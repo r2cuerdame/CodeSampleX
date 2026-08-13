@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-express5-async-errors",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "express": "5.2.1"
+  }
+}

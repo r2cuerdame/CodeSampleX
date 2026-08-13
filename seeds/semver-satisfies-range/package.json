@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-semver-satisfies-range",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "semver": "7.8.5"
+  }
+}

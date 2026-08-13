@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-commander-parse-options",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "commander": "15.0.0"
+  }
+}

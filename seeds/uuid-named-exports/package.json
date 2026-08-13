@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-uuid-named-exports",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "uuid": "14.0.1"
+  }
+}

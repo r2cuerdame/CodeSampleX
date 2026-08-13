@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-lodash-es-named-import",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "lodash-es": "4.18.1"
+  }
+}

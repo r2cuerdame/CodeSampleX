@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-mime-lookup-type",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "mime": "4.1.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-date-fns-format-parse",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "date-fns": "4.4.0"
+  }
+}

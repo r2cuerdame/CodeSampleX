@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-undici-request-json",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "undici": "8.10.0"
+  }
+}
