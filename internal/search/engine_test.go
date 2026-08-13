@@ -485,3 +485,38 @@ func TestRelevanceGateAcceptsDifferentWording(t *testing.T) {
 		t.Errorf("unrelated question still hit: %+v", off.Results)
 	}
 }
+
+// TestPackageNameTokensSplitOnPunctuation: a sample listed in several
+// shards used to keep only the first package it was seen under, and a
+// hyphenated name was one token. Together those made "render a react
+// component" miss its own sample, because the candidate had been reduced
+// to react-dom and "react-dom" is not "react".
+func TestPackageNameTokensSplitOnPunctuation(t *testing.T) {
+	got := contentTokens("react-dom @scope/pkg tailwind.config.js")
+	want := map[string]bool{"react": true, "dom": true, "scope": true,
+		"pkg": true, "tailwind": true, "config": true}
+	for w := range want {
+		found := false
+		for _, g := range got {
+			if g == w {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("token %q missing from %v", w, got)
+		}
+	}
+}
+
+func TestCandidateAccumulatesPackagesAcrossShards(t *testing.T) {
+	base := []domain.PURL{{Ecosystem: "npm", Name: "react-dom", Version: "19.2.8"}}
+	added := appendPURL(base, domain.PURL{Ecosystem: "npm", Name: "react", Version: "19.2.8"})
+	if len(added) != 2 {
+		t.Fatalf("packages = %v, want both", added)
+	}
+	// Idempotent: the same purl seen twice does not duplicate.
+	again := appendPURL(added, domain.PURL{Ecosystem: "npm", Name: "React", Version: "19.2.8"})
+	if len(again) != 2 {
+		t.Errorf("duplicate purl added: %v", again)
+	}
+}

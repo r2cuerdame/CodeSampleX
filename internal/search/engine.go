@@ -216,8 +216,16 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 			}
 			pe.symbols = append(pe.symbols, sp.Symbols...)
 			for _, ss := range sp.Samples {
-				if ss.SampleID == "" || cands[ss.SampleID] != nil {
-					continue // local metadata is authoritative
+				if ss.SampleID == "" {
+					continue
+				}
+				if existing := cands[ss.SampleID]; existing != nil {
+					// Local metadata stays authoritative, but a sample listed
+					// in several shards uses several packages, and keeping
+					// only the first one made both version grading and
+					// package-name relevance depend on shard iteration order.
+					existing.packages = appendPURL(existing.packages, p)
+					continue
 				}
 				c := &candidate{
 					sampleID:       ss.SampleID,
@@ -556,15 +564,22 @@ var stopWords = map[string]bool{
 }
 
 // contentTokens reduces text to the words that carry its topic: lowercase,
-// punctuation-trimmed, no stop words, nothing shorter than three letters.
+// split on every non-alphanumeric boundary, no stop words, nothing shorter
+// than three letters.
+//
+// Splitting on punctuation is what makes package names usable as topic
+// words: "react-dom" has to yield "react", and "@scope/pkg" has to yield
+// "scope" and "pkg", or a question about react fails to match the sample
+// that uses react-dom.
 func contentTokens(s string) []string {
 	var out []string
-	for _, f := range strings.Fields(strings.ToLower(s)) {
-		t := strings.Trim(f, ".,:;!?()[]{}\"'`")
-		if len(t) < 3 || stopWords[t] {
+	for _, f := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(f) < 3 || stopWords[f] {
 			continue
 		}
-		out = append(out, t)
+		out = append(out, f)
 	}
 	return out
 }
@@ -686,4 +701,16 @@ func parsePURLs(ss []string) []domain.PURL {
 		}
 	}
 	return out
+}
+
+// appendPURL adds p unless an equal purl is already present.
+func appendPURL(list []domain.PURL, p domain.PURL) []domain.PURL {
+	for _, existing := range list {
+		if existing.Ecosystem == p.Ecosystem &&
+			strings.EqualFold(existing.Name, p.Name) &&
+			existing.Version == p.Version {
+			return list
+		}
+	}
+	return append(list, p)
 }
