@@ -35,29 +35,7 @@
 {{- end}}
 </div>
 
-<section class="legend">
-  <h2 class="eyebrow mono">{{.T "adapters.legend_heading"}}</h2>
-  <div class="tablewrap">
-    <table class="matrix legendtable">
-      <thead><tr><th>{{.T "adapters.legend_level"}}</th><th>{{.T "adapters.legend_meaning"}}</th></tr></thead>
-      <tbody>
-        {{- range .LevelLegend}}
-        <tr><td class="mono lvl">{{.Code}}</td><td>{{.Meaning}}</td></tr>
-        {{- end}}
-      </tbody>
-    </table>
-  </div>
-  <div class="tablewrap">
-    <table class="matrix legendtable">
-      <thead><tr><th>{{.T "adapters.conf_heading"}}</th><th>{{.T "adapters.legend_meaning"}}</th></tr></thead>
-      <tbody>
-        {{- range .ConfidenceLegend}}
-        <tr><td class="mono lvl">{{.Code}}</td><td>{{.Meaning}}</td></tr>
-        {{- end}}
-      </tbody>
-    </table>
-  </div>
-</section>
-
+{{/* No legend table: each card already spells out every level and the
+     confidence value in place, so a separate key would just repeat it. */}}
 {{if .Doc.RuntimeInstrumentation}}<p class="note">{{.Doc.RuntimeInstrumentation}}</p>{{end}}
 {{end}}

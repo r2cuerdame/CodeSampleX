@@ -79,6 +79,38 @@ func TestSampleUploadHappyPath(t *testing.T) {
 	}
 }
 
+// TestRepublishDoesNotStackCrossJobs pins queue hygiene: re-publishing the
+// same content must not hand peers the same sandbox work again.
+func TestRepublishDoesNotStackCrossJobs(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"src/index.mjs":     "import axios from 'axios';\nexport const post = axios.post;\n",
+		"test/contract.mjs": "console.log('contract');\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+
+	for i := 0; i < 3; i++ {
+		resp := postSample(t, srv.URL, manifest, sampleID, artifact, "")
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload %d: status %d", i, resp.StatusCode)
+		}
+	}
+	jobs, err := store.JobsForSample(context.Background(), sampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := 0
+	for _, j := range jobs {
+		if j.Reason == "cross" && (j.Status == "open" || j.Status == "claimed") {
+			open++
+		}
+	}
+	if open != 1 {
+		t.Errorf("open cross jobs = %d after 3 publishes, want 1: %+v", open, jobs)
+	}
+}
+
 func TestSampleUploadRejectsSampleIDMismatch(t *testing.T) {
 	srv, _, _ := newTestServer(t, nil)
 	manifest := testManifest()

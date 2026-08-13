@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -158,10 +159,10 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Queue cross verification: a peer other than the origin must confirm
-	// the contract before the sample earns CROSS_PASS (§10.1).
-	if _, err := a.d.Store.CreateJob(ctx, serverstore.JobRow{
-		SampleID: claimedID, Reason: "cross", Status: "open",
-	}); err != nil {
+	// the contract before the sample earns CROSS_PASS (§10.1). Re-publishing
+	// the same content must not stack duplicate work on peers — one open
+	// cross job per sample is enough, and none once it is already crossed.
+	if err := a.queueCrossVerification(ctx, claimedID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "queueing verification failed")
 		return
 	}
@@ -170,6 +171,32 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 		"sampleId": claimedID,
 		"status":   "PUBLISHED",
 	})
+}
+
+// queueCrossVerification adds one open cross job for a sample unless it
+// already has outstanding work or has already been cross-verified.
+// Without this, every re-publish of identical content queued another job
+// and peers burned sandbox time re-proving the same artifact.
+func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error {
+	if row, ok, err := a.d.Store.GetSample(ctx, sampleID); err == nil && ok {
+		switch strings.ToUpper(row.Status) {
+		case "CROSS_PASS", "MATRIX_PASS", "STABLE":
+			return nil // already reproduced by another peer
+		}
+	}
+	jobs, err := a.d.Store.JobsForSample(ctx, sampleID)
+	if err != nil {
+		return err
+	}
+	for _, j := range jobs {
+		if j.Reason == "cross" && (j.Status == "open" || j.Status == "claimed") {
+			return nil // work is already queued or in flight
+		}
+	}
+	_, err = a.d.Store.CreateJob(ctx, serverstore.JobRow{
+		SampleID: sampleID, Reason: "cross", Status: "open",
+	})
+	return err
 }
 
 // checkArtifactStatic enforces the C13 static artifact rules on the raw

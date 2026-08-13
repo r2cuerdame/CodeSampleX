@@ -169,7 +169,11 @@ func TestStatsPageExplainsHowItWorks(t *testing.T) {
 func TestAdaptersPageIsReadable(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/adapters").Body.String()
-	mustContain(t, body, "How to read this table")
+	// No separate legend: the cards carry the meanings, and a key that
+	// repeats them is one more thing to read.
+	if strings.Contains(body, "How to read this table") {
+		t.Error("legend table is redundant with the per-card level text")
+	}
 	// Each level is spelled out next to its code on the adapter card, so a
 	// reader never has to decode a row of bare ✓/— glyphs.
 	for _, s := range []string{"A0", "A4", "detected from the lockfile", "verified against a contract"} {
