@@ -182,23 +182,24 @@ func TestLandingExplainsHowItWorks(t *testing.T) {
 	mustContain(t, body, "What is CodeSampleX?")
 }
 
-func TestAdaptersPageIsReadable(t *testing.T) {
+// TestSupportRowsAreSelfExplaining: with the capability page gone, the
+// front page must still answer "does it see my stack, and how much can I
+// trust the symbol data" without A0–A4 decoding.
+func TestSupportRowsAreSelfExplaining(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/adapters").Body.String()
-	// No separate legend: the cards carry the meanings, and a key that
-	// repeats them is one more thing to read.
-	if strings.Contains(body, "How to read this table") {
-		t.Error("legend table is redundant with the per-card level text")
+	body := get(t, mux, "/").Body.String()
+	for _, ecosystem := range []string{"npm", "pypi", "golang", "cargo"} {
+		mustContain(t, body, ecosystem)
 	}
-	// Each level is spelled out next to its code on the adapter card, so a
-	// reader never has to decode a row of bare ✓/— glyphs.
-	for _, s := range []string{"A0", "A4", "detected from the lockfile", "verified against a contract"} {
-		mustContain(t, body, s)
+	// Capabilities in words, not level codes.
+	mustContain(t, body, "packages &amp; versions")
+	mustContain(t, body, "verified samples with contracts")
+	// Symbol confidence survives the page removal, with its meaning on hover.
+	mustContain(t, body, "PROBABLE")
+	mustContain(t, body, "Resolved from imports and call sites")
+	if strings.Contains(body, ">A0<") || strings.Contains(body, ">A4<") {
+		t.Error("landing shows raw capability codes instead of plain language")
 	}
-	// A missing capability is stated in words too, not only as a glyph.
-	mustContain(t, body, "not supported")
-	// Symbol confidence explains itself in place and on hover.
-	mustContain(t, body, "PROBABLE — Resolved from imports and call sites")
 }
 
 func TestLandingKorean(t *testing.T) {
@@ -284,9 +285,13 @@ func TestSitemap(t *testing.T) {
 	// Per-locale landing entries with alternates.
 	mustContain(t, body, "<loc>https://codesamplex.dev/ko/</loc>")
 	mustContain(t, body, `hreflang="ja"`)
-	// Hot packages and adapters page.
 	mustContain(t, body, "<loc>https://codesamplex.dev/npm/axios</loc>")
-	mustContain(t, body, "<loc>https://codesamplex.dev/adapters</loc>")
+	// Redirect-only paths stay out of the map.
+	for _, gone := range []string{"/adapters", "/stats"} {
+		if strings.Contains(body, "codesamplex.dev"+gone+"<") {
+			t.Errorf("sitemap still advertises the redirect %q", gone)
+		}
+	}
 }
 
 func TestInstallScripts(t *testing.T) {

@@ -710,37 +710,6 @@ func loadAdapters() *adaptersDoc {
 	return adaptersCached
 }
 
-// levelCell is one A0…A4 entry on an adapter card: the code alone says
-// nothing, so it carries the level's meaning and its state in words.
-type levelCell struct {
-	Code      string
-	Supported bool
-	Meaning   string
-	State     string // "supported" / "not supported", for screen readers
-	Tip       string
-}
-
-type adapterRow struct {
-	adapterEntry
-	Levels            []bool // aligned with AllCapabilityLevels
-	Cells             []levelCell
-	ConfidenceTip     string
-	ConfidenceMeaning string
-	ConfidenceClass   string // exact | probable | unknown
-}
-
-// legendEntry is one row of the "how to read this table" legends.
-type legendEntry struct{ Code, Meaning string }
-
-type adaptersPageData struct {
-	basePage
-	Doc              *adaptersDoc
-	Rows             []adapterRow
-	Levels           []string
-	LevelLegend      []legendEntry
-	ConfidenceLegend []legendEntry
-}
-
 // confidenceKey maps a published symbol-confidence value to its i18n key.
 var confidenceKey = map[string]string{
 	"EXACT":    "adapters.conf_exact",
@@ -748,65 +717,3 @@ var confidenceKey = map[string]string{
 	"UNKNOWN":  "adapters.conf_unknown",
 }
 
-func (s *site) adaptersPage(w http.ResponseWriter, r *http.Request) {
-	lang := s.negotiate(w, r)
-	doc := loadAdapters()
-	if doc == nil {
-		s.unavailable(w, r, lang)
-		return
-	}
-	levelLegend := make([]legendEntry, 0, len(AllCapabilityLevels))
-	for _, lvl := range AllCapabilityLevels {
-		levelLegend = append(levelLegend, legendEntry{
-			Code:    lvl,
-			Meaning: i18n.T(lang, "adapters."+strings.ToLower(lvl)),
-		})
-	}
-	confLegend := make([]legendEntry, 0, 3)
-	for _, code := range []string{"EXACT", "PROBABLE", "UNKNOWN"} {
-		confLegend = append(confLegend, legendEntry{Code: code, Meaning: i18n.T(lang, confidenceKey[code])})
-	}
-
-	yes, no := i18n.T(lang, "adapters.supported"), i18n.T(lang, "adapters.not_supported")
-	rows := make([]adapterRow, 0, len(doc.Adapters))
-	for _, a := range doc.Adapters {
-		has := make([]bool, len(AllCapabilityLevels))
-		cells := make([]levelCell, len(AllCapabilityLevels))
-		for i, lvl := range AllCapabilityLevels {
-			for _, c := range a.Capabilities {
-				if c == lvl {
-					has[i] = true
-				}
-			}
-			state := no
-			if has[i] {
-				state = yes
-			}
-			cells[i] = levelCell{
-				Code:      lvl,
-				Supported: has[i],
-				Meaning:   levelLegend[i].Meaning,
-				State:     state,
-				Tip:       lvl + " — " + levelLegend[i].Meaning + " (" + state + ")",
-			}
-		}
-		tip, meaning := "", ""
-		conf := strings.ToUpper(a.SymbolConfidence)
-		if key, ok := confidenceKey[conf]; ok {
-			meaning = i18n.T(lang, key)
-			tip = a.SymbolConfidence + " — " + meaning
-		}
-		rows = append(rows, adapterRow{
-			adapterEntry: a, Levels: has, Cells: cells,
-			ConfidenceTip: tip, ConfidenceMeaning: meaning,
-			ConfidenceClass: strings.ToLower(conf),
-		})
-	}
-	title := i18n.T(lang, "adapters.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "meta.adapters"))
-	b.Canonical = s.base(r) + "/adapters"
-	s.render(w, "adapters", http.StatusOK, adaptersPageData{
-		basePage: b, Doc: doc, Rows: rows, Levels: AllCapabilityLevels,
-		LevelLegend: levelLegend, ConfidenceLegend: confLegend,
-	})
-}

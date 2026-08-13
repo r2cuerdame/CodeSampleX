@@ -135,8 +135,8 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 		writeURL(loc, landingAlts)
 	}
 
-	// /stats is a permanent redirect to /explore and stays out of the map.
-	for _, p := range []string{"/explore", "/adapters"} {
+	// /stats and /adapters are permanent redirects and stay out of the map.
+	for _, p := range []string{"/explore"} {
 		writeURL(base+p, nil)
 	}
 

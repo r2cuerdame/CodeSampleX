@@ -1,4 +1,4 @@
-// Package web is the server-rendered public website: landing page,
+﻿// Package web is the server-rendered public website: landing page,
 // Compatibility Explorer, sample/seeder pages, install scripts and SEO
 // surface (plan P6.1–P6.3, goal.md §14.5/§14.6).
 //
@@ -152,7 +152,7 @@ func cacheControl(next http.Handler) http.Handler {
 
 func parseTemplates() map[string]*template.Template {
 	pages := []string{"landing", "explore", "package", "version", "symbol",
-		"sample", "seeder", "adapters", "error"}
+		"sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
 		out[p] = template.Must(template.ParseFS(templateFS,

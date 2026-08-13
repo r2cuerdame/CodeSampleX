@@ -156,17 +156,16 @@ func TestSeederPage(t *testing.T) {
 	mustContain(t, body, "CROSS_PASS")
 }
 
-func TestAdaptersPage(t *testing.T) {
+// TestAdaptersPathRedirects: the capability page folded into the front
+// page's support rows. The machine-readable matrix is still published at
+// GET /v1/adapters, which is what goal.md §13.1 requires.
+func TestAdaptersPathRedirects(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/adapters")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status %d, want 301", rec.Code)
 	}
-	body := rec.Body.String()
-	mustContain(t, body, "node-typescript")
-	mustContain(t, body, "A4")
-	mustContain(t, body, "golang")
-	mustContain(t, body, "cargo")
-	// A3 honesty note from adapters.json.
-	mustContain(t, body, "A3")
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Errorf("Location = %q, want /", loc)
+	}
 }

@@ -111,13 +111,19 @@ type landingPage struct {
 }
 
 // supportRow says what CodeSampleX can observe in one ecosystem, in plain
-// words. The A0–A4 codes stay on /adapters for people who want them; a
-// visitor deciding whether to install needs "does it see my stack".
+// words. The A0–A4 codes and the long per-adapter caveats live in
+// GET /v1/adapters and docs/adapters.md; a visitor deciding whether to
+// install needs "does it see my stack, and how much can I trust it".
 type supportRow struct {
-	Ecosystem string
-	Managers  string
-	Can       []string
-	Missing   []string
+	Ecosystem  string
+	Managers   string
+	Can        []string
+	Missing    []string
+	Confidence string // EXACT | PROBABLE | UNKNOWN
+	// ConfidenceClass styles the chip; ConfidenceTip explains the value
+	// on hover so the word is never a bare label.
+	ConfidenceClass string
+	ConfidenceTip   string
 }
 
 func buildSupport(lang string) []supportRow {
@@ -138,7 +144,15 @@ func buildSupport(lang string) []supportRow {
 		for _, c := range a.Capabilities {
 			has[c] = true
 		}
-		row := supportRow{Ecosystem: a.Ecosystem, Managers: strings.Join(a.PackageManagers, ", ")}
+		row := supportRow{
+			Ecosystem:  a.Ecosystem,
+			Managers:   strings.Join(a.PackageManagers, ", "),
+			Confidence: a.SymbolConfidence,
+		}
+		if key, ok := confidenceKey[strings.ToUpper(a.SymbolConfidence)]; ok {
+			row.ConfidenceClass = strings.ToLower(a.SymbolConfidence)
+			row.ConfidenceTip = i18n.T(lang, key)
+		}
 		for _, l := range labels {
 			if has[l.level] {
 				row.Can = append(row.Can, i18n.T(lang, l.key))
@@ -189,13 +203,24 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	})
 }
 
-// statsPage is kept as a permanent redirect: the network counters moved
-// onto /explore, which is the page that shows the network itself. Old
-// links, bookmarks and indexed URLs still land somewhere correct.
+// statsPage and adaptersPage are permanent redirects. Both pages folded
+// into the front page — the counters and the ecosystem support rows —
+// and old links, bookmarks and indexed URLs still land somewhere correct.
+// The full capability data stays published at GET /v1/adapters and in
+// docs/adapters.md, which is what goal.md §13.1 actually requires.
 func (s *site) statsPage(w http.ResponseWriter, r *http.Request) {
-	target := "/explore"
+	s.redirectTo(w, r, "/explore")
+}
+
+func (s *site) adaptersPage(w http.ResponseWriter, r *http.Request) {
+	s.redirectTo(w, r, "/")
+}
+
+func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string) {
 	if lang := r.URL.Query().Get("lang"); lang != "" {
-		target += "?lang=" + url.QueryEscape(lang)
+		if l, ok := i18n.Canonical(lang); ok {
+			target += "?lang=" + url.QueryEscape(l)
+		}
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
