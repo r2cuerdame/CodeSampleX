@@ -913,12 +913,23 @@ func (p *PG) GetLatestStats(ctx context.Context) (string, bool, error) {
 }
 
 // NetworkCounts computes the raw /v1/stats numbers in one round trip.
+//
+// Peers counts the distinct anonymous peer buckets that contributed
+// evidence in the current epoch — the people actually using the network
+// today. It deliberately does NOT count rows in the peers table: that is
+// the P2P blob tracker, which a node only joins by opting into
+// peerListen, so it read 0 while evidence was arriving every minute.
+// Peer identities rotate daily by design (goal.md §8.6), so one day is
+// the longest window that can be counted without inflating one user into
+// many.
 func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, error) {
 	var c NetworkCounts
+	epoch := now.UTC().Format("2006-01-02")
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		return conn.QueryRow(ctx, `
 			SELECT
-				(SELECT COUNT(*) FROM peers WHERE expires_at > $1),
+				(SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
+					WHERE bucket_kind = 'peer' AND epoch = $2),
 				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages) t),
 				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
 				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
@@ -929,8 +940,9 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 				(SELECT COUNT(DISTINCT s.sample_id) FROM samples s
 					WHERE s.status IN ('CROSS_PASS','MATRIX_PASS','STABLE')
 					   OR EXISTS (SELECT 1 FROM receipts r
-					              WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS'))`, now,
-		).Scan(&c.Peers, &c.Packages, &c.Symbols, &c.Observations, &c.VerifiedSamples)
+					              WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS')),
+				(SELECT COUNT(*) FROM peers WHERE expires_at > $1)`, now, epoch,
+		).Scan(&c.Peers, &c.Packages, &c.Symbols, &c.Observations, &c.VerifiedSamples, &c.ServingPeers)
 	})
 	return c, err
 }

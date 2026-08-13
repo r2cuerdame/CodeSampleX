@@ -1,7 +1,9 @@
 package serverstore
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -26,6 +28,59 @@ func obsBatch(anon, proj string, count int) domain.ObservationBatch {
 		Stage:            domain.StageProjectCompile,
 		Result:           domain.ResultPass,
 		ObservationCount: count,
+	}
+}
+
+// TestNetworkCountsPeersFollowEvidence pins what the headline "Peers"
+// number means. It used to count rows in the P2P blob tracker, which a
+// node only joins by opting into peerListen — so the site reported 0
+// peers while evidence was arriving every minute from real users.
+func TestNetworkCountsPeersFollowEvidence(t *testing.T) {
+	f := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	epoch := now.UTC().Format("2006-01-02")
+
+	batch := func(anonID, pkg string) domain.ObservationBatch {
+		return domain.ObservationBatch{
+			SchemaVersion: 1, Epoch: epoch, AnonID: anonID, ProjectBucket: "proj-" + anonID,
+			Package: pkg, Environment: domain.EnvironmentFingerprint{
+				SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "x64",
+			},
+			Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 3,
+		}
+	}
+	if _, _, err := f.IngestBatches(ctx, []domain.ObservationBatch{
+		batch("peer-a", "pkg:npm/axios@1.12.0"),
+		batch("peer-b", "pkg:npm/axios@1.12.0"),
+		batch("peer-a", "pkg:npm/zod@4.1.12"), // same peer again: still one peer
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := f.NetworkCounts(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Peers != 2 {
+		t.Errorf("Peers = %d, want 2 (distinct contributing buckets today)", c.Peers)
+	}
+	if c.ServingPeers != 0 {
+		t.Errorf("ServingPeers = %d, want 0 — nobody joined the blob tracker", c.ServingPeers)
+	}
+
+	// Yesterday's contributors do not pad today's number: buckets rotate
+	// daily, so counting across days would multiply one person into many.
+	if _, _, err := f.IngestBatches(ctx, []domain.ObservationBatch{
+		batch("peer-c", "pkg:npm/axios@1.12.0"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tomorrow := now.AddDate(0, 0, 1)
+	if c2, err := f.NetworkCounts(ctx, tomorrow); err != nil {
+		t.Fatal(err)
+	} else if c2.Peers != 0 {
+		t.Errorf("Peers on a later day = %d, want 0 — yesterday's buckets must not carry over", c2.Peers)
 	}
 }
 

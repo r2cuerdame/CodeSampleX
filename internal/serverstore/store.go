@@ -109,11 +109,19 @@ type PeerRow struct {
 // (goal.md §14.5). Estimated values are computed elsewhere and always
 // labeled; these are raw counts only.
 type NetworkCounts struct {
-	Peers           int64 // unexpired tracker peers
+	// Peers is the distinct anonymous peer buckets that contributed
+	// evidence in the current epoch: who is actually using the network
+	// today. Buckets rotate daily (goal.md §8.6), so a longer window
+	// would count one person many times.
+	Peers           int64
 	Packages        int64 // distinct (ecosystem, name) pairs
 	Symbols         int64 // distinct non-empty symbol families with evidence
 	Observations    int64 // total aggregated observation count
-	VerifiedSamples int64 // samples at CROSS_PASS or beyond
+	VerifiedSamples int64 // contract-verified or independently reproduced
+	// ServingPeers is the P2P blob tracker population — nodes that opted
+	// into peerListen. Most peers contribute evidence without ever
+	// serving blobs, so this is much smaller and is not the headline.
+	ServingPeers int64
 }
 
 // IdentityRow is one identities-table row (persistent seeder/verifier

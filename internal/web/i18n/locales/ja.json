@@ -16,7 +16,7 @@
   "landing.flywheel_3": "互換性エビデンスが良くなる",
   "landing.flywheel_4": "答えが良くなる",
   "stats.title": "ネットワーク統計",
-  "stats.peers": "ピア",
+  "stats.peers": "本日のピア",
   "stats.packages": "パッケージ",
   "stats.symbols": "シンボル",
   "stats.evidence": "エビデンス",

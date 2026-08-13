@@ -623,9 +623,19 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 	var c NetworkCounts
 	for _, p := range f.peers {
 		if p.ExpiresAt.After(now) {
-			c.Peers++
+			c.ServingPeers++
 		}
 	}
+	// Peers = distinct anonymous buckets that contributed evidence this
+	// epoch, mirroring the PG query.
+	epoch := now.UTC().Format("2006-01-02")
+	active := map[string]struct{}{}
+	for ck := range f.merge.contributions {
+		if ck.epoch == epoch {
+			active[ck.bucket] = struct{}{}
+		}
+	}
+	c.Peers = int64(len(active))
 	pkgNames := map[string]bool{}
 	for _, p := range f.packages {
 		pkgNames[p.Ecosystem+"\x00"+p.Name] = true
