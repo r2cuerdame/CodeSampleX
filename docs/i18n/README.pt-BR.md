@@ -8,6 +8,7 @@ O CodeSampleX é um **cache de raciocínio distribuído local-first** para LLMs 
 
 - Site e Compatibility Explorer: **https://codesamplex.dev**
 - Uma pergunta que o seu LLM para de responder repetidamente: *o `axios.post` realmente funciona com axios 1.12 + Node 22 + pnpm + Windows 11 — e, se não, em qual estágio ele quebra?*
+- Funciona com **Claude Code, Codex, Gemini CLI, OpenCode** — e com qualquer cliente MCP (Cursor, Windsurf, Cline, Zed, VS Code).
 
 ## Instalação
 
@@ -66,7 +67,17 @@ Um projeto que compila nunca é apresentado como um símbolo que funciona. Causa
 
 ## Integração com agentes (MCP)
 
-O `csx init` registra o servidor MCP automaticamente. Ferramentas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Publicar um sample deliberadamente **não** é uma capacidade do MCP — exige a sua aprovação explícita via CLI depois de uma prévia completa.
+**Configurado automaticamente pelo `csx init`:** Claude Code · Codex · Gemini CLI · OpenCode.
+
+**Qualquer outro cliente MCP** (Cursor, Windsurf, Cline, Zed, VS Code) também funciona: o `csx` é um servidor MCP stdio padrão:
+
+```json
+{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```
+
+Independente de modelo: a mesma evidência de compatibilidade serve a Claude, GPT e Codex, Gemini, Llama — qualquer modelo que consiga chamar uma ferramenta MCP.
+
+Ferramentas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Publicar um sample deliberadamente **não** é uma capacidade do MCP — exige a sua aprovação explícita via CLI depois de uma prévia completa.
 
 ```bash
 csx run -- pnpm build      # observed build → evidence

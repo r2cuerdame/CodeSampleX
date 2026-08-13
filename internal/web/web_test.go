@@ -202,6 +202,30 @@ func TestSupportRowsAreSelfExplaining(t *testing.T) {
 	}
 }
 
+// TestLandingNamesSupportedAgents: "does this work with what I already
+// use" is answered by naming the agents, in every locale — these are the
+// words people search for, so they must survive template edits and must
+// not get translated away into a generic phrase.
+func TestLandingNamesSupportedAgents(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	for _, path := range []string{"/", "/ko/", "/ja/", "/zh-CN/", "/de/", "/es/", "/fr/", "/pt-BR/", "/ru/"} {
+		body := get(t, mux, path).Body.String()
+		for _, agent := range []string{
+			"Claude Code", "Codex", "Gemini CLI", "OpenCode", // auto-registered
+			"Cursor", "Windsurf", "Zed", "VS Code", // any MCP client
+			"Claude", "GPT", "Gemini", "Llama", // model-agnostic
+		} {
+			if !strings.Contains(body, agent) {
+				t.Errorf("%s does not name %q", path, agent)
+			}
+		}
+		// The copy-paste MCP config, for clients csx init cannot configure.
+		if !strings.Contains(body, "mcpServers") {
+			t.Errorf("%s is missing the manual MCP config snippet", path)
+		}
+	}
+}
+
 func TestLandingKorean(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/ko/")

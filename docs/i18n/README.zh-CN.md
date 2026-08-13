@@ -8,6 +8,7 @@ CodeSampleX 是一个面向编程 LLM 的**本地优先分布式推理缓存**�
 
 - 官网与兼容性浏览器：**https://codesamplex.dev**
 - 一个你的 LLM 不必再反复回答的问题：*`axios.post` 在 axios 1.12 + Node 22 + pnpm + Windows 11 上到底能不能用——如果不能，具体在哪个阶段出问题？*
+- 开箱即用支持 **Claude Code、Codex、Gemini CLI、OpenCode**，也可接入其他 MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）。
 
 ## 安装
 
@@ -66,7 +67,17 @@ you build/test through csx (or your agent does)
 
 ## 智能体集成（MCP）
 
-`csx init` 会自动注册 MCP 服务器。工具包括：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`。发布样例被有意设计为**不是** MCP 能力——它需要你在完整预览之后通过 CLI 明确批准。
+**`csx init` 自动配置：** Claude Code · Codex · Gemini CLI · OpenCode。
+
+**其他 MCP 客户端**（Cursor、Windsurf、Cline、Zed、VS Code）同样可用。`csx` 是标准的 stdio MCP 服务器：
+
+```json
+{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```
+
+与模型无关：同一份兼容性证据可供 Claude、GPT 与 Codex、Gemini、Llama 等任何能调用 MCP 工具的模型使用。
+
+工具包括：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`。发布样例被有意设计为**不是** MCP 能力——它需要你在完整预览之后通过 CLI 明确批准。
 
 ```bash
 csx run -- pnpm build      # observed build → evidence

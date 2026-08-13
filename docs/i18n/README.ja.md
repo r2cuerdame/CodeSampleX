@@ -8,6 +8,7 @@ CodeSampleX は、コーディング LLM のための**ローカルファース�
 
 - Web サイト & Compatibility Explorer: **https://codesamplex.dev**
 - あなたの LLM が二度と答え直さなくてよくなる問いの一例: *`axios.post` は axios 1.12 + Node 22 + pnpm + Windows 11 で本当に動くのか——動かないなら、どの段階で壊れるのか？*
+- **Claude Code、Codex、Gemini CLI、OpenCode** ですぐ動作し、その他の MCP クライアント（Cursor、Windsurf、Cline、Zed、VS Code）にも接続できます。
 
 ## インストール
 
@@ -66,7 +67,17 @@ you build/test through csx (or your agent does)
 
 ## エージェント統合（MCP）
 
-`csx init` が MCP サーバーを自動登録します。ツール: `search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`。サンプルの公開は意図的に MCP の機能から**外して**あります——完全なプレビューの後、CLI であなたが明示的に承認する必要があります。
+**`csx init` が自動設定:** Claude Code · Codex · Gemini CLI · OpenCode。
+
+**その他の MCP クライアント**（Cursor、Windsurf、Cline、Zed、VS Code）でも動きます。`csx` は標準的な stdio MCP サーバーです:
+
+```json
+{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```
+
+モデルを選びません。同じ互換性エビデンスを Claude、GPT と Codex、Gemini、Llama など MCP ツールを呼べるすべてのモデルが利用できます。
+
+ツール: `search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`。サンプルの公開は意図的に MCP の機能から**外して**あります——完全なプレビューの後、CLI であなたが明示的に承認する必要があります。
 
 ```bash
 csx run -- pnpm build      # observed build → evidence

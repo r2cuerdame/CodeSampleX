@@ -20,6 +20,12 @@ func jsonLD(v any) template.JS {
 	return template.JS(b)
 }
 
+// agentNames lists the coding agents csx init configures by itself. They
+// are product names, identical in every locale, and they double as the
+// terms people search for ("csx claude code mcp"), so they appear in the
+// page text and in the structured data rather than only in the docs.
+const agentNames = "Claude Code, Codex, Gemini CLI, OpenCode"
+
 // landingJSONLD emits WebSite + SoftwareApplication (plan P6.3).
 func landingJSONLD(base, version, lang string) []template.JS {
 	website := map[string]any{
@@ -61,6 +67,17 @@ func landingJSONLD(base, version, lang string) []template.JS {
 				"name":  i18n.T(lang, "landing.what_q"),
 				"acceptedAnswer": map[string]any{
 					"@type": "Answer", "text": i18n.T(lang, "landing.what_a"),
+				},
+			},
+			// "Does it work with <my agent>?" is the question people
+			// actually type; answer it with the names, in their language.
+			{
+				"@type": "Question",
+				"name":  i18n.T(lang, "landing.agents_heading"),
+				"acceptedAnswer": map[string]any{
+					"@type": "Answer",
+					"text": agentNames + ". " + i18n.T(lang, "landing.agents_auto") +
+						" " + i18n.T(lang, "landing.agents_models"),
 				},
 			},
 		},

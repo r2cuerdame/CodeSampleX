@@ -168,6 +168,16 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
   .claims { grid-template-columns: repeat(3, 1fr); gap: 1.2rem; }
 }
 
+/* agent integration (landing) -------------------------------------------- */
+.agentlist { list-style: none; margin: 0 0 0.7rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.agent {
+  display: inline-flex; align-items: baseline; gap: 0.35rem;
+  padding: 0.3rem 0.6rem; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 0.88rem; white-space: nowrap;
+}
+.agents .cmdline { margin: 0.5rem 0 0; }
+.agents .note { margin-top: 0.8rem; }
+
 /* ecosystem support (landing) -------------------------------------------- */
 .ecos { list-style: none; margin: 0 0 0.7rem; padding: 0; }
 .eco {

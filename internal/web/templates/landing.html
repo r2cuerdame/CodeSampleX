@@ -26,6 +26,24 @@
   </ul>
 </section>
 
+{{/* "Will this work with what I already use?" is the first thing a visitor
+     checks, so the agents are named right under the install command rather
+     than buried in the docs. The names are proper nouns — not translated. */}}
+{{$mcpCfg := `{"mcpServers":{"csx":{"command":"csx","args":["mcp"]}}}`}}
+<section class="agents">
+  <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
+  <ul class="agentlist">
+    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
+    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
+    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
+    <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
+  </ul>
+  <p class="dim small">{{.T "landing.agents_auto"}}</p>
+  <p class="small">{{.T "landing.agents_manual"}}</p>
+  <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+  <p class="note">{{.T "landing.agents_models"}}</p>
+</section>
+
 {{/* How healthy the network is. */}}
 <section class="network">
   <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
