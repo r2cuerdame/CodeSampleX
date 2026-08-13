@@ -23,9 +23,22 @@ scp -i "$KeyPath" (Join-Path $repo "deploy\docker-compose.yml") "${User}@${Ip}:/
 scp -i "$KeyPath" (Join-Path $repo "deploy\caddy\Caddyfile") "${User}@${Ip}:/opt/codesamplex/deploy/caddy/"
 scp -i "$KeyPath" (Join-Path $repo "deploy\backup.sh") "${User}@${Ip}:/opt/codesamplex/deploy/"
 
+# Release binaries for /dl and the install scripts (optional but expected).
+$dist = Join-Path $repo "dist"
+if (Test-Path $dist) {
+    Invoke-Expression "$ssh 'mkdir -p /opt/codesamplex/dist'"
+    Get-ChildItem $dist -File | ForEach-Object {
+        scp -i "$KeyPath" $_.FullName "${User}@${Ip}:/opt/codesamplex/dist/"
+    }
+}
+# adapters.json is read from disk beside the server workdir (web /adapters page).
+Invoke-Expression "$ssh 'mkdir -p /opt/codesamplex/schemas/v1'"
+scp -i "$KeyPath" (Join-Path $repo "schemas\v1\adapters.json") "${User}@${Ip}:/opt/codesamplex/schemas/v1/"
+
 $envFile = @"
 CADDY_SITE=$Domain, www.$Domain
 CSX_PUBLIC_URL=https://$Domain
+CSX_DIST_HOST_DIR=/opt/codesamplex/dist
 POSTGRES_PASSWORD=$( -join ((48..57)+(97..122) | Get-Random -Count 24 | ForEach-Object {[char]$_}) )
 "@
 $envPath = "$env:TEMP\csx.env"

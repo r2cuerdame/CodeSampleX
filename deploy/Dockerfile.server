@@ -7,8 +7,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/csx-server ./cmd/csx-server
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -H csx
+RUN apk add --no-cache ca-certificates tzdata wget && adduser -D -H csx
 COPY --from=build /out/csx-server /usr/local/bin/csx-server
+# The /adapters page and /v1 fallback read this from the working directory.
+COPY --from=build /src/schemas/v1/adapters.json /schemas/v1/adapters.json
+WORKDIR /
 USER csx
 EXPOSE 8080
 ENTRYPOINT ["csx-server"]

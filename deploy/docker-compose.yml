@@ -36,8 +36,10 @@ services:
       CSX_SNAPSHOT_INTERVAL: ${CSX_SNAPSHOT_INTERVAL:-5m}
       CSX_GITHUB_CLIENT_ID: ${CSX_GITHUB_CLIENT_ID:-}
       CSX_GITHUB_CLIENT_SECRET: ${CSX_GITHUB_CLIENT_SECRET:-}
+      CSX_DIST_DIR: /data/dist
     volumes:
       - blobs:/data/blobs
+      - ${CSX_DIST_HOST_DIR:-../dist}:/data/dist:ro
     expose:
       - "8080"
     healthcheck:
