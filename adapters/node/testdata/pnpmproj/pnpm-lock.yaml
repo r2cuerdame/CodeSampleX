@@ -1,0 +1,48 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      axios:
+        specifier: ^1.12.0
+        version: 1.12.0
+      local-lib:
+        specifier: file:../local-lib
+        version: file:../local-lib
+    devDependencies:
+      '@types/node':
+        specifier: ^22.5.4
+        version: 22.5.4
+
+packages:
+
+  '@types/node@22.5.4':
+    resolution: {integrity: sha512-fixture1}
+
+  axios@1.12.0:
+    resolution: {integrity: sha512-fixture2}
+
+  follow-redirects@1.15.6:
+    resolution: {integrity: sha512-fixture3}
+    engines: {node: '>=4.0'}
+
+  local-lib@file:../local-lib:
+    resolution: {directory: ../local-lib, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  '@types/node@22.5.4': {}
+
+  axios@1.12.0:
+    dependencies:
+      follow-redirects: 1.15.6
+
+  follow-redirects@1.15.6: {}
+
+  local-lib@file:../local-lib: {}

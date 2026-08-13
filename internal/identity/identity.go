@@ -1,0 +1,146 @@
+// Package identity holds the peer's ed25519 keypair and the secret seed
+// behind the rotating pseudonymous evidence IDs (goal.md §8.6, plan C10).
+// The seed never leaves the machine; only HMAC-derived, epoch-scoped
+// buckets appear in uploads, so the server can dedupe within an epoch
+// but cannot link across epochs or recover paths.
+package identity
+
+import (
+	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+)
+
+const anonSeedLen = 32
+
+// Identity is the loaded local identity. The zero value is unusable;
+// obtain one via LoadOrCreate.
+type Identity struct {
+	priv     ed25519.PrivateKey
+	anonSeed []byte
+}
+
+type identityFile struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Ed25519Priv   string `json:"ed25519Priv"`
+	AnonSeed      string `json:"anonSeed"`
+}
+
+// LoadOrCreate reads home/identity.json, generating and persisting a new
+// identity (file mode 0600) if none exists.
+func LoadOrCreate(home string) (*Identity, error) {
+	path := filepath.Join(home, "identity.json")
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return create(home, path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("identity: load: %w", err)
+	}
+	var f identityFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("identity: parse identity.json: %w", err)
+	}
+	priv, err := base64.StdEncoding.DecodeString(f.Ed25519Priv)
+	if err != nil {
+		return nil, fmt.Errorf("identity: decode ed25519Priv: %w", err)
+	}
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("identity: ed25519Priv length %d, want %d", len(priv), ed25519.PrivateKeySize)
+	}
+	seed, err := base64.StdEncoding.DecodeString(f.AnonSeed)
+	if err != nil {
+		return nil, fmt.Errorf("identity: decode anonSeed: %w", err)
+	}
+	if len(seed) != anonSeedLen {
+		return nil, fmt.Errorf("identity: anonSeed length %d, want %d", len(seed), anonSeedLen)
+	}
+	return &Identity{priv: ed25519.PrivateKey(priv), anonSeed: seed}, nil
+}
+
+func create(home, path string) (*Identity, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("identity: generate key: %w", err)
+	}
+	seed := make([]byte, anonSeedLen)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, fmt.Errorf("identity: generate seed: %w", err)
+	}
+	f := identityFile{
+		SchemaVersion: 1,
+		Ed25519Priv:   base64.StdEncoding.EncodeToString(priv),
+		AnonSeed:      base64.StdEncoding.EncodeToString(seed),
+	}
+	raw, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("identity: marshal: %w", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return nil, fmt.Errorf("identity: save: %w", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return nil, fmt.Errorf("identity: save: %w", err)
+	}
+	return &Identity{priv: priv, anonSeed: seed}, nil
+}
+
+// PeerID is the persistent public identity: "ed25519:" + hex(sha256(pubkey))[:16].
+func (id *Identity) PeerID() string {
+	sum := sha256.Sum256(id.priv.Public().(ed25519.PublicKey))
+	return "ed25519:" + hex.EncodeToString(sum[:])[:16]
+}
+
+// PubkeyB64 returns the base64 ed25519 public key (receipt peerPubkey field).
+func (id *Identity) PubkeyB64() string {
+	return base64.StdEncoding.EncodeToString(id.priv.Public().(ed25519.PublicKey))
+}
+
+// Sign returns the base64 ed25519 signature over msg (canonical JSON).
+func (id *Identity) Sign(msg []byte) string {
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(id.priv, msg))
+}
+
+// AnonID derives the rotating anonymous evidence ID for one daily epoch
+// ("2026-08-13"): hex(HMAC-SHA256(seed, "anon|"+epochDay))[:16].
+func (id *Identity) AnonID(epochDay string) string {
+	return id.derive("anon|"+epochDay, 16)
+}
+
+// ProjectBucket derives the rotating per-project dedup bucket for one
+// monthly epoch ("2026-08"): hex(HMAC-SHA256(seed, "proj|"+path+"|"+month))[:12].
+// The absolute path stays inside the HMAC input; it is never recoverable
+// from the 12-hex output.
+func (id *Identity) ProjectBucket(projectPath, epochMonth string) string {
+	return id.derive("proj|"+projectPath+"|"+epochMonth, 12)
+}
+
+func (id *Identity) derive(input string, n int) string {
+	mac := hmac.New(sha256.New, id.anonSeed)
+	mac.Write([]byte(input))
+	return hex.EncodeToString(mac.Sum(nil))[:n]
+}
+
+// Verify reports whether sigB64 is a valid ed25519 signature by pubB64
+// over msg. Malformed inputs verify as false, never panic.
+func Verify(pubB64, sigB64 string, msg []byte) bool {
+	pub, err := base64.StdEncoding.DecodeString(pubB64)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), msg, sig)
+}
