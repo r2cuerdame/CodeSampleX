@@ -551,3 +551,48 @@ func TestBuilderRunLoopStopsOnCancel(t *testing.T) {
 		t.Fatal("RunLoop never completed a pass")
 	}
 }
+
+// TestShardBuiltForSampleWithoutObservations pins the discovery path for a
+// freshly seeded package: the answer exists before anyone has used the
+// library. Shard keys used to come from observation evidence alone, so
+// such a package got no shard — and since clients only ever read shards,
+// its sample was invisible to every one of them.
+func TestShardBuiltForSampleWithoutObservations(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+
+	// A sample for a package with zero observation evidence.
+	purl := "pkg:cargo/semver@1.0.28"
+	manifest := domain.SampleManifest{
+		SchemaVersion: 1,
+		Case: domain.Case{
+			SchemaVersion: 1, Kind: "HOW", Goal: "check a caret requirement",
+			Packages: []string{purl}, Contract: []string{"matches inside the range"},
+		},
+		Packages:        []string{purl},
+		ContractCommand: []string{"cargo", "run", "--offline"},
+		VerifierAdapter: "cargo@1",
+		Environment:     domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "cargo"},
+	}
+	sampleID := "sha256:" + strings.Repeat("cd", 32)
+	if err := store.SaveSample(ctx, serverstore.SampleRow{
+		SampleID: sampleID, ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+		Status: "PUBLISHED", License: "MIT-0", SizeBytes: 1024, CreatedAt: testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	_, js, ok, err := store.GetShard(ctx, "cargo/semver/1")
+	if err != nil || !ok {
+		t.Fatalf("no shard for a package that has a sample but no observations (err=%v)", err)
+	}
+	if !strings.Contains(js, sampleID) {
+		t.Fatalf("shard does not carry the sample:\n%s", js)
+	}
+}

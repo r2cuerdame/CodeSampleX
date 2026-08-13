@@ -290,6 +290,23 @@ func (b *Builder) regenerateShards(ctx context.Context,
 		}
 	}
 
+	// Samples also define shards. Deriving keys from observation evidence
+	// alone meant a package with a verified sample but nothing observed yet
+	// got no shard at all — and clients only ever read shards, so the
+	// sample was invisible to every one of them. That is the normal state
+	// for a freshly seeded package: the answer exists before the usage.
+	for _, sd := range samples {
+		for _, p := range sd.purls {
+			sk := shardKey{p.Ecosystem, p.Name, p.Major()}
+			if shardPkgs[sk] == nil {
+				shardPkgs[sk] = map[string]*ShardPackage{}
+			}
+			if shardPkgs[sk][p.String()] == nil {
+				shardPkgs[sk][p.String()] = &ShardPackage{PURL: p.String()}
+			}
+		}
+	}
+
 	keys := make([]shardKey, 0, len(shardPkgs))
 	for sk := range shardPkgs {
 		keys = append(keys, sk)
