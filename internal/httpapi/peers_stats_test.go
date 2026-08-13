@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 func TestPeerAnnounceAndForSample(t *testing.T) {
@@ -93,6 +95,35 @@ func TestPeerAnnounceValidation(t *testing.T) {
 
 // --- stats ---------------------------------------------------------------------
 
+// TestStatsReflectsIngestedEvidence pins the behavior the landing page and
+// the e2e harness depend on: evidence uploaded a moment ago shows up in
+// GET /v1/stats without waiting for a builder pass.
+func TestStatsReflectsIngestedEvidence(t *testing.T) {
+	srv, _, _ := newTestServer(t, nil)
+
+	batch := testBatch("pkg:npm/axios@1.12.0", "axios.post", nodeEnv("esm"),
+		domain.StageProjectCompile, domain.ResultPass, 4)
+	var ing struct {
+		Accepted int `json:"accepted"`
+	}
+	resp := postJSON(t, srv.URL+"/v1/evidence/batches", map[string]any{"batches": []any{batch}}, &ing)
+	if resp.StatusCode != http.StatusAccepted || ing.Accepted != 1 {
+		t.Fatalf("ingest: status=%d accepted=%d", resp.StatusCode, ing.Accepted)
+	}
+
+	var stats map[string]any
+	resp = getJSON(t, srv.URL+"/v1/stats", &stats)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stats status = %d", resp.StatusCode)
+	}
+	if n, _ := stats["evidence"].(float64); n < 4 {
+		t.Errorf("evidence = %v, want >= 4 right after ingest", stats["evidence"])
+	}
+	if n, _ := stats["packages"].(float64); n < 1 {
+		t.Errorf("packages = %v, want >= 1 right after ingest", stats["packages"])
+	}
+}
+
 func TestStatsCarriesEstimatedFlagAlways(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 
@@ -108,6 +139,20 @@ func TestStatsCarriesEstimatedFlagAlways(t *testing.T) {
 	}
 	if _, ok := stats["postHitBuildPass"]; !ok {
 		t.Fatal("postHitBuildPass placeholder missing")
+	}
+
+	// The website and the CLI read these exact keys; a rename here blanks a
+	// landing-page counter without any test failing elsewhere.
+	for _, key := range []string{
+		"peers", "packages", "symbols", "evidence", "verifiedSamples",
+		"postHitSuccessRate", "estimatedReasoningAvoided", "estimated", "generatedAt",
+	} {
+		if _, ok := stats[key]; !ok {
+			t.Errorf("stats contract key %q missing from GET /v1/stats", key)
+		}
+	}
+	if stats["estimated"] != true {
+		t.Errorf("estimated = %v, want true", stats["estimated"])
 	}
 
 	// A stored daily rollup is served verbatim.

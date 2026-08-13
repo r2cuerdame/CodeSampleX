@@ -502,17 +502,30 @@ type PlaceholderStat struct {
 }
 
 // StatsDoc is the daily stats rollup served by GET /v1/stats.
+// Field names are a public contract shared with the website and the CLI —
+// renaming one silently blanks a landing-page counter, so they stay fixed:
+// peers, packages, symbols, evidence, verifiedSamples, postHitSuccessRate,
+// estimatedReasoningAvoided (always flagged estimated), estimated,
+// generatedAt.
 type StatsDoc struct {
-	SchemaVersion             int             `json:"schemaVersion"`
-	Day                       string          `json:"day"`
-	GeneratedAt               string          `json:"generatedAt"`
-	Peers                     int64           `json:"peers"`
-	Packages                  int64           `json:"packages"`
-	Symbols                   int64           `json:"symbols"`
-	EvidenceObservations      int64           `json:"evidenceObservations"`
-	VerifiedSamples           int64           `json:"verifiedSamples"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Day           string `json:"day"`
+	GeneratedAt   string `json:"generatedAt"`
+	Peers         int64  `json:"peers"`
+	Packages      int64  `json:"packages"`
+	Symbols       int64  `json:"symbols"`
+	// Evidence counts observation records, not peers or projects: a big
+	// number here says "widely used", never "widely verified".
+	Evidence        int64 `json:"evidence"`
+	VerifiedSamples int64 `json:"verifiedSamples"`
+	// PostHitSuccessRate is 0..1; PostHitBuildPass keeps the honest note
+	// that no adoption data has been collected yet.
+	PostHitSuccessRate        float64         `json:"postHitSuccessRate"`
 	PostHitBuildPass          PlaceholderStat `json:"postHitBuildPass"`
 	EstimatedReasoningAvoided EstimatedStat   `json:"estimatedReasoningAvoided"`
+	// Estimated marks the whole document as containing estimated figures,
+	// mirroring EstimatedReasoningAvoided.Estimated for simple consumers.
+	Estimated bool `json:"estimated"`
 }
 
 // StatsJSON renders the stats rollup. hitsAdopted is the count of adopted
@@ -520,14 +533,16 @@ type StatsDoc struct {
 // reaches the server, and the estimate says so.
 func StatsJSON(c serverstore.NetworkCounts, hitsAdopted int64, now time.Time) ([]byte, error) {
 	doc := StatsDoc{
-		SchemaVersion:        1,
-		Day:                  now.UTC().Format("2006-01-02"),
-		GeneratedAt:          now.UTC().Format(time.RFC3339),
-		Peers:                c.Peers,
-		Packages:             c.Packages,
-		Symbols:              c.Symbols,
-		EvidenceObservations: c.Observations,
-		VerifiedSamples:      c.VerifiedSamples,
+		SchemaVersion:      1,
+		Day:                now.UTC().Format("2006-01-02"),
+		GeneratedAt:        now.UTC().Format(time.RFC3339),
+		Peers:              c.Peers,
+		Packages:           c.Packages,
+		Symbols:            c.Symbols,
+		Evidence:           c.Observations,
+		VerifiedSamples:    c.VerifiedSamples,
+		PostHitSuccessRate: 0,
+		Estimated:          true,
 		PostHitBuildPass: PlaceholderStat{
 			Value: 0,
 			Note:  "placeholder — no post-hit adoption data collected yet",

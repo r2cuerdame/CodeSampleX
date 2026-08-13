@@ -503,8 +503,8 @@ func TestBuilderRunOnce(t *testing.T) {
 	if !stats.EstimatedReasoningAvoided.Estimated {
 		t.Fatal("estimatedReasoningAvoided must always carry estimated:true")
 	}
-	if stats.EvidenceObservations != 22 {
-		t.Fatalf("evidenceObservations = %d, want 22", stats.EvidenceObservations)
+	if stats.Evidence != 22 {
+		t.Fatalf("evidence = %d, want 22", stats.Evidence)
 	}
 	if stats.VerifiedSamples != 1 {
 		t.Fatalf("verifiedSamples = %d, want 1", stats.VerifiedSamples)

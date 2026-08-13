@@ -72,6 +72,57 @@ func startDaemon(t *testing.T, home string) (*Daemon, *Client) {
 	return d, &Client{BaseURL: d.BaseURL()}
 }
 
+// TestIdleVerificationStartsPromptly pins the behavior a cross-verifying
+// peer depends on: with a budget configured, the daemon asks the server for
+// verification jobs shortly after startup instead of after a full 15-minute
+// tick — which is what kept published samples stuck at PUBLISHED.
+func TestIdleVerificationStartsPromptly(t *testing.T) {
+	jobsAsked := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/verification/jobs") {
+			select {
+			case jobsAsked <- struct{}{}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"jobs":[]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	home := newTestHome(t, func(c *config.Config) {
+		c.Mode = config.ModeCommunity
+		c.ServerURL = srv.URL
+		c.IdleVerification = "unlimited"
+	})
+	d, err := New(home)
+	if err != nil {
+		t.Fatalf("daemon.New: %v", err)
+	}
+	if d.Cross == nil {
+		t.Fatal("idleVerification=unlimited must wire a CrossVerifier")
+	}
+	d.verifyFirstDelay = 50 * time.Millisecond
+	d.verifyEvery = 500 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- d.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+		d.Close()
+	})
+
+	select {
+	case <-jobsAsked:
+	case <-time.After(20 * time.Second):
+		t.Fatal("daemon never polled /v1/verification/jobs after startup")
+	}
+}
+
 func seedSample(t *testing.T, d *Daemon, id string) domain.SampleManifest {
 	t.Helper()
 	m := domain.SampleManifest{

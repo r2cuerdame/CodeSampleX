@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -47,6 +48,8 @@ const (
 	defaultWarmEvery   = time.Hour
 	defaultBudgetEvery = 24 * time.Hour
 	defaultVerifyEvery = 15 * time.Minute
+	// First cross-verification attempt after startup.
+	defaultVerifyFirstDelay = 20 * time.Second
 )
 
 // ErrAlreadyRunning is returned by Run when another live daemon holds the
@@ -69,6 +72,7 @@ type Daemon struct {
 
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
+	verifyFirstDelay                                 time.Duration
 
 	batchMu sync.Mutex // serializes drain/upload/preview over the batcher
 	statMu  sync.Mutex // serializes read-modify-write stat counters
@@ -250,9 +254,16 @@ func (d *Daemon) startBackground(ctx context.Context) {
 		_, _ = storage.EnforceBudget(ctx, d.DB, d.CAS, d.Cfg.CacheBudgetMB)
 	})
 	if d.Cross != nil {
-		go tickLoop(ctx, orDefault(d.verifyEvery, defaultVerifyEvery), func() {
-			_ = d.Cross.RunBudget(ctx, d.Cfg.IdleVerification, false)
-		})
+		// Idle verification is explicitly opted into and only pulls work, so
+		// unlike upload/warm it starts soon after launch instead of after a
+		// full interval — a peer that just enabled it should not sit idle for
+		// 15 minutes while jobs wait.
+		go tickLoopAfter(ctx, orDefault(d.verifyFirstDelay, defaultVerifyFirstDelay),
+			orDefault(d.verifyEvery, defaultVerifyEvery), func() {
+				if err := d.Cross.RunBudget(ctx, d.Cfg.IdleVerification, false); err != nil && ctx.Err() == nil {
+					log.Printf("csx daemon: cross verification: %v", err)
+				}
+			})
 	}
 	if d.Peer != nil {
 		d.Peer.StartAnnouncing(ctx)
@@ -274,6 +285,17 @@ func tickLoop(ctx context.Context, every time.Duration, f func()) {
 			f()
 		}
 	}
+}
+
+// tickLoopAfter runs f once after first, then on every tick of every.
+func tickLoopAfter(ctx context.Context, first, every time.Duration, f func()) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(first):
+		f()
+	}
+	tickLoop(ctx, every, f)
 }
 
 func orDefault(v, def time.Duration) time.Duration {
