@@ -71,6 +71,13 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		Overview: func(ctx context.Context, purls []string, env domain.EnvironmentFingerprint) ([]PackageOverview, error) {
 			return overviewFromShards(ctx, db, purls)
 		},
+		LocalReadiness: func(ctx context.Context) (string, int, error) {
+			rows, err := db.ListShards(ctx)
+			if err != nil {
+				return cfg.Mode, 0, err
+			}
+			return cfg.Mode, len(rows), nil
+		},
 		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, error) {
 			return runObserved(ctx, db, ident, cfg, argv, cwd)
 		},

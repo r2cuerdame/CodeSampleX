@@ -31,6 +31,11 @@ type Deps struct {
 	// turns a search miss into a useful answer instead of an empty one; nil
 	// simply falls back to the bare NO_SAFE_MATCH text.
 	Overview func(ctx context.Context, purls []string, env domain.EnvironmentFingerprint) ([]PackageOverview, error)
+	// LocalReadiness reports the install mode and how many compatibility
+	// shards are cached. An agent launched straight from a registry — with
+	// the binary but no `csx init` — would otherwise see every search miss
+	// with no way to tell an empty cache from an empty network.
+	LocalReadiness func(ctx context.Context) (mode string, shards int, err error)
 	// RunObserved wraps one command in the evidence loop (scan → run →
 	// record). sanitized carries only sanitizer output — never raw stderr.
 	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, err error)
@@ -307,10 +312,13 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	if (resp.Miss || len(resp.Results) == 0) && len(a.Packages) > 0 && s.Deps.Overview != nil {
 		overview, _ = s.Deps.Overview(ctx, a.Packages, req.Environment)
 	}
-	if len(overview) > 0 {
-		return textResult(renderMiss(overview), map[string]any{
-			"response": resp, "packageOverview": overview,
-		})
+	if resp.Miss || len(resp.Results) == 0 {
+		hint, ready := s.readinessHint(ctx)
+		if len(overview) > 0 || hint != "" {
+			return textResult(renderMiss(overview, hint), map[string]any{
+				"response": resp, "packageOverview": overview, "localReady": ready,
+			})
+		}
 	}
 	return textResult(renderSearchResponse(resp), resp)
 }
@@ -329,12 +337,43 @@ type PackageOverview struct {
 	TopFailure   string  `json:"topFailure,omitempty"`
 }
 
-// renderMiss writes NO_SAFE_MATCH plus the per-package evidence summary.
-func renderMiss(overview []PackageOverview) string {
+// readinessHint explains an EMPTY LOCAL CACHE, which is a different fact
+// from an empty network and must never be reported as one. It returns the
+// text to append (empty when the cache is warm) and whether this install
+// can answer at all.
+func (s *Server) readinessHint(ctx context.Context) (string, bool) {
+	if s.Deps.LocalReadiness == nil {
+		return "", true
+	}
+	mode, shards, err := s.Deps.LocalReadiness(ctx)
+	if err != nil || shards > 0 {
+		return "", true
+	}
+	switch mode {
+	case "community", "local-only":
+		return "This install has no compatibility shards cached yet, so the miss above says " +
+			"nothing about what the network knows. Run `csx sync`, or start the daemon with " +
+			"`csx daemon`, and retry.", false
+	default:
+		return "This install has not been initialized: no shards are cached, so every search " +
+			"misses regardless of what the network knows. Run `csx init` to pick a mode and " +
+			"warm the cache — it asks one question, and sends nothing unless you join.", false
+	}
+}
+
+// renderMiss writes NO_SAFE_MATCH, any readiness hint, and the per-package
+// evidence summary.
+func renderMiss(overview []PackageOverview, hint string) string {
 	var b strings.Builder
 	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
 	b.WriteString("No verified sample matches this goal in your environment. Solve it fresh — " +
 		"a wrong HIT is worse than a MISS (goal.md §3.8).\n\n")
+	if hint != "" {
+		b.WriteString(hint + "\n\n")
+	}
+	if len(overview) == 0 {
+		return b.String()
+	}
 	b.WriteString("What the network already knows about these packages " +
 		"[USAGE_OBSERVATION — project-level co-occurrence, NOT execution proof]:\n")
 	for _, o := range overview {

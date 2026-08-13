@@ -446,3 +446,48 @@ func TestToolErrorsBecomeIsErrorResults(t *testing.T) {
 		t.Errorf("missing query must set isError, got %v", res)
 	}
 }
+
+// TestSearchMissExplainsAnEmptyCache: an agent that installed the binary
+// without running `csx init` would otherwise see NO_SAFE_MATCH forever and
+// conclude the network is empty. An empty local cache is a different fact
+// from an empty network and must be reported as such, with the way out.
+func TestSearchMissExplainsAnEmptyCache(t *testing.T) {
+	for _, tc := range []struct {
+		mode, want string
+	}{
+		{"", "csx init"},          // never initialized
+		{"community", "csx sync"}, // joined, but nothing warmed yet
+	} {
+		t.Run("mode="+tc.mode, func(t *testing.T) {
+			deps := emptyDeps()
+			deps.LocalReadiness = func(context.Context) (string, int, error) {
+				return tc.mode, 0, nil
+			}
+			c := startServer(t, deps)
+			res := callTool(t, c, "search_known_solution", map[string]any{"query": "anything"})
+			text := toolText(t, res)
+			if !strings.Contains(text, "MATCH: NO_SAFE_MATCH") {
+				t.Errorf("miss header missing:\n%s", text)
+			}
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("miss does not tell the agent to run %q:\n%s", tc.want, text)
+			}
+			sc, ok := res["structuredContent"].(map[string]any)
+			if !ok {
+				t.Fatal("no structuredContent")
+			}
+			if ready, _ := sc["localReady"].(bool); ready {
+				t.Error("localReady must be false when no shards are cached")
+			}
+		})
+	}
+
+	// A warm cache says none of this — the miss is then about the network.
+	deps := emptyDeps()
+	deps.LocalReadiness = func(context.Context) (string, int, error) { return "community", 42, nil }
+	c := startServer(t, deps)
+	text := toolText(t, callTool(t, c, "search_known_solution", map[string]any{"query": "anything"}))
+	if strings.Contains(text, "csx init") || strings.Contains(text, "csx sync") {
+		t.Errorf("warm cache must not nag about setup:\n%s", text)
+	}
+}
