@@ -1,6 +1,10 @@
 # CADDY_SITE selects the site address:
-#   production: "codesamplex.dev, www.codesamplex.dev"  (automatic HTTPS)
+#   production: "codesamplex.dev"  (automatic HTTPS)
 #   local:      ":80"
+# Only names that actually resolve to this host belong here — Caddy asks a
+# CA for a certificate per name, and an unresolvable name fails that
+# challenge forever. Add "www.codesamplex.dev" to CADDY_SITE once a www
+# record exists; a redirect block for it would duplicate the address.
 {$CADDY_SITE::80} {
 	encode zstd gzip
 
@@ -15,8 +19,4 @@
 	}
 
 	reverse_proxy server:8080
-}
-
-www.codesamplex.dev {
-	redir https://codesamplex.dev{uri} permanent
 }

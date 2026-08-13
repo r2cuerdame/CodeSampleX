@@ -13,13 +13,24 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $remote = "${User}@${Ip}"
 $sshArgs = @("-i", $KeyPath, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
 
+# ssh and scp write ordinary progress and host-key notices to stderr, which
+# PowerShell 5.1 turns into terminating errors under ErrorActionPreference
+# Stop. Exit codes are the real signal here.
 function Invoke-Remote([string]$Script) {
-    $out = & ssh @sshArgs $remote $Script 2>&1 | ForEach-Object { "$_" }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & ssh @sshArgs $remote $Script 2>&1 | ForEach-Object { "$_" }
+    } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "remote command failed ($LASTEXITCODE): $Script`n$($out -join "`n")" }
     return $out
 }
 function Copy-Remote([string]$Local, [string]$RemotePath) {
-    & scp -i $KeyPath -o StrictHostKeyChecking=accept-new $Local "${remote}:${RemotePath}" | Out-Null
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & scp -i $KeyPath -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 $Local "${remote}:${RemotePath}" 2>&1 | Out-Null
+    } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "scp failed: $Local -> $RemotePath" }
 }
 
@@ -48,8 +59,10 @@ if (Test-Path $dist) {
 
 # .env holds the generated DB password: write once, never overwrite.
 $pw = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+# Only the apex: www has no DNS record yet, and Caddy would fail its ACME
+# challenge forever. Add it here (and to DNS) together, or not at all.
 $envText = @"
-CADDY_SITE=$Domain, www.$Domain
+CADDY_SITE=$Domain
 CSX_PUBLIC_URL=https://$Domain
 CSX_DIST_HOST_DIR=/opt/codesamplex/dist
 POSTGRES_PASSWORD=$pw
@@ -71,11 +84,14 @@ Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object
 
 Write-Output "== smoke test =="
 $ok = $false
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Seconds 5
     $health = & ssh @sshArgs $remote "curl -fsS http://127.0.0.1/healthz || true" 2>&1 | ForEach-Object { "$_" }
     if ($health -match "ok") { $ok = $true; break }
 }
+$ErrorActionPreference = $prevEAP
 if (-not $ok) {
     Invoke-Remote "cd /opt/codesamplex/deploy && docker compose logs --tail 40 server" | ForEach-Object { Write-Output $_ }
     throw "healthz never returned ok"

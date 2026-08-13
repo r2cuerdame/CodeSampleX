@@ -12,7 +12,7 @@ services:
       - "443:443"
     environment:
       # "codesamplex.dev, www.codesamplex.dev" in production; ":80" locally.
-      CADDY_SITE: ${CADDY_SITE::80}
+      CADDY_SITE: ${CADDY_SITE:-:80}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
