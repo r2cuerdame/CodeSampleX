@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/case.json",
+  "title": "Case",
+  "description": "A problem to solve. Never contains code.",
+  "type": "object",
+  "required": ["schemaVersion", "kind", "goal", "packages", "contract"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "caseId": {"type": "string", "pattern": "^case:sha256:[0-9a-f]{64}$"},
+    "kind": {"enum": ["HOW", "FIX", "MIGRATION", "CONFIG"]},
+    "goal": {"type": "string", "minLength": 1, "maxLength": 500},
+    "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "symbols": {"type": "array", "items": {"type": "string"}},
+    "constraints": {"type": "object", "additionalProperties": {"type": "string"}},
+    "contract": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  },
+  "additionalProperties": false
+}

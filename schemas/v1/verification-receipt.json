@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/verification-receipt.json",
+  "title": "VerificationReceipt",
+  "description": "Immutable signed record of one sample verification in one environment.",
+  "type": "object",
+  "required": ["schemaVersion", "sampleId", "caseId", "environmentHash", "environment", "stages", "verifierAdapter", "sandboxCapability", "logsDigest", "createdAt", "peerId", "peerPubkey", "peerSignature"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "sampleId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "caseId": {"type": "string"},
+    "environmentHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "environment": {"$ref": "environment.json"},
+    "stages": {
+      "type": "object",
+      "additionalProperties": {"enum": ["PASS", "FAIL", "SKIPPED"]}
+    },
+    "verifierAdapter": {"type": "string"},
+    "sandboxCapability": {"enum": ["COMPILE_ONLY", "CONTAINER_RUN", "STRONG_ISOLATION_RUN", "LIVE_INTEGRATION"]},
+    "logsDigest": {"type": "string"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "peerId": {"type": "string", "pattern": "^ed25519:[0-9a-f]{16}$"},
+    "peerPubkey": {"type": "string"},
+    "peerSignature": {"type": "string"}
+  },
+  "additionalProperties": false
+}

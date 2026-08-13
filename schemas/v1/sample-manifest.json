@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/sample-manifest.json",
+  "title": "SampleManifest (csx.json)",
+  "type": "object",
+  "required": ["schemaVersion", "case", "packages", "environment", "license", "contractCommand", "verifierAdapter"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "case": {"$ref": "case.json"},
+    "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "symbols": {"type": "array", "items": {"type": "string"}},
+    "environment": {"$ref": "environment.json"},
+    "license": {"type": "string", "default": "MIT-0"},
+    "buildCommand": {"type": "array", "items": {"type": "string"}},
+    "contractCommand": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "verifierAdapter": {"type": "string"}
+  },
+  "additionalProperties": false
+}

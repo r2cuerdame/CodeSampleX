@@ -28,6 +28,7 @@
 - **i18n (user requirement): README and website in 9 languages: en, ko, ja, zh-CN, es, fr, de, pt-BR, ru.** Website: per-locale routes (`/?lang=` cookie + `/{lang}/` paths for indexable pages), `hreflang` alternates, localized meta descriptions. README.md (en) + `docs/i18n/README.{lang}.md`.
 - SEO: server-rendered pages with canonical URLs, hreflang clusters, sitemap.xml (localized), robots.txt, JSON-LD (WebSite + SoftwareApplication + BreadcrumbList), OpenGraph/Twitter cards, descriptive titles like "axios 1.12 node 22 compatibility" (§14.6).
 - Module path: `github.com/r2cuerdame/codesamplex`.
+- **Ease of install is paramount (user directive 2026-08-13: "무엇보다 설치세팅이 쉬워야해").** One-line installs: `irm https://codesamplex.dev/install.ps1 | iex` and `curl -fsSL https://codesamplex.dev/install.sh | sh` download the single `csx` binary for the platform, add it to PATH, and launch `csx init`. `csx init` asks exactly ONE question (JOIN COMMUNITY / LOCAL ONLY per §5.4) and then does everything itself: config, identity, daemon autostart, MCP registration, agent rules/hooks for detected agents. Every other setting has a working default. No package manager, no dependencies, no config file editing required.
 
 ---
 

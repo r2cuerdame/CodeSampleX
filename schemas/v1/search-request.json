@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/search-request.json",
+  "title": "SearchRequest",
+  "type": "object",
+  "required": ["schemaVersion", "query", "environment"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "query": {"type": "string"},
+    "packages": {"type": "array", "items": {"type": "string"}},
+    "symbols": {"type": "array", "items": {"type": "string"}},
+    "environment": {"$ref": "environment.json"},
+    "errorFingerprint": {"type": "string"},
+    "errorCode": {"type": "string"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 10}
+  },
+  "additionalProperties": false
+}

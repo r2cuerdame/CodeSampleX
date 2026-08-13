@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/search-response.json",
+  "title": "SearchResponse",
+  "type": "object",
+  "required": ["schemaVersion", "results", "miss"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "miss": {"type": "boolean"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["match", "confidence", "score", "exact", "different", "adaptationNeeded", "evidence"],
+        "properties": {
+          "match": {"enum": ["EXACT", "COMPATIBLE", "ADAPTATION_REQUIRED", "REFERENCE_ONLY", "NO_SAFE_MATCH"]},
+          "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+          "score": {"type": "number"},
+          "case": {"$ref": "case.json"},
+          "sampleId": {"type": "string"},
+          "sampleStatus": {"type": "string"},
+          "exact": {"type": "array", "items": {"type": "string"}},
+          "different": {"type": "array", "items": {"type": "string"}},
+          "adaptationNeeded": {"type": "array", "items": {"type": "string"}},
+          "evidence": {"type": "object"},
+          "knownFailures": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

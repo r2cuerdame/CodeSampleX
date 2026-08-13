@@ -1,0 +1,62 @@
+package domain
+
+// SearchRequest is the wire query shape shared by the local daemon, MCP
+// tools, and the server /v1/search API (goal.md §11.1).
+type SearchRequest struct {
+	SchemaVersion    int                    `json:"schemaVersion"`
+	Query            string                 `json:"query"`
+	Packages         []string               `json:"packages,omitempty"`
+	Symbols          []string               `json:"symbols,omitempty"`
+	Environment      EnvironmentFingerprint `json:"environment"`
+	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
+	ErrorCode        string                 `json:"errorCode,omitempty"`
+	Limit            int                    `json:"limit,omitempty"` // default 3
+}
+
+// EvidenceSummary carries the honest numbers behind a result (goal.md §11.5).
+// Compile observations are co-occurrence evidence, never execution proof.
+type EvidenceSummary struct {
+	ProjectCompileObservations int64    `json:"projectCompileObservations"`
+	CleanBuilds                int64    `json:"cleanBuilds"`
+	ContractPasses             int64    `json:"contractPasses"`
+	IndependentCrossPeers      int64    `json:"independentCrossPeers"`
+	UniquePeerBuckets          int64    `json:"uniquePeerBuckets"`
+	PassRate                   float64  `json:"passRate"`
+	Confidence                 string   `json:"confidence"` // HIGH | MEDIUM | LOW
+	ElevatedFailures           []string `json:"elevatedFailures,omitempty"`
+	LastSeen                   string   `json:"lastSeen,omitempty"`
+}
+
+// KnownFailure names a failure cluster relevant to the requesting env.
+type KnownFailure struct {
+	ErrorCode   string              `json:"errorCode,omitempty"`
+	Fingerprint string              `json:"fingerprint,omitempty"`
+	Count       int64               `json:"count"`
+	EnvSummary  map[string]string   `json:"envSummary,omitempty"`
+	Hypotheses  []FailureHypothesis `json:"hypotheses,omitempty"`
+}
+
+// SearchResult is one ranked answer with its environment delta
+// (goal.md §11.5): the LLM reasons over Different/Adaptation, not the
+// whole problem.
+type SearchResult struct {
+	Grade         MatchGrade      `json:"match"`
+	Confidence    string          `json:"confidence"`
+	Score         float64         `json:"score"`
+	Case          *Case           `json:"case,omitempty"`
+	SampleID      string          `json:"sampleId,omitempty"`
+	SampleStatus  string          `json:"sampleStatus,omitempty"`
+	Exact         []string        `json:"exact"`
+	Different     []string        `json:"different"`
+	Adaptation    []string        `json:"adaptationNeeded"`
+	Evidence      EvidenceSummary `json:"evidence"`
+	KnownFailures []KnownFailure  `json:"knownFailures,omitempty"`
+}
+
+// SearchResponse: Miss=true means NO_SAFE_MATCH — deliberately better than
+// a wrong HIT (goal.md §3.8).
+type SearchResponse struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	Results       []SearchResult `json:"results"`
+	Miss          bool           `json:"miss"`
+}

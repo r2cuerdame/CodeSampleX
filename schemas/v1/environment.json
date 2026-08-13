@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/environment.json",
+  "title": "EnvironmentFingerprint",
+  "type": "object",
+  "required": ["schemaVersion", "ecosystem", "os", "arch"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang"]},
+    "os": {"type": "string"},
+    "osVersionBucket": {"type": "string"},
+    "arch": {"type": "string"},
+    "runtime": {"type": "string"},
+    "runtimeVersion": {"type": "string"},
+    "language": {"type": "string"},
+    "languageVersion": {"type": "string"},
+    "packageManager": {"type": "string"},
+    "packageManagerVersion": {"type": "string"},
+    "moduleSystem": {"enum": ["esm", "cjs", "dual", ""]},
+    "frameworks": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

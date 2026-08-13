@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/purl.json",
+  "title": "PackageCoordinate",
+  "description": "PURL-form package coordinate. Version is the lockfile-resolved version where available, never a manifest range.",
+  "type": "string",
+  "pattern": "^pkg:(npm|pypi|cargo|golang)/.+@.+$"
+}

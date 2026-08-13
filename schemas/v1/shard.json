@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/shard.json",
+  "title": "PackageShard",
+  "description": "Compact per-(ecosystem, package, major) metadata shard clients sync and search locally.",
+  "type": "object",
+  "required": ["schemaVersion", "key", "generatedAt", "packages"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "key": {"type": "string", "pattern": "^(npm|pypi|cargo|golang)/.+/[^/]+$"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["purl"],
+        "properties": {
+          "purl": {"type": "string"},
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["family", "stats"],
+              "properties": {
+                "family": {"type": "string"},
+                "stats": {"type": "object"},
+                "failures": {"type": "array", "items": {"type": "object"}}
+              }
+            }
+          },
+          "samples": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
