@@ -68,7 +68,7 @@ func (n *Node) Fetch(ctx context.Context, sampleID string) ([]byte, string, erro
 		}
 		u := "http://" + net.JoinHostPort(p.Addr, strconv.Itoa(p.Port)) +
 			"/peer/v1/samples/" + sampleID
-		data, err := n.httpGet(ctx, u)
+		data, err := n.fetchFromPeer(ctx, u)
 		if err != nil {
 			continue // peer down or refusing: try the next one
 		}
@@ -141,6 +141,18 @@ func (n *Node) peersForSample(ctx context.Context, sampleID string) []trackerPee
 		return nil
 	}
 	return out.Peers
+}
+
+// peerAttemptTimeout bounds one peer attempt. A peer behind a firewall
+// that DROPs instead of REJECTing would otherwise hold the whole chain for
+// the client's full timeout, per listed peer, before the server fallback
+// ever runs. Artifacts are ≤256KB, so a healthy peer answers well inside it.
+const peerAttemptTimeout = 5 * time.Second
+
+func (n *Node) fetchFromPeer(ctx context.Context, url string) ([]byte, error) {
+	pctx, cancel := context.WithTimeout(ctx, peerAttemptTimeout)
+	defer cancel()
+	return n.httpGet(pctx, url)
 }
 
 // httpGet fetches url with a bounded read; non-200 statuses are errors.

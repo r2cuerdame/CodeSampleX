@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +54,21 @@ func (a *api) handlePeerAnnounce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	addr := clientAddr(r)
+
+	// A tracker full of unreachable peers is worse than an empty one: every
+	// fetch then pays a connection attempt per listed peer before falling
+	// back. Most developer machines sit behind NAT, so the observed address
+	// usually cannot be dialed back. Verify before publishing.
+	if !a.peerReachable(r.Context(), addr, body.Port) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"addr":       addr,
+			"registered": false,
+			"reason": "this address is not reachable from the server, so other peers could not " +
+				"fetch from it; evidence and sample uploads are unaffected",
+		})
+		return
+	}
+
 	now := a.now()
 	caps, _ := json.Marshal(body.Capabilities)
 	ids, _ := json.Marshal(body.SampleIDs)
@@ -72,15 +90,55 @@ func (a *api) handlePeerAnnounce(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "announce failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"addr": addr, "ttlSeconds": ttl})
+	writeJSON(w, http.StatusOK, map[string]any{"addr": addr, "ttlSeconds": ttl, "registered": true})
 }
 
-// clientAddr prefers the first X-Forwarded-For hop (set by Caddy), falling
-// back to the connection's remote host.
+// peerReachabilityTimeout bounds the dial-back. It is short on purpose:
+// announce is a routine background call and must not block on a peer
+// whose port is filtered rather than refused.
+const peerReachabilityTimeout = 3 * time.Second
+
+// peerReachable dials the announced address back and asks for the peer
+// ping endpoint. PeerProbe is overridable so tests never touch a network.
+func (a *api) peerReachable(ctx context.Context, addr string, port int) bool {
+	probe := a.d.PeerProbe
+	if probe == nil {
+		probe = defaultPeerProbe
+	}
+	pctx, cancel := context.WithTimeout(ctx, peerReachabilityTimeout)
+	defer cancel()
+	return probe(pctx, addr, port)
+}
+
+func defaultPeerProbe(ctx context.Context, addr string, port int) bool {
+	url := "http://" + net.JoinHostPort(addr, strconv.Itoa(port)) + "/peer/v1/ping"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := (&http.Client{Timeout: peerReachabilityTimeout}).Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024)) //nolint:errcheck
+	return resp.StatusCode == http.StatusOK
+}
+
+// clientAddr returns the address the deployment's own proxy observed.
+//
+// Caddy APPENDS the connecting IP to any X-Forwarded-For the client sent,
+// so the RIGHTMOST hop is the one hop a client cannot forge; the leftmost
+// is whatever the client typed. That distinction matters twice here: the
+// tracker publishes this address to other peers, and the server dials it
+// back to check reachability — trusting the left hop would let a caller
+// point both at an arbitrary host.
 func clientAddr(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		if addr := strings.TrimSpace(first); addr != "" {
+		if i := strings.LastIndex(xff, ","); i >= 0 {
+			xff = xff[i+1:]
+		}
+		if addr := strings.TrimSpace(xff); addr != "" {
 			return addr
 		}
 	}

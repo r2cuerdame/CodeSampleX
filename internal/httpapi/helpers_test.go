@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -46,6 +47,9 @@ func newTestServer(t *testing.T, mutate func(*Deps)) (*httptest.Server, *servers
 		Blobs: blobs,
 		Cfg:   serverstore.ServerConfig{PublicCheck: "trust"},
 		Now:   ck.now,
+		// Reachable by default so peer tests do not dial the network; the
+		// unreachable path has its own test that stubs this false.
+		PeerProbe: func(context.Context, string, int) bool { return true },
 	}
 	if mutate != nil {
 		mutate(&deps)

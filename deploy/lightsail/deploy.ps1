@@ -34,14 +34,26 @@ function Copy-Remote([string]$Local, [string]$RemotePath) {
     if ($LASTEXITCODE -ne 0) { throw "scp failed: $Local -> $RemotePath" }
 }
 
+# docker writes its whole build log to stderr, which PowerShell 5.1 turns
+# into a terminating error under ErrorActionPreference Stop even on exit 0.
+# Same treatment as ssh/scp: run it under Continue, judge by exit code.
+function Invoke-Native([string]$What, [scriptblock]$Run) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Run 2>&1 | ForEach-Object { Write-Output "$_" } }
+    finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)" }
+}
+
 $imageTar = Join-Path $env:TEMP "csx-server-image.tar"
 if (-not $SkipImage) {
     Write-Output "== building linux/amd64 server image =="
-    & docker build --platform linux/amd64 -f (Join-Path $repo "deploy\Dockerfile.server") -t codesamplex/csx-server:latest $repo
-    if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+    $dockerfile = Join-Path $repo "deploy\Dockerfile.server"
+    Invoke-Native "docker build" {
+        & docker build --platform linux/amd64 -f $dockerfile -t codesamplex/csx-server:latest $repo
+    }
     # No gzip on Windows PowerShell; ship the plain tar (ssh compresses).
-    & docker save codesamplex/csx-server:latest -o $imageTar
-    if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
+    Invoke-Native "docker save" { & docker save codesamplex/csx-server:latest -o $imageTar }
 }
 
 Write-Output "== shipping bundle to $Ip =="

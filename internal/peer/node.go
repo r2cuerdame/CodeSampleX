@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/identity"
@@ -41,6 +43,28 @@ type Node struct {
 
 	// announceEvery overrides the 10-minute announce cadence in tests.
 	announceEvery time.Duration
+
+	mu           sync.Mutex
+	lastAnnounce AnnounceResult
+}
+
+// AnnounceResult is what the tracker made of the last announce. Registered
+// false means the tracker could not dial this peer back, so it will not be
+// handed to other peers — normal behind NAT, and harmless: evidence,
+// uploads, and fetching all still work, this peer just cannot serve.
+type AnnounceResult struct {
+	Done       bool
+	Addr       string `json:"addr"`
+	Registered bool   `json:"registered"`
+	Reason     string `json:"reason"`
+}
+
+// LastAnnounce reports the tracker's verdict on the most recent announce.
+// Done is false until the first announce completes.
+func (n *Node) LastAnnounce() AnnounceResult {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.lastAnnounce
 }
 
 // announcePayload is the exact tracker wire format (plan C5,
@@ -107,10 +131,17 @@ func (n *Node) Announce(ctx context.Context) error {
 		return fmt.Errorf("peer: announce: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	replyBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("peer: announce: tracker status %d", resp.StatusCode)
 	}
+
+	// Older servers reply without "registered"; absence means accepted.
+	res := AnnounceResult{Done: true, Registered: true}
+	_ = json.Unmarshal(replyBody, &res)
+	n.mu.Lock()
+	n.lastAnnounce = res
+	n.mu.Unlock()
 	return nil
 }
 
@@ -124,7 +155,19 @@ func (n *Node) StartAnnouncing(ctx context.Context) {
 		interval = announceInterval
 	}
 	go func() {
-		_ = n.Announce(ctx)
+		announce := func() {
+			before := n.LastAnnounce()
+			if err := n.Announce(ctx); err != nil {
+				return
+			}
+			// Log the refusal once per transition, not every 10 minutes:
+			// most developer machines are behind NAT and this is expected,
+			// but a peer that meant to serve should hear about it.
+			if now := n.LastAnnounce(); !now.Registered && (!before.Done || before.Registered) {
+				log.Printf("csx peer: tracker will not list this node: %s", now.Reason)
+			}
+		}
+		announce()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -132,7 +175,7 @@ func (n *Node) StartAnnouncing(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = n.Announce(ctx)
+				announce()
 			}
 		}
 	}()

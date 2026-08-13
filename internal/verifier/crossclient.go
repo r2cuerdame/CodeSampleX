@@ -52,6 +52,18 @@ type CrossVerifier struct {
 	// LastActivityFile is touched by csx run; its mtime drives the
 	// "idle" budget (only verify when the user is not actively working).
 	LastActivityFile string
+	// Source resolves artifacts from the cheapest place first (local CAS,
+	// then announced peers, then the server) — goal.md §15.1. *peer.Node
+	// implements it. Nil downloads straight from the server.
+	Source ArtifactSource
+}
+
+// ArtifactSource is the peer node's fetch chain, kept as an interface so
+// the verifier does not depend on the peer package (the daemon wires them).
+type ArtifactSource interface {
+	// Fetch returns the artifact bytes and the source they came from
+	// ("local" | "peer" | "server").
+	Fetch(ctx context.Context, sampleID string) ([]byte, string, error)
 }
 
 func (cv *CrossVerifier) client() *http.Client {
@@ -120,9 +132,24 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	return &job, nil
 }
 
-// DownloadArtifact fetches the sample artifact and verifies that its
-// SHA-256 equals the content-addressed sampleID BEFORE anything unpacks it.
+// DownloadArtifact returns the sample artifact, verifying that its SHA-256
+// equals the content-addressed sampleID BEFORE anything unpacks it. With a
+// Source set it walks local CAS → peers → server first; any failure there
+// falls back to a direct server download, so a broken peer path can never
+// stall verification.
 func (cv *CrossVerifier) DownloadArtifact(ctx context.Context, sampleID string) ([]byte, error) {
+	if cv.Source != nil {
+		if body, _, err := cv.Source.Fetch(ctx, sampleID); err == nil {
+			if len(body) > samples.MaxCompressedBytes {
+				return nil, fmt.Errorf("verifier: artifact exceeds %d-byte limit", samples.MaxCompressedBytes)
+			}
+			// Re-check even for local hits: a corrupted CAS object must not
+			// be what we sign a receipt over.
+			if got := domain.SHA256Hex(body); got == sampleID {
+				return body, nil
+			}
+		}
+	}
 	u := cv.base() + "/v1/samples/" + url.PathEscape(sampleID) + "/artifact"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

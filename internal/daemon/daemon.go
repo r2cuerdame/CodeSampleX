@@ -125,11 +125,12 @@ func New(home string) (*Daemon, error) {
 	d.Engine = &search.Engine{DB: db}
 	d.Syncer = &search.Syncer{DB: db, ServerURL: cfg.ServerURL, HTTP: d.httpClient()}
 	d.Batcher = &evidence.Batcher{DB: db, Ident: ident, Cfg: cfg}
-	if cfg.PeerListen {
-		d.Peer = &peer.Node{
-			CAS: store, DB: db, Ident: ident,
-			ServerURL: cfg.ServerURL, Port: cfg.PeerPort,
-		}
+	// The node is always constructed: fetching (local CAS → peers → server)
+	// needs no listener and benefits every peer. Only serving and announcing
+	// are gated on cfg.PeerListen, in Run.
+	d.Peer = &peer.Node{
+		CAS: store, DB: db, Ident: ident,
+		ServerURL: cfg.ServerURL, Port: cfg.PeerPort,
 	}
 	if cfg.IdleVerification != "" && cfg.IdleVerification != "off" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -139,6 +140,9 @@ func New(home string) (*Daemon, error) {
 			Cap:              sandbox.Detect(ctx),
 			Env:              environment.Collect(ctx, nil),
 			LastActivityFile: filepath.Join(home, "logs", "last-run.log"),
+			// Re-verifying a sample another peer already caches should not
+			// re-download it from the seeder (goal.md §15.1).
+			Source: d.Peer,
 		}
 		cancel()
 	}
@@ -269,7 +273,7 @@ func (d *Daemon) startBackground(ctx context.Context) {
 				}
 			})
 	}
-	if d.Peer != nil {
+	if d.Peer != nil && d.Cfg.PeerListen {
 		d.Peer.StartAnnouncing(ctx)
 		go func() { _ = d.Peer.ListenAndServe(ctx) }()
 	}

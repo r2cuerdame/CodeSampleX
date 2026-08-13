@@ -7,6 +7,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -44,6 +45,11 @@ type Deps struct {
 	// HTTPClient performs outbound GitHub calls; nil means a 10s-timeout
 	// client.
 	HTTPClient *http.Client
+
+	// PeerProbe dials an announcing peer back to confirm other peers could
+	// actually reach it. nil uses a real HTTP ping; tests supply a stub so
+	// no test ever opens a socket to the outside.
+	PeerProbe func(ctx context.Context, addr string, port int) bool
 
 	// Now is a test seam; nil means time.Now.
 	Now func() time.Time

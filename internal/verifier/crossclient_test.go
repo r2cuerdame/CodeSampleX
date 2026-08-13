@@ -3,6 +3,7 @@ package verifier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,6 +166,61 @@ func TestCrossDownloadArtifactVerifiesHash(t *testing.T) {
 		t.Fatal("corrupted artifact must be rejected before unpack")
 	} else if !strings.Contains(err.Error(), "hash") {
 		t.Fatalf("error should mention hash: %v", err)
+	}
+}
+
+// stubSource is a canned ArtifactSource: peer.Node in production.
+type stubSource struct {
+	data  []byte
+	err   error
+	calls int
+}
+
+func (s *stubSource) Fetch(context.Context, string) ([]byte, string, error) {
+	s.calls++
+	return s.data, "peer", s.err
+}
+
+// TestCrossDownloadPrefersSource pins goal.md §15.1: the verifier asks the
+// local CAS → peer chain before the seeder, and a source that fails or
+// returns wrong bytes silently degrades to the server rather than failing
+// the job.
+func TestCrossDownloadPrefersSource(t *testing.T) {
+	f := newCrossFixture(t)
+
+	// 1. Source hit: server is never touched.
+	src := &stubSource{data: f.artifact}
+	cv := f.verifier(t)
+	cv.Source = src
+	cv.ServerURL = "http://127.0.0.1:1" // any server call would fail here
+	got, err := cv.DownloadArtifact(context.Background(), f.sampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if domain.SHA256Hex(got) != f.sampleID {
+		t.Fatal("artifact from source failed hash check")
+	}
+	if src.calls != 1 {
+		t.Fatalf("source calls = %d, want 1", src.calls)
+	}
+
+	// 2. Source miss and 3. source returning the wrong bytes both fall back
+	// to the server instead of failing.
+	for name, bad := range map[string]*stubSource{
+		"miss":       {err: errors.New("no peer had it")},
+		"wrong-hash": {data: []byte("not the artifact")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cv := f.verifier(t)
+			cv.Source = bad
+			got, err := cv.DownloadArtifact(context.Background(), f.sampleID)
+			if err != nil {
+				t.Fatalf("fallback to server failed: %v", err)
+			}
+			if domain.SHA256Hex(got) != f.sampleID {
+				t.Fatal("server fallback returned the wrong artifact")
+			}
+		})
 	}
 }
 

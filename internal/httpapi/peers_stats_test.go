@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,7 +18,8 @@ func TestPeerAnnounceAndForSample(t *testing.T) {
 	_, peerID := newPeer(t)
 	sampleID := "sha256:" + strings.Repeat("aa", 32)
 
-	// TTL below the floor is clamped to 60; X-Forwarded-For wins as addr.
+	// TTL below the floor is clamped to 60; the addr is the last (proxy-set,
+	// unforgeable) X-Forwarded-For hop, never the client-supplied left one.
 	body, _ := json.Marshal(map[string]any{
 		"peerId": peerID, "port": 48620,
 		"capabilities": []string{"CONTAINER_RUN"},
@@ -26,7 +28,7 @@ func TestPeerAnnounceAndForSample(t *testing.T) {
 	})
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/peers/announce", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	req.Header.Set("X-Forwarded-For", "10.0.0.1, 203.0.113.7")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +45,7 @@ func TestPeerAnnounceAndForSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ann.Addr != "203.0.113.7" {
-		t.Fatalf("addr = %q, want X-Forwarded-For first hop", ann.Addr)
+		t.Fatalf("addr = %q, want X-Forwarded-For last hop", ann.Addr)
 	}
 	if ann.TTLSeconds != 60 {
 		t.Fatalf("ttl = %d, want clamped 60", ann.TTLSeconds)
@@ -90,6 +92,47 @@ func TestPeerAnnounceValidation(t *testing.T) {
 		map[string]any{"peerId": peerID, "port": 48620, "ttlSeconds": 999999}, &ann)
 	if resp.StatusCode != http.StatusOK || ann.TTLSeconds != 7200 {
 		t.Fatalf("ttl clamp: status=%d ttl=%d", resp.StatusCode, ann.TTLSeconds)
+	}
+}
+
+// TestPeerAnnounceUnreachableNotRegistered pins the tracker's core promise:
+// an address the server itself cannot dial back is never handed to other
+// peers, because every listed-but-dead peer costs a fetcher a connection
+// attempt before it falls back to the seeder.
+func TestPeerAnnounceUnreachableNotRegistered(t *testing.T) {
+	srv, _, _ := newTestServer(t, func(d *Deps) {
+		d.PeerProbe = func(context.Context, string, int) bool { return false }
+	})
+	_, peerID := newPeer(t)
+	sampleID := "sha256:" + strings.Repeat("bb", 32)
+
+	var ann struct {
+		Registered bool   `json:"registered"`
+		Reason     string `json:"reason"`
+	}
+	resp := postJSON(t, srv.URL+"/v1/peers/announce", map[string]any{
+		"peerId": peerID, "port": 48620, "sampleIds": []string{sampleID},
+	}, &ann)
+	// Not an error: announcing from behind NAT is the normal case, and the
+	// peer's evidence and uploads keep working.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ann.Registered {
+		t.Fatal("unreachable peer was registered")
+	}
+	if ann.Reason == "" {
+		t.Fatal("no reason given for the refusal")
+	}
+
+	var peers struct {
+		Peers []struct {
+			PeerID string `json:"peerId"`
+		} `json:"peers"`
+	}
+	getJSON(t, srv.URL+"/v1/peers/for-sample/"+sampleID, &peers)
+	if len(peers.Peers) != 0 {
+		t.Fatalf("tracker served an unreachable peer: %+v", peers.Peers)
 	}
 }
 
