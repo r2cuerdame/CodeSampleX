@@ -11,15 +11,43 @@ import (
 // reasoning-avoided figure is an estimate by construction and is always
 // rendered with an "estimated" label (goal.md §14.5).
 type netStats struct {
-	Peers                     int64   `json:"peers"`
-	Packages                  int64   `json:"packages"`
-	Symbols                   int64   `json:"symbols"`
-	Evidence                  int64   `json:"evidence"`
-	VerifiedSamples           int64   `json:"verifiedSamples"`
-	PostHitSuccessRate        float64 `json:"postHitSuccessRate"`
-	EstimatedReasoningAvoided int64   `json:"estimatedReasoningAvoided"`
-	Estimated                 bool    `json:"estimated"`
-	GeneratedAt               string  `json:"generatedAt"`
+	Peers              int64   `json:"peers"`
+	Packages           int64   `json:"packages"`
+	Symbols            int64   `json:"symbols"`
+	Evidence           int64   `json:"evidence"`
+	VerifiedSamples    int64   `json:"verifiedSamples"`
+	PostHitSuccessRate float64 `json:"postHitSuccessRate"`
+	// EstimatedReasoningAvoided is an estimate carried WITH its reasoning:
+	// the producer emits {value, formula, estimated, assumptions} so the
+	// figure can never be mistaken for a measurement. Decoding it as a bare
+	// number silently failed the whole document and blanked every counter.
+	EstimatedReasoningAvoided estimatedNumber `json:"estimatedReasoningAvoided"`
+	Estimated                 bool            `json:"estimated"`
+	GeneratedAt               string          `json:"generatedAt"`
+}
+
+// estimatedNumber decodes either a plain number or the richer
+// {value, estimated, …} object the aggregator writes.
+type estimatedNumber struct {
+	Value     int64
+	Estimated bool
+}
+
+func (e *estimatedNumber) UnmarshalJSON(b []byte) error {
+	var n int64
+	if err := json.Unmarshal(b, &n); err == nil {
+		e.Value, e.Estimated = n, true
+		return nil
+	}
+	var obj struct {
+		Value     float64 `json:"value"`
+		Estimated bool    `json:"estimated"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	e.Value, e.Estimated = int64(obj.Value), obj.Estimated
+	return nil
 }
 
 func (s *site) loadStats(r *http.Request) *netStats {
@@ -66,7 +94,7 @@ func buildTiles(lang string, st *netStats) []statTile {
 		{Label: i18n.T(lang, "stats.evidence"), Value: num(st.Evidence)},
 		{Label: i18n.T(lang, "stats.verified_samples"), Value: num(st.VerifiedSamples)},
 		{Label: i18n.T(lang, "stats.post_hit_success"), Value: pct(st.PostHitSuccessRate)},
-		{Label: i18n.T(lang, "stats.reasoning_avoided"), Value: num(st.EstimatedReasoningAvoided), Estimated: true},
+		{Label: i18n.T(lang, "stats.reasoning_avoided"), Value: num(st.EstimatedReasoningAvoided.Value), Estimated: true},
 	}
 }
 

@@ -88,9 +88,10 @@ $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Seconds 5
-    # -L: with a domain configured, Caddy 308s plain HTTP to HTTPS, and an
-    # unfollowed redirect is not a failed deployment.
-    $health = & ssh @sshArgs $remote "curl -fsSL http://127.0.0.1/healthz || true" 2>&1 | ForEach-Object { "$_" }
+    # Ask the app container directly: through Caddy a production deployment
+    # answers 308 (HTTP→HTTPS) and following that from the host re-enters
+    # TLS with the public hostname, which proves nothing about this build.
+    $health = & ssh @sshArgs $remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null || true" 2>&1 | ForEach-Object { "$_" }
     if ($health -match "ok") { $ok = $true; break }
 }
 $ErrorActionPreference = $prevEAP
@@ -99,7 +100,7 @@ if (-not $ok) {
     throw "healthz never returned ok"
 }
 Write-Output "healthz: ok"
-$landing = Invoke-Remote "curl -fsSL http://127.0.0.1/ | head -c 400"
+$landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/ | head -c 300"
 Write-Output "landing sample: $($landing -join ' ' )"
 Write-Output ""
 Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagation."

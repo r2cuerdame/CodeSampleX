@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
@@ -122,6 +126,32 @@ func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
 	}
 	if !stuck {
 		t.Error("visiting /en/ must remember the choice in the language cookie")
+	}
+}
+
+// TestStatsPageRendersProducerJSON feeds the page the exact document the
+// aggregator writes. A field-shape mismatch (estimatedReasoningAvoided is
+// an object, not a number) silently failed the whole decode and blanked
+// every counter on the live site while the API returned real values.
+func TestStatsPageRendersProducerJSON(t *testing.T) {
+	produced, err := compatibility.StatsJSON(serverstore.NetworkCounts{
+		Peers: 2, Packages: 76, Symbols: 5, Observations: 312, VerifiedSamples: 4,
+	}, 7, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux, store := newTestMux(t, nil)
+	store.statsJSON, store.statsOK = string(produced), true
+
+	body := get(t, mux, "/stats").Body.String()
+	for _, want := range []string{"76", "312", "5", "4", "21"} { // 21 = 7 hits × 3
+		if !strings.Contains(body, want) {
+			t.Errorf("counter %q missing from /stats — page shows placeholders instead of the aggregator's numbers:\n%s",
+				want, truncate(body))
+		}
+	}
+	if strings.Contains(body, `<span class="num mono">—</span>`) {
+		t.Error("a counter rendered as — while the aggregator supplied a value")
 	}
 }
 
