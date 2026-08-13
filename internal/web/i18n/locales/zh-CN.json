@@ -99,7 +99,6 @@
   "error.unavailable": "数据不可用",
   "footer.note": "来自真实环境的公共兼容性知识。",
   "lang.label": "语言",
-  "landing.see_stats": "查看网络实时数据 →",
   "stats.how_heading": "CodeSampleX 如何工作",
   "stats.how_intro": "上面的每个数字都来自这个闭环。它不是对你代码的猜测，而是真实开发环境中真实发生的事。",
   "stats.how_1": "你通过 csx 构建或测试 —— 也可以由编码智能体代劳。",
@@ -146,5 +145,6 @@
   "support.symbols": "用了哪个 API",
   "support.samples": "带 contract 的已验证样本",
   "support.details": "完整能力矩阵",
-  "support.none": "尚未支持"
+  "support.none": "尚未支持",
+  "landing.records_heading": "已记录的包"
 }

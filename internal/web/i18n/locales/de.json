@@ -99,7 +99,6 @@
   "error.unavailable": "Daten nicht verfügbar",
   "footer.note": "Öffentliches Kompatibilitätswissen aus realen Umgebungen.",
   "lang.label": "Sprache",
-  "landing.see_stats": "Aktuelle Netzwerkzahlen ansehen →",
   "stats.how_heading": "So funktioniert CodeSampleX",
   "stats.how_intro": "Jede Zahl oben entsteht aus diesem Kreislauf. Nichts davon ist eine Vermutung über deinen Code — es ist das, was in echten Entwicklungsumgebungen tatsächlich passiert ist.",
   "stats.how_1": "Du baust oder testest über csx — oder dein Coding-Agent tut es für dich.",
@@ -146,5 +145,6 @@
   "support.symbols": "welche API genutzt wurde",
   "support.samples": "per Contract verifizierte Samples",
   "support.details": "Vollständige Capability-Matrix",
-  "support.none": "noch nicht"
+  "support.none": "noch nicht",
+  "landing.records_heading": "Erfasste Pakete"
 }

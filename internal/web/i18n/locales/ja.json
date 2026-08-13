@@ -99,7 +99,6 @@
   "error.unavailable": "データを取得できません",
   "footer.note": "実環境から得た公開互換性ナレッジ。",
   "lang.label": "言語",
-  "landing.see_stats": "ネットワークの現状を見る →",
   "stats.how_heading": "CodeSampleX の仕組み",
   "stats.how_intro": "上の数値はすべてこの流れから生まれます。あなたのコードへの推測ではなく、実際の開発環境で実際に起きたことです。",
   "stats.how_1": "csx 経由でビルドやテストを実行します — コーディングエージェントが代行しても構いません。",
@@ -146,5 +145,6 @@
   "support.symbols": "どの API を使ったか",
   "support.samples": "contract で検証済みのサンプル",
   "support.details": "capability マトリクス全体",
-  "support.none": "未対応"
+  "support.none": "未対応",
+  "landing.records_heading": "記録済みパッケージ"
 }

@@ -26,11 +26,17 @@
   </ul>
 </section>
 
-{{/* The map itself: what the network knows right now, and a way into it. */}}
+{{/* How healthy the network is. */}}
 <section class="network">
   <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
   {{template "tiles" .}}
   <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
+</section>
+
+{{/* What it has on file, and the way in by name. Separate from the
+     counters above: one is network health, this is the archive. */}}
+<section class="records">
+  <h2 class="eyebrow mono">{{.T "landing.records_heading"}}</h2>
   <form class="search" action="/explore" method="get" role="search">
     <input type="search" name="q" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
     {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}

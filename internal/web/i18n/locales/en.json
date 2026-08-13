@@ -99,7 +99,6 @@
   "error.unavailable": "Data unavailable",
   "footer.note": "Public compatibility knowledge from real environments.",
   "lang.label": "Language",
-  "landing.see_stats": "See the live network numbers →",
   "stats.how_heading": "How CodeSampleX works",
   "stats.how_intro": "Every number above comes out of this loop. None of it is a guess about your code — it is what actually happened in real development environments.",
   "stats.how_1": "You build or test through csx — or your coding agent does it for you.",
@@ -146,5 +145,6 @@
   "support.symbols": "which API was used",
   "support.samples": "verified samples with contracts",
   "support.details": "Full capability matrix",
-  "support.none": "not yet"
+  "support.none": "not yet",
+  "landing.records_heading": "Packages on record"
 }

@@ -99,7 +99,6 @@
   "error.unavailable": "데이터를 불러올 수 없습니다",
   "footer.note": "실제 환경에서 얻은 공개 호환성 지식.",
   "lang.label": "언어",
-  "landing.see_stats": "네트워크 현황 보기 →",
   "stats.how_heading": "CodeSampleX 동작 방식",
   "stats.how_intro": "위 숫자는 모두 이 흐름에서 나옵니다. 당신의 코드에 대한 추측이 아니라, 실제 개발 환경에서 실제로 일어난 일입니다.",
   "stats.how_1": "csx를 통해 빌드하거나 테스트합니다 — 코딩 에이전트가 대신 해도 됩니다.",
@@ -146,5 +145,6 @@
   "support.symbols": "어떤 API를 썼는지",
   "support.samples": "contract로 검증된 샘플",
   "support.details": "전체 capability 매트릭스",
-  "support.none": "아직 미지원"
+  "support.none": "아직 미지원",
+  "landing.records_heading": "기록된 패키지"
 }

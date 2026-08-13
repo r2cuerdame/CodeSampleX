@@ -180,7 +180,7 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .cap { display: inline-flex; gap: 0.3rem; align-items: baseline; font-size: 0.82rem; }
 .cap.off { color: var(--dim); }
 .network .chain { margin: 0.7rem 0 0; }
-.network .search { margin: 1rem 0 0.8rem; }
+.records .search { margin: 0 0 0.9rem; }
 
 /* adapter cards ---------------------------------------------------------- */
 .adapters { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); margin: 1.4rem 0 2.2rem; }
