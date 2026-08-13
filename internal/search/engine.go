@@ -569,20 +569,38 @@ func contentTokens(s string) []string {
 	return out
 }
 
-// sharedIntent reports how many content words the question and the
-// sample's goal have in common. Zero means the sample is not an answer to
-// this question, whatever else it matches.
+// sharedIntent reports how many content words the question has in common
+// with what the sample is ABOUT: its goal, the symbols it demonstrates and
+// the names of the packages it uses.
+//
+// Matching the goal sentence alone was too strict. "render a react
+// component to an html string" shares no content word with the goal
+// "Choose between renderToString and renderToStaticMarkup without breaking
+// hydration", yet that is exactly the right sample — the word they have in
+// common is the package name. Including symbols and package names keeps
+// the gate closed on genuinely unrelated questions (a cake recipe shares
+// nothing with axios, post, json or the sample's prose) while letting a
+// question find a sample that words its goal differently.
 func sharedIntent(query string, c *candidate) int {
 	if c == nil || c.caseObj == nil {
 		return 0
 	}
-	goal := map[string]bool{}
-	for _, t := range contentTokens(c.caseObj.Goal) {
-		goal[t] = true
+	about := map[string]bool{}
+	add := func(text string) {
+		for _, t := range contentTokens(text) {
+			about[t] = true
+		}
+	}
+	add(c.caseObj.Goal)
+	for _, sym := range c.caseObj.Symbols {
+		add(sym)
+	}
+	for _, pkg := range c.packages {
+		add(pkg.Name) // "react", "axios" — how people name the thing
 	}
 	shared := 0
 	for _, t := range contentTokens(query) {
-		if goal[t] {
+		if about[t] {
 			shared++
 		}
 	}

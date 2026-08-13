@@ -448,3 +448,40 @@ func TestPackageMatchAloneIsNotAnAnswer(t *testing.T) {
 		t.Fatalf("on-topic results[0] = %s", on.Results[0].SampleID)
 	}
 }
+
+// TestRelevanceGateAcceptsDifferentWording: the gate exists to reject
+// questions a sample has nothing to do with, not questions that name the
+// same subject differently. "render a react component to an html string"
+// shares no content word with the goal "Choose between renderToString and
+// renderToStaticMarkup without breaking hydration" — the word in common is
+// the package name, and rejecting that lost a correct answer.
+func TestRelevanceGateAcceptsDifferentWording(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	m := mkManifest("Choose between renderToString and renderToStaticMarkup without breaking hydration",
+		[]string{"pkg:npm/react@19.2.8"}, nodeEnv("esm"), "renderToStaticMarkup")
+	if err := SeedSampleDoc(ctx, db, m, "sha256:react1", "CROSS_PASS"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	on := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "render a react component to an html string",
+		Packages:      []string{"pkg:npm/react@19.2.8"},
+		Environment:   nodeEnv("esm"),
+	})
+	if on.Miss || len(on.Results) == 0 {
+		t.Fatal("a question naming the package instead of the API must still find the sample")
+	}
+
+	// The gate still closes on a genuinely unrelated question.
+	off := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "how to bake a chocolate cake",
+		Packages:      []string{"pkg:npm/react@19.2.8"},
+		Environment:   nodeEnv("esm"),
+	})
+	if !off.Miss || len(off.Results) != 0 {
+		t.Errorf("unrelated question still hit: %+v", off.Results)
+	}
+}

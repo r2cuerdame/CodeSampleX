@@ -173,6 +173,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	text := searchText(manifest)
 	codeMatched := req.ErrorCode != "" &&
 		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorCode))
+	// The comparison text is what the sample is ABOUT — goal, symbols and
+	// package names — not the goal sentence alone. A question can name the
+	// package where the goal sentence names the API, and both are the same
+	// subject; requiring the sentence to match rejected correct samples.
 	if req.ErrorFingerprint == "" && !codeMatched &&
 		sharedContentTokens(req.Query, text) == 0 {
 		return domain.SearchResult{}, false

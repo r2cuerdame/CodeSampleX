@@ -970,6 +970,21 @@ func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 		}
 		return keys[i] < keys[j] // stable output for an unchanged network
 	})
+
+	// Never truncate a shard that carries a sample. The limit exists to
+	// bound how much observation data a fresh install pulls, not to hide
+	// answers: cutting at a fixed count dropped the jinja2 and tenacity
+	// shards, so their samples were unreachable from a new install however
+	// good they were. Samples are the product; counts are context.
+	withSamples := 0
+	for _, k := range keys {
+		if weight[k] >= sampleShardWeight {
+			withSamples++
+		}
+	}
+	if limit < withSamples {
+		limit = withSamples
+	}
 	if len(keys) > limit {
 		keys = keys[:limit]
 	}
