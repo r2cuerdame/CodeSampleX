@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.r2cuerdame/codesamplex",
+  "title": "CodeSampleX",
+  "description": "Does this library API actually work on your versions, runtime and execution context? Answers from compatibility evidence contributed by real development environments, with contract-verified samples.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/r2cuerdame/CodeSampleX",
+    "source": "github"
+  },
+  "websiteUrl": "https://codesamplex.dev",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.1.0/codesamplex-mcp.mcpb",
+      "fileSha256": "2574ec27fda9a2595c420fc7f1fee689bedbdda4ca7a076b0cac8de550767784",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

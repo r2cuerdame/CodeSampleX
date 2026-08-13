@@ -79,6 +79,8 @@ A project compiling is never presented as a symbol working. Unknown causes stay 
 
 Model-agnostic: the same compatibility evidence serves Claude, GPT and Codex, Gemini, Llama — any model that can call an MCP tool.
 
+Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use `codesamplex-mcp.mcpb` from the [latest release](https://github.com/r2cuerdame/CodeSampleX/releases/latest) instead. It carries one binary per platform (darwin-arm64, linux-amd64, windows-amd64); on any other architecture use the install script above.
+
 Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Publishing a sample is deliberately **not** an MCP capability — it requires your explicit CLI approval after a full preview.
 
 ```bash
