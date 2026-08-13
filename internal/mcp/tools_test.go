@@ -168,6 +168,56 @@ func TestSearchMissRendersNoSafeMatch(t *testing.T) {
 	}
 }
 
+// TestSearchMissCarriesPackageEvidence: on a young network almost every
+// search misses, so a miss must still be worth the round trip — it hands
+// back what the cache knows about the packages asked for, labeled as
+// observation evidence and never as a solution.
+func TestSearchMissCarriesPackageEvidence(t *testing.T) {
+	deps := emptyDeps()
+	var gotPurls []string
+	deps.Overview = func(_ context.Context, purls []string, _ domain.EnvironmentFingerprint) ([]PackageOverview, error) {
+		gotPurls = purls
+		return []PackageOverview{
+			{PURL: "pkg:npm/axios@1.12.0", Cached: true, Observations: 412,
+				PeerBuckets: 37, PassRate: 0.99, Samples: 2, TopFailure: "ERR_MODULE_NOT_FOUND"},
+			{PURL: "pkg:npm/zod@3.23.8"}, // nothing cached
+		}, nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query":    "post json",
+		"packages": []string{"pkg:npm/axios@1.12.0", "pkg:npm/zod@3.23.8"},
+	})
+	text := toolText(t, res)
+
+	if len(gotPurls) != 2 {
+		t.Fatalf("Overview got %v, want both request packages", gotPurls)
+	}
+	if !strings.Contains(text, "MATCH: NO_SAFE_MATCH") {
+		t.Errorf("miss must still say NO_SAFE_MATCH:\n%s", text)
+	}
+	axios := lineContaining(text, "axios")
+	for _, want := range []string{"412 observations", "37 independent peer buckets", "0.99", "2 verified sample"} {
+		if !strings.Contains(axios, want) {
+			t.Errorf("axios line %q missing %q", axios, want)
+		}
+	}
+	// An uncached package is UNKNOWN — saying otherwise would invent a fact.
+	zod := lineContaining(text, "zod")
+	if !strings.Contains(zod, "UNKNOWN, not incompatible") {
+		t.Errorf("uncached package line %q must read as UNKNOWN", zod)
+	}
+	// Observation counts must never be dressed up as execution proof.
+	if !strings.Contains(text, "NOT execution proof") {
+		t.Errorf("evidence class label missing:\n%s", text)
+	}
+	if sc, ok := res["structuredContent"].(map[string]any); !ok {
+		t.Error("miss result has no structuredContent")
+	} else if _, ok := sc["packageOverview"]; !ok {
+		t.Errorf("structuredContent missing packageOverview: %v", sc)
+	}
+}
+
 func TestGetSampleRoundTrip(t *testing.T) {
 	deps := emptyDeps()
 	deps.GetSample = func(_ context.Context, id string) (domain.SampleManifest, map[string]string, error) {

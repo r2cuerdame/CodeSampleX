@@ -149,6 +149,37 @@ func clientAddr(r *http.Request) string {
 	return host
 }
 
+// hotShardLimit is how many shard keys a client is told to warm. Each is
+// one small HTTP GET; the point is that a fresh install has something
+// cached before its first search, not that it mirrors the network.
+const hotShardLimit = 25
+
+// withHotShards adds the "hotShards" key to a stats document. Clients read
+// it to decide what to warm (daemon.fetchHot), and a fresh install has no
+// local package history to warm from — without this key its cache stays
+// empty and every search answers "no cached data". A failure here degrades
+// to the stats document unchanged rather than failing the request.
+func (a *api) withHotShards(ctx context.Context, statsJSON string) string {
+	keys, err := a.d.Store.HotShardKeys(ctx, hotShardLimit)
+	if err != nil || len(keys) == 0 {
+		return statsJSON
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(statsJSON), &doc); err != nil {
+		return statsJSON
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return statsJSON
+	}
+	doc["hotShards"] = raw
+	merged, err := json.Marshal(doc)
+	if err != nil {
+		return statsJSON
+	}
+	return string(merged)
+}
+
 // handlePeersForSample implements GET /v1/peers/for-sample/{sampleId},
 // excluding expired announcements.
 func (a *api) handlePeersForSample(w http.ResponseWriter, r *http.Request) {

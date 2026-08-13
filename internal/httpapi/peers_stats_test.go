@@ -167,6 +167,45 @@ func TestStatsReflectsIngestedEvidence(t *testing.T) {
 	}
 }
 
+// TestStatsCarriesHotShards pins the other half of the cold-start
+// contract: daemon.fetchHot reads "hotShards" from GET /v1/stats, and a
+// fresh install has no local packages to warm from. Without this key its
+// shard cache stays empty and every search answers "no cached data".
+func TestStatsCarriesHotShards(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+
+	// No shards built yet: the key is simply absent, not an empty lie.
+	var stats map[string]any
+	getJSON(t, srv.URL+"/v1/stats", &stats)
+	if _, ok := stats["hotShards"]; ok {
+		t.Errorf("hotShards present with no shards built: %v", stats["hotShards"])
+	}
+
+	for _, key := range []string{"npm/axios/1", "pypi/requests/2"} {
+		if err := store.PutShard(t.Context(), key, "etag-"+key, `{"key":"`+key+`"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	getJSON(t, srv.URL+"/v1/stats", &stats)
+	hot, ok := stats["hotShards"].([]any)
+	if !ok || len(hot) != 2 {
+		t.Fatalf("hotShards = %v, want the two built shard keys", stats["hotShards"])
+	}
+	// The stored daily rollup must carry it too — that is the path
+	// production serves once the builder has run.
+	stored := `{"schemaVersion":1,"day":"2026-08-13","peers":7}`
+	if err := store.SetStatsDaily(t.Context(), "2026-08-13", stored); err != nil {
+		t.Fatal(err)
+	}
+	getJSON(t, srv.URL+"/v1/stats", &stats)
+	if _, ok := stats["hotShards"].([]any); !ok {
+		t.Fatalf("stored rollup served without hotShards: %v", stats)
+	}
+	if stats["peers"] != float64(7) {
+		t.Errorf("merging hotShards clobbered the rollup: %v", stats)
+	}
+}
+
 func TestStatsCarriesEstimatedFlagAlways(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 

@@ -33,5 +33,5 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		js = string(raw)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = io.WriteString(w, js)
+	_, _ = io.WriteString(w, a.withHotShards(r.Context(), js))
 }

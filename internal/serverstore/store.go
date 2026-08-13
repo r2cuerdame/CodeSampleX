@@ -201,6 +201,10 @@ type Store interface {
 
 	PutShard(ctx context.Context, key, etag, shardJSON string) error
 	GetShard(ctx context.Context, key string) (etag, shardJSON string, ok bool, err error)
+	// HotShardKeys lists the shard keys worth warming first, most active
+	// first. A fresh install has no local package history, so this is the
+	// only thing that fills its cache before the first search.
+	HotShardKeys(ctx context.Context, limit int) ([]string, error)
 
 	SaveIdentity(ctx context.Context, login string, githubID int64, tokenHash, apiTokenHash string) error
 	IdentityByAPIToken(ctx context.Context, apiTokenHash string) (IdentityRow, bool, error)

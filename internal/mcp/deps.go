@@ -68,6 +68,9 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		Explain: func(ctx context.Context, purl, symbol string, env domain.EnvironmentFingerprint) (string, json.RawMessage, error) {
 			return explainFromShards(ctx, db, purl, symbol, env)
 		},
+		Overview: func(ctx context.Context, purls []string, env domain.EnvironmentFingerprint) ([]PackageOverview, error) {
+			return overviewFromShards(ctx, db, purls)
+		},
 		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, error) {
 			return runObserved(ctx, db, ident, cfg, argv, cwd)
 		},
@@ -218,6 +221,76 @@ type explainSampleE struct {
 // (PROJECT_* stages, USAGE_OBSERVATION) and verification evidence
 // (contract runs, SAMPLE_VERIFICATION) are reported in separate sections
 // and never summed (goal.md §3.5, docs/execution-context.md §6).
+// maxOverviewPackages bounds the per-miss lookup: a dependency list can be
+// hundreds long, and a miss reply is a hint, not a report.
+const maxOverviewPackages = 8
+
+// overviewFromShards summarizes each package's cached evidence. An
+// unparseable purl or an uncached shard is reported as Cached=false —
+// absence of data is UNKNOWN, never incompatibility (goal.md §3.6).
+func overviewFromShards(ctx context.Context, db *localdb.DB, purls []string) ([]PackageOverview, error) {
+	if len(purls) > maxOverviewPackages {
+		purls = purls[:maxOverviewPackages]
+	}
+	out := make([]PackageOverview, 0, len(purls))
+	for _, purlStr := range purls {
+		o := PackageOverview{PURL: purlStr}
+		p, err := domain.ParsePURL(purlStr)
+		if err != nil {
+			out = append(out, o)
+			continue
+		}
+		row, found, err := db.GetShard(ctx, p.Ecosystem+"/"+p.Name+"/"+p.Major())
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			out = append(out, o)
+			continue
+		}
+		var shard explainShard
+		if err := json.Unmarshal([]byte(row.JSON), &shard); err != nil {
+			out = append(out, o) // unreadable cache reads as no cache
+			continue
+		}
+		o.Cached = true
+
+		var passWeighted float64
+		var topFailCount int64
+		for _, pkg := range shard.Packages {
+			pp, perr := domain.ParsePURL(pkg.PURL)
+			if perr != nil || pp.Ecosystem != p.Ecosystem || !strings.EqualFold(pp.Name, p.Name) {
+				continue
+			}
+			for _, sym := range pkg.Symbols {
+				o.Observations += sym.Stats.ObservationCount
+				passWeighted += sym.Stats.PassRate * float64(sym.Stats.ObservationCount)
+				// Buckets are per-symbol sets we cannot union from the
+				// shard, so report the strongest single symbol rather than
+				// summing and overstating independence.
+				if sym.Stats.UniquePeerBuckets > o.PeerBuckets {
+					o.PeerBuckets = sym.Stats.UniquePeerBuckets
+				}
+				for _, f := range sym.Failures {
+					if f.Count > topFailCount && f.ErrorCode != "" {
+						topFailCount, o.TopFailure = f.Count, f.ErrorCode
+					}
+				}
+			}
+			for _, smp := range pkg.Samples {
+				if smp.SampleID != "" {
+					o.Samples++
+				}
+			}
+		}
+		if o.Observations > 0 {
+			o.PassRate = passWeighted / float64(o.Observations)
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
 func explainFromShards(ctx context.Context, db *localdb.DB, purlStr, symbol string, env domain.EnvironmentFingerprint) (string, json.RawMessage, error) {
 	p, err := domain.ParsePURL(purlStr)
 	if err != nil {

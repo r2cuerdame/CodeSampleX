@@ -27,6 +27,10 @@ type Deps struct {
 	// from locally cached shards, with observation and verification
 	// evidence kept separate. snapshot is the underlying JSON (may be null).
 	Explain func(ctx context.Context, purl, symbol string, env domain.EnvironmentFingerprint) (text string, snapshot json.RawMessage, err error)
+	// Overview summarizes cached evidence for several packages at once. It
+	// turns a search miss into a useful answer instead of an empty one; nil
+	// simply falls back to the bare NO_SAFE_MATCH text.
+	Overview func(ctx context.Context, purls []string, env domain.EnvironmentFingerprint) ([]PackageOverview, error)
 	// RunObserved wraps one command in the evidence loop (scan → run →
 	// record). sanitized carries only sanitizer output — never raw stderr.
 	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, err error)
@@ -293,7 +297,69 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	}
 
 	resp := s.Deps.Search(ctx, req)
+
+	// A miss is the common case on a young network, and "nothing here" is a
+	// wasted round trip: the cache usually holds observation evidence for
+	// the very packages being asked about. Hand that over instead — it is
+	// not a solution and is never labeled as one, but it tells the agent
+	// whether this combination is well-trodden or unexplored.
+	var overview []PackageOverview
+	if (resp.Miss || len(resp.Results) == 0) && len(a.Packages) > 0 && s.Deps.Overview != nil {
+		overview, _ = s.Deps.Overview(ctx, a.Packages, req.Environment)
+	}
+	if len(overview) > 0 {
+		return textResult(renderMiss(overview), map[string]any{
+			"response": resp, "packageOverview": overview,
+		})
+	}
 	return textResult(renderSearchResponse(resp), resp)
+}
+
+// PackageOverview is the compact "what does the network know about this
+// package" summary attached to a miss. Counts are observation evidence:
+// projects that compiled with the package present, never proof that a
+// specific symbol executed (goal.md §3.5).
+type PackageOverview struct {
+	PURL         string  `json:"purl"`
+	Cached       bool    `json:"cached"`
+	Observations int64   `json:"observations"`
+	PeerBuckets  int64   `json:"peerBuckets"`
+	PassRate     float64 `json:"passRate"`
+	Samples      int     `json:"samples"`
+	TopFailure   string  `json:"topFailure,omitempty"`
+}
+
+// renderMiss writes NO_SAFE_MATCH plus the per-package evidence summary.
+func renderMiss(overview []PackageOverview) string {
+	var b strings.Builder
+	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
+	b.WriteString("No verified sample matches this goal in your environment. Solve it fresh — " +
+		"a wrong HIT is worse than a MISS (goal.md §3.8).\n\n")
+	b.WriteString("What the network already knows about these packages " +
+		"[USAGE_OBSERVATION — project-level co-occurrence, NOT execution proof]:\n")
+	for _, o := range overview {
+		if !o.Cached {
+			b.WriteString("- " + o.PURL + ": no cached data — UNKNOWN, not incompatible " +
+				"(run `csx sync` while the server is reachable)\n")
+			continue
+		}
+		if o.Observations == 0 && o.Samples == 0 {
+			b.WriteString("- " + o.PURL + ": shard cached, no observations yet for this package\n")
+			continue
+		}
+		fmt.Fprintf(&b, "- %s: %d observations across %d independent peer buckets, pass rate %.2f",
+			o.PURL, o.Observations, o.PeerBuckets, o.PassRate)
+		if o.Samples > 0 {
+			fmt.Fprintf(&b, "; %d verified sample(s) exist for other goals [SAMPLE_VERIFICATION]", o.Samples)
+		}
+		if o.TopFailure != "" {
+			b.WriteString("; most common recorded failure: " + o.TopFailure)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nUse explain_compatibility for the per-symbol breakdown. " +
+		"Once your solution works, propose_public_sample turns it into the answer the next agent gets.\n")
+	return b.String()
 }
 
 func containsFold(ss []string, want string) bool {

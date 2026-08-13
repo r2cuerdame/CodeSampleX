@@ -517,6 +517,22 @@ func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 	return nil
 }
 
+// HotShardKeys returns the stored keys in sorted order — the fake has no
+// traffic model, only determinism.
+func (f *Fake) HotShardKeys(_ context.Context, limit int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	keys := make([]string, 0, len(f.shards))
+	for k := range f.shards {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
+}
+
 func (f *Fake) GetShard(_ context.Context, key string) (string, string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

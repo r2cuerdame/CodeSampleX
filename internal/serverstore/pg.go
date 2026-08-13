@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -745,6 +746,81 @@ func (p *PG) PutShard(ctx context.Context, key, etag, shardJSON string) error {
 			key, etag, []byte(shardJSON))
 		return err
 	})
+}
+
+// hotShardScanLimit bounds the per-package scan behind HotShardKeys. The
+// tail of a long-tail distribution cannot reach the top of the list, so
+// reading all of it would only cost time.
+const hotShardScanLimit = 5000
+
+// HotShardKeys ranks built shards by the observation volume of the
+// packages they cover. Keys with no shard row are dropped: handing a
+// client a key that 404s wastes the one warm-up it gets.
+func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	weight := map[string]int64{}
+	built := map[string]bool{}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, SUM(observation_count) AS n
+			FROM evidence_agg
+			GROUP BY purl
+			ORDER BY n DESC
+			LIMIT $1`, hotShardScanLimit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl string
+			var n int64
+			if err := rows.Scan(&purl, &n); err != nil {
+				return err
+			}
+			pu, perr := domain.ParsePURL(purl)
+			if perr != nil {
+				continue
+			}
+			weight[pu.Ecosystem+"/"+pu.Name+"/"+pu.Major()] += n
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		krows, err := c.Query(ctx, `SELECT key FROM shards`)
+		if err != nil {
+			return err
+		}
+		defer krows.Close()
+		for krows.Next() {
+			var k string
+			if err := krows.Scan(&k); err != nil {
+				return err
+			}
+			built[k] = true
+		}
+		return krows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]string, 0, len(built))
+	for k := range built {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if weight[keys[i]] != weight[keys[j]] {
+			return weight[keys[i]] > weight[keys[j]]
+		}
+		return keys[i] < keys[j] // stable output for an unchanged network
+	})
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
 }
 
 func (p *PG) GetShard(ctx context.Context, key string) (string, string, bool, error) {
