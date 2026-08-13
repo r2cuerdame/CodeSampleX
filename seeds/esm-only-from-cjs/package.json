@@ -1,0 +1,11 @@
+{
+  "name": "csx-sample-esm-only-from-cjs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "license": "MIT-0",
+  "dependencies": {
+    "p-limit": "7.3.1",
+    "yoga-layout": "3.2.1"
+  }
+}
