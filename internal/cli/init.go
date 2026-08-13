@@ -197,23 +197,30 @@ func initMain(_ context.Context, args []string, env *initEnv) int {
 
 // askContract prints the §5.4 contract screen verbatim and reads the
 // single answer, re-prompting on anything unrecognized.
+//
+// The answer is a single keystroke: typing "community" in full is a lot of
+// work for the only question csx ever asks, and arrow-key menus need raw
+// terminal mode, which breaks under pipes, CI and non-tty installers.
+// Numbers work everywhere; the spelled-out words still answer too.
 func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, strings.TrimRight(contractText, "\n"))
 	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  1) JOIN COMMUNITY   share anonymous public-package evidence, get the network")
+	fmt.Fprintln(out, "  2) LOCAL ONLY       nothing ever leaves this machine")
 	for {
-		fmt.Fprint(out, "Choose [community/local-only]: ")
+		fmt.Fprint(out, "Choose [1/2] (default 1): ")
 		line, err := in.ReadString('\n')
 		ans := strings.ToLower(strings.TrimSpace(line))
 		switch ans {
-		case "community", "c", "join", "join community":
+		case "1", "", "community", "c", "join", "join community":
 			return config.ModeCommunity, nil
-		case "local-only", "local", "l", "local only":
+		case "2", "local-only", "local", "l", "local only":
 			return config.ModeLocalOnly, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf("no mode chosen (answer community or local-only, or pass --community/--local-only/--yes): %w", err)
+			return "", fmt.Errorf("no mode chosen (answer 1 or 2, or pass --community/--local-only/--yes): %w", err)
 		}
-		fmt.Fprintln(out, `Please answer "community" or "local-only".`)
+		fmt.Fprintln(out, `Please answer 1 (community) or 2 (local only).`)
 	}
 }

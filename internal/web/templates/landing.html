@@ -17,14 +17,12 @@
   <p class="dim">{{.T "landing.install_note"}}</p>
 </section>
 
-<section class="network">
-  <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
-  {{template "tiles" .}}
-</section>
-
+{{/* Network counters live on /stats only — the landing page links there
+     rather than repeating them. */}}
 <section class="flywheel">
   <h2 class="eyebrow mono">{{.T "landing.flywheel_heading"}}</h2>
   <p class="chain mono">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}</p>
+  <p class="dim"><a href="{{.WithLang "/stats"}}">{{.T "landing.see_stats"}}</a></p>
 </section>
 
 <section class="contract">

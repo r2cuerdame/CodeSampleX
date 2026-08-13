@@ -28,9 +28,31 @@ const (
 	tomlEnd   = "# csx:end"
 )
 
+// mcpCommand is the executable agents launch for the stdio MCP server.
+// It resolves to the absolute path of the running binary: agents inherit
+// the PATH of whenever they were started, so a bare "csx" fails for every
+// already-running agent after a fresh install (and after any PATH change).
+// Only if the path cannot be determined does it fall back to the name.
+var mcpCommand = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "csx"
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return exe
+}
+
 // codexMCPBlock is the TOML fragment registering the stdio MCP server
 // with Codex (fenced by tomlBegin/tomlEnd on write).
-const codexMCPBlock = "[mcp_servers.csx]\ncommand = \"csx\"\nargs = [\"mcp\"]"
+func codexMCPBlock() string {
+	cmd, err := json.Marshal(mcpCommand()) // TOML basic strings share JSON escaping
+	if err != nil {
+		cmd = []byte(`"csx"`)
+	}
+	return "[mcp_servers.csx]\ncommand = " + string(cmd) + "\nargs = [\"mcp\"]"
+}
 
 // agentHomeEnv names the explicit override for the home directory that
 // ALL agent config paths resolve under. Agent integration is the only
@@ -120,7 +142,7 @@ func installClaude(userHome string) ([]string, error) {
 		if servers == nil {
 			servers = map[string]any{}
 		}
-		servers["csx"] = map[string]any{"command": "csx", "args": []any{"mcp"}}
+		servers["csx"] = map[string]any{"command": mcpCommand(), "args": []any{"mcp"}}
 		m["mcpServers"] = servers
 	})
 	if err != nil {
@@ -143,7 +165,7 @@ func installCodex(userHome string) ([]string, error) {
 	var actions []string
 
 	tomlPath := filepath.Join(userHome, ".codex", "config.toml")
-	changed, err := upsertMarkerFile(tomlPath, tomlBegin, tomlEnd, codexMCPBlock)
+	changed, err := upsertMarkerFile(tomlPath, tomlBegin, tomlEnd, codexMCPBlock())
 	if err != nil {
 		return actions, err
 	}
@@ -169,7 +191,7 @@ func installGemini(userHome string) ([]string, error) {
 		if servers == nil {
 			servers = map[string]any{}
 		}
-		servers["csx"] = map[string]any{"command": "csx", "args": []any{"mcp"}}
+		servers["csx"] = map[string]any{"command": mcpCommand(), "args": []any{"mcp"}}
 		m["mcpServers"] = servers
 	})
 	if err != nil {
@@ -197,7 +219,7 @@ func installOpenCode(userHome string) ([]string, error) {
 		if mcp == nil {
 			mcp = map[string]any{}
 		}
-		mcp["csx"] = map[string]any{"type": "local", "command": []any{"csx", "mcp"}}
+		mcp["csx"] = map[string]any{"type": "local", "command": []any{mcpCommand(), "mcp"}}
 		m["mcp"] = mcp
 	})
 	if err != nil {

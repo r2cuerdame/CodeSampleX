@@ -90,8 +90,12 @@ func TestAgentInstallClaudePreservesExistingJSON(t *testing.T) {
 		t.Errorf("existing mcpServers.foo lost: %v", m)
 	}
 	csx, _ := servers["csx"].(map[string]any)
-	if csx["command"] != "csx" {
-		t.Errorf("mcpServers.csx = %v", servers["csx"])
+	// Absolute path, not a bare name: agents inherit an older PATH.
+	if csx["command"] != mcpCommand() {
+		t.Errorf("mcpServers.csx = %v, want command %q", servers["csx"], mcpCommand())
+	}
+	if !filepath.IsAbs(mcpCommand()) {
+		t.Errorf("mcpCommand() = %q, want an absolute path", mcpCommand())
 	}
 	args, _ := csx["args"].([]any)
 	if len(args) != 1 || args[0] != "mcp" {
@@ -168,8 +172,9 @@ func TestAgentInstallCodex(t *testing.T) {
 	if strings.Count(toml, "# csx:begin") != 1 || strings.Count(toml, "# csx:end") != 1 {
 		t.Errorf("expected exactly one marker block:\n%s", toml)
 	}
+	quoted, _ := json.Marshal(mcpCommand())
 	if !strings.Contains(toml, "[mcp_servers.csx]") ||
-		!strings.Contains(toml, `command = "csx"`) ||
+		!strings.Contains(toml, "command = "+string(quoted)) ||
 		!strings.Contains(toml, `args = ["mcp"]`) {
 		t.Errorf("MCP registration missing:\n%s", toml)
 	}
@@ -195,8 +200,8 @@ func TestAgentInstallGeminiMerge(t *testing.T) {
 	}
 	servers, _ := m["mcpServers"].(map[string]any)
 	csx, _ := servers["csx"].(map[string]any)
-	if csx == nil || csx["command"] != "csx" {
-		t.Errorf("mcpServers.csx = %v", m)
+	if csx == nil || csx["command"] != mcpCommand() {
+		t.Errorf("mcpServers.csx = %v, want command %q", m, mcpCommand())
 	}
 	if _, err := os.Stat(filepath.Join(home, ".gemini", "GEMINI.md")); err != nil {
 		t.Errorf("gemini rule file missing: %v", err)
@@ -224,7 +229,7 @@ func TestAgentInstallOpenCodeMerge(t *testing.T) {
 		t.Fatalf("mcp.csx = %v", m)
 	}
 	cmd, _ := csx["command"].([]any)
-	if len(cmd) != 2 || cmd[0] != "csx" || cmd[1] != "mcp" {
+	if len(cmd) != 2 || cmd[0] != mcpCommand() || cmd[1] != "mcp" {
 		t.Errorf("mcp.csx.command = %v", cmd)
 	}
 }

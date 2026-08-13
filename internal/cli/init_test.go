@@ -91,13 +91,14 @@ func TestInitYesNonInteractive(t *testing.T) {
 	if !strings.Contains(s, "irm https://codesamplex.dev/install.ps1 | iex") {
 		t.Errorf("output missing other-machine one-liner:\n%s", s)
 	}
-	if strings.Contains(s, "Choose [community/local-only]:") {
+	if strings.Contains(s, "Choose [1/2]") {
 		t.Errorf("--yes must not prompt:\n%s", s)
 	}
 }
 
 func TestInitInteractiveCommunity(t *testing.T) {
-	env, out, _ := testInitEnv(t, "community\n")
+	// "1" — the single keystroke the prompt advertises.
+	env, out, _ := testInitEnv(t, "1\n")
 	if code := initMain(context.Background(), nil, env); code != 0 {
 		t.Fatalf("init returned %d\n%s", code, out.String())
 	}
@@ -105,8 +106,11 @@ func TestInitInteractiveCommunity(t *testing.T) {
 	if !strings.Contains(s, contract54) {
 		t.Errorf("interactive init did not print the contract screen:\n%s", s)
 	}
-	if !strings.Contains(s, "Choose [community/local-only]: ") {
+	if !strings.Contains(s, "Choose [1/2] (default 1): ") {
 		t.Errorf("missing prompt:\n%s", s)
+	}
+	if !strings.Contains(s, "1) JOIN COMMUNITY") || !strings.Contains(s, "2) LOCAL ONLY") {
+		t.Errorf("numbered options missing:\n%s", s)
 	}
 	cfg, err := config.Load(os.Getenv("CSX_HOME"))
 	if err != nil {
@@ -118,7 +122,7 @@ func TestInitInteractiveCommunity(t *testing.T) {
 }
 
 func TestInitInteractiveRetryThenLocalOnly(t *testing.T) {
-	env, out, _ := testInitEnv(t, "whatever\nlocal-only\n")
+	env, out, _ := testInitEnv(t, "whatever\n2\n")
 	if code := initMain(context.Background(), nil, env); code != 0 {
 		t.Fatalf("init returned %d\n%s", code, out.String())
 	}
@@ -128,6 +132,29 @@ func TestInitInteractiveRetryThenLocalOnly(t *testing.T) {
 	}
 	if cfg.Mode != config.ModeLocalOnly {
 		t.Fatalf("mode = %q, want local-only", cfg.Mode)
+	}
+}
+
+// Empty input (just Enter) takes the advertised default, and the old
+// spelled-out answers keep working for anyone with them in a script.
+func TestInitInteractiveAcceptsDefaultAndWords(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"\n", config.ModeCommunity},
+		{"community\n", config.ModeCommunity},
+		{"local-only\n", config.ModeLocalOnly},
+		{"l\n", config.ModeLocalOnly},
+	} {
+		env, out, _ := testInitEnv(t, tc.in)
+		if code := initMain(context.Background(), nil, env); code != 0 {
+			t.Fatalf("input %q: init returned %d\n%s", tc.in, code, out.String())
+		}
+		cfg, err := config.Load(os.Getenv("CSX_HOME"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Mode != tc.want {
+			t.Errorf("input %q: mode = %q, want %q", tc.in, cfg.Mode, tc.want)
+		}
 	}
 }
 
