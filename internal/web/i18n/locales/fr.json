@@ -139,5 +139,12 @@
   "landing.how_heading": "Comment ça marche",
   "meta.stats": "Chiffres en direct du réseau CodeSampleX : pairs, paquets, symboles, preuves et échantillons vérifiés, et le fonctionnement du pipeline de preuves.",
   "meta.adapters": "Quels écosystèmes CodeSampleX prend en charge et jusqu'où : détection de paquets, observation des builds, résolution de symboles et vérification par contrat.",
-  "meta.explore": "Recherchez des paquets publics et consultez les preuves de compatibilité réelles : contextes d'exécution, confiance, clusters d'échec et échantillons vérifiés."
+  "meta.explore": "Recherchez des paquets publics et consultez les preuves de compatibilité réelles : contextes d'exécution, confiance, clusters d'échec et échantillons vérifiés.",
+  "landing.support_heading": "Ce qu'il peut observer aujourd'hui",
+  "support.packages": "paquets et versions",
+  "support.builds": "résultats de build, typage et tests",
+  "support.symbols": "quelle API a été utilisée",
+  "support.samples": "échantillons vérifiés par contrat",
+  "support.details": "Matrice complète des capacités",
+  "support.none": "pas encore"
 }

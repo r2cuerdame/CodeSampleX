@@ -139,5 +139,12 @@
   "landing.how_heading": "工作方式",
   "meta.stats": "CodeSampleX 网络的实时数据：节点、包、符号、证据与已验证样本，以及证据流水线的工作方式。",
   "meta.adapters": "CodeSampleX 支持哪些生态以及支持到什么程度：每个适配器的包检测、构建观测、符号解析与 contract 验证。",
-  "meta.explore": "搜索公开包并查看真实环境的兼容性证据：执行上下文、置信度、失败聚类与已验证样本。"
+  "meta.explore": "搜索公开包并查看真实环境的兼容性证据：执行上下文、置信度、失败聚类与已验证样本。",
+  "landing.support_heading": "目前能观测到什么",
+  "support.packages": "包与版本",
+  "support.builds": "构建、类型检查与测试结果",
+  "support.symbols": "用了哪个 API",
+  "support.samples": "带 contract 的已验证样本",
+  "support.details": "完整能力矩阵",
+  "support.none": "尚未支持"
 }

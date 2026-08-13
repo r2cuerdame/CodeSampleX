@@ -139,5 +139,12 @@
   "landing.how_heading": "동작 방식",
   "meta.stats": "CodeSampleX 네트워크의 실시간 수치: 피어, 패키지, 심볼, 증거, 검증된 샘플 — 그리고 증거 파이프라인이 어떻게 동작하는지.",
   "meta.adapters": "CodeSampleX가 지원하는 생태계와 지원 범위: 어댑터별 패키지 탐지, 빌드 관측, 심볼 해석, contract 검증.",
-  "meta.explore": "공개 패키지를 검색하고 실제 환경의 호환성 증거를 확인하세요: 실행 컨텍스트, 신뢰도, 실패 클러스터, 검증된 샘플."
+  "meta.explore": "공개 패키지를 검색하고 실제 환경의 호환성 증거를 확인하세요: 실행 컨텍스트, 신뢰도, 실패 클러스터, 검증된 샘플.",
+  "landing.support_heading": "지금 관측할 수 있는 것",
+  "support.packages": "패키지·버전",
+  "support.builds": "빌드·타입체크·테스트 결과",
+  "support.symbols": "어떤 API를 썼는지",
+  "support.samples": "contract로 검증된 샘플",
+  "support.details": "전체 capability 매트릭스",
+  "support.none": "아직 미지원"
 }

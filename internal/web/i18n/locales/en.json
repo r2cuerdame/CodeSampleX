@@ -139,5 +139,12 @@
   "landing.how_heading": "How it works",
   "meta.stats": "Live numbers from the CodeSampleX network: peers, packages, symbols, evidence and verified samples — plus how the evidence pipeline works.",
   "meta.adapters": "Which ecosystems CodeSampleX supports and exactly how far: package detection, build observation, symbol resolution and contract verification per adapter.",
-  "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and verified samples."
+  "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and verified samples.",
+  "landing.support_heading": "What it can observe today",
+  "support.packages": "packages & versions",
+  "support.builds": "build, typecheck & test results",
+  "support.symbols": "which API was used",
+  "support.samples": "verified samples with contracts",
+  "support.details": "Full capability matrix",
+  "support.none": "not yet"
 }

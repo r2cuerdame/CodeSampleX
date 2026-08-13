@@ -139,5 +139,12 @@
   "landing.how_heading": "So läuft es ab",
   "meta.stats": "Live-Zahlen aus dem CodeSampleX-Netzwerk: Peers, Pakete, Symbole, Belege und verifizierte Samples — plus wie die Evidence-Pipeline arbeitet.",
   "meta.adapters": "Welche Ökosysteme CodeSampleX unterstützt und wie weit: Paketerkennung, Build-Beobachtung, Symbolauflösung und Contract-Verifikation je Adapter.",
-  "meta.explore": "Öffentliche Pakete durchsuchen und echte Kompatibilitätsbelege sehen: Ausführungskontexte, Konfidenz, Fehlercluster und verifizierte Samples."
+  "meta.explore": "Öffentliche Pakete durchsuchen und echte Kompatibilitätsbelege sehen: Ausführungskontexte, Konfidenz, Fehlercluster und verifizierte Samples.",
+  "landing.support_heading": "Was heute beobachtet werden kann",
+  "support.packages": "Pakete und Versionen",
+  "support.builds": "Build-, Typecheck- und Testergebnisse",
+  "support.symbols": "welche API genutzt wurde",
+  "support.samples": "per Contract verifizierte Samples",
+  "support.details": "Vollständige Capability-Matrix",
+  "support.none": "noch nicht"
 }

@@ -139,5 +139,12 @@
   "landing.how_heading": "動作の流れ",
   "meta.stats": "CodeSampleX ネットワークのライブ数値: ピア、パッケージ、シンボル、証拠、検証済みサンプル — そして証拠パイプラインの仕組み。",
   "meta.adapters": "CodeSampleX が対応するエコシステムとその範囲: アダプタごとのパッケージ検出、ビルド観測、シンボル解決、contract 検証。",
-  "meta.explore": "公開パッケージを検索し、実環境の互換性証拠を確認: 実行コンテキスト、信頼度、失敗クラスタ、検証済みサンプル。"
+  "meta.explore": "公開パッケージを検索し、実環境の互換性証拠を確認: 実行コンテキスト、信頼度、失敗クラスタ、検証済みサンプル。",
+  "landing.support_heading": "いま観測できること",
+  "support.packages": "パッケージとバージョン",
+  "support.builds": "ビルド・型チェック・テスト結果",
+  "support.symbols": "どの API を使ったか",
+  "support.samples": "contract で検証済みのサンプル",
+  "support.details": "capability マトリクス全体",
+  "support.none": "未対応"
 }

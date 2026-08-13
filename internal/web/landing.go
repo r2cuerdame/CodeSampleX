@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -101,9 +102,53 @@ func buildTiles(lang string, st *netStats) []statTile {
 
 type landingPage struct {
 	basePage
-	Tiles     []statTile
-	InstallPS string
-	InstallSH string
+	Tiles       []statTile
+	GeneratedAt string
+	Hits        []PackageHit
+	Support     []supportRow
+	InstallPS   string
+	InstallSH   string
+}
+
+// supportRow says what CodeSampleX can observe in one ecosystem, in plain
+// words. The A0–A4 codes stay on /adapters for people who want them; a
+// visitor deciding whether to install needs "does it see my stack".
+type supportRow struct {
+	Ecosystem string
+	Managers  string
+	Can       []string
+	Missing   []string
+}
+
+func buildSupport(lang string) []supportRow {
+	doc := loadAdapters()
+	if doc == nil {
+		return nil
+	}
+	// Level → the plain-language thing it lets the network observe.
+	labels := []struct{ level, key string }{
+		{"A0", "support.packages"},
+		{"A1", "support.builds"},
+		{"A2", "support.symbols"},
+		{"A4", "support.samples"},
+	}
+	rows := make([]supportRow, 0, len(doc.Adapters))
+	for _, a := range doc.Adapters {
+		has := map[string]bool{}
+		for _, c := range a.Capabilities {
+			has[c] = true
+		}
+		row := supportRow{Ecosystem: a.Ecosystem, Managers: strings.Join(a.PackageManagers, ", ")}
+		for _, l := range labels {
+			if has[l.level] {
+				row.Can = append(row.Can, i18n.T(lang, l.key))
+			} else {
+				row.Missing = append(row.Missing, i18n.T(lang, l.key))
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func (s *site) landingRoot(w http.ResponseWriter, r *http.Request) {
@@ -123,11 +168,24 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	}
 	b.JSONLD = landingJSONLD(base, s.d.Version, lang)
 
+	st := s.loadStats(r)
+	generated := ""
+	if st != nil {
+		generated = st.GeneratedAt
+	}
+	hits, err := s.d.Store.HotPackages(r.Context(), 12)
+	if err != nil {
+		hits = nil // an empty map is still a usable landing page
+	}
+
 	s.render(w, "landing", http.StatusOK, landingPage{
-		basePage:  b,
-		Tiles:     buildTiles(lang, s.loadStats(r)),
-		InstallPS: "irm " + base + "/install.ps1 | iex",
-		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
+		basePage:    b,
+		Tiles:       buildTiles(lang, st),
+		GeneratedAt: generated,
+		Hits:        hits,
+		Support:     buildSupport(lang),
+		InstallPS:   "irm " + base + "/install.ps1 | iex",
+		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",
 	})
 }
 

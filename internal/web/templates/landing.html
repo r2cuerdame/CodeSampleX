@@ -48,12 +48,56 @@
   <p class="dim">{{.T "landing.install_note"}}</p>
 </section>
 
-{{/* Network counters live on the explorer — the landing page links there
-     rather than repeating them. */}}
+{{/* The map itself, on the front page: the numbers, a way in by name, and
+     what the network actually knows right now. A separate explorer tab was
+     one more click to the same two things. */}}
+<section class="network">
+  <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
+  {{template "tiles" .}}
+  {{if .GeneratedAt}}<p class="dim mono small">{{.GeneratedAt}}</p>{{end}}
+  <form class="search" action="/explore" method="get" role="search">
+    <input type="search" name="q" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
+    {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+    <button type="submit">{{.T "explore.button"}}</button>
+  </form>
+  {{if .Hits}}
+  <h3 class="eyebrow mono">{{.T "explore.hot"}}</h3>
+  <ul class="pkglist">
+  {{- range .Hits}}
+    <li>
+      <a class="mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
+      {{if .LatestVersion}}<span class="dim mono">{{.LatestVersion}}</span>{{end}}
+      {{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "stats.evidence"}}</span>{{end}}
+    </li>
+  {{- end}}
+  </ul>
+  {{end}}
+</section>
+
+{{/* Support at a glance: what the network can see in each ecosystem, said
+     in words. The A0–A4 matrix lives on /adapters for whoever wants it. */}}
+{{if .Support}}
+<section class="support">
+  <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
+  <div class="ecos">
+  {{- range .Support}}
+    <div class="eco panel">
+      <h3 class="mono">{{.Ecosystem}}</h3>
+      <p class="dim mono small">{{.Managers}}</p>
+      <ul>
+        {{- range .Can}}<li><span class="y" aria-hidden="true">✓</span>{{.}}</li>{{end}}
+        {{- range .Missing}}<li class="off"><span class="n" aria-hidden="true">✕</span>{{.}} <span class="dim small">({{$.T "support.none"}})</span></li>{{end}}
+      </ul>
+    </div>
+  {{- end}}
+  </div>
+  <p class="dim small"><a href="{{.WithLang "/adapters"}}">{{.T "support.details"}} →</a></p>
+</section>
+{{end}}
+
 <section class="flywheel">
   <h2 class="eyebrow mono">{{.T "landing.flywheel_heading"}}</h2>
   <p class="chain mono">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}</p>
-  <p class="dim"><a href="{{.WithLang "/explore"}}">{{.T "landing.see_stats"}}</a></p>
 </section>
 
 <section class="contract">

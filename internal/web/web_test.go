@@ -64,14 +64,12 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "Stop solving the same code twice.")
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
-	// The network counters live on /stats only — the landing links there
-	// instead of repeating them.
-	for _, label := range []string{"Peers", "Verified Samples", "Estimated reasoning avoided", "45,213"} {
-		if strings.Contains(body, label) {
-			t.Errorf("landing still shows the /stats counter %q", label)
-		}
+	// One page carries the whole story: the counters, the way in by name,
+	// and what the network can observe in each ecosystem.
+	for _, s := range []string{"Peers", "Verified Samples", "Estimated reasoning avoided", "45,213",
+		"What it can observe today", "npm", "packages &amp; versions"} {
+		mustContain(t, body, s)
 	}
-	mustContain(t, body, "See the live network numbers")
 	// Project links belong on every page.
 	mustContain(t, body, "https://github.com/r2cuerdame/CodeSampleX")
 	mustContain(t, body, "https://github.com/sponsors/r2cuerdame")
