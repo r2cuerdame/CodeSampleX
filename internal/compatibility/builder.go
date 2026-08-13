@@ -528,9 +528,14 @@ type StatsDoc struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Day           string `json:"day"`
 	GeneratedAt   string `json:"generatedAt"`
-	Peers         int64  `json:"peers"`
-	Packages      int64  `json:"packages"`
-	Symbols       int64  `json:"symbols"`
+	// Peers is TODAY's distinct anonymous peer buckets. Those rotate
+	// daily, so this genuinely cannot be summed over time — a peer active
+	// all month would appear as thirty. ProjectsMonth is the honest
+	// participation figure that does not reset at midnight.
+	Peers         int64 `json:"peers"`
+	ProjectsMonth int64 `json:"projectsMonth"`
+	Packages      int64 `json:"packages"`
+	Symbols       int64 `json:"symbols"`
 	// Evidence counts observation records, not peers or projects: a big
 	// number here says "widely used", never "widely verified".
 	Evidence        int64 `json:"evidence"`
@@ -554,6 +559,7 @@ func StatsJSON(c serverstore.NetworkCounts, hitsAdopted int64, now time.Time) ([
 		Day:                now.UTC().Format("2006-01-02"),
 		GeneratedAt:        now.UTC().Format(time.RFC3339),
 		Peers:              c.Peers,
+		ProjectsMonth:      c.ProjectsMonth,
 		Packages:           c.Packages,
 		Symbols:            c.Symbols,
 		Evidence:           c.Observations,

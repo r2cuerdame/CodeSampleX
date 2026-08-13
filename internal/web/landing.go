@@ -14,6 +14,7 @@ import (
 // rendered with an "estimated" label (goal.md §14.5).
 type netStats struct {
 	Peers              int64   `json:"peers"`
+	ProjectsMonth      int64   `json:"projectsMonth"`
 	Packages           int64   `json:"packages"`
 	Symbols            int64   `json:"symbols"`
 	Evidence           int64   `json:"evidence"`
@@ -90,6 +91,11 @@ func buildTiles(lang string, st *netStats) []statTile {
 		return i18n.FormatPercent(lang, f)
 	}
 	return []statTile{
+		// Projects-this-month leads: peer buckets rotate daily, so the peer
+		// tile resets every midnight and reads as an empty network even
+		// when it is not. Project buckets rotate monthly, which makes this
+		// the longest window the identity scheme can count honestly.
+		{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)},
 		{Label: i18n.T(lang, "stats.peers"), Value: num(st.Peers)},
 		{Label: i18n.T(lang, "stats.packages"), Value: num(st.Packages)},
 		{Label: i18n.T(lang, "stats.symbols"), Value: num(st.Symbols)},

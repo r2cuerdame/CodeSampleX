@@ -113,7 +113,13 @@ type NetworkCounts struct {
 	// evidence in the current epoch: who is actually using the network
 	// today. Buckets rotate daily (goal.md §8.6), so a longer window
 	// would count one person many times.
-	Peers           int64
+	Peers int64
+	// ProjectsMonth is the distinct project buckets seen this calendar
+	// month. Those buckets rotate MONTHLY rather than daily, so counting
+	// them over the month is the longest honest participation window the
+	// identity scheme allows — a peer id summed across days would count
+	// one person once per day and report thirty where there is one.
+	ProjectsMonth   int64
 	Packages        int64 // distinct (ecosystem, name) pairs
 	Symbols         int64 // distinct non-empty symbol families with evidence
 	Observations    int64 // total aggregated observation count

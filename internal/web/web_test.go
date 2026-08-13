@@ -66,7 +66,7 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the counters, the way in by name,
 	// and what the network can observe in each ecosystem.
-	for _, s := range []string{"Peers", "Verified Samples", "Estimated reasoning avoided", "45,213",
+	for _, s := range []string{"Projects this month", "Peers today", "Verified Samples", "Estimated reasoning avoided", "45,213",
 		"What it can observe today", "npm", "packages &amp; versions"} {
 		mustContain(t, body, s)
 	}

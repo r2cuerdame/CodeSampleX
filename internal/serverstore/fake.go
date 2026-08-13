@@ -652,6 +652,17 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 		}
 	}
 	c.Peers = int64(len(active))
+	// Distinct project buckets. Those rotate monthly rather than daily, so
+	// PG windows them to the current month; the fake keeps no epoch for
+	// them and counts every one it has seen, which is the same answer for
+	// any test that does not span a month boundary.
+	projects := map[string]struct{}{}
+	for _, buckets := range f.merge.projectBuckets {
+		for b := range buckets {
+			projects[b] = struct{}{}
+		}
+	}
+	c.ProjectsMonth = int64(len(projects))
 	pkgNames := map[string]bool{}
 	for _, p := range f.packages {
 		pkgNames[p.Ecosystem+"\x00"+p.Name] = true

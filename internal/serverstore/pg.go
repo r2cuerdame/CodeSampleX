@@ -1042,11 +1042,17 @@ func (p *PG) GetLatestStats(ctx context.Context) (string, bool, error) {
 func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, error) {
 	var c NetworkCounts
 	epoch := now.UTC().Format("2006-01-02")
+	monthStart := now.UTC().Format("2006-01") + "-01"
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		return conn.QueryRow(ctx, `
 			SELECT
 				(SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
 					WHERE bucket_kind = 'peer' AND epoch = $2),
+				-- Project buckets rotate monthly, so distinct buckets within
+				-- the month are distinct projects — the one participation
+				-- number here that does not reset every midnight.
+				(SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
+					WHERE bucket_kind = 'project' AND epoch >= $3),
 				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages) t),
 				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
 				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
@@ -1058,8 +1064,9 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 					WHERE s.status IN ('CROSS_PASS','MATRIX_PASS','STABLE')
 					   OR EXISTS (SELECT 1 FROM receipts r
 					              WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS')),
-				(SELECT COUNT(*) FROM peers WHERE expires_at > $1)`, now, epoch,
-		).Scan(&c.Peers, &c.Packages, &c.Symbols, &c.Observations, &c.VerifiedSamples, &c.ServingPeers)
+				(SELECT COUNT(*) FROM peers WHERE expires_at > $1)`, now, epoch, monthStart,
+		).Scan(&c.Peers, &c.ProjectsMonth, &c.Packages, &c.Symbols, &c.Observations,
+			&c.VerifiedSamples, &c.ServingPeers)
 	})
 	return c, err
 }
