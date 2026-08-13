@@ -65,7 +65,12 @@ Note "server healthy at $server"
 $home1 = Join-Path $tmp "home1"; $home2 = Join-Path $tmp "home2"
 $port1 = 48619; $port2 = 48719
 foreach ($h in @(@{home = $home1; port = $port1 }, @{home = $home2; port = $port2 })) {
-    $r = Invoke-Csx $h.home @("init", "--community", "--yes", "--server", $server)
+    # --no-agents: this harness runs on developer/CI machines, and agent
+    # integration is the one part of init that writes OUTSIDE CSX_HOME
+    # (~/.claude.json, ~/.claude/CLAUDE.md, ~/.codex/config.toml,
+    # ~/.gemini/settings.json). None of scenarios A-F exercise it, so the
+    # e2e run must never dirty the host's real home.
+    $r = Invoke-Csx $h.home @("init", "--community", "--yes", "--no-agents", "--server", $server)
     if ($r.exit -ne 0) { throw "csx init failed for $($h.home): $($r.out)" }
     # Two peers on one machine need distinct daemon ports.
     [void](Invoke-Csx $h.home @("config", "set", "daemonPort", "$($h.port)"))

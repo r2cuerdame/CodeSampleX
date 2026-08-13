@@ -32,6 +32,37 @@ const (
 // with Codex (fenced by tomlBegin/tomlEnd on write).
 const codexMCPBlock = "[mcp_servers.csx]\ncommand = \"csx\"\nargs = [\"mcp\"]"
 
+// agentHomeEnv names the explicit override for the home directory that
+// ALL agent config paths resolve under. Agent integration is the only
+// part of csx that writes outside CSX_HOME, so automated runs (the e2e
+// harness, CI, tests) point it at a throwaway directory and can then
+// never dirty the developer's real ~/.claude.json, ~/.codex, ~/.gemini
+// or ~/.config/opencode.
+const agentHomeEnv = "CSX_AGENT_HOME"
+
+// resolveAgentHome picks the root every agent config path is resolved
+// under. CSX_AGENT_HOME wins over the injected OS-home seam (nil means
+// os.UserHomeDir); a blank/whitespace value counts as unset rather than
+// silently resolving to the process working directory. It reports
+// whether the override was in effect so callers can say so.
+func resolveAgentHome(userHome func() (string, error)) (string, bool, error) {
+	if v := strings.TrimSpace(os.Getenv(agentHomeEnv)); v != "" {
+		abs, err := filepath.Abs(v)
+		if err != nil {
+			return "", true, fmt.Errorf("agentinstall: resolve %s=%q: %w", agentHomeEnv, v, err)
+		}
+		return abs, true, nil
+	}
+	if userHome == nil {
+		userHome = os.UserHomeDir
+	}
+	h, err := userHome()
+	if err != nil {
+		return "", false, err
+	}
+	return h, false, nil
+}
+
 type agentInstallResult struct {
 	Agent   string
 	Skipped bool

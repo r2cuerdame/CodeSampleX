@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -43,6 +45,9 @@ func testInitEnv(t *testing.T, stdin string) (*initEnv, *bytes.Buffer, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
+	// Never inherit a developer's real override: tests that want one set
+	// it explicitly after this call.
+	t.Setenv("CSX_AGENT_HOME", "")
 	userHome := t.TempDir()
 	var out bytes.Buffer
 	env := &initEnv{
@@ -179,6 +184,125 @@ func TestInitInteractiveAgentConfirmDeclined(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "skipped") {
 		t.Errorf("summary should mention the skip:\n%s", out.String())
+	}
+}
+
+// filesUnder lists every regular file below root, relative to root.
+func filesUnder(t *testing.T, root string) []string {
+	t.Helper()
+	var got []string
+	if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	return got
+}
+
+// Regression (host pollution): `csx init --community --yes --no-agents`
+// must do config + identity and touch NO agent home at all — the e2e
+// harness runs it on every execution and used to dirty the developer's
+// real ~/.claude.json, ~/.codex, ~/.gemini.
+func TestInitNoAgentsSkipsAllAgentIntegration(t *testing.T) {
+	env, out, userHome := testInitEnv(t, "")
+	agentHome := t.TempDir()
+	t.Setenv("CSX_AGENT_HOME", agentHome)
+	// Agents are detectable in BOTH candidate homes: only --no-agents can
+	// stop csx from writing into them.
+	plantDir(t, userHome, ".claude")
+	plantDir(t, agentHome, ".claude")
+	plantDir(t, agentHome, ".codex")
+
+	if code := initMain(context.Background(), []string{"--community", "--yes", "--no-agents"}, env); code != 0 {
+		t.Fatalf("init --no-agents returned %d\n%s", code, out.String())
+	}
+
+	// Config + identity still happen.
+	home := os.Getenv("CSX_HOME")
+	cfg, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != config.ModeCommunity {
+		t.Fatalf("mode = %q, want community", cfg.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(home, "config.json")); err != nil {
+		t.Fatalf("config.json not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "identity.json")); err != nil {
+		t.Fatalf("identity not created: %v", err)
+	}
+
+	// Neither home received a single file.
+	if got := filesUnder(t, agentHome); len(got) != 0 {
+		t.Errorf("--no-agents wrote into the agent home: %v", got)
+	}
+	if got := filesUnder(t, userHome); len(got) != 0 {
+		t.Errorf("--no-agents wrote into the user home: %v", got)
+	}
+
+	// The summary must say what was skipped and how to do it later.
+	s := out.String()
+	if !strings.Contains(s, "--no-agents") || !strings.Contains(s, "MCP registration") {
+		t.Errorf("summary does not state that MCP registration was skipped:\n%s", s)
+	}
+	if !strings.Contains(s, "csx init") {
+		t.Errorf("summary does not say how to install agent integration later:\n%s", s)
+	}
+}
+
+// CSX_AGENT_HOME confines every agent path csx writes; the OS user home
+// seam is not consulted when it is set.
+func TestInitAgentHomeEnvConfinesEveryWrite(t *testing.T) {
+	env, out, userHome := testInitEnv(t, "")
+	agentHome := t.TempDir()
+	t.Setenv("CSX_AGENT_HOME", agentHome)
+	plantDir(t, userHome, ".claude") // would be written to without the override
+	plantDir(t, userHome, ".codex")
+	plantDir(t, agentHome, ".claude")
+	plantDir(t, agentHome, ".codex")
+
+	if code := initMain(context.Background(), []string{"--community", "--yes"}, env); code != 0 {
+		t.Fatalf("init returned %d\n%s", code, out.String())
+	}
+
+	if got := filesUnder(t, userHome); len(got) != 0 {
+		t.Fatalf("CSX_AGENT_HOME ignored: wrote outside it into %s: %v", userHome, got)
+	}
+	got := filesUnder(t, agentHome)
+	for _, want := range []string{".claude.json", ".claude/CLAUDE.md", ".codex/config.toml", ".codex/AGENTS.md"} {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected %s under the agent home, got %v", want, got)
+		}
+	}
+	// Every path reported in the summary lives under the agent home.
+	for _, line := range strings.Split(out.String(), "\n") {
+		i := strings.Index(line, "→ ")
+		if i < 0 {
+			continue
+		}
+		p := strings.TrimSpace(line[i+len("→ "):])
+		if !strings.HasPrefix(p, agentHome) {
+			t.Errorf("install wrote outside CSX_AGENT_HOME: %s", p)
+		}
 	}
 }
 

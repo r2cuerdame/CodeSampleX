@@ -263,6 +263,33 @@ func TestAgentInstallConfirmDeclined(t *testing.T) {
 	}
 }
 
+// CSX_AGENT_HOME is the explicit escape hatch that keeps automated runs
+// off the real user home: when set it wins over the OS-home seam.
+func TestResolveAgentHome(t *testing.T) {
+	seam := t.TempDir()
+	seamFn := func() (string, error) { return seam, nil }
+
+	t.Setenv("CSX_AGENT_HOME", "")
+	got, overridden, err := resolveAgentHome(seamFn)
+	if err != nil || overridden || got != seam {
+		t.Fatalf("unset: got (%q, %v, %v), want (%q, false, nil)", got, overridden, err, seam)
+	}
+
+	override := t.TempDir()
+	t.Setenv("CSX_AGENT_HOME", override)
+	got, overridden, err = resolveAgentHome(seamFn)
+	if err != nil || !overridden || got != override {
+		t.Fatalf("set: got (%q, %v, %v), want (%q, true, nil)", got, overridden, err, override)
+	}
+
+	// A blank value is treated as unset rather than as the process CWD.
+	t.Setenv("CSX_AGENT_HOME", "   ")
+	got, overridden, err = resolveAgentHome(seamFn)
+	if err != nil || overridden || got != seam {
+		t.Fatalf("blank: got (%q, %v, %v), want (%q, false, nil)", got, overridden, err, seam)
+	}
+}
+
 func TestUpsertMarkerBlock(t *testing.T) {
 	got := upsertMarkerBlock("", "<!-- b -->", "<!-- e -->", "inner")
 	want := "<!-- b -->\ninner\n<!-- e -->\n"
