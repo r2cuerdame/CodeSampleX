@@ -1,0 +1,45 @@
+# E2E overlay: server exposed directly on :8089, fast snapshots, trust-mode
+# publicness (fixtures use real public packages but we avoid registry load).
+name: codesamplex-e2e
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    image: codesamplex/csx-server:e2e
+    restart: unless-stopped
+    environment:
+      CSX_DSN: postgres://csx:e2e-only@db:5432/csx?sslmode=disable
+      CSX_LISTEN: ":8080"
+      CSX_BLOB_DIR: /data/blobs
+      CSX_PUBLIC_URL: http://localhost:8089
+      CSX_PUBLIC_CHECK: trust
+      CSX_SNAPSHOT_INTERVAL: 5s
+    ports:
+      - "8089:8080"
+    volumes:
+      - e2e_blobs:/data/blobs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: csx
+      POSTGRES_PASSWORD: e2e-only
+      POSTGRES_DB: csx
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U csx -d csx"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  e2e_blobs:

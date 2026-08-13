@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "case": {
+    "schemaVersion": 1,
+    "kind": "HOW",
+    "goal": "Upload JSON with axios.post and verify the echo server receives it",
+    "packages": ["pkg:npm/axios@1.12.0"],
+    "symbols": ["axios.post"],
+    "constraints": { "runtime": "node", "moduleSystem": "esm" },
+    "contract": [
+      "start a local echo server",
+      "POST one JSON body to it",
+      "assert the server received the exact body"
+    ]
+  },
+  "packages": ["pkg:npm/axios@1.12.0"],
+  "symbols": ["axios.post"],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "executionContext": "node",
+    "moduleSystem": "esm"
+  },
+  "license": "MIT-0",
+  "contractCommand": ["node", "test/contract.mjs"],
+  "verifierAdapter": "node-typescript@1"
+}
