@@ -117,16 +117,15 @@ func Register(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /{seg}", s.oneSegment)
 	// Locale landings are registered as literal patterns ("GET /ko/{$}") so
 	// they never conflict with /static/ or the package wildcard routes.
+	// /en/ serves English rather than redirecting to "/": the root
+	// re-negotiates Accept-Language, so redirecting there sent every
+	// non-English browser straight back to its own language and made
+	// English unreachable. Visiting an explicit locale is a deliberate
+	// choice, so it is remembered like the ?lang= switch.
 	for _, code := range i18n.Supported {
-		if code == i18n.Default {
-			// /en/ redirects to the canonical root landing.
-			mux.HandleFunc("GET /"+code+"/{$}", func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, "/", http.StatusMovedPermanently)
-			})
-			continue
-		}
 		lang := code
 		mux.HandleFunc("GET /"+code+"/{$}", func(w http.ResponseWriter, r *http.Request) {
+			setLangCookie(w, lang)
 			s.landing(w, r, lang)
 		})
 	}
@@ -174,15 +173,20 @@ func (s *site) base(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// setLangCookie remembers an explicit language choice for a year.
+func setLangCookie(w http.ResponseWriter, lang string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: langCookie, Value: lang, Path: "/",
+		MaxAge: int((365 * 24 * time.Hour).Seconds()), SameSite: http.SameSiteLaxMode,
+	})
+}
+
 // negotiate resolves the request language for non-landing pages:
 // ?lang= query (persisted in a cookie) → cookie → Accept-Language → en.
 func (s *site) negotiate(w http.ResponseWriter, r *http.Request) string {
 	if q := r.URL.Query().Get("lang"); q != "" {
 		if l, ok := i18n.Canonical(q); ok {
-			http.SetCookie(w, &http.Cookie{
-				Name: langCookie, Value: l, Path: "/",
-				MaxAge: int((365 * 24 * time.Hour).Seconds()), SameSite: http.SameSiteLaxMode,
-			})
+			setLangCookie(w, l)
 			return l
 		}
 	}
@@ -224,6 +228,20 @@ func (b basePage) N(n int64) string { return i18n.FormatInt(b.Lang, n) }
 // Pct formats a 0..1 ratio as a percentage.
 func (b basePage) Pct(f float64) string { return i18n.FormatPercent(b.Lang, f) }
 
+// Project links shown in the header and footer. The client is open source
+// (goal.md §3.14) and the network is funded by sponsorship, so both belong
+// on every page.
+const (
+	repoURL    = "https://github.com/r2cuerdame/CodeSampleX"
+	sponsorURL = "https://github.com/sponsors/r2cuerdame"
+)
+
+// RepoURL is the public source repository.
+func (b basePage) RepoURL() string { return repoURL }
+
+// SponsorURL is the GitHub Sponsors page funding the public network.
+func (b basePage) SponsorURL() string { return sponsorURL }
+
 // HomeHref is the landing URL for the page language.
 func (b basePage) HomeHref() string {
 	if b.Lang == i18n.Default {
@@ -245,17 +263,17 @@ func (b basePage) WithLang(path string) string {
 	return path + sep + "lang=" + url.QueryEscape(b.Lang)
 }
 
-// LangLinks builds the footer language switcher.
+// LangLinks builds the footer language switcher. Every entry — English
+// included — carries an explicit locale: linking English to bare "/" made
+// the switcher a no-op for anyone whose browser asks for another language,
+// because "/" re-runs Accept-Language negotiation and lands right back on
+// the language they were trying to leave.
 func (b basePage) LangLinks() []langLink {
 	links := make([]langLink, 0, len(i18n.Supported))
 	for _, code := range i18n.Supported {
 		var href string
 		if b.IsLanding {
-			if code == i18n.Default {
-				href = "/"
-			} else {
-				href = "/" + code + "/"
-			}
+			href = "/" + code + "/"
 		} else {
 			q := url.Values{}
 			for k, vs := range b.query {

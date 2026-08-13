@@ -2,4 +2,17 @@
 <h1>{{.T "stats.title"}}</h1>
 {{template "tiles" .}}
 {{if .GeneratedAt}}<p class="dim mono small">{{.GeneratedAt}}</p>{{end}}
+
+<section class="how">
+  <h2 class="eyebrow mono">{{.T "stats.how_heading"}}</h2>
+  <p class="dim">{{.T "stats.how_intro"}}</p>
+  <ol class="howsteps">
+    <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
+  </ol>
+  <p class="note">{{.T "stats.how_honesty"}}</p>
+</section>
 {{end}}

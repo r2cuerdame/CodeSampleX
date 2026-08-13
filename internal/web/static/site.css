@@ -136,6 +136,39 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .chain { font-size: 0.95rem; overflow-wrap: anywhere; }
 .chain .arr { color: var(--accent); }
 
+/* how it works (stats page) --------------------------------------------- */
+.how { margin-top: 2.5rem; }
+.howsteps { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.55rem; }
+.howsteps li {
+  display: flex; gap: 0.7rem; align-items: baseline;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.7rem 0.9rem; font-size: 0.94rem;
+}
+.stepnum {
+  flex: none; width: 1.4rem; height: 1.4rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-ink); font-size: 0.78rem; font-weight: 600;
+}
+.note {
+  margin-top: 0.9rem; padding: 0.7rem 0.9rem; font-size: 0.9rem;
+  border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0;
+}
+
+/* adapters legend -------------------------------------------------------- */
+.legend { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); margin: 1.2rem 0 2rem; }
+.legendtable td { font-size: 0.9rem; }
+.legendtable .lvl { color: var(--accent); font-weight: 600; white-space: nowrap; }
+abbr.lvl, abbr.conf { text-decoration: underline dotted; cursor: help; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* header icon links ------------------------------------------------------ */
+.nav a.icon { display: inline-flex; align-items: center; }
+.nav a.icon svg { display: block; }
+.nav a.sponsor:hover { color: #db61a2; }
+
 /* contract ------------------------------------------------------------- */
 .cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
 .col ul { list-style: none; margin: 0; padding: 0; }

@@ -60,16 +60,17 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "Stop solving the same code twice.")
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
-	// The seven network counters (§14.5).
-	for _, label := range []string{"Peers", "Packages", "Symbols", "Evidence",
-		"Verified Samples", "Post-hit success rate", "Estimated reasoning avoided"} {
-		mustContain(t, body, label)
+	// The network counters live on /stats only — the landing links there
+	// instead of repeating them.
+	for _, label := range []string{"Peers", "Verified Samples", "Estimated reasoning avoided", "45,213"} {
+		if strings.Contains(body, label) {
+			t.Errorf("landing still shows the /stats counter %q", label)
+		}
 	}
-	// The reasoning-avoided number is ALWAYS labeled estimated.
-	mustContain(t, body, "estimated")
-	// Counter values from the fake stats.
-	mustContain(t, body, "45,213")
-	mustContain(t, body, "87%")
+	mustContain(t, body, "See the live network numbers")
+	// Project links belong on every page.
+	mustContain(t, body, "https://github.com/r2cuerdame/CodeSampleX")
+	mustContain(t, body, "https://github.com/sponsors/r2cuerdame")
 	// Flywheel copy.
 	mustContain(t, body, "More users")
 	mustContain(t, body, "Better answers")
@@ -83,6 +84,69 @@ func TestLandingEnglish(t *testing.T) {
 	if strings.Contains(body, "cdn.") || strings.Contains(body, "googleapis") {
 		t.Error("landing references external assets")
 	}
+}
+
+// TestEnglishReachableFromAnotherLanguage pins the fix for a switcher that
+// could not switch: /en/ used to redirect to "/", which re-negotiates
+// Accept-Language and sent a Korean browser straight back to Korean.
+func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `lang="ko"`) {
+		t.Fatal("Korean browser should get Korean at /")
+	}
+	// The switcher must offer an explicit English URL, never bare "/".
+	mustContain(t, rec.Body.String(), `href="/en/"`)
+
+	req = httptest.NewRequest(http.MethodGet, "/en/", nil)
+	req.Header.Set("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/en/ status = %d, want 200 (a redirect to / re-negotiates)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `lang="en"`) || !strings.Contains(body, "Stop solving the same code twice.") {
+		t.Errorf("/en/ did not render English:\n%s", truncate(body))
+	}
+	// The choice sticks, so the next page is not re-negotiated back.
+	var stuck bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == langCookie && c.Value == "en" {
+			stuck = true
+		}
+	}
+	if !stuck {
+		t.Error("visiting /en/ must remember the choice in the language cookie")
+	}
+}
+
+func TestStatsPageExplainsHowItWorks(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/stats").Body.String()
+	mustContain(t, body, "How CodeSampleX works")
+	mustContain(t, body, "never leave your machine")
+	// Counters still live here.
+	mustContain(t, body, "Verified Samples")
+	// The honesty note separating observations from verifications.
+	mustContain(t, body, "counted separately")
+}
+
+func TestAdaptersPageHasLegendAndTooltips(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/adapters").Body.String()
+	mustContain(t, body, "How to read this table")
+	// Every level is explained, not just labeled.
+	for _, s := range []string{"A0", "A4", "detected from the lockfile", "verified against a contract"} {
+		mustContain(t, body, s)
+	}
+	// Level columns and confidence values carry tooltips.
+	mustContain(t, body, `title="A0 — Package and version detected from the lockfile"`)
+	mustContain(t, body, "PROBABLE — Resolved from imports and call sites")
 }
 
 func TestLandingKorean(t *testing.T) {

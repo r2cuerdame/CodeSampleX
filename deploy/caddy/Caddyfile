@@ -1,11 +1,16 @@
-# CADDY_SITE selects the site address:
-#   production: "codesamplex.dev"  (automatic HTTPS)
+# CADDY_SITE selects the site address(es):
+#   production: "codesamplex.dev, www.codesamplex.dev"  (automatic HTTPS)
 #   local:      ":80"
 # Only names that actually resolve to this host belong here — Caddy asks a
 # CA for a certificate per name, and an unresolvable name fails that
-# challenge forever. Add "www.codesamplex.dev" to CADDY_SITE once a www
-# record exists; a redirect block for it would duplicate the address.
+# challenge forever. A name listed here must NOT also get its own block:
+# duplicating an address makes Caddy refuse the whole config.
 {$CADDY_SITE::80} {
+	# www serves the same site; canonical URLs and sitemaps point at the
+	# apex, so search engines still index one host.
+	@www host www.codesamplex.dev
+	redir @www https://codesamplex.dev{uri} permanent
+
 	encode zstd gzip
 
 	@static path /static/* /install.ps1 /install.sh /robots.txt /sitemap.xml

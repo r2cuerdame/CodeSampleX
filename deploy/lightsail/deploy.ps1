@@ -59,10 +59,10 @@ if (Test-Path $dist) {
 
 # .env holds the generated DB password: write once, never overwrite.
 $pw = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
-# Only the apex: www has no DNS record yet, and Caddy would fail its ACME
-# challenge forever. Add it here (and to DNS) together, or not at all.
+# Both names must resolve to this host: Caddy asks a CA for a certificate
+# per name and an unresolvable one fails its challenge forever.
 $envText = @"
-CADDY_SITE=$Domain
+CADDY_SITE=$Domain, www.$Domain
 CSX_PUBLIC_URL=https://$Domain
 CSX_DIST_HOST_DIR=/opt/codesamplex/dist
 POSTGRES_PASSWORD=$pw

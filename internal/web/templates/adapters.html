@@ -1,13 +1,41 @@
 {{define "content"}}
 <h1>{{.T "adapters.title"}}</h1>
 <p class="dim">{{.Doc.Description}}</p>
+
+{{/* Legend first: A0…A4 mean nothing on their own, so the table below is
+     unreadable without it. Every level cell also carries the same text as
+     a tooltip. */}}
+<section class="legend">
+  <h2 class="eyebrow mono">{{.T "adapters.legend_heading"}}</h2>
+  <div class="tablewrap">
+    <table class="matrix legendtable">
+      <thead><tr><th>{{.T "adapters.legend_level"}}</th><th>{{.T "adapters.legend_meaning"}}</th></tr></thead>
+      <tbody>
+        {{- range .LevelLegend}}
+        <tr><td class="mono lvl">{{.Code}}</td><td>{{.Meaning}}</td></tr>
+        {{- end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="tablewrap">
+    <table class="matrix legendtable">
+      <thead><tr><th>{{.T "adapters.conf_heading"}}</th><th>{{.T "adapters.legend_meaning"}}</th></tr></thead>
+      <tbody>
+        {{- range .ConfidenceLegend}}
+        <tr><td class="mono lvl">{{.Code}}</td><td>{{.Meaning}}</td></tr>
+        {{- end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <div class="tablewrap">
 <table class="matrix">
 <thead><tr>
   <th>{{.T "adapters.ecosystem"}}</th>
   <th>{{.T "adapters.adapter"}}</th>
   <th>{{.T "adapters.pms"}}</th>
-  {{range .Levels}}<th class="num">{{.}}</th>{{end}}
+  {{range .LevelLegend}}<th class="num"><abbr class="lvl" title="{{.Code}} — {{.Meaning}}">{{.Code}}</abbr></th>{{end}}
   <th>{{.T "adapters.symbol_confidence"}}</th>
   <th>{{.T "adapters.notes"}}</th>
 </tr></thead>
@@ -17,8 +45,8 @@
   <td class="mono">{{.Ecosystem}}</td>
   <td class="mono">{{.Name}}@{{.Version}}</td>
   <td class="mono">{{range $i, $pm := .PackageManagers}}{{if $i}}, {{end}}{{$pm}}{{end}}</td>
-  {{range .Levels}}<td class="num">{{if .}}<span class="y" aria-label="yes">✓</span>{{else}}<span class="dim" aria-label="no">—</span>{{end}}</td>{{end}}
-  <td class="mono">{{.SymbolConfidence}}</td>
+  {{range .Cells}}<td class="num"><span class="{{if .Supported}}y{{else}}dim{{end}}" title="{{.Tip}}">{{if .Supported}}✓{{else}}—{{end}}</span><span class="visually-hidden">{{.Tip}}</span></td>{{end}}
+  <td><abbr class="conf mono" title="{{.ConfidenceTip}}">{{.SymbolConfidence}}</abbr></td>
   <td class="small">{{.Notes}}</td>
 </tr>
 {{- end}}
