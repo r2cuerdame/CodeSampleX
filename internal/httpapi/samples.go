@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -37,6 +38,22 @@ var permissiveLicenses = map[string]bool{
 // never belong in a clean-room sample).
 var forbiddenDirs = map[string]bool{
 	"node_modules": true, ".git": true, "venv": true, "target": true,
+}
+
+// blobBudgetExceeded reports whether stored artifacts have reached the
+// configured budget, and how much is in use. A budget of 0 means no limit.
+// An unreadable blob directory is NOT treated as full: refusing uploads
+// because a stat failed would turn a transient error into an outage.
+func (a *api) blobBudgetExceeded(ctx context.Context) (bool, int64) {
+	budget := a.d.Cfg.BlobBudgetBytes
+	if budget <= 0 {
+		return false, 0
+	}
+	used, err := a.d.Blobs.TotalSize(ctx)
+	if err != nil {
+		return false, 0
+	}
+	return used >= budget, used
 }
 
 // handleSampleUpload implements POST /v1/samples (multipart: manifest JSON,
@@ -139,6 +156,21 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "saving case failed")
 		return
 	}
+	// Sample upload is anonymous by design, so the blob directory is the
+	// one place an unauthenticated caller can consume disk without limit.
+	// Filling it takes PostgreSQL down with it — the two share the volume —
+	// so refuse new artifacts past the budget instead. Already-stored
+	// content is exempt: a re-upload is a no-op in a content-addressed
+	// store and must not fail once the budget is reached.
+	if have, herr := a.d.Blobs.Has(ctx, claimedID); herr == nil && !have {
+		if full, used := a.blobBudgetExceeded(ctx); full {
+			writeErr(w, http.StatusInsufficientStorage,
+				"sample storage is at its configured budget ("+
+					strconv.FormatInt(used>>20, 10)+"MB); no new artifacts are accepted")
+			return
+		}
+	}
+
 	blobID, err := a.d.Blobs.Put(ctx, bytes.NewReader(data))
 	if err != nil || blobID != claimedID {
 		writeErr(w, http.StatusInternalServerError, "storing artifact failed")

@@ -9,8 +9,12 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
+// TestHealthz pins the contract the container healthcheck relies on:
+// healthz answers ok only when the store actually responds, and reports
+// unavailable otherwise. A hardcoded ok would keep a server with a dead
+// database in the load balancer.
 func TestHealthz(t *testing.T) {
-	mux := BuildMux(serverstore.ServerConfig{}, nil)
+	mux := BuildMux(serverstore.ServerConfig{}, serverstore.NewFake())
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -25,6 +29,20 @@ func TestHealthz(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "ok" {
 		t.Fatalf("body = %q, want \"ok\"", body)
+	}
+}
+
+func TestHealthzUnavailableWithoutStore(t *testing.T) {
+	srv := httptest.NewServer(BuildMux(serverstore.ServerConfig{}, nil))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when the store is missing", resp.StatusCode)
 	}
 }
 

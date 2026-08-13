@@ -94,10 +94,20 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// Aggregation pipeline: snapshots/shards/stats on CSX_SNAPSHOT_INTERVAL.
 	StartBuilder(ctx, cfg, pg)
 
+	// Timeouts bound what one slow client can hold. Without ReadTimeout a
+	// trickled request body pins a goroutine and, once a handler starts, a
+	// connection out of a pool of 8 — on a 2GB instance a handful of those
+	// is the whole server. WriteTimeout sits above the slowest legitimate
+	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
+	// keep-alive connections Caddy no longer needs.
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           BuildMux(cfg, pg),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 16,
 	}
 	go func() {
 		<-ctx.Done()

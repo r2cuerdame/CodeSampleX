@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -17,6 +18,11 @@ type ServerConfig struct {
 	SnapshotInterval   time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
 	GithubClientID     string        // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
 	GithubClientSecret string        // CSX_GITHUB_CLIENT_SECRET
+	// BlobBudgetBytes caps total artifact storage (CSX_BLOB_BUDGET_MB, 0 =
+	// unlimited). Sample upload is anonymous, so this is the only ceiling
+	// on how much disk an unauthenticated caller can take — and the volume
+	// is shared with PostgreSQL, which stops working when it fills.
+	BlobBudgetBytes int64
 }
 
 // ConfigFromEnv reads the CSX_* server environment with safe defaults.
@@ -35,6 +41,14 @@ func ConfigFromEnv() ServerConfig {
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.SnapshotInterval = d
+		}
+	}
+	// Default 20GB: the production volume is 60GB shared with PostgreSQL,
+	// so artifacts get a third and the database keeps room to breathe.
+	cfg.BlobBudgetBytes = 20 << 30
+	if v := os.Getenv("CSX_BLOB_BUDGET_MB"); v != "" {
+		if mb, err := strconv.ParseInt(v, 10, 64); err == nil && mb >= 0 {
+			cfg.BlobBudgetBytes = mb << 20
 		}
 	}
 	return cfg

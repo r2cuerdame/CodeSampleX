@@ -51,6 +51,10 @@ type Deps struct {
 	// no test ever opens a socket to the outside.
 	PeerProbe func(ctx context.Context, addr string, port int) bool
 
+	// Limits holds the per-class rate limiters; nil builds the defaults.
+	// Tests that hammer an endpoint on purpose install their own.
+	Limits *limiters
+
 	// Now is a test seam; nil means time.Now.
 	Now func() time.Time
 }
@@ -74,31 +78,64 @@ func NewMux(d Deps) *http.ServeMux {
 		d.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	a := &api{d: d}
+	if a.d.Limits == nil {
+		a.d.Limits = newLimiters()
+	}
 	mux := http.NewServeMux()
+	lim := a.d.Limits
 
-	a.route(mux, "POST /v1/evidence/batches", a.handleEvidenceBatches)
-	a.route(mux, "GET /v1/registry/packages/{purl}", a.handleRegistryPackage)
-	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.handleRegistrySymbol)
-	a.route(mux, "POST /v1/search", a.handleSearch)
-	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.handleShard)
-	a.route(mux, "POST /v1/samples", a.handleSampleUpload)
-	a.route(mux, "GET /v1/samples/{sampleId}", a.handleSampleMeta)
-	a.route(mux, "GET /v1/samples/{sampleId}/artifact", a.handleSampleArtifact)
-	a.route(mux, "POST /v1/verifications", a.handleVerification)
-	a.route(mux, "GET /v1/verification/jobs", a.handleJobsList)
-	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.handleJobClaim)
-	a.route(mux, "POST /v1/peers/announce", a.handlePeerAnnounce)
-	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.handlePeersForSample)
-	a.route(mux, "GET /v1/stats", a.handleStats)
-	a.route(mux, "GET /v1/adapters", a.handleAdapters)
-	a.route(mux, "POST /v1/auth/github/device", a.handleGitHubDevice)
-	a.route(mux, "POST /v1/auth/github/poll", a.handleGitHubPoll)
+	// Writes are the expensive, abusable half: they allocate disk, database
+	// rows and connections. Reads are cheap and served from materialized
+	// snapshots, so they get a larger budget.
+	a.route(mux, "POST /v1/evidence/batches", a.limit(lim.write, a.handleEvidenceBatches))
+	a.route(mux, "GET /v1/registry/packages/{purl}", a.limit(lim.read, a.handleRegistryPackage))
+	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.limit(lim.read, a.handleRegistrySymbol))
+	a.route(mux, "POST /v1/search", a.limit(lim.read, a.handleSearch))
+	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.handleShard))
+	a.route(mux, "POST /v1/samples", a.limit(lim.write, a.handleSampleUpload))
+	a.route(mux, "GET /v1/samples/{sampleId}", a.limit(lim.read, a.handleSampleMeta))
+	a.route(mux, "GET /v1/samples/{sampleId}/artifact", a.limit(lim.read, a.handleSampleArtifact))
+	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
+	a.route(mux, "GET /v1/verification/jobs", a.limit(lim.read, a.handleJobsList))
+	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.limit(lim.write, a.handleJobClaim))
+	a.route(mux, "POST /v1/peers/announce", a.limit(lim.write, a.handlePeerAnnounce))
+	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.limit(lim.read, a.handlePeersForSample))
+	a.route(mux, "GET /v1/stats", a.limit(lim.read, a.handleStats))
+	a.route(mux, "GET /v1/adapters", a.limit(lim.read, a.handleAdapters))
+	a.route(mux, "POST /v1/auth/github/device", a.limit(lim.auth, a.handleGitHubDevice))
+	a.route(mux, "POST /v1/auth/github/poll", a.limit(lim.auth, a.handleGitHubPoll))
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "ok")
-	})
+	// healthz is what the container healthcheck and any monitor believe.
+	// A hardcoded "ok" would report a healthy server with a dead database,
+	// which is worse than no health check at all — so it touches the store.
+	// Deliberately unlimited: throttling it would take the deployment down
+	// on its own.
+	mux.HandleFunc("GET /healthz", a.handleHealthz)
 	return mux
+}
+
+// healthzTimeout keeps a stuck database from turning the health check into
+// another hung request; the probe is a single trivial query.
+const healthzTimeout = 3 * time.Second
+
+func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	unhealthy := func(reason string) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, reason)
+	}
+	if a.d.Store == nil {
+		unhealthy("no store configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
+	defer cancel()
+	// Any trivial read proves the pool can hand out a live connection.
+	if _, _, err := a.d.Store.GetLatestStats(ctx); err != nil {
+		unhealthy("database unavailable")
+		return
+	}
+	_, _ = io.WriteString(w, "ok")
 }
 
 // route registers h with a recover guard: a handler panic becomes a JSON
