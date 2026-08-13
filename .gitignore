@@ -1,0 +1,23 @@
+# Build outputs
+/dist/
+*.exe
+*.test
+
+# Local state / scratch
+/.csx/
+*.db
+*.db-wal
+*.db-shm
+
+# Editors / tools
+.vscode/
+.idea/
+.serena/cache/
+
+# E2E scratch
+/test/e2e/tmp/
+/backups/
+
+# OS noise
+Thumbs.db
+.DS_Store

@@ -1,0 +1,22 @@
+# CADDY_SITE selects the site address:
+#   production: "codesamplex.dev, www.codesamplex.dev"  (automatic HTTPS)
+#   local:      ":80"
+{$CADDY_SITE::80} {
+	encode zstd gzip
+
+	@static path /static/* /install.ps1 /install.sh /robots.txt /sitemap.xml
+	header @static Cache-Control "public, max-age=3600"
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy server:8080
+}
+
+www.codesamplex.dev {
+	redir https://codesamplex.dev{uri} permanent
+}
