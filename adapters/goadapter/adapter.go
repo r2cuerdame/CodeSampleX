@@ -6,6 +6,7 @@ package goadapter
 import (
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -74,7 +75,13 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	if len(argv) == 0 {
 		return scanner.CommandProfile{}
 	}
-	tool := strings.ToLower(filepath.Base(filepath.ToSlash(argv[0])))
+	// Split on BOTH separators regardless of the host OS. filepath.ToSlash
+	// is a no-op on Linux, so `C:\Go\bin\go.exe` survived intact and
+	// filepath.Base returned the whole string — the command went
+	// unclassified everywhere except Windows. Evidence is recorded on one
+	// machine and aggregated on another, so a command line must parse the
+	// same way on every platform.
+	tool := strings.ToLower(path.Base(strings.ReplaceAll(argv[0], `\`, "/")))
 	tool = strings.TrimSuffix(tool, ".exe")
 	if tool != "go" {
 		if tool == "gofmt" {

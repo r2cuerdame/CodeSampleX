@@ -283,8 +283,10 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	if codeHit {
 		base += weightErrorCode
 	}
-	base += weightFTS * c.ftsScore
-	base += weightIntent * intentOverlap(req.Query, c)
+	// Relevance to the question actually asked, as opposed to overlap with
+	// whatever happens to be in the caller's dependency tree.
+	relevance := weightFTS*c.ftsScore + weightIntent*intentOverlap(req.Query, c)
+	base += relevance
 
 	// Steps 6+9: environment gate, execution-context axis, known failures.
 	dims := compareEnv(reqEnv, c.env, ecosystemOf(samP, reqEnv, c))
@@ -299,6 +301,27 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// Steps 7–8: verification-strength rerank + recency decay.
 	lvl := verificationLevel(c.status, c.contractStages, receipts)
 	score := base * envFit(grade, cd) * recency(c, now) * strengthBoost(lvl)
+
+	// A sample must be about the question asked. An exact package match
+	// alone scores 0.45 before any multiplier — past missThreshold on its
+	// own — so every verified sample for a package in the caller's
+	// dependency tree used to come back as a confident hit no matter what
+	// was asked: "how to bake a chocolate cake" returned the google/uuid
+	// sample as MATCH: EXACT because uuid was an indirect dependency.
+	//
+	// The test is topic words in common, not the fused relevance score:
+	// c.ftsScore is normalized against the best hit of this query alone,
+	// so a single weak lexical match normalizes to a perfect 1.0 and
+	// carries the full FTS weight. Sharing no content word with the goal
+	// is the unambiguous signal, and this is the wrong HIT the project
+	// rates worse than a MISS (goal.md §3.8) — so it scores zero rather
+	// than merely ranking low.
+	//
+	// Matching the caller's actual error is exempt: a fingerprint or code
+	// hit is direct evidence of relevance whatever the prose says.
+	if !fpHit && !codeHit && sharedIntent(req.Query, c) == 0 {
+		score = 0
+	}
 
 	res := domain.SearchResult{
 		Grade:         grade,
@@ -520,22 +543,58 @@ func knownFailures(matched []shardFailure) []domain.KnownFailure {
 
 // intentOverlap is the v1 step-5 similarity: query-token overlap against
 // the case goal (no embeddings in Public v1).
-func intentOverlap(query string, c *candidate) float64 {
-	q := strings.Fields(strings.ToLower(query))
-	if len(q) == 0 || c.caseObj == nil {
+// stopWords are ignored when judging what a question is ABOUT. Counting
+// them let "how to bake a chocolate cake" overlap the goal "…validate a
+// UUID in Go…" on the word "a", which is not a topic in common.
+var stopWords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true,
+	"how": true, "why": true, "what": true, "when": true, "does": true,
+	"can": true, "you": true, "your": true, "this": true, "that": true,
+	"into": true, "out": true, "not": true, "but": true, "get": true,
+	"use": true, "using": true, "make": true, "want": true, "need": true,
+	"there": true, "here": true, "some": true, "any": true, "all": true,
+}
+
+// contentTokens reduces text to the words that carry its topic: lowercase,
+// punctuation-trimmed, no stop words, nothing shorter than three letters.
+func contentTokens(s string) []string {
+	var out []string
+	for _, f := range strings.Fields(strings.ToLower(s)) {
+		t := strings.Trim(f, ".,:;!?()[]{}\"'`")
+		if len(t) < 3 || stopWords[t] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// sharedIntent reports how many content words the question and the
+// sample's goal have in common. Zero means the sample is not an answer to
+// this question, whatever else it matches.
+func sharedIntent(query string, c *candidate) int {
+	if c == nil || c.caseObj == nil {
 		return 0
 	}
 	goal := map[string]bool{}
-	for _, t := range strings.Fields(strings.ToLower(c.caseObj.Goal)) {
+	for _, t := range contentTokens(c.caseObj.Goal) {
 		goal[t] = true
 	}
-	hit := 0
-	for _, t := range q {
+	shared := 0
+	for _, t := range contentTokens(query) {
 		if goal[t] {
-			hit++
+			shared++
 		}
 	}
-	return float64(hit) / float64(len(q))
+	return shared
+}
+
+func intentOverlap(query string, c *candidate) float64 {
+	q := contentTokens(query)
+	if len(q) == 0 {
+		return 0
+	}
+	return float64(sharedIntent(query, c)) / float64(len(q))
 }
 
 // matchesSymbols reports whether any requested symbol family matches the

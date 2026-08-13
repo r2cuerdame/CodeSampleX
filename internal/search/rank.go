@@ -22,7 +22,6 @@ const (
 
 	// missThreshold: best fused score below this is NO_SAFE_MATCH.
 	missThreshold = 0.25
-
 	// elevatedFailureMinCount is the minimum cluster size that demotes a
 	// result in the matching requester environment.
 	elevatedFailureMinCount = 5
@@ -32,12 +31,12 @@ const (
 type pkgRel int
 
 const (
-	relUnspecified pkgRel = iota // request named no packages
-	relNone                      // request packages share nothing with the candidate
-	relMajorDiff                 // same package, different major
-	relMajor                     // same major, different minor
-	relMajorMinor                // same major.minor, different patch
-	relExactVersion              // identical version
+	relUnspecified  pkgRel = iota // request named no packages
+	relNone                       // request packages share nothing with the candidate
+	relMajorDiff                  // same package, different major
+	relMajor                      // same major, different minor
+	relMajorMinor                 // same major.minor, different patch
+	relExactVersion               // identical version
 )
 
 // packageRelation finds the best (request package, candidate package) pair.

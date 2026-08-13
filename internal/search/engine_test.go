@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -266,8 +267,8 @@ func TestSearchErrorFingerprintRanksFirst(t *testing.T) {
 		ErrorFingerprint: fp,
 		ErrorCode:        "ERR_REQUIRE_ESM",
 	})
-	if resp.Miss || len(resp.Results) < 2 {
-		t.Fatalf("expected >=2 results, got miss=%v n=%d", resp.Miss, len(resp.Results))
+	if resp.Miss || len(resp.Results) == 0 {
+		t.Fatalf("expected a result, got miss=%v n=%d", resp.Miss, len(resp.Results))
 	}
 	if resp.Results[0].SampleID != "sha256:fixa" {
 		t.Fatalf("results[0] = %s, want fingerprint-matched sample sha256:fixa", resp.Results[0].SampleID)
@@ -275,9 +276,14 @@ func TestSearchErrorFingerprintRanksFirst(t *testing.T) {
 	if resp.Results[0].Grade == domain.GradeReferenceOnly {
 		t.Errorf("fix for the searched failure must not be demoted to REFERENCE_ONLY")
 	}
-	if resp.Results[0].Score <= resp.Results[1].Score {
-		t.Errorf("fingerprint match should outscore: %f <= %f",
-			resp.Results[0].Score, resp.Results[1].Score)
+	// The lodash cloneDeep sample shares a package with the request and
+	// nothing else — it is not an answer to "require esm error", and
+	// offering it as an alternative is the wrong-HIT this project rates
+	// worse than a miss.
+	for _, r := range resp.Results {
+		if r.SampleID == "sha256:lodb" {
+			t.Errorf("unrelated same-package sample returned as an alternative (score %f)", r.Score)
+		}
 	}
 }
 
@@ -391,5 +397,54 @@ func TestSearchDefaultLimit(t *testing.T) {
 	}
 	if len(resp.Results) != 3 {
 		t.Fatalf("results = %d, want default limit 3", len(resp.Results))
+	}
+}
+
+// TestPackageMatchAloneIsNotAnAnswer pins the wrong-HIT this project rates
+// worse than a miss (goal.md §3.8). An exact package match scores 0.45
+// before any multiplier — past missThreshold on its own — so every
+// verified sample for a package in the caller's dependency tree used to
+// come back as a confident hit no matter what was asked. Reproduced on
+// production: "how to bake a chocolate cake" with google/uuid in go.mod
+// returned the UUID sample as MATCH: EXACT.
+func TestPackageMatchAloneIsNotAnAnswer(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	m := mkManifest("Generate, parse and validate a UUID in Go with google/uuid",
+		[]string{"pkg:npm/axios@1.12.0"}, nodeEnv("esm"), "uuid.New")
+	// MATRIX_PASS is the strongest verification level, so this candidate
+	// gets the largest strength multiplier — the worst case for the gate.
+	if err := SeedSampleDoc(ctx, db, m, "sha256:uuid1", "MATRIX_PASS"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// The package IS in the caller's tree; the question is unrelated.
+	resp := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "how to bake a chocolate cake",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Environment:   nodeEnv("esm"),
+	})
+	if !resp.Miss || len(resp.Results) != 0 {
+		var got string
+		if len(resp.Results) > 0 {
+			got = fmt.Sprintf(" (%s, grade %s, score %f)",
+				resp.Results[0].SampleID, resp.Results[0].Grade, resp.Results[0].Score)
+		}
+		t.Fatalf("unrelated query returned a hit on package overlap alone%s", got)
+	}
+
+	// The same sample must still be found by a question it actually answers.
+	on := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "validate a uuid in go",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Environment:   nodeEnv("esm"),
+	})
+	if on.Miss || len(on.Results) == 0 {
+		t.Fatal("the relevance floor also blocked an on-topic query")
+	}
+	if on.Results[0].SampleID != "sha256:uuid1" {
+		t.Fatalf("on-topic results[0] = %s", on.Results[0].SampleID)
 	}
 }
