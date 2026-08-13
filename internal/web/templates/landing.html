@@ -4,6 +4,37 @@
   <h1 class="tagline mono">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
 </section>
 
+{{/* The tagline alone does not tell a first-time visitor what this is. */}}
+<section class="what">
+  <h2 class="eyebrow mono">{{.T "landing.what_heading"}}</h2>
+  <p class="lead">{{.T "landing.what_body"}}</p>
+  <blockquote class="qa">
+    <p class="q">{{.T "landing.what_q"}}</p>
+    <p class="a dim">{{.T "landing.what_a"}}</p>
+  </blockquote>
+</section>
+
+<section class="values">
+  <h2 class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
+  <div class="cols">
+    <div class="col panel"><h3>{{.T "landing.value_1_t"}}</h3><p>{{.T "landing.value_1_b"}}</p></div>
+    <div class="col panel"><h3>{{.T "landing.value_2_t"}}</h3><p>{{.T "landing.value_2_b"}}</p></div>
+    <div class="col panel"><h3>{{.T "landing.value_3_t"}}</h3><p>{{.T "landing.value_3_b"}}</p></div>
+  </div>
+</section>
+
+<section class="how">
+  <h2 class="eyebrow mono">{{.T "landing.how_heading"}}</h2>
+  <ol class="howsteps">
+    <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
+  </ol>
+  <p class="note">{{.T "landing.for_agents"}}</p>
+</section>
+
 <section id="install" class="install panel">
   <h2 class="eyebrow mono">{{.T "landing.install_heading"}}</h2>
   <div class="cmd">

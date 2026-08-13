@@ -123,5 +123,21 @@
   "adapters.supported": "compatible",
   "adapters.not_supported": "no compatible",
   "footer.github": "GitHub",
-  "footer.sponsor": "Patrocinar"
+  "footer.sponsor": "Patrocinar",
+  "landing.what_heading": "¿Qué es CodeSampleX?",
+  "landing.what_body": "Los asistentes de programación resuelven cada día los mismos problemas de librerías públicas: leer la documentación, adivinar la API, instalar, fallar al compilar, adivinar la diferencia de versión, corregir, acertar… y olvidarlo todo al terminar la sesión. CodeSampleX lo recuerda. Reúne evidencia anónima de lo que realmente funcionó (y de lo que se rompió) en entornos de desarrollo reales, y entrega a tu asistente una respuesta verificada junto con la diferencia exacta respecto a tu configuración.",
+  "landing.what_q": "¿Funciona de verdad axios.post con axios 1.12 + Node 22 + pnpm + Windows 11? Y si no, ¿en qué paso se rompe?",
+  "landing.what_a": "La documentación oficial no puede responder eso. La evidencia de miles de máquinas reales sí.",
+  "landing.value_heading": "Qué obtienes",
+  "landing.value_1_t": "Respuestas que ya se ejecutaron",
+  "landing.value_1_b": "Muestras mínimas verificadas por un contrato en un sandbox limpio, no fragmentos que alguien esperaba que funcionaran.",
+  "landing.value_2_t": "Calificadas para tu entorno",
+  "landing.value_2_b": "Cada resultado se evalúa frente a tus versiones, runtime y contexto de ejecución: Node, navegador, WebView, Electron, worker.",
+  "landing.value_3_t": "Honestas sobre el fallo",
+  "landing.value_3_b": "Dónde se rompió, con qué frecuencia y la causa probable como probabilidad; nunca una certeza inventada.",
+  "landing.for_agents": "Tu agente lo usa directamente por MCP: pregunta a CodeSampleX antes de escribir código contra una librería pública e informa si la respuesta compiló.",
+  "landing.how_heading": "Cómo funciona",
+  "meta.stats": "Números en vivo de la red CodeSampleX: pares, paquetes, símbolos, evidencia y muestras verificadas, y cómo funciona la tubería de evidencia.",
+  "meta.adapters": "Qué ecosistemas admite CodeSampleX y hasta dónde: detección de paquetes, observación de builds, resolución de símbolos y verificación por contrato.",
+  "meta.explore": "Busca paquetes públicos y consulta evidencia de compatibilidad real: contextos de ejecución, confianza, clústeres de fallo y muestras verificadas."
 }

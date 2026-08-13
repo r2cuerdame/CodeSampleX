@@ -111,7 +111,8 @@ type statsPageData struct {
 func (s *site) statsPage(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
 	title := i18n.T(lang, "stats.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "site.meta_description"))
+	b := s.page(r, lang, title, i18n.T(lang, "meta.stats"))
+	b.Canonical = s.base(r) + "/stats"
 	st := s.loadStats(r)
 	generated := ""
 	if st != nil {

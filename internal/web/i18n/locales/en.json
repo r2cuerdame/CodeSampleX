@@ -123,5 +123,21 @@
   "adapters.supported": "supported",
   "adapters.not_supported": "not supported",
   "footer.github": "GitHub",
-  "footer.sponsor": "Sponsor"
+  "footer.sponsor": "Sponsor",
+  "landing.what_heading": "What is CodeSampleX?",
+  "landing.what_body": "Coding assistants re-solve the same public-library problems every day: read the docs, guess the API, install, fail to compile, guess the version difference, fix, succeed — then forget it all. CodeSampleX remembers. It collects anonymous evidence of what actually worked (and what broke) in real development environments, and hands your assistant a verified answer plus the exact difference from your setup.",
+  "landing.what_q": "Does axios.post really work on axios 1.12 + Node 22 + pnpm + Windows 11 — and if not, at which step does it break?",
+  "landing.what_a": "Official docs can't answer that. Evidence from thousands of real machines can.",
+  "landing.value_heading": "What you get",
+  "landing.value_1_t": "Answers that already ran",
+  "landing.value_1_b": "Minimal samples verified by a contract in a clean sandbox — not a snippet someone hoped would work.",
+  "landing.value_2_t": "Graded for your environment",
+  "landing.value_2_b": "Every result is rated against your versions, runtime and execution context — Node, browser, WebView, Electron, worker.",
+  "landing.value_3_t": "Honest about failure",
+  "landing.value_3_b": "Where it broke, how often, and the likely cause as a probability — never a made-up certainty.",
+  "landing.for_agents": "Your coding agent uses it directly over MCP: it asks CodeSampleX before writing code against a public library, and reports back whether the answer built.",
+  "landing.how_heading": "How it works",
+  "meta.stats": "Live numbers from the CodeSampleX network: peers, packages, symbols, evidence and verified samples — plus how the evidence pipeline works.",
+  "meta.adapters": "Which ecosystems CodeSampleX supports and exactly how far: package detection, build observation, symbol resolution and contract verification per adapter.",
+  "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and verified samples."
 }

@@ -88,7 +88,9 @@ $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Seconds 5
-    $health = & ssh @sshArgs $remote "curl -fsS http://127.0.0.1/healthz || true" 2>&1 | ForEach-Object { "$_" }
+    # -L: with a domain configured, Caddy 308s plain HTTP to HTTPS, and an
+    # unfollowed redirect is not a failed deployment.
+    $health = & ssh @sshArgs $remote "curl -fsSL http://127.0.0.1/healthz || true" 2>&1 | ForEach-Object { "$_" }
     if ($health -match "ok") { $ok = $true; break }
 }
 $ErrorActionPreference = $prevEAP
@@ -97,7 +99,7 @@ if (-not $ok) {
     throw "healthz never returned ok"
 }
 Write-Output "healthz: ok"
-$landing = Invoke-Remote "curl -fsS http://127.0.0.1/ | head -c 400"
+$landing = Invoke-Remote "curl -fsSL http://127.0.0.1/ | head -c 400"
 Write-Output "landing sample: $($landing -join ' ' )"
 Write-Output ""
 Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagation."

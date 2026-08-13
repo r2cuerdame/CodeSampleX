@@ -30,6 +30,46 @@ func imageFor(ecosystem string) (string, error) {
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
 
+// imageRuntime maps an ecosystem to the runtime the pinned image provides
+// and its major version. Kept beside imageFor so the two never drift.
+func imageRuntime(ecosystem string) (runtime, version, language string) {
+	switch ecosystem {
+	case "npm":
+		return "node", "22", "javascript"
+	case "pypi":
+		return "python", "3.12", "python"
+	case "golang":
+		return "go", "1.26", "go"
+	case "cargo":
+		return "rust", "1", "rust"
+	}
+	return "", "", ""
+}
+
+// StageEnvironment reports the container's environment, not the host's:
+// the stages run on linux/amd64 with the image's runtime, and a receipt
+// that claimed the host OS would poison the compatibility graph.
+func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint {
+	eco := m.Environment.Ecosystem
+	if eco == "" {
+		eco = host.Ecosystem
+	}
+	rt, ver, lang := imageRuntime(eco)
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion:    1,
+		Ecosystem:        eco,
+		OS:               "linux",
+		Arch:             "x64",
+		Runtime:          rt,
+		RuntimeVersion:   ver,
+		Language:         lang,
+		ExecutionContext: rt,
+		ModuleSystem:     m.Environment.ModuleSystem,
+		PackageManager:   m.Environment.PackageManager,
+	}
+	return env.Normalize()
+}
+
 // dockerArgs builds the docker run invocation. Resource limits per plan
 // C13: --memory=512m --pids-limit=256. No --env flags: the container
 // keeps only its image-default PATH/HOME.

@@ -123,5 +123,21 @@
   "adapters.supported": "支持",
   "adapters.not_supported": "不支持",
   "footer.github": "GitHub",
-  "footer.sponsor": "赞助"
+  "footer.sponsor": "赞助",
+  "landing.what_heading": "CodeSampleX 是什么？",
+  "landing.what_body": "编码助手每天都在重新解决同样的公开库问题：翻文档、猜 API、安装、编译失败、猜版本差异、修好、成功——然后会话结束就全忘了。CodeSampleX 会记住。它收集真实开发环境中「什么真的能跑、什么会坏」的匿名证据，并把已验证的答案连同与你环境的确切差异一起交给助手。",
+  "landing.what_q": "在 axios 1.12 + Node 22 + pnpm + Windows 11 上，axios.post 到底能不能用？不能的话在哪一步坏掉？",
+  "landing.what_a": "官方文档回答不了。来自成千上万台真实机器的证据可以。",
+  "landing.value_heading": "你会得到",
+  "landing.value_1_t": "已经跑通的答案",
+  "landing.value_1_b": "在干净沙箱中通过 contract 验证的最小样本，而不是「应该能用」的代码片段。",
+  "landing.value_2_t": "按你的环境评级",
+  "landing.value_2_b": "每个结果都针对你的版本、运行时与执行上下文（Node、浏览器、WebView、Electron、Worker）评级。",
+  "landing.value_3_t": "对失败诚实",
+  "landing.value_3_b": "在哪里坏、多频繁，原因以概率呈现，绝不编造确定性。",
+  "landing.for_agents": "编码智能体通过 MCP 直接使用：写公开库代码前先问 CodeSampleX，并回报该答案是否构建成功。",
+  "landing.how_heading": "工作方式",
+  "meta.stats": "CodeSampleX 网络的实时数据：节点、包、符号、证据与已验证样本，以及证据流水线的工作方式。",
+  "meta.adapters": "CodeSampleX 支持哪些生态以及支持到什么程度：每个适配器的包检测、构建观测、符号解析与 contract 验证。",
+  "meta.explore": "搜索公开包并查看真实环境的兼容性证据：执行上下文、置信度、失败聚类与已验证样本。"
 }

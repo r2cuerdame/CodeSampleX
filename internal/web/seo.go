@@ -43,7 +43,36 @@ func landingJSONLD(base, version, lang string) []template.JS {
 	if version != "" {
 		app["softwareVersion"] = version
 	}
-	return []template.JS{jsonLD(website), jsonLD(app)}
+	// The landing page answers "what is this" in prose; FAQPage lets search
+	// engines surface that answer directly instead of the install command.
+	faq := map[string]any{
+		"@context": "https://schema.org",
+		"@type":    "FAQPage",
+		"mainEntity": []map[string]any{
+			{
+				"@type": "Question",
+				"name":  i18n.T(lang, "landing.what_heading"),
+				"acceptedAnswer": map[string]any{
+					"@type": "Answer", "text": i18n.T(lang, "landing.what_body"),
+				},
+			},
+			{
+				"@type": "Question",
+				"name":  i18n.T(lang, "landing.what_q"),
+				"acceptedAnswer": map[string]any{
+					"@type": "Answer", "text": i18n.T(lang, "landing.what_a"),
+				},
+			},
+		},
+	}
+	org := map[string]any{
+		"@context": "https://schema.org",
+		"@type":    "Organization",
+		"name":     "CodeSampleX",
+		"url":      base + "/",
+		"sameAs":   []string{repoURL, sponsorURL},
+	}
+	return []template.JS{jsonLD(website), jsonLD(app), jsonLD(faq), jsonLD(org)}
 }
 
 // breadcrumbJSONLD emits a BreadcrumbList for explorer pages. crumbs are

@@ -123,5 +123,21 @@
   "adapters.supported": "pris en charge",
   "adapters.not_supported": "non pris en charge",
   "footer.github": "GitHub",
-  "footer.sponsor": "Sponsoriser"
+  "footer.sponsor": "Sponsoriser",
+  "landing.what_heading": "Qu'est-ce que CodeSampleX ?",
+  "landing.what_body": "Les assistants de code refont chaque jour les mêmes problèmes de bibliothèques publiques : lire la doc, deviner l'API, installer, échouer à compiler, deviner l'écart de version, corriger, réussir — puis tout oublier à la fin de la session. CodeSampleX s'en souvient. Il rassemble des preuves anonymes de ce qui a réellement fonctionné (et de ce qui a cassé) dans de vrais environnements, et fournit à votre assistant une réponse vérifiée ainsi que l'écart exact avec votre configuration.",
+  "landing.what_q": "axios.post fonctionne-t-il vraiment avec axios 1.12 + Node 22 + pnpm + Windows 11 ? Et sinon, à quelle étape casse-t-il ?",
+  "landing.what_a": "La documentation officielle ne peut pas répondre. Les preuves de milliers de machines réelles, si.",
+  "landing.value_heading": "Ce que vous obtenez",
+  "landing.value_1_t": "Des réponses qui ont déjà tourné",
+  "landing.value_1_b": "Des échantillons minimaux vérifiés par un contrat dans un sandbox propre, pas un extrait supposé fonctionner.",
+  "landing.value_2_t": "Notées pour votre environnement",
+  "landing.value_2_b": "Chaque résultat est évalué face à vos versions, votre runtime et votre contexte d'exécution : Node, navigateur, WebView, Electron, worker.",
+  "landing.value_3_t": "Honnêtes sur l'échec",
+  "landing.value_3_b": "Où ça a cassé, à quelle fréquence, et la cause probable exprimée en probabilité — jamais une certitude inventée.",
+  "landing.for_agents": "Votre agent l'utilise directement via MCP : il interroge CodeSampleX avant d'écrire du code utilisant une bibliothèque publique, puis indique si la réponse a compilé.",
+  "landing.how_heading": "Comment ça marche",
+  "meta.stats": "Chiffres en direct du réseau CodeSampleX : pairs, paquets, symboles, preuves et échantillons vérifiés, et le fonctionnement du pipeline de preuves.",
+  "meta.adapters": "Quels écosystèmes CodeSampleX prend en charge et jusqu'où : détection de paquets, observation des builds, résolution de symboles et vérification par contrat.",
+  "meta.explore": "Recherchez des paquets publics et consultez les preuves de compatibilité réelles : contextes d'exécution, confiance, clusters d'échec et échantillons vérifiés."
 }

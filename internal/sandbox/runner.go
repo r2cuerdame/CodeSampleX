@@ -33,6 +33,11 @@ type Runner interface {
 	Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult
 	Build(ctx context.Context, dir string, m domain.SampleManifest) StageResult
 	Contract(ctx context.Context, dir string, m domain.SampleManifest) StageResult
+	// StageEnvironment describes where the stages actually execute, given
+	// the host environment. A receipt must name that environment, not the
+	// host: a contract run inside a linux container proves nothing about
+	// the Windows machine that started it.
+	StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint
 }
 
 // stageTimeout bounds every stage (plan C13: 5m/stage).

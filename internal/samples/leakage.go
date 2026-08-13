@@ -45,12 +45,27 @@ type ScanOptions struct {
 var allowedURLHosts = []string{
 	"registry.npmjs.org",
 	"pypi.org",
+	"files.pythonhosted.org",
 	"crates.io",
+	"static.crates.io",
 	"proxy.golang.org",
 	"example.com",
+	"example.org",
 	"localhost",
 	"127.0.0.1",
 	"codesamplex.dev",
+	// Funding and metadata hosts that package managers write into
+	// lockfiles. They identify the library's maintainers, never the
+	// contributor, and a lockfile is machine-generated public data.
+	"github.com",
+	"opencollective.com",
+	"tidelift.com",
+	"paypal.me",
+	"patreon.com",
+	"ko-fi.com",
+	"feross.org",
+	"spdx.org",
+	"json.schemastore.org",
 }
 
 type leakPattern struct {
@@ -73,8 +88,10 @@ var leakPatterns = []leakPattern{
 	{KindAbsolutePath, regexp.MustCompile(`(?:^|[^\w.@])(/(?:home|Users|usr|var|etc|tmp|opt|mnt|srv|root|private)/[A-Za-z0-9._/-]+)`)},
 	// UNC shares.
 	{KindAbsolutePath, regexp.MustCompile(`\\\\[A-Za-z0-9._-]+\\[^\s"']+`)},
-	{KindEnvAssignment, regexp.MustCompile(`process\.env\.[A-Za-z_]\w*\s*=\s*["'` + "`" + `]`)},
-	{KindEnvAssignment, regexp.MustCompile(`os\.environ\[\s*["'][^"']+["']\s*\]\s*=\s*["']`)},
+	// Only secret-shaped environment names: a sample legitimately sets TZ,
+	// NODE_ENV or PORT, and flagging those blocked honest contributions.
+	{KindEnvAssignment, regexp.MustCompile(`process\.env\.\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*\s*=\s*["'` + "`" + `]`)},
+	{KindEnvAssignment, regexp.MustCompile(`os\.environ\[\s*["']\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*["']\s*\]\s*=\s*["']`)},
 }
 
 var urlRe = regexp.MustCompile(`https?://[^\s"'<>()\[\]` + "`" + `]+`)
@@ -133,6 +150,9 @@ func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regex
 		lineNo := i + 1
 		for _, lp := range leakPatterns {
 			for _, m := range lp.re.FindAllString(line, -1) {
+				if lp.kind == KindEmail && reservedEmail(m) {
+					continue // RFC 2606 address: documentation, not a person
+				}
 				out = append(out, Finding{File: file, Line: lineNo, Kind: lp.kind, Excerpt: excerpt(m)})
 			}
 		}
@@ -161,13 +181,51 @@ func projectNamePatterns(opts ScanOptions) []*regexp.Regexp {
 	return res
 }
 
-func urlAllowed(raw string, extra []string) bool {
-	raw = strings.TrimRight(raw, ".,;:!?")
-	u, err := url.Parse(raw)
-	if err != nil {
+// templateExprRe matches an interpolation placeholder that a URL literal
+// may carry: `http://127.0.0.1:${port}/x`, "http://%s/x", f"http://{host}/x".
+var templateExprRe = regexp.MustCompile(`\$\{[^}]*\}|\{[A-Za-z_][\w.]*\}|%[sdv]`)
+
+// reservedEmailDomains are the RFC 2606 / RFC 6761 names reserved for
+// documentation and tests. An address there identifies nobody, and
+// flagging it blocked otherwise-clean samples from being published.
+var reservedEmailDomains = []string{
+	"example.com", "example.org", "example.net", "example.edu",
+	"test", "invalid", "localhost", "example",
+}
+
+func reservedEmail(addr string) bool {
+	at := strings.LastIndex(addr, "@")
+	if at < 0 {
 		return false
 	}
-	host := strings.ToLower(u.Hostname())
+	domain := strings.ToLower(strings.TrimRight(addr[at+1:], "."))
+	for _, d := range reservedEmailDomains {
+		if domain == d || strings.HasSuffix(domain, "."+d) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlHostRe pulls the host out of a URL literal directly. url.Parse rejects
+// a templated port ("http://127.0.0.1:${port}/x"), and a parse failure used
+// to make an allowlisted host look like a leak.
+var urlHostRe = regexp.MustCompile(`^https?://(?:[^/@]*@)?([^/:?#\s]+)`)
+
+func urlAllowed(raw string, extra []string) bool {
+	raw = strings.TrimRight(raw, ".,;:!?")
+	var host string
+	if m := urlHostRe.FindStringSubmatch(raw); m != nil {
+		host = strings.ToLower(m[1])
+	} else if u, err := url.Parse(raw); err == nil {
+		host = strings.ToLower(u.Hostname())
+	} else {
+		return false
+	}
+	// A placeholder inside the host itself is not a known host.
+	if templateExprRe.MatchString(host) {
+		return false
+	}
 	for _, a := range allowedURLHosts {
 		if host == a || strings.HasSuffix(host, "."+a) {
 			return true

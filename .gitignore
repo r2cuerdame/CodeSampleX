@@ -21,3 +21,7 @@
 # OS noise
 Thumbs.db
 .DS_Store
+
+# Seed sample deps: materialized in a container for evidence runs
+seeds/*/node_modules/
+

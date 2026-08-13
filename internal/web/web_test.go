@@ -136,16 +136,18 @@ func TestStatsPageExplainsHowItWorks(t *testing.T) {
 	mustContain(t, body, "counted separately")
 }
 
-func TestAdaptersPageHasLegendAndTooltips(t *testing.T) {
+func TestAdaptersPageIsReadable(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/adapters").Body.String()
 	mustContain(t, body, "How to read this table")
-	// Every level is explained, not just labeled.
+	// Each level is spelled out next to its code on the adapter card, so a
+	// reader never has to decode a row of bare ✓/— glyphs.
 	for _, s := range []string{"A0", "A4", "detected from the lockfile", "verified against a contract"} {
 		mustContain(t, body, s)
 	}
-	// Level columns and confidence values carry tooltips.
-	mustContain(t, body, `title="A0 — Package and version detected from the lockfile"`)
+	// A missing capability is stated in words too, not only as a glyph.
+	mustContain(t, body, "not supported")
+	// Symbol confidence explains itself in place and on hover.
 	mustContain(t, body, "PROBABLE — Resolved from imports and call sites")
 }
 

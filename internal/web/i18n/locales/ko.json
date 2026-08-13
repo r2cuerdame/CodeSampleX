@@ -123,5 +123,21 @@
   "adapters.supported": "지원",
   "adapters.not_supported": "미지원",
   "footer.github": "GitHub",
-  "footer.sponsor": "후원"
+  "footer.sponsor": "후원",
+  "landing.what_heading": "CodeSampleX가 뭔가요?",
+  "landing.what_body": "코딩 어시스턴트는 매일 같은 공개 라이브러리 문제를 처음부터 다시 풉니다. 문서를 읽고, API를 추측하고, 설치하고, 컴파일에 실패하고, 버전 차이를 추측해 고치고, 성공하고 — 그리고 세션이 끝나면 전부 잊습니다. CodeSampleX는 그걸 기억합니다. 실제 개발 환경에서 무엇이 진짜로 동작했고 무엇이 깨졌는지를 익명 증거로 모아서, 어시스턴트에게 검증된 답과 내 환경과의 정확한 차이를 함께 줍니다.",
+  "landing.what_q": "axios 1.12 + Node 22 + pnpm + Windows 11에서 axios.post가 정말 동작하나요? 안 되면 어느 단계에서 깨지나요?",
+  "landing.what_a": "공식 문서는 답할 수 없습니다. 수많은 실제 개발 환경의 증거는 답할 수 있습니다.",
+  "landing.value_heading": "무엇을 얻나요",
+  "landing.value_1_t": "이미 돌아간 답",
+  "landing.value_1_b": "깨끗한 샌드박스에서 contract로 검증된 최소 샘플입니다. 누군가 되겠지 하고 올린 조각이 아닙니다.",
+  "landing.value_2_t": "내 환경 기준 등급",
+  "landing.value_2_b": "내 버전·런타임·실행 컨텍스트(Node, 브라우저, WebView, Electron, 워커) 기준으로 결과를 등급화합니다.",
+  "landing.value_3_t": "실패에 정직",
+  "landing.value_3_b": "어디서 깨졌고 얼마나 자주인지, 원인은 확률로 제시합니다. 없는 확신을 지어내지 않습니다.",
+  "landing.for_agents": "코딩 에이전트는 MCP로 직접 사용합니다. 공개 라이브러리 코드를 쓰기 전에 CodeSampleX에 먼저 묻고, 그 답으로 빌드가 됐는지 다시 보고합니다.",
+  "landing.how_heading": "동작 방식",
+  "meta.stats": "CodeSampleX 네트워크의 실시간 수치: 피어, 패키지, 심볼, 증거, 검증된 샘플 — 그리고 증거 파이프라인이 어떻게 동작하는지.",
+  "meta.adapters": "CodeSampleX가 지원하는 생태계와 지원 범위: 어댑터별 패키지 탐지, 빌드 관측, 심볼 해석, contract 검증.",
+  "meta.explore": "공개 패키지를 검색하고 실제 환경의 호환성 증거를 확인하세요: 실행 컨텍스트, 신뢰도, 실패 클러스터, 검증된 샘플."
 }

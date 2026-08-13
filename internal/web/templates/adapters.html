@@ -1,10 +1,40 @@
 {{define "content"}}
 <h1>{{.T "adapters.title"}}</h1>
-<p class="dim">{{.Doc.Description}}</p>
+<p class="lead">{{.Doc.Description}}</p>
 
-{{/* Legend first: A0…A4 mean nothing on their own, so the table below is
-     unreadable without it. Every level cell also carries the same text as
-     a tooltip. */}}
+{{/* A 10-column matrix of ✓/— is unreadable: the codes mean nothing on
+     their own and the row runs off narrow screens. One card per adapter
+     with every level spelled out reads top-to-bottom instead. */}}
+<div class="adapters">
+{{- range .Rows}}
+  <article class="adapter panel">
+    <header class="ahead">
+      <h2 class="mono">{{.Ecosystem}}</h2>
+      <span class="dim mono small">{{.Name}}@{{.Version}}</span>
+    </header>
+    <div class="pms">
+      {{- range .PackageManagers}}<span class="chip pm mono">{{.}}</span>{{end}}
+    </div>
+    <ul class="levels">
+      {{- range .Cells}}
+      <li class="level {{if .Supported}}on{{else}}off{{end}}">
+        <span class="mark" aria-hidden="true">{{if .Supported}}✓{{else}}—{{end}}</span>
+        <span class="lvlcode mono">{{.Code}}</span>
+        <span class="lvltext">{{.Meaning}}</span>
+        <span class="visually-hidden">{{.State}}</span>
+      </li>
+      {{- end}}
+    </ul>
+    <p class="conf">
+      <span class="dim small">{{$.T "adapters.conf_heading"}}</span>
+      <span class="chip conf-{{.ConfidenceClass}} mono" title="{{.ConfidenceTip}}">{{.SymbolConfidence}}</span>
+      <span class="small">{{.ConfidenceMeaning}}</span>
+    </p>
+    <p class="small dim notes">{{.Notes}}</p>
+  </article>
+{{- end}}
+</div>
+
 <section class="legend">
   <h2 class="eyebrow mono">{{.T "adapters.legend_heading"}}</h2>
   <div class="tablewrap">
@@ -29,29 +59,5 @@
   </div>
 </section>
 
-<div class="tablewrap">
-<table class="matrix">
-<thead><tr>
-  <th>{{.T "adapters.ecosystem"}}</th>
-  <th>{{.T "adapters.adapter"}}</th>
-  <th>{{.T "adapters.pms"}}</th>
-  {{range .LevelLegend}}<th class="num"><abbr class="lvl" title="{{.Code}} — {{.Meaning}}">{{.Code}}</abbr></th>{{end}}
-  <th>{{.T "adapters.symbol_confidence"}}</th>
-  <th>{{.T "adapters.notes"}}</th>
-</tr></thead>
-<tbody>
-{{- range .Rows}}
-<tr>
-  <td class="mono">{{.Ecosystem}}</td>
-  <td class="mono">{{.Name}}@{{.Version}}</td>
-  <td class="mono">{{range $i, $pm := .PackageManagers}}{{if $i}}, {{end}}{{$pm}}{{end}}</td>
-  {{range .Cells}}<td class="num"><span class="{{if .Supported}}y{{else}}dim{{end}}" title="{{.Tip}}">{{if .Supported}}✓{{else}}—{{end}}</span><span class="visually-hidden">{{.Tip}}</span></td>{{end}}
-  <td><abbr class="conf mono" title="{{.ConfidenceTip}}">{{.SymbolConfidence}}</abbr></td>
-  <td class="small">{{.Notes}}</td>
-</tr>
-{{- end}}
-</tbody>
-</table>
-</div>
-{{if .Doc.RuntimeInstrumentation}}<p class="dim small">{{.Doc.RuntimeInstrumentation}}</p>{{end}}
+{{if .Doc.RuntimeInstrumentation}}<p class="note">{{.Doc.RuntimeInstrumentation}}</p>{{end}}
 {{end}}

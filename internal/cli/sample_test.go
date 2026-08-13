@@ -124,6 +124,9 @@ func (f fakeVerifyRunner) Build(context.Context, string, domain.SampleManifest) 
 func (f fakeVerifyRunner) Contract(context.Context, string, domain.SampleManifest) sandbox.StageResult {
 	return sandbox.StageResult{Result: f.contract, Log: "fake contract"}
 }
+func (f fakeVerifyRunner) StageEnvironment(host domain.EnvironmentFingerprint, _ domain.SampleManifest) domain.EnvironmentFingerprint {
+	return host.Normalize()
+}
 
 func setVerifierSeams(t *testing.T, r sandbox.Runner, cap domain.SandboxCapability) {
 	t.Helper()

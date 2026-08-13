@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-dayjs-utc-format",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "dayjs": "1.11.19"
+  }
+}

@@ -50,6 +50,11 @@ func Run(
 		return zero, fmt.Errorf("verifier: hash sample: %w", err)
 	}
 
+	// The receipt must describe where the stages ran. Under CONTAINER_RUN
+	// that is the container (linux + the image runtime), not this host —
+	// otherwise a Windows machine would be credited with a linux result.
+	env = r.StageEnvironment(env, m)
+
 	resolve := r.Resolve(ctx, sampleDir, m)
 	var compile, contract sandbox.StageResult
 	switch {

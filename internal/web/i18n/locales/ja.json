@@ -123,5 +123,21 @@
   "adapters.supported": "対応",
   "adapters.not_supported": "非対応",
   "footer.github": "GitHub",
-  "footer.sponsor": "スポンサー"
+  "footer.sponsor": "スポンサー",
+  "landing.what_heading": "CodeSampleX とは？",
+  "landing.what_body": "コーディングアシスタントは毎日、同じ公開ライブラリの問題をゼロから解き直しています。ドキュメントを読み、API を推測し、インストールし、コンパイルに失敗し、バージョン差を推測して直し、成功し — そしてセッションが終わればすべて忘れます。CodeSampleX は覚えています。実際の開発環境で何が本当に動き、何が壊れたかを匿名の証拠として集め、検証済みの答えと自分の環境との差分をアシスタントに渡します。",
+  "landing.what_q": "axios 1.12 + Node 22 + pnpm + Windows 11 で axios.post は本当に動くのか。動かないならどの段階で壊れるのか。",
+  "landing.what_a": "公式ドキュメントには答えられません。無数の実環境からの証拠なら答えられます。",
+  "landing.value_heading": "得られるもの",
+  "landing.value_1_t": "すでに動いた答え",
+  "landing.value_1_b": "クリーンなサンドボックスで contract により検証された最小サンプルです。動くはずという断片ではありません。",
+  "landing.value_2_t": "自分の環境で採点",
+  "landing.value_2_b": "自分のバージョン・ランタイム・実行コンテキスト（Node、ブラウザ、WebView、Electron、ワーカー）に対して結果を格付けします。",
+  "landing.value_3_t": "失敗に正直",
+  "landing.value_3_b": "どこで壊れ、どれだけ頻繁かを示し、原因は確率として提示します。作り話の確信は述べません。",
+  "landing.for_agents": "コーディングエージェントは MCP から直接利用します。公開ライブラリのコードを書く前に CodeSampleX に尋ね、その答えでビルドが通ったかを報告します。",
+  "landing.how_heading": "動作の流れ",
+  "meta.stats": "CodeSampleX ネットワークのライブ数値: ピア、パッケージ、シンボル、証拠、検証済みサンプル — そして証拠パイプラインの仕組み。",
+  "meta.adapters": "CodeSampleX が対応するエコシステムとその範囲: アダプタごとのパッケージ検出、ビルド観測、シンボル解決、contract 検証。",
+  "meta.explore": "公開パッケージを検索し、実環境の互換性証拠を確認: 実行コンテキスト、信頼度、失敗クラスタ、検証済みサンプル。"
 }

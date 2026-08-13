@@ -15,6 +15,47 @@ func kindsFor(fs []Finding, file string) map[string]bool {
 	return out
 }
 
+// TestLeakageScanAllowsHonestSampleContent pins the three false positives
+// that blocked real, clean samples from ever being published: funding URLs
+// that npm writes into every lockfile, a localhost URL whose port is a
+// template placeholder, and an ordinary non-secret env assignment.
+func TestLeakageScanAllowsHonestSampleContent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package-lock.json", `{
+  "packages": {
+    "node_modules/qs": {"funding": {"url": "https://github.com/sponsors/ljharb"}},
+    "node_modules/express": {"funding": {"url": "https://opencollective.com/express"}},
+    "node_modules/axios": {"resolved": "https://registry.npmjs.org/axios/-/axios-1.12.2.tgz"}
+  }
+}`)
+	writeFile(t, dir, "contract.mjs", "const res = await fetch(`http://127.0.0.1:${port}/items`);\nprocess.env.TZ = 'Asia/Seoul';\nconst user = { email: 'dev@example.com' };\n")
+
+	fs, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("clean sample content flagged as leaks: %+v", fs)
+	}
+}
+
+// Secret-shaped env assignments must still be caught.
+func TestLeakageScanFlagsSecretEnvAssignment(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "boot.js", `process.env.API_TOKEN = "abc123";`)
+	writeFile(t, dir, "boot.py", `os.environ["DB_PASSWORD"] = "hunter2"`)
+
+	fs, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"boot.js", "boot.py"} {
+		if !kindsFor(fs, f)[KindEnvAssignment] {
+			t.Errorf("secret env assignment in %s not flagged: %+v", f, fs)
+		}
+	}
+}
+
 func TestLeakageScanFlagsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "aws.txt", "key=AKIAIOSFODNN7EXAMPLE")

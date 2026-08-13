@@ -123,5 +123,21 @@
   "adapters.supported": "unterstützt",
   "adapters.not_supported": "nicht unterstützt",
   "footer.github": "GitHub",
-  "footer.sponsor": "Sponsern"
+  "footer.sponsor": "Sponsern",
+  "landing.what_heading": "Was ist CodeSampleX?",
+  "landing.what_body": "Coding-Assistenten lösen täglich dieselben Probleme mit öffentlichen Bibliotheken neu: Doku lesen, API raten, installieren, Compile-Fehler, Versionsunterschied raten, korrigieren, Erfolg — und mit dem Sitzungsende ist alles vergessen. CodeSampleX merkt es sich. Es sammelt anonyme Belege darüber, was in echten Entwicklungsumgebungen wirklich funktioniert hat (und was brach), und gibt deinem Assistenten eine verifizierte Antwort samt exaktem Unterschied zu deinem Setup.",
+  "landing.what_q": "Funktioniert axios.post wirklich mit axios 1.12 + Node 22 + pnpm + Windows 11 — und wenn nicht, in welchem Schritt bricht es?",
+  "landing.what_a": "Die offizielle Doku kann das nicht beantworten. Belege von tausenden echten Rechnern schon.",
+  "landing.value_heading": "Was du bekommst",
+  "landing.value_1_t": "Antworten, die schon liefen",
+  "landing.value_1_b": "Minimale Samples, in einer sauberen Sandbox per Contract verifiziert — kein Schnipsel, von dem jemand hoffte, er funktioniere.",
+  "landing.value_2_t": "Für deine Umgebung bewertet",
+  "landing.value_2_b": "Jedes Ergebnis wird gegen deine Versionen, Runtime und Ausführungskontexte bewertet: Node, Browser, WebView, Electron, Worker.",
+  "landing.value_3_t": "Ehrlich beim Scheitern",
+  "landing.value_3_b": "Wo es brach, wie oft, und die wahrscheinliche Ursache als Wahrscheinlichkeit — nie eine erfundene Gewissheit.",
+  "landing.for_agents": "Dein Coding-Agent nutzt es direkt über MCP: Er fragt CodeSampleX, bevor er Code gegen eine öffentliche Bibliothek schreibt, und meldet zurück, ob die Antwort gebaut hat.",
+  "landing.how_heading": "So läuft es ab",
+  "meta.stats": "Live-Zahlen aus dem CodeSampleX-Netzwerk: Peers, Pakete, Symbole, Belege und verifizierte Samples — plus wie die Evidence-Pipeline arbeitet.",
+  "meta.adapters": "Welche Ökosysteme CodeSampleX unterstützt und wie weit: Paketerkennung, Build-Beobachtung, Symbolauflösung und Contract-Verifikation je Adapter.",
+  "meta.explore": "Öffentliche Pakete durchsuchen und echte Kompatibilitätsbelege sehen: Ausführungskontexte, Konfidenz, Fehlercluster und verifizierte Samples."
 }

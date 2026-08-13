@@ -34,6 +34,15 @@ func (f *fakeRunner) Contract(ctx context.Context, dir string, m domain.SampleMa
 	return f.contract
 }
 
+// StageEnvironment mirrors the container runner: stages run somewhere else
+// than the host, and the receipt must say so.
+func (f *fakeRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint {
+	env := host
+	env.OS = "linux"
+	env.ExecutionContext = "node"
+	return env.Normalize()
+}
+
 func allPassRunner() *fakeRunner {
 	return &fakeRunner{
 		resolve:  sandbox.StageResult{Result: sandbox.ResultPass, Log: "resolved 0 packages"},
@@ -115,8 +124,15 @@ func TestEngineAllPassReceipt(t *testing.T) {
 	if receipt.CaseID == "" {
 		t.Fatal("case id empty")
 	}
-	if receipt.EnvironmentHash != env.Hash() {
-		t.Fatal("environment hash mismatch")
+	// The receipt names where the stages ran (the runner's environment),
+	// not the host that launched them — self-consistently hashed.
+	wantEnv := r.StageEnvironment(env, testManifest())
+	if receipt.EnvironmentHash != wantEnv.Hash() || receipt.Environment.Hash() != wantEnv.Hash() {
+		t.Fatalf("receipt environment = %+v, want the runner's stage environment %+v",
+			receipt.Environment, wantEnv)
+	}
+	if receipt.Environment.OS == env.OS && env.OS != wantEnv.OS {
+		t.Error("receipt recorded the host OS for a containerised run")
 	}
 	if receipt.SandboxCapability != domain.CapContainerRun {
 		t.Fatalf("capability %s", receipt.SandboxCapability)

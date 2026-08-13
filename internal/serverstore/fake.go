@@ -639,15 +639,28 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 		c.Observations += f.merge.observations[k]
 	}
 	c.Symbols = int64(len(symbols))
-	for _, s := range f.samples {
-		if verifiedStatus(s.Status) {
+	for id, s := range f.samples {
+		if verifiedStatus(s.Status) || f.hasContractPass(id) {
 			c.VerifiedSamples++
 		}
 	}
 	return c, nil
 }
 
+// hasContractPass reports whether any receipt proved the sample's contract.
+func (f *Fake) hasContractPass(sampleID string) bool {
+	for _, r := range f.receipts[sampleID] {
+		if strings.EqualFold(r.ContractResult, "PASS") {
+			return true
+		}
+	}
+	return false
+}
+
 // verifiedStatus reports whether a sample status is CROSS_PASS or beyond.
+// A contract-PASS receipt counts as verified too (see NetworkCounts): the
+// status ladder is about independent reproduction, not about whether the
+// sample was ever proven to work.
 func verifiedStatus(status string) bool {
 	switch strings.ToUpper(status) {
 	case "CROSS_PASS", "MATRIX_PASS", "STABLE":

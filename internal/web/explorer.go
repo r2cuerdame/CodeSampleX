@@ -505,7 +505,7 @@ func (s *site) explore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := i18n.T(lang, "explore.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "site.meta_description"))
+	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
 	b.Canonical = s.base(r) + "/explore"
 	s.render(w, "explore", http.StatusOK, explorePage{
 		basePage: b, Query: q, Hits: hits, Hot: hot,
@@ -684,18 +684,23 @@ func loadAdapters() *adaptersDoc {
 	return adaptersCached
 }
 
-// levelCell is one A0…A4 cell: the glyph alone says nothing, so it carries
-// the level's meaning as a tooltip and as screen-reader text.
+// levelCell is one A0…A4 entry on an adapter card: the code alone says
+// nothing, so it carries the level's meaning and its state in words.
 type levelCell struct {
+	Code      string
 	Supported bool
+	Meaning   string
+	State     string // "supported" / "not supported", for screen readers
 	Tip       string
 }
 
 type adapterRow struct {
 	adapterEntry
-	Levels        []bool // aligned with AllCapabilityLevels
-	Cells         []levelCell
-	ConfidenceTip string
+	Levels            []bool // aligned with AllCapabilityLevels
+	Cells             []levelCell
+	ConfidenceTip     string
+	ConfidenceMeaning string
+	ConfidenceClass   string // exact | probable | unknown
 }
 
 // legendEntry is one row of the "how to read this table" legends.
@@ -751,16 +756,29 @@ func (s *site) adaptersPage(w http.ResponseWriter, r *http.Request) {
 			if has[i] {
 				state = yes
 			}
-			cells[i] = levelCell{Supported: has[i], Tip: lvl + " — " + levelLegend[i].Meaning + " (" + state + ")"}
+			cells[i] = levelCell{
+				Code:      lvl,
+				Supported: has[i],
+				Meaning:   levelLegend[i].Meaning,
+				State:     state,
+				Tip:       lvl + " — " + levelLegend[i].Meaning + " (" + state + ")",
+			}
 		}
-		tip := ""
-		if key, ok := confidenceKey[strings.ToUpper(a.SymbolConfidence)]; ok {
-			tip = a.SymbolConfidence + " — " + i18n.T(lang, key)
+		tip, meaning := "", ""
+		conf := strings.ToUpper(a.SymbolConfidence)
+		if key, ok := confidenceKey[conf]; ok {
+			meaning = i18n.T(lang, key)
+			tip = a.SymbolConfidence + " — " + meaning
 		}
-		rows = append(rows, adapterRow{adapterEntry: a, Levels: has, Cells: cells, ConfidenceTip: tip})
+		rows = append(rows, adapterRow{
+			adapterEntry: a, Levels: has, Cells: cells,
+			ConfidenceTip: tip, ConfidenceMeaning: meaning,
+			ConfidenceClass: strings.ToLower(conf),
+		})
 	}
 	title := i18n.T(lang, "adapters.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "site.meta_description"))
+	b := s.page(r, lang, title, i18n.T(lang, "meta.adapters"))
+	b.Canonical = s.base(r) + "/adapters"
 	s.render(w, "adapters", http.StatusOK, adaptersPageData{
 		basePage: b, Doc: doc, Rows: rows, Levels: AllCapabilityLevels,
 		LevelLegend: levelLegend, ConfidenceLegend: confLegend,

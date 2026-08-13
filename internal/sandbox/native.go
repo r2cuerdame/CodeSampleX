@@ -34,3 +34,9 @@ func (NativeRunner) Build(ctx context.Context, dir string, m domain.SampleManife
 func (NativeRunner) Contract(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
 	return skipped("contract skipped: COMPILE_ONLY capability — sample code does not run on the host")
 }
+
+// StageEnvironment is the host environment: without a container, the
+// resolve and build stages really did run here.
+func (NativeRunner) StageEnvironment(host domain.EnvironmentFingerprint, _ domain.SampleManifest) domain.EnvironmentFingerprint {
+	return host.Normalize()
+}

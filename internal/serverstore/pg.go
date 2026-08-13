@@ -922,8 +922,14 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages) t),
 				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
 				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
-				(SELECT COUNT(*) FROM samples
-					WHERE status IN ('CROSS_PASS','MATRIX_PASS','STABLE'))`, now,
+				-- "Verified" means a contract actually passed in a sandbox,
+				-- which is a receipt fact. Counting only CROSS_PASS+ reported
+				-- zero for every contract-verified sample still waiting for a
+				-- second peer, which reads as "nothing here works".
+				(SELECT COUNT(DISTINCT s.sample_id) FROM samples s
+					WHERE s.status IN ('CROSS_PASS','MATRIX_PASS','STABLE')
+					   OR EXISTS (SELECT 1 FROM receipts r
+					              WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS'))`, now,
 		).Scan(&c.Peers, &c.Packages, &c.Symbols, &c.Observations, &c.VerifiedSamples)
 	})
 	return c, err

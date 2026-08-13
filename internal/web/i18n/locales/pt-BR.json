@@ -123,5 +123,21 @@
   "adapters.supported": "suportado",
   "adapters.not_supported": "não suportado",
   "footer.github": "GitHub",
-  "footer.sponsor": "Apoiar"
+  "footer.sponsor": "Apoiar",
+  "landing.what_heading": "O que é o CodeSampleX?",
+  "landing.what_body": "Assistentes de programação resolvem todo dia os mesmos problemas de bibliotecas públicas: ler a documentação, adivinhar a API, instalar, falhar na compilação, adivinhar a diferença de versão, corrigir, acertar — e esquecer tudo quando a sessão acaba. O CodeSampleX lembra. Ele reúne evidências anônimas do que realmente funcionou (e do que quebrou) em ambientes de desenvolvimento reais e entrega ao seu assistente uma resposta verificada junto com a diferença exata para a sua configuração.",
+  "landing.what_q": "axios.post funciona mesmo com axios 1.12 + Node 22 + pnpm + Windows 11? E se não, em qual etapa quebra?",
+  "landing.what_a": "A documentação oficial não responde isso. Evidências de milhares de máquinas reais respondem.",
+  "landing.value_heading": "O que você ganha",
+  "landing.value_1_t": "Respostas que já rodaram",
+  "landing.value_1_b": "Amostras mínimas verificadas por um contrato em sandbox limpo — não um trecho que alguém torceu para funcionar.",
+  "landing.value_2_t": "Avaliadas para o seu ambiente",
+  "landing.value_2_b": "Cada resultado é classificado diante das suas versões, runtime e contexto de execução: Node, navegador, WebView, Electron, worker.",
+  "landing.value_3_t": "Honestas sobre falhas",
+  "landing.value_3_b": "Onde quebrou, com que frequência e a causa provável como probabilidade — nunca uma certeza inventada.",
+  "landing.for_agents": "Seu agente usa direto via MCP: pergunta ao CodeSampleX antes de escrever código com uma biblioteca pública e reporta se a resposta compilou.",
+  "landing.how_heading": "Como funciona",
+  "meta.stats": "Números ao vivo da rede CodeSampleX: peers, pacotes, símbolos, evidências e amostras verificadas — e como funciona o pipeline de evidências.",
+  "meta.adapters": "Quais ecossistemas o CodeSampleX suporta e até onde: detecção de pacotes, observação de builds, resolução de símbolos e verificação por contrato.",
+  "meta.explore": "Pesquise pacotes públicos e veja evidências reais de compatibilidade: contextos de execução, confiança, clusters de falha e amostras verificadas."
 }

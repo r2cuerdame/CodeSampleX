@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-zod-parse-validate",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "zod": "4.1.12"
+  }
+}

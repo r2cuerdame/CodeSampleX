@@ -154,6 +154,40 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
   border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0;
 }
 
+/* landing explainer ------------------------------------------------------ */
+.lead { font-size: 1.06rem; max-width: 62ch; }
+.what { margin-bottom: 2.2rem; }
+.qa {
+  margin: 1.1rem 0 0; padding: 0.9rem 1.1rem; border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 0 8px 8px 0;
+}
+.qa .q { margin: 0; font-weight: 600; }
+.qa .a { margin: 0.35rem 0 0; font-size: 0.93rem; }
+.values { margin-bottom: 2.2rem; }
+.values .col h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+.values .col p { margin: 0; font-size: 0.9rem; color: var(--dim); }
+
+/* adapter cards ---------------------------------------------------------- */
+.adapters { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); margin: 1.4rem 0 2.2rem; }
+.adapter { display: flex; flex-direction: column; gap: 0.7rem; }
+.ahead { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.ahead h2 { margin: 0; font-size: 1.05rem; color: var(--accent); }
+.pms { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.chip.pm { background: transparent; border: 1px solid var(--line); color: var(--dim); }
+.levels { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
+.level { display: grid; grid-template-columns: 1.1rem 2.2rem 1fr; gap: 0.5rem; align-items: baseline; font-size: 0.88rem; }
+.level .mark { text-align: center; }
+.level.on .mark { color: var(--ok); }
+.level.off { color: var(--dim); }
+.level.off .mark { color: var(--line); }
+.level .lvlcode { color: var(--accent); font-weight: 600; }
+.level.off .lvlcode { color: var(--dim); font-weight: 400; }
+.conf { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin: 0; }
+.chip.conf-exact { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.chip.conf-probable { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.chip.conf-unknown { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
+.adapter .notes { margin: 0; }
+
 /* adapters legend -------------------------------------------------------- */
 .legend { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); margin: 1.2rem 0 2rem; }
 .legendtable td { font-size: 0.9rem; }
