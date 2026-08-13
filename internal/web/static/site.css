@@ -180,7 +180,19 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .cap { display: inline-flex; gap: 0.3rem; align-items: baseline; font-size: 0.82rem; }
 .cap.off { color: var(--dim); }
 .network .chain { margin: 0.7rem 0 0; }
-.records .search { margin: 0 0 0.9rem; }
+
+/* records pager ---------------------------------------------------------- */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin-top: 1.4rem; padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.pagebtn {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.35rem 0.9rem; font-size: 0.85rem;
+}
+a.pagebtn:hover { border-color: var(--accent); text-decoration: none; }
+.pagebtn.off { color: var(--line); }
 
 /* adapter cards ---------------------------------------------------------- */
 .adapters { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); margin: 1.4rem 0 2.2rem; }

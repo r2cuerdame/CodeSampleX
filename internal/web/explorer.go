@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -498,44 +499,105 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 }
 
 // ---------------------------------------------------------------------------
-// Explore.
+// Records: everything the network has evidence for, searchable and paged.
 
-type explorePage struct {
+// recordsPerPage keeps the page readable. A dependency tree runs to
+// hundreds of packages, and a single unbounded list is unusable.
+const recordsPerPage = 40
+
+type recordsPage struct {
 	basePage
-	Query       string
-	Hits        []PackageHit
-	Hot         bool
-	Tiles       []statTile
-	GeneratedAt string
+	Query string
+	Hits  []PackageHit
+	Total int
+	// Page numbers are 1-based for the reader. RangeText and PageText are
+	// rendered here rather than in the template so the numbers get the
+	// locale's own grouping ("1–40 of 1,204").
+	Page, Pages        int
+	RangeText          string
+	PageText           string
+	PrevHref, NextHref string
 }
 
-func (s *site) explore(w http.ResponseWriter, r *http.Request) {
+// explorePage redirects the former URL; the page is now /records.
+func (s *site) explorePage(w http.ResponseWriter, r *http.Request) {
+	target := "/records"
+	if q := r.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	var hits []PackageHit
-	var err error
-	hot := q == ""
-	if hot {
-		hits, err = s.d.Store.HotPackages(r.Context(), 30)
-	} else {
-		hits, err = s.d.Store.SearchPackages(r.Context(), q, 30)
+	page := 1
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 1 {
+		page = p
 	}
+
+	hits, total, err := s.d.Store.RecordPackages(r.Context(), q, (page-1)*recordsPerPage, recordsPerPage)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
-	title := i18n.T(lang, "explore.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
-	b.Canonical = s.base(r) + "/explore"
-	st := s.loadStats(r)
-	generated := ""
-	if st != nil {
-		generated = st.GeneratedAt
+	pages := (total + recordsPerPage - 1) / recordsPerPage
+	if pages == 0 {
+		pages = 1
 	}
-	s.render(w, "explore", http.StatusOK, explorePage{
-		basePage: b, Query: q, Hits: hits, Hot: hot,
-		Tiles: buildTiles(lang, st), GeneratedAt: generated,
-	})
+	// A page number past the end is a stale link, not an error: show the
+	// last real page instead of an empty screen.
+	if page > pages {
+		http.Redirect(w, r, recordsHref(q, pages, lang), http.StatusFound)
+		return
+	}
+
+	from := (page-1)*recordsPerPage + 1
+	to := (page-1)*recordsPerPage + len(hits)
+	if total == 0 {
+		from = 0
+	}
+	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
+	view := recordsPage{
+		Query: q, Hits: hits, Total: total,
+		Page: page, Pages: pages,
+		RangeText: i18n.T(lang, "records.range", n(from), n(to), n(total)),
+		PageText:  i18n.T(lang, "records.page", n(page), n(pages)),
+	}
+	if page > 1 {
+		view.PrevHref = recordsHref(q, page-1, lang)
+	}
+	if page < pages {
+		view.NextHref = recordsHref(q, page+1, lang)
+	}
+
+	title := i18n.T(lang, "records.title") + " — CodeSampleX"
+	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
+	// One canonical URL for the record: paged and searched views are the
+	// same collection sliced differently, and indexing each slice
+	// separately would just split the page's signal.
+	b.Canonical = s.base(r) + "/records"
+	view.basePage = b
+	s.render(w, "records", http.StatusOK, view)
+}
+
+// recordsHref builds a /records link that keeps the query, page and
+// language the reader is on.
+func recordsHref(q string, page int, lang string) string {
+	v := url.Values{}
+	if q != "" {
+		v.Set("q", q)
+	}
+	if page > 1 {
+		v.Set("page", strconv.Itoa(page))
+	}
+	if lang != i18n.Default {
+		v.Set("lang", lang)
+	}
+	if len(v) == 0 {
+		return "/records"
+	}
+	return "/records?" + v.Encode()
 }
 
 // ---------------------------------------------------------------------------

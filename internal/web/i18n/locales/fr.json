@@ -146,5 +146,11 @@
   "support.samples": "échantillons vérifiés par contrat",
   "support.details": "Matrice complète des capacités",
   "support.none": "pas encore",
-  "landing.records_heading": "Paquets enregistrés"
+  "nav.records": "Registre",
+  "records.title": "Registre",
+  "records.intro": "Tous les paquets publics pour lesquels le réseau a des preuves, les mieux connus d'abord.",
+  "records.prev": "Précédent",
+  "records.next": "Suivant",
+  "records.page": "Page %s sur %s",
+  "records.range": "%s–%s sur %s"
 }

@@ -146,5 +146,11 @@
   "support.samples": "amostras verificadas por contrato",
   "support.details": "Matriz completa de capacidades",
   "support.none": "ainda não",
-  "landing.records_heading": "Pacotes registrados"
+  "nav.records": "Registros",
+  "records.title": "Registros",
+  "records.intro": "Todos os pacotes públicos com evidências na rede, os mais conhecidos primeiro.",
+  "records.prev": "Anterior",
+  "records.next": "Próxima",
+  "records.page": "Página %s de %s",
+  "records.range": "%s–%s de %s"
 }

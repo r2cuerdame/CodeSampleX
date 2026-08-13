@@ -146,5 +146,11 @@
   "support.samples": "带 contract 的已验证样本",
   "support.details": "完整能力矩阵",
   "support.none": "尚未支持",
-  "landing.records_heading": "已记录的包"
+  "nav.records": "记录",
+  "records.title": "记录",
+  "records.intro": "网络已有证据的全部公开包，按掌握信息多少排序。",
+  "records.prev": "上一页",
+  "records.next": "下一页",
+  "records.page": "第 %s 页，共 %s 页",
+  "records.range": "%s–%s，共 %s"
 }

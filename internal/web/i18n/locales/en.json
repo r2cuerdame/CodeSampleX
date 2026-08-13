@@ -146,5 +146,11 @@
   "support.samples": "verified samples with contracts",
   "support.details": "Full capability matrix",
   "support.none": "not yet",
-  "landing.records_heading": "Packages on record"
+  "nav.records": "Records",
+  "records.title": "Records",
+  "records.intro": "Every public package the network has evidence for, most-known-about first.",
+  "records.prev": "Previous",
+  "records.next": "Next",
+  "records.page": "Page %s of %s",
+  "records.range": "%s–%s of %s"
 }

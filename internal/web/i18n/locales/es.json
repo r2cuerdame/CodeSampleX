@@ -146,5 +146,11 @@
   "support.samples": "muestras verificadas con contrato",
   "support.details": "Matriz completa de capacidades",
   "support.none": "todavía no",
-  "landing.records_heading": "Paquetes registrados"
+  "nav.records": "Registros",
+  "records.title": "Registros",
+  "records.intro": "Todos los paquetes públicos con evidencia en la red, primero los más conocidos.",
+  "records.prev": "Anterior",
+  "records.next": "Siguiente",
+  "records.page": "Página %s de %s",
+  "records.range": "%s–%s de %s"
 }

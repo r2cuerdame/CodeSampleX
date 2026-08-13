@@ -33,27 +33,8 @@
   <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
 </section>
 
-{{/* What it has on file, and the way in by name. Separate from the
-     counters above: one is network health, this is the archive. */}}
-<section class="records">
-  <h2 class="eyebrow mono">{{.T "landing.records_heading"}}</h2>
-  <form class="search" action="/explore" method="get" role="search">
-    <input type="search" name="q" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
-    {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
-    <button type="submit">{{.T "explore.button"}}</button>
-  </form>
-  {{if .Hits}}
-  <ul class="pkglist">
-  {{- range .Hits}}
-    <li>
-      <a class="mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
-      {{if .LatestVersion}}<span class="dim mono">{{.LatestVersion}}</span>{{end}}
-      {{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "stats.evidence"}}</span>{{end}}
-    </li>
-  {{- end}}
-  </ul>
-  {{end}}
-</section>
+{{/* The record itself is a page of its own (searchable, paged): a
+     hundreds-long package list does not belong on the front page. */}}
 
 <section class="how">
   <h2 class="eyebrow mono">{{.T "landing.how_heading"}}</h2>

@@ -56,8 +56,11 @@ type Store interface {
 	SeederSamples(ctx context.Context, login string) ([]SampleListItem, error)
 	// SearchPackages searches packages by name fragment.
 	SearchPackages(ctx context.Context, q string, limit int) ([]PackageHit, error)
-	// HotPackages returns the highest-traffic packages for sitemap/landing use.
+	// HotPackages returns the highest-traffic packages for sitemap use.
 	HotPackages(ctx context.Context, limit int) ([]PackageHit, error)
+	// RecordPackages returns one ranked page of the packages the network
+	// has evidence for, plus the total so the page can be navigated.
+	RecordPackages(ctx context.Context, q string, offset, limit int) (hits []PackageHit, total int, err error)
 	// FailureClusters returns failure-cluster JSON documents for a package.
 	FailureClusters(ctx context.Context, ecosystem, name string) ([]string, error)
 }
@@ -129,7 +132,9 @@ func Register(mux *http.ServeMux, d Deps) {
 			s.landing(w, r, lang)
 		})
 	}
-	mux.HandleFunc("GET /explore", s.explore)
+	mux.HandleFunc("GET /records", s.records)
+	// /explore was the old name for the same page.
+	mux.HandleFunc("GET /explore", s.explorePage)
 	mux.HandleFunc("GET /stats", s.statsPage)
 	mux.HandleFunc("GET /adapters", s.adaptersPage)
 	mux.HandleFunc("GET /samples/{id}", s.samplePage)
@@ -151,7 +156,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "explore", "package", "version", "symbol",
+	pages := []string{"landing", "records", "package", "version", "symbol",
 		"sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

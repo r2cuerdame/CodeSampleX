@@ -141,10 +141,10 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.statsJSON, store.statsOK = string(produced), true
 
-	body := get(t, mux, "/explore").Body.String()
+	body := get(t, mux, "/").Body.String()
 	for _, want := range []string{"76", "312", "5", "4", "21"} { // 21 = 7 hits × 3
 		if !strings.Contains(body, want) {
-			t.Errorf("counter %q missing from /explore — page shows placeholders instead of the aggregator's numbers:\n%s",
+			t.Errorf("counter %q missing from the front page — page shows placeholders instead of the aggregator's numbers:\n%s",
 				want, truncate(body))
 		}
 	}
@@ -153,9 +153,9 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	}
 }
 
-// TestStatsPathRedirectsToExplore keeps old links and indexed URLs alive
-// after the counters moved onto the explorer.
-func TestStatsPathRedirectsToExplore(t *testing.T) {
+// TestStatsPathRedirects keeps old links and indexed URLs alive after
+// the counters moved onto the front page.
+func TestStatsPathRedirects(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/stats")
 	if rec.Code != http.StatusMovedPermanently {
@@ -244,23 +244,23 @@ func TestLandingRedirectBareLang(t *testing.T) {
 
 func TestLangQueryAndCookie(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	rec := get(t, mux, "/explore?lang=ko")
+	rec := get(t, mux, "/records?lang=ko")
 	body := rec.Body.String()
-	mustContain(t, body, "패키지 탐색")
+	mustContain(t, body, "기록")
 	if !strings.Contains(rec.Header().Get("Set-Cookie"), "csx_lang=ko") {
 		t.Errorf("missing lang cookie, got %q", rec.Header().Get("Set-Cookie"))
 	}
 	// Cookie alone selects the language on later requests.
-	rec2 := get(t, mux, "/explore", "Cookie", "csx_lang=ko")
-	mustContain(t, rec2.Body.String(), "패키지 탐색")
+	rec2 := get(t, mux, "/records", "Cookie", "csx_lang=ko")
+	mustContain(t, rec2.Body.String(), "기록")
 	// Accept-Language fallback.
-	rec3 := get(t, mux, "/explore", "Accept-Language", "ja,en;q=0.5")
-	mustContain(t, rec3.Body.String(), "パッケージ探索")
+	rec3 := get(t, mux, "/records", "Accept-Language", "ja,en;q=0.5")
+	mustContain(t, rec3.Body.String(), "記録")
 }
 
 func TestNetworkCountersEstimatedLabel(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/explore").Body.String()
+	body := get(t, mux, "/").Body.String()
 	mustContain(t, body, "Estimated reasoning avoided")
 	mustContain(t, body, "estimated")
 	mustContain(t, body, "1,204")
@@ -286,6 +286,7 @@ func TestSitemap(t *testing.T) {
 	mustContain(t, body, "<loc>https://codesamplex.dev/ko/</loc>")
 	mustContain(t, body, `hreflang="ja"`)
 	mustContain(t, body, "<loc>https://codesamplex.dev/npm/axios</loc>")
+	mustContain(t, body, "<loc>https://codesamplex.dev/records</loc>")
 	// Redirect-only paths stay out of the map.
 	for _, gone := range []string{"/adapters", "/stats"} {
 		if strings.Contains(body, "codesamplex.dev"+gone+"<") {

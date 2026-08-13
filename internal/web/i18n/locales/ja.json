@@ -146,5 +146,11 @@
   "support.samples": "contract で検証済みのサンプル",
   "support.details": "capability マトリクス全体",
   "support.none": "未対応",
-  "landing.records_heading": "記録済みパッケージ"
+  "nav.records": "記録",
+  "records.title": "記録",
+  "records.intro": "ネットワークが証拠を持つ公開パッケージの全件です。分かっていることが多い順に並びます。",
+  "records.prev": "前へ",
+  "records.next": "次へ",
+  "records.page": "%s / %s ページ",
+  "records.range": "%s–%s / 全 %s"
 }

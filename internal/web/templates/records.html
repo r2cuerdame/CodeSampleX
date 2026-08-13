@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>{{.T "records.title"}}</h1>
+<p class="dim">{{.T "records.intro"}}</p>
+
+<form class="search" action="/records" method="get" role="search">
+  <input type="search" name="q" value="{{.Query}}" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
+  {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+  <button type="submit">{{.T "explore.button"}}</button>
+</form>
+
+{{if .Hits}}
+<p class="dim mono small">{{.RangeText}}</p>
+<ul class="pkglist">
+{{- range .Hits}}
+  <li>
+    <a class="mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
+    {{if .LatestVersion}}<span class="dim mono">{{.LatestVersion}}</span>{{end}}
+    {{if .Symbols}}<span class="dim mono small">{{.Symbols}} · {{$.T "stats.symbols"}}</span>{{end}}
+    {{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "stats.evidence"}}</span>{{end}}
+  </li>
+{{- end}}
+</ul>
+
+{{if gt .Pages 1}}
+<nav class="pager" aria-label="{{.T "records.title"}}">
+  {{if .PrevHref}}<a class="pagebtn mono" href="{{.PrevHref}}" rel="prev">← {{.T "records.prev"}}</a>{{else}}<span class="pagebtn mono off">← {{.T "records.prev"}}</span>{{end}}
+  <span class="dim mono small">{{.PageText}}</span>
+  {{if .NextHref}}<a class="pagebtn mono" href="{{.NextHref}}" rel="next">{{.T "records.next"}} →</a>{{else}}<span class="pagebtn mono off">{{.T "records.next"}} →</span>{{end}}
+</nav>
+{{end}}
+
+{{else}}
+<p class="dim">{{.T "explore.none"}}</p>
+{{end}}
+{{end}}

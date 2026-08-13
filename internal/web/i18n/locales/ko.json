@@ -146,5 +146,11 @@
   "support.samples": "contract로 검증된 샘플",
   "support.details": "전체 capability 매트릭스",
   "support.none": "아직 미지원",
-  "landing.records_heading": "기록된 패키지"
+  "nav.records": "기록",
+  "records.title": "기록",
+  "records.intro": "네트워크가 증거를 가진 공개 패키지 전체입니다. 아는 것이 많은 순서로 표시됩니다.",
+  "records.prev": "이전",
+  "records.next": "다음",
+  "records.page": "%s / %s 페이지",
+  "records.range": "%s–%s / 전체 %s"
 }

@@ -73,6 +73,24 @@ func (f *fakeStore) HotPackages(_ context.Context, limit int) ([]PackageHit, err
 	return f.packages, nil
 }
 
+func (f *fakeStore) RecordPackages(_ context.Context, q string, offset, limit int) ([]PackageHit, int, error) {
+	var all []PackageHit
+	for _, p := range f.packages {
+		if q == "" || strings.Contains(p.Name, q) {
+			all = append(all, p)
+		}
+	}
+	total := len(all)
+	if offset >= total {
+		return nil, total, nil
+	}
+	all = all[offset:]
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) ([]string, error) {
 	return f.clusters[ecosystem+"|"+name], nil
 }

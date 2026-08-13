@@ -156,10 +156,28 @@ func manifestGoal(manifestJSON string) string {
 	return ""
 }
 
-// packageHits groups evidence-bearing snapshot targets into package rows.
-// Only packages with real evidence appear — which is exactly what the
-// explorer should surface.
+// packageHits groups evidence-bearing snapshot targets into package rows,
+// ranked by how much the network actually knows about each one.
+//
+// Ranking matters more than it sounds: a dependency tree is mostly
+// transitive packages nobody looks up (accepts, asynckit, bytes …), and
+// returning them in discovery order buried axios and express under an
+// alphabetical wall of noise.
 func (w *webStore) packageHits(ctx context.Context, filter func(p domain.PURL) bool, limit int) ([]web.PackageHit, error) {
+	all, err := w.rankedPackages(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+// rankedPackages returns every matching package, most-known-about first:
+// symbols with evidence, then raw evidence count, then name for a stable
+// order.
+func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL) bool) ([]web.PackageHit, error) {
 	targets, err := w.s.ListSnapshotTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -169,7 +187,6 @@ func (w *webStore) packageHits(ctx context.Context, filter func(p domain.PURL) b
 		symbols map[string]bool
 	}
 	byPkg := map[string]*agg{}
-	order := []string{}
 	for _, t := range targets {
 		p, err := domain.ParsePURL(t.PURL)
 		if err != nil || (filter != nil && !filter(p)) {
@@ -180,7 +197,6 @@ func (w *webStore) packageHits(ctx context.Context, filter func(p domain.PURL) b
 		if !ok {
 			a = &agg{hit: web.PackageHit{Ecosystem: p.Ecosystem, Name: p.Name, LatestVersion: p.Version}, symbols: map[string]bool{}}
 			byPkg[key] = a
-			order = append(order, key)
 		}
 		if p.Version > a.hit.LatestVersion {
 			a.hit.LatestVersion = p.Version
@@ -190,16 +206,45 @@ func (w *webStore) packageHits(ctx context.Context, filter func(p domain.PURL) b
 		}
 		a.hit.EvidenceCount++
 	}
-	var out []web.PackageHit
-	for _, key := range order {
-		a := byPkg[key]
+	out := make([]web.PackageHit, 0, len(byPkg))
+	for _, a := range byPkg {
 		a.hit.Symbols = len(a.symbols)
 		out = append(out, a.hit)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbols != out[j].Symbols {
+			return out[i].Symbols > out[j].Symbols
+		}
+		if out[i].EvidenceCount != out[j].EvidenceCount {
+			return out[i].EvidenceCount > out[j].EvidenceCount
+		}
+		if out[i].Ecosystem != out[j].Ecosystem {
+			return out[i].Ecosystem < out[j].Ecosystem
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
+}
+
+// RecordPackages returns one page of the record, ranked, with the total
+// so the page can say where the reader is.
+func (w *webStore) RecordPackages(ctx context.Context, q string, offset, limit int) ([]web.PackageHit, int, error) {
+	q = strings.ToLower(strings.TrimSpace(q))
+	all, err := w.rankedPackages(ctx, func(p domain.PURL) bool {
+		return q == "" || strings.Contains(strings.ToLower(p.Name), q)
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(all)
+	if offset >= total {
+		return nil, total, nil
+	}
+	all = all[offset:]
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
 }
 
 func (w *webStore) SearchPackages(ctx context.Context, q string, limit int) ([]web.PackageHit, error) {

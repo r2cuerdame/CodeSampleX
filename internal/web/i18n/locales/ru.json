@@ -146,5 +146,11 @@
   "support.samples": "образцы, проверенные контрактом",
   "support.details": "Полная матрица возможностей",
   "support.none": "пока нет",
-  "landing.records_heading": "Пакеты в записях"
+  "nav.records": "Записи",
+  "records.title": "Записи",
+  "records.intro": "Все публичные пакеты, по которым у сети есть свидетельства — сначала самые изученные.",
+  "records.prev": "Назад",
+  "records.next": "Вперёд",
+  "records.page": "Страница %s из %s",
+  "records.range": "%s–%s из %s"
 }

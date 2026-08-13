@@ -146,5 +146,11 @@
   "support.samples": "per Contract verifizierte Samples",
   "support.details": "Vollständige Capability-Matrix",
   "support.none": "noch nicht",
-  "landing.records_heading": "Erfasste Pakete"
+  "nav.records": "Aufzeichnungen",
+  "records.title": "Aufzeichnungen",
+  "records.intro": "Alle öffentlichen Pakete, zu denen das Netzwerk Belege hat — die bestbelegten zuerst.",
+  "records.prev": "Zurück",
+  "records.next": "Weiter",
+  "records.page": "Seite %s von %s",
+  "records.range": "%s–%s von %s"
 }
