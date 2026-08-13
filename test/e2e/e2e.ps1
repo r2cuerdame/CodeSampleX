@@ -9,7 +9,9 @@ $server = "http://localhost:8089"
 $results = [ordered]@{}
 $evidence = [System.Collections.ArrayList]@()
 
-function Log($msg) { Write-Output ("[e2e] " + $msg) }
+# Log writes straight to the console: Write-Output here would leak into the
+# return value of every function that logs (silently breaking Wait-Until).
+function Log($msg) { [Console]::Out.WriteLine("[e2e] " + $msg) }
 function Note($msg) { [void]$evidence.Add($msg); Log $msg }
 
 function Wait-Until([scriptblock]$Cond, [int]$TimeoutSec, [string]$What) {
@@ -61,11 +63,47 @@ if (-not (Wait-Until { (Invoke-WebRequest -Uri "$server/healthz" -UseBasicParsin
 Note "server healthy at $server"
 
 $home1 = Join-Path $tmp "home1"; $home2 = Join-Path $tmp "home2"
-foreach ($h in @($home1, $home2)) {
-    $r = Invoke-Csx $h @("init", "--community", "--yes", "--server", $server)
-    if ($r.exit -ne 0) { throw "csx init failed for ${h}: $($r.out)" }
+$port1 = 48619; $port2 = 48719
+foreach ($h in @(@{home = $home1; port = $port1 }, @{home = $home2; port = $port2 })) {
+    $r = Invoke-Csx $h.home @("init", "--community", "--yes", "--server", $server)
+    if ($r.exit -ne 0) { throw "csx init failed for $($h.home): $($r.out)" }
+    # Two peers on one machine need distinct daemon ports.
+    [void](Invoke-Csx $h.home @("config", "set", "daemonPort", "$($h.port)"))
 }
-Note "two community peers initialized (home1, home2)"
+Note "two community peers initialized (home1:$port1, home2:$port2)"
+
+# Starts `csx daemon run` for a home and returns @{job; base} once the
+# daemon has published its live address.
+function Start-Daemon([string]$CsxHome) {
+    # NB: never name a job parameter $home — PowerShell's $HOME is read-only
+    # and the assignment kills the job before it runs.
+    $job = Start-Job -ScriptBlock {
+        param($csx, $csxHome)
+        $env:CSX_HOME = $csxHome
+        & $csx daemon run 2>&1
+    } -ArgumentList $script:csx, $CsxHome
+    $addrPath = Join-Path $CsxHome "daemon.addr"
+    $base = $null
+    if (Wait-Until { Test-Path $addrPath } 60 "daemon.addr for $CsxHome") {
+        $addr = (Get-Content $addrPath -Raw).Trim()
+        $base = "http://$addr"
+        if (-not (Wait-Until { (Get-Json "$base/local/v1/status") -ne $null } 30 "daemon status at $base")) {
+            Log "daemon at $base never answered; job output:"
+            Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 15 | ForEach-Object { Log "  $_" }
+            $base = $null
+        }
+    } else {
+        Log "daemon for $CsxHome never published an address; job output:"
+        Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 15 | ForEach-Object { Log "  $_" }
+    }
+    return @{ job = $job; base = $base }
+}
+
+function Stop-Daemon($d) {
+    if ($d.base) { try { Invoke-RestMethod -Method Post -Uri "$($d.base)/local/v1/shutdown" -TimeoutSec 5 | Out-Null } catch {} }
+    Start-Sleep -Seconds 2
+    if ($d.job) { Stop-Job $d.job -ErrorAction SilentlyContinue; Remove-Job $d.job -Force -ErrorAction SilentlyContinue }
+}
 
 $proj = Join-Path $tmp "proj"
 Copy-Item -Recurse (Join-Path $PSScriptRoot "fixtures\npmproj") $proj
@@ -123,16 +161,13 @@ try {
 
     # Peer 2 cross-verifies via its daemon's verification loop (unlimited budget).
     [void](Invoke-Csx $home2 @("config", "set", "idleVerification", "unlimited"))
-    $daemon2 = Start-Job -ScriptBlock {
-        param($csx, $home)
-        $env:CSX_HOME = $home
-        & $csx daemon run 2>&1
-    } -ArgumentList $script:csx, $home2
+    $daemon2 = Start-Daemon $home2
+    if (-not $daemon2.base) { throw "peer 2 daemon did not start" }
     $ok = Wait-Until {
         $s = Get-Json "$server/v1/samples/$sampleId"
         $s -and ($s.status -in @("CROSS_PASS", "MATRIX_PASS", "STABLE"))
     } 240 "sample reaches CROSS_PASS"
-    Stop-Job $daemon2 -ErrorAction SilentlyContinue; Remove-Job $daemon2 -Force -ErrorAction SilentlyContinue
+    Stop-Daemon $daemon2
     $final = Get-Json "$server/v1/samples/$sampleId"
     Note ("D: final sample status = " + $final.status)
     if ($ok) { $results["D - sample contribution + cross verify"] = "PASS" } else { $results["D - sample contribution + cross verify"] = "FAIL" }
@@ -150,20 +185,15 @@ try {
     Note ("C: search HIT grade=" + $js.results[0].match + " sample=" + $js.results[0].sampleId)
 
     # Adoption via the daemon local API.
-    $daemon1 = Start-Job -ScriptBlock {
-        param($csx, $home)
-        $env:CSX_HOME = $home
-        & $csx daemon run 2>&1
-    } -ArgumentList $script:csx, $home1
-    $port = 48619
-    $up = Wait-Until { (Get-Json "http://127.0.0.1:$port/local/v1/status") -ne $null } 45 "daemon1 status"
-    if (-not $up) { throw "daemon1 did not come up" }
+    $daemon1 = Start-Daemon $home1
+    if (-not $daemon1.base) { throw "daemon1 did not come up" }
     $body = @{ sampleId = $script:sampleId; applied = $true; buildPass = $true } | ConvertTo-Json
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/local/v1/adoption" -Body $body -ContentType "application/json" | Out-Null
-    $stats = Get-Json "http://127.0.0.1:$port/local/v1/stats"
-    try { Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/local/v1/shutdown" | Out-Null } catch {}
-    Stop-Job $daemon1 -ErrorAction SilentlyContinue; Remove-Job $daemon1 -Force -ErrorAction SilentlyContinue
-    Note "C: adoption reported, local stats returned"
+    Invoke-RestMethod -Method Post -Uri "$($daemon1.base)/local/v1/adoption" -Body $body -ContentType "application/json" -TimeoutSec 15 | Out-Null
+    $stats = Get-Json "$($daemon1.base)/local/v1/stats"
+    $queue = Get-Json "$($daemon1.base)/local/v1/queue"
+    Stop-Daemon $daemon1
+    if ($null -eq $stats) { throw "daemon stats unavailable" }
+    Note "C: adoption reported; local stats + privacy preview served by daemon"
     $results["C - search + reuse"] = "PASS"
 } catch { Note ("C: EXCEPTION " + $_); $results["C - search + reuse"] = "FAIL" }
 
