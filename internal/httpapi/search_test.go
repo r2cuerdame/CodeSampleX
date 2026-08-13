@@ -238,3 +238,52 @@ func TestShardETagAnd304(t *testing.T) {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
+
+// TestSearchRejectsPackageOnlyRelevance pins the wrong-HIT reproduced on
+// production: POST /v1/search with "how to bake a chocolate cake" and
+// google/uuid in the request returned the UUID sample as MATCH: EXACT at
+// score 0.84. Naming any package scored 0.35 by itself — past
+// noSafeMatchThreshold before the ×3 verification multiplier — and the
+// relevance guard only ran when NO package was given.
+func TestSearchRejectsPackageOnlyRelevance(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+
+	manifest := testManifest()
+	manifest.Case.Goal = "Generate, parse and validate a UUID in Go with google/uuid"
+	manifest.Case.Packages = []string{"pkg:npm/axios@1.12.0"}
+	if err := store.SaveSample(t.Context(), serverstore.SampleRow{
+		SampleID:     "sha256:" + strings.Repeat("ee", 32),
+		ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+		Status:       "MATRIX_PASS", // strongest multiplier: the worst case
+		License:      "MIT-0", SizeBytes: 512, CreatedAt: testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ask := func(query string) (bool, string) {
+		var resp struct {
+			Miss    bool `json:"miss"`
+			Results []struct {
+				Grade string  `json:"match"`
+				Score float64 `json:"score"`
+			} `json:"results"`
+		}
+		postJSON(t, srv.URL+"/v1/search", map[string]any{
+			"schemaVersion": 1, "query": query,
+			"packages":    []string{"pkg:npm/axios@1.12.0"},
+			"environment": nodeEnv("esm"),
+		}, &resp)
+		if resp.Miss || len(resp.Results) == 0 {
+			return true, ""
+		}
+		return false, resp.Results[0].Grade
+	}
+
+	if miss, grade := ask("how to bake a chocolate cake"); !miss {
+		t.Errorf("unrelated query hit on package overlap alone (grade %s)", grade)
+	}
+	// The same sample must still answer a question it is actually about.
+	if miss, _ := ask("validate a uuid"); miss {
+		t.Error("the relevance gate also blocked an on-topic query")
+	}
+}

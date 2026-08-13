@@ -146,6 +146,24 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 		return domain.SearchResult{}, false
 	}
 
+	// A package in the caller's dependency tree says the sample is about
+	// the right library, never that it answers the question. Naming any
+	// package scored 0.35 on its own — past noSafeMatchThreshold before the
+	// ×3 verification multiplier — so "how to bake a chocolate cake" with
+	// google/uuid in go.mod came back as MATCH: EXACT at 0.84. The
+	// relevance guard above only ran when NO package was given, which is
+	// the case that needed it least. Sharing no content word with the
+	// sample is a miss (goal.md §3.8), unless the caller's own error
+	// fingerprint or code matched — that is direct evidence of relevance
+	// whatever the prose says.
+	text := searchText(manifest)
+	codeMatched := req.ErrorCode != "" &&
+		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorCode))
+	if req.ErrorFingerprint == "" && !codeMatched &&
+		sharedContentTokens(req.Query, text) == 0 {
+		return domain.SearchResult{}, false
+	}
+
 	// Environment fit + delta (execution context is ALWAYS sensitive).
 	sampleEnv := manifest.Environment.Normalize()
 	delta := envDelta(reqEnv, sampleEnv, matched, reqVersion)
@@ -601,4 +619,36 @@ func tokens(s string) []string {
 		}
 	}
 	return out
+}
+
+// searchStopWords are ignored when judging what a question is ABOUT.
+// Counting them let "how to bake a chocolate cake" overlap the goal
+// "…validate a UUID in Go…" on the word "a", which is not a topic in
+// common. Mirrors internal/search so the client and the API agree on what
+// counts as relevant.
+var searchStopWords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true,
+	"how": true, "why": true, "what": true, "when": true, "does": true,
+	"can": true, "you": true, "your": true, "this": true, "that": true,
+	"into": true, "out": true, "not": true, "but": true, "get": true,
+	"use": true, "using": true, "make": true, "want": true, "need": true,
+	"there": true, "here": true, "some": true, "any": true, "all": true,
+}
+
+// sharedContentTokens counts the topic words a query and a sample have in
+// common, ignoring stop words and anything shorter than three letters.
+func sharedContentTokens(query, text string) int {
+	have := map[string]bool{}
+	for _, t := range tokens(text) {
+		if len(t) >= 3 && !searchStopWords[t] {
+			have[t] = true
+		}
+	}
+	shared := 0
+	for _, t := range tokens(query) {
+		if len(t) >= 3 && !searchStopWords[t] && have[t] {
+			shared++
+		}
+	}
+	return shared
 }
