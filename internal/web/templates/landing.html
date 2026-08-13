@@ -1,67 +1,42 @@
 {{define "content"}}
+{{/* One block does the opening: what this is, how to get it, and why it is
+     worth having. The page used to say the same thing four times — a
+     what-paragraph, three value cards, five steps and a flywheel line. */}}
 <section class="hero">
   <p class="eyebrow mono">CodeSampleX</p>
   <h1 class="tagline mono">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
-</section>
-
-{{/* The tagline alone does not tell a first-time visitor what this is. */}}
-<section class="what">
-  <h2 class="eyebrow mono">{{.T "landing.what_heading"}}</h2>
   <p class="lead">{{.T "landing.what_body"}}</p>
-  <blockquote class="qa">
-    <p class="q">{{.T "landing.what_q"}}</p>
-    <p class="a dim">{{.T "landing.what_a"}}</p>
-  </blockquote>
-</section>
 
-<section class="values">
-  <h2 class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
-  <div class="cols">
-    <div class="col panel"><h3>{{.T "landing.value_1_t"}}</h3><p>{{.T "landing.value_1_b"}}</p></div>
-    <div class="col panel"><h3>{{.T "landing.value_2_t"}}</h3><p>{{.T "landing.value_2_b"}}</p></div>
-    <div class="col panel"><h3>{{.T "landing.value_3_t"}}</h3><p>{{.T "landing.value_3_b"}}</p></div>
+  <div id="install" class="install">
+    <div class="cmd">
+      <span class="oslabel">{{.T "landing.install_windows"}}</span>
+      <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
+    </div>
+    <div class="cmd">
+      <span class="oslabel">{{.T "landing.install_unix"}}</span>
+      <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
+    </div>
+    <p class="dim small">{{.T "landing.install_note"}}</p>
   </div>
+
+  <ul class="claims">
+    <li><strong>{{.T "landing.value_1_t"}}</strong><span class="dim">{{.T "landing.value_1_b"}}</span></li>
+    <li><strong>{{.T "landing.value_2_t"}}</strong><span class="dim">{{.T "landing.value_2_b"}}</span></li>
+    <li><strong>{{.T "landing.value_3_t"}}</strong><span class="dim">{{.T "landing.value_3_b"}}</span></li>
+  </ul>
 </section>
 
-<section class="how">
-  <h2 class="eyebrow mono">{{.T "landing.how_heading"}}</h2>
-  <ol class="howsteps">
-    <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
-  </ol>
-  <p class="note">{{.T "landing.for_agents"}}</p>
-</section>
-
-<section id="install" class="install panel">
-  <h2 class="eyebrow mono">{{.T "landing.install_heading"}}</h2>
-  <div class="cmd">
-    <span class="oslabel">{{.T "landing.install_windows"}}</span>
-    <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
-  </div>
-  <div class="cmd">
-    <span class="oslabel">{{.T "landing.install_unix"}}</span>
-    <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
-  </div>
-  <p class="dim">{{.T "landing.install_note"}}</p>
-</section>
-
-{{/* The map itself, on the front page: the numbers, a way in by name, and
-     what the network actually knows right now. A separate explorer tab was
-     one more click to the same two things. */}}
+{{/* The map itself: what the network knows right now, and a way into it. */}}
 <section class="network">
   <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
   {{template "tiles" .}}
-  {{if .GeneratedAt}}<p class="dim mono small">{{.GeneratedAt}}</p>{{end}}
+  <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
   <form class="search" action="/explore" method="get" role="search">
     <input type="search" name="q" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
     {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
     <button type="submit">{{.T "explore.button"}}</button>
   </form>
   {{if .Hits}}
-  <h3 class="eyebrow mono">{{.T "explore.hot"}}</h3>
   <ul class="pkglist">
   {{- range .Hits}}
     <li>
@@ -74,31 +49,39 @@
   {{end}}
 </section>
 
-{{/* Support at a glance: what the network can see in each ecosystem, said
-     in words. The A0–A4 matrix lives on /adapters for whoever wants it. */}}
+<section class="how">
+  <h2 class="eyebrow mono">{{.T "landing.how_heading"}}</h2>
+  <p class="q">{{.T "landing.what_q"}}<span class="a dim"> {{.T "landing.what_a"}}</span></p>
+  <ol class="howsteps">
+    <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
+    <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
+  </ol>
+  <p class="note">{{.T "landing.for_agents"}}</p>
+</section>
+
+{{/* Support in words, one row per ecosystem. The A0–A4 matrix lives on
+     /adapters for whoever wants that level of detail. */}}
 {{if .Support}}
 <section class="support">
   <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
-  <div class="ecos">
+  <ul class="ecos">
   {{- range .Support}}
-    <div class="eco panel">
-      <h3 class="mono">{{.Ecosystem}}</h3>
-      <p class="dim mono small">{{.Managers}}</p>
-      <ul>
-        {{- range .Can}}<li><span class="y" aria-hidden="true">✓</span>{{.}}</li>{{end}}
-        {{- range .Missing}}<li class="off"><span class="n" aria-hidden="true">✕</span>{{.}} <span class="dim small">({{$.T "support.none"}})</span></li>{{end}}
-      </ul>
-    </div>
+    <li class="eco">
+      <span class="econame mono">{{.Ecosystem}}</span>
+      <span class="dim mono small">{{.Managers}}</span>
+      <span class="caps">
+        {{- range .Can}}<span class="cap on"><span class="y" aria-hidden="true">✓</span>{{.}}</span>{{end}}
+        {{- range .Missing}}<span class="cap off"><span class="n" aria-hidden="true">✕</span>{{.}}</span>{{end}}
+      </span>
+    </li>
   {{- end}}
-  </div>
+  </ul>
   <p class="dim small"><a href="{{.WithLang "/adapters"}}">{{.T "support.details"}} →</a></p>
 </section>
 {{end}}
-
-<section class="flywheel">
-  <h2 class="eyebrow mono">{{.T "landing.flywheel_heading"}}</h2>
-  <p class="chain mono">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}</p>
-</section>
 
 <section class="contract">
   <h2 class="eyebrow mono">{{.T "contract.heading"}}</h2>
