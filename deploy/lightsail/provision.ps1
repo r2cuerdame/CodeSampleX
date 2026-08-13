@@ -18,12 +18,22 @@ Write-Output "Using bundle $bundle (`$$($bundles[0].price)/mo) in $Region"
 $az = (aws lightsail get-regions --include-availability-zones --region $Region --query "regions[?name=='$Region'].availabilityZones[0].zoneName" --output text)
 if (-not $az -or $az -eq "None") { $az = "${Region}a" }
 
+# file:// lets the AWS CLI load the script verbatim — inlining the content
+# breaks on PowerShell quoting of $(...) inside userdata.
+$userdataUri = "file://" + ((Join-Path $PSScriptRoot "userdata.sh") -replace '\\', '/')
 aws lightsail create-instances --region $Region --instance-names $Name `
     --availability-zone $az --blueprint-id $Blueprint --bundle-id $bundle `
-    --user-data (Get-Content -Raw (Join-Path $PSScriptRoot "userdata.sh"))
+    --user-data $userdataUri
+if (-not $?) { throw "create-instances failed" }
 
 Write-Output "Waiting for instance to run..."
-do { Start-Sleep 10; $state = aws lightsail get-instance --region $Region --instance-name $Name --query "instance.state.name" --output text } while ($state -ne "running")
+$tries = 0
+do {
+    Start-Sleep 10
+    $state = aws lightsail get-instance --region $Region --instance-name $Name --query "instance.state.name" --output text 2>$null
+    $tries++
+    if ($tries -gt 40) { throw "instance $Name did not reach running state" }
+} while ($state -ne "running")
 
 # Static IP + firewall: 22 (SSH), 80/443 (Caddy).
 aws lightsail allocate-static-ip --region $Region --static-ip-name "$Name-ip" 2>$null

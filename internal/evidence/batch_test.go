@@ -1,0 +1,260 @@
+package evidence
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+)
+
+func communityCfg(serverURL string) *config.Config {
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = serverURL
+	return cfg
+}
+
+func TestDrainBuildsBatchesAndMarksUploadedAtomically(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	if err := rec.RecordRun(ctx, dir, fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+
+	batches, err := b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("want 2 batches, got %d", len(batches))
+	}
+
+	epoch := time.Now().UTC().Format("2006-01-02")
+	month := time.Now().UTC().Format("2006-01")
+	abs, _ := filepath.Abs(dir)
+	wantBucket := ident.ProjectBucket(abs, month)
+	wantEnvHash := testEnvFP().Hash()
+	for _, batch := range batches {
+		if batch.SchemaVersion != 1 {
+			t.Errorf("schemaVersion = %d", batch.SchemaVersion)
+		}
+		if batch.AnonID != ident.AnonID(epoch) {
+			t.Errorf("anonId = %q, want %q", batch.AnonID, ident.AnonID(epoch))
+		}
+		if batch.ProjectBucket != wantBucket {
+			t.Errorf("projectBucket = %q, want %q", batch.ProjectBucket, wantBucket)
+		}
+		if batch.Package != "pkg:npm/axios@1.12.0" {
+			t.Errorf("package = %q", batch.Package)
+		}
+		if batch.Environment.Hash() != wantEnvHash {
+			t.Errorf("environment hash mismatch: %q != %q", batch.Environment.Hash(), wantEnvHash)
+		}
+		if batch.ObservationCount != 1 {
+			t.Errorf("observationCount = %d, want 1", batch.ObservationCount)
+		}
+		if batch.Symbol == "" && batch.SymbolConfidence != "" {
+			t.Errorf("package-level batch carries symbolConfidence %q", batch.SymbolConfidence)
+		}
+	}
+
+	// Re-drain: nothing new until new observations arrive.
+	again, err := b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("re-Drain: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("re-drain returned %d batches, want 0", len(again))
+	}
+
+	// A later increment re-pends the rows carrying the FULL epoch count.
+	if err := rec.RecordRun(ctx, dir, fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun again: %v", err)
+	}
+	batches, err = b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("Drain after increment: %v", err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("want 2 re-pended batches, got %d", len(batches))
+	}
+	for _, batch := range batches {
+		if batch.ObservationCount != 2 {
+			t.Errorf("re-send observationCount = %d, want full epoch count 2", batch.ObservationCount)
+		}
+	}
+}
+
+func TestUploadPostsBatchesWithoutAnyPathLikeStrings(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	dir := t.TempDir()
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(raw))
+		mu.Unlock()
+		if r.URL.Path != "/v1/evidence/batches" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, `{"accepted":1,"rejected":[]}`)
+	}))
+	defer srv.Close()
+
+	cfg := communityCfg(srv.URL)
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+
+	// A failing run whose stderr is full of identifying material.
+	stderrTail := `C:\Users\someone\secret-project\src\app.ts(3,7): error TS2345: boom` + "\n" +
+		`    at /home/someone/secret-project/node_modules/corp-secret-lib/index.js:10`
+	profile := knownProfile()
+	if err := rec.RecordRun(ctx, dir, fakeScanResult(), profile, 1, stderrTail); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+
+	n, err := b.Upload(ctx, srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("uploaded %d batches, want 2", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 1 {
+		t.Fatalf("server saw %d requests, want 1", len(bodies))
+	}
+	body := bodies[0]
+
+	var payload struct {
+		Batches []domain.ObservationBatch `json:"batches"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if len(payload.Batches) != 2 {
+		t.Fatalf("payload has %d batches, want 2", len(payload.Batches))
+	}
+	for _, batch := range payload.Batches {
+		if batch.Result != domain.ResultFail || batch.ErrorCode != "TS2345" {
+			t.Errorf("batch result/code = %s/%s", batch.Result, batch.ErrorCode)
+		}
+		if !strings.HasPrefix(batch.ErrorFingerprint, "sha256:") {
+			t.Errorf("errorFingerprint = %q", batch.ErrorFingerprint)
+		}
+	}
+
+	// Privacy: no path-like strings, usernames, or private package names.
+	pathLike := regexp.MustCompile(`[A-Za-z]:[\\/]|/home/|/Users/|node_modules`)
+	if pathLike.MatchString(body) {
+		t.Errorf("payload contains path-like string:\n%s", body)
+	}
+	for _, banned := range []string{"corp-secret-lib", "maybe-internal", "secret-project", "someone", dir, abs2(dir)} {
+		if banned != "" && strings.Contains(body, banned) {
+			t.Errorf("payload contains %q:\n%s", banned, body)
+		}
+	}
+
+	// Everything got marked: nothing pending, second upload posts nothing.
+	if rows := pendingRows(t, db); len(rows) != 0 {
+		t.Fatalf("rows still pending after successful upload: %+v", rows)
+	}
+	n, err = b.Upload(ctx, srv.Client(), srv.URL)
+	if err != nil || n != 0 {
+		t.Fatalf("second upload = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+func abs2(dir string) string {
+	a, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	return a
+}
+
+func TestUploadFailureKeepsRowsPending(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := communityCfg(srv.URL)
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+
+	if err := rec.RecordRun(ctx, t.TempDir(), fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	if _, err := b.Upload(ctx, srv.Client(), srv.URL); err == nil {
+		t.Fatal("Upload succeeded against a 500 server")
+	}
+	if rows := pendingRows(t, db); len(rows) != 2 {
+		t.Fatalf("want 2 rows still pending after failed upload, got %d", len(rows))
+	}
+
+	// Counts must be untouched by the pending restore.
+	for _, r := range pendingRows(t, db) {
+		if r.Count != 1 {
+			t.Errorf("count changed by restore: %+v", r)
+		}
+	}
+}
+
+func TestUploadOnlyRunsInCommunityMode(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	for _, mode := range []string{config.ModeUninitialized, config.ModeLocalOnly} {
+		cfg := config.Default()
+		cfg.Mode = mode
+		rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+		b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+		ctx := context.Background()
+		if err := rec.RecordRun(ctx, t.TempDir(), fakeScanResult(), knownProfile(), 0, ""); err != nil {
+			t.Fatalf("RecordRun: %v", err)
+		}
+		n, err := b.Upload(ctx, srv.Client(), srv.URL)
+		if err != nil || n != 0 {
+			t.Fatalf("mode %q: Upload = (%d, %v), want no-op", mode, n, err)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("server saw %d requests from non-community modes", requests)
+	}
+	// Rows stay for local stats.
+	if rows := pendingRows(t, db); len(rows) == 0 {
+		t.Fatal("local rows were lost in non-community mode")
+	}
+}

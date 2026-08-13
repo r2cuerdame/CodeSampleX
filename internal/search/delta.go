@@ -1,0 +1,135 @@
+package search
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+)
+
+// buildDelta renders the §11.5 Exact / Different lists. The LLM reasons
+// over these deltas instead of re-deriving the whole comparison.
+func buildDelta(rel pkgRel, reqP, samP domain.PURL, dims []dimComparison, cd contextDelta) (exact, different []string) {
+	exact, different = []string{}, []string{}
+
+	switch rel {
+	case relExactVersion, relMajorMinor:
+		exact = append(exact, samP.Name+" "+samP.MajorMinor())
+	case relMajor, relMajorDiff:
+		different = append(different,
+			"Sample uses "+samP.Name+" "+samP.MajorMinor(),
+			"Current project uses "+reqP.Name+" "+reqP.MajorMinor())
+	}
+
+	for _, d := range dims {
+		if d.equal {
+			if d.exactEntry != "" {
+				exact = append(exact, d.exactEntry)
+			}
+			continue
+		}
+		if d.samShow != "" || d.reqShow != "" {
+			different = append(different,
+				"Sample uses "+d.samShow,
+				"Current project uses "+d.reqShow)
+		}
+	}
+
+	if cd.mismatch && cd.samShow != "" && cd.reqShow != "" {
+		different = append(different,
+			"Sample uses "+cd.samShow,
+			"Current project uses "+cd.reqShow)
+	}
+
+	return dedupe(exact), dedupe(different)
+}
+
+// dedupe removes repeated entries while preserving order (a runtime-name
+// difference and a context mismatch can render the same pair).
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := in[:0]
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// runtimeShow renders "node 22" — major bucket, §11.5 style.
+func runtimeShow(name, version string) string {
+	if m := majorOf(version); m != "" {
+		return name + " " + m
+	}
+	return name
+}
+
+// langShow renders "typescript 5.9" — major.minor bucket.
+func langShow(name, version string) string {
+	if mm := majorMinorOf(version); mm != "" {
+		return name + " " + mm
+	}
+	return name
+}
+
+// osShow renders "windows 11".
+func osShow(e domain.EnvironmentFingerprint) string {
+	if e.OSVersionBucket != "" {
+		return e.OS + " " + e.OSVersionBucket
+	}
+	return e.OS
+}
+
+// majorOf trims "22.18.1" → "22", dropping pre-release/build suffixes.
+func majorOf(v string) string {
+	if v == "" {
+		return ""
+	}
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.SplitN(v, ".", 2)[0]
+}
+
+// majorMinorOf trims "5.9.2" → "5.9"; single segments stay as-is.
+func majorMinorOf(v string) string {
+	if v == "" {
+		return ""
+	}
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	segs := strings.SplitN(v, ".", 3)
+	if len(segs) >= 2 {
+		return segs[0] + "." + segs[1]
+	}
+	return segs[0]
+}
+
+// humanEnvSummary renders a failure cluster's env summary in §11.5 style:
+// {"moduleSystem":"esm","runtime":"node@18"} → "node 18 + esm".
+// Runtime leads; remaining keys follow in sorted-key order.
+func humanEnvSummary(summary map[string]string) string {
+	if len(summary) == 0 {
+		return "unknown environment"
+	}
+	var parts []string
+	if rt, ok := summary["runtime"]; ok {
+		parts = append(parts, strings.ReplaceAll(rt, "@", " "))
+	}
+	keys := make([]string, 0, len(summary))
+	for k := range summary {
+		if k == "runtime" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, summary[k])
+	}
+	return strings.Join(parts, " + ")
+}
