@@ -154,7 +154,25 @@ func rowLabels(row snapshotRow) (ctx, detail string) {
 		parts = append(parts, e.PackageManager)
 	}
 	if e.OS != "" {
-		parts = append(parts, e.OS)
+		os := e.OS
+		// musl vs glibc decides whether a native module loads at all, so
+		// it belongs next to the OS rather than hidden in the raw JSON.
+		if e.Libc != "" {
+			os += " " + e.Libc
+		}
+		parts = append(parts, os)
+	}
+	// A container or VM run proves something about that sandbox, not
+	// about the host that started it — say so on the row.
+	if e.Virtualization != "" {
+		v := e.Virtualization
+		if e.ContainerRuntime != "" {
+			v = e.ContainerRuntime
+		}
+		parts = append(parts, v)
+	}
+	if e.CI {
+		parts = append(parts, "ci")
 	}
 	return ctx, strings.Join(parts, " · ")
 }

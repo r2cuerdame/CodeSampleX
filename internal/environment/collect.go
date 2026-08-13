@@ -4,6 +4,7 @@ package environment
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -72,6 +73,9 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	fp.Compiler = get("compiler")
 	fp.CompilerVersion = get("compilerVersion")
 	fp.ExecutionContext = get("executionContext")
+	fp.Virtualization = get("virtualization")
+	fp.ContainerRuntime = get("containerRuntime")
+	fp.Libc = get("libc")
 	fp.BrowserFamily = get("browserFamily")
 	fp.BrowserMajor = get("browserMajor")
 	fp.Engine = get("engine")
@@ -97,7 +101,39 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	if fp.Language == "typescript" && fp.LanguageVersion == "" {
 		fp.LanguageVersion = Probe(ctx, "tsc")
 	}
+
+	// Where the toolchain actually ran. A container, a VM and bare metal
+	// are different compatibility populations even when os/arch match.
+	if fp.Virtualization == "" && fp.ContainerRuntime == "" {
+		fp.Virtualization, fp.ContainerRuntime = detectVirtualization()
+	}
+	if fp.Libc == "" {
+		fp.Libc = detectLibc()
+	}
+	if !fp.CI {
+		fp.CI = DetectCI()
+	}
 	return fp.Normalize()
+}
+
+// ciEnvVars are the conventional markers automated runners set. CI fleets
+// are clones, so evidence from them must not be mistaken for many
+// independent developer environments (goal.md §16.5).
+var ciEnvVars = []string{
+	"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI",
+	"JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION", "APPVEYOR", "DRONE",
+}
+
+// DetectCI reports whether this process looks like an automated runner.
+func DetectCI() bool {
+	for _, k := range ciEnvVars {
+		v := strings.TrimSpace(os.Getenv(k))
+		if v == "" || strings.EqualFold(v, "false") || v == "0" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func archName() string {

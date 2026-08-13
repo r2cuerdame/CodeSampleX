@@ -17,6 +17,28 @@ engineVersion      engine major
 compiler / compilerVersion
 ```
 
+격리 축(2026-08-13 추가):
+
+```text
+virtualization     container | vm | wsl | "" (bare metal 또는 미탐지)
+containerRuntime   docker | podman | containerd | kubernetes | lxc
+libc               musl | glibc | ""
+ci                 자동화 러너 여부
+```
+
+- **왜 필요한가**: alpine 컨테이너 빌드와 ubuntu 호스트 빌드가 둘 다 `os=linux`로만 기록되면
+  증거가 거짓말을 한다. 네이티브 모듈(sharp, bcrypt, canvas 등)은 musl/glibc 경계에서
+  갈리고, 다른 모든 차원이 동일해 보이는데 결과만 다르게 나온다.
+- **탐지 방법**(전부 coarse, 개인 식별 불가): `/.dockerenv`, `/run/.containerenv`,
+  `/proc/1/cgroup`, `/proc/version`(WSL), DMI product name(VM), musl loader 경로,
+  `/etc/os-release`, Windows는 BIOS 제조사 레지스트리 값. 호스트명·컨테이너 ID·머신 ID는
+  읽지 않는다.
+- **검증 영수증**: Public v1 verifier 이미지는 전부 alpine이므로 CONTAINER_RUN 영수증은
+  `virtualization=container, libc=musl, osVersionBucket=alpine`을 싣는다. 이를 그냥
+  "linux"로 기록하면 glibc 배포판까지 검증한 것처럼 보이게 된다.
+- **CI**: CI 러너는 서로 복제본이므로 독립 개발 환경으로 세면 다양성이 과장된다. 지금은
+  기록만 하고, 집계에서 할인하는 것은 후속 작업이다.
+
 - `executionContext`는 **open vocabulary**다. 새 runtime은 schema 변경 없이 추가된다.
 - `domain.EnvironmentFingerprint.Normalize()`: runtime이 node/bun/deno면 context를 자동 유도하고,
   browserFamily에서 engine을 무모순으로 유도한다.

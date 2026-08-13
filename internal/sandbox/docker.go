@@ -49,6 +49,11 @@ func imageRuntime(ecosystem string) (runtime, version, language string) {
 // StageEnvironment reports the container's environment, not the host's:
 // the stages run on linux/amd64 with the image's runtime, and a receipt
 // that claimed the host OS would poison the compatibility graph.
+//
+// The verifier images are all alpine, so results carry musl — the single
+// dimension that most often decides whether a package with a native
+// module loads at all. Recording these runs as plain "linux" would make
+// them look like they proved something about glibc distros too.
 func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint {
 	eco := m.Environment.Ecosystem
 	if eco == "" {
@@ -59,6 +64,7 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		SchemaVersion:    1,
 		Ecosystem:        eco,
 		OS:               "linux",
+		OSVersionBucket:  "alpine",
 		Arch:             "x64",
 		Runtime:          rt,
 		RuntimeVersion:   ver,
@@ -66,6 +72,10 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		ExecutionContext: rt,
 		ModuleSystem:     m.Environment.ModuleSystem,
 		PackageManager:   m.Environment.PackageManager,
+		Virtualization:   "container",
+		ContainerRuntime: "docker",
+		Libc:             "musl",
+		CI:               host.CI,
 	}
 	return env.Normalize()
 }

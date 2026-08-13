@@ -32,7 +32,23 @@
     },
     "browserMajor": {"type": "string", "pattern": "^\\d*$"},
     "engine": {"type": "string", "examples": ["chromium", "gecko", "webkit"]},
-    "engineVersion": {"type": "string"}
+    "engineVersion": {"type": "string"},
+    "virtualization": {
+      "description": "Where the toolchain ran relative to real hardware. A container, a VM and bare metal are separate compatibility populations even when os and arch match.",
+      "enum": ["container", "vm", "wsl", ""]
+    },
+    "containerRuntime": {
+      "type": "string",
+      "examples": ["docker", "podman", "containerd", "kubernetes", "lxc"]
+    },
+    "libc": {
+      "description": "musl (alpine) vs glibc. Prebuilt native modules routinely load on one and fail on the other while every other dimension looks identical.",
+      "enum": ["musl", "glibc", ""]
+    },
+    "ci": {
+      "type": "boolean",
+      "description": "Automated runner. CI fleets are clones, so they must not be counted as many independent developer environments."
+    }
   },
   "additionalProperties": false
 }

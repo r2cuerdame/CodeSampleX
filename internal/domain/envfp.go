@@ -37,6 +37,25 @@ type EnvironmentFingerprint struct {
 	BrowserMajor  string `json:"browserMajor,omitempty"`  // "140" — already a bucket
 	Engine        string `json:"engine,omitempty"`        // chromium|gecko|webkit
 	EngineVersion string `json:"engineVersion,omitempty"`
+
+	// Virtualization says where the toolchain ran relative to real
+	// hardware: "container", "vm", "wsl", or empty for bare metal /
+	// undetectable. A build inside a container is a different
+	// compatibility population than the host that started it, and
+	// recording both as plain "linux" makes the graph lie.
+	Virtualization string `json:"virtualization,omitempty"`
+	// ContainerRuntime names the engine when one is detectable:
+	// docker | podman | containerd | kubernetes | lxc.
+	ContainerRuntime string `json:"containerRuntime,omitempty"`
+	// Libc separates musl (alpine) from glibc. This single dimension
+	// explains a large share of "works on my machine" for anything with a
+	// native module: prebuilt binaries routinely load on one and fail on
+	// the other while every other dimension looks identical.
+	Libc string `json:"libc,omitempty"`
+	// CI marks an automated runner. CI fleets are clones of each other, so
+	// this is recorded to let aggregation discount them rather than treat
+	// them as many independent developer environments (goal.md §16.5).
+	CI bool `json:"ci,omitempty"`
 }
 
 // ContextLabel renders the execution-context axis for display and
