@@ -16,6 +16,19 @@ const (
 	StageProjectCompile   Stage = "PROJECT_COMPILE"
 	StageProjectTest      Stage = "PROJECT_TEST"
 	StageProjectProcess   Stage = "PROJECT_PROCESS"
+	// PROJECT_LOAD observes module/library load in the executing context
+	// (import succeeded in node/bun/deno/browser) without asserting more.
+	StageProjectLoad Stage = "PROJECT_LOAD"
+
+	// Runtime-instrumentation stages (evidence class
+	// RUNTIME_INSTRUMENTATION, goal.md §6.1.D). Emitted ONLY by adapters
+	// with A3 capability that directly observed the call — never inferred.
+	// No Public v1 adapter claims A3; the stages exist so browser/worker
+	// instrumentation can contribute without a schema change.
+	// SYMBOL_EXECUTED result is always PASS (execution observed, outcome
+	// not asserted). SYMBOL_CALL result PASS = returned, FAIL = threw.
+	StageSymbolExecuted Stage = "SYMBOL_EXECUTED"
+	StageSymbolCall     Stage = "SYMBOL_CALL"
 
 	StageResolve   Stage = "RESOLVE"
 	StageSymbol    Stage = "SYMBOL"
@@ -78,6 +91,8 @@ const (
 	FailLibraryRegression    FailureDomain = "LIBRARY_REGRESSION"
 	FailTransitiveDependency FailureDomain = "TRANSITIVE_DEPENDENCY"
 	FailRuntime              FailureDomain = "RUNTIME"
+	FailBrowser              FailureDomain = "BROWSER"
+	FailEngine               FailureDomain = "ENGINE"
 	FailOS                   FailureDomain = "OS"
 	FailArch                 FailureDomain = "ARCH"
 	FailToolchain            FailureDomain = "TOOLCHAIN"

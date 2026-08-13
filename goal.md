@@ -1969,3 +1969,40 @@ CodeSampleX는 다음을 말한다.
 궁극적인 목표는 하나다.
 
 > **전 세계의 코딩 LLM이 이미 끝난 추론을 다시 하지 않게 한다.**
+
+---
+
+# 부록 A — Execution Context 축 (2026-08-13 확장)
+
+Environment 모델은 OS/Runtime/Language에 한정되지 않는다. **Execution Context**는
+독립적인 핵심 호환성 축이다.
+
+```text
+Environment
+├ OS / OS Version / Arch
+├ Language / Language Version / Compiler
+├ Package Manager / PM Version
+└ Execution Context (extensible)
+   ├ Node / Bun / Deno
+   ├ Browser (chrome | edge | firefox | safari | chromium)
+   ├ Android WebView / iOS WKWebView
+   ├ Electron
+   └ Web Worker / Service Worker
+```
+
+원칙:
+
+1. 브라우저 Evidence는 `browserFamily / browserMajor / engine / engineVersion`만 기록한다.
+   **전체 User-Agent는 서버로 보내지 않는다** — 로컬 정규화 후 폐기한다.
+2. 같은 package/symbol이라도 Node 22, Chrome 140, Safari 19, Android WebView는
+   서로 다른 환경으로 집계·검색·표시된다.
+3. 단계 구분에 `PROJECT_LOAD`, `SYMBOL_EXECUTED`, `SYMBOL_CALL`이 추가된다.
+   SYMBOL 단계는 실행이 **직접 관측된 경우에만** 기록한다(A3 adapter 전용, 추측 금지).
+4. 실패 원인 도메인에 `BROWSER`, `ENGINE`이 추가된다. 증거가 없으면 `UNKNOWN` 또는
+   confidence가 있는 가설로 유지하고, 한 변수씩 다른 cross verification으로 좁힌다.
+5. 검색은 현재 프로젝트의 Execution Context를 sensitive dimension으로 반영한다.
+   Safari 프로젝트에는 Node에서만 검증된 Sample보다 Safari 증거를 우선한다.
+6. 빌드/테스트 관측은 toolchain context(node)에 기록한다. 브라우저 context Evidence는
+   실제로 그 환경에서 실행된 단계만 만든다.
+
+상세 설계: `docs/execution-context.md`.

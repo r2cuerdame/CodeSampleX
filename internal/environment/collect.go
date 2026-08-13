@@ -69,6 +69,22 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	fp.PackageManager = get("packageManager")
 	fp.PackageManagerVersion = get("packageManagerVersion")
 	fp.ModuleSystem = get("moduleSystem")
+	fp.Compiler = get("compiler")
+	fp.CompilerVersion = get("compilerVersion")
+	fp.ExecutionContext = get("executionContext")
+	fp.BrowserFamily = get("browserFamily")
+	fp.BrowserMajor = get("browserMajor")
+	fp.Engine = get("engine")
+	fp.EngineVersion = get("engineVersion")
+	if ua := get("userAgent"); ua != "" && fp.BrowserFamily == "" {
+		// Normalize locally; the raw UA is discarded here and never stored.
+		bc := ParseUserAgent(ua)
+		fp.BrowserFamily, fp.BrowserMajor = bc.Family, bc.Major
+		fp.Engine, fp.EngineVersion = bc.Engine, bc.EngineVersion
+		if bc.Family != "" && fp.ExecutionContext == "" {
+			fp.ExecutionContext = "browser"
+		}
+	}
 	if f := get("frameworks"); f != "" {
 		fp.Frameworks = strings.Split(f, ",")
 	}
@@ -81,7 +97,7 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	if fp.Language == "typescript" && fp.LanguageVersion == "" {
 		fp.LanguageVersion = Probe(ctx, "tsc")
 	}
-	return fp
+	return fp.Normalize()
 }
 
 func archName() string {

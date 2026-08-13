@@ -14,10 +14,25 @@
     "runtimeVersion": {"type": "string"},
     "language": {"type": "string"},
     "languageVersion": {"type": "string"},
+    "compiler": {"type": "string"},
+    "compilerVersion": {"type": "string"},
     "packageManager": {"type": "string"},
     "packageManagerVersion": {"type": "string"},
     "moduleSystem": {"enum": ["esm", "cjs", "dual", ""]},
-    "frameworks": {"type": "array", "items": {"type": "string"}}
+    "frameworks": {"type": "array", "items": {"type": "string"}},
+    "executionContext": {
+      "type": "string",
+      "description": "Independent compatibility axis: where the observed stage actually executed. Open vocabulary for extensibility; well-known values listed as examples.",
+      "examples": ["node", "browser", "webview", "electron", "webworker", "serviceworker", "bun", "deno"]
+    },
+    "browserFamily": {
+      "type": "string",
+      "description": "Normalized locally from the User-Agent; the raw UA string is never transmitted.",
+      "examples": ["chrome", "edge", "firefox", "safari", "chromium", "android-webview", "ios-wkwebview", "electron"]
+    },
+    "browserMajor": {"type": "string", "pattern": "^\\d*$"},
+    "engine": {"type": "string", "examples": ["chromium", "gecko", "webkit"]},
+    "engineVersion": {"type": "string"}
   },
   "additionalProperties": false
 }
