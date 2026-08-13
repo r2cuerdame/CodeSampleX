@@ -1,0 +1,11 @@
+{
+  "name": "csx-sample-react-render-to-string",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

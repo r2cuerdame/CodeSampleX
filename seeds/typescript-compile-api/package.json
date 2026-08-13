@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-typescript-compile-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "typescript": "7.0.2"
+  }
+}

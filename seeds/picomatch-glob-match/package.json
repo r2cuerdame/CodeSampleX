@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-picomatch-glob-match",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "picomatch": "4.0.5"
+  }
+}

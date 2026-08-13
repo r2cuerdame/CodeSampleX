@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-eslint-flat-config",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "eslint": "10.8.1"
+  }
+}

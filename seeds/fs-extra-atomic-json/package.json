@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-fs-extra-atomic-json",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "fs-extra": "11.4.0"
+  }
+}

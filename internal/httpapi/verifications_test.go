@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -240,5 +241,85 @@ func TestJobsListAndClaim(t *testing.T) {
 		map[string]string{"peerId": "not-a-peer"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bad peer claim status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestUnknownEnvironmentIsNotDiversity pins the L5 gate. Receipts written
+// before the runner stamped the sandbox environment claim the HOST os with
+// every other field blank — 103 of them on the live network said "windows"
+// for contracts that had executed in a linux container. Counting an
+// environment nobody described as a distinct one is what granted every
+// MATRIX_PASS there, and it is the same hole a Sybil would use: minting
+// environments costs nothing if they are allowed to be blank.
+func TestUnknownEnvironmentIsNotDiversity(t *testing.T) {
+	full := func(os, runtime, version string) compatibility.ReceiptInfo {
+		return compatibility.ReceiptInfo{Env: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, OS: os, Runtime: runtime, RuntimeVersion: version,
+		}}
+	}
+	// The exact shape of the bad receipts: an OS name and nothing else.
+	blank := compatibility.ReceiptInfo{Env: domain.EnvironmentFingerprint{
+		SchemaVersion: 1, OS: "windows",
+	}}
+
+	if spansContextBoundary([]compatibility.ReceiptInfo{blank, full("linux", "node", "22")}) {
+		t.Error("an undescribed environment must not count as a second one")
+	}
+	if spansContextBoundary([]compatibility.ReceiptInfo{blank, blank}) {
+		t.Error("two undescribed environments are not diversity")
+	}
+	// Real boundaries still qualify.
+	if !spansContextBoundary([]compatibility.ReceiptInfo{
+		full("linux", "node", "22"), full("windows", "node", "22")}) {
+		t.Error("two real operating systems should span a boundary")
+	}
+	if !spansContextBoundary([]compatibility.ReceiptInfo{
+		full("linux", "node", "22"), full("linux", "node", "24")}) {
+		t.Error("two real runtime majors should span a boundary")
+	}
+	if spansContextBoundary([]compatibility.ReceiptInfo{
+		full("linux", "node", "22"), full("linux", "node", "22")}) {
+		t.Error("the same environment twice is not diversity")
+	}
+}
+
+// TestRecomputeStatusCanDowngrade: the live path only upgrades, which is
+// right while the rules hold still. When a rule is corrected, a status
+// earned under the old one is wrong, and continuing to advertise it claims
+// verification the evidence does not support.
+func TestRecomputeStatusCanDowngrade(t *testing.T) {
+	now := testNow
+	origin := "ed25519:1111111111111111"
+	other := "ed25519:2222222222222222"
+
+	receipt := func(peer, os, runtime, version string) serverstore.ReceiptRow {
+		r := domain.VerificationReceipt{
+			SchemaVersion: 1, SampleID: "sha256:x", PeerID: peer,
+			Environment: domain.EnvironmentFingerprint{
+				SchemaVersion: 1, OS: os, Runtime: runtime, RuntimeVersion: version,
+			},
+			Stages: map[string]string{"contract": "PASS"},
+		}
+		return serverstore.ReceiptRow{
+			SampleID: "sha256:x", PeerID: peer, ContractResult: "PASS",
+			ReceiptJSON: string(domain.MustCanonicalJSON(r)), CreatedAt: now,
+		}
+	}
+
+	// Exactly the live data: one real container receipt, one that names an
+	// OS and describes nothing else.
+	rows := []serverstore.ReceiptRow{
+		receipt(origin, "windows", "", ""),
+		receipt(other, "linux", "node", "22"),
+	}
+	got := RecomputeStatus(rows, now)
+	if got != "CROSS_PASS" {
+		t.Fatalf("status = %q, want CROSS_PASS: a second peer reproduced it, but no real boundary was crossed", got)
+	}
+
+	// A genuine boundary still reaches MATRIX_PASS.
+	rows = append(rows, receipt(other, "windows", "node", "22"))
+	if got := RecomputeStatus(rows, now); got != "MATRIX_PASS" {
+		t.Fatalf("status = %q, want MATRIX_PASS once two described environments differ", got)
 	}
 }

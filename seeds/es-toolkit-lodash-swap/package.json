@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-es-toolkit-lodash-swap",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "es-toolkit": "1.50.0"
+  }
+}

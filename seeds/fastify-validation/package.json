@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-fastify-validation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "fastify": "5.12.0"
+  }
+}

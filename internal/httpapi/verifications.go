@@ -165,18 +165,35 @@ func statusRank(status string) int {
 // spansContextBoundary reports whether passing receipts cover ≥2 distinct
 // values of at least one context boundary: os, runtime major, or browser
 // family (docs/execution-context.md §4).
+// describesAnEnvironment reports whether a receipt says enough about where
+// it ran to count as a distinct environment.
+//
+// An OS name with no runtime and no version is not a different environment,
+// it is an unknown one, and the two must never be conflated. Receipts
+// written before the runner stamped the sandbox environment claim the HOST
+// os with every other field blank — 103 of them on the live network, all
+// saying "windows" for contracts that actually executed in a linux
+// container. Counting those as diversity is what granted every MATRIX_PASS
+// on the network, and it is also exactly the hole a Sybil would drive
+// through: minting environments is free if they may be blank.
+func describesAnEnvironment(env domain.EnvironmentFingerprint) bool {
+	return env.OS != "" && env.Runtime != "" && env.RuntimeVersion != ""
+}
+
+// spansContextBoundary implements the L5 rule — reproduced across a real
+// OS/runtime/version boundary (goal.md §6.2) — counting only receipts that
+// actually describe where they ran.
 func spansContextBoundary(infos []compatibility.ReceiptInfo) bool {
 	oses := map[string]bool{}
 	runtimeMajors := map[string]bool{}
 	browsers := map[string]bool{}
 	for _, info := range infos {
 		env := info.Env
-		if env.OS != "" {
-			oses[env.OS] = true
+		if !describesAnEnvironment(env) {
+			continue // unknown, not different
 		}
-		if env.Runtime != "" {
-			runtimeMajors[env.Runtime+"@"+majorSeg(env.RuntimeVersion)] = true
-		}
+		oses[env.OS] = true
+		runtimeMajors[env.Runtime+"@"+majorSeg(env.RuntimeVersion)] = true
 		if env.BrowserFamily != "" {
 			browsers[env.BrowserFamily] = true
 		}
@@ -258,4 +275,19 @@ func validPeerID(peerID string) bool {
 		}
 	}
 	return true
+}
+
+// RecomputeStatus re-derives a sample's status from its receipts under the
+// CURRENT rules, starting from PUBLISHED rather than from whatever the row
+// already says.
+//
+// The live path only ever upgrades, which is right while the rules hold
+// still. When a rule is corrected — as the environment-diversity gate was,
+// after receipts that misstated where they ran had already granted
+// MATRIX_PASS — a status earned under the old rule is simply wrong, and
+// leaving it in place would advertise verification the evidence no longer
+// supports. Downgrading is therefore an honesty operation, deliberately
+// kept out of the request path and run by an operator.
+func RecomputeStatus(rows []serverstore.ReceiptRow, now time.Time) string {
+	return sampleStatusFromReceipts("PUBLISHED", rows, now)
 }
