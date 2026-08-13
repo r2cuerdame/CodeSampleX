@@ -1,0 +1,100 @@
+# Everything v0.1.0 needed by hand: cross-compile, checksum, bundle,
+# release, and publish to the MCP Registry. Doing it manually cost a wrong
+# ldflag path (the binaries shipped reporting "dev (git)") and a server.json
+# description over the registry's 100-character limit — both the kind of
+# mistake a pipeline does not repeat.
+#
+# The version comes from the tag, so nothing has to be edited in two places.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release and upload assets
+  id-token: write # OIDC for the MCP Registry — no stored secret
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A tagged release that fails its own tests is worse than no release.
+      - name: Test
+        run: go test ./... && go vet ./...
+
+      - name: Version from tag
+        id: v
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile
+        env:
+          CGO_ENABLED: "0"
+          # This exact path is why v0.1.0 first shipped reporting "dev (git)":
+          # -X takes the fully qualified variable, not a bare name.
+          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}; arch=${target#*/}; ext=""
+            [ "$os" = windows ] && ext=.exe
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$LDFLAGS" \
+              -o "dist/csx-$os-$arch$ext" ./cmd/csx
+          done
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+            -o dist/csx-server-linux-amd64 ./cmd/csx-server
+          (cd dist && sha256sum csx-* > SHA256SUMS.txt)
+
+      - name: Build MCPB bundle
+        id: mcpb
+        run: echo "sha256=$(python3 scripts/make-mcpb.py '${{ steps.v.outputs.version }}')" >> "$GITHUB_OUTPUT"
+
+      # The registry validates nothing about fileSha256, but MCP clients
+      # verify it before installing — a stale digest silently breaks every
+      # install while the listing still looks healthy.
+      - name: Point server.json at this release
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${V}/codesamplex-mcp.mcpb"
+          jq --arg v "$V" --arg url "$URL" --arg sha '${{ steps.mcpb.outputs.sha256 }}' '
+            .version = $v
+            | .packages[0].version = $v
+            | .packages[0].identifier = $url
+            | .packages[0].fileSha256 = $sha
+          ' server.json > server.tmp && mv server.tmp server.json
+          # Fail loudly rather than publish a listing that clients reject.
+          test "$(jq -r '.description | length' server.json)" -le 100
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF#refs/tags/}" \
+            dist/csx-* dist/SHA256SUMS.txt \
+            dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256 \
+            --title "${GITHUB_REF#refs/tags/}" --generate-notes
+
+      # The asset must exist and match before the registry is told about it;
+      # publishing first would advertise a digest nobody can satisfy.
+      - name: Verify the published asset
+        run: |
+          curl -fsSL -o /tmp/bundle.mcpb \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.v.outputs.version }}/codesamplex-mcp.mcpb"
+          echo '${{ steps.mcpb.outputs.sha256 }}  /tmp/bundle.mcpb' | sha256sum -c -
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
