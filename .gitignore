@@ -25,3 +25,4 @@ Thumbs.db
 # Seed sample deps: materialized in a container for evidence runs
 seeds/*/node_modules/
 
+seeds/*/.csx-vendor/

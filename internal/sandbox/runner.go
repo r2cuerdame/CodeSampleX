@@ -68,18 +68,56 @@ func skipped(reason string) StageResult {
 	return StageResult{Result: ResultSkipped, Log: reason}
 }
 
+// vendorDir is where every ecosystem's resolve output must land.
+//
+// Resolve and contract run as SEPARATE containers — resolve with the
+// network, contract with --network=none — and only the workspace is
+// mounted. Anything written outside it (an image's site-packages, the Go
+// module cache, CARGO_HOME) is gone by the time the contract runs. npm
+// happened to work because node_modules is already a workspace directory;
+// every other ecosystem needed to be told, which is why only npm could
+// reach contract verification.
+const vendorDir = "/work/.csx-vendor"
+
 // resolveCommand is the per-ecosystem dependency resolve step. Lifecycle
-// scripts never run (--ignore-scripts / metadata-only fetches).
+// scripts never run (--ignore-scripts / metadata-only fetches), and the
+// output lands inside the workspace so the offline stages can see it.
 func resolveCommand(ecosystem string) ([]string, error) {
 	switch ecosystem {
 	case "npm":
 		return []string{"npm", "ci", "--ignore-scripts"}, nil
 	case "pypi":
-		return []string{"pip", "install", "-r", "requirements.txt", "--no-deps"}, nil
+		// --target keeps the install in the workspace; stageEnv puts the
+		// same path on PYTHONPATH for the contract stage.
+		return []string{"pip", "install", "--no-deps", "--no-compile",
+			"--target", vendorDir + "/py", "-r", "requirements.txt"}, nil
 	case "golang":
 		return []string{"go", "mod", "download"}, nil
 	case "cargo":
 		return []string{"cargo", "fetch"}, nil
 	}
 	return nil, fmt.Errorf("sandbox: unsupported ecosystem %q", ecosystem)
+}
+
+// stageEnv points each toolchain's caches at the mounted workspace. The
+// values are fixed constants pointing inside /work — no host environment
+// is ever forwarded, so this narrows what the container sees rather than
+// widening it.
+func stageEnv(ecosystem string) []string {
+	switch ecosystem {
+	case "pypi":
+		return []string{"PYTHONPATH=" + vendorDir + "/py", "PYTHONDONTWRITEBYTECODE=1"}
+	case "golang":
+		return []string{
+			"GOMODCACHE=" + vendorDir + "/gomod",
+			"GOCACHE=" + vendorDir + "/gobuild",
+			"GOFLAGS=-mod=mod",
+		}
+	case "cargo":
+		return []string{
+			"CARGO_HOME=" + vendorDir + "/cargo",
+			"CARGO_TARGET_DIR=" + vendorDir + "/target",
+		}
+	}
+	return nil
 }

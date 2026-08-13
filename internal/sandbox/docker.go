@@ -81,18 +81,19 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 }
 
 // dockerArgs builds the docker run invocation. Resource limits per plan
-// C13: --memory=512m --pids-limit=256. No --env flags: the container
-// keeps only its image-default PATH/HOME.
-func dockerArgs(image, dir string, networkOff bool, cmd []string) []string {
+// C13: --memory=512m --pids-limit=256. The only --env flags are the fixed
+// cache paths from stageEnv, all pointing inside the mounted workspace;
+// no host environment is ever forwarded.
+func dockerArgs(image, dir string, networkOff bool, env, cmd []string) []string {
 	args := []string{"docker", "run", "--rm"}
 	if networkOff {
 		args = append(args, "--network=none")
 	}
-	args = append(args,
-		"--memory=512m", "--pids-limit=256",
-		"-v", dir+":/work", "-w", "/work",
-		image,
-	)
+	args = append(args, "--memory=512m", "--pids-limit=256")
+	for _, e := range env {
+		args = append(args, "--env", e)
+	}
+	args = append(args, "-v", dir+":/work", "-w", "/work", image)
 	return append(args, cmd...)
 }
 
@@ -105,7 +106,7 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: "sandbox: resolve workdir: " + err.Error()}
 	}
-	return runStage(ctx, "", dockerArgs(img, abs, networkOff, cmd))
+	return runStage(ctx, "", dockerArgs(img, abs, networkOff, stageEnv(m.Environment.Ecosystem), cmd))
 }
 
 // Resolve fetches dependencies with the network ON but lifecycle scripts OFF.

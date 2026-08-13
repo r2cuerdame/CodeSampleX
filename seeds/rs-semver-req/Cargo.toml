@@ -1,0 +1,8 @@
+[package]
+name = "csx-sample-semver"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+semver = "1.0.28"

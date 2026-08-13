@@ -50,8 +50,9 @@ func TestDetectCapability(t *testing.T) {
 
 func TestResolveCommandPerEcosystem(t *testing.T) {
 	cases := map[string][]string{
-		"npm":    {"npm", "ci", "--ignore-scripts"},
-		"pypi":   {"pip", "install", "-r", "requirements.txt", "--no-deps"},
+		"npm": {"npm", "ci", "--ignore-scripts"},
+		"pypi": {"pip", "install", "--no-deps", "--no-compile",
+			"--target", "/work/.csx-vendor/py", "-r", "requirements.txt"},
 		"golang": {"go", "mod", "download"},
 		"cargo":  {"cargo", "fetch"},
 	}
@@ -205,5 +206,37 @@ func TestNativeRunner(t *testing.T) {
 	}
 	if len(calls) != 2 {
 		t.Fatal("empty build command must not exec")
+	}
+}
+
+// TestStageEnvKeepsCachesInTheWorkspace pins why non-npm verification used
+// to be impossible: resolve and contract are separate containers sharing
+// only /work, so a toolchain cache anywhere else is gone before the
+// contract runs. Every value here must therefore live under /work, and
+// none may forward host environment.
+func TestStageEnvKeepsCachesInTheWorkspace(t *testing.T) {
+	for _, eco := range []string{"pypi", "golang", "cargo"} {
+		env := stageEnv(eco)
+		if len(env) == 0 {
+			t.Errorf("%s: no stage env, its resolve output cannot survive to the contract stage", eco)
+			continue
+		}
+		for _, kv := range env {
+			key, value, ok := strings.Cut(kv, "=")
+			if !ok {
+				t.Errorf("%s: %q is not KEY=VALUE", eco, kv)
+				continue
+			}
+			// Non-path settings (flags, toggles) carry no directory.
+			if !strings.Contains(value, "/") {
+				continue
+			}
+			if !strings.HasPrefix(value, "/work/") {
+				t.Errorf("%s: %s points at %s, outside the mounted workspace", eco, key, value)
+			}
+		}
+	}
+	if env := stageEnv("npm"); len(env) != 0 {
+		t.Errorf("npm needs no stage env (node_modules is already in the workspace), got %v", env)
 	}
 }
