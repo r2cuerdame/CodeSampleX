@@ -1,19 +1,31 @@
 import { strict as assert } from 'node:assert';
-import { staticHTML, hydratableHTML } from '../src/index.mjs';
+import { hydratableHTML, staticHTML, escaped } from '../src/index.mjs';
 
-const html = staticHTML({ title: 'CodeSampleX', note: 'evidence, not guesses' });
-assert.match(html, /<div class="card">/);
-assert.match(html, /<h2>CodeSampleX<\/h2>/);
-assert.match(html, /evidence, not guesses/);
+const props = { user: 'codesamplex', count: 3 };
+const hydratable = hydratableHTML(props);
+const staticOnly = staticHTML(props);
+
+// Both carry the same visible text.
+for (const html of [hydratable, staticOnly]) {
+  assert.match(html, /<p>/);
+  assert.match(html, /signed in as/);
+  assert.match(html, /codesamplex/);
+}
+
+// The difference: separators between adjacent text nodes.
+assert.ok(hydratable.includes('<!-- -->'),
+  `renderToString should separate adjacent text nodes: ${hydratable}`);
+assert.ok(!staticOnly.includes('<!-- -->'),
+  `renderToStaticMarkup should omit them: ${staticOnly}`);
+assert.notEqual(hydratable, staticOnly);
+
+// Strip the separators and the two agree exactly — the markup is the same
+// document, only the hydration boundaries differ.
+assert.equal(hydratable.split('<!-- -->').join(''), staticOnly);
 
 // React escapes interpolated text; it is not a raw template engine.
-const escaped = staticHTML({ title: '<script>alert(1)</script>', note: 'x' });
-assert.ok(!escaped.includes('<script>'), escaped);
-assert.match(escaped, /&lt;script&gt;/);
+const xss = escaped('<script>alert(1)</script>');
+assert.ok(!xss.includes('<script>'), xss);
+assert.match(xss, /&lt;script&gt;/);
 
-// The two renderers differ in exactly one way that matters.
-const hydratable = hydratableHTML({ title: 'a', note: 'b' });
-assert.ok(hydratable.includes('<!--'), 'renderToString emits hydration markers');
-assert.ok(!staticHTML({ title: 'a', note: 'b' }).includes('<!--'));
-
-console.log('CONTRACT PASS: react-dom/server rendered, escaped and distinguished both renderers');
+console.log('CONTRACT PASS: renderToString kept text boundaries that renderToStaticMarkup drops');

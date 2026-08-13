@@ -5,6 +5,7 @@
   "type": "module",
   "license": "MIT-0",
   "dependencies": {
-    "typescript": "7.0.2"
+    "typescript": "5.9.3",
+    "typescript7": "npm:typescript@7.0.2"
   }
 }
