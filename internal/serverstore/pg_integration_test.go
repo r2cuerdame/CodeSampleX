@@ -359,3 +359,49 @@ func TestIntegrationCRUD(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegrationHotShardKeysPrefersSamples pins the cold-start ranking: a
+// fresh install warms this list, so a shard that carries a verified sample
+// must outrank a shard that only carries observation counts, however large
+// those counts are. Ranking by volume alone filled the warm set with
+// transitive dependencies nobody asks about.
+func TestIntegrationHotShardKeysPrefersSamples(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	// A busy package with no sample, and a quiet one with a sample.
+	busy := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-14", AnonID: "peerA", ProjectBucket: "projA",
+		Package: "pkg:npm/ms@2.1.3", Symbol: "ms", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm",
+			OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22", ModuleSystem: "esm"},
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 9999,
+	}
+	if _, _, err := pg.IngestBatches(ctx, []domain.ObservationBatch{busy}); err != nil {
+		t.Fatalf("IngestBatches: %v", err)
+	}
+	for _, key := range []string{"npm/ms/2", "npm/chalk/6"} {
+		if err := pg.PutShard(ctx, key, "etag-"+key, `{"key":"`+key+`"}`); err != nil {
+			t.Fatalf("PutShard %s: %v", key, err)
+		}
+	}
+	s := SampleRow{
+		SampleID:     "sha256:" + fmt.Sprintf("%064d", 77),
+		ManifestJSON: `{"schemaVersion":1,"packages":["pkg:npm/chalk@6.0.0"]}`,
+		OriginSeeder: "anonymous", SizeBytes: 512,
+	}
+	if err := pg.SaveSample(ctx, s); err != nil {
+		t.Fatalf("SaveSample: %v", err)
+	}
+
+	keys, err := pg.HotShardKeys(ctx, 10)
+	if err != nil {
+		t.Fatalf("HotShardKeys: %v", err)
+	}
+	if len(keys) < 2 {
+		t.Fatalf("keys = %v, want both shards", keys)
+	}
+	if keys[0] != "npm/chalk/6" {
+		t.Fatalf("keys = %v, want the sample-bearing shard first", keys)
+	}
+}

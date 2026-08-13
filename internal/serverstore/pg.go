@@ -753,9 +753,17 @@ func (p *PG) PutShard(ctx context.Context, key, etag, shardJSON string) error {
 // reading all of it would only cost time.
 const hotShardScanLimit = 5000
 
-// HotShardKeys ranks built shards by the observation volume of the
-// packages they cover. Keys with no shard row are dropped: handing a
-// client a key that 404s wastes the one warm-up it gets.
+// sampleShardWeight makes one verified sample outrank any amount of
+// observation volume. Warming is about what a fresh install can ANSWER
+// with: ranking purely by observations fills the cache with transitive
+// dependencies nobody asks about while the shards that actually carry
+// samples fall off the end of the list.
+const sampleShardWeight = 1_000_000
+
+// HotShardKeys ranks built shards by the samples they carry first, then by
+// the observation volume of the packages they cover. Keys with no shard
+// row are dropped: handing a client a key that 404s wastes the one warm-up
+// it gets.
 func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -786,6 +794,30 @@ func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 			weight[pu.Ecosystem+"/"+pu.Name+"/"+pu.Major()] += n
 		}
 		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		// Every package a published sample declares, so shards holding
+		// answers rank above shards holding only counts.
+		srows, err := c.Query(ctx, `
+			SELECT jsonb_array_elements_text(manifest->'packages') FROM samples`)
+		if err != nil {
+			return err
+		}
+		for srows.Next() {
+			var purl string
+			if err := srows.Scan(&purl); err != nil {
+				srows.Close()
+				return err
+			}
+			pu, perr := domain.ParsePURL(purl)
+			if perr != nil {
+				continue
+			}
+			weight[pu.Ecosystem+"/"+pu.Name+"/"+pu.Major()] += sampleShardWeight
+		}
+		srows.Close()
+		if err := srows.Err(); err != nil {
 			return err
 		}
 

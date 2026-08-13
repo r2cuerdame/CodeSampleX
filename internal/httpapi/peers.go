@@ -152,7 +152,7 @@ func clientAddr(r *http.Request) string {
 // hotShardLimit is how many shard keys a client is told to warm. Each is
 // one small HTTP GET; the point is that a fresh install has something
 // cached before its first search, not that it mirrors the network.
-const hotShardLimit = 25
+const hotShardLimit = 50
 
 // withHotShards adds the "hotShards" key to a stats document. Clients read
 // it to decide what to warm (daemon.fetchHot), and a fresh install has no
