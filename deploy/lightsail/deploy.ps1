@@ -1,55 +1,87 @@
 # Deploy the CodeSampleX stack to the Lightsail host.
-# Builds the linux/amd64 server image locally, ships it with the compose
-# bundle over SSH, and starts the stack (2GB host never builds images itself).
+# The 2GB host never builds: the linux/amd64 image is built here and shipped.
 # Usage: .\deploy.ps1 -Ip <staticIp> -KeyPath <pem> [-Domain codesamplex.dev]
 param(
     [Parameter(Mandatory)][string]$Ip,
     [Parameter(Mandatory)][string]$KeyPath,
     [string]$Domain = "codesamplex.dev",
-    [string]$User = "ubuntu"
+    [string]$User = "ubuntu",
+    [switch]$SkipImage
 )
 $ErrorActionPreference = "Stop"
-$repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$ssh = "ssh -i `"$KeyPath`" -o StrictHostKeyChecking=accept-new $User@$Ip"
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$remote = "${User}@${Ip}"
+$sshArgs = @("-i", $KeyPath, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
 
-Write-Output "Building linux/amd64 server image..."
-docker build --platform linux/amd64 -f (Join-Path $repo "deploy\Dockerfile.server") -t codesamplex/csx-server:latest $repo
-docker save codesamplex/csx-server:latest | gzip > "$env:TEMP\csx-server-image.tar.gz"
+function Invoke-Remote([string]$Script) {
+    $out = & ssh @sshArgs $remote $Script 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "remote command failed ($LASTEXITCODE): $Script`n$($out -join "`n")" }
+    return $out
+}
+function Copy-Remote([string]$Local, [string]$RemotePath) {
+    & scp -i $KeyPath -o StrictHostKeyChecking=accept-new $Local "${remote}:${RemotePath}" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "scp failed: $Local -> $RemotePath" }
+}
 
-Write-Output "Shipping bundle to $Ip..."
-Invoke-Expression "$ssh 'mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/deploy/lightsail'"
-scp -i "$KeyPath" "$env:TEMP\csx-server-image.tar.gz" "${User}@${Ip}:/opt/codesamplex/"
-scp -i "$KeyPath" (Join-Path $repo "deploy\docker-compose.yml") "${User}@${Ip}:/opt/codesamplex/deploy/"
-scp -i "$KeyPath" (Join-Path $repo "deploy\caddy\Caddyfile") "${User}@${Ip}:/opt/codesamplex/deploy/caddy/"
-scp -i "$KeyPath" (Join-Path $repo "deploy\backup.sh") "${User}@${Ip}:/opt/codesamplex/deploy/"
+$imageTar = Join-Path $env:TEMP "csx-server-image.tar"
+if (-not $SkipImage) {
+    Write-Output "== building linux/amd64 server image =="
+    & docker build --platform linux/amd64 -f (Join-Path $repo "deploy\Dockerfile.server") -t codesamplex/csx-server:latest $repo
+    if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+    # No gzip on Windows PowerShell; ship the plain tar (ssh compresses).
+    & docker save codesamplex/csx-server:latest -o $imageTar
+    if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
+}
 
-# Release binaries for /dl and the install scripts (optional but expected).
+Write-Output "== shipping bundle to $Ip =="
+Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1" | Out-Null
+Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"
+Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile"
+Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
+Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schemas/v1/adapters.json"
+
 $dist = Join-Path $repo "dist"
 if (Test-Path $dist) {
-    Invoke-Expression "$ssh 'mkdir -p /opt/codesamplex/dist'"
-    Get-ChildItem $dist -File | ForEach-Object {
-        scp -i "$KeyPath" $_.FullName "${User}@${Ip}:/opt/codesamplex/dist/"
-    }
+    Get-ChildItem $dist -File | ForEach-Object { Copy-Remote $_.FullName "/opt/codesamplex/dist/$($_.Name)" }
+    Write-Output "shipped $((Get-ChildItem $dist -File).Count) release artifacts"
 }
-# adapters.json is read from disk beside the server workdir (web /adapters page).
-Invoke-Expression "$ssh 'mkdir -p /opt/codesamplex/schemas/v1'"
-scp -i "$KeyPath" (Join-Path $repo "schemas\v1\adapters.json") "${User}@${Ip}:/opt/codesamplex/schemas/v1/"
 
-$envFile = @"
+# .env holds the generated DB password: write once, never overwrite.
+$pw = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+$envText = @"
 CADDY_SITE=$Domain, www.$Domain
 CSX_PUBLIC_URL=https://$Domain
 CSX_DIST_HOST_DIR=/opt/codesamplex/dist
-POSTGRES_PASSWORD=$( -join ((48..57)+(97..122) | Get-Random -Count 24 | ForEach-Object {[char]$_}) )
+POSTGRES_PASSWORD=$pw
 "@
-$envPath = "$env:TEMP\csx.env"
-# Never overwrite an existing server .env (it holds the DB password).
-Set-Content -Path $envPath -Value $envFile -Encoding ascii
-scp -i "$KeyPath" $envPath "${User}@${Ip}:/opt/codesamplex/deploy/.env.new"
+$envTmp = Join-Path $env:TEMP "csx.env"
+Set-Content -Path $envTmp -Value ($envText -replace "`r`n", "`n") -Encoding ascii -NoNewline
+Copy-Remote $envTmp "/opt/codesamplex/deploy/.env.new"
+Invoke-Remote "cd /opt/codesamplex/deploy && if [ -f .env ]; then rm -f .env.new; echo 'kept existing .env'; else mv .env.new .env; echo 'wrote new .env'; fi" | Out-Null
 
-Invoke-Expression "$ssh 'cd /opt/codesamplex/deploy && ([ -f .env ] || mv .env.new .env) && rm -f .env.new && gunzip -c ../csx-server-image.tar.gz | docker load && docker compose up -d --no-build && docker compose ps'"
+if (-not $SkipImage) {
+    Write-Output "== loading image on host (this takes a minute) =="
+    Copy-Remote $imageTar "/opt/codesamplex/csx-server-image.tar"
+    Invoke-Remote "docker load -i /opt/codesamplex/csx-server-image.tar && rm -f /opt/codesamplex/csx-server-image.tar" | Out-Null
+}
 
-Write-Output "Smoke test..."
-Start-Sleep 10
-$health = Invoke-Expression "$ssh 'curl -fsS http://127.0.0.1/healthz'"
-Write-Output "healthz: $health"
-Write-Output "Deployed. Point DNS A records for $Domain and www to $Ip."
+Write-Output "== starting stack =="
+Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
+Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object { Write-Output $_ }
+
+Write-Output "== smoke test =="
+$ok = $false
+for ($i = 0; $i -lt 24; $i++) {
+    Start-Sleep -Seconds 5
+    $health = & ssh @sshArgs $remote "curl -fsS http://127.0.0.1/healthz || true" 2>&1 | ForEach-Object { "$_" }
+    if ($health -match "ok") { $ok = $true; break }
+}
+if (-not $ok) {
+    Invoke-Remote "cd /opt/codesamplex/deploy && docker compose logs --tail 40 server" | ForEach-Object { Write-Output $_ }
+    throw "healthz never returned ok"
+}
+Write-Output "healthz: ok"
+$landing = Invoke-Remote "curl -fsS http://127.0.0.1/ | head -c 400"
+Write-Output "landing sample: $($landing -join ' ' )"
+Write-Output ""
+Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagation."
