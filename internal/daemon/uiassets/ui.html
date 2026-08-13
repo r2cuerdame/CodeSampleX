@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeSampleX — Local Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #2d333b;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --good: #3fb950; --warn: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.55 ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+    padding: 2rem 1.25rem 4rem;
+  }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; letter-spacing: .03em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--dim); margin-bottom: 1.5rem; font-size: .85rem; }
+  h2 {
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--dim); margin: 1.75rem 0 .6rem;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: .9rem 1.1rem;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .75rem; }
+  .stat .label { color: var(--dim); font-size: .78rem; }
+  .stat .value { font-size: 1.35rem; margin-top: .15rem; }
+  .kv { display: grid; grid-template-columns: 14rem 1fr; row-gap: .3rem; }
+  .kv dt { color: var(--dim); }
+  .kv dd { overflow-wrap: anywhere; }
+  .badge {
+    display: inline-block; font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--warn); border: 1px solid var(--warn);
+    border-radius: 999px; padding: .05rem .5rem; vertical-align: middle;
+    margin-left: .4rem;
+  }
+  .mode { color: var(--good); }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: normal; }
+  .empty { color: var(--dim); font-style: italic; }
+  pre {
+    overflow-x: auto; font-size: .8rem; line-height: 1.45;
+    background: #0a0d12; border: 1px solid var(--line);
+    border-radius: 8px; padding: .9rem 1.1rem; white-space: pre;
+  }
+  .note { color: var(--dim); font-size: .8rem; margin: .4rem 0 .6rem; }
+  footer { margin-top: 2.5rem; color: var(--dim); font-size: .75rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>CodeSampleX</span> — Local Dashboard</h1>
+  <p class="sub">csx {{.Version}} · uptime {{.Uptime}} · generated {{.GeneratedAt}}</p>
+
+  <h2>Community status</h2>
+  <div class="panel">
+    <dl class="kv">
+      <dt>Mode</dt><dd class="mode">{{.ModeLabel}}</dd>
+      <dt>Server</dt><dd>{{.ServerURL}}</dd>
+      <dt>Peer ID</dt><dd>{{.PeerID}}</dd>
+      <dt>Home</dt><dd>{{.Home}}</dd>
+      <dt>Automatic evidence sent</dt><dd>{{.Stats.EvidenceBatchesSent}} batches</dd>
+      <dt>Last upload</dt><dd>{{if .Stats.LastUpload}}{{.Stats.LastUpload}}{{else}}never{{end}}</dd>
+    </dl>
+  </div>
+
+  <h2>Numbers</h2>
+  <div class="grid">
+    <div class="panel stat"><div class="label">Local cache</div>
+      <div class="value">{{.CacheHuman}}</div>
+      <div class="label">budget {{.Stats.CacheBudgetMB}} MB</div></div>
+    <div class="panel stat"><div class="label">Hits / Misses</div>
+      <div class="value">{{.Stats.Hits}} / {{.Stats.Misses}}</div></div>
+    <div class="panel stat"><div class="label">Post-hit build pass</div>
+      <div class="value">{{.PostHitPassHuman}}</div>
+      <div class="label">{{.Stats.PostHitBuildReports}} reports</div></div>
+    <div class="panel stat"><div class="label">Estimated reasoning avoided<span class="badge">Estimated</span></div>
+      <div class="value">{{.Stats.EstimatedReasoningAvoided}}</div>
+      <div class="label">adopted hits × {{.AvgMissLLMCalls}} − rework (estimate, never measured)</div></div>
+    <div class="panel stat"><div class="label">Automatic evidence sent</div>
+      <div class="value">{{.Stats.EvidenceBatchesSent}}</div></div>
+    <div class="panel stat"><div class="label">Origin Seeds</div>
+      <div class="value">{{.Stats.OriginSeeds}}</div></div>
+    <div class="panel stat"><div class="label">Cross verifications</div>
+      <div class="value">{{.Stats.CrossVerifications}}</div></div>
+    <div class="panel stat"><div class="label">Pending queue depth</div>
+      <div class="value">{{.Stats.QueueDepth}}</div></div>
+  </div>
+
+  <h2>Project dependencies (last scan)</h2>
+  <div class="panel">
+    {{if .Deps}}
+    <table>
+      <tr><th>Package</th><th>Version</th><th>Publicness</th><th>Last seen</th></tr>
+      {{range .Deps}}
+      <tr><td>{{.Name}}</td><td>{{.Version}}</td><td>{{.Publicness}}</td><td>{{.LastSeen}}</td></tr>
+      {{end}}
+    </table>
+    {{else}}<div class="empty">No scanned dependencies yet — run a command through `csx run -- …`.</div>{{end}}
+  </div>
+
+  <h2>Privacy preview</h2>
+  <p class="note">Exactly what would leave this machine, byte for byte
+  (the pending payloads from <code>GET /local/v1/queue</code>). No paths,
+  no file names, no project names, no raw logs — ever.</p>
+  {{if .LocalOnly}}<p class="note">Local-only mode: nothing is uploaded. The list below shows what community mode <em>would</em> send.</p>{{end}}
+  <pre>{{.PreviewJSON}}</pre>
+
+  <footer>CodeSampleX local daemon · everything on this page is computed locally.</footer>
+</main>
+</body>
+</html>

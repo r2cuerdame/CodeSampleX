@@ -1,0 +1,398 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/samples"
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
+)
+
+// callTool runs one tools/call round trip and returns the tool result.
+func callTool(t *testing.T, c *pipeClient, name string, args map[string]any) map[string]any {
+	t.Helper()
+	return result(t, c.call(99, "tools/call", map[string]any{
+		"name":      name,
+		"arguments": args,
+	}))
+}
+
+// toolText extracts the first text content item.
+func toolText(t *testing.T, res map[string]any) string {
+	t.Helper()
+	content, ok := res["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("tool result has no content: %v", res)
+	}
+	first, ok := content[0].(map[string]any)
+	if !ok || first["type"] != "text" {
+		t.Fatalf("first content item is not text: %v", content[0])
+	}
+	text, _ := first["text"].(string)
+	return text
+}
+
+func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
+	var got domain.SearchRequest
+	deps := emptyDeps()
+	deps.Search = func(_ context.Context, req domain.SearchRequest) domain.SearchResponse {
+		got = req
+		return domain.SearchResponse{
+			SchemaVersion: 1,
+			Results: []domain.SearchResult{{
+				Grade:      domain.GradeCompatible,
+				Confidence: "HIGH",
+				Score:      0.9,
+				SampleID:   "sha256:abc",
+				Exact:      []string{"axios 1.12", "node 22"},
+				Different:  []string{"Sample uses ESM", "Current project uses CJS"},
+				Adaptation: []string{"Import syntax only"},
+				Evidence: domain.EvidenceSummary{
+					ProjectCompileObservations: 18291,
+					CleanBuilds:                821,
+					ContractPasses:             318,
+					IndependentCrossPeers:      74,
+					PassRate:                   0.94,
+					Confidence:                 "HIGH",
+					ElevatedFailures:           []string{"node 18 + esm"},
+				},
+			}},
+		}
+	}
+	c := startServer(t, deps)
+
+	rawErr := `C:\Users\bob\proj\src\index.ts(12,5): error TS2345: Argument of type 'string' is not assignable.` +
+		"\n    at C:\\Users\\bob\\proj\\node_modules\\axios\\lib\\core.js:88"
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query":    "axios post type error",
+		"packages": []string{"pkg:npm/axios@1.12.0"},
+		"environment": map[string]any{
+			"ecosystem":        "npm",
+			"os":               "windows",
+			"arch":             "amd64",
+			"runtime":          "node",
+			"runtimeVersion":   "22.18",
+			"moduleSystem":     "cjs",
+			"executionContext": "node",
+		},
+		"errorText": rawErr,
+	})
+
+	// The fake must have received a sanitized request: fingerprint + code
+	// only, no path fragments anywhere in the serialized request.
+	if got.ErrorCode != "TS2345" {
+		t.Errorf("SearchRequest.ErrorCode = %q, want TS2345", got.ErrorCode)
+	}
+	if !strings.HasPrefix(got.ErrorFingerprint, "sha256:") {
+		t.Errorf("SearchRequest.ErrorFingerprint = %q, want sha256:...", got.ErrorFingerprint)
+	}
+	reqJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	for _, leak := range []string{`C:\`, `C:\\`, "Users", "bob", "index.ts", "proj"} {
+		if strings.Contains(string(reqJSON), leak) {
+			t.Errorf("SearchRequest leaks %q: %s", leak, reqJSON)
+		}
+	}
+	if got.Environment.ExecutionContext != "node" {
+		t.Errorf("environment.executionContext = %q, want node", got.Environment.ExecutionContext)
+	}
+
+	// §11.5 layout: MATCH/CONFIDENCE header + the four sections.
+	text := toolText(t, res)
+	for _, want := range []string{
+		"MATCH: COMPATIBLE",
+		"CONFIDENCE: HIGH",
+		"Exact\n",
+		"Different\n",
+		"Adaptation needed\n",
+		"Evidence\n",
+		"- Project compile observations: 18291",
+		"- Clean builds: 821",
+		"- Contract passes: 318",
+		"- Independent cross peers: 74",
+		"- Elevated failures: node 18 + esm",
+		"Import syntax only",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("search text missing %q:\n%s", want, text)
+		}
+	}
+	// Observation counts and verification counts stay separated: the
+	// observation line must not claim execution and the contract line must
+	// carry the verification class.
+	if !strings.Contains(text, "USAGE_OBSERVATION") || !strings.Contains(text, "SAMPLE_VERIFICATION") {
+		t.Errorf("evidence lines must label their evidence classes:\n%s", text)
+	}
+	obsLine := lineContaining(text, "Project compile observations")
+	if strings.Contains(obsLine, "SAMPLE_VERIFICATION") {
+		t.Errorf("observation line claims verification: %s", obsLine)
+	}
+	verLine := lineContaining(text, "Contract passes")
+	if strings.Contains(verLine, "USAGE_OBSERVATION") {
+		t.Errorf("verification line claims observation: %s", verLine)
+	}
+
+	if _, ok := res["structuredContent"].(map[string]any); !ok {
+		t.Errorf("search result has no structuredContent: %v", res)
+	}
+}
+
+func lineContaining(text, want string) string {
+	for _, l := range strings.Split(text, "\n") {
+		if strings.Contains(l, want) {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestSearchMissRendersNoSafeMatch(t *testing.T) {
+	c := startServer(t, emptyDeps()) // emptyDeps Search always misses
+	res := callTool(t, c, "search_known_solution", map[string]any{"query": "anything"})
+	text := toolText(t, res)
+	if !strings.Contains(text, "MATCH: NO_SAFE_MATCH") {
+		t.Errorf("miss text missing NO_SAFE_MATCH:\n%s", text)
+	}
+	sc, ok := res["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("miss result has no structuredContent")
+	}
+	if miss, _ := sc["miss"].(bool); !miss {
+		t.Errorf("structuredContent.miss = %v, want true", sc["miss"])
+	}
+}
+
+func TestGetSampleRoundTrip(t *testing.T) {
+	deps := emptyDeps()
+	deps.GetSample = func(_ context.Context, id string) (domain.SampleManifest, map[string]string, error) {
+		if id != "sha256:deadbeef" {
+			t.Errorf("GetSample id = %q", id)
+		}
+		m := domain.SampleManifest{
+			SchemaVersion:   1,
+			Case:            domain.Case{SchemaVersion: 1, Kind: "HOW", Goal: "axios post basics", Packages: []string{"pkg:npm/axios@1.12.0"}, Contract: []string{"posts JSON"}},
+			Packages:        []string{"pkg:npm/axios@1.12.0"},
+			License:         "MIT-0",
+			ContractCommand: []string{"node", "test/contract.mjs"},
+		}
+		files := map[string]string{
+			"csx.json":  `{"schemaVersion":1}`,
+			"index.mjs": "import axios from 'axios'\n",
+		}
+		return m, files, nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "get_sample", map[string]any{"sampleId": "sha256:deadbeef"})
+	text := toolText(t, res)
+	for _, want := range []string{"index.mjs", "csx.json", "MIT-0", "axios post basics"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("get_sample text missing %q:\n%s", want, text)
+		}
+	}
+	sc, ok := res["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("get_sample has no structuredContent")
+	}
+	files, ok := sc["files"].(map[string]any)
+	if !ok || len(files) != 2 {
+		t.Errorf("structuredContent.files = %v, want 2 files", sc["files"])
+	}
+}
+
+func TestExplainCompatibilityRoundTrip(t *testing.T) {
+	deps := emptyDeps()
+	deps.Explain = func(_ context.Context, purl, symbol string, env domain.EnvironmentFingerprint) (string, json.RawMessage, error) {
+		if purl != "pkg:npm/axios@1.12.0" || symbol != "axios.post" {
+			t.Errorf("Explain(%q, %q)", purl, symbol)
+		}
+		if env.BrowserFamily != "safari" || env.BrowserMajor != "19" {
+			t.Errorf("Explain env = %+v, want safari 19", env)
+		}
+		return "observation evidence separate from verification evidence", json.RawMessage(`{"key":"npm/axios/1"}`), nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "explain_compatibility", map[string]any{
+		"package": "pkg:npm/axios@1.12.0",
+		"symbol":  "axios.post",
+		"environment": map[string]any{
+			"executionContext": "browser",
+			"browserFamily":    "safari",
+			"browserMajor":     "19",
+		},
+	})
+	sc, ok := res["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("explain has no structuredContent")
+	}
+	snap, ok := sc["snapshot"].(map[string]any)
+	if !ok || snap["key"] != "npm/axios/1" {
+		t.Errorf("structuredContent.snapshot = %v", sc["snapshot"])
+	}
+}
+
+func TestRunObservedCommandRoundTrip(t *testing.T) {
+	deps := emptyDeps()
+	deps.RunObserved = func(_ context.Context, argv []string, cwd string) (int, string, string, []string, error) {
+		if len(argv) != 3 || argv[0] != "npm" {
+			t.Errorf("RunObserved argv = %v", argv)
+		}
+		if cwd != "." {
+			t.Errorf("RunObserved cwd = %q", cwd)
+		}
+		return 1, "PROJECT_COMPILE", "FAIL", []string{"errorCode: TS2345", "error TS2345: <path> is not assignable"}, nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "run_observed_command", map[string]any{
+		"command": []string{"npm", "run", "build"},
+		"cwd":     ".",
+	})
+	text := toolText(t, res)
+	for _, want := range []string{"Exit code: 1", "PROJECT_COMPILE", "FAIL", "USAGE_OBSERVATION", "TS2345"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("run_observed text missing %q:\n%s", want, text)
+		}
+	}
+	sc := res["structuredContent"].(map[string]any)
+	if sc["exitCode"].(float64) != 1 || sc["stage"] != "PROJECT_COMPILE" || sc["result"] != "FAIL" {
+		t.Errorf("structuredContent = %v", sc)
+	}
+	if sc["evidenceClass"] != "USAGE_OBSERVATION" {
+		t.Errorf("evidenceClass = %v, want USAGE_OBSERVATION", sc["evidenceClass"])
+	}
+}
+
+func TestReportSampleAdoptionRoundTrip(t *testing.T) {
+	var gotID string
+	var gotApplied bool
+	var gotBuild *bool
+	deps := emptyDeps()
+	deps.ReportAdoption = func(_ context.Context, id string, applied bool, buildPass *bool) error {
+		gotID, gotApplied, gotBuild = id, applied, buildPass
+		return nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "report_sample_adoption", map[string]any{
+		"sampleId":  "sha256:abc",
+		"applied":   true,
+		"buildPass": true,
+	})
+	if gotID != "sha256:abc" || !gotApplied {
+		t.Errorf("ReportAdoption got (%q, %v)", gotID, gotApplied)
+	}
+	if gotBuild == nil || !*gotBuild {
+		t.Errorf("ReportAdoption buildPass = %v, want *true", gotBuild)
+	}
+	if !strings.Contains(toolText(t, res), "ADOPTION_EVIDENCE") {
+		t.Errorf("adoption text missing evidence class")
+	}
+
+	// buildPass omitted → nil pointer.
+	callTool(t, c, "report_sample_adoption", map[string]any{
+		"sampleId": "sha256:abc",
+		"applied":  false,
+	})
+	if gotBuild != nil {
+		t.Errorf("omitted buildPass arrived as %v, want nil", gotBuild)
+	}
+	if gotApplied {
+		t.Errorf("applied=false arrived as true")
+	}
+}
+
+func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
+	deps := emptyDeps()
+	deps.Propose = func(_ context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
+		if goal != "axios upload with progress" {
+			t.Errorf("Propose goal = %q", goal)
+		}
+		if len(pkgs) != 1 || pkgs[0] != "pkg:npm/axios@1.12.0" {
+			t.Errorf("Propose pkgs = %v", pkgs)
+		}
+		spec := samples.BuildSpec(samples.ScanInputs{Goal: goal, Kind: "HOW", Packages: pkgs, Symbols: symbols})
+		return spec, spec.PromptText(), `C:\fake\work\sample-1`, nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "propose_public_sample", map[string]any{
+		"goal":     "axios upload with progress",
+		"packages": []string{"pkg:npm/axios@1.12.0"},
+		"symbols":  []string{"axios.post"},
+	})
+	text := toolText(t, res)
+	if !strings.Contains(text, "explicit approval") || !strings.Contains(text, "csx sample") {
+		t.Errorf("propose text must state publish requires user approval via CLI:\n%s", text)
+	}
+	sc := res["structuredContent"].(map[string]any)
+	if v, _ := sc["publishRequiresUserApproval"].(bool); !v {
+		t.Errorf("structuredContent.publishRequiresUserApproval = %v, want true", sc["publishRequiresUserApproval"])
+	}
+	if sc["workdir"] != `C:\fake\work\sample-1` {
+		t.Errorf("structuredContent.workdir = %v", sc["workdir"])
+	}
+}
+
+func TestListLocalHitsAndStats(t *testing.T) {
+	deps := emptyDeps()
+	deps.LocalHits = func(context.Context) ([]localdb.HitRow, error) {
+		return []localdb.HitRow{{
+			TS:       time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC),
+			Query:    "axios post",
+			Grade:    domain.GradeCompatible,
+			SampleID: "sha256:abc",
+			Adopted:  true,
+		}}, nil
+	}
+	deps.LocalStats = func(context.Context) (map[string]any, error) {
+		return map[string]any{"mode": "community", "hits": 7}, nil
+	}
+	c := startServer(t, deps)
+
+	res := callTool(t, c, "list_local_hits", map[string]any{})
+	if !strings.Contains(toolText(t, res), "axios post") {
+		t.Errorf("hits text missing query")
+	}
+	sc := res["structuredContent"].(map[string]any)
+	hits, ok := sc["hits"].([]any)
+	if !ok || len(hits) != 1 {
+		t.Fatalf("structuredContent.hits = %v", sc["hits"])
+	}
+	hit := hits[0].(map[string]any)
+	if hit["grade"] != "COMPATIBLE" || hit["adopted"] != true {
+		t.Errorf("hit = %v", hit)
+	}
+	if _, present := hit["postBuildPass"]; present {
+		t.Errorf("unknown postBuildPass must be omitted, got %v", hit)
+	}
+
+	res = callTool(t, c, "get_local_stats", map[string]any{})
+	if !strings.Contains(toolText(t, res), "community") {
+		t.Errorf("stats text missing mode")
+	}
+	sc = res["structuredContent"].(map[string]any)
+	if sc["mode"] != "community" {
+		t.Errorf("stats structuredContent = %v", sc)
+	}
+}
+
+func TestToolErrorsBecomeIsErrorResults(t *testing.T) {
+	c := startServer(t, emptyDeps()) // GetSample not wired → error
+
+	res := callTool(t, c, "get_sample", map[string]any{"sampleId": "sha256:missing"})
+	if isErr, _ := res["isError"].(bool); !isErr {
+		t.Errorf("tool failure must set isError, got %v", res)
+	}
+	if !strings.Contains(toolText(t, res), "not wired") {
+		t.Errorf("tool error text missing cause")
+	}
+
+	// Missing required argument is also a readable tool error.
+	res = callTool(t, c, "search_known_solution", map[string]any{})
+	if isErr, _ := res["isError"].(bool); !isErr {
+		t.Errorf("missing query must set isError, got %v", res)
+	}
+}
