@@ -8,6 +8,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/csx-ser
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata wget && adduser -D -H csx
+# Named volumes inherit ownership from the image, so the blob dir must exist
+# and belong to the runtime user before the volume is created.
+RUN mkdir -p /data/blobs /data/dist && chown -R csx:csx /data
 COPY --from=build /out/csx-server /usr/local/bin/csx-server
 # The /adapters page and /v1 fallback read this from the working directory.
 COPY --from=build /src/schemas/v1/adapters.json /schemas/v1/adapters.json

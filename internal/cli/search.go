@@ -14,6 +14,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
 
 func init() {
@@ -55,12 +56,19 @@ func searchMain(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	// Best-effort environment from the current project (no publicness
-	// checks here — nothing is uploaded by a search).
+	// Best-effort environment AND dependency set from the current project
+	// (no publicness checks here — nothing is uploaded by a search).
+	// Auto-completing packages from the lockfile is what makes an in-project
+	// search environment-aware without the caller listing purls (§11.1).
 	env := domain.EnvironmentFingerprint{SchemaVersion: 1}
+	var symbols []string
 	if dir, err := os.Getwd(); err == nil {
 		if res, err := evidence.Scan(ctx, dir, nil); err == nil && res != nil {
 			env = res.Env
+			if len(pkgs) == 0 {
+				pkgs = projectPackages(res)
+			}
+			symbols = projectSymbols(res)
 		} else {
 			env = environment.Collect(ctx, nil)
 		}
@@ -70,6 +78,7 @@ func searchMain(ctx context.Context, args []string) int {
 		SchemaVersion: 1,
 		Query:         query,
 		Packages:      pkgs,
+		Symbols:       symbols,
 		Environment:   env,
 	}
 
@@ -102,6 +111,51 @@ func searchMain(ctx context.Context, args []string) int {
 	}
 	renderSearchText(os.Stdout, *resp)
 	return 0
+}
+
+// maxAutoPackages bounds how many project dependencies a search carries;
+// beyond this the query stops being about the packages in play.
+const maxAutoPackages = 24
+
+// projectPackages returns the scanned public-registry dependencies as purls,
+// direct dependencies first. Private and unknown-publicness packages are
+// included here (nothing is uploaded by a search) but a private purl can
+// never match a public sample, so they only cost a slot — hence direct-first.
+func projectPackages(res *scanner.ScanResult) []string {
+	var direct, indirect []string
+	for _, p := range res.Packages {
+		if p.Publicness == scanner.PublicnessPrivate || p.PURL.Version == "" {
+			continue
+		}
+		if p.Direct {
+			direct = append(direct, p.PURL.String())
+		} else {
+			indirect = append(indirect, p.PURL.String())
+		}
+	}
+	out := append(direct, indirect...)
+	if len(out) > maxAutoPackages {
+		out = out[:maxAutoPackages]
+	}
+	return out
+}
+
+// projectSymbols returns distinct public symbol families observed in the
+// project, capped like packages.
+func projectSymbols(res *scanner.ScanResult) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range res.Symbols {
+		if s.Family == "" || seen[s.Family] {
+			continue
+		}
+		seen[s.Family] = true
+		out = append(out, s.Family)
+		if len(out) == maxAutoPackages {
+			break
+		}
+	}
+	return out
 }
 
 func searchViaDaemon(ctx context.Context, home string, req domain.SearchRequest) (*domain.SearchResponse, error) {

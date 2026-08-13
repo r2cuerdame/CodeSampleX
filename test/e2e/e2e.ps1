@@ -23,14 +23,18 @@ function Wait-Until([scriptblock]$Cond, [int]$TimeoutSec, [string]$What) {
 }
 
 function Invoke-Csx([string]$CsxHome, [string[]]$CsxArgs, [string]$Cwd = $null, [hashtable]$ExtraEnv = @{}) {
-    $prevHome = $env:CSX_HOME; $prevLoc = Get-Location
+    $prevHome = $env:CSX_HOME; $prevLoc = Get-Location; $prevEAP = $ErrorActionPreference
     $env:CSX_HOME = $CsxHome
     foreach ($k in $ExtraEnv.Keys) { Set-Item "env:$k" $ExtraEnv[$k] }
     try {
         if ($Cwd) { Set-Location $Cwd }
-        $out = & $script:csx @CsxArgs 2>&1 | Out-String
+        # PS 5.1 turns native stderr lines into ErrorRecords under
+        # ErrorActionPreference=Stop; child tools legitimately write stderr.
+        $ErrorActionPreference = "Continue"
+        $out = & $script:csx @CsxArgs 2>&1 | ForEach-Object { "$_" } | Out-String
         return @{ exit = $LASTEXITCODE; out = $out }
     } finally {
+        $ErrorActionPreference = $prevEAP
         $env:CSX_HOME = $prevHome
         foreach ($k in $ExtraEnv.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         Set-Location $prevLoc
@@ -102,7 +106,9 @@ try {
 # ---------- Scenario D (before C so search has a sample): contribution + cross verification ----------
 Log "Scenario D: sample contribution + cross verification"
 try {
-    $sampleDir = Join-Path $PSScriptRoot "fixtures\sample-axios-upload"
+    # Work on a copy: `sample create` canonicalizes csx.json in place.
+    $sampleDir = Join-Path $tmp "sample-axios-upload"
+    Copy-Item -Recurse (Join-Path $PSScriptRoot "fixtures\sample-axios-upload") $sampleDir
     $create = Invoke-Csx $home1 @("sample", "create", $sampleDir)
     if ($create.exit -ne 0) { throw "sample create failed: $($create.out)" }
     $sampleId = ([regex]::Match($create.out, "sha256:[0-9a-f]{64}")).Value
@@ -111,7 +117,7 @@ try {
 
     $verify = Invoke-Csx $home1 @("sample", "verify", $sampleId)
     Note ("D: origin verify exit=" + $verify.exit)
-    $publish = Invoke-Csx $home1 @("sample", "publish", $sampleId, "--anonymous", "--server", $server) $null @{ CSX_TEST_ASSUME_YES = "1" }
+    $publish = Invoke-Csx $home1 @("sample", "publish", $sampleId, "--anonymous", "--assume-yes", "--server", $server) $null @{ CSX_TEST_ASSUME_YES = "1" }
     if ($publish.exit -ne 0) { throw "publish failed: $($publish.out)" }
     Note "D: published anonymously"
 
