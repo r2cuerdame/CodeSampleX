@@ -1,0 +1,5 @@
+{{define "content"}}
+<h1>{{.T "stats.title"}}</h1>
+{{template "tiles" .}}
+{{if .GeneratedAt}}<p class="dim mono small">{{.GeneratedAt}}</p>{{end}}
+{{end}}

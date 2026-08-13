@@ -1,0 +1,12 @@
+{{define "content"}}
+<nav class="crumbs mono"><a href="/{{.Ecosystem}}/{{.Name}}">{{.Name}}</a> / <a href="/{{.Ecosystem}}/{{.Name}}/{{.Ver}}">{{.Ver}}</a> / {{.Symbol}}</nav>
+<h1 class="mono">{{.Symbol}} <span class="dim">/ {{.Name}}@{{.Ver}}</span></h1>
+
+<h2 class="eyebrow mono">{{.T "symbol.matrix_heading"}}</h2>
+<p class="note dim small">{{.T "symbol.evidence_note"}}</p>
+{{template "matrix" .}}
+{{if .Generated}}<p class="dim mono small">snapshot · {{.Generated}}</p>{{end}}
+
+<h2 class="eyebrow mono">{{.T "symbol.failures_heading"}}</h2>
+{{template "clusters" .}}
+{{end}}

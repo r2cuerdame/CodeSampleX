@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1><span class="mono">{{.Login}}</span> <span class="dim">· {{.T "seeder.title"}}</span></h1>
+
+<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
+{{if .Samples}}
+<ul class="samples">
+{{- range .Samples}}
+  <li>
+    <a href="/samples/{{.SampleID}}">{{if .Goal}}{{.Goal}}{{else}}{{.SampleID}}{{end}}</a>
+    <span class="chip status mono">{{.Status}}</span>
+    <span class="dim mono small">{{.License}}{{if .CreatedAt}} · {{.CreatedAt}}{{end}}</span>
+  </li>
+{{- end}}
+</ul>
+{{else}}
+<p class="dim">{{.T "seeder.none"}}</p>
+{{end}}
+{{end}}

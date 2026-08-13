@@ -1,0 +1,65 @@
+{{define "content"}}
+<section class="hero">
+  <p class="eyebrow mono">CodeSampleX</p>
+  <h1 class="tagline mono">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
+</section>
+
+<section id="install" class="install panel">
+  <h2 class="eyebrow mono">{{.T "landing.install_heading"}}</h2>
+  <div class="cmd">
+    <span class="oslabel">{{.T "landing.install_windows"}}</span>
+    <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
+  </div>
+  <div class="cmd">
+    <span class="oslabel">{{.T "landing.install_unix"}}</span>
+    <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
+  </div>
+  <p class="dim">{{.T "landing.install_note"}}</p>
+</section>
+
+<section class="network">
+  <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
+  {{template "tiles" .}}
+</section>
+
+<section class="flywheel">
+  <h2 class="eyebrow mono">{{.T "landing.flywheel_heading"}}</h2>
+  <p class="chain mono">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}</p>
+</section>
+
+<section class="contract">
+  <h2 class="eyebrow mono">{{.T "contract.heading"}}</h2>
+  <div class="cols">
+    <div class="col panel">
+      <h3>{{.T "contract.get"}}</h3>
+      <ul>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.get_1"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.get_2"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.get_3"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.get_4"}}</li>
+      </ul>
+    </div>
+    <div class="col panel">
+      <h3>{{.T "contract.contribute"}}</h3>
+      <ul>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.contribute_1"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.contribute_2"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.contribute_3"}}</li>
+        <li><span class="y" aria-hidden="true">✓</span>{{.T "contract.contribute_4"}}</li>
+      </ul>
+    </div>
+    <div class="col panel never">
+      <h3>{{.T "contract.never"}}</h3>
+      <ul>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_1"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_2"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_3"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_4"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_5"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_6"}}</li>
+        <li><span class="n" aria-hidden="true">✕</span>{{.T "contract.never_7"}}</li>
+      </ul>
+    </div>
+  </div>
+</section>
+{{end}}

@@ -1,0 +1,172 @@
+package web
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestSymbolPageContextFirstMatrix(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/npm/axios/1.12.0/axios.post")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Execution context is the leading row dimension (execution-context.md §6).
+	mustContain(t, body, "node 22")
+	mustContain(t, body, "TS 5.9 · pnpm · windows")
+	mustContain(t, body, "safari 19")
+	mustContain(t, body, "ELEVATED FAILURE")
+	mustContain(t, body, "android-webview 140")
+	mustContain(t, body, "UNKNOWN")
+	mustContain(t, body, "no evidence")
+	mustContain(t, body, "HIGH")
+
+	// Context rows appear in snapshot order: node before safari before webview.
+	iNode := strings.Index(body, "node 22")
+	iSafari := strings.Index(body, "safari 19")
+	iWebview := strings.Index(body, "android-webview 140")
+	if !(iNode < iSafari && iSafari < iWebview) {
+		t.Errorf("context rows out of order: node=%d safari=%d webview=%d", iNode, iSafari, iWebview)
+	}
+
+	// Evidence classes separated: 104 project observations, 7 verifications —
+	// and never their sum.
+	mustContain(t, body, ">104<")
+	mustContain(t, body, ">7<")
+	if strings.Contains(body, ">111<") {
+		t.Error("PROJECT_* observations were summed with CONTRACT evidence")
+	}
+
+	// Failure cluster: facts labeled observed, causes labeled hypotheses.
+	mustContain(t, body, "ERR_REQUIRE_ESM")
+	mustContain(t, body, "observed")
+	mustContain(t, body, "hypotheses")
+	mustContain(t, body, "CONFIGURATION")
+	mustContain(t, body, "72%")
+	mustContain(t, body, "regression candidate")
+
+	// SEO: descriptive title + breadcrumbs.
+	mustContain(t, body, "<title>axios.post axios 1.12.0 node 22 compatibility — CodeSampleX</title>")
+	mustContain(t, body, `"BreadcrumbList"`)
+	mustContain(t, body, `rel="canonical" href="https://codesamplex.dev/npm/axios/1.12.0/axios.post"`)
+}
+
+func TestSymbolPageGolangMultiSegment(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/golang/github.com/a/b/v1.2.0/pkg.Func")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, "go 1.26")
+	mustContain(t, body, "MEDIUM")
+	mustContain(t, body, "github.com/a/b")
+}
+
+func TestPackagePage(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/npm/axios")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, `href="/npm/axios/1.12.0"`)
+	mustContain(t, body, `href="/npm/axios/1.11.0"`)
+	mustContain(t, body, "ERR_REQUIRE_ESM")
+	mustContain(t, body, "regression candidate")
+}
+
+func TestVersionPageListsSymbols(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/npm/axios/1.12.0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, `href="/npm/axios/1.12.0/axios.post"`)
+	mustContain(t, body, `href="/npm/axios/1.12.0/axios.get"`)
+}
+
+func TestUnknownEcosystemAndPackage404(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	if rec := get(t, mux, "/gems/rails"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown ecosystem status %d", rec.Code)
+	}
+	if rec := get(t, mux, "/npm/no-such-package"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown package status %d", rec.Code)
+	}
+	if rec := get(t, mux, "/npm/axios/9.9.9/none.sym"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown symbol status %d", rec.Code)
+	}
+}
+
+func TestExploreSearchAndHot(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/explore?q=axios").Body.String()
+	mustContain(t, body, `href="/npm/axios"`)
+
+	hot := get(t, mux, "/explore").Body.String()
+	mustContain(t, hot, "Hot packages")
+	mustContain(t, hot, `href="/npm/axios"`)
+	mustContain(t, hot, `href="/golang/github.com/a/b"`)
+
+	none := get(t, mux, "/explore?q=zzzznothing").Body.String()
+	mustContain(t, none, "No packages found.")
+}
+
+func TestSamplePage(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/samples/sha256:d1e2f3")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, "POST JSON with axios and retries")
+	mustContain(t, body, "responds 200")
+	mustContain(t, body, "retries on ECONNRESET")
+	mustContain(t, body, "src/index.mjs")
+	mustContain(t, body, "test/contract.mjs")
+	mustContain(t, body, "Origin Seeder")
+	mustContain(t, body, `href="/seeders/alice"`)
+	mustContain(t, body, "CROSS_PASS")
+	mustContain(t, body, "L4_CROSS_PASS")
+	mustContain(t, body, "MIT-0")
+	// Receipt details: env context + capability, honestly labeled.
+	mustContain(t, body, "CONTAINER_RUN")
+	mustContain(t, body, "node 22.18")
+
+	if rec := get(t, mux, "/samples/sha256:unknown"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown sample status %d", rec.Code)
+	}
+}
+
+func TestSeederPage(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/seeders/alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, "alice")
+	mustContain(t, body, "POST JSON with axios and retries")
+	mustContain(t, body, `href="/samples/sha256:d1e2f3"`)
+	mustContain(t, body, "CROSS_PASS")
+}
+
+func TestAdaptersPage(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/adapters")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	mustContain(t, body, "node-typescript")
+	mustContain(t, body, "A4")
+	mustContain(t, body, "golang")
+	mustContain(t, body, "cargo")
+	// A3 honesty note from adapters.json.
+	mustContain(t, body, "A3")
+}

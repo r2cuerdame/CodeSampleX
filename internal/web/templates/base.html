@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="description" content="{{.Description}}">
+{{- if .Canonical}}
+<link rel="canonical" href="{{.Canonical}}">
+{{- end}}
+{{- range .Alternates}}
+<link rel="alternate" hreflang="{{.Lang}}" href="{{.URL}}">
+{{- end}}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="CodeSampleX">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:description" content="{{.Description}}">
+{{- if .Canonical}}
+<meta property="og:url" content="{{.Canonical}}">
+{{- end}}
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{.Title}}">
+<meta name="twitter:description" content="{{.Description}}">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%230f1317'/%3E%3Crect%20x='3'%20y='4'%20width='3'%20height='8'%20fill='%23d9a441'/%3E%3Crect%20x='8'%20y='4'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3Crect%20x='8'%20y='7'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3Crect%20x='8'%20y='10'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/site.css">
+{{- range .JSONLD}}
+<script type="application/ld+json">{{.}}</script>
+{{- end}}
+</head>
+<body>
+<header class="top">
+  <div class="wrap bar">
+    <a class="brand mono" href="{{.HomeHref}}">codesample<span class="x">x</span></a>
+    <nav class="nav">
+      <a href="{{.WithLang "/explore"}}">{{.T "nav.explore"}}</a>
+      <a href="{{.WithLang "/stats"}}">{{.T "nav.stats"}}</a>
+      <a href="{{.WithLang "/adapters"}}">{{.T "nav.adapters"}}</a>
+      <a class="cta" href="{{.HomeHref}}#install">{{.T "nav.install"}}</a>
+    </nav>
+  </div>
+</header>
+<main id="main" class="wrap">
+{{block "content" .}}{{end}}
+</main>
+<footer class="foot">
+  <div class="wrap">
+    <p class="dim small">{{.T "footer.note"}}{{if .Version}} <span class="mono">· csx {{.Version}}</span>{{end}}</p>
+    <nav class="langs" aria-label="{{.T "lang.label"}}">
+      {{- range .LangLinks}}
+      <a {{if eq .Code $.Lang}}class="on" {{end}}href="{{.URL}}" lang="{{.Code}}">{{.Name}}</a>
+      {{- end}}
+    </nav>
+  </div>
+</footer>
+<script>for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('click',()=>{navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.classList.add('ok');setTimeout(()=>b.classList.remove('ok'),1200)})});</script>
+</body>
+</html>
+
+{{/* matrix renders []matrixRow with execution context as the leading row
+     dimension. Observations and verifications stay in separate columns. */}}
+{{define "matrix"}}
+<div class="tablewrap">
+<table class="matrix">
+<thead><tr>
+  <th>{{.T "symbol.env_col"}}</th>
+  <th>{{.T "symbol.confidence_col"}}</th>
+  <th class="num">{{.T "symbol.observations_col"}}</th>
+  <th class="num">{{.T "symbol.verified_col"}}</th>
+  <th class="num">{{.T "symbol.pass_rate_col"}}</th>
+  <th class="num">{{.T "symbol.peers_col"}}</th>
+  <th>{{.T "symbol.last_seen_col"}}</th>
+</tr></thead>
+<tbody>
+{{- range .Matrix}}
+<tr>
+  <td class="env"><span class="ctx mono">{{.Context}}</span>{{if .Detail}}<span class="dim mono"> · {{.Detail}}</span>{{end}}
+    {{- if or .ObservedStages .VerifiedStages}}
+    <div class="stages dim mono">{{if .ObservedStages}}{{$.T "symbol.observations_col"}}: {{.ObservedStages}}{{end}}{{if .VerifiedStages}}{{if .ObservedStages}} — {{end}}{{$.T "symbol.verified_col"}}: {{.VerifiedStages}}{{end}}</div>
+    {{- end}}
+  </td>
+  <td><span class="chip {{.ChipClass}} mono"><span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{.Chip}}</span>{{if .NoEvidence}} <span class="dim small">({{$.T "symbol.no_evidence"}})</span>{{end}}</td>
+  <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Observations}}{{end}}</td>
+  <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Verifications}}{{end}}</td>
+  <td class="num mono">{{if .PassRate}}{{.PassRate}}{{else}}—{{end}}</td>
+  <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Peers}}{{end}}</td>
+  <td class="mono dim">{{.LastSeen}}</td>
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{end}}
+
+{{/* clusters renders []clusterView: observed facts first, causes strictly
+     as probabilistic hypotheses (goal.md §3.6). */}}
+{{define "clusters"}}
+{{- if .Clusters}}
+<ul class="clusters">
+{{- range .Clusters}}
+<li class="cluster">
+  <div class="row"><span class="k mono">{{$.T "symbol.observed"}}</span>
+    <span class="mono">{{.Stage}}</span>
+    {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{end}}
+    <span class="dim mono">×{{.Count}}</span>
+    {{if .EnvSummary}}<span class="dim mono">{{.EnvSummary}}</span>{{end}}
+    {{if .Symbol}}<span class="dim mono">{{.Symbol}}</span>{{end}}
+    <span class="dim mono small">{{.Fingerprint}}</span>
+  </div>
+  {{- if .Hypotheses}}
+  <div class="row"><span class="k mono">{{$.T "symbol.hypotheses"}}</span>
+    {{range .Hypotheses}}<span class="chip hyp mono">{{.Domain}} {{.Pct}}</span> {{end}}
+  </div>
+  {{- end}}
+  {{- if .RegressionCandidate}}
+  <div class="row"><span class="chip elevated mono"><span class="glyph" aria-hidden="true">▲</span>{{$.T "symbol.regression_flag"}}</span>{{if .Versions}} <span class="dim mono">{{.Versions}}</span>{{end}}</div>
+  {{- end}}
+</li>
+{{- end}}
+</ul>
+{{- else}}<p class="dim">{{.T "pkg.no_clusters"}}</p>{{end}}
+{{end}}
+
+{{/* tiles renders the network counters; the reasoning-avoided tile is
+     always labeled estimated (goal.md §14.5). */}}
+{{define "tiles"}}
+<div class="stats">
+{{- range .Tiles}}
+  <div class="stat">
+    <span class="num mono">{{.Value}}</span>
+    <span class="lbl">{{.Label}}{{if .Estimated}} <em class="est mono">{{$.T "stats.estimated"}}</em>{{end}}</span>
+  </div>
+{{- end}}
+</div>
+{{end}}

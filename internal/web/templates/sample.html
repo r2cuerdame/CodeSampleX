@@ -1,0 +1,58 @@
+{{define "content"}}
+<h1>{{.T "sample.title"}} <span class="mono small">{{.Meta.SampleID}}</span></h1>
+<div class="badges">
+  <span class="chip status mono">{{.Meta.Status}}</span>
+  <span class="chip level mono">{{.Level}}</span>
+  {{if .Meta.License}}<span class="chip mono">{{.Meta.License}}</span>{{end}}
+</div>
+
+{{if .Manifest}}
+<h2 class="eyebrow mono">{{.T "sample.case"}}</h2>
+<dl class="kv">
+  <dt>{{.T "sample.goal"}}</dt>
+  <dd>{{.Manifest.Case.Goal}} <span class="chip mono small">{{.Manifest.Case.Kind}}</span></dd>
+  <dt>{{.T "sample.packages"}}</dt>
+  <dd class="mono">{{range .Manifest.Packages}}{{.}} {{end}}</dd>
+  {{if .Context}}
+  <dt>{{.T "sample.environment"}}</dt>
+  <dd class="mono">{{.Context}}</dd>
+  {{end}}
+  {{if .Meta.CreatedAt}}
+  <dt>{{.T "sample.created"}}</dt>
+  <dd class="mono">{{.Meta.CreatedAt}}</dd>
+  {{end}}
+</dl>
+
+<h2 class="eyebrow mono">{{.T "sample.contract"}}</h2>
+<ul class="contractlist">
+{{- range .Manifest.Case.Contract}}
+  <li>{{.}}</li>
+{{- end}}
+</ul>
+{{end}}
+
+<h2 class="eyebrow mono">{{.T "sample.files"}}</h2>
+<ul class="files mono">
+{{- range .Meta.Files}}
+  <li>{{.}}</li>
+{{- end}}
+</ul>
+
+<h2 class="eyebrow mono">{{.T "sample.origin"}}</h2>
+{{if .Meta.OriginSeeder}}
+<p><a class="mono" href="/seeders/{{.Meta.OriginSeeder}}">{{.Meta.OriginSeeder}}</a></p>
+{{else}}
+<p class="dim">{{.T "sample.anonymous"}}</p>
+{{end}}
+
+<h2 class="eyebrow mono">{{.T "sample.receipts"}}</h2>
+{{if .Receipts}}
+<ul class="receipts">
+{{- range .Receipts}}
+  <li class="mono"><span class="ctx">{{.Context}}</span> · <span class="chip mono small">{{.Capability}}</span> · {{.Stages}} · {{.Verifier}} · {{.CreatedAt}} · <span class="dim">{{.PeerID}}</span></li>
+{{- end}}
+</ul>
+{{else}}
+<p class="dim">{{.T "sample.no_receipts"}}</p>
+{{end}}
+{{end}}

@@ -1,0 +1,7 @@
+{{define "content"}}
+<section class="hero">
+  <p class="eyebrow mono">{{.Status}}</p>
+  <h1 class="tagline mono">{{if eq .Status 404}}{{.T "error.not_found"}}{{else}}{{.T "error.unavailable"}}{{end}}</h1>
+  <p><a href="{{.HomeHref}}">CodeSampleX</a></p>
+</section>
+{{end}}

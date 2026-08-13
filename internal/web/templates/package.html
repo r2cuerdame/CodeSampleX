@@ -1,0 +1,18 @@
+{{define "content"}}
+<nav class="crumbs mono"><a href="{{.WithLang "/explore"}}">{{.T "nav.explore"}}</a> / {{.Ecosystem}}</nav>
+<h1 class="mono">{{.Name}} <span class="dim">· {{.Ecosystem}}</span></h1>
+
+<h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
+{{if .Versions}}
+<ul class="verlist mono">
+{{- range $i, $v := .Versions}}
+  <li><a href="/{{$.Ecosystem}}/{{$.Name}}/{{$v}}">{{$v}}</a>{{if eq $i 0}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}</li>
+{{- end}}
+</ul>
+{{else}}
+<p class="dim">{{.T "pkg.no_versions"}}</p>
+{{end}}
+
+<h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
+{{template "clusters" .}}
+{{end}}
