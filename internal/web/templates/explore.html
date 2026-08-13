@@ -1,5 +1,9 @@
 {{define "content"}}
 <h1>{{.T "explore.title"}}</h1>
+{{/* The network counters live here, on the page that shows the network
+     itself — a separate stats page was one nav item for seven numbers. */}}
+{{template "tiles" .}}
+{{if .GeneratedAt}}<p class="dim mono small">{{.GeneratedAt}}</p>{{end}}
 <form class="search" action="/explore" method="get" role="search">
   <input type="search" name="q" value="{{.Query}}" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}

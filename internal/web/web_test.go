@@ -143,10 +143,10 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.statsJSON, store.statsOK = string(produced), true
 
-	body := get(t, mux, "/stats").Body.String()
+	body := get(t, mux, "/explore").Body.String()
 	for _, want := range []string{"76", "312", "5", "4", "21"} { // 21 = 7 hits × 3
 		if !strings.Contains(body, want) {
-			t.Errorf("counter %q missing from /stats — page shows placeholders instead of the aggregator's numbers:\n%s",
+			t.Errorf("counter %q missing from /explore — page shows placeholders instead of the aggregator's numbers:\n%s",
 				want, truncate(body))
 		}
 	}
@@ -155,15 +155,33 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	}
 }
 
-func TestStatsPageExplainsHowItWorks(t *testing.T) {
+// TestStatsPathRedirectsToExplore keeps old links and indexed URLs alive
+// after the counters moved onto the explorer.
+func TestStatsPathRedirectsToExplore(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/stats").Body.String()
-	mustContain(t, body, "How CodeSampleX works")
+	rec := get(t, mux, "/stats")
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("/stats status = %d, want 301", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/explore" {
+		t.Errorf("Location = %q, want /explore", loc)
+	}
+	// And the nav no longer carries a Stats entry.
+	body := get(t, mux, "/").Body.String()
+	if strings.Contains(body, `href="/stats"`) {
+		t.Error("nav still links to the removed stats page")
+	}
+}
+
+// The pipeline explanation lives on the landing page, where a first-time
+// visitor meets it before deciding to install anything.
+func TestLandingExplainsHowItWorks(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/").Body.String()
+	mustContain(t, body, "How it works")
 	mustContain(t, body, "never leave your machine")
-	// Counters still live here.
-	mustContain(t, body, "Verified Samples")
-	// The honesty note separating observations from verifications.
-	mustContain(t, body, "counted separately")
+	// Plain-language answer to "what is this".
+	mustContain(t, body, "What is CodeSampleX?")
 }
 
 func TestAdaptersPageIsReadable(t *testing.T) {
@@ -227,23 +245,23 @@ func TestLandingRedirectBareLang(t *testing.T) {
 
 func TestLangQueryAndCookie(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	rec := get(t, mux, "/stats?lang=ko")
+	rec := get(t, mux, "/explore?lang=ko")
 	body := rec.Body.String()
-	mustContain(t, body, "네트워크 통계")
+	mustContain(t, body, "패키지 탐색")
 	if !strings.Contains(rec.Header().Get("Set-Cookie"), "csx_lang=ko") {
 		t.Errorf("missing lang cookie, got %q", rec.Header().Get("Set-Cookie"))
 	}
 	// Cookie alone selects the language on later requests.
-	rec2 := get(t, mux, "/stats", "Cookie", "csx_lang=ko")
-	mustContain(t, rec2.Body.String(), "네트워크 통계")
+	rec2 := get(t, mux, "/explore", "Cookie", "csx_lang=ko")
+	mustContain(t, rec2.Body.String(), "패키지 탐색")
 	// Accept-Language fallback.
-	rec3 := get(t, mux, "/stats", "Accept-Language", "ja,en;q=0.5")
-	mustContain(t, rec3.Body.String(), "ネットワーク統計")
+	rec3 := get(t, mux, "/explore", "Accept-Language", "ja,en;q=0.5")
+	mustContain(t, rec3.Body.String(), "パッケージ探索")
 }
 
-func TestStatsPageEstimatedLabel(t *testing.T) {
+func TestNetworkCountersEstimatedLabel(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/stats").Body.String()
+	body := get(t, mux, "/explore").Body.String()
 	mustContain(t, body, "Estimated reasoning avoided")
 	mustContain(t, body, "estimated")
 	mustContain(t, body, "1,204")

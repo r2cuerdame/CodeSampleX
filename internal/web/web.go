@@ -152,7 +152,7 @@ func cacheControl(next http.Handler) http.Handler {
 
 func parseTemplates() map[string]*template.Template {
 	pages := []string{"landing", "explore", "package", "version", "symbol",
-		"sample", "seeder", "stats", "adapters", "error"}
+		"sample", "seeder", "adapters", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
 		out[p] = template.Must(template.ParseFS(templateFS,

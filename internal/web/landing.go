@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -130,23 +131,14 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	})
 }
 
-type statsPageData struct {
-	basePage
-	Tiles       []statTile
-	GeneratedAt string
+// statsPage is kept as a permanent redirect: the network counters moved
+// onto /explore, which is the page that shows the network itself. Old
+// links, bookmarks and indexed URLs still land somewhere correct.
+func (s *site) statsPage(w http.ResponseWriter, r *http.Request) {
+	target := "/explore"
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		target += "?lang=" + url.QueryEscape(lang)
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
-func (s *site) statsPage(w http.ResponseWriter, r *http.Request) {
-	lang := s.negotiate(w, r)
-	title := i18n.T(lang, "stats.title") + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "meta.stats"))
-	b.Canonical = s.base(r) + "/stats"
-	st := s.loadStats(r)
-	generated := ""
-	if st != nil {
-		generated = st.GeneratedAt
-	}
-	s.render(w, "stats", http.StatusOK, statsPageData{
-		basePage: b, Tiles: buildTiles(lang, st), GeneratedAt: generated,
-	})
-}

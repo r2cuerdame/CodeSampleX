@@ -484,9 +484,11 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 
 type explorePage struct {
 	basePage
-	Query string
-	Hits  []PackageHit
-	Hot   bool
+	Query       string
+	Hits        []PackageHit
+	Hot         bool
+	Tiles       []statTile
+	GeneratedAt string
 }
 
 func (s *site) explore(w http.ResponseWriter, r *http.Request) {
@@ -507,8 +509,14 @@ func (s *site) explore(w http.ResponseWriter, r *http.Request) {
 	title := i18n.T(lang, "explore.title") + " — CodeSampleX"
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
 	b.Canonical = s.base(r) + "/explore"
+	st := s.loadStats(r)
+	generated := ""
+	if st != nil {
+		generated = st.GeneratedAt
+	}
 	s.render(w, "explore", http.StatusOK, explorePage{
 		basePage: b, Query: q, Hits: hits, Hot: hot,
+		Tiles: buildTiles(lang, st), GeneratedAt: generated,
 	})
 }
 
