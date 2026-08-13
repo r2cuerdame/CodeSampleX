@@ -24,10 +24,12 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const usage = `usage: csx-server <migrate|serve>
+const usage = `usage: csx-server <migrate|serve|quarantine>
 
-  migrate   apply schema migrations to $CSX_DSN and exit
-  serve     apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
+  migrate      apply schema migrations to $CSX_DSN and exit
+  serve        apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
+  quarantine   hide a published sample from every serving read (operator only)
+               csx-server quarantine <sampleId> --reason "…"   [--release]
 `
 
 func main() {
@@ -46,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMigrate(cfg, stdout, stderr)
 	case "serve":
 		return runServe(cfg, stdout, stderr)
+	case "quarantine":
+		return runQuarantine(cfg, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "csx-server: unknown subcommand %q\n%s", args[0], usage)
 		return 2

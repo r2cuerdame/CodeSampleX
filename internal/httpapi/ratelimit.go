@@ -30,6 +30,13 @@ var (
 	// authLimit covers the GitHub device flow: brute-forcing a device code
 	// is the one thing here worth guessing at.
 	authLimit = rate{burst: 20, per: time.Minute}
+	// publishLimit covers sample upload alone. It is anonymous and durable
+	// — the only write that creates permanent public content — and search
+	// candidates are bounded, so a flood of samples can crowd out honest
+	// ones. At the shared write budget that takeover cost about nine
+	// minutes; at ten an hour it costs days, while no honest contributor
+	// publishes ten samples in an hour.
+	publishLimit = rate{burst: 10, per: time.Hour}
 )
 
 type rate struct {
@@ -116,14 +123,15 @@ func (l *limiter) sweepLocked(now time.Time) {
 
 // limiters holds one limiter per endpoint class.
 type limiters struct {
-	write, read, auth *limiter
+	write, read, auth, publish *limiter
 }
 
 func newLimiters() *limiters {
 	return &limiters{
-		write: newLimiter(writeLimit),
-		read:  newLimiter(readLimit),
-		auth:  newLimiter(authLimit),
+		write:   newLimiter(writeLimit),
+		read:    newLimiter(readLimit),
+		auth:    newLimiter(authLimit),
+		publish: newLimiter(publishLimit),
 	}
 }
 

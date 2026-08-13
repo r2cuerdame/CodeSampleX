@@ -115,7 +115,8 @@ func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 		"- Project compile observations: 18291",
 		"- Clean builds: 821",
 		"- Contract passes: 318",
-		"- Independent cross peers: 74",
+		"- Distinct verifying peer keys: 74",
+		"not verified as separate parties",
 		"- Elevated failures: node 18 + esm",
 		"Import syntax only",
 	} {

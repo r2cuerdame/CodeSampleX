@@ -480,13 +480,15 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 }
 
 const sampleCols = `sample_id, COALESCE(case_id,''), manifest::text, status,
-	COALESCE(origin_seeder,''), license, size_bytes, hot_score, created_at`
+	COALESCE(origin_seeder,''), license, size_bytes, hot_score, created_at,
+	quarantined, COALESCE(quarantine_reason,'')`
 
 func scanSample(row pgx.Row) (SampleRow, error) {
 	var s SampleRow
 	var created *time.Time
 	err := row.Scan(&s.SampleID, &s.CaseID, &s.ManifestJSON, &s.Status,
-		&s.OriginSeeder, &s.License, &s.SizeBytes, &s.HotScore, &created)
+		&s.OriginSeeder, &s.License, &s.SizeBytes, &s.HotScore, &created,
+		&s.Quarantined, &s.QuarantineReason)
 	if err != nil {
 		return SampleRow{}, err
 	}
@@ -514,6 +516,68 @@ func (p *PG) GetSample(ctx context.Context, sampleID string) (SampleRow, bool, e
 	return s, found, err
 }
 
+// SamplesForPackages returns non-quarantined samples whose manifest names
+// any of the given package (ecosystem, name) pairs.
+//
+// Search used to take the newest 500 samples globally and score those,
+// which made relevance a function of publication order: at 501 samples the
+// oldest silently stop being findable no matter how good they are, and
+// anyone able to publish 500 rows owns every result. Filtering in SQL makes
+// the limit per-query instead of global.
+func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) ([]SampleRow, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements_text(manifest->'packages') AS pkg
+				WHERE pkg LIKE ANY($1)
+			  )
+			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// SetSampleQuarantine hides or restores a sample. Evidence, receipts and
+// the case row are left untouched: a quarantine must be reversible and
+// auditable, not a delete.
+func (p *PG) SetSampleQuarantine(ctx context.Context, sampleID string, on bool, reason string) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tag, err := c.Exec(ctx, `
+			UPDATE samples
+			SET quarantined = $2,
+			    quarantine_reason = CASE WHEN $2 THEN $3 ELSE NULL END,
+			    quarantined_at = CASE WHEN $2 THEN now() ELSE NULL END
+			WHERE sample_id = $1`, sampleID, on, reason)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("serverstore: no sample %s", sampleID)
+		}
+		return nil
+	})
+}
+
 func (p *PG) ListSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 	if limit <= 0 {
 		limit = 50
@@ -522,6 +586,7 @@ func (p *PG) ListSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined
 			ORDER BY created_at DESC, sample_id LIMIT $1`, limit)
 		if err != nil {
 			return err

@@ -352,6 +352,56 @@ func (f *Fake) GetSample(_ context.Context, sampleID string) (SampleRow, bool, e
 	return s, ok, nil
 }
 
+// SamplesForPackages filters the fake's samples by package prefix,
+// mirroring the SQL LIKE ANY match.
+func (f *Fake) SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error) {
+	all, err := f.ListSamples(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	var out []SampleRow
+	for _, row := range all {
+		var m struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal([]byte(row.ManifestJSON), &m) != nil {
+			continue
+		}
+		if matchesAnyPattern(m.Packages, patterns) {
+			out = append(out, row)
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// matchesAnyPattern implements the "prefix%" form the SQL uses.
+func matchesAnyPattern(purls, patterns []string) bool {
+	for _, p := range purls {
+		for _, pat := range patterns {
+			if strings.HasPrefix(p, strings.TrimSuffix(pat, "%")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (f *Fake) SetSampleQuarantine(_ context.Context, sampleID string, on bool, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.samples[sampleID]
+	if !ok {
+		return fmt.Errorf("serverstore: no sample %s", sampleID)
+	}
+	row.Quarantined = on
+	row.QuarantineReason = reason
+	f.samples[sampleID] = row
+	return nil
+}
+
 func (f *Fake) ListSamples(_ context.Context, limit int) ([]SampleRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -360,6 +410,9 @@ func (f *Fake) ListSamples(_ context.Context, limit int) ([]SampleRow, error) {
 	}
 	out := make([]SampleRow, 0, len(f.samples))
 	for _, s := range f.samples {
+		if s.Quarantined {
+			continue // mirrors the SQL's WHERE NOT quarantined
+		}
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {

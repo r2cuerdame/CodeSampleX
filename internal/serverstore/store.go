@@ -68,6 +68,10 @@ type SampleRow struct {
 	SizeBytes    int64
 	HotScore     float64
 	CreatedAt    time.Time
+	// Quarantined hides a sample from every serving read while leaving its
+	// receipts and case intact, so the action is reversible and auditable.
+	Quarantined      bool
+	QuarantineReason string
 }
 
 // ReceiptRow is one receipts-table row. ReceiptJSON is the full signed
@@ -202,6 +206,13 @@ type Store interface {
 	SaveSample(ctx context.Context, s SampleRow) error
 	GetSample(ctx context.Context, sampleID string) (SampleRow, bool, error)
 	ListSamples(ctx context.Context, limit int) ([]SampleRow, error)
+	// SamplesForPackages returns live samples naming any of these package
+	// patterns ("pkg:npm/axios@%"), so search does not depend on a global
+	// newest-N window.
+	SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// SetSampleQuarantine hides or restores a sample without deleting the
+	// evidence trail behind it.
+	SetSampleQuarantine(ctx context.Context, sampleID string, on bool, reason string) error
 	SetSampleStatus(ctx context.Context, sampleID, status string) error
 
 	SaveReceipt(ctx context.Context, r ReceiptRow) error

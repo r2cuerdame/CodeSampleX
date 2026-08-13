@@ -438,7 +438,16 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		fmt.Fprintf(&b, "- Project compile observations: %d [USAGE_OBSERVATION — co-occurrence, not execution proof]\n", e.ProjectCompileObservations)
 		fmt.Fprintf(&b, "- Clean builds: %d [USAGE_OBSERVATION]\n", e.CleanBuilds)
 		fmt.Fprintf(&b, "- Contract passes: %d [SAMPLE_VERIFICATION — sandboxed contract runs]\n", e.ContractPasses)
-		fmt.Fprintf(&b, "- Independent cross peers: %d\n", e.IndependentCrossPeers)
+		// "Independent" overstated what this counts. A peer id is a hash of
+		// a self-generated key with no registration behind it, so the
+		// number is distinct KEYS that reported a pass, and one person can
+		// hold as many as they like. It still means something — the
+		// contract ran to completion in more than one environment — but it
+		// is not proof of independent parties, and naming it that way
+		// invited exactly the wrong inference.
+		fmt.Fprintf(&b, "- Distinct verifying peer keys: %d "+
+			"[self-asserted identities, not verified as separate parties]\n",
+			e.IndependentCrossPeers)
 		if len(e.ElevatedFailures) > 0 {
 			fmt.Fprintf(&b, "- Elevated failures: %s\n", strings.Join(e.ElevatedFailures, "; "))
 		}

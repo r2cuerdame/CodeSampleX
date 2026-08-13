@@ -33,17 +33,31 @@ func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	reqEnv := req.Environment.Normalize()
 
-	samples, err := a.d.Store.ListSamples(r.Context(), maxSearchCandidates)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample listing failed")
-		return
-	}
-
 	reqPURLs := make([]domain.PURL, 0, len(req.Packages))
+	patterns := make([]string, 0, len(req.Packages))
 	for _, ps := range req.Packages {
 		if p, perr := domain.ParsePURL(ps); perr == nil {
 			reqPURLs = append(reqPURLs, p)
+			patterns = append(patterns, "pkg:"+p.Ecosystem+"/"+p.Name+"@%")
 		}
+	}
+
+	// Candidates come from the packages asked about, not from a global
+	// newest-N window. Scoring the newest 500 samples made findability a
+	// function of publication order — past 500 samples the oldest silently
+	// stop being reachable however good they are, and anyone able to
+	// publish 500 rows displaces everything else. Only a query with no
+	// package falls back to the recency window.
+	var samples []serverstore.SampleRow
+	var err error
+	if len(patterns) > 0 {
+		samples, err = a.d.Store.SamplesForPackages(r.Context(), patterns, maxSearchCandidates)
+	} else {
+		samples, err = a.d.Store.ListSamples(r.Context(), maxSearchCandidates)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "sample listing failed")
+		return
 	}
 
 	now := a.now()

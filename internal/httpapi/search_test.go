@@ -287,3 +287,58 @@ func TestSearchRejectsPackageOnlyRelevance(t *testing.T) {
 		t.Error("the relevance gate also blocked an on-topic query")
 	}
 }
+
+// TestQuarantinedSampleIsNotServed pins the takedown path. Publishing is
+// anonymous and permanent, so without this a single abusive or mistaken
+// sample could never be removed — there is no delete, no TTL and no admin
+// API anywhere in the system.
+func TestQuarantinedSampleIsNotServed(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+
+	manifest := testManifest()
+	manifest.Case.Goal = "post JSON with axios"
+	id := "sha256:" + strings.Repeat("aa", 32)
+	if err := store.SaveSample(t.Context(), serverstore.SampleRow{
+		SampleID: id, ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+		Status: "MATRIX_PASS", License: "MIT-0", SizeBytes: 512, CreatedAt: testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	find := func() bool {
+		var resp struct {
+			Miss    bool `json:"miss"`
+			Results []struct {
+				SampleID string `json:"sampleId"`
+			} `json:"results"`
+		}
+		postJSON(t, srv.URL+"/v1/search", map[string]any{
+			"schemaVersion": 1, "query": "post json with axios",
+			"packages":    []string{"pkg:npm/axios@1.12.0"},
+			"environment": nodeEnv("esm"),
+		}, &resp)
+		for _, r := range resp.Results {
+			if r.SampleID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !find() {
+		t.Fatal("sample not findable before quarantine; the test proves nothing")
+	}
+	if err := store.SetSampleQuarantine(t.Context(), id, true, "abuse"); err != nil {
+		t.Fatal(err)
+	}
+	if find() {
+		t.Error("a quarantined sample is still served by search")
+	}
+	// Reversible: the evidence trail was hidden, not destroyed.
+	if err := store.SetSampleQuarantine(t.Context(), id, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !find() {
+		t.Error("releasing a quarantine did not restore the sample")
+	}
+}
