@@ -7,8 +7,17 @@
       "ecosystem": "npm",
       "name": "node-typescript",
       "version": "1.0.0",
-      "packageManagers": ["npm", "pnpm", "yarn"],
-      "capabilities": ["A0", "A1", "A2", "A4"],
+      "packageManagers": [
+        "npm",
+        "pnpm",
+        "yarn"
+      ],
+      "capabilities": [
+        "A0",
+        "A1",
+        "A2",
+        "A4"
+      ],
       "symbolConfidence": "PROBABLE",
       "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract."
     },
@@ -16,28 +25,50 @@
       "ecosystem": "pypi",
       "name": "python",
       "version": "1.0.0",
-      "packageManagers": ["pip", "uv"],
-      "capabilities": ["A0", "A1", "A2"],
+      "packageManagers": [
+        "pip",
+        "uv"
+      ],
+      "capabilities": [
+        "A0",
+        "A1",
+        "A2",
+        "A4"
+      ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification uses the shared container verifier only when a contract is expressible without native builds."
+      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification now runs in the pinned python:3.12-alpine image: pip resolves into the workspace vendor directory so the offline contract stage can import it (A4, proven by published samples)."
     },
     {
       "ecosystem": "golang",
       "name": "go",
       "version": "1.0.0",
-      "packageManagers": ["go"],
-      "capabilities": ["A0", "A1", "A2"],
+      "packageManagers": [
+        "go"
+      ],
+      "capabilities": [
+        "A0",
+        "A1",
+        "A2",
+        "A4"
+      ],
       "symbolConfidence": "PROBABLE",
-      "notes": "go.mod/go.sum resolved versions; go/parser import + selector analysis. EXACT requires go/types integration, not claimed in v1."
+      "notes": "go.mod/go.sum resolved versions; go/parser import + selector analysis. EXACT requires go/types integration, not claimed in v1. Sample verification now runs in the pinned golang:1.26-alpine image with GOMODCACHE inside the workspace, so `go run` compiles offline in the contract stage (A4, proven by published samples)."
     },
     {
       "ecosystem": "cargo",
       "name": "rust",
       "version": "1.0.0",
-      "packageManagers": ["cargo"],
-      "capabilities": ["A0", "A1", "A2"],
+      "packageManagers": [
+        "cargo"
+      ],
+      "capabilities": [
+        "A0",
+        "A1",
+        "A2",
+        "A4"
+      ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Cargo.lock resolved versions; use-statement analysis. Macro-expanded and dynamic usage degrades to UNKNOWN (goal.md §13.5 conservative start)."
+      "notes": "Cargo.lock resolved versions; use-statement analysis. Macro-expanded and dynamic usage degrades to UNKNOWN (goal.md §13.5 conservative start). Sample verification now runs in the pinned rust:1-alpine image with CARGO_HOME inside the workspace, so `cargo run --offline` builds in the contract stage (A4, proven by published samples)."
     }
   ],
   "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."
