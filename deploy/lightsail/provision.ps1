@@ -3,10 +3,14 @@
 # Usage: .\provision.ps1 [-Name csx-prod-1] [-Region <aws region>]
 param(
     [string]$Name = "csx-prod-1",
-    [string]$Region = $(aws configure get region),
+    [string]$Profile = "r2cuerdame",
+    [string]$Region = "",
     [string]$Blueprint = "ubuntu_24_04"
 )
 $ErrorActionPreference = "Stop"
+# Production lives in the r2cuerdame AWS account (160122452281).
+$env:AWS_PROFILE = $Profile
+if (-not $Region) { $Region = $(aws configure get region) }
 if (-not $Region) { throw "No AWS region configured; pass -Region" }
 
 # Pick the current-generation Linux bundle with exactly 2GB RAM ($12 plan).
