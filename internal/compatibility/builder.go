@@ -20,7 +20,27 @@ type Builder struct {
 	Store serverstore.Store
 	// Now is a test seam; nil means time.Now.
 	Now func() time.Time
+
+	// lastRun and passes drive incremental rebuilds. RunLoop is the only
+	// caller and is single-goroutine, so these need no locking.
+	lastRun time.Time
+	passes  int
 }
+
+// Incremental rebuild bounds.
+const (
+	// fullPassEvery forces a complete rebuild periodically so the
+	// materialized views self-heal from any missed change — a bug in the
+	// change query would otherwise leave a stale shard stale forever. At
+	// the default 5-minute interval this is hourly.
+	fullPassEvery = 12
+
+	// changeOverlap re-examines a little before the last pass started.
+	// Rows written while a pass was running would otherwise fall in the
+	// gap between "last_seen <= passStart" and "> passStart", and be
+	// picked up by neither pass.
+	changeOverlap = time.Minute
+)
 
 func (b *Builder) now() time.Time {
 	if b.Now != nil {
@@ -67,13 +87,48 @@ type sampleData struct {
 	receipts []ReceiptInfo
 }
 
-// RunOnce executes one full aggregation pass.
+// RunOnce executes one aggregation pass.
+//
+// The pass is INCREMENTAL by default. Rebuilding everything on every tick
+// cost 1,603 shard writes and 1,958 snapshot writes every five minutes on
+// a network where zero evidence rows had changed — work that scales with
+// the size of the whole network rather than with what happened, and the
+// first thing that would flatten a small instance as the graph grows.
+//
+// Every fullPassEvery-th pass rebuilds everything anyway, so a missed
+// change repairs itself rather than leaving a shard permanently stale.
 func (b *Builder) RunOnce(ctx context.Context) error {
 	now := b.now()
+	passStart := now
+	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
+
+	// affected limits the rebuild to shard keys touched since the last
+	// pass; nil means "everything", which is what a full pass wants.
+	var affected map[shardKey]bool
+	if !full {
+		changes, cerr := b.Store.ChangedSince(ctx, b.lastRun.Add(-changeOverlap))
+		if cerr != nil {
+			return fmt.Errorf("compatibility: changes since %s: %w", b.lastRun, cerr)
+		}
+		if changes.Empty() {
+			// Nothing moved. Stats still refresh — they are one query and
+			// they carry the clock the website displays.
+			if err := b.refreshStats(ctx, now); err != nil {
+				return err
+			}
+			b.passes++
+			b.lastRun = passStart
+			return nil
+		}
+		affected = affectedKeys(changes)
+	}
 
 	targets, err := b.Store.ListSnapshotTargets(ctx)
 	if err != nil {
 		return fmt.Errorf("compatibility: list targets: %w", err)
+	}
+	if affected != nil {
+		targets = keepTargets(targets, affected)
 	}
 	samples, err := b.loadSamples(ctx)
 	if err != nil {
@@ -164,7 +219,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	}
 
 	// C6 shards per (ecosystem, name, major).
-	if err := b.regenerateShards(ctx, byPkg, purlOf, samples, now); err != nil {
+	if err := b.regenerateShards(ctx, byPkg, purlOf, samples, affected, now); err != nil {
 		return err
 	}
 
@@ -173,7 +228,18 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		return err
 	}
 
-	// Daily stats rollup.
+	if err := b.refreshStats(ctx, now); err != nil {
+		return err
+	}
+	b.passes++
+	b.lastRun = passStart
+	return nil
+}
+
+// refreshStats writes the daily rollup. It runs on every pass, including
+// passes with nothing else to do: it is a single query, and it is what the
+// website's counters and generatedAt timestamp come from.
+func (b *Builder) refreshStats(ctx context.Context, now time.Time) error {
 	counts, err := b.Store.NetworkCounts(ctx, now)
 	if err != nil {
 		return fmt.Errorf("compatibility: network counts: %w", err)
@@ -186,6 +252,48 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("compatibility: set stats: %w", err)
 	}
 	return nil
+}
+
+// shardKey identifies one materialized shard.
+type shardKey struct{ ecosystem, name, major string }
+
+func keyFor(purl string) (shardKey, bool) {
+	p, err := domain.ParsePURL(purl)
+	if err != nil {
+		return shardKey{}, false
+	}
+	return shardKey{p.Ecosystem, p.Name, p.Major()}, true
+}
+
+// affectedKeys maps a change set onto the shards it can alter. A shard
+// covers every symbol and sample of one package major, so a single changed
+// row marks the whole key dirty — the unit of rebuild is the shard.
+func affectedKeys(c serverstore.Changes) map[shardKey]bool {
+	out := map[shardKey]bool{}
+	for _, t := range c.Targets {
+		if k, ok := keyFor(t.PURL); ok {
+			out[k] = true
+		}
+	}
+	for _, purl := range c.SamplePURLs {
+		if k, ok := keyFor(purl); ok {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// keepTargets narrows the snapshot targets to the dirty shards. Every
+// target of a dirty key is kept, not just the changed ones: a shard
+// carries all of a package's symbols, so rebuilding it needs all of them.
+func keepTargets(targets []serverstore.SnapshotTarget, affected map[shardKey]bool) []serverstore.SnapshotTarget {
+	out := targets[:0:0]
+	for _, t := range targets {
+		if k, ok := keyFor(t.PURL); ok && affected[k] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
@@ -254,12 +362,13 @@ func sampleClaimsSymbol(sd sampleData, symbol string) bool {
 	return false
 }
 
+// regenerateShards rebuilds shards. affected limits it to the dirty keys;
+// nil rebuilds every key present in the inputs (a full pass).
 func (b *Builder) regenerateShards(ctx context.Context,
 	byPkg map[pkgKey]symVer,
 	purlOf map[pkgKey]map[string]string,
-	samples []sampleData, now time.Time) error {
+	samples []sampleData, affected map[shardKey]bool, now time.Time) error {
 
-	type shardKey struct{ ecosystem, name, major string }
 	shardPkgs := map[shardKey]map[string]*ShardPackage{} // purl → package entry
 
 	for k, symbols := range byPkg {
@@ -298,6 +407,9 @@ func (b *Builder) regenerateShards(ctx context.Context,
 	for _, sd := range samples {
 		for _, p := range sd.purls {
 			sk := shardKey{p.Ecosystem, p.Name, p.Major()}
+			if affected != nil && !affected[sk] {
+				continue // clean key: its shard is already correct
+			}
 			if shardPkgs[sk] == nil {
 				shardPkgs[sk] = map[string]*ShardPackage{}
 			}

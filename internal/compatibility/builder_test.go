@@ -596,3 +596,105 @@ func TestShardBuiltForSampleWithoutObservations(t *testing.T) {
 		t.Fatalf("shard does not carry the sample:\n%s", js)
 	}
 }
+
+// TestIncrementalPassSkipsUnchangedWork pins the fix for the aggregation
+// pass that rebuilt the entire network every five minutes. Measured on
+// production before this: 1,603 shard writes and 1,958 snapshot writes per
+// pass while zero evidence rows had changed. That cost scales with the size
+// of the graph rather than with what happened, which is what would flatten
+// a small instance as the network grows.
+func TestIncrementalPassSkipsUnchangedWork(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+	seedBuilderFixture(t, store)
+
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+
+	// Pass 1 is always full: nothing is materialized yet.
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	afterFirst := store.ShardWrites()
+	if afterFirst == 0 {
+		t.Fatal("first pass wrote no shards")
+	}
+
+	// Nothing has changed since. Subsequent passes must do no shard work.
+	store.ChangedSinceFn = func(context.Context, time.Time) (serverstore.Changes, error) {
+		return serverstore.Changes{}, nil
+	}
+	for i := 0; i < 5; i++ {
+		if err := b.RunOnce(ctx); err != nil {
+			t.Fatalf("idle pass %d: %v", i, err)
+		}
+	}
+	if got := store.ShardWrites(); got != afterFirst {
+		t.Errorf("idle passes wrote %d shards, want 0 beyond the first pass's %d",
+			got-afterFirst, afterFirst)
+	}
+
+	// Stats must still refresh on an idle pass — they carry the counters
+	// and the generatedAt timestamp the website renders.
+	if js, ok, err := store.GetLatestStats(ctx); err != nil || !ok || js == "" {
+		t.Errorf("idle pass did not refresh stats: ok=%v err=%v", ok, err)
+	}
+
+	// A change in one package brings its shard back, and only its shard.
+	store.ChangedSinceFn = func(context.Context, time.Time) (serverstore.Changes, error) {
+		return serverstore.Changes{
+			Targets: []serverstore.SnapshotTarget{
+				{PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post"},
+			},
+		}, nil
+	}
+	before := store.ShardWrites()
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("changed pass: %v", err)
+	}
+	wrote := store.ShardWrites() - before
+	if wrote == 0 {
+		t.Error("a changed package did not rebuild its shard")
+	}
+	if wrote >= afterFirst && afterFirst > 1 {
+		t.Errorf("changed pass wrote %d shards, want fewer than a full pass's %d", wrote, afterFirst)
+	}
+}
+
+// TestFullPassSelfHeals: incremental rebuilds trust a change query, so the
+// builder must periodically rebuild everything anyway. Without this a
+// missed change would leave a shard stale indefinitely.
+func TestFullPassSelfHeals(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+	seedBuilderFixture(t, store)
+	// Always claims nothing changed — the pathological case this guards.
+	store.ChangedSinceFn = func(context.Context, time.Time) (serverstore.Changes, error) {
+		return serverstore.Changes{}, nil
+	}
+
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+	if err := b.RunOnce(ctx); err != nil { // pass 1: full
+		t.Fatal(err)
+	}
+	baseline := store.ShardWrites()
+
+	// Passes 2..fullPassEvery are incremental and idle.
+	for i := 1; i < fullPassEvery; i++ {
+		if err := b.RunOnce(ctx); err != nil {
+			t.Fatalf("pass %d: %v", i+1, err)
+		}
+	}
+	if store.ShardWrites() != baseline {
+		t.Fatalf("idle passes did work: %d beyond baseline", store.ShardWrites()-baseline)
+	}
+
+	// The next one is the scheduled full pass.
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if store.ShardWrites() <= baseline {
+		t.Errorf("pass %d should have been a full rebuild, wrote nothing", fullPassEvery+1)
+	}
+}

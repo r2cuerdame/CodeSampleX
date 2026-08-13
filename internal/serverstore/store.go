@@ -108,6 +108,21 @@ type PeerRow struct {
 // NetworkCounts are the honest headline numbers behind /v1/stats
 // (goal.md §14.5). Estimated values are computed elsewhere and always
 // labeled; these are raw counts only.
+// Changes is everything that could have altered a materialized view since a
+// given time: evidence targets whose rows were touched, and the packages of
+// samples that were added or that gained a receipt.
+//
+// Receipts are the complete signal for sample state: SetSampleStatus is
+// only ever called from the receipt handler, so a status transition always
+// has a receipt behind it and never needs its own timestamp column.
+type Changes struct {
+	Targets     []SnapshotTarget
+	SamplePURLs []string
+}
+
+// Empty reports that nothing moved, so a pass has no work beyond stats.
+func (c Changes) Empty() bool { return len(c.Targets) == 0 && len(c.SamplePURLs) == 0 }
+
 type NetworkCounts struct {
 	// Peers is the distinct anonymous peer buckets that contributed
 	// evidence in the current epoch: who is actually using the network
@@ -173,6 +188,11 @@ type Store interface {
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
+	// ChangedSince reports what moved since a point in time, so the
+	// aggregation pass can rebuild only what is stale instead of the whole
+	// network on every tick.
+	ChangedSince(ctx context.Context, since time.Time) (Changes, error)
+
 	// ListSnapshotTargets returns the distinct (purl, symbol) pairs that
 	// have aggregated evidence.
 	ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error)

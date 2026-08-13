@@ -348,6 +348,57 @@ func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) 
 	return out, err
 }
 
+// ChangedSince implements the incremental-rebuild query. Both halves are
+// index-friendly single scans; on an idle network they return nothing and
+// the aggregation pass does no work at all.
+func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
+	var c Changes
+	err := p.withConn(ctx, func(conn *pgx.Conn) error {
+		rows, err := conn.Query(ctx,
+			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, since)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var t SnapshotTarget
+			if err := rows.Scan(&t.PURL, &t.Symbol); err != nil {
+				rows.Close()
+				return err
+			}
+			c.Targets = append(c.Targets, t)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		// A new sample, or a receipt against an existing one — the latter
+		// also being the only thing that moves a sample's status.
+		prows, err := conn.Query(ctx, `
+			SELECT DISTINCT pkg FROM (
+				SELECT jsonb_array_elements_text(manifest->'packages') AS pkg
+				FROM samples WHERE created_at > $1
+				UNION
+				SELECT jsonb_array_elements_text(s.manifest->'packages') AS pkg
+				FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
+				WHERE r.created_at > $1
+			) t`, since)
+		if err != nil {
+			return err
+		}
+		defer prows.Close()
+		for prows.Next() {
+			var purl string
+			if err := prows.Scan(&purl); err != nil {
+				return err
+			}
+			c.SamplePURLs = append(c.SamplePURLs, purl)
+		}
+		return prows.Err()
+	})
+	return c, err
+}
+
 func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]EvidenceRow, error) {
 	var out []EvidenceRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

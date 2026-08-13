@@ -22,21 +22,25 @@ type Fake struct {
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta
 
-	packages  map[string]PackageRow
-	snapshots map[[2]string]string
-	cases     map[string]domain.Case
-	samples   map[string]SampleRow
-	receipts  map[string][]ReceiptRow
-	jobs      []*JobRow
-	nextJobID int64
-	peers     map[string]PeerRow
-	shards    map[string][2]string // key → {etag, json}
-	ids       map[string]IdentityRow
-	clusters  map[fakeClusterKey]ClusterRow
-	stats     map[string]string // day → stats JSON
+	packages    map[string]PackageRow
+	snapshots   map[[2]string]string
+	cases       map[string]domain.Case
+	samples     map[string]SampleRow
+	receipts    map[string][]ReceiptRow
+	jobs        []*JobRow
+	nextJobID   int64
+	peers       map[string]PeerRow
+	shards      map[string][2]string // key → {etag, json}
+	shardWrites int                  // PutShard calls, for incremental-rebuild tests
+	ids         map[string]IdentityRow
+	clusters    map[fakeClusterKey]ClusterRow
+	stats       map[string]string // day → stats JSON
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
+	// ChangedSinceFn overrides change detection. The fake keeps no per-row
+	// timestamps, so incremental-rebuild tests script it directly.
+	ChangedSinceFn func(context.Context, time.Time) (Changes, error)
 }
 
 type fakeAggMeta struct {
@@ -224,6 +228,33 @@ func (f *Fake) PutSnapshot(_ context.Context, purl, symbol, snapshotJSON string)
 	defer f.mu.Unlock()
 	f.snapshots[[2]string{purl, symbol}] = snapshotJSON
 	return nil
+}
+
+// ChangedSince reports everything as changed. The fake keeps no per-row
+// timestamps, and over-reporting is the safe direction: a builder test then
+// exercises the full path, and no test can pass because a change was
+// silently missed.
+func (f *Fake) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
+	if f.ChangedSinceFn != nil {
+		return f.ChangedSinceFn(ctx, since)
+	}
+	targets, err := f.ListSnapshotTargets(ctx)
+	if err != nil {
+		return Changes{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var purls []string
+	for _, s := range f.samples {
+		var m struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal([]byte(s.ManifestJSON), &m) == nil {
+			purls = append(purls, m.Packages...)
+		}
+	}
+	sort.Strings(purls)
+	return Changes{Targets: targets, SamplePURLs: purls}, nil
 }
 
 func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) {
@@ -510,10 +541,19 @@ func (f *Fake) ExpirePeers(_ context.Context, now time.Time) (int64, error) {
 
 // ----------------------------------------------------------------- shards --
 
+// ShardWrites counts PutShard calls so tests can assert that an idle
+// aggregation pass does no work — the whole point of incremental rebuilds.
+func (f *Fake) ShardWrites() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.shardWrites
+}
+
 func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.shards[key] = [2]string{etag, shardJSON}
+	f.shardWrites++
 	return nil
 }
 
