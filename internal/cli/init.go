@@ -211,15 +211,30 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 	for {
 		fmt.Fprint(out, "Choose [1/2] (default 1): ")
 		line, err := in.ReadString('\n')
-		ans := strings.ToLower(strings.TrimSpace(line))
-		switch ans {
+
+		// The EOF check MUST come before matching the answer. Bare Enter
+		// and end-of-input both arrive as "", and treating them alike is
+		// how `curl … | sh` — whose stdin is the consumed curl pipe, so
+		// every read is EOF — silently enrolled people in evidence sharing
+		// without anyone answering. Joining is a consent decision: with no
+		// human on the other end there is no answer to infer, and the only
+		// safe direction is the one that sends nothing.
+		if err != nil {
+			if strings.TrimSpace(line) == "" {
+				fmt.Fprintln(out)
+				fmt.Fprintln(out, "No answer received (input is not a terminal), so nothing will be shared.")
+				fmt.Fprintln(out, "Choosing LOCAL ONLY. To join the community network, run:")
+				fmt.Fprintln(out, "  csx init --community")
+				return config.ModeLocalOnly, nil
+			}
+			return "", fmt.Errorf("no mode chosen (answer 1 or 2, or pass --community/--local-only/--yes): %w", err)
+		}
+
+		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "1", "", "community", "c", "join", "join community":
 			return config.ModeCommunity, nil
 		case "2", "local-only", "local", "l", "local only":
 			return config.ModeLocalOnly, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("no mode chosen (answer 1 or 2, or pass --community/--local-only/--yes): %w", err)
 		}
 		fmt.Fprintln(out, `Please answer 1 (community) or 2 (local only).`)
 	}

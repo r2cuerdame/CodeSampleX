@@ -72,6 +72,7 @@ func sampleUsage(w io.Writer) {
 	fmt.Fprintln(w, "  publish <sampleId> [--seeder name | --anonymous] [--server URL]")
 	fmt.Fprintln(w, "          upload after leakage re-scan and explicit typed approval")
 	fmt.Fprintln(w, "  list                list local samples")
+	fmt.Fprintln(w, "  pending             samples an agent prepared that nobody has reviewed yet")
 }
 
 func sampleMain(ctx context.Context, args []string) int {
@@ -92,6 +93,8 @@ func sampleMain(ctx context.Context, args []string) int {
 		return samplePublish(ctx, args[1:])
 	case "list":
 		return sampleList(ctx, args[1:])
+	case "pending":
+		return samplePending(ctx, args[1:])
 	default:
 		fmt.Fprintf(sampleStderr, "csx sample: unknown subcommand %q\n\n", args[0])
 		sampleUsage(sampleStderr)
@@ -431,6 +434,12 @@ func sampleCreate(ctx context.Context, args []string) int {
 	if err := env.db.SaveSample(ctx, row); err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample create: %v\n", err)
 		return 1
+	}
+
+	// The proposal has been acted on: it now lives in `csx sample list`,
+	// so it should stop being offered as pending work.
+	if err := env.db.SetProposalState(ctx, dir, "created"); err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample create: note: pending proposal not cleared: %v\n", err)
 	}
 
 	fmt.Fprintf(sampleStdout, "Sample created: %s\n", created.SampleID)
@@ -851,5 +860,51 @@ func sampleList(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleStdout, "%-14s %-11s %-8s %-6s %s\n",
 			short, r.Status, r.License, pinned, manifest.Case.Goal)
 	}
+	return 0
+}
+
+// samplePending lists prepared-but-unreviewed sample workspaces.
+//
+// Publishing needs the user's explicit approval (goal.md §12.4), which
+// means an agent can prepare a sample but cannot finish the job. Before
+// this, that half-finished state was invisible: the workspace was created,
+// filled in, and forgotten. Every proposal nobody reviews is a sample the
+// network never gets.
+func samplePending(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("sample pending", flag.ContinueOnError)
+	fs.SetOutput(sampleStderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	env, err := openSampleEnv()
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample pending: %v\n", err)
+		return 1
+	}
+	defer env.Close()
+
+	rows, err := env.db.PendingProposals(ctx)
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample pending: %v\n", err)
+		return 1
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(sampleStdout, "Nothing pending. Your agent creates these with propose_public_sample")
+		fmt.Fprintln(sampleStdout, "after it solves something worth sharing.")
+		return 0
+	}
+
+	fmt.Fprintf(sampleStdout, "%d sample(s) prepared and waiting for your review:\n\n", len(rows))
+	for _, r := range rows {
+		fmt.Fprintf(sampleStdout, "  %s\n", r.Goal)
+		if len(r.Packages) > 0 {
+			fmt.Fprintf(sampleStdout, "    packages: %s\n", strings.Join(r.Packages, ", "))
+		}
+		fmt.Fprintf(sampleStdout, "    prepared: %s\n", r.CreatedAt.Local().Format("2006-01-02 15:04"))
+		fmt.Fprintf(sampleStdout, "    review:   csx sample create %s\n\n", r.Workdir)
+	}
+	fmt.Fprintln(sampleStdout, "`create` prints a sample id; `csx sample preview <id>` then shows every")
+	fmt.Fprintln(sampleStdout, "file that would be published, and nothing leaves your machine until you")
+	fmt.Fprintln(sampleStdout, "type the confirmation in `csx sample publish <id>`.")
 	return 0
 }

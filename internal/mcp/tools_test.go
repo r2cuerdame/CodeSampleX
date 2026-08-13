@@ -377,6 +377,19 @@ func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
 	if !strings.Contains(text, "explicit approval") || !strings.Contains(text, "csx sample") {
 		t.Errorf("propose text must state publish requires user approval via CLI:\n%s", text)
 	}
+	// The agent is the only party that knows a proposal now exists. If it
+	// does not surface that, the workspace is written and then forgotten —
+	// which is how a prepared sample silently fails to reach the network.
+	if !strings.Contains(text, "TELL THE USER") {
+		t.Errorf("propose must instruct the agent to surface the pending sample:\n%s", text)
+	}
+	if !strings.Contains(text, `csx sample create C:\fake\work\sample-1`) {
+		t.Errorf("propose must give the exact create command for this workdir:\n%s", text)
+	}
+	if !strings.Contains(text, "csx sample pending") {
+		t.Errorf("propose must mention how to find unreviewed proposals later:\n%s", text)
+	}
+
 	sc := res["structuredContent"].(map[string]any)
 	if v, _ := sc["publishRequiresUserApproval"].(bool); !v {
 		t.Errorf("structuredContent.publishRequiresUserApproval = %v, want true", sc["publishRequiresUserApproval"])

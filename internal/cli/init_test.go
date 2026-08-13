@@ -362,3 +362,46 @@ func TestInitCommandRegistered(t *testing.T) {
 	}
 	t.Fatal("init command not registered")
 }
+
+// TestInitWithoutATerminalNeverJoins pins the consent guarantee on the
+// install path the README advertises. `curl … | sh` leaves stdin as the
+// consumed curl pipe, so every read is EOF. Bare Enter and EOF both arrive
+// as "", and treating them alike enrolled people in evidence sharing
+// without anyone answering the question — precisely the hidden telemetry
+// the contract promises this is not.
+func TestInitWithoutATerminalNeverJoins(t *testing.T) {
+	env, out, _ := testInitEnv(t, "") // empty stdin == EOF, as through a pipe
+	if code := initMain(context.Background(), nil, env); code != 0 {
+		t.Fatalf("init returned %d\n%s", code, out.String())
+	}
+	cfg, err := config.Load(os.Getenv("CSX_HOME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != config.ModeLocalOnly {
+		t.Fatalf("mode = %q with no answer given; joining must never be inferred", cfg.Mode)
+	}
+	s := out.String()
+	if !strings.Contains(s, "nothing will be shared") {
+		t.Errorf("the user must be told nothing is shared:\n%s", s)
+	}
+	if !strings.Contains(s, "csx init --community") {
+		t.Errorf("the user must be told how to join deliberately:\n%s", s)
+	}
+}
+
+// An explicit Enter is a human taking the default — the answer the EOF
+// branch used to steal. It must still mean community.
+func TestInitBareEnterStillJoins(t *testing.T) {
+	env, out, _ := testInitEnv(t, "\n")
+	if code := initMain(context.Background(), nil, env); code != 0 {
+		t.Fatalf("init returned %d\n%s", code, out.String())
+	}
+	cfg, err := config.Load(os.Getenv("CSX_HOME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != config.ModeCommunity {
+		t.Fatalf("mode = %q, want community when the user pressed Enter", cfg.Mode)
+	}
+}

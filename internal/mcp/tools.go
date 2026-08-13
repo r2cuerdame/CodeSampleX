@@ -686,11 +686,18 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 	b.WriteString("Clean-room workspace created: " + workdir + "\n\n")
 	b.WriteString("Generate the sample in that EMPTY directory following these instructions:\n\n")
 	b.WriteString(prompt)
-	b.WriteString("\nIMPORTANT — publishing is NOT possible from this tool. ")
-	b.WriteString("Publication requires the user's explicit approval via the CLI ")
-	b.WriteString("(csx sample create <workdir>, then csx sample preview and csx sample publish, ")
-	b.WriteString("where the user reviews every file and confirms). ")
-	b.WriteString("MCP deliberately has no publish capability (goal.md §12.4).")
+	b.WriteString("\nIMPORTANT — publishing is NOT possible from this tool, and never will be. ")
+	b.WriteString("It requires the user's explicit approval after they review every file ")
+	b.WriteString("(goal.md §12.4).\n\n")
+	// The agent is the only party that knows a proposal now exists. Left to
+	// "the user may publish it later", the workspace gets written and then
+	// forgotten — every unreviewed proposal is a sample the network lost.
+	b.WriteString("TELL THE USER, in your reply, that a sample is ready for review, and give them ")
+	b.WriteString("exactly this:\n\n")
+	b.WriteString("  csx sample create " + workdir + "\n")
+	b.WriteString("  csx sample preview <sampleId>   # shows every file that would be published\n")
+	b.WriteString("  csx sample publish <sampleId>\n\n")
+	b.WriteString("`csx sample pending` lists anything prepared and not yet reviewed.")
 
 	structured := map[string]any{
 		"spec":                        spec,

@@ -18,6 +18,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/peer"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
@@ -59,11 +60,18 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		return nil, nil, err
 	}
 	engine := search.Engine{DB: db}
+	// Artifacts resolve through the peer chain: local CAS, then peers that
+	// announced the sample, then the main seeder — every remote payload
+	// re-verified against its content id before it is trusted or cached
+	// (goal.md §15.1). Without it a search hit named a sample the agent
+	// could never open, which killed the value loop one step after it
+	// worked. This only downloads; nothing is uploaded here.
+	fetcher := &peer.Node{CAS: store, DB: db, Ident: ident, ServerURL: cfg.ServerURL}
 
 	d := &Deps{
 		Search: engine.Search,
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
-			return getSample(ctx, db, store, id)
+			return getSample(ctx, db, store, fetcher, id)
 		},
 		Explain: func(ctx context.Context, purl, symbol string, env domain.EnvironmentFingerprint) (string, json.RawMessage, error) {
 			return explainFromShards(ctx, db, purl, symbol, env)
@@ -85,7 +93,16 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			return reportAdoption(ctx, db, ident, sampleID, applied, buildPass)
 		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
-			return propose(ctx, home, goal, pkgs, symbols)
+			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)
+			if err == nil {
+				// Remember it, or the workspace gets filled in and forgotten:
+				// publishing needs the user's approval, and nobody can approve
+				// what they were never told about.
+				_ = db.SaveProposal(ctx, localdb.ProposalRow{
+					Workdir: workdir, Goal: goal, Packages: pkgs,
+				})
+			}
+			return spec, prompt, workdir, err
 		},
 		LocalHits: func(ctx context.Context) ([]localdb.HitRow, error) {
 			return db.ListHits(ctx, hitListLimit)
@@ -101,7 +118,14 @@ func NewDeps(home string) (*Deps, func() error, error) {
 // into a throwaway directory (samples.Unpack enforces the same safety rules
 // as artifact creation). Files come back capped at 64KB each; binaries are
 // skipped. Missing artifact with known metadata degrades to metadata-only.
-func getSample(ctx context.Context, db *localdb.DB, store *cas.Store, id string) (domain.SampleManifest, map[string]string, error) {
+// artifactFetcher resolves a sample artifact from the cheapest source.
+// *peer.Node implements it.
+type artifactFetcher interface {
+	Fetch(ctx context.Context, sampleID string) ([]byte, string, error)
+}
+
+func getSample(ctx context.Context, db *localdb.DB, store *cas.Store,
+	fetch artifactFetcher, id string) (domain.SampleManifest, map[string]string, error) {
 	var manifest domain.SampleManifest
 	row, haveMeta, err := db.GetSample(ctx, id)
 	if err != nil {
@@ -111,17 +135,28 @@ func getSample(ctx context.Context, db *localdb.DB, store *cas.Store, id string)
 		_ = json.Unmarshal([]byte(row.ManifestJSON), &manifest)
 	}
 
-	rc, err := store.Get(id)
-	if err != nil {
-		if haveMeta {
-			return manifest, nil, nil // metadata only; artifact not cached
+	var tgz []byte
+	if rc, gerr := store.Get(id); gerr == nil {
+		data, rerr := io.ReadAll(io.LimitReader(rc, samples.MaxCompressedBytes+1))
+		rc.Close()
+		if rerr != nil {
+			return manifest, nil, rerr
 		}
-		return manifest, nil, fmt.Errorf("sample %s not found locally", id)
-	}
-	tgz, err := io.ReadAll(io.LimitReader(rc, samples.MaxCompressedBytes+1))
-	rc.Close()
-	if err != nil {
-		return manifest, nil, err
+		tgz = data
+	} else {
+		// Not cached. A search hit names a sample the agent has never seen
+		// before, so this is the normal path, not the exception.
+		if fetch == nil {
+			return manifest, nil, fmt.Errorf("sample %s is not cached and no fetcher is configured", id)
+		}
+		data, _, ferr := fetch.Fetch(ctx, id)
+		if ferr != nil {
+			if haveMeta {
+				return manifest, nil, nil // metadata only; artifact unreachable
+			}
+			return manifest, nil, fmt.Errorf("sample %s could not be fetched: %w", id, ferr)
+		}
+		tgz = data
 	}
 
 	tmp, err := os.MkdirTemp("", "csx-sample-*")

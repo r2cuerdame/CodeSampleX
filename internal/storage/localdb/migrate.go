@@ -46,6 +46,14 @@ var ddl = []string{
 	  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, query TEXT, grade TEXT,
 	  sample_id TEXT, adopted INTEGER DEFAULT 0, post_build_pass INTEGER)`,
 	`CREATE TABLE IF NOT EXISTS excluded_packages(pattern TEXT PRIMARY KEY)`,
+	// Samples an agent prepared but nobody has reviewed yet. Publishing
+	// needs the user's explicit approval (goal.md §12.4) — but asking for
+	// that approval requires remembering the proposal exists, and until
+	// this table the workspace was created, filled in, and then silently
+	// forgotten. Every unreviewed proposal is a sample the network lost.
+	`CREATE TABLE IF NOT EXISTS proposals(
+	  workdir TEXT PRIMARY KEY, goal TEXT NOT NULL, packages TEXT NOT NULL,
+	  created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending')`,
 }
 
 // migrate applies the schema; every statement is IF NOT EXISTS so repeated
