@@ -405,3 +405,72 @@ func TestIntegrationHotShardKeysPrefersSamples(t *testing.T) {
 		t.Fatalf("keys = %v, want the sample-bearing shard first", keys)
 	}
 }
+
+// TestIntegrationChangedSinceSeesOutOfBandStatusChanges pins the gap that
+// let a corrected status keep serving the old value. Incremental
+// aggregation rebuilds only what ChangedSince reports; a quarantine or a
+// recompute-status correction touches no evidence row, no new sample and
+// no receipt, so without updated_at the materialized shard advertises the
+// superseded state indefinitely. Observed live: 25 samples downgraded from
+// MATRIX_PASS in the database while their shards still said MATRIX_PASS.
+func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	purl := "pkg:npm/axios@1.12.0"
+	id := "sha256:" + fmt.Sprintf("%064d", 42)
+	manifest := `{"schemaVersion":1,"packages":["` + purl + `"]}`
+	if err := pg.SaveSample(ctx, SampleRow{
+		SampleID: id, ManifestJSON: manifest, Status: "PUBLISHED",
+		License: "MIT-0", SizeBytes: 128,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A moment after creation: nothing has changed since.
+	time.Sleep(1100 * time.Millisecond)
+	mark := time.Now().UTC()
+	changes, err := pg.ChangedSince(ctx, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changes.Empty() {
+		t.Fatalf("expected no changes, got %+v", changes)
+	}
+
+	// A status correction must make the package dirty.
+	if err := pg.SetSampleStatus(ctx, id, "CROSS_PASS"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err = pg.ChangedSince(ctx, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(changes.SamplePURLs, purl) {
+		t.Errorf("a status change outside the request path was not reported: %+v", changes)
+	}
+
+	// So must a quarantine — otherwise a taken-down sample keeps being
+	// served from the shard it is already in.
+	mark2 := time.Now().UTC()
+	time.Sleep(1100 * time.Millisecond)
+	if err := pg.SetSampleQuarantine(ctx, id, true, "abuse"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err = pg.ChangedSince(ctx, mark2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(changes.SamplePURLs, purl) {
+		t.Errorf("a quarantine was not reported as a change: %+v", changes)
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}

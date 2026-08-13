@@ -376,8 +376,12 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 		// also being the only thing that moves a sample's status.
 		prows, err := conn.Query(ctx, `
 			SELECT DISTINCT pkg FROM (
+				-- created_at covers new samples; updated_at covers every
+				-- change made outside the request path (quarantine, a status
+				-- corrected by recompute-status), which would otherwise leave
+				-- the materialized shard advertising the old state forever.
 				SELECT jsonb_array_elements_text(manifest->'packages') AS pkg
-				FROM samples WHERE created_at > $1
+				FROM samples WHERE created_at > $1 OR updated_at > $1
 				UNION
 				SELECT jsonb_array_elements_text(s.manifest->'packages') AS pkg
 				FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
@@ -566,7 +570,8 @@ func (p *PG) SetSampleQuarantine(ctx context.Context, sampleID string, on bool, 
 			UPDATE samples
 			SET quarantined = $2,
 			    quarantine_reason = CASE WHEN $2 THEN $3 ELSE NULL END,
-			    quarantined_at = CASE WHEN $2 THEN now() ELSE NULL END
+			    quarantined_at = CASE WHEN $2 THEN now() ELSE NULL END,
+			    updated_at = now()
 			WHERE sample_id = $1`, sampleID, on, reason)
 		if err != nil {
 			return err
@@ -607,7 +612,7 @@ func (p *PG) ListSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		tag, err := c.Exec(ctx,
-			`UPDATE samples SET status=$2 WHERE sample_id=$1`, sampleID, status)
+			`UPDATE samples SET status=$2, updated_at=now() WHERE sample_id=$1`, sampleID, status)
 		if err != nil {
 			return err
 		}
