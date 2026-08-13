@@ -30,7 +30,12 @@ New-Item -ItemType Directory -Force $CsxHome | Out-Null
 Write-Output "== init (community, no agent config touched) =="
 & $csx init --community --yes --no-agents --server $Server | Select-Object -Last 2
 
-$names = @("axios-post-json", "zod-parse-validate", "express-json-route", "dayjs-utc-format")
+# Seeds are discovered, never listed: a hard-coded array silently skipped
+# every sample added after it was written.
+$names = Get-ChildItem $seeds -Directory |
+    Where-Object { Test-Path (Join-Path $_.FullName "csx.json") } |
+    ForEach-Object { $_.Name } | Sort-Object
+Write-Output "seeds found: $($names -join ', ')"
 $published = @()
 foreach ($n in $names) {
     Write-Output ""

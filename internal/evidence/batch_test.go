@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 func communityCfg(serverURL string) *config.Config {
@@ -223,6 +225,80 @@ func TestUploadFailureKeepsRowsPending(t *testing.T) {
 		if r.Count != 1 {
 			t.Errorf("count changed by restore: %+v", r)
 		}
+	}
+}
+
+// TestUploadChunksToServerLimit pins the fix for a backlog that could
+// never drain: the client posted a whole 1000-row drain in one request
+// while the server rejects anything over 500, so a first sync after
+// scanning a machine's projects failed with 400 and retried forever.
+func TestUploadChunksToServerLimit(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+
+	const serverCap = 500
+	var mu sync.Mutex
+	var sizes []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []json.RawMessage `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		sizes = append(sizes, len(body.Batches))
+		mu.Unlock()
+		if len(body.Batches) > serverCap {
+			http.Error(w, `{"error":"too many batches in one request (max 500)"}`, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, `{"accepted":1,"rejected":[]}`)
+	}))
+	defer srv.Close()
+
+	// A backlog several server-caps deep, as a first scan of many projects
+	// produces.
+	const backlog = 1200
+	ctx := context.Background()
+	env := testEnvFP()
+	if err := db.SaveEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	envHash := env.Hash()
+	for i := 0; i < backlog; i++ {
+		key := localdb.ObsKey{
+			Epoch:   "2026-08-13",
+			PURL:    fmt.Sprintf("pkg:npm/pkg-%04d@1.0.0", i),
+			EnvHash: envHash,
+			Stage:   domain.StageUsed,
+			Result:  domain.ResultPass,
+		}
+		if err := db.RecordObservation(ctx, key, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := communityCfg(srv.URL)
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	sent, err := b.Upload(ctx, srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if sent != backlog {
+		t.Errorf("uploaded %d of %d rows", sent, backlog)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for i, n := range sizes {
+		if n > serverCap {
+			t.Errorf("request %d carried %d batches, over the server's %d cap", i, n, serverCap)
+		}
+	}
+	if rows := pendingRows(t, db); len(rows) != 0 {
+		t.Errorf("%d rows still pending after a successful drain", len(rows))
 	}
 }
 

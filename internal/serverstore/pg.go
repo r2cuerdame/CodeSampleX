@@ -71,26 +71,40 @@ func (p *PG) withConn(ctx context.Context, fn func(*pgx.Conn) error) error {
 // IngestBatches validates each batch and delta-merges the valid ones with
 // the semantics documented in merge.go: per (bucket, agg row, epoch) only
 // count growth is added, so a re-sent identical batch adds exactly 0.
+// IngestBatches applies a whole request in ONE transaction. Per-batch
+// transactions meant a 500-batch upload paid 500 commits: on a small
+// instance that took longer than the client's timeout, so a first sync
+// after scanning a machine could never finish. One commit is also the
+// honest unit — a request lands completely or not at all, and the
+// delta-merge makes a retried request add nothing twice.
 func (p *PG) IngestBatches(ctx context.Context, batches []domain.ObservationBatch) (int, []RejectedBatch, error) {
 	accepted := 0
 	var rejected []RejectedBatch
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+		accepted = 0
+		rejected = nil
 		for i, b := range batches {
 			if verr := ValidateBatch(b); verr != nil {
 				rejected = append(rejected, RejectedBatch{Index: i, Reason: verr.Error()})
 				continue
 			}
-			if err := ingestOne(ctx, c, b); err != nil {
+			if err := ingestOne(ctx, tx, b); err != nil {
 				return fmt.Errorf("serverstore: ingest batch %d: %w", i, err)
 			}
 			accepted++
 		}
-		return nil
+		return tx.Commit(ctx)
 	})
 	return accepted, rejected, err
 }
 
-func ingestOne(ctx context.Context, c *pgx.Conn, b domain.ObservationBatch) error {
+func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error {
 	purl, err := domain.ParsePURL(b.Package) // already validated
 	if err != nil {
 		return err
@@ -102,12 +116,6 @@ func ingestOne(ctx context.Context, c *pgx.Conn, b domain.ObservationBatch) erro
 	if confidence == "" {
 		confidence = string(domain.SymbolUnknown)
 	}
-
-	tx, err := c.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	// Keep the packages registry aware of every purl with evidence.
 	// Publicness stays UNKNOWN until the registry check upgrades it.
@@ -177,7 +185,8 @@ func ingestOne(ctx context.Context, c *pgx.Conn, b domain.ObservationBatch) erro
 		WHERE id = $1`, aggID, delta); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	// The caller owns the transaction: one commit per request, not per batch.
+	return nil
 }
 
 // PurgeDedupOlderThan deletes dedup buckets whose epoch day is older than

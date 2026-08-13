@@ -1,10 +1,13 @@
 #!/bin/sh
-# Generates package-lock.json for every seed sample inside a container so the
-# host never gets node_modules. --package-lock-only resolves the tree without
-# installing anything.
+# Generates package-lock.json for every seed sample inside a container so
+# the host never gets node_modules. --package-lock-only resolves the tree
+# without installing anything. Seeds are discovered, never listed.
 set -e
-for d in axios-post-json zod-parse-validate express-json-route dayjs-utc-format; do
+cd /w
+for csx in */csx.json; do
+  d=$(dirname "$csx")
   cd "/w/$d"
   npm install --package-lock-only --ignore-scripts --no-audit --no-fund --loglevel=error
-  echo "$d: $(node -e 'const l=require("./package-lock.json");console.log(Object.keys(l.packages||{}).length+" resolved entries")')"
+  echo "$d: lockfile written"
+  cd /w
 done

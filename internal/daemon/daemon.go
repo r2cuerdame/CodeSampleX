@@ -230,11 +230,15 @@ func (d *Daemon) requestShutdown() {
 	d.stopOnce.Do(func() { close(d.shutdown) })
 }
 
+// httpClient is used for shard warm and evidence upload. The timeout is
+// generous because an upload is a background chore: a first sync after
+// scanning many projects sends thousands of rows, and a short deadline
+// turned that into a permanent failure rather than a slow success.
 func (d *Daemon) httpClient() *http.Client {
 	if d.HTTP != nil {
 		return d.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: 2 * time.Minute}
 }
 
 // startBackground launches the P4.1 maintenance loops. Every iteration is

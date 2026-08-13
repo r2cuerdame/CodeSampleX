@@ -28,7 +28,16 @@ func TestLeakageScanAllowsHonestSampleContent(t *testing.T) {
     "node_modules/axios": {"resolved": "https://registry.npmjs.org/axios/-/axios-1.12.2.tgz"}
   }
 }`)
-	writeFile(t, dir, "contract.mjs", "const res = await fetch(`http://127.0.0.1:${port}/items`);\nprocess.env.TZ = 'Asia/Seoul';\nconst user = { email: 'dev@example.com' };\n")
+	// RFC 2606 reserved names are what documentation is supposed to use.
+	writeFile(t, dir, "contract.mjs", "const res = await fetch(`http://127.0.0.1:${port}/items`);\n"+
+		"process.env.TZ = 'Asia/Seoul';\n"+
+		"const user = { email: 'dev@example.com' };\n"+
+		"const api = 'https://api.example.test/v1';\n"+
+		"const alt = 'https://docs.example.org/guide';\n")
+
+	// Maintainer funding hosts are unbounded (dotenvx.com, feross.org, …),
+	// so lockfile URLs are not allowlisted at all.
+	writeFile(t, dir, "pnpm-lock.yaml", "  resolution: {integrity: sha512-x}\n  funding: https://dotenvx.com\n")
 
 	fs, err := Scan(dir, ScanOptions{})
 	if err != nil {
@@ -36,6 +45,22 @@ func TestLeakageScanAllowsHonestSampleContent(t *testing.T) {
 	}
 	if len(fs) != 0 {
 		t.Errorf("clean sample content flagged as leaks: %+v", fs)
+	}
+}
+
+// A credential inside a lockfile URL is a real leak and must survive the
+// lockfile exemption.
+func TestLeakageScanFlagsCredentialsInLockfileURL(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package-lock.json",
+		`{"packages":{"node_modules/x":{"resolved":"https://ci-user:s3cr3t@registry.internal.acme.com/x.tgz"}}}`)
+
+	fs, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kindsFor(fs, "package-lock.json")[KindURL] {
+		t.Errorf("credentialed registry URL in a lockfile not flagged: %+v", fs)
 	}
 }
 

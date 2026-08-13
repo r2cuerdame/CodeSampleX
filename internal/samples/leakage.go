@@ -96,6 +96,26 @@ var leakPatterns = []leakPattern{
 
 var urlRe = regexp.MustCompile(`https?://[^\s"'<>()\[\]` + "`" + `]+`)
 
+// credentialURLRe matches a URL carrying inline credentials
+// (https://user:token@host/…). Those are a real leak wherever they appear,
+// lockfile included.
+var credentialURLRe = regexp.MustCompile(`https?://[^/\s:@]+:[^/\s@]+@`)
+
+// lockfileNames are machine-generated dependency manifests. They describe
+// public packages, are written by the package manager rather than by the
+// contributor, and are exactly what a sample must ship to be reproducible.
+var lockfileNames = map[string]bool{
+	"package-lock.json": true, "npm-shrinkwrap.json": true,
+	"pnpm-lock.yaml": true, "yarn.lock": true,
+	"cargo.lock": true, "poetry.lock": true, "uv.lock": true,
+	"go.sum": true, "gemfile.lock": true, "composer.lock": true,
+	"requirements.txt": true,
+}
+
+func isLockfile(file string) bool {
+	return lockfileNames[strings.ToLower(filepath.Base(filepath.FromSlash(file)))]
+}
+
 const (
 	maxScanFileBytes = 2 << 20
 	maxExcerptLen    = 80
@@ -156,7 +176,19 @@ func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regex
 				out = append(out, Finding{File: file, Line: lineNo, Kind: lp.kind, Excerpt: excerpt(m)})
 			}
 		}
+		lock := isLockfile(file)
 		for _, m := range urlRe.FindAllString(line, -1) {
+			// A lockfile is machine-generated public metadata about public
+			// packages: its URLs are registry and funding links chosen by
+			// each maintainer, so no host allowlist can ever cover them and
+			// none of them can carry anything the contributor wrote.
+			// Credentials embedded in one still matter, and are caught below.
+			if lock {
+				if credentialURLRe.MatchString(m) {
+					out = append(out, Finding{File: file, Line: lineNo, Kind: KindURL, Excerpt: excerpt(m)})
+				}
+				continue
+			}
 			if !urlAllowed(m, opts.ExtraAllowedHosts) {
 				out = append(out, Finding{File: file, Line: lineNo, Kind: KindURL, Excerpt: excerpt(m)})
 			}
@@ -185,12 +217,25 @@ func projectNamePatterns(opts ScanOptions) []*regexp.Regexp {
 // may carry: `http://127.0.0.1:${port}/x`, "http://%s/x", f"http://{host}/x".
 var templateExprRe = regexp.MustCompile(`\$\{[^}]*\}|\{[A-Za-z_][\w.]*\}|%[sdv]`)
 
-// reservedEmailDomains are the RFC 2606 / RFC 6761 names reserved for
-// documentation and tests. An address there identifies nobody, and
-// flagging it blocked otherwise-clean samples from being published.
-var reservedEmailDomains = []string{
+// reservedNames are the RFC 2606 / RFC 6761 names set aside for
+// documentation and tests. A host or address under them identifies
+// nobody by construction, and flagging them blocked otherwise-clean
+// samples — an example URL is exactly what a good sample contains.
+var reservedNames = []string{
 	"example.com", "example.org", "example.net", "example.edu",
-	"test", "invalid", "localhost", "example",
+	"test", "invalid", "localhost", "example", "local",
+}
+
+// isReservedName reports whether a host (or an email's domain part) is a
+// reserved documentation name, including any subdomain of one.
+func isReservedName(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "."))
+	for _, d := range reservedNames {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 func reservedEmail(addr string) bool {
@@ -198,13 +243,7 @@ func reservedEmail(addr string) bool {
 	if at < 0 {
 		return false
 	}
-	domain := strings.ToLower(strings.TrimRight(addr[at+1:], "."))
-	for _, d := range reservedEmailDomains {
-		if domain == d || strings.HasSuffix(domain, "."+d) {
-			return true
-		}
-	}
-	return false
+	return isReservedName(addr[at+1:])
 }
 
 // urlHostRe pulls the host out of a URL literal directly. url.Parse rejects
@@ -225,6 +264,9 @@ func urlAllowed(raw string, extra []string) bool {
 	// A placeholder inside the host itself is not a known host.
 	if templateExprRe.MatchString(host) {
 		return false
+	}
+	if isReservedName(host) {
+		return true
 	}
 	for _, a := range allowedURLHosts {
 		if host == a || strings.HasSuffix(host, "."+a) {

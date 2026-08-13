@@ -16,8 +16,16 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
-// drainLimit bounds how many aggregate rows one drain/upload handles.
-const drainLimit = 1000
+const (
+	// drainLimit bounds how many aggregate rows one drain reads at a time.
+	drainLimit = 1000
+	// uploadChunk must not exceed the server's documented per-request cap
+	// (POST /v1/evidence/batches rejects more than 500 with 400).
+	uploadChunk = 500
+	// maxUploadPasses bounds one Upload call so a queue that keeps growing
+	// cannot spin forever; the next sync picks up whatever is left.
+	maxUploadPasses = 40
+)
 
 // Batcher drains pending local observation aggregates into anonymous
 // wire batches (contract C14 step 6). Batches carry only the fields of
@@ -52,35 +60,50 @@ func (b *Batcher) Drain(ctx context.Context) ([]domain.ObservationBatch, error) 
 // Upload drains pending observations and POSTs them to
 // {serverURL}/v1/evidence/batches as {"batches":[...]}. Community mode
 // only: any other mode is a silent no-op. On a non-2xx response or a
-// transport error the drained rows are restored to pending so no
+// transport error the affected rows are restored to pending so no
 // evidence is lost while the server is unreachable (goal.md §25.F).
 // It returns how many batches the server accepted.
+//
+// The upload is chunked to the server's documented per-request limit and
+// repeats until the queue is empty. Posting a whole drain in one request
+// meant any backlog larger than that limit was rejected wholesale and
+// retried forever — the exact shape of a first sync after scanning a
+// machine's worth of projects.
 func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL string) (int, error) {
 	if b.Cfg == nil || b.Cfg.Mode != config.ModeCommunity {
 		return 0, nil
 	}
-	batches, keys, err := b.build(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if len(batches) == 0 {
-		return 0, nil
-	}
-	// Mark before the network round-trip (atomically with the read):
-	// marking after the POST would let a concurrent increment that landed
-	// mid-flight be clobbered by the late mark.
-	if err := b.DB.MarkObservationsUploaded(ctx, keys); err != nil {
-		return 0, err
-	}
-	if err := b.post(ctx, httpClient, serverURL, batches); err != nil {
-		// Failed delivery: flip the rows back to pending. A zero-count
-		// re-record touches nothing but the uploaded flag.
-		for _, k := range keys {
-			_ = b.DB.RecordObservation(ctx, k, 0)
+	sent := 0
+	for pass := 0; pass < maxUploadPasses; pass++ {
+		batches, keys, err := b.build(ctx)
+		if err != nil {
+			return sent, err
 		}
-		return 0, err
+		if len(batches) == 0 {
+			return sent, nil
+		}
+		for start := 0; start < len(batches); start += uploadChunk {
+			end := min(start+uploadChunk, len(batches))
+			chunkBatches, chunkKeys := batches[start:end], keys[start:end]
+
+			// Mark before the network round-trip (atomically with the read):
+			// marking after the POST would let a concurrent increment that
+			// landed mid-flight be clobbered by the late mark.
+			if err := b.DB.MarkObservationsUploaded(ctx, chunkKeys); err != nil {
+				return sent, err
+			}
+			if err := b.post(ctx, httpClient, serverURL, chunkBatches); err != nil {
+				// Failed delivery: flip the rows back to pending. A
+				// zero-count re-record touches nothing but the flag.
+				for _, k := range chunkKeys {
+					_ = b.DB.RecordObservation(ctx, k, 0)
+				}
+				return sent, err
+			}
+			sent += len(chunkBatches)
+		}
 	}
-	return len(batches), nil
+	return sent, nil
 }
 
 // build assembles batches from pending rows without marking anything.
@@ -184,8 +207,14 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain for keep-alive
+	// Keep the server's reason: a bare status turned a one-line contract
+	// mismatch ("too many batches in one request") into a silent, endless
+	// retry that looked like a network problem.
+	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if detail := strings.TrimSpace(string(reply)); detail != "" {
+			return fmt.Errorf("evidence: upload: server returned %s: %s", resp.Status, detail)
+		}
 		return fmt.Errorf("evidence: upload: server returned %s", resp.Status)
 	}
 	return nil
