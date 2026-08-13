@@ -105,6 +105,17 @@ type PeerRow struct {
 	ExpiresAt        time.Time
 }
 
+// NetworkCounts are the honest headline numbers behind /v1/stats
+// (goal.md §14.5). Estimated values are computed elsewhere and always
+// labeled; these are raw counts only.
+type NetworkCounts struct {
+	Peers           int64 // unexpired tracker peers
+	Packages        int64 // distinct (ecosystem, name) pairs
+	Symbols         int64 // distinct non-empty symbol families with evidence
+	Observations    int64 // total aggregated observation count
+	VerifiedSamples int64 // samples at CROSS_PASS or beyond
+}
+
 // IdentityRow is one identities-table row (persistent seeder/verifier
 // identity; automatic evidence never uses these).
 type IdentityRow struct {
@@ -166,6 +177,10 @@ type Store interface {
 	// capability may claim ("" ⇒ any). Jobs whose want_env pins a
 	// sandboxCapability only match that capability.
 	OpenJobs(ctx context.Context, capability string, limit int) ([]JobRow, error)
+	// JobsForSample lists every verification job (any status) for a sample,
+	// oldest first — the aggregation builder uses it to avoid creating
+	// duplicate matrix jobs.
+	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
 	CreateJob(ctx context.Context, j JobRow) (int64, error)
 	// ClaimJob atomically moves an open job to claimed; false means someone
 	// else got there first (or the job is gone).
@@ -187,6 +202,8 @@ type Store interface {
 
 	SetStatsDaily(ctx context.Context, day string, statsJSON string) error
 	GetLatestStats(ctx context.Context) (statsJSON string, ok bool, err error)
+	// NetworkCounts computes the raw stats-rollup numbers as of now.
+	NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, error)
 
 	// PurgeDedupOlderThan deletes rotating dedup buckets older than the
 	// given number of days (goal.md §14.4: 30). Aggregates keep their

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -783,6 +784,34 @@ func samplePublish(ctx context.Context, args []string) int {
 	if err := env.db.SetSampleStatus(ctx, row.SampleID, "PUBLISHED"); err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample publish: update local status: %v\n", err)
 		return 1
+	}
+
+	// Origin PASS enters the cross-verification queue as the first receipt
+	// (goal.md §9.6); without it a later peer receipt would wrongly become
+	// the origin. Best-effort: a failed post leaves the receipt local.
+	if receipts, rerr := env.db.ReceiptsForSample(ctx, row.SampleID); rerr == nil && len(receipts) > 0 {
+		origin := receipts[len(receipts)-1]
+		if b, merr := json.Marshal(origin); merr == nil {
+			vreq, verr := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/verifications", bytes.NewReader(b))
+			if verr == nil {
+				vreq.Header.Set("Content-Type", "application/json")
+				if vresp, derr := sampleHTTP.Do(vreq); derr == nil {
+					io.Copy(io.Discard, io.LimitReader(vresp.Body, 4096))
+					vresp.Body.Close()
+					if vresp.StatusCode >= 200 && vresp.StatusCode < 300 {
+						fmt.Fprintln(sampleStdout, "Origin verification receipt registered.")
+					} else {
+						fmt.Fprintf(sampleStderr, "warning: origin receipt not accepted (HTTP %d); run `csx sample verify` then republish it\n", vresp.StatusCode)
+					}
+				}
+			}
+		}
+	} else {
+		fmt.Fprintln(sampleStdout, "Note: no local verification receipt — run `csx sample verify` first so your origin PASS enters the cross-verification queue.")
+	}
+	if cur, _, gerr := env.db.GetStat(ctx, "originSeeds"); gerr == nil {
+		n, _ := strconv.Atoi(cur)
+		_ = env.db.SetStat(ctx, "originSeeds", strconv.Itoa(n+1))
 	}
 	fmt.Fprintf(sampleStdout, "Published. Public URL: %s/samples/%s\n", serverURL, row.SampleID)
 	return 0

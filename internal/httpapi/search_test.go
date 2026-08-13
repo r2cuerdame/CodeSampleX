@@ -1,0 +1,240 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+)
+
+func saveTestSample(t *testing.T, store *serverstore.Fake, status string) string {
+	t.Helper()
+	manifest := testManifest()
+	sampleID := "sha256:" + strings.Repeat("42", 32)
+	if err := store.SaveSample(context.Background(), serverstore.SampleRow{
+		SampleID:     sampleID,
+		ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+		Status:       status,
+		License:      "MIT-0",
+		SizeBytes:    512,
+		CreatedAt:    testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return sampleID
+}
+
+func TestSearchModuleSystemMismatchIsAdaptationRequired(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	saveTestSample(t, store, "PUBLISHED") // sample env: esm
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "post JSON with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Symbols:       []string{"axios.post"},
+		Environment:   nodeEnv("cjs"), // requester uses CommonJS
+	}
+	var out domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v1/search", req, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if out.Miss || len(out.Results) == 0 {
+		t.Fatalf("miss=%v results=%d, want a hit", out.Miss, len(out.Results))
+	}
+	r := out.Results[0]
+	if r.Grade != domain.GradeAdaptationRequired {
+		t.Fatalf("grade = %s, want ADAPTATION_REQUIRED", r.Grade)
+	}
+	foundAdaptation := false
+	for _, a := range r.Adaptation {
+		if strings.Contains(a, "cjs") {
+			foundAdaptation = true
+		}
+	}
+	if !foundAdaptation {
+		t.Fatalf("adaptation = %v, want an import-syntax entry", r.Adaptation)
+	}
+	if r.Case == nil || r.Case.Goal == "" {
+		t.Fatal("result must carry the case")
+	}
+}
+
+func TestSearchExactEnvironmentIsExactGrade(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	saveTestSample(t, store, "PUBLISHED")
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "post JSON with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Symbols:       []string{"axios.post"},
+		Environment:   nodeEnv("esm"),
+	}
+	var out domain.SearchResponse
+	postJSON(t, srv.URL+"/v1/search", req, &out)
+	if out.Miss || len(out.Results) == 0 {
+		t.Fatalf("want a hit, got miss=%v", out.Miss)
+	}
+	if out.Results[0].Grade != domain.GradeExact {
+		t.Fatalf("grade = %s, want EXACT", out.Results[0].Grade)
+	}
+}
+
+func TestSearchUnrelatedQueryIsNoSafeMatch(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	saveTestSample(t, store, "PUBLISHED")
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "quantum blockchain teapot orchestration",
+		Environment:   nodeEnv("esm"),
+	}
+	var out domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v1/search", req, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !out.Miss || len(out.Results) != 0 {
+		t.Fatalf("miss=%v results=%d, want NO_SAFE_MATCH miss", out.Miss, len(out.Results))
+	}
+}
+
+func TestSearchElevatedFailureInRequesterContextIsReferenceOnly(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	saveTestSample(t, store, "PUBLISHED")
+
+	// Materialize a snapshot with an ELEVATED_FAILURE row in the requester's
+	// context (node 22.18, cjs env is irrelevant — context label decides).
+	env := nodeEnv("esm")
+	fp := "sha256:" + strings.Repeat("ab", 32)
+	rows := []serverstore.EvidenceRow{
+		{
+			PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post",
+			EnvHash: env.Normalize().Hash(),
+			EnvJSON: string(domain.MustCanonicalJSON(env.Normalize())),
+			Stage:   "PROJECT_COMPILE", Result: "PASS", ObservationCount: 3,
+			UniquePeerBuckets: 2, LastSeen: testNow,
+		},
+		{
+			PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post",
+			EnvHash: env.Normalize().Hash(),
+			EnvJSON: string(domain.MustCanonicalJSON(env.Normalize())),
+			Stage:   "PROJECT_COMPILE", Result: "FAIL", ObservationCount: 4,
+			ErrorFingerprint: fp, ErrorCode: "ERR_REQUIRE_ESM",
+			UniquePeerBuckets: 2, LastSeen: testNow,
+		},
+	}
+	snap := compatibility.BuildSnapshot("pkg:npm/axios@1.12.0", "axios.post", rows, nil, nil, testNow)
+	js, _ := json.Marshal(snap)
+	if err := store.PutSnapshot(context.Background(), "pkg:npm/axios@1.12.0", "axios.post", string(js)); err != nil {
+		t.Fatal(err)
+	}
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "post JSON with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Symbols:       []string{"axios.post"},
+		Environment:   nodeEnv("esm"),
+	}
+	var out domain.SearchResponse
+	postJSON(t, srv.URL+"/v1/search", req, &out)
+	if out.Miss || len(out.Results) == 0 {
+		t.Fatalf("want a (demoted) hit, got miss=%v", out.Miss)
+	}
+	r := out.Results[0]
+	if r.Grade != domain.GradeReferenceOnly {
+		t.Fatalf("grade = %s, want REFERENCE_ONLY (elevated failure in requester context)", r.Grade)
+	}
+	if len(r.Evidence.ElevatedFailures) == 0 {
+		t.Fatal("evidence summary must name the elevated-failure context")
+	}
+}
+
+func TestSearchVerifiedSampleOutranksUnverified(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	ctx := context.Background()
+
+	manifest := testManifest()
+	unverified := "sha256:" + strings.Repeat("aa", 32)
+	verified := "sha256:" + strings.Repeat("bb", 32)
+	for _, s := range []struct {
+		id, status string
+	}{{unverified, "PUBLISHED"}, {verified, "CROSS_PASS"}} {
+		if err := store.SaveSample(ctx, serverstore.SampleRow{
+			SampleID:     s.id,
+			ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+			Status:       s.status, License: "MIT-0", SizeBytes: 512, CreatedAt: testNow,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1, Query: "post JSON with axios",
+		Packages:    []string{"pkg:npm/axios@1.12.0"},
+		Environment: nodeEnv("esm"),
+		Limit:       2,
+	}
+	var out domain.SearchResponse
+	postJSON(t, srv.URL+"/v1/search", req, &out)
+	if len(out.Results) != 2 {
+		t.Fatalf("results = %d, want 2", len(out.Results))
+	}
+	if out.Results[0].SampleID != verified {
+		t.Fatalf("top result = %s (status %s), want the CROSS_PASS sample first",
+			out.Results[0].SampleID, out.Results[0].SampleStatus)
+	}
+	if out.Results[0].Score <= out.Results[1].Score {
+		t.Fatalf("verified score %v must beat unverified %v",
+			out.Results[0].Score, out.Results[1].Score)
+	}
+}
+
+// --- shards -------------------------------------------------------------------
+
+func TestShardETagAnd304(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	if err := store.PutShard(context.Background(), "npm/axios/1",
+		"deadbeef", `{"schemaVersion":1,"key":"npm/axios/1","packages":[]}`); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/v1/shards/npm/axios/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	etag := resp.Header.Get("ETag")
+	if etag != `"deadbeef"` {
+		t.Fatalf("etag = %q", etag)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/shards/npm/axios/1", nil)
+	req.Header.Set("If-None-Match", etag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+
+	// Unknown shard → 404.
+	resp, _ = http.Get(srv.URL + "/v1/shards/npm/nope/1")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}

@@ -1,0 +1,24 @@
+CodeSampleX Community
+
+You get
+✓ Public compatibility knowledge
+✓ Verified code answers
+✓ Local agent integration
+✓ Public sample cache
+
+You contribute
+✓ Public package/version usage
+✓ Public API/symbol usage when detectable
+✓ Build/typecheck/test result
+✓ Sanitized failure fingerprints
+
+Never shared automatically
+✕ Source code
+✕ Repository/project name
+✕ File names or paths
+✕ Source snippets
+✕ Secrets or environment variables
+✕ Private packages
+✕ Raw compiler/runtime logs
+
+[ JOIN COMMUNITY ]    [ LOCAL ONLY ]

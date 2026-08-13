@@ -1,0 +1,44 @@
+{
+  "$schema": "https://codesamplex.dev/schemas/v1/adapters.json",
+  "schemaVersion": 1,
+  "description": "Published adapter capability matrix (goal.md §13.1). Levels: A0 package/version detection, A1 build/typecheck/test observation, A2 static symbol resolution, A3 runtime symbol instrumentation, A4 clean Sample + Contract verification. No adapter pretends a level it does not have.",
+  "adapters": [
+    {
+      "ecosystem": "npm",
+      "name": "node-typescript",
+      "version": "1.0.0",
+      "packageManagers": ["npm", "pnpm", "yarn"],
+      "capabilities": ["A0", "A1", "A2", "A4"],
+      "symbolConfidence": "PROBABLE",
+      "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract."
+    },
+    {
+      "ecosystem": "pypi",
+      "name": "python",
+      "version": "1.0.0",
+      "packageManagers": ["pip", "uv"],
+      "capabilities": ["A0", "A1", "A2"],
+      "symbolConfidence": "PROBABLE",
+      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification uses the shared container verifier only when a contract is expressible without native builds."
+    },
+    {
+      "ecosystem": "golang",
+      "name": "go",
+      "version": "1.0.0",
+      "packageManagers": ["go"],
+      "capabilities": ["A0", "A1", "A2"],
+      "symbolConfidence": "PROBABLE",
+      "notes": "go.mod/go.sum resolved versions; go/parser import + selector analysis. EXACT requires go/types integration, not claimed in v1."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rust",
+      "version": "1.0.0",
+      "packageManagers": ["cargo"],
+      "capabilities": ["A0", "A1", "A2"],
+      "symbolConfidence": "PROBABLE",
+      "notes": "Cargo.lock resolved versions; use-statement analysis. Macro-expanded and dynamic usage degrades to UNKNOWN (goal.md §13.5 conservative start)."
+    }
+  ],
+  "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."
+}

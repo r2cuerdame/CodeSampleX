@@ -91,6 +91,9 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}
 	defer pg.Close()
 
+	// Aggregation pipeline: snapshots/shards/stats on CSX_SNAPSHOT_INTERVAL.
+	StartBuilder(ctx, cfg, pg)
+
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           BuildMux(cfg, pg),

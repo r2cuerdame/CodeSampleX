@@ -585,6 +585,32 @@ func (p *PG) OpenJobs(ctx context.Context, capability string, limit int) ([]JobR
 	return out, err
 }
 
+// JobsForSample lists every job for a sample regardless of status.
+func (p *PG) JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error) {
+	var out []JobRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs
+			WHERE sample_id=$1
+			ORDER BY created_at, id`, sampleID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, j)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func scanJob(row pgx.Row) (JobRow, error) {
 	var j JobRow
 	var claimedAt, createdAt *time.Time
@@ -884,6 +910,23 @@ func (p *PG) GetLatestStats(ctx context.Context) (string, bool, error) {
 		return nil
 	})
 	return js, found, err
+}
+
+// NetworkCounts computes the raw /v1/stats numbers in one round trip.
+func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, error) {
+	var c NetworkCounts
+	err := p.withConn(ctx, func(conn *pgx.Conn) error {
+		return conn.QueryRow(ctx, `
+			SELECT
+				(SELECT COUNT(*) FROM peers WHERE expires_at > $1),
+				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages) t),
+				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
+				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
+				(SELECT COUNT(*) FROM samples
+					WHERE status IN ('CROSS_PASS','MATRIX_PASS','STABLE'))`, now,
+		).Scan(&c.Peers, &c.Packages, &c.Symbols, &c.Observations, &c.VerifiedSamples)
+	})
+	return c, err
 }
 
 // ------------------------------------------------------------------- pool --
