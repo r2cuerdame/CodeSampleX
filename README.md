@@ -71,11 +71,14 @@ A project compiling is never presented as a symbol working. Unknown causes stay 
 
 **Configured automatically by `csx init`:** Claude Code · Codex · Gemini CLI · OpenCode.
 
-**Any other MCP client** — Cursor, Windsurf, Cline, Zed, VS Code — works too; `csx` is a standard stdio MCP server:
+**Any other MCP client** — Cursor, Windsurf, Cline, Zed, VS Code — works too; `csx` is a standard stdio MCP server. Run this and paste what it prints:
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
 ```
+csx mcp-config          # JSON for Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML for Codex
+```
+
+It prints the **absolute path** of your install, which is the part that matters: the install script puts `csx` in `~/.local/bin`, and an MCP client is not started from a login shell — it inherits whatever environment its editor had. A bare `{"command": "csx"}` therefore fails even after you have fixed your own `PATH`.
 
 Model-agnostic: the same compatibility evidence serves Claude, GPT and Codex, Gemini, Llama — any model that can call an MCP tool.
 
