@@ -97,6 +97,28 @@ var documentedFindings = []finding{
 		SourceURL:   "https://www.rfc-editor.org/rfc/rfc7518#section-3.2",
 		SourceLabel: "RFC 7518 §3.2",
 	},
+	{
+		Ecosystem: "npm",
+		Subject:   "@modelcontextprotocol/sdk 1.30.0, protocol 2025-11-25, Node 22",
+		Believed: "the MCP specification splits tool failures into two channels and puts " +
+			"“Unknown tools” in the first one — “Protocol Errors: Standard JSON-RPC errors” " +
+			"— printing the example as an error object with code -32602, so a call naming " +
+			"a tool that does not exist should arrive as a JSON-RPC error.",
+		Measured: "the SDK's own McpServer answers it as a successful response instead: " +
+			"await client.callTool({name: \"no_such_tool\", arguments: {}}) resolves, its " +
+			"isError is true, and the -32602 arrives inside the text — “MCP error -32602: " +
+			"Tool no_such_tool not found” — so the code is prose rather than an error " +
+			"object, and a caller that detects failure by catching sees none. The " +
+			"contradiction is that " +
+			"one bullet and no more — the same page assigns input validation errors to the " +
+			"isError channel by design, which is where they arrive — and the same server " +
+			"does reject with a real McpError carrying code -32602 for an unregistered " +
+			"resource URI, so which channel a failure uses is decided by the handler it " +
+			"reached rather than by the kind of failure it is.",
+		SampleID:    "sha256:d133f23612d4a391e0f2b96f76d38e57a55c2c65d48d5e32fc0099002b56ccfd",
+		SourceURL:   "https://modelcontextprotocol.io/specification/2025-11-25/server/tools",
+		SourceLabel: "MCP specification 2025-11-25, tools",
+	},
 }
 
 // believedFindings are the ones where the belief is folklore, migration
@@ -323,6 +345,109 @@ var believedFindings = []finding{
 			"time.monotonic() go backwards — a deadline written as monotonic() + timeout " +
 			"is never reached.",
 		SampleID: "sha256:e0a5abccbe96dde0a46b9b65aae94c3d5ffaa94f5eac58c72b82bec2141a0bfa",
+	},
+	{
+		Ecosystem: "cargo",
+		Subject:   "axum 0.8.9",
+		Believed:  "axum answers a bad JSON body with 422.",
+		Measured: "it answers with three statuses and only one of them is 422: syntactically " +
+			"broken JSON is 400, a body that parses but does not fit the target type — a " +
+			"wrong field type, or a required field left out — is 422, and a request with no " +
+			"Content-Type at all is 415 carrying the rejection message where the handler's " +
+			"201 would have been, so a single assertion for “bad input” is wrong on two of " +
+			"the three. The 400's rejection body is text/plain rather than JSON; and the " +
+			"Content-Type check is not string equality — the header is parsed and its type " +
+			"has to be application, so application/json; charset=utf-8 and " +
+			"application/vnd.csx+json are accepted while text/json is refused exactly like a " +
+			"header that was never sent.",
+		SampleID: "sha256:ad2f9d5347cb52c3acc083de3c1608225248a42c41031bf843e1163d738b6e70",
+	},
+	{
+		Ecosystem: "cargo",
+		Subject:   "once_cell 1.21.4 vs std",
+		Believed:  "std absorbed once_cell, so the dependency can go.",
+		Measured: "almost — and the remainder is two methods, both of them the fallible " +
+			"ones. Compiled with the rustc this " +
+			"sample was measured on, LazyLock::force_mut, DerefMut on LazyLock and " +
+			"OnceLock::wait all build, so the reasons usually quoted for keeping the crate " +
+			"are out of date, and std::cell::OnceCell and LazyCell cover its unsync half. " +
+			"OnceLock::get_or_try_init and try_insert do not build: both are E0658, the " +
+			"first behind once_cell_try with tracking issue 109737, the second behind " +
+			"once_cell_try_insert — so a fallible initialiser has no std spelling, and the " +
+			"get-then-set stand-in written in their " +
+			"place is not equivalent, because 16 threads racing it run the initialiser 16 " +
+			"times where get_or_init runs it once.",
+		SampleID: "sha256:36b55cf55782c3258dcb2509e721eb8edf4affdd15e52754fe01d12bb5fa27c9",
+	},
+	{
+		Ecosystem: "golang",
+		Subject:   "gorm.io/driver/sqlite 1.6.0 over mattn/go-sqlite3 1.14.49, Go 1.26",
+		Believed:  "a cgo package cannot be built with CGO_ENABLED=0, so the build catches it.",
+		Measured: "go-sqlite3 compiles a stub instead: the import builds, the binary links, " +
+			"and the stub still registers the database/sql driver name sqlite3, so finding " +
+			"that name in sql.Drivers() proves nothing about the driver working. The first " +
+			"thing that connects is what fails, with an error naming " +
+			"CGO_ENABLED=0 and saying it “requires cgo to work”, and database/sql defers " +
+			"even that: sql.Open only records the driver name and returns a nil error, and " +
+			"Ping is where “This is a stub” surfaces. So the build is green and the first " +
+			"connection is where it breaks.",
+		SampleID: "sha256:c3632f2f8dc28bb7ef59c80bcd728225b10ed65370fcd4c71af75032848b2f02",
+	},
+	{
+		Ecosystem: "golang",
+		Subject:   "spf13/viper 1.21.0, Go 1.26",
+		Believed:  "AutomaticEnv feeds the environment into Unmarshal the way it feeds Get.",
+		Measured: "Unmarshal enumerates AllKeys and reads each key it finds, and AutomaticEnv " +
+			"contributes no keys to that list — it cannot, since it would have to guess " +
+			"names — so with CSX_LOG_LEVEL exported, GetString(\"log.level\") returns env " +
+			"while AllSettings is empty and the struct field stays \"\", with no error " +
+			"anywhere to say the two disagree. The repair is making the key enumerable: " +
+			"either a SetDefault that never wins the lookup it just enabled, or " +
+			"viper.ExperimentalBindStruct, which takes the key list from the destination " +
+			"struct.",
+		SampleID: "sha256:ea36c1c79c3a4263305e79d2403494634711a275d2fd41a2d8df834ac7e9101b",
+	},
+	{
+		Ecosystem: "composer",
+		Subject:   "symfony/console 8.1.4, PHP 8",
+		Believed: "passing --no-interaction to CommandTester::execute turns the prompts off, " +
+			"the way it does on the command line.",
+		Measured: "what interprets that flag is the application run, and a CommandTester is " +
+			"not one, so under it the option binds and does nothing: " +
+			"getOption('no-interaction') is true and the question is asked anyway. -v is the " +
+			"same dead end — bound true while the output stays at VERBOSITY_NORMAL and the " +
+			"verbose writeln prints nothing — and what the tester does read are execute()'s " +
+			"own interactive and verbosity options, or the same command driven through " +
+			"ApplicationTester, where both flags mean what they say.",
+		SampleID: "sha256:a49ac462fc85823519ce8151c25439ec2ac9e9556684d5a165edf4ae9fd8e48e",
+	},
+	{
+		Ecosystem: "pub",
+		Subject:   "shelf_router 1.1.4, Dart 3",
+		Believed:  "a route handler's parameter names say which capture each one receives.",
+		Measured: "captures are applied positionally in the order the route pattern declares " +
+			"them and the closure's parameter names are never read, so a handler written " +
+			"(Request request, String id, String org) against /orgs/<org>/users/<id> " +
+			"receives the org capture in id: /orgs/acme/users/u42 answers “acme/u42” where " +
+			"the names promise “u42/acme”, and nothing reports it. The count is not checked at " +
+			"registration either — one argument too many registers cleanly and becomes a " +
+			"NoSuchMethodError on the first request that matches.",
+		SampleID: "sha256:2651162215727e626baac2f69d7b7e043707968fea0f9218aa9dda0648549e95",
+	},
+	{
+		Ecosystem: "hex",
+		Subject:   "ecto 3.14.1",
+		Believed:  "an empty string in the params either arrives as an empty string or clears the field.",
+		Measured: "cast compares it against empty_values — [\"\"], compared after trimming, so " +
+			"a whitespace-only string counts too, while a value that survives the check is " +
+			"stored untrimmed — and substitutes the field's declared default, which is nil " +
+			"only for a field that has none: sending \"\" for a field defaulting to " +
+			"\"member\" over a stored \"admin\" writes \"member\", so an empty form field " +
+			"demotes rather than clears. When the substituted default equals the data the " +
+			"key is absent from changes rather than present and empty, which is why the " +
+			"debugger shows nothing there and validate_required reports “can't be blank” " +
+			"for a param that did arrive.",
+		SampleID: "sha256:ec1c423e61b01693526ccce5e694e6c68ed968878f00b8331b3d82c953abea87",
 	},
 }
 
