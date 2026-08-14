@@ -334,11 +334,37 @@ func TestQuarantinedSampleIsNotServed(t *testing.T) {
 	if find() {
 		t.Error("a quarantined sample is still served by search")
 	}
+	// Search was the only path this test used to check, which is how the
+	// direct-fetch endpoints kept serving a withdrawn sample: by content
+	// address, with its old status and no sign it had been taken down.
+	// "Not served" has to mean every serving read, or a quarantine only
+	// hides a sample from people who did not already have its id.
+	for _, path := range []string{
+		"/v1/samples/" + id,
+		"/v1/samples/" + id + "/artifact",
+	} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d while quarantined, want 404", path, resp.StatusCode)
+		}
+	}
 	// Reversible: the evidence trail was hidden, not destroyed.
 	if err := store.SetSampleQuarantine(t.Context(), id, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !find() {
 		t.Error("releasing a quarantine did not restore the sample")
+	}
+	resp, err := http.Get(srv.URL + "/v1/samples/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET the sample after release = %d, want 200", resp.StatusCode)
 	}
 }

@@ -70,7 +70,10 @@ func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version 
 
 func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, bool) {
 	row, ok, err := w.s.GetSample(ctx, id)
-	if err != nil || !ok {
+	// Quarantine hides a sample from every serving read. GetSample returns
+	// the raw row so the operator commands still see it; this is a serving
+	// read, so it has to check.
+	if err != nil || !ok || row.Quarantined {
 		return web.SampleMeta{}, false
 	}
 	return web.SampleMeta{

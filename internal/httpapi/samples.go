@@ -336,7 +336,12 @@ func (a *api) handleSampleMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
 		return
 	}
-	if !ok {
+	// GetSample deliberately does not filter, because the operator commands
+	// and the audit trail need the row. Every SERVING read has to check the
+	// flag itself, and this one did not: a quarantined sample kept answering
+	// here with its old status and no hint it had been withdrawn, so anyone
+	// holding the content address went on being told it was verified.
+	if !ok || row.Quarantined {
 		writeErr(w, http.StatusNotFound, "sample not found")
 		return
 	}
@@ -386,7 +391,8 @@ func (a *api) handleSampleArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sampleID := r.PathValue("sampleId")
-	if _, ok, err := a.d.Store.GetSample(r.Context(), sampleID); err != nil || !ok {
+	row, ok, err := a.d.Store.GetSample(r.Context(), sampleID)
+	if err != nil || !ok || row.Quarantined {
 		writeErr(w, http.StatusNotFound, "sample not found")
 		return
 	}
