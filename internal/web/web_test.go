@@ -148,8 +148,14 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 				want, truncate(body))
 		}
 	}
-	if strings.Contains(body, `<span class="num mono">—</span>`) {
-		t.Error("a counter rendered as — while the aggregator supplied a value")
+	// Exactly one tile has no data behind it here — post-hit success, which
+	// comes from adoption reports the fixture does not supply — and an em
+	// dash is the right rendering for it. Every other counter must show the
+	// aggregator's number. "0%" beside "Post-hit success rate" would be a
+	// claim that we watched and none of it worked.
+	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 1 {
+		t.Errorf("%d counters rendered as —, want exactly 1 (post-hit success):\n%s",
+			n, truncate(body))
 	}
 }
 
@@ -221,9 +227,15 @@ func TestLandingNamesSupportedAgents(t *testing.T) {
 				t.Errorf("%s does not name %q", path, agent)
 			}
 		}
-		// The copy-paste MCP config, for clients csx init cannot configure.
-		if !strings.Contains(body, "mcpServers") {
-			t.Errorf("%s is missing the manual MCP config snippet", path)
+		// The command that PRINTS the MCP config, for clients csx init
+		// cannot configure. Not the config itself: the page used to hand
+		// out {"command":"csx"}, and a client started by an editor does not
+		// inherit the PATH that makes a bare csx resolve.
+		if !strings.Contains(body, "csx mcp-config") {
+			t.Errorf("%s is missing the manual MCP config command", path)
+		}
+		if strings.Contains(body, `"command":"csx"`) {
+			t.Errorf("%s hands out the bare-name MCP config, which does not resolve", path)
 		}
 	}
 }

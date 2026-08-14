@@ -29,7 +29,16 @@
 {{/* "Will this work with what I already use?" is the first thing a visitor
      checks, so the agents are named right under the install command rather
      than buried in the docs. The names are proper nouns — not translated. */}}
-{{$mcpCfg := `{"mcpServers":{"csx":{"command":"csx","args":["mcp"]}}}`}}
+{{/* The command that PRINTS the config, not the config itself.
+     This block used to hand out {"command":"csx"}, which is the one form
+     that does not work: the installer puts csx in ~/.local/bin, and an MCP
+     client is started by an editor rather than a login shell, so it
+     inherits none of the PATH the user just fixed. `csx init` already
+     registers the agents it detects by absolute path for that reason —
+     everyone else was copying the broken spelling off the front page.
+     mcp-config reads the path from the running binary, so it is right
+     wherever they installed it. */}}
+{{$mcpCfg := `csx mcp-config`}}
 <section class="agents">
   <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
   <ul class="agentlist">

@@ -126,7 +126,15 @@ func buildTiles(lang string, st *netStats) []statTile {
 		statTile{Label: i18n.T(lang, "stats.symbols"), Value: num(st.Symbols)},
 		statTile{Label: i18n.T(lang, "stats.evidence"), Value: num(st.Evidence)},
 		statTile{Label: i18n.T(lang, "stats.verified_samples"), Value: num(st.VerifiedSamples)},
-		statTile{Label: i18n.T(lang, "stats.post_hit_success"), Value: pct(st.PostHitSuccessRate)},
+		// Both this and the tile below come from ADOPTION reports, and both
+		// have to say "not measured" the same way. "0%" next to "Post-hit
+		// success rate" is a claim: we watched, and none of it worked. What
+		// is true is that nobody has reported yet, and a visitor deciding
+		// whether to install reads the first one.
+		statTile{
+			Label: i18n.T(lang, "stats.post_hit_success"),
+			Value: notYetMeasured(int64(st.PostHitSuccessRate*10000), pct(st.PostHitSuccessRate)),
+		},
 		statTile{
 			Label:     i18n.T(lang, "stats.reasoning_avoided"),
 			Value:     notYetMeasured(st.EstimatedReasoningAvoided.Value, num(st.EstimatedReasoningAvoided.Value)),
