@@ -19,7 +19,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract."
+      "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract. Verification runs on the runtime the sample declares, not on Node by assumption: node:22-alpine, oven/bun:1-alpine or denoland/deno:alpine, so the execution-context axis (docs/execution-context.md) carries real bun and deno results rather than node for everything."
     },
     {
       "ecosystem": "pypi",

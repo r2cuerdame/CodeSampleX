@@ -1,0 +1,17 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:nanoid@6.0.1": "6.0.1"
+  },
+  "npm": {
+    "nanoid@6.0.1": {
+      "integrity": "sha512-3wVS3i51pE2pi1k5FFL/95BGfVS0kSsvDVuGXHOtxox/TywUmtgq+3qiTOTbs9J7KfHaXPiN171k/A6dBnaXFw==",
+      "bin": true
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:nanoid@6.0.1"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "nanoid": "npm:nanoid@6.0.1"
+  },
+  "tasks": {
+    "test": "deno test --cached-only"
+  }
+}

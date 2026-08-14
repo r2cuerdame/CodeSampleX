@@ -57,7 +57,7 @@ func TestResolveCommandPerEcosystem(t *testing.T) {
 		"cargo":  {"cargo", "fetch"},
 	}
 	for eco, want := range cases {
-		got, err := resolveCommand(eco)
+		got, err := resolveCommand(eco, "")
 		if err != nil {
 			t.Fatalf("%s: %v", eco, err)
 		}
@@ -65,7 +65,7 @@ func TestResolveCommandPerEcosystem(t *testing.T) {
 			t.Fatalf("%s: %v, want %v", eco, got, want)
 		}
 	}
-	if _, err := resolveCommand("nuget"); err == nil {
+	if _, err := resolveCommand("nuget", ""); err == nil {
 		t.Fatal("unknown ecosystem must error")
 	}
 }
@@ -137,7 +137,7 @@ func TestDockerRunnerImages(t *testing.T) {
 		"cargo":  "rust:1-alpine",
 	}
 	for eco, want := range cases {
-		img, err := imageFor(eco)
+		img, err := imageFor(eco, "")
 		if err != nil {
 			t.Fatalf("%s: %v", eco, err)
 		}
@@ -145,7 +145,7 @@ func TestDockerRunnerImages(t *testing.T) {
 			t.Fatalf("%s: %s, want %s", eco, img, want)
 		}
 	}
-	if _, err := imageFor("nuget"); err == nil {
+	if _, err := imageFor("nuget", ""); err == nil {
 		t.Fatal("unknown ecosystem must error")
 	}
 }
@@ -216,7 +216,7 @@ func TestNativeRunner(t *testing.T) {
 // none may forward host environment.
 func TestStageEnvKeepsCachesInTheWorkspace(t *testing.T) {
 	for _, eco := range []string{"pypi", "golang", "cargo"} {
-		env := stageEnv(eco)
+		env := stageEnv(eco, "")
 		if len(env) == 0 {
 			t.Errorf("%s: no stage env, its resolve output cannot survive to the contract stage", eco)
 			continue
@@ -236,7 +236,58 @@ func TestStageEnvKeepsCachesInTheWorkspace(t *testing.T) {
 			}
 		}
 	}
-	if env := stageEnv("npm"); len(env) != 0 {
+	if env := stageEnv("npm", ""); len(env) != 0 {
 		t.Errorf("npm needs no stage env (node_modules is already in the workspace), got %v", env)
+	}
+}
+
+// TestRuntimePicksTheImage pins the execution-context axis. An ecosystem is
+// not a runtime: npm packages run on Node, Bun and Deno, and "does this
+// work on Bun" is the compatibility question the project exists for.
+// Keying the image on ecosystem alone meant every npm sample was verified
+// under Node, so every sample in the network reported executionContext
+// "node" — not because that was true of the ecosystem, but because no
+// other value could be produced.
+func TestRuntimePicksTheImage(t *testing.T) {
+	for _, tc := range []struct{ runtime, wantImage, wantRuntime, wantVersion string }{
+		{"", "node:22-alpine", "node", "22"},
+		{"node", "node:22-alpine", "node", "22"},
+		{"bun", "oven/bun:1-alpine", "bun", "1"},
+		{"deno", "denoland/deno:alpine", "deno", "2"},
+	} {
+		img, err := imageFor("npm", tc.runtime)
+		if err != nil || img != tc.wantImage {
+			t.Errorf("imageFor(npm, %q) = %q, %v; want %q", tc.runtime, img, err, tc.wantImage)
+		}
+		rt, ver, lang := imageRuntime("npm", tc.runtime)
+		if rt != tc.wantRuntime || ver != tc.wantVersion || lang != "javascript" {
+			t.Errorf("imageRuntime(npm, %q) = %q/%q/%q", tc.runtime, rt, ver, lang)
+		}
+	}
+	if _, err := imageFor("npm", "quickjs"); err == nil {
+		t.Error("an unknown runtime must error rather than silently using node")
+	}
+
+	// The receipt must describe the runtime the SAMPLE declares; reading the
+	// host's would stamp a bun contract as node whenever the operator's own
+	// machine happened to run node.
+	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", Runtime: "bun"}}
+	host := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", Runtime: "node"}
+	env := DockerRunner{}.StageEnvironment(host, m)
+	if env.Runtime != "bun" || env.ExecutionContext != "bun" {
+		t.Errorf("StageEnvironment = %s/%s, want bun/bun", env.Runtime, env.ExecutionContext)
+	}
+
+	// Deno's module cache lives outside the project, so it must be pointed
+	// into the workspace or it cannot survive to the offline stage.
+	found := false
+	for _, kv := range stageEnv("npm", "deno") {
+		if strings.HasPrefix(kv, "DENO_DIR=/work/") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("deno needs DENO_DIR inside the workspace, got %v", stageEnv("npm", "deno"))
 	}
 }

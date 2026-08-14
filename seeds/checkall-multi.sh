@@ -15,6 +15,8 @@ FAILED=""
 
 image_for() {
   case "$1" in
+    bun) echo "oven/bun:1-alpine" ;;
+    deno) echo "denoland/deno:alpine" ;;
     pypi) echo "python:3.12-alpine" ;;
     golang) echo "golang:1.26-alpine" ;;
     cargo) echo "rust:1-alpine" ;;
@@ -25,6 +27,8 @@ image_for() {
 # Same env the sandbox exports, kept in one place per ecosystem.
 env_for() {
   case "$1" in
+    deno) echo "--env DENO_DIR=/work/.csx-vendor/deno" ;;
+    bun) echo "" ;;
     pypi) echo "--env PYTHONPATH=/work/.csx-vendor/py --env PYTHONDONTWRITEBYTECODE=1" ;;
     golang) echo "--env GOMODCACHE=/work/.csx-vendor/gomod --env GOCACHE=/work/.csx-vendor/gobuild --env GOFLAGS=-mod=mod" ;;
     cargo) echo "--env CARGO_HOME=/work/.csx-vendor/cargo --env CARGO_TARGET_DIR=/work/.csx-vendor/target" ;;
@@ -33,6 +37,8 @@ env_for() {
 
 resolve_for() {
   case "$1" in
+    bun) echo "bun install --ignore-scripts" ;;
+    deno) echo "deno install" ;;
     pypi) echo "pip install --no-deps --no-compile --target /work/.csx-vendor/py -r requirements.txt" ;;
     golang) echo "go mod download" ;;
     cargo) echo "cargo fetch" ;;
@@ -42,8 +48,14 @@ resolve_for() {
 for csx in "$SEEDS"/*/csx.json; do
   dir=$(dirname "$csx")
   name=$(basename "$dir")
-  eco=$(sed -n 's/.*"ecosystem": *"\([^"]*\)".*/\1/p' "$csx" | head -1)
-  [ "$eco" = "npm" ] && continue
+  eco=$(grep -o '"ecosystem": *"[^"]*"' "$csx" | head -1 | cut -d'"' -f4)
+  rt=$(grep -o '"runtime": *"[^"]*"' "$csx" | head -1 | cut -d'"' -f4)
+  # npm-on-node has its own driver (checkall.sh). npm on another runtime
+  # belongs here, because the RUNTIME is what selects the image.
+  case "$eco/$rt" in
+    npm/node|npm/) continue ;;
+    npm/*) eco="$rt" ;;
+  esac
   image=$(image_for "$eco")
   if [ -z "$image" ]; then
     echo "$name: unknown ecosystem $eco" >&2

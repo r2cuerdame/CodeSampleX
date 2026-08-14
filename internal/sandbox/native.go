@@ -14,7 +14,7 @@ type NativeRunner struct{}
 
 // Resolve fetches dependencies natively without lifecycle scripts.
 func (NativeRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
-	cmd, err := resolveCommand(m.Environment.Ecosystem)
+	cmd, err := resolveCommand(m.Environment.Ecosystem, m.Environment.Runtime)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
 	}

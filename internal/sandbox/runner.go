@@ -82,9 +82,22 @@ const vendorDir = "/work/.csx-vendor"
 // resolveCommand is the per-ecosystem dependency resolve step. Lifecycle
 // scripts never run (--ignore-scripts / metadata-only fetches), and the
 // output lands inside the workspace so the offline stages can see it.
-func resolveCommand(ecosystem string) ([]string, error) {
+func resolveCommand(ecosystem, runtime string) ([]string, error) {
 	switch ecosystem {
 	case "npm":
+		switch runtime {
+		case "bun":
+			// Bun installs into the workspace's node_modules, so nothing
+			// extra is needed for the offline stage to find it.
+			return []string{"bun", "install", "--frozen-lockfile", "--ignore-scripts"}, nil
+		case "deno":
+			// `deno install` caches everything deno.json declares, which is
+			// what the offline stage needs; `deno cache <file>` would only
+			// cover the files named, and the runner cannot know which those
+			// are. DENO_DIR is pointed inside the workspace by stageEnv, so
+			// --cached-only then resolves with no network.
+			return []string{"deno", "install"}, nil
+		}
 		return []string{"npm", "ci", "--ignore-scripts"}, nil
 	case "pypi":
 		// --target keeps the install in the workspace; stageEnv puts the
@@ -103,7 +116,12 @@ func resolveCommand(ecosystem string) ([]string, error) {
 // values are fixed constants pointing inside /work — no host environment
 // is ever forwarded, so this narrows what the container sees rather than
 // widening it.
-func stageEnv(ecosystem string) []string {
+func stageEnv(ecosystem, runtime string) []string {
+	if ecosystem == "npm" && runtime == "deno" {
+		// Deno's module cache lives outside the project by default, so it
+		// would not survive the resolve container.
+		return []string{"DENO_DIR=" + vendorDir + "/deno"}
+	}
 	switch ecosystem {
 	case "pypi":
 		return []string{"PYTHONPATH=" + vendorDir + "/py", "PYTHONDONTWRITEBYTECODE=1"}

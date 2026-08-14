@@ -15,11 +15,27 @@ import (
 // project. No host environment is passed into any container.
 type DockerRunner struct{}
 
-// imageFor maps an ecosystem to its pinned verifier image.
-func imageFor(ecosystem string) (string, error) {
+// imageFor maps an ecosystem AND runtime to its pinned verifier image.
+//
+// The runtime matters because an ecosystem is not a runtime: npm packages
+// run on Node, on Bun and on Deno, and "does this package work on Bun" is
+// exactly the compatibility question this project exists to answer. Keying
+// the image on ecosystem alone verified every npm sample under Node and
+// silently made the execution-context axis (docs/execution-context.md)
+// unusable — every sample in the network claimed executionContext "node"
+// because no other one could be produced.
+func imageFor(ecosystem, runtime string) (string, error) {
 	switch ecosystem {
 	case "npm":
-		return "node:22-alpine", nil
+		switch runtime {
+		case "", "node":
+			return "node:22-alpine", nil
+		case "bun":
+			return "oven/bun:1-alpine", nil
+		case "deno":
+			return "denoland/deno:alpine", nil
+		}
+		return "", fmt.Errorf("sandbox: no verifier image for npm runtime %q", runtime)
 	case "pypi":
 		return "python:3.12-alpine", nil
 	case "golang":
@@ -30,11 +46,17 @@ func imageFor(ecosystem string) (string, error) {
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
 
-// imageRuntime maps an ecosystem to the runtime the pinned image provides
-// and its major version. Kept beside imageFor so the two never drift.
-func imageRuntime(ecosystem string) (runtime, version, language string) {
+// imageRuntime reports the runtime the pinned image provides and its major
+// version. Kept beside imageFor so the two never drift.
+func imageRuntime(ecosystem, runtime string) (rt, version, language string) {
 	switch ecosystem {
 	case "npm":
+		switch runtime {
+		case "bun":
+			return "bun", "1", "javascript"
+		case "deno":
+			return "deno", "2", "javascript"
+		}
 		return "node", "22", "javascript"
 	case "pypi":
 		return "python", "3.12", "python"
@@ -59,7 +81,10 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	if eco == "" {
 		eco = host.Ecosystem
 	}
-	rt, ver, lang := imageRuntime(eco)
+	// The sample's declared runtime picks the container, so it must also
+	// describe the receipt. Reading the HOST runtime here would stamp a
+	// bun contract as node whenever the operator happened to run node.
+	rt, ver, lang := imageRuntime(eco, runtimeOf(m, host))
 	env := domain.EnvironmentFingerprint{
 		SchemaVersion:    1,
 		Ecosystem:        eco,
@@ -98,7 +123,7 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string) []string 
 }
 
 func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManifest, networkOff bool, cmd []string) StageResult {
-	img, err := imageFor(m.Environment.Ecosystem)
+	img, err := imageFor(m.Environment.Ecosystem, m.Environment.Runtime)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
 	}
@@ -106,12 +131,13 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: "sandbox: resolve workdir: " + err.Error()}
 	}
-	return runStage(ctx, "", dockerArgs(img, abs, networkOff, stageEnv(m.Environment.Ecosystem), cmd))
+	return runStage(ctx, "", dockerArgs(img, abs, networkOff,
+		stageEnv(m.Environment.Ecosystem, m.Environment.Runtime), cmd))
 }
 
 // Resolve fetches dependencies with the network ON but lifecycle scripts OFF.
 func (r DockerRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
-	cmd, err := resolveCommand(m.Environment.Ecosystem)
+	cmd, err := resolveCommand(m.Environment.Ecosystem, m.Environment.Runtime)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
 	}
@@ -132,4 +158,13 @@ func (r DockerRunner) Contract(ctx context.Context, dir string, m domain.SampleM
 		return skipped("no contract command in manifest")
 	}
 	return r.stage(ctx, dir, m, true, m.ContractCommand)
+}
+
+// runtimeOf prefers the runtime the sample declares; the host runtime is a
+// fallback for manifests that predate the field.
+func runtimeOf(m domain.SampleManifest, host domain.EnvironmentFingerprint) string {
+	if m.Environment.Runtime != "" {
+		return m.Environment.Runtime
+	}
+	return host.Runtime
 }
