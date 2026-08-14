@@ -392,3 +392,35 @@ func TestLeakageScanAllowsSpecificationIdentifiers(t *testing.T) {
 		}
 	}
 }
+
+// An unbraced interpolation runs straight on past the host, so the host
+// extractor swallowed it: 'http://example.com$path' in Dart read as the host
+// "example.com$path", which matched nothing in the allowlist and refused a
+// sample for naming the documentation domain. Shell, PHP and Ruby write it
+// the same way.
+func TestLeakageScanAllowsAHostFollowedByAnInterpolation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "lib/api.dart", `final uri = Uri.parse('http://example.com$path');`)
+	writeFile(t, dir, "run.sh", `curl "http://localhost:$PORT/health"`)
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindURL {
+			t.Errorf("allowlisted host before an interpolation was flagged: %+v", f)
+		}
+	}
+}
+
+// Cutting at the '$' must not turn an unknown host into an allowed one, and
+// a host that IS the interpolation stays unknown.
+func TestLeakageScanStillFlagsInterpolatedUnknownHosts(t *testing.T) {
+	for _, line := range []string{
+		`final uri = Uri.parse('http://wiki.internal-acme.io$path');`,
+		`final uri = Uri.parse('http://$secretHost/admin');`,
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "lib/api.dart", line)
+		if !kindsFor(mustScan(t, dir), "lib/api.dart")[KindURL] {
+			t.Errorf("not flagged: %s", line)
+		}
+	}
+}

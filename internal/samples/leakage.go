@@ -327,6 +327,14 @@ func urlAllowed(raw string, extra []string) bool {
 	// host matched nothing in the allowlist. Unescape rather than skip, so a
 	// host that is NOT allowlisted is still caught when written as a regex.
 	host = strings.ReplaceAll(host, `\`, "")
+	// A hostname cannot contain '$' either, so one here starts an unbraced
+	// interpolation that ran on past the host: Dart, shell, PHP and Ruby all
+	// write "http://example.com$path". Cutting there recovers the real host.
+	// If nothing is left the '$' began the host, as in "http://$host/x", and
+	// that is genuinely not a known host — the check below still refuses it.
+	if i := strings.IndexByte(host, '$'); i >= 0 {
+		host = host[:i]
+	}
 	// A placeholder inside the host itself is not a known host.
 	if templateExprRe.MatchString(host) {
 		return false
