@@ -51,12 +51,38 @@ installed to. Do not hand-write it.
 curl -fsSL https://codesamplex.dev/install.sh | sh
 ```
 
+Check `curl` and CA certificates first. Container images you are likely to be
+running in do not have them: `debian:13-slim` and `alpine:3.22` both lack
+curl, and a curl without `ca-certificates` fails TLS with `curl: (77)`. In
+both cases **the pipeline still exits 0** — the exit status of `a | b` is
+`b`'s, and `sh` succeeds at reading empty stdin — so an agent that checks the
+exit code concludes the install worked while nothing was installed. Either
+install the prerequisites, or drop curl from the bootstrap entirely; the
+script itself uses wget when curl is absent:
+
+```sh
+apt-get install -y curl ca-certificates            # debian / ubuntu slim
+apk add --no-cache curl ca-certificates            # alpine
+wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
+```
+
 Installs to `$CSX_INSTALL_DIR`, default `~/.local/bin/csx`, then runs `csx
-init`, which asks one question. Piped like this, stdin is the consumed curl
-pipe, so there is nobody to answer it and the answer depends on the version:
-the published `v0.1.0` selects **community** mode, builds from current source
-select local-only and print why. Do not rely on either — run step 2, which
-sets the mode explicitly.
+init`, which asks one question. Piped like this, stdin is the consumed
+download pipe, so nobody can answer it. Measured on the published binary:
+`init` prints `No answer received (input is not a terminal), so nothing will
+be shared.` and selects local-only. Do not rely on that default — run step 2,
+which sets the mode explicitly.
+
+Nothing adds `~/.local/bin` to `PATH`. The installer prints the export line
+once, at install time, and no later command repeats it. Until you run it, the
+next command in this file fails with `sh: csx: not found` (exit 127):
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+csx version    # prints e.g. `csx v0.1.3`; `csx --version` exits 2
+```
+
+Every step below calls `csx` by absolute path so it works either way.
 
 **Windows (PowerShell)**
 
@@ -68,7 +94,9 @@ Installs to `%LOCALAPPDATA%\csx\csx.exe` and adds that directory to the user
 PATH (new terminals only — see the warning above about MCP clients).
 
 **No-prompt alternative (any POSIX host)** — download the binary directly and
-skip the installer's interactive tail:
+skip the installer's interactive tail. Use this one if your policy forbids
+piping a downloaded script into a shell; it is a complete install path, not a
+fallback:
 
 ```sh
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -76,10 +104,30 @@ arch=$(uname -m); case "$arch" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch
 mkdir -p "$HOME/.local/bin"
 curl -fsSL "https://codesamplex.dev/dl/csx-$os-$arch" -o "$HOME/.local/bin/csx"
 chmod +x "$HOME/.local/bin/csx"
+"$HOME/.local/bin/csx" version
 ```
 
 Available: `csx-linux-amd64`, `csx-linux-arm64`, `csx-darwin-amd64`,
-`csx-darwin-arm64`, `csx-windows-amd64.exe`, `csx-windows-arm64.exe`.
+`csx-darwin-arm64`, `csx-windows-amd64.exe`, `csx-windows-arm64.exe`. The same
+files, plus `SHA256SUMS.txt`, are assets on every GitHub release, which is
+where to get them if you want to check the download:
+
+```sh
+rel=https://github.com/r2cuerdame/CodeSampleX/releases/latest/download
+curl -fsSL "$rel/csx-linux-amd64" -o csx
+curl -fsSL "$rel/SHA256SUMS.txt" -o SHA256SUMS.txt
+grep ' csx-linux-amd64$' SHA256SUMS.txt | sed 's/ .*/  csx/' | sha256sum -c -
+install -m 0755 csx "$HOME/.local/bin/csx"
+```
+
+The binary is statically linked (`CGO_ENABLED=0` Go), so it runs on musl —
+alpine, distroless and scratch images need no glibc shim.
+
+A third source, if all you have is the MCPB bundle: `codesamplex-mcp.mcpb` is
+a zip. `unzip codesamplex-mcp.mcpb` yields `manifest.json` and
+`server/csx-darwin-arm64`, `server/csx-linux-amd64`,
+`server/csx-windows-amd64.exe` — the same binaries, needing `chmod +x`. Its
+sha256 is published as `codesamplex-mcp.mcpb.sha256`.
 
 ## Step 2 — set the mode (a consent decision — do not make it for the user)
 
@@ -113,7 +161,11 @@ already exists, writing the absolute path for you:
 
 Edits are marker-fenced and idempotent; re-run `csx init` after installing one
 of these agents. `--no-agents` skips this entirely and writes nothing outside
-`CSX_HOME`; `CSX_AGENT_HOME` redirects it.
+`CSX_HOME` (default `~/.csx`); `CSX_AGENT_HOME` redirects it.
+
+In a clean container none of those directories exist, so `init` prints
+`skipped (not detected)` for all four. That is the expected result of a
+correct install, not a symptom — step 3 covers registering the server by hand.
 
 ## Step 3 — register the server with any other MCP client
 
@@ -141,10 +193,11 @@ Example output (paths differ per machine — use what your run prints):
 }
 ```
 
-`mcp-config` is newer than the published binaries: on `v0.1.0` (what
-`https://codesamplex.dev/dl/...` serves today) and on the `v0.1.2` GitHub
-release it exits 2 with `csx: unknown command "mcp-config"`. Use this form,
-which produces the same object on every version:
+`mcp-config` ships in `v0.1.3` and later, which is what
+`https://codesamplex.dev/dl/...` and the latest GitHub release serve today —
+verified in a clean container. Binaries that predate it (`v0.1.0`, `v0.1.2`)
+exit 2 with `csx: unknown command "mcp-config"`. This form produces the same
+object on every version, so it is safe to run unconditionally:
 
 ```sh
 CSX_BIN="${CSX_INSTALL_DIR:-$HOME/.local/bin}/csx"
@@ -197,7 +250,12 @@ should call `sync` once here.
 
 ## Step 5 — verify the install (do not skip)
 
-Pipe an `initialize` request into the server and check the response.
+Pipe an `initialize` request into the server and check the response. Nothing
+else has to be running: `csx mcp` is a standalone stdio process, needs no
+daemon, and answers even on an install where `init` was never run (it reports
+mode as uninitialized and uploads nothing — it does not silently default to
+community). Framing is newline-delimited JSON, one message per line, not
+`Content-Length` headers.
 
 **macOS / Linux**
 
@@ -216,8 +274,13 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 Expected — one line of JSON on stdout:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"codesamplex","version":"v0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"codesamplex","version":"v0.1.3"}}}
 ```
+
+`version` mirrors whatever binary you installed, so do not match on it. The
+server answers `protocolVersion` `2025-06-18` whatever you requested — asking
+for `2024-11-05` and getting `2025-06-18` back is a normal negotiation, not a
+failure.
 
 **Pass criterion:** the response contains `"name":"codesamplex"`. As a check
 you can branch on:
@@ -248,6 +311,9 @@ Then restart the MCP client so it picks up the new server entry.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Installer exits 0 but `csx` does not exist; output was `curl: not found` or `curl: (77)` | `curl … \| sh` reports `sh`'s status, not curl's | install `curl` + `ca-certificates`, or use the wget form (step 1) |
+| `sh: csx: not found` (exit 127) immediately after a successful install | `~/.local/bin` is not on `PATH` | `export PATH="$HOME/.local/bin:$PATH"`, or call csx by absolute path |
+| `csx: unknown command "--version"` (exit 2) | there is no `--version` flag | `csx version` |
 | Client reports the server failed to start; nothing in its log but a spawn error | config used bare `csx`; the client's PATH has no `~/.local/bin` | use the absolute path from step 3 |
 | `csx: unknown command "mcp-config"` (exit 2) | binary predates the command (`v0.1.0`, `v0.1.2`) | use the fallback snippet in step 3 |
 | `csx mcp: config: resolve home: $HOME is not defined` | client launches servers with a stripped environment | set `CSX_HOME` in the entry's `env` |
@@ -269,17 +335,26 @@ from the agent files.
 
 ## What was verified, and where
 
-Every command and every output quoted above was run on 2026-08-14, against a
-binary built from this repository with `CGO_ENABLED=0 go build ./cmd/csx`
-(`csx mcp-config` exists only there so far) unless stated otherwise:
+Every command and every output quoted above was run on 2026-08-14 against the
+published `v0.1.3` binary — `https://codesamplex.dev/dl/csx-<os>-<arch>` and
+the GitHub release assets — unless stated otherwise:
 
-- Linux: `docker run --rm -it alpine:3.22 sh` (`apk add curl`), from an empty
-  home directory. The published installer, `init`, agent registration,
-  `mcp-config`, `sync`, the handshake and `tools/list` were all run there.
-- Windows 11: `mcp-config` in all three forms and the PowerShell handshake.
-- The `initialize` handshake above was also run against the published
-  `v0.1.0` binary from `https://codesamplex.dev/dl/csx-linux-amd64`, which is
-  where the `"version":"v0.1.0"` in the expected output comes from.
+- `docker run --rm alpine:3.22` and `docker run --rm debian:13-slim`, from an
+  empty home directory, by agents given nothing but this page and the README.
+  The published installer, the missing-`curl` and missing-`ca-certificates`
+  failures, the exit-0 masking, the piped `init` default, `mcp-config`,
+  `sync`, the handshake, `tools/list` and a live `tools/call` were all
+  observed there.
+- The no-pipe path was taken to a full handshake on `alpine:3.22` without ever
+  piping a script into a shell: release binary and `.mcpb` (opened with
+  `unzip`), `chmod +x`, `init --community --yes --no-agents`, `csx mcp`.
+- Windows 11: `mcp-config` in all three forms and the PowerShell handshake,
+  against a binary built from this repository with `CGO_ENABLED=0 go build
+  ./cmd/csx`. The container runs above did not cover Windows.
 - macOS was **not** tested. It takes the same `install.sh` path as Linux,
   and `csx-darwin-amd64` / `csx-darwin-arm64` are published, but no step on
   this page has been executed on a Mac.
+- Derived, not executed as written: the `wget -qO-` bootstrap (`install.sh`
+  selects wget when curl is absent, so only the outer fetch changes) and the
+  `SHA256SUMS.txt` pipeline (the asset is published and the `.mcpb` checksum
+  was verified in-container; the sums file itself was not).

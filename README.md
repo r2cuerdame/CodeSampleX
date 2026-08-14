@@ -24,11 +24,32 @@ macOS / Linux:
 curl -fsSL https://codesamplex.dev/install.sh | sh
 ```
 
+That line needs `curl` and CA certificates, which minimal images (debian-slim, alpine, most agent containers) do not have — and `curl … | sh` **exits 0 when curl is missing**, because a pipeline reports the last command's status, not curl's. So install the prerequisites first, or skip curl entirely; the installer falls back to wget once it is running:
+
+```bash
+apt-get install -y curl ca-certificates            # debian / ubuntu slim
+apk add --no-cache curl ca-certificates            # alpine
+wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
+```
+
+The binary lands in `~/.local/bin`, which is on nobody's `PATH` by default. The installer prints this once and nothing repeats it, so the next command you run is `csx: not found` unless you do:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+csx version    # the install check — `csx --version` is not a spelling csx accepts
+```
+
 One binary, one question. `csx init` shows the community contract and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Everything else (daemon, MCP registration for Claude Code / Codex / Gemini CLI / OpenCode, agent rules) is automatic.
 
-Installing it as an MCP server from an agent, a script, or a directory listing: **[llms-install.md](llms-install.md)** — exact ordered steps for macOS, Linux and Windows, ending with an MCP handshake check.
+Piped into `sh`, that question cannot be asked: stdin is the pipe, `init` reads EOF, prints *"No answer received (input is not a terminal), so nothing will be shared"* and picks **LOCAL ONLY**. Either answer it up front with `csx init --community` / `csx init --local-only` (both re-runnable, both non-interactive), or download and run instead of piping — which also makes a failed download a failed command:
 
-For scripted or CI setups: `csx init --community --yes --no-agents` does config + identity only and writes nothing outside `CSX_HOME`; agent config paths otherwise honor `CSX_AGENT_HOME` when you need them somewhere other than your OS user home.
+```bash
+curl -fsSL https://codesamplex.dev/install.sh -o install.sh && sh install.sh
+```
+
+Installing it as an MCP server from an agent, a script, or a directory listing: **[llms-install.md](llms-install.md)** — exact ordered steps for macOS, Linux and Windows, including a no-pipe binary download and an MCP handshake check.
+
+For scripted or CI setups: `csx init --community --yes --no-agents` does config + identity only and writes nothing outside `CSX_HOME` (default `~/.csx`); agent config paths otherwise honor `CSX_AGENT_HOME` when you need them somewhere other than your OS user home.
 
 ## The contract
 
@@ -80,20 +101,27 @@ csx mcp-config          # JSON for Cursor, Cline, Windsurf, Zed, VS Code
 csx mcp-config --toml   # TOML for Codex
 ```
 
-It prints the **absolute path** of your install, which is the part that matters: the install script puts `csx` in `~/.local/bin`, and an MCP client is not started from a login shell — it inherits whatever environment its editor had. A bare `{"command": "csx"}` therefore fails even after you have fixed your own `PATH`.
+It prints the **absolute path** of your install, which is the part that matters: the install script puts `csx` in `~/.local/bin`, and an MCP client is not started from a login shell — it inherits whatever environment its editor had. A bare `{"command": "csx"}` therefore fails even after you have fixed your own `PATH`. Run it *after* the `export PATH` above, or call it by full path.
+
+The server itself is `csx mcp` — stdio, one JSON-RPC message per line, no daemon required first. `mcp-config` emits it as `args`, but a client that asks for command and arguments in separate fields wants exactly: command = that absolute path, args = `["mcp"]`.
 
 Model-agnostic: the same compatibility evidence serves Claude, GPT and Codex, Gemini, Llama — any model that can call an MCP tool.
 
-Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use `codesamplex-mcp.mcpb` from the [latest release](https://github.com/r2cuerdame/CodeSampleX/releases/latest) instead. It carries one binary per platform (darwin-arm64, linux-amd64, windows-amd64); on any other architecture use the install script above.
+Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use `codesamplex-mcp.mcpb` from the [latest release](https://github.com/r2cuerdame/CodeSampleX/releases/latest) instead. It carries one binary per platform (darwin-arm64, linux-amd64, windows-amd64).
+
+If you will not pipe a script into a shell — or you are on an architecture the bundle omits — take the binary directly: the same release publishes `csx-{linux,darwin}-{amd64,arm64}`, `csx-windows-{amd64,arm64}.exe` and `SHA256SUMS.txt`, and `https://codesamplex.dev/dl/csx-<os>-<arch>` serves the same file. It is statically linked, so it runs on musl/alpine with no glibc. Copy-pasteable download + checksum + `chmod` steps are in [llms-install.md](llms-install.md).
 
 Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Publishing a sample is deliberately **not** an MCP capability — it requires your explicit CLI approval after a full preview.
 
 ```bash
+csx sync                   # warm the shard cache — once, right after install
 csx run -- pnpm build      # observed build → evidence
 csx search "axios multipart upload"
 csx sample propose --goal "upload a file with axios"
 csx ui                     # dashboard + privacy preview
 ```
+
+`csx sync` is not optional garnish. A fresh install has zero shards cached, so every search returns `NO_SAFE_MATCH` until it syncs — indistinguishable, if you skip this, from a network that knows nothing. A long-running `csx daemon` re-warms in the background; a one-shot install calls `sync` once.
 
 ## Ecosystems (Public v1)
 
