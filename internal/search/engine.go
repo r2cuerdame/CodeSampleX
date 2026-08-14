@@ -307,13 +307,14 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		gradePkgs, versionKnown = c.packages, false
 	}
 	rel, reqP, samP := packageRelation(reqPkgs, gradePkgs)
+	fromTree := false
 	if rel == relUnspecified {
 		// Nothing was asked about by name, so the caller's dependency tree
 		// gets to rank — but a tree that contains none of the sample's
 		// packages is silence, not a mismatch, so relNone drops back to
 		// unspecified rather than grading the answer REFERENCE_ONLY.
 		if pr, prP, psP := packageRelation(parsePURLs(req.ProjectPackages), gradePkgs); pr > relNone {
-			rel, reqP, samP = pr, prP, psP
+			rel, reqP, samP, fromTree = pr, prP, psP, true
 		}
 	}
 	if !versionKnown && rel > relPackageOnly {
@@ -330,6 +331,9 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 
 	// Steps 1–5: relevance fusion (exact tokens outrank lexical match).
 	base := relWeight(rel)
+	if fromTree {
+		base *= treeRelevanceFactor
+	}
 	if matchesSymbols(req.Symbols, c) {
 		base += weightSymbol
 	}

@@ -20,6 +20,23 @@ const (
 	weightFTS               = 0.30 // step 4: normalized BM25
 	weightIntent            = 0.15 // step 5: token-overlap intent similarity
 
+	// treeRelevanceFactor discounts a package match that came from the
+	// caller's dependency tree rather than from the question.
+	//
+	// Without it an exact-version match scores 0.45, and textual relevance
+	// can reach 0.45 in total — so any package sitting in the lockfile
+	// outranked every sample the question was actually about. Asked
+	// "validate a map with Ecto.Changeset without a Repo" from a Go
+	// checkout, the engine answered with the google/uuid sample, graded
+	// EXACT, because uuid was a dependency and its symbol uuid.Validate
+	// tokenizes to the word validate.
+	//
+	// Having the package is real evidence — it is why the same question
+	// from an empty directory and from a project that uses the library
+	// should not return identical rankings — but it is evidence of "likely
+	// relevant", never of "this is what was asked".
+	treeRelevanceFactor = 0.4
+
 	// missThreshold: best fused score below this is NO_SAFE_MATCH.
 	missThreshold = 0.25
 	// elevatedFailureMinCount is the minimum cluster size that demotes a
