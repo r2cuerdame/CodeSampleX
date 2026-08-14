@@ -15,7 +15,7 @@ The trap is what happens when the tag does not match. pip does not say
 and the failure that follows is not the missing compiler people assume.
 Forced here with --no-binary :all:, orjson's build backend (maturin, via
 puccinialin) downloads rustup-init for x86_64-unknown-linux-musl, installs
-21 MB of toolchain into /root/.cache/puccinialin, and only then dies on
+21 MB of toolchain into the root user's .cache/puccinialin, and only then dies on
 `cargo --version` returning exit status 127, which pip reports as
 metadata-generation-failed. Installing build-base does not touch that. The
 real question is which wheel tags exist for the interpreter in front of you.

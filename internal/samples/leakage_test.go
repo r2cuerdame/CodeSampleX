@@ -297,3 +297,50 @@ func TestLeakageScanStillFlagsRealUNCPaths(t *testing.T) {
 		}
 	}
 }
+
+// The distribution's own trees are not a leak. A sample about musl versus
+// glibc has to name /usr/lib/x86_64-linux-gnu/libc.so.6, and that path is
+// byte-identical on every machine running that distribution — it describes
+// the platform, not the author. It was blocking a published sample.
+func TestLeakageScanAllowsDistributionOwnedPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md",
+		"the loader searches /usr/lib and /usr/local/lib; the file is /usr/lib/x86_64-linux-gnu/libc.so.6\nconfig lives in /etc/ssl/certs\n")
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindAbsolutePath {
+			t.Errorf("distribution path flagged: %+v", f)
+		}
+	}
+}
+
+// The paths that can carry a person, a project or an employer still are.
+func TestLeakageScanStillFlagsIdentifyingPaths(t *testing.T) {
+	for _, path := range []string{
+		"/home/bob/proj/x.js",
+		"/Users/alice/work/secret-client/main.go",
+		"/opt/acme-corp/deploy.sh",
+		"/var/lib/internal-billing/db",
+		"/root/.ssh/id_ed25519",
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "notes.md", "see "+path+" for details")
+		if !kindsFor(mustScan(t, dir), "notes.md")[KindAbsolutePath] {
+			t.Errorf("%s not flagged", path)
+		}
+	}
+}
+
+// testserver is the host a test client invents for a request that never
+// leaves the process. Starlette and Django both use it, so it appears in
+// every FastAPI test in the world and identifies nobody.
+func TestLeakageScanAllowsTestClientSentinelHost(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test/contract.py", "assert resp.request.url == \"http://testserver/items/7\"\n")
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindURL {
+			t.Errorf("test client sentinel host flagged: %+v", f)
+		}
+	}
+}

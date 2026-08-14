@@ -69,6 +69,11 @@ var allowedURLHosts = []string{
 	"localhost",
 	"127.0.0.1",
 	"codesamplex.dev",
+	// The fixed sentinel host test clients invent for a request that never
+	// leaves the process. Starlette's TestClient and Django's test client
+	// both use it, so it appears in every FastAPI test ever written and
+	// identifies nothing.
+	"testserver",
 	// Funding and metadata hosts that package managers write into
 	// lockfiles. They identify the library's maintainers, never the
 	// contributor, and a lockfile is machine-generated public data.
@@ -100,7 +105,14 @@ var leakPatterns = []leakPattern{
 	{KindAbsolutePath, regexp.MustCompile(`\b[A-Za-z]:[\\/][^\s"'` + "`" + `]+`)},
 	// Unix absolute paths rooted at user/system dirs (keeps route strings
 	// like "/api/users" out of the findings).
-	{KindAbsolutePath, regexp.MustCompile(`(?:^|[^\w.@])(/(?:home|Users|usr|var|etc|tmp|opt|mnt|srv|root|private)/[A-Za-z0-9._/-]+)`)},
+	//
+	// /usr and /etc are deliberately NOT here. Those trees are owned by the
+	// distribution and are byte-identical on every machine running it, so a
+	// sample naming /usr/lib/x86_64-linux-gnu/libc.so.6 is describing the
+	// platform, not its author — and a sample about musl versus glibc has
+	// to name them. Everything left can carry a person, a project or an
+	// employer in its next segment, which is what this check is for.
+	{KindAbsolutePath, regexp.MustCompile(`(?:^|[^\w.@])(/(?:home|Users|var|tmp|opt|mnt|srv|root|private)/[A-Za-z0-9._/-]+)`)},
 	// UNC shares. The leading pair must follow a delimiter, because a
 	// backslash-separated identifier inside JSON looks exactly like one once
 	// the escaping doubles it: composer.lock stores the PHP class
