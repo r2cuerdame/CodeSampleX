@@ -145,6 +145,14 @@ func Register(mux *http.ServeMux, d Deps) {
 	}
 	mux.HandleFunc("GET /records", s.records)
 	mux.HandleFunc("GET /findings", s.findings)
+	// One rule for a trailing slash, applied everywhere: redirect to the
+	// slashless form. It was inconsistent — /records/ and /findings/ hard
+	// 404'd while a package page happily served /npm/zod/ as a second 200
+	// that canonicalized to itself, so the same page existed at two indexed
+	// URLs. Both halves of that are fixed by picking one form and sending
+	// the other to it.
+	mux.HandleFunc("GET /records/{$}", redirectToSlashless)
+	mux.HandleFunc("GET /findings/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
 	mux.HandleFunc("GET /explore", s.explorePage)
 	mux.HandleFunc("GET /stats", s.statsPage)
@@ -465,4 +473,17 @@ func (s *site) download(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// redirectToSlashless sends /path/ to /path, keeping the query so a
+// language choice survives the hop.
+func redirectToSlashless(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSuffix(r.URL.Path, "/")
+	if target == "" {
+		target = "/"
+	}
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }

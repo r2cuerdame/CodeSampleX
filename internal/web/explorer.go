@@ -349,6 +349,12 @@ func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, lang)
 		return
 	}
+	// A trailing slash served the same page at a second URL, and the
+	// canonical echoed whichever one was asked for, so both got indexed.
+	if strings.HasSuffix(r.URL.Path, "/") {
+		redirectToSlashless(w, r)
+		return
+	}
 	name, version, symbol, ok := splitPackagePath(eco, r.PathValue("rest"))
 	if !ok {
 		s.notFound(w, r, lang)
