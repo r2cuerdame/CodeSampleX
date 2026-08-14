@@ -19,6 +19,16 @@ const (
 	weightErrorCode         = 0.30 // step 3: exact error-code hit
 	weightFTS               = 0.30 // step 4: normalized BM25
 	weightIntent            = 0.15 // step 5: token-overlap intent similarity
+	// weightNamedSubject: the question names the candidate's package or one
+	// of its symbols. Naming the library is the strongest thing a question
+	// can do short of pinning a version, and it was worth nothing: the
+	// identifier only opened the relevance gate, then the score was decided
+	// by lexical overlap alone.
+	//
+	// "parse command line flags in rust with clap" ranked an npm commander
+	// sample above the clap one, because BM25 loves "parse command line" and
+	// nothing carried the two words that settle it.
+	weightNamedSubject = 0.20
 
 	// treeRelevanceFactor discounts a package match that came from the
 	// caller's dependency tree rather than from the question.
@@ -158,12 +168,20 @@ func verificationLevel(status string, contractStages map[string]string, receipts
 	case "LOCAL_PASS":
 		lvl = 3
 	}
+	// An unnamed receipt is not a peer. PeerID "" was being counted as a
+	// distinct key, so one anonymous receipt beside one real one reached
+	// L4 — "contract-PASS receipts from two INDEPENDENT peers" — and took
+	// the ×3 strength multiplier with it. Independence is the one thing a
+	// verification level asserts that a single publisher cannot manufacture,
+	// and an empty string was manufacturing it.
 	peers := map[string]bool{}
 	passes := 0
 	for _, r := range receipts {
 		if res, ok := contractResult(r.Stages); ok && res == domain.ResultPass {
 			passes++
-			peers[r.PeerID] = true
+			if r.PeerID != "" {
+				peers[r.PeerID] = true
+			}
 		}
 	}
 	switch {

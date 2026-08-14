@@ -104,6 +104,26 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		out = append(out, dimComparison{samShow: osShow(sam), reqShow: osShow(req)})
 	}
 
+	// Architecture and libc were not compared at all, so a caller on
+	// glibc/x64 was told a sample verified on musl/arm64 was an EXACT match
+	// with an empty difference list. These are the two dimensions that most
+	// often decide whether a package with a native module loads at all —
+	// the whole reason the fingerprint carries them — and the grade was
+	// silent about both. The server-side search compares them; this one
+	// never did, so the same input got two different answers depending on
+	// which path the caller happened to take.
+	//
+	// They are recorded as differences rather than forced to
+	// REFERENCE_ONLY: a pure-source sample really does carry across, and
+	// the honest statement is "this ran somewhere else, here is where",
+	// which costs the EXACT claim and keeps the answer.
+	if req.Arch != "" && sam.Arch != "" && !strings.EqualFold(req.Arch, sam.Arch) {
+		out = append(out, dimComparison{samShow: sam.Arch, reqShow: req.Arch})
+	}
+	if req.Libc != "" && sam.Libc != "" && !strings.EqualFold(req.Libc, sam.Libc) {
+		out = append(out, dimComparison{samShow: sam.Libc, reqShow: req.Libc})
+	}
+
 	return out
 }
 
@@ -195,10 +215,18 @@ func buildGrade(rel pkgRel, dims []dimComparison, cd contextDelta, elevated bool
 	adaptations := []string{}
 	refOnly := elevated || rel == relMajorDiff || rel == relNone
 	adapt := false
+	// anyDifference is every non-equal dimension, including the ones carried
+	// for display alone. EXACT means "nothing here differs from yours", and
+	// only refOnly and adaptation differences were consulted — so a result
+	// could be graded EXACT while its own Different list named the OS, the
+	// architecture and the libc it had actually run on. The grade and the
+	// delta were describing two different comparisons.
+	anyDifference := false
 	for _, d := range dims {
 		if d.equal {
 			continue
 		}
+		anyDifference = true
 		if d.refOnly {
 			refOnly = true
 		}
@@ -230,7 +258,7 @@ func buildGrade(rel pkgRel, dims []dimComparison, cd contextDelta, elevated bool
 		// Silence is not agreement. With nothing comparable the honest
 		// ceiling is COMPATIBLE: the version is right, the machine is
 		// unknown.
-		if !anyComparable(dims) {
+		if !anyComparable(dims) || anyDifference {
 			return domain.GradeCompatible, adaptations
 		}
 		return domain.GradeExact, adaptations

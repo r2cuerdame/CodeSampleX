@@ -124,6 +124,26 @@ func pkgKey(p domain.PURL) string {
 	return p.Ecosystem + "/" + strings.ToLower(p.Name)
 }
 
+// sampleIDFromDocID maps an FTS document id back to the sample it indexes.
+//
+// Two writers disagreed about the key. Shard sync indexes a sample as
+// "sample:"+sampleID; SeedSampleDoc — the path the unit tests use — indexes
+// the bare sampleID. Scoring looked the id up bare, so on any real install,
+// where every candidate arrives through shard sync, NO FTS hit ever matched
+// a candidate: bm25 was computed, ranked, and thrown away.
+//
+// weightFTS is 0.30, the single largest relevance term, and it was
+// contributing nothing. What remained was intentOverlap, a shared-token
+// ratio divided by the length of the question — so asking a longer, more
+// specific question scored LOWER. Measured on the live network: "clap
+// derive parse" answered, "parse command line flags in rust with clap"
+// returned NO_SAFE_MATCH, for the same sample.
+//
+// Every test passed throughout, because the fixtures used the other writer.
+func sampleIDFromDocID(docID string) string {
+	return strings.TrimPrefix(docID, "sample:")
+}
+
 // Search implements the C7 pipeline: candidate collection (package /
 // symbol / error-fingerprint / FTS sources), score fusion, environment
 // gate + execution-context rules, verification-strength rerank, recency
@@ -287,7 +307,7 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 		}
 		if max > 0 {
 			for _, h := range hits {
-				if c := cands[h.DocID]; c != nil {
+				if c := cands[sampleIDFromDocID(h.DocID)]; c != nil {
 					c.ftsScore = h.Score / max
 				}
 			}
@@ -347,6 +367,9 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// Relevance to the question actually asked, as opposed to overlap with
 	// whatever happens to be in the caller's dependency tree.
 	relevance := weightFTS*c.ftsScore + weightIntent*intentOverlap(req.Query, c)
+	if named, _ := intentSignal(req.Query, c); named > 0 {
+		relevance += weightNamedSubject
+	}
 	base += relevance
 
 	// Steps 6+9: environment gate, execution-context axis, known failures.

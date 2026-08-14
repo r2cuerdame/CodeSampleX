@@ -285,3 +285,144 @@ func TestAnUnknownEnvironmentIsNeverGradedExact(t *testing.T) {
 		t.Errorf("grade = %s on the sample's own environment, want EXACT", g)
 	}
 }
+
+// bm25 was computed, ranked, and thrown away. Shard sync indexes a sample
+// as "sample:"+sampleID and SeedSampleDoc — the path every other test uses
+// — indexes the bare id, so on a real install, where every candidate comes
+// from a shard, no FTS hit ever matched a candidate.
+//
+// weightFTS is the largest single relevance term. Without it the score was
+// intentOverlap alone: shared tokens divided by the LENGTH of the question,
+// so asking something longer and more specific scored lower. On the live
+// network "clap derive parse" answered and "parse command line flags in
+// rust with clap" returned NO_SAFE_MATCH, for the same sample.
+func TestLexicalRelevanceSurvivesTheShardDocIdPrefix(t *testing.T) {
+	if got := sampleIDFromDocID("sample:sha256:abc"); got != "sha256:abc" {
+		t.Fatalf("sampleIDFromDocID = %q", got)
+	}
+	if got := sampleIDFromDocID("sha256:abc"); got != "sha256:abc" {
+		t.Fatalf("bare id changed: %q", got)
+	}
+
+	e, _ := seedCorpus(t)
+	long := e.ask(corpusEntry{
+		query: "test axum handlers and routing without binding a port in rust",
+		from:  goEnv(), tree: []string{"pkg:golang/gorm.io/gorm@v1.31.2"},
+	})
+	short := e.ask(corpusEntry{query: "axum oneshot", from: goEnv()})
+	for name, r := range map[string]domain.SearchResponse{"long": long, "short": short} {
+		if r.Miss || len(r.Results) == 0 {
+			t.Fatalf("%s question missed", name)
+		}
+		if r.Results[0].SampleID != "sha256:axum1" {
+			t.Errorf("%s question answered %s", name, r.Results[0].SampleID)
+		}
+	}
+	// The longer, more specific question must not score WORSE than the
+	// two-word one — that inversion is the symptom the defect produced.
+	if long.Results[0].Score < short.Results[0].Score*0.5 {
+		t.Errorf("specific question scored %.3f against %.3f for two words",
+			long.Results[0].Score, short.Results[0].Score)
+	}
+}
+
+// Naming the library is the strongest thing a question can do short of
+// pinning a version, and it only opened the relevance gate. "parse command
+// line flags in rust with clap" ranked an npm commander sample above the
+// clap one: BM25 loves "parse command line", and nothing carried the two
+// words that settle it.
+func TestNamingThePackageOutranksLexicalOverlap(t *testing.T) {
+	e, _ := seedCorpus(t)
+	r := e.ask(corpusEntry{
+		query: "render a component to an html string with react-dom",
+		from:  goEnv(), tree: []string{"pkg:golang/github.com/google/uuid@v1.6.0"},
+	})
+	if r.Miss || len(r.Results) == 0 {
+		t.Fatal("naming the package should answer")
+	}
+	if r.Results[0].SampleID != "sha256:react1" {
+		t.Errorf("answered %s; the question names react-dom", r.Results[0].SampleID)
+	}
+}
+
+// An unnamed receipt is not a peer. PeerID "" counted as a distinct key, so
+// one anonymous receipt beside one real one reached L4 — "contract-PASS
+// from two INDEPENDENT peers" — and took the ×3 multiplier with it.
+// Independence is the one thing a verification level asserts that a single
+// publisher cannot manufacture.
+func TestAnonymousReceiptsDoNotManufactureIndependence(t *testing.T) {
+	pass := map[string]string{"contract": "PASS"}
+	mixed := []domain.VerificationReceipt{
+		{PeerID: "", Stages: pass},
+		{PeerID: "ed25519:aaaa", Stages: pass},
+	}
+	if lvl := verificationLevel("", nil, mixed); lvl >= 4 {
+		t.Errorf("level %d from one named peer and one anonymous receipt", lvl)
+	}
+	two := []domain.VerificationReceipt{
+		{PeerID: "ed25519:aaaa", Stages: pass},
+		{PeerID: "ed25519:bbbb", Stages: pass},
+	}
+	if lvl := verificationLevel("", nil, two); lvl < 4 {
+		t.Errorf("level %d from two genuinely distinct peers, want >= 4", lvl)
+	}
+}
+
+// A result demoted to REFERENCE_ONLY because it is about a different
+// package said nothing about why: relNone had no case in the delta, so the
+// reader saw the demotion with no reason attached.
+func TestADifferentPackageIsStatedInTheDelta(t *testing.T) {
+	e, _ := seedCorpus(t)
+	r := e.Search(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "render a react component to an html string",
+		Packages:      []string{"pkg:npm/react@19.2.8"}, // sample is react-dom
+		Environment:   goEnv(),
+	})
+	if r.Miss || len(r.Results) == 0 {
+		t.Skip("no result to inspect")
+	}
+	res := r.Results[0]
+	if res.Grade == domain.GradeReferenceOnly && len(res.Different) == 0 {
+		t.Error("REFERENCE_ONLY with an empty Different list: the reason is invisible")
+	}
+}
+
+// Architecture and libc were not compared at all, so a caller on glibc/x64
+// was told a sample verified on musl/arm64 was an EXACT match with an empty
+// difference list. Those are the two dimensions that most often decide
+// whether a package with a native module loads at all — the whole reason
+// the fingerprint carries them.
+func TestArchAndLibcAreCompared(t *testing.T) {
+	sam := alpineEnv("npm", "node", "22.18.1", "javascript") // musl, x64
+	sam.Arch = "arm64"
+
+	caller := alpineEnv("npm", "node", "22.18.1", "javascript")
+	caller.Arch, caller.Libc = "x64", "glibc"
+	caller.OSVersionBucket, caller.Virtualization, caller.ContainerRuntime = "debian", "", ""
+
+	dims := compareEnv(caller.Normalize(), sam.Normalize(), "npm")
+	grade, _ := buildGrade(relExactVersion, dims, contextDelta{}, false)
+	if grade == domain.GradeExact {
+		t.Error("EXACT for a glibc/x64 caller against a musl/arm64 sample")
+	}
+	_, different := buildDelta(relExactVersion,
+		domain.PURL{Ecosystem: "npm", Name: "esbuild", Version: "0.25.0"},
+		domain.PURL{Ecosystem: "npm", Name: "esbuild", Version: "0.25.0"},
+		dims, contextDelta{})
+	var sawArch, sawLibc bool
+	for _, d := range different {
+		if strings.Contains(d, "arm64") || strings.Contains(d, "x64") {
+			sawArch = true
+		}
+		if strings.Contains(d, "musl") || strings.Contains(d, "glibc") {
+			sawLibc = true
+		}
+	}
+	if !sawArch {
+		t.Errorf("the architecture difference is not stated: %v", different)
+	}
+	if !sawLibc {
+		t.Errorf("the libc difference is not stated: %v", different)
+	}
+}

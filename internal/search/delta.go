@@ -24,6 +24,18 @@ func buildDelta(rel pkgRel, reqP, samP domain.PURL, dims []dimComparison, cd con
 		different = append(different,
 			"Sample uses "+samP.Name+" "+samP.MajorMinor(),
 			"Current project uses "+reqP.Name+" "+reqP.MajorMinor())
+	case relNone:
+		// The caller named packages and the sample shares none of them. That
+		// demotes the result to REFERENCE_ONLY, and the demotion was the only
+		// sign of it: the delta came back empty, so the reader saw a result
+		// marked "reference only" with nothing said about why. Asked about
+		// react against a react-dom sample, the honest line is that they are
+		// different packages, and it is the whole reason the grade dropped.
+		if samP.Name != "" && reqP.Name != "" {
+			different = append(different,
+				"Sample uses "+samP.Name+" "+samP.MajorMinor(),
+				"Current project uses "+reqP.Name+" "+reqP.MajorMinor()+" — a different package")
+		}
 	}
 
 	for _, d := range dims {
