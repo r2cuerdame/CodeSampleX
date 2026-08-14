@@ -11,6 +11,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -243,6 +245,7 @@ func checkArtifactStatic(data []byte, manifest domain.SampleManifest) error {
 
 	entries := 0
 	var manifestInArtifact []byte
+	lockfiles := map[string]string{}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -276,6 +279,12 @@ func checkArtifactStatic(data []byte, manifest domain.SampleManifest) error {
 		if bytes.IndexByte(content, 0) >= 0 {
 			return errors.New("artifact entry " + name + " looks binary (NUL byte)")
 		}
+		if base := path.Base(strings.TrimPrefix(name, "./")); lockfileForVersionCheck[strings.ToLower(base)] {
+			raw, rerr := io.ReadAll(io.LimitReader(tr, 4<<20))
+			if rerr == nil {
+				lockfiles[strings.ToLower(base)] = string(raw)
+			}
+		}
 		if strings.TrimPrefix(name, "./") == "csx.json" {
 			manifestInArtifact = content
 		}
@@ -299,7 +308,80 @@ func checkArtifactStatic(data []byte, manifest domain.SampleManifest) error {
 	if !bytes.Equal(domain.MustCanonicalJSON(inArtifact), domain.MustCanonicalJSON(normalized)) {
 		return errors.New("csx.json inside artifact does not match the posted manifest")
 	}
+	return checkDeclaredVersions(manifest, lockfiles)
+}
+
+// lockfileForVersionCheck are the lockfiles whose format is unambiguous
+// enough to say "this package resolved to that version" by reading it.
+var lockfileForVersionCheck = map[string]bool{
+	"cargo.lock": true, "package-lock.json": true, "gemfile.lock": true,
+}
+
+// checkDeclaredVersions refuses a manifest that names a version its own
+// lockfile did not resolve.
+//
+// Two published samples said so. A Cargo.toml written as version = "0.4.42"
+// is a CARET requirement, cargo resolved 0.4.45, the contract compiled and
+// passed against 0.4.45 — and the manifest went on claiming 0.4.42. The
+// sample was therefore evidence about a version it had never been run on,
+// which is the one thing this whole network exists not to do, and nothing
+// anywhere would have caught it.
+//
+// Silence is deliberate where the format is not listed or the package is
+// absent: a false refusal here blocks an honest sample, and the check is
+// only worth having while it is certain.
+func checkDeclaredVersions(manifest domain.SampleManifest, lockfiles map[string]string) error {
+	if len(lockfiles) == 0 {
+		return nil
+	}
+	for _, raw := range manifest.Packages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil || p.Version == "" {
+			continue
+		}
+		for name, body := range lockfiles {
+			resolved, found := resolvedVersionIn(name, body, p)
+			if !found || resolved == p.Version {
+				continue
+			}
+			return errors.New("manifest declares " + raw + " but " + name +
+				" resolved " + p.Name + " " + resolved +
+				" — the contract ran against the lockfile, so the manifest is wrong")
+		}
+	}
 	return nil
+}
+
+// resolvedVersionIn reads one package's resolved version out of a lockfile,
+// reporting found=false whenever it cannot be certain.
+func resolvedVersionIn(lockfile, body string, p domain.PURL) (string, bool) {
+	switch lockfile {
+	case "cargo.lock":
+		re := regexp.MustCompile(`(?m)^name = "` + regexp.QuoteMeta(p.Name) + `"
+?
+^version = "([^"]+)"`)
+		if m := re.FindStringSubmatch(body); m != nil {
+			return m[1], true
+		}
+	case "gemfile.lock":
+		re := regexp.MustCompile(`(?m)^\s{4}` + regexp.QuoteMeta(p.Name) + ` \(([^)]+)\)`)
+		if m := re.FindStringSubmatch(body); m != nil {
+			return m[1], true
+		}
+	case "package-lock.json":
+		var lock struct {
+			Packages map[string]struct {
+				Version string `json:"version"`
+			} `json:"packages"`
+		}
+		if json.Unmarshal([]byte(body), &lock) != nil {
+			return "", false
+		}
+		if e, ok := lock.Packages["node_modules/"+p.Name]; ok && e.Version != "" {
+			return e.Version, true
+		}
+	}
+	return "", false
 }
 
 // checkEntryName rejects absolute, traversal, and forbidden-directory names.
