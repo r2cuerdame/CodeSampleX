@@ -620,7 +620,16 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	}
 
 	// Non-sensitive dims: mild penalties, honest delta lines.
+	//
+	// "Non-sensitive" bounds how far the grade drops, not whether it drops
+	// at all. This branch multiplied the fit and wrote the delta line and
+	// left the grade alone, so POST /v1/search answered a linux caller with
+	// MATCH: EXACT for a sample verified on windows — and printed
+	// "os linux (sample: windows)" directly underneath it. EXACT means
+	// nothing here differs from yours; a difference the response itself
+	// lists is a difference.
 	if req.OS != "" && sample.OS != "" && req.OS != sample.OS {
+		d.grade = worseGrade(d.grade, domain.GradeCompatible)
 		d.different = append(d.different, "os "+req.OS+" (sample: "+sample.OS+")")
 		d.fit *= 0.9
 	} else {

@@ -447,13 +447,24 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())
 	}
+	// The upload queue is separate from the observation batches and nothing
+	// ever drained it, so every adoption report ever made is still sitting
+	// in it. `csx sync` said "uploaded batches: 0" and exited 0 the whole
+	// time.
+	q, qerr := d.drainQueue(ctx)
+	res.UploadedReports = q
+	if qerr != nil {
+		res.Errors = append(res.Errors, qerr.Error())
+	}
 	return res
 }
 
 // SyncResult is the POST /local/v1/sync (and csx sync) outcome.
 type SyncResult struct {
-	SchemaVersion   int      `json:"schemaVersion"`
-	WarmedKeys      int      `json:"warmedKeys"`
-	UploadedBatches int      `json:"uploadedBatches"`
+	SchemaVersion   int `json:"schemaVersion"`
+	WarmedKeys      int `json:"warmedKeys"`
+	UploadedBatches int `json:"uploadedBatches"`
+	// UploadedReports is queued items delivered (adoption reports today).
+	UploadedReports int      `json:"uploadedReports"`
 	Errors          []string `json:"errors,omitempty"`
 }

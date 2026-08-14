@@ -135,7 +135,7 @@ func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
 func TestStatsPageRendersProducerJSON(t *testing.T) {
 	produced, err := compatibility.StatsJSON(serverstore.NetworkCounts{
 		Peers: 2, Packages: 76, Symbols: 5, Observations: 312, VerifiedSamples: 4,
-	}, 7, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
+	}, serverstore.AdoptionCounts{Reports: 7, Applied: 7}, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

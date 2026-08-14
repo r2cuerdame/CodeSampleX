@@ -94,3 +94,53 @@ func TestLibcMismatchIsReported(t *testing.T) {
 		t.Errorf("libc difference not reported: %v", r.Different)
 	}
 }
+
+// EXACT means nothing here differs from yours. The OS branch multiplied the
+// fit and wrote the delta line and left the grade alone, so POST /v1/search
+// answered a linux caller with MATCH: EXACT for a sample verified on
+// windows — and printed "os linux (sample: windows)" directly underneath.
+// The client engine had the same defect on its own path; this is the second
+// implementation, and both had to be fixed for the same input to get the
+// same answer.
+func TestOSDifferenceCannotBeGradedExact(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	id := "sha256:" + strings.Repeat("0e", 32)
+
+	m := testManifest()
+	m.Environment = domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "windows", OSVersionBucket: "11",
+		Arch: "x64", Runtime: "node", RuntimeVersion: "22.18.1",
+		Language: "javascript", ModuleSystem: "esm", PackageManager: "npm",
+	}.Normalize()
+	saveSearchable(t, store, id, m)
+
+	caller := m.Environment
+	caller.OS, caller.OSVersionBucket = "linux", "debian"
+
+	var out domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v1/search", domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         m.Case.Goal,
+		Packages:      m.Packages,
+		Environment:   caller,
+	}, &out)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if out.Miss || len(out.Results) == 0 {
+		t.Fatal("an exact package match should still answer")
+	}
+	r := out.Results[0]
+	if r.Grade == domain.GradeExact {
+		t.Errorf("grade EXACT with Different = %v", r.Different)
+	}
+	var saidSo bool
+	for _, d := range r.Different {
+		if strings.Contains(d, "os ") {
+			saidSo = true
+		}
+	}
+	if !saidSo {
+		t.Errorf("the OS difference is not in the delta: %v", r.Different)
+	}
+}

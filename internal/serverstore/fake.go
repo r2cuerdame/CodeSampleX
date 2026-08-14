@@ -36,6 +36,7 @@ type Fake struct {
 	clusters    map[fakeClusterKey]ClusterRow
 	stats       map[string]string // day → stats JSON
 	wanted      map[[3]string]*WantedRow
+	adoptions   map[[3]string]AdoptionRow
 	wantedSeen  map[[5]string]bool
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
@@ -79,6 +80,7 @@ func NewFake() *Fake {
 		clusters:   map[fakeClusterKey]ClusterRow{},
 		stats:      map[string]string{},
 		wanted:     map[[3]string]*WantedRow{},
+		adoptions:  map[[3]string]AdoptionRow{},
 		wantedSeen: map[[5]string]bool{},
 	}
 }
@@ -918,4 +920,37 @@ func (f *Fake) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// -------------------------------------------------------------- adoptions --
+
+func (f *Fake) RecordAdoption(_ context.Context, r AdoptionRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := [3]string{r.SampleID, r.Epoch, r.AnonID}
+	if prev, ok := f.adoptions[key]; ok && r.BuildPass == nil {
+		r.BuildPass = prev.BuildPass
+	}
+	f.adoptions[key] = r
+	return nil
+}
+
+func (f *Fake) AdoptionSummary(_ context.Context) (AdoptionCounts, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var c AdoptionCounts
+	for _, r := range f.adoptions {
+		c.Reports++
+		if r.Applied {
+			c.Applied++
+		}
+		if r.BuildPass != nil {
+			if *r.BuildPass {
+				c.BuildPass++
+			} else {
+				c.BuildFail++
+			}
+		}
+	}
+	return c, nil
 }

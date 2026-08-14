@@ -241,6 +241,13 @@ type Store interface {
 	// the sample still works where it was built.
 	CompleteJobsForSample(ctx context.Context, sampleID, peerID string) error
 
+	// RecordAdoption stores one report that an agent applied a sample and
+	// what happened to the build afterwards. This is the far end of the
+	// loop the product describes, and it had no route to the server at all.
+	RecordAdoption(ctx context.Context, r AdoptionRow) error
+	// AdoptionSummary counts adoption reports for the stats rollup.
+	AdoptionSummary(ctx context.Context) (AdoptionCounts, error)
+
 	// RecordWanted counts anonymous reports that the network had no answer
 	// for a package. The QUESTION IS NEVER SENT — only the part of the
 	// request that was already public — and one reporter counts once per

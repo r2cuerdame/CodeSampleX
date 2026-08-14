@@ -244,7 +244,15 @@ func (b *Builder) refreshStats(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("compatibility: network counts: %w", err)
 	}
-	statsJSON, err := StatsJSON(counts, 0, now)
+	// Adoption reports were hardcoded to zero here, with a comment saying
+	// they had not reached the server yet. They had not, because nothing
+	// drained the client queue and no route existed to receive one; both
+	// are connected now, so the number is read rather than assumed.
+	adopt, err := b.Store.AdoptionSummary(ctx)
+	if err != nil {
+		return fmt.Errorf("compatibility: adoption summary: %w", err)
+	}
+	statsJSON, err := StatsJSON(counts, adopt, now)
 	if err != nil {
 		return err
 	}
@@ -667,10 +675,27 @@ type StatsDoc struct {
 	Estimated bool `json:"estimated"`
 }
 
-// StatsJSON renders the stats rollup. hitsAdopted is the count of adopted
-// search hits reported back by clients — zero until adoption reporting
-// reaches the server, and the estimate says so.
-func StatsJSON(c serverstore.NetworkCounts, hitsAdopted int64, now time.Time) ([]byte, error) {
+// StatsJSON renders the stats rollup from the network counts and the
+// adoption reports clients have sent back.
+//
+// postHitSuccessRate is builds that PASSED over builds that were reported
+// either way. A report with no build attached is counted in neither: the
+// agent did not measure, and folding "unknown" into either bucket would
+// turn a gap in the data into a claim about it. With no reports at all the
+// rate stays 0 and PostHitBuildPass keeps saying nothing has been
+// collected — which is what the front page renders as an em dash rather
+// than as "0%".
+func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, now time.Time) ([]byte, error) {
+	hitsAdopted := adopt.Applied
+	rate := 0.0
+	measured := adopt.BuildPass + adopt.BuildFail
+	if measured > 0 {
+		rate = float64(adopt.BuildPass) / float64(measured)
+	}
+	buildNote := "placeholder — no post-hit adoption data collected yet"
+	if measured > 0 {
+		buildNote = "builds reported after applying a sample"
+	}
 	doc := StatsDoc{
 		SchemaVersion:      1,
 		Day:                now.UTC().Format("2006-01-02"),
@@ -681,11 +706,11 @@ func StatsJSON(c serverstore.NetworkCounts, hitsAdopted int64, now time.Time) ([
 		Symbols:            c.Symbols,
 		Evidence:           c.Observations,
 		VerifiedSamples:    c.VerifiedSamples,
-		PostHitSuccessRate: 0,
+		PostHitSuccessRate: rate,
 		Estimated:          true,
 		PostHitBuildPass: PlaceholderStat{
-			Value: 0,
-			Note:  "placeholder — no post-hit adoption data collected yet",
+			Value: float64(adopt.BuildPass),
+			Note:  buildNote,
 		},
 		EstimatedReasoningAvoided: EstimatedStat{
 			Estimated: true,

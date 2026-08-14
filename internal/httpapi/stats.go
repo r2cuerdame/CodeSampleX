@@ -25,7 +25,15 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
-		raw, jerr := compatibility.StatsJSON(counts, 0, now)
+		// A live rollup reads the adoption reports too; failing to read
+		// them would publish a rate of zero, which is a claim rather than
+		// a gap.
+		adopt, aerr := a.d.Store.AdoptionSummary(r.Context())
+		if aerr != nil {
+			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
+			return
+		}
+		raw, jerr := compatibility.StatsJSON(counts, adopt, now)
 		if jerr != nil {
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return

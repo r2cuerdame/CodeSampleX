@@ -1434,3 +1434,58 @@ func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
 	})
 	return out, err
 }
+
+// ---------------------------------------------------------- adoptions --
+
+// AdoptionRow is one report that an agent applied a sample.
+type AdoptionRow struct {
+	SampleID  string
+	Applied   bool
+	BuildPass *bool // nil = the reporter ran no build
+	Epoch     string
+	AnonID    string
+}
+
+// AdoptionCounts summarises adoption reports for the stats rollup.
+//
+// The three numbers are kept apart on purpose. Applied says the answer was
+// used; BuildPass and BuildFail say whether it then worked. Folding an
+// unknown build into either bucket would turn "we did not measure" into a
+// claim, which is the failure mode this project cares most about.
+type AdoptionCounts struct {
+	Reports   int64
+	Applied   int64
+	BuildPass int64
+	BuildFail int64
+}
+
+// RecordAdoption stores one adoption report, counting a reporter once per
+// sample per epoch. A repeat within the same epoch updates the outcome —
+// an agent that reports "applied" and later reports the build result is
+// telling us more about the same event, not a second event.
+func (p *PG) RecordAdoption(ctx context.Context, r AdoptionRow) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO adoptions(sample_id, applied, build_pass, epoch, anon_id)
+			VALUES($1,$2,$3,$4,$5)
+			ON CONFLICT (sample_id, epoch, anon_id) DO UPDATE SET
+				applied = EXCLUDED.applied,
+				build_pass = COALESCE(EXCLUDED.build_pass, adoptions.build_pass)`,
+			r.SampleID, r.Applied, r.BuildPass, r.Epoch, r.AnonID)
+		return err
+	})
+}
+
+// AdoptionSummary counts adoption reports across the whole network.
+func (p *PG) AdoptionSummary(ctx context.Context) (AdoptionCounts, error) {
+	var out AdoptionCounts
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `
+			SELECT COUNT(*),
+			       COUNT(*) FILTER (WHERE applied),
+			       COUNT(*) FILTER (WHERE build_pass IS TRUE),
+			       COUNT(*) FILTER (WHERE build_pass IS FALSE)
+			  FROM adoptions`).Scan(&out.Reports, &out.Applied, &out.BuildPass, &out.BuildFail)
+	})
+	return out, err
+}
