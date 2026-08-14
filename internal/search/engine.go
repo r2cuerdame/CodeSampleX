@@ -337,7 +337,16 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 			rel, reqP, samP, fromTree = pr, prP, psP, true
 		}
 	}
-	if !versionKnown && rel > relPackageOnly {
+	// The cap has to work in BOTH directions. It only fired for relations
+	// ABOVE relPackageOnly, so relMajorDiff — computed from the shard key,
+	// which is not authoritative about anything — survived untouched, and
+	// the result asserted a version difference the sample had never
+	// declared. "Sample uses axios 7.0, current project uses axios 1.12"
+	// was printed for a sample whose manifest says nothing about a version,
+	// and it also forced REFERENCE_ONLY on that invented basis.
+	//
+	// Unknown is unknown whichever side of the ladder it lands on.
+	if !versionKnown && rel != relUnspecified && rel != relNone {
 		rel = relPackageOnly
 	}
 

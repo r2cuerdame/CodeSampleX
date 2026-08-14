@@ -52,7 +52,14 @@ func buildDelta(rel pkgRel, reqP, samP domain.PURL, dims []dimComparison, cd con
 		}
 	}
 
-	if cd.mismatch && cd.samShow != "" && cd.reqShow != "" {
+	// browserAdapt as well as mismatch. Only a mismatch was rendered, so a
+	// browser-major difference — which CAPS the grade at
+	// ADAPTATION_REQUIRED and puts "verify in safari 19" in the adaptation
+	// list — was left out of the delta entirely: safari 19 caller, safari
+	// 15 sample, and the answer came back ADAPTATION_REQUIRED with
+	// Different empty and the sample's own browser never shown anywhere.
+	// The reader was told to adapt without being told to what.
+	if (cd.mismatch || cd.browserAdapt) && cd.samShow != "" && cd.reqShow != "" {
 		different = append(different,
 			"Sample uses "+cd.samShow,
 			"Current project uses "+cd.reqShow)

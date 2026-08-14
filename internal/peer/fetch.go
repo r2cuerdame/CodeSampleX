@@ -237,7 +237,14 @@ func manifestFromArtifact(data []byte) string {
 		if err != nil {
 			return "{}"
 		}
-		if path.Base(hdr.Name) != "csx.json" || hdr.Typeflag != tar.TypeReg {
+		// The ROOT manifest, not any file called csx.json. Matching on the
+		// base name meant a nested copy — api/csx.json, a fixture, a decoy
+		// — became the sample's stored metadata if it sorted first, and
+		// the local samples row then carried the wrong packages, goal,
+		// license and environment for an artifact whose bytes were
+		// perfectly valid. The content address proves what the bytes ARE;
+		// it says nothing about which file inside them describes them.
+		if path.Clean(hdr.Name) != "csx.json" || hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		raw, err := io.ReadAll(io.LimitReader(tr, 1<<20))

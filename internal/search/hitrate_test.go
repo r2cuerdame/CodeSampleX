@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -424,5 +425,69 @@ func TestArchAndLibcAreCompared(t *testing.T) {
 	}
 	if !sawLibc {
 		t.Errorf("the libc difference is not stated: %v", different)
+	}
+}
+
+// A browser-major difference CAPS the grade at ADAPTATION_REQUIRED and puts
+// "verify in safari 19" in the adaptation list, and only a context MISMATCH
+// was rendered into the delta — so the answer came back telling the reader
+// to adapt without telling them to what. The sample's own browser appeared
+// nowhere.
+func TestAnAdaptableContextDifferenceIsStated(t *testing.T) {
+	req := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", Runtime: "browser",
+		ExecutionContext: "browser", BrowserFamily: "safari", BrowserMajor: "19",
+	}.Normalize()
+	sam := req
+	sam.BrowserMajor = "15"
+
+	cd := compareContext(req, sam.Normalize())
+	if !cd.browserAdapt {
+		t.Fatalf("fixture does not produce a browser adaptation: %+v", cd)
+	}
+	grade, adapt := buildGrade(relExactVersion, nil, cd, false)
+	if grade != domain.GradeAdaptationRequired || len(adapt) == 0 {
+		t.Fatalf("grade=%s adapt=%v", grade, adapt)
+	}
+	p := domain.PURL{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}
+	_, different := buildDelta(relExactVersion, p, p, nil, cd)
+	if len(different) == 0 {
+		t.Fatal("told to adapt, with nothing said about what differs")
+	}
+	var saidSo bool
+	for _, d := range different {
+		if strings.Contains(d, "15") {
+			saidSo = true
+		}
+	}
+	if !saidSo {
+		t.Errorf("the sample's own browser is never shown: %v", different)
+	}
+}
+
+// A shard old enough to carry no packages field is not authoritative about
+// any version. The cap only fired for relations ABOVE relPackageOnly, so a
+// relMajorDiff computed from the shard KEY survived and the result asserted
+// a version difference the sample had never declared — and forced
+// REFERENCE_ONLY on that invented basis.
+func TestAnUnestablishedVersionCannotAssertADifferenceEither(t *testing.T) {
+	c := &candidate{
+		sampleID: "sha256:shardonly",
+		// declared is empty: the shard predates the packages field.
+		packages: []domain.PURL{{Ecosystem: "npm", Name: "axios", Version: "7.0.0"}},
+		caseObj:  &domain.Case{SchemaVersion: 1, Kind: "HOW", Goal: "post json with axios"},
+	}
+	e, _ := seedCorpus(t)
+	res, _ := e.scoreCandidate(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1, Query: "post json with axios",
+		Packages: []string{"pkg:npm/axios@1.12.0"},
+	}, domain.EnvironmentFingerprint{SchemaVersion: 1},
+		[]domain.PURL{{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}},
+		c, map[string]*pkgEvidence{}, time.Now().UTC())
+
+	for _, d := range res.Different {
+		if strings.Contains(d, "7.0") {
+			t.Errorf("asserted a version the sample never declared: %q", d)
+		}
 	}
 }
