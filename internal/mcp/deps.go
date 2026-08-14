@@ -310,6 +310,13 @@ func overviewFromShards(ctx context.Context, db *localdb.DB, purls []string) ([]
 
 		var passWeighted float64
 		var topFailCount int64
+		// One sample is listed under every package VERSION it was verified
+		// against, so counting entries counted the same sample repeatedly:
+		// a package with one sample covering axios 1.11 and 1.12 reported
+		// two. This is the number an agent reads on a MISS to decide
+		// whether a combination is well-trodden, so overstating it is
+		// exactly the wrong direction.
+		seenSamples := map[string]bool{}
 		for _, pkg := range shard.Packages {
 			pp, perr := domain.ParsePURL(pkg.PURL)
 			if perr != nil || pp.Ecosystem != p.Ecosystem || !strings.EqualFold(pp.Name, p.Name) {
@@ -331,7 +338,8 @@ func overviewFromShards(ctx context.Context, db *localdb.DB, purls []string) ([]
 				}
 			}
 			for _, smp := range pkg.Samples {
-				if smp.SampleID != "" {
+				if smp.SampleID != "" && !seenSamples[smp.SampleID] {
+					seenSamples[smp.SampleID] = true
 					o.Samples++
 				}
 			}
@@ -561,16 +569,28 @@ type adoptionPayload struct {
 // enqueues the anonymous adoption evidence for upload (drained by the
 // daemon/`csx sync`; queues locally while the server is unreachable).
 func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identity, sampleID string, applied bool, buildPass *bool) error {
-	hit := localdb.HitRow{
-		TS:       time.Now().UTC(),
-		SampleID: sampleID,
-		Adopted:  applied,
-	}
+	var pass sql.NullBool
 	if buildPass != nil {
-		hit.PostBuildPass = sql.NullBool{Bool: *buildPass, Valid: true}
+		pass = sql.NullBool{Bool: *buildPass, Valid: true}
 	}
-	if err := db.RecordHit(ctx, hit); err != nil {
+	// An adoption is not a search; it is what happened to one. Inserting a
+	// row here counted the same search twice — once when it was answered,
+	// once when the answer was used — and csx stats reported the doubled
+	// number as hits.
+	updated, err := db.MarkAdopted(ctx, sampleID, applied, pass)
+	if err != nil {
 		return err
+	}
+	if !updated {
+		// No search on this machine led here: an agent can report an
+		// adoption for a sample it obtained another way, and that is worth
+		// recording, but it is one event and not two.
+		if err := db.RecordHit(ctx, localdb.HitRow{
+			TS: time.Now().UTC(), SampleID: sampleID,
+			Adopted: applied, PostBuildPass: pass,
+		}); err != nil {
+			return err
+		}
 	}
 
 	epoch := time.Now().UTC().Format("2006-01-02")

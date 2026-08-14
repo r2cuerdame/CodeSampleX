@@ -66,3 +66,38 @@ func (d *DB) CountHits(ctx context.Context) (int, error) {
 	err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM hits`).Scan(&n)
 	return n, err
 }
+
+// MarkAdopted records that a sample the caller was already shown got
+// applied, and reports whether an existing search row was updated.
+//
+// An adoption used to INSERT its own row, so one search that was then
+// adopted counted as two hits: the search row, plus a second row with an
+// empty query and an empty grade. `csx stats` read that as two searches
+// answered, and the post-hit success rate divided by the inflated number.
+// An adoption is not a search; it is what happened to one.
+//
+// The most recent un-adopted row for this sample is the one being reported
+// on. A false return means no such row exists — an agent can report an
+// adoption for a sample it obtained some other way — and the caller
+// decides whether that deserves a row of its own.
+func (d *DB) MarkAdopted(ctx context.Context, sampleID string, applied bool, buildPass sql.NullBool) (bool, error) {
+	res, err := d.sql.ExecContext(ctx, `
+		UPDATE hits SET adopted = ?, post_build_pass = ?
+		WHERE id = (
+			SELECT id FROM hits
+			 WHERE sample_id = ? AND adopted = 0
+			 ORDER BY id DESC LIMIT 1)`,
+		boolInt(applied), buildPass, sampleID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// CountAdoptions returns how many recorded hits were adopted.
+func (d *DB) CountAdoptions(ctx context.Context) (int, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM hits WHERE adopted <> 0`).Scan(&n)
+	return n, err
+}

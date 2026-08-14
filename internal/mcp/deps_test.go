@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/search"
 	"github.com/r2cuerdame/codesamplex/internal/storage/cas"
@@ -269,4 +271,63 @@ func keysOf(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// An adoption is not a search; it is what happened to one. Reporting one
+// used to INSERT its own row, so a single search that was then adopted
+// counted as two hits — the search row, plus a second row with an empty
+// query and an empty grade — and csx stats reported the doubled number.
+func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	id := "sha256:" + strings.Repeat("12", 32)
+
+	if err := db.RecordHit(ctx, localdb.HitRow{
+		TS: time.Now().UTC(), Query: "axios post basics",
+		Grade: domain.GradeExact, SampleID: id,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pass := true
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reportAdoption(ctx, db, ident, id, true, &pass); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.CountHits(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		rows, _ := db.ListHits(ctx, 10)
+		for i, r := range rows {
+			t.Logf("row %d: query=%q grade=%q adopted=%v", i, r.Query, r.Grade, r.Adopted)
+		}
+		t.Errorf("CountHits = %d, want 1: one search that was then adopted", n)
+	}
+	adopted, err := db.CountAdoptions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted != 1 {
+		t.Errorf("CountAdoptions = %d, want 1", adopted)
+	}
+
+	// An adoption with no preceding search on this machine is a real event
+	// and still gets a row — an agent can obtain a sample another way.
+	other := "sha256:" + strings.Repeat("ab", 32)
+	if err := reportAdoption(ctx, db, ident, other, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := db.CountHits(ctx); n != 2 {
+		t.Errorf("CountHits = %d after an unsolicited adoption, want 2", n)
+	}
 }
