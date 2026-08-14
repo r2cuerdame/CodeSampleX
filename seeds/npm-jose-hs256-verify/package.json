@@ -1,0 +1,10 @@
+{
+  "name": "csx-sample-npm-jose-hs256-verify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "jose": "6.2.8"
+  }
+}

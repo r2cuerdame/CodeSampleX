@@ -1,0 +1,8 @@
+[package]
+name = "csx-sample-clap4"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+clap = { version = "4.6.6", features = ["derive"] }

@@ -1,0 +1,9 @@
+{
+  "name": "csx-lightningcss-musl-prebuild",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "lightningcss": "1.33.0"
+  }
+}

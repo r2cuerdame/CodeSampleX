@@ -1,0 +1,9 @@
+[package]
+name = "csx-sample-anyhow"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+anyhow = "1.0.104"
+thiserror = "2.0.20"

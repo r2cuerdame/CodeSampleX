@@ -1,0 +1,14 @@
+source "https://rubygems.org"
+
+# faraday 2.12 added a runtime dependency on the json gem, and json builds a C
+# extension. A ruby alpine image carries no compiler, so on Alpine every
+# faraday >= 2.12 dies in extconf during bundle install, before a line of your
+# code runs. 2.11.0 is the newest release that stays pure Ruby; its json
+# middleware requires Ruby's built-in json instead. Measured, not assumed: the
+# same install with 2.14.3 fails on json, and adding build-base is the other
+# way out if you control the image.
+gem "faraday", "2.11.0"
+
+# minitest 5 for the same reason — minitest 6 depends on prism, another
+# C extension gem.
+gem "minitest", "5.27.0"
