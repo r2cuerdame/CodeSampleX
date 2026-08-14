@@ -72,21 +72,23 @@ where an agent burns an afternoon.
 Chosen for one intersection: **high demand, thin documentation, and one
 environment setting decides the outcome.**
 
-| Package | Scale | The setting |
-|---|---|---|
-| `pypi/protobuf` 7.35 | 891M/mo | `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION` |
-| `pypi/pandas` 3.0 | 786M/mo | pyarrow present in the image or not |
-| `npm/undici` 8.10 + Node proxy | 157M/wk | `http_proxy` vs `HTTP_PROXY`, `NODE_USE_ENV_PROXY` |
-| `npm/vite` 8.2 | 164M/wk | the compat layer silently accepting Vite 7 config |
-| `npm/@prisma/client` 7.9 | — | generated output path, driver adapter, Alpine |
-| `composer/guzzlehttp/guzzle` 8.0 | 20.6M/mo, 37,962 dependents | released three weeks ago |
-| `composer/intervention/image` 4.2 | — | GD built with or without AVIF |
-| `cargo/rustls` 0.23 | — | a transitive dep re-enabling aws-lc-rs |
-| `cargo/getrandom` 0.4 | 505M/90d | the `wasm_js` feature and whether the rustflag is required |
-| `cargo/tonic` 0.14 | — | protoc on the host vs in the builder stage |
-| `hex/opentelemetry_exporter` 1.10 | — | application boot order in a release |
-| `hex/rustler_precompiled` 0.9 | 221k/wk | the alpine target triple |
-| `pub/sqlite3` 3.5 | — | standalone executable vs `dart run` |
+The first version of this list had a column naming the setting that
+matters. That was a mistake and it invalidated Task B for the first batch:
+you cannot ask someone to write down what they believe about an API after
+telling them which knob to look at. 14 of 14 priors came back wrong, which
+proved nothing — the answer was in the question.
+
+So the list is names only. Which setting matters is what Task B is for.
+
+```
+pypi/protobuf 7.35            npm/@prisma/client 7.9
+pypi/pandas 3.0               composer/guzzlehttp/guzzle 8.0
+npm/undici 8.10               composer/intervention/image 4.2
+npm/vite 8.2                  cargo/rustls 0.23
+cargo/getrandom 0.4           cargo/tonic 0.14
+hex/opentelemetry_exporter 1.10   hex/rustler_precompiled 0.9
+pub/sqlite3 3.5
+```
 
 Add your own if you find something that fits the intersection better. The
 intersection is the point, not the list.
