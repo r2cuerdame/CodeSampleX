@@ -171,7 +171,20 @@ func tokenish(m string) bool {
 			hasSym = true
 		}
 	}
-	return hasDigit && ((hasUpper && hasLower) || hasSym)
+	// A digit is the signal, once a run is this long.
+	//
+	// The rule used to be hasDigit && ((hasUpper && hasLower) || hasSym),
+	// so an all-lowercase key with digits in it — a very ordinary shape for
+	// an API key, a session id or a base36 token — passed through into a
+	// field named "sanitized" and was handed back to the caller.
+	//
+	// Widening it is safe because the candidate pattern already requires 20
+	// characters: sha256, utf8, base64 and node22 are never candidates. What
+	// it can now catch that it should not is a very long identifier with a
+	// digit in it, and losing one of those costs nothing — public symbols
+	// are extracted separately and are not taken from this text. This is the
+	// one place where saying less is unambiguously the safe direction.
+	return hasDigit && (hasLower || hasUpper || hasSym)
 }
 
 func mentioned(raw string, publicPkgs []string) []string {
