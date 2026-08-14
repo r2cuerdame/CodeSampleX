@@ -241,6 +241,14 @@ type Store interface {
 	// the sample still works where it was built.
 	CompleteJobsForSample(ctx context.Context, sampleID, peerID string) error
 
+	// RecordWanted counts anonymous reports that the network had no answer
+	// for a package. The QUESTION IS NEVER SENT — only the part of the
+	// request that was already public — and one reporter counts once per
+	// epoch per row, so nobody can manufacture a ranking by asking twice.
+	RecordWanted(ctx context.Context, epoch, anonID string, rows []WantedRow) error
+	// TopWanted lists the most-asked packages that still have no sample.
+	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+
 	AnnouncePeer(ctx context.Context, p PeerRow) error
 	PeersForSample(ctx context.Context, sampleID string) ([]PeerRow, error)
 	ExpirePeers(ctx context.Context, now time.Time) (removed int64, err error)

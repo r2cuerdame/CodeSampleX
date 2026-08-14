@@ -369,3 +369,20 @@ func orEmptyArr(s string) string {
 	}
 	return s
 }
+
+// TopWanted lists the most-asked packages the network still has no sample
+// for. The rows are counted from anonymous miss reports; the question that
+// produced each one never left the machine that asked it.
+func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, error) {
+	rows, err := w.s.TopWanted(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.WantedRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.WantedRow{
+			Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol, Asks: r.Asks,
+		})
+	}
+	return out, nil
+}

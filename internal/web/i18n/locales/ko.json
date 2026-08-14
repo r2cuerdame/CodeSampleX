@@ -101,12 +101,14 @@
   "meta.explorer": "%s의 실제 환경 호환성 증거: 실행 컨텍스트, 신뢰도, 실패 클러스터, 검증된 샘플.",
   "meta.findings": "공개 패키지에 대해 널리 믿어지는 사실을 측정으로 바로잡은 목록입니다. 공식 문서와 어긋나는 것도 두 건 있으며, 각 항목은 고정된 컨테이너에서 네트워크를 끈 채 contract를 실행한 공개 샘플로 연결됩니다.",
   "meta.stats": "CodeSampleX 네트워크의 실시간 수치: 피어, 패키지, 심볼, 증거, 검증된 샘플 — 그리고 증거 파이프라인이 어떻게 동작하는지.",
+  "meta.wanted": "CodeSampleX가 답하지 못한 질문을, 물어본 사람 수 순으로.",
   "nav.adapters": "어댑터",
   "nav.explore": "탐색",
   "nav.findings": "발견",
   "nav.install": "설치",
   "nav.records": "기록",
   "nav.stats": "통계",
+  "nav.wanted": "요청",
   "pkg.clusters": "최근 실패 클러스터",
   "pkg.latest": "최신",
   "pkg.no_clusters": "관측된 실패 클러스터가 없습니다.",
@@ -179,5 +181,12 @@
   "symbol.regression_flag": "회귀 의심",
   "symbol.verified_col": "검증",
   "title.compatibility": "%s %s 호환성",
-  "title.compatibility_one": "%s 호환성"
+  "title.compatibility_one": "%s 호환성",
+  "wanted.asks": "회",
+  "wanted.contribute": "검증된 샘플이 답하는 순간 그 줄은 목록에서 사라집니다. 그게 곧 할 일 목록입니다: 하나 골라서, 실제로 무슨 일이 일어나는지를 계약으로 주장하는 최소 프로젝트를 쓰고, 게시하면 됩니다.",
+  "wanted.empty": "아직 요청된 것이 없습니다.",
+  "wanted.empty_why": "이 목록은 실제 설치본이 보고한 실제 미스로 만들어집니다. 비어 있다는 건 네트워크가 답 못 할 질문에 아무도 부딪히지 않았다는 뜻이고, 지금 시점에서는 물어본 사람이 거의 없다는 뜻입니다.",
+  "wanted.intro": "네트워크가 답을 못 낸 질문들, 많이 물어본 순서입니다. 다른 페이지는 전부 있는 것을 설명하지만, 여기는 아직 아무도 적어두지 않은 것의 목록입니다.",
+  "wanted.privacy": "질문 자체는 여기 없고 앞으로도 없습니다. 사람이 타이핑한 질문에는 프로젝트 이름과 파일 경로가 섞이므로 물어본 기계에 남습니다. 세는 것은 패키지 — 누가 묻기 전부터 공개였던 것 — 이고, 한 보고자는 하루에 한 번만 세므로 두 번 물어서 순위를 올릴 수 없습니다.",
+  "wanted.title": "요청"
 }

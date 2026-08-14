@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -406,4 +407,12 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 		t.Fatalf("landing must render without stats, got %d", rec.Code)
 	}
 	mustContain(t, rec.Body.String(), "Stop solving the same code twice.")
+}
+
+// TopWanted lets the fake stand in for the real store on the wanted page.
+func (f *fakeStore) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
+	if limit > 0 && len(f.wanted) > limit {
+		return f.wanted[:limit], nil
+	}
+	return f.wanted, nil
 }

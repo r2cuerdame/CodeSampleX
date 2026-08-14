@@ -35,6 +35,8 @@ type Fake struct {
 	ids         map[string]IdentityRow
 	clusters    map[fakeClusterKey]ClusterRow
 	stats       map[string]string // day → stats JSON
+	wanted      map[[3]string]*WantedRow
+	wantedSeen  map[[5]string]bool
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -64,18 +66,20 @@ var _ Store = (*Fake)(nil)
 // NewFake returns an empty in-memory Store.
 func NewFake() *Fake {
 	return &Fake{
-		merge:     newMergeState(),
-		aggMeta:   map[aggKey]*fakeAggMeta{},
-		packages:  map[string]PackageRow{},
-		snapshots: map[[2]string]string{},
-		cases:     map[string]domain.Case{},
-		samples:   map[string]SampleRow{},
-		receipts:  map[string][]ReceiptRow{},
-		peers:     map[string]PeerRow{},
-		shards:    map[string][2]string{},
-		ids:       map[string]IdentityRow{},
-		clusters:  map[fakeClusterKey]ClusterRow{},
-		stats:     map[string]string{},
+		merge:      newMergeState(),
+		aggMeta:    map[aggKey]*fakeAggMeta{},
+		packages:   map[string]PackageRow{},
+		snapshots:  map[[2]string]string{},
+		cases:      map[string]domain.Case{},
+		samples:    map[string]SampleRow{},
+		receipts:   map[string][]ReceiptRow{},
+		peers:      map[string]PeerRow{},
+		shards:     map[string][2]string{},
+		ids:        map[string]IdentityRow{},
+		clusters:   map[fakeClusterKey]ClusterRow{},
+		stats:      map[string]string{},
+		wanted:     map[[3]string]*WantedRow{},
+		wantedSeen: map[[5]string]bool{},
 	}
 }
 
@@ -848,4 +852,70 @@ func verifiedStatus(status string) bool {
 		return true
 	}
 	return false
+}
+
+// ----------------------------------------------------------------- wanted --
+
+func (f *Fake) RecordWanted(_ context.Context, epoch, anonID string, rows []WantedRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range rows {
+		seen := [5]string{r.Ecosystem, r.Name, r.Symbol, epoch, anonID}
+		if f.wantedSeen[seen] {
+			continue
+		}
+		f.wantedSeen[seen] = true
+		key := [3]string{r.Ecosystem, r.Name, r.Symbol}
+		w := f.wanted[key]
+		if w == nil {
+			w = &WantedRow{Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol,
+				FirstSeen: f.now()}
+			f.wanted[key] = w
+		}
+		w.Asks++
+		w.LastSeen = f.now()
+	}
+	return nil
+}
+
+func (f *Fake) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	answered := map[string]bool{}
+	for _, s := range f.samples {
+		if s.Quarantined {
+			continue
+		}
+		var m struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal([]byte(s.ManifestJSON), &m) != nil {
+			continue
+		}
+		for _, ps := range m.Packages {
+			if pp, err := domain.ParsePURL(ps); err == nil {
+				answered[pp.Ecosystem+"/"+pp.Name] = true
+			}
+		}
+	}
+	var out []WantedRow
+	for _, w := range f.wanted {
+		if answered[w.Ecosystem+"/"+w.Name] {
+			continue
+		}
+		out = append(out, *w)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Asks != out[j].Asks {
+			return out[i].Asks > out[j].Asks
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

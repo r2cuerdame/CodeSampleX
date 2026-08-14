@@ -101,12 +101,14 @@
   "meta.explorer": "Preuves de compatibilité en environnements réels pour %s : contextes d'exécution, confiance, clusters d'échecs et exemples vérifiés.",
   "meta.findings": "Corrections mesurées de croyances répandues sur des paquets publics — dont deux contredisent la documentation officielle —, chacune reliée à un échantillon publié dont le contract s'exécute hors réseau dans un conteneur épinglé.",
   "meta.stats": "Chiffres en direct du réseau CodeSampleX : pairs, paquets, symboles, preuves et échantillons vérifiés, et le fonctionnement du pipeline de preuves.",
+  "meta.wanted": "The questions CodeSampleX could not answer, ranked by how many people asked.",
   "nav.adapters": "Adaptateurs",
   "nav.explore": "Explorer",
   "nav.findings": "Constats",
   "nav.install": "Installer",
   "nav.records": "Registre",
   "nav.stats": "Statistiques",
+  "nav.wanted": "Wanted",
   "pkg.clusters": "Clusters d'échecs récents",
   "pkg.latest": "dernière",
   "pkg.no_clusters": "Aucun cluster d'échec observé.",
@@ -179,5 +181,12 @@
   "symbol.regression_flag": "régression possible",
   "symbol.verified_col": "Vérifié",
   "title.compatibility": "Compatibilité de %s %s",
-  "title.compatibility_one": "Compatibilité de %s"
+  "title.compatibility_one": "Compatibilité de %s",
+  "wanted.asks": "asks",
+  "wanted.contribute": "A row leaves this list the moment a verified sample answers it. That is the whole to-do list: pick one, write a minimal project whose contract asserts what actually happens, and publish it.",
+  "wanted.empty": "Nothing is being asked for yet.",
+  "wanted.empty_why": "This list is built from real misses reported by real installs. An empty board means no one has hit a question the network could not answer — which, this early, means almost nobody has asked one.",
+  "wanted.intro": "Questions the network had no answer for, most-asked first. Every other page here describes what exists; this one is the list of what nobody has written down yet.",
+  "wanted.privacy": "The questions themselves are not here and never will be. A typed question carries project names and file paths, so it stays on the machine that asked. What is counted is the package — public before anyone asked about it — and one reporter counts once a day, so nobody can push something up the list by asking twice.",
+  "wanted.title": "Wanted"
 }

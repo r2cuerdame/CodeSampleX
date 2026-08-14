@@ -1344,3 +1344,93 @@ func (p *connPool) close() {
 		}
 	}
 }
+
+// ------------------------------------------------------------- wanted --
+
+// WantedRow is one "asked for, not answered" row.
+type WantedRow struct {
+	Ecosystem string
+	Name      string
+	Symbol    string
+	Asks      int64
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
+// RecordWanted counts one anonymous report that the network had no answer
+// for this package (and symbol, when the caller named one).
+//
+// Counted per (reporter, epoch), not per request: one machine asking the
+// same thing all afternoon is one data point. Counting keystrokes would let
+// a single caller manufacture the ranking, which is the whole value of it.
+func (p *PG) RecordWanted(ctx context.Context, epoch, anonID string, rows []WantedRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		for _, r := range rows {
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO wanted_dedup(ecosystem, name, symbol, epoch, anon_id)
+				VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+				r.Ecosystem, r.Name, r.Symbol, epoch, anonID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() == 0 {
+				continue // this reporter already counted today
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO wanted(ecosystem, name, symbol, asks, first_seen, last_seen)
+				VALUES($1,$2,$3,1,now(),now())
+				ON CONFLICT (ecosystem, name, symbol) DO UPDATE
+				  SET asks = wanted.asks + 1, last_seen = now()`,
+				r.Ecosystem, r.Name, r.Symbol); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	})
+}
+
+// TopWanted lists the most-asked unanswered packages, most wanted first.
+// Rows for packages that now HAVE a published sample are excluded: the
+// question stopped being open the moment someone answered it, and leaving
+// it on the list would send the next contributor at work already done.
+func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []WantedRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT w.ecosystem, w.name, w.symbol, w.asks, w.first_seen, w.last_seen
+			  FROM wanted w
+			 WHERE NOT EXISTS (
+			       SELECT 1 FROM samples s
+			        WHERE s.quarantined_at IS NULL
+			          AND EXISTS (
+			              SELECT 1 FROM jsonb_array_elements_text(s.manifest->'packages') AS pkg
+			               WHERE pkg LIKE 'pkg:' || w.ecosystem || '/' || w.name || '@%'))
+			 ORDER BY w.asks DESC, w.last_seen DESC
+			 LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r WantedRow
+			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Symbol, &r.Asks,
+				&r.FirstSeen, &r.LastSeen); err != nil {
+				return err
+			}
+			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	return out, err
+}

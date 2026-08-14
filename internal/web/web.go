@@ -70,6 +70,18 @@ type Store interface {
 	RecordPackages(ctx context.Context, q string, offset, limit int) (hits []PackageHit, total int, err error)
 	// FailureClusters returns failure-cluster JSON documents for a package.
 	FailureClusters(ctx context.Context, ecosystem, name string) ([]string, error)
+	// TopWanted lists the most-asked packages the network still has no
+	// sample for, most wanted first.
+	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+}
+
+// WantedRow is one unanswered question: a package people asked about that
+// nothing in the network answers yet.
+type WantedRow struct {
+	Ecosystem string
+	Name      string
+	Symbol    string
+	Asks      int64
 }
 
 // SampleMeta is the sample header the sample page renders.
@@ -145,6 +157,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	}
 	mux.HandleFunc("GET /records", s.records)
 	mux.HandleFunc("GET /findings", s.findings)
+	mux.HandleFunc("GET /wanted", s.wanted)
 	// One rule for a trailing slash, applied everywhere: redirect to the
 	// slashless form. It was inconsistent — /records/ and /findings/ hard
 	// 404'd while a package page happily served /npm/zod/ as a second 200
@@ -153,6 +166,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	// the other to it.
 	mux.HandleFunc("GET /records/{$}", redirectToSlashless)
 	mux.HandleFunc("GET /findings/{$}", redirectToSlashless)
+	mux.HandleFunc("GET /wanted/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
 	mux.HandleFunc("GET /explore", s.explorePage)
 	mux.HandleFunc("GET /stats", s.statsPage)
@@ -176,7 +190,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "package", "version",
+	pages := []string{"landing", "records", "findings", "wanted", "package", "version",
 		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

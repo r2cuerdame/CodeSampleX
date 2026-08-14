@@ -326,6 +326,10 @@ func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) 
 	resp := d.Engine.Search(ctx, req)
 	if resp.Miss || len(resp.Results) == 0 {
 		d.incrStat(ctx, statMisses, 1)
+		// A miss is a demand signal, and it was being thrown away on the one
+		// machine that already knew. Reported in the background so a search
+		// never waits on it.
+		go d.reportWanted(context.WithoutCancel(ctx), req)
 		return resp
 	}
 	top := resp.Results[0]

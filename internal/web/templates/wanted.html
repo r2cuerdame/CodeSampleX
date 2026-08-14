@@ -1,0 +1,56 @@
+{{define "content"}}
+{{/* Page-specific rules live here rather than in static/site.css, so the
+     page is one new file plus its handler. Everything it can borrow from
+     the shared stylesheet — panel, mono, dim, note, lead — it borrows. */}}
+<style>
+.wantedlist { list-style: none; margin: 1.4rem 0 0; padding: 0; display: grid; gap: 0.5rem; counter-reset: want; }
+.wantedrow {
+  counter-increment: want;
+  display: grid; grid-template-columns: 2.6rem 1fr auto; gap: 0.9rem;
+  align-items: baseline; padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.wantedrow::before {
+  content: counter(want);
+  font-family: var(--mono); font-size: 0.85rem; color: var(--dim);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.wantedname { overflow-wrap: anywhere; }
+.wantedsym { color: var(--dim); font-size: 0.85rem; }
+.wantedasks {
+  font-family: var(--mono); font-size: 0.85rem; color: var(--dim);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.wantedempty { margin-top: 1.4rem; padding: 1.1rem; border: 1px dashed var(--line); border-radius: 6px; }
+.wantedempty p { margin: 0 0 0.5rem; max-width: 74ch; }
+.wantedempty p:last-child { margin-bottom: 0; }
+@media (max-width: 40rem) {
+  .wantedrow { grid-template-columns: 2rem 1fr; }
+  .wantedasks { grid-column: 2; }
+}
+</style>
+
+<h1>{{.T "wanted.title"}}</h1>
+<p class="lead">{{.T "wanted.intro"}}</p>
+<p class="note dim small">{{.T "wanted.privacy"}}</p>
+
+{{if .Items}}
+<ol class="wantedlist">
+  {{range .Items}}
+  <li class="wantedrow">
+    <span class="wantedname">
+      <a class="mono" href="{{.Href}}">{{.Ecosystem}}/{{.Name}}</a>
+      {{if .Symbol}}<span class="wantedsym mono"> · {{.Symbol}}</span>{{end}}
+    </span>
+    <span class="wantedasks">{{.AsksText}}</span>
+  </li>
+  {{end}}
+</ol>
+<p class="note dim small">{{.T "wanted.contribute"}}</p>
+{{else}}
+<div class="wantedempty">
+  <p>{{.T "wanted.empty"}}</p>
+  <p class="dim small">{{.T "wanted.empty_why"}}</p>
+</div>
+{{end}}
+{{end}}

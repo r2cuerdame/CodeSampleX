@@ -9,6 +9,7 @@ import (
 // tests. The integrator adapts the real serverstore to the same
 // interface; nothing here touches a database.
 type fakeStore struct {
+	wanted    []WantedRow
 	statsJSON string
 	statsOK   bool
 	snapshots map[string]string // purl+"\x00"+symbol → snapshot JSON

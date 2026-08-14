@@ -101,12 +101,14 @@
   "meta.explorer": "Kompatibilitätsevidenz aus realen Umgebungen für %s: Ausführungskontexte, Konfidenz, Fehler-Cluster und verifizierte Beispiele.",
   "meta.findings": "Gemessene Korrekturen verbreiteter Annahmen über öffentliche Pakete — zwei davon widersprechen der offiziellen Dokumentation. Jede verweist auf ein veröffentlichtes Sample, dessen Contract ohne Netz in einem gepinnten Container läuft.",
   "meta.stats": "Live-Zahlen aus dem CodeSampleX-Netzwerk: Peers, Pakete, Symbole, Belege und verifizierte Samples — plus wie die Evidence-Pipeline arbeitet.",
+  "meta.wanted": "The questions CodeSampleX could not answer, ranked by how many people asked.",
   "nav.adapters": "Adapter",
   "nav.explore": "Erkunden",
   "nav.findings": "Befunde",
   "nav.install": "Installieren",
   "nav.records": "Aufzeichnungen",
   "nav.stats": "Statistiken",
+  "nav.wanted": "Wanted",
   "pkg.clusters": "Aktuelle Fehler-Cluster",
   "pkg.latest": "neueste",
   "pkg.no_clusters": "Keine Fehler-Cluster beobachtet.",
@@ -179,5 +181,12 @@
   "symbol.regression_flag": "Regressionskandidat",
   "symbol.verified_col": "Verifiziert",
   "title.compatibility": "%s %s Kompatibilität",
-  "title.compatibility_one": "%s Kompatibilität"
+  "title.compatibility_one": "%s Kompatibilität",
+  "wanted.asks": "asks",
+  "wanted.contribute": "A row leaves this list the moment a verified sample answers it. That is the whole to-do list: pick one, write a minimal project whose contract asserts what actually happens, and publish it.",
+  "wanted.empty": "Nothing is being asked for yet.",
+  "wanted.empty_why": "This list is built from real misses reported by real installs. An empty board means no one has hit a question the network could not answer — which, this early, means almost nobody has asked one.",
+  "wanted.intro": "Questions the network had no answer for, most-asked first. Every other page here describes what exists; this one is the list of what nobody has written down yet.",
+  "wanted.privacy": "The questions themselves are not here and never will be. A typed question carries project names and file paths, so it stays on the machine that asked. What is counted is the package — public before anyone asked about it — and one reporter counts once a day, so nobody can push something up the list by asking twice.",
+  "wanted.title": "Wanted"
 }

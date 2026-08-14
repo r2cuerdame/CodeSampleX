@@ -100,6 +100,7 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/samples", a.limit(lim.publish, a.handleSampleUpload))
 	a.route(mux, "GET /v1/samples/{sampleId}", a.limit(lim.read, a.handleSampleMeta))
 	a.route(mux, "GET /v1/samples/{sampleId}/artifact", a.limit(lim.read, a.handleSampleArtifact))
+	a.route(mux, "POST /v1/wanted", a.limit(lim.write, a.handleWanted))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
 	a.route(mux, "GET /v1/verification/jobs", a.limit(lim.read, a.handleJobsList))
 	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.limit(lim.write, a.handleJobClaim))
