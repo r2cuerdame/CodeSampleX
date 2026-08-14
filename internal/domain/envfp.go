@@ -80,9 +80,47 @@ func (e EnvironmentFingerprint) ContextLabel() string {
 	return ctx
 }
 
+// placeholderValues are the ways a caller says "I could not determine this".
+// They must become absence, because the search grader compares a dimension
+// only when both sides declare it — absence is unknown, not a difference.
+// Compared as a literal string instead, "unknown" made a caller that had
+// simply not detected its package manager look like a caller using a
+// DIFFERENT one, which downgraded every otherwise-exact match and produced
+// the advice "use unknown equivalents of lockfile commands".
+//
+// "none" is deliberately not here. For Virtualization, ContainerRuntime and
+// Libc it is a real answer — bare metal, no container, statically linked —
+// and erasing it would throw away a fact rather than a non-answer.
+var placeholderValues = map[string]bool{
+	"unknown": true, "unspecified": true, "undefined": true,
+	"n/a": true, "na": true, "null": true, "nil": true,
+	"?": true, "-": true, "": true,
+}
+
+func clearPlaceholder(v string) string {
+	if placeholderValues[strings.ToLower(strings.TrimSpace(v))] {
+		return ""
+	}
+	return v
+}
+
 // Normalize fills derivable fields: a bare runtime implies its execution
-// context, and browser fields imply engine family where unambiguous.
+// context, and browser fields imply engine family where unambiguous. It
+// also erases placeholder values, so an undetected dimension is absent
+// rather than present-and-different.
 func (e EnvironmentFingerprint) Normalize() EnvironmentFingerprint {
+	for _, f := range []*string{
+		&e.OS, &e.OSVersionBucket, &e.Arch,
+		&e.Runtime, &e.RuntimeVersion,
+		&e.Language, &e.LanguageVersion,
+		&e.Compiler, &e.CompilerVersion,
+		&e.ModuleSystem, &e.PackageManager, &e.PackageManagerVersion,
+		&e.ExecutionContext, &e.BrowserFamily, &e.BrowserMajor,
+		&e.Engine, &e.EngineVersion,
+		&e.Virtualization, &e.ContainerRuntime, &e.Libc,
+	} {
+		*f = clearPlaceholder(*f)
+	}
 	if e.ExecutionContext == "" {
 		switch e.Runtime {
 		case "node", "bun", "deno":
