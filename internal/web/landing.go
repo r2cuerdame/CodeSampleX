@@ -90,20 +90,50 @@ func buildTiles(lang string, st *netStats) []statTile {
 		}
 		return i18n.FormatPercent(lang, f)
 	}
-	return []statTile{
+	// notYetMeasured renders a figure that has no data behind it yet as an
+	// em dash rather than a zero. Both of the tiles below are derived from
+	// ADOPTION reports — a real user applying a sample and telling us how it
+	// went — and the producer marks them as a placeholder until one arrives.
+	// "0" reads as "we measured, and nobody was helped"; the truth is that
+	// nothing has been collected, and those are different claims.
+	notYetMeasured := func(v int64, rendered string) string {
+		if v == 0 {
+			return "—"
+		}
+		return rendered
+	}
+
+	tiles := []statTile{
 		// Projects-this-month leads: peer buckets rotate daily, so the peer
 		// tile resets every midnight and reads as an empty network even
 		// when it is not. Project buckets rotate monthly, which makes this
 		// the longest window the identity scheme can count honestly.
 		{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)},
-		{Label: i18n.T(lang, "stats.peers"), Value: num(st.Peers)},
-		{Label: i18n.T(lang, "stats.packages"), Value: num(st.Packages)},
-		{Label: i18n.T(lang, "stats.symbols"), Value: num(st.Symbols)},
-		{Label: i18n.T(lang, "stats.evidence"), Value: num(st.Evidence)},
-		{Label: i18n.T(lang, "stats.verified_samples"), Value: num(st.VerifiedSamples)},
-		{Label: i18n.T(lang, "stats.post_hit_success"), Value: pct(st.PostHitSuccessRate)},
-		{Label: i18n.T(lang, "stats.reasoning_avoided"), Value: num(st.EstimatedReasoningAvoided.Value), Estimated: true},
 	}
+	// The peer tile is omitted while the count cannot mean anything.
+	//
+	// Buckets rotate daily and the operator's own machine is always one of
+	// them, so "1" is indistinguishable from no external activity at all —
+	// and rendered as a network statistic it implies activity that is not
+	// there. The adoption detector uses exactly this reading: its recorded
+	// baseline is one peer today, meaning us. Above the baseline the number
+	// starts carrying information, and the tile comes back on its own.
+	if st.Peers > 1 {
+		tiles = append(tiles, statTile{Label: i18n.T(lang, "stats.peers"), Value: num(st.Peers)})
+	}
+	tiles = append(tiles,
+		statTile{Label: i18n.T(lang, "stats.packages"), Value: num(st.Packages)},
+		statTile{Label: i18n.T(lang, "stats.symbols"), Value: num(st.Symbols)},
+		statTile{Label: i18n.T(lang, "stats.evidence"), Value: num(st.Evidence)},
+		statTile{Label: i18n.T(lang, "stats.verified_samples"), Value: num(st.VerifiedSamples)},
+		statTile{Label: i18n.T(lang, "stats.post_hit_success"), Value: pct(st.PostHitSuccessRate)},
+		statTile{
+			Label:     i18n.T(lang, "stats.reasoning_avoided"),
+			Value:     notYetMeasured(st.EstimatedReasoningAvoided.Value, num(st.EstimatedReasoningAvoided.Value)),
+			Estimated: true,
+		},
+	)
+	return tiles
 }
 
 type landingPage struct {
