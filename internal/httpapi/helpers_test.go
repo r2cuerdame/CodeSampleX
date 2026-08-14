@@ -233,17 +233,26 @@ func signedReceipt(t *testing.T, priv ed25519.PrivateKey, sampleID string,
 	t.Helper()
 	pub := priv.Public().(ed25519.PublicKey)
 	sum := sha256.Sum256(pub)
+	env = env.Normalize()
+	// The capability follows the environment rather than being asserted
+	// alongside it. A receipt that says CONTAINER_RUN while describing a
+	// host is refused now, and a fixture that could not exist in the wild
+	// is not a fixture worth testing against.
+	cap := domain.CapCompileOnly
+	if env.Virtualization == "container" {
+		cap = domain.CapContainerRun
+	}
 	r := domain.VerificationReceipt{
 		SchemaVersion:   1,
 		SampleID:        sampleID,
 		CaseID:          "case:sha256:test",
-		EnvironmentHash: env.Normalize().Hash(),
+		EnvironmentHash: env.Hash(),
 		Environment:     env,
 		Stages: map[string]string{
 			"resolve": "PASS", "compile": "PASS", "contract": contract,
 		},
 		VerifierAdapter:   "node-typescript@1",
-		SandboxCapability: domain.CapContainerRun,
+		SandboxCapability: cap,
 		LogsDigest:        "sha256:" + hex.EncodeToString(bytes.Repeat([]byte{0x11}, 32)),
 		CreatedAt:         testNow.Format(time.RFC3339),
 		PeerID:            "ed25519:" + hex.EncodeToString(sum[:])[:16],

@@ -34,37 +34,59 @@ const (
 	maxUnpackEntries = 2 * MaxFiles
 )
 
-// forbiddenDirNames are directory names that must never appear in a sample
-// (generated/output/VCS trees; goal.md §7.5, task C13 + .venv/dist).
-var forbiddenDirNames = map[string]bool{
+// generatedDirNames are directories that appear in a sample tree because
+// something RAN there — most often csx itself. `csx sample check` mounts
+// the sample dir as the sandbox workspace, so a check leaves .csx-vendor
+// behind, and the toolchain leaves deps/, _build/, vendor/, .dart_tool/,
+// target/ next to it.
+//
+// They are skipped, not refused. The documented workflow is check and then
+// create, and refusing meant the second command failed on directories the
+// first one had written: an error naming a directory the user never made,
+// with no hint that deleting it was safe. Every one of these is output that
+// the artifact must not carry either way, so skipping reaches the same
+// artifact by a route that does not stop the user — and it makes the sample
+// ID independent of whether a check was run first, which refusing did not.
+//
+// Skipping is only correct because it cannot hide anything: Unpack still
+// REJECTS these entries, so an artifact that carries one is refused on
+// arrival no matter who built it.
+var generatedDirNames = map[string]bool{
 	"node_modules": true,
-	".git":         true,
-	"venv":         true,
-	".venv":        true,
 	"target":       true,
 	"dist":         true,
 	// Any depth, because that is where these appear: running a contract in
 	// a seed directory leaves src/__pycache__, never a root one. Bytecode
 	// is stamped with the interpreter that wrote it — cpython-310 on the
 	// publishing machine, in a sample whose environment says python 3.12 —
-	// so it is host detail in a document meant to carry none. The binary
-	// check catches a .pyc today only because .pyc happens to contain NUL
-	// bytes; that is luck, not a rule, and it reports a confusing error
-	// rather than naming the directory that should not be there.
+	// so it is host detail in a document meant to carry none.
 	"__pycache__":   true,
 	".pytest_cache": true,
 	".mypy_cache":   true,
 	".ruff_cache":   true,
 }
 
+// forbiddenDirNames are directory names that must never appear in a sample
+// and are NOT something csx creates: pointing csx at a repository root
+// instead of a sample directory, or at a project with a live virtualenv.
+// Those stay a hard error, because silently publishing a subset of what the
+// user pointed at would be worse than stopping.
+var forbiddenDirNames = map[string]bool{
+	".git":  true,
+	"venv":  true,
+	".venv": true,
+}
+
 func forbiddenDir(seg string) bool { return forbiddenDirNames[strings.ToLower(seg)] }
 
-// forbiddenRootDirNames are resolve output directories that are only
+func generatedDir(seg string) bool { return generatedDirNames[strings.ToLower(seg)] }
+
+// generatedRootDirNames are resolve output directories that are only
 // generated at the project root. They are matched at the root ONLY: a
-// sample may legitimately contain src/vendor/ or lib/deps/, and rejecting
-// those names at any depth would block honest samples to catch a mistake
-// that can only happen one level up.
-var forbiddenRootDirNames = map[string]bool{
+// sample may legitimately contain src/vendor/ or lib/deps/, and skipping
+// those names at any depth would silently drop honest source to catch a
+// mistake that can only happen one level up.
+var generatedRootDirNames = map[string]bool{
 	"vendor":      true, // composer, and go's vendored module tree
 	"deps":        true, // mix
 	"_build":      true, // mix
@@ -73,19 +95,24 @@ var forbiddenRootDirNames = map[string]bool{
 	".bundle":     true, // bundler config written during install
 }
 
-func forbiddenRootDir(slash string) bool {
+func generatedRootDir(slash string) bool {
 	if strings.Contains(slash, "/") {
 		return false
 	}
-	return forbiddenRootDirNames[strings.ToLower(slash)]
+	return generatedRootDirNames[strings.ToLower(slash)]
 }
 
-// forbiddenFileNames are test-runner scratch files. They are not secrets —
+// forbiddenRootDir reports whether an INCOMING artifact entry names a
+// resolve output directory. Unpack keeps rejecting what BuildArtifact now
+// skips: a tar that carries one was not built by this code path.
+func forbiddenRootDir(slash string) bool { return generatedRootDir(slash) }
+
+// generatedFileNames are test-runner scratch files. They are not secrets —
 // the phpunit one holds test names and timings — but they are output, not
 // source, and they change the artifact hash, so the same sample published
 // twice gets two content addresses for no reason. One reached the network
 // before this check existed.
-var forbiddenFileNames = map[string]bool{
+var generatedFileNames = map[string]bool{
 	".phpunit.result.cache": true,
 	".rspec_status":         true,
 	".byebug_history":       true,
@@ -94,17 +121,21 @@ var forbiddenFileNames = map[string]bool{
 	"erl_crash.dump":        true,
 }
 
-// forbiddenFileExts are compiled outputs. A sample is source plus a
+// generatedFileExts are compiled outputs. A sample is source plus a
 // lockfile; anything already compiled is both redundant and stamped with
 // the machine that compiled it.
-var forbiddenFileExts = map[string]bool{
+var generatedFileExts = map[string]bool{
 	".pyc": true, ".pyo": true, ".class": true, ".beam": true, ".o": true,
 }
 
-func forbiddenFile(base string) bool {
+func generatedFile(base string) bool {
 	lower := strings.ToLower(base)
-	return forbiddenFileNames[lower] || forbiddenFileExts[path.Ext(lower)]
+	return generatedFileNames[lower] || generatedFileExts[path.Ext(lower)]
 }
+
+// forbiddenFile reports whether an INCOMING artifact entry names run
+// output, for the same reason as forbiddenRootDir.
+func forbiddenFile(base string) bool { return generatedFile(base) }
 
 // isEnvFile reports whether base names a dotenv secrets file (.env, .env.local, …).
 func isEnvFile(base string) bool {
@@ -195,7 +226,10 @@ func collectFiles(dir string) ([]string, error) {
 			return fmt.Errorf("samples: symlink not allowed: %s", slash)
 		}
 		if d.IsDir() {
-			if forbiddenDir(base) || forbiddenRootDir(slash) {
+			if generatedDir(base) || generatedRootDir(slash) {
+				return filepath.SkipDir
+			}
+			if forbiddenDir(base) {
 				return fmt.Errorf("samples: forbidden entry: %s/", slash)
 			}
 			return nil
@@ -203,8 +237,14 @@ func collectFiles(dir string) ([]string, error) {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("samples: non-regular file not allowed: %s", slash)
 		}
-		if isEnvFile(base) || forbiddenFile(base) {
+		// A dotenv file is the one thing here that is neither output nor
+		// recoverable: skipping it would publish nothing but would also say
+		// nothing, and the next command would try again. It stops.
+		if isEnvFile(base) {
 			return fmt.Errorf("samples: forbidden entry: %s", slash)
+		}
+		if generatedFile(base) {
+			return nil
 		}
 		paths = append(paths, slash)
 		return nil
@@ -310,7 +350,10 @@ func safeEntryName(name string, isDir bool) (string, error) {
 		if seg == ".." {
 			return "", fmt.Errorf("samples: unpack: unsafe entry name %q", name)
 		}
-		if forbiddenDir(seg) && (i < len(segs)-1 || isDir) {
+		if (forbiddenDir(seg) || generatedDir(seg)) && (i < len(segs)-1 || isDir) {
+			return "", fmt.Errorf("samples: unpack: forbidden entry %q", name)
+		}
+		if i == 0 && generatedRootDir(seg) && (len(segs) > 1 || isDir) {
 			return "", fmt.Errorf("samples: unpack: forbidden entry %q", name)
 		}
 	}

@@ -179,8 +179,11 @@ func Scan(dir string, opts ScanOptions) ([]Finding, error) {
 			return err
 		}
 		if d.IsDir() {
-			if p != dir && forbiddenDir(d.Name()) {
-				return filepath.SkipDir // BuildArtifact rejects these outright
+			if p != dir && (forbiddenDir(d.Name()) || generatedDir(d.Name())) {
+				return filepath.SkipDir // never reaches the artifact
+			}
+			if rel, rerr := filepath.Rel(dir, p); rerr == nil && generatedRootDir(filepath.ToSlash(rel)) {
+				return filepath.SkipDir
 			}
 			return nil
 		}

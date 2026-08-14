@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,6 +18,42 @@ import (
 
 // stableWindow: STABLE requires no FAIL receipt within this window (C13).
 const stableWindow = 30 * 24 * time.Hour
+
+// receiptDescribesWhereItRan rejects a receipt whose environment cannot be
+// the environment its own capability describes.
+//
+// This is not hypothetical. A peer running a build from before the sandbox
+// started rewriting the stage environment signed 271 receipts that said
+// CONTAINER_RUN and then described the Windows host that launched docker.
+// Every one was a valid signature over a false statement, and the graph
+// took them: 39 contract failures produced by a container were filed as
+// Windows results, and 39 sample pages showed a user a FAIL on an
+// environment where it had never been tried.
+//
+// A signature proves who wrote a receipt, never that the receipt is true.
+// The checks below are the ones that can be made from the receipt alone —
+// each rejects a statement the receipt itself contradicts, so no honest
+// peer can trip them, and neither an old build nor a lying one can put a
+// result under an environment it did not run in.
+func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
+	env := receipt.Environment
+	if receipt.SandboxCapability == domain.CapContainerRun {
+		// A container run is described by the container. A receipt naming
+		// the host that started docker is describing the wrong machine.
+		if env.Virtualization != "container" {
+			return errors.New("receipt claims CONTAINER_RUN but its environment is not a container")
+		}
+		if env.OS != "linux" {
+			return errors.New("receipt claims CONTAINER_RUN but its environment is not linux")
+		}
+	}
+	// The graph groups by environmentHash, so a hash that does not belong to
+	// the attached environment files the result under someone else's.
+	if receipt.EnvironmentHash != "" && receipt.EnvironmentHash != env.Hash() {
+		return errors.New("receipt environmentHash does not match its environment")
+	}
+	return nil
+}
 
 // handleVerification implements POST /v1/verifications: verify the ed25519
 // signature and the peerId↔pubkey binding, persist the immutable receipt,
@@ -49,6 +86,11 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	// signature under someone else's name is still a forgery.
 	if derivePeerID(receipt.PeerPubkey) != receipt.PeerID {
 		writeErr(w, http.StatusBadRequest, "peerId does not match peerPubkey fingerprint")
+		return
+	}
+
+	if err := receiptDescribesWhereItRan(receipt); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

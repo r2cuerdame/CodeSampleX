@@ -6,7 +6,9 @@ import (
 	"compress/gzip"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,12 +119,9 @@ func TestBuildArtifactTarShapeCanonical(t *testing.T) {
 
 func TestBuildArtifactRejectsForbiddenEntries(t *testing.T) {
 	cases := []string{
-		"node_modules/x/index.js",
 		".git/config",
 		"venv/lib/a.py",
 		".venv/lib/a.py",
-		"target/debug/a.txt",
-		"dist/bundle.js",
 		".env",
 		"config/.env",
 	}
@@ -132,6 +131,73 @@ func TestBuildArtifactRejectsForbiddenEntries(t *testing.T) {
 			writeFile(t, dir, rel, "data")
 			if _, _, err := BuildArtifact(dir); err == nil {
 				t.Fatalf("expected rejection for %s", rel)
+			}
+		})
+	}
+}
+
+// `csx sample check` mounts the sample dir as the sandbox workspace, so a
+// check leaves .csx-vendor/ behind and the toolchain leaves target/, deps/,
+// vendor/ next to it. Refusing on those made the documented workflow —
+// check, then create — fail on its own leftovers, naming a directory the
+// user never made with no hint that deleting it was safe. They are skipped
+// instead: the artifact is the same either way, and the sample ID no longer
+// depends on whether a check happened to run first.
+func TestBuildArtifactSkipsWhatRunningTheCheckLeavesBehind(t *testing.T) {
+	for _, rel := range []string{
+		"node_modules/x/index.js",
+		"target/debug/a.txt",
+		"dist/bundle.js",
+		".csx-vendor/cargo/x.crate",
+		"vendor/autoload.php",
+		"deps/plug/mix.exs",
+		"_build/dev/a.beam",
+		".dart_tool/package_config.json",
+		".bundle/config",
+		"src/__pycache__/mod.cpython-312.pyc",
+	} {
+		t.Run(rel, func(t *testing.T) {
+			dir := sampleFixture(t)
+			clean, cleanID, err := BuildArtifact(dir)
+			if err != nil {
+				t.Fatalf("clean tree: %v", err)
+			}
+			writeFile(t, dir, rel, "data")
+			dirty, dirtyID, err := BuildArtifact(dir)
+			if err != nil {
+				t.Fatalf("%s should be skipped, not refused: %v", rel, err)
+			}
+			if dirtyID != cleanID {
+				t.Errorf("%s changed the sample ID: %s vs %s", rel, dirtyID, cleanID)
+			}
+			if len(dirty) != len(clean) {
+				t.Errorf("%s changed the artifact", rel)
+			}
+			for _, n := range tarNames(t, dirty) {
+				if n == rel {
+					t.Errorf("%s reached the artifact", rel)
+				}
+			}
+		})
+	}
+}
+
+// Skipping is only safe because nothing can smuggle these in from
+// elsewhere: an artifact built by other code, or by hand, is still refused
+// on arrival.
+func TestUnpackStillRefusesWhatBuildArtifactSkips(t *testing.T) {
+	for _, name := range []string{
+		"node_modules/x.js",
+		"target/debug/a.txt",
+		"vendor/autoload.php",
+		".csx-vendor/x.crate",
+		"deps/plug/mix.exs",
+		"src/__pycache__/mod.pyc",
+		"a.pyc",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Unpack(makeTgz(t, name, "x", tar.TypeReg), t.TempDir()); err == nil {
+				t.Errorf("unpack accepted %s", name)
 			}
 		})
 	}
@@ -291,8 +357,14 @@ func TestBuildArtifactRejectsCompiledOutput(t *testing.T) {
 			dir := t.TempDir()
 			writeArtifactFile(t, dir, "main.py", "print('hi')\n")
 			writeArtifactFile(t, dir, rel, "not really compiled\n")
-			if _, _, err := BuildArtifact(dir); err == nil {
-				t.Fatalf("%s was accepted into the artifact", rel)
+			tgz, _, err := BuildArtifact(dir)
+			if err != nil {
+				t.Fatalf("%s should be skipped, not refused: %v", rel, err)
+			}
+			for _, n := range tarNames(t, tgz) {
+				if n == rel {
+					t.Fatalf("%s was accepted into the artifact", rel)
+				}
 			}
 		})
 	}
@@ -307,12 +379,56 @@ func TestBuildArtifactAllowsNestedVendorButNotRoot(t *testing.T) {
 		t.Fatalf("src/vendor should be allowed: %v", err)
 	}
 
+	var sawNested bool
+	for _, n := range tarNames(t, mustBuild(t, nested)) {
+		if n == "src/vendor/shim.js" {
+			sawNested = true
+		}
+	}
+	if !sawNested {
+		t.Error("src/vendor/shim.js was dropped from the artifact")
+	}
+
 	root := t.TempDir()
 	writeArtifactFile(t, root, "index.js", "export default 1\n")
 	writeArtifactFile(t, root, "vendor/autoload.php", "<?php\n")
-	if _, _, err := BuildArtifact(root); err == nil {
-		t.Fatal("a root vendor/ should be refused")
+	for _, n := range tarNames(t, mustBuild(t, root)) {
+		if n == "vendor/autoload.php" {
+			t.Error("a root vendor/ reached the artifact")
+		}
 	}
+}
+
+func mustBuild(t *testing.T, dir string) []byte {
+	t.Helper()
+	tgz, _, err := BuildArtifact(dir)
+	if err != nil {
+		t.Fatalf("build %s: %v", dir, err)
+	}
+	return tgz
+}
+
+// tarNames lists the entry names inside a built artifact.
+func tarNames(t *testing.T, tgz []byte) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	var out []string
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, hdr.Name)
+	}
+	return out
 }
 
 func writeArtifactFile(t *testing.T, dir, rel, content string) {
