@@ -487,7 +487,11 @@ func (f *Fake) OpenJobs(_ context.Context, capability string, limit int) ([]JobR
 	}
 	var out []JobRow
 	for _, j := range f.jobs {
-		if j.Status != "open" {
+		// A claim that outlived JobLease is claimable again — otherwise a
+		// peer that died holding a job holds it forever.
+		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
+			f.now().Sub(j.ClaimedAt) > JobLease
+		if j.Status != "open" && !expired {
 			continue
 		}
 		if capability != "" && j.WantEnvJSON != "" {
@@ -522,7 +526,12 @@ func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, j := range f.jobs {
-		if j.ID == id && j.Status == "open" {
+		if j.ID != id {
+			continue
+		}
+		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
+			f.now().Sub(j.ClaimedAt) > JobLease
+		if j.Status == "open" || expired {
 			j.Status = "claimed"
 			j.ClaimedBy = peerID
 			j.ClaimedAt = f.now()

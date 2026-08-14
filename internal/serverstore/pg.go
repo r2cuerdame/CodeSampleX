@@ -684,6 +684,14 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 
 // OpenJobs lists claimable jobs. A job that pins want_env.sandboxCapability
 // only matches peers reporting that capability; capability "" matches all.
+//
+// "Claimable" includes a job whose claim has outlived JobLease. ClaimJob
+// has always known how to take one of those back, but this query only ever
+// offered status='open', so nothing could reach that path: a peer that
+// claimed a job and then died — crashed, upgraded, powered off — held it
+// for good. 265 jobs sat claimed with zero open behind a queue that
+// reported itself empty, and cross-verification stopped entirely without
+// anything reporting an error.
 func (p *PG) OpenJobs(ctx context.Context, capability string, limit int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
@@ -694,12 +702,14 @@ func (p *PG) OpenJobs(ctx context.Context, capability string, limit int) ([]JobR
 			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
 			       COALESCE(claimed_by,''), claimed_at, created_at
 			FROM verification_jobs
-			WHERE status='open' AND ($1 = ''
+			WHERE (status='open'
+			       OR (status='claimed' AND claimed_at < now() - $3::interval))
+			  AND ($1 = ''
 				OR want_env IS NULL
 				OR want_env->>'sandboxCapability' IS NULL
 				OR want_env->>'sandboxCapability' = $1)
 			ORDER BY created_at, id
-			LIMIT $2`, capability, limit)
+			LIMIT $2`, capability, limit, JobLease.String())
 		if err != nil {
 			return err
 		}
