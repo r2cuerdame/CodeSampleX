@@ -273,3 +273,55 @@ func TestUnpackRejectsOversize(t *testing.T) {
 		t.Fatal("expected rejection above unpacked size cap")
 	}
 }
+
+// Running a contract inside a seed directory leaves src/__pycache__ behind,
+// and it was only refused at the root. Bytecode names the interpreter that
+// wrote it — cpython-310 on the publishing machine, in a sample whose
+// environment says python 3.12 — so it is host detail in a document meant
+// to carry none. Refuse it by name rather than relying on the binary check
+// noticing NUL bytes in a .pyc.
+func TestBuildArtifactRejectsCompiledOutput(t *testing.T) {
+	for _, rel := range []string{
+		"src/__pycache__/mod.cpython-312.pyc",
+		"__pycache__/mod.pyc",
+		"build/Thing.class",
+		".phpunit.result.cache",
+	} {
+		t.Run(rel, func(t *testing.T) {
+			dir := t.TempDir()
+			writeArtifactFile(t, dir, "main.py", "print('hi')\n")
+			writeArtifactFile(t, dir, rel, "not really compiled\n")
+			if _, _, err := BuildArtifact(dir); err == nil {
+				t.Fatalf("%s was accepted into the artifact", rel)
+			}
+		})
+	}
+}
+
+// The root-only rule really is root-only: a sample may ship src/vendor/.
+func TestBuildArtifactAllowsNestedVendorButNotRoot(t *testing.T) {
+	nested := t.TempDir()
+	writeArtifactFile(t, nested, "index.js", "export default 1\n")
+	writeArtifactFile(t, nested, "src/vendor/shim.js", "export default 2\n")
+	if _, _, err := BuildArtifact(nested); err != nil {
+		t.Fatalf("src/vendor should be allowed: %v", err)
+	}
+
+	root := t.TempDir()
+	writeArtifactFile(t, root, "index.js", "export default 1\n")
+	writeArtifactFile(t, root, "vendor/autoload.php", "<?php\n")
+	if _, _, err := BuildArtifact(root); err == nil {
+		t.Fatal("a root vendor/ should be refused")
+	}
+}
+
+func writeArtifactFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

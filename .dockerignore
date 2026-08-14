@@ -1,0 +1,25 @@
+# The server image needs Go source, go.mod/go.sum and schemas/v1. Nothing
+# else belongs in the build context, and sending it is not free: seeds/
+# alone reaches half a gigabyte once each seed has resolved its
+# dependencies once, which made every deploy transfer 250MB. It also made
+# deploys fail outright — a leftover deno cache under seeds/ contains a
+# broken symlink, and the daemon refuses the whole context over it.
+seeds/
+.git/
+dist/
+backups/
+test/e2e/tmp/
+.csx/
+
+*.exe
+*.test
+*.db
+*.db-wal
+*.db-shm
+
+.vscode/
+.idea/
+.serena/
+docs/
+*.md
+!go.mod

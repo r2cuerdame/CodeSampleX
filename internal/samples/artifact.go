@@ -43,6 +43,18 @@ var forbiddenDirNames = map[string]bool{
 	".venv":        true,
 	"target":       true,
 	"dist":         true,
+	// Any depth, because that is where these appear: running a contract in
+	// a seed directory leaves src/__pycache__, never a root one. Bytecode
+	// is stamped with the interpreter that wrote it — cpython-310 on the
+	// publishing machine, in a sample whose environment says python 3.12 —
+	// so it is host detail in a document meant to carry none. The binary
+	// check catches a .pyc today only because .pyc happens to contain NUL
+	// bytes; that is luck, not a rule, and it reports a confusing error
+	// rather than naming the directory that should not be there.
+	"__pycache__":   true,
+	".pytest_cache": true,
+	".mypy_cache":   true,
+	".ruff_cache":   true,
 }
 
 func forbiddenDir(seg string) bool { return forbiddenDirNames[strings.ToLower(seg)] }
@@ -53,14 +65,12 @@ func forbiddenDir(seg string) bool { return forbiddenDirNames[strings.ToLower(se
 // those names at any depth would block honest samples to catch a mistake
 // that can only happen one level up.
 var forbiddenRootDirNames = map[string]bool{
-	"vendor":        true, // composer, and go's vendored module tree
-	"deps":          true, // mix
-	"_build":        true, // mix
-	".dart_tool":    true, // dart pub
-	".csx-vendor":   true, // this project's own two-phase resolve output
-	".bundle":       true, // bundler config written during install
-	"__pycache__":   true,
-	".pytest_cache": true,
+	"vendor":      true, // composer, and go's vendored module tree
+	"deps":        true, // mix
+	"_build":      true, // mix
+	".dart_tool":  true, // dart pub
+	".csx-vendor": true, // this project's own two-phase resolve output
+	".bundle":     true, // bundler config written during install
 }
 
 func forbiddenRootDir(slash string) bool {
@@ -82,6 +92,18 @@ var forbiddenFileNames = map[string]bool{
 	"npm-debug.log":         true,
 	"yarn-error.log":        true,
 	"erl_crash.dump":        true,
+}
+
+// forbiddenFileExts are compiled outputs. A sample is source plus a
+// lockfile; anything already compiled is both redundant and stamped with
+// the machine that compiled it.
+var forbiddenFileExts = map[string]bool{
+	".pyc": true, ".pyo": true, ".class": true, ".beam": true, ".o": true,
+}
+
+func forbiddenFile(base string) bool {
+	lower := strings.ToLower(base)
+	return forbiddenFileNames[lower] || forbiddenFileExts[path.Ext(lower)]
 }
 
 // isEnvFile reports whether base names a dotenv secrets file (.env, .env.local, …).
@@ -181,7 +203,7 @@ func collectFiles(dir string) ([]string, error) {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("samples: non-regular file not allowed: %s", slash)
 		}
-		if isEnvFile(base) || forbiddenFileNames[strings.ToLower(base)] {
+		if isEnvFile(base) || forbiddenFile(base) {
 			return fmt.Errorf("samples: forbidden entry: %s", slash)
 		}
 		paths = append(paths, slash)
@@ -292,7 +314,7 @@ func safeEntryName(name string, isDir bool) (string, error) {
 			return "", fmt.Errorf("samples: unpack: forbidden entry %q", name)
 		}
 	}
-	if !isDir && isEnvFile(segs[len(segs)-1]) {
+	if !isDir && (isEnvFile(segs[len(segs)-1]) || forbiddenFile(segs[len(segs)-1])) {
 		return "", fmt.Errorf("samples: unpack: forbidden entry %q", name)
 	}
 	return clean, nil
