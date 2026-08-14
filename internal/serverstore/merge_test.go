@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -154,10 +155,10 @@ func TestMergeUniqueBuckets(t *testing.T) {
 	if got := m.observations[k]; got != 8 {
 		t.Fatalf("observation_count = %d, want 8", got)
 	}
-	if got := len(m.peerBuckets[k]); got != 2 {
+	if got := peakBuckets(m.peerBuckets, k); got != 2 {
 		t.Fatalf("unique peer buckets = %d, want 2", got)
 	}
-	if got := len(m.projectBuckets[k]); got != 2 {
+	if got := peakBuckets(m.projectBuckets, k); got != 2 {
 		t.Fatalf("unique project buckets = %d, want 2", got)
 	}
 }
@@ -177,8 +178,40 @@ func TestMergeNewEpochStartsFresh(t *testing.T) {
 	if got := m.observations[k]; got != 10 {
 		t.Fatalf("observation_count = %d, want 10 across two epochs", got)
 	}
-	if got := len(m.peerBuckets[k]); got != 1 {
+	if got := peakBuckets(m.peerBuckets, k); got != 1 {
 		t.Fatalf("unique peer buckets = %d, want 1 (same bucket, two epochs)", got)
+	}
+}
+
+// The anonID rotates daily, so counting distinct buckets over all time made
+// ONE machine reporting for a month look like thirty independent peers —
+// the network's central claim inflating on its own, with nobody doing
+// anything. Independence is the peak within a single epoch: the strongest
+// claim a rotating identity can support.
+func TestOneMachineReportingForAMonthIsStillOnePeer(t *testing.T) {
+	m := newMergeState()
+	b := obsBatch("anonaaaa", "projaaaa", 1)
+	k := aggKeyOf(b)
+	for day := 1; day <= 30; day++ {
+		daily := b
+		daily.Epoch = fmt.Sprintf("2026-08-%02d", day)
+		// A rotating identity: a different anonID every day, same machine.
+		daily.AnonID = fmt.Sprintf("anon%04d", day)
+		m.apply(daily)
+	}
+	if got := peakBuckets(m.peerBuckets, k); got != 1 {
+		t.Errorf("unique peer buckets = %d after 30 days from one machine, want 1", got)
+	}
+
+	// Two machines on the same day is genuinely two.
+	same := b
+	same.Epoch, same.AnonID = "2026-09-01", "anonxxxx"
+	m.apply(same)
+	other := same
+	other.AnonID = "anonyyyy"
+	m.apply(other)
+	if got := peakBuckets(m.peerBuckets, k); got != 2 {
+		t.Errorf("unique peer buckets = %d with two reporters in one epoch, want 2", got)
 	}
 }
 

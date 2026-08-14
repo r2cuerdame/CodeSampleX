@@ -68,18 +68,23 @@ type contribKey struct {
 // It exists for tests (and any future memory-backed Store); the PostgreSQL
 // implementation in pg.go must behave identically.
 type mergeState struct {
-	contributions  map[contribKey]int64 // peer bucket's last-contributed count
-	observations   map[aggKey]int64     // evidence_agg.observation_count
-	peerBuckets    map[aggKey]map[string]struct{}
-	projectBuckets map[aggKey]map[string]struct{}
+	contributions map[contribKey]int64 // peer bucket's last-contributed count
+	observations  map[aggKey]int64     // evidence_agg.observation_count
+	// Buckets are counted WITHIN an epoch and never across them. The
+	// anonID rotates daily and the project bucket monthly, so counting
+	// distinct values over all time made one machine reporting on N days
+	// look like N independent peers — the network's central claim
+	// inflating on its own, with nobody doing anything.
+	peerBuckets    map[aggKey]map[string]map[string]struct{} // agg → epoch → buckets
+	projectBuckets map[aggKey]map[string]map[string]struct{}
 }
 
 func newMergeState() *mergeState {
 	return &mergeState{
 		contributions:  map[contribKey]int64{},
 		observations:   map[aggKey]int64{},
-		peerBuckets:    map[aggKey]map[string]struct{}{},
-		projectBuckets: map[aggKey]map[string]struct{}{},
+		peerBuckets:    map[aggKey]map[string]map[string]struct{}{},
+		projectBuckets: map[aggKey]map[string]map[string]struct{}{},
 	}
 }
 
@@ -94,13 +99,31 @@ func (m *mergeState) apply(b domain.ObservationBatch) int64 {
 	m.contributions[ck] = incoming
 	m.observations[k] += delta
 
-	if m.peerBuckets[k] == nil {
-		m.peerBuckets[k] = map[string]struct{}{}
-	}
-	m.peerBuckets[k][b.AnonID] = struct{}{}
-	if m.projectBuckets[k] == nil {
-		m.projectBuckets[k] = map[string]struct{}{}
-	}
-	m.projectBuckets[k][b.ProjectBucket] = struct{}{}
+	addBucket(m.peerBuckets, k, b.Epoch, b.AnonID)
+	addBucket(m.projectBuckets, k, b.Epoch, b.ProjectBucket)
 	return delta
+}
+
+func addBucket(m map[aggKey]map[string]map[string]struct{}, k aggKey, epoch, bucket string) {
+	if m[k] == nil {
+		m[k] = map[string]map[string]struct{}{}
+	}
+	if m[k][epoch] == nil {
+		m[k][epoch] = map[string]struct{}{}
+	}
+	m[k][epoch][bucket] = struct{}{}
+}
+
+// peakBuckets is the most distinct buckets ever seen in a SINGLE epoch —
+// the strongest independence claim a rotating identity can support. A
+// machine reporting every day for a month is one bucket in each of thirty
+// epochs, which is one, not thirty.
+func peakBuckets(m map[aggKey]map[string]map[string]struct{}, k aggKey) int {
+	best := 0
+	for _, buckets := range m[k] {
+		if len(buckets) > best {
+			best = len(buckets)
+		}
+	}
+	return best
 }

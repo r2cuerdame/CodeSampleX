@@ -148,7 +148,24 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 	rows := make([]SnapshotRow, 0, len(keys))
 	for _, k := range keys {
 		g := groups[k]
-		independence := int64(g.maxPeers + len(g.recPeers))
+		// The two evidence classes are counted apart and never summed.
+		//
+		// independence was maxPeers + len(recPeers) — observation buckets
+		// plus receipt peers — and the sum was then published under the
+		// label uniquePeerBuckets. goal.md §3.5 keeps these classes
+		// separate precisely because they prove different things, and the
+		// same machine can be both an observation bucket and a verifying
+		// peer, so the sum could also count one participant twice.
+		//
+		// Confidence takes the larger of the two rather than the total: it
+		// is the strongest claim either class supports on its own, it can
+		// never exceed what one of them actually measured, and it cannot
+		// double-count anyone.
+		obsPeers, recPeers := int64(g.maxPeers), int64(len(g.recPeers))
+		independence := obsPeers
+		if recPeers > independence {
+			independence = recPeers
+		}
 		v := Compute(g.samples, independence)
 		row := SnapshotRow{
 			ContextLabel:           k.ContextLabel,
@@ -159,13 +176,19 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 			PassRate:               v.PassRate,
 			Confidence:             v.Confidence,
 			ElevatedFailure:        v.ElevatedFailure,
-			UniquePeerBuckets:      int(independence),
+			// The label says peer BUCKETS, which is an observation-side
+			// count. Verifying peers are reported under their own class
+			// below, where a reader can tell them apart.
+			UniquePeerBuckets: int(obsPeers),
 		}
 		if g.obsCount > 0 {
 			row.ObservationClassCounts[string(domain.ClassUsageObservation)] = g.obsCount
 		}
 		if g.verCount > 0 {
 			row.VerificationCounts[string(domain.ClassSampleVerification)] = g.verCount
+		}
+		if recPeers > 0 {
+			row.VerificationCounts["distinctVerifyingPeers"] = recPeers
 		}
 		if !g.lastSeen.IsZero() {
 			row.LastSeen = g.lastSeen.UTC().Format(time.RFC3339)

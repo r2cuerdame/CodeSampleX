@@ -299,8 +299,8 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			Stage: k.Stage, Result: k.Result,
 			ErrorFingerprint: k.ErrorFP, ErrorCode: meta.errorCode,
 			ObservationCount:     f.merge.observations[k],
-			UniquePeerBuckets:    len(f.merge.peerBuckets[k]),
-			UniqueProjectBuckets: len(f.merge.projectBuckets[k]),
+			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
+			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),
 			FirstSeen:            meta.firstSeen, LastSeen: meta.lastSeen,
 		})
 	}

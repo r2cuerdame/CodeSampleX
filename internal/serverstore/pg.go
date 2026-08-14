@@ -178,10 +178,21 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	if _, err := tx.Exec(ctx, `
 		UPDATE evidence_agg SET
 			observation_count = observation_count + $2,
-			unique_peer_buckets = (SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
-				WHERE agg_id = $1 AND bucket_kind = 'peer'),
-			unique_project_buckets = (SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
-				WHERE agg_id = $1 AND bucket_kind = 'project'),
+			-- Buckets are counted WITHIN an epoch and never across them.
+			-- The anonID rotates daily and the project bucket monthly, so
+			-- COUNT(DISTINCT bucket) over the whole ledger made one machine
+			-- reporting on N days look like N independent peers: the
+			-- network's central claim inflating on its own, with nobody
+			-- doing anything. The peak over a single epoch is the strongest
+			-- independence a rotating identity can support.
+			unique_peer_buckets = (SELECT COALESCE(MAX(c), 0) FROM (
+				SELECT COUNT(DISTINCT bucket) AS c FROM evidence_dedup
+				 WHERE agg_id = $1 AND bucket_kind = 'peer'
+				 GROUP BY epoch) pk),
+			unique_project_buckets = (SELECT COALESCE(MAX(c), 0) FROM (
+				SELECT COUNT(DISTINCT bucket) AS c FROM evidence_dedup
+				 WHERE agg_id = $1 AND bucket_kind = 'project'
+				 GROUP BY epoch) pj),
 			last_seen = now()
 		WHERE id = $1`, aggID, delta); err != nil {
 		return err
