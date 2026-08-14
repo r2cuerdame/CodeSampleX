@@ -383,6 +383,12 @@ func explainFromShards(ctx context.Context, db *localdb.DB, purlStr, symbol stri
 
 	matchedSymbols := 0
 	var sampleLines []string
+	// A shard lists one sample under every package version it is relevant
+	// to, and this loop runs once per matching purl — so every verification
+	// receipt was printed twice whenever a shard carried two version
+	// buckets, making one sandboxed run read as two independent ones on the
+	// page that exists to keep observation and verification apart.
+	seenSample := map[string]bool{}
 	for _, pkg := range shard.Packages {
 		pp, perr := domain.ParsePURL(pkg.PURL)
 		if perr != nil || !strings.EqualFold(pp.Name, p.Name) || pp.Ecosystem != p.Ecosystem {
@@ -425,9 +431,10 @@ func explainFromShards(ctx context.Context, db *localdb.DB, purlStr, symbol stri
 			}
 		}
 		for _, smp := range pkg.Samples {
-			if smp.SampleID == "" {
+			if smp.SampleID == "" || seenSample[smp.SampleID] {
 				continue
 			}
+			seenSample[smp.SampleID] = true
 			line := "- " + smp.SampleID
 			if smp.Status != "" {
 				line += " status " + smp.Status

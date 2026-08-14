@@ -644,6 +644,14 @@ func (s *Server) toolReportAdoption(ctx context.Context, raw json.RawMessage) *t
 	if a.SampleID == "" {
 		return errResult("report_sample_adoption: sampleId is required")
 	}
+	// A content address, not any string. Without this an agent could report
+	// adoption of a sample nothing ever returned — the row is queued for
+	// anonymous upload and becomes evidence about a sample that may not
+	// exist, and adoption is the number the whole "reasoning avoided"
+	// figure is derived from.
+	if !validContentAddress(a.SampleID) {
+		return errResult("report_sample_adoption: sampleId must be \"sha256:\" + 64 lowercase hex")
+	}
 	if a.Applied == nil {
 		return errResult("report_sample_adoption: applied is required")
 	}
@@ -779,4 +787,19 @@ func (s *Server) toolLocalStats(ctx context.Context, _ json.RawMessage) *toolRes
 		fmt.Fprintf(&b, "- %s: %v\n", k, stats[k])
 	}
 	return textResult(b.String(), stats)
+}
+
+// validContentAddress checks the "sha256:<64 lowercase hex>" form every
+// sample id in this system has.
+func validContentAddress(id string) bool {
+	const prefix = "sha256:"
+	if len(id) != len(prefix)+64 || !strings.HasPrefix(id, prefix) {
+		return false
+	}
+	for _, r := range id[len(prefix):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }

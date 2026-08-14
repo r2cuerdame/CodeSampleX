@@ -47,7 +47,7 @@ func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 				Grade:      domain.GradeCompatible,
 				Confidence: "HIGH",
 				Score:      0.9,
-				SampleID:   "sha256:abc",
+				SampleID:   "sha256:abababababababababababababababababababababababababababababababab",
 				Exact:      []string{"axios 1.12", "node 22"},
 				Different:  []string{"Sample uses ESM", "Current project uses CJS"},
 				Adaptation: []string{"Import syntax only"},
@@ -329,11 +329,11 @@ func TestReportSampleAdoptionRoundTrip(t *testing.T) {
 	}
 	c := startServer(t, deps)
 	res := callTool(t, c, "report_sample_adoption", map[string]any{
-		"sampleId":  "sha256:abc",
+		"sampleId":  "sha256:abababababababababababababababababababababababababababababababab",
 		"applied":   true,
 		"buildPass": true,
 	})
-	if gotID != "sha256:abc" || !gotApplied {
+	if gotID != "sha256:abababababababababababababababababababababababababababababababab" || !gotApplied {
 		t.Errorf("ReportAdoption got (%q, %v)", gotID, gotApplied)
 	}
 	if gotBuild == nil || !*gotBuild {
@@ -345,7 +345,7 @@ func TestReportSampleAdoptionRoundTrip(t *testing.T) {
 
 	// buildPass omitted → nil pointer.
 	callTool(t, c, "report_sample_adoption", map[string]any{
-		"sampleId": "sha256:abc",
+		"sampleId": "sha256:abababababababababababababababababababababababababababababababab",
 		"applied":  false,
 	})
 	if gotBuild != nil {
@@ -407,7 +407,7 @@ func TestListLocalHitsAndStats(t *testing.T) {
 			TS:       time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC),
 			Query:    "axios post",
 			Grade:    domain.GradeCompatible,
-			SampleID: "sha256:abc",
+			SampleID: "sha256:abababababababababababababababababababababababababababababababab",
 			Adopted:  true,
 		}}, nil
 	}
