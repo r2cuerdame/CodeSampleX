@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/daemon"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 )
 
@@ -45,7 +47,7 @@ type initEnv struct {
 	userHome func() (string, error) // root for agent config detection
 }
 
-func initMain(_ context.Context, args []string, env *initEnv) int {
+func initMain(ctx context.Context, args []string, env *initEnv) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(env.stderr)
 	var (
@@ -188,6 +190,8 @@ func initMain(_ context.Context, args []string, env *initEnv) int {
 		}
 	}
 
+	warmShardCache(ctx, out)
+
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "csx is ready. To set up another machine:")
 	fmt.Fprintln(out, "  irm https://codesamplex.dev/install.ps1 | iex")
@@ -239,3 +243,56 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 		fmt.Fprintln(out, `Please answer 1 (community) or 2 (local only).`)
 	}
 }
+
+// warmShardCache does the first shard sync so the user's FIRST question can
+// be answered.
+//
+// Measured in a clean container with a real Go project and the toolchain
+// present: before any sync the first query returns NO_SAFE_MATCH, and after
+// one the same query returns EXACT. Search is local-cache-first, and an
+// empty cache has nothing to match against — so every new install used to
+// miss on its first question, which is the worst possible first impression
+// and the user had no way to know why. It was documented nowhere.
+//
+// It is safe in both modes. Warming only downloads public aggregate shards;
+// the upload half is a hard no-op outside community mode (see
+// evidence.Batcher.Upload), so a local-only install transmits nothing here.
+//
+// Failure is never fatal. A machine installing without a network, or behind
+// a proxy that blocks it, still finishes init — it is told the cache is cold
+// and how to warm it later, rather than having init fail over something that
+// is only an optimisation of the first query.
+func warmShardCache(ctx context.Context, out io.Writer) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Compatibility cache:")
+
+	home, err := config.Home()
+	if err != nil {
+		fmt.Fprintf(out, "  not warmed (%v) — run `csx sync` before your first question\n", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, shardWarmTimeout)
+	defer cancel()
+
+	d, err := daemon.New(home)
+	if err != nil {
+		fmt.Fprintf(out, "  not warmed (%v) — run `csx sync` before your first question\n", err)
+		return
+	}
+	defer d.Close()
+
+	res := d.SyncNow(ctx)
+	switch {
+	case res.WarmedKeys > 0 && len(res.Errors) == 0:
+		fmt.Fprintf(out, "  warmed %d shard keys\n", res.WarmedKeys)
+	case len(res.Errors) > 0:
+		fmt.Fprintf(out, "  partly warmed (%s)\n", res.Errors[0])
+		fmt.Fprintln(out, "  run `csx sync` once you have a network to finish it")
+	default:
+		fmt.Fprintln(out, "  nothing to warm yet — `csx sync` after your first build")
+	}
+}
+
+// shardWarmTimeout bounds the first sync. An install must not hang on a
+// network that is not there.
+const shardWarmTimeout = 20 * time.Second
