@@ -606,10 +606,15 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 
 	title := i18n.T(lang, "records.title") + " — CodeSampleX"
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
-	// One canonical URL for the record: paged and searched views are the
-	// same collection sliced differently, and indexing each slice
-	// separately would just split the page's signal.
+	// One canonical URL PER LANGUAGE for the record: paged and searched
+	// views are the same collection sliced differently, and indexing each
+	// slice separately would just split the page's signal — but the language
+	// is not a slice of the same page, it is a different page, and dropping
+	// it here made every translation point at the English one.
 	b.Canonical = s.base(r) + "/records"
+	if lang != i18n.Default {
+		b.Canonical += "?lang=" + url.QueryEscape(lang)
+	}
 	view.basePage = b
 	s.render(w, "records", http.StatusOK, view)
 }

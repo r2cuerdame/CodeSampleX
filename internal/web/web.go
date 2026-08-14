@@ -201,6 +201,10 @@ func setLangCookie(w http.ResponseWriter, lang string) {
 // negotiate resolves the request language for non-landing pages:
 // ?lang= query (persisted in a cookie) → cookie → Accept-Language → en.
 func (s *site) negotiate(w http.ResponseWriter, r *http.Request) string {
+	// The body varies by both of these, and without saying so a shared cache
+	// is entitled to hand one visitor's language to the next.
+	w.Header().Add("Vary", "Accept-Language")
+	w.Header().Add("Vary", "Cookie")
 	if q := r.URL.Query().Get("lang"); q != "" {
 		if l, ok := i18n.Canonical(q); ok {
 			setLangCookie(w, l)
@@ -318,11 +322,21 @@ func (s *site) page(r *http.Request, lang, title, desc string) basePage {
 			q[k] = vs
 		}
 	}
+	// The canonical must carry the language. Built as base+path it named the
+	// ENGLISH url on every localized page, so all nine languages disavowed
+	// themselves in favour of one — nine translations collapsing into a
+	// single indexed page, which is the opposite of what translating them
+	// was for. It matches the hreflang set below now, so each language is
+	// self-canonical.
+	canonical := base + path
+	if lang != i18n.Default {
+		canonical += "?lang=" + url.QueryEscape(lang)
+	}
 	b := basePage{
 		Lang:        lang,
 		Title:       title,
 		Description: desc,
-		Canonical:   base + path,
+		Canonical:   canonical,
 		Version:     s.d.Version,
 		path:        path,
 		query:       q,
