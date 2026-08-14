@@ -38,7 +38,15 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].LastSeen.After(rows[j].LastSeen) })
+	// Newest activity first, then newest version. The SQL tiebreak is
+	// ORDER BY version DESC, which is a string sort: it puts 7.0.3 above
+	// 14.0.1. This ordering is the one the reader sees, so it decides.
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].LastSeen.Equal(rows[j].LastSeen) {
+			return rows[i].LastSeen.After(rows[j].LastSeen)
+		}
+		return domain.CompareVersions(rows[i].Version, rows[j].Version) > 0
+	})
 	versions := make([]string, 0, len(rows))
 	for _, r := range rows {
 		versions = append(versions, r.Version)
@@ -259,7 +267,7 @@ func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL
 			a = &agg{hit: web.PackageHit{Ecosystem: p.Ecosystem, Name: p.Name, LatestVersion: p.Version}, symbols: map[string]bool{}}
 			byPkg[key] = a
 		}
-		if p.Version > a.hit.LatestVersion {
+		if domain.CompareVersions(p.Version, a.hit.LatestVersion) > 0 {
 			a.hit.LatestVersion = p.Version
 		}
 		if t.Symbol != "" {

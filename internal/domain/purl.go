@@ -5,6 +5,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -114,4 +115,159 @@ func (p PURL) MajorMinor() string {
 		return p.Major()
 	}
 	return p.Major() + "." + segs[1]
+}
+
+// CompareVersions orders two version strings the way a reader expects,
+// which string comparison does not: "7.0.3" sorts above "14.0.1" because
+// '7' > '1'. The record page picked the newest version that way and told
+// every reader that npm/uuid was at 7.0.3 when the only evidence the
+// network held was 14.0.1 — a wrong fact on the most-read page, about the
+// one thing this site exists to be right about.
+//
+// Numeric segments compare numerically, non-numeric ones lexically, and a
+// version with fewer segments sorts below one that extends it ("1.2" <
+// "1.2.1"). A pre-release suffix is ranked below the release it precedes,
+// per semver: 1.2.0-rc1 < 1.2.0.
+//
+// It returns -1, 0 or 1. This is deliberately not a full semver parser:
+// the input is whatever a lockfile resolved, across nine ecosystems, and a
+// comparator that rejects what it cannot parse would be worse than one
+// that degrades to a sensible order.
+func CompareVersions(a, b string) int {
+	ac, bc := coreVersion(a), coreVersion(b)
+	if c := compareSegments(ac, bc); c != 0 {
+		return c
+	}
+	// Equal cores: a pre-release loses to the plain release.
+	ap, bp := preRelease(a), preRelease(b)
+	switch {
+	case ap == "" && bp == "":
+		return 0
+	case ap == "":
+		return 1
+	case bp == "":
+		return -1
+	}
+	return compareSegments(ap, bp)
+}
+
+// coreVersion strips a leading "v" and any pre-release or build suffix.
+func coreVersion(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	return v
+}
+
+// preRelease returns the suffix after '-', without build metadata.
+func preRelease(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	i := strings.IndexByte(v, '-')
+	if i < 0 {
+		return ""
+	}
+	v = v[i+1:]
+	if j := strings.IndexByte(v, '+'); j >= 0 {
+		v = v[:j]
+	}
+	return v
+}
+
+func compareSegments(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var x, y string
+		if i < len(as) {
+			x = as[i]
+		}
+		if i < len(bs) {
+			y = bs[i]
+		}
+		if c := compareSegment(x, y); c != 0 {
+			return c
+		}
+	}
+	return 0
+}
+
+func compareSegment(x, y string) int {
+	if x == y {
+		return 0
+	}
+	// A missing segment sorts below a present one ("1.2" < "1.2.1").
+	if x == "" {
+		return -1
+	}
+	if y == "" {
+		return 1
+	}
+	xi, xerr := strconv.Atoi(x)
+	yi, yerr := strconv.Atoi(y)
+	switch {
+	case xerr == nil && yerr == nil:
+		if xi != yi {
+			if xi < yi {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	case xerr == nil:
+		return 1 // numeric outranks alphanumeric ("1.10" > "1.beta")
+	case yerr == nil:
+		return -1
+	}
+	return compareMixed(x, y)
+}
+
+// compareMixed orders two alphanumeric identifiers by walking their letter
+// and digit runs in step, so rc2 < rc10 rather than the other way round.
+//
+// Strict semver would compare "rc2" and "rc10" as whole ASCII strings and
+// call rc10 the earlier one, because a pre-release identifier only splits
+// on dots. Nobody who writes rc10 means that, and this comparator exists to
+// order a list a person reads.
+func compareMixed(x, y string) int {
+	for x != "" && y != "" {
+		xr, xrest := leadingRun(x)
+		yr, yrest := leadingRun(y)
+		xd := xr[0] >= '0' && xr[0] <= '9'
+		yd := yr[0] >= '0' && yr[0] <= '9'
+		switch {
+		case xd && yd:
+			xi, _ := strconv.Atoi(xr)
+			yi, _ := strconv.Atoi(yr)
+			if xi != yi {
+				if xi < yi {
+					return -1
+				}
+				return 1
+			}
+		case xr != yr:
+			if xr < yr {
+				return -1
+			}
+			return 1
+		}
+		x, y = xrest, yrest
+	}
+	switch {
+	case x == "" && y == "":
+		return 0
+	case x == "":
+		return -1
+	}
+	return 1
+}
+
+// leadingRun splits off the leading run of digits or of non-digits.
+func leadingRun(s string) (run, rest string) {
+	digit := s[0] >= '0' && s[0] <= '9'
+	for i := 0; i < len(s); i++ {
+		if (s[i] >= '0' && s[i] <= '9') != digit {
+			return s[:i], s[i:]
+		}
+	}
+	return s, ""
 }

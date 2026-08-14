@@ -4,9 +4,9 @@ import "testing"
 
 func TestParsePURL(t *testing.T) {
 	cases := []struct {
-		in                  string
-		eco, name, version  string
-		major, majorMinor   string
+		in                 string
+		eco, name, version string
+		major, majorMinor  string
 	}{
 		{"pkg:npm/axios@1.12.0", "npm", "axios", "1.12.0", "1", "1.12"},
 		{"pkg:npm/%40scope/name@2.0.1", "npm", "@scope/name", "2.0.1", "2", "2.0"},
