@@ -1,4 +1,4 @@
-﻿// Package web is the server-rendered public website: landing page,
+// Package web is the server-rendered public website: landing page,
 // Compatibility Explorer, sample/seeder pages, install scripts and SEO
 // surface (plan P6.1–P6.3, goal.md §14.5/§14.6).
 //
@@ -234,9 +234,9 @@ type basePage struct {
 	IsLanding   bool
 	// OGType is the og:type of the page. Empty renders "website"; pages
 	// that are a dated document rather than a site section set "article".
-	OGType    string
-	path      string
-	query     url.Values // current query without lang
+	OGType string
+	path   string
+	query  url.Values // current query without lang
 }
 
 // T translates a UI string into the page language.

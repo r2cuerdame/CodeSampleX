@@ -234,4 +234,3 @@ func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string)
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
-

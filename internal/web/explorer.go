@@ -280,7 +280,27 @@ func shortHash(h string) string {
 
 var versionRe = regexp.MustCompile(`^v?\d+(\.\d+)*([-+.][0-9A-Za-z.+-]*)?$`)
 
-func looksLikeVersion(seg string) bool { return versionRe.MatchString(seg) }
+// goMajorSuffixRe matches the major-version element of a Go module path:
+// the "/v5" in github.com/golang-jwt/jwt/v5. It is part of the import path,
+// not a version, and a released Go module version always carries a full
+// major.minor.patch — so a bare vN in the golang namespace is never one.
+var goMajorSuffixRe = regexp.MustCompile(`^v[0-9]+$`)
+
+// looksLikeVersion reports whether a URL segment ends the package name.
+//
+// The golang exception is not a nicety: without it every module at v2 or
+// above had no package page at all. /golang/github.com/golang-jwt/jwt/v5
+// split as the package "github.com/golang-jwt/jwt" at version "v5", which
+// does not exist, and dropping the suffix does not help either because the
+// module really is named with it. Both spellings 404'd, so chi/v5, jwt/v5
+// and every other v2+ module was unreachable while decimal, which has no
+// suffix, was fine.
+func looksLikeVersion(ecosystem, seg string) bool {
+	if ecosystem == "golang" && goMajorSuffixRe.MatchString(seg) {
+		return false
+	}
+	return versionRe.MatchString(seg)
+}
 
 // splitPackagePath resolves the rest of a package URL into name, version
 // and symbol. The first version-looking segment after the minimum name
@@ -299,7 +319,7 @@ func splitPackagePath(ecosystem, rest string) (name, version, symbol string, ok 
 	}
 	verIdx := -1
 	for i := minName; i < len(segs); i++ {
-		if looksLikeVersion(segs[i]) {
+		if looksLikeVersion(ecosystem, segs[i]) {
 			verIdx = i
 			break
 		}
@@ -899,4 +919,3 @@ var confidenceKey = map[string]string{
 	"PROBABLE": "adapters.conf_probable",
 	"UNKNOWN":  "adapters.conf_unknown",
 }
-
