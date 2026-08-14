@@ -12,6 +12,22 @@ import (
 const (
 	maxBatchesPerRequest = 500
 	maxEvidenceBody      = 2 << 20 // 2MB
+	// maxRegistryLookupsPerRequest bounds how much outbound traffic ONE
+	// anonymous request can cause.
+	//
+	// The publicness check hits a third-party registry with a package name
+	// the caller chose, and it ran once per batch — so a single request could
+	// fire 500 sequential probes at npmjs.org or pypi.org with names nobody
+	// has ever published, since only an uncached name reaches the network.
+	// That points this server at someone else, and it is the kind of thing
+	// that gets a host blocked. Adding accounts is not the answer here
+	// (goal.md §8.6); bounding the fan-out is.
+	//
+	// Batches naming a package already resolved this request cost nothing,
+	// so an honest client sending many batches about a few packages is
+	// unaffected. Past the cap the remaining NEW names are rejected as
+	// unknown, which is the existing safe default rather than a new failure.
+	maxRegistryLookupsPerRequest = 20
 )
 
 // handleEvidenceBatches implements POST /v1/evidence/batches: validate each
@@ -38,6 +54,10 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	rejected := []serverstore.RejectedBatch{}
 	var keep []domain.ObservationBatch
 	var keepIdx []int
+	// One publicness answer per distinct package per request, and a hard cap
+	// on how many NEW names can reach a third-party registry.
+	seenPublicness := map[string]string{}
+	lookups := 0
 	for i, b := range req.Batches {
 		if err := serverstore.ValidateBatch(b); err != nil {
 			rejected = append(rejected, serverstore.RejectedBatch{Index: i, Reason: err.Error()})
@@ -46,8 +66,17 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		if !a.trustMode() {
 			p, _ := domain.ParsePURL(b.Package) // parse checked by ValidateBatch
 			status := scanner.PublicnessUnknown
-			if a.d.Checker != nil {
+			key := p.String()
+			switch {
+			case a.d.Checker == nil:
+			case seenPublicness[key] != "":
+				// Already resolved in this request: free, and the common
+				// case, since batches cluster on a handful of packages.
+				status = seenPublicness[key]
+			case lookups < maxRegistryLookupsPerRequest:
+				lookups++
 				status = a.d.Checker.Check(r.Context(), p)
+				seenPublicness[key] = status
 			}
 			if status != scanner.PublicnessPublic {
 				// UNKNOWN is treated as private — the safe default (§25.E).

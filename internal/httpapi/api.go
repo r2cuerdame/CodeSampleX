@@ -8,14 +8,15 @@ package httpapi
 
 import (
 	"context"
+
 	"encoding/json"
 	"errors"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
 )
@@ -31,10 +32,14 @@ const (
 // mode (CSX_PUBLIC_CHECK=trust): every syntactically valid public-ecosystem
 // batch is accepted without a registry probe (dev/e2e only).
 type Deps struct {
-	Store   serverstore.Store
-	Blobs   blob.Store
-	Cfg     serverstore.ServerConfig
-	Checker *registry.Checker
+	Store serverstore.Store
+	Blobs blob.Store
+	Cfg   serverstore.ServerConfig
+	// PublicnessChecker is an interface so the outbound-lookup behaviour is
+	// testable: this dependency is the one that reaches a third-party
+	// registry with a name the caller chose, and a test has to be able to
+	// count that.
+	Checker PublicnessChecker
 
 	// GitHub device-flow endpoints; empty fields use the github.com
 	// defaults. Tests point these at httptest servers.
@@ -196,4 +201,10 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(tok)
 	}
 	return ""
+}
+
+// PublicnessChecker answers whether a package exists on its public registry.
+// *registry.Checker satisfies it.
+type PublicnessChecker interface {
+	Check(ctx context.Context, p domain.PURL) string
 }
