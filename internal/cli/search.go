@@ -61,13 +61,15 @@ func searchMain(ctx context.Context, args []string) int {
 	// Auto-completing packages from the lockfile is what makes an in-project
 	// search environment-aware without the caller listing purls (§11.1).
 	env := domain.EnvironmentFingerprint{SchemaVersion: 1}
-	var symbols []string
+	var symbols, projPkgs []string
 	if dir, err := os.Getwd(); err == nil {
 		if res, err := evidence.Scan(ctx, dir, nil); err == nil && res != nil {
 			env = res.Env
-			if len(pkgs) == 0 {
-				pkgs = projectPackages(res)
-			}
+			// The lockfile is CONTEXT, not the question. Filling Packages
+			// with it made the grader read every unrelated dependency as
+			// something the caller had asked about, and answer
+			// REFERENCE_ONLY for the one sample that was right.
+			projPkgs = projectPackages(res)
 			symbols = projectSymbols(res)
 		} else {
 			env = environment.Collect(ctx, nil)
@@ -75,11 +77,12 @@ func searchMain(ctx context.Context, args []string) int {
 	}
 
 	req := domain.SearchRequest{
-		SchemaVersion: 1,
-		Query:         query,
-		Packages:      pkgs,
-		Symbols:       symbols,
-		Environment:   env,
+		SchemaVersion:   1,
+		Query:           query,
+		Packages:        pkgs,
+		ProjectPackages: projPkgs,
+		Symbols:         symbols,
+		Environment:     env,
 	}
 
 	home, err := config.Home()

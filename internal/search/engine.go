@@ -307,6 +307,15 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		gradePkgs, versionKnown = c.packages, false
 	}
 	rel, reqP, samP := packageRelation(reqPkgs, gradePkgs)
+	if rel == relUnspecified {
+		// Nothing was asked about by name, so the caller's dependency tree
+		// gets to rank — but a tree that contains none of the sample's
+		// packages is silence, not a mismatch, so relNone drops back to
+		// unspecified rather than grading the answer REFERENCE_ONLY.
+		if pr, prP, psP := packageRelation(parsePURLs(req.ProjectPackages), gradePkgs); pr > relNone {
+			rel, reqP, samP = pr, prP, psP
+		}
+	}
 	if !versionKnown && rel > relPackageOnly {
 		rel = relPackageOnly
 	}
@@ -337,8 +346,10 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	base += relevance
 
 	// Steps 6+9: environment gate, execution-context axis, known failures.
-	dims := compareEnv(reqEnv, c.env, ecosystemOf(samP, reqEnv, c))
-	cd := compareContext(reqEnv, c.env)
+	samEco := ecosystemOf(samP, reqEnv, c)
+	askedEnv := envAskedAbout(reqEnv, samEco)
+	dims := compareEnv(askedEnv, c.env, samEco)
+	cd := compareContext(askedEnv, c.env)
 	matched := matchingFailures(reqEnv, syms)
 	elevated := elevatedInRequestEnv(req, matched)
 	grade, adaptations := buildGrade(rel, dims, cd, elevated)
@@ -367,7 +378,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	//
 	// Matching the caller's actual error is exempt: a fingerprint or code
 	// hit is direct evidence of relevance whatever the prose says.
-	if !fpHit && !codeHit && sharedIntent(req.Query, c) == 0 {
+	if !fpHit && !codeHit && !aboutTheSameThing(req.Query, c) {
 		score = 0
 	}
 
@@ -662,6 +673,70 @@ func sharedIntent(query string, c *candidate) int {
 	return shared
 }
 
+// aboutTheSameThing reports whether the question and the candidate share
+// enough to be about one subject.
+//
+// What matters is the KIND of word shared, not how many. Sharing the
+// package name or a symbol name is a specific identifier and settles it on
+// its own: "render a react component to an html string" shares nothing
+// with the goal "Choose between renderToString and renderToStaticMarkup
+// without breaking hydration" except the word react, and that is exactly
+// the right sample.
+//
+// Sharing only prose from the goal sentence is much weaker. Asked "validate
+// a map with Ecto.Changeset without a Repo", a fresh install answered with
+// a Go google/uuid sample: uuid sat in the caller's dependency tree, an
+// exact package match alone scores past the miss threshold, and the single
+// generic word "validate" appeared in both goals. Wrong ecosystem, wrong
+// language, wrong question — presented as a match. So prose alone has to
+// clear a higher bar, and a longer question, carrying more signal, is
+// asked for more of it.
+func aboutTheSameThing(query string, c *candidate) bool {
+	strong, prose := intentSignal(query, c)
+	if strong > 0 {
+		return true
+	}
+	if len(contentTokens(query)) >= 4 {
+		return prose >= 2
+	}
+	return prose >= 1
+}
+
+// intentSignal splits the overlap into identifier words (package names and
+// symbols) and prose words (the goal sentence).
+func intentSignal(query string, c *candidate) (strong, prose int) {
+	if c == nil {
+		return 0, 0
+	}
+	strongSet, proseSet := map[string]bool{}, map[string]bool{}
+	add := func(m map[string]bool, text string) {
+		for _, t := range contentTokens(text) {
+			m[t] = true
+		}
+	}
+	if c.caseObj != nil {
+		add(proseSet, c.caseObj.Goal)
+		for _, sym := range c.caseObj.Symbols {
+			add(strongSet, sym)
+		}
+	}
+	for _, sym := range c.symbols {
+		add(strongSet, sym)
+	}
+	for _, pkg := range c.packages {
+		add(strongSet, pkg.Name) // "react", "axios" — how people name the thing
+	}
+	for _, t := range contentTokens(query) {
+		switch {
+		case strongSet[t]:
+			strong++
+		case proseSet[t]:
+			prose++
+		}
+	}
+	return strong, prose
+}
+
 func intentOverlap(query string, c *candidate) float64 {
 	q := contentTokens(query)
 	if len(q) == 0 {
@@ -694,6 +769,41 @@ func matchesSymbols(reqSyms []string, c *candidate) bool {
 }
 
 // ecosystemOf picks the ecosystem governing dimension sensitivity.
+// envAskedAbout drops the request's ecosystem-scoped dimensions when the
+// question is about a different ecosystem than the caller's project.
+//
+// `csx search` fills the request environment from the current directory,
+// which is right for os, arch and libc and wrong for everything else. An
+// agent is always inside SOME project, and the library it asks about is
+// usually one it is about to add — so the request arrived saying runtime
+// go, language go, packageManager gomod, and every Python, Rust and Elixir
+// sample was then judged against a Go project and graded incompatible.
+//
+// Measured on a fresh install: from an empty directory three of four
+// queries returned the right sample; run from inside a Go checkout the
+// same three returned NO_SAFE_MATCH. The caller's project being written in
+// Go says nothing about which Python they would run, and comparing those
+// axes answers a question nobody asked.
+//
+// The host axes stay: os, arch, libc, virtualization and CI are true of
+// the machine whatever the question is about, and they are exactly the
+// dimensions a cross-ecosystem answer still needs to be honest about.
+func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string) domain.EnvironmentFingerprint {
+	if samEcosystem == "" || req.Ecosystem == "" || strings.EqualFold(req.Ecosystem, samEcosystem) {
+		return req
+	}
+	req.Ecosystem = ""
+	req.Runtime, req.RuntimeVersion = "", ""
+	req.Language, req.LanguageVersion = "", ""
+	req.Compiler, req.CompilerVersion = "", ""
+	req.ModuleSystem = ""
+	req.PackageManager, req.PackageManagerVersion = "", ""
+	req.ExecutionContext = ""
+	req.Engine, req.EngineVersion = "", ""
+	req.BrowserFamily, req.BrowserMajor = "", ""
+	return req
+}
+
 func ecosystemOf(samP domain.PURL, reqEnv domain.EnvironmentFingerprint, c *candidate) string {
 	if samP.Ecosystem != "" {
 		return samP.Ecosystem

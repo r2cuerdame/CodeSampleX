@@ -3,9 +3,27 @@ package domain
 // SearchRequest is the wire query shape shared by the local daemon, MCP
 // tools, and the server /v1/search API (goal.md §11.1).
 type SearchRequest struct {
-	SchemaVersion    int                    `json:"schemaVersion"`
-	Query            string                 `json:"query"`
-	Packages         []string               `json:"packages,omitempty"`
+	SchemaVersion int      `json:"schemaVersion"`
+	Query         string   `json:"query"`
+	Packages      []string `json:"packages,omitempty"`
+	// ProjectPackages is the caller's dependency tree, filled in
+	// automatically rather than named by the caller. It ranks: a sample
+	// about something already in the tree is more likely to be the one
+	// wanted. It must never GRADE, because the caller did not ask about it.
+	//
+	// Splitting it out fixed the worst hit-rate defect the project has had.
+	// `csx search` fills packages from the lockfile, so asking "freeze the
+	// clock in a python test" inside a Go checkout arrived carrying two
+	// unrelated Go purls; the grader read that as "you asked about these
+	// packages and this sample is about none of them", returned
+	// REFERENCE_ONLY, and the multiplier put the correct freezegun sample
+	// at 0.105 against a 0.25 miss threshold. From an empty directory the
+	// same query scored 0.27 and answered correctly.
+	//
+	// An agent is always inside SOME project, and the library it asks about
+	// is usually one it is about to add — so the dominant real case was the
+	// broken one.
+	ProjectPackages  []string               `json:"projectPackages,omitempty"`
 	Symbols          []string               `json:"symbols,omitempty"`
 	Environment      EnvironmentFingerprint `json:"environment"`
 	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
