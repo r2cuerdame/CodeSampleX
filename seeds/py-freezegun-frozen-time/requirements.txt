@@ -1,0 +1,5 @@
+# The full closure, because the sandbox installs with --no-deps. freezegun
+# declares only python-dateutil>=2.7, which in turn still needs six.
+freezegun==1.5.5
+python-dateutil==2.9.0.post0
+six==1.17.0

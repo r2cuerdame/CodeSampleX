@@ -1,0 +1,7 @@
+# The full closure, because it is installed with --no-deps. rich pulls
+# markdown-it-py (for rich.markdown) and pygments (for rich.syntax) even
+# when you only ever touch Console, and markdown-it-py pulls mdurl.
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+pygments==2.20.0

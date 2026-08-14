@@ -1,0 +1,42 @@
+[package]
+name = "csx-sample-axum-oneshot"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+# "macros" is not on by default and is the difference between a diagnostic that
+# names the problem and one that does not. main() measures both.
+axum = { version = "0.8.9", features = ["macros"] }
+
+# tower 0.5 declares no `default` feature at all, so `tower = "0.5.3"` gives you
+# a crate with no ServiceExt in it and `use tower::ServiceExt;` is an unresolved
+# import. Measured with cargo 1.97.1, that error arrives with a note and a help:
+#   error[E0432]: unresolved import `tower::ServiceExt`
+#      |     use tower::ServiceExt;
+#      |         ^^^^^^^^^^^^^^^^^ no `ServiceExt` in the root
+#   note: found an item that was configured out
+#      | #[cfg(feature = "util")]
+#      |       ---------------- the item is gated behind the `util` feature
+#   help: a similar name exists in the module
+#      |  use tower::Service;
+# The note holds the answer and the help under it is a trap: tower::Service is a
+# different trait, it needs no feature, so taking the help makes the import
+# compile and leaves you without oneshot(). oneshot() is on ServiceExt.
+#
+# In a real crate this belongs in [dev-dependencies]; it is a normal dependency
+# here only because this sample's contract is `cargo run` rather than a test.
+tower = { version = "0.5.3", features = ["util"] }
+
+# The response body is an axum::body::Body, which is a Stream and not bytes.
+# BodyExt::collect is what turns it into something you can compare against, and
+# it lives in http-body-util rather than in axum or hyper.
+http-body-util = "0.1.5"
+
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+# "rt" only. oneshot() drives the Router in-process, so there is no listener,
+# no socket and nothing for the I/O driver to do - the runtime in main() is
+# built without enable_all() to prove it.
+tokio = { version = "1.53.1", features = ["rt"] }

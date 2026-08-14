@@ -1,0 +1,13 @@
+[package]
+name = "csx-sample-once-cell-vs-oncelock"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+# Default features, which is "std" (and through it "alloc" and "race"). The
+# only once_cell API this sample cannot replace with std is get_or_try_init,
+# and that one lives on once_cell::sync::OnceCell, so no extra feature is
+# needed. "parking_lot" is an optional dependency, not a default; the numbers
+# here are for once_cell's own std-based implementation.
+once_cell = "1.21.4"

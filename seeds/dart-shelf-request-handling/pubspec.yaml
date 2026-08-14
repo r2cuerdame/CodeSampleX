@@ -1,0 +1,10 @@
+name: csx_shelf_requests
+description: Handling shelf requests by calling the handler directly, with no port bound.
+publish_to: none
+environment:
+  sdk: ^3.5.0
+dependencies:
+  shelf: 1.4.2
+  shelf_router: 1.1.4
+dev_dependencies:
+  test: 1.31.2
