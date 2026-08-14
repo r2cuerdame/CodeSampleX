@@ -49,6 +49,21 @@ var allowedURLHosts = []string{
 	"crates.io",
 	"static.crates.io",
 	"proxy.golang.org",
+	// The canonical public registry of every wired ecosystem. These appear
+	// in ordinary hand-written manifests, not only in lockfiles: a Gemfile
+	// opens with `source "https://rubygems.org"` and a composer.json may
+	// name repo.packagist.org. Treating those as leaks rejected every Ruby,
+	// Dart, PHP and Elixir sample at publish time — the check was blocking
+	// whole ecosystems rather than protecting anyone.
+	"rubygems.org",
+	"index.rubygems.org",
+	"pub.dev",
+	"pub.dartlang.org",
+	"packagist.org",
+	"getcomposer.org",
+	"hex.pm",
+	"deno.land",
+	"jsr.io",
 	"example.com",
 	"example.org",
 	"localhost",
@@ -86,8 +101,17 @@ var leakPatterns = []leakPattern{
 	// Unix absolute paths rooted at user/system dirs (keeps route strings
 	// like "/api/users" out of the findings).
 	{KindAbsolutePath, regexp.MustCompile(`(?:^|[^\w.@])(/(?:home|Users|usr|var|etc|tmp|opt|mnt|srv|root|private)/[A-Za-z0-9._/-]+)`)},
-	// UNC shares.
-	{KindAbsolutePath, regexp.MustCompile(`\\\\[A-Za-z0-9._-]+\\[^\s"']+`)},
+	// UNC shares. The leading pair must follow a delimiter, because a
+	// backslash-separated identifier inside JSON looks exactly like one once
+	// the escaping doubles it: composer.lock stores the PHP class
+	// Monolog\Log\Logger as "Monolog\\Log\\Logger", and the middle of that
+	// string matched. A real UNC path always begins a value, so requiring a
+	// delimiter in front costs nothing and drops the whole false-positive
+	// class — it was rejecting a sample whose only crime was PHP namespaces.
+	// The optional second pair covers the same path once JSON has escaped
+	// it: four backslashes can only come from escaping a real UNC prefix,
+	// never from a namespace separator, which is always exactly two.
+	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]+\\{1,2}[^\s"']+)`)},
 	// Only secret-shaped environment names: a sample legitimately sets TZ,
 	// NODE_ENV or PORT, and flagging those blocked honest contributions.
 	{KindEnvAssignment, regexp.MustCompile(`process\.env\.\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*\s*=\s*["'` + "`" + `]`)},
@@ -110,6 +134,8 @@ var lockfileNames = map[string]bool{
 	"cargo.lock": true, "poetry.lock": true, "uv.lock": true,
 	"go.sum": true, "gemfile.lock": true, "composer.lock": true,
 	"requirements.txt": true,
+	"pubspec.lock":     true, "mix.lock": true, "bun.lock": true,
+	"deno.lock": true,
 }
 
 func isLockfile(file string) bool {
@@ -166,6 +192,7 @@ func Scan(dir string, opts ScanOptions) ([]Finding, error) {
 
 func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regexp) []Finding {
 	var out []Finding
+	lock := isLockfile(file)
 	for i, line := range strings.Split(content, "\n") {
 		lineNo := i + 1
 		for _, lp := range leakPatterns {
@@ -173,10 +200,22 @@ func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regex
 				if lp.kind == KindEmail && reservedEmail(m) {
 					continue // RFC 2606 address: documentation, not a person
 				}
+				// The same reasoning that exempts lockfile URLs exempts the
+				// addresses beside them: composer.lock, Gemfile.lock and
+				// pubspec.lock copy each package's authors block verbatim
+				// from the registry. Those identify the LIBRARY's
+				// maintainers — published on Packagist and rubygems for
+				// anyone to read — and cannot contain anything the
+				// contributor wrote. Flagging them blocked every PHP sample
+				// outright: one composer.lock carries 38 of them.
+				// Credentials and keys are still caught here, in lockfiles
+				// too, because those a contributor genuinely can leak.
+				if lp.kind == KindEmail && lock {
+					continue
+				}
 				out = append(out, Finding{File: file, Line: lineNo, Kind: lp.kind, Excerpt: excerpt(m)})
 			}
 		}
-		lock := isLockfile(file)
 		for _, m := range urlRe.FindAllString(line, -1) {
 			// A lockfile is machine-generated public metadata about public
 			// packages: its URLs are registry and funding links chosen by

@@ -208,3 +208,92 @@ func TestLeakageScanCleanSample(t *testing.T) {
 		t.Fatalf("clean fixture produced findings: %+v", fs)
 	}
 }
+
+// A lockfile copies each dependency's author block straight out of the
+// registry, so the addresses in it belong to the library's maintainers and
+// are already public. Treating them as leaks blocked every PHP sample: one
+// composer.lock for php-parser plus phpunit carries 38 of them, and the
+// refusal is unoverridable by design.
+func TestLeakageScanAllowsMaintainerEmailsInLockfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.lock",
+		`{"packages":[{"name":"nikic/php-parser","authors":[{"name":"Nikita Popov","email":"nikic@php.net"}]}]}`)
+	writeFile(t, dir, "Gemfile.lock", "  maintainer: someone@rubygems-author.example.org\n")
+
+	fs, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fs {
+		if f.Kind == KindEmail {
+			t.Errorf("maintainer address in a lockfile flagged: %+v", f)
+		}
+	}
+}
+
+// The exemption is for addresses only. A lockfile is still scanned for the
+// things a contributor can actually leak into one.
+func TestLeakageScanStillFlagsSecretsInLockfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.lock",
+		"{\"x\":\"AKIAIOSFODNN7EXAMPLE\"}\n-----BEGIN RSA PRIVATE KEY-----\n")
+
+	kinds := kindsFor(mustScan(t, dir), "composer.lock")
+	if !kinds[KindAWSKey] {
+		t.Error("AWS key in a lockfile not flagged")
+	}
+	if !kinds[KindPrivateKey] {
+		t.Error("private key in a lockfile not flagged")
+	}
+}
+
+// An address in hand-written source is not covered by the exemption: that
+// one really can be the contributor's.
+func TestLeakageScanStillFlagsEmailsOutsideLockfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "src/app.js", "// contact: someone@acme-internal.co\n")
+
+	if !kindsFor(mustScan(t, dir), "src/app.js")[KindEmail] {
+		t.Error("address in source not flagged")
+	}
+}
+
+func mustScan(t *testing.T, dir string) []Finding {
+	t.Helper()
+	fs, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fs
+}
+
+// A backslash-separated identifier in JSON is not a UNC path. composer.lock
+// stores PHP class names with the backslashes doubled by JSON escaping, and
+// the middle of "Monolog\\Log\\Logger" matched the UNC pattern, so a sample
+// was refused for having namespaces.
+func TestLeakageScanDoesNotReadEscapedNamespacesAsUNCPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.lock",
+		`{"autoload":{"psr-4":{"Monolog\\":"src/"}},"class":"Monolog\\Log\\Logger"}`)
+	writeFile(t, dir, "src/App.php", "use Monolog\\Handler\\StreamHandler;")
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindAbsolutePath {
+			t.Errorf("PHP namespace read as a path: %+v", f)
+		}
+	}
+}
+
+// A real UNC path still is one. It begins a value, which is exactly what
+// separates it from the case above.
+func TestLeakageScanStillFlagsRealUNCPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", `build output goes to \\fileserver\builds\evening`)
+	writeFile(t, dir, "config.json", `{"share": "\\\\buildbox\\artifacts"}`)
+
+	for _, f := range []string{"notes.md", "config.json"} {
+		if !kindsFor(mustScan(t, dir), f)[KindAbsolutePath] {
+			t.Errorf("UNC path in %s not flagged", f)
+		}
+	}
+}

@@ -47,6 +47,43 @@ var forbiddenDirNames = map[string]bool{
 
 func forbiddenDir(seg string) bool { return forbiddenDirNames[strings.ToLower(seg)] }
 
+// forbiddenRootDirNames are resolve output directories that are only
+// generated at the project root. They are matched at the root ONLY: a
+// sample may legitimately contain src/vendor/ or lib/deps/, and rejecting
+// those names at any depth would block honest samples to catch a mistake
+// that can only happen one level up.
+var forbiddenRootDirNames = map[string]bool{
+	"vendor":        true, // composer, and go's vendored module tree
+	"deps":          true, // mix
+	"_build":        true, // mix
+	".dart_tool":    true, // dart pub
+	".csx-vendor":   true, // this project's own two-phase resolve output
+	".bundle":       true, // bundler config written during install
+	"__pycache__":   true,
+	".pytest_cache": true,
+}
+
+func forbiddenRootDir(slash string) bool {
+	if strings.Contains(slash, "/") {
+		return false
+	}
+	return forbiddenRootDirNames[strings.ToLower(slash)]
+}
+
+// forbiddenFileNames are test-runner scratch files. They are not secrets —
+// the phpunit one holds test names and timings — but they are output, not
+// source, and they change the artifact hash, so the same sample published
+// twice gets two content addresses for no reason. One reached the network
+// before this check existed.
+var forbiddenFileNames = map[string]bool{
+	".phpunit.result.cache": true,
+	".rspec_status":         true,
+	".byebug_history":       true,
+	"npm-debug.log":         true,
+	"yarn-error.log":        true,
+	"erl_crash.dump":        true,
+}
+
 // isEnvFile reports whether base names a dotenv secrets file (.env, .env.local, …).
 func isEnvFile(base string) bool {
 	lower := strings.ToLower(base)
@@ -136,7 +173,7 @@ func collectFiles(dir string) ([]string, error) {
 			return fmt.Errorf("samples: symlink not allowed: %s", slash)
 		}
 		if d.IsDir() {
-			if forbiddenDir(base) {
+			if forbiddenDir(base) || forbiddenRootDir(slash) {
 				return fmt.Errorf("samples: forbidden entry: %s/", slash)
 			}
 			return nil
@@ -144,7 +181,7 @@ func collectFiles(dir string) ([]string, error) {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("samples: non-regular file not allowed: %s", slash)
 		}
-		if isEnvFile(base) {
+		if isEnvFile(base) || forbiddenFileNames[strings.ToLower(base)] {
 			return fmt.Errorf("samples: forbidden entry: %s", slash)
 		}
 		paths = append(paths, slash)
