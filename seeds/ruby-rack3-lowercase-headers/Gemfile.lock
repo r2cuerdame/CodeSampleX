@@ -1,0 +1,21 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    minitest (5.25.4)
+    rack (3.2.7)
+
+PLATFORMS
+  ruby
+  x86_64-linux-musl
+
+DEPENDENCIES
+  minitest (= 5.25.4)
+  rack (= 3.2.7)
+
+CHECKSUMS
+  bundler (4.0.18) sha256=02d9a17429de1847b4e0c9f27a9ee4b20c0a74c0a641b4e77195d6019e3618ac
+  minitest (5.25.4) sha256=9cf2cae25ac4dfc90c988ebc3b917f53c054978b673273da1bd20bcb0778f947
+  rack (3.2.7) sha256=93e13e1c24f93556671d85d2d79fa228c3485815c50d7e2f265b5330c6528fb7
+
+BUNDLED WITH
+  4.0.18

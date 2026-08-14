@@ -1,0 +1,20 @@
+{
+  "name": "csx/monolog-3-record",
+  "license": "MIT-0",
+  "require": {
+    "monolog/monolog": "3.9.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "13.3.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "Csx\\": "src/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.5.0"
+    }
+  }
+}

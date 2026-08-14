@@ -8,10 +8,16 @@
 # CROSS_PASS is left for real peers to earn.
 #
 # Usage: .\seed.ps1 [-Server https://codesamplex.dev] [-Seeder r2cuerdame]
+#        .\seed.ps1 -Only php-parser-v5-factory,dart-crypto-digest
+#
+# -Only exists because publishing is rate limited to 10/hour per address:
+# a full re-run of every seed spends the budget re-publishing samples the
+# network already has, and the new ones fail at the end.
 param(
     [string]$Server = "https://codesamplex.dev",
     [string]$Seeder = "r2cuerdame",
-    [string]$CsxHome = "$env:LOCALAPPDATA\csx-seed"
+    [string]$CsxHome = "$env:LOCALAPPDATA\csx-seed",
+    [string[]]$Only = @()
 )
 $ErrorActionPreference = "Stop"
 $seeds = $PSScriptRoot
@@ -35,6 +41,11 @@ Write-Output "== init (community, no agent config touched) =="
 $names = Get-ChildItem $seeds -Directory |
     Where-Object { Test-Path (Join-Path $_.FullName "csx.json") } |
     ForEach-Object { $_.Name } | Sort-Object
+if ($Only.Count -gt 0) {
+    $missing = $Only | Where-Object { $names -notcontains $_ }
+    if ($missing) { throw "no such seed: $($missing -join ', ')" }
+    $names = $names | Where-Object { $Only -contains $_ }
+}
 Write-Output "seeds found: $($names -join ', ')"
 $published = @()
 foreach ($n in $names) {
@@ -68,9 +79,13 @@ foreach ($n in $names) {
     $env:CSX_TEST_ASSUME_YES = "1"
     $ErrorActionPreference = "Continue"
     $p = & $csx sample publish $id --seeder $Seeder --assume-yes --server $Server 2>&1 | ForEach-Object { "$_" }
+    $ok = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEAP
     Remove-Item Env:CSX_TEST_ASSUME_YES -ErrorAction SilentlyContinue
-    if (($p -join "`n") -match "Published") {
+    # Exit code, not a substring. Matching "Published" in the output read a
+    # REFUSED report as a success for two runs straight, because one of the
+    # maintainer addresses the refusal listed was bschussek@2bepublished.at.
+    if ($ok) {
         Write-Output "  published: $Server/samples/$id"
         $published += $id
     } else {
@@ -82,15 +97,28 @@ Write-Output ""
 Write-Output "== evidence from the seed projects =="
 # Real observations: each seed project is scanned and its contract run
 # through csx, so the packages above get PROJECT_TEST evidence too.
+# The command comes from each manifest, not from a hard-coded `node
+# test/contract.mjs`: that assumption ran a Node command inside the python,
+# go and rust seed dirs, which recorded nothing and left stray lockfiles
+# behind. And csx run observes on the HOST, so a seed whose toolchain is
+# not installed here is reported as skipped rather than failed.
 foreach ($n in $names) {
     $dir = Join-Path $seeds $n
+    $m = Get-Content (Join-Path $dir "csx.json") -Raw | ConvertFrom-Json
+    $argv = @($m.contractCommand)
+    if (-not $argv -or $argv.Count -eq 0) {
+        Write-Output ("  {0,-30} no contractCommand" -f $n); continue
+    }
+    if (-not (Get-Command $argv[0] -ErrorAction SilentlyContinue)) {
+        Write-Output ("  {0,-30} skipped ({1} not on this host)" -f $n, $argv[0]); continue
+    }
     Push-Location $dir
     $ErrorActionPreference = "Continue"
-    & $csx run -- node test/contract.mjs 2>&1 | Out-Null
+    & $csx run -- @argv 2>&1 | Out-Null
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
     Pop-Location
-    Write-Output ("  {0,-22} csx run exit={1}" -f $n, $code)
+    Write-Output ("  {0,-30} csx run exit={1}" -f $n, $code)
 }
 & $csx sync | Select-Object -Last 1
 

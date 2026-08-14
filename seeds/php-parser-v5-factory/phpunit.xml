@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- recordTestRunHistory="false": the result cache is output, and it would
+     otherwise land in the published artifact and change its hash. -->
+<phpunit bootstrap="vendor/autoload.php" colors="false" recordTestRunHistory="false">
+  <testsuites><testsuite name="csx"><directory>test</directory></testsuite></testsuites>
+</phpunit>

@@ -1,0 +1,8 @@
+source "https://rubygems.org"
+
+# Modern Ruby moved several stdlib libraries out of the default gem set.
+# Requiring them without declaring them raises LoadError, which is the most
+# common "my code broke on the new Ruby" report.
+gem "csv", "3.3.5"
+gem "base64", "0.3.0"
+gem "minitest", "5.25.4"

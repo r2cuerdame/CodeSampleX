@@ -92,7 +92,11 @@ csx ui                     # dashboard + privacy preview
 
 ## Ecosystems (Public v1)
 
-Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Honest capability matrix: [docs/adapters.md](docs/adapters.md) — no adapter claims runtime symbol instrumentation in v1, and symbol resolution confidence is always labeled (`EXACT`/`PROBABLE`/`UNKNOWN`).
+**Scanned and verified** — your project is detected, its packages resolved from the lockfile, and samples are verified end to end: Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Node samples are verified on the runtime they declare, so Bun and Deno results are real rather than assumed.
+
+**Verified only** — no project scanner yet, but published samples are built and contract-tested in a pinned container, so a compatibility answer for these ecosystems is as trustworthy as any other: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex.
+
+Honest capability matrix: [docs/adapters.md](docs/adapters.md) — no adapter claims runtime symbol instrumentation in v1, and symbol resolution confidence is always labeled (`EXACT`/`PROBABLE`/`UNKNOWN`).
 
 ## Architecture
 

@@ -1,0 +1,4 @@
+source "https://rubygems.org"
+
+gem "rack", "3.2.7"
+gem "minitest", "5.25.4"

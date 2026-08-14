@@ -277,13 +277,26 @@ func TestAdaptersMatchesSchemaFile(t *testing.T) {
 	}
 	var doc struct {
 		Adapters []struct {
+			Ecosystem    string   `json:"ecosystem"`
+			Name         string   `json:"name"`
 			Capabilities []string `json:"capabilities"`
 		} `json:"adapters"`
 	}
-	if err := json.Unmarshal(body, &doc); err != nil || len(doc.Adapters) != 4 {
+	// The count is not asserted: pinning it meant every new ecosystem broke
+	// this test for a reason unrelated to what it is checking. The shape and
+	// the A3 ceiling are the invariants.
+	if err := json.Unmarshal(body, &doc); err != nil || len(doc.Adapters) == 0 {
 		t.Fatalf("adapters doc: %v, adapters=%d", err, len(doc.Adapters))
 	}
+	seen := map[string]bool{}
 	for _, a := range doc.Adapters {
+		if a.Ecosystem == "" || a.Name == "" || len(a.Capabilities) == 0 {
+			t.Fatalf("incomplete adapter entry: %+v", a)
+		}
+		if seen[a.Ecosystem] {
+			t.Fatalf("duplicate adapter for ecosystem %q", a.Ecosystem)
+		}
+		seen[a.Ecosystem] = true
 		for _, c := range a.Capabilities {
 			if c == "A3" {
 				t.Fatal("no Public v1 adapter may claim A3")

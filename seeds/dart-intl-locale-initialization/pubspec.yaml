@@ -1,0 +1,9 @@
+name: csx_intl_locale
+description: Formatting dates in a non-English locale with intl, and parsing strictly.
+publish_to: none
+environment:
+  sdk: ^3.5.0
+dependencies:
+  intl: 0.20.2
+dev_dependencies:
+  test: 1.31.2

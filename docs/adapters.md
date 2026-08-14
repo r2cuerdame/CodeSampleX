@@ -10,29 +10,89 @@ A3  Runtime symbol instrumentation
 A4  Clean Sample + Contract verification
 ```
 
+Two of these describe different halves of the system, and the split is the
+most useful thing this table says. A0–A2 are what the **local scanner** does
+to *your* project. A4 is what the **verifier** does to a *published sample*.
+An ecosystem can have one without the other, and four of them do.
+
 | Ecosystem | Adapter | Package managers | A0 | A1 | A2 | A3 | A4 | Symbol confidence |
 |-----------|---------------------|--------------------|----|----|----|----|----|-------------------|
 | npm | node-typescript@1 | npm, pnpm, yarn | ✓ | ✓ | ✓ | – | ✓ | PROBABLE |
-| pypi | python@1 | pip, uv (+poetry lock best-effort) | ✓ | ✓ | ✓ | – | – | PROBABLE |
-| golang | go@1 | go modules | ✓ | ✓ | ✓ | – | – | PROBABLE |
-| cargo | rust@1 | cargo | ✓ | ✓ | ✓ | – | – | PROBABLE |
+| pypi | python@1 | pip, uv (+poetry lock best-effort) | ✓ | ✓ | ✓ | – | ✓ | PROBABLE |
+| golang | go@1 | go modules | ✓ | ✓ | ✓ | – | ✓ | PROBABLE |
+| cargo | rust@1 | cargo | ✓ | ✓ | ✓ | – | ✓ | PROBABLE |
+| composer | php@1 | composer | – | – | – | – | ✓ | UNKNOWN |
+| gem | ruby@1 | bundler | – | – | – | – | ✓ | UNKNOWN |
+| pub | dart@1 | pub | – | – | – | – | ✓ | UNKNOWN |
+| hex | elixir@1 | mix | – | – | – | – | ✓ | UNKNOWN |
 
-Honest limitations, stated on purpose:
+## Verifier images
 
-- **PROBABLE, not EXACT**: static import/member analysis without a type checker
-  cannot claim EXACT symbol resolution (goal.md §7.2). EXACT is reserved for a
-  future TypeScript type-info / go-types integration.
+Every stage runs in a pinned image, and the receipt records the image's
+environment rather than the host's — a contract that ran in a linux
+container proves nothing about the Windows machine that started it. The
+images are alpine where one exists, so results carry `musl`, the dimension
+that most often decides whether a package with a native module loads at all.
+
+| Ecosystem | Runtime | Image |
+|-----------|---------|-------|
+| npm | node | `node:22-alpine` |
+| npm | bun | `oven/bun:1-alpine` |
+| npm | deno | `denoland/deno:alpine` |
+| pypi | python | `python:3.12-alpine` |
+| golang | go | `golang:1.26-alpine` |
+| cargo | rust | `rust:1-alpine` |
+| composer | php | `composer:2` |
+| gem | ruby | `ruby:3-alpine` |
+| pub | dart | `dart:3.13.0` |
+| hex | elixir | `elixir:1.20.1-alpine` |
+
+npm keys on the **runtime**, not just the ecosystem, because "does this
+package work on Bun" is exactly the question this project exists to answer.
+Keying on ecosystem alone verified every npm sample under Node and made the
+execution-context axis (docs/execution-context.md) unusable: every sample in
+the network claimed `node` because nothing else could be produced.
+
+## How the two stages stay honest
+
+Resolve runs with the network **on** and must never execute sample code.
+Build and contract run with `--network=none`. Only the workspace is shared
+between the two containers, so every toolchain cache is redirected inside it
+(`/work/.csx-vendor`) — an image's `site-packages`, `GOMODCACHE` or
+`CARGO_HOME` would simply be gone by the time the contract runs. npm only
+appeared to work without this because `node_modules` is already a workspace
+directory.
+
+Keeping sample code from running during resolve is per-ecosystem work, not a
+flag: `--ignore-scripts` for npm, `--no-scripts --no-plugins` for composer,
+metadata-only fetches elsewhere. Elixir is the hard case — `mix.exs` is
+executable code and every mix task evaluates it — so its resolve works from a
+scratch directory with no `mix.exs` in sight, reads the pinned package set
+out of `mix.lock` as text, and fetches each package with `mix hex.package
+fetch`, which verifies its checksum. A hex sample without a committed
+`mix.lock` cannot be verified, and because that path skips mix's own `.hex`
+marker file, hex samples build and test with `--no-deps-check`.
+
+## Honest limitations, stated on purpose
+
+- **PROBABLE, not EXACT**: static import/member analysis without a type
+  checker cannot claim EXACT symbol resolution (goal.md §7.2). EXACT is
+  reserved for a future TypeScript type-info / go-types integration.
 - **A3 is absent everywhere**: no Public v1 adapter observes real symbol
-  execution. The `SYMBOL_EXECUTED`/`SYMBOL_CALL` stages exist in the schema for
-  future instrumentation (browser/worker contexts included — see
+  execution. The `SYMBOL_EXECUTED`/`SYMBOL_CALL` stages exist in the schema
+  for future instrumentation (browser/worker contexts included — see
   docs/execution-context.md) and the server rejects them from clients today.
-- **A4 verifier is node-only**: sample contract verification runs the
-  `node-typescript@1` verifier adapter (Docker `CONTAINER_RUN` when available,
-  `COMPILE_ONLY` natively otherwise — receipts say which honestly). Python, Go
-  and Rust samples verify only where a contract fits the shared container
-  verifier; their receipts never overstate.
+- **Four ecosystems verify but do not scan**: composer, gem, pub and hex have
+  no local project adapter, so a PHP or Elixir project on your machine
+  produces no evidence and no local hits. Their published samples are still
+  fully verified, so an agent that names the packages it is about to use gets
+  a real answer.
 - **Dynamic usage degrades confidence**: Python getattr/importlib and Rust
-  macro-expanded usage report `UNKNOWN` rather than guessing (goal.md §13.3, §13.5).
+  macro-expanded usage report `UNKNOWN` rather than guessing (goal.md §13.3,
+  §13.5).
+- **Evaluated and declined**: JVM (Gradle/Maven) and Swift — see
+  docs/kotlin-evaluation.md. Both build with executable manifests, which the
+  resolve stage cannot honour.
 
 Machine-readable source of truth: `schemas/v1/adapters.json`, served at
 `GET /v1/adapters` and rendered at `/adapters`.
