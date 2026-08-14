@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -280,7 +281,12 @@ func mergeJSONFile(path string, mutate func(map[string]any)) (bool, error) {
 	case err != nil:
 		return false, fmt.Errorf("agentinstall: read %s: %w", path, err)
 	default:
-		if err := json.Unmarshal(raw, &m); err != nil {
+		// Windows editors write a UTF-8 BOM routinely, and encoding/json
+		// refuses it. A user who had ever opened their Claude Code or Codex
+		// config in Notepad got "parse failed, left untouched" and no MCP
+		// registration at all — the install looked like it worked and the
+		// agent simply never saw csx.
+		if err := json.Unmarshal(stripBOM(raw), &m); err != nil {
 			return false, fmt.Errorf("agentinstall: parse %s (left untouched): %w", path, err)
 		}
 	}
@@ -290,6 +296,12 @@ func mergeJSONFile(path string, mutate func(map[string]any)) (bool, error) {
 		return false, fmt.Errorf("agentinstall: marshal %s: %w", path, err)
 	}
 	out = append(out, '\n')
+	// Written back the way it arrived. Silently dropping a BOM the editor
+	// put there is a change to somebody else's file we were not asked to
+	// make, and their editor may well put it straight back.
+	if hadBOM(raw) {
+		out = append(append([]byte{}, utf8BOM...), out...)
+	}
 	if raw != nil && string(out) == string(raw) {
 		return false, nil // idempotent no-op
 	}
@@ -352,3 +364,10 @@ func upsertMarkerBlock(content, begin, end, inner string) string {
 	}
 	return content + block
 }
+
+// utf8BOM is the byte-order mark Windows editors prepend to UTF-8.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+func hadBOM(raw []byte) bool { return bytes.HasPrefix(raw, utf8BOM) }
+
+func stripBOM(raw []byte) []byte { return bytes.TrimPrefix(raw, utf8BOM) }
