@@ -140,23 +140,81 @@ func (w *webStore) SeederSamples(ctx context.Context, login string) ([]web.Sampl
 		if r.OriginSeeder != login {
 			continue
 		}
-		out = append(out, web.SampleListItem{
-			SampleID:  r.SampleID,
-			Goal:      manifestGoal(r.ManifestJSON),
-			Status:    r.Status,
-			License:   r.License,
-			CreatedAt: r.CreatedAt.UTC().Format("2006-01-02"),
-		})
+		out = append(out, sampleListItem(r))
 	}
 	return out, nil
 }
 
-func manifestGoal(manifestJSON string) string {
-	var m domain.SampleManifest
-	if json.Unmarshal([]byte(manifestJSON), &m) == nil {
-		return m.Case.Goal
+// ListSamples feeds the sitemap. serverstore.ListSamples already excludes
+// quarantined rows, which is what makes it safe to advertise these URLs.
+func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleListItem, error) {
+	rows, err := w.s.ListSamples(ctx, limit)
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	out := make([]web.SampleListItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sampleListItem(r))
+	}
+	return out, nil
+}
+
+// PackageSamples returns the samples a package page links to.
+//
+// The store filters with a SQL LIKE pattern, where "_" is a wildcard —
+// so "typing_extensions" would also match "typing-extensions". The
+// manifest is re-checked here for an exact "pkg:<eco>/<name>@" prefix so
+// a package page never advertises a sample about a different package.
+func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]web.SampleListItem, error) {
+	prefix := "pkg:" + ecosystem + "/" + name + "@"
+	rows, err := w.s.SamplesForPackages(ctx, []string{prefix + "%"}, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []web.SampleListItem
+	for _, r := range rows {
+		if !manifestNamesPackage(r.ManifestJSON, prefix) {
+			continue
+		}
+		out = append(out, sampleListItem(r))
+	}
+	return out, nil
+}
+
+// sampleListItem projects a stored sample row onto the website's list row.
+func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
+	item := web.SampleListItem{
+		SampleID:  r.SampleID,
+		Status:    r.Status,
+		License:   r.License,
+		CreatedAt: r.CreatedAt.UTC().Format("2006-01-02"),
+	}
+	if m, ok := parseManifest(r.ManifestJSON); ok {
+		item.Goal = m.Case.Goal
+		item.Context = m.Environment.ContextLabel()
+	}
+	return item
+}
+
+func parseManifest(manifestJSON string) (domain.SampleManifest, bool) {
+	var m domain.SampleManifest
+	if json.Unmarshal([]byte(manifestJSON), &m) != nil {
+		return domain.SampleManifest{}, false
+	}
+	return m, true
+}
+
+func manifestNamesPackage(manifestJSON, prefix string) bool {
+	m, ok := parseManifest(manifestJSON)
+	if !ok {
+		return false
+	}
+	for _, p := range m.Packages {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // packageHits groups evidence-bearing snapshot targets into package rows,

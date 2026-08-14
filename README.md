@@ -26,6 +26,8 @@ curl -fsSL https://codesamplex.dev/install.sh | sh
 
 One binary, one question. `csx init` shows the community contract and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Everything else (daemon, MCP registration for Claude Code / Codex / Gemini CLI / OpenCode, agent rules) is automatic.
 
+Installing it as an MCP server from an agent, a script, or a directory listing: **[llms-install.md](llms-install.md)** — exact ordered steps for macOS, Linux and Windows, ending with an MCP handshake check.
+
 For scripted or CI setups: `csx init --community --yes --no-agents` does config + identity only and writes nothing outside `CSX_HOME`; agent config paths otherwise honor `CSX_AGENT_HOME` when you need them somewhere other than your OS user home.
 
 ## The contract

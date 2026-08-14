@@ -13,6 +13,13 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
+{{- if .Samples}}
+{{/* "stats.verified_samples" is reused rather than a new key: it is the
+     same noun phrase and it is already translated into all nine locales. */}}
+<h2 class="eyebrow mono">{{.T "stats.verified_samples"}}</h2>
+{{template "samplelist" .}}
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{end}}

@@ -1,5 +1,9 @@
 {{define "content"}}
-<h1>{{.T "sample.title"}} <span class="mono small">{{.Meta.SampleID}}</span></h1>
+{{/* The heading is the goal — the question this sample answers. The
+     content address is identity, not a title, so it moves below. */}}
+<p class="eyebrow mono">{{.T "sample.title"}}</p>
+<h1>{{if .Goal}}{{.Goal}}{{else}}<span class="mono">{{.Meta.SampleID}}</span>{{end}}</h1>
+<p class="dim mono small">{{.Meta.SampleID}}</p>
 <div class="badges">
   <span class="chip status mono">{{.Meta.Status}}</span>
   <span class="chip level mono">{{.Level}}</span>
@@ -12,7 +16,11 @@
   <dt>{{.T "sample.goal"}}</dt>
   <dd>{{.Manifest.Case.Goal}} <span class="chip mono small">{{.Manifest.Case.Kind}}</span></dd>
   <dt>{{.T "sample.packages"}}</dt>
-  <dd class="mono">{{range .Manifest.Packages}}{{.}} {{end}}</dd>
+  <dd class="mono">
+    {{- range .Packages}}
+    {{if .Href}}<a href="{{.Href}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}
+    {{- end}}
+  </dd>
   {{if .Context}}
   <dt>{{.T "sample.environment"}}</dt>
   <dd class="mono">{{.Context}}</dd>

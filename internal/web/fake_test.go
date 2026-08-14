@@ -19,6 +19,10 @@ type fakeStore struct {
 	seeders   map[string][]SampleListItem
 	packages  []PackageHit
 	clusters  map[string][]string // eco+"|"+name → cluster JSON
+	// sampleList is every published sample, newest first (sitemap +
+	// package pages); samplePackages is the purl list of each one.
+	sampleList     []SampleListItem
+	samplePackages map[string][]string
 }
 
 func snapKey(purl, symbol string) string { return purl + "\x00" + symbol }
@@ -51,6 +55,34 @@ func (f *fakeStore) SampleReceipts(_ context.Context, id string) ([]string, erro
 
 func (f *fakeStore) SeederSamples(_ context.Context, login string) ([]SampleListItem, error) {
 	return f.seeders[login], nil
+}
+
+func (f *fakeStore) ListSamples(_ context.Context, limit int) ([]SampleListItem, error) {
+	out := make([]SampleListItem, 0, len(f.sampleList))
+	for _, it := range f.sampleList {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		out = append(out, it)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, limit int) ([]SampleListItem, error) {
+	prefix := "pkg:" + ecosystem + "/" + name + "@"
+	var out []SampleListItem
+	for _, it := range f.sampleList {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		for _, p := range f.samplePackages[it.SampleID] {
+			if strings.HasPrefix(p, prefix) {
+				out = append(out, it)
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SearchPackages(_ context.Context, q string, limit int) ([]PackageHit, error) {
@@ -244,9 +276,15 @@ func newFakeStore() *fakeStore {
 	  "peerPubkey": "cHVi",
 	  "peerSignature": "c2ln"
 	}`}
-	f.seeders["alice"] = []SampleListItem{
-		{SampleID: "sha256:d1e2f3", Goal: "POST JSON with axios and retries",
-			Status: "CROSS_PASS", License: "MIT-0", CreatedAt: "2026-08-01T00:00:00Z"},
+	item := SampleListItem{
+		SampleID: "sha256:d1e2f3", Goal: "POST JSON with axios and retries",
+		Status: "CROSS_PASS", License: "MIT-0", Context: "node 22.18",
+		CreatedAt: "2026-08-01",
+	}
+	f.seeders["alice"] = []SampleListItem{item}
+	f.sampleList = []SampleListItem{item}
+	f.samplePackages = map[string][]string{
+		"sha256:d1e2f3": {"pkg:npm/axios@1.12.0"},
 	}
 	return f
 }

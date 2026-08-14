@@ -54,6 +54,13 @@ type Store interface {
 	SampleReceipts(ctx context.Context, id string) ([]string, error)
 	// SeederSamples lists samples published under a seeder login.
 	SeederSamples(ctx context.Context, login string) ([]SampleListItem, error)
+	// ListSamples lists published samples, newest first, for the sitemap.
+	// Quarantined samples must not appear.
+	ListSamples(ctx context.Context, limit int) ([]SampleListItem, error)
+	// PackageSamples lists published samples whose manifest names this
+	// package, newest first. This is what puts a link to a sample page on
+	// a page a crawler already reaches.
+	PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]SampleListItem, error)
 	// SearchPackages searches packages by name fragment.
 	SearchPackages(ctx context.Context, q string, limit int) ([]PackageHit, error)
 	// HotPackages returns the highest-traffic packages for sitemap use.
@@ -76,12 +83,16 @@ type SampleMeta struct {
 	Files        []string
 }
 
-// SampleListItem is one row in a seeder's published-samples list.
+// SampleListItem is one row of a published-samples list (a seeder's page,
+// a package page, the sitemap).
 type SampleListItem struct {
-	SampleID  string
-	Goal      string
-	Status    string
-	License   string
+	SampleID string
+	Goal     string
+	Status   string
+	License  string
+	// Context is the execution context the sample was published from
+	// ("node 22"), so a list row says which environment it answers for.
+	Context   string
 	CreatedAt string
 }
 
@@ -133,6 +144,7 @@ func Register(mux *http.ServeMux, d Deps) {
 		})
 	}
 	mux.HandleFunc("GET /records", s.records)
+	mux.HandleFunc("GET /findings", s.findings)
 	// /explore was the old name for the same page.
 	mux.HandleFunc("GET /explore", s.explorePage)
 	mux.HandleFunc("GET /stats", s.statsPage)
@@ -156,8 +168,8 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "package", "version", "symbol",
-		"sample", "seeder", "error"}
+	pages := []string{"landing", "records", "findings", "package", "version",
+		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
 		out[p] = template.Must(template.ParseFS(templateFS,
@@ -220,8 +232,11 @@ type basePage struct {
 	JSONLD      []template.JS
 	Version     string
 	IsLanding   bool
-	path        string
-	query       url.Values // current query without lang
+	// OGType is the og:type of the page. Empty renders "website"; pages
+	// that are a dated document rather than a site section set "article".
+	OGType    string
+	path      string
+	query     url.Values // current query without lang
 }
 
 // T translates a UI string into the page language.

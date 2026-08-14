@@ -11,7 +11,7 @@
 {{- range .Alternates}}
 <link rel="alternate" hreflang="{{.Lang}}" href="{{.URL}}">
 {{- end}}
-<meta property="og:type" content="website">
+<meta property="og:type" content="{{if .OGType}}{{.OGType}}{{else}}website{{end}}">
 <meta property="og:site_name" content="CodeSampleX">
 <meta property="og:title" content="{{.Title}}">
 <meta property="og:description" content="{{.Description}}">
@@ -124,6 +124,22 @@
 {{- end}}
 </ul>
 {{- else}}<p class="dim">{{.T "pkg.no_clusters"}}</p>{{end}}
+{{end}}
+
+{{/* samplelist renders []SampleListItem. The link text is the sample's
+     goal — the question it answers — because that is what a reader (and a
+     crawler) needs to see; the content address is not readable text. */}}
+{{define "samplelist"}}
+<ul class="samples">
+{{- range .Samples}}
+  <li>
+    <a href="/samples/{{.SampleID}}">{{if .Goal}}{{.Goal}}{{else}}{{.SampleID}}{{end}}</a>
+    <span class="chip status mono">{{.Status}}</span>
+    {{- if .Context}}<span class="dim mono small">{{.Context}}</span>{{end}}
+    <span class="dim mono small">{{.License}}{{if .CreatedAt}} · {{.CreatedAt}}{{end}}</span>
+  </li>
+{{- end}}
+</ul>
 {{end}}
 
 {{/* tiles renders the network counters; the reasoning-avoided tile is

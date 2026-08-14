@@ -1,0 +1,78 @@
+{{define "content"}}
+{{/* The page-specific rules live here rather than in static/site.css so this
+     page is one new file plus its handler. Everything it can borrow from the
+     shared stylesheet — panel, chip, mono, dim, eyebrow, note — it borrows. */}}
+<style>
+.findings { list-style: none; margin: 1.2rem 0 0; padding: 0; display: grid; gap: 1rem; }
+.finding { display: flex; flex-direction: column; gap: 0.55rem; }
+.fhead { margin: 0; display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.fhead .subject { color: var(--accent); font-size: 0.88rem; overflow-wrap: anywhere; }
+.finding p.claim { margin: 0; max-width: 74ch; }
+.finding .k {
+  display: block; color: var(--dim); font-family: var(--mono);
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em;
+}
+.finding .measured { border-left: 2px solid var(--accent); padding-left: 0.75rem; }
+.flinks { margin: 0.15rem 0 0; display: flex; gap: 1rem; flex-wrap: wrap; }
+.flinks a.src { color: var(--dim); }
+.flinks a.src:hover { color: var(--text); }
+.ecolist { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.9rem 0 0; padding: 0; list-style: none; }
+</style>
+
+<h1>{{.T "findings.title"}}</h1>
+<p class="lead">{{.T "findings.intro"}}</p>
+<p class="note dim small">{{.T "findings.rerun"}}</p>
+<p class="note dim small">{{.T "findings.untranslated"}}</p>
+<p class="mono small dim">{{.T "findings.count" .Total (len .Ecosystems)}}</p>
+<ul class="ecolist">
+{{- range .Ecosystems}}
+  <li><span class="chip mono">{{.}}</span></li>
+{{- end}}
+</ul>
+
+<section>
+  <h2 class="eyebrow mono">{{.T "findings.group_docs"}}</h2>
+  <p class="note dim small">{{.T "findings.group_docs_note"}}</p>
+  <ol class="findings">
+  {{- range .Documented}}
+    <li class="finding panel">
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
+      <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
+      <p class="flinks small">
+        <a class="mono" href="{{$.WithLang .SampleHref}}">{{$.T "findings.contract"}} · {{.ShortID}}</a>
+        {{- if .SourceURL}}
+        <a class="mono src" href="{{.SourceURL}}" rel="noopener">{{$.T "findings.source"}}: {{.SourceLabel}}</a>
+        {{- end}}
+      </p>
+    </li>
+  {{- end}}
+  </ol>
+</section>
+
+<section>
+  <h2 class="eyebrow mono">{{.T "findings.group_belief"}}</h2>
+  <p class="note dim small">{{.T "findings.group_belief_note"}}</p>
+  <ol class="findings">
+  {{- range .Believed}}
+    <li class="finding panel">
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
+      <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
+      <p class="flinks small">
+        <a class="mono" href="{{$.WithLang .SampleHref}}">{{$.T "findings.contract"}} · {{.ShortID}}</a>
+        {{- if .SourceURL}}
+        <a class="mono src" href="{{.SourceURL}}" rel="noopener">{{$.T "findings.source"}}: {{.SourceLabel}}</a>
+        {{- end}}
+      </p>
+    </li>
+  {{- end}}
+  </ol>
+</section>
+
+<section>
+  <h2 class="eyebrow mono">{{.T "findings.method_heading"}}</h2>
+  <p class="note">{{.T "findings.method_body"}}</p>
+  <p class="note dim small">{{.T "findings.method_missing"}}</p>
+</section>
+{{end}}

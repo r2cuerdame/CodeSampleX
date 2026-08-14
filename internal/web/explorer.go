@@ -356,8 +356,14 @@ type packagePage struct {
 	Ecosystem string
 	Name      string
 	Versions  []string
+	Samples   []SampleListItem
 	Clusters  []clusterView
 }
+
+// packageSampleLimit bounds the samples listed on a package page. It is a
+// reading list, not an archive; the sitemap is what guarantees every
+// sample is reachable.
+const packageSampleLimit = 25
 
 func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
 	raw, err := s.d.Store.FailureClusters(r.Context(), eco, name)
@@ -381,7 +387,14 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		return
 	}
 	clusters := s.loadClusters(r, eco, name)
-	if len(versions) == 0 && len(clusters) == 0 {
+	// Samples are listed here because this is the page a crawler already
+	// reaches from the sitemap: without a link from somewhere indexed, a
+	// sample page exists but is never visited.
+	samples, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	if err != nil {
+		samples = nil // the rest of the page is still worth serving
+	}
+	if len(versions) == 0 && len(clusters) == 0 && len(samples) == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -395,7 +408,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	})}
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
-		Versions: versions, Clusters: clusters,
+		Versions: versions, Samples: samples, Clusters: clusters,
 	})
 }
 
@@ -612,12 +625,53 @@ type receiptView struct {
 	PeerID     string
 }
 
+// descPackageLimit caps how many packages the meta description names.
+// Measured over the 117 seed samples: 89 name one package, 15 name two,
+// and six name three or more (the largest names six).
+const descPackageLimit = 3
+
+// pkgRef is one package a sample is about. Href is empty when the site
+// has no page for that ecosystem (samples exist for ecosystems the
+// explorer does not route, and a link into a 404 is worse than text).
+type pkgRef struct {
+	Label string // "axios 1.12.2"
+	PURL  string // "pkg:npm/axios@1.12.2"
+	Href  string // "/npm/axios"
+}
+
+// packageRefs resolves the manifest's purls into display labels and, where
+// the explorer routes that ecosystem, links.
+//
+// The link is the package page, not the version page. A version page only
+// exists when that exact version string has a snapshot, and manifest
+// versions do not always agree: pkg:golang/github.com/shopspring/decimal
+// is published both as "@1.4.0" and "@v1.4.0", and only the second has a
+// page (measured on the live site — the first answers 404). The package
+// page always exists for a package a published sample names, because that
+// sample is now one of the things the page lists.
+func packageRefs(purls []string) []pkgRef {
+	refs := make([]pkgRef, 0, len(purls))
+	for _, p := range purls {
+		ref := pkgRef{Label: strings.TrimPrefix(p, "pkg:"), PURL: p}
+		if parsed, err := domain.ParsePURL(p); err == nil {
+			ref.Label = parsed.Name + " " + parsed.Version
+			if knownEcosystems[parsed.Ecosystem] {
+				ref.Href = pkgHref(parsed.Ecosystem, parsed.Name)
+			}
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
 type samplePageData struct {
 	basePage
 	Meta     SampleMeta
 	Manifest *domain.SampleManifest
 	Level    string
 	Context  string
+	Goal     string
+	Packages []pkgRef
 	Receipts []receiptView
 }
 
@@ -678,19 +732,86 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	title := i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID) + " — CodeSampleX"
-	desc := i18n.T(lang, "site.meta_description")
-	if manifest != nil && manifest.Case.Goal != "" {
-		desc = manifest.Case.Goal
-	}
-	b := s.page(r, lang, title, desc)
-	ctx := ""
+	var (
+		goal  string
+		ctx   string
+		refs  []pkgRef
+		env   domain.EnvironmentFingerprint
+		purls []string
+		syms  []string
+	)
 	if manifest != nil {
-		ctx = manifest.Environment.ContextLabel()
+		goal = strings.TrimSpace(manifest.Case.Goal)
+		env = manifest.Environment
+		ctx = env.ContextLabel()
+		purls = manifest.Packages
+		syms = manifest.Symbols
+		refs = packageRefs(purls)
 	}
+
+	// The title and description are the whole visible surface of this page
+	// in a search result, and the question the page answers is the goal.
+	// Titling it with the content address instead ("Sample sha256:9d1d…")
+	// gave every sample page a title nobody can search for.
+	title := i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID) + " — CodeSampleX"
+	if goal != "" {
+		title = goal
+		if len(refs) > 0 {
+			title += " · " + refs[0].Label
+		}
+		title += " — CodeSampleX"
+	}
+	// Description: the goal, then the facts that decide whether this
+	// answer applies to the reader — which packages, which environment.
+	// No adjective about how well it works; the level badge and the
+	// receipts on the page carry that, and they carry it exactly.
+	desc := i18n.T(lang, "site.meta_description")
+	if goal != "" {
+		desc = goal
+		var facts []string
+		for i, ref := range refs {
+			// A search snippet is ~160 characters and the goal already
+			// spends most of it. The page lists every package; the
+			// description names the ones that identify the sample.
+			if i == descPackageLimit {
+				facts = append(facts, "…")
+				break
+			}
+			facts = append(facts, strings.TrimPrefix(ref.PURL, "pkg:"))
+		}
+		if ctx != "" {
+			facts = append(facts, ctx)
+		}
+		if len(facts) > 0 {
+			desc += " — " + strings.Join(facts, " · ")
+		}
+	}
+
+	b := s.page(r, lang, title, desc)
+	b.OGType = "article"
+	base := s.base(r)
+	pageURL := base + sampleHref(meta.SampleID)
+	crumbs := [][2]string{{"CodeSampleX", base + "/"}}
+	if len(refs) > 0 && refs[0].Href != "" {
+		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil {
+			crumbs = append(crumbs, [2]string{parsed.Name, base + pkgHref(parsed.Ecosystem, parsed.Name)})
+		}
+	}
+	crumbName := goal
+	if crumbName == "" {
+		crumbName = shortHash(meta.SampleID)
+	}
+	crumbs = append(crumbs, [2]string{crumbName, pageURL})
+	b.JSONLD = []template.JS{breadcrumbJSONLD(crumbs)}
+	if goal != "" {
+		b.JSONLD = append(b.JSONLD,
+			sampleJSONLD(pageURL, goal, desc, meta.CreatedAt, meta.License, purls, syms, env))
+	}
+
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
-		Level: levelBadge(meta.Status), Context: ctx, Receipts: receipts,
+		Level: levelBadge(meta.Status), Context: ctx, Goal: goal,
+		Packages: refs, Receipts: receipts,
 	})
 }
 

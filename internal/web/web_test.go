@@ -161,8 +161,10 @@ func TestStatsPathRedirects(t *testing.T) {
 	if rec.Code != http.StatusMovedPermanently {
 		t.Fatalf("/stats status = %d, want 301", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/explore" {
-		t.Errorf("Location = %q, want /explore", loc)
+	// Straight to the destination: /explore is itself a 301 to /records,
+	// so pointing here made /stats a two-hop redirect chain.
+	if loc := rec.Header().Get("Location"); loc != "/records" {
+		t.Errorf("Location = %q, want /records", loc)
 	}
 	// And the nav no longer carries a Stats entry.
 	body := get(t, mux, "/").Body.String()

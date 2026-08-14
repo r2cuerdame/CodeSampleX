@@ -5,8 +5,10 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -92,6 +94,104 @@ func landingJSONLD(base, version, lang string) []template.JS {
 	return []template.JS{jsonLD(website), jsonLD(app), jsonLD(faq), jsonLD(org)}
 }
 
+// ecosystemLanguage maps an ecosystem to the language its packages are
+// written in, where that is unambiguous. npm is deliberately absent: an
+// npm sample is JavaScript or TypeScript and only the manifest's own
+// environment can say which, so the field is omitted rather than guessed.
+var ecosystemLanguage = map[string]string{
+	"pypi": "Python", "cargo": "Rust", "golang": "Go",
+}
+
+// spdxLicenseURL is the licenses the sample pool accepts (the
+// permissiveLicenses set enforced on upload in internal/httpapi), each
+// with its spdx.org page. It is an explicit table rather than a pattern
+// because "https://spdx.org/licenses/" + anything is a URL that may not
+// exist, and a structured-data claim that 404s is a wrong claim. Every
+// URL here was fetched and answers 200.
+var spdxLicenseURL = map[string]string{
+	"MIT-0":        "https://spdx.org/licenses/MIT-0.html",
+	"MIT":          "https://spdx.org/licenses/MIT.html",
+	"Apache-2.0":   "https://spdx.org/licenses/Apache-2.0.html",
+	"BSD-2-Clause": "https://spdx.org/licenses/BSD-2-Clause.html",
+	"BSD-3-Clause": "https://spdx.org/licenses/BSD-3-Clause.html",
+	"ISC":          "https://spdx.org/licenses/ISC.html",
+	"Unlicense":    "https://spdx.org/licenses/Unlicense.html",
+	"CC0-1.0":      "https://spdx.org/licenses/CC0-1.0.html",
+}
+
+// sampleJSONLD describes a published sample page.
+//
+// A sample is a small complete project: a goal written in words, a
+// contract that was executed, and the files that satisfy it. TechArticle
+// carries the prose half, SoftwareSourceCode the project half. Nothing
+// here asserts a verification level — that claim belongs to the receipts
+// rendered on the page, which say which environment actually ran it.
+func sampleJSONLD(pageURL, goal, desc, created, license string, pkgs, symbols []string, env domain.EnvironmentFingerprint) template.JS {
+	code := map[string]any{
+		"@type":          "SoftwareSourceCode",
+		"name":           goal,
+		"codeSampleType": "full (compile ready) solution",
+	}
+	switch lang := ecosystemLanguage[strings.ToLower(env.Ecosystem)]; {
+	case env.Language != "":
+		code["programmingLanguage"] = env.Language
+	case lang != "":
+		code["programmingLanguage"] = lang
+	}
+	if ctx := env.ContextLabel(); ctx != "" {
+		code["runtimePlatform"] = ctx
+	}
+
+	art := map[string]any{
+		"@context":    "https://schema.org",
+		"@type":       "TechArticle",
+		"headline":    goal,
+		"name":        goal,
+		"description": desc,
+		"url":         pageURL,
+		// The goal and the contract lines are authored English; the page
+		// chrome around them is translated, the sample text is not.
+		"inLanguage": "en",
+		"hasPart":    code,
+		"publisher": map[string]any{
+			"@type": "Organization", "name": "CodeSampleX",
+		},
+	}
+	if created != "" {
+		art["dateCreated"] = created
+		art["datePublished"] = created
+	}
+	if u, ok := spdxLicenseURL[license]; ok {
+		art["license"] = u
+	}
+	// keywords are the packages and symbols the sample is about — the
+	// literal terms someone searches for, not invented tags. The "pkg:"
+	// scheme prefix is an internal identifier and is dropped.
+	kw := make([]string, 0, len(pkgs)+len(symbols))
+	for _, p := range pkgs {
+		kw = append(kw, strings.TrimPrefix(p, "pkg:"))
+	}
+	kw = append(kw, symbols...)
+	if len(kw) > 0 {
+		art["keywords"] = strings.Join(kw, ", ")
+	}
+	about := make([]map[string]any, 0, len(pkgs))
+	for _, p := range pkgs {
+		parsed, err := domain.ParsePURL(p)
+		if err != nil {
+			continue
+		}
+		about = append(about, map[string]any{
+			"@type": "SoftwareApplication", "name": parsed.Name,
+			"softwareVersion": parsed.Version, "applicationCategory": "DeveloperApplication",
+		})
+	}
+	if len(about) > 0 {
+		art["about"] = about
+	}
+	return jsonLD(art)
+}
+
 // breadcrumbJSONLD emits a BreadcrumbList for explorer pages. crumbs are
 // (name, absolute URL) pairs in order.
 func breadcrumbJSONLD(crumbs [][2]string) template.JS {
@@ -126,8 +226,31 @@ func xmlEscape(s string) string {
 	return r.Replace(s)
 }
 
+// sitemapSampleLimit caps the sample section of the map. The sitemap
+// protocol allows 50,000 URLs per file; this leaves room for the package
+// section and keeps a single /sitemap.xml request bounded.
+const sitemapSampleLimit = 5000
+
+// sampleIDRe guards the sample ids that go into the sitemap. Ids are
+// content addresses ("sha256:<hex>"), and the colon is a legal path
+// character that every canonical URL on the site already carries — so the
+// id is emitted verbatim rather than percent-escaped, which would
+// advertise a URL that differs from the page's own rel=canonical. Anything
+// that is not that shape is skipped instead of guessed at.
+var sampleIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:_-]{0,127}$`)
+
+// sampleHref is the site path of a published sample page.
+func sampleHref(id string) string { return "/samples/" + id }
+
 // sitemap lists the per-locale landing cluster (with xhtml alternates),
-// the static indexable pages, and the hot packages (plan P6.3).
+// the static indexable pages, the hot packages (plan P6.3) and every
+// published sample.
+//
+// The samples are the point: each one is a page answering one specific
+// question ("deny_unknown_fields with flatten", "NewFromFloat 0.1"), and
+// before they were listed here nothing on the site linked to them at all —
+// the seeder page is the only other route to a sample page and every
+// published sample is anonymous, so all of them were unreachable.
 func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 	base := s.base(r)
 	var b strings.Builder
@@ -138,6 +261,13 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 		b.WriteString("  <url>\n    <loc>" + xmlEscape(loc) + "</loc>\n")
 		for _, a := range alts {
 			b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Lang + `" href="` + xmlEscape(a.URL) + `"/>` + "\n")
+		}
+		b.WriteString("  </url>\n")
+	}
+	writeDated := func(loc, lastmod string) {
+		b.WriteString("  <url>\n    <loc>" + xmlEscape(loc) + "</loc>\n")
+		if lastmod != "" {
+			b.WriteString("    <lastmod>" + xmlEscape(lastmod) + "</lastmod>\n")
 		}
 		b.WriteString("  </url>\n")
 	}
@@ -153,7 +283,7 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// /stats and /adapters are permanent redirects and stay out of the map.
-	for _, p := range []string{"/records"} {
+	for _, p := range []string{"/records", "/findings"} {
 		writeURL(base+p, nil)
 	}
 
@@ -161,6 +291,18 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 		for _, h := range hot {
 			loc := base + "/" + url.PathEscape(h.Ecosystem) + "/" + escapePathSegments(h.Name)
 			writeURL(loc, nil)
+		}
+	}
+
+	// Every published sample. lastmod is the publication date: a sample is
+	// immutable once published (its id is the hash of its contents), so the
+	// date it was created is the only honest value.
+	if samples, err := s.d.Store.ListSamples(r.Context(), sitemapSampleLimit); err == nil {
+		for _, sm := range samples {
+			if !sampleIDRe.MatchString(sm.SampleID) {
+				continue
+			}
+			writeDated(base+sampleHref(sm.SampleID), datePart(sm.CreatedAt))
 		}
 	}
 
