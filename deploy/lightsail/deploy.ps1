@@ -63,11 +63,43 @@ Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/
 Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
 Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schemas/v1/adapters.json"
 
+# The download endpoint is fed from the LATEST GITHUB RELEASE, never from
+# whatever happens to be sitting in dist/.
+#
+# It used to ship the local folder, and the local folder was last built by
+# hand. The result: every deploy re-shipped v0.1.0 to codesamplex.dev/dl
+# while GitHub's latest was v0.1.2, so everyone who followed the README got
+# a binary two releases old — including the one that inferred consent from
+# EOF, which meant `curl ... | sh` enrolled people in evidence sharing
+# without anyone answering the question. Two sources of truth, and the
+# hand-fed one was the one users actually got.
 $dist = Join-Path $repo "dist"
-if (Test-Path $dist) {
-    Get-ChildItem $dist -File | ForEach-Object { Copy-Remote $_.FullName "/opt/codesamplex/dist/$($_.Name)" }
-    Write-Output "shipped $((Get-ChildItem $dist -File).Count) release artifacts"
+New-Item -ItemType Directory -Force $dist | Out-Null
+Write-Output "== fetching release artifacts =="
+$tag = (& gh release view --repo r2cuerdame/CodeSampleX --json tagName --jq .tagName)
+if ($LASTEXITCODE -ne 0 -or -not $tag) { throw "could not read the latest release tag" }
+Get-ChildItem $dist -File | Remove-Item -Force
+Invoke-Native "gh release download" {
+    & gh release download $tag --repo r2cuerdame/CodeSampleX --dir $dist --clobber
 }
+$artifacts = Get-ChildItem $dist -File
+if ($artifacts.Count -eq 0) { throw "release $tag produced no artifacts" }
+# The checksums the release published, verified before anything is served.
+$sums = Join-Path $dist "SHA256SUMS.txt"
+if (Test-Path $sums) {
+    foreach ($line in Get-Content $sums) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -ne 2) { continue }
+        $name = $parts[1].TrimStart('*').Trim()
+        $file = Join-Path $dist $name
+        if (-not (Test-Path $file)) { continue }
+        $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+        if ($have -ne $parts[0].ToLower()) { throw "checksum mismatch for $name" }
+    }
+    Write-Output "checksums verified against the release"
+}
+$artifacts | ForEach-Object { Copy-Remote $_.FullName "/opt/codesamplex/dist/$($_.Name)" }
+Write-Output "shipped $($artifacts.Count) artifacts from $tag"
 
 # .env holds the generated DB password: write once, never overwrite.
 $pw = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
