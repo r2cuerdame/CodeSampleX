@@ -312,6 +312,12 @@ func urlAllowed(raw string, extra []string) bool {
 	} else {
 		return false
 	}
+	// A hostname cannot contain a backslash, so one here is escaping from a
+	// pattern literal: a test asserting on a URL writes %r{https://api\.
+	// example\.com/items} or /https:\/\/api\.example\.com/, and the escaped
+	// host matched nothing in the allowlist. Unescape rather than skip, so a
+	// host that is NOT allowlisted is still caught when written as a regex.
+	host = strings.ReplaceAll(host, `\`, "")
 	// A placeholder inside the host itself is not a known host.
 	if templateExprRe.MatchString(host) {
 		return false

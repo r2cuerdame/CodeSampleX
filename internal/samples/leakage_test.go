@@ -344,3 +344,33 @@ func TestLeakageScanAllowsTestClientSentinelHost(t *testing.T) {
 		}
 	}
 }
+
+// A test that asserts on a URL writes it as a pattern, and the escapes made
+// an allowlisted host match nothing: %r{https://api\.example\.com/items}
+// was refused for naming example.com. A hostname cannot contain a backslash,
+// so one there is always escaping.
+func TestLeakageScanUnescapesHostsWrittenAsPatterns(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test/contract.rb",
+		`assert_match(%r{https://api\.example\.com/items}, err.message)`)
+	writeFile(t, dir, "test/contract.js",
+		`expect(url).toMatch(/https:\/\/api\.example\.com/)`)
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindURL {
+			t.Errorf("allowlisted host written as a pattern was flagged: %+v", f)
+		}
+	}
+}
+
+// Unescaping must not become a way through: a host that is not allowlisted
+// is still caught when it is written as a regex.
+func TestLeakageScanStillFlagsUnknownHostsWrittenAsPatterns(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test/contract.rb",
+		`assert_match(%r{https://wiki\.internal-acme\.io/runbook}, msg)`)
+
+	if !kindsFor(mustScan(t, dir), "test/contract.rb")[KindURL] {
+		t.Error("an unknown host written as a regex was not flagged")
+	}
+}
