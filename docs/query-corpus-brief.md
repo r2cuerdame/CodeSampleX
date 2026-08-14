@@ -38,7 +38,7 @@ Rules that decide whether the output is usable:
 Return JSON:
 
 ```json
-[{"package":"pkg:pypi/protobuf@7.35.1",
+[{"package":"pkg:<ecosystem>/<name>@<version>",
   "questions":[{"q":"...","envDecided":true,"whatTheyWant":"one line"}]}]
 ```
 
@@ -58,7 +58,7 @@ Return JSON:
 
 ```json
 [{"package":"...","prior":"...","reality":"...","priorWasWrong":true,
-  "envSetting":"PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+  "envSetting":"<the flag, env var or libc that flips it, or empty>",
   "howItFailsQuietly":"one line, or empty if it fails loudly"}]
 ```
 
