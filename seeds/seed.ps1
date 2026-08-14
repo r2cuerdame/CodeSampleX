@@ -120,7 +120,15 @@ foreach ($n in $names) {
     Pop-Location
     Write-Output ("  {0,-30} csx run exit={1}" -f $n, $code)
 }
-& $csx sync | Select-Object -Last 1
+# `csx sync` prints its non-fatal notices to stderr ("shard sync gem/faraday/2:
+# throttled, retry after 1s"), and PowerShell turns any native stderr line into
+# a NativeCommandError that kills the script — after every sample has already
+# been published. The whole run then reports failure over a warning it had
+# deliberately labelled non-fatal. Same trap deploy.ps1 hit with ssh.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $csx sync 2>&1 | Select-Object -Last 1 | ForEach-Object { Write-Output "$_" }
+$ErrorActionPreference = $prevEAP
 
 Write-Output ""
 Write-Output "published $($published.Count)/$($names.Count) samples"
