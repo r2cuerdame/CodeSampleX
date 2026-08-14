@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
@@ -119,10 +121,48 @@ func (s *Syncer) SyncKey(ctx context.Context, key string) error {
 			return err
 		}
 		return s.indexShard(ctx, key, body)
+	case http.StatusTooManyRequests:
+		// A throttled warm used to fall into default and be dropped as a
+		// plain error, leaving that package with no shard — and search
+		// answers NO_SAFE_MATCH for a package it has no shard for, so the
+		// user simply never got an answer about it and nothing said why.
+		// Retry-After is what the server is asking for; honour it.
+		return retryAfterError{key: key, wait: parseRetryAfter(resp.Header.Get("Retry-After"))}
 	default:
 		return fmt.Errorf("shard sync %s: unexpected status %d", key, resp.StatusCode)
 	}
 }
+
+// retryAfterError marks a key the server asked us to come back for, as
+// opposed to one that failed. SyncAll waits and retries these rather than
+// leaving a hole in the cache.
+type retryAfterError struct {
+	key  string
+	wait time.Duration
+}
+
+func (e retryAfterError) Error() string {
+	return fmt.Sprintf("shard sync %s: throttled, retry after %s", e.key, e.wait)
+}
+
+// parseRetryAfter reads the delta-seconds form and clamps it. A server that
+// asks for an hour must not hang an install; the caller's context bounds
+// the wait anyway.
+func parseRetryAfter(v string) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return time.Second
+	}
+	if d := time.Duration(n) * time.Second; d < maxRetryAfter {
+		return d
+	}
+	return maxRetryAfter
+}
+
+const (
+	maxRetryAfter   = 10 * time.Second
+	throttleRetries = 3
+)
 
 // indexShard writes one FTS doc per symbol entry and per sample entry.
 // Bodies hold only aggregate keywords (confidence, stages, error codes) and
@@ -181,14 +221,42 @@ func (s *Syncer) indexShard(ctx context.Context, key string, body []byte) error 
 // SyncAll syncs every key, continuing past individual failures so one
 // unreachable shard (or a down server) never blocks the rest (goal.md §3.9).
 // All failures are aggregated into the returned error.
-func (s *Syncer) SyncAll(ctx context.Context, keys []string) error {
+// SyncAll warms every key and returns HOW MANY ACTUALLY SUCCEEDED.
+//
+// It used to return only an error, and the caller reported len(keys) as the
+// warmed count — so a sync that failed every key still printed "warmed shard
+// keys: 124" and exited 0. A count of what was attempted is not a count of
+// what worked, and the user was reading it as the latter.
+func (s *Syncer) SyncAll(ctx context.Context, keys []string) (int, error) {
 	var errs []error
+	done := 0
 	for _, key := range keys {
-		if err := s.SyncKey(ctx, key); err != nil {
+		err := s.syncKeyWithRetry(ctx, key)
+		if err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		done++
+	}
+	return done, errors.Join(errs...)
+}
+
+// syncKeyWithRetry waits out a throttle rather than leaving the key unwarmed.
+func (s *Syncer) syncKeyWithRetry(ctx context.Context, key string) error {
+	var err error
+	for attempt := 0; attempt <= throttleRetries; attempt++ {
+		err = s.SyncKey(ctx, key)
+		var throttled retryAfterError
+		if !errors.As(err, &throttled) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(throttled.wait):
 		}
 	}
-	return errors.Join(errs...)
+	return err
 }
 
 // WarmKeys builds the shard warm list in §11.2 priority order:

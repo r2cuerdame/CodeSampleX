@@ -496,7 +496,13 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	}
 
 	// Execution context: always sensitive.
-	reqCtx, sampleCtx := req.ExecutionContext, sample.ExecutionContext
+	//
+	// Resolved rather than read raw. A caller that does not set
+	// executionContext — which is most of them, since an agent reports what
+	// it detected — lost the comparison entirely, and with it the only axis
+	// that separates one language's samples from another's. The client's
+	// grader already falls back this way; the server did not.
+	reqCtx, sampleCtx := resolveContext(req), resolveContext(sample)
 	ctxMismatch := reqCtx != "" && sampleCtx != "" && reqCtx != sampleCtx
 	if req.BrowserFamily != "" && sample.BrowserFamily != "" && req.BrowserFamily != sample.BrowserFamily {
 		ctxMismatch = true
@@ -582,6 +588,18 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 		d.fit *= 0.85
 	} else {
 		cmp("arch", req.Arch, sample.Arch)
+	}
+
+	// Language, which nothing compared at all although both sides declare it.
+	// With executionContext absent on the request this was the last thing
+	// standing between a Python question and a Go sample, and a cross-language
+	// hit came back reporting the package manager as its only difference.
+	if req.Language != "" && sample.Language != "" && req.Language != sample.Language {
+		d.grade = worseGrade(d.grade, domain.GradeReferenceOnly)
+		d.different = append(d.different, "language "+req.Language+" (sample: "+sample.Language+")")
+		d.fit *= 0.3
+	} else {
+		cmp("language", req.Language, sample.Language)
 	}
 
 	// Non-sensitive dims: mild penalties, honest delta lines.
@@ -750,4 +768,18 @@ func runtimeLine(runtime, version string) string {
 		return segs[0]
 	}
 	return majorSeg(version)
+}
+
+// resolveContext is the execution context an environment actually describes,
+// falling back the way the client's grader does: an explicit context, else a
+// browser family, else the runtime. Reading ExecutionContext raw meant a
+// request that omitted it skipped the comparison altogether.
+func resolveContext(e domain.EnvironmentFingerprint) string {
+	if e.ExecutionContext != "" {
+		return strings.ToLower(e.ExecutionContext)
+	}
+	if e.BrowserFamily != "" {
+		return "browser"
+	}
+	return strings.ToLower(e.Runtime)
 }

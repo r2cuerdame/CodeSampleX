@@ -66,9 +66,9 @@ type Daemon struct {
 	Engine  *search.Engine
 	Syncer  *search.Syncer
 	Batcher *evidence.Batcher
-	Peer    *peer.Node               // nil unless cfg.peerListen
-	Cross   *verifier.CrossVerifier  // nil unless cfg.idleVerification != off
-	HTTP    *http.Client             // server-bound calls; nil = 30s default
+	Peer    *peer.Node              // nil unless cfg.peerListen
+	Cross   *verifier.CrossVerifier // nil unless cfg.idleVerification != off
+	HTTP    *http.Client            // server-bound calls; nil = 30s default
 
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
@@ -334,7 +334,7 @@ func (d *Daemon) warmNow(ctx context.Context) (int, error) {
 	if len(keys) == 0 {
 		return 0, nil
 	}
-	return len(keys), d.Syncer.SyncAll(ctx, keys)
+	return d.Syncer.SyncAll(ctx, keys)
 }
 
 // warmKeyList builds the warm list: recent public packages from the local
@@ -430,10 +430,15 @@ func (d *Daemon) fetchHot(ctx context.Context) []string {
 // state is never harmed (goal.md §3.9, §25.F).
 func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	res := SyncResult{SchemaVersion: 1}
+	// WarmedKeys is what SUCCEEDED, not what was attempted. Assigning
+	// len(keys) before the sync ran meant a completely failed sync still
+	// printed "warmed shard keys: 124" and exited 0, and the number is read
+	// as a statement of fact about the local cache.
 	keys := d.warmKeyList(ctx)
-	res.WarmedKeys = len(keys)
 	if len(keys) > 0 {
-		if err := d.Syncer.SyncAll(ctx, keys); err != nil {
+		warmed, err := d.Syncer.SyncAll(ctx, keys)
+		res.WarmedKeys = warmed
+		if err != nil {
 			res.Errors = append(res.Errors, err.Error())
 		}
 	}

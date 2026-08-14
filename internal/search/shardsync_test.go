@@ -264,9 +264,13 @@ func TestShardSyncAllContinuesOnFailure(t *testing.T) {
 
 	db := newTestDB(t)
 	sy := &Syncer{DB: db, HTTP: ts.Client(), ServerURL: ts.URL}
-	err := sy.SyncAll(ctx, []string{"npm/boom/1", "npm/axios/1"})
+	warmed, err := sy.SyncAll(ctx, []string{"npm/boom/1", "npm/axios/1"})
 	if err == nil {
 		t.Fatalf("SyncAll must aggregate the 500 into an error")
+	}
+	// The count is of keys that actually synced, so the failed one is not in it.
+	if warmed != 1 {
+		t.Errorf("warmed = %d, want 1 (one key failed)", warmed)
 	}
 	// The failing key must not prevent the good key from syncing.
 	if _, ok, gerr := db.GetShard(ctx, "npm/axios/1"); gerr != nil || !ok {
