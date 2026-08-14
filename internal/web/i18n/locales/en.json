@@ -82,6 +82,7 @@
   "sample.goal": "Goal",
   "sample.contract": "Contract",
   "sample.files": "Files",
+  "sample.download": "Download the verified artifact (tar.gz) — the exact bytes the contract ran against",
   "sample.receipts": "Verification receipts",
   "sample.origin": "Origin Seeder",
   "sample.status": "Status",

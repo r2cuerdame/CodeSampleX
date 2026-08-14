@@ -82,6 +82,7 @@
   "sample.goal": "목표",
   "sample.contract": "컨트랙트",
   "sample.files": "파일",
+  "sample.download": "검증된 아티팩트 내려받기 (tar.gz) — 컨트랙트가 실제로 실행된 바로 그 바이트",
   "sample.receipts": "검증 영수증",
   "sample.origin": "오리진 시더",
   "sample.status": "상태",

@@ -82,6 +82,7 @@
   "sample.goal": "Ziel",
   "sample.contract": "Contract",
   "sample.files": "Dateien",
+  "sample.download": "Verifiziertes Artefakt herunterladen (tar.gz) — genau die Bytes, gegen die der Contract lief",
   "sample.receipts": "Verifizierungsbelege",
   "sample.origin": "Ursprungs-Seeder",
   "sample.status": "Status",

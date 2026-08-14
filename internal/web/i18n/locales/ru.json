@@ -82,6 +82,7 @@
   "sample.goal": "Цель",
   "sample.contract": "Контракт",
   "sample.files": "Файлы",
+  "sample.download": "Скачать проверенный артефакт (tar.gz) — те самые байты, на которых выполнялся контракт",
   "sample.receipts": "Квитанции проверки",
   "sample.origin": "Исходный сидер",
   "sample.status": "Статус",

@@ -45,6 +45,11 @@
   <li>{{.}}</li>
 {{- end}}
 </ul>
+{{/* Naming the files without offering them left a visitor who arrived from
+     a search result unable to read the sample that answered their question,
+     which is most of the point of the page. The artifact endpoint is public
+     and content-addressed, so the link hands over exactly what was verified. */}}
+<p class="small"><a class="mono" href="/v1/samples/{{.Meta.SampleID}}/artifact">{{.T "sample.download"}}</a></p>
 
 <h2 class="eyebrow mono">{{.T "sample.origin"}}</h2>
 {{if .Meta.OriginSeeder}}

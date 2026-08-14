@@ -82,6 +82,7 @@
   "sample.goal": "ゴール",
   "sample.contract": "コントラクト",
   "sample.files": "ファイル",
+  "sample.download": "検証済みアーティファクトをダウンロード (tar.gz) — 契約が実行された正確なバイト列",
   "sample.receipts": "検証レシート",
   "sample.origin": "オリジンシーダー",
   "sample.status": "ステータス",

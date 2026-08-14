@@ -82,6 +82,7 @@
   "sample.goal": "目标",
   "sample.contract": "契约",
   "sample.files": "文件",
+  "sample.download": "下载已验证的构件 (tar.gz) — 契约实际运行的那些字节",
   "sample.receipts": "验证回执",
   "sample.origin": "原始种子者",
   "sample.status": "状态",
