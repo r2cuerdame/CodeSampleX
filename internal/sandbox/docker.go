@@ -42,6 +42,19 @@ func imageFor(ecosystem, runtime string) (string, error) {
 		return "golang:1.26-alpine", nil
 	case "cargo":
 		return "rust:1-alpine", nil
+	case "composer":
+		// One image for both stages on purpose. Composer writes
+		// vendor/composer/platform_check.php from the PHP version it
+		// resolved under, and the contract aborts when the runtime differs —
+		// so resolving on composer:2 and testing on php:8-alpine couples two
+		// tags that drift independently.
+		return "composer:2", nil
+	case "gem":
+		return "ruby:3-alpine", nil
+	case "pub":
+		return "dart:3.13.0", nil
+	case "hex":
+		return "elixir:1.20.1-alpine", nil
 	}
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
@@ -64,6 +77,14 @@ func imageRuntime(ecosystem, runtime string) (rt, version, language string) {
 		return "go", "1.26", "go"
 	case "cargo":
 		return "rust", "1", "rust"
+	case "composer":
+		return "php", "8", "php"
+	case "gem":
+		return "ruby", "3", "ruby"
+	case "pub":
+		return "dart", "3", "dart"
+	case "hex":
+		return "elixir", "1", "elixir"
 	}
 	return "", "", ""
 }

@@ -108,6 +108,28 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		return []string{"go", "mod", "download"}, nil
 	case "cargo":
 		return []string{"cargo", "fetch"}, nil
+	case "composer":
+		// --no-scripts and --no-plugins are the composer equivalent of
+		// npm's --ignore-scripts: composer.json is data, but scripts and
+		// plugins in it are code, and they would run here with the network.
+		return []string{"composer", "install", "--no-scripts", "--no-plugins",
+			"--no-interaction", "--no-progress", "--prefer-dist"}, nil
+	case "gem":
+		// Bundler is not in the image's default gem set on every tag, and
+		// installing it here keeps the contract stage free of network.
+		return []string{"sh", "-c",
+			"gem install bundler --no-document -q && bundle install --quiet"}, nil
+	case "pub":
+		return []string{"dart", "pub", "get"}, nil
+	case "hex":
+		// mix.exs is executable Elixir, and every mix task compiles and
+		// evaluates it — the build.gradle.kts problem exactly. So the
+		// resolve never lets mix see the project: it runs from a scratch
+		// directory with no mix.exs (mix does not search parents), reads the
+		// package set out of mix.lock by TEXT, and fetches each one with
+		// hex.package. Never evaluate mix.lock with an Elixir evaluator;
+		// that would reintroduce the execution this avoids.
+		return []string{"sh", "-c", hexResolveScript}, nil
 	}
 	return nil, fmt.Errorf("sandbox: unsupported ecosystem %q", ecosystem)
 }
@@ -123,6 +145,29 @@ func stageEnv(ecosystem, runtime string) []string {
 		return []string{"DENO_DIR=" + vendorDir + "/deno"}
 	}
 	switch ecosystem {
+	case "composer":
+		return []string{
+			"COMPOSER_HOME=" + vendorDir + "/composer",
+			"COMPOSER_CACHE_DIR=" + vendorDir + "/composer/cache",
+		}
+	case "gem":
+		return []string{
+			"GEM_HOME=" + vendorDir + "/gems",
+			"GEM_PATH=" + vendorDir + "/gems",
+			"BUNDLE_PATH=" + vendorDir + "/gems",
+			"BUNDLE_APP_CONFIG=" + vendorDir + "/bundle",
+		}
+	case "pub":
+		return []string{"PUB_CACHE=" + vendorDir + "/pub"}
+	case "hex":
+		// MIX_ENV must match in both stages: _build is per-env, so
+		// resolving under one and testing under another silently rebuilds
+		// and then fails with no network.
+		return []string{
+			"MIX_HOME=" + vendorDir + "/mix",
+			"HEX_HOME=" + vendorDir + "/hex",
+			"MIX_ENV=test",
+		}
 	case "pypi":
 		return []string{"PYTHONPATH=" + vendorDir + "/py", "PYTHONDONTWRITEBYTECODE=1"}
 	case "golang":
@@ -139,3 +184,26 @@ func stageEnv(ecosystem, runtime string) []string {
 	}
 	return nil
 }
+
+// hexResolveScript fetches the packages mix.lock pins without ever letting
+// mix evaluate the sample's mix.exs. It requires the sample to ship a
+// committed mix.lock — that file is the full transitive closure, so no
+// resolver is needed, and a sample without one cannot be verified.
+// The name and version are cut out with parameter expansion rather than a
+// sed replacement. That is not a style choice: the sed form was written as
+// 's/.../\1@\2/' and reached this file as 's/.../@/' after a round trip
+// through tooling that ate the backreferences, so every fetch ran as
+// `mix hex.package fetch "" ""`. The script still read correctly and failed
+// only inside a container, which is the worst place to find out.
+const hexResolveScript = `set -e
+mkdir -p ` + vendorDir + `/nomix /work/deps
+cd ` + vendorDir + `/nomix
+mix local.hex --force >/dev/null
+mix local.rebar --force >/dev/null
+for s in $(grep -oE ':hex, :[A-Za-z0-9_]+, "[^"]+"' /work/mix.lock | tr -d ' "'); do
+  n=${s#:hex,:}
+  n=${n%%,*}
+  v=${s##*,}
+  test -n "$n" && test -n "$v"
+  mix hex.package fetch "$n" "$v" --unpack --output "/work/deps/$n"
+done`

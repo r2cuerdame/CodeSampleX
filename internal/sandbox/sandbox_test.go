@@ -291,3 +291,69 @@ func TestRuntimePicksTheImage(t *testing.T) {
 		t.Errorf("deno needs DENO_DIR inside the workspace, got %v", stageEnv("npm", "deno"))
 	}
 }
+
+// TestEveryEcosystemKeepsCachesInTheWorkspace covers the rule that decides
+// whether an ecosystem can be supported at all: resolve and contract are
+// separate containers sharing only /work, so any toolchain cache outside it
+// is gone before the contract runs.
+func TestEveryEcosystemKeepsCachesInTheWorkspace(t *testing.T) {
+	for _, eco := range []string{"pypi", "golang", "cargo", "composer", "gem", "pub", "hex"} {
+		env := stageEnv(eco, "")
+		if len(env) == 0 {
+			t.Errorf("%s: no cache redirection, its resolve output cannot survive the stage boundary", eco)
+			continue
+		}
+		for _, kv := range env {
+			key, value, ok := strings.Cut(kv, "=")
+			if !ok {
+				t.Errorf("%s: %q is not KEY=VALUE", eco, kv)
+				continue
+			}
+			if !strings.Contains(value, "/") {
+				continue // a flag or mode, not a path
+			}
+			if !strings.HasPrefix(value, "/work/") {
+				t.Errorf("%s: %s points at %s, outside the mounted workspace", eco, key, value)
+			}
+		}
+		if _, err := imageFor(eco, ""); err != nil {
+			t.Errorf("%s: no image: %v", eco, err)
+		}
+		if _, err := resolveCommand(eco, ""); err != nil {
+			t.Errorf("%s: no resolve command: %v", eco, err)
+		}
+		if rt, ver, lang := imageRuntime(eco, ""); rt == "" || ver == "" || lang == "" {
+			t.Errorf("%s: incomplete runtime metadata %q/%q/%q — a receipt that cannot describe "+
+				"where it ran does not count as environment diversity", eco, rt, ver, lang)
+		}
+	}
+}
+
+// TestResolveNeverRunsSampleCode pins the rule that rejected Gradle and
+// Swift: the network-on stage must not execute anything the sample author
+// wrote. Each ecosystem clears it differently, so the guard is that the
+// command carries its ecosystem's specific opt-out.
+func TestResolveNeverRunsSampleCode(t *testing.T) {
+	for eco, mustContain := range map[string]string{
+		"npm":      "--ignore-scripts",
+		"composer": "--no-scripts",
+		"hex":      "hex.package fetch", // never `mix deps.get`, which evaluates mix.exs
+	} {
+		cmd, err := resolveCommand(eco, "")
+		if err != nil {
+			t.Fatalf("%s: %v", eco, err)
+		}
+		if !strings.Contains(strings.Join(cmd, " "), mustContain) {
+			t.Errorf("%s resolve %v is missing %q", eco, cmd, mustContain)
+		}
+	}
+	// The hex resolve must never hand mix.lock to an Elixir evaluator, and
+	// must never run a mix task from the project directory.
+	hex, _ := resolveCommand("hex", "")
+	script := strings.Join(hex, " ")
+	for _, forbidden := range []string{"deps.get", "Code.eval", "elixir /work"} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("hex resolve contains %q, which would evaluate the sample's own code", forbidden)
+		}
+	}
+}
