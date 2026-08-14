@@ -29,7 +29,7 @@ func runRecomputeStatus(cfg serverstore.ServerConfig, args []string, stdout, std
 	fs := flag.NewFlagSet("recompute-status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	apply := fs.Bool("apply", false, "write the recomputed statuses (default: report only)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return 2
 	}
 

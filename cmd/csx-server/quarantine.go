@@ -28,7 +28,7 @@ func runQuarantine(cfg serverstore.ServerConfig, args []string, stdout, stderr i
 	fs.SetOutput(stderr)
 	reason := fs.String("reason", "", "why it is being hidden (recorded on the row)")
 	release := fs.Bool("release", false, "restore a previously quarantined sample")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
