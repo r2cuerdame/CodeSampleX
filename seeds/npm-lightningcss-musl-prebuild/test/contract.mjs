@@ -143,10 +143,18 @@ assert.deepEqual(platformManifest("lightningcss-linux-x64-musl").os, ["linux"]);
 // which is why every darwin, win32, freebsd, android and arm64 package was
 // still correctly skipped.
 //
-// What decides this is the npm that wrote the lock, not the lockfile format:
-// npm 12 writes libc into a lockfileVersion 3 lock, and `npm ci` from that
-// lock installs only the musl package. So the version below is part of the
-// finding, and regenerating the lock under a newer npm is the fix.
+// What decides this is the npm that wrote the lock, not the lockfile format.
+// This was npm/cli#8514, fixed by npm/cli#9025, which added `libc` to
+// pkgMetaKeys in shrinkwrap.js and shipped in npm 11.11.0 on 2026-02-24:
+// from 11.11.0 onward the writer records libc into a still-lockfileVersion-3
+// lock and `npm ci` from it installs only the musl package.
+//
+// The fix is in the WRITER alone, which is what makes it easy to miss.
+// Bisected on this image: npm 10.9.8 through 11.10.1 omit libc, 11.11.0
+// onward record it. An npm 12 reading a lock written by npm 10 still
+// installs both, and an npm 10 reading a lock written by npm 11.11.0
+// installs only musl. So upgrading npm is not the fix — regenerating the
+// lockfile is.
 assert.deepEqual(tree.installedPlatformPackages, [
   "lightningcss-linux-x64-gnu",
   "lightningcss-linux-x64-musl",
@@ -154,7 +162,7 @@ assert.deepEqual(tree.installedPlatformPackages, [
 assert.match(
   bundledNpmVersion(),
   /^10\./,
-  `image npm is ${bundledNpmVersion()}: npm 12 records libc in the lockfile and installs only the musl package`,
+  `image npm is ${bundledNpmVersion()}: npm 11.11.0 and later record libc in the lockfile, and a lock written by one of those narrows to the musl package alone`,
 );
 const { lockfileVersion, entries } = lockedPlatformEntries();
 assert.equal(lockfileVersion, 3);

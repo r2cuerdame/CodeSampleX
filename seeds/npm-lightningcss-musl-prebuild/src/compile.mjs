@@ -149,8 +149,13 @@ export function loadedNativeModules() {
  * node:22-alpine records `os` and `cpu` per entry and drops `libc`, even
  * though the registry manifests carry it, which is why `npm ci` on Alpine
  * cannot narrow linux-x64 down to one libc the way `npm install` can. What
- * decides this is the npm that wrote the lock, not the format: npm 12 writes
- * `libc` into a lockfileVersion 3 lock and then installs only the musl one.
+ * decides this is the npm that wrote the lock, not the format: npm 11.11.0
+ * added `libc` to the writer's pkgMetaKeys (npm/cli#9025, closing
+ * npm/cli#8514) and records it in a still-lockfileVersion-3 lock.
+ *
+ * It is not specific to `npm ci`, either: a plain `npm install` re-run
+ * against a libc-less lock installs both variants too. Nor to lightningcss —
+ * rollup's platform packages behave identically.
  */
 export function lockedPlatformEntries() {
   const lock = JSON.parse(readFileSync(path.join(seedRoot, "package-lock.json"), "utf8"));

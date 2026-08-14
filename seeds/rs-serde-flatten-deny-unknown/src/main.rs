@@ -4,12 +4,22 @@
 //! against serde 1.0.229 / serde_json 1.0.151, and the error strings are
 //! quoted exactly because they are the only feedback you get.
 //!
-//! The headline is deny_unknown_fields with flatten. Every write-up calls the
-//! pair "incompatible", which is heard as "the derive will stop me". It does
-//! not: rustc_probe/deny_unknown_with_flatten.rs compiles with an empty
-//! stderr, no error and no warning, and this program proves that by running
-//! rustc on it. The incompatibility is a run-time one and it points the
-//! opposite way from what people expect, in BOTH directions:
+//! The headline is deny_unknown_fields with flatten. serde's own
+//! documentation says the attribute is "not supported in combination with
+//! flatten, neither on the outer struct nor on the flattened field", which is
+//! read as "the derive will stop me". It does not stop you, and the reason is
+//! not a missing check: serde_derive IMPLEMENTS the combination
+//! (serde_derive/src/de/struct_.rs handles deny_unknown_fields on a struct
+//! carrying a flatten field) and serde's own test suite covers it. So
+//! rustc_probe/deny_unknown_with_flatten.rs compiles with an empty stderr
+//! because the pair is supported, not because it slipped through — and this
+//! program proves the empty stderr by running rustc on it.
+//!
+//! What the doc note gets wrong is its breadth. The ordinary case works
+//! exactly as you would hope, and the test below asserts it: flattening a
+//! plain struct into a deny_unknown_fields struct accepts the flattened
+//! fields and rejects only genuine leftovers. Three narrower shapes are the
+//! ones that bite, and two of them are asserted here:
 //!
 //!   * deny_unknown_fields on the struct that owns the flatten field turns
 //!     the flatten target into dead weight. A flattened map can never collect
@@ -20,6 +30,11 @@
 //!
 //! The second is the dangerous one: you write a strict type, flatten it, and
 //! the strictness quietly evaporates with no diagnostic at any stage.
+//!
+//! Both are known upstream (serde-rs/serde#1547, #2384). The useful summary
+//! is not "the pair is incompatible" but "the pair is implemented, the
+//! documentation overstates the problem, and the strictness you asked for
+//! survives in one direction only".
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

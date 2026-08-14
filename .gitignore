@@ -26,3 +26,6 @@ Thumbs.db
 seeds/*/node_modules/
 
 seeds/*/.csx-vendor/
+
+# Rust build output in a seed: never published, and it is 100MB of noise
+seeds/*/target/
