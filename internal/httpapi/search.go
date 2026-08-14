@@ -405,6 +405,15 @@ func (a *api) matchingClusters(r *http.Request, p domain.PURL,
 	reqDims := envDims(reqEnv)
 	var out []domain.KnownFailure
 	for _, c := range clusters {
+		// The store looks clusters up by BARE PACKAGE NAME, and the
+		// ecosystem was never checked — so a Rust failure recorded for
+		// cargo/uuid capped an npm/uuid sample at REFERENCE_ONLY and was
+		// shown to the caller as a known failure of the package they asked
+		// about. Names collide across ecosystems constantly: uuid, semver,
+		// yaml, http, decimal, csv.
+		if c.Ecosystem != "" && p.Ecosystem != "" && c.Ecosystem != p.Ecosystem {
+			continue
+		}
 		if c.EnvSummaryJSON == "" {
 			continue
 		}
@@ -484,7 +493,14 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	if reqVersion != "" && matched.Name != "" && matched.Version != reqVersion {
 		reqP := domain.PURL{Ecosystem: matched.Ecosystem, Name: matched.Name, Version: reqVersion}
 		switch {
-		case reqP.Major() != matched.Major():
+		// BreakingBucket, not Major: semver makes a 0.x minor bump exactly
+		// as breaking as a major one, so cargo 0.6 against 0.8 is a
+		// different line entirely, not "a minor version difference". The
+		// client grader was fixed to use it and this one was not, so the
+		// same axum question got REFERENCE_ONLY from one path and
+		// ADAPTATION_REQUIRED with "verify against axum@0.8.1" from the
+		// other. Pre-1.0 is where most of Rust and much of Dart lives.
+		case reqP.BreakingBucket() != matched.BreakingBucket():
 			d.grade = worseGrade(d.grade, domain.GradeReferenceOnly)
 			d.different = append(d.different, "package major version ("+reqVersion+" vs "+matched.Version+")")
 			d.fit *= 0.5

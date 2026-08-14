@@ -144,3 +144,47 @@ func TestOSDifferenceCannotBeGradedExact(t *testing.T) {
 		t.Errorf("the OS difference is not in the delta: %v", r.Different)
 	}
 }
+
+// semver makes a 0.x minor bump exactly as breaking as a major one, so
+// cargo 0.6 against 0.8 is a different line entirely — not "a minor version
+// difference" with an adaptation note telling the caller to verify against
+// it. The client grader uses BreakingBucket and this one used Major(), so
+// the same axum question got REFERENCE_ONLY from one path and
+// ADAPTATION_REQUIRED from the other. Pre-1.0 is where most of Rust and
+// much of Dart lives.
+func TestPreOneMinorBumpIsBreakingOnTheServerToo(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	id := "sha256:" + strings.Repeat("0f", 32)
+
+	m := testManifest()
+	m.Packages = []string{"pkg:cargo/axum@0.6.20"}
+	m.Case.Packages = m.Packages
+	m.Case.Goal = "Test axum handlers without binding a port"
+	m.Environment = domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "cargo", OS: "linux", Arch: "x64",
+		Runtime: "rust", RuntimeVersion: "1.91.0", Language: "rust",
+	}.Normalize()
+	saveSearchable(t, store, id, m)
+
+	var out domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v1/search", domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         m.Case.Goal,
+		Packages:      []string{"pkg:cargo/axum@0.8.1"},
+		Environment:   m.Environment,
+	}, &out)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if out.Miss || len(out.Results) == 0 {
+		t.Skip("no result to grade")
+	}
+	if g := out.Results[0].Grade; g != domain.GradeReferenceOnly {
+		t.Errorf("grade = %s for axum 0.6 against 0.8, want REFERENCE_ONLY", g)
+	}
+	for _, a := range out.Results[0].Adaptation {
+		if strings.Contains(a, "verify against") {
+			t.Errorf("a 0.x line change was offered as an adaptation: %q", a)
+		}
+	}
+}
