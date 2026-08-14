@@ -69,7 +69,18 @@ func NewDeps(home string) (*Deps, func() error, error) {
 	fetcher := &peer.Node{CAS: store, DB: db, Ident: ident, ServerURL: cfg.ServerURL}
 
 	d := &Deps{
-		Search: engine.Search,
+		// Wrapped rather than passed straight through, so recording cannot
+		// be forgotten by whatever calls Search next.
+		//
+		// The daemon's HTTP search path recorded hits and the MCP path did
+		// not, so get_local_stats, csx stats and csx ui reported 0 hits
+		// forever — for the surface the product is actually used through.
+		// A counter presented to the user as fact has to be one.
+		Search: func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+			resp := engine.Search(ctx, req)
+			recordSearchOutcome(ctx, db, req, resp)
+			return resp
+		},
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
 			return getSample(ctx, db, store, fetcher, id)
 		},
@@ -627,4 +638,21 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 		stats["pendingObservations"] = len(pending)
 	}
 	return stats, nil
+}
+
+// recordSearchOutcome writes the local hit row behind csx stats, csx ui and
+// get_local_stats. Queries stay on the machine — the hits table is never
+// uploaded — and a failure here must never break a search, so the error is
+// dropped deliberately rather than surfaced.
+func recordSearchOutcome(ctx context.Context, db *localdb.DB, req domain.SearchRequest, resp domain.SearchResponse) {
+	if db == nil || resp.Miss || len(resp.Results) == 0 {
+		return
+	}
+	top := resp.Results[0]
+	_ = db.RecordHit(ctx, localdb.HitRow{
+		TS:       time.Now().UTC(),
+		Query:    req.Query,
+		Grade:    top.Grade,
+		SampleID: top.SampleID,
+	})
 }

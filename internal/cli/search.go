@@ -96,7 +96,10 @@ func searchMain(ctx context.Context, args []string) int {
 			return 1
 		}
 		defer d.Close()
-		r := d.Engine.Search(ctx, req)
+		// SearchAndRecord, not Engine.Search: with the daemon down this path
+		// counted nothing, so csx stats read 0 for every search made while
+		// it was not running.
+		r := d.SearchAndRecord(ctx, req)
 		resp = &r
 	}
 

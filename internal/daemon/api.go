@@ -149,16 +149,7 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid search request: "+err.Error())
 		return
 	}
-	resp := d.Engine.Search(ctx, req)
-	if resp.Miss {
-		d.incrStat(ctx, statMisses, 1)
-	} else if len(resp.Results) > 0 {
-		top := resp.Results[0]
-		_ = d.DB.RecordHit(ctx, localdb.HitRow{
-			TS: time.Now().UTC(), Query: req.Query,
-			Grade: top.Grade, SampleID: top.SampleID,
-		})
-	}
+	resp := d.SearchAndRecord(ctx, req)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -318,4 +309,29 @@ func (d *Daemon) handleStats(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stopping": true})
 	d.requestShutdown()
+}
+
+// SearchAndRecord runs a search and writes the local hit or miss behind
+// csx stats, csx ui and get_local_stats.
+//
+// It exists because the recording lived only inside this HTTP handler, so
+// every other caller of Engine.Search silently counted nothing: the MCP
+// tools, and the CLI whenever the daemon was down. Those counters are shown
+// to the user as fact and read 0 forever. One entry point is harder to
+// forget than a convention.
+//
+// Queries never leave the machine — the hits table is local and is never
+// uploaded — and a recording failure must not break a search.
+func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+	resp := d.Engine.Search(ctx, req)
+	if resp.Miss || len(resp.Results) == 0 {
+		d.incrStat(ctx, statMisses, 1)
+		return resp
+	}
+	top := resp.Results[0]
+	_ = d.DB.RecordHit(ctx, localdb.HitRow{
+		TS: time.Now().UTC(), Query: req.Query,
+		Grade: top.Grade, SampleID: top.SampleID,
+	})
+	return resp
 }
