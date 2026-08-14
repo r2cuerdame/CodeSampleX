@@ -76,6 +76,13 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A receipt is what a verification job asked for, so its arrival closes
+	// the job. Without this nothing ever completed one — CompleteJob had no
+	// route to it — and every claimed job stayed claimed for good.
+	// Not fatal if it fails: the receipt is saved either way, and the claim
+	// lease frees the job on its own.
+	_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID)
+
 	receipts, err := a.d.Store.ReceiptsForSample(ctx, receipt.SampleID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "receipt lookup failed")

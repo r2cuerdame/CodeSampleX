@@ -759,13 +759,27 @@ func scanJob(row pgx.Row) (JobRow, error) {
 	return j, nil
 }
 
+// JobLease is how long a claim holds a job before it returns to the queue.
+//
+// A claim used to be permanent, and nothing ever called CompleteJob — there
+// was no route to it — so every claimed job was stranded for good. Claiming
+// needs no authentication, and deliberately so: publishing on this network
+// is anonymous and accounts are not the answer (goal.md §8.6). But that
+// makes an unbounded claim a way for one stranger to empty the verification
+// queue permanently, at no cost. A lease is the version of this that cannot
+// be abused: an abandoned claim expires and someone else picks the job up.
+const JobLease = 30 * time.Minute
+
 func (p *PG) ClaimJob(ctx context.Context, id int64, peerID string) (bool, error) {
 	claimed := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tag, err := c.Exec(ctx, `
 			UPDATE verification_jobs
 			SET status='claimed', claimed_by=$2, claimed_at=now()
-			WHERE id=$1 AND status='open'`, id, peerID)
+			WHERE id=$1
+			  AND (status='open'
+			       OR (status='claimed' AND claimed_at < now() - $3::interval))`,
+			id, peerID, JobLease.String())
 		if err != nil {
 			return err
 		}
@@ -773,6 +787,20 @@ func (p *PG) ClaimJob(ctx context.Context, id int64, peerID string) (bool, error
 		return nil
 	})
 	return claimed, err
+}
+
+// CompleteJobsForSample closes every open or claimed job for a sample.
+//
+// A receipt arriving IS the completion — that is what the job asked for —
+// and wiring it here means a finished job cannot be left behind by a peer
+// that never calls anything else.
+func (p *PG) CompleteJobsForSample(ctx context.Context, sampleID string) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx,
+			`UPDATE verification_jobs SET status='done'
+			 WHERE sample_id=$1 AND status IN ('open','claimed')`, sampleID)
+		return err
+	})
 }
 
 func (p *PG) CompleteJob(ctx context.Context, id int64) error {

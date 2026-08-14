@@ -231,6 +231,10 @@ type Store interface {
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
+	// CompleteJobsForSample closes the jobs a receipt has answered. The
+	// receipt IS the completion, so nothing depends on a peer remembering
+	// to call anything else.
+	CompleteJobsForSample(ctx context.Context, sampleID string) error
 
 	AnnouncePeer(ctx context.Context, p PeerRow) error
 	PeersForSample(ctx context.Context, sampleID string) ([]PeerRow, error)

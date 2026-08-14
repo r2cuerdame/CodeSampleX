@@ -532,6 +532,17 @@ func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error
 	return false, nil
 }
 
+func (f *Fake) CompleteJobsForSample(_ context.Context, sampleID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.SampleID == sampleID && (j.Status == "open" || j.Status == "claimed") {
+			j.Status = "done"
+		}
+	}
+	return nil
+}
+
 func (f *Fake) CompleteJob(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
