@@ -374,3 +374,21 @@ func TestLeakageScanStillFlagsUnknownHostsWrittenAsPatterns(t *testing.T) {
 		t.Error("an unknown host written as a regex was not flagged")
 	}
 }
+
+// A specification identifier is not an address. Every JSON Schema a tool
+// generates carries $schema, and nothing fetches it — it names a draft the
+// way an SPDX id names a licence. It refused a sample for containing the
+// schema its own dependency emitted.
+func TestLeakageScanAllowsSpecificationIdentifiers(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test/contract.mjs",
+		`assert.equal(schema.$schema, "http://json-schema.org/draft-07/schema#");`)
+	writeFile(t, dir, "src/doc.xml",
+		`<rdf xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#" />`)
+
+	for _, f := range mustScan(t, dir) {
+		if f.Kind == KindURL {
+			t.Errorf("specification identifier flagged: %+v", f)
+		}
+	}
+}

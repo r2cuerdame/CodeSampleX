@@ -86,6 +86,15 @@ var allowedURLHosts = []string{
 	"feross.org",
 	"spdx.org",
 	"json.schemastore.org",
+	// A specification identifier is not an address. $schema carries
+	// "http://json-schema.org/draft-07/schema#" in every JSON Schema ever
+	// generated, and nothing ever fetches it — it names a draft, the way an
+	// SPDX id names a licence. It refused a sample for publishing the schema
+	// its own tool emitted.
+	"json-schema.org",
+	"schema.org",
+	"www.w3.org",
+	"docs.oasis-open.org",
 }
 
 type leakPattern struct {
