@@ -66,6 +66,13 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 		}
 		if p.Publicness == scanner.PublicnessPublic {
 			key := p.PURL.String()
+			// An excluded package leaves nothing: no observation, no symbol
+			// row, nothing to batch. The setting was consulted by nothing
+			// at all before this, so a user who asked for a package to stay
+			// private still uploaded it.
+			if r.Cfg.IsExcluded(key, p.PURL.Ecosystem, p.PURL.Name) {
+				continue
+			}
 			if _, dup := public[key]; !dup {
 				public[key] = p.PURL
 				publicNames = append(publicNames, p.PURL.Name)

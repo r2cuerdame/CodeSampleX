@@ -73,8 +73,8 @@ func TestUIRendersDashboard(t *testing.T) {
 		"Origin Seeds",
 		"Cross verifications",
 		"Privacy preview",
-		"npm/axios",             // dependency table row
-		"pkg:npm/axios@1.12.0",  // preview shows the pending batch verbatim
+		"npm/axios",            // dependency table row
+		"pkg:npm/axios@1.12.0", // preview shows the pending batch verbatim
 		"observationCount",
 	} {
 		if !strings.Contains(page, want) {

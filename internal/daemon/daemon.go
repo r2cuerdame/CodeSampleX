@@ -348,6 +348,12 @@ func (d *Daemon) warmKeyList(ctx context.Context) []string {
 			if r.Publicness != "PUBLIC" {
 				continue // private/unknown deps never drive server fetches
 			}
+			// Nor do excluded ones. The warm list asks the server for a
+			// shard BY NAME, so leaving an excluded package in it announced
+			// the exact interest the exclusion was meant to keep private.
+			if d.Cfg.IsExcluded(r.PURL.String(), r.PURL.Ecosystem, r.PURL.Name) {
+				continue
+			}
 			recent = append(recent, r.PURL)
 			if len(recent) == 50 {
 				break
