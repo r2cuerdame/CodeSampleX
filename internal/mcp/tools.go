@@ -244,10 +244,32 @@ func (s *Server) toolsCall(ctx context.Context, params json.RawMessage) (any, *r
 	default:
 		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + p.Name}
 	}
-	if !json.Valid(args) {
+	if !isJSONObject(args) {
 		return nil, &rpcError{Code: codeInvalidParams, Message: "tools/call arguments must be a JSON object"}
 	}
 	return handler(ctx, args), nil
+}
+
+// isJSONObject reports whether raw is a JSON object, which is what the
+// error above has always claimed to check. json.Valid alone accepts a
+// string, a number, an array and null — and null is the one that hurt:
+// unmarshalling null into a struct is a no-op that returns no error, so
+// {"arguments": null} ran the tool with every field zeroed. A caller that
+// sent a malformed argument got a confident empty-query search back
+// instead of being told what was wrong with the call.
+func isJSONObject(raw json.RawMessage) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return b == '{'
+		}
+	}
+	return false
 }
 
 // --- search_known_solution ---
