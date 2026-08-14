@@ -42,12 +42,18 @@ func (n *Node) Handler() http.Handler {
 	return mux
 }
 
+// listenAddr is the address ListenAndServe binds. Split out so the choice
+// of interface is testable without opening a socket.
+func (n *Node) listenAddr() string {
+	return fmt.Sprintf("%s:%d", n.BindAddr, n.Port)
+}
+
 // ListenAndServe serves the peer handler on n.Port until ctx is canceled,
 // then shuts down gracefully. A canceled ctx returns nil; listener errors
 // (port in use, …) are returned as-is.
 func (n *Node) ListenAndServe(ctx context.Context) error {
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", n.Port),
+		Addr:              n.listenAddr(),
 		Handler:           n.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

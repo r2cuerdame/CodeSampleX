@@ -41,6 +41,17 @@ type Node struct {
 	ServerURL string
 	Port      int
 
+	// BindAddr is the interface ListenAndServe binds to. Empty means every
+	// interface, which is what a real peer needs: the tracker dials it back
+	// and other peers fetch from it, so a loopback-only peer cannot serve.
+	//
+	// Tests set it to 127.0.0.1. A test binary that binds every interface
+	// makes Windows Defender Firewall prompt on every single run — the
+	// binary is recompiled to a fresh temp path each time, so the allow
+	// decision can never be remembered — and it briefly exposes the port to
+	// the local network for a test that only ever talks to loopback.
+	BindAddr string
+
 	// announceEvery overrides the 10-minute announce cadence in tests.
 	announceEvery time.Duration
 

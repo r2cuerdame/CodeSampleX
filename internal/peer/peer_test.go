@@ -553,6 +553,11 @@ func TestListenAndServeGracefulShutdown(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	a.Port = port
+	// Loopback only. This test talks to 127.0.0.1 and nothing else, and
+	// binding every interface made Windows Defender Firewall prompt on
+	// every run: the test binary lands in a new temp path each time, so it
+	// is a new program to the firewall each time.
+	a.BindAddr = "127.0.0.1"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -583,5 +588,20 @@ func TestListenAndServeGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("ListenAndServe did not shut down after cancel")
+	}
+}
+
+// A real peer must bind every interface — the tracker dials it back and
+// other peers fetch from it — so the default has to stay the wildcard.
+// BindAddr exists so a TEST can be loopback-only, which is what stops
+// Windows Defender Firewall prompting on every run.
+func TestListenAddrDefaultsToEveryInterface(t *testing.T) {
+	n := &Node{Port: 41234}
+	if got := n.listenAddr(); got != ":41234" {
+		t.Errorf("default listenAddr = %q, want %q", got, ":41234")
+	}
+	n.BindAddr = "127.0.0.1"
+	if got := n.listenAddr(); got != "127.0.0.1:41234" {
+		t.Errorf("bound listenAddr = %q, want %q", got, "127.0.0.1:41234")
 	}
 }
