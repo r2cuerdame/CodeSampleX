@@ -18,6 +18,11 @@ const noSafeMatchThreshold = 0.25
 
 const maxSearchCandidates = 500
 
+// maxTreePatterns bounds how many lockfile packages widen a search. A
+// dependency tree runs to hundreds of entries; letting all of them into the
+// candidate query turns one search into a scan.
+const maxTreePatterns = 40
+
 // handleSearch implements POST /v1/search: the simplified server-side C7
 // pipeline — package/symbol exact filter → snapshot environment fit →
 // verification strength from receipts → grade + delta with the
@@ -54,6 +59,18 @@ func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
 		samples, err = a.d.Store.SamplesForPackages(r.Context(), patterns, maxSearchCandidates)
 	} else {
 		samples, err = a.d.Store.ListSamples(r.Context(), maxSearchCandidates)
+		// The caller's dependency tree WIDENS the candidate set; it never
+		// narrows it. A question with no named package would otherwise see
+		// only the newest maxSearchCandidates rows, so a sample about a
+		// library the caller already uses could fall off the end purely by
+		// age — and that is the sample most likely to be wanted.
+		//
+		// Restricting to the tree instead would be the old defect in a new
+		// place: the library an agent asks about is usually one it is
+		// about to add, so it is precisely NOT in the lockfile.
+		if err == nil {
+			samples = appendUnseenSamples(r, a, samples, req.ProjectPackages)
+		}
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "sample listing failed")
@@ -782,4 +799,39 @@ func resolveContext(e domain.EnvironmentFingerprint) string {
 		return "browser"
 	}
 	return strings.ToLower(e.Runtime)
+}
+
+// appendUnseenSamples adds samples for the caller's dependency tree that
+// the recency window did not already include, capped so a large lockfile
+// cannot turn one search into an unbounded scan.
+func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, tree []string) []serverstore.SampleRow {
+	if len(tree) == 0 {
+		return have
+	}
+	patterns := make([]string, 0, len(tree))
+	for _, ps := range tree {
+		if p, err := domain.ParsePURL(ps); err == nil {
+			patterns = append(patterns, "pkg:"+p.Ecosystem+"/"+p.Name+"@%")
+		}
+		if len(patterns) >= maxTreePatterns {
+			break
+		}
+	}
+	if len(patterns) == 0 {
+		return have
+	}
+	extra, err := a.d.Store.SamplesForPackages(r.Context(), patterns, maxSearchCandidates)
+	if err != nil {
+		return have // widening is best-effort; never fail a search over it
+	}
+	seen := make(map[string]bool, len(have))
+	for _, s := range have {
+		seen[s.SampleID] = true
+	}
+	for _, s := range extra {
+		if !seen[s.SampleID] {
+			have = append(have, s)
+		}
+	}
+	return have
 }
