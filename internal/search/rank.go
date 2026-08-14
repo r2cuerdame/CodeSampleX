@@ -31,12 +31,21 @@ const (
 type pkgRel int
 
 const (
-	relUnspecified  pkgRel = iota // request named no packages
-	relNone                       // request packages share nothing with the candidate
-	relMajorDiff                  // same package, different major
-	relMajor                      // same major, different minor
-	relMajorMinor                 // same major.minor, different patch
-	relExactVersion               // identical version
+	relUnspecified pkgRel = iota // request named no packages
+	relNone                      // request packages share nothing with the candidate
+	relMajorDiff                 // same package, different major
+	// relPackageOnly is "the same package, version not established". It sits
+	// above a known major difference and below every claim about a version,
+	// because it asserts less than any of them.
+	//
+	// It exists for candidates that came from a shard old enough not to carry
+	// the sample's declared packages. Grading those off the shard key was
+	// reporting a version the sample was never verified against as an exact
+	// match, so the honest ceiling is the package name.
+	relPackageOnly
+	relMajor        // same major, different minor
+	relMajorMinor   // same major.minor, different patch
+	relExactVersion // identical version
 )
 
 // packageRelation finds the best (request package, candidate package) pair.
@@ -81,6 +90,8 @@ func relWeight(r pkgRel) float64 {
 	case relMajorMinor:
 		return weightPackageMajorMinor
 	case relMajor:
+		return weightPackageMajor
+	case relPackageOnly:
 		return weightPackageMajor
 	case relMajorDiff:
 		return weightPackageMajorDiff

@@ -72,10 +72,14 @@ type shardFailure struct {
 }
 
 type shardSampleEntry struct {
-	SampleID       string                        `json:"sampleId"`
-	Goal           string                        `json:"goal,omitempty"`
-	Status         string                        `json:"status,omitempty"`
-	License        string                        `json:"license,omitempty"`
+	SampleID string `json:"sampleId"`
+	Goal     string `json:"goal,omitempty"`
+	Status   string `json:"status,omitempty"`
+	License  string `json:"license,omitempty"`
+	// Packages is what the sample's own manifest declares. Absent from
+	// shards generated before this field existed, and the grader treats that
+	// absence as "version unknown" rather than guessing from the shard key.
+	Packages       []string                      `json:"packages,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
 }
@@ -84,11 +88,26 @@ type shardSampleEntry struct {
 // or a cached shard. It carries only public sample/case data — nothing
 // project-identifying enters a result by construction.
 type candidate struct {
-	sampleID       string
-	status         string
-	caseObj        *domain.Case
-	env            domain.EnvironmentFingerprint
-	packages       []domain.PURL
+	sampleID string
+	status   string
+	caseObj  *domain.Case
+	env      domain.EnvironmentFingerprint
+	// packages is the union of every package this candidate can be REACHED
+	// by: one sample is listed in a shard under several package versions, and
+	// keeping only the first made name relevance depend on iteration order.
+	// It is a relevance set, never an authority on what the sample declares.
+	packages []domain.PURL
+	// declared is what the SAMPLE ITSELF says it was verified against, from
+	// its own manifest. Only this may drive a version grade.
+	//
+	// Conflating the two is how MCP search came to answer "MATCH: EXACT,
+	// Exact: axios 1.12" for a sample whose csx.json pins axios@1.19.0 —
+	// packageRelation keeps whichever pair scores best, and with every shard
+	// key unioned on, one of them always matched the request exactly. The
+	// server graded the same input ADAPTATION_REQUIRED because it reads the
+	// manifest. A wrong HIT is worse than a MISS (goal.md §3.8), and this was
+	// the wrong HIT arriving with the highest possible confidence.
+	declared       []domain.PURL
 	symbols        []string
 	createdAt      time.Time
 	contractStages map[string]string // from a shard sample entry, if any
@@ -190,6 +209,8 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 		if len(c.packages) == 0 {
 			c.packages = parsePURLs(cc.Packages)
 		}
+		// A local row carries the real manifest, so its packages are declared.
+		c.declared = c.packages
 		cands[r.SampleID] = c
 	}
 
@@ -220,6 +241,9 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					continue
 				}
 				if existing := cands[ss.SampleID]; existing != nil {
+					if len(existing.declared) == 0 {
+						existing.declared = parsePURLs(ss.Packages)
+					}
 					// Local metadata stays authoritative, but a sample listed
 					// in several shards uses several packages, and keeping
 					// only the first one made both version grading and
@@ -232,12 +256,17 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					status:         ss.Status,
 					env:            ss.Environment.Normalize(),
 					packages:       []domain.PURL{p},
+					declared:       parsePURLs(ss.Packages),
 					contractStages: ss.ContractStages,
 				}
 				if ss.Goal != "" {
+					// case.Packages must be what the sample declares. Older
+					// shards do not carry it, and filling it from the shard
+					// key put a version the sample never used into the field
+					// a client parses.
 					c.caseObj = &domain.Case{
 						SchemaVersion: 1, Kind: "HOW", Goal: ss.Goal,
-						Packages: []string{sp.PURL},
+						Packages: ss.Packages,
 					}
 				}
 				cands[ss.SampleID] = c
@@ -269,7 +298,18 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 
 // scoreCandidate produces one SearchResult plus its fused score.
 func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, now time.Time) (domain.SearchResult, float64) {
-	rel, reqP, samP := packageRelation(reqPkgs, c.packages)
+	// Grade against what the sample declares. When a shard predates the
+	// packages field there is nothing authoritative to grade against, so the
+	// relation is capped at "same package, version unknown" rather than
+	// borrowed from the shard key that happened to find it.
+	gradePkgs, versionKnown := c.declared, true
+	if len(gradePkgs) == 0 {
+		gradePkgs, versionKnown = c.packages, false
+	}
+	rel, reqP, samP := packageRelation(reqPkgs, gradePkgs)
+	if !versionKnown && rel > relPackageOnly {
+		rel = relPackageOnly
+	}
 
 	var syms []shardSymbolEntry
 	for _, p := range c.packages {

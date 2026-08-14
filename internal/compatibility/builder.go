@@ -474,10 +474,15 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 			continue
 		}
 		entry := ShardSample{
-			SampleID:    sd.row.SampleID,
-			Goal:        sd.manifest.Case.Goal,
-			Status:      sd.row.Status,
-			License:     sd.row.License,
+			SampleID: sd.row.SampleID,
+			Goal:     sd.manifest.Case.Goal,
+			Status:   sd.row.Status,
+			License:  sd.row.License,
+			// What the sample declares, not the shard key that reached it.
+			// A shard lists one sample under every package version it is
+			// relevant to, and a client with only the key has no way to tell
+			// which one it was verified against.
+			Packages:    sd.manifest.Packages,
 			Environment: sd.manifest.Environment,
 		}
 		if len(sd.receipts) > 0 {

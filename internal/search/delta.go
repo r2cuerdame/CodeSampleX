@@ -15,6 +15,11 @@ func buildDelta(rel pkgRel, reqP, samP domain.PURL, dims []dimComparison, cd con
 	switch rel {
 	case relExactVersion, relMajorMinor:
 		exact = append(exact, samP.Name+" "+samP.MajorMinor())
+	case relPackageOnly:
+		// The package matched by name and nothing established its version, so
+		// neither an exact claim nor a difference would be true.
+		different = append(different,
+			"Sample uses "+samP.Name+" (version not established by this shard)")
 	case relMajor, relMajorDiff:
 		different = append(different,
 			"Sample uses "+samP.Name+" "+samP.MajorMinor(),

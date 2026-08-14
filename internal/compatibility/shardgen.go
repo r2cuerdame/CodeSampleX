@@ -41,10 +41,16 @@ type ShardSymbol struct {
 // ShardSample is one top sample carried in a shard, including its honest
 // verification status and the contract stages its receipts actually showed.
 type ShardSample struct {
-	SampleID       string                        `json:"sampleId"`
-	Goal           string                        `json:"goal,omitempty"`
-	Status         string                        `json:"status"`
-	License        string                        `json:"license"`
+	SampleID string `json:"sampleId"`
+	Goal     string `json:"goal,omitempty"`
+	Status   string `json:"status"`
+	License  string `json:"license"`
+	// Packages is what the sample's manifest declares. A shard lists one
+	// sample under every package version it is relevant to, so without this
+	// a client has no way to tell which of those it was actually verified
+	// against — and the local engine was grading against the shard key,
+	// reporting an exact match on a version the sample never used.
+	Packages       []string                      `json:"packages,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
 }
