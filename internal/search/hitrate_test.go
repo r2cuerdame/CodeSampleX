@@ -249,3 +249,39 @@ func TestTheCallersProjectDoesNotChangeTheAnswer(t *testing.T) {
 		}
 	}
 }
+
+// EXACT is a claim about the ENVIRONMENT as much as the version: nothing
+// here differs from yours. A caller that supplies no environment — every
+// MCP client that omits the field — compared nothing, every dimension was
+// skipped for want of a value on one side, and the empty difference list
+// read as agreement. The most confident grade the system has was handed
+// out on no evidence at all.
+func TestAnUnknownEnvironmentIsNeverGradedExact(t *testing.T) {
+	e, _ := seedCorpus(t)
+
+	blind := e.Search(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "verify a JWT with golang-jwt v5",
+		Packages:      []string{"pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.0"},
+	})
+	if blind.Miss || len(blind.Results) == 0 {
+		t.Fatal("an exact package match with no environment should still answer")
+	}
+	if g := blind.Results[0].Grade; g == domain.GradeExact {
+		t.Errorf("grade = %s with no environment supplied: silence is not agreement", g)
+	}
+
+	// Supplying the environment the sample was verified on still earns it.
+	seen := e.Search(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "verify a JWT with golang-jwt v5",
+		Packages:      []string{"pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.0"},
+		Environment:   alpineEnv("golang", "go", "1.26.0", "go"),
+	})
+	if seen.Miss || len(seen.Results) == 0 {
+		t.Fatal("the matching environment should answer")
+	}
+	if g := seen.Results[0].Grade; g != domain.GradeExact {
+		t.Errorf("grade = %s on the sample's own environment, want EXACT", g)
+	}
+}

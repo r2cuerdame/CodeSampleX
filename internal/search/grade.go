@@ -219,6 +219,20 @@ func buildGrade(rel pkgRel, dims []dimComparison, cd contextDelta, elevated bool
 	case adapt:
 		return domain.GradeAdaptationRequired, adaptations
 	case rel == relExactVersion || rel == relMajorMinor:
+		// EXACT is a claim about the ENVIRONMENT as much as the version:
+		// nothing here differs from yours. A caller that supplied no
+		// environment — every MCP client that omits the field — compared
+		// nothing, and every dimension was skipped for want of a value on
+		// one side. That produced an empty difference list, which read as
+		// agreement, and the most confident grade the system has was
+		// handed out on no evidence at all.
+		//
+		// Silence is not agreement. With nothing comparable the honest
+		// ceiling is COMPATIBLE: the version is right, the machine is
+		// unknown.
+		if !anyComparable(dims) {
+			return domain.GradeCompatible, adaptations
+		}
 		return domain.GradeExact, adaptations
 	default:
 		return domain.GradeCompatible, adaptations
@@ -231,3 +245,9 @@ func buildGrade(rel pkgRel, dims []dimComparison, cd contextDelta, elevated bool
 func equalFoldName(a, b string) bool {
 	return strings.EqualFold(a, b)
 }
+
+// anyComparable reports whether any environment dimension actually had a
+// value on both sides. compareEnv skips a dimension when either side is
+// empty, so an all-empty request yields an empty comparison list that is
+// indistinguishable from perfect agreement unless someone asks.
+func anyComparable(dims []dimComparison) bool { return len(dims) > 0 }
