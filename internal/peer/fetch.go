@@ -1,7 +1,9 @@
 package peer
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
@@ -196,9 +199,18 @@ func (n *Node) storeFetched(ctx context.Context, sampleID string, data []byte) {
 		return
 	}
 	if !ok {
+		// The manifest comes out of the ARTIFACT, which is the authoritative
+		// copy: the bytes hash to the id we asked for.
+		//
+		// This used to store "{}" and leave the rest to shard sync. The local
+		// row then existed with no packages, no goal and no environment, and
+		// the search engine prefers a local row over the shard entry that
+		// found it — so fetching a sample made that sample UNFINDABLE, and
+		// get_sample quietly poisoned the index for the very thing the agent
+		// had just asked about.
 		row = localdb.SampleRow{
 			SampleID:     sampleID,
-			ManifestJSON: "{}", // metadata arrives with shard sync; artifact is authoritative by content id
+			ManifestJSON: manifestFromArtifact(data),
 			Status:       "PUBLISHED",
 			CreatedAt:    time.Now(),
 		}
@@ -206,4 +218,36 @@ func (n *Node) storeFetched(ctx context.Context, sampleID string, data []byte) {
 	row.HasArtifact = true
 	row.LastUsed = time.Now()
 	_ = n.DB.SaveSample(ctx, row)
+}
+
+// manifestFromArtifact reads csx.json out of the fetched tar.gz.
+//
+// Falling back to "{}" keeps the old behaviour for an artifact that somehow
+// carries no manifest, which is the safe direction: a row with no metadata
+// is useless, but a row with the WRONG metadata would be worse.
+func manifestFromArtifact(data []byte) string {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return "{}"
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return "{}"
+		}
+		if path.Base(hdr.Name) != "csx.json" || hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(tr, 1<<20))
+		if err != nil {
+			return "{}"
+		}
+		var m domain.SampleManifest
+		if json.Unmarshal(raw, &m) != nil {
+			return "{}"
+		}
+		return string(raw)
+	}
 }
