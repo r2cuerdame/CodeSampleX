@@ -479,7 +479,7 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 	return j.ID, nil
 }
 
-func (f *Fake) OpenJobs(_ context.Context, capability string, limit int) ([]JobRow, error) {
+func (f *Fake) OpenJobs(_ context.Context, capability, peerID string, limit int) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
@@ -493,6 +493,21 @@ func (f *Fake) OpenJobs(_ context.Context, capability string, limit int) ([]JobR
 			f.now().Sub(j.ClaimedAt) > JobLease
 		if j.Status != "open" && !expired {
 			continue
+		}
+		// A peer that already filed a receipt for this sample cannot
+		// cross-verify it; offering the job only takes it from someone who
+		// could.
+		if peerID != "" {
+			var mine bool
+			for _, r := range f.receipts[j.SampleID] {
+				if r.PeerID == peerID {
+					mine = true
+					break
+				}
+			}
+			if mine {
+				continue
+			}
 		}
 		if capability != "" && j.WantEnvJSON != "" {
 			var want map[string]any
@@ -541,13 +556,29 @@ func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error
 	return false, nil
 }
 
-func (f *Fake) CompleteJobsForSample(_ context.Context, sampleID string) error {
+func (f *Fake) CompleteJobsForSample(_ context.Context, sampleID, peerID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, j := range f.jobs {
-		if j.SampleID == sampleID && (j.Status == "open" || j.Status == "claimed") {
-			j.Status = "done"
+	// A cross job asks a SECOND peer to reproduce the result, so the
+	// origin's own receipt does not answer it. The origin is the peer of
+	// the sample's first receipt, matching sampleStatusFromReceipts.
+	var origin string
+	if rs := f.receipts[sampleID]; len(rs) > 0 {
+		origin = rs[0].PeerID
+		for _, r := range rs[1:] {
+			if r.CreatedAt.Before(rs[0].CreatedAt) {
+				origin = r.PeerID
+			}
 		}
+	}
+	for _, j := range f.jobs {
+		if j.SampleID != sampleID || (j.Status != "open" && j.Status != "claimed") {
+			continue
+		}
+		if j.Reason == "cross" && peerID != "" && peerID == origin {
+			continue
+		}
+		j.Status = "done"
 	}
 	return nil
 }

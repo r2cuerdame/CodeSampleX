@@ -29,10 +29,10 @@ func TestAReceiptClosesTheJobItAnswered(t *testing.T) {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
 
-	if err := store.CompleteJobsForSample(ctx, id); err != nil {
+	if err := store.CompleteJobsForSample(ctx, id, "ed25519:0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", 100)
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,14 +68,14 @@ func TestAJobHeldByADeadPeerReturnsToTheQueue(t *testing.T) {
 	}
 
 	// While the lease holds, nobody else is offered the job.
-	if jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", 100); err != nil {
+	if jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100); err != nil {
 		t.Fatal(err)
 	} else if listed(jobs, jobID) {
 		t.Error("a live claim was offered to another peer")
 	}
 
 	now = now.Add(serverstore.JobLease + time.Minute)
-	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", 100)
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,4 +94,71 @@ func listed(jobs []serverstore.JobRow, id int64) bool {
 		}
 	}
 	return false
+}
+
+// A machine that publishes a sample and also runs a verifier used to claim
+// its own cross job, file its own receipt, and retire the job having
+// cross-verified nothing. The sample then sat at PUBLISHED forever with no
+// open job left to explain why. A receipt from the origin proves only that
+// the sample still works where it was built.
+func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
+	_, store, _ := newTestServer(t, nil)
+	ctx := t.Context()
+
+	id := "sha256:" + strings.Repeat("c5", 32)
+	saveSearchable(t, store, id, testManifest())
+	jobID, err := store.CreateJob(ctx, serverstore.JobRow{
+		SampleID: id, Reason: "cross", Status: "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origin := "ed25519:0000000000000001"
+	if err := store.SaveReceipt(ctx, serverstore.ReceiptRow{
+		ReceiptID: "sha256:r1", SampleID: id, PeerID: origin,
+		EnvHash: "sha256:e1", ContractResult: "PASS", ReceiptJSON: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The origin's own receipt must not retire the cross job.
+	if err := store.CompleteJobsForSample(ctx, id, origin); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listed(jobs, jobID) {
+		t.Fatal("the origin's own receipt closed the cross job: nobody will ever verify this sample")
+	}
+
+	// And the origin is not offered the job it cannot answer.
+	mine, err := store.OpenJobs(ctx, "CONTAINER_RUN", origin, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed(mine, jobID) {
+		t.Error("the origin was offered its own sample to cross-verify")
+	}
+
+	// A second peer answers it, and that does close the job.
+	other := "ed25519:0000000000000002"
+	if err := store.SaveReceipt(ctx, serverstore.ReceiptRow{
+		ReceiptID: "sha256:r2", SampleID: id, PeerID: other,
+		EnvHash: "sha256:e2", ContractResult: "PASS", ReceiptJSON: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteJobsForSample(ctx, id, other); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed(jobs, jobID) {
+		t.Error("a real cross-verification did not close the job")
+	}
 }

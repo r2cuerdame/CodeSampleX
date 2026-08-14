@@ -692,7 +692,7 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 // for good. 265 jobs sat claimed with zero open behind a queue that
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
-func (p *PG) OpenJobs(ctx context.Context, capability string, limit int) ([]JobRow, error) {
+func (p *PG) OpenJobs(ctx context.Context, capability, peerID string, limit int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -701,15 +701,18 @@ func (p *PG) OpenJobs(ctx context.Context, capability string, limit int) ([]JobR
 		rows, err := c.Query(ctx, `
 			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
 			       COALESCE(claimed_by,''), claimed_at, created_at
-			FROM verification_jobs
+			FROM verification_jobs j
 			WHERE (status='open'
 			       OR (status='claimed' AND claimed_at < now() - $3::interval))
 			  AND ($1 = ''
 				OR want_env IS NULL
 				OR want_env->>'sandboxCapability' IS NULL
 				OR want_env->>'sandboxCapability' = $1)
+			  AND ($4 = '' OR NOT EXISTS (
+				SELECT 1 FROM receipts r
+				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4))
 			ORDER BY created_at, id
-			LIMIT $2`, capability, limit, JobLease.String())
+			LIMIT $2`, capability, limit, JobLease.String(), peerID)
 		if err != nil {
 			return err
 		}
@@ -804,11 +807,23 @@ func (p *PG) ClaimJob(ctx context.Context, id int64, peerID string) (bool, error
 // A receipt arriving IS the completion — that is what the job asked for —
 // and wiring it here means a finished job cannot be left behind by a peer
 // that never calls anything else.
-func (p *PG) CompleteJobsForSample(ctx context.Context, sampleID string) error {
+func (p *PG) CompleteJobsForSample(ctx context.Context, sampleID, peerID string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
+		// A cross job asks a SECOND peer to reproduce the result. A receipt
+		// from the peer that originated the sample answers nothing — it
+		// proves only that the sample still works where it was built — so
+		// it must not close the job. It used to: a machine that published a
+		// sample and also ran a verifier would claim its own cross job,
+		// file its own receipt, and retire the job having cross-verified
+		// nothing. The sample then sat at PUBLISHED forever with no open
+		// job to explain why.
 		_, err := c.Exec(ctx,
-			`UPDATE verification_jobs SET status='done'
-			 WHERE sample_id=$1 AND status IN ('open','claimed')`, sampleID)
+			`UPDATE verification_jobs j SET status='done'
+			 WHERE j.sample_id=$1 AND j.status IN ('open','claimed')
+			   AND (j.reason <> 'cross' OR $2 = '' OR $2 IS DISTINCT FROM (
+			         SELECT r.peer_id FROM receipts r
+			          WHERE r.sample_id=$1 ORDER BY r.created_at, r.receipt_id LIMIT 1))`,
+			sampleID, peerID)
 		return err
 	})
 }

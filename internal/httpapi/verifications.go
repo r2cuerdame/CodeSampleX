@@ -123,7 +123,7 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	// route to it — and every claimed job stayed claimed for good.
 	// Not fatal if it fails: the receipt is saved either way, and the claim
 	// lease frees the job on its own.
-	_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID)
+	_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID, receipt.PeerID)
 
 	receipts, err := a.d.Store.ReceiptsForSample(ctx, receipt.SampleID)
 	if err != nil {
@@ -260,7 +260,10 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	jobs, err := a.d.Store.OpenJobs(r.Context(), capability, limit)
+	// peerId has always been sent by the client and never read. A peer
+	// that already filed a receipt for a sample cannot cross-verify it, and
+	// offering it the job takes that job away from a peer who could.
+	jobs, err := a.d.Store.OpenJobs(r.Context(), capability, q.Get("peerId"), limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "job listing failed")
 		return
