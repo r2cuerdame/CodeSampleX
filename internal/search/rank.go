@@ -70,7 +70,10 @@ func packageRelation(reqPkgs, candPkgs []domain.PURL) (pkgRel, domain.PURL, doma
 				r = relExactVersion
 			case rp.MajorMinor() == cp.MajorMinor():
 				r = relMajorMinor
-			case rp.Major() == cp.Major():
+			// BreakingBucket, not Major: semver makes a 0.x minor bump as
+			// breaking as a major one, so 0.6 and 0.8 are not "the same
+			// major, different minor" — they are a different line entirely.
+			case rp.BreakingBucket() == cp.BreakingBucket():
 				r = relMajor
 			default:
 				r = relMajorDiff

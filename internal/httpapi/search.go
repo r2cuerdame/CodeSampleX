@@ -102,19 +102,27 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	}
 
 	// 1. Exact package filter.
+	//
+	// Every shared package is compared and the WIDEST gap is the one graded,
+	// not the first one iteration happens to reach. Breaking on the first
+	// name match made the answer depend on array order: ask about
+	// [axios@1.12, express@5] against a sample on [express@4, axios@1.12] and
+	// the exact axios hit was reported while the express major gap went
+	// unmentioned, but swap the request array and the gap appeared. The
+	// honest summary of fit is the worst mismatch, not the friendliest.
 	var matched domain.PURL
 	reqVersion := ""
 	if len(reqPURLs) > 0 {
 		found := false
+		worst := -1
 		for _, rp := range reqPURLs {
 			for _, sp := range samplePURLs {
-				if sp.Ecosystem == rp.Ecosystem && sp.Name == rp.Name {
-					matched, reqVersion, found = sp, rp.Version, true
-					break
+				if sp.Ecosystem != rp.Ecosystem || sp.Name != rp.Name {
+					continue
 				}
-			}
-			if found {
-				break
+				if d := versionDistance(rp, sp); d > worst {
+					matched, reqVersion, worst, found = sp, rp.Version, d, true
+				}
 			}
 		}
 		if !found {
@@ -177,7 +185,15 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// package names — not the goal sentence alone. A question can name the
 	// package where the goal sentence names the API, and both are the same
 	// subject; requiring the sentence to match rejected correct samples.
-	if req.ErrorFingerprint == "" && !codeMatched &&
+	// The fingerprint exemption has to be EARNED. This read
+	// `req.ErrorFingerprint == ""`, which only asked whether the caller sent
+	// one — so attaching any string at all switched the topic guard off and
+	// an off-topic question got an answer. A fingerprint is evidence of
+	// relevance when it MATCHES the sample, exactly like the error code
+	// beside it.
+	fingerprintMatched := req.ErrorFingerprint != "" &&
+		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorFingerprint))
+	if !fingerprintMatched && !codeMatched &&
 		sharedContentTokens(req.Query, text) == 0 {
 		return domain.SearchResult{}, false
 	}
@@ -520,7 +536,7 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	// Runtime: family change is a context change (handled above); version
 	// major difference is an enumerable adaptation.
 	if req.Runtime != "" && sample.Runtime != "" && req.Runtime == sample.Runtime {
-		rv, sv := majorSeg(req.RuntimeVersion), majorSeg(sample.RuntimeVersion)
+		rv, sv := runtimeLine(req.Runtime, req.RuntimeVersion), runtimeLine(sample.Runtime, sample.RuntimeVersion)
 		switch {
 		case rv != "" && sv != "" && rv != sv:
 			d.grade = worseGrade(d.grade, domain.GradeAdaptationRequired)
@@ -541,6 +557,31 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 		d.different = append(d.different, "compiler "+req.Compiler+" (sample: "+sample.Compiler+")")
 		d.adaptation = append(d.adaptation, "verify with "+req.Compiler)
 		d.fit *= 0.8
+	}
+
+	// libc is not a mild dimension. It decides whether a package with a
+	// native module loads at all, and this project publishes findings that
+	// exist only because of it — the esbuild and lightningcss samples are
+	// about nothing else. Both sides declared it and nobody compared it, so a
+	// glibc caller was told EXACT by a sample verified only on musl.
+	if req.Libc != "" && sample.Libc != "" && req.Libc != sample.Libc {
+		d.different = append(d.different, "libc "+req.Libc+" (sample: "+sample.Libc+")")
+		d.adaptation = append(d.adaptation, "verify on "+req.Libc+": a native module resolved for "+sample.Libc+" may not load")
+		d.grade = worseGrade(d.grade, domain.GradeAdaptationRequired)
+		d.fit *= 0.8
+	} else {
+		cmp("libc", req.Libc, sample.Libc)
+	}
+
+	// arch, same reason at lower weight: a prebuilt binary is per
+	// architecture, and it was declared by both sides and never compared.
+	if req.Arch != "" && sample.Arch != "" && req.Arch != sample.Arch {
+		d.different = append(d.different, "arch "+req.Arch+" (sample: "+sample.Arch+")")
+		d.adaptation = append(d.adaptation, "verify on "+req.Arch)
+		d.grade = worseGrade(d.grade, domain.GradeAdaptationRequired)
+		d.fit *= 0.85
+	} else {
+		cmp("arch", req.Arch, sample.Arch)
 	}
 
 	// Non-sensitive dims: mild penalties, honest delta lines.
@@ -669,4 +710,44 @@ func sharedContentTokens(query, text string) int {
 		}
 	}
 	return shared
+}
+
+// versionDistance ranks how far apart two versions of the same package are,
+// so the grader can pick the widest gap rather than the first match. Larger
+// is further: 0 identical, 1 same major.minor, 2 same breaking line,
+// 3 different breaking line.
+func versionDistance(req, sample domain.PURL) int {
+	switch {
+	case req.Version == sample.Version:
+		return 0
+	case req.MajorMinor() == sample.MajorMinor():
+		return 1
+	case req.BreakingBucket() == sample.BreakingBucket():
+		return 2
+	default:
+		return 3
+	}
+}
+
+// runtimeLine is the version line a runtime's compatibility actually turns
+// on. majorSeg alone compared "1" to "1", so Go 1.9 and Go 1.26 graded
+// equal, and so did Python 3.6 and 3.12 — for the two runtimes whose whole
+// release history lives in the second segment, that is a wrong answer with
+// nothing to warn the reader.
+//
+// Node, Ruby, PHP and Rust do break on the major, so they keep the cheaper
+// comparison; adding a minor there would report a difference that is not one.
+func runtimeLine(runtime, version string) string {
+	if version == "" {
+		return ""
+	}
+	switch strings.ToLower(runtime) {
+	case "go", "golang", "python", "elixir", "dart":
+		segs := strings.SplitN(version, ".", 3)
+		if len(segs) >= 2 {
+			return segs[0] + "." + segs[1]
+		}
+		return segs[0]
+	}
+	return majorSeg(version)
 }

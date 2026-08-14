@@ -84,6 +84,28 @@ func (p PURL) Major() string {
 	return seg
 }
 
+// BreakingBucket returns the version line within which semver promises no
+// breaking change: "1" for 1.2.3, but "0.6" for 0.6.20.
+//
+// Major() is deliberately NOT this, because it also generates shard keys and
+// changing it would invalidate every shard. But grading with it treated 0.x
+// as a stable major, so axum 0.6 against 0.8 was reported as a minor
+// difference when semver makes a 0.x minor bump exactly as breaking as a
+// major one. Pre-1.0 is where most Rust and a lot of Dart lives.
+func (p PURL) BreakingBucket() string {
+	segs := p.versionSegments()
+	if len(segs) == 0 {
+		return ""
+	}
+	if segs[0] != "0" && segs[0] != "v0" {
+		return p.Major()
+	}
+	if len(segs) < 2 {
+		return p.Major()
+	}
+	return p.Major() + "." + segs[1]
+}
+
 // MajorMinor returns "major.minor" ("1.12"; golang "v1.2"). A version with a
 // single segment returns just the major bucket.
 func (p PURL) MajorMinor() string {
