@@ -177,5 +177,7 @@
   "findings.source": "来源",
   "findings.method_heading": "如何核对这里的任何一行",
   "findings.method_body": "打开样本，读它的 contract，然后运行。contract 就是该样本自己的测试：它在断网的固定容器中运行，那次运行的签名回执才是网络所存储的东西。这里没有一条依赖我们对某个库的理解，只依赖这个库实际做了什么。",
-  "findings.method_missing": "无法确认样本仍在线的发现不会出现在本页。清单比样本池短，是有意为之。"
+  "findings.method_missing": "无法确认样本仍在线的发现不会出现在本页。清单比样本池短，是有意为之。",
+  "title.compatibility": "%s %s 兼容性",
+  "title.compatibility_one": "%s 兼容性"
 }

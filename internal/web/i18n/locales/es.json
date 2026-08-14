@@ -177,5 +177,7 @@
   "findings.source": "Fuente",
   "findings.method_heading": "Cómo comprobar cualquier línea de aquí",
   "findings.method_body": "Abre la muestra, lee su contract y ejecútalo. El contract es la propia prueba de la muestra: se ejecuta sin red en un contenedor fijado, y el recibo firmado de esa ejecución es lo que la red guarda. Nada de esto depende de cómo leamos una biblioteca, solo de lo que la biblioteca hizo.",
-  "findings.method_missing": "Los hallazgos cuya muestra no se pudo confirmar en vivo no están en esta página. La lista es más corta que el conjunto de muestras, a propósito."
+  "findings.method_missing": "Los hallazgos cuya muestra no se pudo confirmar en vivo no están en esta página. La lista es más corta que el conjunto de muestras, a propósito.",
+  "title.compatibility": "Compatibilidad de %s %s",
+  "title.compatibility_one": "Compatibilidad de %s"
 }

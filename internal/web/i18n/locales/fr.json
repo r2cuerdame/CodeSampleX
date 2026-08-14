@@ -177,5 +177,7 @@
   "findings.source": "Source",
   "findings.method_heading": "Comment vérifier n'importe quelle ligne",
   "findings.method_body": "Ouvrez l'échantillon, lisez son contract, exécutez-le. Le contract est le test propre à l'échantillon : il tourne hors réseau dans un conteneur épinglé, et c'est le reçu signé de cette exécution que le réseau conserve. Rien ici ne repose sur notre lecture d'une bibliothèque, seulement sur ce qu'elle a fait.",
-  "findings.method_missing": "Les constats dont l'échantillon n'a pas pu être confirmé en ligne ne figurent pas sur cette page. La liste est plus courte que le corpus, volontairement."
+  "findings.method_missing": "Les constats dont l'échantillon n'a pas pu être confirmé en ligne ne figurent pas sur cette page. La liste est plus courte que le corpus, volontairement.",
+  "title.compatibility": "Compatibilité de %s %s",
+  "title.compatibility_one": "Compatibilité de %s"
 }

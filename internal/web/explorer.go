@@ -419,7 +419,9 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		return
 	}
 	base := s.base(r)
-	title := name + " " + eco + " compatibility — CodeSampleX"
+	// Translated: the <html lang> said one language while the title was
+	// always English, which is the first thing a search result shows.
+	title := i18n.T(lang, "title.compatibility", name, eco) + " — CodeSampleX"
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+" ("+eco+")"))
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
@@ -463,7 +465,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		return
 	}
 	base := s.base(r)
-	title := name + " " + version + " compatibility — CodeSampleX"
+	title := i18n.T(lang, "title.compatibility", name, version) + " — CodeSampleX"
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+"@"+version))
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
@@ -513,7 +515,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	if len(matrix) > 0 && matrix[0].Context != "unknown" {
 		titleParts = append(titleParts, matrix[0].Context)
 	}
-	title := strings.Join(titleParts, " ") + " compatibility — CodeSampleX"
+	title := i18n.T(lang, "title.compatibility_one", strings.Join(titleParts, " ")) + " — CodeSampleX"
 
 	base := s.base(r)
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", symbol+" — "+name+"@"+version))

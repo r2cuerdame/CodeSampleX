@@ -177,5 +177,7 @@
   "findings.source": "Fonte",
   "findings.method_heading": "Como conferir qualquer linha daqui",
   "findings.method_body": "Abra a amostra, leia o contract dela e execute. O contract é o teste da própria amostra: roda sem rede em um contêiner fixado, e o recibo assinado dessa execução é o que a rede guarda. Nada aqui depende de como lemos uma biblioteca, apenas do que ela fez.",
-  "findings.method_missing": "Achados cuja amostra não pôde ser confirmada no ar não entram nesta página. A lista é mais curta que o conjunto de amostras, de propósito."
+  "findings.method_missing": "Achados cuja amostra não pôde ser confirmada no ar não entram nesta página. A lista é mais curta que o conjunto de amostras, de propósito.",
+  "title.compatibility": "Compatibilidade de %s %s",
+  "title.compatibility_one": "Compatibilidade de %s"
 }

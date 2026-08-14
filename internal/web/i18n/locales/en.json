@@ -177,5 +177,7 @@
   "findings.source": "Source",
   "findings.method_heading": "How to check any line here",
   "findings.method_body": "Open the sample, read its contract, run it. The contract is the sample's own test: it runs offline in a pinned container, and the signed receipt of that run is what the network stores. Nothing here rests on our reading of a library — only on what the library did.",
-  "findings.method_missing": "Findings whose sample could not be confirmed live are not on this page. The list is shorter than what the sample pool contains, on purpose."
+  "findings.method_missing": "Findings whose sample could not be confirmed live are not on this page. The list is shorter than what the sample pool contains, on purpose.",
+  "title.compatibility": "%s %s compatibility",
+  "title.compatibility_one": "%s compatibility"
 }

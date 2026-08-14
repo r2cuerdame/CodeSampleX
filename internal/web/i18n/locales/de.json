@@ -177,5 +177,7 @@
   "findings.source": "Quelle",
   "findings.method_heading": "Wie Sie jede Zeile hier prüfen",
   "findings.method_body": "Öffnen Sie das Sample, lesen Sie seinen Contract, führen Sie ihn aus. Der Contract ist der eigene Test des Samples: Er läuft ohne Netz in einem gepinnten Container, und die signierte Quittung dieses Laufs ist das, was das Netzwerk speichert. Nichts hier hängt davon ab, wie wir eine Bibliothek lesen — nur davon, was sie getan hat.",
-  "findings.method_missing": "Befunde, deren Sample nicht als veröffentlicht bestätigt werden konnte, stehen nicht auf dieser Seite. Die Liste ist absichtlich kürzer als der Bestand."
+  "findings.method_missing": "Befunde, deren Sample nicht als veröffentlicht bestätigt werden konnte, stehen nicht auf dieser Seite. Die Liste ist absichtlich kürzer als der Bestand.",
+  "title.compatibility": "%s %s Kompatibilität",
+  "title.compatibility_one": "%s Kompatibilität"
 }
