@@ -1,0 +1,9 @@
+{
+  "name": "csx-drizzle-sqlite-migration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "drizzle-orm": "0.45.2"
+  }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "csx-sample-tokio-paused-time"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+# rt + macros + time + sync is the feature set people reach for, and it is not
+# enough: start_paused, time::pause and time::advance are all gated behind
+# "test-util". Measured with those four features on rustc 1.97.1, time::pause
+# and time::advance are a plain E0425 that names the missing feature, but
+# start_paused is not, because the Builder keeps a private field of that name
+# whether or not the feature is on:
+#   error[E0599]: no method named `start_paused` found for mutable reference
+#   `&mut tokio::runtime::Builder` in the current scope
+#      |     ^^^^^^^^^^^^ private field, not a method
+# Nothing in that error mentions "test-util", which is why it reads like a
+# version problem and is not one.
+#
+# test-util is a normal dependency here only because this sample's contract is
+# `cargo run`. In a real crate put it in [dev-dependencies] so a production
+# build cannot pause its own clock:
+#   [dev-dependencies]
+#   tokio = { version = "1.53.1", features = ["test-util", "macros", "rt"] }
+#
+# "rt-multi-thread" is in this list for one reason: main.rs measures what a
+# multi_thread runtime does with start_paused. A paused clock does not need it,
+# and with the five features above Builder::new_multi_thread does not even
+# exist, so the mistake is a compile error rather than a panic. Drop it when
+# you copy this.
+tokio = { version = "1.53.1", features = [
+    "rt",
+    "macros",
+    "time",
+    "sync",
+    "test-util",
+    "rt-multi-thread",
+] }

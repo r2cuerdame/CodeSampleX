@@ -1,0 +1,2 @@
+polars==1.43.2
+polars-runtime-32==1.43.2

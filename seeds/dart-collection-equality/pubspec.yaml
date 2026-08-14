@@ -1,0 +1,9 @@
+name: csx_collection_equality
+description: Why two Dart Lists with the same contents are not ==, and what package:collection does about it.
+publish_to: none
+environment:
+  sdk: ^3.11.0
+dependencies:
+  collection: 1.19.1
+dev_dependencies:
+  test: 1.31.2

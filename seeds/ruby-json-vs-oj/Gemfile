@@ -1,0 +1,38 @@
+source "https://rubygems.org"
+
+# oj is deliberately absent, and why is the first half of the answer.
+#
+# Measured on ruby:3-alpine (ruby 3.4.10, x86_64-linux-musl), not assumed:
+# `gem install oj -v 3.17.6 --no-document` dies in extconf with
+#
+#   The compiler failed to generate an executable file. (RuntimeError)
+#   You have to install development tools first.
+#
+# because the image carries no cc, gcc, clang or make. oj is a C extension and
+# there is nothing to build it with. The same holds for the json gem itself:
+# 2.21.2 is the current release, and `gem install json -v 2.21.2` was measured
+# failing at the same extconf step, so on this image you cannot upgrade past
+# the json Ruby already has either. Adding build-base to the image is the other
+# way out, if the image is yours to change.
+#
+# That leaves the json Ruby ships — 2.9.1 here, already compiled, because it
+# was built when Ruby was. It is the C extension, not the pure-Ruby fallback;
+# the contract checks that. So the question worth answering is not "oj or json"
+# but which of json's defaults quietly change your data.
+
+# minitest 5.27.0 rather than 6.0.6, for the same reason one step removed, and
+# the intermediate measurement is the interesting one. `gem install minitest
+# -v 6.0.6` succeeds here, which makes 6 look fine: minitest 6 needs
+# prism (~> 1.5), and Ruby 3.4.10 has prism 1.5.3 built in, so nothing is
+# fetched. Under bundler it fails — bundler resolves prism to the newest
+# release, 1.9.0, and building that needs the compiler the image does not have:
+#
+#   An error occurred while installing prism (1.9.0), and Bundler cannot continue.
+#
+# Adding `gem "prism", "1.5.3"` does get minitest 6.0.6 installed, because
+# bundler will then use the built-in copy ("prism-1.5.3 is built in to Ruby").
+# That is the technique when you need a gem whose dependency has a native
+# extension: pin the dependency to the version the interpreter already ships.
+# It is not used here because it pins a test dependency to one image's build of
+# Ruby. minitest 5.27.0 has no dependencies at all.
+gem "minitest", "5.27.0"

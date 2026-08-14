@@ -1,0 +1,20 @@
+{
+  "name": "csx/carbon-immutable-timezone",
+  "license": "MIT-0",
+  "require": {
+    "nesbot/carbon": "3.13.2"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "13.3.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "Csx\\": "src/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.5.0"
+    }
+  }
+}

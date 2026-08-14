@@ -1,0 +1,10 @@
+{
+  "name": "csx-zod4-error-shape",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}
