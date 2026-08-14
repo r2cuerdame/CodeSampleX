@@ -14,6 +14,7 @@
   "landing.agents_auto": "csx init los detecta y registra el servidor MCP por ti. No hay que editar ningún archivo de configuración.",
   "landing.agents_manual": "Cualquier otro cliente MCP también sirve: Cursor, Windsurf, Cline, Zed, VS Code. csx es un servidor MCP stdio estándar; añádelo a la configuración de tu cliente:",
   "landing.agents_models": "Independiente del modelo. La misma evidencia de compatibilidad sirve a Claude, GPT y Codex, Gemini, Llama: cualquier modelo capaz de llamar a una herramienta MCP.",
+  "landing.network_heading": "Estado de la red",
   "landing.flywheel_heading": "Por qué mejora",
   "landing.flywheel_1": "Más usuarios",
   "landing.flywheel_2": "Más entornos reales",

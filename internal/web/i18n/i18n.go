@@ -74,7 +74,16 @@ func T(lang, key string, args ...any) string {
 		s, ok = catalogs[Default][key]
 	}
 	if !ok {
-		return key
+		// Never render the key. A missing entry used to print its own name,
+		// so "landing.network_heading" shipped as a visible <h2> on the
+		// homepage in all nine languages — the kind of thing a visitor reads
+		// as "this site is broken" before reading anything else. An empty
+		// string leaves a gap; the key leaves a defect on the page.
+		//
+		// MissingKeys is what catches it: the test walks every template key
+		// and fails on one that has no entry, which is where this belongs
+		// rather than in front of a reader.
+		return ""
 	}
 	if len(args) > 0 {
 		return fmt.Sprintf(s, args...)

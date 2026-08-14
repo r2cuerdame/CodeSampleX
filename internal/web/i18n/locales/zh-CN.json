@@ -14,6 +14,7 @@
   "landing.agents_auto": "csx init 会自动检测并注册 MCP 服务器，无需手动修改配置文件。",
   "landing.agents_manual": "其他 MCP 客户端同样可用 —— Cursor、Windsurf、Cline、Zed、VS Code。csx 是标准的 stdio MCP 服务器，只需在客户端配置中加入：",
   "landing.agents_models": "与模型无关。同一份兼容性证据可供 Claude、GPT 与 Codex、Gemini、Llama 等任何能调用 MCP 工具的模型使用。",
+  "landing.network_heading": "网络状态",
   "landing.flywheel_heading": "为什么会越来越好",
   "landing.flywheel_1": "更多用户",
   "landing.flywheel_2": "更多真实环境",

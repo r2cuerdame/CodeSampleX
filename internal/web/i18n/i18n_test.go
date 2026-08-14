@@ -83,9 +83,15 @@ func TestI18nFallbackAndArgs(t *testing.T) {
 	if got := T("xx", "landing.tagline"); got != "Stop solving the same code twice." {
 		t.Fatalf("fallback = %q", got)
 	}
-	// Unknown key returns the key itself (visible, greppable).
-	if got := T("en", "no.such.key"); got != "no.such.key" {
-		t.Fatalf("missing key = %q", got)
+	// A missing key renders as NOTHING, never as its own name.
+	//
+	// This used to return the key so it would be visible and greppable, and
+	// that is a good instinct pointed at the wrong audience: it made
+	// "landing.network_heading" a visible <h2> on the live homepage in all
+	// nine languages. TestEveryTemplateKeyExists is where a missing key gets
+	// caught now — loudly, in front of a developer instead of a visitor.
+	if got := T("en", "no.such.key"); got != "" {
+		t.Fatalf("missing key rendered %q; it must render nothing", got)
 	}
 	// Args are applied via Sprintf when present.
 	if got := T("en", "meta.explorer", "axios"); !strings.Contains(got, "axios") {
