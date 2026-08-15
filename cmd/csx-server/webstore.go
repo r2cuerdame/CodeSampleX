@@ -47,8 +47,35 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 		}
 		return domain.CompareVersions(rows[i].Version, rows[j].Version) > 0
 	})
+	// Only versions that HAVE a page. The list came from the packages
+	// table, which the publicness gate also writes to -- including purls
+	// whose evidence batch was then refused -- while the version page 404s
+	// unless that exact version has a snapshot target. So a package page
+	// listed versions under a heading whose empty state reads "No versions
+	// with evidence yet", and every one of those links was a 404.
+	//
+	// One extra scan per package page, the same one PackageSymbols already
+	// pays per version page. A link into a 404 is worse than a slow page.
+	targets, terr := w.s.ListSnapshotTargets(ctx)
+	if terr != nil {
+		return nil, terr
+	}
+	hasPage := map[string]bool{}
+	for _, t := range targets {
+		if p, err := domain.ParsePURL(t.PURL); err == nil &&
+			p.Ecosystem == ecosystem && p.Name == name {
+			hasPage[p.Version] = true
+		}
+	}
 	versions := make([]string, 0, len(rows))
 	for _, r := range rows {
+		// The same two conditions versionPage renders on: a symbol with
+		// evidence, or a package-level snapshot. Anything else is a 404.
+		if !hasPage[r.Version] {
+			if _, ok := w.SnapshotJSON(ctx, r.PURL, ""); !ok {
+				continue
+			}
+		}
 		versions = append(versions, r.Version)
 	}
 	return versions, nil

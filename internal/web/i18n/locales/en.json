@@ -99,7 +99,7 @@
   "meta.adapters": "Which ecosystems CodeSampleX supports and exactly how far: package detection, build observation, symbol resolution and contract verification per adapter.",
   "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and verified samples.",
   "meta.explorer": "Real-environment compatibility evidence for %s: execution contexts, confidence, failure clusters and verified samples.",
-  "meta.findings": "Measured corrections of widely held beliefs about public packages — two of them contradicting official documentation — each one linked to a published sample whose contract runs offline in a pinned container.",
+  "meta.findings": "Measured corrections of widely held beliefs about public packages, several contradicting official documentation — each one linked to a published sample whose contract runs offline in a pinned container.",
   "meta.stats": "Live numbers from the CodeSampleX network: peers, packages, symbols, evidence and verified samples — plus how the evidence pipeline works.",
   "meta.wanted": "The questions CodeSampleX could not answer, ranked by how many people asked.",
   "nav.adapters": "Adapters",
