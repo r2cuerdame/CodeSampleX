@@ -123,12 +123,13 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		affected = affectedKeys(changes)
 	}
 
-	targets, err := b.Store.ListSnapshotTargets(ctx)
+	allTargets, err := b.Store.ListSnapshotTargets(ctx)
 	if err != nil {
 		return fmt.Errorf("compatibility: list targets: %w", err)
 	}
+	targets := allTargets
 	if affected != nil {
-		targets = keepTargets(targets, affected)
+		targets = keepTargets(allTargets, affected)
 	}
 	samples, err := b.loadSamples(ctx)
 	if err != nil {
@@ -204,13 +205,24 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		}
 		return pkgKeys[i].name < pkgKeys[j].name
 	})
+	// A failure cluster is a per-PACKAGE aggregate, so rebuilding one needs
+	// every version of that package — not only the versions this pass
+	// happened to touch.
+	//
+	// UpsertFailureCluster replaces observation_count, versions and
+	// env_summary outright. On an incremental pass byPkg held only the
+	// dirty versions, so a cluster with 100 observations on 0.27.2 (all
+	// windows) and 50 on 1.12.0 (all linux) was rewritten, after a change
+	// to 1.12.0 alone, as 50 observations on linux with 0.27.2 dropped from
+	// its version list. The stored cluster then understated the failure and
+	// named the wrong version — and that is what the search shows a caller
+	// as a known failure.
+	clusterEvidence, err := b.evidenceForPackages(ctx, pkgKeys, allTargets, byPkg)
+	if err != nil {
+		return err
+	}
 	for _, k := range pkgKeys {
-		evidenceByVersion := map[string][]serverstore.EvidenceRow{}
-		for _, versions := range byPkg[k] {
-			for version, rows := range versions {
-				evidenceByVersion[version] = append(evidenceByVersion[version], rows...)
-			}
-		}
+		evidenceByVersion := clusterEvidence[k]
 		for _, cluster := range BuildClusters(k.ecosystem, k.name, evidenceByVersion, regressionsByPkg[k], now) {
 			if err := b.Store.UpsertFailureCluster(ctx, cluster); err != nil {
 				return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
@@ -352,9 +364,23 @@ func receiptsForTarget(samples []sampleData, p domain.PURL, symbol string) []Rec
 	return out
 }
 
+// sampleCoversPackage reports whether a sample's receipts may be
+// attributed to this exact package version.
+//
+// It matched on the MAJOR, so a receipt for a sample verified against
+// axios@1.12.0 was attributed to the snapshot of axios@1.0.0 — and the
+// page for 1.0.0 reported contract passes and SAMPLE_VERIFICATION counts
+// for a version nothing had ever been run against. Semver's promise runs
+// forward, not backward: code proven on 1.12 says nothing about 1.0, where
+// the API may not have existed.
+//
+// A receipt attests to the version the contract actually ran against, and
+// to nothing else. Versions with no receipts now show none, which is what
+// is true; the search grades version distance on its own and does not need
+// this to blur.
 func sampleCoversPackage(sd sampleData, p domain.PURL) bool {
 	for _, sp := range sd.purls {
-		if sp.Ecosystem == p.Ecosystem && sp.Name == p.Name && sp.Major() == p.Major() {
+		if sp.Ecosystem == p.Ecosystem && sp.Name == p.Name && sp.Version == p.Version {
 			return true
 		}
 	}
@@ -723,4 +749,48 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 		},
 	}
 	return json.Marshal(doc)
+}
+
+// evidenceForPackages gathers every version's evidence for each touched
+// package, reusing what this pass already loaded and fetching only the
+// versions it skipped.
+//
+// The cost is bounded by the number of versions of the packages that
+// changed, which is what a correct cluster rebuild needs by definition. A
+// full pass loads nothing extra, because byPkg already holds everything.
+func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
+	allTargets []serverstore.SnapshotTarget, byPkg map[pkgKey]symVer,
+) (map[pkgKey]map[string][]serverstore.EvidenceRow, error) {
+	want := make(map[pkgKey]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+	}
+	out := make(map[pkgKey]map[string][]serverstore.EvidenceRow, len(keys))
+	for _, k := range keys {
+		out[k] = map[string][]serverstore.EvidenceRow{}
+		for _, versions := range byPkg[k] {
+			for version, rows := range versions {
+				out[k][version] = append(out[k][version], rows...)
+			}
+		}
+	}
+	for _, t := range allTargets {
+		p, err := domain.ParsePURL(t.PURL)
+		if err != nil {
+			continue
+		}
+		k := pkgKey{p.Ecosystem, p.Name}
+		if !want[k] {
+			continue
+		}
+		if _, loaded := byPkg[k][t.Symbol][p.Version]; loaded {
+			continue // this pass already read it
+		}
+		rows, err := b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
+		if err != nil {
+			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", t.PURL, t.Symbol, err)
+		}
+		out[k][p.Version] = append(out[k][p.Version], rows...)
+	}
+	return out, nil
 }
