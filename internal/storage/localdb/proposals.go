@@ -2,6 +2,7 @@ package localdb
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -63,7 +64,29 @@ func (d *DB) PendingProposals(ctx context.Context) ([]ProposalRow, error) {
 // SetProposalState marks a proposal published or dropped so it stops being
 // offered for review.
 func (d *DB) SetProposalState(ctx context.Context, workdir, state string) error {
-	_, err := d.sql.ExecContext(ctx,
+	res, err := d.sql.ExecContext(ctx,
 		`UPDATE proposals SET state=? WHERE workdir=?`, state, workdir)
+	if err != nil {
+		return err
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return nil
+	}
+	// An exact string match on a path the user typed, against a path the
+	// clean room generated. `csx sample pending` prints the absolute
+	// workdir and says to run `csx sample create <workdir>`; a user who cds
+	// in and types `csx sample create .`, or gives a relative path, or a
+	// differently-cased drive letter on Windows, updated zero rows. That
+	// returned nil, nothing was printed, and pending kept telling them to
+	// create a sample they had already created -- forever.
+	abs, aerr := filepath.Abs(workdir)
+	if aerr != nil {
+		return nil
+	}
+	_, err = d.sql.ExecContext(ctx, `
+		UPDATE proposals SET state=?
+		WHERE workdir=? COLLATE NOCASE
+		   OR REPLACE(workdir,'','/')=? COLLATE NOCASE`,
+		state, abs, filepath.ToSlash(abs))
 	return err
 }
