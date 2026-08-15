@@ -86,6 +86,7 @@ func packageRelation(reqPkgs, candPkgs []domain.PURL) (pkgRel, domain.PURL, doma
 	}
 	reqP = reqPkgs[0]
 	best := relNone
+	found := false
 	for _, rp := range reqPkgs {
 		for _, cp := range candPkgs {
 			if rp.Ecosystem != cp.Ecosystem || !equalFoldName(rp.Name, cp.Name) {
@@ -105,10 +106,25 @@ func packageRelation(reqPkgs, candPkgs []domain.PURL) (pkgRel, domain.PURL, doma
 			default:
 				r = relMajorDiff
 			}
-			if r > best {
-				best, reqP, samP = r, rp, cp
+			// The WORST shared pair is the one graded, not the friendliest.
+			//
+			// Keeping the best meant a caller naming
+			// [react@19.2.0, react-dom@19.2.0] against a sample declaring
+			// [react@19.2.0, react-dom@18.3.1] got MATCH: EXACT on react
+			// while the react-dom major gap — the thing that would actually
+			// break their build — went unmentioned in the delta. The
+			// server-side search already grades the widest gap for exactly
+			// this reason; this is the same input getting two answers.
+			//
+			// An honest summary of fit is the worst mismatch among the
+			// packages both sides share.
+			if !found || r < best {
+				best, reqP, samP, found = r, rp, cp, true
 			}
 		}
+	}
+	if !found {
+		return relNone, reqP, samP
 	}
 	return best, reqP, samP
 }

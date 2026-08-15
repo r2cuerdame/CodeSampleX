@@ -15,8 +15,12 @@ func TestGradeUsesTheSamplesOwnPackagesNotTheShardKey(t *testing.T) {
 	// What the shard union used to hand the grader.
 	union := parsePURLs([]string{"pkg:npm/axios@1.12.2", "pkg:npm/axios@1.19.0"})
 
-	if rel, _, _ := packageRelation(req, union); rel != relExactVersion {
-		t.Fatalf("union relation = %v; the test is not reproducing the old input", rel)
+	// The union input is now safe from two directions: the grader is given
+	// the sample's DECLARED packages, and even handed the union it takes
+	// the WORST shared pair rather than the friendliest — so the version
+	// the sample never declared can no longer produce an exact claim.
+	if rel, _, _ := packageRelation(req, union); rel == relExactVersion {
+		t.Errorf("the shard union still grades EXACT: %v", rel)
 	}
 	rel, _, samP := packageRelation(req, declared)
 	if rel == relExactVersion {

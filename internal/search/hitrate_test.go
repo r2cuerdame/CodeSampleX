@@ -711,3 +711,37 @@ func TestFetchingASampleDoesNotDowngradeIt(t *testing.T) {
 		t.Errorf("status = %q after fetching; the network said STABLE", c.status)
 	}
 }
+
+// packageRelation kept the FRIENDLIEST shared pair, so a caller naming
+// [react@19.2.0, react-dom@19.2.0] against a sample declaring
+// [react@19.2.0, react-dom@18.3.1] was told MATCH: EXACT on react while the
+// react-dom major gap — the thing that would actually break their build —
+// went unmentioned in the delta. The server-side search already grades the
+// widest gap for exactly this reason, so the same input got two answers
+// depending on which path served it.
+func TestTheWidestSharedGapIsTheOneGraded(t *testing.T) {
+	req := parsePURLs([]string{"pkg:npm/react@19.2.0", "pkg:npm/react-dom@19.2.0"})
+	sam := parsePURLs([]string{"pkg:npm/react@19.2.0", "pkg:npm/react-dom@18.3.1"})
+
+	rel, _, samP := packageRelation(req, sam)
+	if rel == relExactVersion {
+		t.Error("graded EXACT while a shared package differs by a major version")
+	}
+	if samP.Name != "react-dom" {
+		t.Errorf("reported %s; the widest gap is react-dom", samP.Name)
+	}
+	// Order must not decide it.
+	rev := parsePURLs([]string{"pkg:npm/react-dom@19.2.0", "pkg:npm/react@19.2.0"})
+	if r2, _, _ := packageRelation(rev, sam); r2 != rel {
+		t.Errorf("the answer depends on array order: %v vs %v", rel, r2)
+	}
+	// Everything agreeing is still EXACT.
+	same := parsePURLs([]string{"pkg:npm/react@19.2.0", "pkg:npm/react-dom@19.2.0"})
+	if r3, _, _ := packageRelation(req, same); r3 != relExactVersion {
+		t.Errorf("relation = %v when every shared package matches exactly", r3)
+	}
+	// A package the sample does not have at all is still relNone.
+	if r4, _, _ := packageRelation(parsePURLs([]string{"pkg:npm/preact@10.28.1"}), sam); r4 != relNone {
+		t.Errorf("relation = %v for a package the sample never names", r4)
+	}
+}
