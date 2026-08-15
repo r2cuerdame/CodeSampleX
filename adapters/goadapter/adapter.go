@@ -65,7 +65,7 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 		// was filed under v0.17.0, and another agent asking about v0.17.0
 		// got a HIT backed by a build that never used it.
 		name, version := r.path, r.version
-		if rep, ok := moduleReplaced[r.path]; ok {
+		if rep, ok := moduleReplaced[r.path]; ok && rep.appliesTo(r.version) {
 			name, version = rep.path, rep.version
 		}
 		pkgs = append(pkgs, scanner.ResolvedPackage{
@@ -130,7 +130,27 @@ type requireEntry struct {
 }
 
 // replacement is what a module replace directive redirects to.
-type replacement struct{ path, version string }
+type replacement struct{ path, version, oldVersion string }
+
+// appliesTo reports whether this replace directive governs the version the
+// build actually selected.
+//
+// `replace old vX => new vY` applies ONLY when the selected version is
+// exactly vX; go ignores it otherwise. The left-hand version was parsed and
+// thrown away, so a stale directive -- the ordinary residue of a `go get
+// -u` -- was applied to whatever version the require line now names. A
+// go.mod requiring golang.org/x/crypto v0.21.0 alongside a leftover
+// `replace golang.org/x/crypto v0.0.0-2022... => golang.org/x/crypto
+// v0.17.0` compiles v0.21.0, and evidence from that build was filed under
+// v0.17.0: the next agent asking about v0.17.0 got a HIT backed by a build
+// that never used it. That is the exact failure the comment at the call
+// site says this code prevents.
+//
+// A version-less left side (`replace old => new vY`) applies to every
+// version, which is why it stays unconditional.
+func (r replacement) appliesTo(selected string) bool {
+	return r.oldVersion == "" || r.oldVersion == selected
+}
 
 // parseGoMod extracts require entries, the set of module paths whose
 // replace target is a filesystem path (⇒ private, never uploadable), and
@@ -201,6 +221,12 @@ func recordReplace(fields []string, localReplaced map[string]bool, moduleReplace
 		return
 	}
 	oldPath := fields[0]
+	// `old vX => new vY` names the version the directive governs; `old =>
+	// new vY` governs every version.
+	oldVersion := ""
+	if arrow == 2 {
+		oldVersion = strings.TrimSpace(fields[1])
+	}
 	target := fields[arrow+1]
 	if unquoted, err := strconv.Unquote(target); err == nil {
 		target = unquoted
@@ -213,7 +239,7 @@ func recordReplace(fields []string, localReplaced map[string]bool, moduleReplace
 	// unless the target is a directory, which the branch above handled.
 	if arrow+2 < len(fields) {
 		if v := strings.TrimSpace(fields[arrow+2]); v != "" {
-			moduleReplaced[oldPath] = replacement{path: target, version: v}
+			moduleReplaced[oldPath] = replacement{path: target, version: v, oldVersion: oldVersion}
 		}
 	}
 }

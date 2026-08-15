@@ -71,6 +71,21 @@ func searchMain(ctx context.Context, args []string) int {
 			// REFERENCE_ONLY for the one sample that was right.
 			projPkgs = projectPackages(res)
 			symbols = projectSymbols(res)
+			// bun.lock, deno.json or an electron dependency say where this
+			// project's code is MEANT to run, which is often not the
+			// runtime that happens to be executing csx. The scanner has
+			// detected it since the beginning and nothing anywhere read the
+			// result: a Bun project searched as plain node, and the
+			// execution-context grading that exists to separate them never
+			// saw the difference.
+			//
+			// Only when the environment does not already say otherwise, and
+			// only for the search: the recorded evidence keeps the context
+			// of the command that actually ran, because a project holding a
+			// bun.lock can still be run with node.
+			if env.ExecutionContext == "" && res.TargetContext != "" {
+				env.ExecutionContext = res.TargetContext
+			}
 		} else {
 			env = environment.Collect(ctx, nil)
 		}

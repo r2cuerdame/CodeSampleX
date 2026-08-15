@@ -163,6 +163,27 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 		topLevel := key == "node_modules/"+name
 		spec, isDirect := directSpecs[name]
 
+		// An ALIAS installs one package under another name:
+		//
+		//	"dependencies": {"lodash": "npm:lodash-es@4.17.21"}
+		//	"node_modules/lodash": {"name":"lodash-es","version":"4.17.21"}
+		//
+		// The key is the import name; the entry's own "name" is the package
+		// that is actually installed. Reading the key alone reported
+		// lodash@4.17.21 -- a package this project never installs, and a
+		// real one on npm, so the publicness check confirmed it and
+		// observations were uploaded about a build that never used it,
+		// while the package that WAS built went unreported. The alias
+		// string-width-cjs -> npm:string-width appears transitively in a
+		// large share of real lockfiles through @isaacs/cliui.
+		//
+		// Symbols still resolve by import name, so an aliased import loses
+		// its symbol row rather than attributing lodash.debounce to the
+		// wrong package. Losing a row is the acceptable half of that trade.
+		if e.Name != "" && e.Name != name {
+			name = e.Name
+		}
+
 		version := e.Version
 		if version == "" && e.Link {
 			version = lock.Packages[e.Resolved].Version
