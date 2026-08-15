@@ -234,7 +234,19 @@ func collectFiles(dir string) ([]string, error) {
 				return filepath.SkipDir
 			}
 			if forbiddenDir(base) {
-				return fmt.Errorf("samples: forbidden entry: %s/", slash)
+				// A dead end without a reason is a dead end. This one is a
+				// deliberate stop rather than a filter: a .git directory
+				// means the sample directory is somebody's actual
+				// repository, and packaging one publishes remotes, author
+				// identities, commit messages and every file the author was
+				// not thinking about. Skipping it silently would publish
+				// the rest of that tree, so the answer is to say why and
+				// what to do instead.
+				return fmt.Errorf(
+					"samples: %s/ is a repository, not a sample directory — "+
+						"packaging it would publish its remotes, authors and history. "+
+						"Copy the minimal project into a directory of its own "+
+						"(or remove %s/) and run this again", slash, slash)
 			}
 			return nil
 		}

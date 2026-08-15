@@ -584,8 +584,68 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		if r.Case != nil && r.Case.Goal != "" {
 			b.WriteString("Goal: " + r.Case.Goal + "\n")
 		}
+		b.WriteString(contractBlock(r))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// maxContractLinesShown bounds an untrimmed list that came from a local
+// manifest. A shard-sourced list is already bounded by the server.
+const maxContractLinesShown = 8
+
+// contractBlock renders what this sample's contract asserted and proved.
+//
+// It carries what a goal sentence cannot: which argument shapes are
+// accepted, what is raised instead of returned, which option or environment
+// setting decides the outcome. It sat in every sample and reached nobody —
+// the rendered answer stopped at the goal line, and seeing more cost a
+// second get_sample call that an agent only makes after it has already
+// decided to use the sample, by which point the claims are no longer what
+// it needed them for.
+//
+// Three clauses keep the heading honest, and each one is load-bearing:
+//
+//   - Printed only when a contract actually PASSED. Lines without a pass
+//     are an author's intent, not a result, and "proven" would then be a
+//     claim the evidence does not support.
+//   - Scoped to the exact package versions the run used. The delta above
+//     prints only major.minor, so this is the only place the pinned version
+//     appears — and a claim about 4.4.3 is not a claim about all of 4.4.
+//   - Never recomputes a count of what it withheld. A shard-sourced list
+//     already ends in the server's own "… and N more" sentinel when it was
+//     trimmed; re-trimming and counting again here would understate a long
+//     list and swallow that sentinel.
+//
+// Every line is printed verbatim. Sorting them into "real assertions" and
+// "setup" would be a judgement no contract made — and in this repo's own
+// corpus the lines that read most like cautions are exactly the ones such a
+// filter drops.
+func contractBlock(r domain.SearchResult) string {
+	if r.Case == nil || len(r.Case.Contract) == 0 || r.Evidence.ContractPasses == 0 {
+		return ""
+	}
+	scope := strings.Join(r.Case.Packages, ", ")
+	if scope == "" {
+		return "" // nothing to scope the claim to, so make no claim
+	}
+
+	var b strings.Builder
+	b.WriteString("Proven by its contract for " + scope + "\n")
+	b.WriteString("  (it ran in a pinned container with the network off and passed;\n")
+	b.WriteString("   these are the author's own lines about that run)\n")
+
+	lines := r.Case.Contract
+	if len(lines) > maxContractLinesShown+1 {
+		for _, line := range lines[:maxContractLinesShown] {
+			b.WriteString("  - " + line + "\n")
+		}
+		fmt.Fprintf(&b, "  … and %d more — get_sample\n", len(lines)-maxContractLinesShown)
+		return b.String()
+	}
+	for _, line := range lines {
+		b.WriteString("  - " + line + "\n")
+	}
+	return b.String()
 }
 
 func writeSection(b *strings.Builder, title string, items []string) {

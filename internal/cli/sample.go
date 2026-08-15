@@ -596,7 +596,7 @@ func sampleVerify(ctx context.Context, args []string) int {
 	}
 	fp := environment.Collect(ctx, map[string]string{"ecosystem": manifest.Environment.Ecosystem})
 
-	receipt, err := verifier.Run(ctx, runner, capability, dir, manifest, ident, fp)
+	receipt, stageLogs, err := verifier.RunLogged(ctx, runner, capability, dir, manifest, ident, fp)
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample verify: %v\n", err)
 		return 1
@@ -632,6 +632,26 @@ func sampleVerify(ctx context.Context, args []string) int {
 	for _, stage := range []string{"resolve", "compile", "load", "contract"} {
 		fmt.Fprintf(sampleStdout, "%-10s %s\n", stage, receipt.Stages[stage])
 	}
+	// What actually happened, for the stage that failed.
+	//
+	// A table of PASS/FAIL and nothing else left an author with no way to
+	// see what their own assertion did, inside a container they cannot
+	// enter -- the only route was to rebuild it by hand and guess at the
+	// flags. This is the loop the whole contribution side depends on.
+	//
+	// Local only: the receipt carries a digest of these logs and never the
+	// logs themselves, because raw output carries paths and usernames.
+	for _, stage := range []string{"resolve", "compile", "contract"} {
+		if receipt.Stages[stage] != sandbox.ResultFail {
+			continue
+		}
+		if tail := lastLines(stageLogs[stage], failLogLines); tail != "" {
+			fmt.Fprintf(sampleStdout, "\nWhat %s printed (last %d lines, this machine only):\n",
+				stage, failLogLines)
+			fmt.Fprintln(sampleStdout, tail)
+		}
+		break
+	}
 	if capability == domain.CapCompileOnly && receipt.Stages["contract"] == sandbox.ResultSkipped {
 		fmt.Fprintln(sampleStdout, "Note: no container isolation on this host (COMPILE_ONLY). NOTHING from the")
 		fmt.Fprintln(sampleStdout, "sample was executed — not the contract, not the build, not even dependency")
@@ -640,6 +660,23 @@ func sampleVerify(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleStdout, "that this machine could not judge it. Install Docker to verify.")
 	}
 	return 0
+}
+
+// failLogLines bounds the failure output a verify prints. Enough to see the
+// assertion that failed and the line above it; not the whole build.
+const failLogLines = 25
+
+// lastLines returns the final n non-empty-trailing lines of s.
+func lastLines(s string, n int) string {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- publish -----------------------------------------------------------

@@ -227,8 +227,16 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 		if r.SampleID != "" {
 			fmt.Fprintf(w, "SAMPLE: %s (%s)\n", r.SampleID, r.SampleStatus)
 		}
-		if r.Case != nil && len(r.Case.Contract) > 0 {
-			fmt.Fprintln(w, "\nProven by its contract (ran offline in a pinned container)")
+		// Only when a contract actually passed, and always scoped to the
+		// versions it ran against. Lines without a pass are an author's
+		// intent rather than a result, and the delta below prints only
+		// major.minor — so this is the one place the pinned version the
+		// claims belong to is stated.
+		if r.Case != nil && len(r.Case.Contract) > 0 &&
+			r.Evidence.ContractPasses > 0 && len(r.Case.Packages) > 0 {
+			fmt.Fprintf(w, "\nProven by its contract for %s\n",
+				strings.Join(r.Case.Packages, ", "))
+			fmt.Fprintln(w, "(it ran in a pinned container with the network off and passed)")
 			for _, line := range r.Case.Contract {
 				fmt.Fprintf(w, "- %s\n", line)
 			}

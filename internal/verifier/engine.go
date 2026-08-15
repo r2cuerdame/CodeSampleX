@@ -36,18 +36,43 @@ func Run(
 	ident *identity.Identity,
 	env domain.EnvironmentFingerprint,
 ) (domain.VerificationReceipt, error) {
+	receipt, _, err := RunLogged(ctx, r, cap, sampleDir, m, ident, env)
+	return receipt, err
+}
+
+// RunLogged is Run, and also returns each stage's output.
+//
+// The receipt stores only a DIGEST of the logs, deliberately: raw output
+// carries paths, usernames and tokens and must never leave the machine
+// (goal.md §8.5). But the logs were then discarded entirely, so an author
+// whose contract failed got a table of PASS/FAIL and nothing else -- no way
+// to see what their own assertion did, on their own machine, in a container
+// they cannot enter. The only way to find out was to rebuild the container
+// by hand and guess at the flags.
+//
+// That is the loop the whole contribution side depends on. These logs stay
+// local: they go to the author's terminal and nowhere near a receipt.
+func RunLogged(
+	ctx context.Context,
+	r sandbox.Runner,
+	cap domain.SandboxCapability,
+	sampleDir string,
+	m domain.SampleManifest,
+	ident *identity.Identity,
+	env domain.EnvironmentFingerprint,
+) (domain.VerificationReceipt, map[string]string, error) {
 	var zero domain.VerificationReceipt
 	if r == nil {
-		return zero, errors.New("verifier: nil runner")
+		return zero, nil, errors.New("verifier: nil runner")
 	}
 	if ident == nil {
-		return zero, errors.New("verifier: nil identity")
+		return zero, nil, errors.New("verifier: nil identity")
 	}
 
 	// Hash the pristine tree BEFORE any stage dirties it with node_modules etc.
 	_, sampleID, err := samples.BuildArtifact(sampleDir)
 	if err != nil {
-		return zero, fmt.Errorf("verifier: hash sample: %w", err)
+		return zero, nil, fmt.Errorf("verifier: hash sample: %w", err)
 	}
 
 	// The receipt must describe where the stages ran. Under CONTAINER_RUN
@@ -102,5 +127,9 @@ func Run(
 		PeerPubkey:        ident.PubkeyB64(),
 	}
 	receipt.PeerSignature = ident.Sign(receipt.SigningBytes())
-	return receipt, nil
+	return receipt, map[string]string{
+		"resolve":  resolve.Log,
+		"compile":  compile.Log,
+		"contract": contract.Log,
+	}, nil
 }
