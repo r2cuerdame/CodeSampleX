@@ -20,9 +20,12 @@ const (
 // It stays a candidate: uncertain causes are hypotheses, not verdicts
 // (goal.md §3.6).
 type RegressionCandidate struct {
-	Package              string  `json:"package"`         // purl of the suspect version
-	PreviousPackage      string  `json:"previousPackage"` // purl of V-1
-	Symbol               string  `json:"symbol,omitempty"`
+	Package         string `json:"package"`         // purl of the suspect version
+	PreviousPackage string `json:"previousPackage"` // purl of V-1
+	Symbol          string `json:"symbol,omitempty"`
+	// Stage is the observation stage the comparison was made at. A
+	// regression only means something within one stage.
+	Stage                string  `json:"stage,omitempty"`
 	ContextLabel         string  `json:"contextLabel"`
 	EnvBucketHash        string  `json:"envBucketHash"`
 	FailRate             float64 `json:"failRate"`
@@ -39,7 +42,7 @@ func DetectRegressions(curPURL, prevPURL, symbol string,
 	curStats := bucketPassFail(cur)
 	prevStats := bucketPassFail(prev)
 
-	keys := make([]bucketKey, 0, len(curStats))
+	keys := make([]stageBucketKey, 0, len(curStats))
 	for k := range curStats {
 		keys = append(keys, k)
 	}
@@ -47,7 +50,10 @@ func DetectRegressions(curPURL, prevPURL, symbol string,
 		if keys[i].ContextLabel != keys[j].ContextLabel {
 			return keys[i].ContextLabel < keys[j].ContextLabel
 		}
-		return keys[i].EnvHash < keys[j].EnvHash
+		if keys[i].EnvHash != keys[j].EnvHash {
+			return keys[i].EnvHash < keys[j].EnvHash
+		}
+		return keys[i].Stage < keys[j].Stage
 	})
 
 	var out []RegressionCandidate
@@ -55,7 +61,17 @@ func DetectRegressions(curPURL, prevPURL, symbol string,
 		c := curStats[k]
 		p, ok := prevStats[k]
 		if !ok {
-			continue // §10.3 compares the SAME env bucket
+			// §10.3 compares the SAME env bucket, and the same STAGE. The
+			// two used to be pooled: every observation stage went into one
+			// tally, so "V-1 passed" could be satisfied entirely by USED
+			// rows -- a symbol appearing in source, which is recorded as a
+			// pass and essentially never fails -- while V's failures came
+			// from PROJECT_COMPILE. That reported "1.11.0 compiled cleanly
+			// in this environment" about a version nothing ever compiled
+			// there, and it was biased toward doing so, because the
+			// always-passing stage inflated exactly the half of the rule
+			// that gates the badge.
+			continue
 		}
 		cTotal, pTotal := c.Pass+c.Fail, p.Pass+p.Fail
 		if cTotal < regressionMinObservations || pTotal < regressionMinObservations {
@@ -68,6 +84,7 @@ func DetectRegressions(curPURL, prevPURL, symbol string,
 				Package:              curPURL,
 				PreviousPackage:      prevPURL,
 				Symbol:               symbol,
+				Stage:                k.Stage,
 				ContextLabel:         k.ContextLabel,
 				EnvBucketHash:        k.EnvHash,
 				FailRate:             failRate,
@@ -80,9 +97,17 @@ func DetectRegressions(curPURL, prevPURL, symbol string,
 	return out
 }
 
-// bucketPassFail tallies observation-stage pass/fail per env bucket.
-func bucketPassFail(rows []serverstore.EvidenceRow) map[bucketKey]StageCount {
-	out := map[bucketKey]StageCount{}
+// stageBucketKey is one environment bucket at one observation stage.
+// Comparing V against V-1 is only meaningful within a single stage: a
+// typecheck pass says nothing about whether the thing ran.
+type stageBucketKey struct {
+	bucketKey
+	Stage string
+}
+
+// bucketPassFail tallies observation pass/fail per env bucket AND stage.
+func bucketPassFail(rows []serverstore.EvidenceRow) map[stageBucketKey]StageCount {
+	out := map[stageBucketKey]StageCount{}
 	for _, row := range rows {
 		if !isObservationStage(row.Stage) {
 			continue
@@ -91,7 +116,8 @@ func bucketPassFail(rows []serverstore.EvidenceRow) map[bucketKey]StageCount {
 		if !ok {
 			continue
 		}
-		k, _ := bucketOf(env)
+		bk, _ := bucketOf(env)
+		k := stageBucketKey{bucketKey: bk, Stage: row.Stage}
 		sc := out[k]
 		if row.Result == string(domain.ResultPass) {
 			sc.Pass += row.ObservationCount

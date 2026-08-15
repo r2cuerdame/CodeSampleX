@@ -61,9 +61,32 @@ func BuildClusters(ecosystem, packageName string,
 		}
 	}
 
-	regressedSymbols := map[string]bool{}
+	// A regression candidate is a claim about ONE version pair at one
+	// stage: "1.12.0 fails where 1.11.0 passed". Keying the badge by symbol
+	// alone spread that claim over every failure cluster sharing the
+	// symbol, so a cluster whose only version was 0.9.0 rendered
+	// "▲ regression candidate  0.9.0" -- a definitive-sounding causal badge
+	// on a version the comparison never looked at.
+	//
+	// It now needs the symbol, the stage, AND the suspect version.
+	type regKey struct{ symbol, stage, version string }
+	regressed := map[regKey]bool{}
 	for _, r := range regressions {
-		regressedSymbols[r.Symbol] = true
+		p, err := domain.ParsePURL(r.Package)
+		if err != nil {
+			continue
+		}
+		regressed[regKey{r.Symbol, r.Stage, p.Version}] = true
+	}
+	// isRegressed reports whether this cluster is the one the candidate is
+	// about: same symbol and stage, and the suspect version among its own.
+	isRegressed := func(symbol, stage string, versions map[string]bool) bool {
+		for v := range versions {
+			if regressed[regKey{symbol, stage, v}] {
+				return true
+			}
+		}
+		return false
 	}
 
 	keys := make([]ckey, 0, len(clusters))
@@ -98,7 +121,7 @@ func BuildClusters(ecosystem, packageName string,
 			ErrorFingerprint:    k.fp,
 			ErrorCode:           c.code,
 			ObservationCount:    c.count,
-			RegressionCandidate: regressedSymbols[k.symbol],
+			RegressionCandidate: isRegressed(k.symbol, k.stage, c.versions),
 			LastSeen:            now,
 		}
 		if summary := envSummary(c.failEnvs); summary != nil {
