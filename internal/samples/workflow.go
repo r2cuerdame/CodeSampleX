@@ -64,7 +64,21 @@ func CreateFromDir(ctx context.Context, dir string, manifest domain.SampleManife
 		return nil, fmt.Errorf("samples: write csx.json: %w", err)
 	}
 
-	findings, err := Scan(dir, ProvenanceOptions(dir))
+	// Provenance comes from where the CONTRIBUTOR is, not from the clean
+	// room. dir here is ~/.csx/samples/work/sample-2589936356, whose name
+	// matches nothing, so the project-name check never fired at creation
+	// either -- and creation is where an author can still fix it cheaply.
+	opts := ProvenanceOptions(dir)
+	if cwd, cerr := os.Getwd(); cerr == nil {
+		from := ProvenanceOptions(cwd)
+		if from.ProjectDirName != "" {
+			opts.ProjectDirName = from.ProjectDirName
+		}
+		if from.GitRemoteName != "" {
+			opts.GitRemoteName = from.GitRemoteName
+		}
+	}
+	findings, err := Scan(dir, opts)
 	if err != nil {
 		return nil, fmt.Errorf("samples: leakage scan: %w", err)
 	}

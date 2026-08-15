@@ -521,7 +521,16 @@ func samplePreview(ctx context.Context, args []string) int {
 		}
 	}
 
-	findings, err := samples.Scan(dir, samples.ProvenanceOptions(dir))
+	// The SAME options the publish gate will use.
+	//
+	// Preview says "everything below is EXACTLY what would be published.
+	// Nothing is hidden" and then scanned with provenance derived from the
+	// throwaway unpack directory -- names like csx-sample-1553973873, which
+	// can match nothing. So the project-name check, the entire purpose of
+	// provenance.go, could not fire here at all: a contributor working in
+	// C:/work/acme-billing saw "Leakage findings: 0" from a preview that
+	// swore it showed what publish would do, and then publish REFUSED.
+	findings, err := samples.Scan(dir, publishProvenance())
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample preview: leakage scan: %v\n", err)
 		return 1

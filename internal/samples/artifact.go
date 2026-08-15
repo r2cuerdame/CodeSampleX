@@ -168,13 +168,41 @@ func BuildArtifact(dir string) (tgz []byte, sampleID string, err error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf) // Header: zero MTime, empty Name — canonical.
 	tw := tar.NewWriter(gz)
+	var unpacked int64
 	for _, p := range paths {
+		// Everything Unpack will refuse has to be refused HERE, while the
+		// author can still act on it.
+		//
+		// Only the compressed size was checked at creation, and Unpack
+		// enforces three more rules: a per-entry and total unpacked cap, a
+		// name safety rule, and USTAR encodability. So `csx sample create`
+		// happily minted samples that preview, verify and publish then
+		// refused forever, with no way to make progress: a 9MB fixture
+		// compresses to 32KB and passes the only gate there was, and a
+		// file named with a colon (legal on Linux and macOS, and what an
+		// ISO timestamp looks like) passed too.
+		if err := buildableEntryName(p); err != nil {
+			return nil, "", err
+		}
 		content, rerr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p)))
 		if rerr != nil {
 			return nil, "", fmt.Errorf("samples: read %s: %w", p, rerr)
 		}
 		if bytes.IndexByte(content, 0) >= 0 {
 			return nil, "", fmt.Errorf("samples: binary file not allowed: %s", p)
+		}
+		if int64(len(content)) > maxUnpackedBytes {
+			return nil, "", fmt.Errorf(
+				"samples: %s is %d bytes; a sample file may be at most %d. "+
+					"Trim the fixture or generate it in the contract instead",
+				p, len(content), maxUnpackedBytes)
+		}
+		unpacked += int64(len(content))
+		if unpacked > maxUnpackedBytes {
+			return nil, "", fmt.Errorf(
+				"samples: the sample totals more than %d bytes unpacked. "+
+					"A sample is a minimal project; move large fixtures out of it",
+				maxUnpackedBytes)
 		}
 		hdr := &tar.Header{
 			Typeflag: tar.TypeReg,
@@ -346,6 +374,46 @@ func Unpack(tgz []byte, destDir string) error {
 	}
 	return nil
 }
+
+// buildableEntryName refuses, at creation time, any name the artifact
+// format or Unpack cannot carry — and says what to do about it.
+//
+// The canonical tar is USTAR, which is what makes identical trees produce
+// identical ids. USTAR cannot encode a non-ASCII name at all, and caps a
+// path component at 100 bytes. Without this check, `csx sample create`
+// failed on a file named tests/café_fixture.json with archive/tar's own
+// text ("Format specifies USTAR; and USTAR cannot encode Name=...") and no
+// hint that renaming it is the way out — on a project whose whole subject
+// is encoding and i18n, those are exactly the fixtures an author reaches
+// for.
+func buildableEntryName(name string) error {
+	if _, err := safeEntryName(name, false); err != nil {
+		return fmt.Errorf(
+			"samples: %q cannot be published: an entry name may not contain "+
+				"a colon, a backslash or a parent reference. Rename it", name)
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if len(seg) > ustarNameSegment {
+			return fmt.Errorf(
+				"samples: %q cannot be published: %q is %d bytes and the "+
+					"archive format caps a path component at %d. Shorten it",
+				name, seg, len(seg), ustarNameSegment)
+		}
+	}
+	for _, r := range name {
+		if r > 127 {
+			return fmt.Errorf(
+				"samples: %q cannot be published: the canonical archive "+
+					"format is ASCII-only, which is what makes identical "+
+					"trees produce identical ids. Rename the file (its "+
+					"CONTENTS may be any encoding you like)", name)
+		}
+	}
+	return nil
+}
+
+// ustarNameSegment is the USTAR limit for one path component.
+const ustarNameSegment = 100
 
 // safeEntryName validates one tar entry name and returns its cleaned
 // slash-relative form.
