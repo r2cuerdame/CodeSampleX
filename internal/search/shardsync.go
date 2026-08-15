@@ -80,6 +80,13 @@ type shardSample struct {
 //	404 → the shard does not exist yet server-side; nothing is removed and
 //	      no error is returned.
 //	network / other status → error, so the caller can queue a retry.
+//
+// errShardAbsent reports a shard the server does not have. It is not a
+// failure -- a package the network has never heard of simply has no shard
+// -- but it is not a warmed key either, and the warmed count is a promise
+// about what actually arrived.
+var errShardAbsent = errors.New("shard not generated yet")
+
 func (s *Syncer) SyncKey(ctx context.Context, key string) error {
 	prev, havePrev, err := s.DB.GetShard(ctx, key)
 	if err != nil {
@@ -111,7 +118,11 @@ func (s *Syncer) SyncKey(ctx context.Context, key string) error {
 		return s.DB.SaveShard(ctx, key, prev.ETag, prev.JSON)
 	case http.StatusNotFound:
 		// Shard may simply not be generated yet; keep whatever we have.
-		return nil
+		// Not an error -- but not a warmed key either. SyncAll promises a
+		// count of what ACTUALLY SUCCEEDED, and counting 404s meant a sync
+		// of packages the network has never heard of reported them all as
+		// warmed, which is the same lie the count was introduced to end.
+		return errShardAbsent
 	case http.StatusOK:
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -335,6 +346,9 @@ func (s *Syncer) SyncAll(ctx context.Context, keys []string) (int, error) {
 	done := 0
 	for _, key := range keys {
 		err := s.syncKeyWithRetry(ctx, key)
+		if errors.Is(err, errShardAbsent) {
+			continue // nothing there to warm, and nothing wrong either
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue

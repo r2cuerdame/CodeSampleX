@@ -85,8 +85,15 @@ func dedupe(in []string) []string {
 
 // runtimeShow renders "node 22" — major bucket, §11.5 style.
 func runtimeShow(name, version string) string {
-	if m := majorOf(version); m != "" {
-		return name + " " + m
+	if name == "" {
+		return ""
+	}
+	// The release LINE, not the major. The comparison was fixed to treat
+	// go1.9 and go1.26 as different lines, and then printed both of them as
+	// "go 1" -- so the delta listed a difference whose two sides read
+	// identically, which is worse than saying nothing.
+	if line := releaseLineOf(name, version); line != "" {
+		return name + " " + line
 	}
 	return name
 }

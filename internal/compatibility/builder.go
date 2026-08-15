@@ -505,10 +505,22 @@ func (b *Builder) regenerateShards(ctx context.Context,
 			return fmt.Errorf("compatibility: put shard %s: %w", key, err)
 		}
 	}
-	if affected == nil {
-		return b.retireEmptyShards(ctx, built, now)
+	// A key that WAS dirty and produced nothing has lost its last input --
+	// the ordinary shape of a quarantine on a seeded package. Retiring only
+	// on full passes left the withdrawn sample being served for up to an
+	// hour, and the operator was told "the next aggregation pass rebuilds
+	// the affected shards".
+	if affected != nil {
+		dirty := map[string]bool{}
+		for sk := range affected {
+			key := sk.ecosystem + "/" + sk.name + "/" + sk.major
+			if !built[key] {
+				dirty[key] = true
+			}
+		}
+		return b.retireShardKeys(ctx, dirty, now)
 	}
-	return nil
+	return b.retireEmptyShards(ctx, built, now)
 }
 
 // retireEmptyShards empties shards nothing feeds any more.
@@ -532,10 +544,19 @@ func (b *Builder) retireEmptyShards(ctx context.Context, built map[string]bool, 
 	if err != nil {
 		return fmt.Errorf("compatibility: list shard keys: %w", err)
 	}
+	want := map[string]bool{}
 	for _, key := range keys {
-		if built[key] {
-			continue
+		if !built[key] {
+			want[key] = true
 		}
+	}
+	return b.retireShardKeys(ctx, want, now)
+}
+
+// retireShardKeys empties the named shards, skipping any that are already
+// empty so an ETag is not churned for nothing.
+func (b *Builder) retireShardKeys(ctx context.Context, keys map[string]bool, now time.Time) error {
+	for key := range keys {
 		_, prev, ok, gerr := b.Store.GetShard(ctx, key)
 		if gerr != nil {
 			return fmt.Errorf("compatibility: get shard %s: %w", key, gerr)

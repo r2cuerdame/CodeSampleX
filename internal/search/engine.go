@@ -637,7 +637,13 @@ func envSummaryMatches(req domain.EnvironmentFingerprint, summary map[string]str
 			if !strings.EqualFold(name, req.Runtime) {
 				return false
 			}
-			if ver != "" && majorOf(ver) != majorOf(req.RuntimeVersion) {
+			// The release LINE, for the same reason the grader uses it: go
+			// 1.9 and go 1.26 are seven years apart and both major "1", so
+			// matching by major reported a failure seen only on 1.26 as
+			// something that would bite a caller on 1.9 -- and a known
+			// failure demotes the sample that would have helped them.
+			if ver != "" && releaseLineOf(req.Runtime, ver) !=
+				releaseLineOf(req.Runtime, req.RuntimeVersion) {
 				return false
 			}
 		case "browserFamily":

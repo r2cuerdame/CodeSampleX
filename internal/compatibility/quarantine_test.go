@@ -120,3 +120,45 @@ func TestRetirementLeavesLiveShardsAlone(t *testing.T) {
 		t.Errorf("the quarantined sample survived:\n%s", js)
 	}
 }
+
+// The operator is told "the next aggregation pass rebuilds the affected
+// shards", and the next pass is almost always an INCREMENTAL one — a full
+// pass runs every twelfth tick, so retiring only on full passes left a
+// withdrawn sample being served for up to an hour after a takedown.
+//
+// An incremental pass already knows which keys are dirty. A dirty key that
+// produced nothing has lost its last input, which is exactly the shape of
+// quarantining the only sample a seeded package had.
+func TestQuarantineIsHonouredByTheVeryNextPass(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+
+	const purl = "pkg:cargo/semver@1.0.28"
+	sampleID := "sha256:" + strings.Repeat("cd", 32)
+	seedSampleOnlyPackage(t, store, purl, sampleID)
+
+	// One builder across both passes: the second is incremental.
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, js, ok, _ := store.GetShard(ctx, "cargo/semver/1"); !ok || !strings.Contains(js, sampleID) {
+		t.Fatal("setup: the shard should carry the sample first")
+	}
+
+	if err := store.SetSampleQuarantine(ctx, sampleID, true, "takedown"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("incremental pass: %v", err)
+	}
+
+	_, js, ok, err := store.GetShard(ctx, "cargo/semver/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok && strings.Contains(js, sampleID) {
+		t.Errorf("the withdrawn sample survived the very next pass:\n%s", js)
+	}
+}

@@ -82,6 +82,15 @@ const (
 // says so when it trims: a truncated list that looks complete would be the
 // system stating that these are ALL the claims, which is a claim of its own.
 func contractForShard(contract []string) []string {
+	// Count what a reader would actually have seen, not how long the input
+	// slice was: blank and whitespace-only lines are dropped, and counting
+	// them made the note claim more was withheld than existed.
+	kept := 0
+	for _, line := range contract {
+		if strings.TrimSpace(line) != "" {
+			kept++
+		}
+	}
 	out := make([]string, 0, len(contract))
 	for _, line := range contract {
 		line = strings.TrimSpace(line)
@@ -96,9 +105,9 @@ func contractForShard(contract []string) []string {
 			break
 		}
 	}
-	if len(out) == maxShardContractLines && len(contract) > maxShardContractLines {
+	if len(out) == maxShardContractLines && kept > maxShardContractLines {
 		out = append(out, fmt.Sprintf("… and %d more, in the sample itself",
-			len(contract)-maxShardContractLines))
+			kept-maxShardContractLines))
 	}
 	return out
 }

@@ -692,7 +692,11 @@ func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 
 // ListSamplesPage is ListSamples with an offset.
 func (f *Fake) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
-	all, err := f.ListSamples(ctx, 0)
+	// Every row, then the window. ListSamples(0) means "use the default",
+	// which is 50 -- so this paged through the newest 50 and returned
+	// nothing at all past that, quietly capping the very scan that exists
+	// to stop quiet capping.
+	all, err := f.ListSamples(ctx, 1<<30)
 	if err != nil {
 		return nil, err
 	}

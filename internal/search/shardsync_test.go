@@ -221,7 +221,11 @@ func hasDoc(hits []localdb.DocHit, docID string) bool {
 	return false
 }
 
-func TestShardSync404IsNil(t *testing.T) {
+// A shard the server has not generated is not a failure and stores
+// nothing — but it is not a warmed key either, so SyncKey reports it with
+// a sentinel the warm COUNT can tell apart. SyncAll's number is a promise
+// about what actually arrived.
+func TestShardSync404IsNotAFailureAndNotAWarm(t *testing.T) {
 	ctx := context.Background()
 	srv := &shardServer{etag: `"v1"`}
 	ts := httptest.NewServer(srv.handler())
@@ -229,11 +233,21 @@ func TestShardSync404IsNil(t *testing.T) {
 
 	db := newTestDB(t)
 	sy := &Syncer{DB: db, HTTP: ts.Client(), ServerURL: ts.URL}
-	if err := sy.SyncKey(ctx, "npm/left-pad/1"); err != nil {
-		t.Fatalf("404 should be nil error, got %v", err)
+	err := sy.SyncKey(ctx, "npm/left-pad/1")
+	if !errors.Is(err, errShardAbsent) {
+		t.Fatalf("404 should report the absent sentinel, got %v", err)
 	}
 	if _, ok, _ := db.GetShard(ctx, "npm/left-pad/1"); ok {
 		t.Fatalf("404 must not store a shard row")
+	}
+
+	// And it must not be counted as warmed, nor reported as an error.
+	n, aerr := sy.SyncAll(ctx, []string{"npm/left-pad/1"})
+	if n != 0 {
+		t.Errorf("warmed count = %d for a shard the server does not have", n)
+	}
+	if aerr != nil {
+		t.Errorf("an absent shard was reported as a sync failure: %v", aerr)
 	}
 }
 

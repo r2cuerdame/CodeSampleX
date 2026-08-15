@@ -1067,8 +1067,15 @@ func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 
 		// Every package a published sample declares, so shards holding
 		// answers rank above shards holding only counts.
+		//
+		// NOT the quarantined ones. A withdrawn sample carried the same
+		// +1,000,000 weight as a live one, so it kept pushing its package
+		// to the top of the HOT list -- the list every client warms first.
+		// "Hides a sample from every serving read" has to include the read
+		// that decides what the whole network downloads.
 		srows, err := c.Query(ctx, `
-			SELECT jsonb_array_elements_text(manifest->'packages') FROM samples`)
+			SELECT jsonb_array_elements_text(manifest->'packages')
+			FROM samples WHERE NOT quarantined`)
 		if err != nil {
 			return err
 		}
