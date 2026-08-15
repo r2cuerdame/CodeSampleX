@@ -27,9 +27,21 @@ type stageCount struct {
 }
 
 type snapshotRow struct {
-	ContextLabel      string                         `json:"contextLabel"`
-	EnvLabel          string                         `json:"envLabel"`
-	Env               *domain.EnvironmentFingerprint `json:"env"`
+	ContextLabel string `json:"contextLabel"`
+	EnvLabel     string `json:"envLabel"`
+	// The producer writes this field as "envBucket" (compatibility
+	// SnapshotRow.EnvBucket). Reading it as "env" meant it never decoded:
+	// every matrix row on every package page rendered with no environment
+	// detail at all, so two buckets differing only by libc, container
+	// runtime or OS appeared as two identical rows with different
+	// confidence chips and no way to tell which was which — including the
+	// musl/glibc distinction the label code calls decisive.
+	//
+	// "env" is kept as an alias so a snapshot written before this is still
+	// readable; the fake in the web tests hand-wrote "envLabel", which is
+	// why nothing caught it.
+	Env               *domain.EnvironmentFingerprint `json:"envBucket"`
+	EnvAlias          *domain.EnvironmentFingerprint `json:"env"`
 	Confidence        string                         `json:"confidence"`
 	ElevatedFailure   bool                           `json:"elevatedFailure"`
 	PassRate          float64                        `json:"passRate"`
@@ -133,6 +145,9 @@ func languageShort(lang, version string) string {
 
 // rowLabels derives the leading context and the detail cell of a row.
 func rowLabels(row snapshotRow) (ctx, detail string) {
+	if row.Env == nil {
+		row.Env = row.EnvAlias
+	}
 	ctx = row.ContextLabel
 	if ctx == "" && row.Env != nil {
 		ctx = row.Env.ContextLabel()
