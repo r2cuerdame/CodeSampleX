@@ -82,6 +82,11 @@ type shardSampleEntry struct {
 	Packages       []string                      `json:"packages,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
+	// Contract is what the sample's contract command asserted and proved in
+	// a pinned container. Absent from shards generated before this field
+	// existed, which simply means the claims are unknown here rather than
+	// that there were none.
+	Contract []string `json:"contract,omitempty"`
 }
 
 // candidate is one sample under consideration, from the local samples table
@@ -298,6 +303,9 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					c.caseObj = &domain.Case{
 						SchemaVersion: 1, Kind: "HOW", Goal: ss.Goal,
 						Packages: ss.Packages,
+						// What the contract actually proved. Older shards do
+						// not carry it and simply have none.
+						Contract: ss.Contract,
 					}
 				}
 				cands[ss.SampleID] = c

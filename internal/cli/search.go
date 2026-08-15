@@ -227,6 +227,13 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 		if r.SampleID != "" {
 			fmt.Fprintf(w, "SAMPLE: %s (%s)\n", r.SampleID, r.SampleStatus)
 		}
+		if r.Case != nil && len(r.Case.Contract) > 0 {
+			fmt.Fprintln(w, "\nProven by its contract (ran offline in a pinned container)")
+			for _, line := range r.Case.Contract {
+				fmt.Fprintf(w, "- %s\n", line)
+			}
+			fmt.Fprintln(w)
+		}
 		printList(w, "Exact", r.Exact)
 		printList(w, "Different", r.Different)
 		printList(w, "Adaptation needed", r.Adaptation)

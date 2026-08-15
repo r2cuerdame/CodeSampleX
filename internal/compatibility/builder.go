@@ -588,6 +588,7 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 			// which one it was verified against.
 			Packages:    sd.manifest.Packages,
 			Environment: sd.manifest.Environment,
+			Contract:    contractForShard(sd.manifest.Case.Contract),
 		}
 		if len(sd.receipts) > 0 {
 			latest := sd.receipts[0]

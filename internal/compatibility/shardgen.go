@@ -3,7 +3,9 @@ package compatibility
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -53,6 +55,52 @@ type ShardSample struct {
 	Packages       []string                      `json:"packages,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
+	// Contract is the assertion list the sample's contract command actually
+	// RAN, in a pinned container with the network off, and passed.
+	//
+	// It is the most useful thing the network knows about a library and it
+	// never left the server: the shard carried the sample's one-line goal
+	// and nothing else, so every search answer came back with
+	// "contract": null and an agent had to spend a second tool call
+	// (get_sample) to learn what was actually proven -- which is exactly
+	// the per-call, per-option detail a goal sentence cannot carry.
+	//
+	// Bounded, because a shard is fetched by every client: see
+	// contractForShard.
+	Contract []string `json:"contract,omitempty"`
+}
+
+// Bounds on the contract lines a shard carries. A shard is fetched by every
+// client warming that package, so this is paid on the network repeatedly; a
+// sample with 40 assertions is also not communicating 40 useful facts.
+const (
+	maxShardContractLines = 8
+	maxShardContractLen   = 240
+)
+
+// contractForShard trims a sample's contract to what is worth shipping, and
+// says so when it trims: a truncated list that looks complete would be the
+// system stating that these are ALL the claims, which is a claim of its own.
+func contractForShard(contract []string) []string {
+	out := make([]string, 0, len(contract))
+	for _, line := range contract {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > maxShardContractLen {
+			line = strings.TrimSpace(line[:maxShardContractLen]) + "…"
+		}
+		out = append(out, line)
+		if len(out) == maxShardContractLines {
+			break
+		}
+	}
+	if len(out) == maxShardContractLines && len(contract) > maxShardContractLines {
+		out = append(out, fmt.Sprintf("… and %d more, in the sample itself",
+			len(contract)-maxShardContractLines))
+	}
+	return out
 }
 
 // ShardPackage is one package version inside a shard.
