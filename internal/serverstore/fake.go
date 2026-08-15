@@ -667,6 +667,28 @@ func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 	return nil
 }
 
+// SamplesBySeeder lists one seeder's live samples, newest first.
+func (f *Fake) SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error) {
+	all, err := f.ListSamples(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	var out []SampleRow
+	for _, s := range all {
+		if s.OriginSeeder != login {
+			continue
+		}
+		out = append(out, s)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // ShardKeys lists the stored keys in sorted order.
 func (f *Fake) ShardKeys(_ context.Context) ([]string, error) {
 	f.mu.Lock()

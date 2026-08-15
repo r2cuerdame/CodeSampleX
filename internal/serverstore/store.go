@@ -210,6 +210,9 @@ type Store interface {
 	// patterns ("pkg:npm/axios@%"), so search does not depend on a global
 	// newest-N window.
 	SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// SamplesBySeeder lists one seeder's published samples, so their page
+	// does not depend on a global newest-N window.
+	SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error)
 	// SetSampleQuarantine hides or restores a sample without deleting the
 	// evidence trail behind it.
 	SetSampleQuarantine(ctx context.Context, sampleID string, on bool, reason string) error

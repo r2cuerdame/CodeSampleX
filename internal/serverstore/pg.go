@@ -572,6 +572,41 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 	return out, err
 }
 
+// SamplesBySeeder lists a seeder's own published samples, newest first.
+//
+// The seeder page used to read the newest 500 samples network-wide and
+// filter them by login, so a seeder's older work disappeared from their own
+// page the moment the network published 500 samples after it — silently,
+// and first for the people who contributed earliest.
+func (p *PG) SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error) {
+	if login == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined AND origin_seeder = $1
+			ORDER BY created_at DESC, sample_id LIMIT $2`, login, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // SetSampleQuarantine hides or restores a sample. Evidence, receipts and
 // the case row are left untouched: a quarantine must be reversible and
 // auditable, not a delete.

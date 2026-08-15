@@ -138,16 +138,16 @@ func (w *webStore) SampleReceipts(ctx context.Context, id string) ([]string, err
 	return out, nil
 }
 
+// seederSampleLimit bounds one seeder page.
+const seederSampleLimit = 200
+
 func (w *webStore) SeederSamples(ctx context.Context, login string) ([]web.SampleListItem, error) {
-	rows, err := w.s.ListSamples(ctx, 500)
+	rows, err := w.s.SamplesBySeeder(ctx, login, seederSampleLimit)
 	if err != nil {
 		return nil, err
 	}
-	var out []web.SampleListItem
+	out := make([]web.SampleListItem, 0, len(rows))
 	for _, r := range rows {
-		if r.OriginSeeder != login {
-			continue
-		}
 		out = append(out, sampleListItem(r))
 	}
 	return out, nil

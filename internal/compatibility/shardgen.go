@@ -137,10 +137,25 @@ func SymbolStatsFromEvidence(rows []serverstore.EvidenceRow, now time.Time) (Sha
 	return stats, failures
 }
 
-// TopShardSamples orders samples by hot score, then recency, and caps the
-// list for shard inclusion.
+// TopShardSamples orders samples for shard inclusion and caps the list.
+//
+// VERIFICATION FIRST, then hot score, then recency. Ordering by traffic
+// alone meant the cap cut by popularity: a package with 21 samples whose
+// oldest was STABLE -- contract-passed and cross-verified by independent
+// peers -- dropped exactly that one, because twenty newer PUBLISHED
+// samples with no receipts at all were more recent and no more popular
+// (a fresh sample's hot score is zero, so the tie fell to recency).
+//
+// Shards are the only document clients ever read, so the sample was not
+// merely ranked lower: it became invisible to every machine on the
+// network, while twenty unverified ones were served in its place. The
+// whole claim of this system is that a verified answer beats a plausible
+// one, and the cap was deciding the opposite.
 func TopShardSamples(samples []ShardSampleInput) []ShardSample {
 	sort.SliceStable(samples, func(i, j int) bool {
+		if a, b := verifiedRank(samples[i].Sample), verifiedRank(samples[j].Sample); a != b {
+			return a > b
+		}
 		if samples[i].HotScore != samples[j].HotScore {
 			return samples[i].HotScore > samples[j].HotScore
 		}
@@ -157,6 +172,27 @@ func TopShardSamples(samples []ShardSampleInput) []ShardSample {
 		out = append(out, s.Sample)
 	}
 	return out
+}
+
+// verifiedRank scores how much of the C13 ladder a sample has actually
+// climbed. A contract-PASS receipt counts even when the status has not
+// caught up yet: the receipt is the evidence, the status is the summary.
+func verifiedRank(s ShardSample) int {
+	rank := 0
+	switch s.Status {
+	case "STABLE":
+		rank = 4
+	case "MATRIX_PASS":
+		rank = 3
+	case "CROSS_PASS":
+		rank = 2
+	case "LOCAL_PASS":
+		rank = 1
+	}
+	if s.ContractStages["contract"] == string(domain.ResultPass) && rank < 1 {
+		rank = 1
+	}
+	return rank
 }
 
 // ShardSampleInput pairs a rendered shard sample with its ordering keys.
