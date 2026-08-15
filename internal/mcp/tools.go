@@ -182,7 +182,7 @@ func toolDefs() []toolDef {
 	return []toolDef{
 		{
 			Name:        "search_known_solution",
-			Description: "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof.",
+			Description: "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers.",
 			InputSchema: obj(map[string]any{
 				"query":       str("what you are trying to do or fix, in plain words"),
 				"packages":    strArr("package purls involved, e.g. pkg:npm/axios@1.12.0"),
