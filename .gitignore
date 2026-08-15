@@ -29,3 +29,13 @@ seeds/*/.csx-vendor/
 
 # Rust build output in a seed: never published, and it is 100MB of noise
 seeds/*/target/
+
+# generated inside seed workspaces: rebuilt by the toolchain, never source
+seeds/*/.dart_tool/
+seeds/*/node_modules/
+seeds/*/__pycache__/
+seeds/*/target/
+seeds/*/_build/
+seeds/*/deps/
+seeds/*/vendor/
+seeds/*/.venv/

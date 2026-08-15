@@ -1,0 +1,24 @@
+source "https://rubygems.org"
+
+# sorbet-runtime is the half of Sorbet that ships to production. It has no
+# runtime dependencies at all, so the newest build installs on a compiler-less
+# Alpine image without a single native extension.
+#
+# The version number is an auto-incrementing build counter, not semver, and the
+# registry entry carries no documentation_uri. Sorbet's own documentation is
+# written around the STATIC checker (srb tc, the LSP); what this gem enforces
+# when the static checker is nowhere in sight gets one thin page. That gap is
+# the whole subject of this sample.
+gem "sorbet-runtime", "0.6.13426"
+
+# minitest 5, not 6. minitest 6 depends on prism, prism builds a C extension,
+# and ruby:3-alpine carries no compiler, so `bundle install` dies in extconf
+# before a line of test code runs. 5.27.0 is the newest 5.x and has no runtime
+# dependencies. Measured in this image, not assumed.
+gem "minitest", "5.27.0"
+
+# Not measured but worth naming: the whole dry-rb family is unusable here for
+# the same reason. dry-types and dry-logic depend on bigdecimal, bigdecimal is
+# a C extension gem at every version the resolver will pick, and it fails the
+# same way. sorbet-runtime's empty dependency list is why this sample can pin
+# the latest release instead of an old one.

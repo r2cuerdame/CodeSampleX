@@ -1,0 +1,13 @@
+name: csx_json_manual
+description: Hand-written fromJson/toJson over dart:convert, using json_annotation's converters and checked helpers with no build_runner and no generated file.
+publish_to: none
+environment:
+  sdk: ^3.11.0
+dependencies:
+  # json_annotation is pure Dart and has no build_runner dependency of its own.
+  # Its runtime half — JsonConverter, $checkedCreate/$checkedConvert and
+  # $checkKeys — works on its own, which is what this seed uses. The annotations
+  # (JsonKey, JsonSerializable) are inert without the generator; see product.dart.
+  json_annotation: 4.12.0
+dev_dependencies:
+  test: 1.31.2

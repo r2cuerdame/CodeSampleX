@@ -1,0 +1,3 @@
+%{
+  "nimble_csv": {:hex, :nimble_csv, "1.3.0", "b7f998dc62b222bce9596e46f028c7a5af04cb5dde6df2ea197c583227c54971", [:mix], [], "hexpm", "41ccdc18f7c8f8bb06e84164fc51635321e80d5a3b450761c4997d620925d619"},
+}

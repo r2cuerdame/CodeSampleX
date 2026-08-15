@@ -1,0 +1,21 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    minitest (5.27.0)
+    sorbet-runtime (0.6.13426)
+
+PLATFORMS
+  ruby
+  x86_64-linux-musl
+
+DEPENDENCIES
+  minitest (= 5.27.0)
+  sorbet-runtime (= 0.6.13426)
+
+CHECKSUMS
+  bundler (4.0.18) sha256=02d9a17429de1847b4e0c9f27a9ee4b20c0a74c0a641b4e77195d6019e3618ac
+  minitest (5.27.0) sha256=2d3b17f8a36fe7801c1adcffdbc38233b938eb0b4966e97a6739055a45fa77d5
+  sorbet-runtime (0.6.13426) sha256=6c4edafc6406ff89ba819ac6f5e1441459a2ac36f463f65b04c34cb16213c998
+
+BUNDLED WITH
+  4.0.18

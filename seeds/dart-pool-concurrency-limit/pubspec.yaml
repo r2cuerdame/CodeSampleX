@@ -1,0 +1,12 @@
+name: csx_pool_concurrency_limit
+description: What package:pool's timeout actually guards, and why forEach hands back results in the wrong order.
+publish_to: none
+environment:
+  sdk: ^3.11.0
+dependencies:
+  pool: 1.5.2
+dev_dependencies:
+  # fake_async drives pool's internal RestartableTimer without a wall clock, so
+  # the timeout assertions below are exact instead of racing a loaded machine.
+  fake_async: 1.3.3
+  test: 1.31.2

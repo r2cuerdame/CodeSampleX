@@ -1,0 +1,28 @@
+source "https://rubygems.org"
+
+# Newest release, and it can be the newest release: zeitwerk 2.8.3 declares no
+# runtime dependency and ships no C extension, so it installs on a ruby alpine
+# image that has no compiler. Several other Ruby seeds in this repo had to hold
+# a version back for exactly that reason; this one does not, and the contract
+# asserts the property rather than trusting this comment.
+gem "zeitwerk", "2.8.3"
+
+# minitest 6 needs prism ~> 1.5, and prism is a C extension gem. This image has
+# no cc, so it cannot build one.
+#
+# Measured, because the obvious check gives the wrong answer: `gem install
+# minitest -v 6.0.6` SUCCEEDS on this image, since rubygems is happy to satisfy
+# prism ~> 1.5 with the prism 1.5.3 that ruby 3.4.10 ships as a default gem.
+# Bundler does not do that — it resolves the dependency to the newest matching
+# release, writes prism 1.9.0 into the lock, and then has to build it:
+#
+#   An error occurred while installing prism (1.9.0), and Bundler cannot continue.
+#   In Gemfile:
+#     minitest was resolved to 6.0.6, which depends on
+#       prism
+#
+# 5.27.0 is the newest minitest with no runtime dependencies — every 6.x
+# release declares prism, and 5.27.0's own dependencies are all :development,
+# which bundler does not install for a gem it is only resolving. The other way
+# out is build-base in the image, if you control it.
+gem "minitest", "5.27.0"

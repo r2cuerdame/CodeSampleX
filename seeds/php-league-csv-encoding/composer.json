@@ -1,0 +1,20 @@
+{
+  "name": "csx/league-csv-encoding",
+  "license": "MIT-0",
+  "require": {
+    "league/csv": "9.28.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "13.3.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "Csx\\": "src/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.5.0"
+    }
+  }
+}

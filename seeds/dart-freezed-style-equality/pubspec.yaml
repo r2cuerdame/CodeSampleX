@@ -1,0 +1,17 @@
+name: csx_freezed_style_equality
+description: Value equality for Dart classes without code generation, and the props list that silently drops a field.
+publish_to: none
+environment:
+  sdk: ^3.13.0
+dependencies:
+  # equatable is the dependency-light, no-codegen answer: two transitive
+  # packages (collection, meta), no build_runner, no generated part file.
+  # 2.1.0 is the newest published stable; 3.0.0-dev.1 exists but is a
+  # prerelease and pub will not select it without an explicit prerelease
+  # constraint. The alternatives all failed the "no code generation" bar:
+  # freezed, built_value and dart_mappable each require build_runner and a
+  # generated .g.dart / .freezed.dart part, which cannot be shipped as
+  # hand-written source in this seed.
+  equatable: 2.1.0
+dev_dependencies:
+  test: 1.31.2

@@ -1,0 +1,19 @@
+source "https://rubygems.org"
+
+# Checked for native extensions before pinning, because the image this is
+# measured in (ruby:3-alpine) ships no C compiler: every gem here has to be
+# pure Ruby or `bundle install` dies in extconf.
+#
+# sinatra 4.2.1 pulls logger, mustermann, rack, rack-protection, rack-session
+# and tilt. All pure Ruby, all install with no toolchain — measured, the whole
+# closure resolves and installs on alpine.
+gem "sinatra", "4.2.1"
+
+# rack-test 2.2.0 depends only on rack, also pure Ruby. It drives the app
+# through Rack directly, so nothing here binds a port.
+gem "rack-test", "2.2.0"
+
+# minitest 6 is the newest release but is unusable here: 6.x added runtime
+# dependencies on drb and prism (~> 1.5), and prism compiles a C extension.
+# 5.27.0 is the newest that installs in this image.
+gem "minitest", "5.27.0"

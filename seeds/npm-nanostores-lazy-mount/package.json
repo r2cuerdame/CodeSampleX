@@ -1,0 +1,10 @@
+{
+  "name": "csx-nanostores-lazy-mount",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "dependencies": {
+    "nanostores": "1.4.2"
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "csx_winnow_1_migration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# winnow 1.0 split the crate behind feature gates that did not exist in 0.7.
+# `default` is ["std", "ascii", "binary"] and both "ascii" and "binary" imply
+# "parser". Setting default-features = false is what a no_std port would reach
+# for, and it removes winnow::combinator, winnow::token, winnow::error AND the
+# Parser trait itself -- the build fails with "could not find `combinator` in
+# `winnow`". A no-default-features dependency must add features = ["parser"].
+winnow = "1.0.4"
