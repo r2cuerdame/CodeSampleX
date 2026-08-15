@@ -71,20 +71,49 @@ func (s *Store) Put(r io.Reader) (string, error) {
 	hexDigest := hex.EncodeToString(h.Sum(nil))
 	id := idPrefix + hexDigest
 	dst := s.pathFor(hexDigest)
-	if _, err := os.Stat(dst); err == nil {
+	// A file already at this path was taken as proof the object was stored,
+	// without ever reading it. The one promise this store makes is that the
+	// id IS the sha256 of the bytes it hands back, and a file that has been
+	// truncated, half-written by an older build, or damaged on disk keeps
+	// that path occupied forever: Put reports success, and every later Get
+	// serves corrupt bytes under a content address that says they are
+	// intact. We hold a verified copy right here, so check before trusting.
+	if verified, err := objectMatches(dst, hexDigest); err == nil && verified {
 		return id, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
+	// Rename cannot replace an existing file on Windows, and the file that
+	// is there is one we just found does not match its own address.
+	_ = os.Remove(dst)
 	if err := os.Rename(tmpName, dst); err != nil {
-		// A concurrent Put may have won the rename; identical content, so done.
-		if _, statErr := os.Stat(dst); statErr == nil {
+		// A concurrent Put may have won the rename. Identical content is
+		// the expected case — but the same rule applies: verify it.
+		if verified, verr := objectMatches(dst, hexDigest); verr == nil && verified {
 			return id, nil
 		}
 		return "", err
 	}
 	return id, nil
+}
+
+// objectMatches reports whether the file at path hashes to hexDigest.
+// A missing file is (false, nil): not an error, just not there.
+func objectMatches(path, hexDigest string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false, err
+	}
+	return hex.EncodeToString(h.Sum(nil)) == hexDigest, nil
 }
 
 // Get opens the object for reading. The error satisfies os.IsNotExist for
