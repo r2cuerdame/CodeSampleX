@@ -143,16 +143,26 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 		if uhErr != nil {
 			fmt.Fprintf(env.stderr, "csx init: skipping agent integration: %v\n", uhErr)
 		} else {
-			var confirm func(string) bool
+			var confirm func(string) (bool, bool)
 			if !*yes {
-				confirm = func(agent string) bool {
+				noInput := false
+				confirm = func(agent string) (bool, bool) {
+					if noInput {
+						return false, false // already learned nobody is there
+					}
 					fmt.Fprintf(out, "Install CSX integration for %s? [y/N]: ", agent)
 					line, err := in.ReadString('\n')
 					if err != nil && line == "" {
-						return false // EOF: safe default is no
+						// EOF. Consent is never inferred, so nothing is
+						// installed — but the reason is that nobody was
+						// asked, and the remaining agents are not prompted
+						// into a closed pipe.
+						fmt.Fprintln(out)
+						noInput = true
+						return false, false
 					}
 					ans := strings.ToLower(strings.TrimSpace(line))
-					return ans == "y" || ans == "yes"
+					return ans == "y" || ans == "yes", true
 				}
 			}
 			results = installAgents(agentHome, confirm)
@@ -191,6 +201,25 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 	}
 
 	warmShardCache(ctx, out)
+
+	// An agent that was never registered is an agent that never calls csx,
+	// and the run above can end that way without anything saying so — the
+	// piped install reaches EOF at the first prompt and skips every agent.
+	// "csx is ready" on its own would be true of the config and false of
+	// the thing the user installed this for.
+	var unasked []string
+	for _, r := range results {
+		if r.Skipped && strings.Contains(r.Reason, "not asked") {
+			unasked = append(unasked, r.Agent)
+		}
+	}
+	if len(unasked) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "NOT registered with %s: nothing read the prompt, so nothing\n",
+			strings.Join(unasked, ", "))
+		fmt.Fprintln(out, "was installed. Your agent cannot call csx until it is. In a terminal, run:")
+		fmt.Fprintf(out, "  csx init --%s --yes\n", cfg.Mode)
+	}
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "csx is ready. To set up another machine:")

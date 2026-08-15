@@ -240,9 +240,9 @@ func TestAgentInstallConfirmDeclined(t *testing.T) {
 	plantDir(t, home, ".gemini")
 
 	var asked []string
-	results := installAgents(home, func(agent string) bool {
+	results := installAgents(home, func(agent string) (bool, bool) {
 		asked = append(asked, agent)
-		return agent == "Gemini CLI"
+		return agent == "Gemini CLI", true
 	})
 
 	if len(asked) != 2 {

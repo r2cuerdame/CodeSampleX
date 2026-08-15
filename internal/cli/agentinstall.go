@@ -100,7 +100,10 @@ type agentInstallResult struct {
 // (--yes); otherwise it is asked once per DETECTED agent. Installation
 // is mode-independent: local-only users still get agent integration —
 // search and evidence stay local, nothing here uploads anything.
-func installAgents(userHome string, confirm func(agent string) bool) []agentInstallResult {
+// confirm reports whether to install for one agent, and whether the
+// question was actually put to a human. The second value exists because
+// EOF is not a "no".
+func installAgents(userHome string, confirm func(agent string) (ok, asked bool)) []agentInstallResult {
 	agents := []struct {
 		name      string
 		detectDir string
@@ -120,10 +123,24 @@ func installAgents(userHome string, confirm func(agent string) bool) []agentInst
 			results = append(results, r)
 			continue
 		}
-		if confirm != nil && !confirm(a.name) {
-			r.Skipped, r.Reason = true, "declined"
-			results = append(results, r)
-			continue
+		if confirm != nil {
+			ok, asked := confirm(a.name)
+			if !ok {
+				// "declined" is a statement about the user, and EOF is not
+				// one: piped into sh, stdin is the pipe and the prompt is
+				// never seen. Reporting a decline for a question nobody was
+				// asked is the same class of lie as any other — and the
+				// consequence is the whole product, because an unregistered
+				// MCP server is one no agent is ever told to call.
+				r.Skipped = true
+				if asked {
+					r.Reason = "declined"
+				} else {
+					r.Reason = "not asked — input is not a terminal"
+				}
+				results = append(results, r)
+				continue
+			}
 		}
 		r.Actions, r.Err = a.install(userHome)
 		results = append(results, r)
