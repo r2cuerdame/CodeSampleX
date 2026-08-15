@@ -126,7 +126,7 @@ func (s *Syncer) SyncKey(ctx context.Context, key string) error {
 		if err := s.DB.SaveShard(ctx, key, resp.Header.Get("ETag"), string(body)); err != nil {
 			return err
 		}
-		if err := s.retireDocs(ctx, stale, docIDsOf(key, body)); err != nil {
+		if err := s.retireDocs(ctx, key, stale, docIDsOf(key, body)); err != nil {
 			return err
 		}
 		return s.indexShard(ctx, key, body)
@@ -204,10 +204,13 @@ func docIDsOf(key string, body []byte) []string {
 // machine that had ever synced it, and kept being returned as a HIT long
 // after it stopped existing upstream. Nothing on the server could reach it.
 //
-// A sample listed by two shards is re-added by the other shard's next sync,
-// so the worst case here is a temporary MISS. That is the right side to err
-// on: a sample the network has retracted must stop being an answer.
-func (s *Syncer) retireDocs(ctx context.Context, stale, fresh []string) error {
+// A sample doc is NOT namespaced by shard key -- one document serves every
+// shard that lists that sample -- so it may only be retired once no other
+// synced shard still lists it. Deleting on this shard's word alone would
+// drop a live sample out of local search the moment the cap evicted it from
+// one of the packages it declares, and the other shard would not put it
+// back: unchanged shards answer 304 and are never re-indexed.
+func (s *Syncer) retireDocs(ctx context.Context, key string, stale, fresh []string) error {
 	if len(stale) == 0 {
 		return nil
 	}
@@ -216,12 +219,55 @@ func (s *Syncer) retireDocs(ctx context.Context, stale, fresh []string) error {
 		keep[id] = true
 	}
 	var gone []string
+	var samples []string
 	for _, id := range stale {
-		if !keep[id] {
-			gone = append(gone, id)
+		if keep[id] {
+			continue
+		}
+		// Symbol docs carry their shard key in the id, so they belong to
+		// this shard alone and go immediately.
+		if strings.HasPrefix(id, "sample:") {
+			samples = append(samples, id)
+			continue
+		}
+		gone = append(gone, id)
+	}
+	if len(samples) > 0 {
+		// If the local shard table cannot be read, nothing is known about
+		// where else these samples appear, so none of them are touched.
+		if elsewhere, ok := s.sampleDocsInOtherShards(ctx, key); ok {
+			for _, id := range samples {
+				if !elsewhere[id] {
+					gone = append(gone, id)
+				}
+			}
 		}
 	}
 	return s.DB.DeleteDocs(ctx, gone)
+}
+
+// sampleDocsInOtherShards collects the sample document ids every OTHER
+// locally stored shard still lists.
+// The bool reports whether the answer is trustworthy; false means the local
+// shard table could not be read, and a live answer must not be deleted on a
+// guess.
+func (s *Syncer) sampleDocsInOtherShards(ctx context.Context, key string) (map[string]bool, bool) {
+	out := map[string]bool{}
+	rows, err := s.DB.ListShards(ctx)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range rows {
+		if r.Key == key {
+			continue
+		}
+		for _, id := range docIDsOf(r.Key, []byte(r.JSON)) {
+			if strings.HasPrefix(id, "sample:") {
+				out[id] = true
+			}
+		}
+	}
+	return out, true
 }
 
 func (s *Syncer) indexShard(ctx context.Context, key string, body []byte) error {
