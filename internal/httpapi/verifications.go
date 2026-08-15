@@ -155,12 +155,31 @@ func derivePeerID(pubB64 string) string {
 }
 
 // sampleStatusFromReceipts applies the C13 transition rules. Status only
-// ever upgrades; the first receipt's peer is the origin.
+// ever upgrades, and CROSS_PASS requires a pass from a peer other than the
+// one that originated the sample.
 func sampleStatusFromReceipts(current string, rows []serverstore.ReceiptRow, now time.Time) string {
 	if len(rows) == 0 {
 		return current
 	}
+	// The origin is the first peer to ATTEST anything, not the first to
+	// write a row.
+	//
+	// Taking rows[0] meant any stranger could become the origin by filing a
+	// FAILING receipt first — and the author's own passing receipt then
+	// counted as the independent confirmation, driving the sample to
+	// CROSS_PASS with exactly one real party behind it. Independence is the
+	// single thing a cross pass asserts that a publisher cannot manufacture
+	// alone, and this handed it over for the price of a failed run.
+	//
+	// With no pass at all, no cross can be claimed either way, so the old
+	// reading is harmless there and is kept as the fallback.
 	origin := rows[0].PeerID
+	for _, row := range rows {
+		if row.ContractResult == string(domain.ResultPass) {
+			origin = row.PeerID
+			break
+		}
+	}
 
 	crossPass := false
 	passPeers := map[string]bool{}

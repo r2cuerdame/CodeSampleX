@@ -257,6 +257,19 @@ func collectFiles(dir string) ([]string, error) {
 		if d.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("samples: symlink not allowed: %s", slash)
 		}
+		// A repository marker is not always a directory. In a git WORKTREE
+		// or a submodule, .git is a small regular FILE holding "gitdir:
+		// /path/to/repo/.git/worktrees/x" -- so the guard below, which
+		// only looks at directories, let it through, and the packaged
+		// sample carried a path from the contributor's machine straight
+		// into a published artifact. Worktrees are the ordinary way to
+		// work on two things at once, so this is not an exotic setup.
+		if !d.IsDir() && forbiddenDir(base) {
+			return fmt.Errorf(
+				"samples: %s is a repository marker, not sample content — "+
+					"this directory is a git worktree or submodule. Copy the "+
+					"minimal project somewhere of its own and run this again", slash)
+		}
 		if d.IsDir() {
 			if generatedDir(base) || generatedRootDir(slash) {
 				return filepath.SkipDir

@@ -124,3 +124,27 @@ func TestEntryNameRulesHoldOnEveryPlatform(t *testing.T) {
 		}
 	}
 }
+
+// A repository marker is not always a directory: in a git worktree or a
+// submodule, .git is a small regular FILE containing "gitdir: <path>". The
+// guard only looked at directories, so packaging from a worktree published
+// a path from the contributor's machine — and worktrees are the ordinary
+// way to work on two things at once, which is exactly what an author
+// preparing a sample beside their real work is doing.
+func TestARepositoryMarkerFileIsRefusedLikeTheDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "csx.json"), []byte(`{"schemaVersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"),
+		[]byte("gitdir: C:/Users/someone/work/secret-project/.git/worktrees/sample\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := BuildArtifact(dir)
+	if err == nil {
+		t.Fatal("packaged a git worktree, publishing the contributor's own path")
+	}
+	if !strings.Contains(err.Error(), "repository marker") {
+		t.Errorf("the refusal does not explain what happened: %v", err)
+	}
+}
