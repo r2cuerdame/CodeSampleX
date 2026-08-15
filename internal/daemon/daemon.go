@@ -475,6 +475,12 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	if qerr != nil {
 		res.Errors = append(res.Errors, qerr.Error())
 	}
+	// An item the server keeps rejecting stops being retried, and a report
+	// that quietly stops existing is exactly the failure mode this whole
+	// path was built to end. Count them so something can say so.
+	if n, cerr := d.DB.QueueSetAsideCount(ctx); cerr == nil {
+		res.SetAsideReports = n
+	}
 	return res
 }
 
@@ -484,6 +490,9 @@ type SyncResult struct {
 	WarmedKeys      int `json:"warmedKeys"`
 	UploadedBatches int `json:"uploadedBatches"`
 	// UploadedReports is queued items delivered (adoption reports today).
-	UploadedReports int      `json:"uploadedReports"`
+	UploadedReports int `json:"uploadedReports"`
+	// SetAsideReports is queued items that stopped being retried because
+	// the server rejected them in a way retrying cannot fix.
+	SetAsideReports int      `json:"setAsideReports,omitempty"`
 	Errors          []string `json:"errors,omitempty"`
 }

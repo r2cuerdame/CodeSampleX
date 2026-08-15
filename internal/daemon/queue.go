@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -55,7 +56,15 @@ func (d *Daemon) drainQueue(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := d.postQueued(ctx, base+path, it.Payload); err != nil {
-			_ = d.DB.QueueMarkFailed(ctx, it.ID, err.Error())
+			// A rejection the server will repeat forever is set aside now
+			// rather than retried 8 more times: it is already at the head
+			// of a FIFO with a drain limit, and every pass it survives is
+			// a slot a deliverable report does not get.
+			if permanentDeliveryFailure(err) {
+				_ = d.DB.QueueSetAside(ctx, it.ID, err.Error())
+			} else {
+				_ = d.DB.QueueMarkFailed(ctx, it.ID, err.Error())
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -69,12 +78,17 @@ func (d *Daemon) drainQueue(ctx context.Context) (int, error) {
 	return sent, firstErr
 }
 
+// permanentFailure marks a rejection that retrying cannot fix.
+type permanentFailure struct{ error }
+
+func permanentDeliveryFailure(err error) bool {
+	var p permanentFailure
+	return errors.As(err, &p)
+}
+
 func (d *Daemon) postQueued(ctx context.Context, url, payload string) error {
 	if !json.Valid([]byte(payload)) {
-		// Unparseable payloads can never be delivered; leaving them queued
-		// would retry forever, so this is the one case that is dropped —
-		// loudly, in the returned error.
-		return fmt.Errorf("queued payload is not valid JSON")
+		return permanentFailure{fmt.Errorf("queued payload is not valid JSON")}
 	}
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -88,11 +102,14 @@ func (d *Daemon) postQueued(ctx context.Context, url, payload string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	// 4xx means this payload will never be accepted, so the caller marks it
-	// failed and it stops being retried by attempt count; 5xx is worth
-	// another pass.
+	// 4xx means this payload will never be accepted, so it is set aside;
+	// 5xx and 429 are worth another pass.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return permanentFailure{err}
+		}
+		return err
 	}
 	return nil
 }

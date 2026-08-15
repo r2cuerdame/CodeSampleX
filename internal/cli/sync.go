@@ -45,6 +45,10 @@ func syncMain(ctx context.Context, args []string) int {
 	fmt.Printf("warmed shard keys:  %d\n", res.WarmedKeys)
 	fmt.Printf("uploaded batches:   %d\n", res.UploadedBatches)
 	fmt.Printf("adoption reports:   %d\n", res.UploadedReports)
+	if res.SetAsideReports > 0 {
+		fmt.Printf("set aside:          %d (the server rejected these; they are kept, not sent)\n",
+			res.SetAsideReports)
+	}
 	for _, e := range res.Errors {
 		fmt.Fprintf(os.Stderr, "csx: sync (non-fatal): %s\n", e)
 	}

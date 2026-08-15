@@ -28,11 +28,29 @@ func (d *DB) Enqueue(ctx context.Context, kind, payload string) (int64, error) {
 	return res.LastInsertId()
 }
 
-// QueuePending returns up to limit queued items, oldest first.
+// MaxQueueAttempts is how many times an item is retried before it is set
+// aside. The drainer's own rule was "it stops being retried by attempt
+// count" — and nothing read the count, so nothing ever stopped.
+//
+// An item the server will never accept (a 4xx: a payload from an older
+// build, a sample id that no longer exists) sat at the head of a
+// FIFO-with-a-limit queue and was re-POSTed on every tick forever. Once
+// enough of them accumulated to fill the drain window, they crowded out
+// every valid item behind them: `csx sync` kept exiting 0 while the
+// adoption reports — the one signal about whether the network's answers
+// actually work, and the only one that cannot be recomputed from anything
+// else — silently stopped arriving.
+const MaxQueueAttempts = 8
+
+// QueuePending returns up to limit queued items, oldest first, skipping the
+// ones that have exhausted their attempts. They stay in the table: an item
+// set aside is evidence about a delivery problem, and deleting it would
+// erase both the report and the reason it never landed.
 func (d *DB) QueuePending(ctx context.Context, limit int) ([]QueueItem, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, kind, payload, created_at, attempts, last_error
-		FROM upload_queue ORDER BY id LIMIT ?`, limit)
+		FROM upload_queue WHERE attempts < ? ORDER BY id LIMIT ?`,
+		MaxQueueAttempts, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +73,25 @@ func (d *DB) QueuePending(ctx context.Context, limit int) ([]QueueItem, error) {
 func (d *DB) QueueMarkDone(ctx context.Context, id int64) error {
 	_, err := d.sql.ExecContext(ctx, `DELETE FROM upload_queue WHERE id = ?`, id)
 	return err
+}
+
+// QueueSetAside stops an item from being retried at all, for a failure that
+// retrying cannot fix.
+func (d *DB) QueueSetAside(ctx context.Context, id int64, errMsg string) error {
+	_, err := d.sql.ExecContext(ctx, `
+		UPDATE upload_queue SET attempts = ?, last_error = ? WHERE id = ?`,
+		MaxQueueAttempts, errMsg, id)
+	return err
+}
+
+// QueueSetAsideCount reports how many items have stopped being retried, so
+// something can say so out loud instead of the queue draining to nothing
+// visible.
+func (d *DB) QueueSetAsideCount(ctx context.Context) (int, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM upload_queue WHERE attempts >= ?`, MaxQueueAttempts).Scan(&n)
+	return n, err
 }
 
 // QueueMarkFailed records a delivery failure, keeping the item queued.
