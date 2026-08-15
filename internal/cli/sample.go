@@ -388,6 +388,9 @@ func sampleCreate(ctx context.Context, args []string) int {
 		return 2
 	}
 	dir := args[0]
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	raw, err := os.ReadFile(filepath.Join(dir, "csx.json"))
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample create: %s has no csx.json manifest: %v\n", dir, err)
@@ -688,6 +691,30 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// originReceipt is the receipt that should enter the cross-verification
+// queue as the origin: the first one whose contract PASSED.
+//
+// It was the LAST receipt stored, whatever it said. Verifying once
+// successfully and then again on a machine without Docker — which is an
+// ordinary thing to do, and which produces a SKIPPED contract — sent the
+// skipped one as the origin. A receipt that proves nothing then occupies
+// the origin slot, and the pass that did prove something arrives later
+// looking like an independent confirmation of it.
+func originReceipt(ctx context.Context, env *sampleEnv, sampleID string) (domain.VerificationReceipt, bool) {
+	receipts, err := env.db.ReceiptsForSample(ctx, sampleID)
+	if err != nil || len(receipts) == 0 {
+		return domain.VerificationReceipt{}, false
+	}
+	for _, r := range receipts {
+		if r.Stages["contract"] == sandbox.ResultPass {
+			return r, true
+		}
+	}
+	// Nothing passed: there is no origin to register, and sending a
+	// failure as one would be a claim of its own.
+	return domain.VerificationReceipt{}, false
+}
+
 // --- publish -----------------------------------------------------------
 
 func samplePublish(ctx context.Context, args []string) int {
@@ -880,8 +907,7 @@ func samplePublish(ctx context.Context, args []string) int {
 	// Origin PASS enters the cross-verification queue as the first receipt
 	// (goal.md §9.6); without it a later peer receipt would wrongly become
 	// the origin. Best-effort: a failed post leaves the receipt local.
-	if receipts, rerr := env.db.ReceiptsForSample(ctx, row.SampleID); rerr == nil && len(receipts) > 0 {
-		origin := receipts[len(receipts)-1]
+	if origin, ok := originReceipt(ctx, env, row.SampleID); ok {
 		if b, merr := json.Marshal(origin); merr == nil {
 			vreq, verr := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/verifications", bytes.NewReader(b))
 			if verr == nil {

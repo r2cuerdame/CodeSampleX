@@ -68,8 +68,8 @@ try {
 
     # Compare normalized: a trailing backslash or a quoted entry is the same
     # directory, and treating it as a different one appended a duplicate.
-    $normalized = $userPath -split ';' | ForEach-Object { $_.Trim().Trim('"').TrimEnd('') }
-    $want = $dir.Trim().Trim('"').TrimEnd('')
+    $normalized = $userPath -split ';' | ForEach-Object { $_.Trim().Trim('"').TrimEnd('\') }
+    $want = $dir.Trim().Trim('"').TrimEnd('\')
     if ($normalized -notcontains $want) {
         $newPath = if ($userPath) { "$userPath;$dir" } else { $dir }
         if ($null -ne $envKey) {

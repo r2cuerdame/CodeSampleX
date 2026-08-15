@@ -574,3 +574,55 @@ func TestSampleCreateDefaultsLicenseAndCapsContractless(t *testing.T) {
 		t.Fatalf("contract-less sample must print the %s cap note:\n%s", domain.L2Compiled, got)
 	}
 }
+
+// Proposals are saved with the absolute clean-room workspace path. When
+// a user runs `csx sample create .` from inside that directory (or with a
+// relative path), sample creation must resolve the path so SetProposalState
+// updates the stored row. Otherwise, the proposal remains 'pending' and
+// `csx sample pending` continues to offer already-created work indefinitely.
+func TestSampleCreateFromRelativePathClearsPendingProposal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	dir := sampleFixtureDir(t, nil)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db := openLocalDB(t, home)
+	err = db.SaveProposal(context.Background(), localdb.ProposalRow{
+		Workdir:  absDir,
+		Goal:     "post a JSON body with axios",
+		Packages: []string{"pkg:npm/axios@1.12.0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	t.Chdir(absDir)
+	out, errBuf := captureSampleIO(t, "")
+	if code := Main([]string{"sample", "create", "."}); code != 0 {
+		t.Fatalf("sample create . exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+
+	db = openLocalDB(t, home)
+	defer db.Close()
+	pending, err := db.PendingProposals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected 0 pending proposals after create, got %d (workdir: %s, state: %s)",
+			len(pending), pending[0].Workdir, pending[0].State)
+	}
+
+	out, errBuf = captureSampleIO(t, "")
+	if code := Main([]string{"sample", "pending"}); code != 0 {
+		t.Fatalf("sample pending exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+	if !strings.Contains(out.String(), "Nothing pending") {
+		t.Fatalf("expected 'Nothing pending', got:\n%s", out.String())
+	}
+}
