@@ -667,6 +667,28 @@ func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 	return nil
 }
 
+// ListSamplesPage is ListSamples with an offset.
+func (f *Fake) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
+	all, err := f.ListSamples(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(all) {
+		return nil, nil
+	}
+	all = all[offset:]
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // SamplesBySeeder lists one seeder's live samples, newest first.
 func (f *Fake) SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error) {
 	all, err := f.ListSamples(ctx, 0)

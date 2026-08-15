@@ -206,6 +206,9 @@ type Store interface {
 	SaveSample(ctx context.Context, s SampleRow) error
 	GetSample(ctx context.Context, sampleID string) (SampleRow, bool, error)
 	ListSamples(ctx context.Context, limit int) ([]SampleRow, error)
+	// ListSamplesPage is ListSamples with an offset, so a caller that means
+	// EVERY sample can page instead of quietly reading the newest N.
+	ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error)
 	// SamplesForPackages returns live samples naming any of these package
 	// patterns ("pkg:npm/axios@%"), so search does not depend on a global
 	// newest-N window.

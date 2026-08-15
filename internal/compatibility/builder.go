@@ -316,10 +316,24 @@ func keepTargets(targets []serverstore.SnapshotTarget, affected map[shardKey]boo
 	return out
 }
 
+// loadSampleBatch bounds one page of the sample scan.
+const loadSampleBatch = 1000
+
 func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
-	rows, err := b.Store.ListSamples(ctx, 1000)
-	if err != nil {
-		return nil, fmt.Errorf("compatibility: list samples: %w", err)
+	// Every sample, in pages. One capped read of the newest 1000 meant that
+	// past that many, the oldest samples stopped appearing in any shard at
+	// all -- and shards are the only document clients ever read, so those
+	// answers left the network silently, oldest first.
+	var rows []serverstore.SampleRow
+	for offset := 0; ; offset += loadSampleBatch {
+		page, perr := b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		if perr != nil {
+			return nil, fmt.Errorf("compatibility: list samples: %w", perr)
+		}
+		rows = append(rows, page...)
+		if len(page) < loadSampleBatch {
+			break
+		}
 	}
 	out := make([]sampleData, 0, len(rows))
 	for _, row := range rows {
