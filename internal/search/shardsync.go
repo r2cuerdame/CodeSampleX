@@ -117,7 +117,16 @@ func (s *Syncer) SyncKey(ctx context.Context, key string) error {
 		if err != nil {
 			return fmt.Errorf("shard sync %s: read body: %w", key, err)
 		}
+		// The PREVIOUS body decides what has to go, so read it before the
+		// new one overwrites it.
+		var stale []string
+		if havePrev {
+			stale = docIDsOf(key, []byte(prev.JSON))
+		}
 		if err := s.DB.SaveShard(ctx, key, resp.Header.Get("ETag"), string(body)); err != nil {
+			return err
+		}
+		if err := s.retireDocs(ctx, stale, docIDsOf(key, body)); err != nil {
 			return err
 		}
 		return s.indexShard(ctx, key, body)
@@ -167,6 +176,54 @@ const (
 // indexShard writes one FTS doc per symbol entry and per sample entry.
 // Bodies hold only aggregate keywords (confidence, stages, error codes) and
 // case goals — never anything project-identifying.
+// docIDsOf lists the FTS documents a shard body produces, in the same shape
+// indexShard writes them.
+func docIDsOf(key string, body []byte) []string {
+	var doc shardDoc
+	if json.Unmarshal(body, &doc) != nil {
+		return nil
+	}
+	var ids []string
+	for _, pkg := range doc.Packages {
+		for _, sym := range pkg.Symbols {
+			ids = append(ids, "shard:"+key+":"+sym.Family)
+		}
+		for _, smp := range pkg.Samples {
+			if smp.SampleID != "" {
+				ids = append(ids, "sample:"+smp.SampleID)
+			}
+		}
+	}
+	return ids
+}
+
+// retireDocs deletes what this shard used to contribute and no longer does.
+//
+// Indexing was add-only: a sample the server withdrew — quarantined for a
+// takedown, or found to be wrong — stayed in the local index of every
+// machine that had ever synced it, and kept being returned as a HIT long
+// after it stopped existing upstream. Nothing on the server could reach it.
+//
+// A sample listed by two shards is re-added by the other shard's next sync,
+// so the worst case here is a temporary MISS. That is the right side to err
+// on: a sample the network has retracted must stop being an answer.
+func (s *Syncer) retireDocs(ctx context.Context, stale, fresh []string) error {
+	if len(stale) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(fresh))
+	for _, id := range fresh {
+		keep[id] = true
+	}
+	var gone []string
+	for _, id := range stale {
+		if !keep[id] {
+			gone = append(gone, id)
+		}
+	}
+	return s.DB.DeleteDocs(ctx, gone)
+}
+
 func (s *Syncer) indexShard(ctx context.Context, key string, body []byte) error {
 	var doc shardDoc
 	if err := json.Unmarshal(body, &doc); err != nil {

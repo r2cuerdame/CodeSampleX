@@ -34,6 +34,31 @@ func (d *DB) IndexDoc(ctx context.Context, docID, kind, title, body, packages, s
 	return tx.Commit()
 }
 
+// DeleteDocs removes documents from the index by id.
+//
+// Indexing was add-only, so nothing a shard ever published could be taken
+// back. A sample withdrawn on the server — a takedown, a license problem, a
+// sample that turned out to be wrong — kept being answered by every machine
+// that had synced it once, forever, because the corrected shard only ever
+// added rows on top of the old ones.
+func (d *DB) DeleteDocs(ctx context.Context, docIDs []string) error {
+	if len(docIDs) == 0 {
+		return nil
+	}
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range docIDs {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM search_fts WHERE doc_id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // FTSQuery runs a BM25-ranked full-text query. User input is never spliced
 // into FTS5 syntax: each whitespace token becomes a quoted phrase and
 // tokens are OR-combined, so metacharacters cannot alter the query.

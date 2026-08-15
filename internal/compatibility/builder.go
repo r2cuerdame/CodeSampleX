@@ -453,6 +453,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 		}
 	}
 
+	built := map[string]bool{}
 	keys := make([]shardKey, 0, len(shardPkgs))
 	for sk := range shardPkgs {
 		keys = append(keys, sk)
@@ -484,12 +485,67 @@ func (b *Builder) regenerateShards(ctx context.Context,
 			pkgs = append(pkgs, *entry)
 		}
 		key := sk.ecosystem + "/" + sk.name + "/" + sk.major
+		built[key] = true
 		shardJSON, etag := BuildShard(key, pkgs, now)
 		if err := b.Store.PutShard(ctx, key, etag, shardJSON); err != nil {
 			return fmt.Errorf("compatibility: put shard %s: %w", key, err)
 		}
 	}
+	if affected == nil {
+		return b.retireEmptyShards(ctx, built, now)
+	}
 	return nil
+}
+
+// retireEmptyShards empties shards nothing feeds any more.
+//
+// A shard was only ever written when something still fed it, so a key whose
+// last live input disappeared was simply skipped — and the previous body
+// stayed in the store, served to every client, forever. That is what
+// `csx-server quarantine` promised to undo: it prints "hidden from search,
+// shards and the explorer" and "the next aggregation pass rebuilds the
+// affected shards", and for the ordinary case of a seeded package whose
+// only sample is withdrawn, no pass ever rebuilt it — not the twelfth, not
+// the hundredth, because a full pass rebuilds the keys it FINDS.
+//
+// Writing the empty shard is what actually reaches the clients: they hold
+// the old body under its ETag and would keep getting 304 otherwise.
+//
+// Full passes only. On an incremental pass the built set is deliberately
+// partial, and every untouched key would look retired.
+func (b *Builder) retireEmptyShards(ctx context.Context, built map[string]bool, now time.Time) error {
+	keys, err := b.Store.ShardKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("compatibility: list shard keys: %w", err)
+	}
+	for _, key := range keys {
+		if built[key] {
+			continue
+		}
+		_, prev, ok, gerr := b.Store.GetShard(ctx, key)
+		if gerr != nil {
+			return fmt.Errorf("compatibility: get shard %s: %w", key, gerr)
+		}
+		if !ok || isEmptyShard(prev) {
+			continue // already empty: rewriting it would only churn ETags
+		}
+		shardJSON, etag := BuildShard(key, nil, now)
+		if err := b.Store.PutShard(ctx, key, etag, shardJSON); err != nil {
+			return fmt.Errorf("compatibility: retire shard %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// isEmptyShard reports whether a stored shard body already carries nothing.
+func isEmptyShard(shardJSON string) bool {
+	var doc struct {
+		Packages []json.RawMessage `json:"packages"`
+	}
+	if json.Unmarshal([]byte(shardJSON), &doc) != nil {
+		return false // unreadable: rewrite it rather than trust it
+	}
+	return len(doc.Packages) == 0
 }
 
 // shardSamplesFor renders the top samples covering (ecosystem, name, major),

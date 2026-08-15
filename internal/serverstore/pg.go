@@ -948,6 +948,27 @@ func (p *PG) PutShard(ctx context.Context, key, etag, shardJSON string) error {
 	})
 }
 
+// ShardKeys lists every stored shard key, ordered so a pass is repeatable.
+func (p *PG) ShardKeys(ctx context.Context) ([]string, error) {
+	var keys []string
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `SELECT key FROM shards ORDER BY key`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var k string
+			if err := rows.Scan(&k); err != nil {
+				return err
+			}
+			keys = append(keys, k)
+		}
+		return rows.Err()
+	})
+	return keys, err
+}
+
 // hotShardScanLimit bounds the per-package scan behind HotShardKeys. The
 // tail of a long-tail distribution cannot reach the top of the list, so
 // reading all of it would only cost time.
