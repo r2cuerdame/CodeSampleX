@@ -698,3 +698,90 @@ func TestFullPassSelfHeals(t *testing.T) {
 		t.Errorf("pass %d should have been a full rebuild, wrote nothing", fullPassEvery+1)
 	}
 }
+
+// Regression detection (§10.3) compares version V against V-1 in the same
+// environment bucket. On an incremental aggregation pass, keepTargets narrowed
+// snapshot targets to the dirty shard keys, dropping versions belonging to
+// other majors. PreviousVersion was given only the versions loaded for this
+// pass, so a new major (e.g. 8.0.0) could not see its predecessor (7.0.3).
+// DetectRegressions was skipped across major boundaries, leaving the snapshot
+// with empty regression candidates and missing the regression badge until
+// the next scheduled full pass.
+func TestRegressionDetectedAcrossMajorVersionBoundaryOnIncrementalPass(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+
+	batch := func(anon, project, pkg, symbol string, env domain.EnvironmentFingerprint,
+		stage domain.Stage, result domain.Result, count int, fp, code string) domain.ObservationBatch {
+		return domain.ObservationBatch{
+			SchemaVersion: 1, Epoch: "2026-08-13", AnonID: anon, ProjectBucket: project,
+			Package: pkg, Symbol: symbol, SymbolConfidence: domain.SymbolProbable,
+			Environment: env, Stage: stage, Result: result, ObservationCount: count,
+			ErrorFingerprint: fp, ErrorCode: code,
+		}
+	}
+
+	env := envNode("esm")
+	// 1. Package uuid has version pkg:npm/uuid@7.0.3 with 10 PASS observations on symbol v4 at stage PROJECT_COMPILE.
+	passBatches := []domain.ObservationBatch{
+		batch("peer1", "proj1", "pkg:npm/uuid@7.0.3", "v4", env,
+			domain.StageProjectCompile, domain.ResultPass, 10, "", ""),
+	}
+	if _, _, err := store.IngestBatches(ctx, passBatches); err != nil {
+		t.Fatalf("ingest pass batches: %v", err)
+	}
+
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+
+	// Initial full pass aggregates 7.0.3.
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("initial pass: %v", err)
+	}
+
+	// 2. A new version pkg:npm/uuid@8.0.0 gets 10 FAIL observations on symbol v4 in the same environment.
+	failBatches := []domain.ObservationBatch{
+		batch("peer2", "proj2", "pkg:npm/uuid@8.0.0", "v4", env,
+			domain.StageProjectCompile, domain.ResultFail, 10,
+			"sha256:"+strings.Repeat("ef", 32), "ERR_BREAKING"),
+	}
+	if _, _, err := store.IngestBatches(ctx, failBatches); err != nil {
+		t.Fatalf("ingest fail batches: %v", err)
+	}
+
+	// 3. An incremental pass runs where uuid@8.0.0 changed.
+	store.ChangedSinceFn = func(context.Context, time.Time) (serverstore.Changes, error) {
+		return serverstore.Changes{
+			Targets: []serverstore.SnapshotTarget{
+				{PURL: "pkg:npm/uuid@8.0.0", Symbol: "v4"},
+			},
+		}, nil
+	}
+
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("incremental pass: %v", err)
+	}
+
+	js, ok, err := store.GetSnapshot(ctx, "pkg:npm/uuid@8.0.0", "v4")
+	if err != nil || !ok {
+		t.Fatalf("snapshot for uuid@8.0.0 v4 missing: ok=%v err=%v", ok, err)
+	}
+	var snap Snapshot
+	if err := json.Unmarshal([]byte(js), &snap); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if len(snap.RegressionCandidates) != 1 {
+		t.Fatalf("expected 1 regression candidate for uuid@8.0.0 against 7.0.3, got %d", len(snap.RegressionCandidates))
+	}
+	reg := snap.RegressionCandidates[0]
+	if reg.Package != "pkg:npm/uuid@8.0.0" || reg.PreviousPackage != "pkg:npm/uuid@7.0.3" {
+		t.Errorf("regression candidate package pair = (%q, %q), want (pkg:npm/uuid@8.0.0, pkg:npm/uuid@7.0.3)",
+			reg.Package, reg.PreviousPackage)
+	}
+	if reg.Symbol != "v4" {
+		t.Errorf("regression candidate symbol = %q, want \"v4\"", reg.Symbol)
+	}
+	if reg.Stage != "PROJECT_COMPILE" {
+		t.Errorf("regression candidate stage = %q, want \"PROJECT_COMPILE\"", reg.Stage)
+	}
+}

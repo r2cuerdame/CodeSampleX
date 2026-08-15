@@ -160,6 +160,30 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		purlOf[k][p.Version] = t.PURL
 	}
 
+	// Index all known target versions by package and symbol so regression
+	// detection (§10.3) can compare against V-1 across major version
+	// boundaries on incremental passes.
+	allVersionsOf := map[pkgKey]map[string][]string{}
+	allPURLOf := map[pkgKey]map[string]map[string]string{}
+	for _, at := range allTargets {
+		p, perr := domain.ParsePURL(at.PURL)
+		if perr != nil {
+			continue
+		}
+		k := pkgKey{p.Ecosystem, p.Name}
+		if allVersionsOf[k] == nil {
+			allVersionsOf[k] = map[string][]string{}
+			allPURLOf[k] = map[string]map[string]string{}
+		}
+		if allPURLOf[k][at.Symbol] == nil {
+			allPURLOf[k][at.Symbol] = map[string]string{}
+		}
+		if _, ok := allPURLOf[k][at.Symbol][p.Version]; !ok {
+			allVersionsOf[k][at.Symbol] = append(allVersionsOf[k][at.Symbol], p.Version)
+			allPURLOf[k][at.Symbol][p.Version] = at.PURL
+		}
+	}
+
 	regressionsByPkg := map[pkgKey][]RegressionCandidate{}
 
 	// Snapshots per target, with §10.3 regression detection against V-1.
@@ -172,14 +196,28 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		rows := byPkg[k][t.Symbol][p.Version]
 
 		var regs []RegressionCandidate
-		versions := make([]string, 0, len(byPkg[k][t.Symbol]))
-		for v := range byPkg[k][t.Symbol] {
-			versions = append(versions, v)
-		}
+		versions := allVersionsOf[k][t.Symbol]
 		if prevVer, ok := PreviousVersion(versions, p.Version); ok {
-			prevPURL := purlOf[k][prevVer]
+			prevPURL := allPURLOf[k][t.Symbol][prevVer]
+			prevRows := byPkg[k][t.Symbol][prevVer]
+			if prevRows == nil {
+				var eerr error
+				prevRows, eerr = b.Store.EvidenceForTarget(ctx, prevPURL, t.Symbol)
+				if eerr != nil {
+					return fmt.Errorf("compatibility: evidence for %s %q: %w", prevPURL, t.Symbol, eerr)
+				}
+				if byPkg[k] == nil {
+					byPkg[k] = symVer{}
+					purlOf[k] = map[string]string{}
+				}
+				if byPkg[k][t.Symbol] == nil {
+					byPkg[k][t.Symbol] = map[string][]serverstore.EvidenceRow{}
+				}
+				byPkg[k][t.Symbol][prevVer] = prevRows
+				purlOf[k][prevVer] = prevPURL
+			}
 			regs = DetectRegressions(t.PURL, prevPURL, t.Symbol,
-				rows, byPkg[k][t.Symbol][prevVer])
+				rows, prevRows)
 			regressionsByPkg[k] = append(regressionsByPkg[k], regs...)
 		}
 
@@ -440,6 +478,9 @@ func (b *Builder) regenerateShards(ctx context.Context,
 					continue
 				}
 				sk := shardKey{k.ecosystem, k.name, p.Major()}
+				if affected != nil && !affected[sk] {
+					continue // clean key: its shard is already correct
+				}
 				if shardPkgs[sk] == nil {
 					shardPkgs[sk] = map[string]*ShardPackage{}
 				}
