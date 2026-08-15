@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -102,16 +103,32 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	if eco == "" {
 		eco = host.Ecosystem
 	}
+	img, _ := imageFor(eco, runtimeOf(m, host))
 	// The sample's declared runtime picks the container, so it must also
 	// describe the receipt. Reading the HOST runtime here would stamp a
 	// bun contract as node whenever the operator happened to run node.
 	rt, ver, lang := imageRuntime(eco, runtimeOf(m, host))
+	// The base and the libc come from the IMAGE, not from a constant.
+	// "the verifier images are all alpine" stopped being true when Dart
+	// arrived: dart:3.13.0 is Debian, so every Dart receipt claimed
+	// osVersionBucket alpine and libc musl for a run on glibc — and musl
+	// versus glibc is the dimension the grader treats as decisive for
+	// whether a native module loads at all.
+	bucket, libc := imageBase(img)
+	// The architecture comes from the HOST. Nothing passes --platform, so
+	// the container runs the host's architecture; stamping x64 meant every
+	// receipt from an arm64 machine — an Apple Silicon laptop, a Graviton
+	// runner — described a run that never happened.
+	arch := host.Normalize().Arch
+	if arch == "" {
+		arch = "x64"
+	}
 	env := domain.EnvironmentFingerprint{
 		SchemaVersion:    1,
 		Ecosystem:        eco,
 		OS:               "linux",
-		OSVersionBucket:  "alpine",
-		Arch:             "x64",
+		OSVersionBucket:  bucket,
+		Arch:             arch,
 		Runtime:          rt,
 		RuntimeVersion:   ver,
 		Language:         lang,
@@ -120,7 +137,7 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		PackageManager:   m.Environment.PackageManager,
 		Virtualization:   "container",
 		ContainerRuntime: "docker",
-		Libc:             "musl",
+		Libc:             libc,
 		CI:               host.CI,
 	}
 	return env.Normalize()
@@ -188,4 +205,19 @@ func runtimeOf(m domain.SampleManifest, host domain.EnvironmentFingerprint) stri
 		return m.Environment.Runtime
 	}
 	return host.Runtime
+}
+
+// imageBase reports the distribution bucket and libc of a verifier image.
+//
+// Reading it from the image name keeps the receipt honest as the image set
+// grows: every alpine tag carries musl, and anything else is a Debian-based
+// official image carrying glibc. An unknown image with neither marker is
+// reported as glibc, because that is what the overwhelming majority of
+// non-alpine base images are and over-claiming musl is the error that
+// misleads.
+func imageBase(image string) (bucket, libc string) {
+	if strings.Contains(image, "alpine") {
+		return "alpine", "musl"
+	}
+	return "debian", "glibc"
 }
