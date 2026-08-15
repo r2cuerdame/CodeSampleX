@@ -17,6 +17,15 @@
       <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
     </div>
     <p class="dim small">{{.T "landing.install_note"}}</p>
+    {{/* Piping a stranger's script into a shell is the biggest thing this
+         page asks of a visitor, and everything that would justify it —
+         the source, the installer itself, the licence — was in the footer.
+         It belongs where the ask is made. */}}
+    <p class="trust small mono">
+      <a href="https://github.com/r2cuerdame/CodeSampleX">{{.T "landing.trust_source"}}</a> ·
+      <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
+      <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
+    </p>
   </div>
 
   <ul class="claims">
@@ -56,6 +65,27 @@
 {{/* How healthy the network is. */}}
 <section class="network">
   <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
+{{- if .Findings}}
+  {{/* The rest of this page explains why the network is needed. These
+       prove it: one line of "the documentation says X, the contract
+       measured Y" does more than every paragraph above, because a reader
+       recognises the shape from their own week. */}}
+  <section class="homefindings">
+    <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
+    <p class="dim small">{{.T "landing.findings_sub"}}</p>
+    <ul class="findinglist">
+    {{- range .Findings}}
+      <li class="finding-card">
+        <a class="fsubject mono" href="{{.Href}}"><span class="eco mono">{{.Ecosystem}}</span> {{.Subject}}</a>
+        <p class="believed"><span class="flabel mono">{{$.T "findings.believed"}}</span> {{.Believed}}</p>
+        <p class="measured"><span class="flabel mono">{{$.T "findings.measured"}}</span> {{.Measured}}</p>
+      </li>
+    {{- end}}
+    </ul>
+    <p class="small"><a href="/findings">{{.T "landing.findings_more"}}</a></p>
+  </section>
+{{- end}}
+
   {{template "tiles" .}}
   <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
 </section>

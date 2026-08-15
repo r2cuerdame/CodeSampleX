@@ -204,18 +204,55 @@ func runtimeOf(m domain.SampleManifest, host domain.EnvironmentFingerprint) stri
 	if m.Environment.Runtime != "" {
 		return m.Environment.Runtime
 	}
-	return host.Runtime
+	// NOT the host's runtime. The container is chosen from the sample's
+	// ecosystem, and the host's runtime is whatever the operator happened
+	// to have — so verifying an npm sample on a machine whose collected
+	// runtime was "go" picked an image by "go" and then stamped the receipt
+	// with it. A receipt that names a runtime the container never had is a
+	// false statement about where the contract ran, and every later grade
+	// against it inherits the error.
+	//
+	// Empty means "the ecosystem's default", which is what imageFor and
+	// imageRuntime already do with it.
+	return ""
+}
+
+// imageBases is what each verifier image ACTUALLY is, verified by running
+// it. A receipt says which libc the contract ran against, and musl versus
+// glibc is the dimension the grader treats as decisive for whether a
+// package with a native module loads at all — so this cannot be a guess.
+//
+// It was inferred from the image NAME: anything containing "alpine" was
+// musl, everything else glibc. composer:2 is an Alpine image that does not
+// say so in its tag, so every PHP receipt this project has ever produced
+// claimed glibc for a run on musl — and a caller on Debian was told a
+// musl-verified sample matched their libc exactly.
+//
+// A name is not evidence. TestImageBaseMatchesTheRealImage runs each of
+// these and fails if the table drifts, which is the only thing that keeps
+// it true as the image set grows.
+var imageBases = map[string]struct{ bucket, libc string }{
+	"node:22-alpine":       {"alpine", "musl"},
+	"python:3.12-alpine":   {"alpine", "musl"},
+	"golang:1.26-alpine":   {"alpine", "musl"},
+	"rust:1-alpine":        {"alpine", "musl"},
+	"ruby:3-alpine":        {"alpine", "musl"},
+	"elixir:1.20.1-alpine": {"alpine", "musl"},
+	"denoland/deno:alpine": {"alpine", "musl"},
+	"oven/bun:1-alpine":    {"alpine", "musl"},
+	"composer:2":           {"alpine", "musl"}, // Alpine, despite the tag
+	"dart:3.13.0":          {"debian", "glibc"},
 }
 
 // imageBase reports the distribution bucket and libc of a verifier image.
 //
-// Reading it from the image name keeps the receipt honest as the image set
-// grows: every alpine tag carries musl, and anything else is a Debian-based
-// official image carrying glibc. An unknown image with neither marker is
-// reported as glibc, because that is what the overwhelming majority of
-// non-alpine base images are and over-claiming musl is the error that
-// misleads.
+// An image absent from the table falls back to the name, and to glibc when
+// the name says nothing — over-claiming musl is the error that misleads,
+// because it is the narrower claim.
 func imageBase(image string) (bucket, libc string) {
+	if b, ok := imageBases[image]; ok {
+		return b.bucket, b.libc
+	}
 	if strings.Contains(image, "alpine") {
 		return "alpine", "musl"
 	}

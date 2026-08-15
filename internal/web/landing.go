@@ -83,6 +83,19 @@ type statTile struct {
 	Estimated bool
 }
 
+// Thresholds below which a figure says less than nothing.
+const (
+	// minPeersToShow: a peer count is a participation statistic, and the
+	// operator's own machines are always in it. Two is what one person
+	// running a laptop and a test container produces, so the tile only
+	// starts carrying information well above that.
+	minPeersToShow = 5
+	// minReportsForARate: the smallest number of reported builds a
+	// percentage may be computed from. One build reported as "100%" is an
+	// anecdote wearing a percentage sign.
+	minReportsForARate = 20
+)
+
 func buildTiles(lang string, st *netStats) []statTile {
 	have := st != nil
 	if st == nil {
@@ -112,6 +125,16 @@ func buildTiles(lang string, st *netStats) []statTile {
 		}
 		return rendered
 	}
+	// A RATE needs enough behind it to be a rate. "100%" over one reported
+	// build is not a measurement, it is one anecdote wearing a percentage
+	// sign — and a percentage implies a precision the sample size cannot
+	// support, which is a stronger claim than the raw count would make.
+	//
+	// Below the floor the tile is not shown at all: a reader deciding
+	// whether to install should see the numbers that mean something
+	// (packages, evidence, verified samples) rather than three tiles that
+	// quietly say "almost nobody has used this yet".
+	measured := func(n int64) bool { return n >= minReportsForARate }
 
 	tiles := []statTile{}
 	// Projects-this-month leads WHEN it means something. Peer buckets
@@ -127,7 +150,7 @@ func buildTiles(lang string, st *netStats) []statTile {
 	// seventy-three people. The peer tile is already hidden for this exact
 	// reason; this number needed the same rule, and it comes back on its
 	// own as soon as a second peer makes it mean what it says.
-	if st.Peers > 1 {
+	if st.Peers >= minPeersToShow {
 		tiles = append(tiles,
 			statTile{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)})
 	}
@@ -139,7 +162,7 @@ func buildTiles(lang string, st *netStats) []statTile {
 	// there. The adoption detector uses exactly this reading: its recorded
 	// baseline is one peer today, meaning us. Above the baseline the number
 	// starts carrying information, and the tile comes back on its own.
-	if st.Peers > 1 {
+	if st.Peers >= minPeersToShow {
 		tiles = append(tiles, statTile{Label: i18n.T(lang, "stats.peers"), Value: num(st.Peers)})
 	}
 	tiles = append(tiles,
@@ -152,17 +175,21 @@ func buildTiles(lang string, st *netStats) []statTile {
 		// success rate" is a claim: we watched, and none of it worked. What
 		// is true is that nobody has reported yet, and a visitor deciding
 		// whether to install reads the first one.
-		statTile{
+	)
+	if measured(st.PostHitBuildsReported) {
+		tiles = append(tiles, statTile{
 			Label: i18n.T(lang, "stats.post_hit_success"),
 			Value: notYetMeasured(st.PostHitBuildsReported, pct(st.PostHitSuccessRate)),
 			Note:  buildsNote(lang, st.PostHitBuildsReported),
-		},
-		statTile{
+		})
+	}
+	if measured(st.PostHitBuildsReported) {
+		tiles = append(tiles, statTile{
 			Label:     i18n.T(lang, "stats.reasoning_avoided"),
 			Value:     notYetMeasured(st.EstimatedReasoningAvoided.Value, num(st.EstimatedReasoningAvoided.Value)),
 			Estimated: true,
-		},
-	)
+		})
+	}
 	return tiles
 }
 
@@ -174,6 +201,22 @@ type landingPage struct {
 	Support     []supportRow
 	InstallPS   string
 	InstallSH   string
+	// Findings are the few measured contradictions shown on the home page.
+	//
+	// The rest of this page EXPLAINS why the network is needed; these PROVE
+	// it. One line of "the documentation says X, the contract measured Y"
+	// does more than every paragraph above it, because a reader recognises
+	// the shape of it from their own week.
+	Findings []homeFinding
+}
+
+// homeFinding is one measured contradiction, trimmed for the home page.
+type homeFinding struct {
+	Ecosystem string
+	Subject   string
+	Believed  string
+	Measured  string
+	Href      string
 }
 
 // supportRow says what CodeSampleX can observe in one ecosystem, in plain
@@ -266,7 +309,48 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		Support:     buildSupport(lang),
 		InstallPS:   "irm " + base + "/install.ps1 | iex",
 		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",
+		Findings:    homeFindings(lang),
 	})
+}
+
+// homeFindingsShown is how many measured contradictions the front page
+// carries. Three: enough that the shape is unmistakable, few enough that
+// the page still opens with what this is.
+const homeFindingsShown = 3
+
+// homeFindings picks the contradictions that land fastest on a stranger.
+//
+// They are chosen by hand rather than by recency, because what makes one
+// land is not how new it is: it is whether the reader has been bitten by it
+// — an empty form field arriving as 0, a password silently truncated at 72
+// bytes. Every one of them links to the sample whose contract measured it,
+// so the claim is checkable in one click.
+func homeFindings(lang string) []homeFinding {
+	want := []string{"zod", "bcryptjs", "jose"}
+	var out []homeFinding
+	for _, w := range want {
+		for _, f := range append(append([]finding{}, documentedFindings...), believedFindings...) {
+			if !strings.HasPrefix(f.Subject, w) {
+				continue
+			}
+			href := "/findings"
+			if f.SampleID != "" {
+				href = "/samples/" + f.SampleID
+			}
+			out = append(out, homeFinding{
+				Ecosystem: f.Ecosystem,
+				Subject:   f.Subject,
+				Believed:  f.Believed,
+				Measured:  f.Measured,
+				Href:      href,
+			})
+			break
+		}
+		if len(out) == homeFindingsShown {
+			break
+		}
+	}
+	return out
 }
 
 // statsPage and adaptersPage are permanent redirects. Both pages folded

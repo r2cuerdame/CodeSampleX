@@ -43,7 +43,7 @@ func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
 	for _, ps := range req.Packages {
 		if p, perr := domain.ParsePURL(ps); perr == nil {
 			reqPURLs = append(reqPURLs, p)
-			patterns = append(patterns, "pkg:"+p.Ecosystem+"/"+p.Name+"@%")
+			patterns = append(patterns, p.AnyVersionPattern())
 		}
 	}
 
@@ -836,7 +836,7 @@ func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, 
 	patterns := make([]string, 0, len(tree))
 	for _, ps := range tree {
 		if p, err := domain.ParsePURL(ps); err == nil {
-			patterns = append(patterns, "pkg:"+p.Ecosystem+"/"+p.Name+"@%")
+			patterns = append(patterns, p.AnyVersionPattern())
 		}
 		if len(patterns) >= maxTreePatterns {
 			break

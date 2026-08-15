@@ -135,6 +135,10 @@ func newFakeStore() *fakeStore {
 	f := &fakeStore{
 		statsJSON: `{"schemaVersion":1,"peers":12,"packages":340,"symbols":1200,` +
 			`"evidence":45213,"verifiedSamples":31,"postHitSuccessRate":0.87,` +
+			// A rate needs the count it came from: the fixture describes a
+			// network with a real success rate, so it has to say how many
+			// builds produced it, or the tiles are correctly hidden.
+			`"postHitBuildsReported":64,` +
 			`"estimatedReasoningAvoided":1204,"estimated":true,"generatedAt":"2026-08-13T00:00:00Z"}`,
 		statsOK:   true,
 		snapshots: map[string]string{},

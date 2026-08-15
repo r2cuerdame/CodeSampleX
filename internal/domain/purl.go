@@ -64,6 +64,22 @@ func (p PURL) String() string {
 	return "pkg:" + p.Ecosystem + "/" + name + "@" + p.Version
 }
 
+// AnyVersionPattern is this package under any version, in the CANONICAL
+// stored form, for a SQL LIKE prefilter.
+//
+// String() escapes a leading "@" to "%40", so a scoped npm package is
+// stored as pkg:npm/%40types/node@20.0.0 — and callers that built the
+// pattern from the raw name asked for pkg:npm/@types/node@%, which matches
+// nothing. Every scoped package (@types/*, @babel/*, @tanstack/*, a large
+// share of npm) silently failed to find its own samples.
+//
+// The escaped "%40" leaves a literal % in the pattern, which LIKE reads as
+// a wildcard. That makes the prefilter slightly looser, never tighter, and
+// the exact ecosystem/name comparison downstream is what decides.
+func (p PURL) AnyVersionPattern() string {
+	return PURL{Ecosystem: p.Ecosystem, Name: p.Name, Version: "%"}.String()
+}
+
 // versionSegments splits the version into numeric-ish dot segments,
 // dropping any pre-release/build suffix.
 func (p PURL) versionSegments() []string {

@@ -24,7 +24,7 @@ func TestParticipationNumbersAreHiddenUntilTheyMeanSomething(t *testing.T) {
 		}
 	}
 
-	joined := buildTiles("en", &netStats{Peers: 2, ProjectsMonth: 73, Packages: 10})
+	joined := buildTiles("en", &netStats{Peers: minPeersToShow, ProjectsMonth: 73, Packages: 10})
 	var sawProjects, sawPeers bool
 	for _, tile := range joined {
 		if strings.Contains(tile.Label, "Projects this month") {
@@ -35,7 +35,7 @@ func TestParticipationNumbersAreHiddenUntilTheyMeanSomething(t *testing.T) {
 		}
 	}
 	if !sawProjects || !sawPeers {
-		t.Errorf("with a second peer both numbers should return: projects=%v peers=%v",
+		t.Errorf("above the peer floor both numbers should return: projects=%v peers=%v",
 			sawProjects, sawPeers)
 	}
 }

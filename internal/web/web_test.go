@@ -67,7 +67,7 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the counters, the way in by name,
 	// and what the network can observe in each ecosystem.
-	for _, s := range []string{"Projects this month", "Peers today", "Verified Samples", "Estimated reasoning avoided", "45,213",
+	for _, s := range []string{"Projects this month", "Peers today", "Verified Samples", "45,213",
 		"What it can observe today", "npm", "packages &amp; versions"} {
 		mustContain(t, body, s)
 	}
@@ -154,8 +154,8 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	// dash is the right rendering for it. Every other counter must show the
 	// aggregator's number. "0%" beside "Post-hit success rate" would be a
 	// claim that we watched and none of it worked.
-	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 1 {
-		t.Errorf("%d counters rendered as —, want exactly 1 (post-hit success):\n%s",
+	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 0 {
+		t.Errorf("%d counters rendered as a placeholder, want none:\n%s",
 			n, truncate(body))
 	}
 }

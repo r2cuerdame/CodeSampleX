@@ -14,10 +14,14 @@ import (
 // em dash, which on this page means "nobody has told us". The one number
 // worth showing was the one it refused to show, and it refused in the
 // direction that flatters.
+//
+// The floor that hides a rate computed from too few reports must not become
+// a second way to hide a bad one: above it, 0% is published exactly like
+// 100% would be.
 func TestAMeasuredZeroIsShownAsZero(t *testing.T) {
 	produced, err := compatibility.StatsJSON(
 		serverstore.NetworkCounts{Peers: 2, Packages: 10, Symbols: 3, Observations: 40, VerifiedSamples: 2},
-		serverstore.AdoptionCounts{Reports: 12, Applied: 12, BuildPass: 0, BuildFail: 12},
+		serverstore.AdoptionCounts{Reports: 24, Applied: 24, BuildPass: 0, BuildFail: 24},
 		time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)

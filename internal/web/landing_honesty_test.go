@@ -22,7 +22,12 @@ func TestPeerTileHiddenWhileItCannotMeanAnything(t *testing.T) {
 	}
 	peers := i18n.T(i18n.Default, "stats.peers")
 
-	for _, n := range []int64{0, 1} {
+	// Two is what one person running a laptop and a test container
+	// produces -- confirmed the hard way: a container I started for an
+	// install test became the second "peer", and the tile read as
+	// participation. A peer count only carries information well above the
+	// number of machines one operator runs.
+	for _, n := range []int64{0, 1, 2, 4} {
 		for _, l := range labelFor(netStats{Peers: n}) {
 			if l == peers {
 				t.Errorf("peers=%d still rendered a peer tile", n)
@@ -30,13 +35,13 @@ func TestPeerTileHiddenWhileItCannotMeanAnything(t *testing.T) {
 		}
 	}
 	var found bool
-	for _, l := range labelFor(netStats{Peers: 2}) {
+	for _, l := range labelFor(netStats{Peers: minPeersToShow}) {
 		if l == peers {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("peers=2 carries information and should be shown")
+		t.Errorf("peers=%d should be shown", minPeersToShow)
 	}
 }
 
@@ -45,8 +50,10 @@ func TestPeerTileHiddenWhileItCannotMeanAnything(t *testing.T) {
 // was helped"; the truth is that nothing has been collected yet, and those
 // are different claims.
 func TestUnmeasuredFiguresRenderAsADashNotZero(t *testing.T) {
+	// Above the floor, where the tile is shown at all: with reports in
+	// hand but nothing derived yet, a dash and a zero are different claims.
 	var reasoning string
-	for _, tile := range buildTiles(i18n.Default, &netStats{}) {
+	for _, tile := range buildTiles(i18n.Default, &netStats{PostHitBuildsReported: minReportsForARate}) {
 		if tile.Label == i18n.T(i18n.Default, "stats.reasoning_avoided") {
 			reasoning = tile.Value
 		}
