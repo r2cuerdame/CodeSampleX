@@ -110,11 +110,17 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			}
 			return cfg.Mode, len(rows), nil
 		},
+		Mode: func() string {
+			if cfg == nil {
+				return ""
+			}
+			return cfg.Mode
+		},
 		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, error) {
 			return runObserved(ctx, db, ident, cfg, argv, cwd)
 		},
 		ReportAdoption: func(ctx context.Context, sampleID string, applied bool, buildPass *bool) error {
-			return reportAdoption(ctx, db, ident, sampleID, applied, buildPass)
+			return reportAdoption(ctx, db, ident, cfg, sampleID, applied, buildPass)
 		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)
@@ -583,7 +589,9 @@ type adoptionPayload struct {
 // reportAdoption records the hit row for local post-hit success stats and
 // enqueues the anonymous adoption evidence for upload (drained by the
 // daemon/`csx sync`; queues locally while the server is unreachable).
-func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identity, sampleID string, applied bool, buildPass *bool) error {
+func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identity,
+	cfg *config.Config, sampleID string, applied bool, buildPass *bool) error {
+
 	var pass sql.NullBool
 	if buildPass != nil {
 		pass = sql.NullBool{Bool: *buildPass, Valid: true}
@@ -621,6 +629,14 @@ func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identit
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
+	}
+	// Community mode only. Nothing drains this queue in local-only mode, so
+	// enqueueing there built a pile of reports that would never be sent
+	// while the tool told the agent they were "queued for anonymous
+	// upload". The local record above is the part that is real in that
+	// mode, and it is kept.
+	if cfg == nil || cfg.Mode != config.ModeCommunity {
+		return nil
 	}
 	_, err = db.Enqueue(ctx, "adoption", string(raw))
 	return err

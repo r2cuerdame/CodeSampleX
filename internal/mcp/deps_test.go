@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
@@ -24,6 +25,14 @@ func seedHome(t *testing.T) (home, sampleID string) {
 	t.Helper()
 	home = t.TempDir()
 	ctx := context.Background()
+
+	// A community install: uploads are part of what this wiring test
+	// exercises, and nothing is queued for a user who has not joined.
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	if err := cfg.Save(home); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
 
 	// Author a tiny sample and store its canonical artifact in the CAS.
 	dir := t.TempDir()
@@ -203,7 +212,7 @@ func TestNewDepsRealWiring(t *testing.T) {
 		if stats["queuedUploads"].(int) < 1 {
 			t.Errorf("stats.queuedUploads = %v, want ≥1 (adoption evidence enqueued)", stats["queuedUploads"])
 		}
-		if stats["mode"] != "uninitialized" {
+		if stats["mode"] != "community" {
 			t.Errorf("stats.mode = %v", stats["mode"])
 		}
 	})
@@ -298,7 +307,7 @@ func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reportAdoption(ctx, db, ident, id, true, &pass); err != nil {
+	if err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, id, true, &pass); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,7 +333,7 @@ func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
 	// An adoption with no preceding search on this machine is a real event
 	// and still gets a row — an agent can obtain a sample another way.
 	other := "sha256:" + strings.Repeat("ab", 32)
-	if err := reportAdoption(ctx, db, ident, other, true, nil); err != nil {
+	if err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, other, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := db.CountHits(ctx); n != 2 {

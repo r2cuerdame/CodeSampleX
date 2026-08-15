@@ -40,6 +40,10 @@ type Deps struct {
 	// record). sanitized carries only sanitizer output — never raw stderr.
 	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, err error)
 	// ReportAdoption records a hit-adoption outcome (ADOPTION_EVIDENCE).
+	// ReportAdoption records what happened to a returned sample. It reports
+	// whether the report was queued for upload, which is false in
+	// local-only mode -- where the record is kept locally and nothing is
+	// ever sent.
 	ReportAdoption func(ctx context.Context, sampleID string, applied bool, buildPass *bool) error
 	// Propose builds a sanitized clean-room spec + prompt and creates an
 	// empty workspace. It NEVER publishes (goal.md §12.4).
@@ -48,6 +52,9 @@ type Deps struct {
 	LocalHits func(ctx context.Context) ([]localdb.HitRow, error)
 	// LocalStats returns the local dashboard stats.
 	LocalStats func(ctx context.Context) (map[string]any, error)
+	// Mode reports the configured mode ("community", "local-only", or "").
+	// Tools consult it before telling a caller that anything will be sent.
+	Mode func() string
 }
 
 // toolDef is one tools/list entry.
@@ -690,9 +697,19 @@ func (s *Server) toolReportAdoption(ctx context.Context, raw json.RawMessage) *t
 	if a.BuildPass != nil {
 		text += fmt.Sprintf(", buildPass=%v", *a.BuildPass)
 	}
-	text += "). Evidence class: ADOPTION_EVIDENCE — queued for anonymous upload."
+	// Do not promise an upload this install will never make. In local-only
+	// mode nothing drains the queue, and saying "queued for anonymous
+	// upload" to a user who chose the mode that sends nothing was simply
+	// false.
+	queued := s.Deps.Mode != nil && s.Deps.Mode() == "community"
+	if queued {
+		text += "). Evidence class: ADOPTION_EVIDENCE — queued for anonymous upload."
+	} else {
+		text += "). Evidence class: ADOPTION_EVIDENCE — recorded locally; this install uploads nothing."
+	}
 	structured := map[string]any{
 		"recorded":      true,
+		"uploadQueued":  queued,
 		"sampleId":      a.SampleID,
 		"applied":       *a.Applied,
 		"evidenceClass": string(domain.ClassAdoptionEvidence),
