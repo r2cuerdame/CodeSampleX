@@ -154,6 +154,7 @@
   "stats.how_honesty": "観測と検証は別々に数えます。プロジェクトがコンパイルできたことを、特定 API が動く証拠として誇張しません。",
   "stats.how_intro": "上の数値はすべてこの流れから生まれます。あなたのコードへの推測ではなく、実際の開発環境で実際に起きたことです。",
   "stats.of_n_builds": "報告されたビルド %s 件中",
+  "stats.of_one_build": "報告されたビルド 1 件中",
   "stats.packages": "パッケージ",
   "stats.peers": "本日のピア",
   "stats.post_hit_success": "適用後成功率",

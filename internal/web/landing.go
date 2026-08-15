@@ -287,8 +287,14 @@ func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string)
 // buildsNote renders the denominator behind the post-hit rate, or "" when
 // there is nothing to qualify.
 func buildsNote(lang string, reported int64) string {
-	if reported == 0 {
+	switch reported {
+	case 0:
 		return ""
+	case 1:
+		// English needs the singular, and several other locales inflect
+		// differently at one too. A number this small is exactly when the
+		// note matters most, so it should not read like a template.
+		return i18n.T(lang, "stats.of_one_build")
 	}
 	return i18n.T(lang, "stats.of_n_builds", i18n.FormatInt(lang, reported))
 }

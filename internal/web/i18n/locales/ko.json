@@ -154,6 +154,7 @@
   "stats.how_honesty": "관측과 검증은 따로 셉니다. 프로젝트가 컴파일됐다는 사실을 특정 API가 동작한다는 증거로 부풀리지 않습니다.",
   "stats.how_intro": "위 숫자는 모두 이 흐름에서 나옵니다. 당신의 코드에 대한 추측이 아니라, 실제 개발 환경에서 실제로 일어난 일입니다.",
   "stats.of_n_builds": "보고된 빌드 %s건 중",
+  "stats.of_one_build": "보고된 빌드 1건 중",
   "stats.packages": "패키지",
   "stats.peers": "오늘 활동한 피어",
   "stats.post_hit_success": "적용 후 성공률",

@@ -154,6 +154,7 @@
   "stats.how_honesty": "Observations et vérifications sont comptées séparément : un projet qui compile n'est jamais présenté comme la preuve qu'une API précise fonctionne.",
   "stats.how_intro": "Chaque chiffre ci-dessus provient de cette boucle. Ce n'est pas une supposition sur votre code : c'est ce qui s'est réellement produit dans de vrais environnements de développement.",
   "stats.of_n_builds": "sur %s builds signalés",
+  "stats.of_one_build": "sur 1 build signalé",
   "stats.packages": "Paquets",
   "stats.peers": "Peers aujourd'hui",
   "stats.post_hit_success": "Taux de réussite après adoption",

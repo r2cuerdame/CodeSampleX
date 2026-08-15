@@ -154,6 +154,7 @@
   "stats.how_honesty": "观测与验证分开计数：项目能编译，绝不会被说成某个 API 一定能用。",
   "stats.how_intro": "上面的每个数字都来自这个闭环。它不是对你代码的猜测，而是真实开发环境中真实发生的事。",
   "stats.of_n_builds": "共 %s 次已报告构建",
+  "stats.of_one_build": "共 1 次已报告构建",
   "stats.packages": "包",
   "stats.peers": "今日节点",
   "stats.post_hit_success": "采用后成功率",
