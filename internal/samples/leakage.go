@@ -141,10 +141,42 @@ var leakPatterns = []leakPattern{
 
 var urlRe = regexp.MustCompile(`https?://[^\s"'<>()\[\]` + "`" + `]+`)
 
-// credentialURLRe matches a URL carrying inline credentials
-// (https://user:token@host/…). Those are a real leak wherever they appear,
-// lockfile included.
-var credentialURLRe = regexp.MustCompile(`https?://[^/\s:@]+:[^/\s@]+@`)
+// userinfoURLRe matches any URL carrying userinfo — https://SOMETHING@host
+// — with or without a colon inside it.
+//
+// The previous pattern required the colon, so it caught user:token@host and
+// missed every single-token form: https://ghp_xxxx@github.com/ (a GitHub
+// PAT), https://npm_xxxx@registry.npmjs.org/ (a registry token), and
+// https://dXNlcjpwYXNz@host/ — base64 of "user:password", which is the
+// same secret with the colon hidden inside the encoding. Those are the
+// shapes a token actually takes; user:pass in a URL is the rare one.
+//
+// The character class excludes "/", so it cannot run past the host and a
+// scoped npm path like registry.npmjs.org/@scope/pkg is not userinfo.
+var userinfoURLRe = regexp.MustCompile(`https?://([^/\s@]+)@`)
+
+// harmlessUserinfo are userinfo values that are conventions rather than
+// secrets. git@ appears in every lockfile that resolves a git dependency,
+// and flagging it would reject honest samples to catch nothing.
+var harmlessUserinfo = map[string]bool{
+	"git": true, "anonymous": true, "ftp": true,
+}
+
+// credentialURL reports whether a URL carries userinfo that could be a
+// secret. Anything with a colon is user:password and always counts; a
+// single token counts unless it is one of the known conventions, because
+// a token is exactly what a single opaque userinfo value usually is.
+func credentialURL(u string) bool {
+	m := userinfoURLRe.FindStringSubmatch(u)
+	if m == nil {
+		return false
+	}
+	info := m[1]
+	if strings.Contains(info, ":") {
+		return true
+	}
+	return !harmlessUserinfo[strings.ToLower(info)]
+}
 
 // lockfileNames are machine-generated dependency manifests. They describe
 // public packages, are written by the package manager rather than by the
@@ -247,7 +279,7 @@ func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regex
 			// none of them can carry anything the contributor wrote.
 			// Credentials embedded in one still matter, and are caught below.
 			if lock {
-				if credentialURLRe.MatchString(m) {
+				if credentialURL(m) {
 					out = append(out, Finding{File: file, Line: lineNo, Kind: KindURL, Excerpt: excerpt(m)})
 				}
 				continue
