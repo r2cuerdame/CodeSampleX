@@ -153,6 +153,7 @@
   "stats.how_heading": "How CodeSampleX works",
   "stats.how_honesty": "Observations and verifications are counted separately: a project that compiles is never presented as proof that one specific API works.",
   "stats.how_intro": "Every number above comes out of this loop. None of it is a guess about your code — it is what actually happened in real development environments.",
+  "stats.of_n_builds": "of %s reported builds",
   "stats.packages": "Packages",
   "stats.peers": "Peers today",
   "stats.post_hit_success": "Post-hit success rate",

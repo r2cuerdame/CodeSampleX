@@ -74,8 +74,12 @@ func (s *site) loadStats(r *http.Request) *netStats {
 // statTile is one network counter. The reasoning-avoided tile always
 // carries Estimated=true — the figure is an estimate by definition.
 type statTile struct {
-	Label     string
-	Value     string
+	Label string
+	Value string
+	// Note carries the denominator when a rate has one. "100%" from a
+	// single report is arithmetically true and tells a reader nothing;
+	// beside "of 1 reported build" it tells them exactly what it is worth.
+	Note      string
 	Estimated bool
 }
 
@@ -140,6 +144,7 @@ func buildTiles(lang string, st *netStats) []statTile {
 		statTile{
 			Label: i18n.T(lang, "stats.post_hit_success"),
 			Value: notYetMeasured(st.PostHitBuildsReported, pct(st.PostHitSuccessRate)),
+			Note:  buildsNote(lang, st.PostHitBuildsReported),
 		},
 		statTile{
 			Label:     i18n.T(lang, "stats.reasoning_avoided"),
@@ -277,4 +282,13 @@ func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string)
 		}
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// buildsNote renders the denominator behind the post-hit rate, or "" when
+// there is nothing to qualify.
+func buildsNote(lang string, reported int64) string {
+	if reported == 0 {
+		return ""
+	}
+	return i18n.T(lang, "stats.of_n_builds", i18n.FormatInt(lang, reported))
 }

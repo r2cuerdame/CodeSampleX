@@ -153,6 +153,7 @@
   "stats.how_heading": "So funktioniert CodeSampleX",
   "stats.how_honesty": "Beobachtungen und Verifikationen werden getrennt gezählt: Dass ein Projekt kompiliert, gilt nie als Beweis, dass eine bestimmte API funktioniert.",
   "stats.how_intro": "Jede Zahl oben entsteht aus diesem Kreislauf. Nichts davon ist eine Vermutung über deinen Code — es ist das, was in echten Entwicklungsumgebungen tatsächlich passiert ist.",
+  "stats.of_n_builds": "von %s gemeldeten Builds",
   "stats.packages": "Pakete",
   "stats.peers": "Peers heute",
   "stats.post_hit_success": "Erfolgsquote nach Übernahme",

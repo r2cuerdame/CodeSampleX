@@ -151,7 +151,7 @@
 {{- range .Tiles}}
   <div class="stat">
     <span class="num mono">{{.Value}}</span>
-    <span class="lbl">{{.Label}}{{if .Estimated}} <em class="est mono">{{$.T "stats.estimated"}}</em>{{end}}</span>
+    <span class="lbl">{{.Label}}{{if .Note}} <em class="est mono">{{.Note}}</em>{{end}}{{if .Estimated}} <em class="est mono">{{$.T "stats.estimated"}}</em>{{end}}</span>
   </div>
 {{- end}}
 </div>
