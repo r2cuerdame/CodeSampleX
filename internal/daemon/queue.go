@@ -18,6 +18,7 @@ const queueDrainLimit = 200
 // the user's contribution and a future build may know where it goes.
 var queueEndpoints = map[string]string{
 	"adoption": "/v1/adoptions",
+	"wanted":   "/v1/wanted",
 }
 
 // drainQueue uploads whatever is sitting in the local upload queue.

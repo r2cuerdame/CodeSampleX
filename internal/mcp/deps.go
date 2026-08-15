@@ -78,7 +78,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		// A counter presented to the user as fact has to be one.
 		Search: func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
 			resp := engine.Search(ctx, req)
-			recordSearchOutcome(ctx, db, req, resp)
+			recordSearchOutcome(ctx, db, ident, cfg, req, resp)
 			return resp
 		},
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
@@ -671,8 +671,16 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 // get_local_stats. Queries stay on the machine — the hits table is never
 // uploaded — and a failure here must never break a search, so the error is
 // dropped deliberately rather than surfaced.
-func recordSearchOutcome(ctx context.Context, db *localdb.DB, req domain.SearchRequest, resp domain.SearchResponse) {
-	if db == nil || resp.Miss || len(resp.Results) == 0 {
+func recordSearchOutcome(ctx context.Context, db *localdb.DB, ident *identity.Identity,
+	cfg *config.Config, req domain.SearchRequest, resp domain.SearchResponse) {
+	if db == nil {
+		return
+	}
+	if resp.Miss || len(resp.Results) == 0 {
+		// A miss is a demand signal. Agents arrive over MCP, so this is the
+		// path where questions actually get asked — and it was the one path
+		// that threw them away.
+		evidence.QueueWanted(ctx, db, ident, cfg, req)
 		return
 	}
 	top := resp.Results[0]
