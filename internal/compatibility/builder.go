@@ -223,7 +223,19 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	}
 	for _, k := range pkgKeys {
 		evidenceByVersion := clusterEvidence[k]
-		for _, cluster := range BuildClusters(k.ecosystem, k.name, evidenceByVersion, regressionsByPkg[k], now) {
+		// Regressions recomputed over the SAME evidence the cluster is
+		// built from, not over whatever versions this pass happened to
+		// touch.
+		//
+		// regressionsByPkg holds only what was detected for the pass's own
+		// targets, while the cluster is rebuilt across every version. So a
+		// package that had a 1.11 -> 1.12 regression lost its flag on the
+		// next incremental pass triggered by unrelated evidence for 0.27.2
+		// -- and got it back on the following full pass. A flag that
+		// flickers with the aggregation schedule is not a finding anyone
+		// can act on, and this is the axis the bug/fix work is built on.
+		regs := regressionsForPackage(k, evidenceByVersion)
+		for _, cluster := range BuildClusters(k.ecosystem, k.name, evidenceByVersion, regs, now) {
 			if err := b.Store.UpsertFailureCluster(ctx, cluster); err != nil {
 				return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
 			}
@@ -856,6 +868,57 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 // The cost is bounded by the number of versions of the packages that
 // changed, which is what a correct cluster rebuild needs by definition. A
 // full pass loads nothing extra, because byPkg already holds everything.
+// regressionsForPackage applies the §10.3 rule across every version of one
+// package, from the same evidence the failure clusters are built from.
+//
+// Detection during the snapshot loop is scoped to the pass's targets, which
+// is correct for snapshots — they are per target — and wrong for clusters,
+// which are per package. This is the per-package answer.
+func regressionsForPackage(k pkgKey, byVersion map[string][]serverstore.EvidenceRow) []RegressionCandidate {
+	// symbol -> version -> rows, and the purl each version was seen under.
+	bySymbol := map[string]map[string][]serverstore.EvidenceRow{}
+	purlOf := map[string]string{}
+	for version, rows := range byVersion {
+		for _, row := range rows {
+			if row.Symbol == "" {
+				continue // package-level evidence carries no symbol
+			}
+			if bySymbol[row.Symbol] == nil {
+				bySymbol[row.Symbol] = map[string][]serverstore.EvidenceRow{}
+			}
+			bySymbol[row.Symbol][version] = append(bySymbol[row.Symbol][version], row)
+			if purlOf[version] == "" {
+				purlOf[version] = row.PURL
+			}
+		}
+	}
+
+	symbols := make([]string, 0, len(bySymbol))
+	for sym := range bySymbol {
+		symbols = append(symbols, sym)
+	}
+	sort.Strings(symbols)
+
+	var out []RegressionCandidate
+	for _, sym := range symbols {
+		versions := make([]string, 0, len(bySymbol[sym]))
+		for v := range bySymbol[sym] {
+			versions = append(versions, v)
+		}
+		sort.Strings(versions) // deterministic; PreviousVersion orders properly
+		for _, v := range versions {
+			prev, ok := PreviousVersion(versions, v)
+			if !ok {
+				continue
+			}
+			out = append(out, DetectRegressions(
+				purlOf[v], purlOf[prev], sym,
+				bySymbol[sym][v], bySymbol[sym][prev])...)
+		}
+	}
+	return out
+}
+
 func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 	allTargets []serverstore.SnapshotTarget, byPkg map[pkgKey]symVer,
 ) (map[pkgKey]map[string][]serverstore.EvidenceRow, error) {

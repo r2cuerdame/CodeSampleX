@@ -82,3 +82,37 @@ func TestRegressionBadgeStaysOnTheVersionItIsAbout(t *testing.T) {
 		}
 	}
 }
+
+// A regression flag that flickers with the aggregation schedule is not a
+// finding anyone can act on — and this is the axis the whole bug/fix
+// programme is built on.
+//
+// Detection was scoped to the versions a pass happened to touch, while the
+// failure cluster is rebuilt across every version. So a package with a
+// 1.11 -> 1.12 regression lost its flag on the next incremental pass
+// triggered by unrelated evidence for another version, and got it back on
+// the following full pass.
+func TestARegressionFlagDoesNotDependOnWhichPassRan(t *testing.T) {
+	stage := string(domain.StageProjectCompile)
+	byVersion := map[string][]serverstore.EvidenceRow{
+		"1.11.0": {evRow("pkg:npm/axios@1.11.0", "get", regEnv, stage, string(domain.ResultPass), 10, "", "", 1)},
+		"1.12.0": {
+			evRow("pkg:npm/axios@1.12.0", "get", regEnv, stage, string(domain.ResultFail), 4, "", "", 1),
+			evRow("pkg:npm/axios@1.12.0", "get", regEnv, stage, string(domain.ResultPass), 1, "", "", 1),
+		},
+		// Unrelated evidence for a much older line, the kind that triggers
+		// an incremental pass without touching the pair above.
+		"0.27.2": {evRow("pkg:npm/axios@0.27.2", "post", regEnv, stage, string(domain.ResultFail), 3, "", "", 1)},
+	}
+
+	got := regressionsForPackage(pkgKey{"npm", "axios"}, byVersion)
+	var found bool
+	for _, c := range got {
+		if c.Package == "pkg:npm/axios@1.12.0" && c.PreviousPackage == "pkg:npm/axios@1.11.0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the 1.11 -> 1.12 regression was not detected from the package's own evidence: %+v", got)
+	}
+}
