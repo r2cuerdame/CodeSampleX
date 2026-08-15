@@ -207,9 +207,24 @@ func (d *Daemon) handleAdoption(w http.ResponseWriter, r *http.Request) {
 	if req.BuildPass != nil {
 		hit.PostBuildPass = sql.NullBool{Bool: *req.BuildPass, Valid: true}
 	}
-	if err := d.DB.RecordHit(ctx, hit); err != nil {
+	// An adoption is what HAPPENED to a search, not a second search. The
+	// MCP path was fixed for this; the HTTP path was not, so a search
+	// followed by an adoption counted as two hits here -- and every rate
+	// with hits in its denominator was diluted by exactly the reports that
+	// prove the network works.
+	updated, err := d.DB.MarkAdopted(ctx, req.SampleID, req.Applied, hit.PostBuildPass)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if !updated {
+		// No search on this machine led here: an agent may report an
+		// adoption for a sample it obtained another way. That is worth
+		// recording, and it is one event.
+		if err := d.DB.RecordHit(ctx, hit); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	_ = d.DB.TouchSample(ctx, req.SampleID)
 

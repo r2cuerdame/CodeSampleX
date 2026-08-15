@@ -53,7 +53,15 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return st, err
 	}
-	st.Hits = len(hits)
+	// The TOTAL, not the size of the page just read. ListHits caps at
+	// 10,000, so past that the dashboard reported exactly 10,000 hits
+	// forever -- a number that stops moving is read as a stalled network
+	// rather than a truncated query.
+	if n, cerr := d.DB.CountHits(ctx); cerr == nil {
+		st.Hits = n
+	} else {
+		st.Hits = len(hits)
+	}
 	passes := 0
 	for _, h := range hits {
 		if h.Adopted {

@@ -52,6 +52,14 @@ type CrossVerifier struct {
 	// LastActivityFile is touched by csx run; its mtime drives the
 	// "idle" budget (only verify when the user is not actively working).
 	LastActivityFile string
+	// OnVerified is called after each job whose receipt was accepted.
+	//
+	// Nothing counted them. The dashboard reads a crossVerifications
+	// counter that no code path ever wrote, so a peer could spend hours
+	// verifying other people's samples and its own stats would report zero
+	// forever -- the one number that shows a peer giving back rather than
+	// taking. Optional: nil simply counts nothing.
+	OnVerified func()
 	// Source resolves artifacts from the cheapest place first (local CAS,
 	// then announced peers, then the server) — goal.md §15.1. *peer.Node
 	// implements it. Nil downloads straight from the server.
@@ -274,6 +282,9 @@ func (cv *CrossVerifier) RunBudget(ctx context.Context, budget string, once bool
 		}
 		if _, err := cv.VerifyAndReport(ctx, job); err != nil {
 			return err
+		}
+		if cv.OnVerified != nil {
+			cv.OnVerified()
 		}
 		if once {
 			return nil

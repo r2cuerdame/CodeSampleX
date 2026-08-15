@@ -252,6 +252,13 @@ func (d *Daemon) startBackground(ctx context.Context) {
 		uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		_, _ = d.uploadNow(uctx) // community-mode gate lives in the batcher
+		// And the report queue. The two are separate stores, and only
+		// observation batches were on this tick: adoption and wanted
+		// reports sat until somebody ran `csx sync` by hand -- while
+		// that command's own output says "or let the daemon do it on its
+		// next tick". A user who never types sync reported nothing, and
+		// adoption is the one signal the network cannot recompute.
+		_, _ = d.drainQueue(uctx)
 	})
 	go tickLoop(ctx, orDefault(d.warmEvery, defaultWarmEvery), func() {
 		wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -268,6 +275,9 @@ func (d *Daemon) startBackground(ctx context.Context) {
 		// 15 minutes while jobs wait.
 		go tickLoopAfter(ctx, orDefault(d.verifyFirstDelay, defaultVerifyFirstDelay),
 			orDefault(d.verifyEvery, defaultVerifyEvery), func() {
+				d.Cross.OnVerified = func() {
+					d.incrStat(ctx, statCrossVerifications, 1)
+				}
 				if err := d.Cross.RunBudget(ctx, d.Cfg.IdleVerification, false); err != nil && ctx.Err() == nil {
 					log.Printf("csx daemon: cross verification: %v", err)
 				}
