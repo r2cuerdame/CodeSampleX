@@ -14,6 +14,7 @@ import (
 	"context"
 	"embed"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -142,9 +143,28 @@ type site struct {
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
 	s := &site{d: d, tmpl: parseTemplates()}
+	// handle registers a page behind a recover guard.
+	//
+	// The /v1 API has had one since the beginning; the website was mounted
+	// bare, so a panic in any page handler killed the connection outright
+	// and the visitor got no response at all -- not a 500, nothing. The
+	// first one found was reachable from a URL: /records?page=<huge>
+	// overflowed page*perPage into a negative offset and panicked on the
+	// slice, from any browser, with no evidence rows needed.
+	handle := func(pattern string, h http.HandlerFunc) {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("web: panic serving %s: %v", r.URL.Path, rec)
+					s.unavailable(w, r, s.negotiate(w, r))
+				}
+			}()
+			h(w, r)
+		})
+	}
 
-	mux.HandleFunc("GET /{$}", s.landingRoot)
-	mux.HandleFunc("GET /{seg}", s.oneSegment)
+	handle("GET /{$}", s.landingRoot)
+	handle("GET /{seg}", s.oneSegment)
 	// Locale landings are registered as literal patterns ("GET /ko/{$}") so
 	// they never conflict with /static/ or the package wildcard routes.
 	// /en/ serves English rather than redirecting to "/": the root
@@ -154,36 +174,36 @@ func Register(mux *http.ServeMux, d Deps) {
 	// choice, so it is remembered like the ?lang= switch.
 	for _, code := range i18n.Supported {
 		lang := code
-		mux.HandleFunc("GET /"+code+"/{$}", func(w http.ResponseWriter, r *http.Request) {
+		handle("GET /"+code+"/{$}", func(w http.ResponseWriter, r *http.Request) {
 			setLangCookie(w, lang)
 			s.landing(w, r, lang)
 		})
 	}
-	mux.HandleFunc("GET /records", s.records)
-	mux.HandleFunc("GET /findings", s.findings)
-	mux.HandleFunc("GET /wanted", s.wanted)
+	handle("GET /records", s.records)
+	handle("GET /findings", s.findings)
+	handle("GET /wanted", s.wanted)
 	// One rule for a trailing slash, applied everywhere: redirect to the
 	// slashless form. It was inconsistent — /records/ and /findings/ hard
 	// 404'd while a package page happily served /npm/zod/ as a second 200
 	// that canonicalized to itself, so the same page existed at two indexed
 	// URLs. Both halves of that are fixed by picking one form and sending
 	// the other to it.
-	mux.HandleFunc("GET /records/{$}", redirectToSlashless)
-	mux.HandleFunc("GET /findings/{$}", redirectToSlashless)
-	mux.HandleFunc("GET /wanted/{$}", redirectToSlashless)
+	handle("GET /records/{$}", redirectToSlashless)
+	handle("GET /findings/{$}", redirectToSlashless)
+	handle("GET /wanted/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
-	mux.HandleFunc("GET /explore", s.explorePage)
-	mux.HandleFunc("GET /stats", s.statsPage)
-	mux.HandleFunc("GET /adapters", s.adaptersPage)
-	mux.HandleFunc("GET /samples/{id}", s.samplePage)
-	mux.HandleFunc("GET /seeders/{login}", s.seederPage)
-	mux.HandleFunc("GET /robots.txt", s.robots)
-	mux.HandleFunc("GET /sitemap.xml", s.sitemap)
-	mux.HandleFunc("GET /install.ps1", s.installScript("install/install.ps1"))
-	mux.HandleFunc("GET /install.sh", s.installScript("install/install.sh"))
-	mux.HandleFunc("GET /dl/{file}", s.download)
+	handle("GET /explore", s.explorePage)
+	handle("GET /stats", s.statsPage)
+	handle("GET /adapters", s.adaptersPage)
+	handle("GET /samples/{id}", s.samplePage)
+	handle("GET /seeders/{login}", s.seederPage)
+	handle("GET /robots.txt", s.robots)
+	handle("GET /sitemap.xml", s.sitemap)
+	handle("GET /install.ps1", s.installScript("install/install.ps1"))
+	handle("GET /install.sh", s.installScript("install/install.sh"))
+	handle("GET /dl/{file}", s.download)
 	mux.Handle("GET /static/", cacheControl(http.FileServerFS(staticFS)))
-	mux.HandleFunc("GET /{ecosystem}/{rest...}", s.packageRoutes)
+	handle("GET /{ecosystem}/{rest...}", s.packageRoutes)
 }
 
 func cacheControl(next http.Handler) http.Handler {

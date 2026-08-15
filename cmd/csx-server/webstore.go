@@ -306,6 +306,11 @@ func (w *webStore) RecordPackages(ctx context.Context, q string, offset, limit i
 		return nil, 0, err
 	}
 	total := len(all)
+	// A negative offset is a caller bug, but it must not be a panic in a
+	// page handler: clamp rather than slice with it.
+	if offset < 0 {
+		offset = 0
+	}
 	if offset >= total {
 		return nil, total, nil
 	}

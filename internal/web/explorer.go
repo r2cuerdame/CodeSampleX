@@ -561,6 +561,11 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 // hundreds of packages, and a single unbounded list is unusable.
 const recordsPerPage = 40
 
+// maxRecordsPage is the deepest page ?page= may ask for. Past this is
+// beyond any real record set, and the multiplication below must not
+// overflow.
+const maxRecordsPage = 1 << 20
+
 type recordsPage struct {
 	basePage
 	Query string
@@ -587,9 +592,14 @@ func (s *site) explorePage(w http.ResponseWriter, r *http.Request) {
 func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	// maxRecordsPage bounds ?page= before it is multiplied. Atoi happily
+	// returns 9223372036854775807, (page-1)*recordsPerPage overflowed to a
+	// negative offset, and the store sliced with it — so any browser could
+	// panic the page with a URL. Deeper than this is past the end of any
+	// real record set anyway, and renders as an empty page.
 	page := 1
 	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 1 {
-		page = p
+		page = min(p, maxRecordsPage)
 	}
 
 	hits, total, err := s.d.Store.RecordPackages(r.Context(), q, (page-1)*recordsPerPage, recordsPerPage)
