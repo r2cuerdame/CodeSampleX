@@ -16,8 +16,36 @@ $dir = Join-Path $env:LOCALAPPDATA 'csx'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $exe = Join-Path $dir 'csx.exe'
 
+# Clean up a previous upgrade's displaced binary, now that nothing holds it.
+Get-ChildItem -Path $dir -Filter 'csx.exe.old-*' -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+
 Write-Host "Downloading csx (windows/$arch) from $base ..."
-Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $exe
+$staged = "$exe.new"
+Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
+
+# Windows will not let anything WRITE a running executable, and after
+# `csx init` the MCP server is exactly that: a long-running process your
+# editor started, holding csx.exe open. Downloading straight over the top
+# therefore failed on every upgrade an existing user attempted — the one
+# case that matters — with an IO error that says nothing about why.
+#
+# Windows does allow a running executable to be RENAMED. So the old binary
+# is moved aside and the new one takes its place; the running server keeps
+# the file it already opened, and the displaced copy is deleted on the next
+# install, once nothing holds it.
+$replaced = $false
+if (Test-Path $exe) {
+    $aside = Join-Path $dir ("csx.exe.old-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+    try {
+        Move-Item -Path $exe -Destination $aside -Force
+        $replaced = $true
+    } catch {
+        Remove-Item $staged -Force -ErrorAction SilentlyContinue
+        throw "csx.exe is in use and could not be replaced. Close your editor (it runs the csx MCP server) and run the installer again."
+    }
+}
+Move-Item -Path $staged -Destination $exe -Force
 
 # Add the install dir to the user PATH once, without changing anything else
 # about it.
@@ -61,3 +89,12 @@ if (($env:Path -split ';') -notcontains $dir) {
 
 Write-Host 'csx installed. Starting setup...'
 & $exe init
+
+# A replaced binary means an MCP server may still be running the old one.
+# It keeps answering with the old code until the editor restarts it, and
+# nothing else in the flow would ever mention that.
+if ($replaced) {
+    Write-Host ''
+    Write-Host 'You upgraded an existing install. If your editor is open, restart it:'
+    Write-Host 'the csx MCP server it started is still running the previous build.'
+}

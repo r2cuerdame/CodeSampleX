@@ -25,15 +25,28 @@ dir="${CSX_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$dir"
 
 echo "Downloading csx ($os/$arch) from $base ..."
+# Download beside the target, then rename over it.
+#
+# Writing straight to $dir/csx truncates the file in place, and after
+# `csx init` that file is a RUNNING process — the MCP server the editor
+# started. Truncating it under a running program corrupts it mid-execution
+# and, if the download then fails, leaves nothing installed at all. rename
+# is atomic: the running server keeps the file it already opened and the
+# next start gets the new one.
+staged="$dir/.csx.download.$$"
+trap 'rm -f "$staged"' EXIT
 if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$base/dl/csx-$os-$arch" -o "$dir/csx"
+    curl -fsSL "$base/dl/csx-$os-$arch" -o "$staged"
 elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$dir/csx" "$base/dl/csx-$os-$arch"
+    wget -qO "$staged" "$base/dl/csx-$os-$arch"
 else
     echo "csx: need curl or wget" >&2
     exit 1
 fi
-chmod +x "$dir/csx"
+chmod +x "$staged"
+upgrade=0
+[ -e "$dir/csx" ] && upgrade=1
+mv -f "$staged" "$dir/csx"
 
 case ":$PATH:" in
     *":$dir:"*) ;;
@@ -44,4 +57,9 @@ case ":$PATH:" in
 esac
 
 echo "csx installed. Starting setup..."
+if [ "$upgrade" = "1" ]; then
+    echo
+    echo "You upgraded an existing install. If your editor is open, restart it:"
+    echo "the csx MCP server it started is still running the previous build."
+fi
 exec "$dir/csx" init
