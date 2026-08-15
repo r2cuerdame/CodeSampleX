@@ -154,6 +154,42 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 	}
 }
 
+// observationStages are the stages an error can actually be RECORDED
+// under, and therefore the only stages a stored fingerprint can carry.
+var observationStages = []domain.Stage{
+	domain.StageUsed,
+	domain.StageProjectTypecheck,
+	domain.StageProjectCompile,
+	domain.StageProjectTest,
+	domain.StageProjectProcess,
+	domain.StageProjectLoad,
+}
+
+// Fingerprints returns the fingerprint this error would carry at each stage
+// it could have been recorded under.
+//
+// A fingerprint is SHA256("v1|" + stage + "|" + code + "|" + template), so
+// the same error text hashes differently depending on the stage that
+// observed it. Everything that RECORDS an error knows its stage. The agent
+// pasting an error into search_known_solution does not -- it has a build
+// log, not a stage -- and searching with an empty stage produced a hash
+// that could not equal any stored fingerprint, ever, on any install. That
+// silently disabled the largest relevance weight in the ranker (0.60,
+// larger than an exact version match at 0.45) and, with it, the rule that
+// exempts "the failure the caller is explicitly looking for a fix to" from
+// being demoted to REFERENCE_ONLY.
+//
+// Asking about all six is the honest form of the question: the caller has
+// this error, and does not claim to know when it happened.
+func (s SanitizedError) Fingerprints() []string {
+	out := make([]string, 0, len(observationStages))
+	for _, stage := range observationStages {
+		out = append(out, domain.SHA256Hex(
+			[]byte("v1|"+string(stage)+"|"+s.Code+"|"+s.Template)))
+	}
+	return out
+}
+
 func extractCode(raw string) string {
 	for _, re := range codeClasses {
 		if m := re.FindString(raw); m != "" {

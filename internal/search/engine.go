@@ -549,12 +549,26 @@ func contractResult(stages map[string]string) (domain.Result, bool) {
 	return "", false
 }
 
+// matchesAnyFingerprint reports whether a stored fingerprint is one of the
+// forms the caller's error could have been recorded as.
+func matchesAnyFingerprint(req domain.SearchRequest, stored string) bool {
+	if req.ErrorFingerprint != "" && stored == req.ErrorFingerprint {
+		return true
+	}
+	for _, fp := range req.ErrorFingerprints {
+		if fp != "" && stored == fp {
+			return true
+		}
+	}
+	return false
+}
+
 // errorHits reports exact error-fingerprint / error-code hits in the shard
 // failure lists of the candidate's packages (§11.3 step 3).
 func errorHits(req domain.SearchRequest, syms []shardSymbolEntry) (fp, code bool) {
 	for _, s := range syms {
 		for _, f := range s.Failures {
-			if req.ErrorFingerprint != "" && f.Fingerprint == req.ErrorFingerprint {
+			if f.Fingerprint != "" && matchesAnyFingerprint(req, f.Fingerprint) {
 				fp = true
 			}
 			if req.ErrorCode != "" && f.ErrorCode != "" && strings.EqualFold(f.ErrorCode, req.ErrorCode) {
@@ -586,7 +600,7 @@ func elevatedInRequestEnv(req domain.SearchRequest, matched []shardFailure) bool
 		if f.Count < elevatedFailureMinCount {
 			continue
 		}
-		if req.ErrorFingerprint != "" && f.Fingerprint == req.ErrorFingerprint {
+		if f.Fingerprint != "" && matchesAnyFingerprint(req, f.Fingerprint) {
 			continue
 		}
 		if req.ErrorCode != "" && f.ErrorCode != "" && strings.EqualFold(f.ErrorCode, req.ErrorCode) {

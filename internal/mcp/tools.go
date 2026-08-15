@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
@@ -52,6 +53,8 @@ type Deps struct {
 	LocalHits func(ctx context.Context) ([]localdb.HitRow, error)
 	// LocalStats returns the local dashboard stats.
 	LocalStats func(ctx context.Context) (map[string]any, error)
+	// MachineEnv reports this host's environment. nil means collect it.
+	MachineEnv func(ctx context.Context) domain.EnvironmentFingerprint
 	// Mode reports the configured mode ("community", "local-only", or "").
 	// Tools consult it before telling a caller that anything will be sent.
 	Mode func() string
@@ -95,8 +98,67 @@ func environmentSchema() map[string]any {
 			"browserMajor":          strProp("browser major version bucket, e.g. \"140\" or \"19\" for safari 19"),
 			"engine":                strProp("chromium | gecko | webkit"),
 			"engineVersion":         strProp("engine major version"),
+			// libc decides whether a package with a native module loads at
+			// all, and the grader treats it as such -- but it compares the
+			// dimension only when BOTH sides declare it, and there was no
+			// way for a caller to declare it. An agent on Alpine asking
+			// about a sample verified on glibc was told MATCH: EXACT with an
+			// empty list of differences.
+			"libc":             strProp("musl | glibc — musl (Alpine) cannot load glibc-built native modules"),
+			"virtualization":   strProp("e.g. container, wsl, vm"),
+			"containerRuntime": strProp("e.g. docker, podman"),
 		},
 	}
+}
+
+// machineEnv is what this host actually is, for the dimensions no agent can
+// be expected to state.
+func (s *Server) machineEnv(ctx context.Context) domain.EnvironmentFingerprint {
+	if s.Deps.MachineEnv != nil {
+		return s.Deps.MachineEnv(ctx)
+	}
+	return environment.Collect(ctx, nil)
+}
+
+// fillFromMachine completes the dimensions the caller left blank with facts
+// about the machine the caller is running on.
+//
+// An agent knows its project: the runtime, the package manager, the module
+// system. It does not know whether this container is musl or glibc, and it
+// was never asked -- the tool schema had no libc property at all. The
+// grader compares libc only when both sides declare it, so the dimension
+// that decides whether a native module loads simply never took part, and a
+// caller on Alpine was told a glibc-verified sample was an EXACT match with
+// nothing listed as different.
+//
+// Anything the caller DID state wins: an agent asking about a deployment
+// target it is not currently on is answering a different question, and this
+// must not overwrite it. Host-shaped dimensions below the OS are filled
+// only when the OS agrees, so a Windows machine does not contribute its
+// version bucket to a question about Linux.
+func fillFromMachine(req, machine domain.EnvironmentFingerprint) domain.EnvironmentFingerprint {
+	if req.OS == "" {
+		req.OS = machine.OS
+	}
+	if req.Arch == "" {
+		req.Arch = machine.Arch
+	}
+	if !strings.EqualFold(req.OS, machine.OS) {
+		return req
+	}
+	if req.OSVersionBucket == "" {
+		req.OSVersionBucket = machine.OSVersionBucket
+	}
+	if req.Libc == "" {
+		req.Libc = machine.Libc
+	}
+	if req.Virtualization == "" {
+		req.Virtualization = machine.Virtualization
+	}
+	if req.ContainerRuntime == "" {
+		req.ContainerRuntime = machine.ContainerRuntime
+	}
+	return req
 }
 
 // toolDefs lists the C8 tools. There is deliberately NO publish tool:
@@ -308,6 +370,7 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	if req.Environment.SchemaVersion == 0 {
 		req.Environment.SchemaVersion = 1
 	}
+	req.Environment = fillFromMachine(req.Environment, s.machineEnv(ctx))
 
 	// errorText is sanitized HERE, before anything reaches the search
 	// request: only the derived fingerprint, error code, and public-symbol
@@ -322,6 +385,11 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 		}
 		san := sanitizer.Sanitize(a.ErrorText, "", pkgNames)
 		req.ErrorFingerprint = san.Fingerprint
+		// The stage is unknown here, so ask under all of the stages this
+		// error could have been recorded at -- see SanitizedError.
+		// Fingerprints. Without this the fingerprint search matched nothing
+		// on any install.
+		req.ErrorFingerprints = san.Fingerprints()
 		req.ErrorCode = san.Code
 		for _, sym := range san.PublicSymbols {
 			if !containsFold(req.Symbols, sym) {

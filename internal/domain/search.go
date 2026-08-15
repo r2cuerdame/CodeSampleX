@@ -27,8 +27,12 @@ type SearchRequest struct {
 	Symbols          []string               `json:"symbols,omitempty"`
 	Environment      EnvironmentFingerprint `json:"environment"`
 	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
-	ErrorCode        string                 `json:"errorCode,omitempty"`
-	Limit            int                    `json:"limit,omitempty"` // default 3
+	// ErrorFingerprints is the same error hashed for every stage it could
+	// have been recorded under. A caller pasting a build log knows the
+	// error, not the stage it was observed at.
+	ErrorFingerprints []string `json:"errorFingerprints,omitempty"`
+	ErrorCode         string   `json:"errorCode,omitempty"`
+	Limit             int      `json:"limit,omitempty"` // default 3
 }
 
 // EvidenceSummary carries the honest numbers behind a result (goal.md §11.5).
