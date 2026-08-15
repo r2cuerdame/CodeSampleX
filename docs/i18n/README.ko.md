@@ -71,9 +71,12 @@ you build/test through csx (or your agent does)
 
 **다른 MCP 클라이언트**(Cursor, Windsurf, Cline, Zed, VS Code)도 됩니다. `csx`는 표준 stdio MCP 서버입니다:
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```sh
+csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML: Codex
 ```
+
+설정은 직접 쓰지 말고 이 명령이 출력한 것을 붙여넣으세요. **설치 경로의 절대 경로**를 넣어 주는데, 그게 핵심입니다: MCP 클라이언트는 로그인 셸에서 시작되지 않아 편집기가 물려준 환경을 그대로 씁니다. 그래서 `"command": "csx"`처럼 이름만 적으면 본인 `PATH`를 고쳐 놓았더라도 실행되지 않습니다.
 
 모델을 가리지 않습니다. 같은 호환성 증거를 Claude, GPT·Codex, Gemini, Llama 등 MCP 도구를 호출할 수 있는 모든 모델이 함께 씁니다.
 

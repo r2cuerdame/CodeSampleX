@@ -71,9 +71,12 @@ you build/test through csx (or your agent does)
 
 **Любой другой MCP-клиент** (Cursor, Windsurf, Cline, Zed, VS Code) тоже подойдёт: `csx` — обычный stdio MCP-сервер:
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```sh
+csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML: Codex
 ```
+
+Не пишите конфигурацию вручную — вставьте то, что печатает эта команда. Она подставляет **абсолютный путь** вашей установки, и это главное: MCP-клиент запускается не из login-оболочки, а наследует окружение редактора. Поэтому простое `"command": "csx"` не запустится, даже если вы уже поправили свой `PATH`.
 
 Не зависит от модели: одни и те же данные о совместимости используют Claude, GPT и Codex, Gemini, Llama — любая модель, умеющая вызывать MCP-инструмент.
 

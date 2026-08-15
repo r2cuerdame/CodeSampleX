@@ -71,9 +71,12 @@ Dass ein Projekt kompiliert, wird nie als funktionierendes Symbol ausgegeben. Un
 
 **Jeder andere MCP-Client** (Cursor, Windsurf, Cline, Zed, VS Code) geht auch: `csx` ist ein normaler stdio-MCP-Server:
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```sh
+csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML: Codex
 ```
+
+Schreiben Sie die Konfiguration nicht von Hand, sondern fügen Sie ein, was dieser Befehl ausgibt. Er setzt den **absoluten Pfad Ihrer Installation** ein, und darauf kommt es an: ein MCP-Client wird nicht aus einer Login-Shell gestartet, er erbt die Umgebung seines Editors. Ein blosses `"command": "csx"` startet deshalb nicht, auch wenn Sie Ihren eigenen `PATH` bereits korrigiert haben.
 
 Modellunabhängig: Dieselbe Kompatibilitäts-Evidenz bedient Claude, GPT und Codex, Gemini, Llama — jedes Modell, das ein MCP-Tool aufrufen kann.
 

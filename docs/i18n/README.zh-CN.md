@@ -71,9 +71,12 @@ you build/test through csx (or your agent does)
 
 **其他 MCP 客户端**（Cursor、Windsurf、Cline、Zed、VS Code）同样可用。`csx` 是标准的 stdio MCP 服务器：
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```sh
+csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML: Codex
 ```
+
+不要手写配置，直接粘贴这条命令的输出。它填入的是**安装路径的绝对路径**，这才是关键：MCP 客户端不是从登录 shell 启动的，它继承编辑器给的环境。所以只写 `"command": "csx"` 这样的名字，即使你已经修好了自己的 `PATH` 也起不来。
 
 与模型无关：同一份兼容性证据可供 Claude、GPT 与 Codex、Gemini、Llama 等任何能调用 MCP 工具的模型使用。
 

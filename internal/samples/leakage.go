@@ -1,6 +1,7 @@
 package samples
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,6 +30,11 @@ const (
 	KindURL           = "URL"
 	KindEnvAssignment = "ENV_ASSIGNMENT"
 	KindProjectName   = "PROJECT_NAME"
+	// KindUnscanned marks a file the scanner could not read or was too
+	// large to read. It is a finding rather than a silence on purpose: the
+	// publish gate refuses on findings, and "we did not look" must not be
+	// reported as "there is nothing there".
+	KindUnscanned = "UNSCANNED"
 )
 
 // ScanOptions parameterizes project-identifying checks. Both names come
@@ -204,7 +210,16 @@ func isLockfile(file string) bool {
 }
 
 const (
-	maxScanFileBytes = 2 << 20
+	// maxScanFileBytes bounds one file the scanner reads. It must be at
+	// least as large as anything an artifact can carry, or a file can be
+	// published without ever being looked at.
+	//
+	// It was 2MB while Unpack allows 8MB, so every file in between went
+	// out unscanned -- and unscanned meant SILENT: `csx sample create`
+	// printed "Leakage findings: 0", the publish gate found nothing to
+	// refuse while telling the user "There is no override flag", and a
+	// 3MB fixture with an AWS key in the middle of it was uploaded.
+	maxScanFileBytes = maxUnpackedBytes
 	maxExcerptLen    = 80
 )
 
@@ -230,8 +245,25 @@ func Scan(dir string, opts ScanOptions) ([]Finding, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
+		rel0, rerr0 := filepath.Rel(dir, p)
+		if rerr0 != nil {
+			return rerr0
+		}
+		relSlash := filepath.ToSlash(rel0)
+
 		info, ierr := d.Info()
-		if ierr != nil || info.Size() > maxScanFileBytes {
+		if ierr != nil {
+			findings = append(findings, Finding{
+				File: relSlash, Line: 1, Kind: KindUnscanned,
+				Excerpt: "could not be read, so it was never checked",
+			})
+			return nil
+		}
+		if info.Size() > maxScanFileBytes {
+			findings = append(findings, Finding{
+				File: relSlash, Line: 1, Kind: KindUnscanned,
+				Excerpt: fmt.Sprintf("%d bytes: too large to check", info.Size()),
+			})
 			return nil
 		}
 		raw, rerr := os.ReadFile(p)

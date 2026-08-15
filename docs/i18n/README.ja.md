@@ -71,9 +71,12 @@ you build/test through csx (or your agent does)
 
 **その他の MCP クライアント**（Cursor、Windsurf、Cline、Zed、VS Code）でも動きます。`csx` は標準的な stdio MCP サーバーです:
 
-```json
-{"mcpServers": {"csx": {"command": "csx", "args": ["mcp"]}}}
+```sh
+csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
+csx mcp-config --toml   # TOML: Codex
 ```
+
+設定は手で書かず、このコマンドの出力を貼り付けてください。**インストール先の絶対パス**が入るのが要点です。MCP クライアントはログインシェルから起動されず、エディタから受け継いだ環境をそのまま使うため、`"command": "csx"` のように名前だけ書くと、自分の `PATH` を直していても起動しません。
 
 モデルを選びません。同じ互換性エビデンスを Claude、GPT と Codex、Gemini、Llama など MCP ツールを呼べるすべてのモデルが利用できます。
 

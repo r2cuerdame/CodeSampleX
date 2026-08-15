@@ -1,0 +1,81 @@
+package samples
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The publish gate refuses on leakage findings and tells the user "There is
+// no override flag". That promise is only as good as the scan behind it,
+// and the scan skipped every file over 2MB while an artifact may carry 8MB
+// unpacked — silently, so `csx sample create` printed "Leakage findings: 0"
+// and publish found nothing to refuse.
+//
+// A 3MB fixture with a credential in the middle of it went out.
+func TestALargeFileIsNotPublishedUnscanned(t *testing.T) {
+	dir := t.TempDir()
+	// ~3MB of filler with a credential buried in it, as a captured API
+	// response fixture would look.
+	filler := strings.Repeat(`{"row":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`+"\n", 70000)
+	body := filler + `{"aws_access_key_id": "AKIAIOSFODNN7EXAMPLE", "note": "prod"}` + "\n" + filler
+	if len(body) < 2<<20 {
+		t.Fatalf("fixture is %d bytes, must exceed the old 2MB cap", len(body))
+	}
+	write(t, dir, "fixture.json", body)
+	write(t, dir, "main.py", "print('hello')\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) == 0 {
+		t.Fatal("a 3MB file carrying an AWS key produced no findings at all")
+	}
+	for _, f := range findings {
+		if f.File == "fixture.json" {
+			return // either the key itself or an explicit UNSCANNED mark
+		}
+	}
+	t.Errorf("nothing was reported about fixture.json: %+v", findings)
+}
+
+// A file the scanner cannot read is reported, not passed over. "We did not
+// look" must never be delivered as "there is nothing there".
+func TestAnUnreadableFileIsReportedRatherThanSkipped(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "main.py", "print('hello')\n")
+	// A file larger than anything an artifact may carry.
+	huge := filepath.Join(dir, "huge.txt")
+	f, err := os.Create(huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxScanFileBytes + 1); err != nil {
+		f.Close()
+		t.Skipf("cannot create a sparse file here: %v", err)
+	}
+	f.Close()
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marked bool
+	for _, fd := range findings {
+		if fd.File == "huge.txt" && fd.Kind == KindUnscanned {
+			marked = true
+		}
+	}
+	if !marked {
+		t.Errorf("a file too large to check was passed over silently: %+v", findings)
+	}
+}
+
+func write(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
