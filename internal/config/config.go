@@ -19,6 +19,24 @@ const (
 	ModeLocalOnly     = "local-only"
 )
 
+// MayContactRegistries reports whether this mode is allowed to ask a public
+// registry whether a package exists.
+//
+// LOCAL ONLY says "nothing about your projects ever leaves this machine",
+// and the README says it in nine languages: local-only mode transmits
+// nothing at all. A publicness probe is a transmission — it hands npm,
+// PyPI, crates.io or the Go proxy the name of every dependency in the
+// lockfile, one request each, from a user who chose the mode that promised
+// exactly this would not happen. The daemon already refused to name
+// packages to the server for this reason; the scan path, the run path,
+// sample creation and the MCP server all did it anyway, on every build.
+//
+// Uninitialized is excluded too: before csx init, no mode has been chosen,
+// so no permission has been given.
+func MayContactRegistries(mode string) bool {
+	return mode == ModeCommunity
+}
+
 // Config is the persisted local client configuration.
 type Config struct {
 	SchemaVersion    int      `json:"schemaVersion"`

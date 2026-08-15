@@ -41,22 +41,24 @@ func runRecomputeStatus(cfg serverstore.ServerConfig, args []string, stdout, std
 	}
 	defer pg.Close()
 
-	samples, err := pg.ListSamples(ctx, recomputeBatch)
-	if err != nil {
-		fmt.Fprintf(stderr, "csx-server recompute-status: %v\n", err)
-		return 1
-	}
-	// The command says it re-derives EVERY sample status, and one capped
-	// call quietly did not: on a network of 1,200 samples it reported
-	// "1000 samples examined" and exited 0, leaving 200 statuses stale
-	// under the rule the operator had just fixed, with nothing in the
-	// output to say a fifth of the work was skipped. Truncation is
-	// acceptable; silent truncation is not.
-	if len(samples) == recomputeBatch {
-		fmt.Fprintf(stderr,
-			"csx-server recompute-status: WARNING — the batch limit of %d was reached.\n", recomputeBatch)
-		fmt.Fprintln(stderr,
-			"  Samples beyond it were NOT examined. Re-run until the count comes back below the limit.")
+	// EVERY sample, which is what the command says it does.
+	//
+	// One capped call quietly examined the first 1000 and exited 0, leaving
+	// the rest stale under the rule the operator had just fixed. Warning
+	// about it was not enough either: the list is ordered newest-first, so
+	// "re-run until the count drops" returned the identical page every time
+	// and could never converge. It pages.
+	var samples []serverstore.SampleRow
+	for offset := 0; ; offset += recomputeBatch {
+		page, perr := pg.ListSamplesPage(ctx, recomputeBatch, offset)
+		if perr != nil {
+			fmt.Fprintf(stderr, "csx-server recompute-status: %v\n", perr)
+			return 1
+		}
+		samples = append(samples, page...)
+		if len(page) < recomputeBatch {
+			break
+		}
 	}
 
 	now := time.Now().UTC()

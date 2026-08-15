@@ -268,10 +268,10 @@ func samplePropose(ctx context.Context, args []string) int {
 		dir = "."
 	}
 
-	// Publicness checks only run once the user chose a mode (same gate as
-	// `csx run`); before init everything stays UNKNOWN = excluded.
+	// Publicness checks only run in community mode (same gate as
+	// `csx run`); anywhere else everything stays UNKNOWN = excluded.
 	var checker *registry.Checker
-	if env.cfg.Mode != config.ModeUninitialized {
+	if config.MayContactRegistries(env.cfg.Mode) {
 		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: env.db}}
 	}
 	res, _ := evidence.Scan(ctx, dir, checker)

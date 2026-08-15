@@ -59,12 +59,12 @@ func TestCheckURLFormsAndPublic(t *testing.T) {
 		purl domain.PURL
 		want string
 	}{
-		{"npm plain", domain.PURL{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}, "/axios"},
-		{"npm scoped", domain.PURL{Ecosystem: "npm", Name: "@scope/pkg", Version: "2.0.0"}, "/@scope%2Fpkg"},
-		{"pypi", domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.31.0"}, "/pypi/requests/json"},
-		{"cargo", domain.PURL{Ecosystem: "cargo", Name: "serde", Version: "1.0.0"}, "/api/v1/crates/serde"},
-		{"golang bang escape", domain.PURL{Ecosystem: "golang", Name: "github.com/Azure/x", Version: "v1.0.0"}, "/github.com/!azure/x/@latest"},
-		{"golang plain", domain.PURL{Ecosystem: "golang", Name: "golang.org/x/sys", Version: "v0.1.0"}, "/golang.org/x/sys/@latest"},
+		{"npm plain", domain.PURL{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}, "/axios/1.12.0"},
+		{"npm scoped", domain.PURL{Ecosystem: "npm", Name: "@scope/pkg", Version: "2.0.0"}, "/@scope%2Fpkg/2.0.0"},
+		{"pypi", domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.31.0"}, "/pypi/requests/2.31.0/json"},
+		{"cargo", domain.PURL{Ecosystem: "cargo", Name: "serde", Version: "1.0.0"}, "/api/v1/crates/serde/1.0.0"},
+		{"golang bang escape", domain.PURL{Ecosystem: "golang", Name: "github.com/Azure/x", Version: "v1.0.0"}, "/github.com/!azure/x/@v/v1.0.0.info"},
+		{"golang plain", domain.PURL{Ecosystem: "golang", Name: "golang.org/x/sys", Version: "v0.1.0"}, "/golang.org/x/sys/@v/v0.1.0.info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -188,8 +188,8 @@ func TestCheckAllUpgradesOnlyUnknown(t *testing.T) {
 	if pkgs[2].Publicness != scanner.PublicnessPublic {
 		t.Fatalf("public pkg publicness = %q, want PUBLIC untouched", pkgs[2].Publicness)
 	}
-	if len(*uris) != 1 || (*uris)[0] != "/axios" {
-		t.Fatalf("request URIs = %v, want only [/axios] (PRIVATE and PUBLIC never queried)", *uris)
+	if len(*uris) != 1 || (*uris)[0] != "/axios/1.12.0" {
+		t.Fatalf("request URIs = %v, want only [/axios/1.12.0] (PRIVATE and PUBLIC never queried)", *uris)
 	}
 }
 

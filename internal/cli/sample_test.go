@@ -317,8 +317,15 @@ func TestSampleVerifyCompileOnlyHonesty(t *testing.T) {
 	if !strings.Contains(got, "COMPILE_ONLY") || !strings.Contains(got, "SKIPPED") {
 		t.Fatalf("COMPILE_ONLY verify output must admit the skipped contract:\n%s", got)
 	}
-	if !strings.Contains(got, "did") || !strings.Contains(got, "NOT run") {
-		t.Fatalf("missing honest capability note:\n%s", got)
+	// The note has to say two things, however it words them: that the
+	// contract did not run, and that the receipt is therefore not evidence
+	// about the sample. Asserting the old sentence letter-for-letter made
+	// this fail against a note that says both more plainly than before.
+	low := strings.ToLower(got)
+	for _, admission := range []string{"did not run", "proves nothing"} {
+		if !strings.Contains(low, admission) {
+			t.Fatalf("capability note never admits %q:\n%s", admission, got)
+		}
 	}
 }
 

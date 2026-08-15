@@ -513,10 +513,12 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		}
 	}
 
-	// Publicness checks only run after the user chose a mode in csx init;
-	// before that everything stays UNKNOWN (= excluded, the safe default).
+	// Publicness checks only run in community mode. An agent routes every
+	// build through run_observed_command, so this is the highest-frequency
+	// caller of all — in local-only it was announcing the whole lockfile to
+	// four public registries on each one.
 	var checker *registry.Checker
-	if cfg != nil && cfg.Mode != config.ModeUninitialized {
+	if cfg != nil && config.MayContactRegistries(cfg.Mode) {
 		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
 	}
 

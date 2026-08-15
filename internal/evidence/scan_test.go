@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -43,15 +44,18 @@ func writeFixtureNpmProject(t *testing.T) string {
 	return dir
 }
 
-// fakeNpmRegistry serves 200 for the given names, 404 otherwise.
+// fakeNpmRegistry serves 200 for the given names and for any release of
+// them, 404 otherwise — npm answers /axios and /axios/1.12.2 alike, and the
+// checker asks about the exact version before it asks about the package.
 func fakeNpmRegistry(t *testing.T, public ...string) (*registry.Checker, *httptest.Server) {
 	t.Helper()
 	known := map[string]bool{}
 	for _, name := range public {
-		known["/"+name] = true
+		known[name] = true
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if known[r.URL.Path] {
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+		if known[parts[0]] {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

@@ -172,7 +172,8 @@ func openScanEnv() (*scanEnv, error) {
 		return nil, err
 	}
 	e := &scanEnv{db: db, cfg: cfg, rec: &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}}
-	if cfg.Mode != config.ModeUninitialized {
+	// Community mode only: see config.MayContactRegistries.
+	if config.MayContactRegistries(cfg.Mode) {
 		e.checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
 	}
 	return e, nil

@@ -595,15 +595,30 @@ func (p *PG) SetSampleQuarantine(ctx context.Context, sampleID string, on bool, 
 }
 
 func (p *PG) ListSamples(ctx context.Context, limit int) ([]SampleRow, error) {
+	return p.ListSamplesPage(ctx, limit, 0)
+}
+
+// ListSamplesPage is ListSamples with an offset, so a caller that must
+// visit EVERY sample can walk past the limit.
+//
+// recompute-status promised to "re-derive every sample status" and read one
+// capped page, so on a network past the cap it silently skipped the rest.
+// Warning about it was not enough either: the list is ordered newest-first,
+// so the "re-run until the count drops" advice returned the identical page
+// every time and could never converge.
+func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			SELECT `+sampleCols+` FROM samples
 			WHERE NOT quarantined
-			ORDER BY created_at DESC, sample_id LIMIT $1`, limit)
+			ORDER BY created_at DESC, sample_id LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}

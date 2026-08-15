@@ -57,15 +57,75 @@ func (c *Checker) Check(ctx context.Context, p domain.PURL) string {
 			return status
 		}
 	}
+	status := c.probe(ctx, p)
+	if status != scanner.PublicnessUnknown && c.Cache != nil {
+		c.Cache.SetPublicness(ctx, key, status)
+	}
+	return status
+}
+
+// probe asks the registry about the exact package the caller named, version
+// included.
+//
+// The verdict is cached under the full purl — name AND version — but every
+// probe was by name alone. So pkg:npm/react@99.0.0 asked the registry about
+// react, got a 200 for the package, and was filed as PUBLIC for a release
+// that has never existed. Publicness is the gate on what may leave a machine
+// and what the server may ingest, so any version string of the caller's
+// choosing entered the network under a real package's name — and shards are
+// keyed by major, so it landed in a shard of its own that nothing could ever
+// verify.
+//
+// A version the registry does not serve is never PUBLIC. It is PRIVATE only
+// when the package itself is absent, which is what PRIVATE has always meant;
+// when the package is public and the version is not, nothing is established
+// either way, so the answer is UNKNOWN — uncached, retried next time, and
+// treated as private everywhere downstream.
+func (c *Checker) probe(ctx context.Context, p domain.PURL) string {
+	if p.Version == "" {
+		return c.nameStatus(ctx, p)
+	}
+	u := c.versionURL(p)
+	if u == "" {
+		return c.nameStatus(ctx, p)
+	}
+	switch c.get(ctx, u) {
+	case http.StatusOK:
+		return scanner.PublicnessPublic
+	case http.StatusNotFound, http.StatusGone:
+		// Tell "no such package" apart from "no such version": only the
+		// first is this package being private.
+		if c.nameStatus(ctx, p) == scanner.PublicnessPrivate {
+			return scanner.PublicnessPrivate
+		}
+		return scanner.PublicnessUnknown
+	}
+	return scanner.PublicnessUnknown
+}
+
+// nameStatus is the package-level existence probe: does this registry serve
+// anything by this name at all?
+func (c *Checker) nameStatus(ctx context.Context, p domain.PURL) string {
 	u := c.checkURL(p)
 	if u == "" {
 		return scanner.PublicnessUnknown
 	}
+	switch c.get(ctx, u) {
+	case http.StatusOK:
+		return scanner.PublicnessPublic
+	case http.StatusNotFound, http.StatusGone:
+		return scanner.PublicnessPrivate
+	}
+	return scanner.PublicnessUnknown
+}
+
+// get returns the status code, or 0 when the request never completed.
+func (c *Checker) get(ctx context.Context, u string) int {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
 	if err != nil {
-		return scanner.PublicnessUnknown
+		return 0
 	}
 	client := c.HTTP
 	if client == nil {
@@ -73,23 +133,10 @@ func (c *Checker) Check(ctx context.Context, p domain.PURL) string {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return scanner.PublicnessUnknown
+		return 0
 	}
 	resp.Body.Close()
-
-	var status string
-	switch resp.StatusCode {
-	case http.StatusOK:
-		status = scanner.PublicnessPublic
-	case http.StatusNotFound, http.StatusGone:
-		status = scanner.PublicnessPrivate
-	default:
-		return scanner.PublicnessUnknown
-	}
-	if c.Cache != nil {
-		c.Cache.SetPublicness(ctx, key, status)
-	}
-	return status
+	return resp.StatusCode
 }
 
 // CheckAll upgrades the Publicness of UNKNOWN entries in place. PRIVATE
@@ -127,6 +174,35 @@ func (c *Checker) checkURL(p domain.PURL) string {
 		return base + "/api/v1/crates/" + url.PathEscape(p.Name)
 	case "golang":
 		return base + "/" + escapeGoModule(p.Name) + "/@latest"
+	}
+	return ""
+}
+
+// versionURL builds the probe for one specific release, or "" when the
+// ecosystem is outside the Public v1 allowlist. Every one of the four
+// registries serves a per-version endpoint, so a version claim is always
+// checkable against the registry that would have to have published it.
+func (c *Checker) versionURL(p domain.PURL) string {
+	pkg := c.checkURL(p)
+	if pkg == "" || p.Version == "" {
+		return ""
+	}
+	switch p.Ecosystem {
+	case "npm":
+		return pkg + "/" + url.PathEscape(p.Version)
+	case "pypi":
+		// checkURL ends in /json; the version goes before it.
+		return strings.TrimSuffix(pkg, "/json") + "/" + url.PathEscape(p.Version) + "/json"
+	case "cargo":
+		return pkg + "/" + url.PathEscape(p.Version)
+	case "golang":
+		// The proxy applies the same case encoding to versions as to module
+		// paths, and wants the v prefix a go.mod always carries.
+		v := p.Version
+		if !strings.HasPrefix(v, "v") {
+			v = "v" + v
+		}
+		return strings.TrimSuffix(pkg, "/@latest") + "/@v/" + escapeGoModule(v) + ".info"
 	}
 	return ""
 }

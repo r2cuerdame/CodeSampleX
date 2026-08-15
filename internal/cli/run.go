@@ -60,11 +60,13 @@ func runMain(ctx context.Context, args []string) int {
 		cfg = config.Default()
 	}
 
-	// Publicness checks talk to public registries, so they run only after
-	// the user chose a mode in csx init; before that everything stays
-	// UNKNOWN (= excluded from evidence, the safe default).
+	// Publicness checks talk to public registries, so they run only in
+	// community mode: local-only promised that nothing about the project
+	// leaves, and a probe names every dependency to npm/PyPI/crates.io/the
+	// Go proxy. Anywhere else everything stays UNKNOWN (= excluded from
+	// evidence, the safe default).
 	var checker *registry.Checker
-	if db != nil && cfg.Mode != config.ModeUninitialized {
+	if db != nil && config.MayContactRegistries(cfg.Mode) {
 		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
 	}
 
