@@ -39,3 +39,8 @@ seeds/*/_build/
 seeds/*/deps/
 seeds/*/vendor/
 seeds/*/.venv/
+
+# scratch probes written by audit agents into the tree; never source
+**/zz*_test.go
+**/claimcheck_*_test.go
+**/*_scratch_test.go
