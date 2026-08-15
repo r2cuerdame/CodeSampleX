@@ -113,12 +113,23 @@ func buildTiles(lang string, st *netStats) []statTile {
 		return rendered
 	}
 
-	tiles := []statTile{
-		// Projects-this-month leads: peer buckets rotate daily, so the peer
-		// tile resets every midnight and reads as an empty network even
-		// when it is not. Project buckets rotate monthly, which makes this
-		// the longest window the identity scheme can count honestly.
-		{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)},
+	tiles := []statTile{}
+	// Projects-this-month leads WHEN it means something. Peer buckets
+	// rotate daily, so the peer tile resets every midnight and reads as an
+	// empty network even when it is not; project buckets rotate monthly,
+	// which makes this the longest window the identity scheme can count
+	// honestly.
+	//
+	// But a project bucket is a DIRECTORY, not a person. With one peer on
+	// the network every one of them is the same machine, so "73 projects
+	// this month" is one operator's folder count wearing the clothes of a
+	// participation statistic — and a reader asked whether it meant
+	// seventy-three people. The peer tile is already hidden for this exact
+	// reason; this number needed the same rule, and it comes back on its
+	// own as soon as a second peer makes it mean what it says.
+	if st.Peers > 1 {
+		tiles = append(tiles,
+			statTile{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)})
 	}
 	// The peer tile is omitted while the count cannot mean anything.
 	//
