@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,6 +61,11 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		return nil, nil, err
 	}
 	engine := search.Engine{DB: db}
+	// A miss for a package this machine has never synced is not an answer
+	// about the network, it is an answer about the local cache. The agent
+	// is asking about a library it is about to ADD, which is exactly the
+	// package the warm list has no reason to hold.
+	syncer := &search.Syncer{DB: db, ServerURL: cfg.ServerURL, HTTP: http.DefaultClient}
 	// Artifacts resolve through the peer chain: local CAS, then peers that
 	// announced the sample, then the main seeder — every remote payload
 	// re-verified against its content id before it is trusted or cached
@@ -78,6 +84,13 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		// A counter presented to the user as fact has to be one.
 		Search: func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
 			resp := engine.Search(ctx, req)
+			// One retry, and only when the miss might be about a shard we
+			// never had: fetch the named packages' shards, then ask again.
+			// Community mode only — in local-only, naming the package to
+			// the server is the thing that mode exists to prevent.
+			if resp.Miss && search.FetchMissing(ctx, engine, syncer, cfg.Mode, req) {
+				resp = engine.Search(ctx, req)
+			}
 			recordSearchOutcome(ctx, db, ident, cfg, req, resp)
 			return resp
 		},

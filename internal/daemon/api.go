@@ -9,6 +9,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
+	"github.com/r2cuerdame/codesamplex/internal/search"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -325,6 +326,13 @@ func (d *Daemon) handleShutdown(w http.ResponseWriter, r *http.Request) {
 // uploaded — and a recording failure must not break a search.
 func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
 	resp := d.Engine.Search(ctx, req)
+	// A miss for a package this machine never synced describes the local
+	// cache, not the network. Fetch the named packages' shards once and
+	// ask again — community mode only, because naming a package to the
+	// server is exactly what local-only exists to avoid.
+	if resp.Miss && search.FetchMissing(ctx, *d.Engine, d.Syncer, d.Cfg.Mode, req) {
+		resp = d.Engine.Search(ctx, req)
+	}
 	if resp.Miss || len(resp.Results) == 0 {
 		d.incrStat(ctx, statMisses, 1)
 		// A miss is a demand signal. Queued rather than posted: the queue
