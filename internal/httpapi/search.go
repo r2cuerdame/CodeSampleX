@@ -210,7 +210,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// beside it.
 	fingerprintMatched := req.ErrorFingerprint != "" &&
 		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorFingerprint))
-	if !fingerprintMatched && !codeMatched &&
+	if req.Query != "" && !fingerprintMatched && !codeMatched &&
 		sharedContentTokens(req.Query, text) == 0 {
 		return domain.SearchResult{}, false
 	}

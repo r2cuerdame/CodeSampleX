@@ -368,3 +368,32 @@ func TestQuarantinedSampleIsNotServed(t *testing.T) {
 		t.Errorf("GET the sample after release = %d, want 200", resp.StatusCode)
 	}
 }
+
+// When a caller queries POST /v1/search with an exact package and symbol but an
+// empty prose query (""), the relevance topic guard treated 0 shared content
+// tokens as an off-topic mismatch and dropped the candidate. This caused all
+// package/symbol-targeted searches without prose text to return NO_SAFE_MATCH,
+// silently failing queries that had explicit, unambiguous identifiers.
+func TestSearchWithoutProseQueryAnswersExactPackageAndSymbol(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	saveTestSample(t, store, "PUBLISHED")
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Symbols:       []string{"axios.post"},
+		Environment:   nodeEnv("esm"),
+	}
+	var out domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v1/search", req, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if out.Miss || len(out.Results) == 0 {
+		t.Fatalf("want a hit for exact package and symbol with empty query, got miss=%v results=%d", out.Miss, len(out.Results))
+	}
+	if out.Results[0].Grade != domain.GradeExact {
+		t.Fatalf("grade = %s, want EXACT", out.Results[0].Grade)
+	}
+}

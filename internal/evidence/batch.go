@@ -253,7 +253,7 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 	// Keep the server's reason: a bare status turned a one-line contract
 	// mismatch ("too many batches in one request") into a silent, endless
 	// retry that looked like a network problem.
-	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		if detail := strings.TrimSpace(string(reply)); detail != "" {
 			return 0, nil, fmt.Errorf("evidence: upload: server returned %s: %s", resp.Status, detail)
