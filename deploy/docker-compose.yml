@@ -17,6 +17,7 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      - caddy_logs:/var/log/caddy
     depends_on:
       server:
         condition: service_healthy
@@ -85,5 +86,6 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  caddy_logs:
   pgdata:
   blobs:

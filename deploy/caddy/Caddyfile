@@ -23,5 +23,39 @@
 		-Server
 	}
 
+	# Access log, deliberately without the client address.
+	#
+	# There was no log at all, so nobody could answer "is anyone visiting"
+	# — and the one number that looked like an answer (peers) only moves
+	# after somebody INSTALLS and RUNS csx, which is several steps past a
+	# first visit. A project that says it will turn sign-in on when traffic
+	# appears has to be able to see traffic appear.
+	#
+	# remote_ip is dropped rather than kept: an IP is personal data, this
+	# network's whole posture is that it does not collect any (goal.md
+	# §8.6), and it is not needed to answer the question. What is left says
+	# WHAT was fetched and HOW OFTEN — which is what "is anyone here" means.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+		# The client address and headers are DELETED from every line, not
+		# merely unused. An IP is personal data, and the peer announce
+		# handler still needs the real X-Forwarded-For to work, so the
+		# stripping happens here — in the log — rather than on the request.
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+		level INFO
+	}
+
 	reverse_proxy server:8080
 }
