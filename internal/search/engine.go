@@ -687,6 +687,81 @@ var stopWords = map[string]bool{
 // words: "react-dom" has to yield "react", and "@scope/pkg" has to yield
 // "scope" and "pkg", or a question about react fails to match the sample
 // that uses react-dom.
+// genericNameWords are the words that appear inside package names without
+// identifying anything: the language or runtime the package is for, and the
+// structural nouns half a registry uses.
+//
+// Splitting a name into all of its words made every one of them a STRONG
+// identifier — the class of token that means "the question named this
+// library" — and one strong token opens the relevance gate by itself. So
+// python-dateutil was named by the word "python", and answered a question
+// about protobuf on Alpine with a sample about parsing ambiguous dates,
+// graded COMPATIBLE at 0.79. The same hole sits under go-*, node-*, rust-*,
+// java-*, php-* and every *-sdk, *-client and *-utils in every registry.
+var genericNameWords = map[string]bool{
+	"python": true, "python3": true, "node": true, "nodejs": true,
+	"javascript": true, "typescript": true, "golang": true, "rust": true,
+	"ruby": true, "php": true, "java": true, "kotlin": true, "swift": true,
+	"dart": true, "flutter": true, "elixir": true, "erlang": true,
+	"deno": true, "bun": true, "dotnet": true, "csharp": true, "perl": true,
+	"scala": true, "haskell": true,
+
+	"lib": true, "libs": true, "core": true, "util": true, "utils": true,
+	"common": true, "api": true, "sdk": true, "client": true, "server": true,
+	"tools": true, "toolkit": true, "plugin": true, "plugins": true,
+	"package": true, "packages": true, "module": true, "modules": true,
+	"helper": true, "helpers": true,
+}
+
+// containsWord reports whether word appears in s delimited by something
+// other than a letter or digit. A plain substring test is far too loose for
+// the short names this exists to catch: a package named "go" would be named
+// by any question mentioning mongodb, django or google.
+func containsWord(s, word string) bool {
+	if word == "" {
+		return false
+	}
+	for i := 0; ; {
+		j := strings.Index(s[i:], word)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(word)
+		if !alnumAt(s, start-1) && !alnumAt(s, end) {
+			return true
+		}
+		i = start + 1
+		if i >= len(s) {
+			return false
+		}
+	}
+}
+
+func alnumAt(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return false
+	}
+	r := s[i]
+	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z'
+}
+
+// nameTokens returns the parts of a package name that actually identify it.
+//
+// The whole name is kept as one token too, so a package whose entire name
+// is a generic word ("go", "core") is still nameable by it — there the word
+// IS the identifier rather than a prefix.
+func nameTokens(name string) []string {
+	name = strings.ToLower(strings.TrimPrefix(name, "@"))
+	out := []string{name}
+	for _, t := range contentTokens(name) {
+		if !genericNameWords[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func contentTokens(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
@@ -789,7 +864,22 @@ func intentSignal(query string, c *candidate) (strong, prose int) {
 		add(strongSet, sym)
 	}
 	for _, pkg := range c.packages {
-		add(strongSet, pkg.Name) // "react", "axios" — how people name the thing
+		// "react", "axios" — how people name the thing. NOT every word in
+		// the name: see nameTokens.
+		for _, t := range nameTokens(pkg.Name) {
+			strongSet[t] = true
+		}
+	}
+	// A short or hyphenated name typed in full ("go", "python-dateutil")
+	// never survives tokenization as one word, so it is matched against the
+	// question directly.
+	lq := strings.ToLower(query)
+	for _, pkg := range c.packages {
+		n := strings.ToLower(pkg.Name)
+		if n != "" && !genericNameWords[n] && containsWord(lq, n) {
+			strong++
+			break
+		}
 	}
 	for _, t := range contentTokens(query) {
 		switch {
