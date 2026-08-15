@@ -186,8 +186,16 @@ var lockfileNames = map[string]bool{
 	"pnpm-lock.yaml": true, "yarn.lock": true,
 	"cargo.lock": true, "poetry.lock": true, "uv.lock": true,
 	"go.sum": true, "gemfile.lock": true, "composer.lock": true,
-	"requirements.txt": true,
-	"pubspec.lock":     true, "mix.lock": true, "bun.lock": true,
+	// requirements.txt is NOT here. The exemption's whole justification is
+	// that these files are written by the package manager rather than by
+	// the contributor — and a requirements.txt is hand-authored. It is also
+	// exactly where a private index gets named:
+	//   --index-url https://pypi.internal.acmecorp.io/simple
+	// went through unflagged, publishing an employer's internal package
+	// host, while the byte-identical line in install.sh was caught. The
+	// public indexes are already on the host allowlist, so an honest file
+	// still passes.
+	"pubspec.lock": true, "mix.lock": true, "bun.lock": true,
 	"deno.lock": true,
 }
 

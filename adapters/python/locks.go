@@ -1,6 +1,7 @@
 package python
 
 import (
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -47,6 +48,46 @@ func normalizeDist(name string) string {
 // parseLockPackages extracts name/version pairs from [[package]] blocks of
 // uv.lock or poetry.lock. Regex-based on purpose: both files are generated
 // with a stable line layout and a full TOML parser would add a dependency.
+// publicIndexHosts are the canonical public Python indexes. A package
+// resolved from anywhere else came from an index this machine was
+// configured for, which is private information about where the
+// contributor works.
+var publicIndexHosts = map[string]bool{
+	"pypi.org":               true,
+	"pypi.python.org":        true,
+	"files.pythonhosted.org": true,
+}
+
+// lockSourceURLRe pulls the index URL out of a lock entry's source table:
+// uv writes source = { registry = "https://…" }, poetry writes url = "https://…"
+// under [package.source].
+var lockSourceURLRe = regexp.MustCompile(`(?m)(?:registry|url)[ 	]*=[ 	]*"(https?://[^"]+)"`)
+
+// fromPrivateIndex reports whether a lock entry resolved from an index that
+// is not a canonical public one.
+//
+// The source patterns only caught editable, path, git and directory
+// entries. A package pulled from a company Artifactory looks like an
+// ordinary registry entry, so it was reported UNKNOWN, the registry
+// checker then found the NAME on public PyPI and upgraded it to PUBLIC,
+// and an observation went out for pkg:pypi/requests@2.31.0-corp1 — an
+// internal build string leaving the machine, and false public evidence for
+// a version PyPI never published.
+//
+// An unrecognised host is treated as private. Over-caution costs some
+// evidence; under-caution sends where someone works to a public network.
+func fromPrivateIndex(block string) bool {
+	m := lockSourceURLRe.FindStringSubmatch(block)
+	if m == nil {
+		return false
+	}
+	u, err := url.Parse(m[1])
+	if err != nil {
+		return true
+	}
+	return !publicIndexHosts[strings.ToLower(u.Hostname())]
+}
+
 func parseLockPackages(data []byte, privateRe *regexp.Regexp) []lockEntry {
 	var out []lockEntry
 	blocks := strings.Split(string(data), "[[package]]")
@@ -58,7 +99,7 @@ func parseLockPackages(data []byte, privateRe *regexp.Regexp) []lockEntry {
 		out = append(out, lockEntry{
 			Name:    name,
 			Version: firstGroup(tomlVersionRe, b),
-			Private: privateRe.MatchString(b),
+			Private: privateRe.MatchString(b) || fromPrivateIndex(b),
 		})
 	}
 	return out
