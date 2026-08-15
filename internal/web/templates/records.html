@@ -16,7 +16,12 @@
     <a class="mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
     {{if .LatestVersion}}<span class="dim mono">{{.LatestVersion}}</span>{{end}}
     {{if .Symbols}}<span class="dim mono small">{{.Symbols}} · {{$.T "stats.symbols"}}</span>{{end}}
-    {{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "stats.evidence"}}</span>{{end}}
+    {{/* NOT stats.evidence: the network tile with that label is
+     SUM(observation_count), and this number is the count of distinct
+     (version, symbol) rows the network holds for this package. The same
+     word for two different quantities made the per-package figure read as
+     a tiny fraction of the network total, which is not what it is. */}}
+{{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "records.entries"}}</span>{{end}}
   </li>
 {{- end}}
 </ul>

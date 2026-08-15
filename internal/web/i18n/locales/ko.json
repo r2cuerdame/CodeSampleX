@@ -116,6 +116,7 @@
   "pkg.no_versions": "아직 증거가 있는 버전이 없습니다.",
   "pkg.symbols": "심벌",
   "pkg.versions": "버전",
+  "records.entries": "항목",
   "records.intro": "네트워크가 증거를 가진 공개 패키지 전체입니다. 아는 것이 많은 순서로 표시됩니다.",
   "records.next": "다음",
   "records.page": "%s / %s 페이지",

@@ -116,6 +116,7 @@
   "pkg.no_versions": "暂无带证据的版本。",
   "pkg.symbols": "符号",
   "pkg.versions": "版本",
+  "records.entries": "条目",
   "records.intro": "网络已有证据的全部公开包，按掌握信息多少排序。",
   "records.next": "下一页",
   "records.page": "第 %s 页，共 %s 页",

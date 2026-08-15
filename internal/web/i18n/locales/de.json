@@ -116,6 +116,7 @@
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.symbols": "Symbole",
   "pkg.versions": "Versionen",
+  "records.entries": "Einträge",
   "records.intro": "Alle öffentlichen Pakete, zu denen das Netzwerk Belege hat — die bestbelegten zuerst.",
   "records.next": "Weiter",
   "records.page": "Seite %s von %s",

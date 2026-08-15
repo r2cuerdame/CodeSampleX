@@ -1253,7 +1253,16 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 				-- number here that does not reset every midnight.
 				(SELECT COUNT(DISTINCT bucket) FROM evidence_dedup
 					WHERE bucket_kind = 'project' AND epoch >= $3),
-				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages) t),
+				-- Only packages the registry check CONFIRMED public. The
+				-- packages table doubles as the publicness cache, so a row
+				-- exists for every purl anyone has ever mentioned —
+				-- including the ones checked and found NOT to exist. An
+				-- anonymous POST of twenty invented purls was rejected for
+				-- ingest and still added twenty rows, so the "Packages"
+				-- figure on the front page could be inflated by a stranger
+				-- naming things that do not exist.
+				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages
+					WHERE publicness = 'PUBLIC') t),
 				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
 				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
 				-- "Verified" means a contract actually passed in a sandbox,

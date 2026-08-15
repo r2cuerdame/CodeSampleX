@@ -116,6 +116,7 @@
   "pkg.no_versions": "エビデンスのあるバージョンはまだありません。",
   "pkg.symbols": "シンボル",
   "pkg.versions": "バージョン",
+  "records.entries": "エントリ",
   "records.intro": "ネットワークが証拠を持つ公開パッケージの全件です。分かっていることが多い順に並びます。",
   "records.next": "次へ",
   "records.page": "%s / %s ページ",

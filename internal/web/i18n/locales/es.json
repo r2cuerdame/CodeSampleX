@@ -116,6 +116,7 @@
   "pkg.no_versions": "Aún no hay versiones con evidencia.",
   "pkg.symbols": "Símbolos",
   "pkg.versions": "Versiones",
+  "records.entries": "entradas",
   "records.intro": "Todos los paquetes públicos con evidencia en la red, primero los más conocidos.",
   "records.next": "Siguiente",
   "records.page": "Página %s de %s",
