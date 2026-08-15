@@ -233,3 +233,63 @@ func TestSampleMetaNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
+
+// The other half of the same promise: "and none once it is already
+// crossed". That branch could never run, because SaveSample overwrote the
+// row's status with "PUBLISHED" before queueCrossVerification read it back
+// — so a re-publish of a cross-verified sample handed peers a fresh sandbox
+// job to re-prove an artifact an independent peer had already reproduced.
+//
+// An unauthenticated stranger could trigger it: the artifact is public, and
+// posting the identical bytes back was enough.
+func TestRepublishingACrossedSampleQueuesNoNewWork(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"src/index.mjs":     "import axios from 'axios';\nexport const post = axios.post;\n",
+		"test/contract.mjs": "console.log('contract');\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+
+	if resp := postSample(t, srv.URL, manifest, sampleID, artifact, ""); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first upload: status %d", resp.StatusCode)
+	}
+	ctx := context.Background()
+	// Reaching CROSS_PASS happens through peer receipts, which also close
+	// the job that asked for the work.
+	if err := store.SetSampleStatus(ctx, sampleID, "CROSS_PASS"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteJobsForSample(ctx, sampleID, "ed25519:peer-b"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.JobsForSample(ctx, sampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp := postSample(t, srv.URL, manifest, sampleID, artifact, ""); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("re-upload: status %d", resp.StatusCode)
+	}
+
+	row, ok, err := store.GetSample(ctx, sampleID)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if row.Status != "CROSS_PASS" {
+		t.Errorf("status after re-publish = %q, want CROSS_PASS", row.Status)
+	}
+	after, err := store.JobsForSample(ctx, sampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("re-publishing a crossed sample queued %d new job(s): %+v",
+			len(after)-len(before), after)
+	}
+	for _, j := range after {
+		if j.Reason == "cross" && (j.Status == "open" || j.Status == "claimed") {
+			t.Errorf("a cross job is open for an already-crossed sample: %+v", j)
+		}
+	}
+}

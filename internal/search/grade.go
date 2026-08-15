@@ -36,7 +36,8 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		samShow := runtimeShow(sam.Runtime, sam.RuntimeVersion)
 		switch {
 		case strings.EqualFold(req.Runtime, sam.Runtime) &&
-			majorOf(req.RuntimeVersion) == majorOf(sam.RuntimeVersion):
+			releaseLineOf(req.Runtime, req.RuntimeVersion) ==
+				releaseLineOf(sam.Runtime, sam.RuntimeVersion):
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
 		// A version nobody stated is not a version that differs. The guard
 		// above only checks that both sides name a RUNTIME, then compares
@@ -84,7 +85,8 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		sameCompiler := strings.EqualFold(req.Compiler, sam.Compiler)
 		unknownCompilerVersion := req.CompilerVersion == "" || sam.CompilerVersion == ""
 		if sameCompiler && (unknownCompilerVersion ||
-			majorOf(req.CompilerVersion) == majorOf(sam.CompilerVersion)) {
+			releaseLineOf(req.Compiler, req.CompilerVersion) ==
+				releaseLineOf(sam.Compiler, sam.CompilerVersion)) {
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
 		} else {
 			d := dimComparison{samShow: samShow, reqShow: reqShow}

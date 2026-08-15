@@ -46,8 +46,16 @@ type snapshotRow struct {
 	ElevatedFailure   bool                           `json:"elevatedFailure"`
 	PassRate          float64                        `json:"passRate"`
 	UniquePeerBuckets int64                          `json:"uniquePeerBuckets"`
-	LastSeen          string                         `json:"lastSeen"`
-	ByStage           map[string]stageCount          `json:"byStage"`
+	// VerificationCounts carries the verification-side counts, including
+	// "distinctVerifyingPeers". It was never decoded, so a row proved by
+	// five independent peers -- with no usage evidence, which is the normal
+	// shape for a freshly seeded package -- printed 0 under a column headed
+	// "Peers". UniquePeerBuckets is an OBSERVATION-side count, as its
+	// producer says in as many words, and independence is the one thing a
+	// reader uses that column to judge.
+	VerificationCounts map[string]int64      `json:"verificationCounts"`
+	LastSeen           string                `json:"lastSeen"`
+	ByStage            map[string]stageCount `json:"byStage"`
 }
 
 type failureCluster struct {
@@ -91,6 +99,11 @@ type matrixRow struct {
 	VerifiedStages string // "CONTRACT 6✓ 1✕"
 	PassRate       string // formatted, "" when no evidence
 	Peers          int64
+	// VerifyingPeers is the verification-side count. It is rendered beside
+	// Peers, never added to it: an observation bucket and a verifying peer
+	// are different classes of evidence and summing them would overstate
+	// both (goal.md §10.2).
+	VerifyingPeers int64
 	LastSeen       string // date part
 }
 
@@ -230,8 +243,9 @@ func buildMatrix(lang string, doc snapshotDoc) []matrixRow {
 			Chip: chip, ChipClass: class, Glyph: glyph, NoEvidence: noEvidence,
 			Observations: obs, Verifications: ver,
 			ObservedStages: obsText, VerifiedStages: verText,
-			Peers:    r.UniquePeerBuckets,
-			LastSeen: datePart(r.LastSeen),
+			Peers:          r.UniquePeerBuckets,
+			VerifyingPeers: r.VerificationCounts["distinctVerifyingPeers"],
+			LastSeen:       datePart(r.LastSeen),
 		}
 		if obs+ver > 0 {
 			row.PassRate = i18n.FormatPercent(lang, r.PassRate)

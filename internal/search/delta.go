@@ -118,6 +118,37 @@ func majorOf(v string) string {
 	return strings.SplitN(v, ".", 2)[0]
 }
 
+// releaseLineOf is the version segment that actually identifies a release
+// line for a given toolchain.
+//
+// For most runtimes the major segment is the line: node 22, python is not
+// one of them. Go, Python, Elixir and Dart put their entire release history
+// in the SECOND segment -- go1.9 and go1.26 are seven years apart and both
+// "1"; python 3.6 and 3.12 both "3" -- so comparing majors alone called
+// them equal and printed "go 1" in the list of things that MATCH.
+//
+// The server-side grader has used this rule since it was fixed there. The
+// client did not, so the same request graded EXACT here and
+// ADAPTATION_REQUIRED there: two answers to one question, and the wrong one
+// went to whoever was running the MCP.
+func releaseLineOf(toolchain, version string) string {
+	if version == "" {
+		return ""
+	}
+	if i := strings.IndexAny(version, "-+"); i >= 0 {
+		version = version[:i]
+	}
+	switch strings.ToLower(toolchain) {
+	case "go", "golang", "python", "elixir", "dart":
+		segs := strings.SplitN(version, ".", 3)
+		if len(segs) >= 2 {
+			return segs[0] + "." + segs[1]
+		}
+		return segs[0]
+	}
+	return majorOf(version)
+}
+
 // majorMinorOf trims "5.9.2" → "5.9"; single segments stay as-is.
 func majorMinorOf(v string) string {
 	if v == "" {

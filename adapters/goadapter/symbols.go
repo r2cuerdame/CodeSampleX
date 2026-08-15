@@ -37,7 +37,19 @@ func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Re
 	seen := map[string]scanner.SymbolUsage{}
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// Skipped, not fatal -- the same rule the node and python
+			// adapters follow, and the one scanFile below states: partial
+			// local code must never abort a scan.
+			//
+			// Returning the error aborted the WHOLE module scan on the
+			// first directory the process could not list, and the caller
+			// discards that error, so a Go repo with one root-owned
+			// bind-mount directory (./data, ./pgdata -- routine in service
+			// repos) recorded zero symbol observations for every package,
+			// exited 0, and said nothing. Symbol evidence is what search
+			// grades on, so the project silently stopped contributing and
+			// stopped matching.
+			return nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr

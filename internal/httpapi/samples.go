@@ -279,11 +279,16 @@ func checkArtifactStatic(data []byte, manifest domain.SampleManifest) error {
 		if bytes.IndexByte(content, 0) >= 0 {
 			return errors.New("artifact entry " + name + " looks binary (NUL byte)")
 		}
+		// The entry was already drained into content above. Reading the
+		// tar reader a SECOND time returns zero bytes and a nil error, so
+		// every lockfile was stored as "" and checkDeclaredVersions --
+		// which exists to refuse a manifest naming a version its own
+		// lockfile never resolved -- could not fire on any upload ever
+		// made. It saw a non-empty map, so it did not early-return either;
+		// it just never found a version. Only its own unit tests, which
+		// build the map by hand, ever exercised it.
 		if base := path.Base(strings.TrimPrefix(name, "./")); lockfileForVersionCheck[strings.ToLower(base)] {
-			raw, rerr := io.ReadAll(io.LimitReader(tr, 4<<20))
-			if rerr == nil {
-				lockfiles[strings.ToLower(base)] = string(raw)
-			}
+			lockfiles[strings.ToLower(base)] = string(content)
 		}
 		if strings.TrimPrefix(name, "./") == "csx.json" {
 			manifestInArtifact = content
