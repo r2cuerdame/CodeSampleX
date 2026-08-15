@@ -622,6 +622,7 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 		}
 		in = append(in, ShardSampleInput{
 			Sample:    entry,
+			Symbols:   sd.manifest.Symbols,
 			HotScore:  sd.row.HotScore,
 			CreatedAt: sd.row.CreatedAt,
 		})

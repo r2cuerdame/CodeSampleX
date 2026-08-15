@@ -200,14 +200,14 @@ func SymbolStatsFromEvidence(rows []serverstore.EvidenceRow, now time.Time) (Sha
 // alone meant the cap cut by popularity: a package with 21 samples whose
 // oldest was STABLE -- contract-passed and cross-verified by independent
 // peers -- dropped exactly that one, because twenty newer PUBLISHED
-// samples with no receipts at all were more recent and no more popular
-// (a fresh sample's hot score is zero, so the tie fell to recency).
+// samples with no receipts at all were more recent and no more popular.
 //
-// Shards are the only document clients ever read, so the sample was not
-// merely ranked lower: it became invisible to every machine on the
-// network, while twenty unverified ones were served in its place. The
-// whole claim of this system is that a verified answer beats a plausible
-// one, and the cap was deciding the opposite.
+// Then COVERAGE. Twenty slots that all answer the same question about the
+// same symbol are worth about one slot: a caller asking about a different
+// part of the library sees nothing, while the shard is full. So the first
+// pass takes the best sample for each distinct symbol before any symbol
+// gets a second slot. Density is the point of the cap, not scarcity —
+// twenty samples about twenty different things beats twenty about one.
 func TopShardSamples(samples []ShardSampleInput) []ShardSample {
 	sort.SliceStable(samples, func(i, j int) bool {
 		if a, b := verifiedRank(samples[i].Sample), verifiedRank(samples[j].Sample); a != b {
@@ -221,14 +221,51 @@ func TopShardSamples(samples []ShardSampleInput) []ShardSample {
 		}
 		return samples[i].Sample.SampleID < samples[j].Sample.SampleID
 	})
-	if len(samples) > maxShardSamples {
-		samples = samples[:maxShardSamples]
+	if len(samples) <= maxShardSamples {
+		out := make([]ShardSample, 0, len(samples))
+		for _, s := range samples {
+			out = append(out, s.Sample)
+		}
+		return out
 	}
-	out := make([]ShardSample, 0, len(samples))
-	for _, s := range samples {
-		out = append(out, s.Sample)
+
+	// Round one: the best sample for each distinct subject, in rank order.
+	picked := make([]ShardSample, 0, maxShardSamples)
+	taken := make([]bool, len(samples))
+	seen := map[string]bool{}
+	for i, s := range samples {
+		if len(picked) == maxShardSamples {
+			break
+		}
+		subj := shardSubject(s)
+		if seen[subj] {
+			continue
+		}
+		seen[subj] = true
+		taken[i] = true
+		picked = append(picked, s.Sample)
 	}
-	return out
+	// Round two: fill whatever is left, still in rank order.
+	for i, s := range samples {
+		if len(picked) == maxShardSamples {
+			break
+		}
+		if taken[i] {
+			continue
+		}
+		picked = append(picked, s.Sample)
+	}
+	return picked
+}
+
+// shardSubject is what a sample is ABOUT, for coverage purposes: its first
+// declared symbol, else its goal. Two samples sharing it answer the same
+// question, however differently they do it.
+func shardSubject(s ShardSampleInput) string {
+	if len(s.Symbols) > 0 {
+		return strings.ToLower(s.Symbols[0])
+	}
+	return strings.ToLower(s.Sample.Goal)
 }
 
 // verifiedRank scores how much of the C13 ladder a sample has actually
@@ -257,4 +294,7 @@ type ShardSampleInput struct {
 	Sample    ShardSample
 	HotScore  float64
 	CreatedAt time.Time
+	// Symbols is what the sample declares it is about, used to spread the
+	// capped list across distinct subjects rather than piling it onto one.
+	Symbols []string
 }
