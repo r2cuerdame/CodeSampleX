@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const anonSeedLen = 32
@@ -43,6 +44,34 @@ func LoadOrCreate(home string) (*Identity, error) {
 		return create(home, path)
 	}
 	return loadExisting(path)
+}
+
+// loadWhenComplete reads an identity another process is in the middle of
+// creating.
+//
+// Electing one writer is not enough on its own: O_EXCL makes the FILE
+// appear atomically, but its CONTENTS arrive a moment later, and a loser
+// that read in that window got "unexpected end of JSON input" and returned
+// no identity at all. Linux CI caught it on the first concurrent run; the
+// window is microseconds and a Windows laptop never hit it.
+//
+// The file is ~200 bytes written by one call, so a few short retries cover
+// it. A file still unreadable after that is a real problem -- a crash
+// during that same window would leave one -- and is reported rather than
+// silently replaced, because replacing it would throw away the private key
+// this machine's whole history is signed with.
+func loadWhenComplete(path string) (*Identity, error) {
+	var err error
+	for attempt := range 50 {
+		var id *Identity
+		if id, err = loadExisting(path); err == nil {
+			return id, nil
+		}
+		if attempt < 49 {
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	return nil, err
 }
 
 // loadExisting parses an identity file that is already on disk.
@@ -110,7 +139,7 @@ func create(home, path string) (*Identity, error) {
 	// Whoever creates the file first wins; everyone else reads it.
 	fh, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, fs.ErrExist) {
-		return loadExisting(path)
+		return loadWhenComplete(path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("identity: save: %w", err)
