@@ -59,10 +59,20 @@ func toResolved(deps []lockDep, source string) []scanner.ResolvedPackage {
 		if d.Private {
 			pub = scanner.PublicnessPrivate
 		}
-		version := d.Version
-		if version == "" {
-			version = "0.0.0"
+		// A version the lockfile did not give us is not 0.0.0. Substituting
+		// one fabricated a release that has never existed and then uploaded
+		// evidence under it: every dependency of a Yarn Berry project
+		// (yarn.lock beginning with __metadata:, which this parser does not
+		// read) was recorded as name@0.0.0, and another machine's search
+		// could be answered with evidence attributed to a version nobody
+		// can install.
+		//
+		// A package we cannot pin is one we have nothing to say about, so
+		// it is left out rather than described wrongly.
+		if d.Version == "" {
+			continue
 		}
+		version := d.Version
 		out = append(out, scanner.ResolvedPackage{
 			PURL:       domain.PURL{Ecosystem: "npm", Name: d.Name, Version: version},
 			Publicness: pub,

@@ -47,7 +47,7 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 	if err != nil {
 		return nil, err
 	}
-	requires, localReplaced := parseGoMod(string(data))
+	requires, localReplaced, moduleReplaced := parseGoMod(string(data))
 
 	source := "go.mod"
 	if fi, err := os.Stat(filepath.Join(dir, "go.sum")); err == nil && !fi.IsDir() {
@@ -60,8 +60,16 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 		if localReplaced[r.path] {
 			publicness = scanner.PublicnessPrivate
 		}
+		// A module replace decides what actually compiled. Reporting the
+		// require line meant evidence produced by golang.org/x/net v0.38.0
+		// was filed under v0.17.0, and another agent asking about v0.17.0
+		// got a HIT backed by a build that never used it.
+		name, version := r.path, r.version
+		if rep, ok := moduleReplaced[r.path]; ok {
+			name, version = rep.path, rep.version
+		}
 		pkgs = append(pkgs, scanner.ResolvedPackage{
-			PURL:       domain.PURL{Ecosystem: "golang", Name: r.path, Version: r.version},
+			PURL:       domain.PURL{Ecosystem: "golang", Name: name, Version: version},
 			Publicness: publicness,
 			Direct:     !r.indirect,
 			Source:     source,
@@ -121,11 +129,16 @@ type requireEntry struct {
 	indirect bool
 }
 
-// parseGoMod extracts require entries and the set of module paths whose
-// replace target is a filesystem path (⇒ private, never uploadable).
-func parseGoMod(src string) ([]requireEntry, map[string]bool) {
+// replacement is what a module replace directive redirects to.
+type replacement struct{ path, version string }
+
+// parseGoMod extracts require entries, the set of module paths whose
+// replace target is a filesystem path (⇒ private, never uploadable), and
+// the module replacements that decide which version actually compiles.
+func parseGoMod(src string) ([]requireEntry, map[string]bool, map[string]replacement) {
 	var requires []requireEntry
 	localReplaced := map[string]bool{}
+	moduleReplaced := map[string]replacement{}
 	const (
 		blockNone = iota
 		blockRequire
@@ -152,7 +165,7 @@ func parseGoMod(src string) ([]requireEntry, map[string]bool) {
 			if fields[0] == ")" {
 				block = blockNone
 			} else {
-				recordReplace(fields, localReplaced)
+				recordReplace(fields, localReplaced, moduleReplaced)
 			}
 			continue
 		}
@@ -167,16 +180,16 @@ func parseGoMod(src string) ([]requireEntry, map[string]bool) {
 			if len(fields) == 2 && fields[1] == "(" {
 				block = blockReplace
 			} else {
-				recordReplace(fields[1:], localReplaced)
+				recordReplace(fields[1:], localReplaced, moduleReplaced)
 			}
 		}
 	}
-	return requires, localReplaced
+	return requires, localReplaced, moduleReplaced
 }
 
 // recordReplace handles `old [ver] => new [ver]` and marks old as locally
 // replaced when new is a filesystem path.
-func recordReplace(fields []string, localReplaced map[string]bool) {
+func recordReplace(fields []string, localReplaced map[string]bool, moduleReplaced map[string]replacement) {
 	arrow := -1
 	for i, f := range fields {
 		if f == "=>" {
@@ -194,6 +207,14 @@ func recordReplace(fields []string, localReplaced map[string]bool) {
 	}
 	if isFilesystemPath(target) {
 		localReplaced[oldPath] = true
+		return
+	}
+	// A module replace always carries a version — go.mod requires one
+	// unless the target is a directory, which the branch above handled.
+	if arrow+2 < len(fields) {
+		if v := strings.TrimSpace(fields[arrow+2]); v != "" {
+			moduleReplaced[oldPath] = replacement{path: target, version: v}
+		}
 	}
 }
 

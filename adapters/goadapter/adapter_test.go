@@ -139,18 +139,27 @@ replace (
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A module replace decides what actually compiles, so the scan reports
+	// the REPLACEMENT — example.com/remote2 at v0.2.0 — not the require
+	// line. Reporting the require line filed evidence produced by one
+	// version under another, and an agent asking about that other version
+	// got a HIT backed by a build that never used it.
 	want := map[string]string{
 		"example.com/rel":      scanner.PublicnessPrivate,
 		"example.com/drive":    scanner.PublicnessPrivate,
-		"example.com/remote":   scanner.PublicnessUnknown,
+		"example.com/remote2":  scanner.PublicnessUnknown,
 		"example.com/blockrel": scanner.PublicnessPrivate,
 	}
+	wantVersion := map[string]string{"example.com/remote2": "v0.2.0"}
 	if len(pkgs) != len(want) {
 		t.Fatalf("got %d packages, want %d", len(pkgs), len(want))
 	}
 	for _, p := range pkgs {
 		if w := want[p.PURL.Name]; p.Publicness != w {
 			t.Errorf("%s publicness %q, want %q", p.PURL.Name, p.Publicness, w)
+		}
+		if v, ok := wantVersion[p.PURL.Name]; ok && p.PURL.Version != v {
+			t.Errorf("%s version %q, want %q — the replacement decides", p.PURL.Name, p.PURL.Version, v)
 		}
 	}
 }

@@ -26,7 +26,12 @@ var (
 
 	// Strict pin: name, optional extras, "==", version. Anything else is a
 	// range and yields no resolved version (§7.1).
-	reqPinRe = regexp.MustCompile(`^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(?:\[[^\]]*\])?\s*==\s*([A-Za-z0-9.!+*]+)$`)
+	// The version class deliberately excludes "*". PEP 440 makes `==4.2.*`
+	// a PREFIX MATCH — a range, not a pin — and accepting it recorded
+	// observations under the literal version string "4.2.*", which no
+	// release has ever had, while grading treated it as exact. `django==4.2.*`
+	// and `flask==3.*` are among the most common lines in a requirements.txt.
+	reqPinRe = regexp.MustCompile(`^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(?:\[[^\]]*\])?\s*==\s*([A-Za-z0-9.!+]+)$`)
 
 	winPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
