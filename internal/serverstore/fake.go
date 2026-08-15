@@ -332,6 +332,21 @@ func (f *Fake) SaveCase(_ context.Context, c domain.Case) error {
 	return nil
 }
 
+// statusRank orders the C13 lifecycle so a re-publish cannot walk it back.
+func statusRank(status string) int {
+	switch status {
+	case "STABLE":
+		return 4
+	case "MATRIX_PASS":
+		return 3
+	case "CROSS_PASS":
+		return 2
+	case "LOCAL_PASS":
+		return 1
+	}
+	return 0
+}
+
 func (f *Fake) SaveSample(_ context.Context, s SampleRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -341,8 +356,16 @@ func (f *Fake) SaveSample(_ context.Context, s SampleRow) error {
 	if s.License == "" {
 		s.License = "MIT-0"
 	}
-	if prev, ok := f.samples[s.SampleID]; ok && !prev.CreatedAt.IsZero() && s.CreatedAt.IsZero() {
-		s.CreatedAt = prev.CreatedAt
+	if prev, ok := f.samples[s.SampleID]; ok {
+		if !prev.CreatedAt.IsZero() && s.CreatedAt.IsZero() {
+			s.CreatedAt = prev.CreatedAt
+		}
+		// Mirrors the SQL: a re-publish never lowers a status that
+		// receipts earned. Same id means same content.
+		if statusRank(prev.Status) > statusRank(s.Status) {
+			s.Status = prev.Status
+		}
+		s.Quarantined, s.QuarantineReason = prev.Quarantined, prev.QuarantineReason
 	}
 	if s.CreatedAt.IsZero() {
 		s.CreatedAt = f.now()

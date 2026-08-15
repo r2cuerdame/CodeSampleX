@@ -486,7 +486,19 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 			ON CONFLICT (sample_id) DO UPDATE SET
 				manifest = EXCLUDED.manifest,
-				status = EXCLUDED.status,
+				-- NOT the status. A sample id is the sha256 of its content,
+				-- so a conflict means this exact sample is already here --
+				-- and the ingest path always sends "PUBLISHED". Overwriting
+				-- with it threw away CROSS_PASS, MATRIX_PASS or STABLE that
+				-- independent peers had actually earned, on nothing more
+				-- than the author re-running their publish. The receipts
+				-- survived, so the status was recoverable only by an
+				-- operator running recompute-status by hand; until then the
+				-- sample ranked lower everywhere and could be cut from its
+				-- own shard by the sample cap.
+				--
+				-- Status is derived from receipts. SetSampleStatus is how it
+				-- moves; this is not.
 				hot_score = EXCLUDED.hot_score`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
 			s.License, s.SizeBytes, s.HotScore)
