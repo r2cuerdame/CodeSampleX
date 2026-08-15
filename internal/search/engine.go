@@ -261,6 +261,17 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					continue
 				}
 				if existing := cands[ss.SampleID]; existing != nil {
+					// The NETWORK decides a sample's status; a local row is
+					// a cache of the artifact, not of the network's
+					// judgement. storeFetched writes "PUBLISHED" for
+					// anything it downloads, so fetching a STABLE sample
+					// downgraded it locally from verification level 5 to 3
+					// — a ×3 strength multiplier to ×1 — and using a sample
+					// made it markedly harder to find again, sometimes
+					// under the miss threshold entirely.
+					if statusRank(ss.Status) > statusRank(existing.status) {
+						existing.status = ss.Status
+					}
 					if len(existing.declared) == 0 {
 						existing.declared = parsePURLs(ss.Packages)
 					}
@@ -917,4 +928,22 @@ func appendPURL(list []domain.PURL, p domain.PURL) []domain.PURL {
 		}
 	}
 	return append(list, p)
+}
+
+// statusRank orders sample statuses by how much verification they assert,
+// so the strongest one anybody knows about wins.
+func statusRank(status string) int {
+	switch status {
+	case "STABLE":
+		return 5
+	case "MATRIX_PASS":
+		return 4
+	case "CROSS_PASS":
+		return 3
+	case "PUBLISHED":
+		return 2
+	case "LOCAL_PASS":
+		return 1
+	}
+	return 0
 }

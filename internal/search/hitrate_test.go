@@ -666,3 +666,48 @@ func TestAMatchingMachineIsStatedAndCounts(t *testing.T) {
 		t.Errorf("grade = %s on a machine that matches exactly", g)
 	}
 }
+
+// The NETWORK decides a sample's status; a local row is a cache of the
+// artifact, not of the network's judgement. storeFetched writes
+// "PUBLISHED" for anything it downloads, so fetching a STABLE sample
+// downgraded it locally from verification level 5 to 3 — a x3 strength
+// multiplier to x1 — and USING a sample made it markedly harder to find
+// again, sometimes under the miss threshold entirely.
+func TestFetchingASampleDoesNotDowngradeIt(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+
+	id := "sha256:stable1"
+	env := alpineEnv("npm", "node", "22.18.1", "javascript")
+	m := mkManifest("Serve a JSON POST route with express and its error shape",
+		[]string{"pkg:npm/express@5.1.0"}, env)
+
+	// The shard says the network considers it STABLE.
+	saveShardJSON(t, db, "npm/express/5", shardFile{
+		SchemaVersion: 1, Key: "npm/express/5",
+		Packages: []shardPackage{{
+			PURL: "pkg:npm/express@5.1.0",
+			Samples: []shardSampleEntry{{
+				SampleID: id, Goal: m.Case.Goal, Status: "STABLE",
+				Packages: m.Packages, Environment: env,
+			}},
+		}},
+	})
+	// get_sample then writes the local row as PUBLISHED.
+	if err := SeedSampleDoc(ctx, db, m, id, "PUBLISHED"); err != nil {
+		t.Fatal(err)
+	}
+
+	e := Engine{DB: db}
+	cands, _, err := e.collect(ctx, domain.SearchRequest{SchemaVersion: 1, Query: m.Case.Goal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cands[id]
+	if c == nil {
+		t.Fatal("candidate missing")
+	}
+	if c.status != "STABLE" {
+		t.Errorf("status = %q after fetching; the network said STABLE", c.status)
+	}
+}
