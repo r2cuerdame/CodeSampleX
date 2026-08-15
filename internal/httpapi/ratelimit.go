@@ -104,18 +104,16 @@ func (l *limiter) allow(key string) (bool, time.Duration) {
 	return true, 0
 }
 
-// sweepIdleAfter is how long a bucket must be untouched to be dropped. Any
-// bucket idle this long has refilled completely, so forgetting it loses
-// nothing.
-const sweepIdleAfter = 10 * time.Minute
-
+// sweepLocked drops buckets that have been untouched for longer than their
+// refill period (l.rate.per). Any bucket idle this long has refilled
+// completely, so forgetting it loses nothing.
 func (l *limiter) sweepLocked(now time.Time) {
 	if now.Sub(l.lastSweep) < time.Minute {
 		return
 	}
 	l.lastSweep = now
 	for k, b := range l.buckets {
-		if now.Sub(b.last) > sweepIdleAfter {
+		if now.Sub(b.last) > l.rate.per {
 			delete(l.buckets, k)
 		}
 	}

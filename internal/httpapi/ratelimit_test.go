@@ -78,10 +78,63 @@ func TestRateLimitEvictsIdleBuckets(t *testing.T) {
 	}
 
 	// Every bucket is now idle past the threshold; the next call sweeps.
-	clock = clock.Add(sweepIdleAfter + time.Minute)
+	clock = clock.Add(l.rate.per + time.Minute)
 	l.allow("10.0.0.1")
 	if len(l.buckets) != 1 {
 		t.Fatalf("buckets = %d after sweep, want only the live one", len(l.buckets))
+	}
+}
+
+// TestIdleSweepDoesNotResetBurstBeforeFullPeriod: dropping an idle bucket is
+// only safe once it has refilled completely. For limiters with long refill
+// periods (like publishLimit at 10/hour), sweeping after a fixed 10-minute
+// window erased the client's consumed quota early, letting an abusive script
+// burst 10 samples every 11 minutes (>50/hour) instead of 10 per hour.
+func TestIdleSweepDoesNotResetBurstBeforeFullPeriod(t *testing.T) {
+	clock := testNow
+	l := &limiter{
+		buckets: map[string]*bucket{},
+		rate:    rate{burst: 10, per: time.Hour},
+		now:     func() time.Time { return clock },
+	}
+
+	client := "203.0.113.50"
+	// Exhaust all 10 tokens at t = 0.
+	for i := 0; i < 10; i++ {
+		if ok, _ := l.allow(client); !ok {
+			t.Fatalf("request %d throttled inside burst", i+1)
+		}
+	}
+	// 11th request must be throttled.
+	if ok, _ := l.allow(client); ok {
+		t.Fatal("request past burst was not throttled")
+	}
+
+	// Advance time by 11 minutes. At this point, only ~1.8 tokens have refilled.
+	clock = clock.Add(11 * time.Minute)
+
+	// A request triggers sweepLocked.
+	// The client should NOT be granted another full burst of 10 requests.
+	// Only 1 token should be allowed (since ~1.8 refilled), and subsequent
+	// requests should be throttled.
+	if ok, _ := l.allow(client); !ok {
+		t.Fatal("expected 1 token after 11 minutes of refill, got throttled")
+	}
+	// Now tokens should be ~0.83, so the very next request must be throttled.
+	if ok, _ := l.allow(client); ok {
+		t.Fatal("client allowed to burst again after 11 minutes; idle sweep reset unearned tokens")
+	}
+
+	// After waiting the full refill period (1 hour), the client legitimately
+	// earns back the full 10-token burst allowance.
+	clock = clock.Add(time.Hour)
+	for i := 0; i < 10; i++ {
+		if ok, _ := l.allow(client); !ok {
+			t.Fatalf("request %d throttled after full refill period", i+1)
+		}
+	}
+	if ok, _ := l.allow(client); ok {
+		t.Fatal("request past full burst was not throttled")
 	}
 }
 
