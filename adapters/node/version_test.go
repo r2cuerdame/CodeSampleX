@@ -1,6 +1,10 @@
 package node
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
+)
 
 // A version the lockfile did not give us is not 0.0.0. Substituting one
 // fabricated a release that has never existed and uploaded evidence under
@@ -15,15 +19,19 @@ func TestAnUnreadableVersionIsNotReportedAsZero(t *testing.T) {
 		{Name: "left-pad", Version: ""},
 	}, "yarn.lock")
 
-	if len(got) != 1 {
-		t.Fatalf("resolved %d packages, want 1 — unpinned ones must be left out", len(got))
-	}
-	if got[0].PURL.Name != "axios" || got[0].PURL.Version != "1.19.0" {
-		t.Errorf("resolved %s@%s", got[0].PURL.Name, got[0].PURL.Version)
+	if len(got) != 3 {
+		t.Fatalf("resolved %d packages, want 3 — unpinned ones stay in the local inventory", len(got))
 	}
 	for _, p := range got {
 		if p.PURL.Version == "0.0.0" {
 			t.Errorf("%s was reported at a fabricated 0.0.0", p.PURL.Name)
+		}
+		// A package with no readable version must never be uploadable.
+		if p.PURL.Version == "" && p.Publicness != scanner.PublicnessPrivate {
+			t.Errorf("%s has no version but is %s — it could be uploaded", p.PURL.Name, p.Publicness)
+		}
+		if p.PURL.Name == "axios" && p.PURL.Version != "1.19.0" {
+			t.Errorf("axios resolved to %q", p.PURL.Version)
 		}
 	}
 }

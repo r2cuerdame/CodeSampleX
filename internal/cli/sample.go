@@ -614,7 +614,19 @@ func sampleVerify(ctx context.Context, args []string) int {
 		_ = env.db.SetSampleStatus(ctx, row.SampleID, "LOCAL_PASS")
 	}
 
-	fmt.Fprintf(sampleStdout, "Verified %s\n", row.SampleID)
+	// The heading is what a reader takes away, and "Verified" over a table
+	// whose compile line says FAIL is the wrong takeaway. A receipt was
+	// produced either way — that is the honest word for it — so the outcome
+	// goes in the heading instead of only in the table below.
+	switch contract := receipt.Stages["contract"]; contract {
+	case sandbox.ResultPass:
+		fmt.Fprintf(sampleStdout, "Verified %s — contract PASSED\n", row.SampleID)
+	case sandbox.ResultFail:
+		fmt.Fprintf(sampleStdout, "Receipt written for %s — contract FAILED\n", row.SampleID)
+	default:
+		fmt.Fprintf(sampleStdout, "Receipt written for %s — contract did not run (%s)\n",
+			row.SampleID, contract)
+	}
 	fmt.Fprintf(sampleStdout, "Sandbox capability: %s\n", capability)
 	fmt.Fprintln(sampleStdout, "Stage      Result")
 	for _, stage := range []string{"resolve", "compile", "load", "contract"} {
@@ -704,16 +716,28 @@ func samplePublish(ctx context.Context, args []string) int {
 		return 1
 	}
 
+	// Attribution requires a token: without one the server has nothing to
+	// bind a name to and records the sample as anonymous. The approval
+	// screen printed the REQUESTED name regardless, so `--seeder acme-labs`
+	// while logged out showed "Seeder: acme-labs", the user typed yes to
+	// that screen, and the sample published anonymously. A preview whose
+	// whole promise is that it shows everything must not show something
+	// that will not happen.
 	seeder := "anonymous"
 	useToken := false
+	requested := ""
 	switch {
 	case *anonymous:
 	case *seederFlag != "":
-		seeder = *seederFlag
-		useToken = env.cfg.APIToken != ""
+		requested = *seederFlag
+		if env.cfg.APIToken != "" {
+			seeder, useToken = *seederFlag, true
+		}
 	case env.cfg.GithubLogin != "":
-		seeder = env.cfg.GithubLogin
-		useToken = env.cfg.APIToken != ""
+		requested = env.cfg.GithubLogin
+		if env.cfg.APIToken != "" {
+			seeder, useToken = env.cfg.GithubLogin, true
+		}
 	}
 
 	serverURL := strings.TrimRight(*server, "/")
@@ -729,6 +753,11 @@ func samplePublish(ctx context.Context, args []string) int {
 	fmt.Fprintf(sampleStdout, "About to publish %s to %s\n", row.SampleID, serverURL)
 	fmt.Fprintf(sampleStdout, "License: %s\n", manifest.License)
 	fmt.Fprintf(sampleStdout, "Seeder:  %s\n", seeder)
+	if requested != "" && !useToken {
+		fmt.Fprintf(sampleStdout,
+			"         (%q needs a signed-in account; run `csx login` first, or this publishes anonymously)\n",
+			requested)
+	}
 	fmt.Fprintf(sampleStdout, "Files (%d):\n", len(paths))
 	for _, p := range paths {
 		fmt.Fprintf(sampleStdout, "  %s\n", p)

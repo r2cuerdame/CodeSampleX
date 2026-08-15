@@ -59,20 +59,23 @@ func toResolved(deps []lockDep, source string) []scanner.ResolvedPackage {
 		if d.Private {
 			pub = scanner.PublicnessPrivate
 		}
-		// A version the lockfile did not give us is not 0.0.0. Substituting
-		// one fabricated a release that has never existed and then uploaded
-		// evidence under it: every dependency of a Yarn Berry project
-		// (yarn.lock beginning with __metadata:, which this parser does not
-		// read) was recorded as name@0.0.0, and another machine's search
-		// could be answered with evidence attributed to a version nobody
-		// can install.
+		// A version the lockfile did not give us is not 0.0.0.
+		// Substituting one fabricated a release that has never existed and
+		// then uploaded evidence under it: every dependency of a Yarn Berry
+		// project (yarn.lock beginning with __metadata:, which this parser
+		// does not read) was recorded as name@0.0.0, so another machine's
+		// search could be answered with evidence attributed to a version
+		// nobody can install.
 		//
-		// A package we cannot pin is one we have nothing to say about, so
-		// it is left out rather than described wrongly.
-		if d.Version == "" {
-			continue
-		}
+		// The entry is kept — a linked local package has no version and is
+		// still worth having in the local inventory — with the version left
+		// EMPTY rather than invented, and marked private so it can never be
+		// uploaded. Nothing may leave this machine describing a release
+		// that does not exist.
 		version := d.Version
+		if version == "" {
+			pub = scanner.PublicnessPrivate
+		}
 		out = append(out, scanner.ResolvedPackage{
 			PURL:       domain.PURL{Ecosystem: "npm", Name: d.Name, Version: version},
 			Publicness: pub,
