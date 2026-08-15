@@ -169,6 +169,7 @@
   "support.packages": "包与版本",
   "support.samples": "带 contract 的已验证样本",
   "support.symbols": "用了哪个 API",
+  "symbol.callshape_note": "这些计数不区分符号的调用方式：重载、参数形态和选项被合并统计。某一具体调用方式的行为由样本的契约证明，而不是由这些数字证明。",
   "symbol.confidence_col": "置信度",
   "symbol.env_col": "环境",
   "symbol.evidence_note": "项目级观测与符号/契约验证分别统计，绝不合并。",

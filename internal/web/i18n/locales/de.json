@@ -169,6 +169,7 @@
   "support.packages": "Pakete und Versionen",
   "support.samples": "per Contract verifizierte Samples",
   "support.symbols": "welche API genutzt wurde",
+  "symbol.callshape_note": "Diese Zahlen unterscheiden nicht, wie das Symbol aufgerufen wurde: Überladungen, Argumentformen und Optionen werden zusammengefasst. Was eine bestimmte Aufrufform tut, beweist der Vertrag eines Samples – nicht diese Zahlen.",
   "symbol.confidence_col": "Konfidenz",
   "symbol.env_col": "Umgebung",
   "symbol.evidence_note": "Beobachtungen auf Projektebene und Symbol-/Contract-Verifizierungen werden getrennt gezählt und niemals zusammengerechnet.",

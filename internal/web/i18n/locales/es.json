@@ -169,6 +169,7 @@
   "support.packages": "paquetes y versiones",
   "support.samples": "muestras verificadas con contrato",
   "support.symbols": "qué API se usó",
+  "symbol.callshape_note": "Estos recuentos no distinguen cómo se llamó al símbolo: las sobrecargas, las formas de los argumentos y las opciones se agrupan. Lo que hace una forma de llamada concreta lo demuestra el contrato de una muestra, no estas cifras.",
   "symbol.confidence_col": "Confianza",
   "symbol.env_col": "Entorno",
   "symbol.evidence_note": "Las observaciones a nivel de proyecto y las verificaciones de símbolo/contrato se cuentan por separado y nunca se combinan.",

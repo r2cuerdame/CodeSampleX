@@ -169,6 +169,7 @@
   "support.packages": "패키지·버전",
   "support.samples": "contract로 검증된 샘플",
   "support.symbols": "어떤 API를 썼는지",
+  "symbol.callshape_note": "이 수치는 심볼을 어떻게 호출했는지 구분하지 않습니다. 오버로드, 인자 형태, 옵션이 한데 묶여 집계됩니다. 특정 호출 형태가 어떻게 동작하는지는 이 숫자가 아니라 샘플의 계약이 증명합니다.",
   "symbol.confidence_col": "신뢰도",
   "symbol.env_col": "환경",
   "symbol.evidence_note": "프로젝트 수준 관측과 심벌/컨트랙트 검증은 따로 집계하며 절대 합산하지 않습니다.",

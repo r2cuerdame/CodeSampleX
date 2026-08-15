@@ -169,6 +169,7 @@
   "support.packages": "パッケージとバージョン",
   "support.samples": "contract で検証済みのサンプル",
   "support.symbols": "どの API を使ったか",
+  "symbol.callshape_note": "これらの数値は、シンボルがどう呼び出されたかを区別しません。オーバーロード、引数の形、オプションはまとめて集計されます。特定の呼び出し方がどう動くかは、この数値ではなくサンプルの契約が証明します。",
   "symbol.confidence_col": "信頼度",
   "symbol.env_col": "環境",
   "symbol.evidence_note": "プロジェクトレベルの観測とシンボル/コントラクト検証は別々に集計し、決して合算しません。",
