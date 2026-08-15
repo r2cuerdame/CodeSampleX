@@ -119,10 +119,23 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		}
 	}
 
-	if req.OS != "" && sam.OS != "" && !strings.EqualFold(req.OS, sam.OS) {
-		// OS is informational unless a failure-cluster boundary says
-		// otherwise (§11.4) — the cluster path handles that demotion.
-		out = append(out, dimComparison{samShow: osShow(sam), reqShow: osShow(req)})
+	// Agreement is recorded, not only difference.
+	//
+	// These three were appended ONLY when they disagreed, so a caller whose
+	// OS, architecture and libc all matched the sample saw none of them in
+	// the Exact list — the answer said "undici 8.10, node" and stayed
+	// silent about the machine, which is the part the reader came for. And
+	// a request that knows ONLY os/arch/libc produced no comparable
+	// dimension at all, so a perfect match was capped at COMPATIBLE for
+	// want of anything to compare.
+	if req.OS != "" && sam.OS != "" {
+		if strings.EqualFold(req.OS, sam.OS) {
+			out = append(out, dimComparison{equal: true, exactEntry: osShow(sam)})
+		} else {
+			// OS is informational unless a failure-cluster boundary says
+			// otherwise (§11.4) — the cluster path handles that demotion.
+			out = append(out, dimComparison{samShow: osShow(sam), reqShow: osShow(req)})
+		}
 	}
 
 	// Architecture and libc were not compared at all, so a caller on
@@ -138,11 +151,19 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 	// REFERENCE_ONLY: a pure-source sample really does carry across, and
 	// the honest statement is "this ran somewhere else, here is where",
 	// which costs the EXACT claim and keeps the answer.
-	if req.Arch != "" && sam.Arch != "" && !strings.EqualFold(req.Arch, sam.Arch) {
-		out = append(out, dimComparison{samShow: sam.Arch, reqShow: req.Arch})
+	if req.Arch != "" && sam.Arch != "" {
+		if strings.EqualFold(req.Arch, sam.Arch) {
+			out = append(out, dimComparison{equal: true, exactEntry: sam.Arch})
+		} else {
+			out = append(out, dimComparison{samShow: sam.Arch, reqShow: req.Arch})
+		}
 	}
-	if req.Libc != "" && sam.Libc != "" && !strings.EqualFold(req.Libc, sam.Libc) {
-		out = append(out, dimComparison{samShow: sam.Libc, reqShow: req.Libc})
+	if req.Libc != "" && sam.Libc != "" {
+		if strings.EqualFold(req.Libc, sam.Libc) {
+			out = append(out, dimComparison{equal: true, exactEntry: sam.Libc})
+		} else {
+			out = append(out, dimComparison{samShow: sam.Libc, reqShow: req.Libc})
+		}
 	}
 
 	return out

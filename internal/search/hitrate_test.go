@@ -624,3 +624,45 @@ func TestNamingThePackageSettlesTheEcosystem(t *testing.T) {
 		}
 	}
 }
+
+// os, arch and libc were appended ONLY when they disagreed, so a caller
+// whose machine matched the sample saw none of them in the Exact list —
+// the answer named the package and the runtime and stayed silent about the
+// machine, which is the part a reader came for. Worse, a request that
+// knows only those three produced no comparable dimension at all, so a
+// perfect match was capped at COMPATIBLE for want of anything to compare.
+func TestAMatchingMachineIsStatedAndCounts(t *testing.T) {
+	sam := alpineEnv("npm", "node", "22.18.1", "javascript") // linux/musl/x64
+	dims := compareEnv(sam, sam, "npm")
+
+	var sawOS, sawArch, sawLibc bool
+	for _, d := range dims {
+		if !d.equal {
+			continue
+		}
+		switch {
+		case strings.Contains(d.exactEntry, "linux"):
+			sawOS = true
+		case d.exactEntry == "x64":
+			sawArch = true
+		case d.exactEntry == "musl":
+			sawLibc = true
+		}
+	}
+	if !sawOS || !sawArch || !sawLibc {
+		t.Errorf("a matching machine is not stated: os=%v arch=%v libc=%v", sawOS, sawArch, sawLibc)
+	}
+
+	// A request that knows ONLY the machine still has something to compare,
+	// so a real match can reach EXACT.
+	machineOnly := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, OS: "linux", Arch: "x64", Libc: "musl",
+	}.Normalize()
+	got := compareEnv(machineOnly, sam, "npm")
+	if len(got) == 0 {
+		t.Fatal("a machine-only request compared nothing")
+	}
+	if g, _ := buildGrade(relExactVersion, got, contextDelta{}, false); g != domain.GradeExact {
+		t.Errorf("grade = %s on a machine that matches exactly", g)
+	}
+}
