@@ -38,8 +38,23 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		case strings.EqualFold(req.Runtime, sam.Runtime) &&
 			majorOf(req.RuntimeVersion) == majorOf(sam.RuntimeVersion):
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
+		// A version nobody stated is not a version that differs. The guard
+		// above only checks that both sides name a RUNTIME, then compares
+		// their VERSIONS — so a sample declaring runtime "node" with no
+		// version was read as a different major from any versioned request
+		// and forced to REFERENCE_ONLY, with the delta printing "Sample
+		// uses node, current project uses node 22" as though that were a
+		// difference.
+		//
+		// Found by asking the live network a real question: the sample that
+		// answered it exactly came back REFERENCE_ONLY at 0.35 while an
+		// unrelated sample for the same package took the top slot at 0.96,
+		// purely because the unrelated one happened to state a version.
+		case strings.EqualFold(req.Runtime, sam.Runtime) &&
+			(req.RuntimeVersion == "" || sam.RuntimeVersion == ""):
+			out = append(out, dimComparison{equal: true, exactEntry: samShow})
 		case strings.EqualFold(req.Runtime, sam.Runtime):
-			// Same runtime, different major: not an enumerable adaptation.
+			// Same runtime, KNOWN different major: not an enumerable adaptation.
 			out = append(out, dimComparison{samShow: samShow, reqShow: reqShow, refOnly: true})
 		default:
 			// Different runtime NAME is an execution-context divergence;
@@ -51,8 +66,12 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 	if req.Language != "" && sam.Language != "" {
 		reqShow := langShow(req.Language, req.LanguageVersion)
 		samShow := langShow(sam.Language, sam.LanguageVersion)
-		if strings.EqualFold(req.Language, sam.Language) &&
-			majorMinorOf(req.LanguageVersion) == majorMinorOf(sam.LanguageVersion) {
+		sameLang := strings.EqualFold(req.Language, sam.Language)
+		// Same reasoning as the runtime above: an unstated version is not a
+		// version that differs.
+		unknownVersion := req.LanguageVersion == "" || sam.LanguageVersion == ""
+		if sameLang && (unknownVersion ||
+			majorMinorOf(req.LanguageVersion) == majorMinorOf(sam.LanguageVersion)) {
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
 		} else {
 			out = append(out, dimComparison{samShow: samShow, reqShow: reqShow})
@@ -62,8 +81,10 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 	if req.Compiler != "" && sam.Compiler != "" {
 		reqShow := runtimeShow(req.Compiler, req.CompilerVersion)
 		samShow := runtimeShow(sam.Compiler, sam.CompilerVersion)
-		if strings.EqualFold(req.Compiler, sam.Compiler) &&
-			majorOf(req.CompilerVersion) == majorOf(sam.CompilerVersion) {
+		sameCompiler := strings.EqualFold(req.Compiler, sam.Compiler)
+		unknownCompilerVersion := req.CompilerVersion == "" || sam.CompilerVersion == ""
+		if sameCompiler && (unknownCompilerVersion ||
+			majorOf(req.CompilerVersion) == majorOf(sam.CompilerVersion)) {
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
 		} else {
 			d := dimComparison{samShow: samShow, reqShow: reqShow}

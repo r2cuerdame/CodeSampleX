@@ -491,3 +491,52 @@ func TestAnUnestablishedVersionCannotAssertADifferenceEither(t *testing.T) {
 		}
 	}
 }
+
+// A version nobody stated is not a version that differs.
+//
+// The runtime branch checked that both sides name a RUNTIME and then
+// compared their VERSIONS, so a sample declaring runtime "node" with no
+// version read as a different major from any versioned request — forced to
+// REFERENCE_ONLY, with the delta printing "Sample uses node, current
+// project uses node 22" as though that were a difference.
+//
+// Found by asking the live network a real question through MCP: the sample
+// that answered it exactly came back REFERENCE_ONLY at 0.35 while an
+// unrelated sample for the same package took the top slot at EXACT 0.96,
+// purely because the unrelated one happened to state a version.
+func TestAnUnstatedVersionIsNotADifferentVersion(t *testing.T) {
+	req := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", Runtime: "node", RuntimeVersion: "22.18",
+		Language: "javascript", LanguageVersion: "es2024", ModuleSystem: "esm",
+	}.Normalize()
+
+	// The sample names its runtime and language but no versions.
+	sam := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", Runtime: "node",
+		Language: "javascript", ModuleSystem: "esm",
+	}.Normalize()
+
+	dims := compareEnv(req, sam, "npm")
+	for _, d := range dims {
+		if d.refOnly {
+			t.Errorf("an unstated version forced REFERENCE_ONLY: sample %q vs request %q",
+				d.samShow, d.reqShow)
+		}
+	}
+	if g, _ := buildGrade(relExactVersion, dims, compareContext(req, sam), false); g == domain.GradeReferenceOnly {
+		t.Error("grade REFERENCE_ONLY on versions neither side compared")
+	}
+
+	// A version both sides DO state, and which really differs, still demotes.
+	known := sam
+	known.RuntimeVersion = "18.20"
+	var sawRefOnly bool
+	for _, d := range compareEnv(req, known.Normalize(), "npm") {
+		if d.refOnly {
+			sawRefOnly = true
+		}
+	}
+	if !sawRefOnly {
+		t.Error("node 18 against node 22 should still be REFERENCE_ONLY")
+	}
+}
