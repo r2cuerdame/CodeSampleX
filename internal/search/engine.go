@@ -369,9 +369,20 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		rel = relPackageOnly
 	}
 
+	// One entry per PACKAGE, however many of its versions the candidate
+	// declares. The key drops the version, so a sample declaring
+	// axios@1.12.0 and axios@1.13.0 collected the same symbol entries
+	// twice — and every observation count built from them came out
+	// doubled, in the numbers a caller reads as measurements.
 	var syms []shardSymbolEntry
+	seenPkg := map[string]bool{}
 	for _, p := range c.packages {
-		if pe := evidence[pkgKey(p)]; pe != nil {
+		k := pkgKey(p)
+		if seenPkg[k] {
+			continue
+		}
+		seenPkg[k] = true
+		if pe := evidence[k]; pe != nil {
 			syms = append(syms, pe.symbols...)
 		}
 	}

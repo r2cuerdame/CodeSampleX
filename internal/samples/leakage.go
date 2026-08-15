@@ -324,6 +324,17 @@ func scanContent(file, content string, opts ScanOptions, nameRes []*regexp.Regex
 				}
 				continue
 			}
+			// Credentials first, and regardless of the host. The allowlist
+			// answers "is it normal to link to this place", which is a
+			// different question from "is there a secret in this string" --
+			// so https://npm_token@registry.npmjs.org/ passed, because the
+			// host is exactly the one a sample is expected to reference.
+			// The lockfile branch above already checks this; source files,
+			// where a contributor actually types things, did not.
+			if credentialURL(m) {
+				out = append(out, Finding{File: file, Line: lineNo, Kind: KindURL, Excerpt: excerpt(m)})
+				continue
+			}
 			if !urlAllowed(m, opts.ExtraAllowedHosts) {
 				out = append(out, Finding{File: file, Line: lineNo, Kind: KindURL, Excerpt: excerpt(m)})
 			}

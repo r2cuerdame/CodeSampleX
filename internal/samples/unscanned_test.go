@@ -79,3 +79,44 @@ func write(t *testing.T, dir, name, body string) {
 		t.Fatal(err)
 	}
 }
+
+// The host allowlist answers "is it normal for a sample to link here",
+// which is a different question from "is there a secret in this string".
+// A source file could therefore carry
+// https://npm_token@registry.npmjs.org/ straight into a published sample,
+// because that host is exactly the one a sample is expected to reference.
+//
+// The lockfile branch had checked this from the beginning. Source files —
+// where a contributor actually types things — did not.
+func TestACredentialInAnAllowedURLIsStillCaught(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.mjs", "const feed = \"https://npm_secrettoken123@registry.npmjs.org/\";\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.File == "index.mjs" && f.Kind == KindURL {
+			return
+		}
+	}
+	t.Errorf("a token embedded in an allowed host's URL was not reported: %+v", findings)
+}
+
+// A plain URL to an allowed host is still fine — that is what the allowlist
+// is for, and flagging it would make the gate unusable.
+func TestAPlainAllowedURLIsNotAFinding(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.mjs", "const url = \"https://registry.npmjs.org/axios\";\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Kind == KindURL {
+			t.Errorf("an ordinary allowed URL was reported as a leak: %+v", f)
+		}
+	}
+}
