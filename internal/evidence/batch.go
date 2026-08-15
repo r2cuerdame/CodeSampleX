@@ -74,13 +74,19 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 		return 0, nil
 	}
 	sent := 0
+	// Rejections inside a 202 are collected and reported at the end. They
+	// are not retried: the server refused this exact payload and would
+	// refuse it again.
+	var refused []rejectedBatch
 	for pass := 0; pass < maxUploadPasses; pass++ {
 		batches, keys, err := b.build(ctx)
 		if err != nil {
 			return sent, err
 		}
 		if len(batches) == 0 {
-			return sent, nil
+			// Nothing left to send — but a refusal from an earlier pass
+			// still has to be reported, or it exits here as a clean run.
+			return sent, rejectionError(refused)
 		}
 		for start := 0; start < len(batches); start += uploadChunk {
 			end := min(start+uploadChunk, len(batches))
@@ -92,7 +98,8 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 			if err := b.DB.MarkObservationsUploaded(ctx, chunkKeys); err != nil {
 				return sent, err
 			}
-			if err := b.post(ctx, httpClient, serverURL, chunkBatches); err != nil {
+			accepted, rejected, err := b.post(ctx, httpClient, serverURL, chunkBatches)
+			if err != nil {
 				// Failed delivery: flip the rows back to pending. A
 				// zero-count re-record touches nothing but the flag.
 				for _, k := range chunkKeys {
@@ -100,10 +107,42 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 				}
 				return sent, err
 			}
-			sent += len(chunkBatches)
+			// What the server ACCEPTED, not what was handed to it. A 202
+			// carries {accepted, rejected:[{index, reason}]}, and treating
+			// the whole 2xx as success reported evidence as uploaded that
+			// the server had explicitly refused -- already marked uploaded
+			// locally, so it was gone, silently, with the count saying it
+			// had landed.
+			sent += accepted
+			refused = append(refused, rejected...)
 		}
 	}
-	return sent, nil
+	return sent, rejectionError(refused)
+}
+
+// rejectedBatch is one refused batch of an ingest reply, mirroring the C5
+// wire shape {index, reason}. It is declared here rather than imported from
+// the server package: this is a client, and the only thing it shares with
+// the server is the protocol.
+type rejectedBatch struct {
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
+}
+
+// rejectionError turns refused batches into one non-fatal error, so the
+// reason reaches the user instead of the evidence disappearing quietly.
+func rejectionError(refused []rejectedBatch) error {
+	if len(refused) == 0 {
+		return nil
+	}
+	reason := refused[0].Reason
+	if reason == "" {
+		reason = "no reason given"
+	}
+	if len(refused) == 1 {
+		return fmt.Errorf("evidence: the server refused 1 batch: %s", reason)
+	}
+	return fmt.Errorf("evidence: the server refused %d batches, first: %s", len(refused), reason)
 }
 
 // build assembles batches from pending rows without marking anything.
@@ -188,15 +227,19 @@ func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.Symbo
 }
 
 // post sends one batch payload; any non-2xx status is an error.
-func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL string, batches []domain.ObservationBatch) error {
+// post delivers one chunk and reports how many batches the server actually
+// took, plus the ones it refused.
+func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL string,
+	batches []domain.ObservationBatch) (int, []rejectedBatch, error) {
+
 	body, err := json.Marshal(map[string]any{"batches": batches})
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	url := strings.TrimSuffix(serverURL, "/") + "/v1/evidence/batches"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if client == nil {
@@ -204,7 +247,7 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	// Keep the server's reason: a bare status turned a one-line contract
@@ -213,9 +256,20 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		if detail := strings.TrimSpace(string(reply)); detail != "" {
-			return fmt.Errorf("evidence: upload: server returned %s: %s", resp.Status, detail)
+			return 0, nil, fmt.Errorf("evidence: upload: server returned %s: %s", resp.Status, detail)
 		}
-		return fmt.Errorf("evidence: upload: server returned %s", resp.Status)
+		return 0, nil, fmt.Errorf("evidence: upload: server returned %s", resp.Status)
 	}
-	return nil
+	// Accepted is a POINTER so "the field was absent" is distinguishable
+	// from "the server accepted zero". A 2xx with no ack body at all means
+	// the request was taken; reading that as zero-accepted would report
+	// every upload as having delivered nothing.
+	var ack struct {
+		Accepted *int            `json:"accepted"`
+		Rejected []rejectedBatch `json:"rejected"`
+	}
+	if json.Unmarshal(reply, &ack) != nil || ack.Accepted == nil {
+		return len(batches) - len(ack.Rejected), ack.Rejected, nil
+	}
+	return *ack.Accepted, ack.Rejected, nil
 }

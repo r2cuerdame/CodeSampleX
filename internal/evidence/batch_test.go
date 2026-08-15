@@ -118,8 +118,15 @@ func TestUploadPostsBatchesWithoutAnyPathLikeStrings(t *testing.T) {
 		if r.URL.Path != "/v1/evidence/batches" {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
+		// Ack what was actually sent, as the real server does: it replies
+		// {accepted, rejected:[{index,reason}]} and the client now counts
+		// what the server took rather than what it handed over.
+		var body struct {
+			Batches []json.RawMessage `json:"batches"`
+		}
+		_ = json.Unmarshal(raw, &body)
 		w.WriteHeader(http.StatusAccepted)
-		io.WriteString(w, `{"accepted":1,"rejected":[]}`)
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
 	}))
 	defer srv.Close()
 
@@ -255,7 +262,7 @@ func TestUploadChunksToServerLimit(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-		io.WriteString(w, `{"accepted":1,"rejected":[]}`)
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
 	}))
 	defer srv.Close()
 
