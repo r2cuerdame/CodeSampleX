@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // IsExcluded reports whether the user asked for this package to be left
 // out of everything that leaves the machine.
@@ -27,21 +30,38 @@ func (c *Config) IsExcluded(purl, ecosystem, name string) bool {
 	if c == nil || len(c.ExcludedPackages) == 0 {
 		return false
 	}
-	forms := []string{
-		strings.ToLower(purl),
-		strings.ToLower(stripVersion(purl)),
-		strings.ToLower(ecosystem + "/" + name),
-		strings.ToLower(name),
+	forms := map[string]bool{}
+	add := func(v string) {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			return
+		}
+		forms[v] = true
+		// A purl percent-encodes the parts of a name that are not
+		// path-safe, so PURL.String() renders @acme/widgets as
+		// pkg:npm/%40acme/widgets. Nobody types that, and comparing only
+		// the encoded form meant every scoped npm package — the most
+		// common shape there is — silently failed to match its own
+		// exclusion entry.
+		if dec, err := url.PathUnescape(v); err == nil {
+			forms[dec] = true
+		}
 	}
+	add(purl)
+	add(stripVersion(purl))
+	add(ecosystem + "/" + name)
+	add(name)
+
 	for _, raw := range c.ExcludedPackages {
 		e := strings.ToLower(strings.TrimSpace(raw))
 		if e == "" {
 			continue
 		}
-		for _, f := range forms {
-			if f != "" && f == e {
-				return true
-			}
+		if forms[e] {
+			return true
+		}
+		if dec, err := url.PathUnescape(e); err == nil && forms[dec] {
+			return true
 		}
 	}
 	return false

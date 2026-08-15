@@ -39,10 +39,15 @@ type identityFile struct {
 // identity (file mode 0600) if none exists.
 func LoadOrCreate(home string) (*Identity, error) {
 	path := filepath.Join(home, "identity.json")
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return create(home, path)
 	}
+	return loadExisting(path)
+}
+
+// loadExisting parses an identity file that is already on disk.
+func loadExisting(path string) (*Identity, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("identity: load: %w", err)
 	}
@@ -89,7 +94,32 @@ func create(home, path string) (*Identity, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, fmt.Errorf("identity: save: %w", err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	// Create EXCLUSIVELY. os.WriteFile truncates, so every process that
+	// started at the same moment and found no identity generated one and
+	// wrote over the others: eight concurrent callers on a fresh home
+	// produced eight different peer IDs, seven of them discarded on disk
+	// while each caller kept using the key it had made in memory.
+	//
+	// The daemon, the MCP server and a CLI command all start together on a
+	// first run, so this is the ordinary path rather than an unlucky one.
+	// The anonSeed is what every rotating evidence ID is derived from, so
+	// disagreeing about it makes one machine count as several independent
+	// peers — the exact inflation the server side was just fixed to stop,
+	// arriving from the client instead.
+	//
+	// Whoever creates the file first wins; everyone else reads it.
+	fh, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return loadExisting(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("identity: save: %w", err)
+	}
+	if _, err := fh.Write(raw); err != nil {
+		fh.Close()
+		return nil, fmt.Errorf("identity: save: %w", err)
+	}
+	if err := fh.Close(); err != nil {
 		return nil, fmt.Errorf("identity: save: %w", err)
 	}
 	return &Identity{priv: priv, anonSeed: seed}, nil

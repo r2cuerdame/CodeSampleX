@@ -184,6 +184,23 @@ func (a *api) withHotShards(ctx context.Context, statsJSON string) string {
 // excluding expired announcements.
 func (a *api) handlePeersForSample(w http.ResponseWriter, r *http.Request) {
 	sampleID := r.PathValue("sampleId")
+	// Quarantine says it hides the sample from EVERY serving read, and the
+	// operator is told so. The sample endpoint and the artifact endpoint
+	// honoured it; this one did not, so a takedown still handed out a list
+	// of peers who have the bytes — and the peer fetch chain tries peers
+	// before the seeder, which is precisely how a client would still get
+	// the sample the operator had just removed.
+	if row, ok, err := a.d.Store.GetSample(r.Context(), sampleID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
+		return
+	} else if ok && row.Quarantined {
+		// Only a KNOWN, quarantined sample is suppressed. The tracker is
+		// deliberately decoupled from the sample table — a peer may
+		// announce before the server has ingested the row — so an unknown
+		// id is served as before rather than silently emptied.
+		writeJSON(w, http.StatusOK, map[string]any{"schemaVersion": 1, "peers": []any{}})
+		return
+	}
 	rows, err := a.d.Store.PeersForSample(r.Context(), sampleID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "peer lookup failed")
