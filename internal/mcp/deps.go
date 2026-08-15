@@ -652,6 +652,11 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 		}
 		stats["mode"] = mode
 	}
+	// A stale build makes every other number here suspect: they were
+	// produced by code the user has already replaced.
+	if n := staleBuildNotice(); n != "" {
+		stats["staleBuild"] = n
+	}
 	if n, err := db.CountHits(ctx); err == nil {
 		stats["hits"] = n
 	}
