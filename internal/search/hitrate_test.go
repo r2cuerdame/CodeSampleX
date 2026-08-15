@@ -578,3 +578,49 @@ func TestADifferentPackageIsAMissNotAReference(t *testing.T) {
 		t.Errorf("answered with %s", ok.Results[0].SampleID)
 	}
 }
+
+// A question that names no language is genuinely ambiguous — "run at most
+// N async operations at once" is answered by p-limit on npm and by
+// package:pool on Dart, and neither is wrong. What must NOT be ambiguous is
+// what happens once the caller names a package: that settles the ecosystem
+// completely, and the other one must not win on lexical similarity.
+//
+// Measured on the live network, where both samples exist and the bare
+// question returned the Dart one.
+func TestNamingThePackageSettlesTheEcosystem(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	for _, s := range []struct {
+		id, goal, purl string
+		env            domain.EnvironmentFingerprint
+	}{
+		{"sha256:plimit1", "Cap how many async tasks run at once with p-limit",
+			"pkg:npm/p-limit@7.1.1", alpineEnv("npm", "node", "22.18.1", "javascript")},
+		{"sha256:pool1", "Run at most N async operations at once in Dart with package:pool",
+			"pkg:pub/pool@1.5.1", alpineEnv("pub", "dart", "3.9.0", "dart")},
+	} {
+		m := mkManifest(s.goal, []string{s.purl}, s.env)
+		if err := SeedSampleDoc(ctx, db, m, s.id, "PUBLISHED"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &testEngine{Engine{DB: db}, ctx}
+
+	for _, tc := range []struct{ pkg, want string }{
+		{"pkg:npm/p-limit@7.1.1", "sha256:plimit1"},
+		{"pkg:pub/pool@1.5.1", "sha256:pool1"},
+	} {
+		r := e.Search(ctx, domain.SearchRequest{
+			SchemaVersion: 1,
+			Query:         "run at most N async operations at once",
+			Packages:      []string{tc.pkg},
+		})
+		if r.Miss || len(r.Results) == 0 {
+			t.Errorf("%s: missed", tc.pkg)
+			continue
+		}
+		if r.Results[0].SampleID != tc.want {
+			t.Errorf("%s answered with %s, want %s", tc.pkg, r.Results[0].SampleID, tc.want)
+		}
+	}
+}
