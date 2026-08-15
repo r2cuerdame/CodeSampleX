@@ -57,10 +57,22 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 			Symbol:    row.Symbol,
 			Asks:      row.Asks,
 			AsksText:  i18n.FormatInt(lang, row.Asks),
-			Href:      b.WithLang(pkgHref(row.Ecosystem, row.Name)),
+			// Only linked when there is something to link to.
+			Href: hrefIf(row.HasPage, b, row.Ecosystem, row.Name),
 		})
 	}
 	s.render(w, "wanted", http.StatusOK, wantedPage{
 		basePage: b, Items: items, Total: len(items),
 	})
+}
+
+// hrefIf returns the package-page link only when that page exists. A
+// wanted row names a package with no sample; one with no evidence either
+// has no page, and linking it sent the reader to a 404 from the one board
+// that is meant to be a to-do list.
+func hrefIf(has bool, b basePage, eco, name string) string {
+	if !has {
+		return ""
+	}
+	return b.WithLang(pkgHref(eco, name))
 }

@@ -1366,6 +1366,11 @@ type WantedRow struct {
 	Asks      int64
 	FirstSeen time.Time
 	LastSeen  time.Time
+	// HasPage reports whether an explorer page exists for this package. A
+	// wanted row is by definition a package with no sample, and one with no
+	// evidence either has no page at all — so linking every row produced a
+	// board of 404s.
+	HasPage bool
 }
 
 // RecordWanted counts one anonymous report that the network had no answer
@@ -1419,7 +1424,9 @@ func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
 	var out []WantedRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT w.ecosystem, w.name, w.symbol, w.asks, w.first_seen, w.last_seen
+			SELECT w.ecosystem, w.name, w.symbol, w.asks, w.first_seen, w.last_seen,
+			       EXISTS (SELECT 1 FROM packages p
+			                WHERE p.ecosystem = w.ecosystem AND p.name = w.name) AS has_page
 			  FROM wanted w
 			 WHERE NOT EXISTS (
 			       SELECT 1 FROM samples s
@@ -1436,7 +1443,7 @@ func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
 		for rows.Next() {
 			var r WantedRow
 			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Symbol, &r.Asks,
-				&r.FirstSeen, &r.LastSeen); err != nil {
+				&r.FirstSeen, &r.LastSeen, &r.HasPage); err != nil {
 				return err
 			}
 			out = append(out, r)

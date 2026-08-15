@@ -381,7 +381,8 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	out := make([]web.WantedRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, web.WantedRow{
-			Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol, Asks: r.Asks,
+			Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol,
+			Asks: r.Asks, HasPage: r.HasPage,
 		})
 	}
 	return out, nil

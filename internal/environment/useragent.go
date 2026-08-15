@@ -17,17 +17,17 @@ type BrowserContext struct {
 }
 
 var (
-	reElectron   = regexp.MustCompile(`Electron/(\d+)`)
-	reEdge       = regexp.MustCompile(`Edg[eA]?/(\d+)`)
-	reOPR        = regexp.MustCompile(`OPR/(\d+)`)
-	reChrome     = regexp.MustCompile(`Chrome/(\d+)`)
-	reFirefox    = regexp.MustCompile(`Firefox/(\d+)`)
-	reSafariVer  = regexp.MustCompile(`Version/(\d+)`)
-	reWebKit     = regexp.MustCompile(`AppleWebKit/(\d+)`)
-	reAndroidWV  = regexp.MustCompile(`; wv\)`)
-	reMobileiOS  = regexp.MustCompile(`\((iPhone|iPad|iPod)`)
-	reSafariTok  = regexp.MustCompile(`Safari/\d`)
-	reHeadless   = regexp.MustCompile(`HeadlessChrome/(\d+)`)
+	reElectron  = regexp.MustCompile(`Electron/(\d+)`)
+	reEdge      = regexp.MustCompile(`Edg[eA]?/(\d+)`)
+	reOPR       = regexp.MustCompile(`OPR/(\d+)`)
+	reChrome    = regexp.MustCompile(`Chrome/(\d+)`)
+	reFirefox   = regexp.MustCompile(`Firefox/(\d+)`)
+	reSafariVer = regexp.MustCompile(`Version/(\d+)`)
+	reWebKit    = regexp.MustCompile(`AppleWebKit/(\d+)`)
+	reAndroidWV = regexp.MustCompile(`; wv\)`)
+	reMobileiOS = regexp.MustCompile(`\((iPhone|iPad|iPod)`)
+	reSafariTok = regexp.MustCompile(`Safari/\d`)
+	reHeadless  = regexp.MustCompile(`HeadlessChrome/(\d+)`)
 )
 
 // ParseUserAgent normalizes a User-Agent into a BrowserContext.

@@ -418,6 +418,24 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		score = 0
 	}
 
+	// A caller who NAMED packages and got a sample about none of them has
+	// not been answered. relNone was graded REFERENCE_ONLY and returned, so
+	// "parse a large CSV lazily without loading it into memory" with
+	// pkg:pypi/polars named came back with an Elixir nimble_csv sample: a
+	// different package, a different language, honestly labelled and still
+	// not an answer.
+	//
+	// Worse than the noise: a returned result is not a miss, so the
+	// question was never recorded as wanted and nobody learned that a
+	// polars sample was needed. The wrong answer displaced the demand
+	// signal that would have fixed it.
+	//
+	// The server-side search already drops these candidates outright. This
+	// makes the two implementations agree.
+	if rel == relNone {
+		score = 0
+	}
+
 	res := domain.SearchResult{
 		Grade:         grade,
 		Confidence:    summary.Confidence,

@@ -55,3 +55,21 @@ func TestWantedPageStatesThatQuestionsStayLocal(t *testing.T) {
 	body := get(t, mux, "/wanted").Body.String()
 	mustContain(t, body, "stays on the machine that asked")
 }
+
+// A wanted package is by definition one with no sample, and usually with no
+// evidence either — so it usually has no explorer page. Linking every row
+// turned the one board that is meant to be a to-do list into a board of
+// 404s: /npm/puppeteer?lang=ko, reported by a reader.
+func TestAWantedRowWithNoPageIsNotALink(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.wanted = []WantedRow{
+		{Ecosystem: "npm", Name: "puppeteer", Asks: 3},             // nothing known yet
+		{Ecosystem: "npm", Name: "undici", Asks: 2, HasPage: true}, // has evidence
+	}
+	body := get(t, mux, "/wanted").Body.String()
+	mustContain(t, body, "npm/puppeteer")
+	if strings.Contains(body, `href="/npm/puppeteer"`) {
+		t.Error("linked a package page that does not exist")
+	}
+	mustContain(t, body, `href="/npm/undici"`)
+}

@@ -82,6 +82,10 @@ type WantedRow struct {
 	Name      string
 	Symbol    string
 	Asks      int64
+	// HasPage reports whether an explorer page exists for this package.
+	// A wanted package usually has neither sample nor evidence, so linking
+	// every row made a board of 404s.
+	HasPage bool
 }
 
 // SampleMeta is the sample header the sample page renders.

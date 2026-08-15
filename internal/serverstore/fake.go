@@ -908,7 +908,14 @@ func (f *Fake) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
 		if answered[w.Ecosystem+"/"+w.Name] {
 			continue
 		}
-		out = append(out, *w)
+		row := *w
+		for _, p := range f.packages {
+			if p.Ecosystem == row.Ecosystem && p.Name == row.Name {
+				row.HasPage = true
+				break
+			}
+		}
+		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Asks != out[j].Asks {

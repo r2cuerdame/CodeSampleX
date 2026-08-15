@@ -144,13 +144,13 @@ func TestMalformedIDRejected(t *testing.T) {
 		"sha256:",
 		"sha256:short",
 		"md5:" + strings.Repeat("ab", 32),
-		strings.Repeat("ab", 32),                       // missing prefix
-		"sha256:" + strings.Repeat("AB", 32),           // uppercase hex
-		"sha256:" + strings.Repeat("zz", 32),           // non-hex
-		"sha256:" + strings.Repeat("ab", 32) + "cd",    // too long
-		"sha256:../../" + strings.Repeat("ab", 28),     // traversal attempt
-		"sha256:aa/bb/" + strings.Repeat("cd", 29),     // separator smuggling
-		"sha256:aa\\bb\\" + strings.Repeat("cd", 29),   // windows separator
+		strings.Repeat("ab", 32),             // missing prefix
+		"sha256:" + strings.Repeat("AB", 32), // uppercase hex
+		"sha256:" + strings.Repeat("zz", 32), // non-hex
+		"sha256:" + strings.Repeat("ab", 32) + "cd",  // too long
+		"sha256:../../" + strings.Repeat("ab", 28),   // traversal attempt
+		"sha256:aa/bb/" + strings.Repeat("cd", 29),   // separator smuggling
+		"sha256:aa\\bb\\" + strings.Repeat("cd", 29), // windows separator
 	}
 	for _, id := range bad {
 		if s.Has(id) {

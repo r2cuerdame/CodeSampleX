@@ -540,3 +540,41 @@ func TestAnUnstatedVersionIsNotADifferentVersion(t *testing.T) {
 		t.Error("node 18 against node 22 should still be REFERENCE_ONLY")
 	}
 }
+
+// A caller who NAMED packages and got a sample about none of them has not
+// been answered. relNone was graded REFERENCE_ONLY and RETURNED, so "parse
+// a large CSV lazily without loading it into memory" with pkg:pypi/polars
+// named came back with an Elixir nimble_csv sample — a different package
+// in a different language, honestly labelled and still not an answer.
+//
+// The cost is not only the noise. A returned result is not a miss, so the
+// question was never recorded as wanted and nobody learned that a polars
+// sample was needed: the wrong answer displaced the demand signal that
+// would have fixed it.
+func TestADifferentPackageIsAMissNotAReference(t *testing.T) {
+	e, _ := seedCorpus(t)
+	r := e.Search(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "render a react component to an html string",
+		Packages:      []string{"pkg:npm/preact@10.28.1"}, // no sample names preact
+		Environment:   goEnv(),
+	})
+	if !r.Miss || len(r.Results) > 0 {
+		t.Errorf("answered a preact question with %d result(s): %v",
+			len(r.Results), r.Results[0].Case.Goal)
+	}
+
+	// Naming a package the network DOES have still answers.
+	ok := e.Search(e.ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "render a react component to an html string",
+		Packages:      []string{"pkg:npm/react-dom@19.2.8"},
+		Environment:   goEnv(),
+	})
+	if ok.Miss || len(ok.Results) == 0 {
+		t.Fatal("naming a package the network has should still answer")
+	}
+	if ok.Results[0].SampleID != "sha256:react1" {
+		t.Errorf("answered with %s", ok.Results[0].SampleID)
+	}
+}
