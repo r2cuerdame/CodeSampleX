@@ -382,9 +382,14 @@ func TestSingleInstanceLockRefusesSecondDaemon(t *testing.T) {
 }
 
 func TestSyncEndpointWarmsShardsAndToleratesOffline(t *testing.T) {
-	// Fake server: stats advertises one HOT shard, only the axios shard
-	// body exists.
+	// Fake server: stats advertises one HOT shard, and both shards exist.
+	//
+	// Only axios used to exist here, and the test still asserted two warmed
+	// keys -- which passed only because a 404 was counted as a warm. That
+	// is the exact miscount the warmed number was introduced to end, so the
+	// fixture now serves what it claims the client warmed.
 	shardBody := `{"schemaVersion":1,"key":"npm/axios/1","generatedAt":"2026-08-13T00:00:00Z","packages":[]}`
+	hotBody := `{"schemaVersion":1,"key":"npm/left-pad/1","generatedAt":"2026-08-13T00:00:00Z","packages":[]}`
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -395,6 +400,12 @@ func TestSyncEndpointWarmsShardsAndToleratesOffline(t *testing.T) {
 			w.Header().Set("ETag", `"e1"`)
 			w.Header().Set("Content-Type", "application/json")
 			io.WriteString(w, shardBody)
+			return
+		}
+		if strings.Contains(r.URL.Path, "left-pad") {
+			w.Header().Set("ETag", `"e2"`)
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, hotBody)
 			return
 		}
 		http.NotFound(w, r)
