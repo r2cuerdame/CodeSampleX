@@ -75,6 +75,38 @@ type SearchResult struct {
 	KnownFailures []KnownFailure  `json:"knownFailures,omitempty"`
 }
 
+// ConfidenceReason explains, in one clause, what this result's confidence
+// level is actually about.
+//
+// Confidence is a statement about INDEPENDENCE: MEDIUM needs two separate
+// machines to have run the thing, HIGH needs three plus volume. On a young
+// network almost nothing has that, so almost every answer reads
+// "CONFIDENCE: LOW" -- next to a sample whose contract passed in a pinned
+// container with the network off. A reader takes that as "this answer is
+// probably wrong", which is not what it says and not what the evidence
+// shows. Naming the reason costs one clause and stops the label from
+// arguing against the evidence printed beside it.
+func (r SearchResult) ConfidenceReason() string {
+	e := r.Evidence
+	independence := e.IndependentCrossPeers
+	if e.UniquePeerBuckets > independence {
+		independence = e.UniquePeerBuckets
+	}
+	switch {
+	case r.Confidence == "HIGH":
+		return ""
+	case independence >= 2:
+		return "" // the label is already carrying its own weight
+	case e.ContractPasses > 0 && independence <= 1:
+		return "its contract passed here, but only one machine has run it; " +
+			"independent runs are what raises this"
+	case e.ProjectCompileObservations == 0 && e.ContractPasses == 0:
+		return "nothing has been observed or verified for this yet"
+	default:
+		return "only one machine has reported on this so far"
+	}
+}
+
 // SearchResponse: Miss=true means NO_SAFE_MATCH — deliberately better than
 // a wrong HIT (goal.md §3.8).
 type SearchResponse struct {

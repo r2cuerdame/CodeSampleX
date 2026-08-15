@@ -531,7 +531,11 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 			b.WriteString("\n--- alternative " + strconv.Itoa(i+1) + " ---\n\n")
 		}
 		b.WriteString("MATCH: " + string(r.Grade) + "\n")
-		b.WriteString("CONFIDENCE: " + r.Confidence + "\n\n")
+		b.WriteString("CONFIDENCE: " + r.Confidence)
+		if why := r.ConfidenceReason(); why != "" {
+			b.WriteString(" — " + why)
+		}
+		b.WriteString("\n\n")
 		writeSection(&b, "Exact", r.Exact)
 		writeSection(&b, "Different", r.Different)
 		writeSection(&b, "Adaptation needed", r.Adaptation)

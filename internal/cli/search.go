@@ -220,7 +220,11 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintf(w, "MATCH: %s\n", r.Grade)
-		fmt.Fprintf(w, "CONFIDENCE: %s\n", r.Confidence)
+		if why := r.ConfidenceReason(); why != "" {
+			fmt.Fprintf(w, "CONFIDENCE: %s — %s\n", r.Confidence, why)
+		} else {
+			fmt.Fprintf(w, "CONFIDENCE: %s\n", r.Confidence)
+		}
 		if r.Case != nil && r.Case.Goal != "" {
 			fmt.Fprintf(w, "GOAL: %s\n", r.Case.Goal)
 		}
