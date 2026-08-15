@@ -116,7 +116,13 @@ func (n *Node) Announce(ctx context.Context) error {
 			return fmt.Errorf("peer: announce: list samples: %w", err)
 		}
 		for _, r := range rows {
-			if r.HasArtifact {
+			// PUBLISHED only. A sample the user created but never published
+			// is a draft — commonly cut from the private repository they
+			// are working in — and announcing it offered that draft's
+			// artifact to anyone who learned the id, which the announce
+			// itself hands to the tracker. The network has no business
+			// distributing something its author has not published.
+			if r.HasArtifact && publishedStatus(r.Status) {
 				ids = append(ids, r.SampleID)
 			}
 		}
@@ -190,4 +196,15 @@ func (n *Node) StartAnnouncing(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// publishedStatus reports whether a local row describes a sample that is
+// actually on the network. "LOCAL" and "LOCAL_PASS" are drafts: created
+// here, verified here, never uploaded.
+func publishedStatus(status string) bool {
+	switch status {
+	case "PUBLISHED", "CROSS_PASS", "MATRIX_PASS", "STABLE":
+		return true
+	}
+	return false
 }

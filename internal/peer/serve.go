@@ -28,6 +28,16 @@ func (n *Node) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// Defence in depth: even with a correct id, only a PUBLISHED
+		// sample is served. The announce loop no longer offers drafts, and
+		// this makes a leaked or guessed id useless against one too.
+		if n.DB != nil {
+			row, ok, derr := n.DB.GetSample(r.Context(), id)
+			if derr != nil || !ok || !publishedStatus(row.Status) {
+				http.NotFound(w, r)
+				return
+			}
+		}
 		rc, err := n.CAS.Get(id)
 		if err != nil {
 			// Missing and malformed ids alike are a plain 404: peers learn
