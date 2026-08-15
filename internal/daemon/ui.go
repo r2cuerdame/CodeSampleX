@@ -118,7 +118,7 @@ func modeLabel(mode string) string {
 	case "community":
 		return "COMMUNITY — anonymous evidence sharing on"
 	case "local-only":
-		return "LOCAL ONLY — nothing leaves this machine"
+		return "LOCAL ONLY — nothing about your projects leaves this machine"
 	default:
 		return "UNINITIALIZED — run csx init"
 	}

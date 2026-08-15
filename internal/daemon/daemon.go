@@ -342,7 +342,20 @@ func (d *Daemon) warmNow(ctx context.Context) (int, error) {
 // entries, deduplicated in that priority order (search.WarmKeys).
 func (d *Daemon) warmKeyList(ctx context.Context) []string {
 	var recent []domain.PURL
-	if rows, err := d.DB.ListPackages(ctx); err == nil {
+	// LOCAL ONLY means nothing about YOUR PROJECTS leaves, and a shard
+	// request names a package: GET /v1/shards/npm/left-pad/1, one per
+	// dependency, from one address. Over a session that is the whole
+	// dependency tree — which is exactly what the contract screen lists
+	// under what a COMMUNITY member contributes, arriving from someone who
+	// was told nothing would.
+	//
+	// The HOT list below is the server's own popularity ranking: the same
+	// for everyone, revealing nothing but that csx is installed. Pinned
+	// packages are named by the user in their own config, which is a
+	// choice they made. Neither is derived from what they happen to have
+	// installed, so both stay.
+	localOnly := d.Cfg.Mode == config.ModeLocalOnly
+	if rows, err := d.DB.ListPackages(ctx); err == nil && !localOnly {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastSeen.After(rows[j].LastSeen) })
 		for _, r := range rows {
 			if r.Publicness != "PUBLIC" {

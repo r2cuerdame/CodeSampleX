@@ -105,7 +105,19 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 	})
 
 	// (3) Absolute and relative paths.
-	s = reWinPath.ReplaceAllString(s, "<path>")
+	//
+	// The boundary guard must be PUT BACK. Replacing the whole match with
+	// "<path>" swallowed the delimiter, and when that delimiter was a quote
+	// the remaining quotes re-paired against the wrong partners: for
+	//
+	//   open "C:\...\config.json" failed; password "hunter2pass" rejected
+	//
+	// step (3) left `open <path>" failed; password "hunter2pass" rejected`,
+	// so step (6) matched `" failed; password "` as the quoted literal and
+	// the PASSWORD survived into the template — which is returned to the
+	// agent, and hashed into the fingerprint that gets uploaded. The unix
+	// branch already restored it; this one did not.
+	s = reWinPath.ReplaceAllString(s, "${1}<path>")
 	s = reUnixPath.ReplaceAllString(s, "${1}<path>")
 	s = reRelPath.ReplaceAllString(s, "<path>")
 

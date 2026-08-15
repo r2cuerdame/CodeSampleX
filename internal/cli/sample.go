@@ -521,7 +521,7 @@ func samplePreview(ctx context.Context, args []string) int {
 		}
 	}
 
-	findings, err := samples.Scan(dir, samples.ScanOptions{})
+	findings, err := samples.Scan(dir, samples.ProvenanceOptions(dir))
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample preview: leakage scan: %v\n", err)
 		return 1
@@ -682,7 +682,11 @@ func samplePublish(ctx context.Context, args []string) int {
 
 	// Leakage re-scan at publish time; findings always refuse (no override
 	// flag exists in v1 — fix the files and re-create the sample).
-	findings, err := samples.Scan(dir, samples.ScanOptions{})
+	// The provenance names come from where the CONTRIBUTOR is standing,
+	// not from the unpacked temp copy: the sample tree cannot know which
+	// project it was written inside. Both fields were empty at every call
+	// site, so this check compiled no patterns and matched nothing.
+	findings, err := samples.Scan(dir, publishProvenance())
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample publish: leakage scan: %v\n", err)
 		return 1
@@ -907,4 +911,16 @@ func samplePending(ctx context.Context, args []string) int {
 	fmt.Fprintln(sampleStdout, "file that would be published, and nothing leaves your machine until you")
 	fmt.Fprintln(sampleStdout, "type the confirmation in `csx sample publish <id>`.")
 	return 0
+}
+
+// publishProvenance derives the project-identifying names for the publish
+// gate. The sample has been unpacked to a temp directory by then, so the
+// names have to come from where the user is running the command — which is
+// their project, in every real case.
+func publishProvenance() samples.ScanOptions {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return samples.ScanOptions{}
+	}
+	return samples.ProvenanceOptions(cwd)
 }

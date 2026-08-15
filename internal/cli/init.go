@@ -211,7 +211,13 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 	fmt.Fprintln(out, strings.TrimRight(contractText, "\n"))
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  1) JOIN COMMUNITY   share anonymous public-package evidence, get the network")
-	fmt.Fprintln(out, "  2) LOCAL ONLY       nothing ever leaves this machine")
+	// "nothing ever leaves this machine" was not literally true and could
+	// not be: warming the cache is a request to the server. What is true,
+	// and is what the reader is actually deciding about, is that nothing
+	// ABOUT THEIR PROJECTS leaves — no packages, no versions, no symbols,
+	// no results. The cache warms from the server's own popularity list,
+	// which is identical for everyone.
+	fmt.Fprintln(out, "  2) LOCAL ONLY       nothing about your projects ever leaves this machine")
 	for {
 		fmt.Fprint(out, "Choose [1/2] (default 1): ")
 		line, err := in.ReadString('\n')

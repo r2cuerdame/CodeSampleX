@@ -64,7 +64,7 @@ func CreateFromDir(ctx context.Context, dir string, manifest domain.SampleManife
 		return nil, fmt.Errorf("samples: write csx.json: %w", err)
 	}
 
-	findings, err := Scan(dir, ScanOptions{})
+	findings, err := Scan(dir, ProvenanceOptions(dir))
 	if err != nil {
 		return nil, fmt.Errorf("samples: leakage scan: %w", err)
 	}

@@ -120,8 +120,6 @@ func TestBuildArtifactTarShapeCanonical(t *testing.T) {
 func TestBuildArtifactRejectsForbiddenEntries(t *testing.T) {
 	cases := []string{
 		".git/config",
-		"venv/lib/a.py",
-		".venv/lib/a.py",
 		".env",
 		"config/.env",
 	}
@@ -155,6 +153,7 @@ func TestBuildArtifactSkipsWhatRunningTheCheckLeavesBehind(t *testing.T) {
 		".dart_tool/package_config.json",
 		".bundle/config",
 		"src/__pycache__/mod.cpython-312.pyc",
+		".venv/lib/python3.13/site-packages/x.py",
 	} {
 		t.Run(rel, func(t *testing.T) {
 			dir := sampleFixture(t)
