@@ -20,6 +20,12 @@ type netStats struct {
 	Evidence           int64   `json:"evidence"`
 	VerifiedSamples    int64   `json:"verifiedSamples"`
 	PostHitSuccessRate float64 `json:"postHitSuccessRate"`
+	// PostHitBuildsReported is the denominator. Deciding "not measured" from
+	// the RATE hid a real result: adoption reports arrive, every reported
+	// build fails, the rate is a genuine 0% — and the page rendered an em
+	// dash, which here means "nobody has told us". The one number worth
+	// showing was the one it refused to show.
+	PostHitBuildsReported int64 `json:"postHitBuildsReported"`
 	// EstimatedReasoningAvoided is an estimate carried WITH its reasoning:
 	// the producer emits {value, formula, estimated, assumptions} so the
 	// figure can never be mistaken for a measurement. Decoding it as a bare
@@ -133,7 +139,7 @@ func buildTiles(lang string, st *netStats) []statTile {
 		// whether to install reads the first one.
 		statTile{
 			Label: i18n.T(lang, "stats.post_hit_success"),
-			Value: notYetMeasured(int64(st.PostHitSuccessRate*10000), pct(st.PostHitSuccessRate)),
+			Value: notYetMeasured(st.PostHitBuildsReported, pct(st.PostHitSuccessRate)),
 		},
 		statTile{
 			Label:     i18n.T(lang, "stats.reasoning_avoided"),

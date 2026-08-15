@@ -652,10 +652,14 @@ func recordsHref(q string, page int, lang string) string {
 type receiptView struct {
 	Context    string
 	Capability string
-	Stages     string
-	Verifier   string
-	CreatedAt  string
-	PeerID     string
+	// Contract is the contract stage's own result, kept apart from the
+	// rendered Stages string so the page can ask whether one actually
+	// passed rather than parsing its own display text.
+	Contract  string
+	Stages    string
+	Verifier  string
+	CreatedAt string
+	PeerID    string
 }
 
 // descPackageLimit caps how many packages the meta description names.
@@ -709,12 +713,27 @@ type samplePageData struct {
 }
 
 // levelBadge maps a sample status to the honest verification level
-// (goal.md §6.2): publication implies a local contract pass, nothing more.
-func levelBadge(status string) string {
+// (goal.md §6.2).
+//
+// PUBLISHED was mapped straight to L3_CONTRACT_PASS — "the sample's
+// intended behaviour was verified" — on the assumption that publication
+// implies a local contract pass. Nothing enforces that: `csx sample
+// publish` does not require `csx sample verify`, and a POST to /v1/samples
+// needs no receipt at all, so a sample the network had never run carried a
+// badge saying its contract had passed. That is the wrong claim in the
+// direction that flatters, on the page a reader goes to in order to decide
+// whether to trust it.
+//
+// contractPassed is whether any receipt actually records one. Without it a
+// published sample is source that arrived, which is exactly L0.
+func levelBadge(status string, contractPassed bool) string {
 	switch status {
 	case "LOCAL":
 		return string(domain.L0SourceOnly)
 	case "LOCAL_PASS", "PUBLISHED":
+		if !contractPassed {
+			return string(domain.L0SourceOnly)
+		}
 		return string(domain.L3ContractPass)
 	case "CROSS_PASS":
 		return string(domain.L4CrossPass)
@@ -757,6 +776,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 			receipts = append(receipts, receiptView{
 				Context:    rec.Environment.ContextLabel(),
 				Capability: string(rec.SandboxCapability),
+				Contract:   rec.Stages["contract"],
 				Stages:     strings.Join(parts, " · "),
 				Verifier:   rec.VerifierAdapter,
 				CreatedAt:  datePart(rec.CreatedAt),
@@ -843,7 +863,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
-		Level: levelBadge(meta.Status), Context: ctx, Goal: goal,
+		Level: levelBadge(meta.Status, anyContractPass(receipts)), Context: ctx, Goal: goal,
 		Packages: refs, Receipts: receipts,
 	})
 }
@@ -931,4 +951,15 @@ var confidenceKey = map[string]string{
 	"EXACT":    "adapters.conf_exact",
 	"PROBABLE": "adapters.conf_probable",
 	"UNKNOWN":  "adapters.conf_unknown",
+}
+
+// anyContractPass reports whether any receipt on this sample records a
+// contract that actually passed.
+func anyContractPass(receipts []receiptView) bool {
+	for _, r := range receipts {
+		if strings.EqualFold(r.Contract, "PASS") {
+			return true
+		}
+	}
+	return false
 }

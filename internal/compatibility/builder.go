@@ -693,9 +693,13 @@ type StatsDoc struct {
 	VerifiedSamples int64 `json:"verifiedSamples"`
 	// PostHitSuccessRate is 0..1; PostHitBuildPass keeps the honest note
 	// that no adoption data has been collected yet.
-	PostHitSuccessRate        float64         `json:"postHitSuccessRate"`
-	PostHitBuildPass          PlaceholderStat `json:"postHitBuildPass"`
-	EstimatedReasoningAvoided EstimatedStat   `json:"estimatedReasoningAvoided"`
+	PostHitSuccessRate float64         `json:"postHitSuccessRate"`
+	PostHitBuildPass   PlaceholderStat `json:"postHitBuildPass"`
+	// PostHitBuildsReported is the DENOMINATOR: adoption reports that
+	// carried a build outcome either way. It exists so a reader can tell a
+	// measured 0% from an unmeasured one, which the rate alone cannot say.
+	PostHitBuildsReported     int64         `json:"postHitBuildsReported"`
+	EstimatedReasoningAvoided EstimatedStat `json:"estimatedReasoningAvoided"`
 	// Estimated marks the whole document as containing estimated figures,
 	// mirroring EstimatedReasoningAvoided.Estimated for simple consumers.
 	Estimated bool `json:"estimated"`
@@ -723,17 +727,18 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 		buildNote = "builds reported after applying a sample"
 	}
 	doc := StatsDoc{
-		SchemaVersion:      1,
-		Day:                now.UTC().Format("2006-01-02"),
-		GeneratedAt:        now.UTC().Format(time.RFC3339),
-		Peers:              c.Peers,
-		ProjectsMonth:      c.ProjectsMonth,
-		Packages:           c.Packages,
-		Symbols:            c.Symbols,
-		Evidence:           c.Observations,
-		VerifiedSamples:    c.VerifiedSamples,
-		PostHitSuccessRate: rate,
-		Estimated:          true,
+		SchemaVersion:         1,
+		Day:                   now.UTC().Format("2006-01-02"),
+		GeneratedAt:           now.UTC().Format(time.RFC3339),
+		Peers:                 c.Peers,
+		ProjectsMonth:         c.ProjectsMonth,
+		Packages:              c.Packages,
+		Symbols:               c.Symbols,
+		Evidence:              c.Observations,
+		VerifiedSamples:       c.VerifiedSamples,
+		PostHitSuccessRate:    rate,
+		PostHitBuildsReported: measured,
+		Estimated:             true,
 		PostHitBuildPass: PlaceholderStat{
 			Value: float64(adopt.BuildPass),
 			Note:  buildNote,
