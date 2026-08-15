@@ -148,13 +148,22 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 func (cv *CrossVerifier) DownloadArtifact(ctx context.Context, sampleID string) ([]byte, error) {
 	if cv.Source != nil {
 		if body, _, err := cv.Source.Fetch(ctx, sampleID); err == nil {
-			if len(body) > samples.MaxCompressedBytes {
-				return nil, fmt.Errorf("verifier: artifact exceeds %d-byte limit", samples.MaxCompressedBytes)
-			}
-			// Re-check even for local hits: a corrupted CAS object must not
-			// be what we sign a receipt over.
-			if got := domain.SHA256Hex(body); got == sampleID {
-				return body, nil
+			// An oversized or wrong-hashed body from a peer is a reason to
+			// stop trusting THAT peer, not a reason to stop verifying.
+			// Returning here contradicted the promise directly above --
+			// "a broken peer path can never stall verification" -- and
+			// handed any peer on the network a way to block cross
+			// verification of any sample by answering with junk.
+			//
+			// Both cases now fall through to the server, which is the one
+			// source whose bytes are checked against the content address
+			// below regardless.
+			if len(body) <= samples.MaxCompressedBytes {
+				// Re-checked even for local hits: a corrupted CAS object
+				// must not be what we sign a receipt over.
+				if got := domain.SHA256Hex(body); got == sampleID {
+					return body, nil
+				}
 			}
 		}
 	}

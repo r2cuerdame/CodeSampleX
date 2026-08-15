@@ -261,7 +261,14 @@ func spansContextBoundary(infos []compatibility.ReceiptInfo) bool {
 			continue // unknown, not different
 		}
 		oses[env.OS] = true
-		runtimeMajors[env.Runtime+"@"+majorSeg(env.RuntimeVersion)] = true
+		// The release LINE, not the major segment. Go, Python, Elixir and
+		// Dart keep their whole history in the second segment, so go1.9 and
+		// go1.26 both bucketed to "go@1" — seven years apart and counted as
+		// the same environment. That withholds L5 from a sample two peers
+		// genuinely reproduced across a real boundary, which is the harmless
+		// direction, but it is still the wrong answer and the same rule the
+		// grader and the client both use.
+		runtimeMajors[env.Runtime+"@"+runtimeLine(env.Runtime, env.RuntimeVersion)] = true
 		if env.BrowserFamily != "" {
 			browsers[env.BrowserFamily] = true
 		}
