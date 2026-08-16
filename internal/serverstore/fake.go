@@ -384,7 +384,14 @@ func (f *Fake) GetSample(_ context.Context, sampleID string) (SampleRow, bool, e
 // SamplesForPackages filters the fake's samples by package prefix,
 // mirroring the SQL LIKE ANY match.
 func (f *Fake) SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error) {
-	all, err := f.ListSamples(ctx, 0)
+	// ListSamples(0) means "use the default", which is 50 -- so this
+	// filtered the newest FIFTY and called the result a search over the
+	// store. Postgres does the opposite: it filters in SQL and applies the
+	// limit after, precisely so relevance stops being a function of
+	// publication order (see pg.go). A fake that caps first cannot fail the
+	// test that would catch that regression, and the identical line three
+	// methods down was already fixed for exactly this reason.
+	all, err := f.ListSamples(ctx, 1<<30)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +725,14 @@ func (f *Fake) ListSamplesPage(ctx context.Context, limit, offset int) ([]Sample
 
 // SamplesBySeeder lists one seeder's live samples, newest first.
 func (f *Fake) SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error) {
-	all, err := f.ListSamples(ctx, 0)
+	// ListSamples(0) means "use the default", which is 50 -- so this
+	// filtered the newest FIFTY and called the result a search over the
+	// store. Postgres does the opposite: it filters in SQL and applies the
+	// limit after, precisely so relevance stops being a function of
+	// publication order (see pg.go). A fake that caps first cannot fail the
+	// test that would catch that regression, and the identical line three
+	// methods down was already fixed for exactly this reason.
+	all, err := f.ListSamples(ctx, 1<<30)
 	if err != nil {
 		return nil, err
 	}

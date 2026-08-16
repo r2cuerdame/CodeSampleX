@@ -57,7 +57,7 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 	pkgs := make([]scanner.ResolvedPackage, 0, len(requires))
 	for _, r := range requires {
 		publicness := scanner.PublicnessUnknown
-		if localReplaced[r.path] {
+		if governs(localReplaced[r.path], r.version) {
 			publicness = scanner.PublicnessPrivate
 		}
 		// A module replace decides what actually compiled. Reporting the
@@ -65,7 +65,7 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 		// was filed under v0.17.0, and another agent asking about v0.17.0
 		// got a HIT backed by a build that never used it.
 		name, version := r.path, r.version
-		if rep, ok := moduleReplaced[r.path]; ok && rep.appliesTo(r.version) {
+		if rep, ok := pickReplacement(moduleReplaced[r.path], r.version); ok {
 			name, version = rep.path, rep.version
 		}
 		pkgs = append(pkgs, scanner.ResolvedPackage{
@@ -152,13 +152,55 @@ func (r replacement) appliesTo(selected string) bool {
 	return r.oldVersion == "" || r.oldVersion == selected
 }
 
+// pickReplacement chooses the directive go would actually apply, out of
+// every replace directive written for one module path.
+//
+// A go.mod may legally carry several for the same path as long as the
+// left-hand versions differ, and this is not an exotic shape: a CVE bump
+// pinned for one version sitting above a catch-all, or the ordinary
+// residue of `go get -u`. Keeping only the last one parsed made file order
+// decide which version got recorded — and when the survivor was the
+// non-matching one, NO replacement applied at all and evidence from a
+// v0.31.0 build was filed under v0.21.0. That is the exact poisoning the
+// comment at the call site says this code prevents; it was prevented for
+// one directive and not for two.
+//
+// go's precedence is that an exact `path vX => …` outranks a version-less
+// `path => …`, regardless of the order they appear in, so the exact match
+// is looked for first and the wildcard is only the fallback.
+func pickReplacement(reps []replacement, selected string) (replacement, bool) {
+	var wildcard replacement
+	var haveWildcard bool
+	for _, r := range reps {
+		if r.oldVersion == selected {
+			return r, true
+		}
+		if r.oldVersion == "" && !haveWildcard {
+			wildcard, haveWildcard = r, true
+		}
+	}
+	return wildcard, haveWildcard
+}
+
+// governs reports whether any of these left-hand versions covers the
+// version the build selected. An empty string is the version-less form and
+// covers everything.
+func governs(oldVersions []string, selected string) bool {
+	for _, v := range oldVersions {
+		if v == "" || v == selected {
+			return true
+		}
+	}
+	return false
+}
+
 // parseGoMod extracts require entries, the set of module paths whose
 // replace target is a filesystem path (⇒ private, never uploadable), and
 // the module replacements that decide which version actually compiles.
-func parseGoMod(src string) ([]requireEntry, map[string]bool, map[string]replacement) {
+func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]replacement) {
 	var requires []requireEntry
-	localReplaced := map[string]bool{}
-	moduleReplaced := map[string]replacement{}
+	localReplaced := map[string][]string{}
+	moduleReplaced := map[string][]replacement{}
 	const (
 		blockNone = iota
 		blockRequire
@@ -209,7 +251,7 @@ func parseGoMod(src string) ([]requireEntry, map[string]bool, map[string]replace
 
 // recordReplace handles `old [ver] => new [ver]` and marks old as locally
 // replaced when new is a filesystem path.
-func recordReplace(fields []string, localReplaced map[string]bool, moduleReplaced map[string]replacement) {
+func recordReplace(fields []string, localReplaced map[string][]string, moduleReplaced map[string][]replacement) {
 	arrow := -1
 	for i, f := range fields {
 		if f == "=>" {
@@ -232,14 +274,20 @@ func recordReplace(fields []string, localReplaced map[string]bool, moduleReplace
 		target = unquoted
 	}
 	if isFilesystemPath(target) {
-		localReplaced[oldPath] = true
+		// The left-hand version governs a local replace exactly as it
+		// governs a module one. Recording only the path marked a module
+		// PRIVATE on the strength of a directive that does not apply to
+		// the version being built, which suppresses evidence that was
+		// perfectly publishable.
+		localReplaced[oldPath] = append(localReplaced[oldPath], oldVersion)
 		return
 	}
 	// A module replace always carries a version — go.mod requires one
 	// unless the target is a directory, which the branch above handled.
 	if arrow+2 < len(fields) {
 		if v := strings.TrimSpace(fields[arrow+2]); v != "" {
-			moduleReplaced[oldPath] = replacement{path: target, version: v, oldVersion: oldVersion}
+			moduleReplaced[oldPath] = append(moduleReplaced[oldPath],
+				replacement{path: target, version: v, oldVersion: oldVersion})
 		}
 	}
 }
