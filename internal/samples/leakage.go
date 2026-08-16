@@ -92,6 +92,37 @@ var allowedURLHosts = []string{
 	"feross.org",
 	"spdx.org",
 	"json.schemastore.org",
+	// Where a library's own release notes live.
+	//
+	// A sample that proves a bugfix has to say where the fix was
+	// ANNOUNCED, or the claim is just an assertion again — the whole point
+	// of that axis is "the notes say this was fixed in x.y.z, and here is
+	// the contract that ran". The gate was refusing the citation, so a
+	// dateutil sample citing dateutil's own changelog could not be
+	// published. These are the publishing platforms every ecosystem's docs
+	// and changelogs sit on: they identify the library, never the
+	// contributor.
+	"readthedocs.io",
+	"docs.rs",
+	"pkg.go.dev",
+	"go.dev",
+	"crates.io",
+	"docs.python.org",
+	"peps.python.org",
+	"nodejs.org",
+	"developer.mozilla.org",
+	"rust-lang.github.io",
+	"doc.rust-lang.org",
+	"hexdocs.pm",
+	"api.dart.dev",
+	"php.net",
+	"ruby-doc.org",
+	"gitlab.com",
+	"sourceforge.net",
+	"rfc-editor.org",
+	"ietf.org",
+	"w3.org",
+	"unicode.org",
 	// A specification identifier is not an address. $schema carries
 	// "http://json-schema.org/draft-07/schema#" in every JSON Schema ever
 	// generated, and nothing ever fetches it — it names a draft, the way an
