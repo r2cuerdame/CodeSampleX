@@ -51,7 +51,26 @@ func imageFor(ecosystem, runtime string) (string, error) {
 		// tags that drift independently.
 		return "composer:2", nil
 	case "gem":
-		return "ruby:3-alpine", nil
+		// Debian, not alpine, and the difference is the whole ecosystem.
+		//
+		// Rubygems has no binary-wheel equivalent: a gem with a C extension
+		// compiles at install time, every time. alpine ships no compiler, so
+		// faraday -> json 2.21.2 died with "An error occurred while
+		// installing json" and took every sample whose dependency tree
+		// touches a native gem with it — json, nokogiri, ffi, bcrypt,
+		// sqlite3, msgpack. Measured both ways on the same Gemfile:
+		// ruby:3-alpine exits 5, ruby:3 installs it and exits 0.
+		//
+		// This is NOT a general alpine problem, which is why only this one
+		// moved. Python was checked the same way and does not have it —
+		// pydantic-core installs on python:3.12-alpine because PyPI
+		// publishes musllinux wheels, so there is nothing to compile.
+		//
+		// The cost is honest and recorded: the environment fingerprint now
+		// says glibc for ruby rather than musl. glibc is what most ruby
+		// runs on, and musl belongs as a second axis of the matrix rather
+		// than as the only one anything is ever verified against.
+		return "ruby:3", nil
 	case "pub":
 		return "dart:3.13.0", nil
 	case "hex":
@@ -237,6 +256,7 @@ var imageBases = map[string]struct{ bucket, libc string }{
 	"golang:1.26-alpine":   {"alpine", "musl"},
 	"rust:1-alpine":        {"alpine", "musl"},
 	"ruby:3-alpine":        {"alpine", "musl"},
+	"ruby:3":               {"debian", "glibc"},
 	"elixir:1.20.1-alpine": {"alpine", "musl"},
 	"denoland/deno:alpine": {"alpine", "musl"},
 	"oven/bun:1-alpine":    {"alpine", "musl"},
