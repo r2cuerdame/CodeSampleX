@@ -23,6 +23,10 @@ func TestReadsAsProse(t *testing.T) {
 		"assertEquals(parser.parse(input).getValue(), expected.getValue());",
 		"record.user.is_a?(Hash) && !record.user.is_a?(OpenStruct)",
 		"assert!(call_without_poll_ready_panics())",
+		// Nine identifiers, not one of them inside a bracket. It reached
+		// the live page under the bracket rule alone.
+		"begin; record.user.name; rescue NoMethodError => e; e.message.include?(\"Hash\"); end",
+		"const worker = new Worker(script, { eval: true, type: \"module\" })",
 		"expect(x).toBe(1)",
 		"",
 		"   ",

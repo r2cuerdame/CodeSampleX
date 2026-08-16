@@ -321,8 +321,49 @@ func firstContractLine(contract []string) string {
 // dropping: a sentence wrongly rejected costs one entry on a page that
 // grows by itself, and an expression wrongly accepted is published under a
 // heading promising a measurement in plain language.
+// It is not enough on its own, either. Stripping brackets still let a
+// whole Ruby statement through —
+//
+//	begin; record.user.name; rescue NoMethodError => e; end
+//
+// nine identifiers, none of them inside a bracket. What that line has none
+// of is FUNCTION WORDS. An English sentence describing a measurement
+// cannot avoid them: something is the, than, because, rather, into,
+// without, still. A code expression contains none, in any language, and
+// that turns out to be the cleanest line between the two.
 func readsAsProse(s string) bool {
-	return countWords(outsideBrackets(s)) >= 6
+	bare := outsideBrackets(s)
+	return countWords(bare) >= 6 && countFunctionWords(bare) >= 3
+}
+
+// functionWords is the closed class English uses to hold a sentence
+// together. Deliberately small: every entry has to be a word that carries
+// no domain meaning, so a line full of them is prose and a line with none
+// is not a sentence about anything.
+var functionWords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
+	"is": true, "are": true, "was": true, "were": true, "be": true, "been": true,
+	"it": true, "its": true, "this": true, "that": true, "these": true,
+	"those": true, "of": true, "to": true, "in": true, "into": true, "on": true,
+	"with": true, "without": true, "for": true, "from": true, "by": true,
+	"as": true, "than": true, "rather": true, "because": true, "so": true,
+	"not": true, "no": true, "when": true, "while": true, "before": true,
+	"after": true, "still": true, "only": true, "even": true, "their": true,
+	"they": true, "which": true, "what": true, "does": true, "do": true,
+	"both": true, "each": true, "every": true, "any": true, "all": true,
+	"more": true, "less": true, "same": true, "instead": true, "own": true,
+	"never": true, "always": true, "already": true, "yet": true, "at": true,
+}
+
+func countFunctionWords(s string) int {
+	n := 0
+	for _, f := range strings.Fields(strings.ToLower(s)) {
+		f = strings.Trim(f, ".,;:!?()[]{}\"'`")
+		if functionWords[f] {
+			n++
+		}
+	}
+	return n
 }
 
 // outsideBrackets removes every (), [] and {} span, including nested ones,
