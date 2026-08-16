@@ -9,10 +9,18 @@ func TestReadsAsProse(t *testing.T) {
 		"assert Deleting a missing field with OpenStruct#delete_field raises NameError and its message uses single-quoted key syntax",
 		"Stack::new(layer_a, layer_b).layer(base) wraps base with layer_a first, executing layer_b before layer_a on incoming requests",
 		"connect, read, write and pool each get their own five seconds",
+		// A sentence that cites a call is still a sentence: it keeps
+		// saying things after the closing bracket.
+		"ms(604800000) returns the string 7d rather than 1w, because the largest unit it formats is a day",
+		"assert that reading a SQLite INTEGER value greater than i32::MAX into i32 returns an error",
 		"the server receives the body as application/json with no charset appended",
 	}
 	code := []string{
 		"assert.strictEqual(ms(604800000), '7d');",
+		// Reached the live page under the token-count rule: seven tokens,
+		// six identifiers, nothing a reader learns from.
+		"assert.strictEqual(ms(604800000, { long: true }), '7 days');",
+		"assertEquals(parser.parse(input).getValue(), expected.getValue());",
 		"record.user.is_a?(Hash) && !record.user.is_a?(OpenStruct)",
 		"assert!(call_without_poll_ready_panics())",
 		"expect(x).toBe(1)",

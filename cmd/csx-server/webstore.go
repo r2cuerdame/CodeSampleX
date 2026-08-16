@@ -301,32 +301,67 @@ func firstContractLine(contract []string) string {
 // readsAsProse reports whether a contract line is a sentence rather than a
 // code expression.
 //
-// The test is deliberately crude, because the cost of being wrong is not
-// symmetric: a prose line wrongly rejected costs one entry on a page that
-// grows on its own, and an expression wrongly accepted is published under
-// a heading that promises a measurement in plain language.
+// The question is not how long the line is. Counting tokens let
 //
-// Six whitespace-separated tokens is what separates the two in practice —
-// `record.user.is_a?(Hash) && !record.user.is_a?(OpenStruct)` is three,
-// and no English sentence describing a measurement is shorter than six.
+//	assert.strictEqual(ms(604800000, { long: true }), '7 days');
+//
+// onto the live page: seven tokens and six identifiers, and nothing a
+// reader can learn from. What actually separates the two is whether there
+// is a SENTENCE OUTSIDE THE BRACKETS. An expression puts everything it
+// says inside them and leaves the call name behind; a sentence that
+// happens to cite a call keeps saying things afterwards:
+//
+//	ms(604800000) returns "7d" rather than "1w", because the largest
+//	unit it formats is a day                              <- kept
+//	Stack::new(a, b).layer(base) wraps base with a first, so b runs
+//	first on the way in                                   <- kept
+//	expect(x).toBe(1)                                     <- dropped
+//
+// The cost of being wrong is not symmetric, which is why this errs toward
+// dropping: a sentence wrongly rejected costs one entry on a page that
+// grows by itself, and an expression wrongly accepted is published under a
+// heading promising a measurement in plain language.
 func readsAsProse(s string) bool {
-	if len(strings.Fields(s)) < 6 {
-		return false
+	return countWords(outsideBrackets(s)) >= 6
+}
+
+// outsideBrackets removes every (), [] and {} span, including nested ones,
+// leaving what the line says in its own voice.
+func outsideBrackets(s string) string {
+	var b strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch r {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				b.WriteRune(r)
+			}
+		}
 	}
-	// And enough real words, so a line of six short operators does not pass
-	// on token count alone.
-	words, run := 0, 0
+	return b.String()
+}
+
+// countWords counts runs of three or more letters, so operators, digits
+// and one- or two-letter fragments do not pass for words.
+func countWords(s string) int {
+	n, run := 0, 0
 	for _, r := range s + " " {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
 			run++
 			continue
 		}
 		if run >= 3 {
-			words++
+			n++
 		}
 		run = 0
 	}
-	return words >= 5
+	return n
 }
 
 // findingSubject names the thing the finding is about: the ecosystem chip
