@@ -201,19 +201,32 @@ type SampleManifest struct {
 // VerificationReceipt is the immutable, signed record of one sample
 // verification in one environment (goal.md §7.7).
 type VerificationReceipt struct {
-	SchemaVersion     int                    `json:"schemaVersion"`
-	SampleID          string                 `json:"sampleId"`
-	CaseID            string                 `json:"caseId"`
-	EnvironmentHash   string                 `json:"environmentHash"`
-	Environment       EnvironmentFingerprint `json:"environment"`
-	Stages            map[string]string      `json:"stages"` // stage → PASS|FAIL|SKIPPED
-	VerifierAdapter   string                 `json:"verifierAdapter"`
-	SandboxCapability SandboxCapability      `json:"sandboxCapability"`
-	LogsDigest        string                 `json:"logsDigest"`
-	CreatedAt         string                 `json:"createdAt"` // RFC3339
-	PeerID            string                 `json:"peerId"`
-	PeerPubkey        string                 `json:"peerPubkey"`    // base64 ed25519 public key
-	PeerSignature     string                 `json:"peerSignature"` // base64 over SigningBytes
+	SchemaVersion   int                    `json:"schemaVersion"`
+	SampleID        string                 `json:"sampleId"`
+	CaseID          string                 `json:"caseId"`
+	EnvironmentHash string                 `json:"environmentHash"`
+	Environment     EnvironmentFingerprint `json:"environment"`
+	Stages          map[string]string      `json:"stages"` // stage → PASS|FAIL|SKIPPED
+	// ResolvedPackages is what the resolve stage ACTUALLY installed, read
+	// out of the lockfile it generated, as purls.
+	//
+	// Without it a receipt takes the version from the manifest, which the
+	// sample's author wrote and the verification never checked — a claim
+	// where this project promises evidence. It is also the axis a
+	// regression farm needs: the same contract run against three releases
+	// produced three receipts that said exactly the same thing, so there
+	// was nowhere for "passes at 2.3, fails at 2.2" to live.
+	//
+	// Empty means NOT ESTABLISHED, never "matches the manifest". A
+	// lockfile that cannot be read yields nothing rather than a guess.
+	ResolvedPackages  []string          `json:"resolvedPackages,omitempty"`
+	VerifierAdapter   string            `json:"verifierAdapter"`
+	SandboxCapability SandboxCapability `json:"sandboxCapability"`
+	LogsDigest        string            `json:"logsDigest"`
+	CreatedAt         string            `json:"createdAt"` // RFC3339
+	PeerID            string            `json:"peerId"`
+	PeerPubkey        string            `json:"peerPubkey"`    // base64 ed25519 public key
+	PeerSignature     string            `json:"peerSignature"` // base64 over SigningBytes
 }
 
 // SigningBytes returns the canonical JSON the peer signature covers

@@ -108,11 +108,12 @@ func RunLogged(
 	}
 
 	receipt := domain.VerificationReceipt{
-		SchemaVersion:   1,
-		SampleID:        sampleID,
-		CaseID:          caseID,
-		EnvironmentHash: env.Hash(),
-		Environment:     env,
+		SchemaVersion:    1,
+		SampleID:         sampleID,
+		CaseID:           caseID,
+		EnvironmentHash:  env.Hash(),
+		Environment:      env,
+		ResolvedPackages: resolvedPackages(sampleDir, m),
 		Stages: map[string]string{
 			"resolve":  resolve.Result,
 			"compile":  compile.Result,
