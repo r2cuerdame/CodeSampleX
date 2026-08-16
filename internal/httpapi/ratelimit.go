@@ -165,9 +165,17 @@ func newLimiters() *limiters {
 // junk tokens, which is the throttle it is meant to be.
 func (a *api) limitPublish(lim *limiters, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// A nil limiter means "no budget configured", exactly as in limit();
+		// dereferencing it instead turned a test-shaped Deps into a panic on
+		// the upload path.
+		if lim == nil || lim.publish == nil {
+			h(w, r)
+			return
+		}
 		l, key := lim.publish, clientAddr(r)
 		if tok := bearerToken(r); tok != "" {
-			if id, ok, err := a.d.Store.IdentityByAPIToken(r.Context(), sha256Hex(tok)); err == nil && ok {
+			if id, ok, err := a.d.Store.IdentityByAPIToken(r.Context(), sha256Hex(tok)); err == nil && ok &&
+				lim.seededPublish != nil {
 				l, key = lim.seededPublish, "seeder:"+id.Login
 			}
 		}

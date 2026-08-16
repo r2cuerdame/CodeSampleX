@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -345,33 +346,50 @@ func checkDeclaredVersions(manifest domain.SampleManifest, lockfiles map[string]
 			continue
 		}
 		for name, body := range lockfiles {
-			resolved, found := resolvedVersionIn(name, body, p)
-			if !found || resolved == p.Version {
+			resolved := resolvedVersionsIn(name, body, p)
+			if len(resolved) == 0 {
+				continue
+			}
+			// A lockfile routinely pins SEVERAL versions of one package:
+			// a Rust workspace holds syn 1 for a transitive dependency and
+			// syn 2 for the direct one, and reading only the first match
+			// refused a manifest that named the version it actually used.
+			// The manifest is wrong only when the version it declares
+			// appears nowhere in the lockfile at all.
+			if slices.Contains(resolved, p.Version) {
 				continue
 			}
 			return errors.New("manifest declares " + raw + " but " + name +
-				" resolved " + p.Name + " " + resolved +
+				" resolved " + p.Name + " " + strings.Join(resolved, ", ") +
 				" — the contract ran against the lockfile, so the manifest is wrong")
 		}
 	}
 	return nil
 }
 
-// resolvedVersionIn reads one package's resolved version out of a lockfile,
-// reporting found=false whenever it cannot be certain.
-func resolvedVersionIn(lockfile, body string, p domain.PURL) (string, bool) {
+// resolvedVersionsIn reads EVERY version a lockfile pins for one package.
+//
+// It used to return the first match and a found flag, which is a different
+// question: a lockfile can pin several versions of the same package at
+// once, and the first one in the file is not necessarily the one the
+// contract used. Returning all of them lets the caller ask what it
+// actually wants — is the declared version in here — instead of comparing
+// against whichever happened to be listed first.
+//
+// An empty result means "cannot tell", and the caller treats that as no
+// objection.
+func resolvedVersionsIn(lockfile, body string, p domain.PURL) []string {
+	var out []string
 	switch lockfile {
 	case "cargo.lock":
-		re := regexp.MustCompile(`(?m)^name = "` + regexp.QuoteMeta(p.Name) + `"
-?
-^version = "([^"]+)"`)
-		if m := re.FindStringSubmatch(body); m != nil {
-			return m[1], true
+		re := regexp.MustCompile(`(?m)^name = "` + regexp.QuoteMeta(p.Name) + `"\n?^version = "([^"]+)"`)
+		for _, m := range re.FindAllStringSubmatch(body, -1) {
+			out = append(out, m[1])
 		}
 	case "gemfile.lock":
 		re := regexp.MustCompile(`(?m)^\s{4}` + regexp.QuoteMeta(p.Name) + ` \(([^)]+)\)`)
-		if m := re.FindStringSubmatch(body); m != nil {
-			return m[1], true
+		for _, m := range re.FindAllStringSubmatch(body, -1) {
+			out = append(out, m[1])
 		}
 	case "package-lock.json":
 		var lock struct {
@@ -380,13 +398,21 @@ func resolvedVersionIn(lockfile, body string, p domain.PURL) (string, bool) {
 			} `json:"packages"`
 		}
 		if json.Unmarshal([]byte(body), &lock) != nil {
-			return "", false
+			return nil
 		}
-		if e, ok := lock.Packages["node_modules/"+p.Name]; ok && e.Version != "" {
-			return e.Version, true
+		// npm nests duplicates under a dependent's own node_modules, and
+		// every one of them is a version this tree really installs.
+		suffix := "node_modules/" + p.Name
+		for key, e := range lock.Packages {
+			if e.Version == "" {
+				continue
+			}
+			if key == suffix || strings.HasSuffix(key, "/"+suffix) {
+				out = append(out, e.Version)
+			}
 		}
 	}
-	return "", false
+	return out
 }
 
 // checkEntryName rejects absolute, traversal, and forbidden-directory names.

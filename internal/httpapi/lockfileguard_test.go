@@ -91,3 +91,46 @@ func TestAnAgreeingLockfileIsAccepted(t *testing.T) {
 		t.Fatalf("an agreeing lockfile was refused: %v", err)
 	}
 }
+
+// A lockfile routinely pins several versions of one package: a Rust
+// workspace holds syn 1 for a transitive dependency and syn 2 for the
+// direct one. Reading only the FIRST match refused a manifest that named
+// the version it actually used — and this guard has no override, so it
+// turned away a correct sample for being correct.
+func TestALockfileWithTwoVersionsAcceptsTheDeclaredOne(t *testing.T) {
+	manifest := domain.SampleManifest{Packages: []string{"pkg:cargo/syn@2.0.48"}}
+	lock := `
+[[package]]
+name = "syn"
+version = "1.0.109"
+
+[[package]]
+name = "syn"
+version = "2.0.48"
+`
+	if err := checkDeclaredVersions(manifest, map[string]string{"cargo.lock": lock}); err != nil {
+		t.Errorf("refused a manifest naming a version the lockfile pins: %v", err)
+	}
+}
+
+// A version pinned NOWHERE in the lockfile is still refused — that is what
+// the guard is for.
+func TestALockfileWithoutTheDeclaredVersionStillRefuses(t *testing.T) {
+	manifest := domain.SampleManifest{Packages: []string{"pkg:cargo/syn@3.0.0"}}
+	lock := `
+[[package]]
+name = "syn"
+version = "1.0.109"
+
+[[package]]
+name = "syn"
+version = "2.0.48"
+`
+	err := checkDeclaredVersions(manifest, map[string]string{"cargo.lock": lock})
+	if err == nil {
+		t.Fatal("accepted a version the lockfile never resolved")
+	}
+	if !strings.Contains(err.Error(), "1.0.109") || !strings.Contains(err.Error(), "2.0.48") {
+		t.Errorf("the refusal does not say what WAS resolved: %v", err)
+	}
+}

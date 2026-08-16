@@ -364,7 +364,12 @@ func (d *Daemon) warmKeyList(ctx context.Context) []string {
 	// packages are named by the user in their own config, which is a
 	// choice they made. Neither is derived from what they happen to have
 	// installed, so both stay.
-	localOnly := d.Cfg.Mode == config.ModeLocalOnly
+	// Not just local-only: UNINITIALIZED too. Before csx init no mode has
+	// been chosen, so no permission has been given — and this list names
+	// the caller's own packages to the server, one request each. The
+	// publicness checks were gated on exactly this reasoning hours ago and
+	// this list was left behind.
+	localOnly := !config.MayContactRegistries(d.Cfg.Mode)
 	if rows, err := d.DB.ListPackages(ctx); err == nil && !localOnly {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastSeen.After(rows[j].LastSeen) })
 		for _, r := range rows {
