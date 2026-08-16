@@ -273,16 +273,60 @@ func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.Derive
 
 // firstContractLine picks the assertion that reads as the measurement.
 //
-// A contract is a list of asserted facts, and the first one is the reason
-// the sample was written — later lines are usually the supporting checks
+// A contract is a list of asserted facts, and the first one is usually the
+// reason the sample was written — later lines are the supporting checks
 // ("exit code 0", "no warnings on stderr") that every sample repeats.
+//
+// But it must also be READABLE, because this one goes on a public page
+// beside a sentence of English. Authors write contract lines both ways:
+//
+//	assert Deleting a missing field raises NameError, and the message
+//	now uses single quotes rather than backticks          <- a sentence
+//	assert.strictEqual(ms(604800000), '7d');              <- an expression
+//
+// Both are perfectly good contract lines and the second is useless as the
+// second half of a finding: a reader who does not already know the library
+// learns nothing from it, and "believed X, measured assert.strictEqual(…)"
+// contradicts nothing on its face. So this walks the contract for a line
+// that reads as prose and gives up rather than printing an expression.
 func firstContractLine(contract []string) string {
 	for _, c := range contract {
-		if c = strings.TrimSpace(c); c != "" {
+		if c = strings.TrimSpace(c); readsAsProse(c) {
 			return c
 		}
 	}
 	return ""
+}
+
+// readsAsProse reports whether a contract line is a sentence rather than a
+// code expression.
+//
+// The test is deliberately crude, because the cost of being wrong is not
+// symmetric: a prose line wrongly rejected costs one entry on a page that
+// grows on its own, and an expression wrongly accepted is published under
+// a heading that promises a measurement in plain language.
+//
+// Six whitespace-separated tokens is what separates the two in practice —
+// `record.user.is_a?(Hash) && !record.user.is_a?(OpenStruct)` is three,
+// and no English sentence describing a measurement is shorter than six.
+func readsAsProse(s string) bool {
+	if len(strings.Fields(s)) < 6 {
+		return false
+	}
+	// And enough real words, so a line of six short operators does not pass
+	// on token count alone.
+	words, run := 0, 0
+	for _, r := range s + " " {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			run++
+			continue
+		}
+		if run >= 3 {
+			words++
+		}
+		run = 0
+	}
+	return words >= 5
 }
 
 // findingSubject names the thing the finding is about: the ecosystem chip
