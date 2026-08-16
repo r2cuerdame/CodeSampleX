@@ -52,6 +52,25 @@ type EnvironmentFingerprint struct {
 	// native module: prebuilt binaries routinely load on one and fail on
 	// the other while every other dimension looks identical.
 	Libc string `json:"libc,omitempty"`
+	// LibcVersion is the glibc version, when the libc is glibc: "2.35".
+	//
+	// musl versus glibc is the first thing that stops a native module
+	// loading on Linux, and the glibc VERSION is the second. Prebuilt
+	// wheels and node binaries target a floor — manylinux2014 is glibc
+	// 2.17, manylinux_2_28 is 2.28 — and a binary built against 2.35 fails
+	// on 2.31 with "GLIBC_2.34 not found". Reporting only the family made a
+	// sample verified on Ubuntu 24.04 an EXACT match for a caller on
+	// CentOS 7, which is precisely the case this project exists to catch.
+	//
+	// It is a property of the platform, like the OS itself, and identifies
+	// nobody. Empty on musl and on non-Linux.
+	LibcVersion string `json:"libcVersion,omitempty"`
+	// Distro is the /etc/os-release ID: "ubuntu", "debian", "alpine".
+	//
+	// osVersionBucket carries only the version NUMBER, so Ubuntu 22 and
+	// any other distribution's 22 were the same bucket. The number means
+	// nothing without the name beside it.
+	Distro string `json:"distro,omitempty"`
 	// CI marks an automated runner. CI fleets are clones of each other, so
 	// this is recorded to let aggregation discount them rather than treat
 	// them as many independent developer environments (goal.md §16.5).
@@ -117,7 +136,7 @@ func (e EnvironmentFingerprint) Normalize() EnvironmentFingerprint {
 		&e.ModuleSystem, &e.PackageManager, &e.PackageManagerVersion,
 		&e.ExecutionContext, &e.BrowserFamily, &e.BrowserMajor,
 		&e.Engine, &e.EngineVersion,
-		&e.Virtualization, &e.ContainerRuntime, &e.Libc,
+		&e.Virtualization, &e.ContainerRuntime, &e.Libc, &e.LibcVersion, &e.Distro,
 	} {
 		*f = clearPlaceholder(*f)
 	}

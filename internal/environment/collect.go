@@ -110,6 +110,16 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	if fp.Libc == "" {
 		fp.Libc = detectLibc()
 	}
+	// The glibc VERSION and the distribution name, which the family and the
+	// bare version number could not carry between them: "glibc" says
+	// nothing about whether a manylinux_2_28 wheel loads, and "22" says
+	// nothing about which distribution numbered it.
+	if fp.LibcVersion == "" && fp.Libc == "glibc" {
+		fp.LibcVersion = detectLibcVersion()
+	}
+	if fp.Distro == "" {
+		fp.Distro = detectDistro()
+	}
 	if !fp.CI {
 		fp.CI = DetectCI()
 	}

@@ -26,3 +26,10 @@ func detectVirtualization() (kind, runtime string) {
 // detectLibc: these platforms have one system C library, so the dimension
 // carries no compatibility signal.
 func detectLibc() string { return "" }
+
+// detectLibcVersion and detectDistro answer only on Linux; the glibc
+// version and the /etc/os-release ID do not exist anywhere else, and an
+// invented value would be a claim about a platform.
+func detectLibcVersion() string { return "" }
+
+func detectDistro() string { return "" }

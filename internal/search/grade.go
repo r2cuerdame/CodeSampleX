@@ -1,6 +1,7 @@
 package search
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -161,14 +162,70 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		}
 	}
 	if req.Libc != "" && sam.Libc != "" {
-		if strings.EqualFold(req.Libc, sam.Libc) {
-			out = append(out, dimComparison{equal: true, exactEntry: sam.Libc})
-		} else {
+		switch {
+		case !strings.EqualFold(req.Libc, sam.Libc):
 			out = append(out, dimComparison{samShow: sam.Libc, reqShow: req.Libc})
+		// Same family, and glibc is only compatible in ONE direction: a
+		// newer glibc runs a binary built against an older one, never the
+		// reverse. A sample verified on 2.39 hands a caller on 2.28 a
+		// "GLIBC_2.34 not found" at load time, and it was reported as an
+		// exact libc match because both said "glibc".
+		//
+		// This is the second most common reason a native module refuses to
+		// load on Linux, after musl itself, and prebuilt wheels are named
+		// for it: manylinux2014 IS glibc 2.17.
+		case olderLibc(req.LibcVersion, sam.LibcVersion):
+			out = append(out, dimComparison{
+				samShow: libcShow(sam), reqShow: libcShow(req),
+			})
+		default:
+			out = append(out, dimComparison{equal: true, exactEntry: libcShow(sam)})
 		}
 	}
 
 	return out
+}
+
+// libcShow renders "glibc 2.35", or just the family when no version is
+// known — never an invented one.
+func libcShow(e domain.EnvironmentFingerprint) string {
+	if e.LibcVersion == "" {
+		return e.Libc
+	}
+	return e.Libc + " " + e.LibcVersion
+}
+
+// olderLibc reports whether the CALLER's glibc is older than the one the
+// sample ran on, which is the direction that breaks. Unknown on either
+// side is not a difference: an unstated version is not a version that
+// differs.
+func olderLibc(reqVer, samVer string) bool {
+	if reqVer == "" || samVer == "" {
+		return false
+	}
+	return compareLibcVersions(reqVer, samVer) < 0
+}
+
+// compareLibcVersions orders "2.28" before "2.35" numerically, so 2.9 does
+// not sort above 2.35 the way a string comparison would.
+func compareLibcVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var x, y int
+		if i < len(as) {
+			x, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			y, _ = strconv.Atoi(bs[i])
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // contextDelta is the execution-context axis verdict
