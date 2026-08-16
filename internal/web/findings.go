@@ -2,7 +2,10 @@ package web
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -454,15 +457,25 @@ var believedFindings = []finding{
 
 type findingsPage struct {
 	basePage
+	Query      string
 	Documented []finding
 	Believed   []finding
 	// Derived is the group nobody edits: samples that declared the belief
 	// they correct. It is listed last because a hand-checked entry earns
 	// its place at the top, and first in importance because it is the only
-	// group that grows while everyone is asleep.
+	// group that grows while everyone is asleep — which is also why it is
+	// the only one that is paged.
 	Derived    []finding
 	Total      int
 	Ecosystems []string
+	Page       int
+	Pages      int
+	RangeText  string
+	PageText   string
+	PrevHref   string
+	NextHref   string
+	Empty      bool
+	Capped     bool
 }
 
 // SampleHref is the public page for the sample that proves this finding.
@@ -486,9 +499,24 @@ func (f finding) ShortID() string {
 	return id
 }
 
-// derivedLimit bounds the machine-derived group. The page stays readable,
-// and the cap is stated on the page rather than silently applied.
-const derivedLimit = 60
+// derivedCap bounds how many derived findings the page will hold in memory
+// at once. It is a ceiling on the whole collection, not on what is shown:
+// the page pages through them.
+//
+// Filtering and paging happen in memory over this cache, which is honest at
+// today's scale (hundreds) and stops being so somewhere past a thousand,
+// where the search belongs in SQL against the manifest column. When that
+// day comes the handler changes and this comment is the reason why.
+const derivedCap = 2000
+
+// findingsPerPage is how many derived findings one page shows.
+const findingsPerPage = 25
+
+// maxFindingsPage bounds ?page= before it is multiplied, the same guard
+// /records needed: Atoi happily returns 9223372036854775807, and
+// (page-1)*perPage overflows to a negative offset that slices a panic out
+// of any browser.
+const maxFindingsPage = 10000
 
 // derivedTTL is how stale the derived group is allowed to be. Publishing
 // runs in batches, so a minute-scale refresh keeps the page current while
@@ -504,7 +532,7 @@ func (s *site) derivedFindings(r *http.Request) []finding {
 	s.derivedMu.Lock()
 	defer s.derivedMu.Unlock()
 	if s.derivedAt.IsZero() || time.Since(s.derivedAt) > derivedTTL {
-		rows, err := s.d.Store.DerivedFindings(r.Context(), derivedLimit)
+		rows, err := s.d.Store.DerivedFindings(r.Context(), derivedCap)
 		if err != nil {
 			return s.derivedCache
 		}
@@ -525,14 +553,41 @@ func (s *site) derivedFindings(r *http.Request) []finding {
 
 func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
-	b := s.page(r, lang, i18n.T(lang, "findings.title")+" — CodeSampleX",
-		i18n.T(lang, "meta.findings"))
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	page := 1
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 1 {
+		page = min(p, maxFindingsPage)
+	}
 
 	derived := s.derivedFindings(r)
+	total := len(derived)
+
+	// A query searches EVERYTHING, hand-written groups included. Someone
+	// typing "timeout" wants the finding about timeouts, and which of three
+	// lists it happens to live in is an authoring detail.
+	documented, believed := documentedFindings, believedFindings
+	if q != "" {
+		documented = matchFindings(documentedFindings, q)
+		believed = matchFindings(believedFindings, q)
+		derived = matchFindings(derived, q)
+	}
+
+	pages := (len(derived) + findingsPerPage - 1) / findingsPerPage
+	if pages == 0 {
+		pages = 1
+	}
+	// A page past the end is a stale link, not an error.
+	if page > pages {
+		http.Redirect(w, r, findingsHref(q, pages, lang), http.StatusFound)
+		return
+	}
+	from := (page - 1) * findingsPerPage
+	to := min(from+findingsPerPage, len(derived))
+	shown := derived[from:to]
 
 	seen := map[string]bool{}
 	var ecos []string
-	for _, list := range [][]finding{documentedFindings, believedFindings, derived} {
+	for _, list := range [][]finding{documented, believed, derived} {
 		for _, f := range list {
 			if !seen[f.Ecosystem] {
 				seen[f.Ecosystem] = true
@@ -542,12 +597,91 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(ecos)
 
-	s.render(w, "findings", http.StatusOK, findingsPage{
+	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
+	b := s.page(r, lang, i18n.T(lang, "findings.title")+" — CodeSampleX",
+		i18n.T(lang, "meta.findings"))
+	// One canonical URL per language. Paged and searched views are the same
+	// collection sliced differently; indexing each slice separately splits
+	// the page's signal, and a translation is not a slice.
+	b.Canonical = s.base(r) + "/findings"
+	if lang != i18n.Default {
+		b.Canonical += "?lang=" + url.QueryEscape(lang)
+	}
+
+	view := findingsPage{
 		basePage:   b,
-		Documented: documentedFindings,
-		Believed:   believedFindings,
-		Derived:    derived,
-		Total:      len(documentedFindings) + len(believedFindings) + len(derived),
+		Query:      q,
+		Documented: documented,
+		Believed:   believed,
+		Derived:    shown,
+		Total:      len(documented) + len(believed) + len(derived),
 		Ecosystems: ecos,
-	})
+		Page:       page,
+		Pages:      pages,
+	}
+	// The count of derived findings is stated whether or not they all fit,
+	// because a page that shows twenty-five of four hundred and says
+	// nothing reads as a page that found twenty-five.
+	if len(derived) > 0 {
+		view.RangeText = i18n.T(lang, "findings.range", n(from+1), n(to), n(len(derived)))
+	}
+	view.PageText = i18n.T(lang, "records.page", n(page), n(pages))
+	if page > 1 {
+		view.PrevHref = findingsHref(q, page-1, lang)
+	}
+	if page < pages {
+		view.NextHref = findingsHref(q, page+1, lang)
+	}
+	if q != "" && view.Total == 0 {
+		view.Empty = true
+	}
+	// Only meaningful when the cache is full: at that point the page really
+	// is not showing everything published, and must say so.
+	view.Capped = total >= derivedCap
+
+	s.render(w, "findings", http.StatusOK, view)
+}
+
+// matchFindings keeps the findings mentioning every word of the query, in
+// any of the fields a reader can see.
+//
+// Every word, not any: "npm timeout" should mean both, which is what a
+// person typing two words means. Matching any of them turns a narrowing
+// query into a widening one.
+func matchFindings(list []finding, q string) []finding {
+	words := strings.Fields(strings.ToLower(q))
+	var out []finding
+	for _, f := range list {
+		hay := strings.ToLower(f.Ecosystem + " " + f.Subject + " " +
+			f.Believed + " " + f.Measured + " " + f.SourceLabel)
+		ok := true
+		for _, w := range words {
+			if !strings.Contains(hay, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// findingsHref builds the link for one slice of the collection.
+func findingsHref(q string, page int, lang string) string {
+	v := url.Values{}
+	if q != "" {
+		v.Set("q", q)
+	}
+	if page > 1 {
+		v.Set("page", strconv.Itoa(page))
+	}
+	if lang != i18n.Default {
+		v.Set("lang", lang)
+	}
+	if len(v) == 0 {
+		return "/findings"
+	}
+	return "/findings?" + v.Encode()
 }

@@ -23,6 +23,12 @@
 <p class="lead">{{.T "findings.intro"}}</p>
 <p class="note dim small">{{.T "findings.rerun"}}</p>
 <p class="note dim small">{{.T "findings.untranslated"}}</p>
+<form class="search" action="/findings" method="get" role="search">
+  <input type="search" name="q" value="{{.Query}}" placeholder="{{.T "findings.search"}}" aria-label="{{.T "findings.search"}}">
+  {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+  <button type="submit">{{.T "explore.button"}}</button>
+</form>
+
 <p class="mono small dim">{{.T "findings.count" .Total (len .Ecosystems)}}</p>
 <ul class="ecolist">
 {{- range .Ecosystems}}
@@ -30,6 +36,9 @@
 {{- end}}
 </ul>
 
+{{if .Empty}}<p class="dim">{{.T "findings.none" .Query}}</p>{{end}}
+
+{{- if .Documented}}
 <section>
   <h2 class="eyebrow mono">{{.T "findings.group_docs"}}</h2>
   <p class="note dim small">{{.T "findings.group_docs_note"}}</p>
@@ -49,7 +58,9 @@
   {{- end}}
   </ol>
 </section>
+{{- end}}
 
+{{- if .Believed}}
 <section>
   <h2 class="eyebrow mono">{{.T "findings.group_belief"}}</h2>
   <p class="note dim small">{{.T "findings.group_belief_note"}}</p>
@@ -69,11 +80,14 @@
   {{- end}}
   </ol>
 </section>
+{{- end}}
 
 {{- if .Derived}}
 <section>
   <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
   <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
+  {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
+  {{if .Capped}}<p class="note dim small">{{.T "findings.capped"}}</p>{{end}}
   <ol class="findings">
   {{- range .Derived}}
     <li class="finding panel">
@@ -86,6 +100,13 @@
     </li>
   {{- end}}
   </ol>
+  {{if gt .Pages 1}}
+  <nav class="pager" aria-label="{{.T "findings.title"}}">
+    {{if .PrevHref}}<a class="pagebtn mono" href="{{.PrevHref}}" rel="prev">← {{.T "records.prev"}}</a>{{else}}<span class="pagebtn mono off">← {{.T "records.prev"}}</span>{{end}}
+    <span class="dim mono small">{{.PageText}}</span>
+    {{if .NextHref}}<a class="pagebtn mono" href="{{.NextHref}}" rel="next">{{.T "records.next"}} →</a>{{else}}<span class="pagebtn mono off">{{.T "records.next"}} →</span>{{end}}
+  </nav>
+  {{end}}
 </section>
 {{- end}}
 
