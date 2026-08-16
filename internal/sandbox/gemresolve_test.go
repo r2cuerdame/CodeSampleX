@@ -60,3 +60,38 @@ func TestGemPathStaysHermetic(t *testing.T) {
 	}
 	t.Error("no GEM_PATH is set for the gem ecosystem")
 }
+
+// bundler and rubygems must agree on where a gem lives.
+//
+// BUNDLE_PATH=<dir> installs to <dir>/ruby/<abi>/gems/x while GEM_PATH
+// =<dir> reads <dir>/gems/x, and the contract command is whatever the
+// manifest declares — "ruby test/contract.rb", never "bundle exec" — so
+// it went through rubygems, looked in the second path and raised LoadError
+// for a gem resolved four directories away. Every ruby sample requiring a
+// real gem failed that way; only default gems compiled into ruby itself
+// ever passed.
+func TestBundlerInstallsWhereRubygemsLooks(t *testing.T) {
+	env := stageEnv("gem", "ruby")
+	var home, path string
+	var system bool
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "GEM_HOME="):
+			home = strings.TrimPrefix(e, "GEM_HOME=")
+		case strings.HasPrefix(e, "GEM_PATH="):
+			path = strings.TrimPrefix(e, "GEM_PATH=")
+		case e == "BUNDLE_PATH__SYSTEM=true":
+			system = true
+		case strings.HasPrefix(e, "BUNDLE_PATH="):
+			t.Errorf("BUNDLE_PATH is set (%q): it nests the install under "+
+				"ruby/<abi>/, which is not where GEM_PATH reads", e)
+		}
+	}
+	if !system {
+		t.Error("BUNDLE_PATH__SYSTEM is not set, so bundler will nest the install")
+	}
+	if home == "" || home != path {
+		t.Errorf("GEM_HOME=%q GEM_PATH=%q: bundler installs into the first "+
+			"and ruby reads the second, so they have to be the same", home, path)
+	}
+}

@@ -159,10 +159,32 @@ func stageEnv(ecosystem, runtime string) []string {
 			"COMPOSER_CACHE_DIR=" + vendorDir + "/composer/cache",
 		}
 	case "gem":
+		// BUNDLE_PATH__SYSTEM, not BUNDLE_PATH. They point at the same
+		// directory and lay it out differently, and the difference was that
+		// no ruby sample requiring a real gem could ever pass.
+		//
+		// BUNDLE_PATH=<dir> makes bundler install into
+		// <dir>/ruby/<abi>/gems/minitest-5.27.0, an isolated tree it
+		// expects to be entered through `bundle exec`. GEM_PATH=<dir> makes
+		// ruby look in <dir>/gems/minitest-5.27.0. The contract command is
+		// whatever the manifest declares — `ruby test/contract.rb`, not
+		// `bundle exec ruby ...` — so it went through rubygems, looked in
+		// the second path, and got LoadError for a gem that was sitting
+		// resolved four directories away.
+		//
+		// __SYSTEM tells bundler to install into GEM_HOME the way `gem
+		// install` does, which is the layout GEM_PATH already describes.
+		// Only default gems compiled into ruby itself — set, csv, json —
+		// ever worked before this, which is why the ecosystem looked like
+		// it had a contract-quality problem rather than a wiring one.
+		//
+		// The ABI segment is why this is not fixed by appending a path:
+		// "3.4.0" comes from the image, and hardcoding it would break on
+		// the next ruby tag.
 		return []string{
 			"GEM_HOME=" + vendorDir + "/gems",
 			"GEM_PATH=" + vendorDir + "/gems",
-			"BUNDLE_PATH=" + vendorDir + "/gems",
+			"BUNDLE_PATH__SYSTEM=true",
 			"BUNDLE_APP_CONFIG=" + vendorDir + "/bundle",
 		}
 	case "pub":
