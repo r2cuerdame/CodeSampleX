@@ -3,35 +3,39 @@
      worth having. The page used to say the same thing four times — a
      what-paragraph, three value cards, five steps and a flywheel line. */}}
 <section class="hero">
-  <p class="eyebrow mono">CodeSampleX</p>
-  <h1 class="tagline mono">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
-  <p class="lead">{{.T "landing.what_body"}}</p>
-
-  <div id="install" class="install">
-    <div class="cmd">
-      <span class="oslabel">{{.T "landing.install_windows"}}</span>
-      <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
+  <div class="hero-stage">
+    <div class="hero-copy">
+      <p class="eyebrow mono"><span class="eyebrow-mark" aria-hidden="true">✓</span> CodeSampleX</p>
+      <h1 class="tagline">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
+      <p class="lead">{{.T "landing.what_body"}}</p>
     </div>
-    <div class="cmd">
-      <span class="oslabel">{{.T "landing.install_unix"}}</span>
-      <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
+    <img class="hero-art" src="/static/inspector-hero-v1.webp" width="1672" height="943" alt="" decoding="async" fetchpriority="high">
+    <div id="install" class="install">
+      <div class="cmd">
+        <span class="oslabel">{{.T "landing.install_windows"}}</span>
+        <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
+      </div>
+      <div class="cmd">
+        <span class="oslabel">{{.T "landing.install_unix"}}</span>
+        <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
+      </div>
+      <p class="dim small">{{.T "landing.install_note"}}</p>
+      {{/* Piping a stranger's script into a shell is the biggest thing this
+           page asks of a visitor, and everything that would justify it —
+           the source, the installer itself, the licence — was in the footer.
+           It belongs where the ask is made. */}}
+      <p class="trust small mono">
+        <a href="https://github.com/r2cuerdame/CodeSampleX">{{.T "landing.trust_source"}}</a> ·
+        <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
+        <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
+      </p>
     </div>
-    <p class="dim small">{{.T "landing.install_note"}}</p>
-    {{/* Piping a stranger's script into a shell is the biggest thing this
-         page asks of a visitor, and everything that would justify it —
-         the source, the installer itself, the licence — was in the footer.
-         It belongs where the ask is made. */}}
-    <p class="trust small mono">
-      <a href="https://github.com/r2cuerdame/CodeSampleX">{{.T "landing.trust_source"}}</a> ·
-      <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
-      <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
-    </p>
   </div>
 
   <ul class="claims">
-    <li><strong>{{.T "landing.value_1_t"}}</strong><span class="dim">{{.T "landing.value_1_b"}}</span></li>
-    <li><strong>{{.T "landing.value_2_t"}}</strong><span class="dim">{{.T "landing.value_2_b"}}</span></li>
-    <li><strong>{{.T "landing.value_3_t"}}</strong><span class="dim">{{.T "landing.value_3_b"}}</span></li>
+    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_1_t"}}</strong><span class="dim">{{.T "landing.value_1_b"}}</span></span></li>
+    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_2_t"}}</strong><span class="dim">{{.T "landing.value_2_b"}}</span></span></li>
+    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_3_t"}}</strong><span class="dim">{{.T "landing.value_3_b"}}</span></span></li>
   </ul>
 </section>
 
@@ -82,7 +86,7 @@
       </li>
     {{- end}}
     </ul>
-    <p class="small"><a href="/findings">{{.T "landing.findings_more"}}</a></p>
+    <p class="small"><a href="{{.WithLang "/findings"}}">{{.T "landing.findings_more"}}</a></p>
   </section>
 {{- end}}
 
@@ -127,7 +131,7 @@
 </section>
 {{end}}
 
-<section class="contract">
+<section id="contract" class="contract">
   <h2 class="eyebrow mono">{{.T "contract.heading"}}</h2>
   <div class="cols">
     <div class="col panel">

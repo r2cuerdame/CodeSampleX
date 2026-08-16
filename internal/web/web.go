@@ -312,6 +312,7 @@ type basePage struct {
 	JSONLD      []template.JS
 	Version     string
 	IsLanding   bool
+	OGImage     string
 	// OGType is the og:type of the page. Empty renders "website"; pages
 	// that are a dated document rather than a site section set "article".
 	OGType string

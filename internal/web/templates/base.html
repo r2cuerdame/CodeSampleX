@@ -18,19 +18,26 @@
 {{- if .Canonical}}
 <meta property="og:url" content="{{.Canonical}}">
 {{- end}}
-<meta name="twitter:card" content="summary">
+{{- if .OGImage}}
+<meta property="og:image" content="{{.OGImage}}">
+{{- end}}
+<meta name="twitter:card" content="{{if .OGImage}}summary_large_image{{else}}summary{{end}}">
 <meta name="twitter:title" content="{{.Title}}">
 <meta name="twitter:description" content="{{.Description}}">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%230f1317'/%3E%3Crect%20x='3'%20y='4'%20width='3'%20height='8'%20fill='%23d9a441'/%3E%3Crect%20x='8'%20y='4'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3Crect%20x='8'%20y='7'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3Crect%20x='8'%20y='10'%20width='5'%20height='2'%20fill='%236b7683'/%3E%3C/svg%3E">
+{{- if .OGImage}}
+<meta name="twitter:image" content="{{.OGImage}}">
+{{- end}}
+<meta name="theme-color" content="#0b2a6b">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='4'%20fill='%230b2a6b'/%3E%3Cpath%20d='M8%202.2l4.4%201.6v3.4c0%203-1.8%205.2-4.4%206.6-2.6-1.4-4.4-3.6-4.4-6.6V3.8L8%202.2z'%20fill='%23155eeb'/%3E%3Cpath%20d='M5.5%207.8l1.5%201.5%203.5-3.6'%20fill='none'%20stroke='white'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/site.css">
 {{- range .JSONLD}}
 <script type="application/ld+json">{{.}}</script>
 {{- end}}
 </head>
-<body>
+<body{{if .IsLanding}} class="landing-page"{{end}}>
 <header class="top">
   <div class="wrap bar">
-    <a class="brand mono" href="{{.HomeHref}}">codesample<span class="x">x</span></a>
+    <a class="brand" href="{{.HomeHref}}"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="shield" d="M12 2.5 20 5.4v6.2c0 5.2-3.3 8.7-8 10.4-4.7-1.7-8-5.2-8-10.4V5.4L12 2.5Z"/><path class="check" d="m7.8 12 2.6 2.6 5.9-6.1"/></svg></span><span class="brand-word">CodeSample<span class="x">X</span></span></a>
     <nav class="nav">
       <a href="{{.WithLang "/records"}}">{{.T "nav.records"}}</a>
       <a href="{{.WithLang "/findings"}}">{{.T "nav.findings"}}</a>

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +18,8 @@ func TestDumpForReview(t *testing.T) {
 	pages := map[string]string{
 		"landing.html":    "/",
 		"landing-ko.html": "/ko/",
+		"landing-de.html": "/de/",
+		"landing-ru.html": "/ru/",
 		"symbol.html":     "/npm/axios/1.12.0/axios.post",
 		"package.html":    "/npm/axios",
 		"sample.html":     "/samples/sha256:d1e2f3",
@@ -26,17 +29,21 @@ func TestDumpForReview(t *testing.T) {
 	}
 	for name, path := range pages {
 		rec := get(t, mux, path)
-		if err := os.WriteFile(filepath.Join(dir, name), rec.Body.Bytes(), 0o644); err != nil {
+		body := bytes.ReplaceAll(rec.Body.Bytes(), []byte(`"/static/`), []byte(`"static/`))
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Copy the stylesheet next to the dumps so file:// review works.
-	css, err := os.ReadFile("static/site.css")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Copy the self-hosted landing assets next to the dumps so file:// review
+	// works without a server or a network connection.
 	_ = os.MkdirAll(filepath.Join(dir, "static"), 0o755)
-	if err := os.WriteFile(filepath.Join(dir, "static", "site.css"), css, 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"site.css", "inspector-hero-v1.webp"} {
+		asset, err := os.ReadFile(filepath.Join("static", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "static", name), asset, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

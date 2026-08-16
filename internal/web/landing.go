@@ -283,6 +283,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	title := "CodeSampleX — " + i18n.T(lang, "landing.tagline")
 	b := s.page(r, lang, title, i18n.T(lang, "site.meta_description"))
 	b.IsLanding = true
+	b.OGImage = base + "/static/inspector-hero-v1.webp"
 	b.Alternates = landingAlternates(base)
 	if lang == i18n.Default {
 		b.Canonical = base + "/"

@@ -63,6 +63,10 @@ func TestLandingEnglish(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "Stop solving the same code twice.")
+	mustContain(t, body, `class="landing-page"`)
+	mustContain(t, body, `src="/static/inspector-hero-v1.webp"`)
+	mustContain(t, body, `content="https://codesamplex.dev/static/inspector-hero-v1.webp"`)
+	mustContain(t, body, `content="summary_large_image"`)
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the counters, the way in by name,
@@ -394,6 +398,20 @@ func TestStaticCSSServed(t *testing.T) {
 		t.Errorf("content type %q", rec.Header().Get("Content-Type"))
 	}
 	mustContain(t, rec.Body.String(), "prefers-color-scheme")
+}
+
+func TestStaticInspectorHeroServed(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/static/inspector-hero-v1.webp")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "image/webp") {
+		t.Errorf("content type %q", rec.Header().Get("Content-Type"))
+	}
+	if rec.Body.Len() < 1_000 {
+		t.Errorf("hero asset unexpectedly small: %d bytes", rec.Body.Len())
+	}
 }
 
 func TestStatsUnavailableStillRenders(t *testing.T) {
