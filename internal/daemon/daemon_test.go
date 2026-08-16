@@ -318,7 +318,11 @@ func TestPrivacyPreviewSanitized(t *testing.T) {
 }
 
 func TestAdoptionRecordsHit(t *testing.T) {
-	home := newTestHome(t, nil)
+	// Community mode: an adoption report is queued for upload only where
+	// the user agreed to take part. The mode used to go unstated here, and
+	// the test passed against an uninitialized install that was queuing
+	// uploads nobody had consented to.
+	home := newTestHome(t, func(cfg *config.Config) { cfg.Mode = config.ModeCommunity })
 	d, c := startDaemon(t, home)
 	ctx := context.Background()
 	seedSample(t, d, "sha256:bbb2")

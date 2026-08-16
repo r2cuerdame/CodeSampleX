@@ -43,6 +43,10 @@ type Stats struct {
 	Packages                  int     `json:"packages"`
 	QueueDepth                int     `json:"queueDepth"`
 	LastUpload                string  `json:"lastUpload,omitempty"`
+	// CountsArePartial reports that adoption and build-report counts were
+	// tallied from the newest page of hits rather than the whole store,
+	// which happens once there are more hits than one page holds.
+	CountsArePartial bool `json:"countsArePartial,omitempty"`
 }
 
 // StatsNow computes the dashboard numbers from localdb + CAS.
@@ -57,11 +61,24 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	// 10,000, so past that the dashboard reported exactly 10,000 hits
 	// forever -- a number that stops moving is read as a stalled network
 	// rather than a truncated query.
-	if n, cerr := d.DB.CountHits(ctx); cerr == nil {
-		st.Hits = n
-	} else {
-		st.Hits = len(hits)
+	//
+	// But the counters BELOW are tallied from that page, so taking the
+	// total here and the adoptions from ten thousand rows put a whole-store
+	// number over a partial one: with 15,000 hits and 12,000 adoptions the
+	// page holds at most 10,000 of each, and the adoption rate came out
+	// wrong in the flattering direction. Either both come from the store or
+	// both come from the page. They come from the store.
+	total, terr := d.DB.CountHits(ctx)
+	if terr != nil {
+		total = len(hits)
 	}
+	st.Hits = total
+	// When the store is larger than one page, the counters below describe
+	// the newest 10,000 hits and not the whole store. Say which, rather
+	// than presenting a partial tally as a total: the alternative is a
+	// dashboard whose adoption count silently stops growing while its hit
+	// count keeps going.
+	st.CountsArePartial = total > len(hits)
 	passes := 0
 	for _, h := range hits {
 		if h.Adopted {

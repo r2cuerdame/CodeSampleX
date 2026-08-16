@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"net/http"
 	"time"
 
@@ -238,7 +239,16 @@ func (d *Daemon) handleAdoption(w http.ResponseWriter, r *http.Request) {
 		Applied:       req.Applied,
 		BuildPass:     req.BuildPass,
 	})
-	if err == nil {
+	// Community mode only, exactly like the MCP path.
+	//
+	// That path was fixed earlier tonight and this one was not: the same
+	// report, arriving through the local HTTP API instead of the tool, was
+	// still queued for upload in local-only mode. Nothing drains the queue
+	// there, so nothing actually left — but the row was written on the
+	// promise that it would be sent, and a user who chose the mode that
+	// sends nothing had a payload with their anonID sitting in a queue
+	// named "upload".
+	if err == nil && d.Cfg != nil && d.Cfg.Mode == config.ModeCommunity {
 		_, _ = d.DB.Enqueue(ctx, "adoption", string(payload))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"recorded": true})
