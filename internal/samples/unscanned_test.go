@@ -120,3 +120,40 @@ func TestAPlainAllowedURLIsNotAFinding(t *testing.T) {
 		}
 	}
 }
+
+// "Anything that is not whitespace" also describes a regular expression.
+// A sample about the regex crate contains r"(\N\{[^}]+})|([{}])", whose
+// middle reads as two backslashes, a name, a backslash and then junk — and
+// the publish gate refused it with no override flag, turning a contributor
+// away for writing exactly the sample the network asked for.
+func TestARegexLiteralIsNotAUNCPath(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lib.rs", `        let re = Regex::new(r"(\\N\{[^}]+})|([{}])").unwrap();`+"\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Kind == KindAbsolutePath {
+			t.Errorf("a regex literal was reported as a path: %+v", f)
+		}
+	}
+}
+
+// A real UNC path is still caught — that is what the rule is for.
+func TestARealUNCPathIsStillCaught(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "config.js", "const share = \"\\\\fileserver\\acme-payroll\\out.csv\";\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Kind == KindAbsolutePath {
+			return
+		}
+	}
+	t.Errorf("a UNC share pointing at a company file server was not reported: %+v", findings)
+}

@@ -138,7 +138,20 @@ var leakPatterns = []leakPattern{
 	// The optional second pair covers the same path once JSON has escaped
 	// it: four backslashes can only come from escaping a real UNC prefix,
 	// never from a namespace separator, which is always exactly two.
-	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]+\\{1,2}[^\s"']+)`)},
+	// The trailing segment is restricted to what a path segment is actually
+	// made of, because "anything that is not whitespace" also describes a
+	// regular expression. A sample about the regex crate contains
+	// r"(\\N\{[^}]+})|([{}])", whose middle reads as two backslashes, a
+	// name, a backslash and then junk — and the publish gate refused it
+	// with no override flag. A false positive here is a contributor turned
+	// away for writing exactly the sample the network asked for; a leak
+	// inside a path containing regex metacharacters is the rarer thing by
+	// a wide margin.
+	// The segment after the separator must BEGIN with a path character, or
+	// the engine simply backtracks: with a backslash allowed anywhere in
+	// the trailing class, \\N\{ matches by letting the class eat the second
+	// backslash of the pair it just skipped.
+	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]+\\{1,2}[A-Za-z0-9._-][A-Za-z0-9._\\/-]*)`)},
 	// Only secret-shaped environment names: a sample legitimately sets TZ,
 	// NODE_ENV or PORT, and flagging those blocked honest contributions.
 	{KindEnvAssignment, regexp.MustCompile(`process\.env\.\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*\s*=\s*["'` + "`" + `]`)},
