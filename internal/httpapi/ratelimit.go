@@ -37,6 +37,22 @@ var (
 	// minutes; at ten an hour it costs days, while no honest contributor
 	// publishes ten samples in an hour.
 	publishLimit = rate{burst: 10, per: time.Hour}
+
+	// seededPublishLimit is the budget for a publish that arrives with a
+	// VALID api token.
+	//
+	// The anonymous limit is an abuse control, and it stays exactly as
+	// strict: anyone at all may publish, so ten an hour is what an
+	// unidentified stranger gets. An identified seeder is a different
+	// situation — the account is revocable and every sample it publishes is
+	// attributed to it — so the same number was not protecting anything, it
+	// was only capping the people doing the work. Seeding a network from
+	// nothing means thousands of samples, and ten an hour is forty-one days
+	// for ten thousand.
+	//
+	// Keyed by login rather than address, so it follows the identity rather
+	// than the machine.
+	seededPublishLimit = rate{burst: 300, per: time.Hour}
 )
 
 type rate struct {
@@ -122,14 +138,50 @@ func (l *limiter) sweepLocked(now time.Time) {
 // limiters holds one limiter per endpoint class.
 type limiters struct {
 	write, read, auth, publish *limiter
+	// seededPublish is the identified-seeder budget, keyed by login.
+	seededPublish *limiter
 }
 
 func newLimiters() *limiters {
 	return &limiters{
-		write:   newLimiter(writeLimit),
-		read:    newLimiter(readLimit),
-		auth:    newLimiter(authLimit),
-		publish: newLimiter(publishLimit),
+		write:         newLimiter(writeLimit),
+		read:          newLimiter(readLimit),
+		auth:          newLimiter(authLimit),
+		publish:       newLimiter(publishLimit),
+		seededPublish: newLimiter(seededPublishLimit),
+	}
+}
+
+// limitPublish picks the publish budget from WHO is publishing.
+//
+// A valid api token identifies a seeder: the account is revocable and every
+// sample it uploads is attributed to it, which is what the anonymous limit
+// exists to substitute for. So an identified seeder gets the seeded budget,
+// keyed by login so it follows the identity rather than the machine, and
+// everyone else gets exactly the strict anonymous one.
+//
+// The identity is resolved BEFORE the budget is chosen: keying on the token
+// itself would let anyone mint unlimited buckets by presenting unlimited
+// junk tokens, which is the throttle it is meant to be.
+func (a *api) limitPublish(lim *limiters, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l, key := lim.publish, clientAddr(r)
+		if tok := bearerToken(r); tok != "" {
+			if id, ok, err := a.d.Store.IdentityByAPIToken(r.Context(), sha256Hex(tok)); err == nil && ok {
+				l, key = lim.seededPublish, "seeder:"+id.Login
+			}
+		}
+		if ok, wait := l.allow(key); !ok {
+			seconds := int(wait.Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeErr(w, http.StatusTooManyRequests,
+				"rate limit exceeded; retry in "+strconv.Itoa(seconds)+"s")
+			return
+		}
+		h(w, r)
 	}
 }
 

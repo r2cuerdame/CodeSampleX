@@ -783,6 +783,25 @@ func samplePublish(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleStderr, "csx sample publish: REFUSED — %d leakage finding(s):\n", len(findings))
 		printFindings(sampleStderr, findings)
 		fmt.Fprintln(sampleStderr, "Fix the files and run `csx sample create` again. There is no override flag.")
+		// A URL finding is the one that most often surprises an author of a
+		// legitimate sample: a sample ABOUT network behaviour has to contain
+		// hosts, and "proxy.corp" is indistinguishable from a real internal
+		// one. The scanner cannot tell an invented host from a company's,
+		// which is exactly why it refuses -- so the message has to say what
+		// to write instead rather than only that this was wrong.
+		for _, f := range findings {
+			if f.Kind == samples.KindURL {
+				fmt.Fprintln(sampleStderr,
+					"\nA URL finding does not mean the host is real — it means nothing here can tell.")
+				fmt.Fprintln(sampleStderr,
+					"For hosts a sample invents, use the names reserved for exactly this:")
+				fmt.Fprintln(sampleStderr,
+					"  example.com / example.org / example.net, anything under .test, .invalid or .local,")
+				fmt.Fprintln(sampleStderr,
+					"  localhost, and the documentation IP ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24.")
+				break
+			}
+		}
 		return 1
 	}
 
