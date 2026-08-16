@@ -71,9 +71,11 @@ func CreateFromDir(ctx context.Context, dir string, manifest domain.SampleManife
 		return nil, errors.New("samples: case believed repeats the goal — " +
 			"believed is what a developer expects, which the contract then contradicts")
 	}
-	if manifest.Case.CaseID == "" {
-		manifest.Case.CaseID = manifest.Case.ComputeID()
-	}
+	// The case ID is derived data, never author-controlled data. Recompute it
+	// even when csx.json already carries one: authors routinely refine a goal
+	// or contract and an old ID must not make two different cases collapse
+	// onto the same store row.
+	manifest.Case.CaseID = manifest.Case.ComputeID()
 
 	maxLevel := domain.L5MatrixPass
 	if len(manifest.ContractCommand) == 0 {

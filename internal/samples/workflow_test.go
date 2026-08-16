@@ -84,6 +84,24 @@ func TestWorkflowContractlessCapsAtL2(t *testing.T) {
 	}
 }
 
+func TestWorkflowRecomputesStaleCaseID(t *testing.T) {
+	dir := sampleFixture(t)
+	m := testManifest()
+	m.Case.CaseID = "case:sha256:" + strings.Repeat("0", 64)
+	want := m.Case.ComputeID()
+
+	created, err := CreateFromDir(context.Background(), dir, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := created.Manifest.Case.CaseID; got != want {
+		t.Fatalf("case id = %q, want recomputed %q", got, want)
+	}
+	if got := created.Manifest.Case.CaseID; got == m.Case.CaseID {
+		t.Fatal("stale author-supplied case id was preserved")
+	}
+}
+
 func TestWorkflowFindingsDoNotBlockCreation(t *testing.T) {
 	dir := sampleFixture(t)
 	writeFile(t, dir, "src/leak.js", `const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";`)

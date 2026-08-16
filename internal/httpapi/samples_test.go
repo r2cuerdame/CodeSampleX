@@ -127,6 +127,28 @@ func TestSampleUploadRejectsSampleIDMismatch(t *testing.T) {
 	}
 }
 
+func TestSampleUploadRejectsStaleCaseID(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	manifest.Case.CaseID = "case:sha256:" + strings.Repeat("0", 64)
+	artifact := buildArtifact(t, manifest, nil)
+	sampleID := domain.SHA256Hex(artifact)
+
+	resp := postSample(t, srv.URL, manifest, sampleID, artifact, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 400", resp.StatusCode, body)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "caseId does not match") {
+		t.Fatalf("body = %s", body)
+	}
+	if _, ok, err := store.GetSample(context.Background(), sampleID); err != nil || ok {
+		t.Fatalf("mismatched case sample was stored: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestSampleUploadRejectsOversizedArtifact(t *testing.T) {
 	srv, _, _ := newTestServer(t, nil)
 	manifest := testManifest()

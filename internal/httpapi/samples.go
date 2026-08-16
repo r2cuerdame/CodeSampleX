@@ -152,9 +152,16 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	cse := manifest.Case
-	if cse.CaseID == "" {
-		cse.CaseID = cse.ComputeID()
+	computedCaseID := cse.ComputeID()
+	if cse.CaseID != "" && cse.CaseID != computedCaseID {
+		writeErr(w, http.StatusBadRequest, "caseId does not match case content")
+		return
 	}
+	cse.CaseID = computedCaseID
+	// Keep stored metadata coherent for legacy clients that omitted the
+	// derived field. The artifact remains byte-identical and content-addressed;
+	// only the server's parsed manifest gains the ID it just verified.
+	manifest.Case = cse
 	if err := a.d.Store.SaveCase(ctx, cse); err != nil {
 		writeErr(w, http.StatusInternalServerError, "saving case failed")
 		return
