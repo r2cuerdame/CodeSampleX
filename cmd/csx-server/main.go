@@ -24,12 +24,16 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const usage = `usage: csx-server <migrate|serve|quarantine|recompute-status>
+const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status>
 
   migrate      apply schema migrations to $CSX_DSN and exit
   serve        apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
   quarantine   hide a published sample from every serving read (operator only)
                csx-server quarantine <sampleId> --reason "…"   [--release]
+  seeder-create
+               mint a seeder identity and its api token (operator only)
+               csx-server seeder-create <login>
+
   recompute-status
                re-derive every sample status from its receipts under the
                current rules; corrects statuses granted under an older rule
@@ -54,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(cfg, stdout, stderr)
 	case "quarantine":
 		return runQuarantine(cfg, args[1:], stdout, stderr)
+	case "seeder-create":
+		return runSeederCreate(cfg, args[1:], stdout, stderr)
 	case "recompute-status":
 		return runRecomputeStatus(cfg, args[1:], stdout, stderr)
 	default:
