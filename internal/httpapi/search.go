@@ -692,9 +692,22 @@ func searchText(m domain.SampleManifest) string {
 	b.WriteString(m.Case.Goal)
 	b.WriteByte(' ')
 	b.WriteString(m.Case.Kind)
-	for _, p := range m.Packages {
+	// The package NAME, not the raw purl.
+	//
+	// A purl tokenizes to pkg, the ecosystem, the name and the version
+	// digits — so "pkg" and "npm" were content tokens of EVERY sample, and
+	// the relevance gate ("shares no content word with the sample" is a
+	// miss) opened for any query containing either. The client-side engine
+	// had the same shape of bug through package names; this is its twin,
+	// through the purl itself.
+	for _, raw := range m.Packages {
+		if pp, err := domain.ParsePURL(raw); err == nil && pp.Name != "" {
+			b.WriteByte(' ')
+			b.WriteString(pp.Name)
+			continue
+		}
 		b.WriteByte(' ')
-		b.WriteString(p)
+		b.WriteString(raw)
 	}
 	for _, s := range m.Symbols {
 		b.WriteByte(' ')
