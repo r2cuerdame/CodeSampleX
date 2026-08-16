@@ -117,8 +117,16 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 	case "gem":
 		// Bundler is not in the image's default gem set on every tag, and
 		// installing it here keeps the contract stage free of network.
-		return []string{"sh", "-c",
-			"gem install bundler --no-document -q && bundle install --quiet"}, nil
+		//
+		// The Gemfile check comes first because bundler's answer to a
+		// missing one is to print its entire command list and exit 10.
+		// Ninety-seven ruby samples out of a hundred and thirty died that
+		// way, and what the author got back was thirty lines of "bundle
+		// doctor / bundle env / bundle fund" with the actual reason
+		// nowhere in it. A resolve that cannot say why it failed costs the
+		// sample twice: once when it fails, and again when nobody can tell
+		// what to change.
+		return []string{"sh", "-c", gemResolveScript}, nil
 	case "pub":
 		return []string{"dart", "pub", "get"}, nil
 	case "hex":
@@ -195,6 +203,38 @@ func stageEnv(ecosystem, runtime string) []string {
 // through tooling that ate the backreferences, so every fetch ran as
 // `mix hex.package fetch "" ""`. The script still read correctly and failed
 // only inside a container, which is the worst place to find out.
+// gemResolveScript installs bundler and resolves, after saying plainly
+// what is wrong when it cannot.
+//
+// Two diagnostics, both learned from a run where forty-two of forty-three
+// verification failures were ruby and every one of them was unreadable:
+//
+//   - No Gemfile. Bundler answers that by printing its whole command list
+//     and exiting 10, which tells an author nothing about what to write.
+//   - A contract requiring minitest. GEM_PATH points at the vendor
+//     directory ONLY, on purpose: a contract that passes because the base
+//     image happened to ship a test framework proves something about the
+//     image, not about the library. So minitest is genuinely absent, and
+//     the author has to hear that from the resolve rather than from a
+//     LoadError three stages later.
+const gemResolveScript = `set -e
+if [ ! -f Gemfile ]; then
+  echo "csx: no Gemfile. A gem sample must pin its dependency in a Gemfile" >&2
+  echo "csx: (with the exact version) so the resolve can be reproduced." >&2
+  exit 1
+fi
+if grep -qE "require ['\"](minitest|rspec|test-unit)" test/*.rb 2>/dev/null; then
+  if ! grep -qE "(minitest|rspec|test-unit)" Gemfile; then
+    echo "csx: the contract requires a test framework that is not in the Gemfile." >&2
+    echo "csx: GEM_PATH is the vendor directory only, so nothing the base image" >&2
+    echo "csx: ships is visible. Assert with plain Ruby -- raise unless ... -- or" >&2
+    echo "csx: declare and pin the framework as a dependency." >&2
+    exit 1
+  fi
+fi
+gem install bundler --no-document -q
+bundle install --quiet`
+
 const hexResolveScript = `set -e
 mkdir -p ` + vendorDir + `/nomix /work/deps
 cd ` + vendorDir + `/nomix
