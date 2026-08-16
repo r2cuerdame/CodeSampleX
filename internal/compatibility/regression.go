@@ -22,8 +22,20 @@ const (
 type RegressionCandidate struct {
 	Package         string `json:"package"`         // purl of the suspect version
 	PreviousPackage string `json:"previousPackage"` // purl of V-1
-	Symbol          string `json:"symbol,omitempty"`
-	// Stage is the observation stage the comparison was made at. A
+	// CaseID is present for receipt-established candidates. It makes the
+	// comparison auditable: both sides ran the same immutable problem rather
+	// than merely mentioning the same symbol.
+	CaseID string `json:"caseId,omitempty"`
+	Symbol string `json:"symbol,omitempty"`
+	// Receipt-established boundaries retain every comparison dimension that
+	// made the two executions comparable. Consumers must not read an adapter-
+	// specific failure as a package-wide verdict.
+	VerifierAdapter   string                   `json:"verifierAdapter,omitempty"`
+	SandboxCapability domain.SandboxCapability `json:"sandboxCapability,omitempty"`
+	CompanionPackages []string                 `json:"companionPackages,omitempty"`
+	HarnessHash       string                   `json:"harnessHash,omitempty"`
+	// Stage is the stage the comparison was made at. Observation candidates
+	// use a PROJECT_* stage; exact receipt boundaries use CONTRACT. A
 	// regression only means something within one stage.
 	Stage                string  `json:"stage,omitempty"`
 	ContextLabel         string  `json:"contextLabel"`

@@ -150,6 +150,100 @@ func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	}
 }
 
+func TestIntegrationResolvedReceiptTargetsAndChanges(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	mark := time.Now().UTC().Add(-time.Second)
+	declared := "pkg:npm/axios@1.0.0"
+	resolved := "pkg:npm/axios@2.1.3"
+	cse := domain.Case{
+		SchemaVersion: 1, Kind: "HOW", Goal: "post JSON",
+		Packages: []string{declared}, Contract: []string{"posts JSON"},
+	}
+	caseID := cse.ComputeID()
+	if err := pg.SaveCase(ctx, cse); err != nil {
+		t.Fatal(err)
+	}
+	manifest := domain.SampleManifest{
+		SchemaVersion: 1, Case: cse, Packages: []string{declared},
+		Symbols: []string{"axios.post"},
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		},
+		License: "MIT-0", ContractCommand: []string{"node", "test.mjs"},
+		VerifierAdapter: "node-typescript@1",
+	}
+	sampleID := "sha256:" + fmt.Sprintf("%064d", 91)
+	if err := pg.SaveSample(ctx, SampleRow{
+		SampleID: sampleID, CaseID: caseID,
+		ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	receipt := domain.VerificationReceipt{
+		SchemaVersion: 2, SampleID: sampleID, CaseID: caseID,
+		Stages:           map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
+		ResolvedPackages: []string{resolved},
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "sha256:" + fmt.Sprintf("%064d", 92), SampleID: sampleID,
+		PeerID: "ed25519:0011223344556677", EnvHash: "sha256:" + fmt.Sprintf("%064d", 93),
+		ReceiptJSON: string(domain.MustCanonicalJSON(receipt)), ContractResult: "PASS",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := pg.ListSnapshotTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTargets := map[SnapshotTarget]bool{
+		{PURL: resolved, Symbol: ""}:           true,
+		{PURL: resolved, Symbol: "axios.post"}: true,
+	}
+	for _, target := range targets {
+		delete(wantTargets, target)
+	}
+	if len(wantTargets) != 0 {
+		t.Fatalf("receipt targets missing: %v (got %v)", wantTargets, targets)
+	}
+	changes, err := pg.ChangedSince(ctx, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDirty := map[string]bool{declared: true, resolved: true}
+	for _, purl := range changes.SamplePURLs {
+		delete(wantDirty, purl)
+	}
+	if len(wantDirty) != 0 {
+		t.Fatalf("receipt dirty keys missing: %v (got %v)", wantDirty, changes.SamplePURLs)
+	}
+
+	if err := pg.SetSampleQuarantine(ctx, sampleID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = pg.ListSnapshotTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		if target.PURL == resolved {
+			t.Fatalf("quarantined sample still created receipt target: %+v", target)
+		}
+	}
+	changes, err = pg.ChangedSince(ctx, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDirty = map[string]bool{declared: true, resolved: true}
+	for _, purl := range changes.SamplePURLs {
+		delete(wantDirty, purl)
+	}
+	if len(wantDirty) != 0 {
+		t.Fatalf("quarantine did not dirty historical resolved keys: %v", wantDirty)
+	}
+}
+
 func TestIntegrationCRUD(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
@@ -174,15 +268,33 @@ func TestIntegrationCRUD(t *testing.T) {
 	})
 
 	t.Run("snapshots", func(t *testing.T) {
-		if err := pg.PutSnapshot(ctx, "pkg:npm/axios@1.12.0", "axios.post", `{"schemaVersion":1}`); err != nil {
+		first := SnapshotTarget{PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post"}
+		second := SnapshotTarget{PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.request"}
+		if err := pg.PutSnapshot(ctx, first.PURL, first.Symbol, `{"schemaVersion":1}`); err != nil {
 			t.Fatalf("PutSnapshot: %v", err)
 		}
-		js, ok, err := pg.GetSnapshot(ctx, "pkg:npm/axios@1.12.0", "axios.post")
+		if err := pg.PutSnapshot(ctx, second.PURL, second.Symbol, `{"schemaVersion":1}`); err != nil {
+			t.Fatalf("PutSnapshot second: %v", err)
+		}
+		js, ok, err := pg.GetSnapshot(ctx, first.PURL, first.Symbol)
 		if err != nil || !ok || js == "" {
 			t.Fatalf("GetSnapshot: %q ok=%v err=%v", js, ok, err)
 		}
 		if _, ok, _ := pg.GetSnapshot(ctx, "pkg:npm/axios@1.12.0", "axios.get"); ok {
 			t.Fatal("GetSnapshot found absent symbol")
+		}
+		keys, err := pg.SnapshotKeys(ctx)
+		if err != nil || len(keys) != 2 || keys[0] != first || keys[1] != second {
+			t.Fatalf("SnapshotKeys: %+v err=%v", keys, err)
+		}
+		if err := pg.DeleteSnapshots(ctx, []SnapshotTarget{first}); err != nil {
+			t.Fatalf("DeleteSnapshots: %v", err)
+		}
+		if _, ok, _ := pg.GetSnapshot(ctx, first.PURL, first.Symbol); ok {
+			t.Fatal("deleted snapshot survived")
+		}
+		if _, ok, _ := pg.GetSnapshot(ctx, second.PURL, second.Symbol); !ok {
+			t.Fatal("deleting one snapshot removed another")
 		}
 	})
 

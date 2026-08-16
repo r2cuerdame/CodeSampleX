@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ func testInitEnv(t *testing.T, stdin string) (*initEnv, *bytes.Buffer, string) {
 		stdout:   &out,
 		stderr:   &out,
 		userHome: func() (string, error) { return userHome, nil },
+		warm:     func(context.Context, io.Writer) {},
 	}
 	return env, &out, userHome
 }

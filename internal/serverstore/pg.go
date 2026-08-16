@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -338,32 +339,126 @@ func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string)
 	})
 }
 
-func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) {
+func (p *PG) SnapshotKeys(ctx context.Context) ([]SnapshotTarget, error) {
 	var out []SnapshotTarget
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx,
-			`SELECT DISTINCT purl, symbol FROM evidence_agg ORDER BY purl, symbol`)
+		rows, err := c.Query(ctx, `
+			SELECT purl, symbol FROM compatibility_snapshots
+			ORDER BY purl, symbol`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var t SnapshotTarget
-			if err := rows.Scan(&t.PURL, &t.Symbol); err != nil {
+			var target SnapshotTarget
+			if err := rows.Scan(&target.PURL, &target.Symbol); err != nil {
 				return err
 			}
-			out = append(out, t)
+			out = append(out, target)
 		}
 		return rows.Err()
 	})
 	return out, err
 }
 
-// ChangedSince implements the incremental-rebuild query. Both halves are
-// index-friendly single scans; on an idle network they return nothing and
-// the aggregation pass does no work at all.
+func (p *PG) DeleteSnapshots(ctx context.Context, targets []SnapshotTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		for _, target := range targets {
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM compatibility_snapshots WHERE purl=$1 AND symbol=$2`,
+				target.PURL, target.Symbol); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	})
+}
+
+func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) {
+	seen := map[SnapshotTarget]bool{}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `SELECT DISTINCT purl, symbol FROM evidence_agg`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var t SnapshotTarget
+			if err := rows.Scan(&t.PURL, &t.Symbol); err != nil {
+				rows.Close()
+				return err
+			}
+			seen[t] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		// Validate the signed list as one unit in Go, using the same canonical
+		// PURL/concrete-version/sorted/unique rules as Fake and aggregation.
+		// Exploding JSON in SQL first partially accepted malformed receipts.
+		receipts, err := c.Query(ctx, `
+			SELECT r.receipt::text, s.manifest::text
+			FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
+			WHERE NOT s.quarantined
+			  AND r.receipt->>'schemaVersion' = '2'
+			  AND r.receipt->'stages'->>'resolve' = 'PASS'`)
+		if err != nil {
+			return err
+		}
+		defer receipts.Close()
+		for receipts.Next() {
+			var receiptJSON, manifestJSON string
+			if err := receipts.Scan(&receiptJSON, &manifestJSON); err != nil {
+				return err
+			}
+			var manifest struct {
+				Symbols []string `json:"symbols"`
+			}
+			if json.Unmarshal([]byte(manifestJSON), &manifest) != nil {
+				continue
+			}
+			symbols := append([]string{""}, manifest.Symbols...)
+			for _, purl := range resolvedPackageStrings(receiptJSON) {
+				for _, symbol := range symbols {
+					seen[SnapshotTarget{PURL: purl, Symbol: symbol}] = true
+				}
+			}
+		}
+		return receipts.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SnapshotTarget, 0, len(seen))
+	for target := range seen {
+		out = append(out, target)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out, nil
+}
+
+// ChangedSince implements the incremental-rebuild query. It includes both
+// author-declared purls and exact purls established by v2 receipts; on an
+// idle network the timestamp predicates return nothing and aggregation does
+// no materialized-view work.
 func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
 	var c Changes
+	seenPURLs := map[string]bool{}
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		rows, err := conn.Query(ctx,
 			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, since)
@@ -401,17 +496,56 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 		if err != nil {
 			return err
 		}
-		defer prows.Close()
 		for prows.Next() {
 			var purl string
 			if err := prows.Scan(&purl); err != nil {
+				prows.Close()
 				return err
 			}
-			c.SamplePURLs = append(c.SamplePURLs, purl)
+			seenPURLs[purl] = true
 		}
-		return prows.Err()
+		if err := prows.Err(); err != nil {
+			prows.Close()
+			return err
+		}
+		prows.Close()
+
+		// Validate each historical/new receipt as a whole before any member
+		// becomes a dirty key. This keeps malformed direct DB inserts from
+		// affecting one convenient version in PostgreSQL but not in Fake.
+		rrows, err := conn.Query(ctx, `
+			SELECT r.receipt::text
+			FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
+			WHERE r.created_at > $1 OR s.created_at > $1 OR s.updated_at > $1`, since)
+		if err != nil {
+			return err
+		}
+		defer rrows.Close()
+		for rrows.Next() {
+			var receiptJSON string
+			if err := rrows.Scan(&receiptJSON); err != nil {
+				return err
+			}
+			for _, purl := range resolvedPackageStrings(receiptJSON) {
+				seenPURLs[purl] = true
+			}
+		}
+		return rrows.Err()
 	})
-	return c, err
+	if err != nil {
+		return Changes{}, err
+	}
+	for purl := range seenPURLs {
+		c.SamplePURLs = append(c.SamplePURLs, purl)
+	}
+	sort.Strings(c.SamplePURLs)
+	sort.Slice(c.Targets, func(i, j int) bool {
+		if c.Targets[i].PURL != c.Targets[j].PURL {
+			return c.Targets[i].PURL < c.Targets[j].PURL
+		}
+		return c.Targets[i].Symbol < c.Targets[j].Symbol
+	})
+	return c, nil
 }
 
 func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]EvidenceRow, error) {
@@ -1065,35 +1199,72 @@ func (p *PG) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 			return err
 		}
 
-		// Every package a published sample declares, so shards holding
-		// answers rank above shards holding only counts.
+		// Every package a published sample declares, plus every exact version
+		// its v2 receipts established, so shards holding answers rank above
+		// shards holding only counts. The sample id participates in DISTINCT:
+		// repeated cross-verification must not manufacture extra popularity.
 		//
 		// NOT the quarantined ones. A withdrawn sample carried the same
 		// +1,000,000 weight as a live one, so it kept pushing its package
 		// to the top of the HOT list -- the list every client warms first.
 		// "Hides a sample from every serving read" has to include the read
 		// that decides what the whole network downloads.
+		samplePURLs := map[[2]string]bool{}
 		srows, err := c.Query(ctx, `
-			SELECT jsonb_array_elements_text(manifest->'packages')
-			FROM samples WHERE NOT quarantined`)
+			SELECT sample_id, manifest::text FROM samples WHERE NOT quarantined`)
 		if err != nil {
 			return err
 		}
 		for srows.Next() {
-			var purl string
-			if err := srows.Scan(&purl); err != nil {
+			var sampleID, manifestJSON string
+			if err := srows.Scan(&sampleID, &manifestJSON); err != nil {
 				srows.Close()
 				return err
 			}
-			pu, perr := domain.ParsePURL(purl)
-			if perr != nil {
+			var manifest struct {
+				Packages []string `json:"packages"`
+			}
+			if json.Unmarshal([]byte(manifestJSON), &manifest) != nil {
 				continue
 			}
-			weight[pu.Ecosystem+"/"+pu.Name+"/"+pu.Major()] += sampleShardWeight
+			for _, purl := range manifest.Packages {
+				samplePURLs[[2]string{sampleID, purl}] = true
+			}
 		}
 		srows.Close()
 		if err := srows.Err(); err != nil {
 			return err
+		}
+
+		rrows, err := c.Query(ctx, `
+			SELECT s.sample_id, r.receipt::text
+			FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
+			WHERE NOT s.quarantined
+			  AND r.receipt->>'schemaVersion' = '2'
+			  AND r.receipt->'stages'->>'resolve' = 'PASS'`)
+		if err != nil {
+			return err
+		}
+		for rrows.Next() {
+			var sampleID, receiptJSON string
+			if err := rrows.Scan(&sampleID, &receiptJSON); err != nil {
+				rrows.Close()
+				return err
+			}
+			for _, purl := range resolvedPackageStrings(receiptJSON) {
+				samplePURLs[[2]string{sampleID, purl}] = true
+			}
+		}
+		rrows.Close()
+		if err := rrows.Err(); err != nil {
+			return err
+		}
+		for samplePURL := range samplePURLs {
+			pu, perr := domain.ParsePURL(samplePURL[1])
+			if perr != nil {
+				continue
+			}
+			weight[pu.Ecosystem+"/"+pu.Name+"/"+pu.Major()] += sampleShardWeight
 		}
 
 		krows, err := c.Query(ctx, `SELECT key FROM shards`)

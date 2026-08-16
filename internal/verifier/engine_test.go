@@ -15,22 +15,34 @@ import (
 
 // fakeRunner returns scripted stage results and records the call order.
 type fakeRunner struct {
-	resolve  sandbox.StageResult
-	build    sandbox.StageResult
-	contract sandbox.StageResult
-	calls    []string
+	resolve      sandbox.StageResult
+	build        sandbox.StageResult
+	contract     sandbox.StageResult
+	calls        []string
+	resolveHook  func(string)
+	buildHook    func(string)
+	contractHook func(string)
 }
 
 func (f *fakeRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) sandbox.StageResult {
 	f.calls = append(f.calls, "resolve")
+	if f.resolveHook != nil {
+		f.resolveHook(dir)
+	}
 	return f.resolve
 }
 func (f *fakeRunner) Build(ctx context.Context, dir string, m domain.SampleManifest) sandbox.StageResult {
 	f.calls = append(f.calls, "build")
+	if f.buildHook != nil {
+		f.buildHook(dir)
+	}
 	return f.build
 }
 func (f *fakeRunner) Contract(ctx context.Context, dir string, m domain.SampleManifest) sandbox.StageResult {
 	f.calls = append(f.calls, "contract")
+	if f.contractHook != nil {
+		f.contractHook(dir)
+	}
 	return f.contract
 }
 
@@ -91,6 +103,17 @@ func fixtureDir(t *testing.T) string {
 	return dir
 }
 
+func writeFixtureFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testIdentity(t *testing.T) *identity.Identity {
 	t.Helper()
 	id, err := identity.LoadOrCreate(t.TempDir())
@@ -118,7 +141,7 @@ func TestEngineAllPassReceipt(t *testing.T) {
 	if receipt.SampleID != wantID {
 		t.Fatalf("sample id %s, want %s", receipt.SampleID, wantID)
 	}
-	if receipt.SchemaVersion != 1 {
+	if receipt.SchemaVersion != 2 {
 		t.Fatalf("schemaVersion %d", receipt.SchemaVersion)
 	}
 	if receipt.CaseID == "" {
@@ -163,6 +186,8 @@ func TestEngineAllPassReceipt(t *testing.T) {
 
 func TestEngineSignatureVerifiesAndTamperBreaks(t *testing.T) {
 	dir := fixtureDir(t)
+	writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"1.12.4","resolved":"https://registry.npmjs.org/axios/-/axios-1.12.4.tgz"}}}`)
+	writeFixtureFile(t, dir, "node_modules/axios/package.json", `{"name":"axios","version":"1.12.4"}`)
 	ident := testIdentity(t)
 
 	receipt, err := Run(context.Background(), allPassRunner(), domain.CapContainerRun, dir, testManifest(), ident, testEnv())
@@ -185,13 +210,72 @@ func TestEngineSignatureVerifiesAndTamperBreaks(t *testing.T) {
 	if identity.Verify(tampered2.PeerPubkey, tampered2.PeerSignature, tampered2.SigningBytes()) {
 		t.Fatal("tampered sample id must break the signature")
 	}
+
+	tampered3 := receipt
+	tampered3.ResolvedPackages = []string{"pkg:npm/axios@1.13.0"}
+	if identity.Verify(tampered3.PeerPubkey, tampered3.PeerSignature, tampered3.SigningBytes()) {
+		t.Fatal("tampered resolved packages must break the signature")
+	}
+}
+
+func TestEngineSnapshotsResolvedPackagesBeforeSampleCodeRuns(t *testing.T) {
+	dir := fixtureDir(t)
+	writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"1.12.4","resolved":"https://registry.npmjs.org/axios/-/axios-1.12.4.tgz"}}}`)
+	writeFixtureFile(t, dir, "node_modules/axios/package.json", `{"name":"axios","version":"1.12.4"}`)
+	r := allPassRunner()
+	r.resolveHook = func(dir string) {
+		writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"1.12.4","resolved":"https://registry.npmjs.org/axios/-/axios-1.12.4.tgz"}}}`)
+		writeFixtureFile(t, dir, "node_modules/axios/package.json", `{"name":"axios","version":"1.12.4"}`)
+	}
+	r.contractHook = func(dir string) {
+		writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"9.9.9","resolved":"https://registry.npmjs.org/axios/-/axios-9.9.9.tgz"}}}`)
+		writeFixtureFile(t, dir, "node_modules/axios/package.json", `{"name":"axios","version":"9.9.9"}`)
+	}
+
+	receipt, err := Run(context.Background(), r, domain.CapContainerRun, dir, testManifest(), testIdentity(t), testEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pkg:npm/axios@1.12.4"}
+	if len(receipt.ResolvedPackages) != 1 || receipt.ResolvedPackages[0] != want[0] {
+		t.Fatalf("resolved packages = %v, want resolve-stage snapshot %v", receipt.ResolvedPackages, want)
+	}
+}
+
+func TestEngineRejectsResolveMutationOfImmutableSampleContent(t *testing.T) {
+	dir := fixtureDir(t)
+	r := allPassRunner()
+	r.resolveHook = func(dir string) {
+		writeFixtureFile(t, dir, "src/echo.mjs", "export function echo(){ return 'forged' }\n")
+	}
+
+	receipt, err := Run(context.Background(), r, domain.CapContainerRun, dir, testManifest(), testIdentity(t), testEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Stages["resolve"] != sandbox.ResultFail {
+		t.Fatalf("resolve = %q, want FAIL after source mutation", receipt.Stages["resolve"])
+	}
+	for _, stage := range []string{"compile", "contract", "load"} {
+		if receipt.Stages[stage] != sandbox.ResultSkipped {
+			t.Errorf("%s = %q, want SKIPPED", stage, receipt.Stages[stage])
+		}
+	}
+	if len(r.calls) != 1 || r.calls[0] != "resolve" {
+		t.Fatalf("later stages ran after integrity failure: %v", r.calls)
+	}
+	if len(receipt.ResolvedPackages) != 0 {
+		t.Fatalf("mutating resolve produced package claims: %v", receipt.ResolvedPackages)
+	}
 }
 
 func TestEngineResolveFailShortCircuits(t *testing.T) {
 	r := allPassRunner()
 	r.resolve = sandbox.StageResult{Result: sandbox.ResultFail, Log: "npm ERR"}
+	dir := fixtureDir(t)
+	writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"1.12.4"}}}`)
 
-	receipt, err := Run(context.Background(), r, domain.CapContainerRun, fixtureDir(t), testManifest(), testIdentity(t), testEnv())
+	receipt, err := Run(context.Background(), r, domain.CapContainerRun, dir, testManifest(), testIdentity(t), testEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +289,24 @@ func TestEngineResolveFailShortCircuits(t *testing.T) {
 	}
 	if len(r.calls) != 1 || r.calls[0] != "resolve" {
 		t.Fatalf("later stages must not run after FAIL: %v", r.calls)
+	}
+	if len(receipt.ResolvedPackages) != 0 {
+		t.Fatalf("failed resolve claimed pre-existing lockfile versions: %v", receipt.ResolvedPackages)
+	}
+}
+
+func TestEngineSkippedResolveDoesNotClaimPreexistingLockfile(t *testing.T) {
+	r := allPassRunner()
+	r.resolve = sandbox.StageResult{Result: sandbox.ResultSkipped, Log: "no isolation"}
+	dir := fixtureDir(t)
+	writeFixtureFile(t, dir, "package-lock.json", `{"packages":{"node_modules/axios":{"version":"1.12.4"}}}`)
+
+	receipt, err := Run(context.Background(), r, domain.CapCompileOnly, dir, testManifest(), testIdentity(t), testEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.ResolvedPackages) != 0 {
+		t.Fatalf("skipped resolve claimed pre-existing lockfile versions: %v", receipt.ResolvedPackages)
 	}
 }
 

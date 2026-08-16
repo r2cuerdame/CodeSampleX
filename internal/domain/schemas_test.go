@@ -85,5 +85,90 @@ func TestSchemaFixtures(t *testing.T) {
 				t.Errorf("%s: required key %q missing from Go type's JSON", e.Name(), key)
 			}
 		}
+		// Schemas in this directory deliberately reject unknown fields. Check
+		// the other direction too: a newly serialized Go field that is absent
+		// from properties would otherwise make every document invalid while
+		// this fixture test stayed green.
+		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
+			properties, _ := schema["properties"].(map[string]any)
+			for key := range m {
+				if _, present := properties[key]; !present {
+					t.Errorf("%s: Go type emits key %q rejected by additionalProperties:false", e.Name(), key)
+				}
+			}
+		}
+	}
+}
+
+func TestVerificationReceiptSchemaEvolution(t *testing.T) {
+	v1Dir := schemaDir(t)
+	readSchema := func(path string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s: not valid JSON: %v", path, err)
+		}
+		return schema
+	}
+
+	v1 := readSchema(filepath.Join(v1Dir, "verification-receipt.json"))
+	v2 := readSchema(filepath.Join(filepath.Dir(v1Dir), "v2", "verification-receipt.json"))
+	v1Properties, _ := v1["properties"].(map[string]any)
+	v2Properties, _ := v2["properties"].(map[string]any)
+	if _, present := v1Properties["resolvedPackages"]; present {
+		t.Fatal("public v1 receipt schema must not contain resolvedPackages")
+	}
+	if _, present := v2Properties["resolvedPackages"]; !present {
+		t.Fatal("v2 receipt schema is missing resolvedPackages")
+	}
+	resolvedProperty, _ := v2Properties["resolvedPackages"].(map[string]any)
+	if got := resolvedProperty["minItems"]; got != float64(1) {
+		t.Fatalf("v2 resolvedPackages minItems = %v, want 1 so present-empty cannot change signing bytes", got)
+	}
+	for version, schema := range map[int]map[string]any{1: v1, 2: v2} {
+		versionProperty, _ := schema["properties"].(map[string]any)["schemaVersion"].(map[string]any)
+		if got := versionProperty["const"]; got != float64(version) {
+			t.Errorf("v%d schemaVersion const = %v, want %d", version, got, version)
+		}
+	}
+
+	fixture := VerificationReceipt{
+		SchemaVersion:     2,
+		SampleID:          "sha256:ab",
+		CaseID:            "case:x",
+		EnvironmentHash:   "sha256:cd",
+		Environment:       EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "x64"},
+		Stages:            map[string]string{"resolve": "PASS"},
+		ResolvedPackages:  []string{"pkg:npm/axios@1.12.0"},
+		VerifierAdapter:   "node-typescript@1",
+		SandboxCapability: CapContainerRun,
+		LogsDigest:        "sha256:ef",
+		CreatedAt:         "2026-08-13T00:00:00Z",
+		PeerID:            "ed25519:0123456789abcdef",
+		PeerPubkey:        "pk",
+		PeerSignature:     "sig",
+	}
+	b, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(b, &document); err != nil {
+		t.Fatal(err)
+	}
+	for key := range document {
+		if _, present := v2Properties[key]; !present {
+			t.Errorf("v2 verification-receipt.json rejects Go field %q", key)
+		}
+	}
+	for _, raw := range v2["required"].([]any) {
+		key := raw.(string)
+		if _, present := document[key]; !present {
+			t.Errorf("v2 required key %q missing from Go type's JSON", key)
+		}
 	}
 }

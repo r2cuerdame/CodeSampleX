@@ -64,6 +64,31 @@ func (p PURL) String() string {
 	return "pkg:" + p.Ecosystem + "/" + name + "@" + p.Version
 }
 
+// ConcreteResolvedVersion reports whether v has the shape of a registry
+// release selected by a resolver, rather than a request/range/protocol. It
+// is intentionally cross-ecosystem and conservative: public versions used
+// by the supported resolvers fit this ASCII set, while ^1, >=2, URLs,
+// workspace references and whitespace do not. At least one digit is
+// required so channel names such as "latest" cannot become signed version
+// evidence.
+func ConcreteResolvedVersion(v string) bool {
+	if v == "" || strings.TrimSpace(v) != v {
+		return false
+	}
+	hasDigit := false
+	for _, r := range v {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r == '.', r == '_', r == '-', r == '+', r == '!':
+		default:
+			return false
+		}
+	}
+	return hasDigit
+}
+
 // AnyVersionPattern is this package under any version, in the CANONICAL
 // stored form, for a SQL LIKE prefilter.
 //

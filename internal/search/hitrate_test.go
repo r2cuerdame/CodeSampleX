@@ -126,6 +126,7 @@ func seedCorpus(t *testing.T) (*testEngine, []corpusEntry) {
 		if err := SeedSampleDoc(ctx, db, m, s.id, "CROSS_PASS"); err != nil {
 			t.Fatalf("seed %s: %v", s.id, err)
 		}
+		saveResolvedReceipt(t, db, s.id, m, "ed25519:aaaaaaaaaaaaaaaa")
 	}
 
 	goTree := []string{

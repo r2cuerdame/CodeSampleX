@@ -56,12 +56,15 @@ type ShardSample struct {
 	Believed string `json:"believed,omitempty"`
 	Status   string `json:"status"`
 	License  string `json:"license"`
-	// Packages is what the sample's manifest declares. A shard lists one
-	// sample under every package version it is relevant to, so without this
-	// a client has no way to tell which of those it was actually verified
-	// against — and the local engine was grading against the shard key,
-	// reporting an exact match on a version the sample never used.
-	Packages       []string                      `json:"packages,omitempty"`
+	// Packages is what the sample's manifest declares. It is retained so a
+	// client can see the author's input rather than silently replacing it
+	// with resolver output.
+	Packages []string `json:"packages,omitempty"`
+	// Verifications keeps every resolver claim coupled to the environment
+	// and stage verdict that established it. Flattening several receipts into
+	// one package list would claim combinations that never ran and could
+	// attach a PASS from one version to a FAIL at another.
+	Verifications  []ShardVerification           `json:"verifications,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
 	// Contract is the assertion list the sample's contract command actually
@@ -77,6 +80,18 @@ type ShardSample struct {
 	// Bounded, because a shard is fetched by every client: see
 	// contractForShard.
 	Contract []string `json:"contract,omitempty"`
+}
+
+// ShardVerification is one receipt-scoped resolver claim. Packages, stages
+// and environment are deliberately inseparable: together they describe one
+// real execution. VerificationLevel is the strongest level proved for the
+// same exact package set without exposing peer identities in the shard.
+type ShardVerification struct {
+	ResolvedPackages  []string                      `json:"resolvedPackages"`
+	Environment       domain.EnvironmentFingerprint `json:"environment"`
+	Stages            map[string]string             `json:"stages"`
+	VerificationLevel int                           `json:"verificationLevel,omitempty"`
+	CreatedAt         string                        `json:"createdAt,omitempty"`
 }
 
 // Bounds on the contract lines a shard carries. A shard is fetched by every
@@ -294,6 +309,11 @@ func verifiedRank(s ShardSample) int {
 	}
 	if s.ContractStages["contract"] == string(domain.ResultPass) && rank < 1 {
 		rank = 1
+	}
+	for _, v := range s.Verifications {
+		if v.Stages["contract"] == string(domain.ResultPass) && rank < 1 {
+			rank = 1
+		}
 	}
 	return rank
 }

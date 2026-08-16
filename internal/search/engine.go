@@ -76,10 +76,13 @@ type shardSampleEntry struct {
 	Goal     string `json:"goal,omitempty"`
 	Status   string `json:"status,omitempty"`
 	License  string `json:"license,omitempty"`
-	// Packages is what the sample's own manifest declares. Absent from
-	// shards generated before this field existed, and the grader treats that
-	// absence as "version unknown" rather than guessing from the shard key.
-	Packages       []string                      `json:"packages,omitempty"`
+	// Packages is what the sample's own manifest declares. It remains useful
+	// for relevance and disclosure, but never establishes a verified version.
+	Packages []string `json:"packages,omitempty"`
+	// Verifications keeps each resolved package set with the stages and
+	// environment of the receipt that established it. The legacy fields stay
+	// readable for old shards, but never establish a version.
+	Verifications  []shardVerificationEntry      `json:"verifications,omitempty"`
 	Environment    domain.EnvironmentFingerprint `json:"environment"`
 	ContractStages map[string]string             `json:"contractStages,omitempty"`
 	// Contract is what the sample's contract command asserted and proved in
@@ -90,6 +93,26 @@ type shardSampleEntry struct {
 	// Believed is the belief the sample corrects, when its author stated
 	// one. Absent from older shards and from samples that correct nothing.
 	Believed string `json:"believed,omitempty"`
+}
+
+type shardVerificationEntry struct {
+	ResolvedPackages  []string                      `json:"resolvedPackages"`
+	Environment       domain.EnvironmentFingerprint `json:"environment"`
+	Stages            map[string]string             `json:"stages"`
+	VerificationLevel int                           `json:"verificationLevel,omitempty"`
+	CreatedAt         string                        `json:"createdAt,omitempty"`
+}
+
+// verificationVariant is one coherent execution claim. It is never merged
+// with another variant: package versions, environment and PASS/FAIL belong
+// to the same receipt or they do not belong in one search grade.
+type verificationVariant struct {
+	packages []domain.PURL
+	env      domain.EnvironmentFingerprint
+	stages   map[string]string
+	level    int
+	created  time.Time
+	receipt  *domain.VerificationReceipt
 }
 
 // candidate is one sample under consideration, from the local samples table
@@ -105,17 +128,22 @@ type candidate struct {
 	// keeping only the first made name relevance depend on iteration order.
 	// It is a relevance set, never an authority on what the sample declares.
 	packages []domain.PURL
-	// declared is what the SAMPLE ITSELF says it was verified against, from
-	// its own manifest. Only this may drive a version grade.
+	// declared is what the SAMPLE ITSELF asks for, from its manifest. It is
+	// retained for relevance and honest display, but does not prove what the
+	// resolver selected.
 	//
-	// Conflating the two is how MCP search came to answer "MATCH: EXACT,
+	// Conflating reachability, declaration and verification is how MCP search
+	// came to answer "MATCH: EXACT,
 	// Exact: axios 1.12" for a sample whose csx.json pins axios@1.19.0 —
 	// packageRelation keeps whichever pair scores best, and with every shard
 	// key unioned on, one of them always matched the request exactly. The
 	// server graded the same input ADAPTATION_REQUIRED because it reads the
 	// manifest. A wrong HIT is worse than a MISS (goal.md §3.8), and this was
 	// the wrong HIT arriving with the highest possible confidence.
-	declared       []domain.PURL
+	declared []domain.PURL
+	// verifications are receipt-scoped exact resolver outputs. Flattening
+	// them would let one version's PASS verify another version's package set.
+	verifications  []verificationVariant
 	symbols        []string
 	createdAt      time.Time
 	contractStages map[string]string // from a shard sample entry, if any
@@ -283,6 +311,12 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					if len(existing.declared) == 0 {
 						existing.declared = parsePURLs(ss.Packages)
 					}
+					for _, variant := range variantsFromShard(ss.Verifications) {
+						existing.verifications = appendVerification(existing.verifications, variant)
+						for _, verified := range variant.packages {
+							existing.packages = appendPURL(existing.packages, verified)
+						}
+					}
 					// Local metadata stays authoritative, but a sample listed
 					// in several shards uses several packages, and keeping
 					// only the first one made both version grading and
@@ -296,7 +330,13 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					env:            ss.Environment.Normalize(),
 					packages:       []domain.PURL{p},
 					declared:       parsePURLs(ss.Packages),
+					verifications:  variantsFromShard(ss.Verifications),
 					contractStages: ss.ContractStages,
+				}
+				for _, variant := range c.verifications {
+					for _, verified := range variant.packages {
+						c.packages = appendPURL(c.packages, verified)
+					}
 				}
 				if ss.Goal != "" {
 					// case.Packages must be what the sample declares. Older
@@ -343,36 +383,24 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 
 // scoreCandidate produces one SearchResult plus its fused score.
 func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, now time.Time) (domain.SearchResult, float64) {
-	// Grade against what the sample declares. When a shard predates the
-	// packages field there is nothing authoritative to grade against, so the
-	// relation is capped at "same package, version unknown" rather than
-	// borrowed from the shard key that happened to find it.
-	gradePkgs, versionKnown := c.declared, true
-	if len(gradePkgs) == 0 {
-		gradePkgs, versionKnown = c.packages, false
-	}
-	rel, reqP, samP := packageRelation(reqPkgs, gradePkgs)
+	receipts, _ := e.DB.ReceiptsForSample(ctx, c.sampleID)
+	askedPkgs := reqPkgs
 	fromTree := false
-	if rel == relUnspecified {
+	if len(askedPkgs) == 0 {
 		// Nothing was asked about by name, so the caller's dependency tree
 		// gets to rank — but a tree that contains none of the sample's
 		// packages is silence, not a mismatch, so relNone drops back to
 		// unspecified rather than grading the answer REFERENCE_ONLY.
-		if pr, prP, psP := packageRelation(parsePURLs(req.ProjectPackages), gradePkgs); pr > relNone {
-			rel, reqP, samP, fromTree = pr, prP, psP, true
-		}
+		askedPkgs = parsePURLs(req.ProjectPackages)
 	}
-	// The cap has to work in BOTH directions. It only fired for relations
-	// ABOVE relPackageOnly, so relMajorDiff — computed from the shard key,
-	// which is not authoritative about anything — survived untouched, and
-	// the result asserted a version difference the sample had never
-	// declared. "Sample uses axios 7.0, current project uses axios 1.12"
-	// was printed for a sample whose manifest says nothing about a version,
-	// and it also forced REFERENCE_ONLY on that invented basis.
-	//
-	// Unknown is unknown whichever side of the ladder it lands on.
-	if !versionKnown && rel != relUnspecified && rel != relNone {
-		rel = relPackageOnly
+	selection := selectGradeVariant(c, receipts, askedPkgs, reqEnv)
+	rel, reqP, samP := selection.rel, selection.reqP, selection.samP
+	if len(reqPkgs) == 0 {
+		if len(askedPkgs) > 0 && rel > relNone {
+			fromTree = true
+		} else {
+			rel = relUnspecified
+		}
 	}
 
 	// One entry per PACKAGE, however many of its versions the candidate
@@ -382,7 +410,11 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// doubled, in the numbers a caller reads as measurements.
 	var syms []shardSymbolEntry
 	seenPkg := map[string]bool{}
-	for _, p := range c.packages {
+	relevancePackages := append([]domain.PURL(nil), c.packages...)
+	for _, claim := range selection.claims {
+		relevancePackages = appendPURL(relevancePackages, claim.purl)
+	}
+	for _, p := range relevancePackages {
 		k := pkgKey(p)
 		if seenPkg[k] {
 			continue
@@ -392,8 +424,6 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 			syms = append(syms, pe.symbols...)
 		}
 	}
-	receipts, _ := e.DB.ReceiptsForSample(ctx, c.sampleID)
-
 	// Steps 1–5: relevance fusion (exact tokens outrank lexical match).
 	base := relWeight(rel)
 	if fromTree {
@@ -420,17 +450,17 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// Steps 6+9: environment gate, execution-context axis, known failures.
 	samEco := ecosystemOf(samP, reqEnv, c)
 	askedEnv := envAskedAbout(reqEnv, samEco)
-	dims := compareEnv(askedEnv, c.env, samEco)
-	cd := compareContext(askedEnv, c.env)
+	dims := compareEnv(askedEnv, selection.env, samEco)
+	cd := compareContext(askedEnv, selection.env)
 	matched := matchingFailures(reqEnv, syms)
 	elevated := elevatedInRequestEnv(req, matched)
 	grade, adaptations := buildGrade(rel, dims, cd, elevated)
 	exact, different := buildDelta(rel, reqP, samP, dims, cd)
 
-	summary := buildEvidence(c, syms, receipts, now)
+	summary := buildEvidence(syms, selection.receipts, selection.stages, now)
 
 	// Steps 7–8: verification-strength rerank + recency decay.
-	lvl := verificationLevel(c.status, c.contractStages, receipts)
+	lvl := selection.level
 	score := base * envFit(grade, cd) * recency(c, now) * strengthBoost(lvl)
 
 	// A sample must be about the question asked. An exact package match
@@ -492,7 +522,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 // observation counts and contract evidence live in SEPARATE fields and are
 // never summed together (goal.md §3.5, docs/execution-context.md §6);
 // the C7 confidence formula weighs the classes, it does not conflate them.
-func buildEvidence(c *candidate, syms []shardSymbolEntry, receipts []domain.VerificationReceipt, now time.Time) domain.EvidenceSummary {
+func buildEvidence(syms []shardSymbolEntry, receipts []domain.VerificationReceipt, shardStages map[string]string, now time.Time) domain.EvidenceSummary {
 	var s domain.EvidenceSummary
 	var evSamples []compatibility.Sample
 	var lastSeen string
@@ -546,7 +576,7 @@ func buildEvidence(c *candidate, syms []shardSymbolEntry, receipts []domain.Veri
 	// A shard sample entry may declare a contract PASS the local store has
 	// no receipt for; count it only when no receipts exist to avoid double
 	// counting.
-	if len(receipts) == 0 && c.contractStages["contract"] == "PASS" {
+	if len(receipts) == 0 && shardStages["contract"] == "PASS" {
 		s.ContractPasses++
 	}
 	s.IndependentCrossPeers = int64(len(peers))
@@ -1049,6 +1079,298 @@ func parsePURLs(ss []string) []domain.PURL {
 		if p, err := domain.ParsePURL(s); err == nil {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+type packageClaim struct {
+	purl         domain.PURL
+	versionKnown bool
+}
+
+type gradeSelection struct {
+	claims   []packageClaim
+	rel      pkgRel
+	reqP     domain.PURL
+	samP     domain.PURL
+	env      domain.EnvironmentFingerprint
+	stages   map[string]string
+	receipts []domain.VerificationReceipt
+	level    int
+	created  time.Time
+}
+
+// selectGradeVariant chooses one real receipt execution to grade. It never
+// unions package versions from different receipts. Declared identities not
+// present in that execution remain package-only claims, so resolving axios
+// does not make a declared zod dependency disappear from search.
+func selectGradeVariant(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL, reqEnv domain.EnvironmentFingerprint) gradeSelection {
+	variants := append([]verificationVariant(nil), c.verifications...)
+	for i := range receipts {
+		packages := verifiedPURLsFromReceipt(receipts[i])
+		if len(packages) == 0 {
+			continue
+		}
+		created, _ := time.Parse(time.RFC3339, receipts[i].CreatedAt)
+		variants = append(variants, verificationVariant{
+			packages: packages,
+			env:      receipts[i].Environment.Normalize(),
+			stages:   receipts[i].Stages,
+			created:  created,
+			receipt:  &receipts[i],
+		})
+	}
+
+	if len(variants) == 0 {
+		claims := unknownPackageClaims(c)
+		rel, reqP, samP := packageRelationClaims(askedPkgs, claims)
+		return gradeSelection{
+			claims: claims, rel: rel, reqP: reqP, samP: samP,
+			env: c.env, stages: c.contractStages, receipts: receipts,
+			level: verificationLevel(c.status, c.contractStages, receipts),
+		}
+	}
+
+	var best gradeSelection
+	haveBest := false
+	for _, variant := range variants {
+		claims := packageClaimsForVariant(c, variant.packages)
+		rel, reqP, samP := packageRelationClaims(askedPkgs, claims)
+		matching := receiptsForPackageSet(receipts, variant.packages)
+		level := variant.level
+		if localLevel := verificationLevel("", variant.stages, matching); localLevel > level {
+			level = localLevel
+		}
+		selection := gradeSelection{
+			claims: claims, rel: rel, reqP: reqP, samP: samP,
+			env: variant.env.Normalize(), stages: variant.stages,
+			receipts: matching, level: level, created: variant.created,
+		}
+		if !haveBest || betterGradeSelection(selection, best, reqEnv, c) {
+			best, haveBest = selection, true
+		}
+	}
+	return best
+}
+
+func betterGradeSelection(a, b gradeSelection, reqEnv domain.EnvironmentFingerprint, c *candidate) bool {
+	if a.rel != b.rel {
+		return a.rel > b.rel
+	}
+	if ar, br := stageVerdictRank(a.stages), stageVerdictRank(b.stages); ar != br {
+		return ar > br
+	}
+	if ar, br := selectionEnvironmentRank(a, reqEnv, c), selectionEnvironmentRank(b, reqEnv, c); ar != br {
+		return ar > br
+	}
+	if a.level != b.level {
+		return a.level > b.level
+	}
+	if !a.created.Equal(b.created) {
+		return a.created.After(b.created)
+	}
+	return packageClaimKey(a.claims) < packageClaimKey(b.claims)
+}
+
+func stageVerdictRank(stages map[string]string) int {
+	switch stages["contract"] {
+	case string(domain.ResultPass):
+		return 2
+	case string(domain.ResultFail):
+		return 0
+	default:
+		return 1
+	}
+}
+
+func selectionEnvironmentRank(s gradeSelection, reqEnv domain.EnvironmentFingerprint, c *candidate) int {
+	ecosystem := ecosystemOf(s.samP, reqEnv, c)
+	asked := envAskedAbout(reqEnv, ecosystem)
+	grade, _ := buildGrade(s.rel, compareEnv(asked, s.env, ecosystem), compareContext(asked, s.env), false)
+	switch grade {
+	case domain.GradeExact:
+		return 4
+	case domain.GradeCompatible:
+		return 3
+	case domain.GradeAdaptationRequired:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func unknownPackageClaims(c *candidate) []packageClaim {
+	return packageClaimsForVariant(c, nil)
+}
+
+func packageClaimsForVariant(c *candidate, verified []domain.PURL) []packageClaim {
+	base := c.declared
+	if len(base) == 0 {
+		base = c.packages
+	}
+	var out []packageClaim
+	index := map[string]int{}
+	for _, p := range base {
+		key := packageIdentityKey(p)
+		if _, exists := index[key]; exists {
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, packageClaim{purl: p})
+	}
+	for _, p := range verified {
+		key := packageIdentityKey(p)
+		if i, exists := index[key]; exists {
+			out[i] = packageClaim{purl: p, versionKnown: true}
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, packageClaim{purl: p, versionKnown: true})
+	}
+	return out
+}
+
+func packageIdentityKey(p domain.PURL) string {
+	return strings.ToLower(p.Ecosystem) + "\x00" + strings.ToLower(p.Name)
+}
+
+func packageClaimKey(claims []packageClaim) string {
+	parts := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		known := "0"
+		if claim.versionKnown {
+			known = "1"
+		}
+		parts = append(parts, claim.purl.String()+"\x00"+known)
+	}
+	return strings.Join(parts, "\x01")
+}
+
+func packageRelationClaims(reqPkgs []domain.PURL, claims []packageClaim) (pkgRel, domain.PURL, domain.PURL) {
+	var reqP, samP domain.PURL
+	if len(claims) > 0 {
+		samP = claims[0].purl
+	}
+	if len(reqPkgs) == 0 {
+		return relUnspecified, reqP, samP
+	}
+	reqP = reqPkgs[0]
+	best, found := relNone, false
+	for _, rp := range reqPkgs {
+		for _, claim := range claims {
+			cp := claim.purl
+			if rp.Ecosystem != cp.Ecosystem || !equalFoldName(rp.Name, cp.Name) {
+				continue
+			}
+			r := relPackageOnly
+			if claim.versionKnown && rp.Version != "" {
+				switch {
+				case rp.Version == cp.Version:
+					r = relExactVersion
+				case rp.MajorMinor() == cp.MajorMinor():
+					r = relMajorMinor
+				case rp.BreakingBucket() == cp.BreakingBucket():
+					r = relMajor
+				default:
+					r = relMajorDiff
+				}
+			}
+			if !found || r < best {
+				best, reqP, samP, found = r, rp, cp, true
+			}
+		}
+	}
+	if !found {
+		return relNone, reqP, samP
+	}
+	return best, reqP, samP
+}
+
+func variantsFromShard(entries []shardVerificationEntry) []verificationVariant {
+	var out []verificationVariant
+	for _, entry := range entries {
+		if entry.Stages["resolve"] != string(domain.ResultPass) {
+			continue
+		}
+		packages := parseVerifiedPURLs(entry.ResolvedPackages)
+		if len(packages) == 0 {
+			continue
+		}
+		level := entry.VerificationLevel
+		if entry.Stages["contract"] != string(domain.ResultPass) {
+			level = 0
+		} else if level < 3 {
+			level = 3
+		} else if level > 4 {
+			level = 4
+		}
+		created, _ := time.Parse(time.RFC3339, entry.CreatedAt)
+		out = appendVerification(out, verificationVariant{
+			packages: packages, env: entry.Environment.Normalize(), stages: entry.Stages,
+			level: level, created: created,
+		})
+	}
+	return out
+}
+
+func appendVerification(list []verificationVariant, add verificationVariant) []verificationVariant {
+	key := verificationKey(add)
+	for i := range list {
+		if verificationKey(list[i]) == key {
+			if add.level > list[i].level {
+				list[i].level = add.level
+			}
+			return list
+		}
+	}
+	return append(list, add)
+}
+
+func verificationKey(v verificationVariant) string {
+	return receiptPackageSetKey(v.packages) + "\x00" + v.env.Normalize().Hash() + "\x00" +
+		string(domain.MustCanonicalJSON(v.stages)) + "\x00" + v.created.UTC().Format(time.RFC3339Nano)
+}
+
+func receiptPackageSetKey(packages []domain.PURL) string {
+	parts := make([]string, 0, len(packages))
+	for _, p := range packages {
+		parts = append(parts, p.String())
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func receiptsForPackageSet(receipts []domain.VerificationReceipt, packages []domain.PURL) []domain.VerificationReceipt {
+	want := receiptPackageSetKey(packages)
+	var out []domain.VerificationReceipt
+	for _, receipt := range receipts {
+		resolved := verifiedPURLsFromReceipt(receipt)
+		if len(resolved) > 0 && receiptPackageSetKey(resolved) == want {
+			out = append(out, receipt)
+		}
+	}
+	return out
+}
+
+func verifiedPURLsFromReceipt(receipt domain.VerificationReceipt) []domain.PURL {
+	if receipt.SchemaVersion != 2 || receipt.Stages["resolve"] != string(domain.ResultPass) ||
+		len(receipt.ResolvedPackages) == 0 {
+		return nil
+	}
+	return parseVerifiedPURLs(receipt.ResolvedPackages)
+}
+
+// parseVerifiedPURLs fails the entire claim closed. Partially accepting a
+// malformed list would let one convenient purl establish a version while
+// discarding the evidence that the signed list itself was invalid.
+func parseVerifiedPURLs(raw []string) []domain.PURL {
+	out := make([]domain.PURL, 0, len(raw))
+	for i, value := range raw {
+		p, err := domain.ParsePURL(value)
+		if err != nil || p.String() != value || !domain.ConcreteResolvedVersion(p.Version) ||
+			(i > 0 && value <= raw[i-1]) {
+			return nil
+		}
+		out = append(out, p)
 	}
 	return out
 }

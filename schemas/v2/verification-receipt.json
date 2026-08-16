@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v2/verification-receipt.json",
+  "title": "VerificationReceipt",
+  "description": "Immutable signed record of one sample verification in one environment.",
+  "type": "object",
+  "required": ["schemaVersion", "sampleId", "caseId", "environmentHash", "environment", "stages", "verifierAdapter", "sandboxCapability", "logsDigest", "createdAt", "peerId", "peerPubkey", "peerSignature"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "sampleId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "caseId": {"type": "string"},
+    "environmentHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "environment": {"$ref": "../v1/environment.json"},
+    "stages": {
+      "type": "object",
+      "additionalProperties": {"enum": ["PASS", "FAIL", "SKIPPED"]}
+    },
+    "resolvedPackages": {
+      "type": "array",
+      "description": "Package versions established by a successful resolve stage. Omitted when resolution did not run or the installed version could not be established.",
+      "minItems": 1,
+      "items": {"type": "string", "pattern": "^pkg:[^/]+/.+@[^@]+$"},
+      "uniqueItems": true
+    },
+    "verifierAdapter": {"type": "string"},
+    "sandboxCapability": {"enum": ["COMPILE_ONLY", "CONTAINER_RUN", "STRONG_ISOLATION_RUN", "LIVE_INTEGRATION"]},
+    "logsDigest": {"type": "string"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "peerId": {"type": "string", "pattern": "^ed25519:[0-9a-f]{16}$"},
+    "peerPubkey": {"type": "string"},
+    "peerSignature": {"type": "string"}
+  },
+  "additionalProperties": false
+}

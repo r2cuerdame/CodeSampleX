@@ -79,41 +79,66 @@ func skipped(reason string) StageResult {
 // reach contract verification.
 const vendorDir = "/work/.csx-vendor"
 
+// NPMResolver reports the package manager the npm verifier image actually
+// uses for a runtime. The declared packageManager is descriptive input, not
+// authority to select a different tool: Node images carry npm, Bun images use
+// Bun, and Deno images use Deno.
+func NPMResolver(runtime string) string {
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "bun":
+		return "bun"
+	case "deno":
+		return "deno"
+	default:
+		return "npm"
+	}
+}
+
 // resolveCommand is the per-ecosystem dependency resolve step. Lifecycle
 // scripts never run (--ignore-scripts / metadata-only fetches), and the
 // output lands inside the workspace so the offline stages can see it.
 func resolveCommand(ecosystem, runtime string) ([]string, error) {
 	switch ecosystem {
 	case "npm":
-		switch runtime {
+		switch NPMResolver(runtime) {
 		case "bun":
-			// Bun installs into the workspace's node_modules, so nothing
-			// extra is needed for the offline stage to find it.
-			return []string{"bun", "install", "--frozen-lockfile", "--ignore-scripts"}, nil
+			return []string{"sh", "-c", "rm -rf /work/node_modules; bun install --frozen-lockfile --ignore-scripts"}, nil
 		case "deno":
 			// `deno install` caches everything deno.json declares, which is
 			// what the offline stage needs; `deno cache <file>` would only
 			// cover the files named, and the runner cannot know which those
 			// are. DENO_DIR is pointed inside the workspace by stageEnv, so
 			// --cached-only then resolves with no network.
-			return []string{"deno", "install"}, nil
+			return []string{"sh", "-c", "rm -rf /work/node_modules " + vendorDir + "/deno; deno install --frozen"}, nil
 		}
-		return []string{"npm", "ci", "--ignore-scripts"}, nil
+		return []string{"sh", "-c", "rm -rf /work/node_modules; npm ci --ignore-scripts"}, nil
 	case "pypi":
 		// --target keeps the install in the workspace; stageEnv puts the
-		// same path on PYTHONPATH for the contract stage.
-		return []string{"pip", "install", "--no-deps", "--no-compile",
-			"--target", vendorDir + "/py", "-r", "requirements.txt"}, nil
+		// same path on PYTHONPATH for the contract stage. The report records
+		// the download URL selected by pip. dist-info alone proves which
+		// distribution was installed but not whether it came from PyPI, a
+		// private index, VCS, or a local path; the signed receipt must not
+		// reconstruct a public purl without that provenance.
+		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/py " + vendorDir +
+			"/pip-report.json; mkdir -p " + vendorDir + "; pip install --no-deps --no-compile --report " +
+			vendorDir + "/pip-report.json --target " + vendorDir + "/py -r requirements.txt"}, nil
 	case "golang":
-		return []string{"go", "mod", "download"}, nil
+		// go.mod is a request, not the selected build list: Minimal Version
+		// Selection and replace directives can make a newer or differently
+		// sourced module run. Persist `go list -m` immediately after download
+		// so the receipt can sign what the Go tool actually selected.
+		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/gomod " + vendorDir +
+			"/gobuild " + vendorDir + "/go-modules.json; mkdir -p " + vendorDir +
+			"; go mod download; go list -m -json all > " + vendorDir + "/go-modules.json"}, nil
 	case "cargo":
-		return []string{"cargo", "fetch"}, nil
+		return []string{"sh", "-c", "rm -rf " + vendorDir + "/cargo " + vendorDir +
+			"/target; cargo fetch --locked"}, nil
 	case "composer":
 		// --no-scripts and --no-plugins are the composer equivalent of
 		// npm's --ignore-scripts: composer.json is data, but scripts and
 		// plugins in it are code, and they would run here with the network.
-		return []string{"composer", "install", "--no-scripts", "--no-plugins",
-			"--no-interaction", "--no-progress", "--prefer-dist"}, nil
+		return []string{"sh", "-c", "rm -rf /work/vendor " + vendorDir +
+			"/composer; composer install --no-scripts --no-plugins --no-interaction --no-progress --prefer-dist"}, nil
 	case "gem":
 		// Bundler is not in the image's default gem set on every tag, and
 		// installing it here keeps the contract stage free of network.
@@ -128,7 +153,8 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// what to change.
 		return []string{"sh", "-c", gemResolveScript}, nil
 	case "pub":
-		return []string{"dart", "pub", "get"}, nil
+		return []string{"sh", "-c", "rm -rf /work/.dart_tool " + vendorDir +
+			"/pub; dart pub get --enforce-lockfile"}, nil
 	case "hex":
 		// mix.exs is executable Elixir, and every mix task compiles and
 		// evaluates it — the build.gradle.kts problem exactly. So the
@@ -185,6 +211,7 @@ func stageEnv(ecosystem, runtime string) []string {
 			"GEM_HOME=" + vendorDir + "/gems",
 			"GEM_PATH=" + vendorDir + "/gems",
 			"BUNDLE_PATH__SYSTEM=true",
+			"BUNDLE_FROZEN=true",
 			"BUNDLE_APP_CONFIG=" + vendorDir + "/bundle",
 		}
 	case "pub":
@@ -204,7 +231,7 @@ func stageEnv(ecosystem, runtime string) []string {
 		return []string{
 			"GOMODCACHE=" + vendorDir + "/gomod",
 			"GOCACHE=" + vendorDir + "/gobuild",
-			"GOFLAGS=-mod=mod",
+			"GOFLAGS=-mod=readonly",
 		}
 	case "cargo":
 		return []string{
@@ -254,10 +281,12 @@ if grep -qE "require ['\"](minitest|rspec|test-unit)" test/*.rb 2>/dev/null; the
     exit 1
   fi
 fi
+rm -rf ` + vendorDir + `/gems ` + vendorDir + `/bundle
 gem install bundler --no-document -q
 bundle install --quiet`
 
 const hexResolveScript = `set -e
+rm -rf ` + vendorDir + `/mix ` + vendorDir + `/hex ` + vendorDir + `/nomix /work/deps /work/_build
 mkdir -p ` + vendorDir + `/nomix /work/deps
 cd ` + vendorDir + `/nomix
 mix local.hex --force >/dev/null

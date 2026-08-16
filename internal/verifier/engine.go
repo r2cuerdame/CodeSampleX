@@ -81,6 +81,28 @@ func RunLogged(
 	env = r.StageEnvironment(env, m)
 
 	resolve := r.Resolve(ctx, sampleDir, m)
+	var resolved []string
+	if resolve.Result == sandbox.ResultPass {
+		// A resolver can execute dependency code (for example a Python build
+		// backend or a Ruby extension) before Build/Contract ever start. The
+		// sample ID was computed from the pristine artifact, so do not let a
+		// successful-looking resolve change source, its contract, or its lock
+		// and then obtain a signature for the old ID. Generated install/cache
+		// directories are excluded by BuildArtifact; every remaining byte must
+		// still be the artifact the peer was asked to verify.
+		_, afterResolveID, integrityErr := samples.BuildArtifact(sampleDir)
+		if integrityErr != nil || afterResolveID != sampleID {
+			resolve.Result = sandbox.ResultFail
+			if resolve.Log != "" {
+				resolve.Log += "\n"
+			}
+			resolve.Log += "csx: resolve changed immutable sample content"
+		} else {
+			// Snapshot immediately after the integrity gate. Build and contract
+			// commands are sample-controlled and may rewrite metadata later.
+			resolved = resolvedPackages(sampleDir, m)
+		}
+	}
 	var compile, contract sandbox.StageResult
 	switch {
 	case resolve.Result == sandbox.ResultFail:
@@ -106,14 +128,13 @@ func RunLogged(
 	if caseID == "" {
 		caseID = m.Case.ComputeID()
 	}
-
 	receipt := domain.VerificationReceipt{
-		SchemaVersion:    1,
+		SchemaVersion:    2,
 		SampleID:         sampleID,
 		CaseID:           caseID,
 		EnvironmentHash:  env.Hash(),
 		Environment:      env,
-		ResolvedPackages: resolvedPackages(sampleDir, m),
+		ResolvedPackages: resolved,
 		Stages: map[string]string{
 			"resolve":  resolve.Result,
 			"compile":  compile.Result,

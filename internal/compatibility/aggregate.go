@@ -12,11 +12,15 @@ import (
 // ReceiptInfo is the slice of a verification receipt the aggregation
 // pipeline needs: who verified, where, and what the contract said.
 type ReceiptInfo struct {
-	PeerID         string
-	Env            domain.EnvironmentFingerprint
-	ContractResult string // PASS | FAIL | SKIPPED | ""
-	Stages         map[string]string
-	CreatedAt      time.Time
+	PeerID            string
+	CaseID            string
+	Env               domain.EnvironmentFingerprint
+	ContractResult    string // PASS | FAIL | SKIPPED | ""
+	Stages            map[string]string
+	ResolvedPackages  []domain.PURL
+	VerifierAdapter   string
+	SandboxCapability domain.SandboxCapability
+	CreatedAt         time.Time
 }
 
 // ParseReceiptRow extracts ReceiptInfo from a stored receipt row.
@@ -25,13 +29,46 @@ func ParseReceiptRow(r serverstore.ReceiptRow) (ReceiptInfo, bool) {
 	if err := json.Unmarshal([]byte(r.ReceiptJSON), &rec); err != nil {
 		return ReceiptInfo{}, false
 	}
+	peerID := rec.PeerID
+	if peerID == "" {
+		peerID = r.PeerID
+	}
+	contractResult := rec.Stages["contract"]
+	if contractResult == "" {
+		contractResult = r.ContractResult
+	}
 	return ReceiptInfo{
-		PeerID:         r.PeerID,
-		Env:            rec.Environment.Normalize(),
-		ContractResult: r.ContractResult,
-		Stages:         rec.Stages,
-		CreatedAt:      r.CreatedAt,
+		PeerID:            peerID,
+		CaseID:            rec.CaseID,
+		Env:               rec.Environment.Normalize(),
+		ContractResult:    contractResult,
+		Stages:            rec.Stages,
+		ResolvedPackages:  resolvedPURLsFromReceipt(rec),
+		VerifierAdapter:   rec.VerifierAdapter,
+		SandboxCapability: rec.SandboxCapability,
+		CreatedAt:         r.CreatedAt,
 	}, true
+}
+
+// resolvedPURLsFromReceipt returns only package versions the signed v2
+// receipt actually established. Public v1 had no resolvedPackages field;
+// an empty list means the resolver could not prove a version and is never a
+// cue to borrow one from the manifest. A malformed v2 list invalidates the
+// whole list rather than accepting a convenient subset.
+func resolvedPURLsFromReceipt(rec domain.VerificationReceipt) []domain.PURL {
+	if rec.SchemaVersion != 2 || rec.Stages["resolve"] != string(domain.ResultPass) || len(rec.ResolvedPackages) == 0 {
+		return nil
+	}
+	out := make([]domain.PURL, 0, len(rec.ResolvedPackages))
+	for i, raw := range rec.ResolvedPackages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil || p.String() != raw || !domain.ConcreteResolvedVersion(p.Version) ||
+			(i > 0 && raw <= rec.ResolvedPackages[i-1]) {
+			return nil
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // StageCount is the pass/fail tally of one stage.

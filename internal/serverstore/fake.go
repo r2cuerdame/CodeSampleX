@@ -236,6 +236,31 @@ func (f *Fake) PutSnapshot(_ context.Context, purl, symbol, snapshotJSON string)
 	return nil
 }
 
+func (f *Fake) SnapshotKeys(_ context.Context) ([]SnapshotTarget, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SnapshotTarget, 0, len(f.snapshots))
+	for key := range f.snapshots {
+		out = append(out, SnapshotTarget{PURL: key[0], Symbol: key[1]})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out, nil
+}
+
+func (f *Fake) DeleteSnapshots(_ context.Context, targets []SnapshotTarget) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, target := range targets {
+		delete(f.snapshots, [2]string{target.PURL, target.Symbol})
+	}
+	return nil
+}
+
 // ChangedSince reports everything as changed. The fake keeps no per-row
 // timestamps, and over-reporting is the safe direction: a builder test then
 // exercises the full path, and no test can pass because a change was
@@ -250,14 +275,25 @@ func (f *Fake) ChangedSince(ctx context.Context, since time.Time) (Changes, erro
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var purls []string
-	for _, s := range f.samples {
+	seen := map[string]bool{}
+	for sampleID, s := range f.samples {
 		var m struct {
 			Packages []string `json:"packages"`
 		}
 		if json.Unmarshal([]byte(s.ManifestJSON), &m) == nil {
-			purls = append(purls, m.Packages...)
+			for _, purl := range m.Packages {
+				seen[purl] = true
+			}
 		}
+		for _, receipt := range f.receipts[sampleID] {
+			for _, purl := range resolvedPackageStrings(receipt.ReceiptJSON) {
+				seen[purl] = true
+			}
+		}
+	}
+	purls := make([]string, 0, len(seen))
+	for purl := range seen {
+		purls = append(purls, purl)
 	}
 	sort.Strings(purls)
 	return Changes{Targets: targets, SamplePURLs: purls}, nil
@@ -275,6 +311,33 @@ func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) 
 			out = append(out, t)
 		}
 	}
+	// A signed v2 receipt establishes an exact package target even before
+	// anonymous evidence exists for it. v1 and empty resolved lists establish
+	// no version and therefore add no target.
+	for sampleID, receipts := range f.receipts {
+		sample, ok := f.samples[sampleID]
+		if !ok || sample.Quarantined {
+			continue
+		}
+		var manifest struct {
+			Symbols []string `json:"symbols"`
+		}
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		symbols := append([]string{""}, manifest.Symbols...)
+		for _, receipt := range receipts {
+			for _, purl := range resolvedPackageStrings(receipt.ReceiptJSON) {
+				for _, symbol := range symbols {
+					t := SnapshotTarget{PURL: purl, Symbol: symbol}
+					if !seen[t] {
+						seen[t] = true
+						out = append(out, t)
+					}
+				}
+			}
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].PURL != out[j].PURL {
 			return out[i].PURL < out[j].PURL
@@ -282,6 +345,29 @@ func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) 
 		return out[i].Symbol < out[j].Symbol
 	})
 	return out, nil
+}
+
+// resolvedPackageStrings reads only exact versions established by a v2
+// receipt whose resolve stage passed. Corrupt lists fail closed as a unit;
+// callers never salvage one convenient version from an invalid claim.
+func resolvedPackageStrings(receiptJSON string) []string {
+	var receipt domain.VerificationReceipt
+	if json.Unmarshal([]byte(receiptJSON), &receipt) != nil ||
+		receipt.SchemaVersion != 2 ||
+		receipt.Stages["resolve"] != string(domain.ResultPass) ||
+		len(receipt.ResolvedPackages) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(receipt.ResolvedPackages))
+	for i, raw := range receipt.ResolvedPackages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil || p.String() != raw || !domain.ConcreteResolvedVersion(p.Version) ||
+			(i > 0 && raw <= receipt.ResolvedPackages[i-1]) {
+			return nil
+		}
+		out = append(out, raw)
+	}
+	return out
 }
 
 func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]EvidenceRow, error) {

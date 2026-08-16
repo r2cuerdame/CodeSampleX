@@ -146,6 +146,10 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	if arch == "" {
 		arch = "x64"
 	}
+	packageManager := m.Environment.PackageManager
+	if eco == "npm" {
+		packageManager = NPMResolver(runtimeOf(m, host))
+	}
 	env := domain.EnvironmentFingerprint{
 		SchemaVersion:    1,
 		Ecosystem:        eco,
@@ -157,7 +161,7 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		Language:         lang,
 		ExecutionContext: rt,
 		ModuleSystem:     m.Environment.ModuleSystem,
-		PackageManager:   m.Environment.PackageManager,
+		PackageManager:   packageManager,
 		Virtualization:   "container",
 		ContainerRuntime: "docker",
 		Libc:             libc,

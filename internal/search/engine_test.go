@@ -76,6 +76,26 @@ func saveShardJSON(t *testing.T, db *localdb.DB, key string, sf shardFile) {
 	}
 }
 
+func saveResolvedReceipt(t *testing.T, db *localdb.DB, sampleID string, m domain.SampleManifest, peer string) {
+	t.Helper()
+	caseID := m.Case.CaseID
+	if caseID == "" {
+		caseID = m.Case.ComputeID()
+	}
+	receipt := domain.VerificationReceipt{
+		SchemaVersion: 2, SampleID: sampleID, CaseID: caseID,
+		EnvironmentHash: m.Environment.Normalize().Hash(), Environment: m.Environment,
+		Stages:           map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
+		ResolvedPackages: m.Packages, VerifierAdapter: m.VerifierAdapter,
+		SandboxCapability: domain.CapContainerRun, LogsDigest: "sha256:test",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339), PeerID: peer,
+		PeerPubkey: "test", PeerSignature: "test",
+	}
+	if err := db.SaveReceipt(context.Background(), receipt); err != nil {
+		t.Fatalf("save resolved receipt for %s: %v", sampleID, err)
+	}
+}
+
 // ESM sample answering a CJS request must come back ADAPTATION_REQUIRED
 // with the §11.5-style import-syntax delta, never EXACT/COMPATIBLE.
 func TestSearchESMSampleCJSRequestAdaptationRequired(t *testing.T) {
@@ -86,6 +106,7 @@ func TestSearchESMSampleCJSRequestAdaptationRequired(t *testing.T) {
 	if err := SeedSampleDoc(ctx, db, m, "sha256:aaa1", "LOCAL_PASS"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	saveResolvedReceipt(t, db, "sha256:aaa1", m, "ed25519:aaaa111122223333")
 
 	resp := Engine{DB: db}.Search(ctx, domain.SearchRequest{
 		SchemaVersion: 1,
@@ -328,10 +349,11 @@ func TestSearchCrossPassOutranksLocalPass(t *testing.T) {
 	}
 	mkReceipt := func(peer string) domain.VerificationReceipt {
 		return domain.VerificationReceipt{
-			SchemaVersion: 1, SampleID: "sha256:crossc", CaseID: mC.Case.ComputeID(),
+			SchemaVersion: 2, SampleID: "sha256:crossc", CaseID: mC.Case.ComputeID(),
 			EnvironmentHash: env.Hash(), Environment: env,
-			Stages:          map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
-			VerifierAdapter: "node-typescript@1", SandboxCapability: domain.CapContainerRun,
+			Stages:           map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
+			ResolvedPackages: mC.Packages,
+			VerifierAdapter:  "node-typescript@1", SandboxCapability: domain.CapContainerRun,
 			LogsDigest: "sha256:log", CreatedAt: time.Now().UTC().Format(time.RFC3339),
 			PeerID: peer, PeerPubkey: "pk", PeerSignature: "sig",
 		}

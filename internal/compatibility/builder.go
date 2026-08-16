@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -83,6 +84,8 @@ type symVer = map[string]map[string][]serverstore.EvidenceRow
 type sampleData struct {
 	row      serverstore.SampleRow
 	manifest domain.SampleManifest
+	// purls are the author-declared manifest packages. Resolver-established
+	// versions live only on the individual receipts.
 	purls    []domain.PURL
 	receipts []ReceiptInfo
 }
@@ -129,12 +132,20 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	}
 	targets := allTargets
 	if affected != nil {
+		// Receipt regressions compare adjacent measured versions, including
+		// cross-major boundaries. A change to the old endpoint therefore also
+		// invalidates snapshots of newer majors for the same package.
+		affected = expandAffectedPackageMajors(affected, allTargets)
 		targets = keepTargets(allTargets, affected)
 	}
 	samples, err := b.loadSamples(ctx)
 	if err != nil {
 		return err
 	}
+	if err := b.ensureReceiptPackages(ctx, samples); err != nil {
+		return err
+	}
+	receiptRegressions := regressionsFromReceipts(samples)
 
 	// Evidence indexed by package → symbol → version → rows.
 	byPkg := map[pkgKey]symVer{}
@@ -220,6 +231,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 				rows, prevRows)
 			regressionsByPkg[k] = append(regressionsByPkg[k], regs...)
 		}
+		regs = append(regs, receiptRegressions[receiptTarget{purl: p.String(), symbol: t.Symbol}]...)
 
 		receipts := receiptsForTarget(samples, p, t.Symbol)
 		snap := BuildSnapshot(t.PURL, t.Symbol, rows, receipts, regs, now)
@@ -230,6 +242,9 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if err := b.Store.PutSnapshot(ctx, t.PURL, t.Symbol, string(js)); err != nil {
 			return fmt.Errorf("compatibility: put snapshot %s: %w", t.PURL, err)
 		}
+	}
+	if err := b.retireSnapshots(ctx, allTargets, affected); err != nil {
+		return err
 	}
 
 	// Failure clusters per package (across versions and symbols).
@@ -298,6 +313,68 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	return nil
 }
 
+// retireSnapshots deletes materialized rows whose final live source was
+// removed. Receipt-only targets disappear on quarantine; without retirement
+// their old PASS/regression JSON remained directly servable forever.
+func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.SnapshotTarget, affected map[shardKey]bool) error {
+	want := make(map[serverstore.SnapshotTarget]bool, len(live))
+	for _, target := range live {
+		want[target] = true
+	}
+	stored, err := b.Store.SnapshotKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("compatibility: list snapshot keys: %w", err)
+	}
+	var stale []serverstore.SnapshotTarget
+	for _, target := range stored {
+		if want[target] {
+			continue
+		}
+		if affected != nil {
+			key, ok := keyFor(target.PURL)
+			if !ok || !affected[key] {
+				continue
+			}
+		}
+		stale = append(stale, target)
+	}
+	if err := b.Store.DeleteSnapshots(ctx, stale); err != nil {
+		return fmt.Errorf("compatibility: delete retired snapshots: %w", err)
+	}
+	return nil
+}
+
+// ensureReceiptPackages makes receipt-only versions reachable through the
+// registry endpoints as well as through snapshots and shards. Observation
+// ingest already creates package rows; exact v2 receipt targets may be the
+// first time the network sees a release, so insert an UNKNOWN-publicness row
+// once without refreshing the last-seen clock on every aggregation pass.
+func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleData) error {
+	seen := map[string]bool{}
+	for _, sample := range samples {
+		for _, receipt := range sample.receipts {
+			for _, p := range receipt.ResolvedPackages {
+				if seen[p.String()] {
+					continue
+				}
+				seen[p.String()] = true
+				if _, ok, err := b.Store.GetPackage(ctx, p.String()); err != nil {
+					return fmt.Errorf("compatibility: get package %s: %w", p.String(), err)
+				} else if ok {
+					continue
+				}
+				if err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
+					PURL: p.String(), Ecosystem: p.Ecosystem, Name: p.Name,
+					Version: p.Version, Major: p.Major(), Publicness: "UNKNOWN",
+				}); err != nil {
+					return fmt.Errorf("compatibility: register receipt package %s: %w", p.String(), err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // refreshStats writes the daily rollup. It runs on every pass, including
 // passes with nothing else to do: it is a single query, and it is what the
 // website's counters and generatedAt timestamp come from.
@@ -351,6 +428,24 @@ func affectedKeys(c serverstore.Changes) map[shardKey]bool {
 		}
 	}
 	return out
+}
+
+// expandAffectedPackageMajors marks every known major of a dirty package.
+// Receipt-derived regressions are attached to the newer endpoint, so only
+// rebuilding the major named by a changed old receipt would leave the
+// boundary stale until the next hourly full pass.
+func expandAffectedPackageMajors(affected map[shardKey]bool, targets []serverstore.SnapshotTarget) map[shardKey]bool {
+	dirtyPackages := map[string]bool{}
+	for key := range affected {
+		dirtyPackages[key.ecosystem+"\x00"+strings.ToLower(key.name)] = true
+	}
+	for _, target := range targets {
+		key, ok := keyFor(target.PURL)
+		if ok && dirtyPackages[key.ecosystem+"\x00"+strings.ToLower(key.name)] {
+			affected[key] = true
+		}
+	}
+	return affected
 }
 
 // keepTargets narrows the snapshot targets to the dirty shards. Every
@@ -411,40 +506,28 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 	return out, nil
 }
 
-// receiptsForTarget collects receipts of samples that cover the target
-// package (same ecosystem+name+major) and symbol ("" = package level;
-// otherwise the sample must claim the symbol).
+// receiptsForTarget collects only receipts that established this exact
+// resolved purl. A v1 receipt, or a v2 receipt whose resolver could not
+// establish a package list, is useful lifecycle evidence but is not version
+// evidence and is deliberately absent here.
 func receiptsForTarget(samples []sampleData, p domain.PURL, symbol string) []ReceiptInfo {
 	var out []ReceiptInfo
 	for _, sd := range samples {
-		if !sampleCoversPackage(sd, p) {
-			continue
-		}
 		if symbol != "" && !sampleClaimsSymbol(sd, symbol) {
 			continue
 		}
-		out = append(out, sd.receipts...)
+		for _, rec := range sd.receipts {
+			if receiptCoversPackage(rec, p) {
+				out = append(out, rec)
+			}
+		}
 	}
 	return out
 }
 
-// sampleCoversPackage reports whether a sample's receipts may be
-// attributed to this exact package version.
-//
-// It matched on the MAJOR, so a receipt for a sample verified against
-// axios@1.12.0 was attributed to the snapshot of axios@1.0.0 — and the
-// page for 1.0.0 reported contract passes and SAMPLE_VERIFICATION counts
-// for a version nothing had ever been run against. Semver's promise runs
-// forward, not backward: code proven on 1.12 says nothing about 1.0, where
-// the API may not have existed.
-//
-// A receipt attests to the version the contract actually ran against, and
-// to nothing else. Versions with no receipts now show none, which is what
-// is true; the search grades version distance on its own and does not need
-// this to blur.
-func sampleCoversPackage(sd sampleData, p domain.PURL) bool {
-	for _, sp := range sd.purls {
-		if sp.Ecosystem == p.Ecosystem && sp.Name == p.Name && sp.Version == p.Version {
+func receiptCoversPackage(rec ReceiptInfo, p domain.PURL) bool {
+	for _, rp := range rec.ResolvedPackages {
+		if rp.Ecosystem == p.Ecosystem && rp.Name == p.Name && rp.Version == p.Version {
 			return true
 		}
 	}
@@ -458,6 +541,84 @@ func sampleClaimsSymbol(sd sampleData, symbol string) bool {
 		}
 	}
 	return false
+}
+
+// sampleShardPURLs is the union of what the author declared and what signed
+// v2 receipts actually resolved. The former keeps the sample discoverable by
+// its stated input; the latter creates the exact version shards that carry
+// verified evidence. Neither silently substitutes for the other.
+func sampleShardPURLs(sd sampleData) []domain.PURL {
+	out := append([]domain.PURL(nil), sd.purls...)
+	seen := map[string]bool{}
+	for _, p := range out {
+		seen[p.String()] = true
+	}
+	for _, rec := range sd.receipts {
+		for _, p := range rec.ResolvedPackages {
+			if !seen[p.String()] {
+				seen[p.String()] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+func sampleVerifications(sd sampleData) []ShardVerification {
+	// Count independent peers by exact package set once, then attach the
+	// resulting level to each receipt-scoped execution. Environment and stage
+	// verdict stay receipt-local; only the strength summary is shared.
+	peersBySet := map[string]map[string]bool{}
+	for _, rec := range sd.receipts {
+		if len(rec.ResolvedPackages) == 0 || rec.ContractResult != string(domain.ResultPass) || rec.PeerID == "" {
+			continue
+		}
+		key := receiptPackageSetKey(rec.ResolvedPackages)
+		if peersBySet[key] == nil {
+			peersBySet[key] = map[string]bool{}
+		}
+		peersBySet[key][rec.PeerID] = true
+	}
+
+	var out []ShardVerification
+	for _, rec := range sd.receipts {
+		if len(rec.ResolvedPackages) == 0 {
+			continue
+		}
+		packages := make([]string, 0, len(rec.ResolvedPackages))
+		for _, p := range rec.ResolvedPackages {
+			packages = append(packages, p.String())
+		}
+		level := 0
+		if rec.ContractResult == string(domain.ResultPass) {
+			level = 3
+			if len(peersBySet[receiptPackageSetKey(rec.ResolvedPackages)]) >= 2 {
+				level = 4
+			}
+		}
+		entry := ShardVerification{
+			ResolvedPackages:  packages,
+			Environment:       rec.Env,
+			Stages:            rec.Stages,
+			VerificationLevel: level,
+		}
+		if !rec.CreatedAt.IsZero() {
+			entry.CreatedAt = rec.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return string(domain.MustCanonicalJSON(out[i])) < string(domain.MustCanonicalJSON(out[j]))
+	})
+	return out
+}
+
+func receiptPackageSetKey(packages []domain.PURL) string {
+	parts := make([]string, 0, len(packages))
+	for _, p := range packages {
+		parts = append(parts, p.String())
+	}
+	return strings.Join(parts, "\x00")
 }
 
 // regenerateShards rebuilds shards. affected limits it to the dirty keys;
@@ -506,7 +667,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 	// sample was invisible to every one of them. That is the normal state
 	// for a freshly seeded package: the answer exists before the usage.
 	for _, sd := range samples {
-		for _, p := range sd.purls {
+		for _, p := range sampleShardPURLs(sd) {
 			sk := shardKey{p.Ecosystem, p.Name, p.Major()}
 			if affected != nil && !affected[sk] {
 				continue // clean key: its shard is already correct
@@ -642,7 +803,7 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 	var in []ShardSampleInput
 	for _, sd := range samples {
 		covered := false
-		for _, sp := range sd.purls {
+		for _, sp := range sampleShardPURLs(sd) {
 			if sp.Ecosystem == ecosystem && sp.Name == name && sp.Major() == major {
 				covered = true
 				break
@@ -656,14 +817,14 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 			Goal:     sd.manifest.Case.Goal,
 			Status:   sd.row.Status,
 			License:  sd.row.License,
-			// What the sample declares, not the shard key that reached it.
-			// A shard lists one sample under every package version it is
-			// relevant to, and a client with only the key has no way to tell
-			// which one it was verified against.
-			Packages:    sd.manifest.Packages,
-			Environment: sd.manifest.Environment,
-			Contract:    contractForShard(sd.manifest.Case.Contract),
-			Believed:    sd.manifest.Case.Believed,
+			// Keep the author's declaration and the resolver-established
+			// versions side by side. The shard key is only reachability and is
+			// never substituted for either one.
+			Packages:      sd.manifest.Packages,
+			Verifications: sampleVerifications(sd),
+			Environment:   sd.manifest.Environment,
+			Contract:      contractForShard(sd.manifest.Case.Contract),
+			Believed:      sd.manifest.Case.Believed,
 		}
 		if len(sd.receipts) > 0 {
 			latest := sd.receipts[0]

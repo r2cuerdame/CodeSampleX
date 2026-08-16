@@ -21,7 +21,7 @@ image_for() {
     golang) echo "golang:1.26-alpine" ;;
     cargo) echo "rust:1-alpine" ;;
     composer) echo "composer:2" ;;
-    gem) echo "ruby:3-alpine" ;;
+    gem) echo "ruby:3" ;;
     pub) echo "dart:3.13.0" ;;
     hex) echo "elixir:1.20.1-alpine" ;;
     *) echo "" ;;
@@ -34,10 +34,10 @@ env_for() {
     deno) echo "--env DENO_DIR=/work/.csx-vendor/deno" ;;
     bun) echo "" ;;
     pypi) echo "--env PYTHONPATH=/work/.csx-vendor/py --env PYTHONDONTWRITEBYTECODE=1" ;;
-    golang) echo "--env GOMODCACHE=/work/.csx-vendor/gomod --env GOCACHE=/work/.csx-vendor/gobuild --env GOFLAGS=-mod=mod" ;;
+    golang) echo "--env GOMODCACHE=/work/.csx-vendor/gomod --env GOCACHE=/work/.csx-vendor/gobuild --env GOFLAGS=-mod=readonly" ;;
     cargo) echo "--env CARGO_HOME=/work/.csx-vendor/cargo --env CARGO_TARGET_DIR=/work/.csx-vendor/target" ;;
     composer) echo "--env COMPOSER_HOME=/work/.csx-vendor/composer --env COMPOSER_CACHE_DIR=/work/.csx-vendor/composer/cache" ;;
-    gem) echo "--env GEM_HOME=/work/.csx-vendor/gems --env GEM_PATH=/work/.csx-vendor/gems --env BUNDLE_PATH=/work/.csx-vendor/gems --env BUNDLE_APP_CONFIG=/work/.csx-vendor/bundle" ;;
+    gem) echo "--env GEM_HOME=/work/.csx-vendor/gems --env GEM_PATH=/work/.csx-vendor/gems --env BUNDLE_PATH__SYSTEM=true --env BUNDLE_FROZEN=true --env BUNDLE_APP_CONFIG=/work/.csx-vendor/bundle" ;;
     pub) echo "--env PUB_CACHE=/work/.csx-vendor/pub" ;;
     hex) echo "--env MIX_HOME=/work/.csx-vendor/mix --env HEX_HOME=/work/.csx-vendor/hex --env MIX_ENV=test" ;;
   esac
@@ -48,17 +48,37 @@ env_for() {
 # that decides whether the network accepts a receipt.
 resolve_for() {
   case "$1" in
-    bun) echo "bun install --ignore-scripts" ;;
-    deno) echo "deno install" ;;
-    pypi) echo "pip install --no-deps --no-compile --target /work/.csx-vendor/py -r requirements.txt" ;;
-    golang) echo "go mod download" ;;
-    cargo) echo "cargo fetch" ;;
-    composer) echo "composer install --no-scripts --no-plugins --no-interaction --no-progress --prefer-dist" ;;
-    gem) echo "gem install bundler --no-document -q && bundle install --quiet" ;;
-    pub) echo "dart pub get" ;;
+    bun) echo "rm -rf /work/node_modules; bun install --frozen-lockfile --ignore-scripts" ;;
+    deno) echo "rm -rf /work/node_modules /work/.csx-vendor/deno; deno install --frozen" ;;
+    pypi) echo "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-deps --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt" ;;
+    golang) echo "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json" ;;
+    cargo) echo "rm -rf /work/.csx-vendor/cargo /work/.csx-vendor/target; cargo fetch --locked" ;;
+    composer) echo "rm -rf /work/vendor /work/.csx-vendor/composer; composer install --no-scripts --no-plugins --no-interaction --no-progress --prefer-dist" ;;
+    gem) cat <<'GEM_RESOLVE'
+set -e
+if [ ! -f Gemfile ]; then
+  echo "csx: no Gemfile. A gem sample must pin its dependency in a Gemfile" >&2
+  echo "csx: (with the exact version) so the resolve can be reproduced." >&2
+  exit 1
+fi
+if grep -qE "require ['\"](minitest|rspec|test-unit)" test/*.rb 2>/dev/null; then
+  if ! grep -qE "(minitest|rspec|test-unit)" Gemfile; then
+    echo "csx: the contract requires a test framework that is not in the Gemfile." >&2
+    echo "csx: GEM_PATH is the vendor directory only, so nothing the base image" >&2
+    echo "csx: ships is visible. Assert with plain Ruby -- raise unless ... -- or" >&2
+    echo "csx: declare and pin the framework as a dependency." >&2
+    exit 1
+  fi
+fi
+rm -rf /work/.csx-vendor/gems /work/.csx-vendor/bundle
+gem install bundler --no-document -q
+bundle install --quiet
+GEM_RESOLVE
+    ;;
+    pub) echo "rm -rf /work/.dart_tool /work/.csx-vendor/pub; dart pub get --enforce-lockfile" ;;
     # Single-quoted so the outer shell leaves the parameter expansions alone;
     # mix never sees the sample's mix.exs, it only reads mix.lock as text.
-    hex) echo 'set -e; mkdir -p /work/.csx-vendor/nomix /work/deps; cd /work/.csx-vendor/nomix; mix local.hex --force >/dev/null; mix local.rebar --force >/dev/null; for s in $(grep -oE ":hex, :[A-Za-z0-9_]+, \"[^\"]+\"" /work/mix.lock | tr -d " \""); do n=${s#:hex,:}; n=${n%%,*}; v=${s##*,}; mix hex.package fetch "$n" "$v" --unpack --output "/work/deps/$n"; done' ;;
+    hex) echo 'set -e; rm -rf /work/.csx-vendor/mix /work/.csx-vendor/hex /work/.csx-vendor/nomix /work/deps /work/_build; mkdir -p /work/.csx-vendor/nomix /work/deps; cd /work/.csx-vendor/nomix; mix local.hex --force >/dev/null; mix local.rebar --force >/dev/null; for s in $(grep -oE ":hex, :[A-Za-z0-9_]+, \"[^\"]+\"" /work/mix.lock | tr -d " \""); do n=${s#:hex,:}; n=${n%%,*}; v=${s##*,}; mix hex.package fetch "$n" "$v" --unpack --output "/work/deps/$n"; done' ;;
     # No silent success: an ecosystem with an image but no resolve step would
     # otherwise run its contract against an empty workspace.
     *) echo "echo 'checkall-multi: no resolve command for $1' >&2; exit 1" ;;
@@ -86,6 +106,15 @@ for csx in "$SEEDS"/*/csx.json; do
   # contractCommand from the manifest, so the check cannot drift from what
   # the verifier will actually run.
   cmd=$(sed -n 's/.*"contractCommand": *\[\([^]]*\)\].*/\1/p' "$csx" | tr -d '"' | tr ',' ' ')
+
+  # Every run starts from the immutable seed, never output from a previous
+  # resolver. The target is validated against the absolute seeds directory
+  # before the recursive delete is allowed.
+  vendor_dir="$dir/.csx-vendor"
+  case "$vendor_dir" in
+    "$SEEDS"/*/.csx-vendor) rm -rf -- "$vendor_dir" ;;
+    *) echo "$name: unsafe generated-directory path" >&2; exit 1 ;;
+  esac
 
   printf '%-28s %-7s ' "$name" "$eco"
   # shellcheck disable=SC2086

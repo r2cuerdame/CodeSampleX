@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
@@ -55,6 +57,97 @@ func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
 	return nil
 }
 
+// receiptResolvedPackagesMatchSample validates the claims that can be checked
+// without rerunning the resolver. An empty list is deliberately valid: it
+// means the peer could not establish a resolved version. A non-empty list is
+// evidence only after a successful resolve, and it may name a different
+// version of a package the sample declared, but never a different package.
+func receiptResolvedPackagesMatchSample(receipt domain.VerificationReceipt, manifest domain.SampleManifest) error {
+	if receipt.ResolvedPackages == nil {
+		return nil
+	}
+	if len(receipt.ResolvedPackages) == 0 {
+		return errors.New("resolvedPackages must be omitted rather than empty")
+	}
+	if receipt.Stages["resolve"] != string(domain.ResultPass) {
+		return errors.New("resolvedPackages requires a PASS resolve stage")
+	}
+
+	receiptEcosystem := strings.ToLower(strings.TrimSpace(receipt.Environment.Ecosystem))
+	manifestEcosystem := strings.ToLower(strings.TrimSpace(manifest.Environment.Ecosystem))
+	if receiptEcosystem == "" || manifestEcosystem == "" || receiptEcosystem != manifestEcosystem {
+		return errors.New("resolvedPackages requires matching receipt and sample ecosystems")
+	}
+
+	parsed := make([]domain.PURL, len(receipt.ResolvedPackages))
+	for i, raw := range receipt.ResolvedPackages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil {
+			return errors.New("resolvedPackages contains an invalid purl")
+		}
+		if p.String() != raw {
+			return errors.New("resolvedPackages must contain canonical purls")
+		}
+		if !domain.ConcreteResolvedVersion(p.Version) {
+			return errors.New("resolvedPackages must contain concrete resolved versions")
+		}
+		if p.Ecosystem != receiptEcosystem {
+			return errors.New("resolvedPackages contains a package from a resolver that did not run")
+		}
+		if i > 0 {
+			switch {
+			case raw == receipt.ResolvedPackages[i-1]:
+				return errors.New("resolvedPackages must not contain duplicates")
+			case raw < receipt.ResolvedPackages[i-1]:
+				return errors.New("resolvedPackages must be sorted")
+			}
+		}
+		parsed[i] = p
+	}
+
+	type packageKey struct {
+		ecosystem string
+		name      string
+	}
+	declared := make(map[packageKey]bool, len(manifest.Packages))
+	for _, raw := range manifest.Packages {
+		if p, err := domain.ParsePURL(raw); err == nil {
+			declared[packageKey{ecosystem: p.Ecosystem, name: p.Name}] = true
+		}
+	}
+	for _, p := range parsed {
+		if !declared[packageKey{ecosystem: p.Ecosystem, name: p.Name}] {
+			return errors.New("resolvedPackages contains a package not declared by the sample")
+		}
+	}
+	return nil
+}
+
+// readVerificationReceipt enforces the receipt schemas' closed wire shape.
+// A signature only covers fields represented by VerificationReceipt; if an
+// unknown field or a second JSON document were silently discarded, the
+// server would accept and store a different statement from the bytes the
+// sender presented.
+func readVerificationReceipt(w http.ResponseWriter, r *http.Request, receipt *domain.VerificationReceipt) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(receipt); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		writeErr(w, http.StatusBadRequest, "invalid verification receipt: "+err.Error())
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "verification receipt must contain exactly one JSON document")
+		return false
+	}
+	return true
+}
+
 // handleVerification implements POST /v1/verifications: verify the ed25519
 // signature and the peerId↔pubkey binding, persist the immutable receipt,
 // then recompute the sample's status per the BINDING transition rules:
@@ -65,11 +158,35 @@ func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
 //	            → STABLE       ≥3 distinct passing peers ∧ no FAIL in 30d
 func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	var receipt domain.VerificationReceipt
-	if !readJSON(w, r, 1<<20, &receipt) {
+	if !readVerificationReceipt(w, r, &receipt) {
 		return
 	}
-	if receipt.SchemaVersion != 1 {
-		writeErr(w, http.StatusBadRequest, "receipt schemaVersion must be 1")
+	switch receipt.SchemaVersion {
+	case 1:
+		// resolvedPackages did not exist in the public v1 schema. Keeping the
+		// version boundary strict prevents a document from claiming v1 while
+		// relying on v2 semantics.
+		// A present empty array is still not a v1 document. json.Unmarshal
+		// preserves absent (nil) versus [] (non-nil), so enforce the schema
+		// boundary instead of only rejecting arrays that happen to carry a
+		// claim.
+		if receipt.ResolvedPackages != nil {
+			writeErr(w, http.StatusBadRequest, "receipt schemaVersion 1 must not contain resolvedPackages")
+			return
+		}
+	case 2:
+		// v2 adds resolvedPackages. Its claims are checked against the sample
+		// after the signature and sample identity have been established.
+		// Check the present-empty wire form before signature verification:
+		// omitempty necessarily canonicalizes [] as absent, so accepting it
+		// would make a schema-valid-looking document impossible to sign in
+		// the same form this server verifies.
+		if receipt.ResolvedPackages != nil && len(receipt.ResolvedPackages) == 0 {
+			writeErr(w, http.StatusBadRequest, "resolvedPackages must be omitted rather than empty")
+			return
+		}
+	default:
+		writeErr(w, http.StatusBadRequest, "receipt schemaVersion must be 1 or 2")
 		return
 	}
 	if receipt.SampleID == "" || receipt.PeerID == "" || receipt.PeerPubkey == "" || receipt.PeerSignature == "" {
@@ -103,6 +220,17 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeErr(w, http.StatusNotFound, "unknown sample")
 		return
+	}
+	if receipt.SchemaVersion == 2 {
+		var manifest domain.SampleManifest
+		if err := json.Unmarshal([]byte(sample.ManifestJSON), &manifest); err != nil {
+			writeErr(w, http.StatusInternalServerError, "stored sample manifest is invalid")
+			return
+		}
+		if err := receiptResolvedPackagesMatchSample(receipt, manifest); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	contractResult := receipt.Stages["contract"]

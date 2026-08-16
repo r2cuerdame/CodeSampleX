@@ -329,6 +329,103 @@ func TestSampleVerifyCompileOnlyHonesty(t *testing.T) {
 	}
 }
 
+func TestSampleVerifyJSONPrintsOnlyTheSignedReceipt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+	sampleID := createLocalSample(t, home, nil)
+
+	setVerifierSeams(t, fakeVerifyRunner{contract: sandbox.ResultPass}, domain.CapContainerRun)
+	out, errBuf := captureSampleIO(t, "")
+	if code := Main([]string{"sample", "verify", sampleID, "--json"}); code != 0 {
+		t.Fatalf("verify --json exited %d\nstderr: %s", code, errBuf)
+	}
+	var receipt domain.VerificationReceipt
+	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
+		t.Fatalf("stdout is not one receipt JSON document: %v\n%s", err, out.String())
+	}
+	if receipt.SampleID != sampleID || receipt.Stages["contract"] != sandbox.ResultPass {
+		t.Fatalf("receipt = sample %q, contract %q", receipt.SampleID, receipt.Stages["contract"])
+	}
+	if receipt.PeerSignature == "" {
+		t.Fatal("machine output omitted the receipt signature")
+	}
+	if strings.Contains(out.String(), "Stage      Result") || strings.Contains(out.String(), "Verified ") {
+		t.Fatalf("human output contaminated --json stdout:\n%s", out.String())
+	}
+}
+
+func TestParseSampleVerifyArgs(t *testing.T) {
+	for _, tc := range []struct {
+		args     []string
+		wantID   string
+		wantJSON bool
+		wantOK   bool
+	}{
+		{args: []string{"sha256:abc"}, wantID: "sha256:abc", wantOK: true},
+		{args: []string{"sha256:abc", "--json"}, wantID: "sha256:abc", wantJSON: true, wantOK: true},
+		{args: []string{"--json", "sha256:abc"}, wantID: "sha256:abc", wantJSON: true, wantOK: true},
+		{args: nil},
+		{args: []string{"--json"}},
+		{args: []string{"sha256:a", "sha256:b"}},
+		{args: []string{"sha256:a", "--json", "--json"}},
+		{args: []string{"sha256:a", "--unknown"}},
+	} {
+		gotID, gotJSON, gotOK := parseSampleVerifyArgs(tc.args)
+		if gotID != tc.wantID || gotJSON != tc.wantJSON || gotOK != tc.wantOK {
+			t.Errorf("parseSampleVerifyArgs(%v) = %q, %v, %v; want %q, %v, %v",
+				tc.args, gotID, gotJSON, gotOK, tc.wantID, tc.wantJSON, tc.wantOK)
+		}
+	}
+}
+
+func TestOriginReceiptSkipsHybridV1AndPrefersReverifiedV2(t *testing.T) {
+	db := openLocalDB(t, t.TempDir())
+	defer db.Close()
+	const sampleID = "sha256:upgrade"
+
+	oldHybrid := domain.VerificationReceipt{
+		SchemaVersion:    1,
+		SampleID:         sampleID,
+		Stages:           map[string]string{"contract": sandbox.ResultPass},
+		ResolvedPackages: []string{"pkg:npm/axios@1.12.4"},
+		CreatedAt:        "2026-08-17T00:00:00Z",
+	}
+	if err := db.SaveReceipt(context.Background(), oldHybrid); err != nil {
+		t.Fatal(err)
+	}
+	reverified := oldHybrid
+	reverified.SchemaVersion = 2
+	reverified.CreatedAt = "2026-08-17T00:01:00Z"
+	if err := db.SaveReceipt(context.Background(), reverified); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := originReceipt(context.Background(), &sampleEnv{db: db}, sampleID)
+	if !ok || got.SchemaVersion != 2 {
+		t.Fatalf("origin = schema v%d, ok=%v; want reverified v2", got.SchemaVersion, ok)
+	}
+}
+
+func TestOriginReceiptFallsBackToValidLegacyV1(t *testing.T) {
+	db := openLocalDB(t, t.TempDir())
+	defer db.Close()
+	const sampleID = "sha256:legacy"
+	r := domain.VerificationReceipt{
+		SchemaVersion: 1,
+		SampleID:      sampleID,
+		Stages:        map[string]string{"contract": sandbox.ResultPass},
+		CreatedAt:     "2026-08-17T00:00:00Z",
+	}
+	if err := db.SaveReceipt(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := originReceipt(context.Background(), &sampleEnv{db: db}, sampleID)
+	if !ok || got.SchemaVersion != 1 {
+		t.Fatalf("origin = schema v%d, ok=%v; want legacy v1", got.SchemaVersion, ok)
+	}
+}
+
 func TestSampleListShowsSamples(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)

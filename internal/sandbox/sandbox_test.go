@@ -50,11 +50,10 @@ func TestDetectCapability(t *testing.T) {
 
 func TestResolveCommandPerEcosystem(t *testing.T) {
 	cases := map[string][]string{
-		"npm": {"npm", "ci", "--ignore-scripts"},
-		"pypi": {"pip", "install", "--no-deps", "--no-compile",
-			"--target", "/work/.csx-vendor/py", "-r", "requirements.txt"},
-		"golang": {"go", "mod", "download"},
-		"cargo":  {"cargo", "fetch"},
+		"npm":    {"sh", "-c", "rm -rf /work/node_modules; npm ci --ignore-scripts"},
+		"pypi":   {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-deps --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
+		"golang": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json"},
+		"cargo":  {"sh", "-c", "rm -rf /work/.csx-vendor/cargo /work/.csx-vendor/target; cargo fetch --locked"},
 	}
 	for eco, want := range cases {
 		got, err := resolveCommand(eco, "")
@@ -65,8 +64,38 @@ func TestResolveCommandPerEcosystem(t *testing.T) {
 			t.Fatalf("%s: %v, want %v", eco, got, want)
 		}
 	}
+	for runtime, want := range map[string][]string{
+		"bun":  {"sh", "-c", "rm -rf /work/node_modules; bun install --frozen-lockfile --ignore-scripts"},
+		"deno": {"sh", "-c", "rm -rf /work/node_modules /work/.csx-vendor/deno; deno install --frozen"},
+	} {
+		got, err := resolveCommand("npm", runtime)
+		if err != nil || strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("npm/%s: %v, %v; want %v", runtime, got, err, want)
+		}
+	}
 	if _, err := resolveCommand("nuget", ""); err == nil {
 		t.Fatal("unknown ecosystem must error")
+	}
+}
+
+func TestEveryResolverStartsFromCleanGeneratedOutput(t *testing.T) {
+	for _, eco := range []string{"npm", "pypi", "golang", "cargo", "composer", "gem", "pub", "hex"} {
+		got, err := resolveCommand(eco, "")
+		if err != nil {
+			t.Fatalf("%s: %v", eco, err)
+		}
+		if !strings.Contains(strings.Join(got, " "), "rm -rf") {
+			t.Errorf("%s resolver can reuse author-planted generated output: %v", eco, got)
+		}
+	}
+	for _, runtime := range []string{"bun", "deno"} {
+		got, err := resolveCommand("npm", runtime)
+		if err != nil {
+			t.Fatalf("npm/%s: %v", runtime, err)
+		}
+		if !strings.Contains(strings.Join(got, " "), "rm -rf") {
+			t.Errorf("npm/%s resolver can reuse author-planted output: %v", runtime, got)
+		}
 	}
 }
 
@@ -281,6 +310,47 @@ func TestRuntimePicksTheImage(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("deno needs DENO_DIR inside the workspace, got %v", stageEnv("npm", "deno"))
+	}
+}
+
+func TestNPMResolverMatchesReceiptPackageManager(t *testing.T) {
+	host := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", Runtime: "node"}
+	for _, tc := range []struct {
+		runtime, declaredPackageManager, want string
+	}{
+		{runtime: "", declaredPackageManager: "bun", want: "npm"},
+		{runtime: "node", declaredPackageManager: "pnpm", want: "npm"},
+		{runtime: "bun", declaredPackageManager: "npm", want: "bun"},
+		{runtime: "deno", declaredPackageManager: "npm", want: "deno"},
+	} {
+		m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+			SchemaVersion:  1,
+			Ecosystem:      "npm",
+			Runtime:        tc.runtime,
+			PackageManager: tc.declaredPackageManager,
+		}}
+		cmd, err := resolveCommand("npm", tc.runtime)
+		if err != nil {
+			t.Fatalf("runtime %q: %v", tc.runtime, err)
+		}
+		if joined := " " + strings.Join(cmd, " ") + " "; !strings.Contains(joined, " "+tc.want+" ") {
+			t.Errorf("runtime %q resolve command %q does not use %q", tc.runtime, joined, tc.want)
+		}
+		if got := (DockerRunner{}).StageEnvironment(host, m).PackageManager; got != tc.want {
+			t.Errorf("runtime %q with declared package manager %q reports %q, want %q",
+				tc.runtime, tc.declaredPackageManager, got, tc.want)
+		}
+	}
+
+	// Other ecosystems still report exactly what their manifest declares.
+	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+		SchemaVersion:  1,
+		Ecosystem:      "cargo",
+		Runtime:        "rust",
+		PackageManager: "custom-cargo",
+	}}
+	if got := (DockerRunner{}).StageEnvironment(host, m).PackageManager; got != "custom-cargo" {
+		t.Errorf("non-npm package manager changed to %q", got)
 	}
 }
 

@@ -33,6 +33,7 @@ func init() {
 				stdout:   os.Stdout,
 				stderr:   os.Stderr,
 				userHome: os.UserHomeDir,
+				warm:     warmShardCache,
 			})
 		},
 	})
@@ -45,6 +46,7 @@ type initEnv struct {
 	stdout   io.Writer
 	stderr   io.Writer
 	userHome func() (string, error) // root for agent config detection
+	warm     func(context.Context, io.Writer)
 }
 
 func initMain(ctx context.Context, args []string, env *initEnv) int {
@@ -200,7 +202,9 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 		}
 	}
 
-	warmShardCache(ctx, out)
+	if env.warm != nil {
+		env.warm(ctx, out)
+	}
 
 	// An agent that was never registered is an agent that never calls csx,
 	// and the run above can end that way without anything saying so — the

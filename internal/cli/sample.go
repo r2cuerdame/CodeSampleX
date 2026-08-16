@@ -68,7 +68,8 @@ func sampleUsage(w io.Writer) {
 	fmt.Fprintln(w, "          build a sanitized spec and clean-room workspace for LLM generation")
 	fmt.Fprintln(w, "  create <dir>        turn a clean-room directory (with csx.json) into a local sample")
 	fmt.Fprintln(w, "  preview <sampleId>  show EVERYTHING that would be published — nothing hidden")
-	fmt.Fprintln(w, "  verify <sampleId>   run the sandbox verification pipeline and save the receipt")
+	fmt.Fprintln(w, "  verify <sampleId> [--json]")
+	fmt.Fprintln(w, "                       run verification, save the receipt, optionally print only receipt JSON")
 	fmt.Fprintln(w, "  publish <sampleId> [--seeder name | --anonymous] [--server URL]")
 	fmt.Fprintln(w, "          upload after leakage re-scan and explicit typed approval")
 	fmt.Fprintln(w, "  list                list local samples")
@@ -549,8 +550,9 @@ func samplePreview(ctx context.Context, args []string) int {
 // --- verify ------------------------------------------------------------
 
 func sampleVerify(ctx context.Context, args []string) int {
-	if len(args) != 1 {
-		fmt.Fprintln(sampleStderr, "usage: csx sample verify <sampleId>")
+	sampleID, jsonOutput, ok := parseSampleVerifyArgs(args)
+	if !ok {
+		fmt.Fprintln(sampleStderr, "usage: csx sample verify <sampleId> [--json]")
 		return 2
 	}
 	env, err := openSampleEnv()
@@ -560,7 +562,7 @@ func sampleVerify(ctx context.Context, args []string) int {
 	}
 	defer env.Close()
 
-	row, err := resolveLocalSample(ctx, env.db, args[0])
+	row, err := resolveLocalSample(ctx, env.db, sampleID)
 	if err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample verify: %v\n", err)
 		return 1
@@ -625,6 +627,14 @@ func sampleVerify(ctx context.Context, args []string) int {
 	if receipt.Stages["contract"] == sandbox.ResultPass && row.Status == "LOCAL" {
 		_ = env.db.SetSampleStatus(ctx, row.SampleID, "LOCAL_PASS")
 	}
+	if jsonOutput {
+		// Automation must not scrape the human stage table. The receipt is
+		// already the bounded, signed, machine-readable record and contains no
+		// raw logs or local paths. Keep stdout to exactly one JSON document;
+		// operational errors continue to use stderr and a non-zero exit code.
+		_, _ = sampleStdout.Write(append(domain.MustCanonicalJSON(receipt), '\n'))
+		return 0
+	}
 
 	// The heading is what a reader takes away, and "Verified" over a table
 	// whose compile line says FAIL is the wrong takeaway. A receipt was
@@ -674,6 +684,26 @@ func sampleVerify(ctx context.Context, args []string) int {
 	return 0
 }
 
+func parseSampleVerifyArgs(args []string) (sampleID string, jsonOutput, ok bool) {
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			if jsonOutput {
+				return "", false, false
+			}
+			jsonOutput = true
+		case strings.HasPrefix(arg, "-") || sampleID != "":
+			return "", false, false
+		default:
+			sampleID = arg
+		}
+	}
+	if sampleID == "" {
+		return "", false, false
+	}
+	return sampleID, jsonOutput, true
+}
+
 // failLogLines bounds the failure output a verify prints. Enough to see the
 // assertion that failed and the line above it; not the whole build.
 const failLogLines = 25
@@ -692,7 +722,8 @@ func lastLines(s string, n int) string {
 }
 
 // originReceipt is the receipt that should enter the cross-verification
-// queue as the origin: the first one whose contract PASSED.
+// queue as the origin. Prefer the earliest server-acceptable v2 PASS, then
+// fall back to a legacy v1 PASS.
 //
 // It was the LAST receipt stored, whatever it said. Verifying once
 // successfully and then again on a machine without Docker — which is an
@@ -705,8 +736,18 @@ func originReceipt(ctx context.Context, env *sampleEnv, sampleID string) (domain
 	if err != nil || len(receipts) == 0 {
 		return domain.VerificationReceipt{}, false
 	}
+	// b904d67 briefly emitted resolvedPackages while still labeling the
+	// receipt schemaVersion 1. The v2-aware server must reject that hybrid,
+	// and ReceiptsForSample orders it before a later repair verification.
+	// Selecting the first PASS forever would therefore make an upgraded
+	// client keep reposting a document the upgraded server cannot accept.
 	for _, r := range receipts {
-		if r.Stages["contract"] == sandbox.ResultPass {
+		if r.SchemaVersion == 2 && r.Stages["contract"] == sandbox.ResultPass {
+			return r, true
+		}
+	}
+	for _, r := range receipts {
+		if r.SchemaVersion == 1 && r.ResolvedPackages == nil && r.Stages["contract"] == sandbox.ResultPass {
 			return r, true
 		}
 	}

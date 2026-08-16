@@ -32,8 +32,10 @@ type PackageRow struct {
 	LastSeen   time.Time
 }
 
-// SnapshotTarget is one (purl, symbol) pair that has evidence and therefore
-// needs a compatibility snapshot. Symbol "" is the package-level row.
+// SnapshotTarget is one (purl, symbol) pair that has either aggregated
+// observation evidence or exact version evidence from a signed v2 receipt,
+// and therefore needs a compatibility snapshot. Symbol "" is the
+// package-level row.
 type SnapshotTarget struct {
 	PURL   string
 	Symbol string
@@ -113,8 +115,9 @@ type PeerRow struct {
 // (goal.md §14.5). Estimated values are computed elsewhere and always
 // labeled; these are raw counts only.
 // Changes is everything that could have altered a materialized view since a
-// given time: evidence targets whose rows were touched, and the packages of
-// samples that were added or that gained a receipt.
+// given time: evidence targets whose rows were touched, author-declared
+// packages of samples that changed, and exact package versions established
+// by receipts.
 //
 // Receipts are the complete signal for sample state: SetSampleStatus is
 // only ever called from the receipt handler, so a status transition always
@@ -192,13 +195,18 @@ type Store interface {
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
+	// SnapshotKeys lists materialized rows already stored. It is distinct
+	// from ListSnapshotTargets, which lists the live source rows that should
+	// exist, and lets aggregation retire snapshots whose last source vanished.
+	SnapshotKeys(ctx context.Context) ([]SnapshotTarget, error)
+	DeleteSnapshots(ctx context.Context, targets []SnapshotTarget) error
 	// ChangedSince reports what moved since a point in time, so the
 	// aggregation pass can rebuild only what is stale instead of the whole
 	// network on every tick.
 	ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 
-	// ListSnapshotTargets returns the distinct (purl, symbol) pairs that
-	// have aggregated evidence.
+	// ListSnapshotTargets returns distinct (purl, symbol) pairs established
+	// by aggregated evidence or signed v2 receipt resolver output.
 	ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error)
 	EvidenceForTarget(ctx context.Context, purl, symbol string) ([]EvidenceRow, error)
 

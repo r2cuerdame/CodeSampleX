@@ -353,10 +353,11 @@ func seedBuilderFixture(t *testing.T, store *serverstore.Fake) (samplePURL, samp
 		env := envNode("esm")
 		env.OS = envOS
 		receipt := domain.VerificationReceipt{
-			SchemaVersion: 1, SampleID: sampleID, CaseID: "case:x",
+			SchemaVersion: 2, SampleID: sampleID, CaseID: "case:x",
 			EnvironmentHash: env.Normalize().Hash(), Environment: env,
-			Stages:          map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
-			VerifierAdapter: "node-typescript@1", SandboxCapability: domain.CapContainerRun,
+			Stages:           map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"},
+			ResolvedPackages: []string{samplePURL},
+			VerifierAdapter:  "node-typescript@1", SandboxCapability: domain.CapContainerRun,
 			LogsDigest: "sha256:x", CreatedAt: testNow.Format(time.RFC3339),
 			PeerID: "ed25519:" + strings.Repeat("ab", 8),
 		}

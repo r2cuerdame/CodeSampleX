@@ -33,6 +33,19 @@ func TestParsePURL(t *testing.T) {
 	}
 }
 
+func TestConcreteResolvedVersionRejectsRequestsAndProtocols(t *testing.T) {
+	for _, version := range []string{"1.2.3", "v0.0.0-20260817010101-abcdef123456", "1!2.0+linux", "2.0.0.pre"} {
+		if !ConcreteResolvedVersion(version) {
+			t.Errorf("%q should be a concrete resolved version", version)
+		}
+	}
+	for _, version := range []string{"", "latest", "^1.2.3", ">=2", "~1.0", "file:../x", "https://example/x", "1.2 || 2"} {
+		if ConcreteResolvedVersion(version) {
+			t.Errorf("%q should not be accepted as a concrete resolved version", version)
+		}
+	}
+}
+
 func TestParsePURLRoundTrip(t *testing.T) {
 	for _, in := range []string{
 		"pkg:npm/axios@1.12.0",

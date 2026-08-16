@@ -23,6 +23,11 @@ func TestShardSampleFieldsSurviveTheRoundTrip(t *testing.T) {
 		Status:   "PUBLISHED",
 		License:  "MIT-0",
 		Packages: []string{"pkg:pypi/httpx@0.28.1"},
+		Verifications: []compatibility.ShardVerification{{
+			ResolvedPackages:  []string{"pkg:pypi/httpx@0.28.2"},
+			Stages:            map[string]string{"resolve": "PASS", "contract": "PASS"},
+			VerificationLevel: 3,
+		}},
 		Believed: "a timeout of 5 covers the whole request",
 		Contract: []string{"connect, read, write and pool each get their own 5 seconds"},
 		Environment: domain.EnvironmentFingerprint{
@@ -51,6 +56,11 @@ func TestShardSampleFieldsSurviveTheRoundTrip(t *testing.T) {
 	}
 	if len(in.Packages) != 1 || in.Packages[0] != out.Packages[0] {
 		t.Errorf("packages = %v, want %v", in.Packages, out.Packages)
+	}
+	if len(in.Verifications) != 1 || len(in.Verifications[0].ResolvedPackages) != 1 ||
+		in.Verifications[0].ResolvedPackages[0] != out.Verifications[0].ResolvedPackages[0] ||
+		in.Verifications[0].Stages["contract"] != "PASS" {
+		t.Errorf("verifications = %+v, want %+v", in.Verifications, out.Verifications)
 	}
 	if len(in.Contract) != 1 || in.Contract[0] != out.Contract[0] {
 		t.Errorf("contract = %v, want %v", in.Contract, out.Contract)
