@@ -51,6 +51,7 @@
 <footer class="foot">
   <div class="wrap">
     <p class="dim small">{{.T "footer.note"}}{{if .Version}} <span class="mono">· csx {{.Version}}</span>{{end}}
+      · <a href="{{.WithLang "/contribute"}}">{{.T "nav.contribute"}}</a>
       · <a href="{{.RepoURL}}" rel="noopener">{{.T "footer.github"}}</a>
       · <a href="{{.SponsorURL}}" rel="noopener">{{.T "footer.sponsor"}}</a></p>
     <nav class="langs" aria-label="{{.T "lang.label"}}">

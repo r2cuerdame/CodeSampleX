@@ -1,0 +1,54 @@
+{{define "content"}}
+<style>
+.channels { list-style: none; margin: 1.2rem 0 0; padding: 0; display: grid; gap: 1rem; }
+.channel { display: flex; flex-direction: column; gap: 0.5rem; }
+.channel h3 { margin: 0; font-size: 1rem; }
+.channel p { margin: 0; max-width: 74ch; }
+.claim-box {
+  border-left: 2px solid var(--accent); padding: 0.1rem 0 0.1rem 0.9rem;
+  margin: 1.1rem 0 0; max-width: 74ch;
+}
+.claim-box p { margin: 0; }
+.closed { margin: 1.4rem 0 0; max-width: 74ch; }
+</style>
+
+<h1>{{.T "contribute.title"}}</h1>
+<p class="lead">{{.T "contribute.lead"}}</p>
+
+<div class="claim-box">
+  <p>{{.T "contribute.claim"}}</p>
+</div>
+
+<section>
+  <h2 class="eyebrow mono">{{.T "contribute.open_heading"}}</h2>
+  <ul class="channels">
+    <li class="channel panel">
+      <h3>{{.T "contribute.evidence_h"}}</h3>
+      <p>{{.T "contribute.evidence_b"}}</p>
+      <p class="small"><a class="mono" href="{{.WithLang "/"}}#contract">{{.T "contribute.evidence_link"}}</a></p>
+    </li>
+    <li class="channel panel">
+      <h3>{{.T "contribute.verify_h"}}</h3>
+      <p>{{.T "contribute.verify_b"}}</p>
+      <p class="small"><a class="mono" href="{{.WithLang "/adapters"}}">{{.T "contribute.verify_link"}}</a></p>
+    </li>
+    <li class="channel panel">
+      <h3>{{.T "contribute.report_h"}}</h3>
+      <p>{{.T "contribute.report_b"}}</p>
+      <p class="small"><a class="mono" href="{{.IssuesURL}}" rel="noopener">{{.T "contribute.report_link"}}</a></p>
+    </li>
+    <li class="channel panel">
+      <h3>{{.T "contribute.ask_h"}}</h3>
+      <p>{{.T "contribute.ask_b"}}</p>
+      <p class="small"><a class="mono" href="{{.WithLang "/wanted"}}">{{.T "contribute.ask_link"}}</a></p>
+    </li>
+  </ul>
+</section>
+
+<section class="closed">
+  <h2 class="eyebrow mono">{{.T "contribute.closed_heading"}}</h2>
+  <p class="note">{{.T "contribute.closed_body"}}</p>
+  <p class="note dim small">{{.T "contribute.closed_later"}}</p>
+  <p class="note dim small"><a class="mono" href="{{.SourceURL}}" rel="noopener">{{.T "contribute.source"}}</a></p>
+</section>
+{{end}}

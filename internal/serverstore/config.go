@@ -10,11 +10,20 @@ import (
 // C9). It lives here so cmd/csx-server and the Wave C HTTP layer share one
 // definition.
 type ServerConfig struct {
-	DSN                string        // CSX_DSN — PostgreSQL connection string, required to run
-	Listen             string        // CSX_LISTEN — default ":8080"
-	BlobDir            string        // CSX_BLOB_DIR — sample artifact blob directory
-	PublicURL          string        // CSX_PUBLIC_URL — canonical external base URL
-	PublicCheck        string        // CSX_PUBLIC_CHECK — "strict" (default) | "trust" (dev/e2e only)
+	DSN         string // CSX_DSN — PostgreSQL connection string, required to run
+	Listen      string // CSX_LISTEN — default ":8080"
+	BlobDir     string // CSX_BLOB_DIR — sample artifact blob directory
+	PublicURL   string // CSX_PUBLIC_URL — canonical external base URL
+	PublicCheck string // CSX_PUBLIC_CHECK — "strict" (default) | "trust" (dev/e2e only)
+	// Publishing is who may upload a sample: "seeded" (default) requires a
+	// token that resolves to a seeder identity, "open" allows anonymous
+	// upload and exists for local development and e2e runs only.
+	//
+	// The shipped policy is seeded. A sample is worth what its provenance is
+	// worth, and code from an origin the network cannot establish cannot be
+	// given that guarantee -- see internal/httpapi/publishgate.go. Evidence,
+	// receipts and every read stay anonymous.
+	Publishing         string        // CSX_PUBLISHING — "seeded" (default) | "open" (dev/e2e only)
 	SnapshotInterval   time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
 	GithubClientID     string        // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
 	GithubClientSecret string        // CSX_GITHUB_CLIENT_SECRET
@@ -34,6 +43,7 @@ func ConfigFromEnv() ServerConfig {
 		BlobDir:            envOr("CSX_BLOB_DIR", "blobs"),
 		PublicURL:          envOr("CSX_PUBLIC_URL", "http://localhost:8080"),
 		PublicCheck:        envOr("CSX_PUBLIC_CHECK", "strict"),
+		Publishing:         envOr("CSX_PUBLISHING", "seeded"),
 		SnapshotInterval:   5 * time.Minute,
 		GithubClientID:     os.Getenv("CSX_GITHUB_CLIENT_ID"),
 		GithubClientSecret: os.Getenv("CSX_GITHUB_CLIENT_SECRET"),

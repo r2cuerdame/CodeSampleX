@@ -45,8 +45,12 @@ func newTestServer(t *testing.T, mutate func(*Deps)) (*httptest.Server, *servers
 	deps := Deps{
 		Store: store,
 		Blobs: blobs,
-		Cfg:   serverstore.ServerConfig{PublicCheck: "trust"},
-		Now:   ck.now,
+		// The shipped policy is seeded publishing; the suite predates the
+		// gate and publishes anonymously throughout, so it runs the dev
+		// policy. The gate itself is tested against the DEFAULT in
+		// publishgate_test.go, which is the configuration that ships.
+		Cfg: serverstore.ServerConfig{PublicCheck: "trust", Publishing: "open"},
+		Now: ck.now,
 		// Reachable by default so peer tests do not dial the network; the
 		// unreachable path has its own test that stubs this false.
 		PeerProbe: func(context.Context, string, int) bool { return true },
