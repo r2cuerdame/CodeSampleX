@@ -201,7 +201,14 @@ func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleList
 // manifest is re-checked here for an exact "pkg:<eco>/<name>@" prefix so
 // a package page never advertises a sample about a different package.
 func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]web.SampleListItem, error) {
-	prefix := "pkg:" + ecosystem + "/" + name + "@"
+	// The CANONICAL prefix. PURL.String() escapes a leading "@" to "%40",
+	// so a scoped npm package is stored as pkg:npm/%40scope/name@... and a
+	// prefix built by concatenation matched none of them. Every scoped
+	// package — @tanstack, @babel, @modelcontextprotocol, a large share of
+	// npm — showed an empty sample list on its own page while its samples
+	// sat published and unreachable.
+	prefix := strings.TrimSuffix(
+		domain.PURL{Ecosystem: ecosystem, Name: name, Version: ""}.String(), "")
 	rows, err := w.s.SamplesForPackages(ctx, []string{prefix + "%"}, limit)
 	if err != nil {
 		return nil, err
@@ -370,6 +377,11 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			continue
 		}
 		doc := map[string]any{
+			// The symbol the cluster is ABOUT. It was never serialized, so
+			// the template's {{if .Symbol}} was false on every package page
+			// and a failure cluster rendered with no indication of which
+			// call it concerned.
+			"symbol":              c.Symbol,
 			"stage":               c.Stage,
 			"errorCode":           c.ErrorCode,
 			"fingerprint":         c.ErrorFingerprint,
