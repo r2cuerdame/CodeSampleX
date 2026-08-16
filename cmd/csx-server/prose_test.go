@@ -14,6 +14,10 @@ func TestReadsAsProse(t *testing.T) {
 		"ms(604800000) returns the string 7d rather than 1w, because the largest unit it formats is a day",
 		"assert that reading a SQLite INTEGER value greater than i32::MAX into i32 returns an error",
 		"the server receives the body as application/json with no charset appended",
+		// Off the live page. Two function words is what a real sentence
+		// carries once the language keywords are excluded.
+		"PSR-18 sendRequest returns 4xx and 5xx status codes as valid ResponseInterface instances without throwing",
+		"A default client must follow StatusSeeOther by issuing the next request as GET, not POST",
 	}
 	code := []string{
 		"assert.strictEqual(ms(604800000), '7d');",
@@ -28,6 +32,9 @@ func TestReadsAsProse(t *testing.T) {
 		"begin; record.user.name; rescue NoMethodError => e; e.message.include?(\"Hash\"); end",
 		"const worker = new Worker(script, { eval: true, type: \"module\" })",
 		"expect(x).toBe(1)",
+		// Reached the live page: not and and are English function words
+		// AND Python operators, so the line looked like a sentence.
+		"assert not Path(zf, 0).exists() and not Path(zf, 0).is_dir() and (Path(zf) / 0).exists()",
 		"",
 		"   ",
 	}

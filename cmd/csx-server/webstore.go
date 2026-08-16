@@ -333,24 +333,36 @@ func firstContractLine(contract []string) string {
 // that turns out to be the cleanest line between the two.
 func readsAsProse(s string) bool {
 	bare := outsideBrackets(s)
-	return countWords(bare) >= 6 && countFunctionWords(bare) >= 3
+	// Two, not three. The list lost its most common members to the
+	// keyword overlap, and real sentences off the live page carry exactly
+	// two of what is left: "PSR-18 sendRequest returns 4xx and 5xx status
+	// codes AS valid instances WITHOUT throwing". A code expression still
+	// carries none.
+	return countWords(bare) >= 6 && countFunctionWords(bare) >= 2
 }
 
 // functionWords is the closed class English uses to hold a sentence
 // together. Deliberately small: every entry has to be a word that carries
 // no domain meaning, so a line full of them is prose and a line with none
 // is not a sentence about anything.
+// Words that are ALSO operators or builtins in a mainstream language are
+// deliberately absent — and, or, not, in, is, all, any, each. A Python or
+// Ruby assertion is full of them:
+//
+//	assert not Path(zf, "sub").exists() and not Path(zf, "sub").is_dir()
+//
+// which reached the live page carrying four of them and nothing else. A
+// word only helps here if finding it means somebody was writing English.
 var functionWords = map[string]bool{
-	"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-	"is": true, "are": true, "was": true, "were": true, "be": true, "been": true,
-	"it": true, "its": true, "this": true, "that": true, "these": true,
-	"those": true, "of": true, "to": true, "in": true, "into": true, "on": true,
-	"with": true, "without": true, "for": true, "from": true, "by": true,
+	"the": true, "a": true, "an": true, "but": true, "was": true, "were": true,
+	"been": true, "its": true, "this": true, "that": true, "these": true,
+	"those": true, "of": true, "to": true, "into": true, "on": true,
+	"with": true, "without": true, "from": true, "by": true,
 	"as": true, "than": true, "rather": true, "because": true, "so": true,
-	"not": true, "no": true, "when": true, "while": true, "before": true,
+	"no": true, "when": true, "while": true, "before": true,
 	"after": true, "still": true, "only": true, "even": true, "their": true,
-	"they": true, "which": true, "what": true, "does": true, "do": true,
-	"both": true, "each": true, "every": true, "any": true, "all": true,
+	"they": true, "which": true, "what": true, "does": true,
+	"both": true, "every": true,
 	"more": true, "less": true, "same": true, "instead": true, "own": true,
 	"never": true, "always": true, "already": true, "yet": true, "at": true,
 }
