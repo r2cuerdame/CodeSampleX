@@ -120,6 +120,14 @@ func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFin
 	if fp.Distro == "" {
 		fp.Distro = detectDistro()
 	}
+	// Every other dimension takes an explicit hint before falling back to
+	// detection; this one never read its own. The guard below could not
+	// fire, so a caller who stated ci was ignored — harmless today, because
+	// detection agrees in the ordinary case, and wrong the moment it does
+	// not.
+	if v := get("ci"); v != "" {
+		fp.CI = v == "true" || v == "1"
+	}
 	if !fp.CI {
 		fp.CI = DetectCI()
 	}

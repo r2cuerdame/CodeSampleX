@@ -78,7 +78,9 @@ type shardSample struct {
 //	304 → the cached copy is current; only synced_at is re-stamped.
 //	200 → body + ETag stored, contents (re)indexed into FTS.
 //	404 → the shard does not exist yet server-side; nothing is removed and
-//	      no error is returned.
+//	      errShardAbsent is returned. It is not a failure — SyncAll counts
+//	      it as neither warmed nor errored — but the caller has to be able
+//	      to tell "nothing there" from "one more warmed key".
 //	network / other status → error, so the caller can queue a retry.
 //
 // errShardAbsent reports a shard the server does not have. It is not a

@@ -179,15 +179,20 @@ func coreVersion(v string) string {
 // preRelease returns the suffix after '-', without build metadata.
 func preRelease(v string) string {
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	// Build metadata comes off FIRST. Semver ignores it for precedence and
+	// a version carrying it is not a prerelease -- but a hyphen inside it
+	// looked like the prerelease separator, so 1.2.0+build-1 was read as
+	// prerelease "1" and sorted BELOW plain 1.2.0. Version order decides
+	// which release is "V-1", so a mis-ordered pair points the regression
+	// rule at the wrong comparison.
+	if j := strings.IndexByte(v, '+'); j >= 0 {
+		v = v[:j]
+	}
 	i := strings.IndexByte(v, '-')
 	if i < 0 {
 		return ""
 	}
-	v = v[i+1:]
-	if j := strings.IndexByte(v, '+'); j >= 0 {
-		v = v[:j]
-	}
-	return v
+	return v[i+1:]
 }
 
 func compareSegments(a, b string) int {
