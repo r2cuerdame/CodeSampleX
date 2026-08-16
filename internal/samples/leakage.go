@@ -456,7 +456,17 @@ func urlAllowed(raw string, extra []string) bool {
 	// example\.com/items} or /https:\/\/api\.example\.com/, and the escaped
 	// host matched nothing in the allowlist. Unescape rather than skip, so a
 	// host that is NOT allowlisted is still caught when written as a regex.
-	host = strings.ReplaceAll(host, `\`, "")
+	// A backslash before a DOT is a regex escape and comes out; a
+	// backslash before anything else ENDS the host, because it is a
+	// string escape that ran on: "API_URL=https://api.example.com\n"
+	// yielded api.example.com\n, and removing the backslash gave
+	// api.example.comn -- not an allowlisted host, so a sample whose URL
+	// pointed at example.com was refused at publish with no override. The
+	// gate has to be wrong in the direction of asking, never of blocking.
+	host = strings.ReplaceAll(host, `\.`, ".")
+	if i := strings.IndexByte(host, '\\'); i >= 0 {
+		host = host[:i]
+	}
 	// A hostname cannot contain '$' either, so one here starts an unbraced
 	// interpolation that ran on past the host: Dart, shell, PHP and Ruby all
 	// write "http://example.com$path". Cutting there recovers the real host.

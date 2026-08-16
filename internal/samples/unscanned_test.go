@@ -157,3 +157,58 @@ func TestARealUNCPathIsStillCaught(t *testing.T) {
 	}
 	t.Errorf("a UNC share pointing at a company file server was not reported: %+v", findings)
 }
+
+// A URL inside a string literal carries the string's escapes with it:
+// "API_URL=https://api.example.com\n" yields the host api.example.com\n.
+// Removing the backslash gave api.example.comn — not an allowlisted host —
+// so a sample whose URL pointed at example.com, the host reserved for
+// exactly this, was refused at publish with no override.
+//
+// A backslash before a dot is a regex escape and comes out; a backslash
+// before anything else ends the host.
+func TestAStringEscapeDoesNotBreakAnAllowedHost(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "contract.mjs", `const env = "API_URL=https://api.example.com\n";`+"\n")
+
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Kind == KindURL {
+			t.Errorf("an allowed host was refused because of a string escape: %+v", f)
+		}
+	}
+}
+
+// The regex-escaped form still resolves, and a host that is NOT allowed is
+// still caught when written that way.
+func TestARegexEscapedHostIsStillResolved(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "spec.rb", `assert_match %r{https://api\.example\.com/items}, url`+"\n")
+	findings, err := Scan(dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Kind == KindURL {
+			t.Errorf("a regex-escaped allowed host was reported: %+v", f)
+		}
+	}
+
+	dir2 := t.TempDir()
+	write(t, dir2, "spec.rb", `assert_match %r{https://jenkins\.acme-corp\.internal/job}, url`+"\n")
+	findings2, err := Scan(dir2, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var caught bool
+	for _, f := range findings2 {
+		if f.Kind == KindURL {
+			caught = true
+		}
+	}
+	if !caught {
+		t.Errorf("an internal host written as a regex was not caught: %+v", findings2)
+	}
+}
