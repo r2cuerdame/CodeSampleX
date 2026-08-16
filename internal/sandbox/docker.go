@@ -2,9 +2,13 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -166,8 +170,11 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 // C13: --memory=512m --pids-limit=256. The only --env flags are the fixed
 // cache paths from stageEnv, all pointing inside the mounted workspace;
 // no host environment is ever forwarded.
-func dockerArgs(image, dir string, networkOff bool, env, cmd []string) []string {
+func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name string) []string {
 	args := []string{"docker", "run", "--rm"}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
 	if networkOff {
 		args = append(args, "--network=none")
 	}
@@ -188,8 +195,51 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: "sandbox: resolve workdir: " + err.Error()}
 	}
-	return runStage(ctx, "", dockerArgs(img, abs, networkOff,
-		stageEnv(m.Environment.Ecosystem, m.Environment.Runtime), cmd))
+	// A named container, so a stage that outruns its timeout can be
+	// killed rather than left behind.
+	//
+	// The timeout cancels the context, which kills the `docker run`
+	// CLIENT. The container belongs to dockerd and keeps running, and
+	// --rm only removes it once it exits — which for a hung build is
+	// never. One was found still compiling fifteen minutes into a
+	// five-minute stage, on a machine where six containers is the measured
+	// ceiling, so every timed-out verification permanently took a share of
+	// the pool. Over a night that is not a leak, it is the throughput.
+	name := containerName(abs, networkOff, cmd)
+	res := runStage(ctx, "", dockerArgs(img, abs, networkOff,
+		stageEnv(m.Environment.Ecosystem, m.Environment.Runtime), cmd, name))
+	if ctx.Err() != nil || res.Result == ResultFail {
+		reapContainer(name)
+	}
+	return res
+}
+
+// containerName derives a name unique to this stage of this workspace.
+//
+// The workspace directory is already unique per verification (the caller
+// unpacks into a fresh temp dir), and the stage is distinguished by
+// whether the network is off and by the command, so two stages of one
+// sample never collide.
+func containerName(dir string, networkOff bool, cmd []string) string {
+	h := sha256.Sum256([]byte(dir + "\x00" + strconv.FormatBool(networkOff) +
+		"\x00" + strings.Join(cmd, "\x00")))
+	return "csx-" + hex.EncodeToString(h[:8])
+}
+
+// reapContainer kills a container that may still be running after its
+// stage gave up. Best effort and quick: it runs on the failure path, and a
+// verifier that blocks on cleanup is worse than a container that lingers a
+// few seconds longer.
+//
+// A container that already exited makes this a no-op — docker kill on an
+// absent name is an error nobody needs to hear about.
+func reapContainer(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _ = execCombined(ctx, "", []string{"docker", "kill", name})
 }
 
 // Resolve fetches dependencies with the network ON but lifecycle scripts OFF.
