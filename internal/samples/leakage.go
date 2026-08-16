@@ -185,8 +185,14 @@ var leakPatterns = []leakPattern{
 	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]+\\{1,2}[A-Za-z0-9._-][A-Za-z0-9._\\/-]*)`)},
 	// Only secret-shaped environment names: a sample legitimately sets TZ,
 	// NODE_ENV or PORT, and flagging those blocked honest contributions.
-	{KindEnvAssignment, regexp.MustCompile(`process\.env\.\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*\s*=\s*["'` + "`" + `]`)},
-	{KindEnvAssignment, regexp.MustCompile(`os\.environ\[\s*["']\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*["']\s*\]\s*=\s*["']`)},
+	//
+	// And only when something is actually ASSIGNED. A sample about dotenv
+	// has to demonstrate what an empty value does, so it writes
+	// process.env.EMPTY_TOKEN = "" -- which carries no secret by
+	// construction, and was refused at publish with no override anyway. The
+	// quote pair must have something between it.
+	{KindEnvAssignment, regexp.MustCompile(`process\.env\.\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*\s*=\s*["'` + "`" + `][^"'` + "`" + `\s]`)},
+	{KindEnvAssignment, regexp.MustCompile(`os\.environ\[\s*["']\w*(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|DSN|CONN)\w*["']\s*\]\s*=\s*["'][^"'\s]`)},
 }
 
 var urlRe = regexp.MustCompile(`https?://[^\s"'<>()\[\]` + "`" + `]+`)

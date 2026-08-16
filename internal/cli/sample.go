@@ -790,6 +790,19 @@ func samplePublish(ctx context.Context, args []string) int {
 		// which is exactly why it refuses -- so the message has to say what
 		// to write instead rather than only that this was wrong.
 		for _, f := range findings {
+			if f.Kind == samples.KindAbsolutePath {
+				fmt.Fprintln(sampleStderr,
+					"\nAn absolute path is refused because its next segment can carry a person,")
+				fmt.Fprintln(sampleStderr,
+					"a project or an employer, and nothing here can tell whether yours does.")
+				fmt.Fprintln(sampleStderr,
+					"A sample needs no absolute path: use a relative one, or a path the")
+				fmt.Fprintln(sampleStderr,
+					"contract creates itself in a temp directory.")
+				break
+			}
+		}
+		for _, f := range findings {
 			if f.Kind == samples.KindURL {
 				fmt.Fprintln(sampleStderr,
 					"\nA URL finding does not mean the host is real — it means nothing here can tell.")
