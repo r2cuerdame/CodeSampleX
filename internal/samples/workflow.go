@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // DefaultLicense is the default public-sample license (goal.md §7.5).
 const DefaultLicense = "MIT-0"
+
+// maxBelievedBytes bounds Case.Believed, which is rendered as prose on the
+// public findings page.
+const maxBelievedBytes = 600
 
 // Created is the result of turning a clean-room directory into a local
 // sample. Findings are advisory here: they block PUBLISH, never creation
@@ -47,6 +52,24 @@ func CreateFromDir(ctx context.Context, dir string, manifest domain.SampleManife
 	}
 	if manifest.Case.SchemaVersion == 0 {
 		manifest.Case.SchemaVersion = 1
+	}
+	// A declared belief is published on /findings as prose, so it is bounded
+	// here where the author can still fix it. The bound is generous — the
+	// longest hand-written entry on that page is under it — and it is a
+	// refusal rather than a truncation, because half a sentence about what
+	// people believe is worse than no sentence.
+	if n := len(manifest.Case.Believed); n > maxBelievedBytes {
+		return nil, fmt.Errorf("samples: case believed is %d bytes, limit %d — "+
+			"state the belief in a sentence or two; the measurement belongs in the contract",
+			n, maxBelievedBytes)
+	}
+	// The belief and the goal are different claims: the goal is what the
+	// sample does, the belief is what someone expects to happen. Copying one
+	// into the other produces a finding that contradicts nothing.
+	if manifest.Case.Believed != "" &&
+		strings.EqualFold(strings.TrimSpace(manifest.Case.Believed), strings.TrimSpace(manifest.Case.Goal)) {
+		return nil, errors.New("samples: case believed repeats the goal — " +
+			"believed is what a developer expects, which the contract then contradicts")
 	}
 	if manifest.Case.CaseID == "" {
 		manifest.Case.CaseID = manifest.Case.ComputeID()

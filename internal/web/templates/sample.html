@@ -31,6 +31,12 @@
   {{end}}
 </dl>
 
+{{- if .Manifest.Case.Believed}}
+<h2 class="eyebrow mono">{{.T "sample.believed"}}</h2>
+<p class="note">{{.Manifest.Case.Believed}}</p>
+<p class="note dim small">{{.T "sample.believed_note"}}</p>
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "sample.contract"}}</h2>
 <ul class="contractlist">
 {{- range .Manifest.Case.Contract}}

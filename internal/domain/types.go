@@ -161,6 +161,19 @@ type Case struct {
 	Symbols       []string          `json:"symbols,omitempty"`
 	Constraints   map[string]string `json:"constraints,omitempty"`
 	Contract      []string          `json:"contract"`
+	// Believed is the thing a competent developer or model expects, which
+	// the contract then measures and contradicts.
+	//
+	// It is what turns a sample into a FINDING. The findings page is the
+	// most persuasive thing on the site — "the documentation says X, the
+	// contract measured Y" does more than any paragraph of explanation —
+	// and it was a hand-written list of twenty-nine entries in Go source
+	// while the storehouse grew past three hundred samples. The page that
+	// convinces people was the one that could not grow.
+	//
+	// Optional, and omitted when empty, so every case id computed before
+	// this field existed is unchanged.
+	Believed string `json:"believed,omitempty"`
 }
 
 // ComputeID derives the content-addressed case ID over the canonical JSON

@@ -45,6 +45,15 @@ type ShardSymbol struct {
 type ShardSample struct {
 	SampleID string `json:"sampleId"`
 	Goal     string `json:"goal,omitempty"`
+	// Believed is what the sample's author says a competent developer or
+	// model expects, which the contract below then contradicts.
+	//
+	// This is the single most useful sentence the network can hand a model,
+	// because it names the wrong answer the model was about to write. It
+	// costs one line in the shard and saves the round trip that a goal
+	// sentence alone forces. Empty on every sample authored before the
+	// field existed, and on every sample that corrects nothing.
+	Believed string `json:"believed,omitempty"`
 	Status   string `json:"status"`
 	License  string `json:"license"`
 	// Packages is what the sample's manifest declares. A shard lists one

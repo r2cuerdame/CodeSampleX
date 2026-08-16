@@ -663,6 +663,7 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 			Packages:    sd.manifest.Packages,
 			Environment: sd.manifest.Environment,
 			Contract:    contractForShard(sd.manifest.Case.Contract),
+			Believed:    sd.manifest.Case.Believed,
 		}
 		if len(sd.receipts) > 0 {
 			latest := sd.receipts[0]

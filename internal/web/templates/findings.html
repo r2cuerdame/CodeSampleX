@@ -70,6 +70,25 @@
   </ol>
 </section>
 
+{{- if .Derived}}
+<section>
+  <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
+  <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
+  <ol class="findings">
+  {{- range .Derived}}
+    <li class="finding panel">
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
+      <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
+      <p class="flinks small">
+        <a class="mono" href="{{$.WithLang .SampleHref}}">{{$.T "findings.contract"}} · {{.ShortID}}</a>
+      </p>
+    </li>
+  {{- end}}
+  </ol>
+</section>
+{{- end}}
+
 <section>
   <h2 class="eyebrow mono">{{.T "findings.method_heading"}}</h2>
   <p class="note">{{.T "findings.method_body"}}</p>

@@ -87,6 +87,9 @@ type shardSampleEntry struct {
 	// existed, which simply means the claims are unknown here rather than
 	// that there were none.
 	Contract []string `json:"contract,omitempty"`
+	// Believed is the belief the sample corrects, when its author stated
+	// one. Absent from older shards and from samples that correct nothing.
+	Believed string `json:"believed,omitempty"`
 }
 
 // candidate is one sample under consideration, from the local samples table
@@ -303,6 +306,9 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					c.caseObj = &domain.Case{
 						SchemaVersion: 1, Kind: "HOW", Goal: ss.Goal,
 						Packages: ss.Packages,
+						// What the caller probably believes, which is the
+						// half of the answer a goal sentence cannot carry.
+						Believed: ss.Believed,
 						// What the contract actually proved. Older shards do
 						// not carry it and simply have none.
 						Contract: ss.Contract,

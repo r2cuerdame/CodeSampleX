@@ -24,6 +24,7 @@ type fakeStore struct {
 	// package pages); samplePackages is the purl list of each one.
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
+	derived        []DerivedFinding
 }
 
 func snapKey(purl, symbol string) string { return purl + "\x00" + symbol }
@@ -67,6 +68,14 @@ func (f *fakeStore) ListSamples(_ context.Context, limit int) ([]SampleListItem,
 		out = append(out, it)
 	}
 	return out, nil
+}
+
+// derivedFindings lets a test hand the findings page machine-derived rows.
+func (f *fakeStore) DerivedFindings(_ context.Context, limit int) ([]DerivedFinding, error) {
+	if limit < len(f.derived) {
+		return f.derived[:limit], nil
+	}
+	return f.derived, nil
 }
 
 func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, limit int) ([]SampleListItem, error) {

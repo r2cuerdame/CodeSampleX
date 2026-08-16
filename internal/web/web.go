@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -74,6 +75,27 @@ type Store interface {
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	// DerivedFindings returns published samples that state the belief they
+	// correct, newest first. These grow the /findings page without anyone
+	// editing Go source.
+	DerivedFindings(ctx context.Context, limit int) ([]DerivedFinding, error)
+}
+
+// DerivedFinding is a finding the network produced rather than one a
+// person wrote: a published sample whose case declares what was believed,
+// paired with the contract line that measured otherwise.
+//
+// The hand-written lists in findings.go are the reason this exists. They
+// are good entries, but they are twenty-nine entries in a Go literal, and
+// the storehouse they are drawn from passed three hundred samples and is
+// aimed at ten thousand. The most persuasive page on the site was the only
+// one that could not grow on its own.
+type DerivedFinding struct {
+	Ecosystem string
+	Subject   string // "axios@1.12.0", from the first package purl
+	Believed  string // Case.Believed, written by the sample's author
+	Measured  string // the contract line that contradicts it
+	SampleID  string
 }
 
 // WantedRow is one unanswered question: a package people asked about that
@@ -138,6 +160,12 @@ var knownEcosystems = map[string]bool{"npm": true, "pypi": true, "cargo": true, 
 type site struct {
 	d    Deps
 	tmpl map[string]*template.Template
+
+	// derived* cache the machine-derived findings. The scan reads every
+	// recent manifest, which is fine on a timer and not fine per request.
+	derivedMu    sync.Mutex
+	derivedCache []finding
+	derivedAt    time.Time
 }
 
 // Register mounts every website route on mux.

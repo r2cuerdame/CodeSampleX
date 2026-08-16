@@ -634,6 +634,14 @@ func contractBlock(r domain.SearchResult) string {
 	}
 
 	var b strings.Builder
+	// The belief goes FIRST, above the proof, because it is addressed to the
+	// reader rather than about the sample: it names the answer the caller was
+	// about to write. A model that reads only the top of this block still
+	// gets the one sentence that changes what it does next.
+	if believed := strings.TrimSpace(r.Case.Believed); believed != "" {
+		b.WriteString("Commonly assumed: " + believed + "\n")
+		b.WriteString("  The contract below measured otherwise.\n")
+	}
 	b.WriteString("Proven by its contract for " + scope + "\n")
 	b.WriteString("  (it ran in a pinned container with the network off and passed;\n")
 	b.WriteString("   these are the author's own lines about that run)\n")

@@ -223,6 +223,84 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
+// derivedFindingScan bounds how many recent samples are read looking for
+// declared beliefs. Only a minority of samples state one, so the scan is
+// wider than the number of findings it can return.
+const derivedFindingScan = 2000
+
+// DerivedFindings reads the newest samples and keeps the ones whose case
+// says what was believed.
+//
+// It scans rather than filters in SQL because the belief lives inside the
+// manifest JSON, and the manifest is the artifact's own copy — no column
+// mirrors it, and adding one would put a second answer beside the sample
+// itself. The result is cached by the caller, so this runs on a timer, not
+// on a request.
+func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.DerivedFinding, error) {
+	rows, err := w.s.ListSamples(ctx, derivedFindingScan)
+	if err != nil {
+		return nil, err
+	}
+	var out []web.DerivedFinding
+	for _, r := range rows {
+		m, ok := parseManifest(r.ManifestJSON)
+		if !ok || strings.TrimSpace(m.Case.Believed) == "" {
+			continue
+		}
+		measured := firstContractLine(m.Case.Contract)
+		if measured == "" {
+			// A belief with nothing measured against it is an opinion,
+			// and an opinion is what this page exists not to publish.
+			continue
+		}
+		eco, subject := findingSubject(m.Case.Packages)
+		if eco == "" {
+			continue
+		}
+		out = append(out, web.DerivedFinding{
+			Ecosystem: eco,
+			Subject:   subject,
+			Believed:  strings.TrimSpace(m.Case.Believed),
+			Measured:  measured,
+			SampleID:  r.SampleID,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// firstContractLine picks the assertion that reads as the measurement.
+//
+// A contract is a list of asserted facts, and the first one is the reason
+// the sample was written — later lines are usually the supporting checks
+// ("exit code 0", "no warnings on stderr") that every sample repeats.
+func firstContractLine(contract []string) string {
+	for _, c := range contract {
+		if c = strings.TrimSpace(c); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
+// findingSubject names the thing the finding is about: the ecosystem chip
+// and "name@version" of the first package the case pins.
+func findingSubject(packages []string) (ecosystem, subject string) {
+	for _, raw := range packages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil {
+			continue
+		}
+		if p.Version == "" {
+			return p.Ecosystem, p.Name
+		}
+		return p.Ecosystem, p.Name + "@" + p.Version
+	}
+	return "", ""
+}
+
 // sampleListItem projects a stored sample row onto the website's list row.
 func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
 	item := web.SampleListItem{

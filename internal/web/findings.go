@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -455,6 +456,11 @@ type findingsPage struct {
 	basePage
 	Documented []finding
 	Believed   []finding
+	// Derived is the group nobody edits: samples that declared the belief
+	// they correct. It is listed last because a hand-checked entry earns
+	// its place at the top, and first in importance because it is the only
+	// group that grows while everyone is asleep.
+	Derived    []finding
 	Total      int
 	Ecosystems []string
 }
@@ -480,14 +486,53 @@ func (f finding) ShortID() string {
 	return id
 }
 
+// derivedLimit bounds the machine-derived group. The page stays readable,
+// and the cap is stated on the page rather than silently applied.
+const derivedLimit = 60
+
+// derivedTTL is how stale the derived group is allowed to be. Publishing
+// runs in batches, so a minute-scale refresh keeps the page current while
+// one scan serves every visitor in between.
+const derivedTTL = 5 * time.Minute
+
+// derivedFindings returns the machine-derived group, cached.
+//
+// A miss returns nothing rather than an error page: the hand-written
+// findings are the page's substance and must render even when the store is
+// unreachable.
+func (s *site) derivedFindings(r *http.Request) []finding {
+	s.derivedMu.Lock()
+	defer s.derivedMu.Unlock()
+	if s.derivedAt.IsZero() || time.Since(s.derivedAt) > derivedTTL {
+		rows, err := s.d.Store.DerivedFindings(r.Context(), derivedLimit)
+		if err != nil {
+			return s.derivedCache
+		}
+		out := make([]finding, 0, len(rows))
+		for _, d := range rows {
+			out = append(out, finding{
+				Ecosystem: d.Ecosystem,
+				Subject:   d.Subject,
+				Believed:  d.Believed,
+				Measured:  d.Measured,
+				SampleID:  d.SampleID,
+			})
+		}
+		s.derivedCache, s.derivedAt = out, time.Now()
+	}
+	return s.derivedCache
+}
+
 func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
 	b := s.page(r, lang, i18n.T(lang, "findings.title")+" — CodeSampleX",
 		i18n.T(lang, "meta.findings"))
 
+	derived := s.derivedFindings(r)
+
 	seen := map[string]bool{}
 	var ecos []string
-	for _, list := range [][]finding{documentedFindings, believedFindings} {
+	for _, list := range [][]finding{documentedFindings, believedFindings, derived} {
 		for _, f := range list {
 			if !seen[f.Ecosystem] {
 				seen[f.Ecosystem] = true
@@ -501,7 +546,8 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		basePage:   b,
 		Documented: documentedFindings,
 		Believed:   believedFindings,
-		Total:      len(documentedFindings) + len(believedFindings),
+		Derived:    derived,
+		Total:      len(documentedFindings) + len(believedFindings) + len(derived),
 		Ecosystems: ecos,
 	})
 }
