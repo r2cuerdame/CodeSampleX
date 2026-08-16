@@ -888,6 +888,18 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 	b.WriteString("Clean-room workspace created: " + workdir + "\n\n")
 	b.WriteString("Generate the sample in that EMPTY directory following these instructions:\n\n")
 	b.WriteString(prompt)
+	// The workspace is on the machine running the DAEMON. An agent reaching
+	// this server over MCP from a container, a remote host or another OS
+	// cannot write there, and the observed failure is not an error — it is
+	// an agent quietly choosing a path of its own (/root/csx_layout_sample)
+	// and writing a perfectly good sample somewhere `csx sample create`
+	// will never be pointed at. Every one of those is a proposal the
+	// network loses without anyone noticing it was lost.
+	b.WriteString("\n\nIF YOU CANNOT WRITE TO THAT EXACT PATH — it is on the machine running " +
+		"the csx daemon, which may not be the one you are on — STOP and say so in your reply. " +
+		"Do not choose a different directory silently. If you have already written the files " +
+		"somewhere else, say exactly where: `csx sample create` accepts any directory, so the " +
+		"work is recoverable as long as the user is told the path.\n")
 	b.WriteString("\nIMPORTANT — publishing is NOT possible from this tool, and never will be. ")
 	b.WriteString("It requires the user's explicit approval after they review every file ")
 	b.WriteString("(goal.md §12.4).\n\n")
@@ -897,9 +909,19 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 	b.WriteString("TELL THE USER, in your reply, that a sample is ready for review, and give them ")
 	b.WriteString("exactly this:\n\n")
 	b.WriteString("  csx sample create " + workdir + "\n")
-	b.WriteString("  csx sample preview <sampleId>   # shows every file that would be published\n")
-	b.WriteString("  csx sample publish <sampleId>\n\n")
-	b.WriteString("`csx sample pending` lists anything prepared and not yet reviewed.")
+	b.WriteString("  csx sample preview <sampleId>   # shows every file that would be published\n\n")
+	b.WriteString("`csx sample pending` lists anything prepared and not yet reviewed.\n\n")
+	// Upload is seeded-only, so telling every user to run `publish` sends
+	// most of them into a 403. What the sample IS worth to them is the part
+	// that was never said: it is local evidence, and the local engine
+	// answers from it immediately.
+	b.WriteString("WHERE THIS SAMPLE GOES: it stays on this machine and answers this machine's " +
+		"own searches from now on, which is most of its value. Upload to the public network is " +
+		"seeded-only — samples there are generated and verified by the project so their origin " +
+		"is established, and an unseeded `csx sample publish` is refused with a 403 that explains " +
+		"itself. To get this into the network, contribute the IDEA rather than the code: the " +
+		"package, the API, what you expected and what actually happened. " +
+		"See https://codesamplex.dev/contribute.")
 
 	structured := map[string]any{
 		"spec":                        spec,

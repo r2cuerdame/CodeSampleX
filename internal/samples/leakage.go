@@ -123,6 +123,36 @@ var allowedURLHosts = []string{
 	"ietf.org",
 	"w3.org",
 	"unicode.org",
+	// A library's own documentation host, when the library PRINTS it. React
+	// puts reactjs.org/docs/error-decoder.html in the minified error it
+	// throws, and OpenTelemetry's schema URL is not a link at all — it is
+	// the argument you pass to WithSchemaURL, an identifier that happens to
+	// be spelled as a URL. A sample asserting on either cannot omit it, so
+	// refusing them refused samples about the two things this network is
+	// best at: exact error text, and an API whose argument must be right.
+	//
+	// This list can never be complete, and that is a known cost rather than
+	// an oversight. The alternative — allowing any registrable domain — is
+	// the one thing that must not happen, because "git.acme-corp.com" is
+	// registrable too and names an employer. Until the gate can ask whether
+	// a URL appears verbatim in the resolved package's own shipped files,
+	// which is a check the container could actually run, each host here is
+	// added deliberately when a real sample is refused for it.
+	"reactjs.org",
+	"react.dev",
+	"opentelemetry.io",
+	"angular.dev",
+	"vuejs.org",
+	"svelte.dev",
+	"kotlinlang.org",
+	"swift.org",
+	"openjdk.org",
+	"postgresql.org",
+	"sqlite.org",
+	"openssl.org",
+	"curl.se",
+	"gnu.org",
+	"kernel.org",
 	// A specification identifier is not an address. $schema carries
 	// "http://json-schema.org/draft-07/schema#" in every JSON Schema ever
 	// generated, and nothing ever fetches it — it names a draft, the way an
@@ -182,7 +212,24 @@ var leakPatterns = []leakPattern{
 	// the engine simply backtracks: with a backslash allowed anywhere in
 	// the trailing class, \\N\{ matches by letting the class eat the second
 	// backslash of the pair it just skipped.
-	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]+\\{1,2}[A-Za-z0-9._-][A-Za-z0-9._\\/-]*)`)},
+	//
+	// Both segments must be at least TWO characters, because an escaped
+	// CRLF is not a file server. A contract line reading
+	//
+	//     assert getType handles filenames containing CRLF (\r\n)
+	//
+	// becomes (\\r\\n) once JSON escapes it, which is exactly the shape of
+	// the share \\r\n — and the sample was refused at publish with no
+	// override. Every sample about line endings, CSV quoting, HTTP header
+	// framing or any wire protocol writes that sequence, so this was not
+	// one sample: it was a whole class of them, and the class where the
+	// traps are densest.
+	//
+	// Nobody names a file server "r". The reverse miss — a real share whose
+	// host or share name is a single character — is a thing that does not
+	// happen, and the escape sequences it now skips (\r\n, \n\t, \t\n) are
+	// things that happen constantly.
+	{KindAbsolutePath, regexp.MustCompile(`(?:^|[\s"'=:(\[,])(\\{2}(?:\\{2})?[A-Za-z0-9._-]{2,}\\{1,2}[A-Za-z0-9._-]{2}[A-Za-z0-9._\\/-]*)`)},
 	// Only secret-shaped environment names: a sample legitimately sets TZ,
 	// NODE_ENV or PORT, and flagging those blocked honest contributions.
 	//
@@ -411,6 +458,10 @@ func projectNamePatterns(opts ScanOptions) []*regexp.Regexp {
 
 // templateExprRe matches an interpolation placeholder that a URL literal
 // may carry: `http://127.0.0.1:${port}/x`, "http://%s/x", f"http://{host}/x".
+// urlAuthorityRe pulls the authority out of a URL as written, before any
+// normalization: scheme, "://", then everything up to the first /?#.
+var urlAuthorityRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://([^/?#\s]*)`)
+
 var templateExprRe = regexp.MustCompile(`\$\{[^}]*\}|\{[A-Za-z_][\w.]*\}|%[sdv]`)
 
 // reservedNames are the RFC 2606 / RFC 6761 names set aside for
@@ -448,6 +499,28 @@ func reservedEmail(addr string) bool {
 var urlHostRe = regexp.MustCompile(`^https?://(?:[^/@]*@)?([^/:?#\s]+)`)
 
 func urlAllowed(raw string, extra []string) bool {
+	// A "host" made entirely of punctuation is an ellipsis in prose, not a
+	// hostname. An axios doc comment explaining that `proxy: 'http://...'`
+	// is invalid configuration was read as a URL pointing at the host "...",
+	// and the finished sample was refused at publish with no override.
+	//
+	// This is safe in the direction that matters: invented hostnames are
+	// refused because nothing can tell one from a company's internal name,
+	// and a string of dots is not a name anybody can have — there is no
+	// character in it for anything to hide in.
+	//
+	// It reads the ORIGINAL string, before the trailing-punctuation trim
+	// below, because that trim turns "http://..." into "http:/" and loses
+	// the very thing being judged. Judging the trimmed form instead would
+	// also sweep in "http://$secretHost/admin", whose authority is cut to
+	// nothing by the interpolation guard further down and whose hidden host
+	// is exactly what this check exists to refuse.
+	if m := urlAuthorityRe.FindStringSubmatch(raw); m != nil && m[1] != "" &&
+		!strings.ContainsFunc(m[1], func(r rune) bool {
+			return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		}) {
+		return true
+	}
 	raw = strings.TrimRight(raw, ".,;:!?")
 	var host string
 	if m := urlHostRe.FindStringSubmatch(raw); m != nil {
