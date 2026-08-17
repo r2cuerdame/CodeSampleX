@@ -45,22 +45,72 @@ function Invoke-Native([string]$What, [scriptblock]$Run) {
     if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)" }
 }
 
+$requiredReleaseAssets = @(
+    "csx-darwin-amd64",
+    "csx-darwin-arm64",
+    "csx-linux-amd64",
+    "csx-linux-arm64",
+    "csx-server-linux-amd64",
+    "csx-windows-amd64.exe",
+    "csx-windows-arm64.exe",
+    "SHA256SUMS.txt",
+    "codesamplex-mcp.mcpb",
+    "codesamplex-mcp.mcpb.sha256"
+)
+
+function Assert-ReleaseDirectory([string]$Directory) {
+    $actual = @(Get-ChildItem $Directory -File | ForEach-Object { $_.Name } | Sort-Object)
+    $expected = @($requiredReleaseAssets | Sort-Object)
+    $difference = @(Compare-Object $expected $actual)
+    if ($difference.Count -ne 0) {
+        throw "release asset set is incomplete or unexpected: $($difference | Out-String)"
+    }
+
+    $verified = @{}
+    foreach ($line in Get-Content (Join-Path $Directory "SHA256SUMS.txt")) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -ne 2) { throw "malformed SHA256SUMS.txt line" }
+        $name = $parts[1].TrimStart('*').Trim()
+        $file = Join-Path $Directory $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "checksum names missing asset: $name" }
+        $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+        if ($have -ne $parts[0].ToLower()) { throw "checksum mismatch for $name" }
+        $verified[$name] = $true
+    }
+    foreach ($name in $requiredReleaseAssets[0..6]) {
+        if (-not $verified[$name]) { throw "SHA256SUMS.txt does not cover $name" }
+    }
+
+    $bundleLine = @(Get-Content (Join-Path $Directory "codesamplex-mcp.mcpb.sha256"))
+    if ($bundleLine.Count -ne 1) { throw "malformed MCPB checksum file" }
+    $bundleParts = $bundleLine[0] -split '\s+', 2
+    if ($bundleParts.Count -ne 2 -or $bundleParts[1].TrimStart('*').Trim() -ne "codesamplex-mcp.mcpb") {
+        throw "MCPB checksum names the wrong asset"
+    }
+    $bundleHash = (Get-FileHash (Join-Path $Directory "codesamplex-mcp.mcpb") -Algorithm SHA256).Hash.ToLower()
+    if ($bundleHash -ne $bundleParts[0].ToLower()) { throw "MCPB checksum mismatch" }
+}
+
 $imageTar = Join-Path $env:TEMP "csx-server-image.tar"
 if (-not $SkipImage) {
     Write-Output "== building linux/amd64 server image =="
     $dockerfile = Join-Path $repo "deploy\Dockerfile.server"
+    $revision = (& git -C $repo rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw "could not determine the server revision" }
     Invoke-Native "docker build" {
-        & docker build --platform linux/amd64 -f $dockerfile -t codesamplex/csx-server:latest $repo
+        & docker build --platform linux/amd64 --build-arg "CSX_VERSION=$revision" -f $dockerfile -t codesamplex/csx-server:latest $repo
     }
     # No gzip on Windows PowerShell; ship the plain tar (ssh compresses).
     Invoke-Native "docker save" { & docker save codesamplex/csx-server:latest -o $imageTar }
 }
 
 Write-Output "== shipping bundle to $Ip =="
-Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1" | Out-Null
+Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups" | Out-Null
 Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"
 Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile"
 Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
+Copy-Remote (Join-Path $repo "deploy\restore-check.sh") "/opt/codesamplex/deploy/restore-check.sh"
+Invoke-Remote "chmod 755 /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh" | Out-Null
 Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schemas/v1/adapters.json"
 
 # The download endpoint is fed from the LATEST GITHUB RELEASE, never from
@@ -73,33 +123,54 @@ Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schem
 # EOF, which meant `curl ... | sh` enrolled people in evidence sharing
 # without anyone answering the question. Two sources of truth, and the
 # hand-fed one was the one users actually got.
-$dist = Join-Path $repo "dist"
-New-Item -ItemType Directory -Force $dist | Out-Null
-Write-Output "== fetching release artifacts =="
 $tag = (& gh release view --repo r2cuerdame/CodeSampleX --json tagName --jq .tagName)
 if ($LASTEXITCODE -ne 0 -or -not $tag) { throw "could not read the latest release tag" }
-Get-ChildItem $dist -File | Remove-Item -Force
-Invoke-Native "gh release download" {
-    & gh release download $tag --repo r2cuerdame/CodeSampleX --dir $dist --clobber
-}
-$artifacts = Get-ChildItem $dist -File
-if ($artifacts.Count -eq 0) { throw "release $tag produced no artifacts" }
-# The checksums the release published, verified before anything is served.
-$sums = Join-Path $dist "SHA256SUMS.txt"
-if (Test-Path $sums) {
-    foreach ($line in Get-Content $sums) {
-        $parts = $line -split '\s+', 2
-        if ($parts.Count -ne 2) { continue }
-        $name = $parts[1].TrimStart('*').Trim()
-        $file = Join-Path $dist $name
-        if (-not (Test-Path $file)) { continue }
-        $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-        if ($have -ne $parts[0].ToLower()) { throw "checksum mismatch for $name" }
+if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "unsafe release tag: $tag" }
+$remoteTagLine = Invoke-Remote "cat /opt/codesamplex/dist/.release-tag 2>/dev/null || true" | Select-Object -First 1
+$remoteTag = if ($null -eq $remoteTagLine) { "" } else { ([string]$remoteTagLine).Trim() }
+$remoteFiles = ($requiredReleaseAssets | ForEach-Object { "test -f /opt/codesamplex/dist/$_" }) -join " && "
+$remoteValidation = ('set -eu; {0}; cd /opt/codesamplex/dist; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $remoteFiles, $requiredReleaseAssets.Count)
+$releaseReady = $false
+if ($remoteTag -eq $tag) {
+    try {
+        Invoke-Remote $remoteValidation | Out-Null
+        $releaseReady = $true
+    } catch {
+        Write-Output "== remote $tag asset validation failed; refreshing the complete set =="
     }
-    Write-Output "checksums verified against the release"
 }
-$artifacts | ForEach-Object { Copy-Remote $_.FullName "/opt/codesamplex/dist/$($_.Name)" }
-Write-Output "shipped $($artifacts.Count) artifacts from $tag"
+if ($releaseReady) {
+    # `gh release download` increments GitHub's public download counter. A
+    # code-only server deploy used to download every platform binary again,
+    # making that counter mostly measure our own deploys instead of people.
+    Write-Output "== release artifacts already served from $tag; skipping download =="
+} else {
+    $dist = Join-Path $repo "dist"
+    New-Item -ItemType Directory -Force $dist | Out-Null
+    Write-Output "== fetching release artifacts for $tag =="
+    Get-ChildItem $dist -File | Remove-Item -Force
+    Invoke-Native "gh release download" {
+        & gh release download $tag --repo r2cuerdame/CodeSampleX --dir $dist --clobber
+    }
+    Assert-ReleaseDirectory $dist
+    Write-Output "checksums and exact release asset set verified"
+
+    # Stage beside the live directory. The server keeps its old bind mount
+    # while these files transfer, so it can never serve a partially copied
+    # executable. The compose restart below remounts the atomically swapped
+    # directory only after every checksum passes on the host too.
+    $stage = "/opt/codesamplex/dist.stage"
+    Invoke-Remote "rm -rf /opt/codesamplex/dist.stage && mkdir -p /opt/codesamplex/dist.stage" | Out-Null
+    Get-ChildItem $dist -File | ForEach-Object { Copy-Remote $_.FullName "$stage/$($_.Name)" }
+    $tagTmp = Join-Path $env:TEMP "csx-release-tag.txt"
+    Set-Content -Path $tagTmp -Value $tag -Encoding ascii -NoNewline
+    Copy-Remote $tagTmp "$stage/.release-tag"
+    $stageFiles = ($requiredReleaseAssets | ForEach-Object { "test -f $stage/$_" }) -join " && "
+    $stageValidation = ('set -eu; {0}; cd /opt/codesamplex/dist.stage; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $stageFiles, $requiredReleaseAssets.Count)
+    Invoke-Remote $stageValidation | Out-Null
+    Invoke-Remote "set -eu; rm -rf /opt/codesamplex/dist.previous; mv /opt/codesamplex/dist /opt/codesamplex/dist.previous; if mv /opt/codesamplex/dist.stage /opt/codesamplex/dist; then :; else mv /opt/codesamplex/dist.previous /opt/codesamplex/dist; exit 1; fi" | Out-Null
+    Write-Output "atomically shipped $($requiredReleaseAssets.Count) artifacts from $tag"
+}
 
 # .env holds the generated DB password: write once, never overwrite.
 $pw = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
@@ -118,6 +189,11 @@ Invoke-Remote "cd /opt/codesamplex/deploy && if [ -f .env ]; then rm -f .env.new
 
 if (-not $SkipImage) {
     Write-Output "== loading image on host (this takes a minute) =="
+    $oldImage = Invoke-Remote "docker image inspect codesamplex/csx-server:latest --format '{{.Id}}' 2>/dev/null || true" | Select-Object -First 1
+    if ($oldImage) {
+        Invoke-Remote "docker tag codesamplex/csx-server:latest codesamplex/csx-server:rollback-predeploy" | Out-Null
+        Write-Output "rollback-predeploy: $(([string]$oldImage).Trim())"
+    }
     Copy-Remote $imageTar "/opt/codesamplex/csx-server-image.tar"
     Invoke-Remote "docker load -i /opt/codesamplex/csx-server-image.tar && rm -f /opt/codesamplex/csx-server-image.tar" | Out-Null
 }
@@ -125,6 +201,12 @@ if (-not $SkipImage) {
 Write-Output "== starting stack =="
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object { Write-Output $_ }
+if (-not $SkipImage) {
+    $imagePair = Invoke-Remote 'set -eu; expected=$(docker image inspect codesamplex/csx-server:latest --format ''{{.Id}}''); actual=$(docker inspect codesamplex-server-1 --format ''{{.Image}}''); echo $expected $actual' | Select-Object -First 1
+    $ids = (([string]$imagePair).Trim() -split '\s+')
+    if ($ids.Count -ne 2 -or $ids[0] -ne $ids[1]) { throw "server container is not running the image that was just loaded" }
+    Write-Output "server image: $($ids[0])"
+}
 
 Write-Output "== smoke test =="
 $ok = $false

@@ -6,6 +6,8 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,8 +18,9 @@ import (
 )
 
 const (
-	cacheTTL       = 24 * time.Hour
-	requestTimeout = 5 * time.Second
+	cacheTTL                = 24 * time.Hour
+	requestTimeout          = 5 * time.Second
+	maxComposerMetadataBody = 4 << 20
 )
 
 // Cache stores publicness verdicts keyed by canonical purl string.
@@ -28,15 +31,21 @@ type Cache interface {
 }
 
 var defaultBaseURLs = map[string]string{
-	"npm":    "https://registry.npmjs.org",
-	"pypi":   "https://pypi.org",
-	"cargo":  "https://crates.io",
-	"golang": "https://proxy.golang.org",
+	"npm":      "https://registry.npmjs.org",
+	"pypi":     "https://pypi.org",
+	"cargo":    "https://crates.io",
+	"golang":   "https://proxy.golang.org",
+	"gem":      "https://rubygems.org",
+	"composer": "https://repo.packagist.org",
+	"hex":      "https://hex.pm",
+	"pub":      "https://pub.dev",
 }
+
+const defaultHexArchiveBaseURL = "https://repo.hex.pm"
 
 var defaultClient = &http.Client{Timeout: requestTimeout}
 
-// Checker resolves package publicness against the four Public v1 registries.
+// Checker resolves package publicness against the eight Public v1 registries.
 // The zero value uses the real registry endpoints, a 5s-timeout HTTP client,
 // and no cache.
 type Checker struct {
@@ -51,6 +60,16 @@ type Checker struct {
 // returned without a network call; UNKNOWN verdicts are never cached so the
 // next call retries.
 func (c *Checker) Check(ctx context.Context, p domain.PURL) string {
+	// A PURL parser separates fields; it does not prove that the name has a
+	// valid shape for its registry. In particular, an unescaped '?' or '#'
+	// changes the meaning of a URL assembled from that name: an exact npm
+	// probe for "react?anything" would otherwise request /react and grade a
+	// made-up package PUBLIC. Validate before consulting the cache as well,
+	// so an old poisoned verdict cannot bypass the corrected boundary.
+	if !ValidPackageName(p.Ecosystem, p.Name) ||
+		(p.Version != "" && !domain.ConcreteResolvedVersion(p.Version)) {
+		return scanner.PublicnessUnknown
+	}
 	key := p.String()
 	if c.Cache != nil {
 		if status, at, ok := c.Cache.GetPublicness(ctx, key); ok && time.Since(at) < cacheTTL {
@@ -62,6 +81,73 @@ func (c *Checker) Check(ctx context.Context, p domain.PURL) string {
 		c.Cache.SetPublicness(ctx, key, status)
 	}
 	return status
+}
+
+// ValidPackageName reports whether name has a safe public-registry shape.
+//
+// It is deliberately a conservative common subset of the registries' name
+// grammars. Public package names are ASCII and use unreserved path
+// characters; only npm scopes, Composer coordinates and Go modules contain
+// slashes, and each has a fixed shape. This is both input validation and a
+// URL-boundary invariant: query delimiters, fragments, traversal elements
+// and extra path segments can never be reinterpreted by net/http or a
+// registry proxy.
+func ValidPackageName(ecosystem, name string) bool {
+	if name == "" || strings.TrimSpace(name) != name {
+		return false
+	}
+	validSegment := func(segment string) bool {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+		for i := 0; i < len(segment); i++ {
+			c := segment[i]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				(c >= '0' && c <= '9') || strings.ContainsRune("-._~", rune(c)) {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+
+	switch ecosystem {
+	case "npm":
+		if !strings.HasPrefix(name, "@") {
+			return !strings.Contains(name, "/") && validSegment(name)
+		}
+		scope, pkg, ok := strings.Cut(name, "/")
+		return ok && !strings.Contains(pkg, "/") && len(scope) > 1 &&
+			validSegment(scope[1:]) && validSegment(pkg)
+	case "composer":
+		vendor, pkg, ok := strings.Cut(name, "/")
+		return ok && !strings.Contains(pkg, "/") && validSegment(vendor) && validSegment(pkg)
+	case "golang":
+		segments := strings.Split(name, "/")
+		if len(segments) < 2 || !strings.Contains(segments[0], ".") {
+			return false
+		}
+		// Go requires the leading domain element to be lower-case LDH plus
+		// dots. Later module-path elements may contain upper-case letters,
+		// which the proxy represents with !-escaping.
+		for i := 0; i < len(segments[0]); i++ {
+			c := segments[0][i]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' {
+				continue
+			}
+			return false
+		}
+		for _, segment := range segments {
+			if !validSegment(segment) {
+				return false
+			}
+		}
+		return true
+	case "pypi", "cargo", "gem", "hex", "pub":
+		return !strings.Contains(name, "/") && validSegment(name)
+	default:
+		return false
+	}
 }
 
 // probe asks the registry about the exact package the caller named, version
@@ -85,11 +171,24 @@ func (c *Checker) probe(ctx context.Context, p domain.PURL) string {
 	if p.Version == "" {
 		return c.nameStatus(ctx, p)
 	}
+	// Packagist's v2 metadata endpoint is both the package probe and the
+	// authoritative version list. A 200 alone therefore cannot prove the
+	// requested release exists; inspect its bounded response body instead.
+	if p.Ecosystem == "composer" {
+		return c.probeComposer(ctx, p)
+	}
 	u := c.versionURL(p)
 	if u == "" {
 		return c.nameStatus(ctx, p)
 	}
-	switch c.get(ctx, u) {
+	method := http.MethodGet
+	switch p.Ecosystem {
+	case "gem", "hex", "pub":
+		// These registries expose immutable release archives. HEAD proves the
+		// exact object without downloading package contents.
+		method = http.MethodHead
+	}
+	switch c.requestStatus(ctx, method, u) {
 	case http.StatusOK:
 		return scanner.PublicnessPublic
 	case http.StatusNotFound, http.StatusGone:
@@ -99,6 +198,54 @@ func (c *Checker) probe(ctx context.Context, p domain.PURL) string {
 			return scanner.PublicnessPrivate
 		}
 		return scanner.PublicnessUnknown
+	}
+	return scanner.PublicnessUnknown
+}
+
+// probeComposer checks an exact Composer release in Packagist's p2 metadata.
+// The endpoint can be large for long-lived packages, so both network reads
+// and JSON decoding are capped. Oversized or malformed metadata is UNKNOWN,
+// which downstream treats as private.
+func (c *Checker) probeComposer(ctx context.Context, p domain.PURL) string {
+	u := c.checkURL(p)
+	if u == "" {
+		return scanner.PublicnessUnknown
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
+	if err != nil {
+		return scanner.PublicnessUnknown
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return scanner.PublicnessUnknown
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound, http.StatusGone:
+		return scanner.PublicnessPrivate
+	case http.StatusOK:
+	default:
+		return scanner.PublicnessUnknown
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxComposerMetadataBody+1))
+	if err != nil || len(body) > maxComposerMetadataBody {
+		return scanner.PublicnessUnknown
+	}
+	var metadata struct {
+		Packages map[string][]struct {
+			Version string `json:"version"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(body, &metadata); err != nil {
+		return scanner.PublicnessUnknown
+	}
+	for _, release := range metadata.Packages[p.Name] {
+		if release.Version == p.Version {
+			return scanner.PublicnessPublic
+		}
 	}
 	return scanner.PublicnessUnknown
 }
@@ -121,22 +268,32 @@ func (c *Checker) nameStatus(ctx context.Context, p domain.PURL) string {
 
 // get returns the status code, or 0 when the request never completed.
 func (c *Checker) get(ctx context.Context, u string) int {
+	return c.requestStatus(ctx, http.MethodGet, u)
+}
+
+// requestStatus returns the HTTP status code, or 0 when the request never
+// completed. Bodies are never consumed here; callers use this only for
+// endpoints whose status is sufficient evidence.
+func (c *Checker) requestStatus(ctx context.Context, method, u string) int {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(reqCtx, method, u, nil)
 	if err != nil {
 		return 0
 	}
-	client := c.HTTP
-	if client == nil {
-		client = defaultClient
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return 0
 	}
 	resp.Body.Close()
 	return resp.StatusCode
+}
+
+func (c *Checker) httpClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return defaultClient
 }
 
 // CheckAll upgrades the Publicness of UNKNOWN entries in place. PRIVATE
@@ -154,34 +311,65 @@ func (c *Checker) CheckAll(ctx context.Context, pkgs []scanner.ResolvedPackage) 
 // checkURL builds the per-ecosystem existence-probe URL, or "" for an
 // ecosystem outside the Public v1 allowlist.
 func (c *Checker) checkURL(p domain.PURL) string {
-	base, ok := c.BaseURLs[p.Ecosystem]
+	base, ok := c.baseURL(p.Ecosystem)
 	if !ok {
-		if base, ok = defaultBaseURLs[p.Ecosystem]; !ok {
-			return ""
-		}
+		return ""
 	}
-	base = strings.TrimSuffix(base, "/")
 	switch p.Ecosystem {
 	case "npm":
-		name := p.Name
-		if scoped, rest, ok := strings.Cut(name, "/"); ok && strings.HasPrefix(scoped, "@") {
-			name = scoped + "%2F" + rest
-		}
-		return base + "/" + name
+		// PathEscape preserves the npm scope marker while escaping its slash
+		// as %2F, the registry's canonical scoped-package endpoint.
+		return base + "/" + url.PathEscape(p.Name)
 	case "pypi":
 		return base + "/pypi/" + url.PathEscape(p.Name) + "/json"
 	case "cargo":
 		return base + "/api/v1/crates/" + url.PathEscape(p.Name)
 	case "golang":
-		return base + "/" + escapeGoModule(p.Name) + "/@latest"
+		return base + "/" + escapeGoModulePath(p.Name) + "/@latest"
+	case "gem":
+		return base + "/api/v1/versions/" + url.PathEscape(p.Name) + ".json"
+	case "composer":
+		vendor, name, ok := strings.Cut(p.Name, "/")
+		if !ok || vendor == "" || name == "" || strings.Contains(name, "/") {
+			return ""
+		}
+		return base + "/p2/" + url.PathEscape(vendor) + "/" + url.PathEscape(name) + ".json"
+	case "hex":
+		return base + "/api/packages/" + url.PathEscape(p.Name)
+	case "pub":
+		return base + "/api/packages/" + url.PathEscape(p.Name)
 	}
 	return ""
 }
 
+// escapeGoModulePath applies proxy case encoding and then treats every
+// slash-separated element as one URL path segment. ValidPackageName has
+// already excluded URL delimiters and traversal elements; preserving '/'
+// here is intentional because it is part of a Go module coordinate.
+func escapeGoModulePath(path string) string {
+	encoded := escapeGoModule(path)
+	segments := strings.Split(encoded, "/")
+	for i, segment := range segments {
+		// The proxy protocol spells an upper-case rune as a literal ! plus
+		// its lower-case form. PathEscape may encode !; either wire form is
+		// equivalent, but retaining it keeps the documented proxy shape.
+		segments[i] = strings.ReplaceAll(url.PathEscape(segment), "%21", "!")
+	}
+	return strings.Join(segments, "/")
+}
+
+func (c *Checker) baseURL(ecosystem string) (string, bool) {
+	base, ok := c.BaseURLs[ecosystem]
+	if !ok {
+		base, ok = defaultBaseURLs[ecosystem]
+	}
+	return strings.TrimSuffix(base, "/"), ok
+}
+
 // versionURL builds the probe for one specific release, or "" when the
-// ecosystem is outside the Public v1 allowlist. Every one of the four
-// registries serves a per-version endpoint, so a version claim is always
-// checkable against the registry that would have to have published it.
+// ecosystem is outside the Public v1 allowlist. Every supported registry
+// provides either an exact-release endpoint or authoritative version
+// metadata, so a version claim is checkable where it would be published.
 func (c *Checker) versionURL(p domain.PURL) string {
 	pkg := c.checkURL(p)
 	if pkg == "" || p.Version == "" {
@@ -203,6 +391,20 @@ func (c *Checker) versionURL(p domain.PURL) string {
 			v = "v" + v
 		}
 		return strings.TrimSuffix(pkg, "/@latest") + "/@v/" + escapeGoModule(v) + ".info"
+	case "gem":
+		base, _ := c.baseURL(p.Ecosystem)
+		return base + "/downloads/" + url.PathEscape(p.Name+"-"+p.Version+".gem")
+	case "composer":
+		return pkg
+	case "hex":
+		base, _ := c.baseURL(p.Ecosystem)
+		if _, overridden := c.BaseURLs[p.Ecosystem]; !overridden {
+			base = defaultHexArchiveBaseURL
+		}
+		return strings.TrimSuffix(base, "/") + "/tarballs/" + url.PathEscape(p.Name+"-"+p.Version+".tar")
+	case "pub":
+		base, _ := c.baseURL(p.Ecosystem)
+		return base + "/api/archives/" + url.PathEscape(p.Name+"-"+p.Version+".tar.gz")
 	}
 	return ""
 }

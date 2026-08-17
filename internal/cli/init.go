@@ -34,6 +34,26 @@ func init() {
 				stderr:   os.Stderr,
 				userHome: os.UserHomeDir,
 				warm:     warmShardCache,
+				stopDaemon: func(ctx context.Context) error {
+					home, err := config.Home()
+					if err != nil {
+						return err
+					}
+					dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+					defer cancel()
+					_, err = daemon.StopRunning(dctx, home)
+					return err
+				},
+				startDaemon: func(ctx context.Context) error {
+					home, err := config.Home()
+					if err != nil {
+						return err
+					}
+					dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+					defer cancel()
+					_, err = daemon.EnsureRunning(dctx, home, Version)
+					return err
+				},
 			})
 		},
 	})
@@ -47,6 +67,9 @@ type initEnv struct {
 	stderr   io.Writer
 	userHome func() (string, error) // root for agent config detection
 	warm     func(context.Context, io.Writer)
+	// nil in unit tests that do not want to spawn a process.
+	stopDaemon  func(context.Context) error
+	startDaemon func(context.Context) error
 }
 
 func initMain(ctx context.Context, args []string, env *initEnv) int {
@@ -110,6 +133,17 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 	if err != nil {
 		fmt.Fprintf(env.stderr, "csx init: %v\n", err)
 		return 1
+	}
+	// A daemon keeps the config it loaded at process start. Stop it before a
+	// mode/server transition, especially before revoking community consent;
+	// otherwise the old in-memory community config can continue uploading
+	// after config.json says local-only.
+	daemonConfigChanged := cfg.Mode != mode || (*server != "" && cfg.ServerURL != *server)
+	if daemonConfigChanged && env.stopDaemon != nil {
+		if err := env.stopDaemon(ctx); err != nil {
+			fmt.Fprintf(env.stderr, "csx init: could not stop the existing daemon before changing privacy/network settings: %v\n", err)
+			return 1
+		}
 	}
 	cfg.Mode = mode
 	if *server != "" {
@@ -205,6 +239,13 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 	if env.warm != nil {
 		env.warm(ctx, out)
 	}
+	if cfg.Mode == config.ModeCommunity && env.startDaemon != nil {
+		if err := env.startDaemon(ctx); err != nil {
+			fmt.Fprintf(out, "  background sync not started (%v) — run `csx daemon start`\n", err)
+		} else {
+			fmt.Fprintln(out, "  background sync running")
+		}
+	}
 
 	// An agent that was never registered is an agent that never calls csx,
 	// and the run above can end that way without anything saying so — the
@@ -293,9 +334,9 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 // miss on its first question, which is the worst possible first impression
 // and the user had no way to know why. It was documented nowhere.
 //
-// It is safe in both modes. Warming only downloads public aggregate shards;
-// the upload half is a hard no-op outside community mode (see
-// evidence.Batcher.Upload), so a local-only install transmits nothing here.
+// It is safe in both modes. SyncNow is a complete no-op outside community
+// mode; even its popularity-list GET is forbidden because local-only promises
+// that this process transmits nothing at all.
 //
 // Failure is never fatal. A machine installing without a network, or behind
 // a proxy that blocks it, still finishes init — it is told the cache is cold

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,28 +165,72 @@ const ensureTimeout = 10 * time.Second
 
 // EnsureRunning returns a client for the daemon serving home, spawning
 // "csx daemon run" detached (Windows: new process group + detached;
-// Unix: setsid) when none answers. The spawned daemon inherits home via
-// CSX_HOME and logs to $home/logs/daemon.log.
-func EnsureRunning(ctx context.Context, home string) (*Client, error) {
-	probe := func() (*Client, error) {
-		c, err := NewClient(home)
-		if err != nil {
-			return nil, err
-		}
-		pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		if _, err := c.Status(pctx); err != nil {
-			return nil, err
-		}
-		return c, nil
+// Unix: setsid) when none answers. If expectedVersion is supplied, a live
+// daemon from a different build is stopped gracefully first. That matters on
+// upgrade: replacing the executable does not replace the already-running
+// process, and accepting it here can leave new queue/protocol behavior dormant
+// until the machine reboots.
+//
+// The spawned daemon inherits home via CSX_HOME and logs to
+// $home/logs/daemon.log.
+func EnsureRunning(ctx context.Context, home string, expectedVersion ...string) (*Client, error) {
+	want := Version
+	if len(expectedVersion) > 0 {
+		want = expectedVersion[0]
 	}
-	if c, err := probe(); err == nil {
-		return c, nil
+	return ensureRunning(ctx, home, want, func() error { return spawnDetached(home) })
+}
+
+// StopRunning gracefully stops the daemon for home and waits until both its
+// listener and single-instance lock are gone. alreadyRunning is false when no
+// daemon answered; that is a successful no-op for init/config transitions.
+func StopRunning(ctx context.Context, home string) (alreadyRunning bool, err error) {
+	c, _, err := probeRunning(ctx, home)
+	if err != nil {
+		if daemonLockHeld(home) {
+			return true, fmt.Errorf("daemon is running but its status endpoint is unavailable: %w", err)
+		}
+		return false, nil
+	}
+	if err := stopAndWait(ctx, home, c); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func ensureRunning(ctx context.Context, home, expectedVersion string, spawn func() error) (*Client, error) {
+	if c, st, err := probeRunning(ctx, home); err == nil {
+		if expectedVersion == "" || st.Version == expectedVersion {
+			return c, nil
+		}
+		if err := stopAndWait(ctx, home, c); err != nil {
+			return nil, fmt.Errorf("daemon: replace version %q with %q: %w", st.Version, expectedVersion, err)
+		}
 	}
 
+	if err := spawn(); err != nil {
+		return nil, err
+	}
+
+	deadline := time.Now().Add(ensureTimeout)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if c, st, err := probeRunning(ctx, home); err == nil {
+			if expectedVersion == "" || st.Version == expectedVersion {
+				return c, nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, errors.New("daemon: spawned but not ready within 10s (see logs/daemon.log)")
+}
+
+func spawnDetached(home string) error {
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("daemon: locate csx binary: %w", err)
+		return fmt.Errorf("daemon: locate csx binary: %w", err)
 	}
 	cmd := exec.Command(exe, "daemon", "run")
 	cmd.Env = append(os.Environ(), "CSX_HOME="+home)
@@ -198,19 +243,62 @@ func EnsureRunning(ctx context.Context, home string) (*Client, error) {
 		}
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("daemon: spawn: %w", err)
+		return fmt.Errorf("daemon: spawn: %w", err)
 	}
 	_ = cmd.Process.Release()
+	return nil
+}
+
+func probeRunning(ctx context.Context, home string) (*Client, StatusInfo, error) {
+	c, err := NewClient(home)
+	if err != nil {
+		return nil, StatusInfo{}, err
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	st, err := c.Status(pctx)
+	if err != nil {
+		return nil, StatusInfo{}, err
+	}
+	// A stale daemon.addr can point at a subsequently reused port. Never stop
+	// or accept a process merely because it speaks the same small status JSON.
+	if filepath.Clean(st.Home) != filepath.Clean(home) {
+		return nil, StatusInfo{}, fmt.Errorf("daemon: status home %q does not match %q", st.Home, home)
+	}
+	return c, st, nil
+}
+
+func stopAndWait(ctx context.Context, home string, c *Client) error {
+	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err := c.Shutdown(sctx)
+	cancel()
+	if err != nil {
+		// A daemon can finish between the status probe and shutdown request.
+		if _, _, probeErr := probeRunning(ctx, home); probeErr != nil && !daemonLockHeld(home) {
+			return nil
+		}
+		return fmt.Errorf("graceful shutdown: %w", err)
+	}
 
 	deadline := time.Now().Add(ensureTimeout)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
-		if c, err := probe(); err == nil {
-			return c, nil
+		_, _, probeErr := probeRunning(ctx, home)
+		if probeErr != nil && !daemonLockHeld(home) {
+			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil, errors.New("daemon: spawned but not ready within 10s (see logs/daemon.log)")
+	return errors.New("daemon did not stop within 10s")
+}
+
+func daemonLockHeld(home string) bool {
+	raw, err := os.ReadFile(filepath.Join(home, "daemon.lock"))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return err == nil && pidAlive(pid)
 }

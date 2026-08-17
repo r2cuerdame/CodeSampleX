@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -480,5 +482,53 @@ func TestEnsureRunningFastPathUsesLiveDaemon(t *testing.T) {
 	}
 	if c.BaseURL != d.BaseURL() {
 		t.Errorf("EnsureRunning base = %q, want %q", c.BaseURL, d.BaseURL())
+	}
+}
+
+func TestEnsureRunningStopsAStaleVersionBeforeSpawning(t *testing.T) {
+	home := t.TempDir()
+	var shutdowns atomic.Int64
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/local/v1/status":
+			writeJSON(w, http.StatusOK, StatusInfo{SchemaVersion: 1, Version: "v-old", Home: home})
+		case "/local/v1/shutdown":
+			shutdowns.Add(1)
+			writeJSON(w, http.StatusOK, map[string]bool{"stopping": true})
+			go srv.Close()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	if err := os.WriteFile(addrFile(home), []byte(strings.TrimPrefix(srv.URL, "http://")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	spawned := errors.New("spawned replacement")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := ensureRunning(ctx, home, "v-new", func() error { return spawned })
+	if !errors.Is(err, spawned) {
+		t.Fatalf("ensureRunning error = %v, want replacement spawn", err)
+	}
+	if shutdowns.Load() != 1 {
+		t.Fatalf("stale daemon shutdowns = %d, want 1", shutdowns.Load())
+	}
+}
+
+func TestStopRunningWaitsForDaemonExit(t *testing.T) {
+	home := newTestHome(t, nil)
+	_, c := startDaemon(t, home)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	running, err := StopRunning(ctx, home)
+	if err != nil || !running {
+		t.Fatalf("StopRunning running=%v err=%v", running, err)
+	}
+	if _, err := c.Status(ctx); err == nil {
+		t.Fatal("daemon still answers after StopRunning returned")
 	}
 }

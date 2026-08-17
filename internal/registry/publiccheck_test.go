@@ -50,7 +50,10 @@ func countingServer(t *testing.T, code int) (*httptest.Server, *[]string) {
 }
 
 func allBases(url string) map[string]string {
-	return map[string]string{"npm": url, "pypi": url, "cargo": url, "golang": url}
+	return map[string]string{
+		"npm": url, "pypi": url, "cargo": url, "golang": url,
+		"gem": url, "composer": url, "hex": url, "pub": url,
+	}
 }
 
 func TestCheckURLFormsAndPublic(t *testing.T) {
@@ -65,6 +68,9 @@ func TestCheckURLFormsAndPublic(t *testing.T) {
 		{"cargo", domain.PURL{Ecosystem: "cargo", Name: "serde", Version: "1.0.0"}, "/api/v1/crates/serde/1.0.0"},
 		{"golang bang escape", domain.PURL{Ecosystem: "golang", Name: "github.com/Azure/x", Version: "v1.0.0"}, "/github.com/!azure/x/@v/v1.0.0.info"},
 		{"golang plain", domain.PURL{Ecosystem: "golang", Name: "golang.org/x/sys", Version: "v0.1.0"}, "/golang.org/x/sys/@v/v0.1.0.info"},
+		{"gem", domain.PURL{Ecosystem: "gem", Name: "rack", Version: "3.2.4"}, "/downloads/rack-3.2.4.gem"},
+		{"hex", domain.PURL{Ecosystem: "hex", Name: "req", Version: "0.5.15"}, "/tarballs/req-0.5.15.tar"},
+		{"pub", domain.PURL{Ecosystem: "pub", Name: "http", Version: "1.5.0"}, "/api/archives/http-1.5.0.tar.gz"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,6 +84,57 @@ func TestCheckURLFormsAndPublic(t *testing.T) {
 				t.Fatalf("request URIs = %v, want [%s]", *uris, tt.want)
 			}
 		})
+	}
+}
+
+func TestArchiveVersionProbesUseHEAD(t *testing.T) {
+	for _, tc := range []struct {
+		ecosystem string
+		name      string
+		version   string
+	}{
+		{"gem", "rack", "3.2.4"},
+		{"hex", "req", "0.5.15"},
+		{"pub", "http", "1.5.0"},
+	} {
+		t.Run(tc.ecosystem, func(t *testing.T) {
+			var method string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method = r.Method
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
+			c := &Checker{BaseURLs: map[string]string{tc.ecosystem: srv.URL}}
+			got := c.Check(context.Background(), domain.PURL{
+				Ecosystem: tc.ecosystem,
+				Name:      tc.name,
+				Version:   tc.version,
+			})
+			if got != scanner.PublicnessPublic {
+				t.Fatalf("Check = %q, want PUBLIC", got)
+			}
+			if method != http.MethodHead {
+				t.Fatalf("method = %q, want HEAD", method)
+			}
+		})
+	}
+}
+
+func TestComposerURLAndExactVersion(t *testing.T) {
+	var method, uri string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, uri = r.Method, r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"packages":{"guzzlehttp/guzzle":[{"version":"7.10.0"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Checker{BaseURLs: map[string]string{"composer": srv.URL}}
+	p := domain.PURL{Ecosystem: "composer", Name: "guzzlehttp/guzzle", Version: "7.10.0"}
+	if got := c.Check(context.Background(), p); got != scanner.PublicnessPublic {
+		t.Fatalf("Check = %q, want PUBLIC", got)
+	}
+	if method != http.MethodGet || uri != "/p2/guzzlehttp/guzzle.json" {
+		t.Fatalf("request = %s %s, want GET /p2/guzzlehttp/guzzle.json", method, uri)
 	}
 }
 
@@ -117,6 +174,44 @@ func TestCheckUnknownEcosystemIsUnknown(t *testing.T) {
 	p := domain.PURL{Ecosystem: "maven", Name: "junit", Version: "4.13"}
 	if got := c.Check(context.Background(), p); got != scanner.PublicnessUnknown {
 		t.Fatalf("Check = %q, want UNKNOWN", got)
+	}
+}
+
+func TestUnsafeOrWrongShapePackageNamesFailClosedBeforeHTTP(t *testing.T) {
+	srv, uris := countingServer(t, http.StatusOK)
+	c := &Checker{BaseURLs: allBases(srv.URL)}
+	tests := []domain.PURL{
+		{Ecosystem: "npm", Name: "react?shadow", Version: "18.2.0"},
+		{Ecosystem: "npm", Name: "react#shadow", Version: "18.2.0"},
+		{Ecosystem: "npm", Name: "scope/pkg", Version: "1.0.0"},
+		{Ecosystem: "npm", Name: "@scope/pkg/extra", Version: "1.0.0"},
+		{Ecosystem: "golang", Name: "github.com/google/uuid?shadow", Version: "v1.6.0"},
+		{Ecosystem: "golang", Name: "github.com/google/uuid/../shadow", Version: "v1.6.0"},
+		{Ecosystem: "pypi", Name: "requests/other", Version: "2.31.0"},
+		{Ecosystem: "composer", Name: "vendor/pkg/extra", Version: "1.0.0"},
+	}
+	for _, p := range tests {
+		if got := c.Check(context.Background(), p); got != scanner.PublicnessUnknown {
+			t.Errorf("Check(%s) = %q, want UNKNOWN", p.String(), got)
+		}
+	}
+	if len(*uris) != 0 {
+		t.Fatalf("invalid names reached registry HTTP: %v", *uris)
+	}
+}
+
+func TestValidNestedRegistryNamesRemainAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		ecosystem string
+		name      string
+	}{
+		{"npm", "@modelcontextprotocol/sdk"},
+		{"golang", "github.com/Azure/azure-sdk-for-go/sdk/azcore"},
+		{"composer", "guzzlehttp/guzzle"},
+	} {
+		if !ValidPackageName(tc.ecosystem, tc.name) {
+			t.Errorf("ValidPackageName(%q, %q) = false", tc.ecosystem, tc.name)
+		}
 	}
 }
 
@@ -196,10 +291,14 @@ func TestCheckAllUpgradesOnlyUnknown(t *testing.T) {
 func TestDefaultBaseURLs(t *testing.T) {
 	c := &Checker{}
 	want := map[string]string{
-		"npm":    "https://registry.npmjs.org/axios",
-		"pypi":   "https://pypi.org/pypi/x/json",
-		"cargo":  "https://crates.io/api/v1/crates/x",
-		"golang": "https://proxy.golang.org/example.com/x/@latest",
+		"npm":      "https://registry.npmjs.org/axios",
+		"pypi":     "https://pypi.org/pypi/x/json",
+		"cargo":    "https://crates.io/api/v1/crates/x",
+		"golang":   "https://proxy.golang.org/example.com/x/@latest",
+		"gem":      "https://rubygems.org/api/v1/versions/x.json",
+		"composer": "https://repo.packagist.org/p2/vendor/x.json",
+		"hex":      "https://hex.pm/api/packages/x",
+		"pub":      "https://pub.dev/api/packages/x",
 	}
 	for eco, wantURL := range want {
 		name := "x"
@@ -207,10 +306,29 @@ func TestDefaultBaseURLs(t *testing.T) {
 			name = "axios"
 		} else if eco == "golang" {
 			name = "example.com/x"
+		} else if eco == "composer" {
+			name = "vendor/x"
 		}
 		got := c.checkURL(domain.PURL{Ecosystem: eco, Name: name, Version: "1"})
 		if got != wantURL {
 			t.Errorf("checkURL(%s) = %q, want %q", eco, got, wantURL)
+		}
+	}
+}
+
+func TestDefaultExactVersionURLs(t *testing.T) {
+	c := &Checker{}
+	for _, tc := range []struct {
+		purl domain.PURL
+		want string
+	}{
+		{domain.PURL{Ecosystem: "gem", Name: "rack", Version: "3.2.4"}, "https://rubygems.org/downloads/rack-3.2.4.gem"},
+		{domain.PURL{Ecosystem: "composer", Name: "guzzlehttp/guzzle", Version: "7.10.0"}, "https://repo.packagist.org/p2/guzzlehttp/guzzle.json"},
+		{domain.PURL{Ecosystem: "hex", Name: "req", Version: "0.5.15"}, "https://repo.hex.pm/tarballs/req-0.5.15.tar"},
+		{domain.PURL{Ecosystem: "pub", Name: "http", Version: "1.5.0"}, "https://pub.dev/api/archives/http-1.5.0.tar.gz"},
+	} {
+		if got := c.versionURL(tc.purl); got != tc.want {
+			t.Errorf("versionURL(%s) = %q, want %q", tc.purl.String(), got, tc.want)
 		}
 	}
 }

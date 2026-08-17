@@ -10,6 +10,33 @@
   {{if .Meta.License}}<span class="chip mono">{{.Meta.License}}</span>{{end}}
 </div>
 
+<section class="evidence-panel panel">
+  <h2 class="eyebrow mono">{{.T "sample.evidence_heading"}}</h2>
+  <p class="dim small">{{.T "sample.evidence_intro"}}</p>
+  <div class="evidence-summary">
+    <div><span>{{.T "filters.basis"}}</span><strong>{{.T .EvidenceBasisKey}}</strong></div>
+    <div><span>{{.T "sample.receipts"}}</span><strong>{{len .Receipts}}</strong></div>
+    <div><span>{{.T "sample.level"}}</span><strong class="mono">{{.Level}}</strong></div>
+  </div>
+  <h3>{{.T "sample.declared_environment"}}</h3>
+  {{if .DeclaredEnvironment.Present}}
+  <dl class="envfacts">
+    {{range .DeclaredEnvironment.Facts}}<div><dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd></div>{{end}}
+  </dl>
+  {{else}}<p class="dim small">{{.T "sample.environment_missing"}}</p>{{end}}
+  {{if .Receipts}}
+  <h3>{{.T "sample.verified_environments"}}</h3>
+  <div class="verified-envs">
+    {{range .Receipts}}
+    <article class="verified-env">
+      {{if .Environment.Present}}<dl class="envfacts">{{range .Environment.Facts}}<div><dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd></div>{{end}}</dl>{{else}}<p class="dim small">{{$.T "sample.environment_missing"}}</p>{{end}}
+      <p class="mono small dim">{{.Capability}} · {{.Stages}} · {{.Verifier}} · {{.CreatedAt}}</p>
+    </article>
+    {{end}}
+  </div>
+  {{end}}
+</section>
+
 {{if .Manifest}}
 <h2 class="eyebrow mono">{{.T "sample.case"}}</h2>
 <dl class="kv">
@@ -51,10 +78,9 @@
   <li>{{.}}</li>
 {{- end}}
 </ul>
-{{/* Naming the files without offering them left a visitor who arrived from
-     a search result unable to read the sample that answered their question,
-     which is most of the point of the page. The artifact endpoint is public
-     and content-addressed, so the link hands over exactly what was verified. */}}
+{{/* Naming the files without offering them left a visitor unable to inspect
+     the sample. The content-addressed source artifact is public; whether a
+     particular run passed is stated separately by its receipts above. */}}
 <p class="small"><a class="mono" href="/v1/samples/{{.Meta.SampleID}}/artifact">{{.T "sample.download"}}</a></p>
 
 <h2 class="eyebrow mono">{{.T "sample.origin"}}</h2>
@@ -68,7 +94,7 @@
 {{if .Receipts}}
 <ul class="receipts">
 {{- range .Receipts}}
-  <li class="mono"><span class="ctx">{{.Context}}</span> · <span class="chip mono small">{{.Capability}}</span> · {{.Stages}} · {{.Verifier}} · {{.CreatedAt}} · <span class="dim">{{.PeerID}}</span></li>
+  <li class="mono"><span class="ctx">{{if .Environment.Summary}}{{.Environment.Summary}}{{else}}{{.Context}}{{end}}</span> · <span class="chip mono small">{{.Capability}}</span> · {{.Stages}} · {{.Verifier}} · {{.CreatedAt}} · <span class="dim">{{.PeerID}}</span></li>
 {{- end}}
 </ul>
 {{else}}

@@ -12,8 +12,8 @@
 <h2 class="eyebrow mono">{{.T "pkg.symbols"}}</h2>
 {{if .Symbols}}
 <ul class="symlist mono">
-{{- range $s := .Symbols}}
-  <li><a href="/{{$.Ecosystem}}/{{$.Name}}/{{$.Ver}}/{{$s}}">{{$s}}</a></li>
+{{- range .Symbols}}
+  <li><a href="{{.Href}}">{{.Name}}</a></li>
 {{- end}}
 </ul>
 {{else}}

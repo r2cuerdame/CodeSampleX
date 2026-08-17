@@ -8,6 +8,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -21,6 +23,30 @@ import (
 type webStore struct {
 	s     serverstore.Store
 	blobs blob.Store
+
+	// Environment filters need materialized snapshot rows. Cache that
+	// immutable read briefly and serialize refreshes so concurrent public
+	// filter requests do not each materialize and parse the whole table on
+	// the small production host.
+	snapshotMu   sync.Mutex
+	snapshotAt   time.Time
+	snapshotRows []serverstore.SnapshotRow
+}
+
+const recordSnapshotCacheTTL = 30 * time.Second
+
+func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
+	w.snapshotMu.Lock()
+	defer w.snapshotMu.Unlock()
+	if !w.snapshotAt.IsZero() && time.Since(w.snapshotAt) < recordSnapshotCacheTTL {
+		return w.snapshotRows, nil
+	}
+	rows, err := w.s.ListSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	w.snapshotRows, w.snapshotAt = rows, time.Now()
+	return w.snapshotRows, nil
 }
 
 func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
@@ -122,6 +148,14 @@ func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, b
 	}, true
 }
 
+func (w *webStore) SampleManifest(ctx context.Context, id string) (string, bool) {
+	row, ok, err := w.s.GetSample(ctx, id)
+	if err != nil || !ok || row.Quarantined {
+		return "", false
+	}
+	return row.ManifestJSON, true
+}
+
 // artifactFiles lists entry names from the sample artifact; best-effort —
 // an unreadable artifact just renders without a file list.
 func (w *webStore) artifactFiles(ctx context.Context, id string) []string {
@@ -209,7 +243,7 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	// sat published and unreachable.
 	prefix := strings.TrimSuffix(
 		domain.PURL{Ecosystem: ecosystem, Name: name, Version: ""}.String(), "")
-	rows, err := w.s.SamplesForPackages(ctx, []string{prefix + "%"}, limit)
+	rows, err := w.s.VerifiedSamplesForPackages(ctx, []string{prefix + "%"}, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +271,7 @@ const derivedFindingScan = 2000
 // itself. The result is cached by the caller, so this runs on a timer, not
 // on a request.
 func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.DerivedFinding, error) {
-	rows, err := w.s.ListSamples(ctx, derivedFindingScan)
+	rows, err := w.s.ListVerifiedSamples(ctx, derivedFindingScan)
 	if err != nil {
 		return nil, err
 	}
@@ -258,11 +292,14 @@ func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.Derive
 			continue
 		}
 		out = append(out, web.DerivedFinding{
-			Ecosystem: eco,
-			Subject:   subject,
-			Believed:  strings.TrimSpace(m.Case.Believed),
-			Measured:  measured,
-			SampleID:  r.SampleID,
+			Ecosystem:   eco,
+			Subject:     subject,
+			Believed:    strings.TrimSpace(m.Case.Believed),
+			Measured:    measured,
+			SampleID:    r.SampleID,
+			OS:          web.RecordEnvironmentOS(m.Environment),
+			Runtime:     web.RecordEnvironmentRuntime(m.Environment),
+			Environment: web.RecordEnvironmentSummary(m.Environment),
 		})
 		if len(out) >= limit {
 			break
@@ -541,11 +578,9 @@ func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL
 
 // RecordPackages returns one page of the record, ranked, with the total
 // so the page can say where the reader is.
-func (w *webStore) RecordPackages(ctx context.Context, q string, offset, limit int) ([]web.PackageHit, int, error) {
-	q = strings.ToLower(strings.TrimSpace(q))
-	all, err := w.rankedPackages(ctx, func(p domain.PURL) bool {
-		return q == "" || strings.Contains(strings.ToLower(p.Name), q)
-	})
+func (w *webStore) RecordPackages(ctx context.Context, filter web.RecordFilter, offset, limit int) ([]web.PackageHit, int, error) {
+	filter.Query = strings.ToLower(strings.TrimSpace(filter.Query))
+	all, err := w.rankedRecordPackages(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -563,6 +598,138 @@ func (w *webStore) RecordPackages(ctx context.Context, q string, offset, limit i
 		all = all[:limit]
 	}
 	return all, total, nil
+}
+
+// recordSnapshot is the subset of a compatibility snapshot needed by the
+// record filters. Environment rows and their stage classes are materialized
+// already; this adapter reads those facts and does not re-aggregate evidence.
+type recordSnapshot struct {
+	Rows []struct {
+		Env      *domain.EnvironmentFingerprint `json:"envBucket"`
+		EnvAlias *domain.EnvironmentFingerprint `json:"env"`
+		ByStage  map[string]struct {
+			Pass int64 `json:"pass"`
+			Fail int64 `json:"fail"`
+		} `json:"byStage"`
+	} `json:"rows"`
+}
+
+func recordStageMatches(byStage map[string]struct {
+	Pass int64 `json:"pass"`
+	Fail int64 `json:"fail"`
+}, basis string) bool {
+	if basis == "" {
+		return true
+	}
+	for stage, count := range byStage {
+		if count.Pass+count.Fail == 0 {
+			continue
+		}
+		observed := stage == string(domain.StageUsed) || strings.HasPrefix(stage, "PROJECT_")
+		if (basis == "observed" && observed) || (basis == "verified" && !observed) {
+			return true
+		}
+	}
+	return false
+}
+
+func recordSnapshotMatches(raw string, filter web.RecordFilter) bool {
+	var doc recordSnapshot
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return false
+	}
+	for _, row := range doc.Rows {
+		env := row.Env
+		if env == nil {
+			env = row.EnvAlias
+		}
+		// Selecting an environment dimension requires a recorded
+		// fingerprint. An old row with only a presentation label is unknown,
+		// not a match inferred from that prose.
+		if (filter.OS != "" || filter.Runtime != "") && env == nil {
+			continue
+		}
+		if env != nil && !web.RecordEnvironmentMatches(*env, filter.OS, filter.Runtime) {
+			continue
+		}
+		if recordStageMatches(row.ByStage, filter.Basis) {
+			return true
+		}
+	}
+	return false
+}
+
+// rankedRecordPackages is the filtered variant of rankedPackages. With only
+// a name/ecosystem filter it never loads snapshot documents. OS, runtime and
+// basis filters intentionally pay that cost because those dimensions live in
+// snapshot rows, and guessing them from npm/PyPI/etc. would be false.
+func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFilter) ([]web.PackageHit, error) {
+	type agg struct {
+		hit     web.PackageHit
+		symbols map[string]bool
+	}
+	byPkg := map[string]*agg{}
+	query := strings.ToLower(filter.Query)
+	add := func(purl, symbol, snapshotJSON string) {
+		p, err := domain.ParsePURL(purl)
+		if err != nil || (filter.Ecosystem != "" && p.Ecosystem != filter.Ecosystem) ||
+			(query != "" && !strings.Contains(strings.ToLower(p.Name), query)) {
+			return
+		}
+		if snapshotJSON != "" && !recordSnapshotMatches(snapshotJSON, filter) {
+			return
+		}
+		key := p.Ecosystem + "/" + p.Name
+		a, ok := byPkg[key]
+		if !ok {
+			a = &agg{hit: web.PackageHit{Ecosystem: p.Ecosystem, Name: p.Name, LatestVersion: p.Version}, symbols: map[string]bool{}}
+			byPkg[key] = a
+		}
+		if domain.CompareVersions(p.Version, a.hit.LatestVersion) > 0 {
+			a.hit.LatestVersion = p.Version
+		}
+		if symbol != "" {
+			a.symbols[symbol] = true
+		}
+		a.hit.EvidenceCount++
+	}
+
+	needsSnapshot := filter.OS != "" || filter.Runtime != "" || filter.Basis != ""
+	if needsSnapshot {
+		rows, err := w.cachedSnapshots(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			add(row.PURL, row.Symbol, row.SnapshotJSON)
+		}
+	} else {
+		targets, err := w.s.ListSnapshotTargets(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, target := range targets {
+			add(target.PURL, target.Symbol, "")
+		}
+	}
+	out := make([]web.PackageHit, 0, len(byPkg))
+	for _, a := range byPkg {
+		a.hit.Symbols = len(a.symbols)
+		out = append(out, a.hit)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbols != out[j].Symbols {
+			return out[i].Symbols > out[j].Symbols
+		}
+		if out[i].EvidenceCount != out[j].EvidenceCount {
+			return out[i].EvidenceCount > out[j].EvidenceCount
+		}
+		if out[i].Ecosystem != out[j].Ecosystem {
+			return out[i].Ecosystem < out[j].Ecosystem
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
 
 func (w *webStore) SearchPackages(ctx context.Context, q string, limit int) ([]web.PackageHit, error) {
@@ -635,8 +802,23 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	out := make([]web.WantedRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, web.WantedRow{
-			Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol,
+			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
 			Asks: r.Asks, HasPage: r.HasPage,
+		})
+	}
+	return out, nil
+}
+
+func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
+	rows, err := w.s.WantedForPackage(ctx, ecosystem, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.WantedRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.WantedRow{
+			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
+			Asks: r.Asks, HasPage: true,
 		})
 	}
 	return out, nil

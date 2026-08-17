@@ -38,6 +38,10 @@ func newCLIHome(t *testing.T, mutate func(*config.Config)) string {
 // startCLIDaemon runs an in-process daemon over home; cleanup stops it.
 func startCLIDaemon(t *testing.T, home string) *daemon.Daemon {
 	t.Helper()
+	// The real `csx daemon run` copies the CLI link-time version into the
+	// daemon status. Match that here so version-aware EnsureRunning does not
+	// correctly mistake this in-process fixture for an old installed build.
+	daemon.Version = Version
 	d, err := daemon.New(home)
 	if err != nil {
 		t.Fatalf("daemon.New: %v", err)

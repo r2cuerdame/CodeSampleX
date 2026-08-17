@@ -12,7 +12,7 @@ import (
 func TestWantedPageRanksUnansweredQuestions(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.wanted = []WantedRow{
-		{Ecosystem: "npm", Name: "undici", Symbol: "ProxyAgent", Asks: 214},
+		{Ecosystem: "npm", Name: "undici", Version: "7.13.0", Symbol: "ProxyAgent", Asks: 214},
 		{Ecosystem: "pypi", Name: "protobuf", Asks: 96},
 	}
 	rec := get(t, mux, "/wanted")
@@ -21,6 +21,7 @@ func TestWantedPageRanksUnansweredQuestions(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "npm/undici")
+	mustContain(t, body, "npm/undici@7.13.0")
 	mustContain(t, body, "ProxyAgent")
 	mustContain(t, body, "214")
 	mustContain(t, body, "pypi/protobuf")
@@ -56,11 +57,10 @@ func TestWantedPageStatesThatQuestionsStayLocal(t *testing.T) {
 	mustContain(t, body, "stays on the machine that asked")
 }
 
-// A wanted package is by definition one with no sample, and usually with no
-// evidence either — so it usually has no explorer page. Linking every row
-// turned the one board that is meant to be a to-do list into a board of
-// 404s: /npm/puppeteer?lang=ko, reported by a reader.
-func TestAWantedRowWithNoPageIsNotALink(t *testing.T) {
+// Wanted-only package pages now carry an honest coordinate-specific stub,
+// so every board row is actionable without turning into a 404. HasPage is
+// retained on the store row for compatibility, but no longer decides links.
+func TestEveryWantedRowLinksToItsHonestStubPage(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.wanted = []WantedRow{
 		{Ecosystem: "npm", Name: "puppeteer", Asks: 3},             // nothing known yet
@@ -68,8 +68,9 @@ func TestAWantedRowWithNoPageIsNotALink(t *testing.T) {
 	}
 	body := get(t, mux, "/wanted").Body.String()
 	mustContain(t, body, "npm/puppeteer")
-	if strings.Contains(body, `href="/npm/puppeteer"`) {
-		t.Error("linked a package page that does not exist")
-	}
+	mustContain(t, body, `href="/npm/puppeteer"`)
 	mustContain(t, body, `href="/npm/undici"`)
+	if rec := get(t, mux, "/npm/puppeteer"); rec.Code != http.StatusOK {
+		t.Fatalf("wanted-only package status = %d, want 200", rec.Code)
+	}
 }

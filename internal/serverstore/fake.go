@@ -35,9 +35,9 @@ type Fake struct {
 	ids         map[string]IdentityRow
 	clusters    map[fakeClusterKey]ClusterRow
 	stats       map[string]string // day → stats JSON
-	wanted      map[[3]string]*WantedRow
+	wanted      map[[4]string]*WantedRow
 	adoptions   map[[3]string]AdoptionRow
-	wantedSeen  map[[5]string]bool
+	wantedSeen  map[[6]string]bool
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -79,9 +79,9 @@ func NewFake() *Fake {
 		ids:        map[string]IdentityRow{},
 		clusters:   map[fakeClusterKey]ClusterRow{},
 		stats:      map[string]string{},
-		wanted:     map[[3]string]*WantedRow{},
+		wanted:     map[[4]string]*WantedRow{},
 		adoptions:  map[[3]string]AdoptionRow{},
-		wantedSeen: map[[5]string]bool{},
+		wantedSeen: map[[6]string]bool{},
 	}
 }
 
@@ -227,6 +227,22 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 	defer f.mu.Unlock()
 	js, ok := f.snapshots[[2]string{purl, symbol}]
 	return js, ok, nil
+}
+
+func (f *Fake) ListSnapshots(_ context.Context) ([]SnapshotRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SnapshotRow, 0, len(f.snapshots))
+	for key, snapshotJSON := range f.snapshots {
+		out = append(out, SnapshotRow{PURL: key[0], Symbol: key[1], SnapshotJSON: snapshotJSON})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out, nil
 }
 
 func (f *Fake) PutSnapshot(_ context.Context, purl, symbol, snapshotJSON string) error {
@@ -492,6 +508,46 @@ func (f *Fake) SamplesForPackages(ctx context.Context, patterns []string, limit 
 		if matchesAnyPattern(m.Packages, patterns) {
 			out = append(out, row)
 		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *Fake) VerifiedSamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error) {
+	all, err := f.SamplesForPackages(ctx, patterns, 1<<30)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SampleRow, 0, len(all))
+	for _, row := range all {
+		if !f.hasContractPass(row.SampleID) {
+			continue
+		}
+		out = append(out, row)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *Fake) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error) {
+	all, err := f.ListSamples(ctx, 1<<30)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SampleRow, 0, len(all))
+	for _, row := range all {
+		if !f.hasContractPass(row.SampleID) {
+			continue
+		}
+		out = append(out, row)
 		if limit > 0 && len(out) >= limit {
 			break
 		}
@@ -1027,6 +1083,24 @@ func (f *Fake) hasContractPass(sampleID string) bool {
 	return false
 }
 
+// hasExactResolvedContractPass is the versioned Wanted answer boundary.
+// A manifest version is author input; only a PASS receipt whose valid v2
+// resolvedPackages list names the coordinate proves that release actually
+// ran. Legacy v1 receipts intentionally establish no exact version.
+func (f *Fake) hasExactResolvedContractPass(sampleID, purl string) bool {
+	for _, r := range f.receipts[sampleID] {
+		if !strings.EqualFold(r.ContractResult, "PASS") {
+			continue
+		}
+		for _, resolved := range resolvedPackageStrings(r.ReceiptJSON) {
+			if resolved == purl {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // verifiedStatus reports whether a sample status is CROSS_PASS or beyond.
 // A contract-PASS receipt counts as verified too (see NetworkCounts): the
 // status ladder is about independent reproduction, not about whether the
@@ -1041,63 +1115,103 @@ func verifiedStatus(status string) bool {
 
 // ----------------------------------------------------------------- wanted --
 
-func (f *Fake) RecordWanted(_ context.Context, epoch, anonID string, rows []WantedRow) error {
+func (f *Fake) RecordWanted(ctx context.Context, epoch, anonID string, rows []WantedRow) error {
+	return f.RecordWantedBatch(ctx, []WantedSubmission{{Epoch: epoch, AnonID: anonID, Rows: rows}})
+}
+
+func (f *Fake) RecordWantedBatch(_ context.Context, reports []WantedSubmission) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, r := range rows {
-		seen := [5]string{r.Ecosystem, r.Name, r.Symbol, epoch, anonID}
-		if f.wantedSeen[seen] {
-			continue
+	for _, report := range reports {
+		for _, r := range report.Rows {
+			seen := [6]string{r.Ecosystem, r.Name, r.Version, r.Symbol, report.Epoch, report.AnonID}
+			if f.wantedSeen[seen] {
+				continue
+			}
+			f.wantedSeen[seen] = true
+			key := [4]string{r.Ecosystem, r.Name, r.Version, r.Symbol}
+			w := f.wanted[key]
+			if w == nil {
+				w = &WantedRow{Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
+					FirstSeen: f.now()}
+				f.wanted[key] = w
+			}
+			w.Asks++
+			w.LastSeen = f.now()
 		}
-		f.wantedSeen[seen] = true
-		key := [3]string{r.Ecosystem, r.Name, r.Symbol}
-		w := f.wanted[key]
-		if w == nil {
-			w = &WantedRow{Ecosystem: r.Ecosystem, Name: r.Name, Symbol: r.Symbol,
-				FirstSeen: f.now()}
-			f.wanted[key] = w
-		}
-		w.Asks++
-		w.LastSeen = f.now()
 	}
 	return nil
 }
 
 func (f *Fake) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
+	return f.listWanted(limit, "", "")
+}
+
+func (f *Fake) WantedForPackage(_ context.Context, ecosystem, name string) ([]WantedRow, error) {
+	return f.listWanted(100, ecosystem, name)
+}
+
+func (f *Fake) listWanted(limit int, ecosystem, name string) ([]WantedRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
-	answered := map[string]bool{}
-	for _, s := range f.samples {
-		if s.Quarantined {
-			continue
-		}
-		var m struct {
-			Packages []string `json:"packages"`
-		}
-		if json.Unmarshal([]byte(s.ManifestJSON), &m) != nil {
-			continue
-		}
-		for _, ps := range m.Packages {
-			if pp, err := domain.ParsePURL(ps); err == nil {
-				answered[pp.Ecosystem+"/"+pp.Name] = true
-			}
-		}
-	}
 	var out []WantedRow
 	for _, w := range f.wanted {
-		if answered[w.Ecosystem+"/"+w.Name] {
+		if ecosystem != "" && (w.Ecosystem != ecosystem || w.Name != name) {
 			continue
 		}
-		row := *w
-		for _, p := range f.packages {
-			if p.Ecosystem == row.Ecosystem && p.Name == row.Name {
-				row.HasPage = true
+		answered := false
+		for _, s := range f.samples {
+			if s.Quarantined {
+				continue
+			}
+			var m struct {
+				Packages []string `json:"packages"`
+				Symbols  []string `json:"symbols"`
+			}
+			if json.Unmarshal([]byte(s.ManifestJSON), &m) != nil {
+				continue
+			}
+			packageMatch := false
+			for _, ps := range m.Packages {
+				pp, err := domain.ParsePURL(ps)
+				if err != nil || pp.Ecosystem != w.Ecosystem || pp.Name != w.Name {
+					continue
+				}
+				packageMatch = true
+			}
+			if !packageMatch {
+				continue
+			}
+			if w.Version == "" {
+				if !f.hasContractPass(s.SampleID) {
+					continue
+				}
+			} else {
+				exact := domain.PURL{Ecosystem: w.Ecosystem, Name: w.Name, Version: w.Version}.String()
+				if !f.hasExactResolvedContractPass(s.SampleID, exact) {
+					continue
+				}
+			}
+			symbolMatch := w.Symbol == ""
+			for _, symbol := range m.Symbols {
+				if symbol == w.Symbol {
+					symbolMatch = true
+					break
+				}
+			}
+			if symbolMatch {
+				answered = true
 				break
 			}
 		}
+		if answered {
+			continue
+		}
+		row := *w
+		row.HasPage = true
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool {

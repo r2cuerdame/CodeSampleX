@@ -41,6 +41,15 @@ type SnapshotTarget struct {
 	Symbol string
 }
 
+// SnapshotRow is one materialized compatibility document. Collection pages
+// use this batched shape so filtering by recorded environment does not issue
+// one database query per target.
+type SnapshotRow struct {
+	PURL         string
+	Symbol       string
+	SnapshotJSON string
+}
+
 // EvidenceRow is one aggregated evidence_agg row.
 type EvidenceRow struct {
 	PURL                 string
@@ -194,6 +203,7 @@ type Store interface {
 	ListPackageVersions(ctx context.Context, ecosystem, name string) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
 	// SnapshotKeys lists materialized rows already stored. It is distinct
 	// from ListSnapshotTargets, which lists the live source rows that should
@@ -221,6 +231,15 @@ type Store interface {
 	// patterns ("pkg:npm/axios@%"), so search does not depend on a global
 	// newest-N window.
 	SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// VerifiedSamplesForPackages is the serving-only form used by package
+	// pages: every returned sample has at least one contract-PASS receipt.
+	// Search keeps using SamplesForPackages so source-only candidates can be
+	// graded honestly rather than disappearing from the local resolver.
+	VerifiedSamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// ListVerifiedSamples returns newest non-quarantined samples with an
+	// actual contract-PASS receipt. Public measured findings must never be
+	// derived from author prose on a source-only upload.
+	ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error)
 	// SamplesBySeeder lists one seeder's published samples, so their page
 	// does not depend on a global newest-N window.
 	SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error)
@@ -267,8 +286,12 @@ type Store interface {
 	// request that was already public — and one reporter counts once per
 	// epoch per row, so nobody can manufacture a ranking by asking twice.
 	RecordWanted(ctx context.Context, epoch, anonID string, rows []WantedRow) error
+	RecordWantedBatch(ctx context.Context, reports []WantedSubmission) error
 	// TopWanted lists the most-asked packages that still have no sample.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	// WantedForPackage is the stable targeted lookup behind a wanted-only
+	// package page; its result must not depend on the row's global rank.
+	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
 
 	AnnouncePeer(ctx context.Context, p PeerRow) error
 	PeersForSample(ctx context.Context, sampleID string) ([]PeerRow, error)

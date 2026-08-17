@@ -2,11 +2,28 @@
 <h1>{{.T "records.title"}}</h1>
 <p class="dim">{{.T "records.intro"}}</p>
 
-<form class="search" action="/records" method="get" role="search">
-  <input type="search" name="q" value="{{.Query}}" placeholder="{{.T "explore.placeholder"}}" aria-label="{{.T "explore.placeholder"}}">
+<form class="filterbar" action="/records" method="get" role="search">
+  <label class="filterquery"><span>{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Filter.Query}}" placeholder="{{.T "explore.placeholder"}}"></label>
+  <label><span>{{.T "adapters.ecosystem"}}</span><select name="eco">
+    <option value="">{{.T "filters.all"}}</option>
+    {{range .EcosystemOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select></label>
+  <label><span>{{.T "filters.os"}}</span><select name="os">
+    <option value="">{{.T "filters.all"}}</option>
+    {{range .OSOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select></label>
+  <label><span>{{.T "filters.runtime"}}</span><select name="runtime">
+    <option value="">{{.T "filters.all"}}</option>
+    {{range .RuntimeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select></label>
+  <label><span>{{.T "filters.basis"}}</span><select name="basis">
+    <option value="">{{.T "filters.all"}}</option>
+    {{range .BasisOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select></label>
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
-  <button type="submit">{{.T "explore.button"}}</button>
+  <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasFilters}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>
+<p class="dim small filter-note">{{.T "records.filter_note"}}</p>
 
 {{if .Hits}}
 <p class="dim mono small">{{.RangeText}}</p>

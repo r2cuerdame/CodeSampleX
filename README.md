@@ -24,6 +24,31 @@ The public counters are a five-minute rollup, available as JSON without an accou
 curl -fsSL https://codesamplex.dev/v1/stats
 ```
 
+Those counters describe network data and protocol activity, not an audience estimate:
+
+| Field | What it counts |
+|-------|----------------|
+| `verifiedSamples` | distinct samples with a sandbox contract-PASS receipt |
+| `evidence` | accepted observation records; not users, projects, executions, or independently verified samples |
+| `packages` / `symbols` | public package names and observed symbols represented in the compatibility data |
+| `peers` | distinct anonymous daily peer buckets that contributed evidence |
+| `projectsMonth` | distinct anonymous monthly project buckets that contributed evidence |
+| `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL after using a sample |
+
+CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. HTTP requests and release/binary download responses can be counted separately, but retries, automation, mirrors, CI, and deployment traffic mean those numbers are not people or completed installs. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count.
+
+### Demand-led coverage
+
+In community mode, a `NO_SAFE_MATCH` contributes a privacy-safe Wanted tuple instead of the user's prompt: public package, exact version and, when the request contains one unambiguous package, each retained requested symbol within the bounded report. A multi-package v1 request stays package-only rather than inventing which symbol belongs to which dependency.
+
+[Wanted](https://codesamplex.dev/wanted) ranks the unanswered tuples by demand, and the production queue takes them before broad hot-package expansion. A Wanted row closes only when a live, non-quarantined sample has a contract-PASS receipt and contains the exact canonical package version and requested symbol; a source-only upload or a sample for another release/API is not treated as the answer. `GET /v1/wanted` exposes the same privacy-safe actionable queue for contributors.
+
+Package URLs can also render an explicit **Wanted-only** page before the first verified sample exists. That page reports demand and missing coverage only: it does not manufacture a compatibility result, version matrix, or evidence claim.
+
+### Inspecting recorded environments
+
+[Records](https://codesamplex.dev/records) can be filtered by ecosystem, recorded operating system, recorded runtime/execution context, and evidence basis (`observed` or `verified`). [Findings](https://codesamplex.dev/findings) uses the same environment filters and separates finding source (`official`, `common belief`, or `sample contract`). Environment filters match recorded fingerprints only; CodeSampleX does not infer an OS or runtime from the package ecosystem. Sample detail pages show the declared environment alongside verification-run environments, sandbox capability, per-stage results, and receipt-backed verification level.
+
 The public deployment is **seeded-only for sample source**: official samples are clean-room projects whose provenance can be established. Search, evidence submission, verification receipts, the wanted board, and `NO_SAFE_MATCH` requests remain open without an account. See [Contribute](https://codesamplex.dev/contribute) for the paths that are open to everyone.
 
 ## Install

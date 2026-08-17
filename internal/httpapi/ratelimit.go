@@ -25,6 +25,17 @@ import (
 var (
 	// writeLimit covers evidence, samples, verifications and announce.
 	writeLimit = rate{burst: 60, per: time.Minute}
+	// Feedback is privacy-safe, compact demand/adoption data and must not
+	// crowd verification receipts out of the durable write budget.
+	feedbackLimit = rate{burst: 60, per: time.Minute}
+	// A wanted batch can contain at most 20 reports and each report at most
+	// 10 candidate rows. A full idle bucket therefore admits 80 reports / 800
+	// candidate-row attempts immediately, then refills at four requests per
+	// minute. In a rolling minute that starts full, burst plus refill can
+	// approach 160 reports / 1,600 row attempts before the daily reporter-row
+	// dedup ledger applies. This limits cheap repetition; it does not prove
+	// that anonymous reporter ids represent unique people.
+	wantedBatchLimit = rate{burst: 4, per: time.Minute}
 	// readLimit covers search and the shard/registry reads a warm-up storms.
 	readLimit = rate{burst: 300, per: time.Minute}
 	// authLimit covers the GitHub device flow: brute-forcing a device code
@@ -137,7 +148,7 @@ func (l *limiter) sweepLocked(now time.Time) {
 
 // limiters holds one limiter per endpoint class.
 type limiters struct {
-	write, read, auth, publish *limiter
+	write, feedback, wantedBatch, read, auth, publish *limiter
 	// seededPublish is the identified-seeder budget, keyed by login.
 	seededPublish *limiter
 }
@@ -145,6 +156,8 @@ type limiters struct {
 func newLimiters() *limiters {
 	return &limiters{
 		write:         newLimiter(writeLimit),
+		feedback:      newLimiter(feedbackLimit),
+		wantedBatch:   newLimiter(wantedBatchLimit),
 		read:          newLimiter(readLimit),
 		auth:          newLimiter(authLimit),
 		publish:       newLimiter(publishLimit),

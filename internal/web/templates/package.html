@@ -2,6 +2,16 @@
 <nav class="crumbs mono"><a href="{{.WithLang "/explore"}}">{{.T "nav.explore"}}</a> / {{.Ecosystem}}</nav>
 <h1 class="mono">{{.Name}} <span class="dim">· {{.Ecosystem}}</span></h1>
 
+{{if .Wanted}}
+<aside class="note wanted-stub">
+  <strong>{{.T "pkg.requested"}}</strong>
+  <span>{{.T "pkg.requested_note"}}</span>
+  <ul class="wanted-stub-list mono small">
+    {{range .Wanted}}<li>{{if .Version}}@{{.Version}}{{end}}{{if .Symbol}}{{if .Version}} · {{end}}{{.Symbol}}{{end}} · {{$.N .Asks}} {{$.T "wanted.asks"}}</li>{{end}}
+  </ul>
+</aside>
+{{end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
 {{if .Versions}}
 <ul class="verlist mono">
@@ -14,9 +24,9 @@
 {{end}}
 
 {{- if .Samples}}
-{{/* "stats.verified_samples" is reused rather than a new key: it is the
-     same noun phrase and it is already translated into all nine locales. */}}
-<h2 class="eyebrow mono">{{.T "stats.verified_samples"}}</h2>
+{{/* A published source sample is useful even before it has a passing
+     receipt. Do not label every row as verified merely because some are. */}}
+<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
 {{template "samplelist" .}}
 {{- end}}
 
