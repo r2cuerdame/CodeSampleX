@@ -1,0 +1,12 @@
+{
+  "name": "csx-three-core-data-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  }
+}
