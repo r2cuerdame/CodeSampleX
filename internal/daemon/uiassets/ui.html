@@ -94,6 +94,25 @@
       <div class="value">{{.Stats.QueueDepth}}</div></div>
   </div>
 
+  <h2>Verified failure detours</h2>
+  <p class="note">A successive, local-only funnel. Later stages count only
+  when every earlier stage was measured. “Reported failures avoided” means
+  exact fingerprint match + verified offer + applied + post-hit PASS.</p>
+  <div class="grid">
+    <div class="panel stat"><div class="label">1 · Exact failure matches</div>
+      <div class="value">{{.Stats.ExactFailureMatches}}</div></div>
+    <div class="panel stat"><div class="label">2 · Verified detours offered</div>
+      <div class="value">{{.Stats.VerifiedDetoursOffered}}</div></div>
+    <div class="panel stat"><div class="label">3 · Applied</div>
+      <div class="value">{{.Stats.VerifiedDetoursApplied}}</div></div>
+    <div class="panel stat"><div class="label">4 · Post-hit result</div>
+      <div class="value">{{.Stats.DetourPostHitPass}} PASS / {{.Stats.DetourPostHitFail}} FAIL</div>
+      <div class="label">{{.Stats.DetourPostHitUnknown}} unknown</div></div>
+    <div class="panel stat"><div class="label">Reported failures avoided</div>
+      <div class="value">{{.Stats.ReportedFailuresAvoided}}</div>
+      <div class="label">all four measured stages, no time-saved estimate</div></div>
+  </div>
+
   <h2>Project dependencies (last scan)</h2>
   <div class="panel">
     {{if .Deps}}

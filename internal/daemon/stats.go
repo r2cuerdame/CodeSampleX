@@ -33,6 +33,13 @@ type Stats struct {
 	Adoptions                 int     `json:"adoptions"`
 	PostHitBuildReports       int     `json:"postHitBuildReports"`
 	PostHitBuildPassRate      float64 `json:"postHitBuildPassRate"`
+	ExactFailureMatches       int     `json:"exactFailureMatches"`
+	VerifiedDetoursOffered    int     `json:"verifiedDetoursOffered"`
+	VerifiedDetoursApplied    int     `json:"verifiedDetoursApplied"`
+	DetourPostHitPass         int     `json:"detourPostHitPass"`
+	DetourPostHitFail         int     `json:"detourPostHitFail"`
+	DetourPostHitUnknown      int     `json:"detourPostHitUnknown"`
+	ReportedFailuresAvoided   int     `json:"reportedFailuresAvoided"`
 	EvidenceBatchesSent       int     `json:"evidenceBatchesSent"`
 	OriginSeeds               int     `json:"originSeeds"`
 	CrossVerifications        int     `json:"crossVerifications"`
@@ -97,6 +104,15 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	rework := st.PostHitBuildReports - passes
 	if est := st.Adoptions*avgMissLLMCalls - rework; est > 0 {
 		st.EstimatedReasoningAvoided = est
+	}
+	if funnel, err := d.DB.InterventionSummary(ctx); err == nil {
+		st.ExactFailureMatches = funnel.ExactFailureMatches
+		st.VerifiedDetoursOffered = funnel.VerifiedDetoursOffered
+		st.VerifiedDetoursApplied = funnel.Applied
+		st.DetourPostHitPass = funnel.PostHitPass
+		st.DetourPostHitFail = funnel.PostHitFail
+		st.DetourPostHitUnknown = funnel.PostHitUnknown
+		st.ReportedFailuresAvoided = funnel.ReportedFailuresAvoided
 	}
 
 	st.Misses = d.intStat(ctx, statMisses)

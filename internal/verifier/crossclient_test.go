@@ -30,6 +30,7 @@ type crossFixture struct {
 	receipts   []domain.VerificationReceipt
 	corruptArt bool
 	requests   int
+	reasonSeen string
 }
 
 func newCrossFixture(t *testing.T) *crossFixture {
@@ -58,6 +59,7 @@ func newCrossFixture(t *testing.T) *crossFixture {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.requests++
+		f.reasonSeen = r.URL.Query().Get("reason")
 		if r.URL.Query().Get("peerId") == "" || r.URL.Query().Get("capability") == "" {
 			http.Error(w, "missing peerId/capability", http.StatusBadRequest)
 			return
@@ -138,6 +140,9 @@ func TestCrossFetchJobClaims(t *testing.T) {
 	if len(f.claims) != 1 || f.claims[0] != "7:"+cv.Ident.PeerID() {
 		t.Fatalf("claims: %v", f.claims)
 	}
+	if f.reasonSeen != CrossJobReason {
+		t.Fatalf("job query reason = %q, want %q", f.reasonSeen, CrossJobReason)
+	}
 
 	// No jobs left → nil, nil.
 	job2, err := cv.FetchJob(context.Background())
@@ -146,6 +151,70 @@ func TestCrossFetchJobClaims(t *testing.T) {
 	}
 	if job2 != nil {
 		t.Fatalf("expected no job, got %+v", job2)
+	}
+}
+
+func TestCrossFetchRefusesMatrixJobEvenIfServerIgnoresFilter(t *testing.T) {
+	ident, err := identity.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/verification/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"jobs": []map[string]any{{
+			"id": 9, "sampleId": "sha256:" + strings.Repeat("a", 64),
+			"reason": "matrix", "wantEnv": map[string]any{"os": "darwin"},
+		}}})
+	})
+	mux.HandleFunc("POST /v1/verification/jobs/{id}/claim", func(w http.ResponseWriter, r *http.Request) {
+		claims++
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cv := &CrossVerifier{
+		HTTP: srv.Client(), ServerURL: srv.URL, Ident: ident,
+		Cap: domain.CapContainerRun,
+	}
+	if _, err := cv.FetchJob(context.Background()); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("matrix job error = %v, want explicit refusal", err)
+	}
+	if claims != 0 {
+		t.Fatalf("matrix job was claimed %d times", claims)
+	}
+}
+
+func TestCrossFetchRefusesUnenforcedWantEnvOnCrossJob(t *testing.T) {
+	ident, err := identity.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/verification/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"jobs": []map[string]any{{
+			"id": 10, "sampleId": "sha256:" + strings.Repeat("b", 64),
+			"reason": "cross", "wantEnv": map[string]any{"runtime": "node", "runtimeVersion": "20"},
+		}}})
+	})
+	mux.HandleFunc("POST /v1/verification/jobs/{id}/claim", func(w http.ResponseWriter, r *http.Request) {
+		claims++
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cv := &CrossVerifier{
+		HTTP: srv.Client(), ServerURL: srv.URL, Ident: ident,
+		Cap: domain.CapContainerRun,
+	}
+	if _, err := cv.FetchJob(context.Background()); err == nil || !strings.Contains(err.Error(), "wantEnv") {
+		t.Fatalf("targeted cross job error = %v, want explicit refusal", err)
+	}
+	if claims != 0 {
+		t.Fatalf("environment-targeted job was claimed %d times", claims)
 	}
 }
 

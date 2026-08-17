@@ -23,12 +23,18 @@ func TestUIRendersDashboard(t *testing.T) {
 
 	// Dashboard inputs: one adopted hit with a build-pass report, one
 	// miss, one dependency, one pending observation.
-	if err := d.DB.RecordHit(ctx, localdb.HitRow{
+	offerID, err := d.DB.RecordSearchOffer(ctx, localdb.HitRow{
 		TS: time.Now(), Query: "q", Grade: domain.GradeCompatible,
-		SampleID: "sha256:aaa1", Adopted: true,
-		PostBuildPass: sql.NullBool{Bool: true, Valid: true},
-	}); err != nil {
-		t.Fatalf("record hit: %v", err)
+		SampleID: "sha256:aaa1",
+	}, localdb.InterventionRow{
+		SampleID: "sha256:aaa1", ExactFailureMatched: true, VerifiedOffer: true,
+	})
+	if err != nil {
+		t.Fatalf("record search offer: %v", err)
+	}
+	if _, err := d.DB.CorrelateInterventionAdoption(ctx, offerID, "sha256:aaa1", true,
+		sql.NullBool{Bool: true, Valid: true}, ""); err != nil {
+		t.Fatalf("correlate intervention: %v", err)
 	}
 	d.incrStat(ctx, statMisses, 1)
 	purl := domain.PURL{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}
@@ -72,6 +78,12 @@ func TestUIRendersDashboard(t *testing.T) {
 		"Automatic evidence sent",
 		"Origin Seeds",
 		"Cross verifications",
+		"Verified failure detours",
+		"Exact failure matches",
+		"Verified detours offered",
+		"Reported failures avoided",
+		"1 PASS / 0 FAIL",
+		"no time-saved estimate",
 		"Privacy preview",
 		"npm/axios",            // dependency table row
 		"pkg:npm/axios@1.12.0", // preview shows the pending batch verbatim

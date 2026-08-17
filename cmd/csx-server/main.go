@@ -8,7 +8,7 @@
 //
 // Configuration is environment-only: CSX_DSN (required), CSX_LISTEN,
 // CSX_BLOB_DIR, CSX_PUBLIC_URL, CSX_PUBLIC_CHECK, CSX_SNAPSHOT_INTERVAL,
-// CSX_GITHUB_CLIENT_ID, CSX_GITHUB_CLIENT_SECRET.
+// CSX_GITHUB_CLIENT_ID, CSX_GITHUB_CLIENT_SECRET, CSX_ACTIVITY_HASH_KEY.
 package main
 
 import (
@@ -116,26 +116,49 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// is the whole server. WriteTimeout sits above the slowest legitimate
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
+	handler, activityTracker := buildMuxWithTracker(context.Background(), cfg, pg)
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           BuildMux(cfg, pg),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 16,
 	}
+	shutdownDone := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			// Stop lingering connections before closing the collector's admission
+			// gate. A handler that survives Close is still counted as dropped if
+			// it reaches observation after collector shutdown begins.
+			_ = srv.Close()
+		}
+		trackerCtx, trackerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		trackerErr := activityTracker.Close(trackerCtx)
+		trackerCancel()
+		shutdownDone <- errors.Join(shutdownErr, trackerErr)
 	}()
 
 	fmt.Fprintf(stdout, "csx-server: listening on %s\n", cfg.Listen)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err := srv.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = activityTracker.Close(trackerCtx)
+		cancel()
 		fmt.Fprintf(stderr, "csx-server: %v\n", err)
 		return 1
+	}
+	if ctx.Err() != nil {
+		if shutdownErr := <-shutdownDone; shutdownErr != nil {
+			telemetry := activityTracker.Telemetry()
+			fmt.Fprintf(stderr, "csx-server: shutdown incomplete: %v (activity pending=%d dropped=%d failures=%d)\n", shutdownErr, telemetry.Pending, telemetry.Dropped, telemetry.StoreFailures)
+			return 1
+		}
 	}
 	return 0
 }

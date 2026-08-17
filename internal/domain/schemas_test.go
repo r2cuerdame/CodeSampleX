@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,5 +172,71 @@ func TestVerificationReceiptSchemaEvolution(t *testing.T) {
 		if _, present := document[key]; !present {
 			t.Errorf("v2 required key %q missing from Go type's JSON", key)
 		}
+	}
+}
+
+func TestSearchSchemaRollingCompatibility(t *testing.T) {
+	v1Dir := schemaDir(t)
+	v2Dir := filepath.Join(filepath.Dir(v1Dir), "v2")
+	read := func(path string) ([]byte, map[string]any) {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatal(err)
+		}
+		return raw, schema
+	}
+
+	// These are the exact pre-v2 public contracts. Any byte change requires a
+	// new version instead of silently teaching strict v1 validators new keys.
+	for name, want := range map[string]string{
+		"search-request.json":  "a3f92fe5af0a1d8b328af48f471b590e292eb7484453e4ddb553fc1012735ce7",
+		"search-response.json": "fb5eed7b9b8518a7f4e7c14a2842fc80f83871c3d1b0a640e9b17fca25ca50fc",
+	} {
+		raw, _ := read(filepath.Join(v1Dir, name))
+		if got := fmt.Sprintf("%x", sha256.Sum256(raw)); got != want {
+			t.Fatalf("v1 %s hash = %s, want frozen %s", name, got, want)
+		}
+	}
+
+	_, v1Request := read(filepath.Join(v1Dir, "search-request.json"))
+	_, v1Response := read(filepath.Join(v1Dir, "search-response.json"))
+	_, v2Request := read(filepath.Join(v2Dir, "search-request.json"))
+	_, v2Response := read(filepath.Join(v2Dir, "search-response.json"))
+	v1ReqProps := v1Request["properties"].(map[string]any)
+	v2ReqProps := v2Request["properties"].(map[string]any)
+	for _, key := range []string{"projectPackages", "contextSymbols", "symbolProvenance", "environmentProvenance", "errorFingerprints"} {
+		if _, ok := v1ReqProps[key]; ok {
+			t.Errorf("strict v1 request unexpectedly contains %q", key)
+		}
+		if _, ok := v2ReqProps[key]; !ok {
+			t.Errorf("v2 request missing %q", key)
+		}
+	}
+	v1ResultProps := v1Response["properties"].(map[string]any)["results"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	v2ResultProps := v2Response["properties"].(map[string]any)["results"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := v1ResultProps["exactFailureMatched"]; ok {
+		t.Fatal("exactFailureMatched leaked into strict public v1")
+	}
+	if _, ok := v2ResultProps["exactFailureMatched"]; !ok {
+		t.Fatal("v2 response missing exactFailureMatched")
+	}
+	if _, ok := v1Response["properties"].(map[string]any)["offerId"]; ok {
+		t.Fatal("local offerId leaked into the public search schema")
+	}
+
+	// A new decoder accepts an old response and leaves negotiated-only
+	// evidence unavailable/false rather than manufacturing it.
+	old := `{"schemaVersion":1,"results":[{"match":"COMPATIBLE","confidence":"LOW","score":0.5,"exact":[],"different":[],"adaptationNeeded":[],"evidence":{}}],"miss":false}`
+	var decoded SearchResponse
+	if err := json.Unmarshal([]byte(old), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != 1 || decoded.Results[0].ExactFailureMatched {
+		t.Fatalf("old response decoded incorrectly: %+v", decoded)
 	}
 }

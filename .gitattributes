@@ -1,0 +1,4 @@
+# Remote shell programs are streamed or copied to Linux hosts. Keep their
+# repository and checkout bytes LF-only even when core.autocrlf=true.
+*.ps1 text eol=lf
+*.sh  text eol=lf

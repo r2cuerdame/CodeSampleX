@@ -92,12 +92,17 @@ func searchMain(ctx context.Context, args []string) int {
 	}
 
 	req := domain.SearchRequest{
-		SchemaVersion:   1,
+		SchemaVersion:   2,
 		Query:           query,
 		Packages:        pkgs,
 		ProjectPackages: projPkgs,
-		Symbols:         symbols,
-		Environment:     env,
+		// Symbols is a rolling-compatibility copy for old daemons. A v2 daemon
+		// consumes the provenance marker and keeps it ranking-only.
+		Symbols:               symbols,
+		ContextSymbols:        symbols,
+		SymbolProvenance:      domain.SearchProvenanceContext,
+		Environment:           env,
+		EnvironmentProvenance: domain.SearchProvenanceContext,
 	}
 
 	home, err := config.Home()
@@ -130,7 +135,7 @@ func searchMain(ctx context.Context, args []string) int {
 		fmt.Println(string(out))
 		return 0
 	}
-	renderSearchText(os.Stdout, *resp)
+	renderSearchText(os.Stdout, resp.SearchResponse)
 	return 0
 }
 
@@ -179,7 +184,7 @@ func projectSymbols(res *scanner.ScanResult) []string {
 	return out
 }
 
-func searchViaDaemon(ctx context.Context, home string, req domain.SearchRequest) (*domain.SearchResponse, error) {
+func searchViaDaemon(ctx context.Context, home string, req domain.SearchRequest) (*daemon.LocalSearchResponse, error) {
 	c, err := daemon.NewClient(home)
 	if err != nil {
 		return nil, err

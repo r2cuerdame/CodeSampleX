@@ -115,6 +115,27 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 			// had landed.
 			sent += accepted
 			refused = append(refused, rejected...)
+			// A 202 can accept part of a chunk and refuse the rest. The rows
+			// were marked uploaded before the request to avoid clobbering a
+			// concurrent increment, so explicitly restore only the refused
+			// indexes. They remain durable for a later upload, while accepted
+			// rows stay complete and contribute to sent.
+			seen := make(map[int]bool, len(rejected))
+			for _, rejection := range rejected {
+				if rejection.Index < 0 || rejection.Index >= len(chunkKeys) || seen[rejection.Index] {
+					continue
+				}
+				seen[rejection.Index] = true
+				if err := b.DB.RecordObservation(ctx, chunkKeys[rejection.Index], 0); err != nil {
+					return sent, fmt.Errorf("evidence: restore refused batch %d: %w", rejection.Index, err)
+				}
+			}
+		}
+		// Do not immediately retry a payload the server refused. Finish every
+		// chunk from this drain, then leave the refused rows pending for the
+		// next scheduled pass and report the refusal to the caller.
+		if len(refused) > 0 {
+			return sent, rejectionError(refused)
 		}
 	}
 	return sent, rejectionError(refused)

@@ -50,6 +50,11 @@ const (
 	defaultWarmEvery   = time.Hour
 	defaultBudgetEvery = 24 * time.Hour
 	defaultVerifyEvery = 15 * time.Minute
+	// Evidence aggregates are durable, anonymous, and already consent-gated.
+	// Flush a preexisting backlog soon after an MCP-started daemon appears;
+	// otherwise a daemon that lives less than one maintenance interval never
+	// uploads evidence at all.
+	defaultUploadFirstDelay = 5 * time.Second
 	// Wanted/adoption reports are tiny and already queued.  Upload them soon
 	// after an MCP-started daemon appears instead of making the public Wanted
 	// board wait a full maintenance interval.
@@ -81,7 +86,7 @@ type Daemon struct {
 
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
-	verifyFirstDelay                                 time.Duration
+	uploadFirstDelay, verifyFirstDelay               time.Duration
 
 	batchMu sync.Mutex // serializes drain/upload/preview over the batcher
 	statMu  sync.Mutex // serializes read-modify-write stat counters
@@ -281,11 +286,12 @@ func (d *Daemon) httpClient() *http.Client {
 // best-effort: a down server never breaks local features (goal.md §3.9).
 func (d *Daemon) startBackground(ctx context.Context) {
 	if d.communityNetworkEnabled() {
-		go tickLoop(ctx, orDefault(d.uploadEvery, defaultUploadEvery), func() {
-			uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			defer cancel()
-			_, _ = d.uploadNow(uctx)
-		})
+		go tickLoopAfter(ctx, orDefault(d.uploadFirstDelay, defaultUploadFirstDelay),
+			orDefault(d.uploadEvery, defaultUploadEvery), func() {
+				uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				_, _ = d.uploadNow(uctx)
+			})
 		go tickLoopAfter(ctx, defaultQueueFirstDelay,
 			orDefault(d.uploadEvery, defaultUploadEvery), func() {
 				qctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -367,7 +373,10 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 	d.batchMu.Lock()
 	defer d.batchMu.Unlock()
 	n, err := d.Batcher.Upload(ctx, d.httpClient(), d.Cfg.ServerURL)
-	if err == nil && n > 0 {
+	// Upload can return accepted work together with a refusal error. Stamp
+	// only the batches the server acknowledged; refused rows stay pending in
+	// the batcher and must not hide genuine progress from the liveness stats.
+	if n > 0 {
 		_ = d.DB.SetStat(ctx, statLastUpload, time.Now().UTC().Format(time.RFC3339))
 		d.incrStat(ctx, statEvidenceSent, n)
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -42,6 +43,26 @@ type fakeAccessReader struct {
 	err     error
 	calls   int
 }
+
+type fakeActivityReader struct {
+	metrics     activity.Metrics
+	metricsErr  error
+	markErr     error
+	markCalls   int
+	metricCalls int
+}
+
+func (f *fakeActivityReader) MarkOwner(context.Context, *http.Request, time.Time) error {
+	f.markCalls++
+	return f.markErr
+}
+
+func (f *fakeActivityReader) Metrics(context.Context, time.Time) (activity.Metrics, error) {
+	f.metricCalls++
+	return f.metrics, f.metricsErr
+}
+
+func (f *fakeActivityReader) Telemetry() activity.Telemetry { return f.metrics.Telemetry }
 
 func (f *fakeAccessReader) Metrics(context.Context, time.Time) (AccessLogMetrics, error) {
 	f.calls++
@@ -84,6 +105,10 @@ func configuredMux(t *testing.T, store Store) (*http.ServeMux, string) {
 }
 
 func configuredMuxWithAccess(t *testing.T, store Store, access AccessMetricsReader) (*http.ServeMux, string) {
+	return configuredMuxFull(t, store, access, nil)
+}
+
+func configuredMuxFull(t *testing.T, store Store, access AccessMetricsReader, activityReader ActivityReader) (*http.ServeMux, string) {
 	t.Helper()
 	secret := "a-long-random-admin-secret"
 	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
@@ -95,10 +120,137 @@ func configuredMuxWithAccess(t *testing.T, store Store, access AccessMetricsRead
 		StartedAt:     now.Add(-26*time.Hour - 4*time.Minute),
 		Now:           func() time.Time { return now },
 		AccessMetrics: access,
+		Activity:      activityReader,
 	}) {
 		t.Fatal("valid token hash did not register /admin")
 	}
 	return mux, secret
+}
+
+func TestExternalNetworkEstimatesAreKoreanHonestAndOwnerExcluded(t *testing.T) {
+	reader := &fakeActivityReader{metrics: activity.Metrics{
+		Counts:    activity.Counts{ExternalDAU: 3, ExternalMAU: 9, OwnerDAU: 1, OwnerMAU: 2, DaySeen: true, MonthSeen: true},
+		Daily:     activity.BuildDailyWindow(time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC), activity.DailyRaw{OldestEpoch: "2026-08-15", Days: []activity.DayCount{{Epoch: "2026-08-15", Count: 2, Rows: 2, Healthy: true}, {Epoch: "2026-08-16", Healthy: true}, {Epoch: "2026-08-17", Count: 3, Rows: 3, Healthy: true}}}),
+		Telemetry: activity.Telemetry{Dropped: 2, StoreFailures: 1, Flushes: 7, Pending: 4},
+	}}
+	mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.RemoteAddr = "198.51.100.77:4567"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+	req.Header.Set("User-Agent", "private-owner-agent")
+	req.SetBasicAuth("admin", secret)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		// The two headline labels are exact and load-bearing: they say ID, not
+		// user, and they name the period they actually cover.
+		"오늘 API 활동 ID", "이번 달 API 활동 ID",
+		">3<", ">9<",
+		// The copy must rule out the three readings an operator would
+		// otherwise reach for on its own.
+		"사람 수가 아니고", "MCP 클라이언트나 세션 수도", "달력 기준 월(UTC 1일부터 말일까지)", "최근 30일이 아니라",
+		"네트워크 추정치", "소유자 네트워크 제외", "사람/사용자 수가 아님", "이 활동 추정 수집기", "활동 추정 저장소",
+		"소유자 제외 1개", "소유자 제외 2개", "공유 NAT·통신사망·회사망", "되돌릴 수 없는 버킷 승격",
+		"CSX_ACTIVITY_HASH_KEY가 개인정보 보호 경계", "IPv4 버킷은 2^32 주소 공간 열거",
+		"키가 없거나 잘못되어 수집이 꺼진 동안에도", "현재 UTC 기간을 포함해 일 버킷 35개·월 버킷 13개", "서버의 다른 기능",
+		"대기열 포화 누락 2건", "저장 실패 1건", "성공 플러시 7회",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Korean estimate view missing %q", want)
+		}
+	}
+	for _, pii := range []string{"198.51.100.77", "203.0.113.99", "private-owner-agent"} {
+		if strings.Contains(body, pii) {
+			t.Errorf("dashboard returned request PII %q", pii)
+		}
+	}
+	if strings.Contains(body, "서버는 IP") || strings.Contains(body, "서버에 IP") {
+		t.Fatal("activity privacy copy makes an unsupported server-wide no-IP claim")
+	}
+	if reader.markCalls != 1 || reader.metricCalls != 1 {
+		t.Fatalf("activity calls = mark:%d metrics:%d, want 1 each", reader.markCalls, reader.metricCalls)
+	}
+}
+
+// The daily chart has to keep four claims apart: counted traffic, a
+// health-proven zero, a collection gap, and a day before collection.
+func TestDailyActivityChartSeparatesCountsHealthyZerosGapsAndPreCollectionDays(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
+	window := activity.BuildDailyWindow(now, activity.DailyRaw{
+		OldestEpoch: "2026-08-13",
+		Days: []activity.DayCount{
+			{Epoch: "2026-08-13", Count: 5, Rows: 5, Healthy: true},
+			{Epoch: "2026-08-15", Healthy: true},
+			// Observed, but every bucket was the owner's: counted evidence, not a gap.
+			{Epoch: "2026-08-16", Count: 0, OwnerExcluded: 2, Rows: 2, Healthy: true},
+			{Epoch: "2026-08-17", Count: 3, Rows: 3, Healthy: true},
+		},
+	})
+	plot := buildActivityDaily(window)
+	if len(plot.Pending) != activity.DailyWindowDays-5 {
+		t.Fatalf("pre-collection columns = %d, want %d", len(plot.Pending), activity.DailyWindowDays-5)
+	}
+	if len(plot.Gaps) != 1 || plot.Gaps[0].Day != "2026-08-14" {
+		t.Fatalf("gap columns = %+v, want only 2026-08-14", plot.Gaps)
+	}
+	if len(plot.HealthyZeros) != 1 || plot.HealthyZeros[0].Day != "2026-08-15" {
+		t.Fatalf("healthy-zero columns = %+v, want only 2026-08-15", plot.HealthyZeros)
+	}
+	if len(plot.Bars) != 3 {
+		t.Fatalf("counted columns = %d, want 3 (including the owner-only zero day)", len(plot.Bars))
+	}
+	if plot.Bars[1].Day != "2026-08-16" || plot.Bars[1].Value != 0 {
+		t.Fatalf("owner-only day = %+v, want a collected zero rather than a gap", plot.Bars[1])
+	}
+	if plot.Max != 5 || plot.DayFrom != "2026-07-18" || plot.DayTo != "2026-08-17" {
+		t.Fatalf("plot range = %s~%s max=%d", plot.DayFrom, plot.DayTo, plot.Max)
+	}
+	if plot.StartEpoch != "2026-08-13" || plot.GapDays != 1 || !plot.Collecting || plot.Empty {
+		t.Fatalf("plot summary = %+v", plot)
+	}
+	if !strings.Contains(plot.RangeNote, "수집 시작 2026-08-13") || !strings.Contains(plot.RangeNote, "수집 공백 1일") {
+		t.Fatalf("range note does not report collection start and gaps: %q", plot.RangeNote)
+	}
+
+	// Nothing retained at all must never render 31 zero bars.
+	empty := buildActivityDaily(activity.BuildDailyWindow(now, activity.DailyRaw{}))
+	if len(empty.Bars) != 0 || len(empty.Gaps) != 0 || len(empty.Pending) != activity.DailyWindowDays || !empty.Empty || empty.Collecting {
+		t.Fatalf("empty plot = %+v, want every column marked pre-collection", empty)
+	}
+}
+
+func TestExternalNetworkEstimateNoRequestAndOwnerMarkFailureStates(t *testing.T) {
+	t.Run("no request", func(t *testing.T) {
+		reader := &fakeActivityReader{}
+		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
+		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		if !strings.Contains(body, "아직 의미 있는 API 요청 없음") {
+			t.Fatalf("no-request state missing: %s", body)
+		}
+	})
+	t.Run("owner mark error", func(t *testing.T) {
+		reader := &fakeActivityReader{markErr: errors.New("db down")}
+		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
+		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		if !strings.Contains(body, "소유자 네트워크 제외를 확인할 수 없습니다") {
+			t.Fatalf("owner error missing: %s", body)
+		}
+		if reader.metricCalls != 0 {
+			t.Fatal("dashboard claimed metrics after owner exclusion failed")
+		}
+	})
+	t.Run("invalid dedicated key", func(t *testing.T) {
+		reader := &fakeActivityReader{markErr: activity.ErrInvalidKey}
+		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
+		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		if !strings.Contains(body, "활동 해시 키 구성이 올바르지 않아") {
+			t.Fatalf("invalid-key state missing: %s", body)
+		}
+	})
 }
 
 func serve(mux *http.ServeMux, method, target, username, secret string) *httptest.ResponseRecorder {

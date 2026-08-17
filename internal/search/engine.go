@@ -15,6 +15,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	searchrelevance "github.com/r2cuerdame/codesamplex/internal/search/relevance"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -79,6 +80,11 @@ type shardSampleEntry struct {
 	// Packages is what the sample's own manifest declares. It remains useful
 	// for relevance and disclosure, but never establishes a verified version.
 	Packages []string `json:"packages,omitempty"`
+	// Symbols is the bounded manifest-declared list carried by current
+	// shards. Older shards omit it; omission means exact failure attribution
+	// is unavailable, never that every package-level failure belongs to the
+	// sample.
+	Symbols []string `json:"symbols,omitempty"`
 	// Verifications keeps each resolved package set with the stages and
 	// environment of the receipt that established it. The legacy fields stay
 	// readable for old shards, but never establish a version.
@@ -186,7 +192,11 @@ func sampleIDFromDocID(docID string) string {
 // decay, and the known-failure demotion. Best score below the threshold
 // means NO_SAFE_MATCH: Miss=true, no results.
 func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
-	resp := domain.SearchResponse{SchemaVersion: 1, Results: []domain.SearchResult{}}
+	version := 1
+	if req.SchemaVersion >= 2 {
+		version = 2
+	}
+	resp := domain.SearchResponse{SchemaVersion: version, Results: []domain.SearchResult{}}
 	if e.DB == nil {
 		resp.Miss = true
 		return resp
@@ -311,6 +321,9 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					if len(existing.declared) == 0 {
 						existing.declared = parsePURLs(ss.Packages)
 					}
+					if len(existing.symbols) == 0 {
+						existing.symbols = append([]string(nil), ss.Symbols...)
+					}
 					for _, variant := range variantsFromShard(ss.Verifications) {
 						existing.verifications = appendVerification(existing.verifications, variant)
 						for _, verified := range variant.packages {
@@ -330,6 +343,7 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					env:            ss.Environment.Normalize(),
 					packages:       []domain.PURL{p},
 					declared:       parsePURLs(ss.Packages),
+					symbols:        append([]string(nil), ss.Symbols...),
 					verifications:  variantsFromShard(ss.Verifications),
 					contractStages: ss.ContractStages,
 				}
@@ -346,6 +360,7 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 					c.caseObj = &domain.Case{
 						SchemaVersion: 1, Kind: "HOW", Goal: ss.Goal,
 						Packages: ss.Packages,
+						Symbols:  append([]string(nil), ss.Symbols...),
 						// What the caller probably believes, which is the
 						// half of the answer a goal sentence cannot carry.
 						Believed: ss.Believed,
@@ -393,7 +408,8 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		// unspecified rather than grading the answer REFERENCE_ONLY.
 		askedPkgs = parsePURLs(req.ProjectPackages)
 	}
-	selection := selectGradeVariant(c, receipts, askedPkgs, reqEnv)
+	environmentContext := req.EnvironmentIsContext()
+	selection := selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, environmentContext)
 	rel, reqP, samP := selection.rel, selection.reqP, selection.samP
 	if len(reqPkgs) == 0 {
 		if len(askedPkgs) > 0 && rel > relNone {
@@ -429,10 +445,14 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	if fromTree {
 		base *= treeRelevanceFactor
 	}
-	if matchesSymbols(req.Symbols, c) {
+	declaredSymbolHit := len(matchingSymbols(req.Symbols, c)) > 0
+	contextSymbolHit := len(matchingSymbols(req.ContextSymbols, c)) > 0
+	if declaredSymbolHit || contextSymbolHit {
 		base += weightSymbol
 	}
-	fpHit, codeHit := errorHits(req, syms)
+	_, codeHit := errorHits(req, syms)
+	fingerprintPackages := candidateFingerprintPackages(req, selection.claims, evidence, c)
+	fpHit := len(fingerprintPackages) > 0
 	if fpHit {
 		base += weightErrorFingerprint
 	}
@@ -449,7 +469,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 
 	// Steps 6+9: environment gate, execution-context axis, known failures.
 	samEco := ecosystemOf(samP, reqEnv, c)
-	askedEnv := envAskedAbout(reqEnv, samEco)
+	askedEnv := envAskedAbout(reqEnv, samEco, environmentContext)
 	dims := compareEnv(askedEnv, selection.env, samEco)
 	cd := compareContext(askedEnv, selection.env)
 	matched := matchingFailures(reqEnv, syms)
@@ -480,7 +500,17 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	//
 	// Matching the caller's actual error is exempt: a fingerprint or code
 	// hit is direct evidence of relevance whatever the prose says.
-	if !fpHit && !codeHit && !aboutTheSameThing(req.Query, c) {
+	if len(req.Symbols) > 0 && !declaredSymbolHit {
+		score = 0
+	}
+	if !fpHit && !codeHit && !declaredSymbolHit && !aboutTheSameThing(req.Query, c) {
+		score = 0
+	}
+	// A package-less request searches the global candidate pool. An explicit
+	// ecosystem is a caller constraint there, not ambient project context;
+	// only a full declared-symbol match is strong enough to cross it.
+	if len(reqPkgs) == 0 && !environmentContext && reqEnv.Ecosystem != "" &&
+		!declaredSymbolHit && !candidateSupportsEcosystem(c, reqEnv.Ecosystem) {
 		score = 0
 	}
 
@@ -502,18 +532,20 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		score = 0
 	}
 
+	exactFailureMatched := fpHit && selectedContractPassed(selection, fingerprintPackages) && candidateHasContract(c)
 	res := domain.SearchResult{
-		Grade:         grade,
-		Confidence:    summary.Confidence,
-		Score:         score,
-		Case:          c.caseObj,
-		SampleID:      c.sampleID,
-		SampleStatus:  c.status,
-		Exact:         exact,
-		Different:     different,
-		Adaptation:    adaptations,
-		Evidence:      summary,
-		KnownFailures: knownFailures(matched),
+		Grade:               grade,
+		Confidence:          summary.Confidence,
+		Score:               score,
+		Case:                c.caseObj,
+		SampleID:            c.sampleID,
+		SampleStatus:        c.status,
+		ExactFailureMatched: exactFailureMatched,
+		Exact:               exact,
+		Different:           different,
+		Adaptation:          adaptations,
+		Evidence:            summary,
+		KnownFailures:       knownFailures(matched),
 	}
 	return res, score
 }
@@ -634,6 +666,113 @@ func errorHits(req domain.SearchRequest, syms []shardSymbolEntry) (fp, code bool
 	return fp, code
 }
 
+// candidateFingerprintPackages binds every fingerprint match to the package
+// whose failure evidence contained it. Flattening all package symbols into
+// one slice loses that identity and lets a PASS for another dependency earn
+// an exact detour.
+func candidateFingerprintPackages(req domain.SearchRequest, claims []packageClaim,
+	evidence map[string]*pkgEvidence, c *candidate) []domain.PURL {
+	explicit := make(map[string]bool, len(req.Packages))
+	for _, raw := range req.Packages {
+		if p, err := domain.ParsePURL(raw); err == nil && p.String() == raw {
+			explicit[p.String()] = true
+		}
+	}
+	var matched []domain.PURL
+	seen := map[string]bool{}
+	for _, claim := range claims {
+		p := claim.purl
+		// Project/package claims widen discovery only when the caller omitted
+		// packages. Once req.Packages is explicit, a failure must belong to
+		// that exact canonical PURL (including version). Otherwise an axios-
+		// only request can become an exact detour through a lodash claim from
+		// the same multi-package sample.
+		if len(req.Packages) > 0 && !explicit[p.String()] {
+			continue
+		}
+		key := pkgKey(p)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pe := evidence[key]
+		if pe == nil {
+			continue
+		}
+		found := false
+		for _, s := range pe.symbols {
+			if !candidateDeclaresSymbol(c, s.Family) {
+				continue
+			}
+			for _, f := range s.Failures {
+				if f.Fingerprint != "" && matchesAnyFingerprint(req, f.Fingerprint) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if found {
+			matched = append(matched, p)
+		}
+	}
+	return matched
+}
+
+func candidateDeclaresSymbol(c *candidate, symbol string) bool {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" || c == nil {
+		return false
+	}
+	for _, declared := range c.symbols {
+		declared = strings.TrimSpace(declared)
+		if declared != "" && strings.EqualFold(declared, symbol) {
+			return true
+		}
+	}
+	if c.caseObj != nil {
+		for _, declared := range c.caseObj.Symbols {
+			declared = strings.TrimSpace(declared)
+			if declared != "" && strings.EqualFold(declared, symbol) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func candidateHasContract(c *candidate) bool {
+	if c == nil || c.caseObj == nil {
+		return false
+	}
+	for _, line := range c.caseObj.Contract {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func selectedContractPassed(selection gradeSelection, failurePackages []domain.PURL) bool {
+	if selection.stages["contract"] != string(domain.ResultPass) || len(selection.resolved) == 0 {
+		return false
+	}
+	for _, resolved := range selection.resolved {
+		for _, failed := range failurePackages {
+			if samePackageIdentity(resolved, failed) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func samePackageIdentity(a, b domain.PURL) bool {
+	return strings.EqualFold(a.Ecosystem, b.Ecosystem) && strings.EqualFold(a.Name, b.Name)
+}
+
 // matchingFailures returns the shard failures whose envSummary matches the
 // requester environment — the clusters that would bite THIS user.
 func matchingFailures(reqEnv domain.EnvironmentFingerprint, syms []shardSymbolEntry) []shardFailure {
@@ -745,15 +884,6 @@ func knownFailures(matched []shardFailure) []domain.KnownFailure {
 // stopWords are ignored when judging what a question is ABOUT. Counting
 // them let "how to bake a chocolate cake" overlap the goal "…validate a
 // UUID in Go…" on the word "a", which is not a topic in common.
-var stopWords = map[string]bool{
-	"the": true, "and": true, "for": true, "with": true, "from": true,
-	"how": true, "why": true, "what": true, "when": true, "does": true,
-	"can": true, "you": true, "your": true, "this": true, "that": true,
-	"into": true, "out": true, "not": true, "but": true, "get": true,
-	"use": true, "using": true, "make": true, "want": true, "need": true,
-	"there": true, "here": true, "some": true, "any": true, "all": true,
-}
-
 // contentTokens reduces text to the words that carry its topic: lowercase,
 // split on every non-alphanumeric boundary, no stop words, nothing shorter
 // than three letters.
@@ -773,52 +903,12 @@ var stopWords = map[string]bool{
 // about protobuf on Alpine with a sample about parsing ambiguous dates,
 // graded COMPATIBLE at 0.79. The same hole sits under go-*, node-*, rust-*,
 // java-*, php-* and every *-sdk, *-client and *-utils in every registry.
-var genericNameWords = map[string]bool{
-	"python": true, "python3": true, "node": true, "nodejs": true,
-	"javascript": true, "typescript": true, "golang": true, "rust": true,
-	"ruby": true, "php": true, "java": true, "kotlin": true, "swift": true,
-	"dart": true, "flutter": true, "elixir": true, "erlang": true,
-	"deno": true, "bun": true, "dotnet": true, "csharp": true, "perl": true,
-	"scala": true, "haskell": true,
-
-	"lib": true, "libs": true, "core": true, "util": true, "utils": true,
-	"common": true, "api": true, "sdk": true, "client": true, "server": true,
-	"tools": true, "toolkit": true, "plugin": true, "plugins": true,
-	"package": true, "packages": true, "module": true, "modules": true,
-	"helper": true, "helpers": true,
-}
-
 // containsWord reports whether word appears in s delimited by something
 // other than a letter or digit. A plain substring test is far too loose for
 // the short names this exists to catch: a package named "go" would be named
 // by any question mentioning mongodb, django or google.
 func containsWord(s, word string) bool {
-	if word == "" {
-		return false
-	}
-	for i := 0; ; {
-		j := strings.Index(s[i:], word)
-		if j < 0 {
-			return false
-		}
-		start := i + j
-		end := start + len(word)
-		if !alnumAt(s, start-1) && !alnumAt(s, end) {
-			return true
-		}
-		i = start + 1
-		if i >= len(s) {
-			return false
-		}
-	}
-}
-
-func alnumAt(s string, i int) bool {
-	if i < 0 || i >= len(s) {
-		return false
-	}
-	r := s[i]
-	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z'
+	return searchrelevance.ContainsIdentifier(s, word)
 }
 
 // nameTokens returns the parts of a package name that actually identify it.
@@ -827,27 +917,11 @@ func alnumAt(s string, i int) bool {
 // is a generic word ("go", "core") is still nameable by it — there the word
 // IS the identifier rather than a prefix.
 func nameTokens(name string) []string {
-	name = strings.ToLower(strings.TrimPrefix(name, "@"))
-	out := []string{name}
-	for _, t := range contentTokens(name) {
-		if !genericNameWords[t] {
-			out = append(out, t)
-		}
-	}
-	return out
+	return searchrelevance.NameTokens(name)
 }
 
 func contentTokens(s string) []string {
-	var out []string
-	for _, f := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
-	}) {
-		if len(f) < 3 || stopWords[f] {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+	return searchrelevance.ContentTokens(s)
 }
 
 // sharedIntent reports how many content words the question has in common
@@ -923,48 +997,18 @@ func intentSignal(query string, c *candidate) (strong, prose int) {
 	if c == nil {
 		return 0, 0
 	}
-	strongSet, proseSet := map[string]bool{}, map[string]bool{}
-	add := func(m map[string]bool, text string) {
-		for _, t := range contentTokens(text) {
-			m[t] = true
-		}
-	}
+	goal := ""
+	var symbols []string
 	if c.caseObj != nil {
-		add(proseSet, c.caseObj.Goal)
-		for _, sym := range c.caseObj.Symbols {
-			add(strongSet, sym)
-		}
+		goal = c.caseObj.Goal
+		symbols = append(symbols, c.caseObj.Symbols...)
 	}
-	for _, sym := range c.symbols {
-		add(strongSet, sym)
-	}
+	symbols = append(symbols, c.symbols...)
+	var names []string
 	for _, pkg := range c.packages {
-		// "react", "axios" — how people name the thing. NOT every word in
-		// the name: see nameTokens.
-		for _, t := range nameTokens(pkg.Name) {
-			strongSet[t] = true
-		}
+		names = append(names, pkg.Name)
 	}
-	// A short or hyphenated name typed in full ("go", "python-dateutil")
-	// never survives tokenization as one word, so it is matched against the
-	// question directly.
-	lq := strings.ToLower(query)
-	for _, pkg := range c.packages {
-		n := strings.ToLower(pkg.Name)
-		if n != "" && !genericNameWords[n] && containsWord(lq, n) {
-			strong++
-			break
-		}
-	}
-	for _, t := range contentTokens(query) {
-		switch {
-		case strongSet[t]:
-			strong++
-		case proseSet[t]:
-			prose++
-		}
-	}
-	return strong, prose
+	return searchrelevance.Signal(query, goal, names, symbols)
 }
 
 func intentOverlap(query string, c *candidate) float64 {
@@ -975,23 +1019,20 @@ func intentOverlap(query string, c *candidate) float64 {
 	return float64(sharedIntent(query, c)) / float64(len(q))
 }
 
-// matchesSymbols reports whether any requested symbol family matches the
-// candidate's declared symbols.
-func matchesSymbols(reqSyms []string, c *candidate) bool {
-	if len(reqSyms) == 0 {
-		return false
-	}
-	have := map[string]bool{}
-	for _, s := range c.symbols {
-		have[strings.ToLower(s)] = true
-	}
+// matchingSymbols returns the candidate's actual declared identities matched
+// by the request.
+func matchingSymbols(reqSyms []string, c *candidate) []string {
+	var declared []string
+	declared = append(declared, c.symbols...)
 	if c.caseObj != nil {
-		for _, s := range c.caseObj.Symbols {
-			have[strings.ToLower(s)] = true
-		}
+		declared = append(declared, c.caseObj.Symbols...)
 	}
-	for _, s := range reqSyms {
-		if have[strings.ToLower(s)] {
+	return searchrelevance.MatchedDeclaredSymbols(reqSyms, declared)
+}
+
+func candidateSupportsEcosystem(c *candidate, ecosystem string) bool {
+	for _, p := range c.packages {
+		if strings.EqualFold(p.Ecosystem, ecosystem) {
 			return true
 		}
 	}
@@ -1018,8 +1059,11 @@ func matchesSymbols(reqSyms []string, c *candidate) bool {
 // The host axes stay: os, arch, libc, virtualization and CI are true of
 // the machine whatever the question is about, and they are exactly the
 // dimensions a cross-ecosystem answer still needs to be honest about.
-func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string) domain.EnvironmentFingerprint {
+func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string, inferred bool) domain.EnvironmentFingerprint {
 	if samEcosystem == "" || req.Ecosystem == "" || strings.EqualFold(req.Ecosystem, samEcosystem) {
+		return req
+	}
+	if !inferred {
 		return req
 	}
 	req.Ecosystem = ""
@@ -1096,6 +1140,10 @@ type gradeSelection struct {
 	env      domain.EnvironmentFingerprint
 	stages   map[string]string
 	receipts []domain.VerificationReceipt
+	// resolved is the exact package set of the selected receipt/shard
+	// verification variant. It is deliberately empty for aggregate legacy
+	// contractStages and v1 receipts, which cannot bind a PASS to a package.
+	resolved []domain.PURL
 	level    int
 	created  time.Time
 }
@@ -1104,7 +1152,13 @@ type gradeSelection struct {
 // unions package versions from different receipts. Declared identities not
 // present in that execution remain package-only claims, so resolving axios
 // does not make a declared zod dependency disappear from search.
-func selectGradeVariant(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL, reqEnv domain.EnvironmentFingerprint) gradeSelection {
+func selectGradeVariant(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL,
+	reqEnv domain.EnvironmentFingerprint) gradeSelection {
+	return selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, false)
+}
+
+func selectGradeVariantWithProvenance(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL,
+	reqEnv domain.EnvironmentFingerprint, environmentInferred bool) gradeSelection {
 	variants := append([]verificationVariant(nil), c.verifications...)
 	for i := range receipts {
 		packages := verifiedPURLsFromReceipt(receipts[i])
@@ -1144,23 +1198,26 @@ func selectGradeVariant(c *candidate, receipts []domain.VerificationReceipt, ask
 		selection := gradeSelection{
 			claims: claims, rel: rel, reqP: reqP, samP: samP,
 			env: variant.env.Normalize(), stages: variant.stages,
-			receipts: matching, level: level, created: variant.created,
+			receipts: matching, resolved: append([]domain.PURL(nil), variant.packages...),
+			level: level, created: variant.created,
 		}
-		if !haveBest || betterGradeSelection(selection, best, reqEnv, c) {
+		if !haveBest || betterGradeSelection(selection, best, reqEnv, environmentInferred, c) {
 			best, haveBest = selection, true
 		}
 	}
 	return best
 }
 
-func betterGradeSelection(a, b gradeSelection, reqEnv domain.EnvironmentFingerprint, c *candidate) bool {
+func betterGradeSelection(a, b gradeSelection, reqEnv domain.EnvironmentFingerprint,
+	environmentInferred bool, c *candidate) bool {
 	if a.rel != b.rel {
 		return a.rel > b.rel
 	}
 	if ar, br := stageVerdictRank(a.stages), stageVerdictRank(b.stages); ar != br {
 		return ar > br
 	}
-	if ar, br := selectionEnvironmentRank(a, reqEnv, c), selectionEnvironmentRank(b, reqEnv, c); ar != br {
+	if ar, br := selectionEnvironmentRank(a, reqEnv, environmentInferred, c),
+		selectionEnvironmentRank(b, reqEnv, environmentInferred, c); ar != br {
 		return ar > br
 	}
 	if a.level != b.level {
@@ -1183,9 +1240,10 @@ func stageVerdictRank(stages map[string]string) int {
 	}
 }
 
-func selectionEnvironmentRank(s gradeSelection, reqEnv domain.EnvironmentFingerprint, c *candidate) int {
+func selectionEnvironmentRank(s gradeSelection, reqEnv domain.EnvironmentFingerprint,
+	environmentInferred bool, c *candidate) int {
 	ecosystem := ecosystemOf(s.samP, reqEnv, c)
-	asked := envAskedAbout(reqEnv, ecosystem)
+	asked := envAskedAbout(reqEnv, ecosystem, environmentInferred)
 	grade, _ := buildGrade(s.rel, compareEnv(asked, s.env, ecosystem), compareContext(asked, s.env), false)
 	switch grade {
 	case domain.GradeExact:

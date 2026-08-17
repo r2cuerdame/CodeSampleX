@@ -111,6 +111,11 @@ type landingPage struct {
 	Support     []supportRow
 	InstallPS   string
 	InstallSH   string
+	// LLMPrompt is the ready-to-paste instruction for the coding agent the
+	// visitor already has open. It is rendered visibly AND carried in the
+	// copy button's data attribute, from this one field, so the text a
+	// reader checks is byte-for-byte the text their agent receives.
+	LLMPrompt string
 	// Findings are the few measured contradictions shown on the home page.
 	//
 	// The rest of this page EXPLAINS why the network is needed; these PROVE
@@ -220,8 +225,21 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		Support:     buildSupport(lang),
 		InstallPS:   "irm " + base + "/install.ps1 | iex",
 		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",
+		LLMPrompt:   llmPrompt(lang, base),
 		Findings:    homeFindings(lang),
 	})
+}
+
+// llmPrompt renders the "let your agent install it" prompt for one locale.
+//
+// The two %s are this deployment's own origin, so the installer URLs a
+// visitor hands to an agent are the ones they are reading the page on
+// rather than a hard-coded hostname. Everything the prompt asks the agent
+// to run is a published CodeSampleX command; it names no third-party
+// client that csx has not been measured against, asks for no credential,
+// and tells the agent to ADD to an MCP config rather than replace it.
+func llmPrompt(lang, base string) string {
+	return i18n.T(lang, "landing.llm_prompt", base, base)
 }
 
 // homeFindingsShown is how many measured contradictions the front page

@@ -26,11 +26,14 @@
 	# The private operator dashboard needs API request volume, not identities.
 	# Keep a dedicated, privacy-safe log instead of exposing the historical
 	# access.log (which predates query stripping) to the application container.
-	# remote_ip is dropped rather than kept: an IP is personal data, this
-	# network's whole posture is that it does not collect any (goal.md
-	# §8.6), and it is not needed to count endpoint activity. These counters
-	# answer which APIs ran and how often; they cannot identify users, humans,
-	# installations or active MCP sessions.
+	# This safe API activity/access-log collector drops remote_ip because an IP
+	# is personal data and is not needed to count endpoint activity. These
+	# counters answer which API route groups ran and how often; this statement
+	# is deliberately limited to this collector. Other CodeSampleX server
+	# features have their own documented storage and privacy boundaries.
+	# In particular, the application separately stores key-scoped network
+	# pseudonyms in activity_buckets: CSX_ACTIVITY_HASH_KEY is their privacy
+	# boundary, and IPv4 buckets are enumerable if that colocated key is lost.
 	# Website, admin and health-check traffic are not API calls and would burn
 	# the bounded retention window without improving this metric.
 	# Allowlist only route families owned by this server. If an unknown 404

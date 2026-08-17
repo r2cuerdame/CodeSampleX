@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // The MCP path stopped queueing adoption uploads outside community mode
@@ -20,9 +21,18 @@ func TestAdoptionIsNotQueuedOutsideCommunityMode(t *testing.T) {
 		home := newTestHome(t, func(cfg *config.Config) { cfg.Mode = mode })
 		d, c := startDaemon(t, home)
 		seedSample(t, d, "sha256:ccc3")
+		resp, err := c.Search(ctx, domain.SearchRequest{
+			SchemaVersion: 1,
+			Query:         "upload multipart form with axios",
+			Packages:      []string{"pkg:npm/axios@1.12.0"},
+			Environment:   testEnv(),
+		})
+		if err != nil || resp.Miss || len(resp.Results) == 0 || resp.OfferID == "" {
+			t.Fatalf("mode %q: search before adoption: resp=%+v err=%v", mode, resp, err)
+		}
 
 		pass := true
-		if err := c.Adopt(ctx, AdoptionRequest{SampleID: "sha256:ccc3", Applied: true, BuildPass: &pass}); err != nil {
+		if err := c.Adopt(ctx, AdoptionRequest{OfferID: resp.OfferID, SampleID: "sha256:ccc3", Applied: true, BuildPass: &pass}); err != nil {
 			t.Fatalf("mode %q: adopt: %v", mode, err)
 		}
 		// The local record is kept — that is what list_local_hits reads.

@@ -10,6 +10,7 @@ func TestConfigFromEnvDefaults(t *testing.T) {
 		"CSX_DSN", "CSX_LISTEN", "CSX_BLOB_DIR", "CSX_PUBLIC_URL",
 		"CSX_PUBLIC_CHECK", "CSX_SNAPSHOT_INTERVAL",
 		"CSX_GITHUB_CLIENT_ID", "CSX_GITHUB_CLIENT_SECRET",
+		"CSX_ACTIVITY_HASH_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -37,6 +38,7 @@ func TestConfigFromEnvOverrides(t *testing.T) {
 	t.Setenv("CSX_SNAPSHOT_INTERVAL", "5s")
 	t.Setenv("CSX_GITHUB_CLIENT_ID", "cid")
 	t.Setenv("CSX_GITHUB_CLIENT_SECRET", "sec")
+	t.Setenv("CSX_ACTIVITY_HASH_KEY", "activity-only-key")
 
 	cfg := ConfigFromEnv()
 	if cfg.DSN != "postgres://u:p@localhost:5432/csx" {
@@ -51,6 +53,9 @@ func TestConfigFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.GithubClientID != "cid" || cfg.GithubClientSecret != "sec" {
 		t.Errorf("github creds not read: %+v", cfg)
+	}
+	if cfg.ActivityHashKey != "activity-only-key" {
+		t.Errorf("activity key not read")
 	}
 }
 

@@ -45,7 +45,7 @@ func TestNewDepsReloadsCommunityRevocationBeforeRemoteWork(t *testing.T) {
 		Packages:      []string{"pkg:npm/left-pad@1.3.0"},
 		Symbols:       []string{"leftPad"},
 	}
-	if resp := deps.Search(t.Context(), first); !resp.Miss {
+	if resp, _ := deps.Search(t.Context(), first); !resp.Miss {
 		t.Fatal("empty community cache unexpectedly returned a hit")
 	}
 	if remoteCalls.Load() == 0 {
@@ -73,7 +73,7 @@ func TestNewDepsReloadsCommunityRevocationBeforeRemoteWork(t *testing.T) {
 		Packages:      []string{"pkg:npm/is-even@1.0.0"},
 		Symbols:       []string{"isEven"},
 	}
-	if resp := deps.Search(t.Context(), second); !resp.Miss {
+	if resp, _ := deps.Search(t.Context(), second); !resp.Miss {
 		t.Fatal("empty local-only cache unexpectedly returned a hit")
 	}
 
@@ -92,7 +92,21 @@ func TestNewDepsReloadsCommunityRevocationBeforeRemoteWork(t *testing.T) {
 	// Adoption and run evidence are also upload queues. Both remain useful
 	// locally, but a post-revocation call may not add an uploadable row.
 	pass := true
-	if err := deps.ReportAdoption(t.Context(), missingID, true, &pass); err != nil {
+	correlationDB, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	offerID, err := correlationDB.RecordSearchOffer(t.Context(), localdb.HitRow{SampleID: missingID}, localdb.InterventionRow{
+		SampleID: missingID, ExactFailureMatched: true, VerifiedOffer: true,
+	})
+	if err != nil {
+		correlationDB.Close()
+		t.Fatal(err)
+	}
+	if err := correlationDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deps.ReportAdoption(t.Context(), offerID, missingID, true, &pass); err != nil {
 		t.Fatalf("record local adoption: %v", err)
 	}
 	project := t.TempDir()

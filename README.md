@@ -109,6 +109,24 @@ Never shared automatically
 
 This is not hidden telemetry — it is the protocol. Community peers are consumers **and** producers. Local-only mode never sends anything. The privacy preview in `csx ui` shows the exact payloads before they leave your machine.
 
+## Contributor Worker (VERIFY MVP)
+
+An installed `csx` binary can contribute spare compute without reading a user project:
+
+```bash
+csx init --community
+csx worker start                         # idle-aware, 2 Docker lanes
+csx worker start --parallel 4 --budget 15m
+csx worker start --once                  # claim at most one available job
+csx worker start --budget unlimited      # run until Ctrl-C
+```
+
+The public worker currently supports **VERIFY only**. It requests only server-assigned jobs whose declarative reason is `cross`; the queue does not send an arbitrary host shell command. The worker downloads the content-addressed public artifact, verifies its hash before unpacking, and runs the artifact's declared stages in a disposable Docker workspace through the same pinned verifier pipeline used by CodeSampleX. Resolve is containerized; build and contract stages are containerized with the network disabled. Downloaded sample code is never executed directly on the host, and a missing or unreachable Docker daemon is a hard refusal rather than a native fallback. Each container already enforces the runner's fixed `512m` memory and `256` PID limits. An accepted result is submitted as the existing ed25519-signed v2 verification receipt; raw stage logs stay local.
+
+`--parallel` is deliberately bounded to `1..8`; `--budget` accepts `5m`, `15m`, `idle`, or `unlimited`; Ctrl-C cancels active stages and stops cleanly. The foreground display reports only this process's measured completed/failed counts. It does not claim global users or contributors.
+
+`EXPAND` (testing a sample against a different version/environment) and `CREATE` (authoring a new sample) are **not available** in this public MVP, because the worker does not yet enforce arbitrary requested environment matrices or run an authoring model. Consequently, this worker cross-verifies existing published samples; it does not itself create the new source needed to close a Wanted request.
+
 ## How it works
 
 ```text

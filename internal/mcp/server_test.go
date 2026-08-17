@@ -127,8 +127,8 @@ func rpcErrorCode(t *testing.T, resp map[string]any) int {
 // override the functions they exercise.
 func emptyDeps() *Deps {
 	return &Deps{
-		Search: func(context.Context, domain.SearchRequest) domain.SearchResponse {
-			return domain.SearchResponse{SchemaVersion: 1, Miss: true, Results: []domain.SearchResult{}}
+		Search: func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
+			return domain.SearchResponse{SchemaVersion: 1, Miss: true, Results: []domain.SearchResult{}}, ""
 		},
 		GetSample: func(context.Context, string) (domain.SampleManifest, map[string]string, error) {
 			return domain.SampleManifest{}, nil, fmt.Errorf("not wired")
@@ -139,8 +139,8 @@ func emptyDeps() *Deps {
 		RunObserved: func(context.Context, []string, string) (int, string, string, []string, error) {
 			return 0, "", "", nil, fmt.Errorf("not wired")
 		},
-		ReportAdoption: func(context.Context, string, bool, *bool) error {
-			return fmt.Errorf("not wired")
+		ReportAdoption: func(context.Context, string, string, bool, *bool) (localdb.InterventionOutcome, error) {
+			return localdb.InterventionOutcome{}, fmt.Errorf("not wired")
 		},
 		Propose: func(context.Context, string, []string, []string) (samples.SanitizedSpec, string, string, error) {
 			return samples.SanitizedSpec{}, "", "", fmt.Errorf("not wired")
@@ -252,7 +252,7 @@ func TestToolsListSchemas(t *testing.T) {
 		"get_sample":             {"sampleId"},
 		"explain_compatibility":  {"package"},
 		"run_observed_command":   {"command"},
-		"report_sample_adoption": {"sampleId", "applied"},
+		"report_sample_adoption": {"offerId", "sampleId", "applied"},
 		"propose_public_sample":  {"goal", "packages"},
 		"list_local_hits":        {},
 		"get_local_stats":        {},

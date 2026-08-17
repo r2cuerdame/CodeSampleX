@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/r2cuerdame/codesamplex/internal/config"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/search"
@@ -44,9 +46,19 @@ type SampleInfo struct {
 // AdoptionRequest is the POST /local/v1/adoption body (MCP
 // report_sample_adoption lands here too).
 type AdoptionRequest struct {
+	OfferID   string `json:"offerId"`
 	SampleID  string `json:"sampleId"`
 	Applied   bool   `json:"applied"`
 	BuildPass *bool  `json:"buildPass,omitempty"`
+}
+
+// LocalSearchResponse extends a public search response with the opaque
+// capability needed to report on this exact local offer. Keeping the field
+// here prevents it from entering domain.SearchResponse, the public v1 schema,
+// shard documents, or upload payloads.
+type LocalSearchResponse struct {
+	domain.SearchResponse
+	OfferID string `json:"offerId,omitempty"`
 }
 
 // adoptionEvidence is the queued ADOPTION_EVIDENCE payload. By
@@ -156,6 +168,39 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// normalizeLocalSearchRequest is the only legacy-softening boundary. Before
+// v2, csx CLI put scanner-derived symbols in symbols and had no provenance;
+// public/MCP inputs do not pass through this endpoint and remain fail-closed.
+// New CLIs retain a symbols compatibility copy for old daemons, then mark it
+// context so a new daemon can remove the exclusion again.
+func normalizeLocalSearchRequest(req *domain.SearchRequest) {
+	if req == nil {
+		return
+	}
+	legacyCLI := req.SchemaVersion < 2 && req.SymbolProvenance == "" && len(req.Symbols) > 0
+	contextCopy := req.SymbolProvenance == domain.SearchProvenanceContext
+	if legacyCLI || contextCopy {
+		seen := make(map[string]bool, len(req.ContextSymbols)+len(req.Symbols))
+		merged := make([]string, 0, len(req.ContextSymbols)+len(req.Symbols))
+		for _, symbols := range [][]string{req.ContextSymbols, req.Symbols} {
+			for _, symbol := range symbols {
+				key := strings.ToLower(strings.TrimSpace(symbol))
+				if key == "" || seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, symbol)
+			}
+		}
+		req.ContextSymbols = merged
+		req.Symbols = nil
+		req.SymbolProvenance = domain.SearchProvenanceContext
+	}
+	if legacyCLI && req.EnvironmentProvenance == "" {
+		req.EnvironmentProvenance = domain.SearchProvenanceContext
+	}
+}
+
 func (d *Daemon) handleSample(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -200,58 +245,52 @@ func (d *Daemon) handleAdoption(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "sampleId required")
 		return
 	}
-	hit := localdb.HitRow{
-		TS:       time.Now().UTC(),
-		SampleID: req.SampleID,
-		Adopted:  req.Applied,
+	if req.OfferID == "" {
+		writeErr(w, http.StatusBadRequest, localdb.ErrOfferIDRequired.Error())
+		return
 	}
+	var pass sql.NullBool
 	if req.BuildPass != nil {
-		hit.PostBuildPass = sql.NullBool{Bool: *req.BuildPass, Valid: true}
+		pass = sql.NullBool{Bool: *req.BuildPass, Valid: true}
 	}
-	// An adoption is what HAPPENED to a search, not a second search. The
-	// MCP path was fixed for this; the HTTP path was not, so a search
-	// followed by an adoption counted as two hits here -- and every rate
-	// with hits in its denominator was diluted by exactly the reports that
-	// prove the network works.
-	updated, err := d.DB.MarkAdopted(ctx, req.SampleID, req.Applied, hit.PostBuildPass)
+	outboxPayload := ""
+	if d.Cfg != nil && d.Cfg.Mode == config.ModeCommunity {
+		epoch := time.Now().UTC().Format("2006-01-02")
+		payload, err := json.Marshal(adoptionEvidence{
+			SchemaVersion: 1,
+			EvidenceClass: string(domain.ClassAdoptionEvidence),
+			Epoch:         epoch,
+			AnonID:        d.Ident.AnonID(epoch),
+			SampleID:      req.SampleID,
+			Applied:       req.Applied,
+			BuildPass:     req.BuildPass,
+		})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		outboxPayload = string(payload)
+	}
+	// Only a local search offer can be adopted. Without that correlation an
+	// arbitrary sample id says nothing about what CodeSampleX showed, so it
+	// must not become either a journey row or upload evidence. In community
+	// mode the update and outbox insert are one transaction, so an enqueue
+	// failure leaves the offer token retryable and is returned to the caller.
+	outcome, err := d.DB.CorrelateInterventionAdoption(ctx, req.OfferID, req.SampleID, req.Applied, pass, outboxPayload)
+	if errors.Is(err, localdb.ErrNoEligibleIntervention) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !updated {
-		// No search on this machine led here: an agent may report an
-		// adoption for a sample it obtained another way. That is worth
-		// recording, and it is one event.
-		if err := d.DB.RecordHit(ctx, hit); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
 	_ = d.DB.TouchSample(ctx, req.SampleID)
-
-	epoch := time.Now().UTC().Format("2006-01-02")
-	payload, err := json.Marshal(adoptionEvidence{
-		SchemaVersion: 1,
-		EvidenceClass: string(domain.ClassAdoptionEvidence),
-		Epoch:         epoch,
-		AnonID:        d.Ident.AnonID(epoch),
-		SampleID:      req.SampleID,
-		Applied:       req.Applied,
-		BuildPass:     req.BuildPass,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"recorded":               true,
+		"uploadQueued":           outcome.UploadQueued,
+		"reportedFailureAvoided": outcome.ReportedFailureAvoided(),
 	})
-	// Community mode only, exactly like the MCP path.
-	//
-	// That path was fixed earlier tonight and this one was not: the same
-	// report, arriving through the local HTTP API instead of the tool, was
-	// still queued for upload in local-only mode. Nothing drains the queue
-	// there, so nothing actually left — but the row was written on the
-	// promise that it would be sent, and a user who chose the mode that
-	// sends nothing had a payload with their anonID sitting in a queue
-	// named "upload".
-	if err == nil && d.Cfg != nil && d.Cfg.Mode == config.ModeCommunity {
-		_, _ = d.DB.Enqueue(ctx, "adoption", string(payload))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"recorded": true})
 }
 
 func (d *Daemon) handleQueue(w http.ResponseWriter, r *http.Request) {
@@ -349,7 +388,8 @@ func (d *Daemon) handleShutdown(w http.ResponseWriter, r *http.Request) {
 //
 // Queries never leave the machine — the hits table is local and is never
 // uploaded — and a recording failure must not break a search.
-func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) LocalSearchResponse {
+	normalizeLocalSearchRequest(&req)
 	resp := d.Engine.Search(ctx, req)
 	// A miss for a package this machine never synced describes the local
 	// cache, not the network. Fetch the named packages' shards once and
@@ -363,12 +403,18 @@ func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) 
 		// A miss is a demand signal. Queued rather than posted: the queue
 		// retries, works offline, and a search never waits on it.
 		evidence.QueueWanted(ctx, d.DB, d.Ident, d.Cfg, req)
-		return resp
+		return LocalSearchResponse{SearchResponse: resp}
 	}
 	top := resp.Results[0]
-	_ = d.DB.RecordHit(ctx, localdb.HitRow{
-		TS: time.Now().UTC(), Query: req.Query,
+	now := time.Now().UTC()
+	offerID, _ := d.DB.RecordSearchOffer(ctx, localdb.HitRow{
+		TS: now, Query: req.Query,
 		Grade: top.Grade, SampleID: top.SampleID,
+	}, localdb.InterventionRow{
+		TS:                  now,
+		SampleID:            top.SampleID,
+		ExactFailureMatched: top.ExactFailureMatched,
+		VerifiedOffer:       top.VerifiedOffer(),
 	})
-	return resp
+	return LocalSearchResponse{SearchResponse: resp, OfferID: offerID}
 }

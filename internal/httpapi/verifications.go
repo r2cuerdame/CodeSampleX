@@ -404,10 +404,15 @@ func spansContextBoundary(infos []compatibility.ReceiptInfo) bool {
 	return len(oses) >= 2 || len(runtimeMajors) >= 2 || len(browsers) >= 2
 }
 
-// handleJobsList implements GET /v1/verification/jobs?peerId=&capability=&limit=.
+// handleJobsList implements GET /v1/verification/jobs?peerId=&capability=&reason=&limit=.
 func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	capability := q.Get("capability")
+	reason := q.Get("reason")
+	if reason != "" && reason != "cross" && reason != "matrix" {
+		writeErr(w, http.StatusBadRequest, "reason must be cross or matrix")
+		return
+	}
 	limit := 10
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
@@ -417,7 +422,7 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 	// peerId has always been sent by the client and never read. A peer
 	// that already filed a receipt for a sample cannot cross-verify it, and
 	// offering it the job takes that job away from a peer who could.
-	jobs, err := a.d.Store.OpenJobs(r.Context(), capability, q.Get("peerId"), limit)
+	jobs, err := a.d.Store.OpenJobs(r.Context(), capability, q.Get("peerId"), reason, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "job listing failed")
 		return

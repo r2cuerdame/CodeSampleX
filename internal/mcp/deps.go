@@ -146,7 +146,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		// not, so get_local_stats, csx stats and csx ui reported 0 hits
 		// forever — for the surface the product is actually used through.
 		// A counter presented to the user as fact has to be one.
-		Search: func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		Search: func(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
 			resp := engine.Search(ctx, req)
 			// One retry, and only when the miss might be about a shard we
 			// never had: fetch the named packages' shards, then ask again.
@@ -164,9 +164,9 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			// Reload again: mode may have changed while a community shard fetch
 			// was in flight. A miss observed after revocation must not become a
 			// Wanted upload candidate.
-			recordSearchOutcomeReloaded(ctx, db, ident,
+			offerID := recordSearchOutcomeReloaded(ctx, db, ident,
 				func() *config.Config { return currentConfig(home) }, req, resp)
-			return resp
+			return resp, offerID
 		},
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
 			return getSample(ctx, db, store, fetcher, id)
@@ -192,9 +192,9 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			return runObserved(ctx, db, ident, currentConfig(home), registryHTTP,
 				func() *config.Config { return currentConfig(home) }, argv, cwd)
 		},
-		ReportAdoption: func(ctx context.Context, sampleID string, applied bool, buildPass *bool) error {
+		ReportAdoption: func(ctx context.Context, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error) {
 			return reportAdoptionReloaded(ctx, db, ident, currentConfig(home),
-				func() *config.Config { return currentConfig(home) }, sampleID, applied, buildPass)
+				func() *config.Config { return currentConfig(home) }, offerID, sampleID, applied, buildPass)
 		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)
@@ -683,65 +683,42 @@ type adoptionPayload struct {
 // enqueues the anonymous adoption evidence for upload (drained by the
 // daemon/`csx sync`; queues locally while the server is unreachable).
 func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identity,
-	cfg *config.Config, sampleID string, applied bool, buildPass *bool) error {
-	return reportAdoptionReloaded(ctx, db, ident, cfg, nil, sampleID, applied, buildPass)
+	cfg *config.Config, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error) {
+	return reportAdoptionReloaded(ctx, db, ident, cfg, nil, offerID, sampleID, applied, buildPass)
 }
 
 func reportAdoptionReloaded(ctx context.Context, db *localdb.DB, ident *identity.Identity,
-	cfg *config.Config, reloadConfig func() *config.Config, sampleID string, applied bool, buildPass *bool) error {
+	cfg *config.Config, reloadConfig func() *config.Config, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error) {
 
 	var pass sql.NullBool
 	if buildPass != nil {
 		pass = sql.NullBool{Bool: *buildPass, Valid: true}
 	}
-	// An adoption is not a search; it is what happened to one. Inserting a
-	// row here counted the same search twice — once when it was answered,
-	// once when the answer was used — and csx stats reported the doubled
-	// number as hits.
-	updated, err := db.MarkAdopted(ctx, sampleID, applied, pass)
-	if err != nil {
-		return err
-	}
-	if !updated {
-		// No search on this machine led here: an agent can report an
-		// adoption for a sample it obtained another way, and that is worth
-		// recording, but it is one event and not two.
-		if err := db.RecordHit(ctx, localdb.HitRow{
-			TS: time.Now().UTC(), SampleID: sampleID,
-			Adopted: applied, PostBuildPass: pass,
-		}); err != nil {
-			return err
-		}
-	}
-
-	epoch := time.Now().UTC().Format("2006-01-02")
-	payload := adoptionPayload{
-		SchemaVersion: 1,
-		EvidenceClass: string(domain.ClassAdoptionEvidence),
-		Epoch:         epoch,
-		AnonID:        ident.AnonID(epoch),
-		SampleID:      sampleID,
-		Applied:       applied,
-		BuildPass:     buildPass,
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	// Community mode only. Nothing drains this queue in local-only mode, so
-	// enqueueing there built a pile of reports that would never be sent
-	// while the tool told the agent they were "queued for anonymous
-	// upload". The local record above is the part that is real in that
-	// mode, and it is kept.
+	// Decide consent and construct the outbox payload before spending the
+	// one-use offer token. Community correlation and enqueue then commit in
+	// one SQLite transaction; local-only correlation passes an empty payload.
 	uploadCfg := cfg
 	if reloadConfig != nil {
 		uploadCfg = reloadConfig()
 	}
-	if uploadCfg == nil || uploadCfg.Mode != config.ModeCommunity {
-		return nil
+	outboxPayload := ""
+	if uploadCfg != nil && uploadCfg.Mode == config.ModeCommunity {
+		epoch := time.Now().UTC().Format("2006-01-02")
+		raw, err := json.Marshal(adoptionPayload{
+			SchemaVersion: 1,
+			EvidenceClass: string(domain.ClassAdoptionEvidence),
+			Epoch:         epoch,
+			AnonID:        ident.AnonID(epoch),
+			SampleID:      sampleID,
+			Applied:       applied,
+			BuildPass:     buildPass,
+		})
+		if err != nil {
+			return localdb.InterventionOutcome{}, err
+		}
+		outboxPayload = string(raw)
 	}
-	_, err = db.Enqueue(ctx, "adoption", string(raw))
-	return err
+	return db.CorrelateInterventionAdoption(ctx, offerID, sampleID, applied, pass, outboxPayload)
 }
 
 // propose builds the sanitized clean-room spec and workspace (goal.md §9.2,
@@ -802,6 +779,15 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 	if pending, err := db.PendingObservations(ctx, 1000); err == nil {
 		stats["pendingObservations"] = len(pending)
 	}
+	if funnel, err := db.InterventionSummary(ctx); err == nil {
+		stats["exactFailureMatches"] = funnel.ExactFailureMatches
+		stats["verifiedDetoursOffered"] = funnel.VerifiedDetoursOffered
+		stats["verifiedDetoursApplied"] = funnel.Applied
+		stats["postHitPass"] = funnel.PostHitPass
+		stats["postHitFail"] = funnel.PostHitFail
+		stats["postHitUnknown"] = funnel.PostHitUnknown
+		stats["reportedFailuresAvoided"] = funnel.ReportedFailuresAvoided
+	}
 	return stats, nil
 }
 
@@ -810,14 +796,14 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 // uploaded — and a failure here must never break a search, so the error is
 // dropped deliberately rather than surfaced.
 func recordSearchOutcome(ctx context.Context, db *localdb.DB, ident *identity.Identity,
-	cfg *config.Config, req domain.SearchRequest, resp domain.SearchResponse) {
-	recordSearchOutcomeReloaded(ctx, db, ident, func() *config.Config { return cfg }, req, resp)
+	cfg *config.Config, req domain.SearchRequest, resp domain.SearchResponse) string {
+	return recordSearchOutcomeReloaded(ctx, db, ident, func() *config.Config { return cfg }, req, resp)
 }
 
 func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *identity.Identity,
-	reloadConfig func() *config.Config, req domain.SearchRequest, resp domain.SearchResponse) {
+	reloadConfig func() *config.Config, req domain.SearchRequest, resp domain.SearchResponse) string {
 	if db == nil {
-		return
+		return ""
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		// A miss is a demand signal. Agents arrive over MCP, so this is the
@@ -828,13 +814,20 @@ func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *ide
 			cfg = reloadConfig()
 		}
 		evidence.QueueWanted(ctx, db, ident, cfg, req)
-		return
+		return ""
 	}
 	top := resp.Results[0]
-	_ = db.RecordHit(ctx, localdb.HitRow{
-		TS:       time.Now().UTC(),
+	now := time.Now().UTC()
+	offerID, _ := db.RecordSearchOffer(ctx, localdb.HitRow{
+		TS:       now,
 		Query:    req.Query,
 		Grade:    top.Grade,
 		SampleID: top.SampleID,
+	}, localdb.InterventionRow{
+		TS:                  now,
+		SampleID:            top.SampleID,
+		ExactFailureMatched: top.ExactFailureMatched,
+		VerifiedOffer:       top.VerifiedOffer(),
 	})
+	return offerID
 }

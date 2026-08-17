@@ -54,7 +54,9 @@ func (d *DB) ListHits(ctx context.Context, limit int) ([]HitRow, error) {
 		h.Query = query.String
 		h.Grade = domain.MatchGrade(grade.String)
 		h.SampleID = sampleID.String
-		h.Adopted = adopted != 0
+		// -1 means the offer was explicitly not applied. It is a completed
+		// report (so it must not be selected again) but not an adoption.
+		h.Adopted = adopted > 0
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -87,7 +89,7 @@ func (d *DB) MarkAdopted(ctx context.Context, sampleID string, applied bool, bui
 			SELECT id FROM hits
 			 WHERE sample_id = ? AND adopted = 0
 			 ORDER BY id DESC LIMIT 1)`,
-		boolInt(applied), buildPass, sampleID)
+		adoptionState(applied), buildPass, sampleID)
 	if err != nil {
 		return false, err
 	}
@@ -98,6 +100,16 @@ func (d *DB) MarkAdopted(ctx context.Context, sampleID string, applied bool, bui
 // CountAdoptions returns how many recorded hits were adopted.
 func (d *DB) CountAdoptions(ctx context.Context) (int, error) {
 	var n int
-	err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM hits WHERE adopted <> 0`).Scan(&n)
+	err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM hits WHERE adopted > 0`).Scan(&n)
 	return n, err
+}
+
+// adoptionState distinguishes "not reported yet" (0) from an explicit
+// applied=false report (-1) without changing the existing SQLite schema.
+// Public/local surfaces still expose both as adopted=false.
+func adoptionState(applied bool) int {
+	if applied {
+		return 1
+	}
+	return -1
 }

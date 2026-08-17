@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -22,6 +24,12 @@ import (
 // idleWindow: idle-budget verification only proceeds when no csx run
 // activity happened within this window (plan P8.3).
 const idleWindow = 10 * time.Minute
+
+// CrossJobReason is the only declarative job class a public contributor
+// worker may claim. Matrix jobs carry a requested environment that this
+// client does not yet enforce, so treating them as ordinary cross jobs would
+// sign a receipt for a different claim than the server asked it to prove.
+const CrossJobReason = "cross"
 
 // Job is one open cross/matrix verification job (plan C5).
 type Job struct {
@@ -64,6 +72,11 @@ type CrossVerifier struct {
 	// then announced peers, then the server) — goal.md §15.1. *peer.Node
 	// implements it. Nil downloads straight from the server.
 	Source ArtifactSource
+
+	// fetchMu keeps a worker's parallel execution lanes from all listing the
+	// same open job before one of them claims it. Verification remains fully
+	// parallel; only the tiny list+claim transaction is serialized locally.
+	fetchMu sync.Mutex
 }
 
 // ArtifactSource is the peer node's fetch chain, kept as an interface so
@@ -97,8 +110,18 @@ func (cv *CrossVerifier) runner() sandbox.Runner {
 // capability and claims it via POST /v1/verification/jobs/{id}/claim.
 // (nil, nil) means no work is available.
 func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
-	u := fmt.Sprintf("%s/v1/verification/jobs?peerId=%s&capability=%s&limit=1",
-		cv.base(), url.QueryEscape(cv.Ident.PeerID()), url.QueryEscape(string(cv.Cap)))
+	if cv.Ident == nil {
+		return nil, errors.New("verifier: nil identity")
+	}
+	cv.fetchMu.Lock()
+	defer cv.fetchMu.Unlock()
+
+	q := url.Values{}
+	q.Set("peerId", cv.Ident.PeerID())
+	q.Set("capability", string(cv.Cap))
+	q.Set("reason", CrossJobReason)
+	q.Set("limit", "1")
+	u := cv.base() + "/v1/verification/jobs?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -121,6 +144,15 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 		return nil, nil
 	}
 	job := body.Jobs[0]
+	// Defense in depth against an old or misconfigured server ignoring the
+	// query. A matrix job can carry WantEnv constraints this verifier has not
+	// promised to realize; never claim it and never sign a receipt for it.
+	if job.Reason != CrossJobReason {
+		return nil, fmt.Errorf("verifier: refused %q job; public workers only accept %q jobs", job.Reason, CrossJobReason)
+	}
+	if raw := bytes.TrimSpace(job.WantEnv); len(raw) != 0 && !bytes.Equal(raw, []byte("null")) {
+		return nil, errors.New("verifier: refused environment-targeted job; this worker does not enforce wantEnv")
+	}
 
 	claim, _ := json.Marshal(map[string]string{"peerId": cv.Ident.PeerID()})
 	cu := fmt.Sprintf("%s/v1/verification/jobs/%d/claim", cv.base(), job.ID)
@@ -138,6 +170,27 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 		return nil, fmt.Errorf("verifier: claim job %d: HTTP %d", job.ID, cresp.StatusCode)
 	}
 	return &job, nil
+}
+
+// RunOne claims and processes at most one cross-verification job. worked is
+// true once a job was claimed, including when its verification or receipt
+// submission failed; callers use that distinction to report job failures
+// separately from queue/network errors.
+func (cv *CrossVerifier) RunOne(ctx context.Context) (worked bool, err error) {
+	job, err := cv.FetchJob(ctx)
+	if err != nil {
+		return false, err
+	}
+	if job == nil {
+		return false, nil
+	}
+	if _, err := cv.VerifyAndReport(ctx, job); err != nil {
+		return true, err
+	}
+	if cv.OnVerified != nil {
+		cv.OnVerified()
+	}
+	return true, nil
 }
 
 // DownloadArtifact returns the sample artifact, verifying that its SHA-256
@@ -276,24 +329,18 @@ func (cv *CrossVerifier) RunBudget(ctx context.Context, budget string, once bool
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if budget == "idle" && !cv.isIdle() {
+		if budget == "idle" && !cv.IsIdle() {
 			return nil // user is active; try again on the next tick
 		}
 		if limit > 0 && time.Since(start) >= limit {
 			return nil
 		}
-		job, err := cv.FetchJob(ctx)
+		worked, err := cv.RunOne(ctx)
 		if err != nil {
 			return err
 		}
-		if job == nil {
+		if !worked {
 			return nil
-		}
-		if _, err := cv.VerifyAndReport(ctx, job); err != nil {
-			return err
-		}
-		if cv.OnVerified != nil {
-			cv.OnVerified()
 		}
 		if once {
 			return nil
@@ -301,9 +348,9 @@ func (cv *CrossVerifier) RunBudget(ctx context.Context, budget string, once bool
 	}
 }
 
-// isIdle reports whether the last recorded csx run activity is older than
+// IsIdle reports whether the last recorded csx run activity is older than
 // the idle window. A missing activity file counts as idle.
-func (cv *CrossVerifier) isIdle() bool {
+func (cv *CrossVerifier) IsIdle() bool {
 	if cv.LastActivityFile == "" {
 		return true
 	}

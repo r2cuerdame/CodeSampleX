@@ -31,6 +31,9 @@ type ServerConfig struct {
 	// it is a valid hexadecimal SHA-256 digest. It is intentionally separate
 	// from seeder credentials and never accepts a raw token.
 	AdminTokenSHA256 string // CSX_ADMIN_TOKEN_SHA256
+	// ActivityHashKey is a dedicated 256-bit hex key for period-scoped
+	// external network estimates. It must never reuse an admin credential.
+	ActivityHashKey string // CSX_ACTIVITY_HASH_KEY
 	// BlobBudgetBytes caps total artifact storage (CSX_BLOB_BUDGET_MB, 0 =
 	// unlimited). Sample upload is anonymous, so this is the only ceiling
 	// on how much disk an unauthenticated caller can take — and the volume
@@ -52,6 +55,7 @@ func ConfigFromEnv() ServerConfig {
 		GithubClientID:     os.Getenv("CSX_GITHUB_CLIENT_ID"),
 		GithubClientSecret: os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
 		AdminTokenSHA256:   os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
+		ActivityHashKey:    os.Getenv("CSX_ACTIVITY_HASH_KEY"),
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

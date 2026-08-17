@@ -9,6 +9,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	searchrelevance "github.com/r2cuerdame/codesamplex/internal/search/relevance"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -28,6 +29,14 @@ const maxTreePatterns = 40
 // verification strength from receipts → grade + delta with the
 // execution-context rules of docs/execution-context.md §5.
 func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
+	a.handleSearchVersion(w, r, 1)
+}
+
+func (a *api) handleSearchV2(w http.ResponseWriter, r *http.Request) {
+	a.handleSearchVersion(w, r, 2)
+}
+
+func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, responseVersion int) {
 	var req domain.SearchRequest
 	if !readJSON(w, r, 1<<20, &req) {
 		return
@@ -88,17 +97,47 @@ func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	if len(results) == 0 || results[0].Score < noSafeMatchThreshold {
-		writeJSON(w, http.StatusOK, domain.SearchResponse{
-			SchemaVersion: 1, Results: []domain.SearchResult{}, Miss: true,
+		writeSearchResponse(w, responseVersion, domain.SearchResponse{
+			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,
 		})
 		return
 	}
 	if len(results) > limit {
 		results = results[:limit]
 	}
-	writeJSON(w, http.StatusOK, domain.SearchResponse{
-		SchemaVersion: 1, Results: results, Miss: false,
+	writeSearchResponse(w, responseVersion, domain.SearchResponse{
+		SchemaVersion: responseVersion, Results: results, Miss: false,
 	})
+}
+
+// writeSearchResponse keeps /v1 byte-shape compatible with its original
+// additionalProperties:false schema. V2 is the negotiated surface for new
+// result metadata such as exactFailureMatched.
+func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchResponse) {
+	if version >= 2 {
+		resp.SchemaVersion = 2
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "search response encoding failed")
+		return
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		writeErr(w, http.StatusInternalServerError, "search response encoding failed")
+		return
+	}
+	legacy["schemaVersion"] = float64(1)
+	if results, ok := legacy["results"].([]any); ok {
+		for _, item := range results {
+			if result, ok := item.(map[string]any); ok {
+				delete(result, "exactFailureMatched")
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, legacy)
 }
 
 // scoreSample evaluates one candidate sample against the request; ok=false
@@ -150,22 +189,15 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	}
 
 	// 2. Exact symbol filter.
+	declaredSymbols := manifestDeclaredSymbols(manifest)
+	matchedDeclared := searchrelevance.MatchedDeclaredSymbols(req.Symbols, declaredSymbols)
+	matchedContext := searchrelevance.MatchedDeclaredSymbols(req.ContextSymbols, declaredSymbols)
 	matchedSymbol := ""
 	if len(req.Symbols) > 0 {
-		for _, rs := range req.Symbols {
-			for _, ss := range manifest.Symbols {
-				if ss == rs {
-					matchedSymbol = ss
-					break
-				}
-			}
-			if matchedSymbol != "" {
-				break
-			}
-		}
-		if matchedSymbol == "" {
+		if len(matchedDeclared) == 0 {
 			return domain.SearchResult{}, false
 		}
+		matchedSymbol = matchedDeclared[0]
 	}
 
 	// Base relevance.
@@ -173,7 +205,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	if len(reqPURLs) > 0 {
 		score += 0.35
 	}
-	if matchedSymbol != "" {
+	if matchedSymbol != "" || len(matchedContext) > 0 {
 		score += 0.2
 	}
 	overlap := tokenOverlap(req.Query+" "+req.ErrorCode, searchText(manifest))
@@ -181,7 +213,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	if score == 0 {
 		return domain.SearchResult{}, false
 	}
-	if len(reqPURLs) == 0 && len(req.Symbols) == 0 && overlap < 0.1 {
+	if len(reqPURLs) == 0 && len(req.Symbols) == 0 && len(matchedContext) == 0 && overlap < 0.1 {
 		return domain.SearchResult{}, false
 	}
 
@@ -196,6 +228,13 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// fingerprint or code matched — that is direct evidence of relevance
 	// whatever the prose says.
 	text := searchText(manifest)
+	// Failure clusters are the server's recorded fingerprint authority. A
+	// fingerprint merely appearing in prose is not enough to call the
+	// caller's failure an exact match; conversely, a recorded cluster match
+	// is direct relevance even when the goal uses different words.
+	failureCandidates := eligibleFailurePackages(reqPURLs, samplePURLs)
+	knownFailures, fingerprintPackages := a.matchingClusters(r, failureCandidates, reqEnv, req, manifestDeclaredSymbols(manifest))
+	candidateFailureMatched := len(fingerprintPackages) > 0
 	codeMatched := req.ErrorCode != "" &&
 		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorCode))
 	// The comparison text is what the sample is ABOUT — goal, symbols and
@@ -208,19 +247,27 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// an off-topic question got an answer. A fingerprint is evidence of
 	// relevance when it MATCHES the sample, exactly like the error code
 	// beside it.
-	fingerprintMatched := req.ErrorFingerprint != "" &&
-		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorFingerprint))
-	if req.Query != "" && !fingerprintMatched && !codeMatched &&
-		sharedContentTokens(req.Query, text) == 0 {
+	fingerprintMatched := candidateFailureMatched || requestFingerprintInText(req, text)
+	packageNames := samplePackageNames(samplePURLs)
+	topicSupported := searchrelevance.AboutSameThing(req.Query, manifest.Case.Goal, packageNames, declaredSymbols)
+	if req.Query != "" && !fingerprintMatched && !codeMatched && matchedSymbol == "" && !topicSupported {
+		return domain.SearchResult{}, false
+	}
+	// With no requested package the server is scanning its newest global
+	// window. An explicitly declared ecosystem gates that broad fallback;
+	// only an exact declared symbol can intentionally cross ecosystems.
+	environmentContext := req.EnvironmentIsContext()
+	if len(reqPURLs) == 0 && !environmentContext && reqEnv.Ecosystem != "" &&
+		matchedSymbol == "" && !purlsSupportEcosystem(samplePURLs, reqEnv.Ecosystem) {
 		return domain.SearchResult{}, false
 	}
 
-	// Environment fit + delta (execution context is ALWAYS sensitive).
-	sampleEnv := manifest.Environment.Normalize()
-	delta := envDelta(reqEnv, sampleEnv, matched, reqVersion)
-	score *= delta.fit
-
-	// Verification strength from receipts.
+	// Verification receipts are execution variants: resolved package set,
+	// environment and stage verdict came from one run and must stay together.
+	// Grading against the manifest while borrowing a PASS from an arbitrary
+	// same-name receipt made axios@1 on Linux look verified by an axios@2 on
+	// Windows receipt. Read the variants before computing the delta so the
+	// grade, evidence and exact-failure decision all use the same run.
 	receiptRows, err := a.d.Store.ReceiptsForSample(r.Context(), row.SampleID)
 	if err != nil {
 		return domain.SearchResult{}, false
@@ -231,9 +278,35 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 			receipts = append(receipts, info)
 		}
 	}
-	contractPasses, passPeers, lastReceipt := receiptStrength(receipts)
+
+	sampleEnv := manifest.Environment.Normalize()
+	askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentContext)
+	delta := envDelta(askedEnv, sampleEnv, matched, reqVersion)
+	selected, hasSelected := selectServerReceiptVariant(receipts, reqPURLs, reqEnv, environmentContext)
+	strengthReceipts := receipts
+	allowAggregateStatus := true
+	if hasSelected {
+		matched = selected.matched
+		delta = selected.delta
+		strengthReceipts = receiptsForServerVariant(receipts, selected.receipt)
+		allowAggregateStatus = false
+	} else if hasResolvedServerReceipt(receipts) {
+		// Resolved receipts exist, but none describe a package the caller
+		// explicitly asked about. The manifest can still be a reference hit;
+		// those unrelated executions cannot verify it for this request.
+		strengthReceipts = nil
+		allowAggregateStatus = false
+	}
+	score *= delta.fit
+
+	contractPasses, passPeers, lastReceipt := receiptStrength(strengthReceipts)
+	if hasSelected {
+		contractPasses, passPeers, lastReceipt = receiptVariantStrength(strengthReceipts)
+	}
+	exactFailureMatched := candidateFailureMatched && hasNonemptyContract(manifest.Case.Contract) &&
+		hasSelected && selectedServerContractPassed(selected, fingerprintPackages, reqPURLs)
 	switch {
-	case passPeers >= 2 || verifiedStatus(row.Status): // L4+: cross-verified
+	case passPeers >= 2 || (allowAggregateStatus && verifiedStatus(row.Status)): // L4+: cross-verified
 		score *= 3
 	case contractPasses >= 1: // L3: contract passed at origin
 		score *= 2
@@ -261,22 +334,22 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 
 	// Known-failure clusters matching the requester environment cap the
 	// grade at REFERENCE_ONLY and ride along as warnings.
-	knownFailures := a.matchingClusters(r, matched, reqEnv)
 	if len(knownFailures) > 0 {
 		grade = worseGrade(grade, domain.GradeReferenceOnly)
 	}
 
 	result := domain.SearchResult{
-		Grade:         grade,
-		Confidence:    summary.Confidence,
-		Score:         score,
-		SampleID:      row.SampleID,
-		SampleStatus:  row.Status,
-		Exact:         delta.exact,
-		Different:     delta.different,
-		Adaptation:    delta.adaptation,
-		Evidence:      summary,
-		KnownFailures: knownFailures,
+		Grade:               grade,
+		Confidence:          summary.Confidence,
+		Score:               score,
+		SampleID:            row.SampleID,
+		SampleStatus:        row.Status,
+		ExactFailureMatched: exactFailureMatched,
+		Exact:               delta.exact,
+		Different:           delta.different,
+		Adaptation:          delta.adaptation,
+		Evidence:            summary,
+		KnownFailures:       knownFailures,
 	}
 	c := manifest.Case
 	result.Case = &c
@@ -302,6 +375,251 @@ func receiptStrength(receipts []compatibility.ReceiptInfo) (int, int, time.Time)
 		}
 	}
 	return passes, len(peers), last
+}
+
+// receiptVariantStrength is the strict v2 form used after selecting a real
+// execution variant. Row-level fallback columns are legacy indexes, not the
+// signed stage verdict, so they cannot verify a selected matrix cell.
+func receiptVariantStrength(receipts []compatibility.ReceiptInfo) (int, int, time.Time) {
+	passes := 0
+	peers := map[string]bool{}
+	var last time.Time
+	for _, rec := range receipts {
+		if rec.CreatedAt.After(last) {
+			last = rec.CreatedAt
+		}
+		if rec.Stages["resolve"] == string(domain.ResultPass) &&
+			rec.Stages["contract"] == string(domain.ResultPass) {
+			passes++
+			peers[rec.PeerID] = true
+		}
+	}
+	return passes, len(peers), last
+}
+
+func hasNonemptyContract(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// serverReceiptSelection is one real v2 execution. None of its fields may be
+// borrowed from another receipt: resolved versions, environment and stage
+// verdict are the signed statement whose fit is being graded.
+type serverReceiptSelection struct {
+	receipt    compatibility.ReceiptInfo
+	matched    domain.PURL
+	reqVersion string
+	delta      deltaResult
+}
+
+// selectServerReceiptVariant chooses the best real execution for this
+// request. Package fit outranks verdict, verdict outranks environment fit,
+// matching the local search engine's receipt-variant ordering. Receipts with
+// no v2 resolved package identity cannot establish a version and stay out.
+func selectServerReceiptVariant(receipts []compatibility.ReceiptInfo, requested []domain.PURL,
+	reqEnv domain.EnvironmentFingerprint, environmentInferred bool) (serverReceiptSelection, bool) {
+
+	var best serverReceiptSelection
+	bestDistance := 0
+	haveBest := false
+	for _, receipt := range receipts {
+		if len(receipt.ResolvedPackages) == 0 || receipt.Stages["resolve"] != string(domain.ResultPass) {
+			continue
+		}
+		matched, reqVersion, distance, ok := serverVariantPackageMatch(requested, receipt.ResolvedPackages)
+		if !ok {
+			continue
+		}
+		askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentInferred)
+		selection := serverReceiptSelection{
+			receipt: receipt, matched: matched, reqVersion: reqVersion,
+			delta: envDelta(askedEnv, receipt.Env.Normalize(), matched, reqVersion),
+		}
+		if !haveBest || betterServerReceiptSelection(selection, distance, best, bestDistance) {
+			best, bestDistance, haveBest = selection, distance, true
+		}
+	}
+	return best, haveBest
+}
+
+func serverVariantPackageMatch(requested, resolved []domain.PURL) (domain.PURL, string, int, bool) {
+	if len(resolved) == 0 {
+		return domain.PURL{}, "", 0, false
+	}
+	if len(requested) == 0 {
+		return resolved[0], "", 0, true
+	}
+	var matched domain.PURL
+	reqVersion := ""
+	worst := -1
+	for _, rp := range requested {
+		for _, sp := range resolved {
+			if !samePackageIdentity(rp, sp) {
+				continue
+			}
+			if distance := versionDistance(rp, sp); distance > worst {
+				matched, reqVersion, worst = sp, rp.Version, distance
+			}
+		}
+	}
+	return matched, reqVersion, worst, worst >= 0
+}
+
+func betterServerReceiptSelection(a serverReceiptSelection, aDistance int,
+	b serverReceiptSelection, bDistance int) bool {
+	if aDistance != bDistance {
+		return aDistance < bDistance
+	}
+	if ar, br := serverStageVerdictRank(a.receipt.Stages), serverStageVerdictRank(b.receipt.Stages); ar != br {
+		return ar > br
+	}
+	if ar, br := serverDeltaRank(a.delta), serverDeltaRank(b.delta); ar != br {
+		return ar > br
+	}
+	if a.delta.fit != b.delta.fit {
+		return a.delta.fit > b.delta.fit
+	}
+	return a.receipt.CreatedAt.After(b.receipt.CreatedAt)
+}
+
+func serverStageVerdictRank(stages map[string]string) int {
+	switch stages["contract"] {
+	case string(domain.ResultPass):
+		return 2
+	case string(domain.ResultFail):
+		return 0
+	default:
+		return 1
+	}
+}
+
+func serverDeltaRank(delta deltaResult) int {
+	switch delta.grade {
+	case domain.GradeExact:
+		return 4
+	case domain.GradeCompatible:
+		return 3
+	case domain.GradeAdaptationRequired:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func hasResolvedServerReceipt(receipts []compatibility.ReceiptInfo) bool {
+	for _, receipt := range receipts {
+		if len(receipt.ResolvedPackages) > 0 && receipt.Stages["resolve"] == string(domain.ResultPass) {
+			return true
+		}
+	}
+	return false
+}
+
+// receiptsForServerVariant retains only independent executions of the exact
+// resolved package set in the exact normalized environment selected above.
+// A PASS from another matrix cell must not raise this cell's evidence.
+func receiptsForServerVariant(receipts []compatibility.ReceiptInfo,
+	selected compatibility.ReceiptInfo) []compatibility.ReceiptInfo {
+
+	var out []compatibility.ReceiptInfo
+	for _, receipt := range receipts {
+		if sameResolvedPackageSet(receipt.ResolvedPackages, selected.ResolvedPackages) &&
+			receipt.Env.Normalize().Hash() == selected.Env.Normalize().Hash() {
+			out = append(out, receipt)
+		}
+	}
+	return out
+}
+
+func sameResolvedPackageSet(a, b []domain.PURL) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !sameExactPackage(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// selectedServerContractPassed requires the selected receipt itself to say
+// resolve PASS and contract PASS, and to contain the exact canonical
+// package/version that produced the fingerprint. When packages were explicit,
+// that same exact PURL must be among them; same-name evidence is insufficient.
+func selectedServerContractPassed(selected serverReceiptSelection, failurePackages,
+	requested []domain.PURL) bool {
+	if len(failurePackages) == 0 || selected.receipt.Stages["resolve"] != string(domain.ResultPass) ||
+		selected.receipt.Stages["contract"] != string(domain.ResultPass) {
+		return false
+	}
+	for _, resolved := range selected.receipt.ResolvedPackages {
+		for _, failed := range failurePackages {
+			if !sameExactPackage(resolved, failed) ||
+				(len(requested) > 0 && !containsExactPackage(requested, resolved)) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func sameExactPackage(a, b domain.PURL) bool {
+	return samePackageIdentity(a, b) && a.Version == b.Version
+}
+
+func containsExactPackage(packages []domain.PURL, want domain.PURL) bool {
+	for _, p := range packages {
+		if sameExactPackage(p, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePackageIdentity(a, b domain.PURL) bool {
+	return strings.EqualFold(a.Ecosystem, b.Ecosystem) && strings.EqualFold(a.Name, b.Name)
+}
+
+// eligibleFailurePackages keeps grading and failure attribution separate.
+// The widest shared version gap still chooses the grading PURL, while an
+// exact failure may belong to any package shared by request and sample. With
+// no package filter, every manifest-declared package is eligible.
+func eligibleFailurePackages(requested, sample []domain.PURL) []domain.PURL {
+	if len(requested) == 0 {
+		return uniquePackageIdentities(sample)
+	}
+	var out []domain.PURL
+	for _, sp := range sample {
+		for _, rp := range requested {
+			if samePackageIdentity(sp, rp) {
+				out = append(out, sp)
+				break
+			}
+		}
+	}
+	return uniquePackageIdentities(out)
+}
+
+func uniquePackageIdentities(in []domain.PURL) []domain.PURL {
+	var out []domain.PURL
+	seen := map[string]bool{}
+	for _, p := range in {
+		if p.Name == "" {
+			continue
+		}
+		key := strings.ToLower(p.Ecosystem) + "\x00" + strings.ToLower(p.Name)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func verifiedStatus(status string) bool {
@@ -390,57 +708,116 @@ func confidenceRank(c string) int {
 	return 0
 }
 
-// matchingClusters returns known-failure clusters whose environment summary
-// matches the requester environment.
-func (a *api) matchingClusters(r *http.Request, p domain.PURL,
-	reqEnv domain.EnvironmentFingerprint) []domain.KnownFailure {
-
-	if p.Name == "" {
-		return nil
-	}
-	clusters, err := a.d.Store.ListFailureClusters(r.Context(), p.Name)
-	if err != nil {
-		return nil
-	}
+// matchingClusters inspects every eligible sample package and preserves the
+// package identity of each exact fingerprint match. The environment-summary
+// filter controls warnings only; the fingerprint describes the observed
+// failure itself. The worst version gap used for grading is intentionally not
+// consulted here.
+func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
+	reqEnv domain.EnvironmentFingerprint, req domain.SearchRequest, declaredSymbols []string) ([]domain.KnownFailure, []domain.PURL) {
 	reqDims := envDims(reqEnv)
 	var out []domain.KnownFailure
-	for _, c := range clusters {
-		// The store looks clusters up by BARE PACKAGE NAME, and the
-		// ecosystem was never checked — so a Rust failure recorded for
-		// cargo/uuid capped an npm/uuid sample at REFERENCE_ONLY and was
-		// shown to the caller as a known failure of the package they asked
-		// about. Names collide across ecosystems constantly: uuid, semver,
-		// yaml, http, decimal, csv.
-		if c.Ecosystem != "" && p.Ecosystem != "" && c.Ecosystem != p.Ecosystem {
+	var fingerprintPackages []domain.PURL
+	matchedPackage := map[string]bool{}
+	for _, p := range uniquePackageIdentities(packages) {
+		clusters, err := a.d.Store.ListFailureClusters(r.Context(), p.Name)
+		if err != nil {
 			continue
 		}
-		if c.EnvSummaryJSON == "" {
-			continue
-		}
-		var summary map[string]string
-		if json.Unmarshal([]byte(c.EnvSummaryJSON), &summary) != nil || len(summary) == 0 {
-			continue
-		}
-		match := true
-		for k, v := range summary {
-			if rv, ok := reqDims[k]; !ok || rv != v {
-				match = false
-				break
+		for _, c := range clusters {
+			// The store looks clusters up by BARE PACKAGE NAME, so ecosystem
+			// remains a mandatory identity check for colliding names.
+			if c.Ecosystem != "" && p.Ecosystem != "" && !strings.EqualFold(c.Ecosystem, p.Ecosystem) {
+				continue
 			}
+			if declaredFailureSymbol(c.Symbol, declaredSymbols) && matchesSearchFingerprint(req, c.ErrorFingerprint) {
+				key := strings.ToLower(p.Ecosystem) + "\x00" + strings.ToLower(p.Name)
+				if !matchedPackage[key] {
+					matchedPackage[key] = true
+					fingerprintPackages = append(fingerprintPackages, p)
+				}
+			}
+			if c.EnvSummaryJSON == "" {
+				continue
+			}
+			var summary map[string]string
+			if json.Unmarshal([]byte(c.EnvSummaryJSON), &summary) != nil || len(summary) == 0 {
+				continue
+			}
+			match := true
+			for k, v := range summary {
+				if rv, ok := reqDims[k]; !ok || rv != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+			kf := domain.KnownFailure{
+				ErrorCode:   c.ErrorCode,
+				Fingerprint: c.ErrorFingerprint,
+				Count:       c.ObservationCount,
+				EnvSummary:  summary,
+			}
+			_ = json.Unmarshal([]byte(c.HypothesesJSON), &kf.Hypotheses)
+			out = append(out, kf)
 		}
-		if !match {
-			continue
-		}
-		kf := domain.KnownFailure{
-			ErrorCode:   c.ErrorCode,
-			Fingerprint: c.ErrorFingerprint,
-			Count:       c.ObservationCount,
-			EnvSummary:  summary,
-		}
-		_ = json.Unmarshal([]byte(c.HypothesesJSON), &kf.Hypotheses)
-		out = append(out, kf)
 	}
+	return out, fingerprintPackages
+}
+
+func declaredFailureSymbol(clusterSymbol string, declared []string) bool {
+	clusterSymbol = strings.TrimSpace(clusterSymbol)
+	if clusterSymbol == "" {
+		return false
+	}
+	for _, symbol := range declared {
+		symbol = strings.TrimSpace(symbol)
+		if symbol != "" && strings.EqualFold(symbol, clusterSymbol) {
+			return true
+		}
+	}
+	return false
+}
+
+func manifestDeclaredSymbols(manifest domain.SampleManifest) []string {
+	out := append([]string(nil), manifest.Symbols...)
+	out = append(out, manifest.Case.Symbols...)
 	return out
+}
+
+// matchesSearchFingerprint compares stable hashes exactly. Case folding or
+// substring matching would turn a near miss into a claimed failure detour.
+func matchesSearchFingerprint(req domain.SearchRequest, stored string) bool {
+	if stored == "" {
+		return false
+	}
+	if req.ErrorFingerprint != "" && stored == req.ErrorFingerprint {
+		return true
+	}
+	for _, fingerprint := range req.ErrorFingerprints {
+		if fingerprint != "" && stored == fingerprint {
+			return true
+		}
+	}
+	return false
+}
+
+// requestFingerprintInText preserves the older topic-relevance behavior for
+// samples that explicitly discuss a fingerprint. It never sets
+// ExactFailureMatched; only recorded failure clusters can earn that field.
+func requestFingerprintInText(req domain.SearchRequest, text string) bool {
+	text = strings.ToLower(text)
+	if req.ErrorFingerprint != "" && strings.Contains(text, strings.ToLower(req.ErrorFingerprint)) {
+		return true
+	}
+	for _, fingerprint := range req.ErrorFingerprints {
+		if fingerprint != "" && strings.Contains(text, strings.ToLower(fingerprint)) {
+			return true
+		}
+	}
+	return false
 }
 
 // envDims renders the request environment in envSummary vocabulary.
@@ -488,6 +865,21 @@ type deltaResult struct {
 func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, reqVersion string) deltaResult {
 	d := deltaResult{fit: 1.0, grade: domain.GradeExact,
 		exact: []string{}, different: []string{}, adaptation: []string{}}
+
+	sampleEcosystem := sample.Ecosystem
+	if sampleEcosystem == "" {
+		sampleEcosystem = matched.Ecosystem
+	}
+	if req.Ecosystem != "" && sampleEcosystem != "" {
+		if strings.EqualFold(req.Ecosystem, sampleEcosystem) {
+			d.exact = append(d.exact, "ecosystem "+strings.ToLower(sampleEcosystem))
+		} else {
+			d.grade = worseGrade(d.grade, domain.GradeReferenceOnly)
+			d.different = append(d.different, "ecosystem "+strings.ToLower(req.Ecosystem)+
+				" (sample: "+strings.ToLower(sampleEcosystem)+")")
+			d.fit *= 0.4
+		}
+	}
 
 	// Package version distance.
 	if reqVersion != "" && matched.Name != "" && matched.Version != reqVersion {
@@ -783,6 +1175,43 @@ func sharedContentTokens(query, text string) int {
 		}
 	}
 	return shared
+}
+
+func samplePackageNames(packages []domain.PURL) []string {
+	out := make([]string, 0, len(packages))
+	for _, p := range packages {
+		if p.Name != "" {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
+func purlsSupportEcosystem(packages []domain.PURL, ecosystem string) bool {
+	for _, p := range packages {
+		if strings.EqualFold(p.Ecosystem, ecosystem) {
+			return true
+		}
+	}
+	return false
+}
+
+func serverEnvAskedAbout(req domain.EnvironmentFingerprint, sampleEcosystem string,
+	inferred bool) domain.EnvironmentFingerprint {
+	if !inferred || sampleEcosystem == "" || req.Ecosystem == "" ||
+		strings.EqualFold(req.Ecosystem, sampleEcosystem) {
+		return req
+	}
+	req.Ecosystem = ""
+	req.Runtime, req.RuntimeVersion = "", ""
+	req.Language, req.LanguageVersion = "", ""
+	req.Compiler, req.CompilerVersion = "", ""
+	req.ModuleSystem = ""
+	req.PackageManager, req.PackageManagerVersion = "", ""
+	req.ExecutionContext = ""
+	req.Engine, req.EngineVersion = "", ""
+	req.BrowserFamily, req.BrowserMajor = "", ""
+	return req
 }
 
 // versionDistance ranks how far apart two versions of the same package are,

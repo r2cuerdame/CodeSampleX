@@ -96,6 +96,7 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "GET /v1/registry/packages/{purl}", a.limit(lim.read, a.handleRegistryPackage))
 	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.limit(lim.read, a.handleRegistrySymbol))
 	a.route(mux, "POST /v1/search", a.limit(lim.read, a.handleSearch))
+	a.route(mux, "POST /v2/search", a.limit(lim.read, a.handleSearchV2))
 	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.handleShard))
 	a.route(mux, "POST /v1/samples", a.limitPublish(lim, a.requireSeeder(a.handleSampleUpload)))
 	a.route(mux, "GET /v1/samples/{sampleId}", a.limit(lim.read, a.handleSampleMeta))

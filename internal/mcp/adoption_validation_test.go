@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 // report_sample_adoption checked only that the id was non-empty, so an agent
@@ -14,9 +16,9 @@ import (
 func TestAdoptionRejectsAnIdThatIsNotAContentAddress(t *testing.T) {
 	called := false
 	deps := &Deps{
-		ReportAdoption: func(_ context.Context, _ string, _ bool, _ *bool) error {
+		ReportAdoption: func(_ context.Context, _, _ string, _ bool, _ *bool) (localdb.InterventionOutcome, error) {
 			called = true
-			return nil
+			return localdb.InterventionOutcome{}, nil
 		},
 	}
 	c := startServer(t, deps)
@@ -29,7 +31,7 @@ func TestAdoptionRejectsAnIdThatIsNotAContentAddress(t *testing.T) {
 		strings.Repeat("ab", 32),
 	} {
 		res := callTool(t, c, "report_sample_adoption", map[string]any{
-			"sampleId": bad, "applied": true,
+			"offerId": "0123456789abcdef0123456789abcdef", "sampleId": bad, "applied": true,
 		})
 		if !strings.Contains(toolText(t, res), "sha256:") {
 			t.Errorf("%q was not rejected with an explanation: %s", bad, toolText(t, res))

@@ -1,7 +1,19 @@
 package domain
 
-// SearchRequest is the wire query shape shared by the local daemon, MCP
-// tools, and the server /v1/search API (goal.md §11.1).
+// SearchProvenance records whether search input was declared by the caller or
+// inferred from ambient project/error context. The empty value is deliberate:
+// it is the third state needed to distinguish legacy JSON from an explicit
+// declaration at a protocol boundary.
+type SearchProvenance string
+
+const (
+	SearchProvenanceExplicit SearchProvenance = "explicit"
+	SearchProvenanceContext  SearchProvenance = "context"
+)
+
+// SearchRequest is the in-process superset shared by the local daemon, MCP,
+// and public search. Public v1 uses only its frozen original fields; v2 owns
+// provenance/context additions (goal.md §11.1).
 type SearchRequest struct {
 	SchemaVersion int      `json:"schemaVersion"`
 	Query         string   `json:"query"`
@@ -23,16 +35,36 @@ type SearchRequest struct {
 	// An agent is always inside SOME project, and the library it asks about
 	// is usually one it is about to add — so the dominant real case was the
 	// broken one.
-	ProjectPackages  []string               `json:"projectPackages,omitempty"`
-	Symbols          []string               `json:"symbols,omitempty"`
+	ProjectPackages []string `json:"projectPackages,omitempty"`
+	// ContextSymbols are scanner/error-derived context. They may improve ranking,
+	// but unlike Symbols they were not declared by the caller and therefore
+	// must never exclude a candidate.
+	ContextSymbols []string `json:"contextSymbols,omitempty"`
+	Symbols        []string `json:"symbols,omitempty"`
+	// SymbolProvenance is explicit on public/MCP requests and context for
+	// scanner-derived local requests. A new CLI also populates Symbols for an
+	// old daemon; the new daemon uses this marker to avoid treating that legacy
+	// compatibility copy as an exclusion.
+	SymbolProvenance SearchProvenance       `json:"symbolProvenance,omitempty"`
 	Environment      EnvironmentFingerprint `json:"environment"`
-	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
+	// EnvironmentProvenance records whether ecosystem-scoped dimensions came
+	// from the caller or the current project. Only context dimensions may be
+	// softened when the candidate belongs to another ecosystem.
+	EnvironmentProvenance SearchProvenance `json:"environmentProvenance,omitempty"`
+	ErrorFingerprint      string           `json:"errorFingerprint,omitempty"`
 	// ErrorFingerprints is the same error hashed for every stage it could
 	// have been recorded under. A caller pasting a build log knows the
 	// error, not the stage it was observed at.
 	ErrorFingerprints []string `json:"errorFingerprints,omitempty"`
 	ErrorCode         string   `json:"errorCode,omitempty"`
 	Limit             int      `json:"limit,omitempty"` // default 3
+}
+
+// EnvironmentIsContext is fail-closed: absent/unknown provenance is explicit.
+// The local daemon is the only boundary allowed to translate a proven legacy
+// CLI request into context provenance.
+func (r SearchRequest) EnvironmentIsContext() bool {
+	return r.EnvironmentProvenance == SearchProvenanceContext
 }
 
 // EvidenceSummary carries the honest numbers behind a result (goal.md §11.5).
@@ -62,17 +94,34 @@ type KnownFailure struct {
 // (goal.md §11.5): the LLM reasons over Different/Adaptation, not the
 // whole problem.
 type SearchResult struct {
-	Grade         MatchGrade      `json:"match"`
-	Confidence    string          `json:"confidence"`
-	Score         float64         `json:"score"`
-	Case          *Case           `json:"case,omitempty"`
-	SampleID      string          `json:"sampleId,omitempty"`
-	SampleStatus  string          `json:"sampleStatus,omitempty"`
-	Exact         []string        `json:"exact"`
-	Different     []string        `json:"different"`
-	Adaptation    []string        `json:"adaptationNeeded"`
-	Evidence      EvidenceSummary `json:"evidence"`
-	KnownFailures []KnownFailure  `json:"knownFailures,omitempty"`
+	Grade        MatchGrade `json:"match"`
+	Confidence   string     `json:"confidence"`
+	Score        float64    `json:"score"`
+	Case         *Case      `json:"case,omitempty"`
+	SampleID     string     `json:"sampleId,omitempty"`
+	SampleStatus string     `json:"sampleStatus,omitempty"`
+	// ExactFailureMatched is true only when one of the caller's sanitized
+	// error fingerprints equalled a recorded failure for a nonempty symbol
+	// declared by this candidate, and the selected nonempty contract passed.
+	// An error code, package match, different-symbol cluster, or semantic hit
+	// must never set it.
+	ExactFailureMatched bool            `json:"exactFailureMatched"`
+	Exact               []string        `json:"exact"`
+	Different           []string        `json:"different"`
+	Adaptation          []string        `json:"adaptationNeeded"`
+	Evidence            EvidenceSummary `json:"evidence"`
+	KnownFailures       []KnownFailure  `json:"knownFailures,omitempty"`
+}
+
+// VerifiedOffer reports whether this result is safe to offer as already
+// verified in the caller's environment. A contract PASS is necessary but
+// not sufficient: adaptation, any disclosed difference, and reference-only
+// grades all require the caller to verify again.
+func (r SearchResult) VerifiedOffer() bool {
+	if r.Evidence.ContractPasses <= 0 || len(r.Different) > 0 || len(r.Adaptation) > 0 {
+		return false
+	}
+	return r.Grade == GradeExact || r.Grade == GradeCompatible
 }
 
 // ConfidenceReason explains, in one clause, what this result's confidence

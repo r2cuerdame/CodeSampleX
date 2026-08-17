@@ -29,6 +29,11 @@
         <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
         <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
       </p>
+      {{/* The second way in, named where the first one is offered: a
+           visitor who does not want to run a shell command themselves is
+           standing right here, and the alternative was invisible from the
+           anchor every "Install" link in the site points at. */}}
+      <p class="small llmlink"><a href="#install-llm">{{.T "landing.llm_link"}}</a></p>
     </div>
   </div>
 
@@ -37,6 +42,33 @@
     <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_2_t"}}</strong><span class="dim">{{.T "landing.value_2_b"}}</span></span></li>
     <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_3_t"}}</strong><span class="dim">{{.T "landing.value_3_b"}}</span></span></li>
   </ul>
+</section>
+
+{{/* The install box asks the visitor to run a command. This asks nobody to
+     run anything: it hands the same install to the agent that is already
+     open in their editor, in words, and the words are on the page rather
+     than behind the button — the prompt a reader checks IS the prompt that
+     gets copied, because both render the same field.
+
+     What it deliberately does not do: invent a client. The four agents
+     below are the ones csx init detects; everything else is registered
+     from `csx mcp-config`, which is what the next section already says.
+     And it asks for no credential — csx has no account to have one — so a
+     prompt that made a visitor paste a token would be a new attack surface
+     on a page whose whole argument is that it takes nothing from you. */}}
+<section id="install-llm" class="llminstall">
+  <h2 class="eyebrow mono">{{.T "landing.llm_heading"}}</h2>
+  <p class="llmlead">{{.T "landing.llm_body"}}</p>
+  <div class="llmbox">
+    {{/* Visible and selectable: with JavaScript off the copy button does
+         nothing, and the prompt is still readable and copyable by hand. */}}
+    <pre class="llmtext mono">{{.LLMPrompt}}</pre>
+    <div class="llmactions">
+      <button class="copy llmcopy mono" type="button" data-copy="{{.LLMPrompt}}" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.llm_copy"}}</button>
+    </div>
+  </div>
+  <p class="note">{{.T "landing.llm_safety"}}</p>
+  <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>
 </section>
 
 {{/* "Will this work with what I already use?" is the first thing a visitor
@@ -52,7 +84,7 @@
      mcp-config reads the path from the running binary, so it is right
      wherever they installed it. */}}
 {{$mcpCfg := `csx mcp-config`}}
-<section class="agents">
+<section id="agents" class="agents">
   <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
   <ul class="agentlist">
     <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>

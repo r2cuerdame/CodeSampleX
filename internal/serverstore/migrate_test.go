@@ -84,3 +84,35 @@ func TestSplitStatements(t *testing.T) {
 		t.Errorf("statement 1 = %q", got[1])
 	}
 }
+
+func TestActivityMigrationIsAdditiveAndPrivacyBounded(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := migs[len(migs)-1]
+	if last.Version != "0008_activity_buckets.sql" {
+		t.Fatalf("last migration = %q", last.Version)
+	}
+	all := strings.ToLower(strings.Join(last.Statements, "\n"))
+	for _, required := range []string{"create table if not exists activity_buckets", "create table if not exists activity_health", "octet_length(bucket) = 16", "kind", "epoch", "owner", "first_seen", "last_seen"} {
+		if !strings.Contains(all, required) {
+			t.Errorf("activity migration missing %q", required)
+		}
+	}
+	raw, err := migrationsFS.ReadFile("migrations/0008_activity_buckets.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comments := strings.ToLower(string(raw))
+	for _, required := range []string{"privacy boundary", "ipv4 space is enumerable", "keyed pseudonyms"} {
+		if !strings.Contains(comments, required) {
+			t.Errorf("activity migration privacy disclosure missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"ip_address", "remote_addr", "forwarded_for", "user_agent", "route_param"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("activity migration contains PII column %q", forbidden)
+		}
+	}
+}

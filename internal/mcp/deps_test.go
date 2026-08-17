@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,7 @@ func TestNewDepsRealWiring(t *testing.T) {
 	}
 	defer closeDB() //nolint:errcheck
 	ctx := context.Background()
+	var offerID string
 
 	t.Run("GetSample", func(t *testing.T) {
 		manifest, files, err := deps.GetSample(ctx, sampleID)
@@ -139,7 +141,7 @@ func TestNewDepsRealWiring(t *testing.T) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		resp := deps.Search(ctx, domain.SearchRequest{
+		resp, token := deps.Search(ctx, domain.SearchRequest{
 			SchemaVersion: 1,
 			Query:         "axios post basics",
 			Packages:      []string{"pkg:npm/axios@1.12.0"},
@@ -150,6 +152,10 @@ func TestNewDepsRealWiring(t *testing.T) {
 		if resp.Miss || len(resp.Results) == 0 {
 			t.Fatalf("expected a hit for the seeded sample, got miss")
 		}
+		if token == "" {
+			t.Fatal("local search did not return an offerId")
+		}
+		offerID = token
 	})
 
 	t.Run("Explain", func(t *testing.T) {
@@ -188,7 +194,7 @@ func TestNewDepsRealWiring(t *testing.T) {
 
 	t.Run("ReportAdoptionAndHitsAndStats", func(t *testing.T) {
 		pass := true
-		if err := deps.ReportAdoption(ctx, sampleID, true, &pass); err != nil {
+		if _, err := deps.ReportAdoption(ctx, offerID, sampleID, true, &pass); err != nil {
 			t.Fatalf("ReportAdoption: %v", err)
 		}
 		hits, err := deps.LocalHits(ctx)
@@ -236,6 +242,24 @@ func TestNewDepsRealWiring(t *testing.T) {
 		}
 		if payload.EvidenceClass != "ADOPTION_EVIDENCE" || payload.SampleID != sampleID || payload.AnonID == "" {
 			t.Errorf("payload = %+v", payload)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal([]byte(items[0].Payload), &wire); err != nil {
+			t.Fatal(err)
+		}
+		allowed := map[string]bool{
+			"schemaVersion": true, "evidenceClass": true, "epoch": true,
+			"anonId": true, "sampleId": true, "applied": true, "buildPass": true,
+		}
+		for key := range wire {
+			if !allowed[key] {
+				t.Errorf("adoption upload payload changed with local journey field %q: %s", key, items[0].Payload)
+			}
+		}
+		for key := range allowed {
+			if _, ok := wire[key]; !ok {
+				t.Errorf("adoption upload payload lost existing field %q: %s", key, items[0].Payload)
+			}
 		}
 		if strings.Contains(items[0].Payload, home) {
 			t.Errorf("adoption payload leaks home path: %s", items[0].Payload)
@@ -296,10 +320,13 @@ func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
 	ctx := t.Context()
 	id := "sha256:" + strings.Repeat("12", 32)
 
-	if err := db.RecordHit(ctx, localdb.HitRow{
+	offerID, err := db.RecordSearchOffer(ctx, localdb.HitRow{
 		TS: time.Now().UTC(), Query: "axios post basics",
 		Grade: domain.GradeExact, SampleID: id,
-	}); err != nil {
+	}, localdb.InterventionRow{
+		SampleID: id, ExactFailureMatched: true, VerifiedOffer: true,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	pass := true
@@ -307,7 +334,7 @@ func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, id, true, &pass); err != nil {
+	if _, err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, offerID, id, true, &pass); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,13 +357,13 @@ func TestAdoptionUpdatesTheSearchInsteadOfCountingTwice(t *testing.T) {
 		t.Errorf("CountAdoptions = %d, want 1", adopted)
 	}
 
-	// An adoption with no preceding search on this machine is a real event
-	// and still gets a row — an agent can obtain a sample another way.
+	// An adoption with no preceding local intervention cannot establish
+	// what CodeSampleX offered, so it fails instead of inventing a journey.
 	other := "sha256:" + strings.Repeat("ab", 32)
-	if err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, other, true, nil); err != nil {
-		t.Fatal(err)
+	if _, err := reportAdoption(ctx, db, ident, &config.Config{Mode: config.ModeCommunity}, "bogus-offer", other, true, nil); !errors.Is(err, localdb.ErrNoEligibleIntervention) {
+		t.Fatalf("uncorrelated adoption error = %v, want ErrNoEligibleIntervention", err)
 	}
-	if n, _ := db.CountHits(ctx); n != 2 {
-		t.Errorf("CountHits = %d after an unsolicited adoption, want 2", n)
+	if n, _ := db.CountHits(ctx); n != 1 {
+		t.Errorf("CountHits = %d after rejected unsolicited adoption, want 1", n)
 	}
 }

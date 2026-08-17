@@ -165,7 +165,10 @@ func (e *testEngine) ask(c corpusEntry) domain.SearchResponse {
 		Query:           c.query,
 		ProjectPackages: c.tree,
 		Environment:     c.from,
-		Limit:           3,
+		// corpusEntry.from models the automatically scanned current project,
+		// not an environment the caller explicitly constrained.
+		EnvironmentProvenance: domain.SearchProvenanceContext,
+		Limit:                 3,
 	})
 }
 

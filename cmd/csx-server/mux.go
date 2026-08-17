@@ -9,6 +9,7 @@ import (
 
 	"net/http"
 
+	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/admin"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
@@ -25,6 +26,15 @@ var processStartedAt = time.Now()
 // "trust" skips the registry probe (dev/e2e), anything else runs the strict
 // Checker backed by the packages table as its cache.
 func BuildMux(cfg serverstore.ServerConfig, store serverstore.Store) *http.ServeMux {
+	return buildMux(context.Background(), cfg, store)
+}
+
+func buildMux(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) *http.ServeMux {
+	mux, _ := buildMuxWithTracker(ctx, cfg, store)
+	return mux
+}
+
+func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) (*http.ServeMux, *activity.Tracker) {
 	deps := httpapi.Deps{Store: store, Cfg: cfg}
 	if cfg.BlobDir != "" {
 		blobs, err := blob.NewFS(cfg.BlobDir)
@@ -37,25 +47,37 @@ func BuildMux(cfg serverstore.ServerConfig, store serverstore.Store) *http.Serve
 	if cfg.PublicCheck != "trust" && store != nil {
 		deps.Checker = &registry.Checker{Cache: &registry.ServerCache{Store: store}}
 	}
-	mux := httpapi.NewMux(deps)
+	inner := httpapi.NewMux(deps)
+	var activityStore activity.Store
+	if candidate, ok := store.(activity.Store); ok {
+		activityStore = candidate
+	}
+	var activityMaintenance activity.MaintenanceStore
+	if candidate, ok := store.(activity.MaintenanceStore); ok {
+		activityMaintenance = candidate
+	}
+	activityTracker := activity.NewWithMaintenance(ctx, activityStore, activityMaintenance, activity.Config{HashKeyHex: cfg.ActivityHashKey})
 	var accessMetrics admin.AccessMetricsReader
 	if accessLogPath := os.Getenv("CSX_ADMIN_ACCESS_LOG"); accessLogPath != "" {
 		accessMetrics = admin.NewAccessLogReader(accessLogPath)
 	}
-	admin.Register(mux, admin.Deps{
+	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
 		Version:       serverVersion(),
 		StartedAt:     processStartedAt,
 		AccessMetrics: accessMetrics,
+		Activity:      activityTracker,
 	})
-	web.Register(mux, web.Deps{
+	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},
 		PublicURL: cfg.PublicURL,
 		Version:   serverVersion(),
 		DistDir:   os.Getenv("CSX_DIST_DIR"),
 	})
-	return mux
+	outer := http.NewServeMux()
+	outer.Handle("/", activityTracker.Wrap(inner))
+	return outer, activityTracker
 }
 
 // serverVersion prefers an explicit CSX_VERSION, falling back to the module

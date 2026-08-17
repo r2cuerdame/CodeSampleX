@@ -246,7 +246,7 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 }
 
 /* agent integration (landing) -------------------------------------------- */
-.agents, .how, .support {
+.agents, .how, .support, .llminstall {
   padding: clamp(1.4rem, 3vw, 2rem);
   border: 1px solid var(--line); border-radius: 1.4rem;
   background: rgba(255,255,255,0.82); box-shadow: var(--shadow-soft);
@@ -264,6 +264,33 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 }
 .agents .cmdline { margin: 0.5rem 0 0; }
 .agents .note { margin-top: 0.8rem; }
+
+/* let an agent do the install (landing) ---------------------------------- */
+/* These are anchor targets and the header is sticky: without a scroll
+   margin, what a visitor just clicked toward lands underneath it. #install
+   is included because it had the same problem — every "Install" link in the
+   site points there, and it arrived with its first command half-covered. */
+#install, #install-llm, #agents { scroll-margin-top: 5rem; }
+.llmlink a { font-weight: 700; }
+.llminstall .llmlead { margin: 0 0 0.9rem; font-size: 0.95rem; max-width: 68ch; }
+.llmbox {
+  color: #f4f8ff; background: var(--accent-2);
+  border: 1px solid #214680; border-radius: 0.9rem;
+  padding: 0.95rem 1rem 0.85rem;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09);
+}
+/* The prompt is prose, not a command line: it wraps rather than scrolling
+   sideways, so the whole of what the agent is being told stays readable at
+   any width — including on a phone, where a horizontal scroller would hide
+   the half of a sentence that matters. */
+.llmtext {
+  margin: 0; font-size: 0.82rem; line-height: 1.65;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.llmactions { display: flex; justify-content: flex-end; margin-top: 0.75rem; }
+.llmcopy { font-size: 0.78rem; padding: 0.32rem 0.8rem; }
+.llminstall .note { margin-top: 1rem; }
+.llminstall > p:last-child { margin-bottom: 0; }
 
 /* evidence highlights (landing) ------------------------------------------ */
 .homefindings { margin: 0 0 2rem; }
@@ -521,7 +548,8 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .hero .install { margin: 0.8rem 1.1rem 1.25rem; padding: 0.85rem 0.8rem 0.68rem; }
   .hero-art { height: 18.5rem; margin-top: -0.25rem; object-position: 70% 50%; }
   .claims { grid-template-columns: 1fr; }
-  .agents, .how, .support { padding: 1.15rem; border-radius: 1.1rem; }
+  .agents, .how, .support, .llminstall { padding: 1.15rem; border-radius: 1.1rem; }
+  .llmtext { font-size: 0.78rem; }
   .cmdline { min-width: 0; }
   .cmdline code {
     flex: 1 1 auto; min-width: 0; overflow: hidden;

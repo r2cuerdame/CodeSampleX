@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -240,6 +242,109 @@ func TestDaemonStatusSearchQueueEndpoints(t *testing.T) {
 	}
 }
 
+func TestLegacySearchJSONIsNormalizedOnlyAtDaemonBoundary(t *testing.T) {
+	home := newTestHome(t, nil)
+	d, _ := startDaemon(t, home)
+	manifest := domain.SampleManifest{
+		SchemaVersion: 1,
+		Case: domain.Case{SchemaVersion: 1, Kind: "HOW",
+			Goal:     "freeze time in a Python test with freezegun",
+			Packages: []string{"pkg:pypi/freezegun@1.5.5"}, Symbols: []string{"freezegun.freeze_time"},
+			Contract: []string{"freezes datetime during the test"}},
+		Packages: []string{"pkg:pypi/freezegun@1.5.5"}, Symbols: []string{"freezegun.freeze_time"},
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "pypi", OS: "windows", Arch: "amd64",
+			Runtime: "python", RuntimeVersion: "3.13", Language: "python", PackageManager: "pip"}.Normalize(),
+		License: "MIT-0", ContractCommand: []string{"pytest"}, VerifierAdapter: "python@1",
+	}
+	if err := search.SeedSampleDoc(t.Context(), d.DB, manifest, "sha256:legacy-cross-ecosystem", "CROSS_PASS"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact pre-change CLI shape: scanner symbols occupied `symbols`, while
+	// neither provenance field nor the v2 contextSymbols field existed.
+	legacy := `{"schemaVersion":1,"query":"freeze time in a Python test with freezegun",` +
+		`"symbols":["ambient.NodeThing"],"environment":{"schemaVersion":1,"ecosystem":"npm",` +
+		`"os":"windows","arch":"amd64","runtime":"node","runtimeVersion":"24.13",` +
+		`"language":"javascript","moduleSystem":"esm","packageManager":"npm"}}`
+	resp, err := http.Post(d.BaseURL()+"/local/v1/search", "application/json", strings.NewReader(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var oldShape LocalSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&oldShape); err != nil {
+		t.Fatal(err)
+	}
+	if oldShape.Miss || len(oldShape.Results) == 0 || oldShape.Results[0].SampleID != "sha256:legacy-cross-ecosystem" {
+		t.Fatalf("legacy daemon request lost cross-ecosystem behavior: %+v", oldShape.SearchResponse)
+	}
+
+	// The same symbols/environment in a negotiated explicit request remain
+	// exclusions. This is the MCP/public safety property: npm/node input must
+	// never be softened merely because legacy local compatibility exists.
+	explicit := domain.SearchRequest{
+		SchemaVersion: 2, Query: "freeze time in a Python test with freezegun",
+		Symbols: []string{"ambient.NodeThing"}, SymbolProvenance: domain.SearchProvenanceExplicit,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "amd64",
+			Runtime: "node", RuntimeVersion: "24.13", Language: "javascript", ModuleSystem: "esm", PackageManager: "npm"}.Normalize(),
+		EnvironmentProvenance: domain.SearchProvenanceExplicit,
+	}
+	raw, err := json.Marshal(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Post(d.BaseURL()+"/local/v1/search", "application/json", strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var explicitOut LocalSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&explicitOut); err != nil {
+		t.Fatal(err)
+	}
+	if !explicitOut.Miss || len(explicitOut.Results) != 0 {
+		t.Fatalf("explicit npm/node request was softened: %+v", explicitOut.SearchResponse)
+	}
+}
+
+func TestNewLocalClientRemainsUsefulWithOldDaemon(t *testing.T) {
+	var received map[string]any
+	oldDaemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/local/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		// An old daemon ignores the v2-only keys but still consumes symbols.
+		io.WriteString(w, `{"schemaVersion":1,"results":[],"miss":true}`)
+	}))
+	defer oldDaemon.Close()
+
+	client := &Client{BaseURL: oldDaemon.URL}
+	request := domain.SearchRequest{
+		SchemaVersion: 2, Query: "legacy fallback",
+		Symbols: []string{"ambient.symbol"}, ContextSymbols: []string{"ambient.symbol"},
+		SymbolProvenance:      domain.SearchProvenanceContext,
+		Environment:           domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "amd64"},
+		EnvironmentProvenance: domain.SearchProvenanceContext,
+	}
+	response, err := client.Search(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.SchemaVersion != 1 || !response.Miss {
+		t.Fatalf("new client did not accept old response: %+v", response)
+	}
+	if got, ok := received["symbols"].([]any); !ok || len(got) != 1 || got[0] != "ambient.symbol" {
+		t.Fatalf("old daemon did not receive legacy symbols fallback: %#v", received)
+	}
+	if received["schemaVersion"] != float64(2) || received["symbolProvenance"] != "context" {
+		t.Fatalf("new daemon negotiation metadata missing: %#v", received)
+	}
+}
+
 // The §12.5 privacy preview must contain only sanitized fields: a
 // FAIL observation seeded from a raw error full of Windows paths and a
 // username may surface only as fingerprint + error code.
@@ -328,9 +433,18 @@ func TestAdoptionRecordsHit(t *testing.T) {
 	d, c := startDaemon(t, home)
 	ctx := context.Background()
 	seedSample(t, d, "sha256:bbb2")
+	searchResp, err := c.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "upload multipart form with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Environment:   testEnv(),
+	})
+	if err != nil || searchResp.Miss || len(searchResp.Results) == 0 || searchResp.OfferID == "" {
+		t.Fatalf("search before adoption: resp=%+v err=%v", searchResp, err)
+	}
 
 	pass := true
-	if err := c.Adopt(ctx, AdoptionRequest{SampleID: "sha256:bbb2", Applied: true, BuildPass: &pass}); err != nil {
+	if err := c.Adopt(ctx, AdoptionRequest{OfferID: searchResp.OfferID, SampleID: "sha256:bbb2", Applied: true, BuildPass: &pass}); err != nil {
 		t.Fatalf("adopt: %v", err)
 	}
 
@@ -366,9 +480,77 @@ func TestAdoptionRecordsHit(t *testing.T) {
 		t.Errorf("preview queued = %+v", q.Queued)
 	}
 
+	// A sample obtained outside the local search path has no eligible
+	// intervention and is rejected rather than becoming an invented journey.
+	if err := c.Adopt(ctx, AdoptionRequest{OfferID: "bogus-offer", SampleID: "sha256:uncorrelated", Applied: true}); err == nil {
+		t.Error("uncorrelated adoption should fail")
+	}
+
+	// Pre-upgrade/legacy callers have no offer token. They must re-search and
+	// can never receive failure-avoidance credit by sample-id recency.
+	if err := c.Adopt(ctx, AdoptionRequest{SampleID: "sha256:bbb2", Applied: true, BuildPass: &pass}); err == nil || !strings.Contains(err.Error(), "re-run search_known_solution") {
+		t.Errorf("legacy no-token adoption error = %v, want explicit re-search", err)
+	}
+
 	// Missing sampleId is rejected.
-	if err := c.Adopt(ctx, AdoptionRequest{Applied: true}); err == nil {
+	if err := c.Adopt(ctx, AdoptionRequest{OfferID: "bogus-offer", Applied: true}); err == nil {
 		t.Error("adoption without sampleId should fail")
+	}
+}
+
+func TestAdoptionEnqueueFailureIsReturnedAndOfferRemainsRetryable(t *testing.T) {
+	home := newTestHome(t, func(cfg *config.Config) { cfg.Mode = config.ModeCommunity })
+	d, c := startDaemon(t, home)
+	ctx := context.Background()
+	seedSample(t, d, "sha256:outbox-failure")
+	searchResp, err := c.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1,
+		Query:         "upload multipart form with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Environment:   testEnv(),
+	})
+	if err != nil || searchResp.Miss || len(searchResp.Results) == 0 || searchResp.OfferID == "" {
+		t.Fatalf("search before adoption: resp=%+v err=%v", searchResp, err)
+	}
+
+	rawDB, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(home, "csx.db"))+"?_pragma=busy_timeout(30000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+	if _, err := rawDB.ExecContext(ctx, `
+		CREATE TRIGGER reject_daemon_adoption_outbox BEFORE INSERT ON upload_queue
+		WHEN NEW.kind = 'adoption'
+		BEGIN SELECT RAISE(ABORT, 'blocked daemon outbox'); END`); err != nil {
+		t.Fatal(err)
+	}
+	pass := true
+	report := AdoptionRequest{
+		OfferID: searchResp.OfferID, SampleID: "sha256:outbox-failure", Applied: true, BuildPass: &pass,
+	}
+	if err := c.Adopt(ctx, report); err == nil || !strings.Contains(err.Error(), "blocked daemon outbox") {
+		t.Fatalf("daemon discarded enqueue failure: %v", err)
+	}
+	hits, err := d.DB.ListHits(ctx, 10)
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("hits after enqueue failure = %+v, %v", hits, err)
+	}
+	if hits[0].Adopted || hits[0].PostBuildPass.Valid {
+		t.Fatalf("enqueue failure spent offer token: %+v", hits[0])
+	}
+	if queued, err := d.DB.QueuePending(ctx, 10); err != nil || len(queued) != 0 {
+		t.Fatalf("enqueue failure left queue rows: %+v, %v", queued, err)
+	}
+
+	if _, err := rawDB.ExecContext(ctx, `DROP TRIGGER reject_daemon_adoption_outbox`); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Adopt(ctx, report); err != nil {
+		t.Fatalf("retry after outbox recovery: %v", err)
+	}
+	queued, err := d.DB.QueuePending(ctx, 10)
+	if err != nil || len(queued) != 1 || queued[0].Kind != "adoption" {
+		t.Fatalf("retry queue = %+v, %v", queued, err)
 	}
 }
 

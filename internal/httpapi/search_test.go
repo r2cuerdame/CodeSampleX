@@ -71,14 +71,17 @@ func TestSearchExactEnvironmentIsExactGrade(t *testing.T) {
 	saveTestSample(t, store, "PUBLISHED")
 
 	req := domain.SearchRequest{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Query:         "post JSON with axios",
 		Packages:      []string{"pkg:npm/axios@1.12.0"},
-		Symbols:       []string{"axios.post"},
-		Environment:   nodeEnv("esm"),
+		// The first request symbol misses. Snapshot evidence must use the
+		// actual later match, axios.post, rather than Symbols[0].
+		Symbols:          []string{"axios.missing", "axios.post"},
+		SymbolProvenance: domain.SearchProvenanceExplicit,
+		Environment:      nodeEnv("esm"),
 	}
 	var out domain.SearchResponse
-	postJSON(t, srv.URL+"/v1/search", req, &out)
+	postJSON(t, srv.URL+"/v2/search", req, &out)
 	if out.Miss || len(out.Results) == 0 {
 		t.Fatalf("want a hit, got miss=%v", out.Miss)
 	}
@@ -138,14 +141,15 @@ func TestSearchElevatedFailureInRequesterContextIsReferenceOnly(t *testing.T) {
 	}
 
 	req := domain.SearchRequest{
-		SchemaVersion: 1,
-		Query:         "post JSON with axios",
-		Packages:      []string{"pkg:npm/axios@1.12.0"},
-		Symbols:       []string{"axios.post"},
-		Environment:   nodeEnv("esm"),
+		SchemaVersion:    2,
+		Query:            "post JSON with axios",
+		Packages:         []string{"pkg:npm/axios@1.12.0"},
+		Symbols:          []string{"axios.missing", "axios.post"},
+		SymbolProvenance: domain.SearchProvenanceExplicit,
+		Environment:      nodeEnv("esm"),
 	}
 	var out domain.SearchResponse
-	postJSON(t, srv.URL+"/v1/search", req, &out)
+	postJSON(t, srv.URL+"/v2/search", req, &out)
 	if out.Miss || len(out.Results) == 0 {
 		t.Fatalf("want a (demoted) hit, got miss=%v", out.Miss)
 	}

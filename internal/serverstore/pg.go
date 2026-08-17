@@ -1,6 +1,7 @@
 package serverstore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -994,7 +997,7 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 // for good. 265 jobs sat claimed with zero open behind a queue that
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
-func (p *PG) OpenJobs(ctx context.Context, capability, peerID string, limit int) ([]JobRow, error) {
+func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -1006,6 +1009,7 @@ func (p *PG) OpenJobs(ctx context.Context, capability, peerID string, limit int)
 			FROM verification_jobs j
 			WHERE (status='open'
 			       OR (status='claimed' AND claimed_at < now() - $3::interval))
+			  AND ($5 = '' OR j.reason = $5)
 			  AND ($1 = ''
 				OR want_env IS NULL
 				OR want_env->>'sandboxCapability' IS NULL
@@ -1014,7 +1018,7 @@ func (p *PG) OpenJobs(ctx context.Context, capability, peerID string, limit int)
 				SELECT 1 FROM receipts r
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4))
 			ORDER BY created_at, id
-			LIMIT $2`, capability, limit, JobLease.String(), peerID)
+			LIMIT $2`, capability, limit, JobLease.String(), peerID, reason)
 		if err != nil {
 			return err
 		}
@@ -1583,6 +1587,265 @@ func (p *PG) GetLatestStats(ctx context.Context) (string, bool, error) {
 		return nil
 	})
 	return js, found, err
+}
+
+// --------------------------------------------------------------- activity --
+
+// RecordActivity persists only epoch-scoped 128-bit buckets. owner is
+// monotonic so an authenticated admin visit retroactively excludes a bucket
+// even when an older non-owner observation arrives later from the queue.
+func (p *PG) RecordActivity(ctx context.Context, buckets []activity.Bucket) error {
+	if len(buckets) == 0 {
+		return nil
+	}
+	for _, bucket := range buckets {
+		if !validActivityEpoch(bucket.Kind, bucket.Epoch) || bucket.SeenAt.IsZero() || !activityEpochMatchesSeenAt(bucket) {
+			return errors.New("serverstore: invalid activity bucket")
+		}
+	}
+	ordered := append([]activity.Bucket(nil), buckets...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Kind != ordered[j].Kind {
+			return ordered[i].Kind < ordered[j].Kind
+		}
+		if ordered[i].Epoch != ordered[j].Epoch {
+			return ordered[i].Epoch < ordered[j].Epoch
+		}
+		return bytes.Compare(ordered[i].Value[:], ordered[j].Value[:]) < 0
+	})
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			lastErr = recordActivityAttempt(ctx, c, ordered)
+			if lastErr == nil || !retryableActivityTransaction(lastErr) {
+				return lastErr
+			}
+			if attempt < 2 {
+				timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return fmt.Errorf("serverstore: activity transaction failed after 3 attempts: %w", lastErr)
+	})
+}
+
+func recordActivityAttempt(ctx context.Context, c *pgx.Conn, buckets []activity.Bucket) error {
+	tx, err := c.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var batch pgx.Batch
+	for _, bucket := range buckets {
+		batch.Queue(`
+				INSERT INTO activity_buckets(kind, epoch, bucket, owner, first_seen, last_seen)
+				SELECT $1, $2, $3, $4, $5, $5
+				WHERE ($1='day' AND $2 BETWEEN
+					to_char((now() AT TIME ZONE 'UTC')::date - 34, 'YYYY-MM-DD') AND
+					to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD'))
+				   OR ($1='month' AND $2 BETWEEN
+					to_char(date_trunc('month', now() AT TIME ZONE 'UTC') - interval '12 months', 'YYYY-MM') AND
+					to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM'))
+				ON CONFLICT (kind, epoch, bucket) DO UPDATE SET
+					owner = activity_buckets.owner OR EXCLUDED.owner,
+					first_seen = LEAST(activity_buckets.first_seen, EXCLUDED.first_seen),
+					last_seen = GREATEST(activity_buckets.last_seen, EXCLUDED.last_seen)`,
+			bucket.Kind, bucket.Epoch, bucket.Value[:], bucket.Owner, bucket.SeenAt.UTC())
+	}
+	results := tx.SendBatch(ctx, &batch)
+	for range buckets {
+		tag, err := results.Exec()
+		if err != nil {
+			_ = results.Close()
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			_ = results.Close()
+			return errors.New("serverstore: activity epoch is outside the retention window")
+		}
+	}
+	if err := results.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func retryableActivityTransaction(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "40001" || pgErr.Code == "40P01"
+}
+
+func validActivityEpoch(kind, epoch string) bool {
+	var layout string
+	switch kind {
+	case activity.KindDay:
+		layout = "2006-01-02"
+	case activity.KindMonth:
+		layout = "2006-01"
+	default:
+		return false
+	}
+	parsed, err := time.Parse(layout, epoch)
+	return err == nil && parsed.Format(layout) == epoch
+}
+
+func activityEpochMatchesSeenAt(bucket activity.Bucket) bool {
+	switch bucket.Kind {
+	case activity.KindDay:
+		return bucket.Epoch == bucket.SeenAt.UTC().Format("2006-01-02")
+	case activity.KindMonth:
+		return bucket.Epoch == bucket.SeenAt.UTC().Format("2006-01")
+	default:
+		return false
+	}
+}
+
+func (p *PG) ActivityCounts(ctx context.Context, dayEpoch, monthEpoch string) (activity.Counts, error) {
+	var out activity.Counts
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `
+			SELECT
+				COUNT(*) FILTER (WHERE kind='day' AND epoch=$1 AND NOT owner),
+				COUNT(*) FILTER (WHERE kind='month' AND epoch=$2 AND NOT owner),
+				COUNT(*) FILTER (WHERE kind='day' AND epoch=$1 AND owner),
+				COUNT(*) FILTER (WHERE kind='month' AND epoch=$2 AND owner),
+				EXISTS(SELECT 1 FROM activity_buckets WHERE kind='day' AND epoch=$1 AND NOT owner),
+				EXISTS(SELECT 1 FROM activity_buckets WHERE kind='month' AND epoch=$2 AND NOT owner)
+			FROM activity_buckets
+			WHERE (kind='day' AND epoch=$1) OR (kind='month' AND epoch=$2)`,
+			dayEpoch, monthEpoch).Scan(&out.ExternalDAU, &out.ExternalMAU, &out.OwnerDAU, &out.OwnerMAU, &out.DaySeen, &out.MonthSeen)
+	})
+	return out, err
+}
+
+// ActivityDaily backs the daily chart. A bounded daily health marker makes a
+// healthy zero distinguishable from both a collection gap and a day before
+// collection. Bucket rows remain separate so traffic proves collection even
+// for an epoch created before health markers were introduced.
+func (p *PG) ActivityDaily(ctx context.Context, fromEpoch, toEpoch string) (activity.DailyRaw, error) {
+	if !validActivityEpoch(activity.KindDay, fromEpoch) || !validActivityEpoch(activity.KindDay, toEpoch) {
+		return activity.DailyRaw{}, errors.New("serverstore: invalid activity day epoch range")
+	}
+	var out activity.DailyRaw
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH bucket_days AS (
+				SELECT epoch,
+				       COUNT(*) FILTER (WHERE NOT owner) AS external,
+				       COUNT(*) FILTER (WHERE owner) AS owner_excluded,
+				       COUNT(*) AS total
+				  FROM activity_buckets
+				 WHERE kind='day' AND epoch BETWEEN $1 AND $2
+				 GROUP BY epoch
+			), epochs AS (
+				SELECT epoch FROM activity_health WHERE epoch BETWEEN $1 AND $2
+				UNION
+				SELECT epoch FROM bucket_days
+			)
+			SELECT e.epoch,
+			       COALESCE(b.external, 0),
+			       COALESCE(b.owner_excluded, 0),
+			       COALESCE(b.total, 0),
+			       EXISTS(SELECT 1 FROM activity_health h WHERE h.epoch=e.epoch)
+			  FROM epochs e
+			  LEFT JOIN bucket_days b ON b.epoch=e.epoch
+			 ORDER BY e.epoch`, fromEpoch, toEpoch)
+		if err != nil {
+			return err
+		}
+		// A fresh slice per attempt: withConn may re-run this closure on a new
+		// connection, and a retry must not append to the previous result.
+		var days []activity.DayCount
+		for rows.Next() {
+			var d activity.DayCount
+			if err := rows.Scan(&d.Epoch, &d.Count, &d.OwnerExcluded, &d.Rows, &d.Healthy); err != nil {
+				rows.Close()
+				return err
+			}
+			days = append(days, d)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		out.Days = days
+		var oldest *string
+		if err := c.QueryRow(ctx, `
+			SELECT MIN(epoch) FROM (
+				SELECT epoch FROM activity_health
+				UNION
+				SELECT epoch FROM activity_buckets WHERE kind='day'
+			) retained_days`).Scan(&oldest); err != nil {
+			return err
+		}
+		if oldest != nil {
+			out.OldestEpoch = *oldest
+		}
+		return nil
+	})
+	if err != nil {
+		return activity.DailyRaw{}, err
+	}
+	return out, nil
+}
+
+// MarkActivityHealthy records only the current UTC day's explicit collection
+// health marker. The tracker calls it at startup and at each UTC rollover,
+// independently of collector-key readiness; one call never backfills history.
+func (p *PG) MarkActivityHealthy(ctx context.Context, now time.Time) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO activity_health(epoch, checked_at)
+			VALUES ($1, $2)
+			ON CONFLICT (epoch) DO UPDATE SET
+				checked_at = GREATEST(activity_health.checked_at, EXCLUDED.checked_at)`,
+			now.UTC().Format("2006-01-02"), now.UTC())
+		return err
+	})
+}
+
+// PruneActivity bounds linkable state to exactly 35 daily and 13 monthly
+// epochs including the current UTC day/month. It remains on the independent
+// six-hour maintenance cadence. Both tails are deleted, including health
+// markers, so a skewed future row cannot evade a lower-bound-only pass.
+func (p *PG) PruneActivity(ctx context.Context, now time.Time) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var batch pgx.Batch
+		batch.Queue(`
+			DELETE FROM activity_buckets
+			WHERE (kind='day' AND epoch < to_char(($1::timestamptz AT TIME ZONE 'UTC')::date - 34, 'YYYY-MM-DD'))
+			   OR (kind='day' AND epoch > to_char(($1::timestamptz AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD'))
+			   OR (kind='month' AND epoch < to_char(date_trunc('month', $1::timestamptz AT TIME ZONE 'UTC') - interval '12 months', 'YYYY-MM'))
+			   OR (kind='month' AND epoch > to_char($1::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM'))`, now.UTC())
+		batch.Queue(`
+			DELETE FROM activity_health
+			WHERE epoch < to_char(($1::timestamptz AT TIME ZONE 'UTC')::date - 34, 'YYYY-MM-DD')
+			   OR epoch > to_char(($1::timestamptz AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD')`, now.UTC())
+		results := tx.SendBatch(ctx, &batch)
+		for i := 0; i < 2; i++ {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return err
+			}
+		}
+		if err := results.Close(); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
 }
 
 // NetworkCounts computes the raw /v1/stats numbers in one round trip.

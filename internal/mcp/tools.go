@@ -19,8 +19,10 @@ import (
 // real wiring (NewDeps) stays daemon-free. Every function takes the request
 // context; none may retain it.
 type Deps struct {
-	// Search runs the C7 pipeline over the local store.
-	Search func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse
+	// Search runs the C7 pipeline over the local store. offerID is an opaque
+	// local-only capability for the recorded top result; it is empty on a
+	// miss or when local recording failed.
+	Search func(ctx context.Context, req domain.SearchRequest) (resp domain.SearchResponse, offerID string)
 	// GetSample returns a cached sample's manifest and its files
 	// (path → content, ≤64KB per file, binaries skipped).
 	GetSample func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error)
@@ -40,12 +42,10 @@ type Deps struct {
 	// RunObserved wraps one command in the evidence loop (scan → run →
 	// record). sanitized carries only sanitizer output — never raw stderr.
 	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, err error)
-	// ReportAdoption records a hit-adoption outcome (ADOPTION_EVIDENCE).
-	// ReportAdoption records what happened to a returned sample. It reports
-	// whether the report was queued for upload, which is false in
-	// local-only mode -- where the record is kept locally and nothing is
-	// ever sent.
-	ReportAdoption func(ctx context.Context, sampleID string, applied bool, buildPass *bool) error
+	// ReportAdoption records what happened to a returned sample. The outcome
+	// can call a failure "avoided" only when the local correlation proves all
+	// four stages; the upload remains the existing anonymous adoption event.
+	ReportAdoption func(ctx context.Context, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error)
 	// Propose builds a sanitized clean-room spec + prompt and creates an
 	// empty workspace. It NEVER publishes (goal.md §12.4).
 	Propose func(ctx context.Context, goal string, pkgs, symbols []string) (spec samples.SanitizedSpec, prompt string, workdir string, err error)
@@ -219,10 +219,11 @@ func toolDefs() []toolDef {
 			Name:        "report_sample_adoption",
 			Description: "Report whether a sample from search_known_solution was actually applied, and whether the build passed afterwards. Records ADOPTION_EVIDENCE — the network optimizes post-hit success rate, so honest reports matter.",
 			InputSchema: obj(map[string]any{
+				"offerId":   str("opaque local offer id returned by search_known_solution"),
 				"sampleId":  str("the adopted (or rejected) sample id"),
 				"applied":   map[string]any{"type": "boolean", "description": "true if the sample's approach was applied to the project"},
 				"buildPass": map[string]any{"type": "boolean", "description": "whether the project built/passed after adoption; omit if not known yet"},
-			}, "sampleId", "applied"),
+			}, "offerId", "sampleId", "applied"),
 		},
 		{
 			Name:        "propose_public_sample",
@@ -361,11 +362,13 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	}
 
 	req := domain.SearchRequest{
-		SchemaVersion: 1,
-		Query:         a.Query,
-		Packages:      a.Packages,
-		Symbols:       a.Symbols,
-		Environment:   a.Environment,
+		SchemaVersion:         2,
+		Query:                 a.Query,
+		Packages:              a.Packages,
+		Symbols:               a.Symbols,
+		SymbolProvenance:      domain.SearchProvenanceExplicit,
+		Environment:           a.Environment,
+		EnvironmentProvenance: domain.SearchProvenanceExplicit,
 	}
 	if req.Environment.SchemaVersion == 0 {
 		req.Environment.SchemaVersion = 1
@@ -392,13 +395,13 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 		req.ErrorFingerprints = san.Fingerprints()
 		req.ErrorCode = san.Code
 		for _, sym := range san.PublicSymbols {
-			if !containsFold(req.Symbols, sym) {
-				req.Symbols = append(req.Symbols, sym)
+			if !containsFold(req.ContextSymbols, sym) {
+				req.ContextSymbols = append(req.ContextSymbols, sym)
 			}
 		}
 	}
 
-	resp := s.Deps.Search(ctx, req)
+	resp, offerID := s.Deps.Search(ctx, req)
 
 	// A miss is the common case on a young network, and "nothing here" is a
 	// wasted round trip: the cache usually holds observation evidence for
@@ -417,7 +420,18 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 			})
 		}
 	}
-	return textResult(renderSearchResponse(resp), resp)
+	return textResult(renderSearchResponse(resp), localSearchStructured{
+		SearchResponse: resp,
+		OfferID:        offerID,
+	})
+}
+
+// localSearchStructured deliberately lives in the MCP package rather than
+// domain.SearchResponse: offerId is a local capability, not part of the
+// public /v1/search schema or any upload document.
+type localSearchStructured struct {
+	domain.SearchResponse
+	OfferID string `json:"offerId,omitempty"`
 }
 
 // PackageOverview is the compact "what does the network know about this
@@ -468,6 +482,7 @@ func (s *Server) readinessHint(ctx context.Context) (string, bool) {
 // evidence summary.
 func renderMiss(overview []PackageOverview, hint string) string {
 	var b strings.Builder
+	b.WriteString("DECISION: UNKNOWN — no safe verified match.\n\n")
 	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
 	b.WriteString("No verified sample matches this goal in your environment. Solve it fresh — " +
 		"a wrong HIT is worse than a MISS (goal.md §3.8).\n\n")
@@ -520,12 +535,15 @@ func containsFold(ss []string, want string) bool {
 // proof (goal.md §3.5).
 func renderSearchResponse(resp domain.SearchResponse) string {
 	if resp.Miss || len(resp.Results) == 0 {
-		return "MATCH: NO_SAFE_MATCH\n\n" +
+		return "DECISION: UNKNOWN — no safe verified match.\n\n" +
+			"MATCH: NO_SAFE_MATCH\n\n" +
 			"No safe match in the local network cache for this environment. " +
 			"NO_SAFE_MATCH is deliberately better than a wrong HIT (goal.md §3.8): solve the problem fresh, " +
 			"and consider propose_public_sample afterwards so the network learns."
 	}
 	var b strings.Builder
+	b.WriteString(renderDecision(resp.Results[0]))
+	b.WriteString("\n\n")
 	for i, r := range resp.Results {
 		if i > 0 {
 			b.WriteString("\n--- alternative " + strconv.Itoa(i+1) + " ---\n\n")
@@ -591,6 +609,26 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		b.WriteString(contractBlock(r))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderDecision is deliberately the first, compact line of an MCP search
+// answer. It says what the caller should do before the detailed evidence.
+// The exact-failure label is earned only by an exact sanitized fingerprint
+// match plus an already-passing contract in a reusable environment.
+func renderDecision(r domain.SearchResult) string {
+	switch {
+	case r.Evidence.ContractPasses <= 0 || len(r.Different) > 0 || len(r.Adaptation) > 0 ||
+		r.Grade == domain.GradeAdaptationRequired:
+		return "DECISION: REVERIFY — adapt or verify this sample in your environment before use."
+	case r.Grade == domain.GradeReferenceOnly:
+		return "DECISION: REFERENCE_ONLY — use this as reference only; it is not verified for this environment."
+	case !r.VerifiedOffer():
+		return "DECISION: REVERIFY — adapt or verify this sample in your environment before use."
+	case r.ExactFailureMatched:
+		return "DECISION: VERIFIED_DETOUR — exact failure fingerprint matched a contract PASS reusable in this environment."
+	default:
+		return "DECISION: REUSE_VERIFIED — a contract PASS is reusable in this environment."
+	}
 }
 
 // maxContractLinesShown bounds an untrimmed list that came from a local
@@ -806,6 +844,7 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 // --- report_sample_adoption ---
 
 type adoptionArgs struct {
+	OfferID   string `json:"offerId"`
 	SampleID  string `json:"sampleId"`
 	Applied   *bool  `json:"applied"`
 	BuildPass *bool  `json:"buildPass"`
@@ -827,32 +866,49 @@ func (s *Server) toolReportAdoption(ctx context.Context, raw json.RawMessage) *t
 	if !validContentAddress(a.SampleID) {
 		return errResult("report_sample_adoption: sampleId must be \"sha256:\" + 64 lowercase hex")
 	}
+	if a.OfferID == "" {
+		return errResult("report_sample_adoption: " + localdb.ErrOfferIDRequired.Error())
+	}
 	if a.Applied == nil {
 		return errResult("report_sample_adoption: applied is required")
 	}
-	if err := s.Deps.ReportAdoption(ctx, a.SampleID, *a.Applied, a.BuildPass); err != nil {
+	outcome, err := s.Deps.ReportAdoption(ctx, a.OfferID, a.SampleID, *a.Applied, a.BuildPass)
+	if err != nil {
 		return errResult("report_sample_adoption: " + err.Error())
 	}
-	text := fmt.Sprintf("Recorded adoption report for %s (applied=%v", a.SampleID, *a.Applied)
+	failureAvoided := outcome.ReportedFailureAvoided()
+	var text string
+	if failureAvoided {
+		text = fmt.Sprintf("Reported failure avoided for %s: exact failure fingerprint matched, a verified detour was offered and applied, and the post-hit build passed", a.SampleID)
+	} else {
+		text = fmt.Sprintf("Recorded adoption report for %s (applied=%v", a.SampleID, *a.Applied)
+	}
 	if a.BuildPass != nil {
-		text += fmt.Sprintf(", buildPass=%v", *a.BuildPass)
+		if failureAvoided {
+			text += fmt.Sprintf(" (buildPass=%v", *a.BuildPass)
+		} else {
+			text += fmt.Sprintf(", buildPass=%v", *a.BuildPass)
+		}
+	} else if failureAvoided {
+		text += " (buildPass not reported"
 	}
 	// Do not promise an upload this install will never make. In local-only
 	// mode nothing drains the queue, and saying "queued for anonymous
 	// upload" to a user who chose the mode that sends nothing was simply
 	// false.
-	queued := s.Deps.Mode != nil && s.Deps.Mode() == "community"
+	queued := outcome.UploadQueued
 	if queued {
 		text += "). Evidence class: ADOPTION_EVIDENCE — queued for anonymous upload."
 	} else {
 		text += "). Evidence class: ADOPTION_EVIDENCE — recorded locally; this install uploads nothing."
 	}
 	structured := map[string]any{
-		"recorded":      true,
-		"uploadQueued":  queued,
-		"sampleId":      a.SampleID,
-		"applied":       *a.Applied,
-		"evidenceClass": string(domain.ClassAdoptionEvidence),
+		"recorded":               true,
+		"uploadQueued":           queued,
+		"sampleId":               a.SampleID,
+		"applied":                *a.Applied,
+		"reportedFailureAvoided": failureAvoided,
+		"evidenceClass":          string(domain.ClassAdoptionEvidence),
 	}
 	if a.BuildPass != nil {
 		structured["buildPass"] = *a.BuildPass

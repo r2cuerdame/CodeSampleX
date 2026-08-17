@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -31,7 +33,8 @@ const (
 var templateFS embed.FS
 
 var dashboardTemplate = template.Must(template.New("admin.html").Funcs(template.FuncMap{
-	"number": formatInt,
+	"number":  formatInt,
+	"numberu": formatUint,
 }).ParseFS(templateFS, "templates/admin.html"))
 
 // Store is the deliberately small read-only view needed by the dashboard.
@@ -50,6 +53,14 @@ type AccessMetricsReader interface {
 	Metrics(ctx context.Context, now time.Time) (AccessLogMetrics, error)
 }
 
+// ActivityReader can mark the authenticated operator network and return only
+// privacy-bounded, owner-excluded network estimates and collection telemetry.
+type ActivityReader interface {
+	MarkOwner(ctx context.Context, r *http.Request, now time.Time) error
+	Metrics(ctx context.Context, now time.Time) (activity.Metrics, error)
+	Telemetry() activity.Telemetry
+}
+
 // Deps wires the private dashboard. TokenSHA256 must be the 64-character
 // hexadecimal SHA-256 digest of the HTTP Basic password; a raw token is never
 // accepted. The username is always "admin".
@@ -60,6 +71,7 @@ type Deps struct {
 	StartedAt     time.Time
 	Now           func() time.Time
 	AccessMetrics AccessMetricsReader
+	Activity      ActivityReader
 }
 
 type handler struct {
@@ -69,6 +81,7 @@ type handler struct {
 	startedAt     time.Time
 	now           func() time.Time
 	accessMetrics AccessMetricsReader
+	activity      ActivityReader
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -95,6 +108,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		startedAt:     startedAt,
 		now:           now,
 		accessMetrics: d.AccessMetrics,
+		activity:      d.Activity,
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -148,11 +162,40 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		data.Version = "알 수 없음"
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), dashboardTimeout)
+	defer cancel()
+	if h.activity == nil {
+		data.ActivityError = "외부 네트워크 추정 집계가 구성되지 않았습니다"
+	} else {
+		data.ActivityTelemetry = h.activity.Telemetry()
+		if err := h.activity.MarkOwner(ctx, r, now); err != nil {
+			// Without a confirmed owner mark, showing a number could count this
+			// very admin request as external. Prefer explicit unavailability.
+			data.ActivityTelemetry = h.activity.Telemetry()
+			switch {
+			case errors.Is(err, activity.ErrInvalidKey):
+				data.ActivityError = "활동 해시 키 구성이 올바르지 않아 추정치를 제공하지 않습니다"
+			case errors.Is(err, activity.ErrUnavailable):
+				data.ActivityError = "API 활동 ID 집계가 구성되지 않았습니다"
+			case errors.Is(err, activity.ErrNoNetworkIdentity):
+				data.ActivityError = "이 요청의 네트워크 경계를 신뢰할 수 없어 소유자 네트워크 제외를 확인할 수 없습니다"
+			default:
+				data.ActivityError = "소유자 네트워크 제외를 확인할 수 없습니다"
+			}
+		} else if metrics, err := h.activity.Metrics(ctx, now); err != nil {
+			data.ActivityTelemetry = metrics.Telemetry
+			data.ActivityError = "API 활동 ID 추정치를 불러올 수 없습니다"
+		} else {
+			data.Activity = metrics
+			data.ActivityDaily = buildActivityDaily(metrics.Daily)
+			data.ActivityTelemetry = metrics.Telemetry
+			data.ActivityAvailable = true
+		}
+	}
+
 	if h.store == nil {
 		data.DBError = "저장소가 구성되지 않았습니다"
 	} else {
-		ctx, cancel := context.WithTimeout(r.Context(), dashboardTimeout)
-		defer cancel()
 		h.collect(ctx, now, &data)
 	}
 
@@ -278,6 +321,12 @@ type dashboardData struct {
 	Access          accessView
 	AccessAvailable bool
 	AccessError     string
+
+	Activity          activity.Metrics
+	ActivityDaily     activityDailyPlot
+	ActivityTelemetry activity.Telemetry
+	ActivityAvailable bool
+	ActivityError     string
 }
 
 func nonNegative(d time.Duration) time.Duration {
@@ -319,6 +368,14 @@ func formatInt(n int64) string {
 	}
 	if negative {
 		return "-" + s
+	}
+	return s
+}
+
+func formatUint(n uint64) string {
+	s := strconv.FormatUint(n, 10)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
 	}
 	return s
 }

@@ -252,12 +252,13 @@ type Store interface {
 	ReceiptsForSample(ctx context.Context, sampleID string) ([]ReceiptRow, error)
 
 	// OpenJobs lists open verification jobs a peer with the given sandbox
-	// capability may claim ("" ⇒ any). Jobs whose want_env pins a
-	// sandboxCapability only match that capability. A job for a sample
-	// peerID has already filed a receipt on is never offered to it: a peer
-	// cannot cross-verify its own work, and claiming the job took it away
-	// from someone who could.
-	OpenJobs(ctx context.Context, capability, peerID string, limit int) ([]JobRow, error)
+	// capability may claim ("" ⇒ any). A non-empty reason restricts the
+	// result to that declarative job class ("cross" or "matrix"). Jobs whose
+	// want_env pins a sandboxCapability only match that capability. A job for
+	// a sample peerID has already filed a receipt on is never offered to it:
+	// a peer cannot cross-verify its own work, and claiming the job took it
+	// away from someone who could.
+	OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error)
 	// JobsForSample lists every verification job (any status) for a sample,
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.

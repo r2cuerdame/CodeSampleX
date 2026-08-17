@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -39,7 +40,7 @@ func toolText(t *testing.T, res map[string]any) string {
 func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 	var got domain.SearchRequest
 	deps := emptyDeps()
-	deps.Search = func(_ context.Context, req domain.SearchRequest) domain.SearchResponse {
+	deps.Search = func(_ context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
 		got = req
 		return domain.SearchResponse{
 			SchemaVersion: 1,
@@ -61,7 +62,7 @@ func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 					ElevatedFailures:           []string{"node 18 + esm"},
 				},
 			}},
-		}
+		}, "0123456789abcdef0123456789abcdef"
 	}
 	c := startServer(t, deps)
 
@@ -81,6 +82,13 @@ func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 		},
 		"errorText": rawErr,
 	})
+	structured := res["structuredContent"].(map[string]any)
+	if structured["offerId"] != "0123456789abcdef0123456789abcdef" {
+		t.Errorf("search structured offerId = %v", structured["offerId"])
+	}
+	if strings.Contains(toolText(t, res), "0123456789abcdef0123456789abcdef") {
+		t.Error("local offerId leaked into human-readable/public-style search text")
+	}
 
 	// The fake must have received a sanitized request: fingerprint + code
 	// only, no path fragments anywhere in the serialized request.
@@ -102,9 +110,16 @@ func TestSearchKnownSolutionSanitizesErrorText(t *testing.T) {
 	if got.Environment.ExecutionContext != "node" {
 		t.Errorf("environment.executionContext = %q, want node", got.Environment.ExecutionContext)
 	}
+	if got.SchemaVersion != 2 || got.SymbolProvenance != domain.SearchProvenanceExplicit ||
+		got.EnvironmentProvenance != domain.SearchProvenanceExplicit || got.EnvironmentIsContext() {
+		t.Errorf("MCP input must negotiate explicit/fail-closed v2 provenance: %+v", got)
+	}
 
 	// §11.5 layout: MATCH/CONFIDENCE header + the four sections.
 	text := toolText(t, res)
+	if !strings.HasPrefix(text, "DECISION: REVERIFY — ") {
+		t.Errorf("compact decision must be the first line for an adaptation:\n%s", text)
+	}
 	for _, want := range []string{
 		"MATCH: COMPATIBLE",
 		"CONFIDENCE: HIGH",
@@ -157,6 +172,9 @@ func TestSearchMissRendersNoSafeMatch(t *testing.T) {
 	c := startServer(t, emptyDeps()) // emptyDeps Search always misses
 	res := callTool(t, c, "search_known_solution", map[string]any{"query": "anything"})
 	text := toolText(t, res)
+	if !strings.HasPrefix(text, "DECISION: UNKNOWN — ") {
+		t.Errorf("miss decision must be first:\n%s", text)
+	}
 	if !strings.Contains(text, "MATCH: NO_SAFE_MATCH") {
 		t.Errorf("miss text missing NO_SAFE_MATCH:\n%s", text)
 	}
@@ -166,6 +184,59 @@ func TestSearchMissRendersNoSafeMatch(t *testing.T) {
 	}
 	if miss, _ := sc["miss"].(bool); !miss {
 		t.Errorf("structuredContent.miss = %v, want true", sc["miss"])
+	}
+}
+
+func TestSearchDecisionIsFirstAndEarned(t *testing.T) {
+	base := domain.SearchResult{
+		Grade: domain.GradeExact,
+		Evidence: domain.EvidenceSummary{
+			ContractPasses: 1,
+		},
+	}
+	tests := []struct {
+		name string
+		res  domain.SearchResult
+		want string
+	}{
+		{"verified detour", func() domain.SearchResult { r := base; r.ExactFailureMatched = true; return r }(), "VERIFIED_DETOUR"},
+		{"verified reuse", base, "REUSE_VERIFIED"},
+		{"adaptation", func() domain.SearchResult {
+			r := base
+			r.Grade = domain.GradeAdaptationRequired
+			r.Adaptation = []string{"change imports"}
+			return r
+		}(), "REVERIFY"},
+		{"different", func() domain.SearchResult {
+			r := base
+			r.Grade = domain.GradeCompatible
+			r.Different = []string{"Sample uses linux"}
+			return r
+		}(), "REVERIFY"},
+		{"no contract", func() domain.SearchResult { r := base; r.Evidence.ContractPasses = 0; return r }(), "REVERIFY"},
+		{"reference only", func() domain.SearchResult {
+			r := base
+			r.Grade = domain.GradeReferenceOnly
+			return r
+		}(), "REFERENCE_ONLY"},
+		{"reference with difference", func() domain.SearchResult {
+			r := base
+			r.Grade = domain.GradeReferenceOnly
+			r.Different = []string{"different runtime"}
+			return r
+		}(), "REVERIFY"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text := renderSearchResponse(domain.SearchResponse{Results: []domain.SearchResult{tc.res}})
+			wantPrefix := "DECISION: " + tc.want + " — "
+			if !strings.HasPrefix(text, wantPrefix) {
+				t.Fatalf("text prefix = %q, want %q\n%s", strings.SplitN(text, "\n", 2)[0], wantPrefix, text)
+			}
+			if !strings.Contains(text, "\n\nMATCH: ") {
+				t.Errorf("existing detail must remain below the compact decision:\n%s", text)
+			}
+		})
 	}
 }
 
@@ -319,22 +390,24 @@ func TestRunObservedCommandRoundTrip(t *testing.T) {
 }
 
 func TestReportSampleAdoptionRoundTrip(t *testing.T) {
+	var gotOffer string
 	var gotID string
 	var gotApplied bool
 	var gotBuild *bool
 	deps := emptyDeps()
-	deps.ReportAdoption = func(_ context.Context, id string, applied bool, buildPass *bool) error {
-		gotID, gotApplied, gotBuild = id, applied, buildPass
-		return nil
+	deps.ReportAdoption = func(_ context.Context, offerID, id string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error) {
+		gotOffer, gotID, gotApplied, gotBuild = offerID, id, applied, buildPass
+		return localdb.InterventionOutcome{}, nil
 	}
 	c := startServer(t, deps)
 	res := callTool(t, c, "report_sample_adoption", map[string]any{
+		"offerId":   "0123456789abcdef0123456789abcdef",
 		"sampleId":  "sha256:abababababababababababababababababababababababababababababababab",
 		"applied":   true,
 		"buildPass": true,
 	})
-	if gotID != "sha256:abababababababababababababababababababababababababababababababab" || !gotApplied {
-		t.Errorf("ReportAdoption got (%q, %v)", gotID, gotApplied)
+	if gotOffer != "0123456789abcdef0123456789abcdef" || gotID != "sha256:abababababababababababababababababababababababababababababababab" || !gotApplied {
+		t.Errorf("ReportAdoption got (%q, %q, %v)", gotOffer, gotID, gotApplied)
 	}
 	if gotBuild == nil || !*gotBuild {
 		t.Errorf("ReportAdoption buildPass = %v, want *true", gotBuild)
@@ -342,9 +415,13 @@ func TestReportSampleAdoptionRoundTrip(t *testing.T) {
 	if !strings.Contains(toolText(t, res), "ADOPTION_EVIDENCE") {
 		t.Errorf("adoption text missing evidence class")
 	}
+	if strings.Contains(strings.ToLower(toolText(t, res)), "failure avoided") {
+		t.Errorf("neutral adoption was labeled as a failure avoided: %s", toolText(t, res))
+	}
 
 	// buildPass omitted → nil pointer.
 	callTool(t, c, "report_sample_adoption", map[string]any{
+		"offerId":  "fedcba9876543210fedcba9876543210",
 		"sampleId": "sha256:abababababababababababababababababababababababababababababababab",
 		"applied":  false,
 	})
@@ -353,6 +430,36 @@ func TestReportSampleAdoptionRoundTrip(t *testing.T) {
 	}
 	if gotApplied {
 		t.Errorf("applied=false arrived as true")
+	}
+
+	deps.ReportAdoption = func(_ context.Context, _, _ string, _ bool, buildPass *bool) (localdb.InterventionOutcome, error) {
+		return localdb.InterventionOutcome{
+			ExactFailureMatched: true,
+			VerifiedOffer:       true,
+			Applied:             true,
+			BuildPass:           sql.NullBool{Bool: true, Valid: buildPass != nil},
+		}, nil
+	}
+	res = callTool(t, c, "report_sample_adoption", map[string]any{
+		"offerId":   "0123456789abcdef0123456789abcdef",
+		"sampleId":  "sha256:abababababababababababababababababababababababababababababababab",
+		"applied":   true,
+		"buildPass": true,
+	})
+	if !strings.Contains(strings.ToLower(toolText(t, res)), "reported failure avoided") {
+		t.Errorf("four-stage outcome lacks the earned label: %s", toolText(t, res))
+	}
+	sc := res["structuredContent"].(map[string]any)
+	if sc["reportedFailureAvoided"] != true {
+		t.Errorf("reportedFailureAvoided = %v, want true", sc["reportedFailureAvoided"])
+	}
+
+	res = callTool(t, c, "report_sample_adoption", map[string]any{
+		"sampleId": "sha256:abababababababababababababababababababababababababababababababab",
+		"applied":  true,
+	})
+	if !res["isError"].(bool) || !strings.Contains(toolText(t, res), "re-run search_known_solution") {
+		t.Fatalf("legacy no-token report was not neutral/re-search: %v", res)
 	}
 }
 

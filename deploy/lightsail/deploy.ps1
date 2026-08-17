@@ -229,6 +229,67 @@ if ($ConfigureAdmin) {
     }
 }
 
+# Snapshot the exact post-staging local relationship. A failed deployment is
+# intentionally resumable: an existing active credential stays active and a
+# newly generated/resumed pending credential stays pending. The final DPAPI
+# promotion is the only local mutation after this point.
+$adminCredentialState = $null
+if ($ConfigureAdmin) {
+    $activeExisted = Test-Path -LiteralPath $adminCredentialPaths.Active -PathType Leaf
+    $pendingExisted = Test-Path -LiteralPath $adminCredentialPaths.Pending -PathType Leaf
+    $activeBackup = $adminCredentialPaths.Active + ".deploy-state." + $deployLockOwner
+    $pendingBackup = $adminCredentialPaths.Pending + ".deploy-state." + $deployLockOwner
+    if ($activeExisted) { [IO.File]::Copy($adminCredentialPaths.Active, $activeBackup, $false) }
+    if ($pendingExisted) { [IO.File]::Copy($adminCredentialPaths.Pending, $pendingBackup, $false) }
+    $adminCredentialState = [pscustomobject]@{
+        ActiveExisted  = $activeExisted
+        PendingExisted = $pendingExisted
+        ActiveBackup   = $activeBackup
+        PendingBackup  = $pendingBackup
+        ActiveHash     = if ($activeExisted) { (Get-FileHash -LiteralPath $activeBackup -Algorithm SHA256).Hash } else { "" }
+        PendingHash    = if ($pendingExisted) { (Get-FileHash -LiteralPath $pendingBackup -Algorithm SHA256).Hash } else { "" }
+    }
+}
+
+function Restore-CSXAdminCredentialRelationship($Paths, $State) {
+    if ($null -eq $State) { return }
+    foreach ($item in @(
+        [pscustomobject]@{ Path = $Paths.Active; Backup = $State.ActiveBackup; Existed = $State.ActiveExisted },
+        [pscustomobject]@{ Path = $Paths.Pending; Backup = $State.PendingBackup; Existed = $State.PendingExisted }
+    )) {
+        if (-not $item.Existed) {
+            [IO.File]::Delete($item.Path)
+            continue
+        }
+        $restore = $item.Path + ".restore." + [Guid]::NewGuid().ToString("N")
+        $discard = $item.Path + ".discard." + [Guid]::NewGuid().ToString("N")
+        try {
+            [IO.File]::Copy($item.Backup, $restore, $false)
+            if ([IO.File]::Exists($item.Path)) {
+                [IO.File]::Replace($restore, $item.Path, $discard)
+            } else {
+                [IO.File]::Move($restore, $item.Path)
+            }
+        } finally {
+            # State replacement has no fallible cleanup after it: leftover
+            # files are still DPAPI ciphertext and are retried by this finally.
+            try { [IO.File]::Delete($restore) } catch { }
+            try { [IO.File]::Delete($discard) } catch { }
+        }
+    }
+    $activeNow = Test-Path -LiteralPath $Paths.Active -PathType Leaf
+    $pendingNow = Test-Path -LiteralPath $Paths.Pending -PathType Leaf
+    if ($activeNow -ne $State.ActiveExisted -or $pendingNow -ne $State.PendingExisted) {
+        throw "local admin credential active/pending relationship was not restored"
+    }
+    if ($activeNow -and (Get-FileHash -LiteralPath $Paths.Active -Algorithm SHA256).Hash -ne $State.ActiveHash) {
+        throw "local active admin credential was not restored exactly"
+    }
+    if ($pendingNow -and (Get-FileHash -LiteralPath $Paths.Pending -Algorithm SHA256).Hash -ne $State.PendingHash) {
+        throw "local pending admin credential was not restored exactly"
+    }
+}
+
 $requiredReleaseAssets = @(
     "csx-darwin-amd64",
     "csx-darwin-arm64",
@@ -292,7 +353,60 @@ if (-not $SkipImage) {
 
 Write-Output "== shipping bundle to $Ip =="
 Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
-Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"
+# Snapshot the exact live server/config/image state before this deploy changes
+# the compose file, image tag, container, or mode-0600 environment. Every
+# dimension has one present/absent marker so first-deploy rollback is as
+# deterministic as an ordinary rolling rollback.
+$snapshotServerConfig = @'
+set -eu
+umask 077
+cd /opt/codesamplex/deploy
+rm -f docker-compose.yml.rollback-predeploy docker-compose.yml.rollback-absent .env.rollback-predeploy .env.rollback-absent \
+  server-container.rollback-present server-container.rollback-absent server-container.rollback-running server-container.rollback-stopped \
+  server-image.rollback-id server-latest.rollback-id server-latest.rollback-absent
+if [ -f docker-compose.yml ]; then
+  cp -p docker-compose.yml docker-compose.yml.rollback-predeploy
+else
+  : > docker-compose.yml.rollback-absent
+fi
+if [ -f .env ]; then
+  cp -p .env .env.rollback-predeploy
+  chmod 0600 .env.rollback-predeploy
+else
+  : > .env.rollback-absent
+fi
+docker image rm codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:rollback-latest-predeploy >/dev/null 2>&1 || true
+if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then
+  test -f docker-compose.yml.rollback-predeploy
+  old=$(docker inspect codesamplex-server-1 --format '{{.Image}}')
+  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  docker image inspect "$old" >/dev/null
+  docker tag "$old" codesamplex/csx-server:rollback-predeploy
+  printf '%s\n' "$old" > server-image.rollback-id
+  : > server-container.rollback-present
+  if [ "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true ]; then
+    : > server-container.rollback-running
+  else
+    : > server-container.rollback-stopped
+  fi
+else
+  : > server-container.rollback-absent
+fi
+if docker image inspect codesamplex/csx-server:latest >/dev/null 2>&1; then
+  latest=$(docker image inspect codesamplex/csx-server:latest --format '{{.Id}}')
+  printf '%s\n' "$latest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  docker tag "$latest" codesamplex/csx-server:rollback-latest-predeploy
+  printf '%s\n' "$latest" > server-latest.rollback-id
+else
+  : > server-latest.rollback-absent
+fi
+'@
+Invoke-RemoteScript $snapshotServerConfig | Out-Null
+$serverActivationStarted = $false
+$caddyPromoted = $false
+$distPromoted = $false
+try {
+Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml.candidate"
 Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile.candidate"
 # Validate syntax and privacy semantics with the exact production Caddy image
 # before touching the running proxy. The probe log lives only in tmpfs. It
@@ -398,6 +512,7 @@ if ($releaseReady) {
     $stageValidation = ('set -eu; {0}; cd /opt/codesamplex/dist.stage; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $stageFiles, $requiredReleaseAssets.Count)
     Invoke-Remote $stageValidation | Out-Null
     Invoke-Remote "set -eu; rm -rf /opt/codesamplex/dist.previous; mv /opt/codesamplex/dist /opt/codesamplex/dist.previous; if mv /opt/codesamplex/dist.stage /opt/codesamplex/dist; then :; else mv /opt/codesamplex/dist.previous /opt/codesamplex/dist; exit 1; fi" | Out-Null
+    $distPromoted = $true
     Write-Output "atomically shipped $($requiredReleaseAssets.Count) artifacts from $tag"
 }
 
@@ -412,9 +527,38 @@ CSX_DIST_HOST_DIR=/opt/codesamplex/dist
 POSTGRES_PASSWORD=$pw
 "@
 $envTmp = Join-Path $env:TEMP "csx.env"
-Set-Content -Path $envTmp -Value ($envText -replace "`r`n", "`n") -Encoding ascii -NoNewline
+$normalizedEnvText = ($envText -replace "`r`n", "`n").TrimEnd("`r", "`n") + "`n"
+[IO.File]::WriteAllText($envTmp, $normalizedEnvText, [Text.Encoding]::ASCII)
 Copy-Remote $envTmp "/opt/codesamplex/deploy/.env.new"
 Invoke-Remote "cd /opt/codesamplex/deploy && chmod 600 .env.new && if [ -f .env ]; then rm -f .env.new; chmod 600 .env; echo 'kept existing .env'; else mv .env.new .env; echo 'wrote new .env'; fi" | Out-Null
+
+# Generate the activity HMAC key on the host and keep it stable across rolling
+# deploys. It travels neither in argv nor output and never touches local disk.
+$ensureActivityKey = @'
+set -eu
+umask 077
+cd /opt/codesamplex/deploy
+[ -f .env ] || exit 65
+chmod 0600 .env
+if grep -Eq '^CSX_ACTIVITY_HASH_KEY=[0-9a-f]{64}$' .env; then exit 0; fi
+if grep -q '^CSX_ACTIVITY_HASH_KEY=' .env; then exit 64; fi
+key=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+[ "${#key}" -eq 64 ] || exit 66
+tmp=$(mktemp .env.activity.XXXXXX)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+cat .env > "$tmp"
+# A legacy or freshly copied env may lack its final newline. Repair the
+# boundary before appending so the key can never become part of the database
+# password (and therefore the DSN) on first deploy.
+if [ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ]; then printf '\n' >> "$tmp"; fi
+printf '%s\n' "CSX_ACTIVITY_HASH_KEY=$key" >> "$tmp"
+chmod 0600 "$tmp"
+mv "$tmp" .env
+unset key
+trap - EXIT HUP INT TERM
+'@
+Invoke-RemoteScript $ensureActivityKey | Out-Null
+Write-Output "activity hash key: present in remote mode-0600 environment"
 
 if ($ConfigureAdmin) {
     # Only the one-way verifier crosses SSH, on stdin. The fixed remote script
@@ -441,18 +585,22 @@ trap - EXIT HUP INT TERM
 
 if (-not $SkipImage) {
     Write-Output "== loading image on host (this takes a minute) =="
-    $oldImage = Invoke-Remote "docker image inspect codesamplex/csx-server:latest --format '{{.Id}}' 2>/dev/null || true" | Select-Object -First 1
-    if ($oldImage) {
-        Invoke-Remote "docker tag codesamplex/csx-server:latest codesamplex/csx-server:rollback-predeploy" | Out-Null
-        Write-Output "rollback-predeploy: $(([string]$oldImage).Trim())"
-    }
     $remoteImageTar = "/opt/codesamplex/csx-server-image-$deployLockOwner.tar"
     Copy-Remote $imageTar $remoteImageTar
     Invoke-Remote "set -eu; docker load -i $remoteImageTar >/dev/null; docker tag $localImageTag codesamplex/csx-server:latest; docker image rm $localImageTag >/dev/null; rm -f $remoteImageTar" | Out-Null
 }
 
-$caddyPromoted = $false
-try {
+    $promoteServerConfig = @'
+set -eu
+cd /opt/codesamplex/deploy
+candidate=docker-compose.yml.candidate
+test -f "$candidate"
+chmod 0644 "$candidate"
+mv -f "$candidate" docker-compose.yml
+'@
+    Invoke-RemoteScript $promoteServerConfig | Out-Null
+    $serverActivationStarted = $true
+
     # Promote only after every unrelated shipping/build step has succeeded.
     # Keep one exact rollback copy until the live privacy smoke passes.
     $promoteCaddy = @'
@@ -461,17 +609,31 @@ candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
 live=/opt/codesamplex/deploy/caddy/Caddyfile
 rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
 absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
+container_present=/opt/codesamplex/deploy/caddy/container.rollback-present
+container_absent=/opt/codesamplex/deploy/caddy/container.rollback-absent
+container_running=/opt/codesamplex/deploy/caddy/container.rollback-running
+container_stopped=/opt/codesamplex/deploy/caddy/container.rollback-stopped
+image_id=/opt/codesamplex/deploy/caddy/container.rollback-image-id
 promoted=0
 cleanup() {
-  if [ "$promoted" -eq 0 ]; then rm -f "$rollback" "$absent"; fi
+  if [ "$promoted" -eq 0 ]; then rm -f "$rollback" "$absent" "$container_present" "$container_absent" "$container_running" "$container_stopped" "$image_id"; fi
 }
 trap cleanup EXIT HUP INT TERM
 test -f "$candidate"
-rm -f "$rollback" "$absent"
+rm -f "$rollback" "$absent" "$container_present" "$container_absent" "$container_running" "$container_stopped" "$image_id"
 if [ -f "$live" ]; then
   cp -p "$live" "$rollback"
 else
   : > "$absent"
+fi
+if docker container inspect codesamplex-caddy-1 >/dev/null 2>&1; then
+  old=$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')
+  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  printf '%s\n' "$old" > "$image_id"
+  : > "$container_present"
+  if [ "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = true ]; then : > "$container_running"; else : > "$container_stopped"; fi
+else
+  : > "$container_absent"
 fi
 chmod 0644 "$candidate"
 mv -f "$candidate" "$live"
@@ -567,46 +729,77 @@ docker compose exec -T server sh -c '
 '@
 $safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
 Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
-    Invoke-Remote "rm -f /opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy /opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent /opt/codesamplex/deploy/caddy/Caddyfile.candidate" | Out-Null
-    $caddyPromoted = $false
-} catch {
-    $deployFailure = $_
-    if ($caddyPromoted) {
-        $rollbackCaddy = @'
-set -eu
-cd /opt/codesamplex/deploy
-live=/opt/codesamplex/deploy/caddy/Caddyfile
-rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
-absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
-candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
-if [ -f "$rollback" ]; then
-  chmod 0644 "$rollback"
-  mv -f "$rollback" "$live"
-  rm -f "$absent" "$candidate"
-  docker compose up -d --no-build --no-deps --force-recreate caddy
-  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-elif [ -f "$absent" ]; then
-  rm -f "$live" "$absent" "$candidate"
-  docker compose rm -sf caddy >/dev/null 2>&1 || true
-else
-  exit 69
-fi
-'@
-        try {
-            Invoke-RemoteScript $rollbackCaddy | Out-Null
-            Write-Output "Caddy config: restored rollback-predeploy after failed activation"
-        } catch {
-            Write-Warning "Caddy activation failed and automatic rollback also failed; rollback-predeploy needs operator attention"
-        }
-    }
-    throw $deployFailure
-}
 Write-Output "privacy-safe API access log: query-free, bounded, server-readable"
 
-# The former logger is now inactive and its files can contain historical
-# queries. Irrecoverably remove only its exact current/roll filename family,
-# only after the replacement config is committed and rollback is no longer
-# needed. An interrupted cleanup is safe to retry on the next deploy.
+    # Match the route state to the verifier in the live environment on every
+    # rollout. Configured admin must be 401 without credentials; deliberately
+    # unconfigured admin must remain 404.
+    $adminProbe = @'
+set -eu
+cd /opt/codesamplex/deploy
+response=$(docker compose exec -T server wget -S -O /dev/null http://127.0.0.1:8080/admin 2>&1 || true)
+if grep -Eq '^CSX_ADMIN_TOKEN_SHA256=[0-9a-f]{64}$' .env; then
+  printf '%s\n' "$response" | grep -q '401'
+else
+  printf '%s\n' "$response" | grep -q '404'
+fi
+'@
+    Invoke-RemoteScript $adminProbe | Out-Null
+    Write-Output "admin route state: matches live verifier configuration"
+
+if ($ConfigureAdmin) {
+    # Prove the local DPAPI credential and remote verifier are the same value.
+    # The request is made with a header (never a URL credential), follows no
+    # redirects, and exposes only its numeric status.
+    $adminCredentialFile = if ($adminCredentialPending) { $adminCredentialPaths.Pending } else { $adminCredentialPaths.Active }
+    $adminStatus = 0
+    for ($i = 0; $i -lt 10 -and $adminStatus -ne 200; $i++) {
+        $probeSecret = Read-CSXAdminCredential $adminCredentialFile
+        try {
+            try { $adminStatus = Invoke-CSXAdminAuthenticatedProbe $probeSecret }
+            catch { $adminStatus = 0 }
+        } finally {
+            $probeSecret.Dispose()
+        }
+        if ($adminStatus -ne 200) { Start-Sleep -Seconds 2 }
+    }
+    if ($adminStatus -ne 200) { throw "admin authenticated smoke failed (HTTP $adminStatus)" }
+    Write-Output "admin authenticated smoke: 200"
+}
+
+# Prove the dedicated key reached the server and migration 0008 is queryable.
+# After an authenticated admin smoke, also require fresh owner rows for both
+# current epochs; this verifies retroactive exclusion without persisting a raw
+# address or polluting the external estimate with a synthetic network.
+$activityOwnerCheck = ":"
+if ($ConfigureAdmin) {
+    $activityOwnerCheck = @'
+owner_epochs=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT COUNT(DISTINCT kind) FROM activity_buckets WHERE owner AND last_seen >= now() - interval '5 minutes' AND ((kind='day' AND epoch=to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD')) OR (kind='month' AND epoch=to_char(now() AT TIME ZONE 'UTC','YYYY-MM')))" )
+test "$owner_epochs" = 2
+'@
+}
+$activitySmoke = @'
+set -eu
+cd /opt/codesamplex/deploy
+docker compose exec -T server sh -c 'printf "%s\n" "$CSX_ACTIVITY_HASH_KEY" | grep -Eq "^[0-9a-f]{64}$"'
+present=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT to_regclass('public.activity_buckets') IS NOT NULL")
+test "$present" = t
+health_present=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT to_regclass('public.activity_health') IS NOT NULL")
+test "$health_present" = t
+columns=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name='activity_buckets'")
+test "$columns" = kind,epoch,bucket,owner,first_seen,last_seen
+__CSX_ACTIVITY_OWNER_CHECK__
+'@
+$activitySmoke = $activitySmoke.Replace('__CSX_ACTIVITY_OWNER_CHECK__', $activityOwnerCheck)
+Invoke-RemoteScript $activitySmoke | Out-Null
+Write-Output "activity estimate smoke: key and migration ready$(if ($ConfigureAdmin) { '; fresh owner exclusion recorded' } else { '' })"
+
+$landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/ | head -c 300"
+Write-Output "landing sample: $($landing -join ' ' )"
+
+# The former logger can contain historical queries. Purge only after the new
+# server and Caddy pass their live smokes, but before committing either side of
+# the coordinated remote/DPAPI transaction.
 $legacyAccessPurge = @'
 set -eu
 cd /opt/codesamplex/deploy
@@ -632,51 +825,222 @@ removed=$(docker compose exec -T caddy sh -c '
 printf 'legacy query-bearing access files irrecoverably removed: %s\n' "$removed"
 '@
 Invoke-RemoteScript $legacyAccessPurge | ForEach-Object { Write-Output $_ }
-if ($ConfigureAdmin) {
-    # An unauthenticated 401 proves that the exact private route was mounted;
-    # a missing or malformed verifier deliberately leaves it at 404.
-    $adminProbe = @'
-cd /opt/codesamplex/deploy
-response=$(docker compose exec -T server wget -S -O /dev/null http://127.0.0.1:8080/admin 2>&1 || true)
-# Windows PowerShell 5.1's native SSH argument marshalling can strip the
-# quotes around the captured response, leaving each whitespace-delimited
-# token on its own line. Match the status token itself so both renderings are
-# accepted; this response is from the fixed loopback /admin endpoint only.
-printf '%s\n' "$response" | grep -q '401'
-'@
-    Invoke-RemoteScript $adminProbe | Out-Null
-    Write-Output "admin route: configured (401 without credentials)"
 
-    # Prove the local DPAPI credential and remote verifier are the same value.
-    # The request is made with a header (never a URL credential), follows no
-    # redirects, and exposes only its numeric status.
-    $adminCredentialFile = if ($adminCredentialPending) { $adminCredentialPaths.Pending } else { $adminCredentialPaths.Active }
-    $adminStatus = 0
-    for ($i = 0; $i -lt 10 -and $adminStatus -ne 200; $i++) {
-        $probeSecret = Read-CSXAdminCredential $adminCredentialFile
-        try {
-            try { $adminStatus = Invoke-CSXAdminAuthenticatedProbe $probeSecret }
-            catch { $adminStatus = 0 }
-        } finally {
-            $probeSecret.Dispose()
-        }
-        if ($adminStatus -ne 200) { Start-Sleep -Seconds 2 }
-    }
-    if ($adminStatus -ne 200) { throw "admin authenticated smoke failed (HTTP $adminStatus)" }
-    Write-Output "admin authenticated smoke: 200"
-    if ($adminCredentialPending) {
-        Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
-        Write-Output "local admin credential committed to the current user's DPAPI store"
-    }
+# Final remote commit proves the exact live state and removes only disposable
+# candidates. Predeploy snapshots intentionally remain until the next locked
+# deployment takes a fresh snapshot, so an unlikely local DPAPI promotion
+# failure can still restore remote .env/config/image state exactly.
+$commitDeployment = @'
+set -eu
+cd /opt/codesamplex/deploy
+test -f docker-compose.yml
+test -f .env
+test ! -e docker-compose.yml.candidate
+test ! -e .env.new
+test ! -e caddy/Caddyfile.candidate
+docker compose config --quiet
+test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true
+test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = true
+docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz | grep -q '^ok'
+'@
+Invoke-RemoteScript $commitDeployment | Out-Null
+
+if ($ConfigureAdmin -and $adminCredentialPending) {
+    Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
+    Write-Output "local admin credential committed after final remote deployment commit"
 }
-$landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/ | head -c 300"
-Write-Output "landing sample: $($landing -join ' ' )"
+    $serverActivationStarted = $false
+    $caddyPromoted = $false
+} catch {
+    $deployFailure = $_
+    $serverRollbackFailure = $null
+    $caddyRollbackFailure = $null
+    $credentialRollbackFailure = $null
+    $restoreDist = if ($distPromoted) { "1" } else { "0" }
+    $rollbackServer = @'
+set -eu
+cd /opt/codesamplex/deploy
+restore_dist=__CSX_RESTORE_DIST__
+one_of() {
+  count=0
+  for marker in "$@"; do if [ -e "$marker" ]; then count=$((count + 1)); fi; done
+  test "$count" -eq 1
+}
+one_of docker-compose.yml.rollback-predeploy docker-compose.yml.rollback-absent
+one_of .env.rollback-predeploy .env.rollback-absent
+one_of server-container.rollback-present server-container.rollback-absent
+one_of server-latest.rollback-id server-latest.rollback-absent
+if [ -f server-container.rollback-present ]; then
+  one_of server-container.rollback-running server-container.rollback-stopped
+  test -f server-image.rollback-id
+  old=$(cat server-image.rollback-id)
+  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  test "$(docker image inspect codesamplex/csx-server:rollback-predeploy --format '{{.Id}}')" = "$old"
+else
+  test ! -e server-image.rollback-id
+  test ! -e server-container.rollback-running
+  test ! -e server-container.rollback-stopped
+fi
+if [ -f .env.rollback-predeploy ]; then
+  test ! -e .env.rollback-absent
+fi
+if [ "$restore_dist" -eq 1 ]; then test -d /opt/codesamplex/dist.previous; fi
+if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then docker rm -f codesamplex-server-1 >/dev/null; fi
+if [ -f docker-compose.yml.rollback-predeploy ]; then
+  cp -p docker-compose.yml.rollback-predeploy docker-compose.yml
+else
+  rm -f docker-compose.yml
+fi
+if [ -f .env.rollback-predeploy ]; then
+  cp -p .env.rollback-predeploy .env
+  chmod 0600 .env
+else
+  rm -f .env
+fi
+rm -f docker-compose.yml.candidate .env.new .env.activity.* .env.admin.* caddy/Caddyfile.candidate
+if [ "$restore_dist" -eq 1 ]; then
+  rm -rf /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist.failed-rollback
+  cp -a /opt/codesamplex/dist.previous /opt/codesamplex/dist.rollback-stage
+  mv /opt/codesamplex/dist /opt/codesamplex/dist.failed-rollback
+  if mv /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist; then
+    rm -rf /opt/codesamplex/dist.failed-rollback
+  else
+    mv /opt/codesamplex/dist.failed-rollback /opt/codesamplex/dist
+    exit 68
+  fi
+fi
+if [ -f server-container.rollback-present ]; then
+  docker tag codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:latest
+  docker compose up -d --no-build --no-deps --force-recreate server
+  test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
+  if [ -f server-container.rollback-running ]; then
+    i=0
+    while [ "$i" -lt 24 ]; do
+      if docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
+      i=$((i + 1))
+      sleep 5
+    done
+    test "$i" -lt 24
+    test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true
+  else
+    docker compose stop server >/dev/null
+    test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = false
+  fi
+else
+  ! docker container inspect codesamplex-server-1 >/dev/null 2>&1
+fi
+if [ -f server-latest.rollback-id ]; then
+  latest=$(cat server-latest.rollback-id)
+  printf '%s\n' "$latest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  test "$(docker image inspect codesamplex/csx-server:rollback-latest-predeploy --format '{{.Id}}')" = "$latest"
+  docker tag codesamplex/csx-server:rollback-latest-predeploy codesamplex/csx-server:latest
+  test "$(docker image inspect codesamplex/csx-server:latest --format '{{.Id}}')" = "$latest"
+else
+  if docker image inspect codesamplex/csx-server:latest >/dev/null 2>&1; then docker image rm codesamplex/csx-server:latest >/dev/null; fi
+  ! docker image inspect codesamplex/csx-server:latest >/dev/null 2>&1
+fi
+if [ -f docker-compose.yml.rollback-predeploy ]; then cmp -s docker-compose.yml.rollback-predeploy docker-compose.yml; else test ! -e docker-compose.yml; fi
+if [ -f .env.rollback-predeploy ]; then cmp -s .env.rollback-predeploy .env; else test ! -e .env; fi
+test ! -e docker-compose.yml.candidate
+test ! -e .env.new
+'@
+    $rollbackServer = $rollbackServer.Replace('__CSX_RESTORE_DIST__', $restoreDist)
+    try {
+        Invoke-RemoteScript $rollbackServer | Out-Null
+        Write-Output "server rollback: exact prior container/image/config/env state proved"
+    } catch {
+        $serverRollbackFailure = $_
+    }
+
+    if ($caddyPromoted) {
+        $rollbackCaddy = @'
+set -eu
+cd /opt/codesamplex/deploy
+live=/opt/codesamplex/deploy/caddy/Caddyfile
+rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
+absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
+candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
+container_present=/opt/codesamplex/deploy/caddy/container.rollback-present
+container_absent=/opt/codesamplex/deploy/caddy/container.rollback-absent
+container_running=/opt/codesamplex/deploy/caddy/container.rollback-running
+container_stopped=/opt/codesamplex/deploy/caddy/container.rollback-stopped
+image_id=/opt/codesamplex/deploy/caddy/container.rollback-image-id
+one_of() {
+  count=0
+  for marker in "$@"; do if [ -e "$marker" ]; then count=$((count + 1)); fi; done
+  test "$count" -eq 1
+}
+one_of "$rollback" "$absent"
+one_of "$container_present" "$container_absent"
+if [ -f "$container_present" ]; then one_of "$container_running" "$container_stopped"; test -f "$image_id"; fi
+if docker container inspect codesamplex-caddy-1 >/dev/null 2>&1; then docker rm -f codesamplex-caddy-1 >/dev/null; fi
+if [ -f "$rollback" ]; then
+  chmod 0644 "$rollback"
+  cp -p "$rollback" "$live"
+else
+  rm -f "$live" "$candidate"
+fi
+rm -f "$candidate"
+if [ -f "$container_present" ]; then
+  test -f "$rollback"
+  old=$(cat "$image_id")
+  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
+  docker compose up -d --no-build --no-deps --force-recreate caddy
+  test "$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')" = "$old"
+  if [ -f "$container_running" ]; then
+    docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+    test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = true
+  else
+    docker compose stop caddy >/dev/null
+    test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = false
+  fi
+else
+  ! docker container inspect codesamplex-caddy-1 >/dev/null 2>&1
+fi
+if [ -f "$rollback" ]; then cmp -s "$rollback" "$live"; else test ! -e "$live"; fi
+test ! -e "$candidate"
+'@
+        try {
+            Invoke-RemoteScript $rollbackCaddy | Out-Null
+            Write-Output "Caddy rollback: restored rollback-predeploy after failed activation"
+        } catch {
+            $caddyRollbackFailure = $_
+        }
+    } else {
+        try { Invoke-Remote "rm -f /opt/codesamplex/deploy/caddy/Caddyfile.candidate" | Out-Null }
+        catch { $caddyRollbackFailure = $_ }
+    }
+
+    if ($ConfigureAdmin) {
+        try { Restore-CSXAdminCredentialRelationship $adminCredentialPaths $adminCredentialState }
+        catch { $credentialRollbackFailure = $_ }
+    }
+
+    # Rollbacks are independent and all are attempted. If any rollback fails,
+    # aggregate it with the original deployment exception rather than hiding
+    # either error behind a warning or a replacement throw.
+    $allFailures = New-Object 'System.Collections.Generic.List[System.Exception]'
+    $allFailures.Add($deployFailure.Exception)
+    foreach ($rollbackFailure in @($serverRollbackFailure, $caddyRollbackFailure, $credentialRollbackFailure)) {
+        if ($null -ne $rollbackFailure) { $allFailures.Add($rollbackFailure.Exception) }
+    }
+    if ($allFailures.Count -gt 1) {
+        throw [AggregateException]::new("deployment failed and one or more exact rollbacks failed", $allFailures.ToArray())
+    }
+    throw $deployFailure
+}
 Write-Output ""
 Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagation."
 } catch {
     $deployScriptFailure = $_
     throw
 } finally {
+    if ($null -ne $adminCredentialState -and $null -eq $credentialRollbackFailure) {
+        # These are DPAPI ciphertext copies, retained only long enough to
+        # prove/restore the coordinated local state transition.
+        [IO.File]::Delete($adminCredentialState.ActiveBackup)
+        [IO.File]::Delete($adminCredentialState.PendingBackup)
+    }
     # Clean only per-invocation artifacts whose names contain this lock
     # owner's validated random token. Cleanup errors are warnings; lock
     # release below remains mandatory and gets its own error handling.

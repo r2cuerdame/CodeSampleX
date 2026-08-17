@@ -116,8 +116,8 @@ func (c *Client) Status(ctx context.Context) (StatusInfo, error) {
 }
 
 // Search runs POST /local/v1/search.
-func (c *Client) Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error) {
-	var resp domain.SearchResponse
+func (c *Client) Search(ctx context.Context, req domain.SearchRequest) (LocalSearchResponse, error) {
+	var resp LocalSearchResponse
 	err := c.do(ctx, http.MethodPost, "/local/v1/search", req, &resp)
 	return resp, err
 }

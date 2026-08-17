@@ -498,11 +498,11 @@ func TestIntegrationCRUD(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateJob pinned: %v", err)
 		}
-		open, err := pg.OpenJobs(ctx, "", "", 10)
+		open, err := pg.OpenJobs(ctx, "", "", "", 10)
 		if err != nil || len(open) != 2 {
 			t.Fatalf("OpenJobs any: %v err=%v", open, err)
 		}
-		open, err = pg.OpenJobs(ctx, "COMPILE_ONLY", "", 10)
+		open, err = pg.OpenJobs(ctx, "COMPILE_ONLY", "", "", 10)
 		if err != nil || len(open) != 1 || open[0].ID != id {
 			t.Fatalf("OpenJobs COMPILE_ONLY: %v err=%v", open, err)
 		}
@@ -516,7 +516,7 @@ func TestIntegrationCRUD(t *testing.T) {
 		if err := pg.CompleteJob(ctx, id); err != nil {
 			t.Fatalf("CompleteJob: %v", err)
 		}
-		open, err = pg.OpenJobs(ctx, "", "", 10)
+		open, err = pg.OpenJobs(ctx, "", "", "", 10)
 		if err != nil || len(open) != 1 || open[0].ID != pinned {
 			t.Fatalf("OpenJobs after claim+complete: %v err=%v", open, err)
 		}

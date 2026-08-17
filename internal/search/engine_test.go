@@ -96,6 +96,31 @@ func saveResolvedReceipt(t *testing.T, db *localdb.DB, sampleID string, m domain
 	}
 }
 
+func saveReceiptWithPackages(t *testing.T, db *localdb.DB, sampleID string, m domain.SampleManifest,
+	schemaVersion int, resolved []string, contractResult string) {
+	t.Helper()
+	caseID := m.Case.CaseID
+	if caseID == "" {
+		caseID = m.Case.ComputeID()
+	}
+	receipt := domain.VerificationReceipt{
+		SchemaVersion: schemaVersion, SampleID: sampleID, CaseID: caseID,
+		EnvironmentHash: m.Environment.Normalize().Hash(), Environment: m.Environment,
+		Stages: map[string]string{
+			"resolve":  string(domain.ResultPass),
+			"compile":  string(domain.ResultPass),
+			"contract": contractResult,
+		},
+		ResolvedPackages: resolved, VerifierAdapter: m.VerifierAdapter,
+		SandboxCapability: domain.CapContainerRun, LogsDigest: "sha256:test",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339), PeerID: "ed25519:aaaa111122223333",
+		PeerPubkey: "test", PeerSignature: "test",
+	}
+	if err := db.SaveReceipt(context.Background(), receipt); err != nil {
+		t.Fatalf("save receipt for %s: %v", sampleID, err)
+	}
+}
+
 // ESM sample answering a CJS request must come back ADAPTATION_REQUIRED
 // with the §11.5-style import-syntax delta, never EXACT/COMPATIBLE.
 func TestSearchESMSampleCJSRequestAdaptationRequired(t *testing.T) {
@@ -259,6 +284,7 @@ func TestSearchErrorFingerprintRanksFirst(t *testing.T) {
 	if err := SeedSampleDoc(ctx, db, mA, "sha256:fixa", "LOCAL_PASS"); err != nil {
 		t.Fatalf("seed A: %v", err)
 	}
+	saveResolvedReceipt(t, db, "sha256:fixa", mA, "ed25519:aaaa111122223333")
 	mB := mkManifest("clone object deeply with lodash",
 		[]string{"pkg:npm/lodash@4.17.21"}, nodeEnv("cjs"), "lodash.cloneDeep")
 	if err := SeedSampleDoc(ctx, db, mB, "sha256:lodb", "LOCAL_PASS"); err != nil {
@@ -294,6 +320,9 @@ func TestSearchErrorFingerprintRanksFirst(t *testing.T) {
 	if resp.Results[0].SampleID != "sha256:fixa" {
 		t.Fatalf("results[0] = %s, want fingerprint-matched sample sha256:fixa", resp.Results[0].SampleID)
 	}
+	if !resp.Results[0].ExactFailureMatched {
+		t.Error("exact fingerprint match was not exposed on SearchResult")
+	}
 	if resp.Results[0].Grade == domain.GradeReferenceOnly {
 		t.Errorf("fix for the searched failure must not be demoted to REFERENCE_ONLY")
 	}
@@ -305,6 +334,187 @@ func TestSearchErrorFingerprintRanksFirst(t *testing.T) {
 		if r.SampleID == "sha256:lodb" {
 			t.Errorf("unrelated same-package sample returned as an alternative (score %f)", r.Score)
 		}
+	}
+
+	// The same error CODE is useful for relevance but is not an exact
+	// fingerprint match. Neither is a semantic/package hit with no error.
+	for _, tc := range []struct {
+		name string
+		req  domain.SearchRequest
+	}{
+		{
+			name: "error code only",
+			req: domain.SearchRequest{
+				SchemaVersion: 1, Query: "require esm error",
+				Packages: []string{"pkg:npm/axios@1.12.0"}, Environment: nodeEnv("cjs"),
+				ErrorFingerprint: "sha256:not-the-recorded-fingerprint", ErrorCode: "ERR_REQUIRE_ESM",
+			},
+		},
+		{
+			name: "semantic package hit",
+			req: domain.SearchRequest{
+				SchemaVersion: 1, Query: "fix require esm error when loading axios",
+				Packages: []string{"pkg:npm/axios@1.12.0"}, Environment: nodeEnv("cjs"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (Engine{DB: db}).Search(ctx, tc.req)
+			if got.Miss || len(got.Results) == 0 {
+				t.Fatalf("expected relevance hit, got miss=%v", got.Miss)
+			}
+			if got.Results[0].ExactFailureMatched {
+				t.Error("nonmatching fingerprint was promoted to an exact failure match")
+			}
+		})
+	}
+}
+
+func TestExactFailureMatchedRequiresDeclaredSymbolAndSelectedPassContract(t *testing.T) {
+	const fp = "sha256:exact-failure"
+	tests := []struct {
+		name             string
+		candidateSym     string
+		clusterPackage   string
+		clusterSym       string
+		contract         []string
+		packages         []string
+		requestPackages  []string
+		omitPackages     bool
+		receiptSchema    int
+		resolvedPackages []string
+		contractResult   string
+		wantExact        bool
+	}{
+		{
+			name: "same package symbol resolved pass", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"returns parsed JSON"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/axios@1.12.0"}, contractResult: "PASS", wantExact: true,
+		},
+		{
+			name: "pass resolves different package", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"returns parsed JSON"},
+			packages: []string{"pkg:npm/axios@1.12.0", "pkg:npm/lodash@4.17.21"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/lodash@4.17.21"}, contractResult: "PASS", wantExact: false,
+		},
+		{
+			name: "explicit axios excludes lodash failure", candidateSym: "lodash.get",
+			clusterPackage: "lodash", clusterSym: "lodash.get",
+			contract:        []string{"returns parsed JSON"},
+			packages:        []string{"pkg:npm/axios@1.12.0", "pkg:npm/lodash@4.17.21"},
+			requestPackages: []string{"pkg:npm/axios@1.12.0"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/lodash@4.17.21"}, contractResult: "PASS", wantExact: false,
+		},
+		{
+			name: "omitted packages allow lodash failure", candidateSym: "lodash.get",
+			clusterPackage: "lodash", clusterSym: "lodash.get",
+			contract:     []string{"returns parsed JSON"},
+			packages:     []string{"pkg:npm/axios@1.12.0", "pkg:npm/lodash@4.17.21"},
+			omitPackages: true, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/lodash@4.17.21"}, contractResult: "PASS", wantExact: true,
+		},
+		{
+			name: "explicit version excludes a different receipt version", candidateSym: "axios.get",
+			clusterSym: "axios.get", contract: []string{"returns parsed JSON"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/axios@2.0.0"}, contractResult: "PASS", wantExact: false,
+		},
+		{
+			name:         "multi-package failure on non-worst grading package",
+			candidateSym: "lodash.get", clusterPackage: "lodash", clusterSym: "lodash.get",
+			contract:        []string{"returns parsed JSON"},
+			packages:        []string{"pkg:npm/axios@1.12.0", "pkg:npm/lodash@4.17.21"},
+			requestPackages: []string{"pkg:npm/axios@2.0.0", "pkg:npm/lodash@4.17.21"},
+			receiptSchema:   2, resolvedPackages: []string{"pkg:npm/lodash@4.17.21"},
+			contractResult: "PASS", wantExact: true,
+		},
+		{
+			name: "omitted package request", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"returns parsed JSON"}, omitPackages: true,
+			receiptSchema: 2, resolvedPackages: []string{"pkg:npm/axios@1.12.0"},
+			contractResult: "PASS", wantExact: true,
+		},
+		{
+			name: "v1 pass has no resolved packages", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"returns parsed JSON"}, receiptSchema: 1,
+			contractResult: "PASS", wantExact: false,
+		},
+		{
+			name: "same package different symbol", candidateSym: "axios.post", clusterSym: "axios.get",
+			contract: []string{"posts JSON"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/axios@1.12.0"}, contractResult: "PASS", wantExact: false,
+		},
+		{
+			name: "blank cluster symbol", candidateSym: "axios.get", clusterSym: "",
+			contract: []string{"returns parsed JSON"}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/axios@1.12.0"}, contractResult: "PASS", wantExact: false,
+		},
+		{
+			name: "no selected pass", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"returns parsed JSON"}, wantExact: false,
+		},
+		{
+			name: "blank declared contract", candidateSym: "axios.get", clusterSym: "axios.get",
+			contract: []string{"  "}, receiptSchema: 2,
+			resolvedPackages: []string{"pkg:npm/axios@1.12.0"}, contractResult: "PASS", wantExact: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openDB(t)
+			ctx := context.Background()
+			packages := tc.packages
+			if len(packages) == 0 {
+				packages = []string{"pkg:npm/axios@1.12.0"}
+			}
+			m := mkManifest("get JSON with axios",
+				packages, nodeEnv("esm"), tc.candidateSym)
+			m.Case.Contract = tc.contract
+			if err := SeedSampleDoc(ctx, db, m, "sha256:candidate", "LOCAL_PASS"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.receiptSchema != 0 {
+				saveReceiptWithPackages(t, db, "sha256:candidate", m,
+					tc.receiptSchema, tc.resolvedPackages, tc.contractResult)
+			}
+			clusterPackage := tc.clusterPackage
+			clusterPURL := "pkg:npm/axios@1.12.0"
+			if clusterPackage == "" {
+				clusterPackage = "axios"
+			} else if clusterPackage == "lodash" {
+				clusterPURL = "pkg:npm/lodash@4.17.21"
+			}
+			shardKey := "npm/" + clusterPackage + "/1"
+			saveShardJSON(t, db, shardKey, shardFile{
+				SchemaVersion: 1, Key: shardKey,
+				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+				Packages: []shardPackage{{
+					PURL: clusterPURL,
+					Symbols: []shardSymbolEntry{{
+						Family:   tc.clusterSym,
+						Stats:    shardSymbolStats{ObservationCount: 1, PassRate: 1},
+						Failures: []shardFailure{{Fingerprint: fp, Count: 1}},
+					}},
+				}},
+			})
+
+			requestPackages := tc.requestPackages
+			if len(requestPackages) == 0 && !tc.omitPackages {
+				requestPackages = []string{"pkg:npm/axios@1.12.0"}
+			}
+			resp := (Engine{DB: db}).Search(ctx, domain.SearchRequest{
+				SchemaVersion:    1,
+				Query:            "get JSON with axios",
+				Packages:         requestPackages,
+				Environment:      nodeEnv("esm"),
+				ErrorFingerprint: fp,
+			})
+			if resp.Miss || len(resp.Results) == 0 {
+				t.Fatalf("expected candidate hit, got %+v", resp)
+			}
+			if got := resp.Results[0].ExactFailureMatched; got != tc.wantExact {
+				t.Errorf("ExactFailureMatched = %v, want %v", got, tc.wantExact)
+			}
+		})
 	}
 }
 

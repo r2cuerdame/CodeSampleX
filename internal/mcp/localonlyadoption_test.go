@@ -43,19 +43,25 @@ func TestLocalOnlyRecordsAdoptionWithoutQueueingIt(t *testing.T) {
 	} {
 		before := queueLen(t, db)
 		cfg := &config.Config{Mode: tc.mode}
-		if err := reportAdoption(ctx, db, ident, cfg, sampleID, true, &pass); err != nil {
+		offerID, err := db.RecordSearchOffer(ctx, localdb.HitRow{SampleID: sampleID}, localdb.InterventionRow{
+			SampleID: sampleID, ExactFailureMatched: true, VerifiedOffer: true,
+		})
+		if err != nil {
+			t.Fatalf("record intervention: %v", err)
+		}
+		if _, err := reportAdoption(ctx, db, ident, cfg, offerID, sampleID, true, &pass); err != nil {
 			t.Fatalf("%s: %v", tc.mode, err)
 		}
 		queued := queueLen(t, db) > before
 		if queued != tc.wantQueued {
 			t.Errorf("mode %q: queued=%v, want %v (%s)", tc.mode, queued, tc.wantQueued, tc.description)
 		}
-		// The local record is kept in every mode.
-		n, cerr := db.CountHits(ctx)
+		// The correlated local intervention is kept in every mode.
+		funnel, cerr := db.InterventionSummary(ctx)
 		if cerr != nil {
 			t.Fatal(cerr)
 		}
-		if n == 0 {
+		if funnel.Applied == 0 {
 			t.Errorf("mode %q: the adoption was not recorded locally either", tc.mode)
 		}
 	}

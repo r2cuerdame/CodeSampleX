@@ -32,7 +32,7 @@ func TestAReceiptClosesTheJobItAnswered(t *testing.T) {
 	if err := store.CompleteJobsForSample(ctx, id, "ed25519:0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,14 +68,14 @@ func TestAJobHeldByADeadPeerReturnsToTheQueue(t *testing.T) {
 	}
 
 	// While the lease holds, nobody else is offered the job.
-	if jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100); err != nil {
+	if jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", "", 100); err != nil {
 		t.Fatal(err)
 	} else if listed(jobs, jobID) {
 		t.Error("a live claim was offered to another peer")
 	}
 
 	now = now.Add(serverstore.JobLease + time.Minute)
-	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
 	if err := store.CompleteJobsForSample(ctx, id, origin); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	jobs, err := store.OpenJobs(ctx, "CONTAINER_RUN", "", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
 	}
 
 	// And the origin is not offered the job it cannot answer.
-	mine, err := store.OpenJobs(ctx, "CONTAINER_RUN", origin, 100)
+	mine, err := store.OpenJobs(ctx, "CONTAINER_RUN", origin, "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
 	if err := store.CompleteJobsForSample(ctx, id, other); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err = store.OpenJobs(ctx, "CONTAINER_RUN", "", 100)
+	jobs, err = store.OpenJobs(ctx, "CONTAINER_RUN", "", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}

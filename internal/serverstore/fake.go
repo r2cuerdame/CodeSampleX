@@ -657,7 +657,7 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 	return j.ID, nil
 }
 
-func (f *Fake) OpenJobs(_ context.Context, capability, peerID string, limit int) ([]JobRow, error) {
+func (f *Fake) OpenJobs(_ context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
@@ -670,6 +670,9 @@ func (f *Fake) OpenJobs(_ context.Context, capability, peerID string, limit int)
 		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
 			f.now().Sub(j.ClaimedAt) > JobLease
 		if j.Status != "open" && !expired {
+			continue
+		}
+		if reason != "" && j.Reason != reason {
 			continue
 		}
 		// A peer that already filed a receipt for this sample cannot

@@ -32,6 +32,17 @@ type dimComparison struct {
 func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimComparison {
 	out := []dimComparison{}
 
+	if req.Ecosystem != "" && sam.Ecosystem != "" {
+		if strings.EqualFold(req.Ecosystem, sam.Ecosystem) {
+			out = append(out, dimComparison{equal: true, exactEntry: "ecosystem " + strings.ToLower(sam.Ecosystem)})
+		} else {
+			out = append(out, dimComparison{
+				samShow: "ecosystem " + strings.ToLower(sam.Ecosystem),
+				reqShow: "ecosystem " + strings.ToLower(req.Ecosystem), refOnly: true,
+			})
+		}
+	}
+
 	if req.Runtime != "" && sam.Runtime != "" {
 		reqShow := runtimeShow(req.Runtime, req.RuntimeVersion)
 		samShow := runtimeShow(sam.Runtime, sam.RuntimeVersion)
