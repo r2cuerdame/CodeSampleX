@@ -355,7 +355,11 @@ if ($ConfigureAdmin) {
     $adminProbe = @'
 cd /opt/codesamplex/deploy
 response=$(docker compose exec -T server wget -S -O /dev/null http://127.0.0.1:8080/admin 2>&1 || true)
-printf '%s\n' "$response" | grep -q ' 401 '
+# Windows PowerShell 5.1's native SSH argument marshalling can strip the
+# quotes around the captured response, leaving each whitespace-delimited
+# token on its own line. Match the status token itself so both renderings are
+# accepted; this response is from the fixed loopback /admin endpoint only.
+printf '%s\n' "$response" | grep -q '401'
 '@
     Invoke-Remote $adminProbe | Out-Null
     Write-Output "admin route: configured (401 without credentials)"
