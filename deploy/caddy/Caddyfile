@@ -23,35 +23,88 @@
 		-Server
 	}
 
-	# Access log, deliberately without the client address.
-	#
-	# There was no log at all, so nobody could answer "is anyone visiting"
-	# — and the one number that looked like an answer (peers) only moves
-	# after somebody INSTALLS and RUNS csx, which is several steps past a
-	# first visit. A project that says it will turn sign-in on when traffic
-	# appears has to be able to see traffic appear.
-	#
+	# The private operator dashboard needs API request volume, not identities.
+	# Keep a dedicated, privacy-safe log instead of exposing the historical
+	# access.log (which predates query stripping) to the application container.
 	# remote_ip is dropped rather than kept: an IP is personal data, this
 	# network's whole posture is that it does not collect any (goal.md
-	# §8.6), and it is not needed to answer the question. What is left says
-	# WHAT was fetched and HOW OFTEN — which is what "is anyone here" means.
+	# §8.6), and it is not needed to count endpoint activity. These counters
+	# answer which APIs ran and how often; they cannot identify users, humans,
+	# installations or active MCP sessions.
+	# Website, admin and health-check traffic are not API calls and would burn
+	# the bounded retention window without improving this metric.
+	# Allowlist only route families owned by this server. If an unknown 404
+	# contains a user-controlled segment, it must never reach the safe log.
+	@skipAPIMetrics not path /v1/search /v1/evidence /v1/evidence/* /v1/registry /v1/registry/* /v1/shards /v1/shards/* /v1/samples /v1/samples/* /v1/wanted /v1/wanted/* /v1/adoptions /v1/adoptions/* /v1/verifications /v1/verifications/* /v1/verification /v1/verification/* /v1/peers /v1/peers/* /v1/stats /v1/adapters /v1/auth /v1/auth/*
+	log_skip @skipAPIMetrics
+	# Append the fixed label selected by Caddy's decoded path matcher, then
+	# delete the URI wholesale in the encoder below. Merely truncating the raw
+	# URI is insufficient: an encoded slash such as %2F can match a known route
+	# after decoding while still carrying user-controlled bytes in one raw
+	# segment.
+	@apiSearch path /v1/search
+	log_append @apiSearch csx_route search
+	@apiEvidence path /v1/evidence /v1/evidence/*
+	log_append @apiEvidence csx_route evidence
+	@apiRegistry path /v1/registry /v1/registry/*
+	log_append @apiRegistry csx_route registry
+	@apiShards path /v1/shards /v1/shards/*
+	log_append @apiShards csx_route shards
+	@apiSamples path /v1/samples /v1/samples/*
+	log_append @apiSamples csx_route samples
+	@apiWanted path /v1/wanted /v1/wanted/*
+	log_append @apiWanted csx_route wanted
+	@apiAdoptions path /v1/adoptions /v1/adoptions/*
+	log_append @apiAdoptions csx_route adoption
+	@apiVerifications path /v1/verifications /v1/verifications/*
+	log_append @apiVerifications csx_route verifications
+	@apiVerificationJobs path /v1/verification /v1/verification/*
+	log_append @apiVerificationJobs csx_route verification_jobs
+	@apiPeers path /v1/peers /v1/peers/*
+	log_append @apiPeers csx_route peers
+	@apiStats path /v1/stats
+	log_append @apiStats csx_route stats
+	@apiAdapters path /v1/adapters
+	log_append @apiAdapters csx_route adapters
+	@apiAuth path /v1/auth /v1/auth/*
+	log_append @apiAuth csx_route auth
+	# HTTP method tokens are client-controlled too. Store only the three
+	# buckets the dashboard uses, never the raw token.
+	@methodGetHead method GET HEAD
+	log_append @methodGetHead csx_method get_head
+	@methodPost method POST
+	log_append @methodPost csx_method post
+	@methodOther not method GET HEAD POST
+	log_append @methodOther csx_method other
+
 	log {
-		output file /var/log/caddy/access.log {
+		output file /var/log/caddy-safe/access-safe.log {
+			mode 0644
 			roll_size 10MiB
-			roll_keep 3
+			# Force a daily boundary even when traffic never reaches 10 MiB,
+			# otherwise the current file can outlive the 31-day roll policy.
+			# roll_interval is checked on writes; the UTC midnight timer also
+			# closes an idle current file so retention is bounded at rest.
+			roll_interval 24h
+			roll_at 00:00
+			# Worst-case disk ceiling is about 410 MiB (current + 40 rolls).
+			# Caddy compresses rolls, and age retention prevents stale growth.
+			roll_keep 40
+			roll_keep_for 744h
 		}
-		# The client address and headers are DELETED from every line, not
-		# merely unused. An IP is personal data, and the peer announce
-		# handler still needs the real X-Forwarded-For to work, so the
-		# stripping happens here — in the log — rather than on the request.
+		# The request-dependent fields kept are status, coarse method and the
+		# fixed csx_route label above (alongside Caddy's constant log
+		# metadata/timestamp). Delete the entire request object before bytes
+		# reach disk so future Caddy request fields cannot widen collection.
 		format filter {
 			wrap json
 			fields {
-				request>remote_ip delete
-				request>remote_port delete
-				request>client_ip delete
-				request>headers delete
+				request delete
 				resp_headers delete
+				bytes_read delete
+				duration delete
+				size delete
+				user_id delete
 			}
 		}
 		level INFO

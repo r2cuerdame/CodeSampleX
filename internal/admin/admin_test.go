@@ -15,22 +15,37 @@ import (
 )
 
 type fakeStore struct {
-	statsErr    error
-	counts      serverstore.NetworkCounts
-	countsErr   error
-	wanted      []serverstore.WantedRow
-	wantedTotal int
-	wantedErr   error
-	adoption    serverstore.AdoptionCounts
-	adoptionErr error
+	statsErr          error
+	counts            serverstore.NetworkCounts
+	countsErr         error
+	wanted            []serverstore.WantedRow
+	wantedTotal       int
+	wantedErr         error
+	adoption          serverstore.AdoptionCounts
+	adoptionErr       error
+	insights          serverstore.AdminInsights
+	insightsAvailable bool
+	insightsErr       error
 
 	statsCalls    int
 	countsCalls   int
 	wantedCalls   int
 	adoptionCalls int
+	insightsCalls int
 	wantedQuery   string
 	wantedOffset  int
 	wantedLimit   int
+}
+
+type fakeAccessReader struct {
+	metrics AccessLogMetrics
+	err     error
+	calls   int
+}
+
+func (f *fakeAccessReader) Metrics(context.Context, time.Time) (AccessLogMetrics, error) {
+	f.calls++
+	return f.metrics, f.err
 }
 
 func (f *fakeStore) GetLatestStats(context.Context) (string, bool, error) {
@@ -54,22 +69,32 @@ func (f *fakeStore) AdoptionSummary(context.Context) (serverstore.AdoptionCounts
 	return f.adoption, f.adoptionErr
 }
 
+func (f *fakeStore) AdminInsights(context.Context, time.Time) (serverstore.AdminInsights, bool, error) {
+	f.insightsCalls++
+	return f.insights, f.insightsAvailable, f.insightsErr
+}
+
 func digest(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
 
 func configuredMux(t *testing.T, store Store) (*http.ServeMux, string) {
+	return configuredMuxWithAccess(t, store, nil)
+}
+
+func configuredMuxWithAccess(t *testing.T, store Store, access AccessMetricsReader) (*http.ServeMux, string) {
 	t.Helper()
 	secret := "a-long-random-admin-secret"
 	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
 	mux := http.NewServeMux()
 	if !Register(mux, Deps{
-		Store:       store,
-		TokenSHA256: digest(secret),
-		Version:     "v1.2.3-test",
-		StartedAt:   now.Add(-26*time.Hour - 4*time.Minute),
-		Now:         func() time.Time { return now },
+		Store:         store,
+		TokenSHA256:   digest(secret),
+		Version:       "v1.2.3-test",
+		StartedAt:     now.Add(-26*time.Hour - 4*time.Minute),
+		Now:           func() time.Time { return now },
+		AccessMetrics: access,
 	}) {
 		t.Fatal("valid token hash did not register /admin")
 	}
@@ -182,6 +207,16 @@ func TestPrivateHeadersApplyToSuccessUnauthorizedAndRejectedMethod(t *testing.T)
 }
 
 func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
+	daily := make([]serverstore.AdminDailyStat, 0, 5)
+	for i, samples := range []int64{900, 910, 925, 940, 951} {
+		day := time.Date(2026, 8, 12+i, 0, 0, 0, 0, time.UTC)
+		daily = append(daily, serverstore.AdminDailyStat{
+			Day:             day,
+			Evidence:        serverstore.AdminMetricValue{Value: 44000 + int64(i)*300, Valid: true},
+			VerifiedSamples: serverstore.AdminMetricValue{Value: samples, Valid: true},
+			Packages:        serverstore.AdminMetricValue{Value: 1200 + int64(i)*8, Valid: true},
+		})
+	}
 	store := &fakeStore{
 		counts: serverstore.NetworkCounts{
 			Peers: 7, ProjectsMonth: 11, Packages: 1234, Observations: 45213,
@@ -191,8 +226,84 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 			Ecosystem: "npm", Name: "three", Version: "0.180.0", Symbol: "Scene",
 			Asks: 8, LastSeen: time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC),
 		}},
-		wantedTotal: 31,
-		adoption:    serverstore.AdoptionCounts{Reports: 20, Applied: 14, BuildPass: 10, BuildFail: 2},
+		wantedTotal:       31,
+		adoption:          serverstore.AdoptionCounts{Reports: 20, Applied: 14, BuildPass: 10, BuildFail: 2},
+		insightsAvailable: true,
+		insights: serverstore.AdminInsights{
+			Daily:        daily,
+			Verification: serverstore.AdminVerificationCounts{Pass: 72, Fail: 5, Skipped: 3},
+			Ecosystems:   []serverstore.AdminEcosystemCount{{Ecosystem: "npm", Verifications: 70}, {Ecosystem: "pypi", Verifications: 10}},
+			PackageDepth: []serverstore.AdminPackageDepth{{Ecosystem: "npm", Name: "three", VerifiedSamples: 16}},
+		},
+	}
+	access := &fakeAccessReader{metrics: AccessLogMetrics{
+		Days: []AccessLogDay{
+			{Date: "2026-08-16", HasRequests: true, AccessStatusCounts: AccessStatusCounts{Requests: 34071}, Groups: []AccessGroupCounts{{Label: "검색·전달", AccessStatusCounts: AccessStatusCounts{Requests: 25000}}, {Label: "피드백·기여", AccessStatusCounts: AccessStatusCounts{Requests: 6000}}, {Label: "조정·메타데이터", AccessStatusCounts: AccessStatusCounts{Requests: 3071}}}},
+			{Date: "2026-08-17", HasRequests: true, AccessStatusCounts: AccessStatusCounts{Requests: 35396}, Groups: []AccessGroupCounts{{Label: "검색·전달", AccessStatusCounts: AccessStatusCounts{Requests: 26000}}, {Label: "피드백·기여", AccessStatusCounts: AccessStatusCounts{Requests: 6000}}, {Label: "조정·메타데이터", AccessStatusCounts: AccessStatusCounts{Requests: 3396}}}},
+		},
+		Routes:              []AccessRouteCounts{{Label: "검색", GroupLabel: "POST 기여 · 기타 조정", AccessStatusCounts: AccessStatusCounts{Requests: 40000, GetHeadRequests: 8000, PostRequests: 31990, OtherMethodRequests: 10, Status429: 7, Status5xx: 2}}},
+		Groups:              []AccessGroupCounts{{Label: "검색·전달", AccessStatusCounts: AccessStatusCounts{Requests: 51000}}, {Label: "피드백·기여", AccessStatusCounts: AccessStatusCounts{Requests: 12000}}, {Label: "조정·메타데이터", AccessStatusCounts: AccessStatusCounts{Requests: 6467}}},
+		Totals:              AccessStatusCounts{Requests: 69467, GetHeadRequests: 60000, PostRequests: 9467, Status2xx: 68000, Status4xx: 1200, Status429: 42, Status5xx: 267},
+		CollectionStartedAt: time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC),
+		OldestEventAt:       time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC),
+		NewestEventAt:       time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
+		DaysWithRequests:    2, SourceFiles: 2,
+	}}
+	mux, secret := configuredMuxWithAccess(t, store, access)
+	rec := serve(mux, http.MethodGet, "/admin", "admin", secret)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "30일 성장 추이", "누적", "일일 순증감",
+		"1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
+		"누락 날짜는 0으로 채우거나 선으로 연결하지 않음", "전체 네트워크에 접수된 검증 영수증",
+		"최근 검증 생태계 구성", "npm · JavaScript/TypeScript", "최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
+		"API 요청 활동", "사용자 수가 아니라", "69,467", "35,396", "일별 전체 API 요청", "많이 호출된 API 종류", "<th scope=\"col\">기타</th>", "POST 기여 · 기타 조정",
+		"API 종류별 요청 방식 및 응답 상태 집계", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
+		"‘실패 회피’는 추정하지 않습니다", "해석할 때 제외해야 할 것", "활성 MCP 세션", "설치 및 다운로드",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing honest label %q", want)
+		}
+	}
+	for _, forbidden := range []string{"<form", "<button", "ZgotmplZ", secret} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("body unexpectedly contains %q", forbidden)
+		}
+	}
+	if got := strings.Count(body, `class="table-wrap"`); got != 3 {
+		t.Errorf("mobile table wrappers = %d, want 3", got)
+	}
+	if got := strings.Count(body, `<caption class="sr-only">`); got != 3 {
+		t.Errorf("accessible table captions = %d, want 3", got)
+	}
+	if got := strings.Count(body, `scope="col"`); got != 15 {
+		t.Errorf("scoped table headers = %d, want 15", got)
+	}
+	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
+		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",
+			store.wantedQuery, store.wantedOffset, store.wantedLimit, topWantedLimit)
+	}
+	if store.statsCalls != 1 || store.countsCalls != 1 || store.wantedCalls != 1 || store.adoptionCalls != 1 || store.insightsCalls != 1 {
+		t.Errorf("query calls = stats:%d counts:%d wanted:%d adoption:%d insights:%d, want one each",
+			store.statsCalls, store.countsCalls, store.wantedCalls, store.adoptionCalls, store.insightsCalls)
+	}
+	if access.calls != 1 {
+		t.Errorf("access metric calls = %d, want 1", access.calls)
+	}
+}
+
+func TestDashboardDoesNotInventZeroTargetWhenVerifiedCountIsUnavailable(t *testing.T) {
+	store := &fakeStore{
+		countsErr:         errors.New("counts unavailable"),
+		insightsAvailable: true,
+		insights: serverstore.AdminInsights{Daily: []serverstore.AdminDailyStat{{
+			Day:      time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+			Evidence: serverstore.AdminMetricValue{Value: 42, Valid: true},
+			// VerifiedSamples is deliberately missing, not a measured zero.
+		}}},
 	}
 	mux, secret := configuredMux(t, store)
 	rec := serve(mux, http.MethodGet, "/admin", "admin", secret)
@@ -200,29 +311,15 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{
-		`<html lang="ko">`, "CodeSampleX 운영 현황", "1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
-		"매일 바뀌는 익명 버킷입니다. 누적 사용자나 활성 MCP 세션 수가 아닙니다.",
-		"매월 바뀌는 익명 버킷입니다. 계정·설치·고유 사용자 수가 아닙니다.",
-		"원시 요청 횟수가 아닙니다", "‘실패 회피’는 추정하지 않습니다", "아직 측정하지 않는 항목",
-		"활성 MCP 세션", "설치 및 다운로드", "30일 추세",
-	} {
+	for _, want := range []string{"검증된 샘플 10K 목표", "집계 없음", "현재 검증 샘플 집계를 읽지 못했습니다."} {
 		if !strings.Contains(body, want) {
-			t.Errorf("body missing honest label %q", want)
+			t.Errorf("body missing unavailable-target label %q", want)
 		}
 	}
-	for _, forbidden := range []string{"<form", "<button", secret} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("body unexpectedly contains %q", forbidden)
+	for _, falseClaim := range []string{"0 / 10,000", "남은 샘플 0개", `aria-label="10K 목표 진행률"`} {
+		if strings.Contains(body, falseClaim) {
+			t.Errorf("body invented unavailable target value %q", falseClaim)
 		}
-	}
-	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
-		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",
-			store.wantedQuery, store.wantedOffset, store.wantedLimit, topWantedLimit)
-	}
-	if store.statsCalls != 1 || store.countsCalls != 1 || store.wantedCalls != 1 || store.adoptionCalls != 1 {
-		t.Errorf("query calls = stats:%d counts:%d wanted:%d adoption:%d, want one each",
-			store.statsCalls, store.countsCalls, store.wantedCalls, store.adoptionCalls)
 	}
 }
 

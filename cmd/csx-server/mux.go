@@ -38,11 +38,16 @@ func BuildMux(cfg serverstore.ServerConfig, store serverstore.Store) *http.Serve
 		deps.Checker = &registry.Checker{Cache: &registry.ServerCache{Store: store}}
 	}
 	mux := httpapi.NewMux(deps)
+	var accessMetrics admin.AccessMetricsReader
+	if accessLogPath := os.Getenv("CSX_ADMIN_ACCESS_LOG"); accessLogPath != "" {
+		accessMetrics = admin.NewAccessLogReader(accessLogPath)
+	}
 	admin.Register(mux, admin.Deps{
-		Store:       store,
-		TokenSHA256: cfg.AdminTokenSHA256,
-		Version:     serverVersion(),
-		StartedAt:   processStartedAt,
+		Store:         newAdminStore(store),
+		TokenSHA256:   cfg.AdminTokenSHA256,
+		Version:       serverVersion(),
+		StartedAt:     processStartedAt,
+		AccessMetrics: accessMetrics,
 	})
 	web.Register(mux, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},

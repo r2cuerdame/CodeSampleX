@@ -11,6 +11,7 @@ import (
 )
 
 func TestBuildMuxAdminRouteIsAbsentUntilValidHashConfigured(t *testing.T) {
+	t.Setenv("CSX_ADMIN_ACCESS_LOG", "")
 	for _, tokenHash := range []string{"", "raw-token", "not-hex"} {
 		mux := BuildMux(serverstore.ServerConfig{AdminTokenSHA256: tokenHash}, serverstore.NewFake())
 		req := httptest.NewRequest(http.MethodGet, "/admin", nil)
@@ -23,6 +24,7 @@ func TestBuildMuxAdminRouteIsAbsentUntilValidHashConfigured(t *testing.T) {
 }
 
 func TestBuildMuxWiresPrivateAdminRoute(t *testing.T) {
+	t.Setenv("CSX_ADMIN_ACCESS_LOG", "")
 	secret := "integration-admin-secret"
 	sum := sha256.Sum256([]byte(secret))
 	cfg := serverstore.ServerConfig{AdminTokenSHA256: hex.EncodeToString(sum[:])}

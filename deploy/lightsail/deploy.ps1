@@ -19,6 +19,21 @@ $sshArgs = @("-i", $KeyPath, "-o", "StrictHostKeyChecking=accept-new", "-o", "Co
 if ($RotateAdmin -and -not $ConfigureAdmin) {
     throw "-RotateAdmin requires -ConfigureAdmin"
 }
+if ($Domain.Length -gt 253 -or $Domain -notmatch '^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$') {
+    throw "-Domain must be an ASCII DNS hostname"
+}
+# This production deploy also has a fixed www canonical redirect and an
+# authenticated admin-origin check. Refuse a different host instead of ever
+# sending the private credential to, or claiming readiness for, another
+# origin. A generalized multi-domain deploy needs those contracts changed as
+# one unit.
+if (-not [string]::Equals($Domain, "codesamplex.dev", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "this production deploy supports only codesamplex.dev"
+}
+$Domain = $Domain.ToLowerInvariant()
+if ($User -notmatch '^[a-z_][a-z0-9_-]{0,31}$') {
+    throw "-User must be a simple Linux account name"
+}
 
 # ssh and scp write ordinary progress and host-key notices to stderr, which
 # PowerShell 5.1 turns into terminating errors under ErrorActionPreference
@@ -103,6 +118,33 @@ function Invoke-Native([string]$What, [scriptblock]$Run) {
     if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)" }
 }
 
+# The lock covers local credential state, the fixed Docker tag/tar, every
+# remote candidate/rollback filename, activation and smoke. Creating the
+# parent is the only pre-lock remote mutation and is idempotent for a
+# first-ever host.
+Invoke-Remote "sudo install -d -o $User -g $User /opt/codesamplex" | Out-Null
+$deployLockOwner = [guid]::NewGuid().ToString("N")
+$acquireDeployLock = @'
+set -eu
+lock=/opt/codesamplex/.deploy-lock
+owner=__CSX_DEPLOY_OWNER__
+umask 077
+if ! mkdir "$lock" 2>/dev/null; then
+  echo "another deploy owns /opt/codesamplex/.deploy-lock; confirm it is no longer running, inspect owner, then remove only owner and the empty directory manually" >&2
+  exit 73
+fi
+printf '%s\n' "$owner" > "$lock/owner"
+chmod 0600 "$lock/owner"
+'@
+$acquireDeployLock = $acquireDeployLock.Replace('__CSX_DEPLOY_OWNER__', $deployLockOwner)
+Invoke-Remote $acquireDeployLock | Out-Null
+$deployLockHeld = $true
+$deployScriptFailure = $null
+$imageTar = $null
+$remoteImageTar = $null
+$localImageTag = $null
+$localImageCleanupNeeded = $false
+try {
 $adminTokenHash = ""
 $adminCredentialPending = $false
 $adminCredentialPaths = $null
@@ -185,23 +227,68 @@ function Assert-ReleaseDirectory([string]$Directory) {
     if ($bundleHash -ne $bundleParts[0].ToLower()) { throw "MCPB checksum mismatch" }
 }
 
-$imageTar = Join-Path $env:TEMP "csx-server-image.tar"
+$localImageTag = "codesamplex/csx-server:deploy-$deployLockOwner"
+$imageTar = Join-Path $env:TEMP "csx-server-image-$deployLockOwner.tar"
 if (-not $SkipImage) {
+	$localImageCleanupNeeded = $true
     Write-Output "== building linux/amd64 server image =="
     $dockerfile = Join-Path $repo "deploy\Dockerfile.server"
     $revision = (& git -C $repo rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw "could not determine the server revision" }
     Invoke-Native "docker build" {
-        & docker build --platform linux/amd64 --build-arg "CSX_VERSION=$revision" -f $dockerfile -t codesamplex/csx-server:latest $repo
+        & docker build --platform linux/amd64 --build-arg "CSX_VERSION=$revision" -f $dockerfile -t $localImageTag $repo
     }
     # No gzip on Windows PowerShell; ship the plain tar (ssh compresses).
-    Invoke-Native "docker save" { & docker save codesamplex/csx-server:latest -o $imageTar }
+    Invoke-Native "docker save" { & docker save $localImageTag -o $imageTar }
 }
 
 Write-Output "== shipping bundle to $Ip =="
 Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
 Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"
-Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile"
+Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile.candidate"
+# Validate syntax and privacy semantics with the exact production Caddy image
+# before touching the running proxy. The probe log lives only in tmpfs. It
+# proves a known API is coarsened and an unknown user-controlled route is not
+# logged at all, while the old in-memory production config keeps serving.
+$caddyConfigPreflight = @'
+set -eu
+name=csx-caddy-config-preflight
+candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
+passed=0
+cleanup() {
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  if [ "$passed" -eq 0 ]; then rm -f "$candidate"; fi
+}
+trap cleanup EXIT HUP INT TERM
+docker rm -f "$name" >/dev/null 2>&1 || true
+test -f "$candidate"
+docker run -d --name "$name" --tmpfs /var/log/caddy-safe:rw,mode=755 \
+  -e CADDY_SITE=:18080 \
+  -v "$candidate":/etc/caddy/Caddyfile:ro \
+  caddy:2.11.4-alpine >/dev/null
+i=0
+while [ "$i" -lt 10 ]; do
+  docker exec "$name" wget -q -T 3 -t 1 -O /dev/null 'http://127.0.0.1:18080/v1/samples/known-id-must-not-log?query-must-not-log=1' >/dev/null 2>&1 || true
+  if docker exec "$name" sh -c "grep -q '\"csx_route\":\"samples\"' /var/log/caddy-safe/access-safe.log 2>/dev/null"; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+docker exec "$name" wget -q -T 3 -t 1 -O /dev/null 'http://127.0.0.1:18080/v1/samples%2Fencoded-id-must-not-log/path' >/dev/null 2>&1 || true
+docker exec "$name" wget -q -T 3 -t 1 -O /dev/null 'http://127.0.0.1:18080/v1/unknown-secret-must-not-log/path' >/dev/null 2>&1 || true
+docker exec "$name" sh -c '
+  test "$(stat -c %a /var/log/caddy-safe/access-safe.log)" = 644
+  grep -q '"csx_route":"samples"' /var/log/caddy-safe/access-safe.log
+  grep -q '"csx_method":"get_head"' /var/log/caddy-safe/access-safe.log
+  ! grep -Eq 'known-id-must-not-log|query-must-not-log|encoded-id-must-not-log|unknown-secret-must-not-log|remote_ip|client_ip|headers|user_id|"request"' /var/log/caddy-safe/access-safe.log
+  ! grep -q '?' /var/log/caddy-safe/access-safe.log
+'
+docker rm -f "$name" >/dev/null 2>&1
+passed=1
+'@
+Invoke-Remote $caddyConfigPreflight | Out-Null
+Write-Output "Caddy privacy-safe log preflight: passed"
 Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
 Copy-Remote (Join-Path $repo "deploy\restore-check.sh") "/opt/codesamplex/deploy/restore-check.sh"
 Invoke-Remote "chmod 755 /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh" | Out-Null
@@ -311,9 +398,39 @@ if (-not $SkipImage) {
         Invoke-Remote "docker tag codesamplex/csx-server:latest codesamplex/csx-server:rollback-predeploy" | Out-Null
         Write-Output "rollback-predeploy: $(([string]$oldImage).Trim())"
     }
-    Copy-Remote $imageTar "/opt/codesamplex/csx-server-image.tar"
-    Invoke-Remote "docker load -i /opt/codesamplex/csx-server-image.tar && rm -f /opt/codesamplex/csx-server-image.tar" | Out-Null
+    $remoteImageTar = "/opt/codesamplex/csx-server-image-$deployLockOwner.tar"
+    Copy-Remote $imageTar $remoteImageTar
+    Invoke-Remote "set -eu; docker load -i $remoteImageTar >/dev/null; docker tag $localImageTag codesamplex/csx-server:latest; docker image rm $localImageTag >/dev/null; rm -f $remoteImageTar" | Out-Null
 }
+
+$caddyPromoted = $false
+try {
+    # Promote only after every unrelated shipping/build step has succeeded.
+    # Keep one exact rollback copy until the live privacy smoke passes.
+    $promoteCaddy = @'
+set -eu
+candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
+live=/opt/codesamplex/deploy/caddy/Caddyfile
+rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
+absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
+promoted=0
+cleanup() {
+  if [ "$promoted" -eq 0 ]; then rm -f "$rollback" "$absent"; fi
+}
+trap cleanup EXIT HUP INT TERM
+test -f "$candidate"
+rm -f "$rollback" "$absent"
+if [ -f "$live" ]; then
+  cp -p "$live" "$rollback"
+else
+  : > "$absent"
+fi
+chmod 0644 "$candidate"
+mv -f "$candidate" "$live"
+promoted=1
+'@
+    Invoke-Remote $promoteCaddy | Out-Null
+    $caddyPromoted = $true
 
 Write-Output "== starting stack =="
 # A release refresh swaps the host dist directory atomically. An existing
@@ -323,6 +440,11 @@ Write-Output "== starting stack =="
 # upgrades need the same guarantee, and its healthcheck bounds the restart.
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
+# Caddy documents that file-output option changes require a server restart,
+# not only a config reload. Recreate this single proxy after the healthy app
+# is ready, then reload once more as an explicit live-config validation.
+Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate caddy" | Out-Null
+Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object { Write-Output $_ }
 if (-not $SkipImage) {
     $imagePair = Invoke-Remote 'set -eu; expected=$(docker image inspect codesamplex/csx-server:latest --format ''{{.Id}}''); actual=$(docker inspect codesamplex-server-1 --format ''{{.Image}}''); echo $expected $actual' | Select-Object -First 1
@@ -349,6 +471,119 @@ if (-not $ok) {
     throw "healthz never returned ok"
 }
 Write-Output "healthz: ok"
+
+# Start the privacy-safe log's collection epoch once, then prove the live
+# encoder strips queries and path IDs before disk. The application container
+# must read the 0644 safe log through its read-only dedicated volume; the
+# historical query-bearing access.log is not mounted into its namespace.
+$safeAccessLogSmoke = @'
+set -eu
+cd /opt/codesamplex/deploy
+docker compose exec -T caddy sh -c '
+  umask 022
+  marker=/var/log/caddy-safe/access-safe.log.since
+  if [ ! -f "$marker" ]; then
+    tmp=$(mktemp /var/log/caddy-safe/.access-safe.since.XXXXXX)
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp"
+    chmod 0644 "$tmp"
+    mv "$tmp" "$marker"
+  fi
+'
+curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/stats?csx_safe_log_smoke=discard-this-query'
+curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/samples%2Fencoded-marker-must-not-log/path'
+curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/secret-marker-must-not-log/path'
+i=0
+while [ "$i" -lt 10 ]; do
+  if docker compose exec -T caddy sh -c "grep -q '\"csx_route\":\"stats\"' /var/log/caddy-safe/access-safe.log 2>/dev/null"; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+docker compose exec -T caddy sh -c '
+  test -f /var/log/caddy-safe/access-safe.log
+  test "$(stat -c %a /var/log/caddy-safe/access-safe.log)" = 644
+  test "$(stat -c %a /var/log/caddy-safe/access-safe.log.since)" = 644
+  ! grep -q "discard-this-query" /var/log/caddy-safe/access-safe.log
+  ! grep -q "encoded-marker-must-not-log" /var/log/caddy-safe/access-safe.log
+  ! grep -q "secret-marker-must-not-log" /var/log/caddy-safe/access-safe.log
+  ! grep -q '?' /var/log/caddy-safe/access-safe.log
+  grep -q '"csx_method":"get_head"' /var/log/caddy-safe/access-safe.log
+  ! grep -Eq 'remote_ip|client_ip|headers|user_id|"request"' /var/log/caddy-safe/access-safe.log
+'
+docker compose exec -T server sh -c '
+  test -r /var/log/caddy-safe/access-safe.log
+  test -r /var/log/caddy-safe/access-safe.log.since
+  test ! -e /var/log/caddy/access.log
+'
+'@
+$safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
+Invoke-Remote $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
+    Invoke-Remote "rm -f /opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy /opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent /opt/codesamplex/deploy/caddy/Caddyfile.candidate" | Out-Null
+    $caddyPromoted = $false
+} catch {
+    $deployFailure = $_
+    if ($caddyPromoted) {
+        $rollbackCaddy = @'
+set -eu
+cd /opt/codesamplex/deploy
+live=/opt/codesamplex/deploy/caddy/Caddyfile
+rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
+absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
+candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
+if [ -f "$rollback" ]; then
+  chmod 0644 "$rollback"
+  mv -f "$rollback" "$live"
+  rm -f "$absent" "$candidate"
+  docker compose up -d --no-build --no-deps --force-recreate caddy
+  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+elif [ -f "$absent" ]; then
+  rm -f "$live" "$absent" "$candidate"
+  docker compose rm -sf caddy >/dev/null 2>&1 || true
+else
+  exit 69
+fi
+'@
+        try {
+            Invoke-Remote $rollbackCaddy | Out-Null
+            Write-Output "Caddy config: restored rollback-predeploy after failed activation"
+        } catch {
+            Write-Warning "Caddy activation failed and automatic rollback also failed; rollback-predeploy needs operator attention"
+        }
+    }
+    throw $deployFailure
+}
+Write-Output "privacy-safe API access log: query-free, bounded, server-readable"
+
+# The former logger is now inactive and its files can contain historical
+# queries. Irrecoverably remove only its exact current/roll filename family,
+# only after the replacement config is committed and rollback is no longer
+# needed. An interrupted cleanup is safe to retry on the next deploy.
+$legacyAccessPurge = @'
+set -eu
+cd /opt/codesamplex/deploy
+removed=$(docker compose exec -T caddy sh -c '
+  set -eu
+  old_dir=/var/log/caddy
+  test "$(readlink -f "$old_dir")" = /var/log/caddy
+  count=0
+  for old in "$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz; do
+    [ -e "$old" ] || continue
+    [ ! -L "$old" ] || exit 66
+    [ -f "$old" ] || exit 67
+    base=${old##*/}
+    case "$base" in
+      access.log|access-*.log|access-*.log.gz) ;;
+      *) exit 68 ;;
+    esac
+    rm -f -- "$old"
+    count=$((count + 1))
+  done
+  printf "%s" "$count"
+')
+printf 'legacy query-bearing access files irrecoverably removed: %s\n' "$removed"
+'@
+Invoke-Remote $legacyAccessPurge | ForEach-Object { Write-Output $_ }
 if ($ConfigureAdmin) {
     # An unauthenticated 401 proves that the exact private route was mounted;
     # a missing or malformed verifier deliberately leaves it at 404.
@@ -390,3 +625,51 @@ $landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T s
 Write-Output "landing sample: $($landing -join ' ' )"
 Write-Output ""
 Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagation."
+} catch {
+    $deployScriptFailure = $_
+    throw
+} finally {
+    # Clean only per-invocation artifacts whose names contain this lock
+    # owner's validated random token. Cleanup errors are warnings; lock
+    # release below remains mandatory and gets its own error handling.
+    $expectedImageTar = Join-Path $env:TEMP "csx-server-image-$deployLockOwner.tar"
+    if ($null -ne $imageTar -and $imageTar -eq $expectedImageTar -and (Test-Path -LiteralPath $imageTar -PathType Leaf)) {
+        try { Remove-Item -LiteralPath $imageTar -Force }
+        catch { Write-Warning "could not remove the per-deploy local image tar" }
+    }
+    if ($localImageCleanupNeeded -and $localImageTag -eq "codesamplex/csx-server:deploy-$deployLockOwner") {
+        $cleanupEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { & docker image rm $localImageTag 2>&1 | Out-Null }
+        finally { $ErrorActionPreference = $cleanupEAP }
+    }
+    if ($null -ne $remoteImageTar -and $remoteImageTar -eq "/opt/codesamplex/csx-server-image-$deployLockOwner.tar") {
+        try { Invoke-Remote "rm -f $remoteImageTar; docker image rm $localImageTag >/dev/null 2>&1 || true" | Out-Null }
+        catch { Write-Warning "could not remove per-deploy remote image artifacts" }
+    }
+    if ($deployLockHeld) {
+        $releaseDeployLock = @'
+set -eu
+lock=/opt/codesamplex/.deploy-lock
+owner=__CSX_DEPLOY_OWNER__
+test "$(readlink -f "$lock")" = /opt/codesamplex/.deploy-lock
+test -f "$lock/owner"
+test ! -L "$lock/owner"
+test "$(cat "$lock/owner")" = "$owner"
+test "$(find "$lock" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1
+rm -f "$lock/owner"
+rmdir "$lock"
+'@
+        $releaseDeployLock = $releaseDeployLock.Replace('__CSX_DEPLOY_OWNER__', $deployLockOwner)
+        try {
+            Invoke-Remote $releaseDeployLock | Out-Null
+            $deployLockHeld = $false
+        } catch {
+            if ($null -ne $deployScriptFailure) {
+                Write-Warning "deploy failed and its exact remote lock could not be released; original failure is preserved and an operator must inspect the lock owner"
+            } else {
+                throw
+            }
+        }
+    }
+}

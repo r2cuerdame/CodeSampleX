@@ -41,25 +41,34 @@ type Store interface {
 	NetworkCounts(ctx context.Context, now time.Time) (serverstore.NetworkCounts, error)
 	ListWanted(ctx context.Context, query string, offset, limit int) (rows []serverstore.WantedRow, total int, err error)
 	AdoptionSummary(ctx context.Context) (serverstore.AdoptionCounts, error)
+	AdminInsights(ctx context.Context, now time.Time) (insights serverstore.AdminInsights, available bool, err error)
+}
+
+// AccessMetricsReader is the narrow read-only seam around privacy-safe,
+// query-stripped HTTP access logs. It exposes request volume, never users.
+type AccessMetricsReader interface {
+	Metrics(ctx context.Context, now time.Time) (AccessLogMetrics, error)
 }
 
 // Deps wires the private dashboard. TokenSHA256 must be the 64-character
 // hexadecimal SHA-256 digest of the HTTP Basic password; a raw token is never
 // accepted. The username is always "admin".
 type Deps struct {
-	Store       Store
-	TokenSHA256 string
-	Version     string
-	StartedAt   time.Time
-	Now         func() time.Time
+	Store         Store
+	TokenSHA256   string
+	Version       string
+	StartedAt     time.Time
+	Now           func() time.Time
+	AccessMetrics AccessMetricsReader
 }
 
 type handler struct {
-	store     Store
-	wantHash  [sha256.Size]byte
-	version   string
-	startedAt time.Time
-	now       func() time.Time
+	store         Store
+	wantHash      [sha256.Size]byte
+	version       string
+	startedAt     time.Time
+	now           func() time.Time
+	accessMetrics AccessMetricsReader
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -80,11 +89,12 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		startedAt = now()
 	}
 	h := &handler{
-		store:     d.Store,
-		wantHash:  wantHash,
-		version:   d.Version,
-		startedAt: startedAt,
-		now:       now,
+		store:         d.Store,
+		wantHash:      wantHash,
+		version:       d.Version,
+		startedAt:     startedAt,
+		now:           now,
+		accessMetrics: d.AccessMetrics,
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -219,6 +229,24 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.Adoption = adoption
 		data.AdoptionAvailable = true
 	}
+
+	if insights, available, err := h.store.AdminInsights(ctx, now); err != nil {
+		data.InsightsError = "30일 운영 추세를 불러올 수 없습니다"
+	} else if !available {
+		data.InsightsError = "현재 저장소는 30일 운영 추세를 제공하지 않습니다"
+	} else {
+		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
+		data.InsightsAvailable = true
+	}
+
+	if h.accessMetrics == nil {
+		data.AccessError = "API 안전 로그 집계가 구성되지 않았습니다"
+	} else if metrics, err := h.accessMetrics.Metrics(ctx, now); err != nil {
+		data.AccessError = "API 요청 집계를 불러올 수 없습니다"
+	} else {
+		data.Access = buildAccessView(metrics, now)
+		data.AccessAvailable = true
+	}
 }
 
 type dashboardData struct {
@@ -242,6 +270,14 @@ type dashboardData struct {
 	Adoption          serverstore.AdoptionCounts
 	AdoptionAvailable bool
 	AdoptionError     string
+
+	Insights          insightView
+	InsightsAvailable bool
+	InsightsError     string
+
+	Access          accessView
+	AccessAvailable bool
+	AccessError     string
 }
 
 func nonNegative(d time.Duration) time.Duration {

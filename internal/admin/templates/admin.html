@@ -4,107 +4,131 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>CodeSampleX 운영 현황</title>
+  <title>CodeSampleX 운영 대시보드</title>
   <style>
-    :root { color-scheme: dark; --bg:#07132b; --panel:#0c1d3d; --line:#25477d; --ink:#edf5ff; --muted:#9eb3d4; --blue:#4387ff; --cyan:#62d9ff; --ok:#4ade80; --warn:#fbbf24; }
+    :root { color-scheme:dark; --bg:#07132b; --panel:#0c1d3d; --line:#25477d; --ink:#edf5ff; --muted:#9eb3d4; --blue:#4387ff; --cyan:#62d9ff; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --purple:#a78bfa }
     * { box-sizing:border-box }
     body { margin:0; background:radial-gradient(circle at 12% 0,#16396f 0,transparent 32rem),var(--bg); color:var(--ink); font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif }
-    main { width:min(1180px,calc(100% - 32px)); margin:0 auto; padding:34px 0 64px }
-    h1,h2,p { margin-top:0 } h1 { font-size:clamp(25px,4vw,38px); margin-bottom:5px } h2 { font-size:17px; margin-bottom:16px }
+    main { width:min(1240px,calc(100% - 32px)); margin:0 auto; padding:34px 0 64px }
+    h1,h2,h3,p { margin-top:0 } h1 { font-size:clamp(25px,4vw,38px); margin-bottom:5px } h2 { font-size:18px; margin-bottom:4px } h3 { font-size:14px; margin:0 }
     .eyebrow { color:var(--cyan); font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase }
-    .muted,.note { color:var(--muted) } .note { font-size:12px; margin:12px 0 0 }
-    .topline { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:18px; margin-bottom:24px }
+    .muted,.note { color:var(--muted) } .note { font-size:12px; margin:10px 0 0 }
+    .topline,.section-head,.metric-head,.mix-head { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:12px }
+    .topline { margin-bottom:24px }.section-head { align-items:start; margin-bottom:18px }
     .stamp { color:var(--muted); font:12px ui-monospace,SFMono-Regular,Consolas,monospace }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px }
     .panel { grid-column:span 12; background:linear-gradient(145deg,rgba(16,42,83,.96),rgba(8,25,54,.96)); border:1px solid var(--line); border-radius:18px; padding:20px; box-shadow:0 18px 45px rgba(0,0,0,.18) }
-    .status { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
-    .metric { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:15px; background:rgba(3,14,34,.38) }
-    .label { display:block; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase }
-    .value { display:block; margin-top:5px; font-size:24px; font-weight:820; letter-spacing:-.03em; overflow-wrap:anywhere }
-    .value.small { font-size:18px; letter-spacing:0 } .ok { color:var(--ok) } .bad { color:var(--warn) }
-    .counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
-    .counts .metric p { margin:8px 0 0; min-height:3em; color:var(--muted); font-size:12px }
-    table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.07em; text-transform:uppercase } th,td { padding:10px 8px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
-    code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }
-    .wide { grid-column:span 8 } .side { grid-column:span 4 }
-    .raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
-    .raw div { background:rgba(3,14,34,.35); border-radius:10px; padding:11px }
-    .raw strong { display:block; font-size:20px } .raw span { color:var(--muted); font-size:11px }
-    ul { margin:0; padding-left:20px } li+li { margin-top:7px }
-    .empty { padding:18px 0; color:var(--muted) }
-    @media(max-width:800px) { .wide,.side { grid-column:span 12 } .counts,.status { grid-template-columns:1fr } .counts .metric p { min-height:auto } }
+    .wide { grid-column:span 8 }.side { grid-column:span 4 }.half { grid-column:span 6 }
+    .target { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; border:1px solid rgba(98,217,255,.35); border-radius:15px; padding:17px; background:linear-gradient(120deg,rgba(67,135,255,.17),rgba(3,14,34,.42)); margin-bottom:16px }
+    .target strong { font-size:clamp(28px,4vw,44px); line-height:1; letter-spacing:-.04em }.target .remaining { margin:8px 0 0;color:var(--muted) }
+    .progress-svg { width:100%; height:12px; margin-top:12px; display:block }.eta { display:flex; flex-direction:column; justify-content:center; border-left:1px solid rgba(98,217,255,.25); padding-left:18px }.eta strong { font-size:24px }.eta span { color:var(--muted); font-size:12px }
+    .trend-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
+    .trend { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:14px; padding:15px; background:rgba(3,14,34,.38) }
+    .trend .latest { display:block; font-size:24px; font-weight:820; letter-spacing:-.03em }.trend .description { color:var(--muted); font-size:11px }
+    .chart-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:13px }.chart-box { min-width:0 }.chart-label { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; margin-bottom:2px }
+    .chart { width:100%; height:88px; display:block; overflow:visible }.axis { stroke:rgba(158,179,212,.25); stroke-width:1 }.series { stroke:var(--cyan); stroke-width:2; vector-effect:non-scaling-stroke }.dot { fill:var(--cyan) }.delta { fill:var(--blue) }.delta.negative { fill:var(--bad) }.delta.zero { fill:var(--muted) }
+    .stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px }.metric { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:14px; background:rgba(3,14,34,.38) }
+    .label { display:block; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.06em }.value { display:block; margin-top:4px; font-size:23px; font-weight:820; letter-spacing:-.03em; overflow-wrap:anywhere }.value.small { font-size:17px; letter-spacing:0 }.ok { color:var(--ok) }.bad { color:var(--warn) }
+    .mix-list { display:grid; gap:11px }.mix-head { align-items:center; font-size:12px }.mix-track { height:8px; margin-top:4px; border-radius:999px; overflow:hidden; background:rgba(158,179,212,.14) }.mix-fill { display:block; height:8px; fill:var(--blue) }.mix-fill.pass { fill:var(--ok) }.mix-fill.fail { fill:var(--bad) }.mix-fill.skip { fill:var(--warn) }.mix-fill.unknown { fill:var(--muted) }.mix-fill.ecosystem { fill:var(--purple) }.mix-fill.consume,.stack.consume { fill:var(--cyan) }.mix-fill.contribute,.stack.contribute { fill:var(--purple) }.mix-fill.coordinate,.stack.coordinate { fill:var(--warn) }.stack.unknown { fill:var(--muted) }
+    .result-totals { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:14px }.result-totals div,.raw div { background:rgba(3,14,34,.35); border-radius:10px; padding:11px }.result-totals strong,.raw strong { display:block; font-size:20px }.result-totals span,.raw span { color:var(--muted); font-size:11px }
+    .table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch }.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0 }
+    table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.06em } th,td { padding:9px 7px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
+    code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }.raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
+    ul { margin:0; padding-left:20px } li+li { margin-top:7px }.empty { padding:14px 0; color:var(--muted) }.server { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
+    @media(max-width:960px) { .trend-grid { grid-template-columns:1fr }.wide,.side,.half { grid-column:span 12 } }
+    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server { grid-template-columns:1fr }.chart-pair { grid-template-columns:1fr }.chart { height:110px } }
   </style>
 </head>
 <body>
 <main>
   <div class="topline">
-    <div><div class="eyebrow">비공개 · 읽기 전용</div><h1>CodeSampleX 운영 현황</h1><p class="muted">추정 사용자 수를 섞지 않은 실제 측정값입니다.</p></div>
+    <div><div class="eyebrow">비공개 · 읽기 전용</div><h1>CodeSampleX 운영 대시보드</h1><p class="muted">지금 얼마나 커졌는지보다, 무엇이 얼마나 빠르게 쌓이는지 봅니다.</p></div>
     <div class="stamp">생성 시각 {{.GeneratedAt}}</div>
   </div>
 
   <div class="grid">
-    <section class="panel" aria-labelledby="runtime-title">
-      <h2 id="runtime-title">서버</h2>
-      <div class="status">
-        <div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div>
-        <div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div>
-        <div class="metric"><span class="label">데이터베이스 읽기 점검</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div>
+    <section class="panel" aria-labelledby="growth-title">
+      <div class="section-head"><div><h2 id="growth-title">30일 성장 추이</h2><p class="note">UTC {{if .InsightsAvailable}}{{.Insights.WindowStart}} ~ {{.Insights.WindowEnd}} · 스냅샷 {{.Insights.SnapshotDays}}/30일{{if .Insights.MissingDays}} · 누락 {{.Insights.MissingDays}}일{{end}}{{else}}최근 30일{{end}}</p></div><span class="stamp">누락 날짜는 0으로 채우거나 선으로 연결하지 않음</span></div>
+      {{if .InsightsAvailable}}
+      <div class="target">
+        <div><span class="label">검증된 샘플 10K 목표</span>{{if .Insights.Target.HasCurrent}}<strong>{{number .Insights.Target.Current}} / {{number .Insights.Target.Target}}</strong>{{if .Insights.Target.Achieved}}<p class="remaining ok">목표 달성</p>{{else}}<p class="remaining">남은 샘플 {{number .Insights.Target.Remaining}}개</p>{{end}}
+          <svg class="progress-svg" viewBox="0 0 100 8" preserveAspectRatio="none" aria-label="10K 목표 진행률"><rect width="100" height="8" rx="4" fill="rgba(158,179,212,.18)"/><rect width="{{.Insights.Target.Progress}}" height="8" rx="4" fill="#62d9ff"/></svg>{{else}}<strong>집계 없음</strong><p class="remaining">{{.Insights.Target.Reason}}</p>{{end}}
+        </div>
+        <div class="eta">{{if not .Insights.Target.HasCurrent}}<strong>예상일 보류</strong><span>현재 집계가 없어 계산하지 않습니다.</span>{{else if .Insights.Target.Achieved}}<strong class="ok">10K 달성</strong><span>현재 집계 기준</span>{{else if .Insights.Target.ETAAvailable}}<strong>{{.Insights.Target.ETADate}}</strong><span>예상 {{number .Insights.Target.ETADays}}일 · 완료된 유효 {{.Insights.Target.ValidDays}}일 평균 +{{.Insights.Target.Average}}/일</span>{{else}}<strong>예상일 보류</strong><span>{{.Insights.Target.Reason}}</span>{{end}}</div>
       </div>
-      <p class="note">점검 지연 시간은 애플리케이션의 최신 통계 읽기 시간이며 PostgreSQL 내부 실행 시간은 아닙니다.</p>
+      <div class="trend-grid">
+        {{range .Insights.Trends}}
+        <article class="trend"><div class="metric-head"><div><h3>{{.Name}}</h3><span class="description">{{.Description}}</span></div>{{if .HasLatest}}<span class="latest">{{number .Latest}}</span>{{else}}<span class="latest">—</span>{{end}}</div>
+          <div class="chart-pair">
+            <div class="chart-box"><div class="chart-label"><span>누적</span>{{if not .Line.Empty}}<span>{{number .Line.Min}}–{{number .Line.Max}}</span>{{end}}</div>
+              {{if .Line.Empty}}<div class="empty">스냅샷 없음</div>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="30일 누적 추이"><line class="axis" x1="16" y1="116" x2="584" y2="116"/>{{range .Line.Lines}}<line class="series" x1="{{.X1}}" y1="{{.Y1}}" x2="{{.X2}}" y2="{{.Y2}}"/>{{end}}{{range .Line.Dots}}<circle class="dot" cx="{{.X}}" cy="{{.Y}}" r="3"><title>{{.Day}} · {{number .Value}}</title></circle>{{end}}</svg>{{end}}
+            </div>
+            <div class="chart-box"><div class="chart-label"><span>일일 순증감</span><span>유효 {{.Delta.ValidDays}}일{{if .Delta.RangeLabel}} · {{.Delta.RangeLabel}}{{end}}</span></div>
+              {{if .Delta.Empty}}<div class="empty">연속 스냅샷 부족</div>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="30일 일일 순증감"><line class="axis" x1="16" y1="{{.Delta.Baseline}}" x2="584" y2="{{.Delta.Baseline}}"/>{{range .Delta.Bars}}<rect class="delta {{.Tone}}" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}" rx="2"><title>{{.Day}} · {{.SignedValue}}</title></rect>{{end}}</svg>{{end}}
+            </div>
+          </div>
+        </article>
+        {{end}}
+      </div>
+      <p class="note">오늘 스냅샷은 진행 중인 값입니다. 목표 예상일은 서로 연속인 완료 날짜 쌍의 음수를 포함한 순증감 단순 평균이며 계획이나 보장이 아닙니다.</p>
+      {{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
     </section>
 
-    <section class="panel" aria-labelledby="counts-title">
-      <h2 id="counts-title">현재 집계</h2>
-      {{if .CountsAvailable}}
-      <div class="counts">
-        <div class="metric"><span class="label">패키지</span><span class="value">{{number .Counts.Packages}}</span><p>레지스트리 확인을 통과한 공개 생태계/이름 조합입니다.</p></div>
-        <div class="metric"><span class="label">증거(사용 관측)</span><span class="value">{{number .Counts.Observations}}</span><p>집계된 사용 관측 수입니다. 검증된 샘플 수와는 다릅니다.</p></div>
-        <div class="metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span><p>계약 PASS 영수증 또는 이후 검증 상태가 있는 샘플입니다.</p></div>
-        <div class="metric"><span class="label">오늘 익명 피어 버킷</span><span class="value">{{number .Counts.Peers}}</span><p>매일 바뀌는 익명 버킷입니다. 누적 사용자나 활성 MCP 세션 수가 아닙니다.</p></div>
-        <div class="metric"><span class="label">이번 달 프로젝트 버킷</span><span class="value">{{number .Counts.ProjectsMonth}}</span><p>매월 바뀌는 익명 버킷입니다. 계정·설치·고유 사용자 수가 아닙니다.</p></div>
-        <div class="metric"><span class="label">현재 기여 피어</span><span class="value">{{number .Counts.ServingPeers}}</span><p>현재 P2P blob 제공을 알린 피어만 셉니다. 대부분의 증거 기여자는 이 기능을 켜지 않습니다.</p></div>
-      </div>
-      {{else}}<p class="empty">{{.CountsError}}</p>{{end}}
+    <section class="panel" aria-labelledby="api-title">
+      <div class="section-head"><div><h2 id="api-title">API 요청 활동</h2><p class="note">사용자 수가 아니라 쿼리 문자열과 경로 식별자를 제거한 안전 로그의 HTTP 요청 수입니다.</p></div>{{if .AccessAvailable}}<span class="stamp">기록 범위 {{.Access.RangeLabel}}{{if .Access.PartialToday}} · 오늘 진행 중{{end}}</span>{{end}}</div>
+      {{if .AccessAvailable}}
+        {{if .Access.NoSource}}<p class="empty">연결된 안전 로그가 아직 없어 API 요청량을 주장하지 않습니다.</p>
+        {{else}}
+        <div class="stats"><div class="metric"><span class="label">보존 로그 내 전체 요청</span><span class="value">{{number .Access.Total.Requests}}</span></div><div class="metric"><span class="label">최근 관측일 · {{.Access.LatestDate}}</span><span class="value">{{number .Access.LatestRequests}}</span></div><div class="metric"><span class="label">요청이 있던 날 평균</span><span class="value">{{number .Access.AveragePerDay}}</span></div><div class="metric"><span class="label">GET / HEAD 요청</span><span class="value">{{number .Access.Total.GetHeadRequests}}</span></div><div class="metric"><span class="label">POST 요청</span><span class="value">{{number .Access.Total.PostRequests}}</span></div><div class="metric"><span class="label">429 제한 응답</span><span class="value">{{number .Access.Total.Status429}}</span></div></div>
+        <div class="chart-pair">
+          <div class="trend"><div class="chart-label"><span>일별 전체 API 요청 · 최근 31 UTC일</span><span>{{.Access.Daily.DayFrom}} ~ {{.Access.Daily.DayTo}}</span></div>{{if .Access.Daily.Empty}}<p class="empty">요청이 기록된 날짜가 없습니다.</p>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="일별 API 요청"><line class="axis" x1="16" y1="116" x2="584" y2="116"/>{{range .Access.Daily.Bars}}<rect class="delta" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}" rx="2"><title>{{.Day}} · {{number .Value}} 요청</title></rect>{{end}}</svg>{{end}}</div>
+          <div class="trend"><div class="chart-label"><span>활동군별 일일 요청</span><span>검색/기여/조정</span></div>{{if .Access.Daily.Empty}}<p class="empty">활동군 데이터가 없습니다.</p>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="활동군별 일일 API 요청"><line class="axis" x1="16" y1="116" x2="584" y2="116"/>{{range .Access.Daily.Stacks}}<rect class="stack {{.Tone}}" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"><title>{{.Day}} · {{.Label}} {{number .Value}} 요청</title></rect>{{end}}</svg>{{end}}</div>
+        </div>
+        <div class="grid" style="margin-top:16px">
+          <div class="half"><h3>활동군 구성</h3><div class="mix-list">{{range .Access.GroupRows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div></div>
+          <div class="half"><h3>응답 상태</h3><div class="mix-list">{{range .Access.StatusRows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div><p class="note">429는 4xx 안에 포함되며 위 핵심 수치에서 별도로 보여줍니다.</p></div>
+        </div>
+        {{if .Access.Routes}}<h3 style="margin-top:18px">많이 호출된 API 종류</h3><div class="table-wrap"><table><caption class="sr-only">API 종류별 요청 방식 및 응답 상태 집계</caption><thead><tr><th scope="col">API 종류</th><th scope="col">활동군</th><th scope="col">전체</th><th scope="col">GET/HEAD</th><th scope="col">POST</th><th scope="col">기타</th><th scope="col">429</th><th scope="col">5xx</th></tr></thead><tbody>{{range .Access.Routes}}<tr><td>{{.Label}}</td><td>{{.GroupLabel}}</td><td>{{number .Requests}}</td><td>{{number .GetHead}}</td><td>{{number .Post}}</td><td>{{number .Other}}</td><td>{{number .Status429}}</td><td>{{number .Status5xx}}</td></tr>{{end}}</tbody></table></div>{{end}}
+        <p class="note">로그 파일 {{.Access.SourceFiles}}개 · 요청 관측 {{.Access.DaysWithRequests}}일{{if .Access.CollectionStarted}} · 안전 로그 수집 시작 {{.Access.CollectionStarted}}{{end}}. 로그 보존 이전 기간은 0으로 간주하지 않습니다.{{if .Access.QualityNote}} {{.Access.QualityNote}}.{{end}}</p>
+        {{end}}
+      {{else}}<p class="empty">{{.AccessError}}</p>{{end}}
+    </section>
+
+    <section class="panel wide" aria-labelledby="verification-title">
+      <div class="section-head"><div><h2 id="verification-title">최근 30일 검증 활동</h2><p class="note">전체 네트워크에 접수된 검증 영수증입니다. 전용 샘플 공장만 분리한 수치가 아닙니다.</p></div>{{if .InsightsAvailable}}<span class="value">{{number .Insights.Verification.Total}}</span>{{end}}</div>
+      {{if .InsightsAvailable}}
+        {{if .Insights.Verification.Total}}<div class="result-totals"><div><strong class="ok">{{number .Insights.Verification.Pass}}</strong><span>PASS</span></div><div><strong class="bad">{{number .Insights.Verification.Fail}}</strong><span>FAIL</span></div><div><strong>{{number .Insights.Verification.Skipped}}</strong><span>SKIPPED</span></div></div>
+        <div class="mix-list">{{range .Insights.Verification.Rows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">이 기간에 접수된 검증 영수증이 없습니다.</p>{{end}}
+      {{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
+    </section>
+
+    <section class="panel side" aria-labelledby="ecosystem-title">
+      <h2 id="ecosystem-title">최근 검증 생태계 구성</h2><p class="note">전체 네트워크의 최근 30일 PASS 영수증에 기록된 실제 실행 환경 기준입니다. 작성된 샘플 환경을 대신 쓰지 않으며 격리된 샘플은 제외합니다.</p>
+      {{if .InsightsAvailable}}{{if .Insights.Ecosystems}}<div class="mix-list">{{range .Insights.Ecosystems}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">최근 PASS 생태계 데이터가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
+    </section>
+
+    <section class="panel half" aria-labelledby="depth-title">
+      <h2 id="depth-title">최근 패키지 깊이</h2><p class="note">전체 네트워크의 최근 30일 v2 PASS 영수증에 기록된 실제 resolvedPackages 기준입니다. 버전을 합치고 샘플 하나는 패키지당 한 번만 셉니다. 해석할 수 없는 v1 영수증과 격리된 샘플은 제외합니다.</p>
+      {{if .InsightsAvailable}}{{if .Insights.PackageDepth}}<div class="table-wrap"><table><caption class="sr-only">최근 30일 패키지별 검증 샘플 수</caption><thead><tr><th scope="col">패키지</th><th scope="col">검증 샘플</th></tr></thead><tbody>{{range .Insights.PackageDepth}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{number .VerifiedSamples}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">최근 패키지 깊이 데이터가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
+    </section>
+
+    <section class="panel half" aria-labelledby="counts-title">
+      <h2 id="counts-title">현재 네트워크 집계</h2>
+      {{if .CountsAvailable}}<div class="stats"><div class="metric"><span class="label">패키지</span><span class="value">{{number .Counts.Packages}}</span></div><div class="metric"><span class="label">증거(사용 관측)</span><span class="value">{{number .Counts.Observations}}</span></div><div class="metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span></div><div class="metric"><span class="label">오늘 익명 피어 버킷</span><span class="value">{{number .Counts.Peers}}</span></div><div class="metric"><span class="label">이번 달 프로젝트 버킷</span><span class="value">{{number .Counts.ProjectsMonth}}</span></div><div class="metric"><span class="label">현재 기여 피어</span><span class="value">{{number .Counts.ServingPeers}}</span></div></div>{{else}}<p class="empty">{{.CountsError}}</p>{{end}}
+      <p class="note">피어·프로젝트는 회전하는 익명 버킷이며 고유 사용자, 계정, 활성 MCP 세션 수가 아닙니다.</p>
     </section>
 
     <section class="panel wide" aria-labelledby="wanted-title">
       <h2 id="wanted-title">요청 대기열 {{if .WantedAvailable}}· 미응답 좌표 {{.WantedTotal}}개{{end}}</h2>
-      {{if .WantedAvailable}}
-        {{if .Wanted}}
-        <table>
-          <thead><tr><th>패키지</th><th>버전</th><th>심벌</th><th>익명 일별 보고</th><th>최근 기록</th></tr></thead>
-          <tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody>
-        </table>
-        {{else}}<p class="empty">현재 기록된 미응답 좌표가 없습니다.</p>{{end}}
-      {{else}}<p class="empty">{{.WantedError}}</p>{{end}}
-      <p class="note">공개 패키지 좌표만 저장하며 질문 원문은 저장하지 않습니다. 보고는 익명 보고자/일자별로 중복 제거되므로 원시 요청 횟수가 아닙니다.</p>
+      {{if .WantedAvailable}}{{if .Wanted}}<div class="table-wrap"><table><caption class="sr-only">미응답 요청 패키지 좌표</caption><thead><tr><th scope="col">패키지</th><th scope="col">버전</th><th scope="col">심벌</th><th scope="col">익명 일별 보고</th><th scope="col">최근 기록</th></tr></thead><tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">현재 기록된 미응답 좌표가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.WantedError}}</p>{{end}}
+      <p class="note">질문 원문은 저장하지 않습니다. 보고는 익명 보고자/일자별로 중복 제거되므로 원시 API 요청 횟수가 아닙니다.</p>
     </section>
 
-    <section class="panel side" aria-labelledby="adoption-title">
-      <h2 id="adoption-title">샘플 채택 보고</h2>
-      {{if .AdoptionAvailable}}
-      <div class="raw">
-        <div><strong>{{number .Adoption.Reports}}</strong><span>전체 보고</span></div>
-        <div><strong>{{number .Adoption.Applied}}</strong><span>샘플 적용</span></div>
-        <div><strong>{{number .Adoption.BuildPass}}</strong><span>적용 후 빌드 PASS</span></div>
-        <div><strong>{{number .Adoption.BuildFail}}</strong><span>적용 후 빌드 FAIL</span></div>
-      </div>
-      {{else}}<p class="empty">{{.AdoptionError}}</p>{{end}}
-      <p class="note">보존된 전체 네트워크 보고이며 샘플/익명 보고자/일자별로 중복 제거됩니다. PASS와 FAIL은 보고된 결과이고 ‘실패 회피’는 추정하지 않습니다.</p>
-    </section>
+    <section class="panel side" aria-labelledby="adoption-title"><h2 id="adoption-title">샘플 채택 보고</h2>{{if .AdoptionAvailable}}<div class="raw"><div><strong>{{number .Adoption.Reports}}</strong><span>전체 보고</span></div><div><strong>{{number .Adoption.Applied}}</strong><span>샘플 적용</span></div><div><strong>{{number .Adoption.BuildPass}}</strong><span>적용 후 빌드 PASS</span></div><div><strong>{{number .Adoption.BuildFail}}</strong><span>적용 후 빌드 FAIL</span></div></div>{{else}}<p class="empty">{{.AdoptionError}}</p>{{end}}<p class="note">샘플/익명 보고자/일자별 중복 제거 결과입니다. ‘실패 회피’는 추정하지 않습니다.</p></section>
 
-    <section class="panel" aria-labelledby="limits-title">
-      <h2 id="limits-title">아직 측정하지 않는 항목</h2>
-      <ul class="muted">
-        <li>고유 사용자 또는 계정</li>
-        <li>활성 MCP 세션</li>
-        <li>설치 및 다운로드</li>
-        <li>언어별 비중</li>
-        <li>샘플 공장 처리량</li>
-        <li>회피한 실패</li>
-        <li>30일 추세 — 현재 저장소는 최신 범위 제한 집계만 제공합니다</li>
-      </ul>
-    </section>
+    <section class="panel" aria-labelledby="runtime-title"><h2 id="runtime-title">서버 상태</h2><div class="server"><div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div><div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div><div class="metric"><span class="label">데이터베이스 읽기 점검</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div></div><p class="note">점검 지연 시간은 애플리케이션의 최신 통계 읽기 시간이며 PostgreSQL 내부 실행 시간은 아닙니다.</p></section>
+
+    <section class="panel" aria-labelledby="limits-title"><h2 id="limits-title">해석할 때 제외해야 할 것</h2><ul class="muted"><li>고유 사용자 또는 계정</li><li>활성 MCP 세션</li><li>설치 및 다운로드</li><li>전용 샘플 공장만의 처리량</li><li>회피한 실패 또는 절약 시간</li></ul></section>
   </div>
 </main>
 </body>
