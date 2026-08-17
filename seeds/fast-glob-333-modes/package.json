@@ -1,0 +1,12 @@
+{
+  "name": "fast-glob-modes-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "fast-glob": "3.3.3"
+  }
+}

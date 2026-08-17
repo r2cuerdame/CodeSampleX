@@ -1,0 +1,8 @@
+{
+  "name": "minimatch-glob-contract",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "minimatch": "10.1.1"
+  }
+}
