@@ -82,7 +82,7 @@ csx version    # the install check — `csx --version` is not a spelling csx acc
 
 One binary, one question. `csx init` shows the community contract and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Everything else (daemon, MCP registration for Claude Code / Codex / Gemini CLI / OpenCode, agent rules) is automatic.
 
-Piped into `sh`, that question cannot be asked: stdin is the pipe, `init` reads EOF, prints *"No answer received (input is not a terminal), so nothing will be shared"* and picks **LOCAL ONLY**. Either answer it up front with `csx init --community` / `csx init --local-only` (both re-runnable, both non-interactive), or download and run instead of piping — which also makes a failed download a failed command:
+Piped into `sh`, stdin is already consumed by the download pipe, so `init` cannot read an answer and takes the advertised default: **JOIN COMMUNITY**. Community mode receives the public compatibility network and contributes only sanitized public package/version/symbol/environment and build-result evidence — never source, paths, project names, secrets, private packages, or raw logs. To opt out, run `csx init --local-only` at any time. Both mode flags are re-runnable and non-interactive. You can also download and run the installer separately, which makes a failed download a failed command:
 
 ```bash
 curl -fsSL https://codesamplex.dev/install.sh -o install.sh && sh install.sh

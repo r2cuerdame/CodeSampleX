@@ -431,13 +431,11 @@ func TestInitCommandRegistered(t *testing.T) {
 	t.Fatal("init command not registered")
 }
 
-// TestInitWithoutATerminalNeverJoins pins the consent guarantee on the
-// install path the README advertises. `curl … | sh` leaves stdin as the
-// consumed curl pipe, so every read is EOF. Bare Enter and EOF both arrive
-// as "", and treating them alike enrolled people in evidence sharing
-// without anyone answering the question — precisely the hidden telemetry
-// the contract promises this is not.
-func TestInitWithoutATerminalNeverJoins(t *testing.T) {
+// The product default is community mode even when stdin is unavailable.
+// Piped installers consume stdin before init runs, so EOF must take the same
+// advertised default as pressing Enter. --local-only remains the explicit
+// opt-out and is covered separately.
+func TestInitWithoutATerminalUsesCommunityDefault(t *testing.T) {
 	env, out, _ := testInitEnv(t, "") // empty stdin == EOF, as through a pipe
 	if code := initMain(context.Background(), nil, env); code != 0 {
 		t.Fatalf("init returned %d\n%s", code, out.String())
@@ -446,15 +444,15 @@ func TestInitWithoutATerminalNeverJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != config.ModeLocalOnly {
-		t.Fatalf("mode = %q with no answer given; joining must never be inferred", cfg.Mode)
+	if cfg.Mode != config.ModeCommunity {
+		t.Fatalf("mode = %q with no answer given, want community default", cfg.Mode)
 	}
 	s := out.String()
-	if !strings.Contains(s, "nothing will be shared") {
-		t.Errorf("the user must be told nothing is shared:\n%s", s)
+	if !strings.Contains(s, "default: COMMUNITY") {
+		t.Errorf("the user must be told which default was selected:\n%s", s)
 	}
-	if !strings.Contains(s, "csx init --community") {
-		t.Errorf("the user must be told how to join deliberately:\n%s", s)
+	if !strings.Contains(s, "csx init --local-only") {
+		t.Errorf("the user must be told how to opt out:\n%s", s)
 	}
 }
 

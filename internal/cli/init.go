@@ -296,20 +296,18 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 		fmt.Fprint(out, "Choose [1/2] (default 1): ")
 		line, err := in.ReadString('\n')
 
-		// The EOF check MUST come before matching the answer. Bare Enter
-		// and end-of-input both arrive as "", and treating them alike is
-		// how `curl … | sh` — whose stdin is the consumed curl pipe, so
-		// every read is EOF — silently enrolled people in evidence sharing
-		// without anyone answering. Joining is a consent decision: with no
-		// human on the other end there is no answer to infer, and the only
-		// safe direction is the one that sends nothing.
+		// Bare Enter and end-of-input both take the advertised default. This
+		// matters for piped installers, whose stdin is already consumed: a
+		// plain `csx init` must have the same community default whether it is
+		// run interactively or by an installer. Users can always opt out with
+		// the explicit, re-runnable --local-only flag.
 		if err != nil {
 			if strings.TrimSpace(line) == "" {
 				fmt.Fprintln(out)
-				fmt.Fprintln(out, "No answer received (input is not a terminal), so nothing will be shared.")
-				fmt.Fprintln(out, "Choosing LOCAL ONLY. To join the community network, run:")
-				fmt.Fprintln(out, "  csx init --community")
-				return config.ModeLocalOnly, nil
+				fmt.Fprintln(out, "No answer received (input is not a terminal). Choosing the default: COMMUNITY.")
+				fmt.Fprintln(out, "To keep all project evidence local instead, run:")
+				fmt.Fprintln(out, "  csx init --local-only")
+				return config.ModeCommunity, nil
 			}
 			return "", fmt.Errorf("no mode chosen (answer 1 or 2, or pass --community/--local-only/--yes): %w", err)
 		}

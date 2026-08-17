@@ -100,7 +100,8 @@ func TestAgentInstallPromptOnlyEverPointsAtCodeSampleX(t *testing.T) {
 			"github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md",
 			"search_known_solution",
 			"csx sync",
-			"local-only",
+			"csx init --community --yes",
+			"mode: community",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("locale %s: prompt is missing %q", lang, want)
