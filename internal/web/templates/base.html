@@ -76,7 +76,21 @@
      nobody using a screen reader receives. A button carrying data-copied
      swaps its own label instead (and announces it, being aria-live), then
      restores; buttons without the attribute behave exactly as before. */}}
-<script>for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('click',()=>{if(b.classList.contains('ok'))return;const d=b.dataset.copied,o=b.textContent;navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.classList.add('ok');if(d)b.textContent=d;setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o},1200)})});</script>
+<script>
+async function copyText(t){
+  try{await navigator.clipboard.writeText(t);return true}catch(_){
+    const a=document.createElement('textarea');
+    a.value=t;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
+    document.body.appendChild(a);a.focus();a.select();
+    const ok=document.execCommand('copy');a.remove();return ok
+  }
+}
+for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('click',async()=>{
+  if(b.classList.contains('ok')||!await copyText(b.dataset.copy))return;
+  const d=b.dataset.copied,o=b.textContent;b.classList.add('ok');if(d)b.textContent=d;
+  setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o},1200)
+});
+</script>
 </body>
 </html>
 

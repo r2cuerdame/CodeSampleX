@@ -44,6 +44,10 @@ func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	// Copy feedback that a screen reader receives, not just a green border.
 	mustContain(t, body, `data-copied="Copied"`)
 	mustContain(t, body, `aria-live="polite"`)
+	// Clipboard permissions can be denied even on HTTPS (embedded browsers,
+	// unfocused tabs). The visible button must retain the old selection-based
+	// fallback instead of silently doing nothing.
+	mustContain(t, body, `document.execCommand('copy')`)
 	// No JavaScript: the prompt is still on the page, in full, selectable.
 	if !strings.Contains(body, ">"+want+"</pre>") {
 		t.Error("prompt is not rendered as readable page text")
