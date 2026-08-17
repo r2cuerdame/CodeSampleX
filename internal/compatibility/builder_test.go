@@ -452,6 +452,18 @@ func TestBuilderRunOnce(t *testing.T) {
 	if len(shard.Packages[0].Samples) != 1 || shard.Packages[0].Samples[0].Status != "CROSS_PASS" {
 		t.Fatalf("shard samples = %+v", shard.Packages[0].Samples)
 	}
+	if got := shard.Packages[0].Samples[0].Symbols; len(got) != 1 || got[0] != "axios.post" {
+		t.Fatalf("manifest symbols missing from shard sample: %v", got)
+	}
+	if shard.Packages[0].Samples[0].SymbolsTruncated {
+		t.Fatal("one valid manifest symbol was marked truncated")
+	}
+	if shard.Packages[0].CanonicalCaseCountTotal != 1 ||
+		shard.Packages[0].DistinctSubjectCountTotal != 1 {
+		t.Fatalf("shard depth totals = (%d, %d), want (1, 1)",
+			shard.Packages[0].CanonicalCaseCountTotal,
+			shard.Packages[0].DistinctSubjectCountTotal)
+	}
 	if shard.Packages[0].Samples[0].ContractStages["contract"] != "PASS" {
 		t.Fatalf("contractStages = %+v", shard.Packages[0].Samples[0].ContractStages)
 	}

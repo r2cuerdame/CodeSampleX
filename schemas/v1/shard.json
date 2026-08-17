@@ -16,6 +16,16 @@
         "required": ["purl"],
         "properties": {
           "purl": {"type": "string"},
+          "canonicalCaseCountTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Exact number of canonical case IDs across all matching samples before the samples cap is applied."
+          },
+          "distinctSubjectCountTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Exact number of distinct safe manifest-declared symbol families across all matching samples before the samples cap is applied."
+          },
           "symbols": {
             "type": "array",
             "items": {
@@ -28,7 +38,30 @@
               }
             }
           },
-          "samples": {"type": "array", "items": {"type": "object"}}
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "symbols": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "uniqueItems": true,
+                  "description": "Sorted, case-sensitive, manifest-declared public symbol families; each item is at most 256 UTF-8 bytes.",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+                  }
+                },
+                "symbolsTruncated": {
+                  "type": "boolean",
+                  "description": "True when a manifest symbol was invalid or omitted by the 32-symbol wire bound."
+                }
+              }
+            }
+          }
         }
       }
     }

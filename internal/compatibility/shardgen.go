@@ -7,13 +7,25 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-// maxShardSamples caps how many top samples ride inside one shard.
-const maxShardSamples = 20
+const (
+	// maxShardSamples caps how many top samples ride inside one shard.
+	maxShardSamples = 20
+	// maxShardSampleSymbols bounds the manifest-declared symbol families
+	// carried by one sample. A sample can declare more, but a shard is fetched
+	// by every client interested in the package, so the wire view stays small
+	// and says when it is incomplete.
+	maxShardSampleSymbols = 32
+	// maxPublicSymbolBytes matches the public symbol boundary used by the
+	// request paths. It is a byte bound because that is what limits the shard.
+	maxPublicSymbolBytes = 256
+)
 
 // ShardSymbolStats is the compact per-symbol statistics block of contract C6.
 type ShardSymbolStats struct {
@@ -60,6 +72,12 @@ type ShardSample struct {
 	// client can see the author's input rather than silently replacing it
 	// with resolver output.
 	Packages []string `json:"packages,omitempty"`
+	// Symbols is the bounded, canonical view of the public symbol families
+	// declared by the sample manifest. Invalid declarations are never copied
+	// into the public shard. SymbolsTruncated says when any valid declaration
+	// was beyond the bound or any invalid declaration had to be withheld.
+	Symbols          []string `json:"symbols,omitempty"`
+	SymbolsTruncated bool     `json:"symbolsTruncated,omitempty"`
 	// Verifications keeps every resolver claim coupled to the environment
 	// and stage verdict that established it. Flattening several receipts into
 	// one package list would claim combinations that never ran and could
@@ -102,6 +120,51 @@ const (
 	maxShardContractLen   = 240
 )
 
+// symbolsForShard returns both the bounded wire view and the complete safe
+// set used for exact pre-cap aggregate counts. Symbols are case-sensitive:
+// "Client" and "client" may be different public APIs. Sorting before the
+// cap makes the result independent of manifest order.
+//
+// Slash, #, ?, brackets and namespace punctuation are deliberately allowed.
+// Go import-qualified symbols and Ruby predicates routinely contain them;
+// treating every path-shaped public name as a private filesystem path would
+// hide valid APIs. Sample publication already applies the separate leakage
+// boundary to the artifact that contains the manifest.
+func symbolsForShard(symbols []string) (bounded, all []string, truncated bool) {
+	seen := make(map[string]bool, len(symbols))
+	for _, raw := range symbols {
+		if !utf8.ValidString(raw) {
+			truncated = true
+			continue
+		}
+		valid := true
+		for _, r := range raw {
+			if unicode.IsControl(r) {
+				valid = false
+				break
+			}
+		}
+		symbol := strings.TrimSpace(raw)
+		if !valid || symbol == "" || len(symbol) > maxPublicSymbolBytes {
+			truncated = true
+			continue
+		}
+		if seen[symbol] {
+			continue
+		}
+		seen[symbol] = true
+		all = append(all, symbol)
+	}
+	sort.Strings(all)
+	if len(all) > maxShardSampleSymbols {
+		truncated = true
+		bounded = append([]string(nil), all[:maxShardSampleSymbols]...)
+	} else {
+		bounded = append([]string(nil), all...)
+	}
+	return bounded, all, truncated
+}
+
 // contractForShard trims a sample's contract to what is worth shipping, and
 // says so when it trims: a truncated list that looks complete would be the
 // system stating that these are ALL the claims, which is a claim of its own.
@@ -138,9 +201,11 @@ func contractForShard(contract []string) []string {
 
 // ShardPackage is one package version inside a shard.
 type ShardPackage struct {
-	PURL    string        `json:"purl"`
-	Symbols []ShardSymbol `json:"symbols,omitempty"`
-	Samples []ShardSample `json:"samples,omitempty"`
+	PURL                      string        `json:"purl"`
+	Symbols                   []ShardSymbol `json:"symbols,omitempty"`
+	Samples                   []ShardSample `json:"samples,omitempty"`
+	CanonicalCaseCountTotal   int           `json:"canonicalCaseCountTotal,omitempty"`
+	DistinctSubjectCountTotal int           `json:"distinctSubjectCountTotal,omitempty"`
 }
 
 // Shard is the C6 wire document for one (ecosystem, package, major).

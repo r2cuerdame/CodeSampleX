@@ -699,6 +699,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 
 	for _, sk := range keys {
 		var pkgs []ShardPackage
+		sampleSet := shardSamplesFor(samples, sk.ecosystem, sk.name, sk.major)
 		purls := make([]string, 0, len(shardPkgs[sk]))
 		for purl := range shardPkgs[sk] {
 			purls = append(purls, purl)
@@ -709,7 +710,9 @@ func (b *Builder) regenerateShards(ctx context.Context,
 			sort.Slice(entry.Symbols, func(i, j int) bool {
 				return entry.Symbols[i].Family < entry.Symbols[j].Family
 			})
-			entry.Samples = shardSamplesFor(samples, sk.ecosystem, sk.name, sk.major)
+			entry.Samples = sampleSet.Samples
+			entry.CanonicalCaseCountTotal = sampleSet.CanonicalCaseCountTotal
+			entry.DistinctSubjectCountTotal = sampleSet.DistinctSubjectCountTotal
 			pkgs = append(pkgs, *entry)
 		}
 		key := sk.ecosystem + "/" + sk.name + "/" + sk.major
@@ -797,10 +800,22 @@ func isEmptyShard(shardJSON string) bool {
 	return len(doc.Packages) == 0
 }
 
+// shardSampleSet carries the bounded sample list plus counts computed from
+// every matching sample before that cap is applied. The totals are therefore
+// exact; they never present the visible top 20 as the package's full depth.
+type shardSampleSet struct {
+	Samples                   []ShardSample
+	CanonicalCaseCountTotal   int
+	DistinctSubjectCountTotal int
+}
+
 // shardSamplesFor renders the top samples covering (ecosystem, name, major),
-// each with the contract stages its latest receipt actually reported.
-func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []ShardSample {
+// each with the contract stages its latest receipt actually reported. It also
+// computes exact case and safe-symbol totals from the complete pre-cap input.
+func shardSamplesFor(samples []sampleData, ecosystem, name, major string) shardSampleSet {
 	var in []ShardSampleInput
+	caseIDs := map[string]bool{}
+	subjects := map[string]bool{}
 	for _, sd := range samples {
 		covered := false
 		for _, sp := range sampleShardPURLs(sd) {
@@ -812,6 +827,18 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 		if !covered {
 			continue
 		}
+		// CaseID is the canonical subject identity stored with current
+		// manifests. Legacy manifests predate the derived field, so derive the
+		// same identity from their canonical case content instead.
+		caseID := sd.manifest.Case.CaseID
+		if caseID == "" {
+			caseID = sd.manifest.Case.ComputeID()
+		}
+		caseIDs[caseID] = true
+		boundedSymbols, allSymbols, symbolsTruncated := symbolsForShard(sd.manifest.Symbols)
+		for _, symbol := range allSymbols {
+			subjects[symbol] = true
+		}
 		entry := ShardSample{
 			SampleID: sd.row.SampleID,
 			Goal:     sd.manifest.Case.Goal,
@@ -820,11 +847,13 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 			// Keep the author's declaration and the resolver-established
 			// versions side by side. The shard key is only reachability and is
 			// never substituted for either one.
-			Packages:      sd.manifest.Packages,
-			Verifications: sampleVerifications(sd),
-			Environment:   sd.manifest.Environment,
-			Contract:      contractForShard(sd.manifest.Case.Contract),
-			Believed:      sd.manifest.Case.Believed,
+			Packages:         sd.manifest.Packages,
+			Symbols:          boundedSymbols,
+			SymbolsTruncated: symbolsTruncated,
+			Verifications:    sampleVerifications(sd),
+			Environment:      sd.manifest.Environment,
+			Contract:         contractForShard(sd.manifest.Case.Contract),
+			Believed:         sd.manifest.Case.Believed,
 		}
 		if len(sd.receipts) > 0 {
 			latest := sd.receipts[0]
@@ -837,12 +866,16 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) []Shar
 		}
 		in = append(in, ShardSampleInput{
 			Sample:    entry,
-			Symbols:   sd.manifest.Symbols,
+			Symbols:   allSymbols,
 			HotScore:  sd.row.HotScore,
 			CreatedAt: sd.row.CreatedAt,
 		})
 	}
-	return TopShardSamples(in)
+	return shardSampleSet{
+		Samples:                   TopShardSamples(in),
+		CanonicalCaseCountTotal:   len(caseIDs),
+		DistinctSubjectCountTotal: len(subjects),
+	}
 }
 
 // createMatrixJobs opens up to 3 one-variable-changed verification jobs for
