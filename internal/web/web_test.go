@@ -434,3 +434,13 @@ func (f *fakeStore) TopWanted(_ context.Context, limit int) ([]WantedRow, error)
 	}
 	return f.wanted, nil
 }
+
+func (f *fakeStore) WantedForPackage(_ context.Context, ecosystem, name string) ([]WantedRow, error) {
+	var out []WantedRow
+	for _, row := range f.wanted {
+		if row.Ecosystem == ecosystem && row.Name == name {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}

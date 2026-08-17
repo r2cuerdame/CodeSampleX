@@ -7,8 +7,10 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/daemon"
 )
 
 func init() {
@@ -61,6 +63,7 @@ func configMain(ctx context.Context, args []string) int {
 			fmt.Fprintf(os.Stderr, "csx: unknown config key %q (known: %s)\n", key, knownKeys(m))
 			return 2
 		}
+		oldMode, _ := m["mode"].(string)
 		raw := args[2]
 		var v any
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
@@ -78,9 +81,31 @@ func configMain(ctx context.Context, args []string) int {
 			fmt.Fprintf(os.Stderr, "csx: invalid value for %q: %v\n", key, err)
 			return 2
 		}
+		var daemonWasRunning bool
+		if key == "mode" && oldMode != cfg.Mode {
+			// The daemon keeps its config in memory. A privacy downshift must
+			// stop the community process before config.json changes, or it can
+			// continue uploading under consent the user just revoked.
+			dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			daemonWasRunning, err = daemon.StopRunning(dctx, home)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "csx: stop daemon before mode change: %v\n", err)
+				return 1
+			}
+		}
 		if err := cfg.Save(home); err != nil {
 			fmt.Fprintf(os.Stderr, "csx: %v\n", err)
 			return 1
+		}
+		if daemonWasRunning && cfg.Mode == config.ModeCommunity {
+			dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			_, err = daemon.EnsureRunning(dctx, home, Version)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "csx: restart daemon after mode change: %v\n", err)
+				return 1
+			}
 		}
 		fmt.Printf("%s = %s\n", key, renderValue(m[key]))
 		return 0

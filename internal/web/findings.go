@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -45,6 +47,11 @@ type finding struct {
 	SampleID    string // content address of the published sample
 	SourceURL   string // official document the belief comes from, "" if none
 	SourceLabel string
+	OS          string // recorded by the linked sample; empty means unknown
+	Runtime     string // normalized recorded runtime bucket; empty means unknown
+	Environment string // compact display of the recorded environment
+	BasisKey    string // localized key naming how this finding entered the list
+	Basis       string // docs | belief | sample
 }
 
 // documentedFindings are the ones where the belief is printed in the
@@ -457,7 +464,7 @@ var believedFindings = []finding{
 
 type findingsPage struct {
 	basePage
-	Query      string
+	Filter     findingsFilter
 	Documented []finding
 	Believed   []finding
 	// Derived is the group nobody edits: samples that declared the belief
@@ -465,17 +472,48 @@ type findingsPage struct {
 	// its place at the top, and first in importance because it is the only
 	// group that grows while everyone is asleep — which is also why it is
 	// the only one that is paged.
-	Derived    []finding
-	Total      int
-	Ecosystems []string
-	Page       int
-	Pages      int
-	RangeText  string
-	PageText   string
-	PrevHref   string
-	NextHref   string
-	Empty      bool
-	Capped     bool
+	Derived          []finding
+	Total            int
+	Ecosystems       []string
+	Page             int
+	Pages            int
+	RangeText        string
+	PageText         string
+	PrevHref         string
+	NextHref         string
+	Empty            bool
+	Capped           bool
+	EcosystemOptions []filterOption
+	OSOptions        []filterOption
+	RuntimeOptions   []filterOption
+	BasisOptions     []filterOption
+	HasFilters       bool
+	ClearHref        string
+}
+
+type findingsFilter struct {
+	Query     string
+	Ecosystem string
+	OS        string
+	Runtime   string
+	Basis     string // docs | belief | sample | ""
+}
+
+var findingBasisValues = []string{"docs", "belief", "sample"}
+
+func cleanFindingsFilter(f findingsFilter) findingsFilter {
+	f.Query = strings.TrimSpace(f.Query)
+	f.Ecosystem = cleanFilterValue(f.Ecosystem, ecosystemFilterValues)
+	f.OS = cleanFilterValue(f.OS, osFilterValues)
+	f.Runtime = cleanFilterValue(f.Runtime, runtimeFilterValues)
+	f.Basis = cleanFilterValue(f.Basis, findingBasisValues)
+	return f
+}
+
+func findingBasisOptions(lang, selected string) []filterOption {
+	return filterOptions(findingBasisValues, selected, func(value string) string {
+		return i18n.T(lang, "findings.basis_"+value)
+	})
 }
 
 // SampleHref is the public page for the sample that proves this finding.
@@ -539,11 +577,16 @@ func (s *site) derivedFindings(r *http.Request) []finding {
 		out := make([]finding, 0, len(rows))
 		for _, d := range rows {
 			out = append(out, finding{
-				Ecosystem: d.Ecosystem,
-				Subject:   d.Subject,
-				Believed:  d.Believed,
-				Measured:  d.Measured,
-				SampleID:  d.SampleID,
+				Ecosystem:   d.Ecosystem,
+				Subject:     d.Subject,
+				Believed:    d.Believed,
+				Measured:    d.Measured,
+				SampleID:    d.SampleID,
+				OS:          d.OS,
+				Runtime:     d.Runtime,
+				Environment: d.Environment,
+				BasisKey:    "findings.basis_sample",
+				Basis:       "sample",
 			})
 		}
 		s.derivedCache, s.derivedAt = out, time.Now()
@@ -551,26 +594,94 @@ func (s *site) derivedFindings(r *http.Request) []finding {
 	return s.derivedCache
 }
 
+// decorateFindings attaches the linked sample's recorded environment to the
+// hand-checked lists. Those entries predate machine-derived findings, so the
+// environment is not duplicated in their Go literals; the content-addressed
+// sample remains the source of truth. A missing or old manifest stays unknown.
+func (s *site) decorateFindings(r *http.Request, input []finding, basis, basisKey string) []finding {
+	out := make([]finding, len(input))
+	copy(out, input)
+	for i := range out {
+		out[i].BasisKey = basisKey
+		out[i].Basis = basis
+		manifestJSON, ok := s.d.Store.SampleManifest(r.Context(), out[i].SampleID)
+		if !ok {
+			continue
+		}
+		var manifest domain.SampleManifest
+		if json.Unmarshal([]byte(manifestJSON), &manifest) != nil {
+			continue
+		}
+		out[i].OS = RecordEnvironmentOS(manifest.Environment)
+		out[i].Runtime = RecordEnvironmentRuntime(manifest.Environment)
+		out[i].Environment = RecordEnvironmentSummary(manifest.Environment)
+	}
+	return out
+}
+
+// handFindings decorates the two static groups once per cache window.
+// Content-addressed sample manifests do not change, and a timed retry lets
+// a sample that was temporarily unavailable appear without making every
+// visitor pay dozens of sequential database reads.
+func (s *site) handFindings(r *http.Request) ([]finding, []finding) {
+	s.handMu.Lock()
+	defer s.handMu.Unlock()
+	if s.handAt.IsZero() || time.Since(s.handAt) > derivedTTL {
+		s.handDocumented = s.decorateFindings(r, documentedFindings, "docs", "findings.basis_docs")
+		s.handBelieved = s.decorateFindings(r, believedFindings, "belief", "findings.basis_belief")
+		s.handAt = time.Now()
+	}
+	return append([]finding(nil), s.handDocumented...), append([]finding(nil), s.handBelieved...)
+}
+
+func filterFindings(input []finding, filter findingsFilter) []finding {
+	searched := input
+	if filter.Query != "" {
+		searched = matchFindings(searched, filter.Query)
+	}
+	out := make([]finding, 0, len(searched))
+	for _, finding := range searched {
+		if filter.Ecosystem != "" && finding.Ecosystem != filter.Ecosystem {
+			continue
+		}
+		if filter.OS != "" && finding.OS != filter.OS {
+			continue
+		}
+		if filter.Runtime != "" && finding.Runtime != filter.Runtime {
+			continue
+		}
+		if filter.Basis != "" && finding.Basis != filter.Basis {
+			continue
+		}
+		out = append(out, finding)
+	}
+	return out
+}
+
 func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	filter := cleanFindingsFilter(findingsFilter{
+		Query:     r.URL.Query().Get("q"),
+		Ecosystem: r.URL.Query().Get("eco"),
+		OS:        r.URL.Query().Get("os"),
+		Runtime:   r.URL.Query().Get("runtime"),
+		Basis:     r.URL.Query().Get("basis"),
+	})
 	page := 1
 	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 1 {
 		page = min(p, maxFindingsPage)
 	}
 
 	derived := s.derivedFindings(r)
-	total := len(derived)
+	rawDerivedTotal := len(derived)
 
 	// A query searches EVERYTHING, hand-written groups included. Someone
 	// typing "timeout" wants the finding about timeouts, and which of three
 	// lists it happens to live in is an authoring detail.
-	documented, believed := documentedFindings, believedFindings
-	if q != "" {
-		documented = matchFindings(documentedFindings, q)
-		believed = matchFindings(believedFindings, q)
-		derived = matchFindings(derived, q)
-	}
+	documented, believed := s.handFindings(r)
+	documented = filterFindings(documented, filter)
+	believed = filterFindings(believed, filter)
+	derived = filterFindings(derived, filter)
 
 	pages := (len(derived) + findingsPerPage - 1) / findingsPerPage
 	if pages == 0 {
@@ -578,7 +689,7 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	}
 	// A page past the end is a stale link, not an error.
 	if page > pages {
-		http.Redirect(w, r, findingsHref(q, pages, lang), http.StatusFound)
+		http.Redirect(w, r, findingsHref(filter, pages, lang), http.StatusFound)
 		return
 	}
 	from := (page - 1) * findingsPerPage
@@ -609,15 +720,21 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := findingsPage{
-		basePage:   b,
-		Query:      q,
-		Documented: documented,
-		Believed:   believed,
-		Derived:    shown,
-		Total:      len(documented) + len(believed) + len(derived),
-		Ecosystems: ecos,
-		Page:       page,
-		Pages:      pages,
+		basePage:         b,
+		Filter:           filter,
+		Documented:       documented,
+		Believed:         believed,
+		Derived:          shown,
+		Total:            len(documented) + len(believed) + len(derived),
+		Ecosystems:       ecos,
+		Page:             page,
+		Pages:            pages,
+		EcosystemOptions: ecosystemOptions(filter.Ecosystem),
+		OSOptions:        osOptions(filter.OS),
+		RuntimeOptions:   runtimeOptions(filter.Runtime),
+		BasisOptions:     findingBasisOptions(lang, filter.Basis),
+		HasFilters:       filter.Query != "" || filter.Ecosystem != "" || filter.OS != "" || filter.Runtime != "" || filter.Basis != "",
+		ClearHref:        findingsHref(findingsFilter{}, 1, lang),
 	}
 	// The count of derived findings is stated whether or not they all fit,
 	// because a page that shows twenty-five of four hundred and says
@@ -627,17 +744,17 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	}
 	view.PageText = i18n.T(lang, "records.page", n(page), n(pages))
 	if page > 1 {
-		view.PrevHref = findingsHref(q, page-1, lang)
+		view.PrevHref = findingsHref(filter, page-1, lang)
 	}
 	if page < pages {
-		view.NextHref = findingsHref(q, page+1, lang)
+		view.NextHref = findingsHref(filter, page+1, lang)
 	}
-	if q != "" && view.Total == 0 {
+	if view.HasFilters && view.Total == 0 {
 		view.Empty = true
 	}
 	// Only meaningful when the cache is full: at that point the page really
 	// is not showing everything published, and must say so.
-	view.Capped = total >= derivedCap
+	view.Capped = rawDerivedTotal >= derivedCap
 
 	s.render(w, "findings", http.StatusOK, view)
 }
@@ -669,10 +786,22 @@ func matchFindings(list []finding, q string) []finding {
 }
 
 // findingsHref builds the link for one slice of the collection.
-func findingsHref(q string, page int, lang string) string {
+func findingsHref(filter findingsFilter, page int, lang string) string {
 	v := url.Values{}
-	if q != "" {
-		v.Set("q", q)
+	if filter.Query != "" {
+		v.Set("q", filter.Query)
+	}
+	if filter.Ecosystem != "" {
+		v.Set("eco", filter.Ecosystem)
+	}
+	if filter.OS != "" {
+		v.Set("os", filter.OS)
+	}
+	if filter.Runtime != "" {
+		v.Set("runtime", filter.Runtime)
+	}
+	if filter.Basis != "" {
+		v.Set("basis", filter.Basis)
 	}
 	if page > 1 {
 		v.Set("page", strconv.Itoa(page))

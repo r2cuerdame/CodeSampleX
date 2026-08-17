@@ -41,7 +41,7 @@ func uiMain(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "csx: %v\n", err)
 		return 1
 	}
-	c, err := daemon.EnsureRunning(ctx, home)
+	c, err := daemon.EnsureRunning(ctx, home, Version)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "csx: %v\n", err)
 		return 1

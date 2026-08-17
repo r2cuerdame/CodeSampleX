@@ -61,6 +61,130 @@ func openTestPG(t *testing.T) *PG {
 	return pg
 }
 
+func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	requests := []WantedRow{
+		{Ecosystem: "npm", Name: "three", Version: "0.180.0", Symbol: "Texture.transformUv"},
+		{Ecosystem: "npm", Name: "three", Version: "0.180.0", Symbol: "CanvasTexture"},
+		// Rows received before the version migration remain visible: their
+		// exact requested release can no longer be reconstructed honestly.
+		{Ecosystem: "npm", Name: "three", Symbol: "LegacySymbol"},
+		{Ecosystem: "npm", Name: "@scope/pkg", Version: "2.0.0", Symbol: "scoped.call"},
+	}
+	if err := pg.RecordWanted(ctx, "2026-08-17", "anon-a", requests); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := `{"packages":["pkg:npm/three@0.179.0"],"symbols":["Texture.transformUv"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:other", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pg.TopWanted(ctx, 20)
+	if err != nil || len(rows) != 4 {
+		t.Fatalf("different version closed wanted row: rows=%+v err=%v", rows, err)
+	}
+
+	manifest = `{"packages":["pkg:npm/three@0.180.0"],"symbols":["Texture.transformUv"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:exact", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	// A PASS attached to an author-declared 0.180.0 manifest does not
+	// answer 0.180.0 when the v2 resolver says the run actually used
+	// 0.179.0.
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-wrong-resolve", SampleID: "sha256:exact", ContractResult: "PASS",
+		ReceiptJSON: `{"schemaVersion":2,"stages":{"resolve":"PASS","contract":"PASS"},` +
+			`"resolvedPackages":["pkg:npm/three@0.179.0"]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = pg.TopWanted(ctx, 20)
+	if err != nil || len(rows) != 4 {
+		t.Fatalf("manifest version closed request despite a different resolved release: rows=%+v err=%v", rows, err)
+	}
+
+	// Matrix verification is the inverse: the manifest may name the base
+	// release, while resolvedPackages proves the requested release really
+	// ran and therefore answers it.
+	manifest = `{"packages":["pkg:npm/three@0.179.0"],"symbols":["Texture.transformUv"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:matrix", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	manifest = `{"packages":["pkg:npm/%40scope/pkg@2.0.0"],"symbols":["scoped.call"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:scoped", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range []ReceiptRow{
+		{ReceiptID: "receipt-matrix", SampleID: "sha256:matrix", ContractResult: "PASS",
+			ReceiptJSON: `{"schemaVersion":2,"stages":{"resolve":"PASS","contract":"PASS"},` +
+				`"resolvedPackages":["pkg:npm/three@0.180.0"]}`},
+		{ReceiptID: "receipt-scoped", SampleID: "sha256:scoped", ContractResult: "PASS",
+			ReceiptJSON: `{"schemaVersion":2,"stages":{"resolve":"PASS","contract":"PASS"},` +
+				`"resolvedPackages":["pkg:npm/%40scope/pkg@2.0.0"]}`},
+	} {
+		if err := pg.SaveReceipt(ctx, receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err = pg.TopWanted(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("wanted rows after exact answers = %+v, want CanvasTexture + legacy", rows)
+	}
+	remaining := map[string]bool{}
+	for _, row := range rows {
+		remaining[row.Symbol] = true
+	}
+	if !remaining["CanvasTexture"] || !remaining["LegacySymbol"] {
+		t.Fatalf("wrong rows remain: %+v", rows)
+	}
+
+	// Rows migrated from the old schema have no version. A v1 receipt also
+	// has no resolvedPackages, so the only honest recoverable policy is a
+	// contract pass for the same package and symbol at any release.
+	manifest = `{"packages":["pkg:npm/three@0.170.0"],"symbols":["LegacySymbol"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:legacy", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-legacy", SampleID: "sha256:legacy", ContractResult: "PASS",
+		ReceiptJSON: `{"schemaVersion":1,"stages":{"contract":"PASS"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = pg.TopWanted(ctx, 20)
+	if err != nil || len(rows) != 1 || rows[0].Symbol != "CanvasTexture" {
+		t.Fatalf("legacy answer policy left wrong rows: rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestIntegrationVerifiedSampleReadsRequireContractPass(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	manifest := `{"packages":["pkg:npm/axios@1.12.0"],"symbols":["axios.get"]}`
+	for _, id := range []string{"sha256:source-only", "sha256:proved"} {
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: id, ManifestJSON: manifest}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-proved", SampleID: "sha256:proved", ContractResult: "PASS", ReceiptJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pg.VerifiedSamplesForPackages(ctx, []string{"pkg:npm/axios@%"}, 10)
+	if err != nil || len(rows) != 1 || rows[0].SampleID != "sha256:proved" {
+		t.Fatalf("verified package rows = %+v, err=%v", rows, err)
+	}
+	rows, err = pg.ListVerifiedSamples(ctx, 10)
+	if err != nil || len(rows) != 1 || rows[0].SampleID != "sha256:proved" {
+		t.Fatalf("verified sample rows = %+v, err=%v", rows, err)
+	}
+}
+
 func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()

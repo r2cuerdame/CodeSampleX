@@ -76,10 +76,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF#refs/tags/}" \
-            dist/csx-* dist/SHA256SUMS.txt \
-            dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256 \
-            --title "${GITHUB_REF#refs/tags/}" --generate-notes
+          TAG="${GITHUB_REF#refs/tags/}"
+          ASSETS=(dist/csx-* dist/SHA256SUMS.txt \
+            dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256)
+          # A registry publish can fail after the GitHub release exists. Make
+          # reruns repair/replace that release's assets instead of failing at
+          # `gh release create` and permanently blocking recovery.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "$TAG" --generate-notes
+          fi
 
       # The asset must exist and match before the registry is told about it;
       # publishing first would advertise a digest nobody can satisfy.
@@ -91,8 +99,12 @@ jobs:
 
       - name: Install mcp-publisher
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
+          PUBLISHER_VERSION=v1.8.1
+          curl -fsSL -o /tmp/mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo 'a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  /tmp/mcp-publisher.tar.gz' \
+            | sha256sum -c -
+          tar xzf /tmp/mcp-publisher.tar.gz mcp-publisher
 
       - name: Publish to the MCP Registry
         run: |

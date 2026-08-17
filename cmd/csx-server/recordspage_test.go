@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/web"
 )
 
 // Any browser could take the site's records page down with a URL:
@@ -39,7 +40,30 @@ func TestDeepRecordsPageDoesNotKillTheConnection(t *testing.T) {
 // reaches it.
 func TestRecordPackagesClampsANegativeOffset(t *testing.T) {
 	w := &webStore{s: serverstore.NewFake()}
-	if _, _, err := w.RecordPackages(context.Background(), "", -80, 40); err != nil {
+	if _, _, err := w.RecordPackages(context.Background(), web.RecordFilter{}, -80, 40); err != nil {
 		t.Fatalf("negative offset: %v", err)
+	}
+}
+
+func TestRecordSnapshotFiltersRecordedEnvironmentAndBasis(t *testing.T) {
+	raw := `{"rows":[{"envBucket":{"schemaVersion":1,"ecosystem":"npm","os":"linux","arch":"amd64","runtime":"node","runtimeVersion":"22.18"},"byStage":{"PROJECT_COMPILE":{"pass":4,"fail":0},"CONTRACT":{"pass":1,"fail":0}}}]}`
+	for _, filter := range []web.RecordFilter{
+		{OS: "linux"},
+		{Runtime: "node"},
+		{Basis: "observed"},
+		{Basis: "verified"},
+		{OS: "linux", Runtime: "node", Basis: "verified"},
+	} {
+		if !recordSnapshotMatches(raw, filter) {
+			t.Errorf("filter %+v did not match its recorded row", filter)
+		}
+	}
+	for _, filter := range []web.RecordFilter{{OS: "windows"}, {Runtime: "python"}} {
+		if recordSnapshotMatches(raw, filter) {
+			t.Errorf("filter %+v matched an unrecorded dimension", filter)
+		}
+	}
+	if recordSnapshotMatches(`{"rows":[{"envLabel":"node 22 · linux","byStage":{"CONTRACT":{"pass":1}}}]}`, web.RecordFilter{OS: "linux"}) {
+		t.Error("presentation-only envLabel was treated as structured OS evidence")
 	}
 }

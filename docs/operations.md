@@ -16,22 +16,33 @@ only — build and verification runners live on peers, never here.
 Creates the instance (ubuntu 24.04 + userdata: docker, compose plugin, 2G swap,
 swappiness 20), allocates+attaches static IP, opens 22/80/443. SSH key:
 `aws lightsail download-default-key-pair --region ap-northeast-2` (profile
-r2cuerdame) → `%USERPROFILE%\.ssh\lightsail-csx-r2.pem`.
+r2cuerdame) → `%USERPROFILE%\.ssh\lightsail-csx-r3`.
 
 ## Deploy / upgrade
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r2.pem
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3
 ```
 
 Builds the linux/amd64 image locally (the 2GB host never builds), ships it +
 compose bundle over SSH, `docker load`, `docker compose up -d`. The server `.env`
 (holds the generated PostgreSQL password) is created once and never overwritten.
-Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`
-(deploy.ps1 uploads `dist/` when present; CSX_DIST_DIR=/data/dist in compose).
+The deploy also installs `backup.sh` and `restore-check.sh`, restores executable
+permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
+user.
+Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
+`deploy.ps1` records the served release tag and skips re-downloading identical
+GitHub assets on code-only deploys, so GitHub's download counters are not
+inflated by our own rollout loop (CSX_DIST_DIR=/data/dist in compose).
 
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and
 `docker compose ps` shows caddy/server/db healthy.
+
+Migration `0006_wanted_versions.sql` is forward-only with respect to older
+server binaries: it replaces the Wanted conflict key with
+`(ecosystem,name,version,symbol)`. Roll forward to a fixed server if the new
+image fails. Rolling back to a pre-0006 binary requires restoring the verified
+pre-deploy database backup; otherwise its old Wanted upsert returns 500.
 
 ## DNS — codesamplex.dev (Gabia)
 
@@ -67,6 +78,9 @@ Nightly cron on the host (`crontab -e`):
 
 Produces `backups/<UTC date>/csx.pgdump` + `blobs.tar.gz`, pruned after 14 days.
 Copy off-host periodically (S3-compatible target is a post-v1 improvement).
+The weekly `restore-check.sh` restores the latest dump into a disposable database,
+compares critical table counts with production, reads the complete blob archive,
+and removes the disposable database even on failure.
 
 Restore:
 

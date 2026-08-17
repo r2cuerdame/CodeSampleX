@@ -23,11 +23,16 @@
 <p class="lead">{{.T "findings.intro"}}</p>
 <p class="note dim small">{{.T "findings.rerun"}}</p>
 <p class="note dim small">{{.T "findings.untranslated"}}</p>
-<form class="search" action="/findings" method="get" role="search">
-  <input type="search" name="q" value="{{.Query}}" placeholder="{{.T "findings.search"}}" aria-label="{{.T "findings.search"}}">
+<form class="filterbar" action="/findings" method="get" role="search">
+  <label class="filterquery"><span>{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Filter.Query}}" placeholder="{{.T "findings.search"}}"></label>
+  <label><span>{{.T "adapters.ecosystem"}}</span><select name="eco"><option value="">{{.T "filters.all"}}</option>{{range .EcosystemOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+  <label><span>{{.T "filters.os"}}</span><select name="os"><option value="">{{.T "filters.all"}}</option>{{range .OSOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+  <label><span>{{.T "filters.runtime"}}</span><select name="runtime"><option value="">{{.T "filters.all"}}</option>{{range .RuntimeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+  <label><span>{{.T "findings.source"}}</span><select name="basis"><option value="">{{.T "filters.all"}}</option>{{range .BasisOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
-  <button type="submit">{{.T "explore.button"}}</button>
+  <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasFilters}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>
+<p class="dim small filter-note">{{.T "findings.filter_note"}}</p>
 
 <p class="mono small dim">{{.T "findings.count" .Total (len .Ecosystems)}}</p>
 <ul class="ecolist">
@@ -36,7 +41,7 @@
 {{- end}}
 </ul>
 
-{{if .Empty}}<p class="dim">{{.T "findings.none" .Query}}</p>{{end}}
+{{if .Empty}}<p class="dim">{{.T "findings.none"}}</p>{{end}}
 
 {{- if .Documented}}
 <section>
@@ -45,7 +50,7 @@
   <ol class="findings">
   {{- range .Documented}}
     <li class="finding panel">
-      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="chip mono">{{$.T .BasisKey}}</span>{{if .Environment}}<span class="chip mono">{{.Environment}}</span>{{end}}<span class="mono subject">{{.Subject}}</span></p>
       <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
       <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
       <p class="flinks small">
@@ -67,7 +72,7 @@
   <ol class="findings">
   {{- range .Believed}}
     <li class="finding panel">
-      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="chip mono">{{$.T .BasisKey}}</span>{{if .Environment}}<span class="chip mono">{{.Environment}}</span>{{end}}<span class="mono subject">{{.Subject}}</span></p>
       <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
       <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
       <p class="flinks small">
@@ -91,7 +96,7 @@
   <ol class="findings">
   {{- range .Derived}}
     <li class="finding panel">
-      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="mono subject">{{.Subject}}</span></p>
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="chip mono">{{$.T .BasisKey}}</span>{{if .Environment}}<span class="chip mono">{{.Environment}}</span>{{end}}<span class="mono subject">{{.Subject}}</span></p>
       <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
       <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
       <p class="flinks small">

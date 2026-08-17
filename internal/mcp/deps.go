@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -35,6 +36,53 @@ const maxFileReturn = 64 * 1024
 // hitListLimit bounds list_local_hits output.
 const hitListLimit = 50
 
+// errPersistedModeDisallowsRemote is deliberately path-free. A config read
+// can fail while another process replaces config.json, and returning the
+// underlying error from an MCP tool would disclose the CSX home path. More
+// importantly, a failed read is not permission to keep using the mode that
+// happened to be in memory when this long-running process started.
+var errPersistedModeDisallowsRemote = errors.New("mcp: remote access disabled by persisted mode")
+
+// persistedModeTransport is the final consent check immediately before an
+// MCP-owned HTTP request leaves the process. The higher-level operations also
+// reload config so they do not enqueue evidence or even construct remote work
+// in local-only mode. Keeping the check here closes the smaller race where the
+// persisted mode changes after that operation-level check but before Do.
+type persistedModeTransport struct {
+	home string
+	base http.RoundTripper
+}
+
+func (t persistedModeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	cfg, err := config.Load(t.home)
+	if err != nil || cfg.Mode != config.ModeCommunity {
+		return nil, errPersistedModeDisallowsRemote
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+// currentConfig reloads the persisted consent state for every MCP operation.
+// Any read/parse failure returns an uninitialized config, which is the
+// fail-closed mode. The error is intentionally not surfaced because it can
+// contain the local config path.
+func currentConfig(home string) *config.Config {
+	cfg, err := config.Load(home)
+	if err != nil {
+		return config.Default()
+	}
+	return cfg
+}
+
+type artifactFetchFunc func(context.Context, string) ([]byte, string, error)
+
+func (f artifactFetchFunc) Fetch(ctx context.Context, sampleID string) ([]byte, string, error) {
+	return f(ctx, sampleID)
+}
+
 // NewDeps wires the real tool implementations over one CSX home, the same
 // stores the daemon uses but constructed in-process — the MCP server keeps
 // working with no daemon running (goal.md §3.9). The returned close func
@@ -43,8 +91,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 	if err := config.EnsureHome(home); err != nil {
 		return nil, nil, err
 	}
-	cfg, err := config.Load(home)
-	if err != nil {
+	if _, err := config.Load(home); err != nil {
 		return nil, nil, err
 	}
 	ident, err := identity.LoadOrCreate(home)
@@ -61,18 +108,35 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		return nil, nil, err
 	}
 	engine := search.Engine{DB: db}
+	// Every MCP-owned HTTP client checks the persisted mode again in its
+	// transport. Operation-level checks below avoid unnecessary work and queue
+	// writes; this transport is the last fail-closed boundary before the wire.
+	remoteTransport := persistedModeTransport{home: home, base: http.DefaultTransport}
+	syncHTTP := &http.Client{Transport: remoteTransport}
+	fetchHTTP := &http.Client{Transport: remoteTransport, Timeout: 30 * time.Second}
+	registryHTTP := &http.Client{Transport: remoteTransport}
+
 	// A miss for a package this machine has never synced is not an answer
 	// about the network, it is an answer about the local cache. The agent
 	// is asking about a library it is about to ADD, which is exactly the
 	// package the warm list has no reason to hold.
-	syncer := &search.Syncer{DB: db, ServerURL: cfg.ServerURL, HTTP: http.DefaultClient}
 	// Artifacts resolve through the peer chain: local CAS, then peers that
 	// announced the sample, then the main seeder — every remote payload
 	// re-verified against its content id before it is trusted or cached
 	// (goal.md §15.1). Without it a search hit named a sample the agent
 	// could never open, which killed the value loop one step after it
 	// worked. This only downloads; nothing is uploaded here.
-	fetcher := &peer.Node{CAS: store, DB: db, Ident: ident, ServerURL: cfg.ServerURL}
+	fetcher := artifactFetchFunc(func(ctx context.Context, sampleID string) ([]byte, string, error) {
+		live := currentConfig(home)
+		if live.Mode != config.ModeCommunity {
+			return nil, "", errPersistedModeDisallowsRemote
+		}
+		node := &peer.Node{
+			CAS: store, DB: db, Ident: ident, HTTP: fetchHTTP,
+			ServerURL: live.ServerURL,
+		}
+		return node.Fetch(ctx, sampleID)
+	})
 
 	d := &Deps{
 		// Wrapped rather than passed straight through, so recording cannot
@@ -88,10 +152,20 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			// never had: fetch the named packages' shards, then ask again.
 			// Community mode only — in local-only, naming the package to
 			// the server is the thing that mode exists to prevent.
-			if resp.Miss && search.FetchMissing(ctx, engine, syncer, cfg.Mode, req) {
-				resp = engine.Search(ctx, req)
+			if resp.Miss {
+				live := currentConfig(home)
+				if live.Mode == config.ModeCommunity {
+					syncer := &search.Syncer{DB: db, ServerURL: live.ServerURL, HTTP: syncHTTP}
+					if search.FetchMissing(ctx, engine, syncer, live.Mode, req) {
+						resp = engine.Search(ctx, req)
+					}
+				}
 			}
-			recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+			// Reload again: mode may have changed while a community shard fetch
+			// was in flight. A miss observed after revocation must not become a
+			// Wanted upload candidate.
+			recordSearchOutcomeReloaded(ctx, db, ident,
+				func() *config.Config { return currentConfig(home) }, req, resp)
 			return resp
 		},
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
@@ -105,22 +179,22 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		},
 		LocalReadiness: func(ctx context.Context) (string, int, error) {
 			rows, err := db.ListShards(ctx)
+			mode := currentConfig(home).Mode
 			if err != nil {
-				return cfg.Mode, 0, err
+				return mode, 0, err
 			}
-			return cfg.Mode, len(rows), nil
+			return mode, len(rows), nil
 		},
 		Mode: func() string {
-			if cfg == nil {
-				return ""
-			}
-			return cfg.Mode
+			return currentConfig(home).Mode
 		},
 		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, error) {
-			return runObserved(ctx, db, ident, cfg, argv, cwd)
+			return runObserved(ctx, db, ident, currentConfig(home), registryHTTP,
+				func() *config.Config { return currentConfig(home) }, argv, cwd)
 		},
 		ReportAdoption: func(ctx context.Context, sampleID string, applied bool, buildPass *bool) error {
-			return reportAdoption(ctx, db, ident, cfg, sampleID, applied, buildPass)
+			return reportAdoptionReloaded(ctx, db, ident, currentConfig(home),
+				func() *config.Config { return currentConfig(home) }, sampleID, applied, buildPass)
 		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)
@@ -138,7 +212,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			return db.ListHits(ctx, hitListLimit)
 		},
 		LocalStats: func(ctx context.Context) (map[string]any, error) {
-			return localStats(ctx, db, cfg)
+			return localStats(ctx, db, currentConfig(home))
 		},
 	}
 	return d, db.Close, nil
@@ -510,7 +584,8 @@ func envSummaryText(summary map[string]string) string {
 // same pipeline as `csx run`: scan → classify → run → record. The wrapped
 // command's exit code passes through; returned error text is sanitizer
 // output only, never raw stderr.
-func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config, argv []string, cwd string) (int, string, string, []string, error) {
+func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config,
+	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string) (int, string, string, []string, error) {
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
@@ -525,7 +600,7 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 	// four public registries on each one.
 	var checker *registry.Checker
 	if cfg != nil && config.MayContactRegistries(cfg.Mode) {
-		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
+		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}, HTTP: registryHTTP}
 	}
 
 	res, _ := evidence.Scan(ctx, cwd, checker)
@@ -568,8 +643,26 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 	}
 
 	if res != nil && ident != nil {
-		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-		_ = rec.RecordRun(ctx, cwd, res, profile, exitCode, tail) // best-effort
+		recordCfg := cfg
+		if reloadConfig != nil {
+			recordCfg = reloadConfig()
+		}
+		recordRes := res
+		if recordCfg == nil || recordCfg.Mode != config.ModeCommunity {
+			// A command can outlive the consent that existed when its scan
+			// began. Preserve local inventory diagnostics while removing the
+			// PUBLIC classifications that make observations uploadable.
+			closed := *res
+			closed.Packages = append([]scanner.ResolvedPackage(nil), res.Packages...)
+			for i := range closed.Packages {
+				if closed.Packages[i].Publicness == scanner.PublicnessPublic {
+					closed.Packages[i].Publicness = scanner.PublicnessUnknown
+				}
+			}
+			recordRes = &closed
+		}
+		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
+		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, tail) // best-effort
 	}
 	return exitCode, string(stage), string(result), sanitized, nil
 }
@@ -591,6 +684,11 @@ type adoptionPayload struct {
 // daemon/`csx sync`; queues locally while the server is unreachable).
 func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	cfg *config.Config, sampleID string, applied bool, buildPass *bool) error {
+	return reportAdoptionReloaded(ctx, db, ident, cfg, nil, sampleID, applied, buildPass)
+}
+
+func reportAdoptionReloaded(ctx context.Context, db *localdb.DB, ident *identity.Identity,
+	cfg *config.Config, reloadConfig func() *config.Config, sampleID string, applied bool, buildPass *bool) error {
 
 	var pass sql.NullBool
 	if buildPass != nil {
@@ -635,7 +733,11 @@ func reportAdoption(ctx context.Context, db *localdb.DB, ident *identity.Identit
 	// while the tool told the agent they were "queued for anonymous
 	// upload". The local record above is the part that is real in that
 	// mode, and it is kept.
-	if cfg == nil || cfg.Mode != config.ModeCommunity {
+	uploadCfg := cfg
+	if reloadConfig != nil {
+		uploadCfg = reloadConfig()
+	}
+	if uploadCfg == nil || uploadCfg.Mode != config.ModeCommunity {
 		return nil
 	}
 	_, err = db.Enqueue(ctx, "adoption", string(raw))
@@ -709,6 +811,11 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 // dropped deliberately rather than surfaced.
 func recordSearchOutcome(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	cfg *config.Config, req domain.SearchRequest, resp domain.SearchResponse) {
+	recordSearchOutcomeReloaded(ctx, db, ident, func() *config.Config { return cfg }, req, resp)
+}
+
+func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *identity.Identity,
+	reloadConfig func() *config.Config, req domain.SearchRequest, resp domain.SearchResponse) {
 	if db == nil {
 		return
 	}
@@ -716,6 +823,10 @@ func recordSearchOutcome(ctx context.Context, db *localdb.DB, ident *identity.Id
 		// A miss is a demand signal. Agents arrive over MCP, so this is the
 		// path where questions actually get asked — and it was the one path
 		// that threw them away.
+		var cfg *config.Config
+		if reloadConfig != nil {
+			cfg = reloadConfig()
+		}
 		evidence.QueueWanted(ctx, db, ident, cfg, req)
 		return
 	}

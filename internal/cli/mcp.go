@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/daemon"
 	"github.com/r2cuerdame/codesamplex/internal/mcp"
 )
 
@@ -34,6 +36,21 @@ func mcpMain(ctx context.Context, _ []string) int {
 		return 1
 	}
 	defer closeDB() //nolint:errcheck // process is exiting
+
+	// Agent integrations launch `csx mcp` directly.  Until this point that
+	// path never started the daemon, so wanted/adoption reports accumulated
+	// forever unless somebody happened to type `csx sync`.  Start it in the
+	// background: MCP protocol startup stays immediate and the detached
+	// daemon owns retries/offline handling.
+	if deps.Mode != nil && deps.Mode() == config.ModeCommunity {
+		go func() {
+			dctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if _, err := daemon.EnsureRunning(dctx, home, Version); err != nil {
+				fmt.Fprintf(os.Stderr, "csx mcp: background sync unavailable: %v\n", err)
+			}
+		}()
+	}
 
 	in, out := os.Stdin, os.Stdout
 	os.Stdout = os.Stderr

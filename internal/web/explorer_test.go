@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,55 @@ func TestVersionPageListsSymbols(t *testing.T) {
 	body := rec.Body.String()
 	mustContain(t, body, `href="/npm/axios/1.12.0/axios.post"`)
 	mustContain(t, body, `href="/npm/axios/1.12.0/axios.get"`)
+}
+
+func TestVersionPageUsesQueryLinksForPathUnsafeSymbols(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	const (
+		eco     = "gem"
+		name    = "ruby-api-shapes"
+		version = "1.0.0"
+	)
+	store.versions[eco+"|"+name] = []string{version}
+	store.symbols[eco+"|"+name+"|"+version] = []string{
+		"OpenStruct#[]", "Set#include?", "Namespace/member",
+	}
+	for _, symbol := range store.symbols[eco+"|"+name+"|"+version] {
+		store.snapshots[snapKey("pkg:gem/"+name+"@"+version, symbol)] = `{
+		  "schemaVersion":1,"purl":"pkg:gem/ruby-api-shapes@1.0.0",
+		  "symbol":` + strconv.Quote(symbol) + `,"rows":[],"failures":[]
+		}`
+	}
+
+	body := get(t, mux, "/gem/ruby-api-shapes/1.0.0").Body.String()
+	mustContain(t, body, `href="/gem/ruby-api-shapes/1.0.0?symbol=OpenStruct%23%5B%5D"`)
+	mustContain(t, body, `href="/gem/ruby-api-shapes/1.0.0?symbol=Set%23include%3F"`)
+	mustContain(t, body, `href="/gem/ruby-api-shapes/1.0.0?symbol=Namespace%2Fmember"`)
+
+	for _, encoded := range []string{
+		"OpenStruct%23%5B%5D", "Set%23include%3F", "Namespace%2Fmember",
+	} {
+		rec := get(t, mux, "/gem/ruby-api-shapes/1.0.0?symbol="+encoded)
+		if rec.Code != http.StatusOK {
+			t.Errorf("symbol=%s status = %d, want 200", encoded, rec.Code)
+		}
+		mustContain(t, rec.Body.String(), `rel="canonical" href="https://codesamplex.dev/gem/ruby-api-shapes/1.0.0?symbol=`+encoded+`"`)
+	}
+
+	// Established links for ordinary symbols stay readable and routable.
+	if got := symbolHref("npm", "axios", "1.12.0", "axios.post"); got != "/npm/axios/1.12.0/axios.post" {
+		t.Fatalf("simple symbol href = %q", got)
+	}
+}
+
+func TestGoSemanticImportVersionBaseRoute(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.versions["golang|github.com/go-chi/chi/v5"] = []string{"v5.2.3"}
+	rec := get(t, mux, "/golang/github.com/go-chi/chi/v5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `href="/golang/github.com/go-chi/chi/v5/v5.2.3"`)
 }
 
 func TestUnknownEcosystemAndPackage404(t *testing.T) {
@@ -178,6 +228,9 @@ func TestSamplePage(t *testing.T) {
 	mustContain(t, body, `href="/seeders/alice"`)
 	mustContain(t, body, "CROSS_PASS")
 	mustContain(t, body, "L4_CROSS_PASS")
+	mustContain(t, body, "Verification level")
+	mustContain(t, body, "Verification-run environments")
+	mustContain(t, body, "Download the source artifact")
 	mustContain(t, body, "MIT-0")
 	// Receipt details: env context + capability, honestly labeled.
 	mustContain(t, body, "CONTAINER_RUN")

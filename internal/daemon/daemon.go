@@ -30,7 +30,9 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/peer"
+	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
 	"github.com/r2cuerdame/codesamplex/internal/search"
 	"github.com/r2cuerdame/codesamplex/internal/storage"
 	"github.com/r2cuerdame/codesamplex/internal/storage/cas"
@@ -48,6 +50,10 @@ const (
 	defaultWarmEvery   = time.Hour
 	defaultBudgetEvery = 24 * time.Hour
 	defaultVerifyEvery = 15 * time.Minute
+	// Wanted/adoption reports are tiny and already queued.  Upload them soon
+	// after an MCP-started daemon appears instead of making the public Wanted
+	// board wait a full maintenance interval.
+	defaultQueueFirstDelay = 2 * time.Second
 	// First cross-verification attempt after startup.
 	defaultVerifyFirstDelay = 20 * time.Second
 )
@@ -69,6 +75,9 @@ type Daemon struct {
 	Peer    *peer.Node              // nil unless cfg.peerListen
 	Cross   *verifier.CrossVerifier // nil unless cfg.idleVerification != off
 	HTTP    *http.Client            // server-bound calls; nil = 30s default
+	// WantedPublic is the fail-closed package publicness boundary used before
+	// a queued miss is allowed to leave the machine.
+	WantedPublic func(context.Context, domain.PURL) bool
 
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
@@ -123,6 +132,10 @@ func New(home string) (*Daemon, error) {
 		shutdown: make(chan struct{}),
 	}
 	d.Engine = &search.Engine{DB: db}
+	publicChecker := &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
+	d.WantedPublic = func(ctx context.Context, p domain.PURL) bool {
+		return publicChecker.Check(ctx, p) == scanner.PublicnessPublic
+	}
 	d.Syncer = &search.Syncer{DB: db, ServerURL: cfg.ServerURL, HTTP: d.httpClient()}
 	d.Batcher = &evidence.Batcher{DB: db, Ident: ident, Cfg: cfg}
 	// The node is always constructed: fetching (local CAS → peers → server)
@@ -132,7 +145,7 @@ func New(home string) (*Daemon, error) {
 		CAS: store, DB: db, Ident: ident,
 		ServerURL: cfg.ServerURL, Port: cfg.PeerPort,
 	}
-	if cfg.IdleVerification != "" && cfg.IdleVerification != "off" {
+	if cfg.Mode == config.ModeCommunity && cfg.IdleVerification != "" && cfg.IdleVerification != "off" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		d.Cross = &verifier.CrossVerifier{
 			ServerURL:        cfg.ServerURL,
@@ -178,6 +191,25 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer release()
+	// New() reads config before this process owns the single-instance lock.
+	// A concurrent `csx init --local-only` can revoke community mode in that
+	// small window. Reload after acquiring the lock so a just-starting daemon
+	// cannot carry the old consent state into its background loops.
+	fresh, err := config.Load(d.Home)
+	if err != nil {
+		return fmt.Errorf("daemon: reload config after lock: %w", err)
+	}
+	*d.Cfg = *fresh
+	if d.Syncer != nil {
+		d.Syncer.ServerURL = fresh.ServerURL
+	}
+	if d.Peer != nil {
+		d.Peer.ServerURL = fresh.ServerURL
+		d.Peer.Port = fresh.PeerPort
+	}
+	if d.Cross != nil {
+		d.Cross.ServerURL = fresh.ServerURL
+	}
 
 	tcpLn, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(d.Cfg.DaemonPort)))
 	if err != nil {
@@ -248,27 +280,28 @@ func (d *Daemon) httpClient() *http.Client {
 // startBackground launches the P4.1 maintenance loops. Every iteration is
 // best-effort: a down server never breaks local features (goal.md §3.9).
 func (d *Daemon) startBackground(ctx context.Context) {
-	go tickLoop(ctx, orDefault(d.uploadEvery, defaultUploadEvery), func() {
-		uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		_, _ = d.uploadNow(uctx) // community-mode gate lives in the batcher
-		// And the report queue. The two are separate stores, and only
-		// observation batches were on this tick: adoption and wanted
-		// reports sat until somebody ran `csx sync` by hand -- while
-		// that command's own output says "or let the daemon do it on its
-		// next tick". A user who never types sync reported nothing, and
-		// adoption is the one signal the network cannot recompute.
-		_, _ = d.drainQueue(uctx)
-	})
-	go tickLoop(ctx, orDefault(d.warmEvery, defaultWarmEvery), func() {
-		wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		_, _ = d.warmNow(wctx)
-	})
+	if d.communityNetworkEnabled() {
+		go tickLoop(ctx, orDefault(d.uploadEvery, defaultUploadEvery), func() {
+			uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			_, _ = d.uploadNow(uctx)
+		})
+		go tickLoopAfter(ctx, defaultQueueFirstDelay,
+			orDefault(d.uploadEvery, defaultUploadEvery), func() {
+				qctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				_, _ = d.drainQueue(qctx)
+			})
+		go tickLoop(ctx, orDefault(d.warmEvery, defaultWarmEvery), func() {
+			wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			_, _ = d.warmNow(wctx)
+		})
+	}
 	go tickLoop(ctx, orDefault(d.budgetEvery, defaultBudgetEvery), func() {
 		_, _ = storage.EnforceBudget(ctx, d.DB, d.CAS, d.Cfg.CacheBudgetMB)
 	})
-	if d.Cross != nil {
+	if d.communityNetworkEnabled() && d.Cross != nil {
 		// Idle verification is explicitly opted into and only pulls work, so
 		// unlike upload/warm it starts soon after launch instead of after a
 		// full interval — a peer that just enabled it should not sit idle for
@@ -283,10 +316,14 @@ func (d *Daemon) startBackground(ctx context.Context) {
 				}
 			})
 	}
-	if d.Peer != nil && d.Cfg.PeerListen {
+	if d.communityNetworkEnabled() && d.Peer != nil && d.Cfg.PeerListen {
 		d.Peer.StartAnnouncing(ctx)
 		go func() { _ = d.Peer.ListenAndServe(ctx) }()
 	}
+}
+
+func (d *Daemon) communityNetworkEnabled() bool {
+	return d != nil && d.Cfg != nil && d.Cfg.Mode == config.ModeCommunity
 }
 
 // tickLoop runs f on every tick until ctx is done. The first run waits a
@@ -340,6 +377,9 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 // warmNow syncs the §11.2 shard warm list. Server failures are returned
 // but never fatal to the caller loops.
 func (d *Daemon) warmNow(ctx context.Context) (int, error) {
+	if !d.communityNetworkEnabled() {
+		return 0, nil
+	}
 	keys := d.warmKeyList(ctx)
 	if len(keys) == 0 {
 		return 0, nil
@@ -347,10 +387,14 @@ func (d *Daemon) warmNow(ctx context.Context) (int, error) {
 	return d.Syncer.SyncAll(ctx, keys)
 }
 
-// warmKeyList builds the warm list: recent public packages from the local
-// inventory → HOT keys from the last /v1/stats fetch → pinned config
-// entries, deduplicated in that priority order (search.WarmKeys).
+// warmKeyList builds the community-mode warm list: recent public packages
+// from the local inventory → HOT keys from the last /v1/stats fetch → pinned
+// config entries, deduplicated in that priority order (search.WarmKeys).
+// Outside community mode it returns before making any network request.
 func (d *Daemon) warmKeyList(ctx context.Context) []string {
+	if !d.communityNetworkEnabled() {
+		return nil
+	}
 	var recent []domain.PURL
 	// LOCAL ONLY means nothing about YOUR PROJECTS leaves, and a shard
 	// request names a package: GET /v1/shards/npm/left-pad/1, one per
@@ -359,18 +403,12 @@ func (d *Daemon) warmKeyList(ctx context.Context) []string {
 	// under what a COMMUNITY member contributes, arriving from someone who
 	// was told nothing would.
 	//
-	// The HOT list below is the server's own popularity ranking: the same
-	// for everyone, revealing nothing but that csx is installed. Pinned
-	// packages are named by the user in their own config, which is a
-	// choice they made. Neither is derived from what they happen to have
-	// installed, so both stay.
 	// Not just local-only: UNINITIALIZED too. Before csx init no mode has
 	// been chosen, so no permission has been given — and this list names
 	// the caller's own packages to the server, one request each. The
 	// publicness checks were gated on exactly this reasoning hours ago and
 	// this list was left behind.
-	localOnly := !config.MayContactRegistries(d.Cfg.Mode)
-	if rows, err := d.DB.ListPackages(ctx); err == nil && !localOnly {
+	if rows, err := d.DB.ListPackages(ctx); err == nil {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastSeen.After(rows[j].LastSeen) })
 		for _, r := range rows {
 			if r.Publicness != "PUBLIC" {
@@ -420,6 +458,9 @@ func (d *Daemon) fetchHot(ctx context.Context) []string {
 		defer d.hotMu.Unlock()
 		return append([]string(nil), d.hotKeys...)
 	}
+	if !d.communityNetworkEnabled() {
+		return nil
+	}
 	url := strings.TrimSuffix(d.Cfg.ServerURL, "/") + "/v1/stats"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -464,6 +505,9 @@ func (d *Daemon) fetchHot(ctx context.Context) []string {
 // state is never harmed (goal.md §3.9, §25.F).
 func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	res := SyncResult{SchemaVersion: 1}
+	if !d.communityNetworkEnabled() {
+		return res
+	}
 	// WarmedKeys is what SUCCEEDED, not what was attempted. Assigning
 	// len(keys) before the sync ran meant a completely failed sync still
 	// printed "warmed shard keys: 124" and exited 0, and the number is read

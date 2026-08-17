@@ -34,7 +34,7 @@ func daemonMain(ctx context.Context, args []string) int {
 	case "run":
 		return daemonRun(ctx, home)
 	case "start":
-		c, err := daemon.EnsureRunning(ctx, home)
+		c, err := daemon.EnsureRunning(ctx, home, Version)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "csx: start daemon: %v\n", err)
 			return 1

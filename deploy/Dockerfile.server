@@ -7,6 +7,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/csx-server ./cmd/csx-server
 
 FROM alpine:3.22
+ARG CSX_VERSION=dev
+ENV CSX_VERSION=$CSX_VERSION
+LABEL org.opencontainers.image.revision=$CSX_VERSION
 RUN apk add --no-cache ca-certificates tzdata wget && adduser -D -H csx
 # Named volumes inherit ownership from the image, so the blob dir must exist
 # and belong to the runtime user before the volume is created.

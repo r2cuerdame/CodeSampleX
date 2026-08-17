@@ -315,6 +315,13 @@ var versionRe = regexp.MustCompile(`^v?\d+(\.\d+)*([-+.][0-9A-Za-z.+-]*)?$`)
 // major.minor.patch — so a bare vN in the golang namespace is never one.
 var goMajorSuffixRe = regexp.MustCompile(`^v[0-9]+$`)
 
+// simpleSymbolPathRe is deliberately conservative. Symbols matching it keep
+// the original, readable /version/symbol URL. Everything else travels in a
+// query parameter: fragments, query delimiters, brackets and slashes either
+// change URL meaning or are decoded by net/http before routing, so path
+// escaping alone cannot represent every public API name losslessly.
+var simpleSymbolPathRe = regexp.MustCompile(`^[0-9A-Za-z._:@$+\-]+$`)
+
 // looksLikeVersion reports whether a URL segment ends the package name.
 //
 // The golang exception is not a nicety: without it every module at v2 or
@@ -389,6 +396,17 @@ func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, lang)
 		return
 	}
+	if querySymbols, present := r.URL.Query()["symbol"]; present {
+		// Two different symbol coordinates in one URL are ambiguous. The
+		// query form is for symbols that cannot safely occupy one path
+		// segment, and is accepted only on a version route.
+		if version == "" || symbol != "" || len(querySymbols) != 1 ||
+			querySymbols[0] == "" || len(querySymbols[0]) > 512 {
+			s.notFound(w, r, lang)
+			return
+		}
+		symbol = querySymbols[0]
+	}
 	switch {
 	case version == "":
 		s.packagePage(w, r, lang, eco, name)
@@ -403,6 +421,20 @@ func pkgHref(eco, name string) string {
 	return "/" + eco + "/" + escapePathSegments(name)
 }
 
+func versionHref(eco, name, version string) string {
+	return pkgHref(eco, name) + "/" + url.PathEscape(version)
+}
+
+// symbolHref keeps established URLs for simple symbols and uses a query for
+// names such as OpenStruct#[], Set#include? and slash-delimited API families.
+func symbolHref(eco, name, version, symbol string) string {
+	base := versionHref(eco, name, version)
+	if simpleSymbolPathRe.MatchString(symbol) {
+		return base + "/" + symbol
+	}
+	return base + "?" + url.Values{"symbol": {symbol}}.Encode()
+}
+
 // ---------------------------------------------------------------------------
 // Package page.
 
@@ -413,6 +445,7 @@ type packagePage struct {
 	Versions  []string
 	Samples   []SampleListItem
 	Clusters  []clusterView
+	Wanted    []WantedRow
 }
 
 // packageSampleLimit bounds the samples listed on a package page. It is a
@@ -449,7 +482,14 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	if err != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
-	if len(versions) == 0 && len(clusters) == 0 && len(samples) == 0 {
+	// A package requested through NO_SAFE_MATCH has a useful, honest page
+	// even before its first sample exists. It says exactly that the request
+	// is queued; it does not manufacture a version, matrix or evidence row.
+	var wanted []WantedRow
+	if rows, err := s.d.Store.WantedForPackage(r.Context(), eco, name); err == nil {
+		wanted = rows
+	}
+	if len(versions) == 0 && len(clusters) == 0 && len(samples) == 0 && len(wanted) == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -465,7 +505,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	})}
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
-		Versions: versions, Samples: samples, Clusters: clusters,
+		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
 	})
 }
 
@@ -477,8 +517,13 @@ type versionPage struct {
 	Ecosystem string
 	Name      string
 	Ver       string
-	Symbols   []string
+	Symbols   []symbolLink
 	Matrix    []matrixRow
+}
+
+type symbolLink struct {
+	Name string
+	Href string
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
@@ -505,11 +550,18 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
 		{name, base + pkgHref(eco, name)},
-		{version, base + pkgHref(eco, name) + "/" + url.PathEscape(version)},
+		{version, base + versionHref(eco, name, version)},
 	})}
+	links := make([]symbolLink, 0, len(symbols))
+	for _, symbol := range symbols {
+		links = append(links, symbolLink{
+			Name: symbol,
+			Href: b.WithLang(symbolHref(eco, name, version, symbol)),
+		})
+	}
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
-		Symbols: symbols, Matrix: matrix,
+		Symbols: links, Matrix: matrix,
 	})
 }
 
@@ -554,12 +606,23 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 
 	base := s.base(r)
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", symbol+" — "+name+"@"+version))
-	verHref := base + pkgHref(eco, name) + "/" + url.PathEscape(version)
+	verPath := versionHref(eco, name, version)
+	verHref := base + verPath
+	symbolPath := symbolHref(eco, name, version, symbol)
+	if parsed, err := url.Parse(symbolPath); err == nil {
+		// page() intentionally drops arbitrary query parameters from SEO
+		// canonicals. Here ?symbol= is identity, not a filter, so retain it
+		// in canonical, hreflang and language-switch links.
+		b.path = parsed.Path
+		b.query = parsed.Query()
+		b.Canonical = base + b.WithLang(symbolPath)
+		b.Alternates = queryAlternatesWithQuery(base, parsed.Path, parsed.Query())
+	}
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
 		{name, base + pkgHref(eco, name)},
 		{version, verHref},
-		{symbol, verHref + "/" + url.PathEscape(symbol)},
+		{symbol, base + symbolPath},
 	})}
 	s.render(w, "symbol", http.StatusOK, symbolPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version, Symbol: symbol,
@@ -582,9 +645,15 @@ const maxRecordsPage = 1 << 20
 
 type recordsPage struct {
 	basePage
-	Query string
-	Hits  []PackageHit
-	Total int
+	Filter           RecordFilter
+	Hits             []PackageHit
+	Total            int
+	EcosystemOptions []filterOption
+	OSOptions        []filterOption
+	RuntimeOptions   []filterOption
+	BasisOptions     []filterOption
+	HasFilters       bool
+	ClearHref        string
 	// Page numbers are 1-based for the reader. RangeText and PageText are
 	// rendered here rather than in the template so the numbers get the
 	// locale's own grouping ("1–40 of 1,204").
@@ -605,7 +674,13 @@ func (s *site) explorePage(w http.ResponseWriter, r *http.Request) {
 
 func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	filter := cleanRecordFilter(RecordFilter{
+		Query:     r.URL.Query().Get("q"),
+		Ecosystem: r.URL.Query().Get("eco"),
+		OS:        r.URL.Query().Get("os"),
+		Runtime:   r.URL.Query().Get("runtime"),
+		Basis:     r.URL.Query().Get("basis"),
+	})
 	// maxRecordsPage bounds ?page= before it is multiplied. Atoi happily
 	// returns 9223372036854775807, (page-1)*recordsPerPage overflowed to a
 	// negative offset, and the store sliced with it — so any browser could
@@ -616,7 +691,7 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 		page = min(p, maxRecordsPage)
 	}
 
-	hits, total, err := s.d.Store.RecordPackages(r.Context(), q, (page-1)*recordsPerPage, recordsPerPage)
+	hits, total, err := s.d.Store.RecordPackages(r.Context(), filter, (page-1)*recordsPerPage, recordsPerPage)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
@@ -628,7 +703,7 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	// A page number past the end is a stale link, not an error: show the
 	// last real page instead of an empty screen.
 	if page > pages {
-		http.Redirect(w, r, recordsHref(q, pages, lang), http.StatusFound)
+		http.Redirect(w, r, recordsHref(filter, pages, lang), http.StatusFound)
 		return
 	}
 
@@ -639,16 +714,22 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	}
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
 	view := recordsPage{
-		Query: q, Hits: hits, Total: total,
-		Page: page, Pages: pages,
+		Filter: filter, Hits: hits, Total: total,
+		EcosystemOptions: ecosystemOptions(filter.Ecosystem),
+		OSOptions:        osOptions(filter.OS),
+		RuntimeOptions:   runtimeOptions(filter.Runtime),
+		BasisOptions:     basisOptions(lang, filter.Basis),
+		HasFilters:       filter.Query != "" || filter.Ecosystem != "" || filter.OS != "" || filter.Runtime != "" || filter.Basis != "",
+		ClearHref:        recordsHref(RecordFilter{}, 1, lang),
+		Page:             page, Pages: pages,
 		RangeText: i18n.T(lang, "records.range", n(from), n(to), n(total)),
 		PageText:  i18n.T(lang, "records.page", n(page), n(pages)),
 	}
 	if page > 1 {
-		view.PrevHref = recordsHref(q, page-1, lang)
+		view.PrevHref = recordsHref(filter, page-1, lang)
 	}
 	if page < pages {
-		view.NextHref = recordsHref(q, page+1, lang)
+		view.NextHref = recordsHref(filter, page+1, lang)
 	}
 
 	title := i18n.T(lang, "records.title") + " — CodeSampleX"
@@ -668,10 +749,22 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 
 // recordsHref builds a /records link that keeps the query, page and
 // language the reader is on.
-func recordsHref(q string, page int, lang string) string {
+func recordsHref(filter RecordFilter, page int, lang string) string {
 	v := url.Values{}
-	if q != "" {
-		v.Set("q", q)
+	if filter.Query != "" {
+		v.Set("q", filter.Query)
+	}
+	if filter.Ecosystem != "" {
+		v.Set("eco", filter.Ecosystem)
+	}
+	if filter.OS != "" {
+		v.Set("os", filter.OS)
+	}
+	if filter.Runtime != "" {
+		v.Set("runtime", filter.Runtime)
+	}
+	if filter.Basis != "" {
+		v.Set("basis", filter.Basis)
 	}
 	if page > 1 {
 		v.Set("page", strconv.Itoa(page))
@@ -689,8 +782,9 @@ func recordsHref(q string, page int, lang string) string {
 // Sample page.
 
 type receiptView struct {
-	Context    string
-	Capability string
+	Context     string
+	Environment environmentView
+	Capability  string
 	// Contract is the contract stage's own result, kept apart from the
 	// rendered Stages string so the page can ask whether one actually
 	// passed rather than parsing its own display text.
@@ -742,13 +836,15 @@ func packageRefs(purls []string) []pkgRef {
 
 type samplePageData struct {
 	basePage
-	Meta     SampleMeta
-	Manifest *domain.SampleManifest
-	Level    string
-	Context  string
-	Goal     string
-	Packages []pkgRef
-	Receipts []receiptView
+	Meta                SampleMeta
+	Manifest            *domain.SampleManifest
+	Level               string
+	Context             string
+	Goal                string
+	Packages            []pkgRef
+	Receipts            []receiptView
+	DeclaredEnvironment environmentView
+	EvidenceBasisKey    string
 }
 
 // levelBadge maps a sample status to the honest verification level
@@ -813,13 +909,14 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 				parts = append(parts, st+":"+rec.Stages[st])
 			}
 			receipts = append(receipts, receiptView{
-				Context:    rec.Environment.ContextLabel(),
-				Capability: string(rec.SandboxCapability),
-				Contract:   rec.Stages["contract"],
-				Stages:     strings.Join(parts, " · "),
-				Verifier:   rec.VerifierAdapter,
-				CreatedAt:  datePart(rec.CreatedAt),
-				PeerID:     rec.PeerID,
+				Context:     rec.Environment.ContextLabel(),
+				Environment: makeEnvironmentView(lang, rec.Environment),
+				Capability:  string(rec.SandboxCapability),
+				Contract:    rec.Stages["contract"],
+				Stages:      strings.Join(parts, " · "),
+				Verifier:    rec.VerifierAdapter,
+				CreatedAt:   datePart(rec.CreatedAt),
+				PeerID:      rec.PeerID,
 			})
 		}
 	}
@@ -832,6 +929,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 		purls []string
 		syms  []string
 	)
+	var declaredEnvironment environmentView
 	if manifest != nil {
 		goal = strings.TrimSpace(manifest.Case.Goal)
 		env = manifest.Environment
@@ -839,6 +937,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 		purls = manifest.Packages
 		syms = manifest.Symbols
 		refs = packageRefs(purls)
+		declaredEnvironment = makeEnvironmentView(lang, env)
 	}
 
 	// The title and description are the whole visible surface of this page
@@ -900,10 +999,21 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 			sampleJSONLD(pageURL, goal, desc, meta.CreatedAt, meta.License, purls, syms, env))
 	}
 
+	level := levelBadge(meta.Status, anyContractPass(receipts))
+	basisKey := "sample.basis_source"
+	switch level {
+	case string(domain.L3ContractPass):
+		basisKey = "sample.basis_contract"
+	case string(domain.L4CrossPass):
+		basisKey = "sample.basis_cross"
+	case string(domain.L5MatrixPass):
+		basisKey = "sample.basis_matrix"
+	}
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
-		Level: levelBadge(meta.Status, anyContractPass(receipts)), Context: ctx, Goal: goal,
+		Level: level, Context: ctx, Goal: goal,
 		Packages: refs, Receipts: receipts,
+		DeclaredEnvironment: declaredEnvironment, EvidenceBasisKey: basisKey,
 	})
 }
 

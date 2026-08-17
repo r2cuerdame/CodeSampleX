@@ -327,6 +327,29 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 	return js, found, err
 }
 
+func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
+	var out []SnapshotRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, symbol, snapshot::text
+			FROM compatibility_snapshots
+			ORDER BY purl, symbol`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row SnapshotRow
+			if err := rows.Scan(&row.PURL, &row.Symbol, &row.SnapshotJSON); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
@@ -702,6 +725,77 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 				WHERE pkg LIKE ANY($1)
 			  )
 			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// VerifiedSamplesForPackages is SamplesForPackages with a receipt-backed
+// contract proof. Publication alone is not verification.
+func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, limit int) ([]SampleRow, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM receipts verified_receipt
+				WHERE verified_receipt.sample_id = samples.sample_id
+				  AND verified_receipt.contract_result = 'PASS'
+			  )
+			  AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements_text(manifest->'packages') AS pkg
+				WHERE pkg LIKE ANY($1)
+			  )
+			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func (p *PG) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM receipts verified_receipt
+				WHERE verified_receipt.sample_id = samples.sample_id
+				  AND verified_receipt.contract_result = 'PASS'
+			  )
+			ORDER BY created_at DESC, sample_id LIMIT $1`, limit)
 		if err != nil {
 			return err
 		}
@@ -1632,15 +1726,24 @@ func (p *connPool) close() {
 type WantedRow struct {
 	Ecosystem string
 	Name      string
+	Version   string
 	Symbol    string
 	Asks      int64
 	FirstSeen time.Time
 	LastSeen  time.Time
-	// HasPage reports whether an explorer page exists for this package. A
-	// wanted row is by definition a package with no sample, and one with no
-	// evidence either has no page at all — so linking every row produced a
-	// board of 404s.
+	// HasPage is retained on the internal row for wire compatibility. Every
+	// supported Wanted coordinate now has an honest request-only page, so it
+	// is always true and must not trigger expensive snapshot/sample scans.
 	HasPage bool
+}
+
+// WantedSubmission keeps one rotating reporter bucket attached to the rows
+// it asked for. Batch ingest stores several submissions atomically while the
+// dedup key remains per reporter, epoch, package version and symbol.
+type WantedSubmission struct {
+	Epoch  string
+	AnonID string
+	Rows   []WantedRow
 }
 
 // RecordWanted counts one anonymous report that the network had no answer
@@ -1650,7 +1753,14 @@ type WantedRow struct {
 // same thing all afternoon is one data point. Counting keystrokes would let
 // a single caller manufacture the ranking, which is the whole value of it.
 func (p *PG) RecordWanted(ctx context.Context, epoch, anonID string, rows []WantedRow) error {
-	if len(rows) == 0 {
+	return p.RecordWantedBatch(ctx, []WantedSubmission{{Epoch: epoch, AnonID: anonID, Rows: rows}})
+}
+
+// RecordWantedBatch applies a wire batch in one database transaction. A
+// transport retry is safe because every row first passes through the rotating
+// dedup key, and a storage failure cannot leave half the envelope committed.
+func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) error {
+	if len(reports) == 0 {
 		return nil
 	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
@@ -1659,60 +1769,100 @@ func (p *PG) RecordWanted(ctx context.Context, epoch, anonID string, rows []Want
 			return err
 		}
 		defer tx.Rollback(ctx)
-		for _, r := range rows {
-			tag, err := tx.Exec(ctx, `
-				INSERT INTO wanted_dedup(ecosystem, name, symbol, epoch, anon_id)
-				VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-				r.Ecosystem, r.Name, r.Symbol, epoch, anonID)
-			if err != nil {
-				return err
-			}
-			if tag.RowsAffected() == 0 {
-				continue // this reporter already counted today
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO wanted(ecosystem, name, symbol, asks, first_seen, last_seen)
-				VALUES($1,$2,$3,1,now(),now())
-				ON CONFLICT (ecosystem, name, symbol) DO UPDATE
+		for _, report := range reports {
+			for _, r := range report.Rows {
+				tag, err := tx.Exec(ctx, `
+				INSERT INTO wanted_dedup(ecosystem, name, version, symbol, epoch, anon_id)
+				VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+					r.Ecosystem, r.Name, r.Version, r.Symbol, report.Epoch, report.AnonID)
+				if err != nil {
+					return err
+				}
+				if tag.RowsAffected() == 0 {
+					continue // this reporter already counted today
+				}
+				if _, err := tx.Exec(ctx, `
+				INSERT INTO wanted(ecosystem, name, version, symbol, asks, first_seen, last_seen)
+				VALUES($1,$2,$3,$4,1,now(),now())
+				ON CONFLICT (ecosystem, name, version, symbol) DO UPDATE
 				  SET asks = wanted.asks + 1, last_seen = now()`,
-				r.Ecosystem, r.Name, r.Symbol); err != nil {
-				return err
+					r.Ecosystem, r.Name, r.Version, r.Symbol); err != nil {
+					return err
+				}
 			}
 		}
 		return tx.Commit(ctx)
 	})
 }
 
-// TopWanted lists the most-asked unanswered packages, most wanted first.
-// Rows for packages that now HAVE a published sample are excluded: the
-// question stopped being open the moment someone answered it, and leaving
-// it on the list would send the next contributor at work already done.
+// TopWanted lists the most-asked unanswered package versions and symbols,
+// most wanted first. A row closes only when a live sample carries the exact
+// canonical PURL and, when requested, the exact symbol. A different release
+// or a different API is still an unanswered request.
 func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
+	return p.listWanted(ctx, limit, "", "")
+}
+
+func (p *PG) WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error) {
+	return p.listWanted(ctx, 100, ecosystem, name)
+}
+
+func (p *PG) listWanted(ctx context.Context, limit int, ecosystem, name string) ([]WantedRow, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	var out []WantedRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT w.ecosystem, w.name, w.symbol, w.asks, w.first_seen, w.last_seen,
-			       EXISTS (SELECT 1 FROM packages p
-			                WHERE p.ecosystem = w.ecosystem AND p.name = w.name) AS has_page
+			SELECT w.ecosystem, w.name, w.version, w.symbol,
+			       w.asks, w.first_seen, w.last_seen,
+			       TRUE AS has_page
 			  FROM wanted w
-			 WHERE NOT EXISTS (
+			 WHERE ($2 = '' OR (w.ecosystem = $2 AND w.name = $3))
+			   AND NOT EXISTS (
 			       SELECT 1 FROM samples s
-			        WHERE s.quarantined_at IS NULL
+			        WHERE NOT s.quarantined
 			          AND EXISTS (
 			              SELECT 1 FROM jsonb_array_elements_text(s.manifest->'packages') AS pkg
-			               WHERE pkg LIKE 'pkg:' || w.ecosystem || '/' || w.name || '@%'))
+			               WHERE strpos(pkg, 'pkg:' || w.ecosystem || '/' ||
+			                     CASE WHEN left(w.name, 1) = '@'
+			                          THEN '%40' || substring(w.name from 2)
+			                          ELSE w.name END || '@') = 1)
+			          AND EXISTS (
+			              SELECT 1 FROM receipts answer_receipt
+			               WHERE answer_receipt.sample_id = s.sample_id
+			                 AND answer_receipt.contract_result = 'PASS'
+			                 AND (
+			                     -- Pre-version Wanted rows cannot recover the
+			                     -- release that was originally requested. Keep
+			                     -- the legacy policy honest and broad: any
+			                     -- contract pass for the same package answers
+			                     -- that unversioned historical row.
+			                     w.version = ''
+			                     OR (
+			                         -- A versioned request is answered only by
+			                         -- the signed v2 resolver claim for the
+			                         -- release that actually ran. The manifest
+			                         -- version is author input and may differ in
+			                         -- a matrix verification.
+			                         answer_receipt.receipt->>'schemaVersion' = '2'
+			                         AND answer_receipt.receipt->'stages'->>'resolve' = 'PASS'
+			                         AND COALESCE(answer_receipt.receipt->'resolvedPackages', '[]'::jsonb) ?
+			                             ('pkg:' || w.ecosystem || '/' ||
+			                              CASE WHEN left(w.name, 1) = '@'
+			                                   THEN '%40' || substring(w.name from 2)
+			                                   ELSE w.name END || '@' || w.version)
+			                     )))
+			          AND (w.symbol = '' OR COALESCE(s.manifest->'symbols', '[]'::jsonb) ? w.symbol))
 			 ORDER BY w.asks DESC, w.last_seen DESC
-			 LIMIT $1`, limit)
+			 LIMIT $1`, limit, ecosystem, name)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var r WantedRow
-			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Symbol, &r.Asks,
+			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Version, &r.Symbol, &r.Asks,
 				&r.FirstSeen, &r.LastSeen, &r.HasPage); err != nil {
 				return err
 			}

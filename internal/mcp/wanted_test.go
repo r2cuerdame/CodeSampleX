@@ -7,6 +7,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
@@ -16,7 +17,7 @@ import (
 // live: a real agent, given the rule in a standing file, called
 // search_known_solution first and got NO_SAFE_MATCH, and nothing recorded
 // that anyone had wanted it.
-func TestAnMCPMissIsRecordedAsWanted(t *testing.T) {
+func TestAnMCPMissQueuesWantedCandidateWithoutRegistryIO(t *testing.T) {
 	dir := t.TempDir()
 	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
 	if err != nil {
@@ -47,7 +48,7 @@ func TestAnMCPMissIsRecordedAsWanted(t *testing.T) {
 	}
 	var found bool
 	for _, it := range items {
-		if it.Kind != "wanted" {
+		if it.Kind != evidence.WantedCandidateQueueKind {
 			continue
 		}
 		found = true
@@ -75,7 +76,7 @@ func TestAnMCPMissIsRecordedAsWanted(t *testing.T) {
 	})
 	after, _ := db.QueuePending(ctx, 10)
 	for _, it := range after[before:] {
-		if it.Kind == "wanted" {
+		if it.Kind == evidence.WantedCandidateQueueKind {
 			t.Error("an answered question was recorded as wanted")
 		}
 	}
@@ -100,7 +101,7 @@ func TestLocalOnlyRecordsNoWant(t *testing.T) {
 		domain.SearchResponse{SchemaVersion: 1, Miss: true})
 	items, _ := db.QueuePending(t.Context(), 10)
 	for _, it := range items {
-		if it.Kind == "wanted" {
+		if it.Kind == evidence.WantedCandidateQueueKind {
 			t.Error("local-only mode queued a report")
 		}
 	}

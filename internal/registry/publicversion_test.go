@@ -102,6 +102,86 @@ func TestPublishedVersionStaysPublic(t *testing.T) {
 	}
 }
 
+func TestAdditionalEcosystemExactVersionVerdicts(t *testing.T) {
+	for _, tc := range []struct {
+		ecosystem   string
+		published   string
+		unpublished string
+		absent      string
+		versionPath string
+		namePath    string
+	}{
+		{
+			"gem",
+			"pkg:gem/rack@1.0.0", "pkg:gem/rack@99.0.0", "pkg:gem/unheard-of@1.0.0",
+			"/downloads/rack-1.0.0.gem", "/api/v1/versions/rack.json",
+		},
+		{
+			"hex",
+			"pkg:hex/req@1.0.0", "pkg:hex/req@99.0.0", "pkg:hex/unheard-of@1.0.0",
+			"/tarballs/req-1.0.0.tar", "/api/packages/req",
+		},
+		{
+			"pub",
+			"pkg:pub/http@1.0.0", "pkg:pub/http@99.0.0", "pkg:pub/unheard-of@1.0.0",
+			"/api/archives/http-1.0.0.tar.gz", "/api/packages/http",
+		},
+	} {
+		t.Run(tc.ecosystem, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case tc.versionPath, tc.namePath:
+					w.WriteHeader(http.StatusOK)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			c := &Checker{BaseURLs: map[string]string{tc.ecosystem: srv.URL}}
+			assertPublicness(t, c, tc.published, scanner.PublicnessPublic)
+			assertPublicness(t, c, tc.unpublished, scanner.PublicnessUnknown)
+			assertPublicness(t, c, tc.absent, scanner.PublicnessPrivate)
+		})
+	}
+}
+
+func TestComposerExactVersionVerdicts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/p2/guzzlehttp/guzzle.json" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"packages":{"guzzlehttp/guzzle":[{"version":"1.0.0"},{"version":"1.1.0"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Checker{BaseURLs: map[string]string{"composer": srv.URL}}
+	assertPublicness(t, c, "pkg:composer/guzzlehttp/guzzle@1.0.0", scanner.PublicnessPublic)
+	assertPublicness(t, c, "pkg:composer/guzzlehttp/guzzle@99.0.0", scanner.PublicnessUnknown)
+	assertPublicness(t, c, "pkg:composer/unheard-of/package@1.0.0", scanner.PublicnessPrivate)
+}
+
+func TestComposerMetadataBodyIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(strings.Repeat(" ", maxComposerMetadataBody+1)))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Checker{BaseURLs: map[string]string{"composer": srv.URL}}
+	assertPublicness(t, c, "pkg:composer/guzzlehttp/guzzle@1.0.0", scanner.PublicnessUnknown)
+}
+
+func assertPublicness(t *testing.T, c *Checker, rawPURL, want string) {
+	t.Helper()
+	p, err := domain.ParsePURL(rawPURL)
+	if err != nil {
+		t.Fatalf("ParsePURL(%q): %v", rawPURL, err)
+	}
+	if got := c.Check(context.Background(), p); got != want {
+		t.Errorf("Check(%s) = %s, want %s", rawPURL, got, want)
+	}
+}
+
 // A package the registry has never heard of is PRIVATE, not merely unknown:
 // that verdict is what keeps a company's internal package from being
 // reported, and it must survive the version probe landing first.

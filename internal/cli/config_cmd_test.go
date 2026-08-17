@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/daemon"
 )
 
 func TestConfigSetAndGet(t *testing.T) {
@@ -45,6 +48,32 @@ func TestConfigSetAndGet(t *testing.T) {
 	// Other fields survive a set (defaults + file merge).
 	if cfg.ServerURL != unreachableServer {
 		t.Errorf("serverUrl clobbered: %q", cfg.ServerURL)
+	}
+}
+
+func TestConfigModeDownshiftStopsCommunityDaemon(t *testing.T) {
+	home := newCLIHome(t, func(c *config.Config) { c.Mode = config.ModeCommunity })
+	startCLIDaemon(t, home)
+
+	out, code := captureStdout(t, func() int {
+		return Main([]string{"config", "set", "mode", "local-only"})
+	})
+	if code != 0 {
+		t.Fatalf("config set mode exit = %d\n%s", code, out)
+	}
+	cfg, err := config.Load(home)
+	if err != nil || cfg.Mode != config.ModeLocalOnly {
+		t.Fatalf("mode = %q err=%v", cfg.Mode, err)
+	}
+
+	c, err := daemon.NewClient(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := c.Status(ctx); err == nil {
+		t.Fatal("community daemon still running after mode changed to local-only")
 	}
 }
 

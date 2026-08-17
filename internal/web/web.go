@@ -52,6 +52,10 @@ type Store interface {
 	PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error)
 	// SampleMeta returns published-sample metadata by content id.
 	SampleMeta(ctx context.Context, id string) (SampleMeta, bool)
+	// SampleManifest returns only the stored manifest. Collection pages use
+	// this instead of SampleMeta so they do not open and decompress the
+	// artifact merely to learn its recorded environment.
+	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool)
 	// SampleReceipts returns the verification-receipt JSON documents of a sample.
 	SampleReceipts(ctx context.Context, id string) ([]string, error)
 	// SeederSamples lists samples published under a seeder login.
@@ -69,12 +73,13 @@ type Store interface {
 	HotPackages(ctx context.Context, limit int) ([]PackageHit, error)
 	// RecordPackages returns one ranked page of the packages the network
 	// has evidence for, plus the total so the page can be navigated.
-	RecordPackages(ctx context.Context, q string, offset, limit int) (hits []PackageHit, total int, err error)
+	RecordPackages(ctx context.Context, filter RecordFilter, offset, limit int) (hits []PackageHit, total int, err error)
 	// FailureClusters returns failure-cluster JSON documents for a package.
 	FailureClusters(ctx context.Context, ecosystem, name string) ([]string, error)
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -96,6 +101,23 @@ type DerivedFinding struct {
 	Believed  string // Case.Believed, written by the sample's author
 	Measured  string // the contract line that contradicts it
 	SampleID  string
+	// OS and Runtime come from the sample manifest's recorded environment.
+	// They are empty when the manifest did not establish that dimension;
+	// the findings page never guesses them from the ecosystem.
+	OS          string
+	Runtime     string
+	Environment string
+}
+
+// RecordFilter is the user-visible slice of /records. Environment and
+// evidence-basis dimensions are matched against materialized snapshot rows;
+// an absent dimension does not count as a match.
+type RecordFilter struct {
+	Query     string
+	Ecosystem string
+	OS        string
+	Runtime   string
+	Basis     string // observed | verified | ""
 }
 
 // WantedRow is one unanswered question: a package people asked about that
@@ -103,6 +125,7 @@ type DerivedFinding struct {
 type WantedRow struct {
 	Ecosystem string
 	Name      string
+	Version   string
 	Symbol    string
 	Asks      int64
 	// HasPage reports whether an explorer page exists for this package.
@@ -142,6 +165,12 @@ type PackageHit struct {
 	LatestVersion string
 	Symbols       int
 	EvidenceCount int64
+	// Filter dimensions are populated by test stores and are not rendered.
+	// The production adapter matches the same dimensions directly against
+	// snapshot rows before it builds a PackageHit.
+	OperatingSystems []string
+	Runtimes         []string
+	EvidenceBases    []string
 }
 
 // Deps wires the site to the rest of the server.
@@ -155,7 +184,15 @@ type Deps struct {
 const langCookie = "csx_lang"
 
 // knownEcosystems guards the /{ecosystem}/... routes against junk paths.
-var knownEcosystems = map[string]bool{"npm": true, "pypi": true, "cargo": true, "golang": true}
+//
+// Automatic project observation started with four ecosystems, but verified
+// samples and compatibility snapshots now cover all eight. Keeping the old
+// four-name route guard made every Gem, Composer, Hex and pub package URL in
+// the sitemap a guaranteed 404 even though the data behind it existed.
+var knownEcosystems = map[string]bool{
+	"npm": true, "pypi": true, "cargo": true, "golang": true,
+	"gem": true, "composer": true, "hex": true, "pub": true,
+}
 
 type site struct {
 	d    Deps
@@ -166,6 +203,15 @@ type site struct {
 	derivedMu    sync.Mutex
 	derivedCache []finding
 	derivedAt    time.Time
+
+	// hand* caches environment decoration for the static findings. Their
+	// sample IDs are immutable, but the linked sample may arrive after a
+	// deployment, so a short TTL avoids both permanent misses and 29 store
+	// reads on every public request.
+	handMu         sync.Mutex
+	handDocumented []finding
+	handBelieved   []finding
+	handAt         time.Time
 }
 
 // Register mounts every website route on mux.
@@ -424,15 +470,38 @@ func (s *site) page(r *http.Request, lang, title, desc string) basePage {
 
 // queryAlternates builds hreflang links for ?lang=-negotiated pages.
 func queryAlternates(base, path string) []alternate {
+	return queryAlternatesWithQuery(base, path, nil)
+}
+
+// queryAlternatesWithQuery is used when a query value identifies the
+// resource rather than filtering it (currently symbol names that cannot be
+// represented safely as one URL path segment). It preserves that identity
+// while changing only the locale.
+func queryAlternatesWithQuery(base, path string, values url.Values) []alternate {
 	alts := make([]alternate, 0, len(i18n.Supported)+1)
 	for _, code := range i18n.Supported {
-		u := base + path
+		q := url.Values{}
+		for key, list := range values {
+			q[key] = append([]string(nil), list...)
+		}
 		if code != i18n.Default {
-			u += "?lang=" + url.QueryEscape(code)
+			q.Set("lang", code)
+		}
+		u := base + path
+		if encoded := q.Encode(); encoded != "" {
+			u += "?" + encoded
 		}
 		alts = append(alts, alternate{Lang: code, URL: u})
 	}
-	alts = append(alts, alternate{Lang: "x-default", URL: base + path})
+	q := url.Values{}
+	for key, list := range values {
+		q[key] = append([]string(nil), list...)
+	}
+	u := base + path
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	alts = append(alts, alternate{Lang: "x-default", URL: u})
 	return alts
 }
 

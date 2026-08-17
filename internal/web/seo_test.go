@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -102,6 +103,37 @@ func TestPackagePageExistsForASampledPackage(t *testing.T) {
 		t.Fatalf("/cargo/serde status = %d, want 200 (a sample names it)", rec.Code)
 	}
 	mustContain(t, rec.Body.String(), `href="/samples/sha256:cafe01"`)
+}
+
+// Verified samples cover eight ecosystems.  The package router originally
+// kept the four-ecosystem observation allowlist and turned every Gem,
+// Composer, Hex and pub link emitted by the sitemap into a 404.
+func TestPackagePagesExistForEverySampleEcosystem(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	cases := []struct {
+		ecosystem string
+		name      string
+		version   string
+	}{
+		{"gem", "rack-protection", "4.2.1"},
+		{"composer", "guzzlehttp/guzzle", "8.0.2"},
+		{"hex", "req", "0.7.2"},
+		{"pub", "args", "2.7.0"},
+	}
+	for i, tc := range cases {
+		id := fmt.Sprintf("sha256:ecosystem-%d", i)
+		store.sampleList = append(store.sampleList, SampleListItem{
+			SampleID: id, Goal: "exercise " + tc.name,
+			Status: "PUBLISHED", License: "MIT-0", CreatedAt: "2026-08-17",
+		})
+		store.samplePackages[id] = []string{
+			fmt.Sprintf("pkg:%s/%s@%s", tc.ecosystem, tc.name, tc.version),
+		}
+		path := "/" + tc.ecosystem + "/" + tc.name
+		if rec := get(t, mux, path); rec.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200", path, rec.Code)
+		}
+	}
 }
 
 // TestPackagePageLinksSamples: the sitemap gets a crawler to the package

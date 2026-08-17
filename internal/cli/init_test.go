@@ -98,6 +98,72 @@ func TestInitYesNonInteractive(t *testing.T) {
 	}
 }
 
+func TestInitStartsBackgroundSync(t *testing.T) {
+	env, out, _ := testInitEnv(t, "")
+	called := false
+	env.startDaemon = func(context.Context) error {
+		called = true
+		return nil
+	}
+	if code := initMain(context.Background(), []string{"--yes"}, env); code != 0 {
+		t.Fatalf("init --yes returned %d\n%s", code, out.String())
+	}
+	if !called {
+		t.Fatal("init did not start the background sync daemon")
+	}
+	if !strings.Contains(out.String(), "background sync running") {
+		t.Errorf("init hid daemon status:\n%s", out.String())
+	}
+}
+
+func TestInitLocalOnlyDoesNotStartBackgroundSync(t *testing.T) {
+	env, out, _ := testInitEnv(t, "")
+	called := false
+	env.startDaemon = func(context.Context) error {
+		called = true
+		return nil
+	}
+	if code := initMain(context.Background(), []string{"--local-only", "--yes"}, env); code != 0 {
+		t.Fatalf("init returned %d\n%s", code, out.String())
+	}
+	if called {
+		t.Fatal("local-only init started a network-capable daemon")
+	}
+}
+
+func TestInitCommunityToLocalOnlyStopsDaemonBeforeSaving(t *testing.T) {
+	env, out, _ := testInitEnv(t, "")
+	home := os.Getenv("CSX_HOME")
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := false
+	env.stopDaemon = func(context.Context) error {
+		current, err := config.Load(home)
+		if err != nil {
+			return err
+		}
+		if current.Mode != config.ModeCommunity {
+			t.Fatalf("mode was saved as %q before the old daemon stopped", current.Mode)
+		}
+		stopped = true
+		return nil
+	}
+	if code := initMain(context.Background(), []string{"--local-only", "--yes"}, env); code != 0 {
+		t.Fatalf("init returned %d\n%s", code, out.String())
+	}
+	if !stopped {
+		t.Fatal("community daemon was not stopped during privacy downshift")
+	}
+	cfg, err := config.Load(home)
+	if err != nil || cfg.Mode != config.ModeLocalOnly {
+		t.Fatalf("mode after init = %q err=%v", cfg.Mode, err)
+	}
+}
+
 func TestInitInteractiveCommunity(t *testing.T) {
 	// "1" — the single keystroke the prompt advertises.
 	env, out, _ := testInitEnv(t, "1\n")

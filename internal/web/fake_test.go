@@ -51,6 +51,11 @@ func (f *fakeStore) SampleMeta(_ context.Context, id string) (SampleMeta, bool) 
 	return m, ok
 }
 
+func (f *fakeStore) SampleManifest(_ context.Context, id string) (string, bool) {
+	m, ok := f.samples[id]
+	return m.ManifestJSON, ok
+}
+
 func (f *fakeStore) SampleReceipts(_ context.Context, id string) ([]string, error) {
 	return f.receipts[id], nil
 }
@@ -115,10 +120,14 @@ func (f *fakeStore) HotPackages(_ context.Context, limit int) ([]PackageHit, err
 	return f.packages, nil
 }
 
-func (f *fakeStore) RecordPackages(_ context.Context, q string, offset, limit int) ([]PackageHit, int, error) {
+func (f *fakeStore) RecordPackages(_ context.Context, filter RecordFilter, offset, limit int) ([]PackageHit, int, error) {
 	var all []PackageHit
 	for _, p := range f.packages {
-		if q == "" || strings.Contains(p.Name, q) {
+		if (filter.Query == "" || strings.Contains(p.Name, filter.Query)) &&
+			(filter.Ecosystem == "" || p.Ecosystem == filter.Ecosystem) &&
+			(filter.OS == "" || containsString(p.OperatingSystems, filter.OS)) &&
+			(filter.Runtime == "" || containsString(p.Runtimes, filter.Runtime)) &&
+			(filter.Basis == "" || containsString(p.EvidenceBases, filter.Basis)) {
 			all = append(all, p)
 		}
 	}
@@ -131,6 +140,15 @@ func (f *fakeStore) RecordPackages(_ context.Context, q string, offset, limit in
 		all = all[:limit]
 	}
 	return all, total, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) ([]string, error) {
@@ -163,8 +181,10 @@ func newFakeStore() *fakeStore {
 		receipts: map[string][]string{},
 		seeders:  map[string][]SampleListItem{},
 		packages: []PackageHit{
-			{Ecosystem: "npm", Name: "axios", LatestVersion: "1.12.0", Symbols: 2, EvidenceCount: 45000},
-			{Ecosystem: "golang", Name: "github.com/a/b", LatestVersion: "v1.2.0", Symbols: 1, EvidenceCount: 12},
+			{Ecosystem: "npm", Name: "axios", LatestVersion: "1.12.0", Symbols: 2, EvidenceCount: 45000,
+				OperatingSystems: []string{"linux", "windows"}, Runtimes: []string{"node"}, EvidenceBases: []string{"observed", "verified"}},
+			{Ecosystem: "golang", Name: "github.com/a/b", LatestVersion: "v1.2.0", Symbols: 1, EvidenceCount: 12,
+				OperatingSystems: []string{"linux"}, Runtimes: []string{"go"}, EvidenceBases: []string{"observed"}},
 		},
 		clusters: map[string][]string{},
 	}

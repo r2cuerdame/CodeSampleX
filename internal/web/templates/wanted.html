@@ -39,7 +39,7 @@
   {{range .Items}}
   <li class="wantedrow">
     <span class="wantedname">
-      {{if .Href}}<a class="mono" href="{{.Href}}">{{.Ecosystem}}/{{.Name}}</a>{{else}}<span class="mono">{{.Ecosystem}}/{{.Name}}</span>{{end}}
+      {{if .Href}}<a class="mono" href="{{.Href}}">{{.Ecosystem}}/{{.Name}}{{if .Version}}@{{.Version}}{{end}}</a>{{else}}<span class="mono">{{.Ecosystem}}/{{.Name}}{{if .Version}}@{{.Version}}{{end}}</span>{{end}}
       {{if .Symbol}}<span class="wantedsym mono"> · {{.Symbol}}</span>{{end}}
     </span>
     <span class="wantedasks">{{.AsksText}}</span>

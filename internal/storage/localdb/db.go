@@ -28,7 +28,14 @@ func Open(path string) (*DB, error) {
 			return nil, err
 		}
 	}
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	// MCP servers, the daemon and parallel sample workers intentionally
+	// share this database.  Five seconds was shorter than a real
+	// sample-create transaction under load, so a correct second writer was
+	// rejected with SQLITE_BUSY and the candidate had to be repaired by
+	// hand.  WAL keeps readers concurrent; the longer timeout serializes the
+	// small write section instead of turning ordinary parallelism into data
+	// loss.
+	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
 	sdb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
