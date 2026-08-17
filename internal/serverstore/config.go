@@ -27,6 +27,10 @@ type ServerConfig struct {
 	SnapshotInterval   time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
 	GithubClientID     string        // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
 	GithubClientSecret string        // CSX_GITHUB_CLIENT_SECRET
+	// AdminTokenSHA256 enables the private read-only /admin route only when
+	// it is a valid hexadecimal SHA-256 digest. It is intentionally separate
+	// from seeder credentials and never accepts a raw token.
+	AdminTokenSHA256 string // CSX_ADMIN_TOKEN_SHA256
 	// BlobBudgetBytes caps total artifact storage (CSX_BLOB_BUDGET_MB, 0 =
 	// unlimited). Sample upload is anonymous, so this is the only ceiling
 	// on how much disk an unauthenticated caller can take — and the volume
@@ -47,6 +51,7 @@ func ConfigFromEnv() ServerConfig {
 		SnapshotInterval:   5 * time.Minute,
 		GithubClientID:     os.Getenv("CSX_GITHUB_CLIENT_ID"),
 		GithubClientSecret: os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
+		AdminTokenSHA256:   os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

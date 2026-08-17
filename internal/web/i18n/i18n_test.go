@@ -147,3 +147,42 @@ func TestI18nFormatInt(t *testing.T) {
 		t.Errorf("negative = %q", got)
 	}
 }
+
+func TestI18nFormatCompactInt(t *testing.T) {
+	cases := []struct {
+		lang string
+		n    int64
+		want string
+	}{
+		{"en", 999, "999"},
+		{"en", 1_000, "1K"},
+		{"en", 17_500, "17.5K"},
+		{"en", 45_213, "45.2K"},
+		{"en", 999_949, "999.9K"},
+		{"en", 999_950, "1M"},
+		{"en", 1_250_000, "1.3M"},
+		{"en", 999_950_000, "1B"},
+		{"en", 999_950_000_000, "1T"},
+		{"en", -17_500, "-17.5K"},
+		{"de", 17_500, "17,5K"},
+	}
+	for _, tc := range cases {
+		if got := FormatCompactInt(tc.lang, tc.n); got != tc.want {
+			t.Errorf("FormatCompactInt(%q, %d) = %q, want %q", tc.lang, tc.n, got, tc.want)
+		}
+	}
+
+	// Every supported catalog must be accepted. The five comma-decimal
+	// locales localize the separator; the remaining four use a dot.
+	for _, lang := range Supported {
+		got := FormatCompactInt(lang, 17_500)
+		want := "17.5K"
+		switch lang {
+		case "de", "es", "fr", "pt-BR", "ru":
+			want = "17,5K"
+		}
+		if got != want {
+			t.Errorf("locale %s compact value = %q, want %q", lang, got, want)
+		}
+	}
+}
