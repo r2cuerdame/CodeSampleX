@@ -35,6 +35,59 @@ Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
 GitHub assets on code-only deploys, so GitHub's download counters are not
 inflated by our own rollout loop (CSX_DIST_DIR=/data/dist in compose).
 
+### Enable or rotate the private admin dashboard
+
+The admin route is fail-closed: it stays indistinguishable from an unknown path
+(`404`) until a valid password verifier is configured. Enable it during a normal
+deployment with:
+
+```powershell
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -ConfigureAdmin
+```
+
+`-ConfigureAdmin` creates a 256-bit random password with the Windows CSPRNG and
+stores it locally as current-user DPAPI ciphertext under LocalAppData. It never
+prints or copies the password. Only its SHA-256 verifier is sent on SSH stdin
+and atomically installed in the host's mode-0600 `.env`. Subsequent deployments
+preserve and reuse the same credential. A failed first deployment keeps a
+pending DPAPI credential so the next `-ConfigureAdmin` run can finish safely.
+
+When the running image already contains the dashboard and only its deployment
+wiring is being activated, the same operation may reuse the installed image:
+
+```powershell
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin
+```
+
+The deploy verifies `/healthz` and then requires an unauthenticated `/admin`
+request to return `401` (a missing/malformed verifier returns `404`). It then
+uses the DPAPI credential through a local .NET HTTP client and requires an
+authenticated `200`; neither the Basic header nor response body is printed.
+Then open `https://codesamplex.dev/admin` and use username `admin`. Copy the password to
+the clipboard only when you are ready to paste it:
+
+```powershell
+.\deploy\lightsail\reveal-admin-password.ps1
+```
+
+That explicit command decrypts through current-user DPAPI and copies the value;
+it still does not print it or place it in argv. Clear the clipboard after use.
+Never put the password in a URL or `curl -u` command, where it can enter browser
+history, shell history, process listings, or logs.
+
+Re-run the authenticated status-only smoke at any time with:
+
+```powershell
+.\deploy\lightsail\verify-admin.ps1
+```
+
+Rotate the password with a full deploy (omit `-SkipImage` when a new image is
+also required):
+
+```powershell
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin -RotateAdmin
+```
+
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and
 `docker compose ps` shows caddy/server/db healthy.
 
@@ -107,4 +160,5 @@ CSX_PUBLIC_URL   https://codesamplex.dev
 POSTGRES_PASSWORD generated at first deploy
 CSX_PUBLIC_CHECK strict            (trust only for dev/e2e)
 CSX_GITHUB_CLIENT_ID/SECRET        optional; GitHub identity is 501 until set
+CSX_ADMIN_TOKEN_SHA256             optional; enables private read-only /admin
 ```

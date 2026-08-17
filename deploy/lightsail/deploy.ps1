@@ -6,12 +6,19 @@ param(
     [Parameter(Mandatory)][string]$KeyPath,
     [string]$Domain = "codesamplex.dev",
     [string]$User = "ubuntu",
-    [switch]$SkipImage
+    [switch]$SkipImage,
+    [switch]$ConfigureAdmin,
+    [switch]$RotateAdmin
 )
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $remote = "${User}@${Ip}"
 $sshArgs = @("-i", $KeyPath, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
+. (Join-Path $PSScriptRoot "admin-credential.ps1")
+
+if ($RotateAdmin -and -not $ConfigureAdmin) {
+    throw "-RotateAdmin requires -ConfigureAdmin"
+}
 
 # ssh and scp write ordinary progress and host-key notices to stderr, which
 # PowerShell 5.1 turns into terminating errors under ErrorActionPreference
@@ -24,6 +31,57 @@ function Invoke-Remote([string]$Script) {
     } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "remote command failed ($LASTEXITCODE): $Script`n$($out -join "`n")" }
     return $out
+}
+function Invoke-RemoteInput([string]$Script, [string]$StdinText) {
+    if ($StdinText -notmatch '^[0-9a-f]{64}$') {
+        throw "refusing malformed remote verifier input"
+    }
+    if ($KeyPath.Contains('"')) { throw "SSH key path contains an unsupported quote" }
+    if ($remote -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$') { throw "unsafe SSH destination" }
+
+    # Windows PowerShell 5 may prepend a UTF-8 BOM while newer hosts may not.
+    # The fixed remote command prefixes `#` to a disposable first line, making
+    # that line a comment in either case. The verifier remains on stdin only;
+    # ProcessStartInfo.Arguments is static.
+    $payload = "CSX-STDIN-V1`nhash='$StdinText'`n$Script`n"
+    $payloadBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($payload)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = (Get-Command ssh.exe -ErrorAction Stop).Source
+    $psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "{ printf ''#''; cat; } | sh"'
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $psi
+    try {
+        if (-not $process.Start()) { throw "could not start SSH verifier transport" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        try {
+            $process.StandardInput.BaseStream.Write($payloadBytes, 0, $payloadBytes.Length)
+        } finally {
+            $process.StandardInput.Close()
+            [Array]::Clear($payloadBytes, 0, $payloadBytes.Length)
+            $payload = $null
+        }
+        $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            # The remote program never echoes the verifier. Keep failures
+            # generic anyway so a future edit cannot turn logs into a leak.
+            throw "remote verifier installation failed ($($process.ExitCode))"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($stdout)) { return $stdout.TrimEnd() }
+    } finally {
+        if ($null -ne $payloadBytes) { [Array]::Clear($payloadBytes, 0, $payloadBytes.Length) }
+        $payload = $null
+        $stdout = $null
+        $stderr = $null
+        $process.Dispose()
+    }
 }
 function Copy-Remote([string]$Local, [string]$RemotePath) {
     $prev = $ErrorActionPreference
@@ -43,6 +101,42 @@ function Invoke-Native([string]$What, [scriptblock]$Run) {
     try { & $Run 2>&1 | ForEach-Object { Write-Output "$_" } }
     finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)" }
+}
+
+$adminTokenHash = ""
+$adminCredentialPending = $false
+$adminCredentialPaths = $null
+if ($ConfigureAdmin) {
+    Write-Output "== configuring private /admin credential =="
+    $adminCredentialPaths = Get-CSXAdminCredentialPaths
+
+    if ($RotateAdmin) {
+        if (Test-Path -LiteralPath $adminCredentialPaths.Pending -PathType Leaf) {
+            throw "a pending admin credential exists from an incomplete deploy; rerun with -ConfigureAdmin before rotating again"
+        }
+        $adminSecret = New-CSXAdminCredential
+        Save-CSXAdminCredential $adminSecret $adminCredentialPaths.Pending
+        $adminCredentialPending = $true
+        Write-Output "generated a new 256-bit password in the current user's DPAPI store"
+    } elseif (Test-Path -LiteralPath $adminCredentialPaths.Pending -PathType Leaf) {
+        $adminSecret = Read-CSXAdminCredential $adminCredentialPaths.Pending
+        $adminCredentialPending = $true
+        Write-Output "resuming the pending DPAPI-protected admin credential"
+    } elseif (Test-Path -LiteralPath $adminCredentialPaths.Active -PathType Leaf) {
+        $adminSecret = Read-CSXAdminCredential $adminCredentialPaths.Active
+        Write-Output "reusing the current DPAPI-protected admin credential"
+    } else {
+        $adminSecret = New-CSXAdminCredential
+        Save-CSXAdminCredential $adminSecret $adminCredentialPaths.Pending
+        $adminCredentialPending = $true
+        Write-Output "generated a 256-bit password in the current user's DPAPI store"
+    }
+
+    try {
+        $adminTokenHash = Get-CSXSecureStringSHA256 $adminSecret
+    } finally {
+        $adminSecret.Dispose()
+    }
 }
 
 $requiredReleaseAssets = @(
@@ -185,7 +279,30 @@ POSTGRES_PASSWORD=$pw
 $envTmp = Join-Path $env:TEMP "csx.env"
 Set-Content -Path $envTmp -Value ($envText -replace "`r`n", "`n") -Encoding ascii -NoNewline
 Copy-Remote $envTmp "/opt/codesamplex/deploy/.env.new"
-Invoke-Remote "cd /opt/codesamplex/deploy && if [ -f .env ]; then rm -f .env.new; echo 'kept existing .env'; else mv .env.new .env; echo 'wrote new .env'; fi" | Out-Null
+Invoke-Remote "cd /opt/codesamplex/deploy && chmod 600 .env.new && if [ -f .env ]; then rm -f .env.new; chmod 600 .env; echo 'kept existing .env'; else mv .env.new .env; echo 'wrote new .env'; fi" | Out-Null
+
+if ($ConfigureAdmin) {
+    # Only the one-way verifier crosses SSH, on stdin. The fixed remote script
+    # validates it and atomically replaces just this setting in the existing
+    # host-owned .env; neither plaintext nor verifier is printed.
+    $installAdminHash = @'
+set -eu
+umask 077
+printf '%s\n' "$hash" | grep -Eq '^[0-9a-f]{64}$' || exit 64
+cd /opt/codesamplex/deploy
+[ -f .env ] || exit 65
+tmp=$(mktemp .env.admin.XXXXXX)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+awk -F= '$1 != "CSX_ADMIN_TOKEN_SHA256"' .env > "$tmp"
+printf '%s\n' "CSX_ADMIN_TOKEN_SHA256=$hash" >> "$tmp"
+chmod 600 "$tmp"
+mv "$tmp" .env
+trap - EXIT HUP INT TERM
+'@
+    Invoke-RemoteInput $installAdminHash $adminTokenHash | Out-Null
+    $adminTokenHash = $null
+    Write-Output "admin credential hash installed"
+}
 
 if (-not $SkipImage) {
     Write-Output "== loading image on host (this takes a minute) =="
@@ -232,6 +349,39 @@ if (-not $ok) {
     throw "healthz never returned ok"
 }
 Write-Output "healthz: ok"
+if ($ConfigureAdmin) {
+    # An unauthenticated 401 proves that the exact private route was mounted;
+    # a missing or malformed verifier deliberately leaves it at 404.
+    $adminProbe = @'
+cd /opt/codesamplex/deploy
+response=$(docker compose exec -T server wget -S -O /dev/null http://127.0.0.1:8080/admin 2>&1 || true)
+printf '%s\n' "$response" | grep -q ' 401 '
+'@
+    Invoke-Remote $adminProbe | Out-Null
+    Write-Output "admin route: configured (401 without credentials)"
+
+    # Prove the local DPAPI credential and remote verifier are the same value.
+    # The request is made with a header (never a URL credential), follows no
+    # redirects, and exposes only its numeric status.
+    $adminCredentialFile = if ($adminCredentialPending) { $adminCredentialPaths.Pending } else { $adminCredentialPaths.Active }
+    $adminStatus = 0
+    for ($i = 0; $i -lt 10 -and $adminStatus -ne 200; $i++) {
+        $probeSecret = Read-CSXAdminCredential $adminCredentialFile
+        try {
+            try { $adminStatus = Invoke-CSXAdminAuthenticatedProbe $probeSecret }
+            catch { $adminStatus = 0 }
+        } finally {
+            $probeSecret.Dispose()
+        }
+        if ($adminStatus -ne 200) { Start-Sleep -Seconds 2 }
+    }
+    if ($adminStatus -ne 200) { throw "admin authenticated smoke failed (HTTP $adminStatus)" }
+    Write-Output "admin authenticated smoke: 200"
+    if ($adminCredentialPending) {
+        Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
+        Write-Output "local admin credential committed to the current user's DPAPI store"
+    }
+}
 $landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/ | head -c 300"
 Write-Output "landing sample: $($landing -join ' ' )"
 Write-Output ""
