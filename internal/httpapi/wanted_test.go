@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -181,6 +182,37 @@ func TestWantedRejectsNamesThatCanChangeRegistryURLMeaning(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("unsafe package names reached Wanted storage: %+v", rows)
+	}
+}
+
+func TestWantedAcceptsKnownEngineTargetAndRejectsArbitraryGenericTarget(t *testing.T) {
+	valid := wantedReport{
+		SchemaVersion: 1,
+		Epoch:         "2026-08-13",
+		AnonID:        "0123456789abcdef",
+		Packages:      []string{"pkg:generic/engine/unity@6000.0.24f1"},
+		Symbols:       []string{"AssetDatabase.Refresh"},
+	}
+	rows, err := rowsForWantedReport(valid, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
+	if err != nil || len(rows) != 1 || rows[0].Name != "engine/unity" {
+		t.Fatalf("known Unity target rows = %+v, err = %v", rows, err)
+	}
+
+	invalid := valid
+	invalid.Packages = []string{"pkg:generic/sdk/company-secret@1.0.0"}
+	if _, err := rowsForWantedReport(invalid, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("arbitrary generic target was accepted")
+	}
+
+	// A known target has no package registry to query. It must still pass the
+	// production (non-trust) path without a Checker, while the fixed allowlist
+	// above remains the boundary.
+	srv, _, _ := newTestServer(t, func(d *Deps) {
+		d.Cfg.PublicCheck = ""
+		d.Checker = nil
+	})
+	if resp := postJSON(t, srv.URL+"/v1/wanted", valid, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("known target POST status = %d, want 200", resp.StatusCode)
 	}
 }
 

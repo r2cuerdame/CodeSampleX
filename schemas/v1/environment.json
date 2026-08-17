@@ -6,7 +6,7 @@
   "required": ["schemaVersion", "ecosystem", "os", "arch"],
   "properties": {
     "schemaVersion": {"const": 1},
-    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang"]},
+    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang", "maven"]},
     "os": {"type": "string"},
     "osVersionBucket": {"type": "string"},
     "arch": {"type": "string"},

@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -79,6 +80,80 @@ func TestAnMCPMissQueuesWantedCandidateWithoutRegistryIO(t *testing.T) {
 		if it.Kind == evidence.WantedCandidateQueueKind {
 			t.Error("an answered question was recorded as wanted")
 		}
+	}
+}
+
+func TestJavaMavenMissQueuesWantedWithoutClaimingAdapterSupport(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Packages:      []string{"pkg:maven/org.apache.commons/commons-lang3@3.17.0"},
+		Symbols:       []string{"StringUtils.isBlank"},
+	}
+	recordSearchOutcome(t.Context(), db, ident, cfg, req,
+		domain.SearchResponse{SchemaVersion: 2, Miss: true})
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Kind != evidence.WantedCandidateQueueKind ||
+		!strings.Contains(items[0].Payload, "pkg:maven/org.apache.commons/commons-lang3@3.17.0") {
+		t.Fatalf("Maven miss did not become a wanted candidate: %+v", items)
+	}
+	if domain.AllowedEcosystems["maven"] {
+		t.Fatal("wanted-only Maven must not become an automatic evidence ecosystem")
+	}
+}
+
+func TestEngineOnlyMissQueuesFixedPublicTargetAndDropsPrivateFramework(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Symbols:       []string{"AssetDatabase.Refresh"},
+		Environment: domain.EnvironmentFingerprint{Frameworks: []string{
+			"unity@6000.0.24f1", "company-secret-sdk@7.2.0",
+		}},
+	}
+	recordSearchOutcome(t.Context(), db, ident, cfg, req,
+		domain.SearchResponse{SchemaVersion: 2, Miss: true})
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !strings.Contains(items[0].Payload, "pkg:generic/engine/unity@6000.0.24f1") {
+		t.Fatalf("Unity target was not queued: %+v", items)
+	}
+	if strings.Contains(items[0].Payload, "company-secret") {
+		t.Fatalf("arbitrary framework name leaked into Wanted: %s", items[0].Payload)
+	}
+	if domain.AllowedEcosystems["generic"] {
+		t.Fatal("wanted targets must not become automatic evidence ecosystems")
 	}
 }
 

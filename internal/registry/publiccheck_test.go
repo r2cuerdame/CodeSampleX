@@ -52,7 +52,7 @@ func countingServer(t *testing.T, code int) (*httptest.Server, *[]string) {
 func allBases(url string) map[string]string {
 	return map[string]string{
 		"npm": url, "pypi": url, "cargo": url, "golang": url,
-		"gem": url, "composer": url, "hex": url, "pub": url,
+		"gem": url, "composer": url, "hex": url, "pub": url, "maven": url,
 	}
 }
 
@@ -71,6 +71,7 @@ func TestCheckURLFormsAndPublic(t *testing.T) {
 		{"gem", domain.PURL{Ecosystem: "gem", Name: "rack", Version: "3.2.4"}, "/downloads/rack-3.2.4.gem"},
 		{"hex", domain.PURL{Ecosystem: "hex", Name: "req", Version: "0.5.15"}, "/tarballs/req-0.5.15.tar"},
 		{"pub", domain.PURL{Ecosystem: "pub", Name: "http", Version: "1.5.0"}, "/api/archives/http-1.5.0.tar.gz"},
+		{"maven", domain.PURL{Ecosystem: "maven", Name: "org.apache.commons/commons-lang3", Version: "3.17.0"}, "/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.pom"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -171,7 +172,7 @@ func TestCheckNetworkErrorIsUnknown(t *testing.T) {
 
 func TestCheckUnknownEcosystemIsUnknown(t *testing.T) {
 	c := &Checker{}
-	p := domain.PURL{Ecosystem: "maven", Name: "junit", Version: "4.13"}
+	p := domain.PURL{Ecosystem: "nuget", Name: "Newtonsoft.Json", Version: "13.0.3"}
 	if got := c.Check(context.Background(), p); got != scanner.PublicnessUnknown {
 		t.Fatalf("Check = %q, want UNKNOWN", got)
 	}
@@ -189,6 +190,7 @@ func TestUnsafeOrWrongShapePackageNamesFailClosedBeforeHTTP(t *testing.T) {
 		{Ecosystem: "golang", Name: "github.com/google/uuid/../shadow", Version: "v1.6.0"},
 		{Ecosystem: "pypi", Name: "requests/other", Version: "2.31.0"},
 		{Ecosystem: "composer", Name: "vendor/pkg/extra", Version: "1.0.0"},
+		{Ecosystem: "maven", Name: "org.example/artifact/extra", Version: "1.0.0"},
 	}
 	for _, p := range tests {
 		if got := c.Check(context.Background(), p); got != scanner.PublicnessUnknown {
@@ -208,6 +210,7 @@ func TestValidNestedRegistryNamesRemainAccepted(t *testing.T) {
 		{"npm", "@modelcontextprotocol/sdk"},
 		{"golang", "github.com/Azure/azure-sdk-for-go/sdk/azcore"},
 		{"composer", "guzzlehttp/guzzle"},
+		{"maven", "org.apache.commons/commons-lang3"},
 	} {
 		if !ValidPackageName(tc.ecosystem, tc.name) {
 			t.Errorf("ValidPackageName(%q, %q) = false", tc.ecosystem, tc.name)

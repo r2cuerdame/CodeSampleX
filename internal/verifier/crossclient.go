@@ -120,7 +120,10 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	q.Set("peerId", cv.Ident.PeerID())
 	q.Set("capability", string(cv.Cap))
 	q.Set("reason", CrossJobReason)
-	q.Set("limit", "1")
+	// Ask for a small window and choose locally. Capability is filtered by the
+	// server; ecosystem/runtime/SDK requirements are checked by this binary.
+	// Looking at one row let an incompatible head job hide compatible work.
+	q.Set("limit", "20")
 	u := cv.base() + "/v1/verification/jobs?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -140,36 +143,81 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("verifier: list jobs: %w", err)
 	}
-	if len(body.Jobs) == 0 {
-		return nil, nil
-	}
-	job := body.Jobs[0]
-	// Defense in depth against an old or misconfigured server ignoring the
-	// query. A matrix job can carry WantEnv constraints this verifier has not
-	// promised to realize; never claim it and never sign a receipt for it.
-	if job.Reason != CrossJobReason {
-		return nil, fmt.Errorf("verifier: refused %q job; public workers only accept %q jobs", job.Reason, CrossJobReason)
-	}
-	if raw := bytes.TrimSpace(job.WantEnv); len(raw) != 0 && !bytes.Equal(raw, []byte("null")) {
-		return nil, errors.New("verifier: refused environment-targeted job; this worker does not enforce wantEnv")
-	}
+	for i := range body.Jobs {
+		job := body.Jobs[i]
+		// Defense in depth against an old or misconfigured server ignoring
+		// the reason filter. Public workers never claim matrix/create work.
+		if job.Reason != CrossJobReason {
+			continue
+		}
+		if !cv.canPrepare(job.WantEnv) {
+			continue
+		}
 
-	claim, _ := json.Marshal(map[string]string{"peerId": cv.Ident.PeerID()})
-	cu := fmt.Sprintf("%s/v1/verification/jobs/%d/claim", cv.base(), job.ID)
-	creq, err := http.NewRequestWithContext(ctx, http.MethodPost, cu, bytes.NewReader(claim))
-	if err != nil {
-		return nil, err
+		claim, _ := json.Marshal(map[string]string{"peerId": cv.Ident.PeerID()})
+		cu := fmt.Sprintf("%s/v1/verification/jobs/%d/claim", cv.base(), job.ID)
+		creq, err := http.NewRequestWithContext(ctx, http.MethodPost, cu, bytes.NewReader(claim))
+		if err != nil {
+			return nil, err
+		}
+		creq.Header.Set("Content-Type", "application/json")
+		cresp, err := cv.client().Do(creq)
+		if err != nil {
+			return nil, fmt.Errorf("verifier: claim job %d: %w", job.ID, err)
+		}
+		cresp.Body.Close()
+		if cresp.StatusCode < 200 || cresp.StatusCode >= 300 {
+			return nil, fmt.Errorf("verifier: claim job %d: HTTP %d", job.ID, cresp.StatusCode)
+		}
+		return &job, nil
 	}
-	creq.Header.Set("Content-Type", "application/json")
-	cresp, err := cv.client().Do(creq)
-	if err != nil {
-		return nil, fmt.Errorf("verifier: claim job %d: %w", job.ID, err)
+	return nil, nil
+}
+
+// canPrepare is deliberately fail-closed. Legacy cross jobs with no
+// requirements remain claimable; malformed, unknown, or unsatisfied
+// requirements are treated as work for another machine.
+func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return true
 	}
-	defer cresp.Body.Close()
-	if cresp.StatusCode < 200 || cresp.StatusCode >= 300 {
-		return nil, fmt.Errorf("verifier: claim job %d: HTTP %d", job.ID, cresp.StatusCode)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var want domain.WorkerRequirements
+	if err := dec.Decode(&want); err != nil {
+		return false
 	}
-	return &job, nil
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return false
+	}
+	if want.SandboxCapability != "" && want.SandboxCapability != cv.Cap {
+		return false
+	}
+	if want.Ecosystem != "" {
+		if cv.Cap == domain.CapContainerRun {
+			if !sandbox.ContainerSupports(want.Ecosystem, want.Runtime) {
+				return false
+			}
+		} else if cv.Env.Ecosystem != want.Ecosystem {
+			return false
+		}
+	} else if want.Runtime != "" && cv.Env.Runtime != want.Runtime {
+		return false
+	}
+	for _, required := range want.Frameworks {
+		found := false
+		for _, available := range cv.Env.Frameworks {
+			if strings.EqualFold(strings.TrimSpace(available), strings.TrimSpace(required)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // RunOne claims and processes at most one cross-verification job. worked is

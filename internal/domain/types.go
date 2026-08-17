@@ -132,6 +132,17 @@ const (
 	CapLiveIntegration    SandboxCapability = "LIVE_INTEGRATION"
 )
 
+// WorkerRequirements is the closed, declarative description attached to a
+// verification job. A worker must satisfy every non-empty field before it
+// claims the job. This stays separate from EnvironmentFingerprint: it says
+// what must be available, not where a result already ran.
+type WorkerRequirements struct {
+	SandboxCapability SandboxCapability `json:"sandboxCapability,omitempty"`
+	Ecosystem         string            `json:"ecosystem,omitempty"`
+	Runtime           string            `json:"runtime,omitempty"`
+	Frameworks        []string          `json:"frameworks,omitempty"`
+}
+
 // ObservationBatch is the anonymous automatic-evidence wire unit
 // (goal.md §7.6). It must never carry source, paths, project names,
 // or raw logs — only the fields below.

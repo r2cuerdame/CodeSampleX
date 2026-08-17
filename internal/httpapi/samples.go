@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -220,10 +221,14 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 // Without this, every re-publish of identical content queued another job
 // and peers burned sandbox time re-proving the same artifact.
 func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error {
+	var manifest domain.SampleManifest
 	if row, ok, err := a.d.Store.GetSample(ctx, sampleID); err == nil && ok {
 		switch strings.ToUpper(row.Status) {
 		case "CROSS_PASS", "MATRIX_PASS", "STABLE":
 			return nil // already reproduced by another peer
+		}
+		if err := json.Unmarshal([]byte(row.ManifestJSON), &manifest); err != nil {
+			return fmt.Errorf("decode sample manifest for worker requirements: %w", err)
 		}
 	}
 	jobs, err := a.d.Store.JobsForSample(ctx, sampleID)
@@ -235,8 +240,22 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 			return nil // work is already queued or in flight
 		}
 	}
+	requirements := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun,
+		Ecosystem:         manifest.Environment.Ecosystem,
+		Runtime:           manifest.Environment.Runtime,
+	}
+	// Only installed engines/SDKs are host requirements. Ordinary framework
+	// libraries are resolved inside the disposable container and must not
+	// unnecessarily exclude otherwise capable workers.
+	for _, framework := range manifest.Environment.Frameworks {
+		if _, ok := domain.WantedTargetFromFramework(framework); ok {
+			requirements.Frameworks = append(requirements.Frameworks, framework)
+		}
+	}
 	_, err = a.d.Store.CreateJob(ctx, serverstore.JobRow{
 		SampleID: sampleID, Reason: "cross", Status: "open",
+		WantEnvJSON: string(domain.MustCanonicalJSON(requirements)),
 	})
 	return err
 }

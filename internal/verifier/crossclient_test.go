@@ -154,7 +154,7 @@ func TestCrossFetchJobClaims(t *testing.T) {
 	}
 }
 
-func TestCrossFetchRefusesMatrixJobEvenIfServerIgnoresFilter(t *testing.T) {
+func TestCrossFetchSkipsMatrixJobEvenIfServerIgnoresFilter(t *testing.T) {
 	ident, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -178,15 +178,15 @@ func TestCrossFetchRefusesMatrixJobEvenIfServerIgnoresFilter(t *testing.T) {
 		HTTP: srv.Client(), ServerURL: srv.URL, Ident: ident,
 		Cap: domain.CapContainerRun,
 	}
-	if _, err := cv.FetchJob(context.Background()); err == nil || !strings.Contains(err.Error(), "refused") {
-		t.Fatalf("matrix job error = %v, want explicit refusal", err)
+	if job, err := cv.FetchJob(context.Background()); err != nil || job != nil {
+		t.Fatalf("matrix job result = %+v, %v; want no claimable work", job, err)
 	}
 	if claims != 0 {
 		t.Fatalf("matrix job was claimed %d times", claims)
 	}
 }
 
-func TestCrossFetchRefusesUnenforcedWantEnvOnCrossJob(t *testing.T) {
+func TestCrossFetchSkipsUnsatisfiedWantEnvOnCrossJob(t *testing.T) {
 	ident, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -210,11 +210,48 @@ func TestCrossFetchRefusesUnenforcedWantEnvOnCrossJob(t *testing.T) {
 		HTTP: srv.Client(), ServerURL: srv.URL, Ident: ident,
 		Cap: domain.CapContainerRun,
 	}
-	if _, err := cv.FetchJob(context.Background()); err == nil || !strings.Contains(err.Error(), "wantEnv") {
-		t.Fatalf("targeted cross job error = %v, want explicit refusal", err)
+	if job, err := cv.FetchJob(context.Background()); err != nil || job != nil {
+		t.Fatalf("targeted cross job result = %+v, %v; want no claimable work", job, err)
 	}
 	if claims != 0 {
 		t.Fatalf("environment-targeted job was claimed %d times", claims)
+	}
+}
+
+func TestCrossFetchSkipsUnpreparedEngineAndClaimsLaterContainerJob(t *testing.T) {
+	ident, err := identity.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimed string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/verification/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"jobs": []map[string]any{
+			{
+				"id": 11, "sampleId": "sha256:" + strings.Repeat("c", 64), "reason": "cross",
+				"wantEnv": map[string]any{"sandboxCapability": "CONTAINER_RUN", "frameworks": []string{"unity@6000.0.24f1"}},
+			},
+			{
+				"id": 12, "sampleId": "sha256:" + strings.Repeat("d", 64), "reason": "cross",
+				"wantEnv": map[string]any{"sandboxCapability": "CONTAINER_RUN", "ecosystem": "npm", "runtime": "node"},
+			},
+		}})
+	})
+	mux.HandleFunc("POST /v1/verification/jobs/{id}/claim", func(w http.ResponseWriter, r *http.Request) {
+		claimed = r.PathValue("id")
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cv := &CrossVerifier{
+		HTTP: srv.Client(), ServerURL: srv.URL, Ident: ident,
+		Cap: domain.CapContainerRun,
+		Env: domain.EnvironmentFingerprint{Frameworks: nil},
+	}
+	job, err := cv.FetchJob(context.Background())
+	if err != nil || job == nil || job.ID != 12 || claimed != "12" {
+		t.Fatalf("job = %+v, claimed = %q, err = %v; want compatible job 12", job, claimed, err)
 	}
 }
 

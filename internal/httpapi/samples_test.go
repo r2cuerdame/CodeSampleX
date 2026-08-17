@@ -40,6 +40,13 @@ func TestSampleUploadHappyPath(t *testing.T) {
 	if err != nil || len(jobs) != 1 || jobs[0].Reason != "cross" || jobs[0].Status != "open" {
 		t.Fatalf("jobs = %+v err=%v, want one open cross job", jobs, err)
 	}
+	var want domain.WorkerRequirements
+	if err := json.Unmarshal([]byte(jobs[0].WantEnvJSON), &want); err != nil {
+		t.Fatalf("worker requirements = %q: %v", jobs[0].WantEnvJSON, err)
+	}
+	if want.SandboxCapability != domain.CapContainerRun || want.Ecosystem != "npm" {
+		t.Fatalf("worker requirements = %+v, want Docker npm support", want)
+	}
 
 	// Metadata reads back with anonymous seeder.
 	var meta struct {

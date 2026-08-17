@@ -126,6 +126,11 @@ func TestAdditionalEcosystemExactVersionVerdicts(t *testing.T) {
 			"pkg:pub/http@1.0.0", "pkg:pub/http@99.0.0", "pkg:pub/unheard-of@1.0.0",
 			"/api/archives/http-1.0.0.tar.gz", "/api/packages/http",
 		},
+		{
+			"maven",
+			"pkg:maven/org.example/example-lib@1.0.0", "pkg:maven/org.example/example-lib@99.0.0", "pkg:maven/org.example/unheard-of@1.0.0",
+			"/org/example/example-lib/1.0.0/example-lib-1.0.0.pom", "/org/example/example-lib/maven-metadata.xml",
+		},
 	} {
 		t.Run(tc.ecosystem, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

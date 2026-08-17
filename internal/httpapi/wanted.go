@@ -26,6 +26,13 @@ const maxWantedEpochAgeDays = 30
 var wantedEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
 	"gem": true, "composer": true, "hex": true, "pub": true,
+	// Maven is wanted-only for now. Accepting a demand signal does not claim
+	// that a Java scanner or verifier exists; /adapters remains the source of
+	// truth for those capabilities.
+	"maven": true,
+	// generic is limited below to domain.IsWantedTarget's fixed public
+	// engine/SDK vocabulary; arbitrary generic purls are rejected.
+	"generic": true,
 }
 
 // wantedReport is what a peer sends after a NO_SAFE_MATCH.
@@ -206,7 +213,9 @@ func rowsForWantedReport(req wantedReport, now time.Time) ([]serverstore.WantedR
 		if err != nil {
 			return nil, fmt.Errorf("package purl is invalid")
 		}
-		if !wantedEcosystems[p.Ecosystem] || !registry.ValidPackageName(p.Ecosystem, p.Name) ||
+		validCoordinate := domain.IsWantedTarget(p) ||
+			(wantedEcosystems[p.Ecosystem] && registry.ValidPackageName(p.Ecosystem, p.Name))
+		if !validCoordinate ||
 			len(p.Name) > 256 ||
 			len(p.Version) > 128 || !domain.ConcreteResolvedVersion(p.Version) {
 			return nil, fmt.Errorf("package must name a supported ecosystem and concrete release")
@@ -284,12 +293,16 @@ func (a *api) publicWantedRows(ctx context.Context, rows []serverstore.WantedRow
 	if a.trustMode() {
 		return rows, nil
 	}
-	if a.d.Checker == nil {
-		return nil, fmt.Errorf("public package check unavailable")
-	}
 	out := make([]serverstore.WantedRow, 0, len(rows))
 	for _, row := range rows {
 		p := domain.PURL{Ecosystem: row.Ecosystem, Name: row.Name, Version: row.Version}
+		if domain.IsWantedTarget(p) {
+			out = append(out, row)
+			continue
+		}
+		if a.d.Checker == nil {
+			return nil, fmt.Errorf("public package check unavailable")
+		}
 		key := p.String()
 		status, ok := cache[key]
 		if !ok {

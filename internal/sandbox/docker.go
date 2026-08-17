@@ -83,6 +83,15 @@ func imageFor(ecosystem, runtime string) (string, error) {
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
 
+// ContainerSupports reports whether this binary has a pinned image for the
+// requested ecosystem/runtime. Workers use the same decision as the runner
+// before claiming work, so an unsupported job is never taken and failed just
+// because it happened to be first in the queue.
+func ContainerSupports(ecosystem, runtime string) bool {
+	_, err := imageFor(ecosystem, runtime)
+	return err == nil
+}
+
 // imageRuntime reports the runtime the pinned image provides and its major
 // version. Kept beside imageFor so the two never drift.
 func imageRuntime(ecosystem, runtime string) (rt, version, language string) {

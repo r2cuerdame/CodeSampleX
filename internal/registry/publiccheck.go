@@ -39,13 +39,16 @@ var defaultBaseURLs = map[string]string{
 	"composer": "https://repo.packagist.org",
 	"hex":      "https://hex.pm",
 	"pub":      "https://pub.dev",
+	"maven":    "https://repo.maven.apache.org/maven2",
 }
 
 const defaultHexArchiveBaseURL = "https://repo.hex.pm"
 
 var defaultClient = &http.Client{Timeout: requestTimeout}
 
-// Checker resolves package publicness against the eight Public v1 registries.
+// Checker resolves package publicness against the supported registries. Eight
+// ecosystems have Public v1 verification adapters; Maven Central is queried
+// only so Java demand can enter Wanted without claiming adapter support.
 // The zero value uses the real registry endpoints, a 5s-timeout HTTP client,
 // and no cache.
 type Checker struct {
@@ -119,7 +122,7 @@ func ValidPackageName(ecosystem, name string) bool {
 		scope, pkg, ok := strings.Cut(name, "/")
 		return ok && !strings.Contains(pkg, "/") && len(scope) > 1 &&
 			validSegment(scope[1:]) && validSegment(pkg)
-	case "composer":
+	case "composer", "maven":
 		vendor, pkg, ok := strings.Cut(name, "/")
 		return ok && !strings.Contains(pkg, "/") && validSegment(vendor) && validSegment(pkg)
 	case "golang":
@@ -309,7 +312,7 @@ func (c *Checker) CheckAll(ctx context.Context, pkgs []scanner.ResolvedPackage) 
 }
 
 // checkURL builds the per-ecosystem existence-probe URL, or "" for an
-// ecosystem outside the Public v1 allowlist.
+// ecosystem outside the supported public-coordinate registries.
 func (c *Checker) checkURL(p domain.PURL) string {
 	base, ok := c.baseURL(p.Ecosystem)
 	if !ok {
@@ -338,6 +341,13 @@ func (c *Checker) checkURL(p domain.PURL) string {
 		return base + "/api/packages/" + url.PathEscape(p.Name)
 	case "pub":
 		return base + "/api/packages/" + url.PathEscape(p.Name)
+	case "maven":
+		group, artifact, ok := strings.Cut(p.Name, "/")
+		if !ok || group == "" || artifact == "" || strings.Contains(artifact, "/") {
+			return ""
+		}
+		groupPath := strings.ReplaceAll(group, ".", "/")
+		return base + "/" + groupPath + "/" + url.PathEscape(artifact) + "/maven-metadata.xml"
 	}
 	return ""
 }
@@ -367,7 +377,7 @@ func (c *Checker) baseURL(ecosystem string) (string, bool) {
 }
 
 // versionURL builds the probe for one specific release, or "" when the
-// ecosystem is outside the Public v1 allowlist. Every supported registry
+// ecosystem is outside the supported public-coordinate registries. Every supported registry
 // provides either an exact-release endpoint or authoritative version
 // metadata, so a version claim is checkable where it would be published.
 func (c *Checker) versionURL(p domain.PURL) string {
@@ -405,6 +415,16 @@ func (c *Checker) versionURL(p domain.PURL) string {
 	case "pub":
 		base, _ := c.baseURL(p.Ecosystem)
 		return base + "/api/archives/" + url.PathEscape(p.Name+"-"+p.Version+".tar.gz")
+	case "maven":
+		base, _ := c.baseURL(p.Ecosystem)
+		group, artifact, ok := strings.Cut(p.Name, "/")
+		if !ok || group == "" || artifact == "" || strings.Contains(artifact, "/") {
+			return ""
+		}
+		groupPath := strings.ReplaceAll(group, ".", "/")
+		version := url.PathEscape(p.Version)
+		return base + "/" + groupPath + "/" + url.PathEscape(artifact) + "/" + version + "/" +
+			url.PathEscape(artifact+"-"+p.Version+".pom")
 	}
 	return ""
 }

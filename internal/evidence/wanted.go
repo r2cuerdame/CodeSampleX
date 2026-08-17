@@ -74,22 +74,36 @@ func QueueWanted(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	// NO_SAFE_MATCH must not wait on third-party network latency.
 	pkgs := make([]string, 0, maxWantedPackages)
 	seen := map[string]bool{}
+	derivedTargetCount := 0
+	appendPackage := func(p domain.PURL) {
+		key := p.Ecosystem + "/" + p.Name + "@" + p.Version
+		if seen[key] || cfg.IsExcluded(p.String(), p.Ecosystem, p.Name) || len(pkgs) >= maxWantedPackages {
+			return
+		}
+		seen[key] = true
+		pkgs = append(pkgs, p.String())
+	}
 	for _, ps := range req.Packages {
 		p, err := domain.ParsePURL(ps)
 		if err != nil {
 			continue
 		}
-		if !wantedEcosystem(p.Ecosystem) || !domain.ConcreteResolvedVersion(p.Version) {
+		if !wantedEcosystem(p.Ecosystem) || !domain.ConcreteResolvedVersion(p.Version) ||
+			(p.Ecosystem == "generic" && !domain.IsWantedTarget(p)) {
 			continue
 		}
-		key := p.Ecosystem + "/" + p.Name + "@" + p.Version
-		if seen[key] || cfg.IsExcluded(ps, p.Ecosystem, p.Name) {
-			continue
-		}
-		seen[key] = true
-		pkgs = append(pkgs, p.String())
+		appendPackage(p)
 		if len(pkgs) >= maxWantedPackages {
 			break
+		}
+	}
+	// A request can be about the engine or SDK itself and name no registry
+	// package. Only the fixed public vocabulary is converted; arbitrary
+	// framework strings remain local.
+	for _, framework := range req.Environment.Frameworks {
+		if p, ok := domain.WantedTargetFromFramework(framework); ok {
+			derivedTargetCount++
+			appendPackage(p)
 		}
 	}
 	if len(pkgs) == 0 {
@@ -101,7 +115,8 @@ func QueueWanted(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	// the caller named exactly one package; otherwise attaching them would
 	// invent a package/symbol relationship.
 	var symbols []string
-	if len(req.Packages) == 1 && len(pkgs) == 1 {
+	if len(pkgs) == 1 && ((len(req.Packages) == 1 && derivedTargetCount == 0) ||
+		(len(req.Packages) == 0 && derivedTargetCount == 1)) {
 		symbols = sanitizeWantedSymbols(req.Symbols)
 	}
 	payload, err := json.Marshal(WantedReport{
@@ -155,7 +170,8 @@ func PrepareWantedForUpload(ctx context.Context, payload string,
 			return nil, fmt.Errorf("%w: %v", ErrWantedPublicnessUnconfirmed, err)
 		}
 		p, err := domain.ParsePURL(raw)
-		if err != nil || !wantedEcosystem(p.Ecosystem) || !domain.ConcreteResolvedVersion(p.Version) {
+		if err != nil || !wantedEcosystem(p.Ecosystem) || !domain.ConcreteResolvedVersion(p.Version) ||
+			(p.Ecosystem == "generic" && !domain.IsWantedTarget(p)) {
 			continue
 		}
 		canonical := p.String()
@@ -163,7 +179,7 @@ func PrepareWantedForUpload(ctx context.Context, payload string,
 			continue
 		}
 		seen[canonical] = true
-		if isPublic(ctx, p) {
+		if domain.IsWantedTarget(p) || isPublic(ctx, p) {
 			confirmed = append(confirmed, canonical)
 		}
 	}
@@ -207,7 +223,7 @@ func sanitizeWantedSymbols(raw []string) []string {
 
 func wantedEcosystem(ecosystem string) bool {
 	switch ecosystem {
-	case "npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub":
+	case "npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub", "maven", "generic":
 		return true
 	}
 	return false

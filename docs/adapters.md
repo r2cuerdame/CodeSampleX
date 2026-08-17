@@ -96,3 +96,31 @@ marker file, hex samples build and test with `--no-deps-check`.
 
 Machine-readable source of truth: `schemas/v1/adapters.json`, served at
 `GET /v1/adapters` and rendered at `/adapters`.
+
+## Wanted-only coordinates
+
+The Wanted intake deliberately has a wider vocabulary than the adapter
+matrix. `maven` coordinates such as
+`pkg:maven/org.apache.commons/commons-lang3@3.17.0` are accepted after the
+exact release is confirmed on Maven Central. This records demand for Java
+without pretending that CodeSampleX can scan or verify Java projects yet.
+Maven remains outside `domain.AllowedEcosystems`, so it cannot produce
+automatic usage evidence.
+
+Engines and platform SDKs are environment, not ordinary dependencies. A miss
+with a fixed public `frameworks` entry such as `unity@6000.0.24f1`,
+`unreal@5.6`, `android-sdk@35`, `jdk@21`, or
+`windows-sdk@10.0.26100` becomes a Wanted-only `pkg:generic/engine/...` or
+`pkg:generic/sdk/...` coordinate, even when no registry package was named.
+The conversion uses a closed public-name allowlist; arbitrary framework
+strings never leave the machine. Callers can also use open-vocabulary
+execution contexts such as `unity-editor`, `unity-player`, `unreal-editor`,
+`unreal-game`, `jvm`, or `android`. None of these coordinates is verification
+evidence until a dedicated adapter and runner produce a signed passing
+receipt.
+
+Verification jobs carry closed worker requirements (`sandboxCapability`,
+`ecosystem`, `runtime`, and any installed engine/SDK frameworks). A worker
+examines a bounded queue window and claims only a job its local runner can
+prepare. Thus broad Wanted collection never sends a Unity job to an ordinary
+Docker-only worker merely because that job was first in the queue.
