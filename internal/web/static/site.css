@@ -270,7 +270,7 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
    margin, what a visitor just clicked toward lands underneath it. #install
    is included because it had the same problem — every "Install" link in the
    site points there, and it arrived with its first command half-covered. */
-#install, #install-llm, #agents { scroll-margin-top: 5rem; }
+#install, #install-llm, #install-worker, #agents { scroll-margin-top: 5rem; }
 .llmlink a { font-weight: 700; }
 .llminstall .llmlead { margin: 0 0 0.9rem; font-size: 0.95rem; max-width: 68ch; }
 .llmbox {
@@ -298,6 +298,13 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .llmcopy.ok { color: #fff; background: var(--ok); border-color: var(--ok); }
 .llminstall .note { margin-top: 1rem; }
 .llminstall > p:last-child { margin-bottom: 0; }
+.workerinstall {
+  margin-top: 1.6rem; padding-top: 1.35rem;
+  border-top: 1px solid var(--line);
+}
+.workerinstall .llmlead { margin: 0 0 0.9rem; font-size: 0.95rem; max-width: 68ch; }
+.workerbox { background: #13243f; border-color: #263f64; }
+.workerinstall .note { margin-bottom: 0; }
 
 /* evidence highlights (landing) ------------------------------------------ */
 .homefindings { margin: 0 0 2rem; }

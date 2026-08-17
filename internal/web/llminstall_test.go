@@ -57,6 +57,30 @@ func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	}
 }
 
+func TestWorkerOnlyPromptIsVisibleCopiedAndIsolated(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/contribute").Body.String()
+
+	want := html.EscapeString(workerPrompt("en", "https://codesamplex.dev"))
+	if strings.Count(body, want) != 2 {
+		t.Fatalf("worker prompt should appear exactly twice (visible text + data-copy), got %d",
+			strings.Count(body, want))
+	}
+	for _, required := range []string{
+		`id="install-worker"`,
+		"Worker-only machine",
+		"Copy worker prompt",
+		"csx init --community --yes --no-agents --no-daemon",
+		"csx worker start --mode verify --parallel 2 --budget idle",
+		"Docker",
+	} {
+		mustContain(t, body, required)
+	}
+	if strings.Contains(workerPrompt("en", "https://codesamplex.dev"), "mcp-config") {
+		t.Error("worker-only prompt must not configure an MCP client")
+	}
+}
+
 func TestStylesheetURLTracksTheRunningVersion(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
@@ -74,24 +98,26 @@ func TestAgentInstallPromptOnlyEverPointsAtCodeSampleX(t *testing.T) {
 	const base = "https://csx.example"
 	allowed := map[string]bool{"github.com": true, "csx.example": true}
 	for _, lang := range i18n.Supported {
-		prompt := llmPrompt(lang, base)
-		if prompt == "" {
-			t.Fatalf("locale %s has no install prompt", lang)
-		}
-		// A stray percent sign in a translation would render as %!x(MISSING)
-		// or leave the placeholder unfilled — either way the agent is handed
-		// a URL that does not resolve.
-		if strings.Contains(prompt, "%!") || strings.Contains(prompt, "%s") {
-			t.Errorf("locale %s: prompt has a broken format placeholder:\n%s", lang, prompt)
-		}
-		for _, raw := range promptURL.FindAllString(prompt, -1) {
-			u, err := url.Parse(strings.TrimRight(raw, ".,;:"))
-			if err != nil {
-				t.Errorf("locale %s: unparseable URL %q", lang, raw)
-				continue
+		prompts := []string{llmPrompt(lang, base), workerPrompt(lang, base)}
+		for _, prompt := range prompts {
+			if prompt == "" {
+				t.Fatalf("locale %s has an empty install prompt", lang)
 			}
-			if !allowed[u.Host] {
-				t.Errorf("locale %s: prompt sends the agent to %q", lang, u.Host)
+			// A stray percent sign in a translation would render as %!x(MISSING)
+			// or leave the placeholder unfilled — either way the agent is handed
+			// a URL that does not resolve.
+			if strings.Contains(prompt, "%!") || strings.Contains(prompt, "%s") {
+				t.Errorf("locale %s: prompt has a broken format placeholder:\n%s", lang, prompt)
+			}
+			for _, raw := range promptURL.FindAllString(prompt, -1) {
+				u, err := url.Parse(strings.TrimRight(raw, ".,;:"))
+				if err != nil {
+					t.Errorf("locale %s: unparseable URL %q", lang, raw)
+					continue
+				}
+				if !allowed[u.Host] {
+					t.Errorf("locale %s: prompt sends the agent to %q", lang, u.Host)
+				}
 			}
 		}
 		for _, want := range []string{
@@ -103,8 +129,20 @@ func TestAgentInstallPromptOnlyEverPointsAtCodeSampleX(t *testing.T) {
 			"csx init --community --yes",
 			"mode: community",
 		} {
-			if !strings.Contains(prompt, want) {
+			if !strings.Contains(llmPrompt(lang, base), want) {
 				t.Errorf("locale %s: prompt is missing %q", lang, want)
+			}
+		}
+		for _, want := range []string{
+			base + "/install.sh",
+			base + "/install.ps1",
+			"github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md",
+			"csx init --community --yes --no-agents --no-daemon",
+			"csx worker start --mode verify --parallel 2 --budget idle",
+			"Docker",
+		} {
+			if !strings.Contains(workerPrompt(lang, base), want) {
+				t.Errorf("locale %s: worker prompt is missing %q", lang, want)
 			}
 		}
 	}

@@ -111,7 +111,16 @@ This is not hidden telemetry — it is the protocol. Community peers are consume
 
 ## Contributor Worker (VERIFY MVP)
 
-An installed `csx` binary can contribute spare compute without reading a user project:
+The **Contribute** page at <https://codesamplex.dev/contribute> has a separate,
+visible prompt for turning a spare machine into a persistent worker without
+registering MCP or agent rules. The worker-only initialization is:
+
+```bash
+csx init --community --yes --no-agents --no-daemon
+```
+
+An installed `csx` binary can also contribute spare compute in the foreground
+without reading a user project:
 
 ```bash
 csx init --community

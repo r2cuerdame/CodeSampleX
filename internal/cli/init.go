@@ -80,10 +80,11 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 		localOnly = fs.Bool("local-only", false, "local-only mode without asking")
 		yes       = fs.Bool("yes", false, "non-interactive: community mode (unless --local-only) and auto-accept agent installs")
 		noAgents  = fs.Bool("no-agents", false, "config + identity only: skip ALL agent integration (no MCP registration, no agent rule files, nothing written outside CSX_HOME)")
+		noDaemon  = fs.Bool("no-daemon", false, "do not run the background sync daemon (for worker-only machines)")
 		server    = fs.String("server", "", "override the server URL")
 	)
 	fs.Usage = func() {
-		fmt.Fprintln(env.stderr, "Usage: csx init [--community|--local-only] [--yes] [--no-agents] [--server URL]")
+		fmt.Fprintln(env.stderr, "Usage: csx init [--community|--local-only] [--yes] [--no-agents] [--no-daemon] [--server URL]")
 		fmt.Fprintln(env.stderr)
 		fmt.Fprintln(env.stderr, "Sets up config + identity and, unless --no-agents is given, registers the")
 		fmt.Fprintf(env.stderr, "csx MCP server and usage rules for every detected agent under %s\n", agentHomeEnv)
@@ -139,6 +140,12 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 	// otherwise the old in-memory community config can continue uploading
 	// after config.json says local-only.
 	daemonConfigChanged := cfg.Mode != mode || (*server != "" && cfg.ServerURL != *server)
+	// A worker-only machine should run one process: the contributor worker.
+	// --no-daemon therefore also stops an already-running daemon even when
+	// the saved mode did not change.
+	if *noDaemon {
+		daemonConfigChanged = true
+	}
 	if daemonConfigChanged && env.stopDaemon != nil {
 		if err := env.stopDaemon(ctx); err != nil {
 			fmt.Fprintf(env.stderr, "csx init: could not stop the existing daemon before changing privacy/network settings: %v\n", err)
@@ -239,7 +246,9 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 	if env.warm != nil {
 		env.warm(ctx, out)
 	}
-	if cfg.Mode == config.ModeCommunity && env.startDaemon != nil {
+	if *noDaemon {
+		fmt.Fprintln(out, "  background sync not started (--no-daemon: worker-only setup)")
+	} else if cfg.Mode == config.ModeCommunity && env.startDaemon != nil {
 		if err := env.startDaemon(ctx); err != nil {
 			fmt.Fprintf(out, "  background sync not started (%v) — run `csx daemon start`\n", err)
 		} else {

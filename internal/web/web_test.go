@@ -365,6 +365,10 @@ func TestInstallScripts(t *testing.T) {
 		t.Error("install.ps1 placeholder not substituted")
 	}
 	sh := get(t, mux, "/install.sh").Body.String()
+	mustContain(t, sh, `CSX_WORKER_ONLY`)
+	mustContain(t, sh, `init --community --yes --no-agents --no-daemon`)
+	mustContain(t, ps, `CSX_WORKER_ONLY`)
+	mustContain(t, ps, `init --community --yes --no-agents --no-daemon`)
 	mustContain(t, sh, `base="https://codesamplex.dev"`)
 	mustContain(t, sh, "/dl/csx-$os-$arch")
 	mustContain(t, sh, "init")

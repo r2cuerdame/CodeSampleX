@@ -35,6 +35,15 @@ func TestContributePageAnswersTheRefusal(t *testing.T) {
 	// The claim the whole policy exists to make.
 	mustContain(t, body, i18n.T("en", "contribute.claim"))
 	mustContain(t, body, "https://codesamplex.dev/contribute") // canonical
+	mustContain(t, body, `id="install-worker"`)
+	mustContain(t, body, `csx init --community --yes --no-agents --no-daemon`)
+	mustContain(t, body, `csx worker start --mode verify --parallel 2 --budget idle`)
+	// Contribution is a first-class destination in the top menu, not only the
+	// footer link that already existed.
+	home := get(t, mux, "/").Body.String()
+	if strings.Count(home, `href="/contribute"`) < 2 {
+		t.Error("contribute is not present in both the top menu and footer")
+	}
 }
 
 // The page is translated like every other page, and the claim is the one
@@ -46,4 +55,15 @@ func TestContributePageIsTranslated(t *testing.T) {
 		t.Error("the Korean page is serving the English claim")
 	}
 	mustContain(t, body, i18n.T("ko", "contribute.claim"))
+	for _, key := range []string{
+		"landing.worker_heading", "landing.worker_body",
+		"landing.worker_copy", "landing.worker_safety",
+	} {
+		mustContain(t, body, i18n.T("ko", key))
+	}
+	worker := workerPrompt("ko", "https://codesamplex.dev")
+	if worker == workerPrompt("en", "https://codesamplex.dev") {
+		t.Error("the Korean page is serving the English worker prompt")
+	}
+	mustContain(t, body, worker)
 }

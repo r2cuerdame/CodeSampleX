@@ -88,7 +88,11 @@ if (($env:Path -split ';') -notcontains $dir) {
 }
 
 Write-Host 'csx installed. Starting setup...'
-& $exe init
+if ($env:CSX_WORKER_ONLY -eq '1') {
+    & $exe init --community --yes --no-agents --no-daemon
+} else {
+    & $exe init
+}
 
 # A replaced binary means an MCP server may still be running the old one.
 # It keeps answering with the old code until the editor restarts it, and

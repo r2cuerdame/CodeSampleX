@@ -19,6 +19,18 @@
   <p>{{.T "contribute.claim"}}</p>
 </div>
 
+<section id="install-worker" class="workerinstall">
+  <h2 class="eyebrow mono">{{.T "landing.worker_heading"}}</h2>
+  <p class="llmlead">{{.T "landing.worker_body"}}</p>
+  <div class="llmbox workerbox">
+    <div class="llmactions">
+      <button class="copy llmcopy mono" type="button" data-copy="{{.WorkerPrompt}}" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+    </div>
+    <pre class="llmtext mono">{{.WorkerPrompt}}</pre>
+  </div>
+  <p class="note">{{.T "landing.worker_safety"}}</p>
+</section>
+
 <section>
   <h2 class="eyebrow mono">{{.T "contribute.open_heading"}}</h2>
   <ul class="channels">

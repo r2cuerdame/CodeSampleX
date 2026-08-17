@@ -62,4 +62,7 @@ if [ "$upgrade" = "1" ]; then
     echo "You upgraded an existing install. If your editor is open, restart it:"
     echo "the csx MCP server it started is still running the previous build."
 fi
+if [ "${CSX_WORKER_ONLY:-}" = "1" ]; then
+    exec "$dir/csx" init --community --yes --no-agents --no-daemon
+fi
 exec "$dir/csx" init

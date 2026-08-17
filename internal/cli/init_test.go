@@ -131,6 +131,31 @@ func TestInitLocalOnlyDoesNotStartBackgroundSync(t *testing.T) {
 	}
 }
 
+func TestInitNoDaemonStopsExistingAndDoesNotStart(t *testing.T) {
+	env, out, _ := testInitEnv(t, "")
+	stopped, started := false, false
+	env.stopDaemon = func(context.Context) error {
+		stopped = true
+		return nil
+	}
+	env.startDaemon = func(context.Context) error {
+		started = true
+		return nil
+	}
+	if code := initMain(context.Background(), []string{"--community", "--yes", "--no-agents", "--no-daemon"}, env); code != 0 {
+		t.Fatalf("worker-only init returned %d\n%s", code, out.String())
+	}
+	if !stopped {
+		t.Fatal("--no-daemon did not stop an existing background daemon")
+	}
+	if started {
+		t.Fatal("--no-daemon started the background daemon")
+	}
+	if !strings.Contains(out.String(), "--no-daemon: worker-only setup") {
+		t.Errorf("worker-only init hid daemon decision:\n%s", out.String())
+	}
+}
+
 func TestInitCommunityToLocalOnlyStopsDaemonBeforeSaving(t *testing.T) {
 	env, out, _ := testInitEnv(t, "")
 	home := os.Getenv("CSX_HOME")

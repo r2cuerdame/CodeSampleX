@@ -307,6 +307,118 @@ publishing a sample requires explicit CLI approval by the human.
 
 Then restart the MCP client so it picks up the new server entry.
 
+## Worker-only machine
+
+Use this path for a spare machine that should contribute Docker verification
+but must not be connected to an MCP client or inspect a local project. It runs
+one contributor process and deliberately skips both agent integration and the
+background sync daemon.
+
+The normal installers run interactive `csx init`. Set `CSX_WORKER_ONLY=1` so
+the same first-party installers instead run the exact worker-only initialization:
+
+**macOS / Linux**
+
+```sh
+curl -fsSL https://codesamplex.dev/install.sh | CSX_WORKER_ONLY=1 sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+$env:CSX_WORKER_ONLY = '1'
+try { irm https://codesamplex.dev/install.ps1 | iex }
+finally { Remove-Item Env:\CSX_WORKER_ONLY -ErrorAction SilentlyContinue }
+```
+
+Both forms run:
+
+```sh
+csx init --community --yes --no-agents --no-daemon
+```
+
+The result is community mode with an identity, warmed public cache and no MCP
+entry, agent rule or background daemon. A worker still requires a reachable
+Docker daemon. If Docker is missing, stop: installing it or granting
+administrator access is a separate human decision.
+
+Run the worker in the foreground to inspect it:
+
+```sh
+/absolute/path/to/csx worker start --mode verify --parallel 2 --budget idle
+```
+
+For persistent operation, use exactly one native per-user service. Its command
+must use the absolute binary path above, start automatically, restart on
+failure, and refuse duplicate instances:
+
+| OS | Native service | Stable name |
+|---|---|---|
+| Linux | `systemd --user` unit | `csx-worker.service` |
+| macOS | LaunchAgent | `dev.codesamplex.worker` |
+| Windows | Scheduled Task | `CodeSampleX Contributor Worker` |
+
+On Linux, write `~/.config/systemd/user/csx-worker.service`, replacing the
+executable path with the one printed by the installer:
+
+```ini
+[Unit]
+Description=CodeSampleX Contributor Worker
+After=docker.service
+
+[Service]
+ExecStart=/absolute/path/to/csx worker start --mode verify --parallel 2 --budget idle
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Then run `systemctl --user daemon-reload`,
+`systemctl --user enable --now csx-worker.service`, and verify with
+`systemctl --user is-active csx-worker.service`. Enabling user lingering makes
+the service start before login and is a separate system-level choice; do not
+enable it without the machine owner's approval.
+
+On macOS, write `~/Library/LaunchAgents/dev.codesamplex.worker.plist`, again
+using the installed absolute path:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.codesamplex.worker</string>
+  <key>ProgramArguments</key><array>
+    <string>/absolute/path/to/csx</string><string>worker</string><string>start</string>
+    <string>--mode</string><string>verify</string><string>--parallel</string><string>2</string>
+    <string>--budget</string><string>idle</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+</dict></plist>
+```
+
+Load it with
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.codesamplex.worker.plist`
+and verify with `launchctl print gui/$(id -u)/dev.codesamplex.worker`.
+
+On Windows, create the current-user task from PowerShell:
+
+```powershell
+$csx = "$env:LOCALAPPDATA\csx\csx.exe"
+$action = New-ScheduledTaskAction -Execute $csx -Argument 'worker start --mode verify --parallel 2 --budget idle'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -Action $action -Trigger $trigger -Settings $settings -Description 'Docker-isolated CodeSampleX verification worker' -Force
+Start-ScheduledTask -TaskName 'CodeSampleX Contributor Worker'
+Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' | Select-Object TaskName, State
+```
+
+An empty server queue is healthy. The process waits; it is not a failed
+installation. `csx daemon status` should report `not running` on a worker-only
+machine because `--no-daemon` intentionally leaves only the contributor worker.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
