@@ -1,0 +1,8 @@
+{
+  "name": "luxon-locale-week-contract",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "luxon": "3.6.1"
+  }
+}
