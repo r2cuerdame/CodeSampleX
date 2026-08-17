@@ -76,6 +76,23 @@ func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The website collection keeps the same exact-answer policy while adding
+	// search, total counts and stable offset pagination. Legacy versionless
+	// rows remain searchable and are not silently discarded.
+	page, total, err := pg.ListWanted(ctx, "npm three canvas", 0, 1)
+	if err != nil || total != 1 || len(page) != 1 || page[0].Symbol != "CanvasTexture" {
+		t.Fatalf("searched wanted page = %+v total=%d err=%v", page, total, err)
+	}
+	page, total, err = pg.ListWanted(ctx, "npm three", 1, 2)
+	if err != nil || total != 3 || len(page) != 2 ||
+		page[0].Symbol != "CanvasTexture" || page[1].Symbol != "Texture.transformUv" {
+		t.Fatalf("paged wanted rows = %+v total=%d err=%v", page, total, err)
+	}
+	page, total, err = pg.ListWanted(ctx, "legacy", 0, 20)
+	if err != nil || total != 1 || len(page) != 1 || page[0].Version != "" {
+		t.Fatalf("versionless wanted row = %+v total=%d err=%v", page, total, err)
+	}
+
 	manifest := `{"packages":["pkg:npm/three@0.179.0"],"symbols":["Texture.transformUv"]}`
 	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:other", ManifestJSON: manifest}); err != nil {
 		t.Fatal(err)

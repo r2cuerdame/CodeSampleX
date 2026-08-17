@@ -1144,22 +1144,43 @@ func (f *Fake) RecordWantedBatch(_ context.Context, reports []WantedSubmission) 
 }
 
 func (f *Fake) TopWanted(_ context.Context, limit int) ([]WantedRow, error) {
-	return f.listWanted(limit, "", "")
+	rows, _, err := f.listWanted("", 0, limit, "", "")
+	return rows, err
+}
+
+func (f *Fake) ListWanted(_ context.Context, query string, offset, limit int) ([]WantedRow, int, error) {
+	return f.listWanted(query, offset, limit, "", "")
 }
 
 func (f *Fake) WantedForPackage(_ context.Context, ecosystem, name string) ([]WantedRow, error) {
-	return f.listWanted(100, ecosystem, name)
+	rows, _, err := f.listWanted("", 0, 100, ecosystem, name)
+	return rows, err
 }
 
-func (f *Fake) listWanted(limit int, ecosystem, name string) ([]WantedRow, error) {
+func (f *Fake) listWanted(query string, offset, limit int, ecosystem, name string) ([]WantedRow, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
+	if offset < 0 {
+		offset = 0
+	}
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 	var out []WantedRow
 	for _, w := range f.wanted {
 		if ecosystem != "" && (w.Ecosystem != ecosystem || w.Name != name) {
+			continue
+		}
+		haystack := strings.ToLower(strings.Join([]string{w.Ecosystem, w.Name, w.Version, w.Symbol}, " "))
+		matches := true
+		for _, word := range words {
+			if !strings.Contains(haystack, word) {
+				matches = false
+				break
+			}
+		}
+		if !matches {
 			continue
 		}
 		answered := false
@@ -1218,12 +1239,29 @@ func (f *Fake) listWanted(limit int, ecosystem, name string) ([]WantedRow, error
 		if out[i].Asks != out[j].Asks {
 			return out[i].Asks > out[j].Asks
 		}
-		return out[i].Name < out[j].Name
+		if !out[i].LastSeen.Equal(out[j].LastSeen) {
+			return out[i].LastSeen.After(out[j].LastSeen)
+		}
+		if out[i].Ecosystem != out[j].Ecosystem {
+			return out[i].Ecosystem < out[j].Ecosystem
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		if out[i].Version != out[j].Version {
+			return out[i].Version < out[j].Version
+		}
+		return out[i].Symbol < out[j].Symbol
 	})
+	total := len(out)
+	if offset >= total {
+		return nil, total, nil
+	}
+	out = out[offset:]
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // -------------------------------------------------------------- adoptions --

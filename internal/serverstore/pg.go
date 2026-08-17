@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -1800,26 +1801,38 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 // canonical PURL and, when requested, the exact symbol. A different release
 // or a different API is still an unanswered request.
 func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
-	return p.listWanted(ctx, limit, "", "")
+	rows, _, err := p.listWanted(ctx, "", 0, limit, "", "")
+	return rows, err
+}
+
+func (p *PG) ListWanted(ctx context.Context, query string, offset, limit int) ([]WantedRow, int, error) {
+	return p.listWanted(ctx, query, offset, limit, "", "")
 }
 
 func (p *PG) WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error) {
-	return p.listWanted(ctx, 100, ecosystem, name)
+	rows, _, err := p.listWanted(ctx, "", 0, 100, ecosystem, name)
+	return rows, err
 }
 
-func (p *PG) listWanted(ctx context.Context, limit int, ecosystem, name string) ([]WantedRow, error) {
+func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ecosystem, name string) ([]WantedRow, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	if offset < 0 {
+		offset = 0
+	}
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 	var out []WantedRow
+	var total int64
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT w.ecosystem, w.name, w.version, w.symbol,
-			       w.asks, w.first_seen, w.last_seen,
-			       TRUE AS has_page
-			  FROM wanted w
-			 WHERE ($2 = '' OR (w.ecosystem = $2 AND w.name = $3))
-			   AND NOT EXISTS (
+			WITH unanswered AS (
+				SELECT w.ecosystem, w.name, w.version, w.symbol,
+				       w.asks, w.first_seen, w.last_seen,
+				       TRUE AS has_page
+				  FROM wanted w
+				 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
+				   AND NOT EXISTS (
 			       SELECT 1 FROM samples s
 			        WHERE NOT s.quarantined
 			          AND EXISTS (
@@ -1854,23 +1867,47 @@ func (p *PG) listWanted(ctx context.Context, limit int, ecosystem, name string) 
 			                                   ELSE w.name END || '@' || w.version)
 			                     )))
 			          AND (w.symbol = '' OR COALESCE(s.manifest->'symbols', '[]'::jsonb) ? w.symbol))
-			 ORDER BY w.asks DESC, w.last_seen DESC
-			 LIMIT $1`, limit, ecosystem, name)
+			   AND NOT EXISTS (
+			       SELECT 1 FROM unnest($5::text[]) AS wanted_words(word)
+			        WHERE strpos(lower(concat_ws(' ', w.ecosystem, w.name, w.version, w.symbol)), word) = 0
+			   )
+			), counted AS (
+				SELECT count(*) AS total FROM unanswered
+			), page_rows AS (
+				SELECT * FROM unanswered
+				 ORDER BY asks DESC, last_seen DESC, ecosystem, name, version, symbol
+				 LIMIT $1 OFFSET $2
+			)
+			SELECT COALESCE(p.ecosystem, ''), COALESCE(p.name, ''),
+			       COALESCE(p.version, ''), COALESCE(p.symbol, ''),
+			       COALESCE(p.asks, 0),
+			       COALESCE(p.first_seen, 'epoch'::timestamptz),
+			       COALESCE(p.last_seen, 'epoch'::timestamptz),
+			       COALESCE(p.has_page, FALSE), counted.total,
+			       p.ecosystem IS NOT NULL AS present
+			  FROM counted
+			  LEFT JOIN page_rows p ON TRUE
+			 ORDER BY p.asks DESC NULLS LAST, p.last_seen DESC NULLS LAST,
+			          p.ecosystem, p.name, p.version, p.symbol`,
+			limit, offset, ecosystem, name, words)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var r WantedRow
+			var present bool
 			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Version, &r.Symbol, &r.Asks,
-				&r.FirstSeen, &r.LastSeen, &r.HasPage); err != nil {
+				&r.FirstSeen, &r.LastSeen, &r.HasPage, &total, &present); err != nil {
 				return err
 			}
-			out = append(out, r)
+			if present {
+				out = append(out, r)
+			}
 		}
 		return rows.Err()
 	})
-	return out, err
+	return out, int(total), err
 }
 
 // ---------------------------------------------------------- adoptions --

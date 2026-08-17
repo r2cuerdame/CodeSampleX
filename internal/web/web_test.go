@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -433,6 +434,52 @@ func (f *fakeStore) TopWanted(_ context.Context, limit int) ([]WantedRow, error)
 		return f.wanted[:limit], nil
 	}
 	return f.wanted, nil
+}
+
+func (f *fakeStore) WantedRows(_ context.Context, query string, offset, limit int) ([]WantedRow, int, error) {
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	all := append([]WantedRow(nil), f.wanted...)
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Asks != all[j].Asks {
+			return all[i].Asks > all[j].Asks
+		}
+		if all[i].Ecosystem != all[j].Ecosystem {
+			return all[i].Ecosystem < all[j].Ecosystem
+		}
+		if all[i].Name != all[j].Name {
+			return all[i].Name < all[j].Name
+		}
+		if all[i].Version != all[j].Version {
+			return all[i].Version < all[j].Version
+		}
+		return all[i].Symbol < all[j].Symbol
+	})
+	matched := all[:0]
+	for _, row := range all {
+		haystack := strings.ToLower(strings.Join([]string{row.Ecosystem, row.Name, row.Version, row.Symbol}, " "))
+		ok := true
+		for _, word := range words {
+			if !strings.Contains(haystack, word) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			matched = append(matched, row)
+		}
+	}
+	total := len(matched)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= total {
+		return nil, total, nil
+	}
+	matched = matched[offset:]
+	if limit > 0 && len(matched) > limit {
+		matched = matched[:limit]
+	}
+	return matched, total, nil
 }
 
 func (f *fakeStore) WantedForPackage(_ context.Context, ecosystem, name string) ([]WantedRow, error) {

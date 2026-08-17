@@ -79,6 +79,9 @@ type Store interface {
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	// WantedRows returns one searchable, ranked page plus the number of
+	// unanswered rows matching that query.
+	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone

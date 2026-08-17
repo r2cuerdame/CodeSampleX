@@ -809,6 +809,21 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	return out, nil
 }
 
+func (w *webStore) WantedRows(ctx context.Context, query string, offset, limit int) ([]web.WantedRow, int, error) {
+	rows, total, err := w.s.ListWanted(ctx, query, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]web.WantedRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.WantedRow{
+			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
+			Asks: r.Asks, HasPage: r.HasPage,
+		})
+	}
+	return out, total, nil
+}
+
 func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
 	rows, err := w.s.WantedForPackage(ctx, ecosystem, name)
 	if err != nil {

@@ -289,6 +289,10 @@ type Store interface {
 	RecordWantedBatch(ctx context.Context, reports []WantedSubmission) error
 	// TopWanted lists the most-asked packages that still have no sample.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	// ListWanted returns one searchable, ranked page of unanswered package
+	// coordinates plus the full filtered count. TopWanted remains the small
+	// public-API view; this is the collection contract used by the website.
+	ListWanted(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	// WantedForPackage is the stable targeted lookup behind a wanted-only
 	// package page; its result must not depend on the row's global rank.
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
