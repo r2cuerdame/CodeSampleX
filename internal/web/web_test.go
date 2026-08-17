@@ -70,11 +70,20 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, `content="summary_large_image"`)
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
-	// One page carries the whole story: the counters, the way in by name,
-	// and what the network can observe in each ecosystem.
-	for _, s := range []string{"Projects this month", "Peers today", "Verified Samples", "45,213",
+	// One page carries the whole story: the focused counters, the way in by
+	// name, and what the network can observe in each ecosystem.
+	for _, s := range []string{"Packages", "Evidence", "Verified Samples", "45.2K",
+		`title="45,213" aria-label="Evidence: 45,213"`,
 		"What it can observe today", "npm", "packages &amp; versions"} {
 		mustContain(t, body, s)
+	}
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	}
+	for _, omitted := range []string{"Symbols", "Projects this month", "Peers today", "Post-hit success rate"} {
+		if strings.Contains(body, `<span class="lbl">`+omitted+`</span>`) {
+			t.Errorf("homepage still renders %q as a stat card", omitted)
+		}
 	}
 	// Project links belong on every page.
 	mustContain(t, body, "https://github.com/r2cuerdame/CodeSampleX")
@@ -134,12 +143,12 @@ func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
 }
 
 // TestStatsPageRendersProducerJSON feeds the page the exact document the
-// aggregator writes. A field-shape mismatch (estimatedReasoningAvoided is
-// an object, not a number) silently failed the whole decode and blanked
-// every counter on the live site while the API returned real values.
+// aggregator writes. The homepage displays only the three decision-useful
+// counters in compact form, while preserving each exact count for assistive
+// technology and hover text.
 func TestStatsPageRendersProducerJSON(t *testing.T) {
 	produced, err := compatibility.StatsJSON(serverstore.NetworkCounts{
-		Peers: 2, Packages: 76, Symbols: 5, Observations: 312, VerifiedSamples: 4,
+		Peers: 22, Packages: 17_500, Symbols: 9_876, Observations: 45_213, VerifiedSamples: 1_234,
 	}, serverstore.AdoptionCounts{Reports: 7, Applied: 7}, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
@@ -148,17 +157,22 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	store.statsJSON, store.statsOK = string(produced), true
 
 	body := get(t, mux, "/").Body.String()
-	for _, want := range []string{"76", "312", "5", "4", "21"} { // 21 = 7 hits × 3
+	for _, want := range []string{
+		`title="17,500" aria-label="Packages: 17,500">17.5K</span>`,
+		`title="45,213" aria-label="Evidence: 45,213">45.2K</span>`,
+		`title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`,
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("counter %q missing from the front page — page shows placeholders instead of the aggregator's numbers:\n%s",
+			t.Errorf("counter %q missing from the front page:\n%s",
 				want, truncate(body))
 		}
 	}
-	// Exactly one tile has no data behind it here — post-hit success, which
-	// comes from adoption reports the fixture does not supply — and an em
-	// dash is the right rendering for it. Every other counter must show the
-	// aggregator's number. "0%" beside "Post-hit success rate" would be a
-	// claim that we watched and none of it worked.
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	}
+	if strings.Contains(body, `<span class="lbl">Symbols</span>`) || strings.Contains(body, `>9.9K</span>`) {
+		t.Errorf("symbol count leaked into the homepage stat cards:\n%s", truncate(body))
+	}
 	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 0 {
 		t.Errorf("%d counters rendered as a placeholder, want none:\n%s",
 			n, truncate(body))
@@ -302,12 +316,13 @@ func TestLangQueryAndCookie(t *testing.T) {
 	mustContain(t, rec3.Body.String(), "記録")
 }
 
-func TestNetworkCountersEstimatedLabel(t *testing.T) {
+func TestNetworkCountersKeepExactAccessibleValues(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
-	mustContain(t, body, "Estimated reasoning avoided")
-	mustContain(t, body, "estimated")
-	mustContain(t, body, "1,204")
+	mustContain(t, body, `title="45,213" aria-label="Evidence: 45,213">45.2K</span>`)
+	if strings.Contains(body, `<span class="lbl">Estimated reasoning avoided</span>`) {
+		t.Error("non-headline estimate still renders as a homepage card")
+	}
 }
 
 func TestRobotsTxt(t *testing.T) {
@@ -425,7 +440,14 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("landing must render without stats, got %d", rec.Code)
 	}
-	mustContain(t, rec.Body.String(), "Stop solving the same code twice.")
+	body := rec.Body.String()
+	mustContain(t, body, "Stop solving the same code twice.")
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("unavailable stats cards = %d, want 3 placeholders", got)
+	}
+	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 3 {
+		t.Errorf("unavailable stat placeholders = %d, want 3", got)
+	}
 }
 
 // TopWanted lets the fake stand in for the real store on the wanted page.

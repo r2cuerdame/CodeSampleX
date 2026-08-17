@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>CodeSampleX Operator</title>
+  <style>
+    :root { color-scheme: dark; --bg:#07132b; --panel:#0c1d3d; --line:#25477d; --ink:#edf5ff; --muted:#9eb3d4; --blue:#4387ff; --cyan:#62d9ff; --ok:#4ade80; --warn:#fbbf24; }
+    * { box-sizing:border-box }
+    body { margin:0; background:radial-gradient(circle at 12% 0,#16396f 0,transparent 32rem),var(--bg); color:var(--ink); font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif }
+    main { width:min(1180px,calc(100% - 32px)); margin:0 auto; padding:34px 0 64px }
+    h1,h2,p { margin-top:0 } h1 { font-size:clamp(25px,4vw,38px); margin-bottom:5px } h2 { font-size:17px; margin-bottom:16px }
+    .eyebrow { color:var(--cyan); font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase }
+    .muted,.note { color:var(--muted) } .note { font-size:12px; margin:12px 0 0 }
+    .topline { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:18px; margin-bottom:24px }
+    .stamp { color:var(--muted); font:12px ui-monospace,SFMono-Regular,Consolas,monospace }
+    .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px }
+    .panel { grid-column:span 12; background:linear-gradient(145deg,rgba(16,42,83,.96),rgba(8,25,54,.96)); border:1px solid var(--line); border-radius:18px; padding:20px; box-shadow:0 18px 45px rgba(0,0,0,.18) }
+    .status { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
+    .metric { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:15px; background:rgba(3,14,34,.38) }
+    .label { display:block; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase }
+    .value { display:block; margin-top:5px; font-size:24px; font-weight:820; letter-spacing:-.03em; overflow-wrap:anywhere }
+    .value.small { font-size:18px; letter-spacing:0 } .ok { color:var(--ok) } .bad { color:var(--warn) }
+    .counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
+    .counts .metric p { margin:8px 0 0; min-height:3em; color:var(--muted); font-size:12px }
+    table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.07em; text-transform:uppercase } th,td { padding:10px 8px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
+    code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }
+    .wide { grid-column:span 8 } .side { grid-column:span 4 }
+    .raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
+    .raw div { background:rgba(3,14,34,.35); border-radius:10px; padding:11px }
+    .raw strong { display:block; font-size:20px } .raw span { color:var(--muted); font-size:11px }
+    ul { margin:0; padding-left:20px } li+li { margin-top:7px }
+    .empty { padding:18px 0; color:var(--muted) }
+    @media(max-width:800px) { .wide,.side { grid-column:span 12 } .counts,.status { grid-template-columns:1fr } .counts .metric p { min-height:auto } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="topline">
+    <div><div class="eyebrow">Private · read only</div><h1>CodeSampleX Operator</h1><p class="muted">Measured network state without inferred user counts.</p></div>
+    <div class="stamp">generated {{.GeneratedAt}}</div>
+  </div>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="runtime-title">
+      <h2 id="runtime-title">Server</h2>
+      <div class="status">
+        <div class="metric"><span class="label">Version</span><span class="value small">{{.Version}}</span></div>
+        <div class="metric"><span class="label">Process uptime</span><span class="value small">{{.Uptime}}</span></div>
+        <div class="metric"><span class="label">Database read probe</span>{{if .DBHealthy}}<span class="value small ok">healthy · {{.DBProbe}}</span>{{else}}<span class="value small bad">unavailable{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div>
+      </div>
+      <p class="note">Probe latency is the application-level latest-stats read, not server-side PostgreSQL execution time.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="counts-title">
+      <h2 id="counts-title">Current bounded counts</h2>
+      {{if .CountsAvailable}}
+      <div class="counts">
+        <div class="metric"><span class="label">Packages</span><span class="value">{{number .Counts.Packages}}</span><p>Distinct public ecosystem/name pairs confirmed by registry checks.</p></div>
+        <div class="metric"><span class="label">Evidence (usage observations)</span><span class="value">{{number .Counts.Observations}}</span><p>Aggregated usage observations. This is not the number of verified samples.</p></div>
+        <div class="metric"><span class="label">Verified samples</span><span class="value">{{number .Counts.VerifiedSamples}}</span><p>Samples with a PASS contract receipt or a later verified status.</p></div>
+        <div class="metric"><span class="label">Anonymous peer buckets today</span><span class="value">{{number .Counts.Peers}}</span><p>Daily-rotating buckets; not an all-time user count and not active MCP sessions.</p></div>
+        <div class="metric"><span class="label">Project buckets this month</span><span class="value">{{number .Counts.ProjectsMonth}}</span><p>Monthly-rotating buckets; not accounts, installs, or unique people.</p></div>
+        <div class="metric"><span class="label">Opt-in serving peers now</span><span class="value">{{number .Counts.ServingPeers}}</span><p>Live P2P blob announcements only. Most evidence contributors never enable this.</p></div>
+      </div>
+      {{else}}<p class="empty">{{.CountsError}}</p>{{end}}
+    </section>
+
+    <section class="panel wide" aria-labelledby="wanted-title">
+      <h2 id="wanted-title">Wanted queue {{if .WantedAvailable}}· {{.WantedTotal}} unanswered coordinates{{end}}</h2>
+      {{if .WantedAvailable}}
+        {{if .Wanted}}
+        <table>
+          <thead><tr><th>Package</th><th>Version</th><th>Symbol</th><th>Anonymous epoch reports</th><th>Last seen</th></tr></thead>
+          <tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody>
+        </table>
+        {{else}}<p class="empty">No unanswered coordinates are currently recorded.</p>{{end}}
+      {{else}}<p class="empty">{{.WantedError}}</p>{{end}}
+      <p class="note">Only public package coordinates are stored; question text is not. Reports are deduplicated per anonymous reporter and epoch, so this is not raw request volume.</p>
+    </section>
+
+    <section class="panel side" aria-labelledby="adoption-title">
+      <h2 id="adoption-title">Sample adoption reports</h2>
+      {{if .AdoptionAvailable}}
+      <div class="raw">
+        <div><strong>{{number .Adoption.Reports}}</strong><span>total reports</span></div>
+        <div><strong>{{number .Adoption.Applied}}</strong><span>sample applied</span></div>
+        <div><strong>{{number .Adoption.BuildPass}}</strong><span>post-hit build PASS</span></div>
+        <div><strong>{{number .Adoption.BuildFail}}</strong><span>post-hit build FAIL</span></div>
+      </div>
+      {{else}}<p class="empty">{{.AdoptionError}}</p>{{end}}
+      <p class="note">These are all retained network reports, deduplicated per sample/reporter epoch. PASS and FAIL are reported outcomes; no “failure avoided” claim is inferred.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="limits-title">
+      <h2 id="limits-title">Not measured in this MVP</h2>
+      <ul class="muted">
+        <li>Unique users or accounts</li>
+        <li>Active MCP sessions</li>
+        <li>Installs and downloads</li>
+        <li>Language mix</li>
+        <li>Factory throughput</li>
+        <li>Failures avoided</li>
+        <li>30-day trend — the current store exposes only the latest bounded rollup</li>
+      </ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>

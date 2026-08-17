@@ -10,8 +10,9 @@ import (
 )
 
 // netStats mirrors the materialized NetworkStats JSON (plan P5.5). The
-// reasoning-avoided figure is an estimate by construction and is always
-// rendered with an "estimated" label (goal.md §14.5).
+// homepage deliberately presents only packages, evidence and verified
+// samples, but keeping the complete shape here lets it decode the producer's
+// document without changing the raw stats contract.
 type netStats struct {
 	Peers              int64   `json:"peers"`
 	ProjectsMonth      int64   `json:"projectsMonth"`
@@ -71,126 +72,35 @@ func (s *site) loadStats(r *http.Request) *netStats {
 	return &st
 }
 
-// statTile is one network counter. The reasoning-avoided tile always
-// carries Estimated=true — the figure is an estimate by definition.
+// statTile is one homepage network counter. Value is compact for scanning;
+// Exact is the locale-formatted raw count exposed to assistive technology
+// and pointer users.
 type statTile struct {
 	Label string
 	Value string
-	// Note carries the denominator when a rate has one. "100%" from a
-	// single report is arithmetically true and tells a reader nothing;
-	// beside "of 1 reported build" it tells them exactly what it is worth.
-	Note      string
-	Estimated bool
+	Exact string
 }
-
-// Thresholds below which a figure says less than nothing.
-const (
-	// minPeersToShow: a peer count is a participation statistic, and the
-	// operator's own machines are always in it. Two is what one person
-	// running a laptop and a test container produces, so the tile only
-	// starts carrying information well above that.
-	minPeersToShow = 5
-	// minReportsForARate: the smallest number of reported builds a
-	// percentage may be computed from. One build reported as "100%" is an
-	// anecdote wearing a percentage sign.
-	minReportsForARate = 20
-)
 
 func buildTiles(lang string, st *netStats) []statTile {
 	have := st != nil
 	if st == nil {
 		st = &netStats{}
 	}
-	num := func(n int64) string {
+	counter := func(key string, n int64) statTile {
+		tile := statTile{Label: i18n.T(lang, key)}
 		if !have {
-			return "—"
+			tile.Value = "—"
+			return tile
 		}
-		return i18n.FormatInt(lang, n)
+		tile.Value = i18n.FormatCompactInt(lang, n)
+		tile.Exact = i18n.FormatInt(lang, n)
+		return tile
 	}
-	pct := func(f float64) string {
-		if !have {
-			return "—"
-		}
-		return i18n.FormatPercent(lang, f)
+	return []statTile{
+		counter("stats.packages", st.Packages),
+		counter("stats.evidence", st.Evidence),
+		counter("stats.verified_samples", st.VerifiedSamples),
 	}
-	// notYetMeasured renders a figure that has no data behind it yet as an
-	// em dash rather than a zero. Both of the tiles below are derived from
-	// ADOPTION reports — a real user applying a sample and telling us how it
-	// went — and the producer marks them as a placeholder until one arrives.
-	// "0" reads as "we measured, and nobody was helped"; the truth is that
-	// nothing has been collected, and those are different claims.
-	notYetMeasured := func(v int64, rendered string) string {
-		if v == 0 {
-			return "—"
-		}
-		return rendered
-	}
-	// A RATE needs enough behind it to be a rate. "100%" over one reported
-	// build is not a measurement, it is one anecdote wearing a percentage
-	// sign — and a percentage implies a precision the sample size cannot
-	// support, which is a stronger claim than the raw count would make.
-	//
-	// Below the floor the tile is not shown at all: a reader deciding
-	// whether to install should see the numbers that mean something
-	// (packages, evidence, verified samples) rather than three tiles that
-	// quietly say "almost nobody has used this yet".
-	measured := func(n int64) bool { return n >= minReportsForARate }
-
-	tiles := []statTile{}
-	// Projects-this-month leads WHEN it means something. Peer buckets
-	// rotate daily, so the peer tile resets every midnight and reads as an
-	// empty network even when it is not; project buckets rotate monthly,
-	// which makes this the longest window the identity scheme can count
-	// honestly.
-	//
-	// But a project bucket is a DIRECTORY, not a person. With one peer on
-	// the network every one of them is the same machine, so "73 projects
-	// this month" is one operator's folder count wearing the clothes of a
-	// participation statistic — and a reader asked whether it meant
-	// seventy-three people. The peer tile is already hidden for this exact
-	// reason; this number needed the same rule, and it comes back on its
-	// own as soon as a second peer makes it mean what it says.
-	if st.Peers >= minPeersToShow {
-		tiles = append(tiles,
-			statTile{Label: i18n.T(lang, "stats.projects_month"), Value: num(st.ProjectsMonth)})
-	}
-	// The peer tile is omitted while the count cannot mean anything.
-	//
-	// Buckets rotate daily and the operator's own machine is always one of
-	// them, so "1" is indistinguishable from no external activity at all —
-	// and rendered as a network statistic it implies activity that is not
-	// there. The adoption detector uses exactly this reading: its recorded
-	// baseline is one peer today, meaning us. Above the baseline the number
-	// starts carrying information, and the tile comes back on its own.
-	if st.Peers >= minPeersToShow {
-		tiles = append(tiles, statTile{Label: i18n.T(lang, "stats.peers"), Value: num(st.Peers)})
-	}
-	tiles = append(tiles,
-		statTile{Label: i18n.T(lang, "stats.packages"), Value: num(st.Packages)},
-		statTile{Label: i18n.T(lang, "stats.symbols"), Value: num(st.Symbols)},
-		statTile{Label: i18n.T(lang, "stats.evidence"), Value: num(st.Evidence)},
-		statTile{Label: i18n.T(lang, "stats.verified_samples"), Value: num(st.VerifiedSamples)},
-		// Both this and the tile below come from ADOPTION reports, and both
-		// have to say "not measured" the same way. "0%" next to "Post-hit
-		// success rate" is a claim: we watched, and none of it worked. What
-		// is true is that nobody has reported yet, and a visitor deciding
-		// whether to install reads the first one.
-	)
-	if measured(st.PostHitBuildsReported) {
-		tiles = append(tiles, statTile{
-			Label: i18n.T(lang, "stats.post_hit_success"),
-			Value: notYetMeasured(st.PostHitBuildsReported, pct(st.PostHitSuccessRate)),
-			Note:  buildsNote(lang, st.PostHitBuildsReported),
-		})
-	}
-	if measured(st.PostHitBuildsReported) {
-		tiles = append(tiles, statTile{
-			Label:     i18n.T(lang, "stats.reasoning_avoided"),
-			Value:     notYetMeasured(st.EstimatedReasoningAvoided.Value, num(st.EstimatedReasoningAvoided.Value)),
-			Estimated: true,
-		})
-	}
-	return tiles
 }
 
 type landingPage struct {
@@ -378,19 +288,4 @@ func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string)
 		}
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
-}
-
-// buildsNote renders the denominator behind the post-hit rate, or "" when
-// there is nothing to qualify.
-func buildsNote(lang string, reported int64) string {
-	switch reported {
-	case 0:
-		return ""
-	case 1:
-		// English needs the singular, and several other locales inflect
-		// differently at one too. A number this small is exactly when the
-		// note matters most, so it should not read like a template.
-		return i18n.T(lang, "stats.of_one_build")
-	}
-	return i18n.T(lang, "stats.of_n_builds", i18n.FormatInt(lang, reported))
 }

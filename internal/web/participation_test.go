@@ -5,37 +5,18 @@ import (
 	"testing"
 )
 
-// A project bucket is a DIRECTORY, not a person. With one peer on the
-// network every bucket is the same machine, so "73 Projects this month"
-// was one operator's folder count wearing the clothes of a participation
-// statistic — and a reader asked whether it meant seventy-three people.
-//
-// The peer tile is already hidden for exactly this reason. This number
-// needed the same rule, and both come back on their own as soon as a
-// second peer makes them mean what they say.
-func TestParticipationNumbersAreHiddenUntilTheyMeanSomething(t *testing.T) {
-	alone := buildTiles("en", &netStats{Peers: 1, ProjectsMonth: 73, Packages: 10})
-	for _, tile := range alone {
-		if strings.Contains(tile.Label, "Projects this month") {
-			t.Errorf("projects tile shown with one peer: %q", tile.Value)
+// Participation counts remain part of the materialized stats document, but
+// the compact homepage strip is intentionally not a general stats dashboard.
+func TestParticipationNumbersNeverExpandHomepageStats(t *testing.T) {
+	for _, peers := range []int64{0, 1, 5, 5_000} {
+		tiles := buildTiles("en", &netStats{Peers: peers, ProjectsMonth: 73_000, Packages: 10})
+		if len(tiles) != 3 {
+			t.Errorf("peers=%d produced %d tiles, want 3", peers, len(tiles))
 		}
-		if strings.Contains(tile.Label, "Peers today") {
-			t.Errorf("peers tile shown with one peer: %q", tile.Value)
+		for _, tile := range tiles {
+			if strings.Contains(tile.Label, "Projects this month") || strings.Contains(tile.Label, "Peers today") {
+				t.Errorf("peers=%d rendered participation tile %q", peers, tile.Label)
+			}
 		}
-	}
-
-	joined := buildTiles("en", &netStats{Peers: minPeersToShow, ProjectsMonth: 73, Packages: 10})
-	var sawProjects, sawPeers bool
-	for _, tile := range joined {
-		if strings.Contains(tile.Label, "Projects this month") {
-			sawProjects = true
-		}
-		if strings.Contains(tile.Label, "Peers today") {
-			sawPeers = true
-		}
-	}
-	if !sawProjects || !sawPeers {
-		t.Errorf("above the peer floor both numbers should return: projects=%v peers=%v",
-			sawProjects, sawPeers)
 	}
 }

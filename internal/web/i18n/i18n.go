@@ -211,6 +211,68 @@ func FormatInt(lang string, n int64) string {
 	return b.String()
 }
 
+// FormatCompactInt shortens large counters for prominent UI while keeping
+// one useful decimal place (17,500 -> 17.5K). Callers that display this
+// value must keep FormatInt available as the exact, accessible value.
+func FormatCompactInt(lang string, n int64) string {
+	type unit struct {
+		divisor uint64
+		suffix  string
+	}
+	units := [...]unit{
+		{1_000_000_000_000, "T"},
+		{1_000_000_000, "B"},
+		{1_000_000, "M"},
+		{1_000, "K"},
+	}
+
+	negative := n < 0
+	magnitude := uint64(n)
+	if negative {
+		// This form also handles math.MinInt64 without overflowing first.
+		magnitude = uint64(-(n + 1)) + 1
+	}
+	if magnitude < 1_000 {
+		return FormatInt(lang, n)
+	}
+
+	chosenIndex := len(units) - 1
+	for i, candidate := range units {
+		if magnitude >= candidate.divisor {
+			chosenIndex = i
+			break
+		}
+	}
+	// Round to one decimal using integer arithmetic. Avoiding float64 keeps
+	// exact int64 counts stable even when they grow beyond 2^53.
+	chosen := units[chosenIndex]
+	tenths := (magnitude + chosen.divisor/20) / (chosen.divisor / 10)
+	// Rounding at a unit boundary should produce 1M, not 1000K (and the
+	// equivalent M/B/T transitions).
+	for tenths >= 10_000 && chosenIndex > 0 {
+		chosenIndex--
+		chosen = units[chosenIndex]
+		tenths = (magnitude + chosen.divisor/20) / (chosen.divisor / 10)
+	}
+
+	var b strings.Builder
+	if negative {
+		b.WriteByte('-')
+	}
+	b.WriteString(strconv.FormatUint(tenths/10, 10))
+	if tenths%10 != 0 {
+		switch lang {
+		case "de", "es", "fr", "pt-BR", "ru":
+			b.WriteByte(',')
+		default:
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.FormatUint(tenths%10, 10))
+	}
+	b.WriteString(chosen.suffix)
+	return b.String()
+}
+
 // FormatPercent renders a 0..1 ratio as a whole percentage with the
 // locale's spacing convention.
 func FormatPercent(lang string, ratio float64) string {

@@ -5,9 +5,11 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"net/http"
 
+	"github.com/r2cuerdame/codesamplex/internal/admin"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
@@ -15,6 +17,8 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
 	"github.com/r2cuerdame/codesamplex/internal/web"
 )
+
+var processStartedAt = time.Now()
 
 // BuildMux assembles the csx-server HTTP handler: the complete /v1 API
 // (contract C5) plus /healthz. Publicness gating follows CSX_PUBLIC_CHECK:
@@ -34,6 +38,12 @@ func BuildMux(cfg serverstore.ServerConfig, store serverstore.Store) *http.Serve
 		deps.Checker = &registry.Checker{Cache: &registry.ServerCache{Store: store}}
 	}
 	mux := httpapi.NewMux(deps)
+	admin.Register(mux, admin.Deps{
+		Store:       store,
+		TokenSHA256: cfg.AdminTokenSHA256,
+		Version:     serverVersion(),
+		StartedAt:   processStartedAt,
+	})
 	web.Register(mux, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},
 		PublicURL: cfg.PublicURL,
