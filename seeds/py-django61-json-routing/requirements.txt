@@ -1,0 +1,13 @@
+# Fully pinned, hash-checked dependency closure for Django 6.1.
+asgiref==3.12.1 \
+    --hash=sha256:59dcb51c272ad209d59bed5708a64a333083e86017d7fcdd67498eeab7784340 \
+    --hash=sha256:fe386d1c2bff7259ea95929266d12a8cf9a8b5a1c2598402967d8792e7a7c094
+django==6.1 \
+    --hash=sha256:6c132cd980c9392b06807d4ca52d72530d631dc65a85d9dacede00a780cefbbe \
+    --hash=sha256:86a2aacd59b817e4d6ac2ebfe22356c58f66f7b24e503f71b7c2fead677ee48b
+sqlparse==0.6.0 \
+    --hash=sha256:113c35c75365ab9cc9c7231d68c6428fb11c085fc8e9eb1ad659b7ddbf6cd2b9 \
+    --hash=sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f
+tzdata==2026.3 ; sys_platform == 'win32' \
+    --hash=sha256:4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415 \
+    --hash=sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931
