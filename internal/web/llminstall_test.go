@@ -48,6 +48,19 @@ func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	if !strings.Contains(body, ">"+want+"</pre>") {
 		t.Error("prompt is not rendered as readable page text")
 	}
+	// The primary action comes before the long prompt. A reader arriving at
+	// the anchor must not have to scan or scroll to discover the copy button.
+	button := strings.Index(body, `class="copy llmcopy mono"`)
+	prompt := strings.Index(body, `<pre class="llmtext mono">`)
+	if button < 0 || prompt < 0 || button > prompt {
+		t.Errorf("copy action must precede prompt: button=%d prompt=%d", button, prompt)
+	}
+}
+
+func TestStylesheetURLTracksTheRunningVersion(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/").Body.String()
+	mustContain(t, body, `href="/static/site.css?v=1.0.0-test"`)
 }
 
 // promptURL finds every URL the prompt hands to an agent.

@@ -62,10 +62,10 @@
   <div class="llmbox">
     {{/* Visible and selectable: with JavaScript off the copy button does
          nothing, and the prompt is still readable and copyable by hand. */}}
-    <pre class="llmtext mono">{{.LLMPrompt}}</pre>
     <div class="llmactions">
       <button class="copy llmcopy mono" type="button" data-copy="{{.LLMPrompt}}" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.llm_copy"}}</button>
     </div>
+    <pre class="llmtext mono">{{.LLMPrompt}}</pre>
   </div>
   <p class="note">{{.T "landing.llm_safety"}}</p>
   <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>

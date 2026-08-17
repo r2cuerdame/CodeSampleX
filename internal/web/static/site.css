@@ -287,8 +287,15 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
   margin: 0; font-size: 0.82rem; line-height: 1.65;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.llmactions { display: flex; justify-content: flex-end; margin-top: 0.75rem; }
-.llmcopy { font-size: 0.78rem; padding: 0.32rem 0.8rem; }
+.llmactions { display: flex; justify-content: flex-start; margin: 0 0 0.85rem; }
+.llmcopy {
+  margin-left: 0; padding: 0.55rem 0.9rem;
+  color: var(--accent-2); background: #fff; border-color: #fff;
+  font-size: 0.86rem; font-weight: 800;
+  box-shadow: 0 5px 14px rgba(0,0,0,0.18);
+}
+.llmcopy:hover { color: var(--accent-2); background: #eaf2ff; }
+.llmcopy.ok { color: #fff; background: var(--ok); border-color: var(--ok); }
 .llminstall .note { margin-top: 1rem; }
 .llminstall > p:last-child { margin-bottom: 0; }
 
