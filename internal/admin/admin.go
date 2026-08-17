@@ -119,12 +119,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "허용되지 않은 요청 방식입니다", http.StatusMethodNotAllowed)
 		return
 	}
 	if !h.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="CodeSampleX Admin", charset="UTF-8"`)
-		http.Error(w, "authorization required", http.StatusUnauthorized)
+		http.Error(w, "인증이 필요합니다", http.StatusUnauthorized)
 		return
 	}
 
@@ -135,11 +135,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Uptime:      formatDuration(nonNegative(now.Sub(h.startedAt))),
 	}
 	if data.Version == "" {
-		data.Version = "unknown"
+		data.Version = "알 수 없음"
 	}
 
 	if h.store == nil {
-		data.DBError = "store is not configured"
+		data.DBError = "저장소가 구성되지 않았습니다"
 	} else {
 		ctx, cancel := context.WithTimeout(r.Context(), dashboardTimeout)
 		defer cancel()
@@ -148,7 +148,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var body bytes.Buffer
 	if err := dashboardTemplate.Execute(&body, data); err != nil {
-		http.Error(w, "dashboard rendering failed", http.StatusInternalServerError)
+		http.Error(w, "운영 화면을 렌더링하지 못했습니다", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -193,20 +193,20 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 	_, _, err := h.store.GetLatestStats(ctx)
 	data.DBProbe = formatLatency(nonNegative(h.now().Sub(probeStart)))
 	if err != nil {
-		data.DBError = "read probe failed"
+		data.DBError = "읽기 점검 실패"
 	} else {
 		data.DBHealthy = true
 	}
 
 	if counts, err := h.store.NetworkCounts(ctx, now); err != nil {
-		data.CountsError = "network counts unavailable"
+		data.CountsError = "네트워크 집계를 불러올 수 없습니다"
 	} else {
 		data.Counts = counts
 		data.CountsAvailable = true
 	}
 
 	if rows, total, err := h.store.ListWanted(ctx, "", 0, topWantedLimit); err != nil {
-		data.WantedError = "Wanted summary unavailable"
+		data.WantedError = "요청 요약을 불러올 수 없습니다"
 	} else {
 		data.Wanted = rows
 		data.WantedTotal = total
@@ -214,7 +214,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 	}
 
 	if adoption, err := h.store.AdoptionSummary(ctx); err != nil {
-		data.AdoptionError = "adoption summary unavailable"
+		data.AdoptionError = "채택 요약을 불러올 수 없습니다"
 	} else {
 		data.Adoption = adoption
 		data.AdoptionAvailable = true
@@ -261,15 +261,15 @@ func formatLatency(d time.Duration) string {
 func formatDuration(d time.Duration) string {
 	d = d.Truncate(time.Second)
 	if d < time.Minute {
-		return fmt.Sprintf("%ds", int64(d/time.Second))
+		return fmt.Sprintf("%d초", int64(d/time.Second))
 	}
 	if d < time.Hour {
-		return fmt.Sprintf("%dm %ds", int64(d/time.Minute), int64((d%time.Minute)/time.Second))
+		return fmt.Sprintf("%d분 %d초", int64(d/time.Minute), int64((d%time.Minute)/time.Second))
 	}
 	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh %dm", int64(d/time.Hour), int64((d%time.Hour)/time.Minute))
+		return fmt.Sprintf("%d시간 %d분", int64(d/time.Hour), int64((d%time.Hour)/time.Minute))
 	}
-	return fmt.Sprintf("%dd %dh", int64(d/(24*time.Hour)), int64((d%(24*time.Hour))/time.Hour))
+	return fmt.Sprintf("%d일 %d시간", int64(d/(24*time.Hour)), int64((d%(24*time.Hour))/time.Hour))
 }
 
 func formatInt(n int64) string {

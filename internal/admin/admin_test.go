@@ -201,11 +201,11 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"1,234", "45,213", "951", "31 unanswered coordinates", "npm/three", "0.180.0", "Scene",
-		"Daily-rotating buckets; not an all-time user count and not active MCP sessions.",
-		"Monthly-rotating buckets; not accounts, installs, or unique people.",
-		"not raw request volume", "no “failure avoided” claim is inferred", "Not measured in this MVP",
-		"Active MCP sessions", "Installs and downloads", "30-day trend",
+		`<html lang="ko">`, "CodeSampleX 운영 현황", "1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
+		"매일 바뀌는 익명 버킷입니다. 누적 사용자나 활성 MCP 세션 수가 아닙니다.",
+		"매월 바뀌는 익명 버킷입니다. 계정·설치·고유 사용자 수가 아닙니다.",
+		"원시 요청 횟수가 아닙니다", "‘실패 회피’는 추정하지 않습니다", "아직 측정하지 않는 항목",
+		"활성 MCP 세션", "설치 및 다운로드", "30일 추세",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing honest label %q", want)
@@ -247,7 +247,7 @@ func TestReadProbeFailureIsShownWithoutInventingHealth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 dashboard with partial state", rec.Code)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "unavailable") || strings.Contains(body, "healthy ·") {
+	if body := rec.Body.String(); !strings.Contains(body, "사용 불가") || strings.Contains(body, "정상 ·") {
 		t.Fatalf("database status was not honest: %s", body)
 	}
 }

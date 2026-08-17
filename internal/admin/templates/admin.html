@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>CodeSampleX Operator</title>
+  <title>CodeSampleX 운영 현황</title>
   <style>
     :root { color-scheme: dark; --bg:#07132b; --panel:#0c1d3d; --line:#25477d; --ink:#edf5ff; --muted:#9eb3d4; --blue:#4387ff; --cyan:#62d9ff; --ok:#4ade80; --warn:#fbbf24; }
     * { box-sizing:border-box }
@@ -38,71 +38,71 @@
 <body>
 <main>
   <div class="topline">
-    <div><div class="eyebrow">Private · read only</div><h1>CodeSampleX Operator</h1><p class="muted">Measured network state without inferred user counts.</p></div>
-    <div class="stamp">generated {{.GeneratedAt}}</div>
+    <div><div class="eyebrow">비공개 · 읽기 전용</div><h1>CodeSampleX 운영 현황</h1><p class="muted">추정 사용자 수를 섞지 않은 실제 측정값입니다.</p></div>
+    <div class="stamp">생성 시각 {{.GeneratedAt}}</div>
   </div>
 
   <div class="grid">
     <section class="panel" aria-labelledby="runtime-title">
-      <h2 id="runtime-title">Server</h2>
+      <h2 id="runtime-title">서버</h2>
       <div class="status">
-        <div class="metric"><span class="label">Version</span><span class="value small">{{.Version}}</span></div>
-        <div class="metric"><span class="label">Process uptime</span><span class="value small">{{.Uptime}}</span></div>
-        <div class="metric"><span class="label">Database read probe</span>{{if .DBHealthy}}<span class="value small ok">healthy · {{.DBProbe}}</span>{{else}}<span class="value small bad">unavailable{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div>
+        <div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div>
+        <div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div>
+        <div class="metric"><span class="label">데이터베이스 읽기 점검</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div>
       </div>
-      <p class="note">Probe latency is the application-level latest-stats read, not server-side PostgreSQL execution time.</p>
+      <p class="note">점검 지연 시간은 애플리케이션의 최신 통계 읽기 시간이며 PostgreSQL 내부 실행 시간은 아닙니다.</p>
     </section>
 
     <section class="panel" aria-labelledby="counts-title">
-      <h2 id="counts-title">Current bounded counts</h2>
+      <h2 id="counts-title">현재 집계</h2>
       {{if .CountsAvailable}}
       <div class="counts">
-        <div class="metric"><span class="label">Packages</span><span class="value">{{number .Counts.Packages}}</span><p>Distinct public ecosystem/name pairs confirmed by registry checks.</p></div>
-        <div class="metric"><span class="label">Evidence (usage observations)</span><span class="value">{{number .Counts.Observations}}</span><p>Aggregated usage observations. This is not the number of verified samples.</p></div>
-        <div class="metric"><span class="label">Verified samples</span><span class="value">{{number .Counts.VerifiedSamples}}</span><p>Samples with a PASS contract receipt or a later verified status.</p></div>
-        <div class="metric"><span class="label">Anonymous peer buckets today</span><span class="value">{{number .Counts.Peers}}</span><p>Daily-rotating buckets; not an all-time user count and not active MCP sessions.</p></div>
-        <div class="metric"><span class="label">Project buckets this month</span><span class="value">{{number .Counts.ProjectsMonth}}</span><p>Monthly-rotating buckets; not accounts, installs, or unique people.</p></div>
-        <div class="metric"><span class="label">Opt-in serving peers now</span><span class="value">{{number .Counts.ServingPeers}}</span><p>Live P2P blob announcements only. Most evidence contributors never enable this.</p></div>
+        <div class="metric"><span class="label">패키지</span><span class="value">{{number .Counts.Packages}}</span><p>레지스트리 확인을 통과한 공개 생태계/이름 조합입니다.</p></div>
+        <div class="metric"><span class="label">증거(사용 관측)</span><span class="value">{{number .Counts.Observations}}</span><p>집계된 사용 관측 수입니다. 검증된 샘플 수와는 다릅니다.</p></div>
+        <div class="metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span><p>계약 PASS 영수증 또는 이후 검증 상태가 있는 샘플입니다.</p></div>
+        <div class="metric"><span class="label">오늘 익명 피어 버킷</span><span class="value">{{number .Counts.Peers}}</span><p>매일 바뀌는 익명 버킷입니다. 누적 사용자나 활성 MCP 세션 수가 아닙니다.</p></div>
+        <div class="metric"><span class="label">이번 달 프로젝트 버킷</span><span class="value">{{number .Counts.ProjectsMonth}}</span><p>매월 바뀌는 익명 버킷입니다. 계정·설치·고유 사용자 수가 아닙니다.</p></div>
+        <div class="metric"><span class="label">현재 기여 피어</span><span class="value">{{number .Counts.ServingPeers}}</span><p>현재 P2P blob 제공을 알린 피어만 셉니다. 대부분의 증거 기여자는 이 기능을 켜지 않습니다.</p></div>
       </div>
       {{else}}<p class="empty">{{.CountsError}}</p>{{end}}
     </section>
 
     <section class="panel wide" aria-labelledby="wanted-title">
-      <h2 id="wanted-title">Wanted queue {{if .WantedAvailable}}· {{.WantedTotal}} unanswered coordinates{{end}}</h2>
+      <h2 id="wanted-title">요청 대기열 {{if .WantedAvailable}}· 미응답 좌표 {{.WantedTotal}}개{{end}}</h2>
       {{if .WantedAvailable}}
         {{if .Wanted}}
         <table>
-          <thead><tr><th>Package</th><th>Version</th><th>Symbol</th><th>Anonymous epoch reports</th><th>Last seen</th></tr></thead>
+          <thead><tr><th>패키지</th><th>버전</th><th>심벌</th><th>익명 일별 보고</th><th>최근 기록</th></tr></thead>
           <tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody>
         </table>
-        {{else}}<p class="empty">No unanswered coordinates are currently recorded.</p>{{end}}
+        {{else}}<p class="empty">현재 기록된 미응답 좌표가 없습니다.</p>{{end}}
       {{else}}<p class="empty">{{.WantedError}}</p>{{end}}
-      <p class="note">Only public package coordinates are stored; question text is not. Reports are deduplicated per anonymous reporter and epoch, so this is not raw request volume.</p>
+      <p class="note">공개 패키지 좌표만 저장하며 질문 원문은 저장하지 않습니다. 보고는 익명 보고자/일자별로 중복 제거되므로 원시 요청 횟수가 아닙니다.</p>
     </section>
 
     <section class="panel side" aria-labelledby="adoption-title">
-      <h2 id="adoption-title">Sample adoption reports</h2>
+      <h2 id="adoption-title">샘플 채택 보고</h2>
       {{if .AdoptionAvailable}}
       <div class="raw">
-        <div><strong>{{number .Adoption.Reports}}</strong><span>total reports</span></div>
-        <div><strong>{{number .Adoption.Applied}}</strong><span>sample applied</span></div>
-        <div><strong>{{number .Adoption.BuildPass}}</strong><span>post-hit build PASS</span></div>
-        <div><strong>{{number .Adoption.BuildFail}}</strong><span>post-hit build FAIL</span></div>
+        <div><strong>{{number .Adoption.Reports}}</strong><span>전체 보고</span></div>
+        <div><strong>{{number .Adoption.Applied}}</strong><span>샘플 적용</span></div>
+        <div><strong>{{number .Adoption.BuildPass}}</strong><span>적용 후 빌드 PASS</span></div>
+        <div><strong>{{number .Adoption.BuildFail}}</strong><span>적용 후 빌드 FAIL</span></div>
       </div>
       {{else}}<p class="empty">{{.AdoptionError}}</p>{{end}}
-      <p class="note">These are all retained network reports, deduplicated per sample/reporter epoch. PASS and FAIL are reported outcomes; no “failure avoided” claim is inferred.</p>
+      <p class="note">보존된 전체 네트워크 보고이며 샘플/익명 보고자/일자별로 중복 제거됩니다. PASS와 FAIL은 보고된 결과이고 ‘실패 회피’는 추정하지 않습니다.</p>
     </section>
 
     <section class="panel" aria-labelledby="limits-title">
-      <h2 id="limits-title">Not measured in this MVP</h2>
+      <h2 id="limits-title">아직 측정하지 않는 항목</h2>
       <ul class="muted">
-        <li>Unique users or accounts</li>
-        <li>Active MCP sessions</li>
-        <li>Installs and downloads</li>
-        <li>Language mix</li>
-        <li>Factory throughput</li>
-        <li>Failures avoided</li>
-        <li>30-day trend — the current store exposes only the latest bounded rollup</li>
+        <li>고유 사용자 또는 계정</li>
+        <li>활성 MCP 세션</li>
+        <li>설치 및 다운로드</li>
+        <li>언어별 비중</li>
+        <li>샘플 공장 처리량</li>
+        <li>회피한 실패</li>
+        <li>30일 추세 — 현재 저장소는 최신 범위 제한 집계만 제공합니다</li>
       </ul>
     </section>
   </div>
