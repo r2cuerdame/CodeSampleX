@@ -105,7 +105,7 @@ if (-not $SkipImage) {
 }
 
 Write-Output "== shipping bundle to $Ip =="
-Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups" | Out-Null
+Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
 Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"
 Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile"
 Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
@@ -199,6 +199,12 @@ if (-not $SkipImage) {
 }
 
 Write-Output "== starting stack =="
+# A release refresh swaps the host dist directory atomically. An existing
+# bind mount keeps the old directory inode even after the host path is
+# replaced, so `compose up` without recreation can keep serving the previous
+# release forever. Recreate the server explicitly on every deploy: image
+# upgrades need the same guarantee, and its healthcheck bounds the restart.
+Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object { Write-Output $_ }
 if (-not $SkipImage) {
