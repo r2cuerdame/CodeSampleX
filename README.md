@@ -2,6 +2,10 @@
 
 > **Stop solving the same code twice.**
 
+<p align="center">
+  <img src="internal/web/static/inspector-hero-v1.webp" alt="CodeSampleX compatibility inspector" width="560">
+</p>
+
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
 CodeSampleX is a **local-first distributed reasoning cache** for coding LLMs. Instead of every agent on Earth re-deriving how a public library works — and re-hitting the same version incompatibilities — CodeSampleX collects anonymous compatibility **Evidence** from real development environments and serves **verified minimal Samples** with the exact delta between a known-good answer and your project.
@@ -9,6 +13,18 @@ CodeSampleX is a **local-first distributed reasoning cache** for coding LLMs. In
 - Website & Compatibility Explorer: **https://codesamplex.dev**
 - One question your LLM stops re-answering: *does `axios.post` actually work on axios 1.12 + Node 22 + pnpm + Windows 11 — and if not, at which stage does it break?*
 - Works with **Claude Code, Codex, Gemini CLI, OpenCode** — and any MCP client (Cursor, Windsurf, Cline, Zed, VS Code).
+
+## Live network
+
+[Records](https://codesamplex.dev/records) · [Findings](https://codesamplex.dev/findings) · [Wanted](https://codesamplex.dev/wanted) · [Contribute](https://codesamplex.dev/contribute)
+
+The public counters are a five-minute rollup, available as JSON without an account:
+
+```bash
+curl -fsSL https://codesamplex.dev/v1/stats
+```
+
+The public deployment is **seeded-only for sample source**: official samples are clean-room projects whose provenance can be established. Search, evidence submission, verification receipts, the wanted board, and `NO_SAFE_MATCH` requests remain open without an account. See [Contribute](https://codesamplex.dev/contribute) for the paths that are open to everyone.
 
 ## Install
 
@@ -90,6 +106,8 @@ Four layers, kept honestly separate:
 
 A project compiling is never presented as a symbol working. Unknown causes stay `UNKNOWN`. A wrong HIT is worse than a MISS — `NO_SAFE_MATCH` is a feature.
 
+Verification receipts now have two wire versions. Legacy v1 receipts remain readable, but only a signed **v2 receipt** can carry `resolvedPackages`: canonical package URLs read after a successful resolve from what the verifier actually installed. Missing or ambiguous provenance produces no version claim. The server rejects unsorted, non-canonical, undeclared, cross-ecosystem, or resolve-without-PASS claims, and compatibility snapshots file each receipt under the version that actually ran rather than the version an author typed into a manifest.
+
 ## Agent integration (MCP)
 
 **Configured automatically by `csx init`:** Claude Code · Codex · Gemini CLI · OpenCode.
@@ -111,7 +129,7 @@ Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use 
 
 If you will not pipe a script into a shell — or you are on an architecture the bundle omits — take the binary directly: the same release publishes `csx-{linux,darwin}-{amd64,arm64}`, `csx-windows-{amd64,arm64}.exe` and `SHA256SUMS.txt`, and `https://codesamplex.dev/dl/csx-<os>-<arch>` serves the same file. It is statically linked, so it runs on musl/alpine with no glibc. Copy-pasteable download + checksum + `chmod` steps are in [llms-install.md](llms-install.md).
 
-Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Publishing a sample is deliberately **not** an MCP capability — it requires your explicit CLI approval after a full preview.
+Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Uploading sample source is deliberately **not** an MCP capability. `propose_public_sample` creates only a sanitized clean-room brief; an authorized seeder still has to use the CLI, review the complete preview, and type an explicit approval.
 
 ```bash
 csx sync                   # warm the shard cache — once, right after install
@@ -133,7 +151,9 @@ Honest capability matrix: [docs/adapters.md](docs/adapters.md) — no adapter cl
 
 ## Architecture
 
-Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered explorer behind Caddy). Samples are content-addressed (`sha256`) and distributed local-cache-first → peers → main seeder. Downloaded samples never run on your host directly — resolve with `--ignore-scripts`, compile and contract run network-off in a sandbox, receipts are ed25519-signed. See [goal.md](goal.md) (product spec), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
+Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered explorer behind Caddy). Samples are content-addressed (`sha256`) and distributed local-cache-first → peers → main seeder. Their case identity is derived from the claim itself; stale or hand-copied `caseId` values are refused.
+
+Downloaded samples never run on your host directly. Resolution runs in a pinned sandbox with install scripts disabled where the ecosystem supports it; the immutable artifact is re-hashed after resolve; compile and contract stages run network-off. The resulting ed25519-signed v2 receipt covers the stage verdicts, environment, logs digest, and any package versions the resolver could actually establish. Compatibility aggregation keeps receipt/package sets scoped together, so one run cannot be flattened into evidence for a version or dependency set it never executed. See [goal.md](goal.md) (product spec), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
 
 ## Building from source
 
