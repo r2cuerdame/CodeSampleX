@@ -81,6 +81,20 @@ func TestPackagePage(t *testing.T) {
 	mustContain(t, body, "regression candidate")
 }
 
+// /explore is retained as a legacy redirect, not as an internal destination.
+// Advertising it in both the visible breadcrumb and its JSON-LD made crawlers
+// rediscover a URL that can only ever appear as "Page with redirect".
+func TestPackagePageDoesNotAdvertiseLegacyExploreURL(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/npm/axios?lang=de").Body.String()
+
+	mustContain(t, body, `href="/records?lang=de"`)
+	mustContain(t, body, `https://codesamplex.dev/records?eco=npm`)
+	if strings.Contains(body, "/explore") {
+		t.Error("package page still advertises the legacy /explore redirect")
+	}
+}
+
 func TestVersionPageListsSymbols(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/npm/axios/1.12.0")

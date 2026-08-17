@@ -500,7 +500,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+" ("+eco+")"))
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
-		{eco, base + "/explore?q=" + url.QueryEscape(eco)},
+		{eco, base + recordsHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
 		{name, base + pkgHref(eco, name)},
 	})}
 	s.render(w, "package", http.StatusOK, packagePage{

@@ -226,10 +226,11 @@ func xmlEscape(s string) string {
 	return r.Replace(s)
 }
 
-// sitemapSampleLimit caps the sample section of the map. The sitemap
-// protocol allows 50,000 URLs per file; this leaves room for the package
-// section and keeps a single /sitemap.xml request bounded.
-const sitemapSampleLimit = 5000
+// sitemapSampleLimit caps the sample section of the map. The factory target
+// is 10,000 samples, so the old 5,000 cap silently dropped its oldest half.
+// 20,000 samples plus the bounded landing, static and package sections remain
+// well below the sitemap protocol's 50,000-URL limit while leaving headroom.
+const sitemapSampleLimit = 20_000
 
 // sampleIDRe guards the sample ids that go into the sitemap. Ids are
 // content addresses ("sha256:<hex>"), and the colon is a legal path

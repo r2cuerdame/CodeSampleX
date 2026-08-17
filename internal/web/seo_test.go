@@ -41,6 +41,41 @@ func TestSitemapListsSamplePages(t *testing.T) {
 	mustContain(t, body, "<lastmod>2026-08-01</lastmod>")
 }
 
+// The factory target is 10,000 samples. Every one must remain discoverable;
+// ListSamples is newest-first, so checking the last row catches a cap that
+// quietly evicts the oldest samples. The resulting single sitemap must also
+// retain ample room under both protocol limits.
+func TestSitemapCoversFactoryTargetWithinProtocolBudget(t *testing.T) {
+	const (
+		factoryTarget     = 10_000
+		protocolURLLimit  = 50_000
+		protocolByteLimit = 50 * 1024 * 1024
+	)
+
+	mux, store := newTestMux(t, nil)
+	store.sampleList = make([]SampleListItem, 0, factoryTarget)
+	for i := 0; i < factoryTarget; i++ {
+		store.sampleList = append(store.sampleList, SampleListItem{
+			SampleID:  fmt.Sprintf("sha256:%064x", i),
+			CreatedAt: "2026-08-17",
+		})
+	}
+
+	body := get(t, mux, "/sitemap.xml").Body.String()
+	oldest := "https://codesamplex.dev/samples/" + store.sampleList[factoryTarget-1].SampleID
+	mustContain(t, body, "<loc>"+oldest+"</loc>")
+
+	if got := strings.Count(body, "<loc>https://codesamplex.dev/samples/"); got != factoryTarget {
+		t.Errorf("sample <loc> count = %d, want %d", got, factoryTarget)
+	}
+	if got := strings.Count(body, "<loc>"); got >= protocolURLLimit {
+		t.Errorf("sitemap URL count = %d, must stay below %d", got, protocolURLLimit)
+	}
+	if got := len(body); got >= protocolByteLimit {
+		t.Errorf("sitemap size = %d bytes, must stay below %d", got, protocolByteLimit)
+	}
+}
+
 // TestSitemapSkipsMalformedSampleIDs: a sitemap entry that does not
 // resolve is worse than a missing one, so anything that is not a content
 // address is left out rather than escaped into a guess.
