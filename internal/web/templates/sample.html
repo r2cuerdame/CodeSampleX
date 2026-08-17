@@ -3,7 +3,7 @@
      content address is identity, not a title, so it moves below. */}}
 <p class="eyebrow mono">{{.T "sample.title"}}</p>
 <h1>{{if .Goal}}{{.Goal}}{{else}}<span class="mono">{{.Meta.SampleID}}</span>{{end}}</h1>
-<p class="dim mono small">{{.Meta.SampleID}}</p>
+<p class="dim mono small sample-id">{{.Meta.SampleID}}</p>
 <div class="badges">
   <span class="chip status mono">{{.Meta.Status}}</span>
   <span class="chip level mono">{{.Level}}</span>

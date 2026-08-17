@@ -234,6 +234,7 @@ func TestSamplePage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "POST JSON with axios and retries")
+	mustContain(t, body, `class="dim mono small sample-id"`)
 	mustContain(t, body, "responds 200")
 	mustContain(t, body, "retries on ECONNRESET")
 	mustContain(t, body, "src/index.mjs")

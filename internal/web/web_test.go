@@ -418,6 +418,7 @@ func TestStaticCSSServed(t *testing.T) {
 		t.Errorf("content type %q", rec.Header().Get("Content-Type"))
 	}
 	mustContain(t, rec.Body.String(), "prefers-color-scheme")
+	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
 }
 
 func TestStaticInspectorHeroServed(t *testing.T) {
