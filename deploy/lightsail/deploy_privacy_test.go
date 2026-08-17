@@ -24,8 +24,8 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		strings.Index(script, reload),
 		strings.Index(script, smoke),
 	}
-	lockAcquire := strings.Index(script, "Invoke-Remote $acquireDeployLock")
-	lockRelease := strings.Index(script, "Invoke-Remote $releaseDeployLock")
+	lockAcquire := strings.Index(script, "Invoke-RemoteScript $acquireDeployLock")
+	lockRelease := strings.Index(script, "Invoke-RemoteScript $releaseDeployLock")
 	parentInstall := strings.Index(script, `Invoke-Remote "sudo install -d -o $User -g $User /opt/codesamplex"`)
 	imageBuild := strings.Index(script, "& docker build --platform linux/amd64")
 	imageSave := strings.Index(script, "& docker save $localImageTag -o $imageTar")
@@ -41,6 +41,16 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
+		`function Invoke-RemoteScript([string]$Script)`,
+		`$process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)`,
+		`$psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "sh -s"'`,
+		`Invoke-RemoteScript $caddyConfigPreflight`,
+		`Invoke-RemoteScript $promoteCaddy`,
+		`Invoke-RemoteScript $safeAccessLogSmoke`,
+		`Invoke-RemoteScript $rollbackCaddy`,
+		`Invoke-RemoteScript $legacyAccessPurge`,
+		`Invoke-RemoteScript $adminProbe`,
+		`Invoke-RemoteScript $releaseDeployLock`,
 		`-v "$candidate":/etc/caddy/Caddyfile:ro`,
 		`if [ "$passed" -eq 0 ]; then rm -f "$candidate"; fi`,
 		`sudo install -d -o $User -g $User /opt/codesamplex`,
@@ -60,6 +70,20 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("deploy.ps1 is missing %q", required)
+		}
+	}
+	for _, unsafe := range []string{
+		`Invoke-Remote $acquireDeployLock`,
+		`Invoke-Remote $caddyConfigPreflight`,
+		`Invoke-Remote $promoteCaddy`,
+		`Invoke-Remote $safeAccessLogSmoke`,
+		`Invoke-Remote $rollbackCaddy`,
+		`Invoke-Remote $legacyAccessPurge`,
+		`Invoke-Remote $adminProbe`,
+		`Invoke-Remote $releaseDeployLock`,
+	} {
+		if strings.Contains(script, unsafe) {
+			t.Errorf("quote-sensitive multiline program still crosses argv: %q", unsafe)
 		}
 	}
 	if strings.Contains(script, `Copy-Remote (Join-Path $repo "deploy\caddy\Caddyfile") "/opt/codesamplex/deploy/caddy/Caddyfile"`) {

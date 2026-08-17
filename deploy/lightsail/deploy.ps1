@@ -47,6 +47,54 @@ function Invoke-Remote([string]$Script) {
     if ($LASTEXITCODE -ne 0) { throw "remote command failed ($LASTEXITCODE): $Script`n$($out -join "`n")" }
     return $out
 }
+function Invoke-RemoteScript([string]$Script) {
+    if ([string]::IsNullOrWhiteSpace($Script)) { throw "refusing an empty remote script" }
+    if ($KeyPath.Contains('"')) { throw "SSH key path contains an unsupported quote" }
+    if ($remote -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$') { throw "unsafe SSH destination" }
+
+    # Windows OpenSSH does not preserve nested shell quotes when an entire
+    # multiline program is passed as one argv element. Send programs on stdin
+    # to a fixed `sh -s` command so regex pipes, quotes and redirects arrive
+    # byte-for-byte. Secrets use Invoke-RemoteInput instead.
+    $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Script)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = (Get-Command ssh.exe -ErrorAction Stop).Source
+    $psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "sh -s"'
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $psi
+    try {
+        if (-not $process.Start()) { throw "could not start SSH script transport" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        try {
+            $process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)
+        } finally {
+            $process.StandardInput.Close()
+            [Array]::Clear($scriptBytes, 0, $scriptBytes.Length)
+        }
+        $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            $detail = (($stdout, $stderr) -join "`n").Trim()
+            if ($detail.Length -gt 4096) { $detail = $detail.Substring($detail.Length - 4096) }
+            throw "remote script failed ($($process.ExitCode))`n$detail"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+            return @($stdout.TrimEnd() -split "`r?`n")
+        }
+    } finally {
+        if ($null -ne $scriptBytes) { [Array]::Clear($scriptBytes, 0, $scriptBytes.Length) }
+        $stdout = $null
+        $stderr = $null
+        $process.Dispose()
+    }
+}
 function Invoke-RemoteInput([string]$Script, [string]$StdinText) {
     if ($StdinText -notmatch '^[0-9a-f]{64}$') {
         throw "refusing malformed remote verifier input"
@@ -137,7 +185,7 @@ printf '%s\n' "$owner" > "$lock/owner"
 chmod 0600 "$lock/owner"
 '@
 $acquireDeployLock = $acquireDeployLock.Replace('__CSX_DEPLOY_OWNER__', $deployLockOwner)
-Invoke-Remote $acquireDeployLock | Out-Null
+Invoke-RemoteScript $acquireDeployLock | Out-Null
 $deployLockHeld = $true
 $deployScriptFailure = $null
 $imageTar = $null
@@ -287,7 +335,7 @@ docker exec "$name" sh -c '
 docker rm -f "$name" >/dev/null 2>&1
 passed=1
 '@
-Invoke-Remote $caddyConfigPreflight | Out-Null
+Invoke-RemoteScript $caddyConfigPreflight | Out-Null
 Write-Output "Caddy privacy-safe log preflight: passed"
 Copy-Remote (Join-Path $repo "deploy\backup.sh") "/opt/codesamplex/deploy/backup.sh"
 Copy-Remote (Join-Path $repo "deploy\restore-check.sh") "/opt/codesamplex/deploy/restore-check.sh"
@@ -429,7 +477,7 @@ chmod 0644 "$candidate"
 mv -f "$candidate" "$live"
 promoted=1
 '@
-    Invoke-Remote $promoteCaddy | Out-Null
+    Invoke-RemoteScript $promoteCaddy | Out-Null
     $caddyPromoted = $true
 
 Write-Output "== starting stack =="
@@ -518,7 +566,7 @@ docker compose exec -T server sh -c '
 '
 '@
 $safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
-Invoke-Remote $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
+Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
     Invoke-Remote "rm -f /opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy /opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent /opt/codesamplex/deploy/caddy/Caddyfile.candidate" | Out-Null
     $caddyPromoted = $false
 } catch {
@@ -545,7 +593,7 @@ else
 fi
 '@
         try {
-            Invoke-Remote $rollbackCaddy | Out-Null
+            Invoke-RemoteScript $rollbackCaddy | Out-Null
             Write-Output "Caddy config: restored rollback-predeploy after failed activation"
         } catch {
             Write-Warning "Caddy activation failed and automatic rollback also failed; rollback-predeploy needs operator attention"
@@ -583,7 +631,7 @@ removed=$(docker compose exec -T caddy sh -c '
 ')
 printf 'legacy query-bearing access files irrecoverably removed: %s\n' "$removed"
 '@
-Invoke-Remote $legacyAccessPurge | ForEach-Object { Write-Output $_ }
+Invoke-RemoteScript $legacyAccessPurge | ForEach-Object { Write-Output $_ }
 if ($ConfigureAdmin) {
     # An unauthenticated 401 proves that the exact private route was mounted;
     # a missing or malformed verifier deliberately leaves it at 404.
@@ -596,7 +644,7 @@ response=$(docker compose exec -T server wget -S -O /dev/null http://127.0.0.1:8
 # accepted; this response is from the fixed loopback /admin endpoint only.
 printf '%s\n' "$response" | grep -q '401'
 '@
-    Invoke-Remote $adminProbe | Out-Null
+    Invoke-RemoteScript $adminProbe | Out-Null
     Write-Output "admin route: configured (401 without credentials)"
 
     # Prove the local DPAPI credential and remote verifier are the same value.
@@ -662,7 +710,7 @@ rmdir "$lock"
 '@
         $releaseDeployLock = $releaseDeployLock.Replace('__CSX_DEPLOY_OWNER__', $deployLockOwner)
         try {
-            Invoke-Remote $releaseDeployLock | Out-Null
+            Invoke-RemoteScript $releaseDeployLock | Out-Null
             $deployLockHeld = $false
         } catch {
             if ($null -ne $deployScriptFailure) {
