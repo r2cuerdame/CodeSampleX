@@ -349,6 +349,11 @@ func splitPackagePath(ecosystem, rest string) (name, version, symbol string, ok 
 	minName := 1
 	if ecosystem == "npm" && strings.HasPrefix(segs[0], "@") {
 		minName = 2
+	} else if ecosystem == "maven" {
+		// Maven identity is groupId/artifactId. Artifact IDs are allowed to
+		// look like versions (for example a library literally named "2.0"),
+		// so the first segment can never terminate the coordinate.
+		minName = 2
 	}
 	if len(segs) < minName {
 		return "", "", "", false

@@ -109,8 +109,32 @@ func resolvedVersion(dir string, m domain.SampleManifest, p domain.PURL) string 
 		return goListResolved(dir, p.Name)
 	case "pypi":
 		return distInfoResolved(dir, p.Name)
+	case "maven":
+		return mavenResolved(dir, p)
 	}
 	return ""
+}
+
+// mavenResolved proves one manifest-locked JAR was fetched by the generated
+// Central-only resolver. The manifest supplies the coordinate, but it becomes
+// receipt evidence only when the fresh local repository contains the exact JAR
+// and Maven's remote marker attributes it to the forced Central mirror.
+func mavenResolved(dir string, p domain.PURL) string {
+	group, artifact, ok := strings.Cut(p.Name, "/")
+	if !ok || strings.Contains(artifact, "/") || !domain.ConcreteResolvedVersion(p.Version) {
+		return ""
+	}
+	base := filepath.Join(dir, ".csx-vendor", "m2", filepath.FromSlash(strings.ReplaceAll(group, ".", "/")), artifact, p.Version)
+	jarName := artifact + "-" + p.Version + ".jar"
+	jar, err := os.Stat(filepath.Join(base, jarName))
+	if err != nil || !jar.Mode().IsRegular() || jar.Size() == 0 {
+		return ""
+	}
+	marker := readFile(base, "_remote.repositories")
+	if !strings.Contains(marker, jarName+">csx-central=") {
+		return ""
+	}
+	return p.Version
 }
 
 // bunResolved reads Bun's text lockfile. bun.lock is JSONC rather than

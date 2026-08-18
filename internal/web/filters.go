@@ -15,9 +15,9 @@ type filterOption struct {
 	Selected bool
 }
 
-var ecosystemFilterValues = []string{"npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub"}
+var ecosystemFilterValues = []string{"npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub", "maven"}
 var osFilterValues = []string{"linux", "windows", "darwin"}
-var runtimeFilterValues = []string{"node", "python", "go", "rust", "ruby", "php", "elixir", "dart", "browser", "bun", "deno"}
+var runtimeFilterValues = []string{"node", "python", "go", "rust", "ruby", "php", "elixir", "dart", "java", "browser", "bun", "deno"}
 var basisFilterValues = []string{"observed", "verified"}
 
 func cleanFilterValue(raw string, allowed []string) string {

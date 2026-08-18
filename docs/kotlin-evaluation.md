@@ -1,9 +1,8 @@
-# Kotlin / JVM as a fifth ecosystem — evaluated, not adopted
+# Java/Maven verification adopted narrowly; Gradle/Kotlin still excluded
 
-**Verdict: not adopted.** Both JVM build tools break the two-phase sandbox
-guarantee that npm, PyPI, Go and Cargo all satisfy, and the break is
-structural rather than a missing flag. Everything below was measured, not
-reasoned about.
+**Current verdict:** Java libraries from Maven Central now have a narrow A4
+verifier. Gradle and arbitrary Maven builds are still not adopted. The original
+measurements below remain the reason for that boundary.
 
 ## What the sandbox guarantees today
 
@@ -28,7 +27,7 @@ Measured: `gradle --no-daemon dependencies` resolved fine inside
 `--memory=512m` in 2m11s, so resource limits are not the obstacle. The
 obstacle is that resolving at all means executing the sample.
 
-## Maven: declarative, but its plugins resolve lazily
+## Why ordinary Maven builds are still unsafe
 
 `pom.xml` is declarative, so Maven clears the bar Gradle fails. It fails a
 different one: surefire resolves its *provider* tree when the test goal
@@ -47,7 +46,31 @@ the list is not derivable from the pom. Producing a complete offline
 repository means running the tests once with the network up — which is the
 Gradle problem again.
 
-## What would make it work
+## The adopted JVM-specific runner
+
+The implementation is the earlier option 3, constrained to what it can prove:
+
+1. `pom.xml`, `.mvn`, project settings, extensions and build plugins are never
+   used in the network-enabled stage.
+2. Every runtime JAR is listed as an exact canonical Maven purl in
+   `csx.json`. That complete list is the lock; SNAPSHOTs, ranges, classifiers
+   and non-JAR packaging are rejected.
+3. The host writes a fresh resolver POM and settings below `.csx-vendor`.
+   Settings mirror every repository to Maven Central. Maven runs the pinned
+   `maven-dependency-plugin:3.9.0` from `/tmp`, with strict checksums and
+   transitive expansion disabled.
+4. Only the generated JAR directory crosses into the network-off build and
+   contract stages. Samples compile and run with plain `javac`/`java`; they do
+   not need surefire or any project plugin.
+5. The resolve log records the exact coordinate list and SHA-256 of every JAR,
+   and the receipt reports every manifest package actually found in the fresh,
+   Central-only local repository.
+
+This supports normal Java library contracts. It does not claim that arbitrary
+Maven applications, annotation-processor builds, Kotlin compiler plugins,
+Gradle projects or Maven plugin APIs are supported.
+
+## Options considered before adoption
 
 Three options, all requiring a decision rather than more code:
 
@@ -64,12 +87,11 @@ Three options, all requiring a decision rather than more code:
    guarantee intact, and it is real work: a resolver integration plus a
    contract runner that does not go through Gradle or Maven at all.
 
-Option 3 is the recommendation whenever JVM support is worth that cost.
-Until then the adapter matrix should not list a JVM ecosystem, because
-claiming A4 for it would claim an isolation property the pipeline cannot
-deliver.
+Option 3 is now implemented for the exact-JAR Maven Central subset above. The
+adapter matrix claims only A4 for that subset; it makes no local-project A0/A1/
+A2 claim and no Gradle/Kotlin claim.
 
-## Cost of the four ecosystems that do work
+## Why the earlier adapters were smaller
 
 For comparison, adding an ecosystem that fits the model is small: a pinned
 image, a resolve command, and cache environment variables pointing inside

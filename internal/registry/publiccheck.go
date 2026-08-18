@@ -46,9 +46,10 @@ const defaultHexArchiveBaseURL = "https://repo.hex.pm"
 
 var defaultClient = &http.Client{Timeout: requestTimeout}
 
-// Checker resolves package publicness against the supported registries. Eight
-// ecosystems have Public v1 verification adapters; Maven Central is queried
-// only so Java demand can enter Wanted without claiming adapter support.
+// Checker resolves package publicness against the supported registries. Nine
+// ecosystems have Public v1 verification adapters; Maven is deliberately A4
+// only, so this probe supports exact sample coordinates and Wanted without
+// implying that arbitrary Java projects are scanned.
 // The zero value uses the real registry endpoints, a 5s-timeout HTTP client,
 // and no cache.
 type Checker struct {

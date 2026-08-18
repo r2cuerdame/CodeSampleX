@@ -54,6 +54,7 @@ func TestResolveCommandPerEcosystem(t *testing.T) {
 		"pypi":   {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-deps --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
 		"golang": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json"},
 		"cargo":  {"sh", "-c", "rm -rf /work/.csx-vendor/cargo /work/.csx-vendor/target; cargo fetch --locked"},
+		"maven":  {"sh", "-c", mavenResolveScript},
 	}
 	for eco, want := range cases {
 		got, err := resolveCommand(eco, "")
@@ -79,7 +80,7 @@ func TestResolveCommandPerEcosystem(t *testing.T) {
 }
 
 func TestEveryResolverStartsFromCleanGeneratedOutput(t *testing.T) {
-	for _, eco := range []string{"npm", "pypi", "golang", "cargo", "composer", "gem", "pub", "hex"} {
+	for _, eco := range []string{"npm", "pypi", "golang", "cargo", "composer", "gem", "pub", "hex", "maven"} {
 		got, err := resolveCommand(eco, "")
 		if err != nil {
 			t.Fatalf("%s: %v", eco, err)
@@ -164,6 +165,7 @@ func TestDockerRunnerImages(t *testing.T) {
 		"pypi":   "python:3.12-alpine",
 		"golang": "golang:1.26-alpine",
 		"cargo":  "rust:1-alpine",
+		"maven":  mavenJavaImage,
 	}
 	for eco, want := range cases {
 		img, err := imageFor(eco, "")
@@ -236,7 +238,7 @@ func TestNativeRunnerExecutesNothing(t *testing.T) {
 // contract runs. Every value here must therefore live under /work, and
 // none may forward host environment.
 func TestStageEnvKeepsCachesInTheWorkspace(t *testing.T) {
-	for _, eco := range []string{"pypi", "golang", "cargo"} {
+	for _, eco := range []string{"pypi", "golang", "cargo", "maven"} {
 		env := stageEnv(eco, "")
 		if len(env) == 0 {
 			t.Errorf("%s: no stage env, its resolve output cannot survive to the contract stage", eco)
@@ -444,7 +446,7 @@ func TestNPMResolverMatchesReceiptPackageManager(t *testing.T) {
 // separate containers sharing only /work, so any toolchain cache outside it
 // is gone before the contract runs.
 func TestEveryEcosystemKeepsCachesInTheWorkspace(t *testing.T) {
-	for _, eco := range []string{"pypi", "golang", "cargo", "composer", "gem", "pub", "hex"} {
+	for _, eco := range []string{"pypi", "golang", "cargo", "composer", "gem", "pub", "hex", "maven"} {
 		env := stageEnv(eco, "")
 		if len(env) == 0 {
 			t.Errorf("%s: no cache redirection, its resolve output cannot survive the stage boundary", eco)
@@ -485,6 +487,7 @@ func TestResolveNeverRunsSampleCode(t *testing.T) {
 		"npm":      "--ignore-scripts",
 		"composer": "--no-scripts",
 		"hex":      "hex.package fetch", // never `mix deps.get`, which evaluates mix.exs
+		"maven":    "-DexcludeTransitive=true",
 	} {
 		cmd, err := resolveCommand(eco, "")
 		if err != nil {
@@ -501,6 +504,13 @@ func TestResolveNeverRunsSampleCode(t *testing.T) {
 	for _, forbidden := range []string{"deps.get", "Code.eval", "elixir /work"} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("hex resolve contains %q, which would evaluate the sample's own code", forbidden)
+		}
+	}
+	maven, _ := resolveCommand("maven", "")
+	mavenScript := strings.Join(maven, " ")
+	for _, forbidden := range []string{"/work/pom.xml", "/work/.mvn", "mvn test", "dependency:go-offline"} {
+		if strings.Contains(mavenScript, forbidden) {
+			t.Errorf("Maven resolve contains %q, which would trust project-controlled Maven configuration", forbidden)
 		}
 	}
 }

@@ -24,6 +24,10 @@ func TestSplitPackagePathKeepsGoMajorSuffixInTheName(t *testing.T) {
 		{"npm", "zod/v4", "zod", "v4", ""},
 		{"cargo", "serde/1.0.229", "serde", "1.0.229", ""},
 		{"npm", "@scope/pkg/1.2.3", "@scope/pkg", "1.2.3", ""},
+		{"maven", "com.fasterxml.jackson.core/jackson-databind", "com.fasterxml.jackson.core/jackson-databind", "", ""},
+		{"maven", "com.fasterxml.jackson.core/jackson-databind/2.21.4", "com.fasterxml.jackson.core/jackson-databind", "2.21.4", ""},
+		{"maven", "org.example/2.0", "org.example/2.0", "", ""},
+		{"maven", "org.example/2.0/1.4.0", "org.example/2.0", "1.4.0", ""},
 	}
 	for _, c := range cases {
 		name, version, symbol, ok := splitPackagePath(c.eco, c.rest)

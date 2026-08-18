@@ -13,7 +13,7 @@ A4  Clean Sample + Contract verification
 Two of these describe different halves of the system, and the split is the
 most useful thing this table says. A0–A2 are what the **local scanner** does
 to *your* project. A4 is what the **verifier** does to a *published sample*.
-An ecosystem can have one without the other, and four of them do.
+An ecosystem can have one without the other, and five of them do.
 
 | Ecosystem | Adapter | Package managers | A0 | A1 | A2 | A3 | A4 | Symbol confidence |
 |-----------|---------------------|--------------------|----|----|----|----|----|-------------------|
@@ -25,6 +25,7 @@ An ecosystem can have one without the other, and four of them do.
 | gem | ruby@1 | bundler | – | – | – | – | ✓ | UNKNOWN |
 | pub | dart@1 | pub | – | – | – | – | ✓ | UNKNOWN |
 | hex | elixir@1 | mix | – | – | – | – | ✓ | UNKNOWN |
+| maven | maven-java@1 | Maven | – | – | – | – | ✓ | UNKNOWN |
 
 ## Verifier images
 
@@ -46,6 +47,7 @@ that most often decides whether a package with a native module loads at all.
 | gem | ruby | `ruby:3-alpine` |
 | pub | dart | `dart:3.13.0` |
 | hex | elixir | `elixir:1.20.1-alpine` |
+| maven | Java | `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927…` |
 
 npm keys on the **runtime**, not just the ecosystem, because "does this
 package work on Bun" is exactly the question this project exists to answer.
@@ -73,6 +75,12 @@ fetch`, which verifies its checksum. A hex sample without a committed
 `mix.lock` cannot be verified, and because that path skips mix's own `.hex`
 marker file, hex samples build and test with `--no-deps-check`.
 
+Maven uses the same rule by refusing the sample's Maven project altogether
+during resolve. Exact Maven purls in `csx.json` are the complete runtime lock.
+CodeSampleX generates a resolver project and Central-only settings, invokes the
+pinned dependency plugin from `/tmp` with transitive expansion disabled, and
+passes only the resulting JAR directory to offline `javac`/`java` stages.
+
 ## Honest limitations, stated on purpose
 
 - **PROBABLE, not EXACT**: static import/member analysis without a type
@@ -82,7 +90,7 @@ marker file, hex samples build and test with `--no-deps-check`.
   execution. The `SYMBOL_EXECUTED`/`SYMBOL_CALL` stages exist in the schema
   for future instrumentation (browser/worker contexts included — see
   docs/execution-context.md) and the server rejects them from clients today.
-- **Four ecosystems verify but do not scan**: composer, gem, pub and hex have
+- **Five ecosystems verify but do not scan**: composer, gem, pub, hex and Maven have
   no local project adapter, so a PHP or Elixir project on your machine
   produces no evidence and no local hits. Their published samples are still
   fully verified, so an agent that names the packages it is about to use gets
@@ -90,22 +98,21 @@ marker file, hex samples build and test with `--no-deps-check`.
 - **Dynamic usage degrades confidence**: Python getattr/importlib and Rust
   macro-expanded usage report `UNKNOWN` rather than guessing (goal.md §13.3,
   §13.5).
-- **Evaluated and declined**: JVM (Gradle/Maven) and Swift — see
-  docs/kotlin-evaluation.md. Both build with executable manifests, which the
-  resolve stage cannot honour.
+- **Deliberately narrow JVM support**: plain Java library contracts backed by a
+  complete exact Maven Central JAR set are verified; Gradle, arbitrary Maven
+  builds/plugins, classifiers, SNAPSHOTs and Kotlin compiler plugins remain
+  unsupported. See docs/kotlin-evaluation.md.
 
 Machine-readable source of truth: `schemas/v1/adapters.json`, served at
 `GET /v1/adapters` and rendered at `/adapters`.
 
-## Wanted-only coordinates
+## Wider Wanted-only coordinates
 
-The Wanted intake deliberately has a wider vocabulary than the adapter
-matrix. `maven` coordinates such as
+Maven coordinates such as
 `pkg:maven/org.apache.commons/commons-lang3@3.17.0` are accepted after the
-exact release is confirmed on Maven Central. This records demand for Java
-without pretending that CodeSampleX can scan or verify Java projects yet.
-Maven remains outside `domain.AllowedEcosystems`, so it cannot produce
-automatic usage evidence.
+exact release is confirmed on Maven Central and can back A4 samples. Maven has
+no local scanner, so merely opening a Java project still produces no automatic
+usage evidence.
 
 Engines and platform SDKs are environment, not ordinary dependencies. A miss
 with a fixed public `frameworks` entry such as `unity@6000.0.24f1`,

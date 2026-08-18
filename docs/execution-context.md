@@ -9,7 +9,7 @@ Electron 38, Web Worker, Service Worker, Bun, Deno는 서로 다른 환경으로
 `EnvironmentFingerprint`(schemas/v1/environment.json)에 다음 축이 추가되었다.
 
 ```text
-executionContext   node | browser | webview | electron | webworker | serviceworker | bun | deno | <확장 가능>
+executionContext   node | browser | webview | electron | webworker | serviceworker | bun | deno | java | <확장 가능>
 browserFamily      chrome | edge | firefox | safari | chromium | android-webview | ios-wkwebview | electron
 browserMajor       "140"  (이미 bucket)
 engine             chromium | gecko | webkit

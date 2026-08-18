@@ -36,6 +36,13 @@ func TestHexRuntimeFilterUsesRecordedElixir(t *testing.T) {
 	}
 }
 
+func TestMavenJavaFiltersAreAccepted(t *testing.T) {
+	f := cleanRecordFilter(RecordFilter{Ecosystem: "maven", Runtime: "java"})
+	if f.Ecosystem != "maven" || f.Runtime != "java" {
+		t.Fatalf("Maven/Java filters were discarded: %+v", f)
+	}
+}
+
 func TestRecordsFiltersUseRecordedDimensions(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/records?eco=npm&os=windows&runtime=node&basis=verified").Body.String()

@@ -189,12 +189,13 @@ const langCookie = "csx_lang"
 // knownEcosystems guards the /{ecosystem}/... routes against junk paths.
 //
 // Automatic project observation started with four ecosystems, but verified
-// samples and compatibility snapshots now cover all eight. Keeping the old
+// samples and compatibility snapshots now cover all nine. Keeping the old
 // four-name route guard made every Gem, Composer, Hex and pub package URL in
 // the sitemap a guaranteed 404 even though the data behind it existed.
 var knownEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
 	"gem": true, "composer": true, "hex": true, "pub": true,
+	"maven": true,
 }
 
 type site struct {

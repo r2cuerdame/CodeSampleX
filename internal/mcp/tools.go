@@ -79,7 +79,7 @@ func environmentSchema() map[string]any {
 		"type":        "object",
 		"description": "Sparse environment fingerprint; set only the dimensions you know. Include executionContext (and browserFamily/browserMajor when browser-like) so results are graded for where the code actually runs.",
 		"properties": map[string]any{
-			"ecosystem":             strProp("npm | pypi | cargo | golang"),
+			"ecosystem":             strProp("npm | pypi | cargo | golang | maven"),
 			"os":                    strProp("windows | linux | darwin"),
 			"osVersionBucket":       strProp("e.g. \"11\""),
 			"arch":                  strProp("amd64 | arm64"),

@@ -76,6 +76,10 @@ func TestResolvedPackagesReadsEachEcosystemsLockfile(t *testing.T) {
 			"pubspec.lock":                   "packages:\r\n  collection:\r\n    dependency: direct main\r\n    description:\r\n      name: collection\r\n      url: https://pub.dev\r\n    source: hosted\r\n    version: \"1.19.1\"\r\n",
 			".dart_tool/package_config.json": `{"configVersion":2,"packages":[{"name":"collection","rootUri":"file:///work/.csx-vendor/pub/hosted/pub.dev/collection-1.19.1","packageUri":"lib/"}]}`,
 		}, "pkg:pub/collection@1.19.1"},
+		{"maven", "pkg:maven/org.apache.commons/commons-lang3@3.17.0", map[string]string{
+			".csx-vendor/m2/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.jar": "jar bytes",
+			".csx-vendor/m2/org/apache/commons/commons-lang3/3.17.0/_remote.repositories":     "commons-lang3-3.17.0.jar>csx-central=\n",
+		}, "pkg:maven/org.apache.commons/commons-lang3@3.17.0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -84,6 +88,32 @@ func TestResolvedPackagesReadsEachEcosystemsLockfile(t *testing.T) {
 			got := resolvedPackages(dir, manifestWith(c.purl))
 			if len(got) != 1 || got[0] != c.want {
 				t.Errorf("resolved %v, want [%s]", got, c.want)
+			}
+		})
+	}
+}
+
+func TestMavenResolvedRequiresFreshCentralArtifact(t *testing.T) {
+	purl := "pkg:maven/org.apache.commons/commons-lang3@3.17.0"
+	base := ".csx-vendor/m2/org/apache/commons/commons-lang3/3.17.0/"
+	for name, files := range map[string]map[string]string{
+		"missing jar": {
+			base + "_remote.repositories": "commons-lang3-3.17.0.jar>csx-central=\n",
+		},
+		"empty jar": {
+			base + "commons-lang3-3.17.0.jar": "",
+			base + "_remote.repositories":     "commons-lang3-3.17.0.jar>csx-central=\n",
+		},
+		"wrong repository": {
+			base + "commons-lang3-3.17.0.jar": "jar",
+			base + "_remote.repositories":     "commons-lang3-3.17.0.jar>attacker=\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAll(t, dir, files)
+			if got := resolvedPackages(dir, manifestWith(purl)); len(got) != 0 {
+				t.Fatalf("unproven Maven artifact became receipt evidence: %v", got)
 			}
 		})
 	}

@@ -32,6 +32,7 @@ const (
 	// their API against the browser environment the manifest requested,
 	// instead of failing before launch while looking for their old cache key.
 	chrome134Executable = "/home/pptruser/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
+	mavenJavaImage      = "maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927df2c662cdd47ddb116443d6bec4696cfae3de1a0ddac8fcc7b87ce61ae"
 )
 
 // imageFor maps an ecosystem AND runtime to its pinned verifier image.
@@ -93,6 +94,11 @@ func imageFor(ecosystem, runtime string) (string, error) {
 		return "dart:3.13.0", nil
 	case "hex":
 		return "elixir:1.20.1-alpine", nil
+	case "maven":
+		if runtime != "" && runtime != "java" {
+			return "", fmt.Errorf("sandbox: no verifier image for maven runtime %q", runtime)
+		}
+		return mavenJavaImage, nil
 	}
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
@@ -187,6 +193,8 @@ func imageRuntime(ecosystem, runtime string) (rt, version, language string) {
 		return "dart", "3", "dart"
 	case "hex":
 		return "elixir", "1", "elixir"
+	case "maven":
+		return "java", "21", "java"
 	}
 	return "", "", ""
 }
@@ -227,6 +235,8 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	packageManager := m.Environment.PackageManager
 	if eco == "npm" {
 		packageManager = NPMResolver(runtimeOf(m, host))
+	} else if eco == "maven" {
+		packageManager = "maven"
 	}
 	env := domain.EnvironmentFingerprint{
 		SchemaVersion:    1,
@@ -251,6 +261,12 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		env.BrowserMajor = "134"
 		env.Engine = "chromium"
 		env.EngineVersion = "134"
+	}
+	if eco == "maven" {
+		env.LanguageVersion = "21"
+		env.Compiler = "javac"
+		env.CompilerVersion = "21"
+		env.PackageManagerVersion = "3.9"
 	}
 	return env.Normalize()
 }
@@ -353,6 +369,11 @@ func reapContainer(name string) {
 
 // Resolve fetches dependencies with the network ON but lifecycle scripts OFF.
 func (r DockerRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
+	if m.Environment.Ecosystem == "maven" {
+		if err := prepareMavenResolver(dir, m); err != nil {
+			return StageResult{Result: ResultFail, Log: err.Error()}
+		}
+	}
 	cmd, err := resolveCommand(m.Environment.Ecosystem, m.Environment.Runtime)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
@@ -422,6 +443,7 @@ var imageBases = map[string]struct{ bucket, libc string }{
 	"oven/bun:1-alpine":    {"alpine", "musl"},
 	"composer:2":           {"alpine", "musl"}, // Alpine, despite the tag
 	"dart:3.13.0":          {"debian", "glibc"},
+	mavenJavaImage:         {"alpine", "musl"},
 }
 
 // imageBase reports the distribution bucket and libc of a verifier image.

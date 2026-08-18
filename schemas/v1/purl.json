@@ -4,5 +4,5 @@
   "title": "PackageCoordinate",
   "description": "PURL-form package coordinate. Version is the lockfile-resolved version where available, never a manifest range.",
   "type": "string",
-  "pattern": "^pkg:(npm|pypi|cargo|golang)/.+@.+$"
+  "pattern": "^pkg:(npm|pypi|cargo|golang|maven)/.+@.+$"
 }

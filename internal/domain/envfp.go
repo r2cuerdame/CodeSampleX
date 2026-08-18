@@ -25,7 +25,7 @@ type EnvironmentFingerprint struct {
 	// ExecutionContext is an independent compatibility axis: where the
 	// observed stage actually executed. Open vocabulary — well-known values
 	// are "node", "browser", "webview", "electron", "webworker",
-	// "serviceworker", "bun", "deno"; new runtimes extend it without a
+	// "serviceworker", "bun", "deno", "java"; new runtimes extend it without a
 	// schema change. Build/test observations record the toolchain context
 	// (a browser-targeting build still executes in node); browser-context
 	// evidence only comes from stages that truly ran there.

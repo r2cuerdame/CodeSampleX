@@ -121,6 +121,19 @@
       ],
       "symbolConfidence": "UNKNOWN",
       "notes": "Verification-only adapter, and the one with a real constraint. mix.exs is executable Elixir and every mix task evaluates it, so `mix deps.get` would run the sample's own code while the network is up. Resolve therefore never lets mix see the project: it works from a scratch directory, reads the pinned package set out of mix.lock as TEXT, and fetches each one with mix hex.package fetch, which verifies the package checksum. A sample without a committed mix.lock cannot be verified. Because that skips mix's own .hex marker file, samples build and test with --no-deps-check. No local project scanner yet, so Elixir projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: elixir:1.20.1-alpine."
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven-java",
+      "version": "1.0.0",
+      "packageManagers": [
+        "maven"
+      ],
+      "capabilities": [
+        "A4"
+      ],
+      "symbolConfidence": "UNKNOWN",
+      "notes": "Verification-only Java adapter. The sample's pom.xml, .mvn directory, settings and build plugins are never used while networking is enabled. Exact canonical Maven purls in the manifest are the complete runtime lock (direct and companion JARs): CodeSampleX generates a fresh resolver POM and Central-only settings, runs only maven-dependency-plugin 3.9.0 from /tmp with transitive expansion disabled and strict checksums, then runs build/contract offline in the digest-pinned maven:3.9.11-eclipse-temurin-21-alpine image. This deliberately excludes Gradle, Maven classifiers/non-JAR packaging, SNAPSHOTs and dependency graphs not fully pinned in the manifest. No local project scanner yet, so Maven projects get no A0/A1/A2 detection."
     }
   ],
   "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."

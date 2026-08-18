@@ -113,8 +113,8 @@ func TestJavaMavenMissQueuesWantedWithoutClaimingAdapterSupport(t *testing.T) {
 		!strings.Contains(items[0].Payload, "pkg:maven/org.apache.commons/commons-lang3@3.17.0") {
 		t.Fatalf("Maven miss did not become a wanted candidate: %+v", items)
 	}
-	if domain.AllowedEcosystems["maven"] {
-		t.Fatal("wanted-only Maven must not become an automatic evidence ecosystem")
+	if !domain.AllowedEcosystems["maven"] {
+		t.Fatal("verified Maven support must be in the public ecosystem allowlist")
 	}
 }
 

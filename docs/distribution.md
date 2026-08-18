@@ -217,13 +217,13 @@ Verified answers to library compatibility questions
 **Paragraph** (1,210 characters, inside every form's limit including Anthropic's 2,000):
 
 ```
-CodeSampleX is a stdio MCP server that answers a question documentation cannot: does this library API actually work on these exact versions, package manager, runtime and OS - and if not, at which stage does it break? Instead of an agent re-deriving a public library's usage from memory, it asks CodeSampleX first and gets either a verified minimal sample graded against the caller's environment, or NO_SAFE_MATCH, which is a deliberate answer rather than a plausible guess. Every published sample is a tiny project with a contract test; that contract is built and executed in a pinned container with the network off, and the result is an ed25519-signed receipt. Compile observations and execution proof are recorded separately and never summed. It is local-first: the tool that runs your build reduces the result to anonymous package/version/symbol/environment facts on your machine, and source code, file paths, project names and raw logs are never transmitted; local-only mode transmits nothing at all. Eight package ecosystems are covered (npm, PyPI, Go modules, Cargo, Composer, RubyGems, pub, Hex), verified across ten runtime images including Bun and Deno. Apache-2.0; published samples default to MIT-0.
+CodeSampleX is a stdio MCP server that answers a question documentation cannot: does this library API actually work on these exact versions, package manager, runtime and OS - and if not, at which stage does it break? Instead of an agent re-deriving a public library's usage from memory, it asks CodeSampleX first and gets either a verified minimal sample graded against the caller's environment, or NO_SAFE_MATCH, which is a deliberate answer rather than a plausible guess. Every published sample is a tiny project with a contract test; that contract is built and executed in a pinned container with the network off, and the result is an ed25519-signed receipt. Compile observations and execution proof are recorded separately and never summed. It is local-first: the tool that runs your build reduces the result to anonymous package/version/symbol/environment facts on your machine, and source code, file paths, project names and raw logs are never transmitted; local-only mode transmits nothing at all. Nine package ecosystems are covered (npm, PyPI, Go modules, Cargo, Composer, RubyGems, pub, Hex, Maven), verified across eleven runtime images including Bun, Deno and Java 21. Apache-2.0; published samples default to MIT-0.
 ```
 
 Notes on the numbers in that paragraph:
 
-- "Eight package ecosystems" and "ten runtime images" come from the two tables in
-  `docs/adapters.md`, counted. Do not write "nine".
+- "Nine package ecosystems" and "eleven runtime images" come from the two tables
+  in `docs/adapters.md`, counted.
 - No sample count appears in the copy on purpose: the live landing page read
   **104 Verified Samples** on 2026-08-14 and the number moves. If a form wants
   one, read it off https://codesamplex.dev first.
@@ -263,7 +263,7 @@ Reuse these anywhere. All verified against the repo or the live site.
 | MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.1.2/codesamplex-mcp.mcpb` |
 | Transport | stdio |
 | Category | Developer Tools (or "Development" where that is the option) |
-| Tags | `compatibility`, `dependencies`, `verification`, `evidence`, `npm`, `pypi`, `golang`, `cargo`, `developer-tools` |
+| Tags | `compatibility`, `dependencies`, `verification`, `evidence`, `npm`, `pypi`, `golang`, `cargo`, `maven`, `developer-tools` |
 | Contact email | **Operator supplies.** Not written into this file — it is a public repo, and forms that want a contact address should get one the operator chooses. |
 | Install (Windows) | `irm https://codesamplex.dev/install.ps1 \| iex` |
 | Install (macOS/Linux) | `curl -fsSL https://codesamplex.dev/install.sh \| sh` |
@@ -455,7 +455,7 @@ files are needed at the repo root:
   "homepage": "https://codesamplex.dev",
   "repository": "https://github.com/r2cuerdame/CodeSampleX",
   "license": "Apache-2.0",
-  "keywords": ["compatibility", "dependencies", "verification", "npm", "pypi", "golang", "cargo"]
+  "keywords": ["compatibility", "dependencies", "verification", "npm", "pypi", "golang", "cargo", "maven"]
 }
 ```
 

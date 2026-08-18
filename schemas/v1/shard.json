@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "key", "generatedAt", "packages"],
   "properties": {
     "schemaVersion": {"const": 1},
-    "key": {"type": "string", "pattern": "^(npm|pypi|cargo|golang)/.+/[^/]+$"},
+    "key": {"type": "string", "pattern": "^(npm|pypi|cargo|golang|maven)/.+/[^/]+$"},
     "generatedAt": {"type": "string", "format": "date-time"},
     "packages": {
       "type": "array",

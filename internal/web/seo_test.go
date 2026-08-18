@@ -140,7 +140,7 @@ func TestPackagePageExistsForASampledPackage(t *testing.T) {
 	mustContain(t, rec.Body.String(), `href="/samples/sha256:cafe01"`)
 }
 
-// Verified samples cover eight ecosystems.  The package router originally
+// Verified samples cover nine ecosystems. The package router originally
 // kept the four-ecosystem observation allowlist and turned every Gem,
 // Composer, Hex and pub link emitted by the sitemap into a 404.
 func TestPackagePagesExistForEverySampleEcosystem(t *testing.T) {
@@ -154,6 +154,7 @@ func TestPackagePagesExistForEverySampleEcosystem(t *testing.T) {
 		{"composer", "guzzlehttp/guzzle", "8.0.2"},
 		{"hex", "req", "0.7.2"},
 		{"pub", "args", "2.7.0"},
+		{"maven", "org.apache.commons/commons-lang3", "3.17.0"},
 	}
 	for i, tc := range cases {
 		id := fmt.Sprintf("sha256:ecosystem-%d", i)

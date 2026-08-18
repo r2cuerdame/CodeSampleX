@@ -125,3 +125,61 @@ func TestDockerSmokeHexResolve(t *testing.T) {
 		t.Fatalf("jason was not unpacked into deps/: %v", err)
 	}
 }
+
+// TestDockerSmokeMavenJava proves the narrow Java path end to end: an exact
+// Central coordinate is resolved without reading the sample pom/.mvn tree,
+// javac sees only the locked JAR directory, and the contract executes after
+// Docker networking has been disabled. It is opt-in because it pulls a large
+// JDK image and contacts Maven Central during resolve.
+func TestDockerSmokeMavenJava(t *testing.T) {
+	if os.Getenv("CSX_TEST_DOCKER") != "1" {
+		t.Skip("set CSX_TEST_DOCKER=1 to run the real-docker smoke test")
+	}
+	if Detect(context.Background()) != domain.CapContainerRun {
+		t.Skip("docker daemon not available")
+	}
+
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("pom.xml", `<project><build><plugins><plugin><artifactId>must-not-run</artifactId></plugin></plugins></build></project>`)
+	write(".mvn/maven.config", `-s /work/attacker-settings.xml`)
+	write("Contract.java", `import org.apache.commons.lang3.StringUtils;
+public final class Contract {
+  public static void main(String[] args) {
+    if (!StringUtils.isBlank(" \t")) throw new AssertionError("contract failed");
+    System.out.println("contract ok");
+  }
+}
+`)
+
+	m := mavenManifest("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
+	m.BuildCommand = []string{"sh", "-c", "mkdir -p /work/.csx-vendor/classes && javac -cp '/work/.csx-vendor/maven-jars/*' -d /work/.csx-vendor/classes Contract.java"}
+	m.ContractCommand = []string{"sh", "-c", "java -cp '/work/.csx-vendor/classes:/work/.csx-vendor/maven-jars/*' Contract"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	r := DockerRunner{}
+	if res := r.Resolve(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("resolve: %s\n%s", res.Result, res.Log)
+	}
+	if res := r.Build(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("build: %s\n%s", res.Result, res.Log)
+	}
+	if res := r.Contract(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("contract: %s\n%s", res.Result, res.Log)
+	}
+	env := r.StageEnvironment(domain.EnvironmentFingerprint{SchemaVersion: 1, Arch: "x64"}, m)
+	if env.Runtime != "java" || env.RuntimeVersion != "21" || env.Compiler != "javac" ||
+		env.PackageManager != "maven" || env.Libc != "musl" {
+		t.Fatalf("Maven stage environment is not the image that ran: %+v", env)
+	}
+}

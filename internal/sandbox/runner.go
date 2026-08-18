@@ -164,6 +164,12 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// hex.package. Never evaluate mix.lock with an Elixir evaluator;
 		// that would reintroduce the execution this avoids.
 		return []string{"sh", "-c", hexResolveScript}, nil
+	case "maven":
+		// The generated project lives under .csx-vendor, but Maven runs from
+		// /tmp so it cannot discover /work/.mvn/maven.config or extensions.
+		// Every classpath artifact is an exact manifest purl and transitive
+		// expansion is disabled: manifest packages are the reproducible lock.
+		return []string{"sh", "-c", mavenResolveScript}, nil
 	}
 	return nil, fmt.Errorf("sandbox: unsupported ecosystem %q", ecosystem)
 }
@@ -224,6 +230,10 @@ func stageEnv(ecosystem, runtime string) []string {
 			"MIX_HOME=" + vendorDir + "/mix",
 			"HEX_HOME=" + vendorDir + "/hex",
 			"MIX_ENV=test",
+		}
+	case "maven":
+		return []string{
+			"CLASSPATH=" + vendorDir + "/maven-jars/*",
 		}
 	case "pypi":
 		return []string{"PYTHONPATH=" + vendorDir + "/py", "PYTHONDONTWRITEBYTECODE=1"}
@@ -298,3 +308,24 @@ for s in $(grep -oE ':hex, :[A-Za-z0-9_]+, "[^"]+"' /work/mix.lock | tr -d ' "')
   test -n "$n" && test -n "$v"
   mix hex.package fetch "$n" "$v" --unpack --output "/work/deps/$n"
 done`
+
+const mavenResolveScript = `set -eu
+rm -rf ` + vendorDir + `/m2 ` + vendorDir + `/maven-jars ` + vendorDir + `/maven-dependencies.txt ` + vendorDir + `/maven-resolved.sha256 /tmp/csx-maven-resolver
+mkdir -p ` + vendorDir + `/m2 ` + vendorDir + `/maven-jars /tmp/csx-maven-resolver
+cp /work/` + mavenResolverPOM + ` /tmp/csx-maven-resolver/pom.xml
+cp /work/` + mavenResolverConfig + ` /tmp/csx-maven-resolver/settings.xml
+cd /tmp/csx-maven-resolver
+mvn --batch-mode --no-transfer-progress --strict-checksums \
+  -s settings.xml -f pom.xml \
+  -Dmaven.repo.local=` + vendorDir + `/m2 \
+  -DexcludeTransitive=true -DincludeScope=runtime \
+  -DoutputDirectory=` + vendorDir + `/maven-jars \
+  -DoutputFile=` + vendorDir + `/maven-dependencies.txt \
+  -DoutputAbsoluteArtifactFilename=true \
+  ` + mavenDependencyPlugin + `:copy-dependencies \
+  ` + mavenDependencyPlugin + `:list
+test -s ` + vendorDir + `/maven-dependencies.txt
+find ` + vendorDir + `/maven-jars -type f -name '*.jar' -exec sha256sum {} \; | sort > ` + vendorDir + `/maven-resolved.sha256
+test -s ` + vendorDir + `/maven-resolved.sha256
+cat ` + vendorDir + `/maven-dependencies.txt
+cat ` + vendorDir + `/maven-resolved.sha256`

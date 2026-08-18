@@ -26,9 +26,9 @@ const maxWantedEpochAgeDays = 30
 var wantedEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
 	"gem": true, "composer": true, "hex": true, "pub": true,
-	// Maven is wanted-only for now. Accepting a demand signal does not claim
-	// that a Java scanner or verifier exists; /adapters remains the source of
-	// truth for those capabilities.
+	// Maven supports verification-only A4 samples. Wanted also accepts it so
+	// unmet Java demand is visible despite the deliberate lack of an A0-A2
+	// local project scanner; /adapters remains the capability source of truth.
 	"maven": true,
 	// generic is limited below to domain.IsWantedTarget's fixed public
 	// engine/SDK vocabulary; arbitrary generic purls are rejected.

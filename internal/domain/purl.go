@@ -10,7 +10,7 @@ import (
 )
 
 // PURL identifies a public package as pkg:<ecosystem>/<name>@<version>.
-// Ecosystems in Public v1: npm, pypi, cargo, golang.
+// Ecosystems in Public v1: npm, pypi, cargo, golang, maven.
 // golang names may contain '/' (module paths); npm names may be scoped (@scope/name).
 type PURL struct {
 	Ecosystem string
@@ -18,12 +18,15 @@ type PURL struct {
 	Version   string
 }
 
-// AllowedEcosystems is the Public v1 automatic-collection allowlist (goal.md §8.1).
+// AllowedEcosystems is the Public v1 package/receipt allowlist. Scanner
+// coverage is a separate claim: verification-only ecosystems such as Maven
+// may publish signed sample evidence without scanning arbitrary local projects.
 var AllowedEcosystems = map[string]bool{
 	"npm":    true,
 	"pypi":   true,
 	"cargo":  true,
 	"golang": true,
+	"maven":  true,
 }
 
 // ParsePURL parses a package URL string. It accepts both canonical
