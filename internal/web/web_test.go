@@ -14,6 +14,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
 func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
@@ -74,6 +75,11 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, `content="https://codesamplex.dev/static/inspector-hero-v1.webp"`)
 	mustContain(t, body, `content="summary_large_image"`)
 	mustContain(t, body, `class="home-search" action="/records"`)
+	mustContain(t, body, `class="evidence-question" href="/npm/axios/1.12.2/axios.post"`)
+	mustContain(t, body, "View environment results")
+	if strings.Contains(body, "pnpm + Windows 11") {
+		t.Error("landing still advertises the old environment example that has no matching evidence page")
+	}
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters, the way in by
@@ -134,6 +140,18 @@ func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) 
 		if strings.Contains(body, workerOnly) {
 			t.Errorf("worker-only contribution content leaked onto the homepage: %q", workerOnly)
 		}
+	}
+	support := strings.Index(body, i18n.T("en", "landing.support_heading"))
+	agents := strings.Index(body, `id="agents"`)
+	if support < 0 || agents < 0 || support >= agents {
+		t.Errorf("ecosystem support must precede the folded agent section: support=%d agents=%d", support, agents)
+	}
+	mustContain(t, body, `<details id="agents" class="agents support-agents agent-detail">`)
+	if strings.Contains(body, `id="agents" class="agents support-agents agent-detail" open`) {
+		t.Error("agent integration details must be collapsed by default")
+	}
+	if strings.Contains(body, "eyebrow-mark") {
+		t.Error("hero repeats the CodeSampleX brand above the tagline")
 	}
 }
 
@@ -508,6 +526,10 @@ func TestStaticCSSServed(t *testing.T) {
 	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
 	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
 	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);")
+	mustContain(t, rec.Body.String(), ".how-body {\n  display: grid; grid-template-columns:")
+	mustContain(t, rec.Body.String(), ".flabel {\n  display: inline-block;")
+	mustContain(t, rec.Body.String(), ".record-version { padding:")
+	mustContain(t, rec.Body.String(), ".record-symbols { padding:")
 	mustContain(t, rec.Body.String(), "@media (hover: none), (pointer: coarse)")
 	mustContain(t, rec.Body.String(), "@media (prefers-reduced-motion: reduce)")
 }

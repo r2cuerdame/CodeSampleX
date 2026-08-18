@@ -43,6 +43,22 @@ func TestMavenJavaFiltersAreAccepted(t *testing.T) {
 	}
 }
 
+func TestRecordQueryMatchesSeveralPackageNamesAtOnce(t *testing.T) {
+	query := ParseRecordQuery(" React, axios  lodash | react ")
+	for _, name := range []string{"react", "react-dom", "axios", "lodash-es"} {
+		matched, _, _ := query.MatchPackage(name)
+		if !matched {
+			t.Errorf("batch query did not match %q", name)
+		}
+	}
+	if matched, _, _ := query.MatchPackage("vue"); matched {
+		t.Error("batch query matched an unrelated package")
+	}
+	if _, exact, _ := query.MatchPackage("react"); !exact {
+		t.Error("exact package name was not identified for ranking")
+	}
+}
+
 func TestRecordsFiltersUseRecordedDimensions(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/records?eco=npm&os=windows&runtime=node&basis=verified").Body.String()

@@ -13,6 +13,12 @@ import (
 )
 
 func TestAutomaticUpdateReloadsRevokedConsentBeforeNetwork(t *testing.T) {
+	for _, name := range []string{
+		"CSX_LAUNCHER_ROOT", "CSX_LAUNCHER_PATH", "CSX_LAUNCHER_VERSION",
+		"CSX_PAYLOAD_VERSION", "CSX_ACTIVE_SEQUENCE", "CSX_ACTIVE_SHA256",
+	} {
+		t.Setenv(name, "")
+	}
 	home := t.TempDir()
 	exe := filepath.Join(t.TempDir(), "csx")
 	if runtime.GOOS == "windows" {

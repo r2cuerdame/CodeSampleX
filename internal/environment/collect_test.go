@@ -77,3 +77,20 @@ func TestProbeUnknownTool(t *testing.T) {
 		t.Fatalf("unknown tool must return empty, got %q", v)
 	}
 }
+
+func TestPublicCLIToolsHaveFixedLocalProbeCommands(t *testing.T) {
+	for _, name := range []string{
+		"npm", "pnpm", "maven", "gradle", "gem", "bundler", "gh",
+		"git", "curl", "jq", "openssl", "docker", "kubectl", "helm",
+		"terraform", "opentofu", "powershell", "cmd",
+	} {
+		spec, ok := probeable[name]
+		if !ok || spec.command == "" {
+			t.Errorf("CLI target %q has no fixed probe command", name)
+		}
+	}
+	if probeable["maven"].command != "mvn" || probeable["bundler"].command != "bundle" ||
+		probeable["opentofu"].command != "tofu" {
+		t.Fatalf("logical CLI names do not map to their real executables: %+v", probeable)
+	}
+}

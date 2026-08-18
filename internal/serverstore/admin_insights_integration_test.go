@@ -31,6 +31,25 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 		}
 	}
 
+	jobNow := time.Now().UTC().Add(time.Minute)
+	jobCutoff := jobNow.Add(-JobLease)
+	if err := pg.withConn(ctx, func(conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `
+			INSERT INTO verification_jobs(sample_id, reason, status, claimed_by, claimed_at, created_at)
+			VALUES
+			  ($1, 'cross',  'open',    NULL,              NULL,   $3),
+			  ($1, 'cross',  'claimed', 'private-peer-a', $4,     $4),
+			  ($2, 'matrix', 'claimed', 'private-peer-b', $5,     $6),
+			  ($2, 'matrix', 'claimed', 'private-peer-c', $7,     $7),
+			  ($2, 'matrix', 'done',    'private-peer-z', $7,     $7)`,
+			samples[0].SampleID, samples[1].SampleID,
+			jobNow.Add(-5*time.Hour), jobCutoff,
+			jobCutoff.Add(-time.Second), jobNow.Add(-4*time.Hour), jobNow.Add(-10*time.Minute))
+		return err
+	}); err != nil {
+		t.Fatalf("seed verification jobs: %v", err)
+	}
+
 	receipts := []ReceiptRow{
 		{
 			ReceiptID: "receipt-admin-v2", SampleID: samples[0].SampleID, PeerID: "peer-a", EnvHash: "env-a", ContractResult: "PASS",
@@ -86,7 +105,7 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 		}
 	}
 
-	now := time.Now().UTC().Add(time.Minute)
+	now := jobNow
 	for i, samples := range []int64{8, 9, 11} {
 		day := now.AddDate(0, 0, i-2).Format("2006-01-02")
 		doc := fmt.Sprintf(`{"evidence":%d,"verifiedSamples":%d,"packages":%d}`, 100+i, samples, 5+i)
@@ -137,5 +156,14 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 	}
 	if !todayFound {
 		t.Fatalf("daily rows omitted UTC today %s under non-UTC database session: %+v", now.Format("2006-01-02"), got.Daily)
+	}
+	if got.Jobs.Cross.Claimable != 1 || got.Jobs.Cross.Live != 1 || got.Jobs.Cross.Stale != 0 {
+		t.Fatalf("cross job queue = %+v", got.Jobs.Cross)
+	}
+	if got.Jobs.Matrix.Claimable != 1 || got.Jobs.Matrix.Live != 1 || got.Jobs.Matrix.Stale != 1 {
+		t.Fatalf("matrix job queue = %+v", got.Jobs.Matrix)
+	}
+	if got.Jobs.LiveClaimants != 2 || !got.Jobs.HasOldest || !got.Jobs.OldestClaimable.Equal(jobNow.Add(-5*time.Hour)) {
+		t.Fatalf("job queue summary = %+v", got.Jobs)
 	}
 }

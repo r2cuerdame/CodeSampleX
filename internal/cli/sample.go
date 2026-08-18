@@ -778,6 +778,12 @@ func originReceipt(ctx context.Context, env *sampleEnv, sampleID string) (domain
 
 // --- publish -----------------------------------------------------------
 
+// publishApprovalForTest is a package-private dependency seam. Production
+// builds leave it nil, so no environment variable or command-line flag can
+// bypass the typed human approval. Tests in this package may install a
+// temporary function without shipping a remotely triggerable bypass.
+var publishApprovalForTest func() bool
+
 func samplePublish(ctx context.Context, args []string) int {
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(sampleStderr, "usage: csx sample publish <sampleId> [--seeder name | --anonymous] [--server URL]")
@@ -789,11 +795,6 @@ func samplePublish(ctx context.Context, args []string) int {
 	seederFlag := fs.String("seeder", "", "publish under this seeder name")
 	anonymous := fs.Bool("anonymous", false, "publish without seeder attribution")
 	server := fs.String("server", "", "server URL (default: config serverUrl)")
-	// --assume-yes is TEST-ONLY: it is honored exclusively when the
-	// CSX_TEST_ASSUME_YES=1 environment variable is set by a test harness.
-	// There is deliberately NO way to skip the typed-yes approval in
-	// normal use (goal.md §9.4).
-	assumeYes := fs.Bool("assume-yes", false, "test-only; requires CSX_TEST_ASSUME_YES=1")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -933,7 +934,7 @@ func samplePublish(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintln(sampleStdout, "Run `csx sample preview` to inspect every file's content before approving.")
 
-	if !(*assumeYes && os.Getenv("CSX_TEST_ASSUME_YES") == "1") {
+	if publishApprovalForTest == nil || !publishApprovalForTest() {
 		fmt.Fprint(sampleStdout, "[PUBLISH] Type \"yes\" to publish this sample publicly: ")
 		line, rerr := bufio.NewReader(sampleStdin).ReadString('\n')
 		if rerr != nil && line == "" {

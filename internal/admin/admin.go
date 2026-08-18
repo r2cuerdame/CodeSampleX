@@ -1,4 +1,6 @@
-// Package admin serves the private, read-only operator dashboard.
+// Package admin serves the private operator dashboard. Network metrics stay
+// read-only; the isolated sample-worker control plane only issues and revokes
+// in-memory refresh capabilities that cannot publish samples.
 //
 // It deliberately consumes only bounded aggregate reads. In particular it
 // does not infer users, active MCP sessions, downloads, or factory activity
@@ -63,15 +65,17 @@ type ActivityReader interface {
 
 // Deps wires the private dashboard. TokenSHA256 must be the 64-character
 // hexadecimal SHA-256 digest of the HTTP Basic password; a raw token is never
-// accepted. The username is always "admin".
+// accepted. The username is always "recuerdame".
 type Deps struct {
 	Store         Store
 	TokenSHA256   string
+	PublicURL     string
 	Version       string
 	StartedAt     time.Time
 	Now           func() time.Time
 	AccessMetrics AccessMetricsReader
 	Activity      ActivityReader
+	Authoring     serverstore.AuthoringSessionStore
 }
 
 type handler struct {
@@ -82,6 +86,9 @@ type handler struct {
 	now           func() time.Time
 	accessMetrics AccessMetricsReader
 	activity      ActivityReader
+	publicURL     string
+	authoring     *authoringRegistry
+	authoringRate *authoringRateLimiter
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -109,6 +116,9 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		now:           now,
 		accessMetrics: d.AccessMetrics,
 		activity:      d.Activity,
+		publicURL:     strings.TrimRight(d.PublicURL, "/"),
+		authoring:     newAuthoringRegistry(now, d.Authoring),
+		authoringRate: newAuthoringRateLimiter(),
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -121,6 +131,12 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	} {
 		mux.Handle(method+" /admin", h)
 	}
+	mux.HandleFunc("GET /admin/admin.js", h.adminScript)
+	mux.HandleFunc("HEAD /admin/admin.js", h.adminScript)
+	mux.HandleFunc("GET /admin/api/authoring-sessions", h.authoringSessions)
+	mux.HandleFunc("POST /admin/api/authoring-sessions", h.authoringSessions)
+	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
+	mux.HandleFunc("POST /v1/authoring/session/refresh", h.refreshAuthoringSession)
 	return true
 }
 
@@ -197,7 +213,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.collect(ctx, now, &data)
 	}
-	data.Growth = buildGrowthView(data.Activity, data.ActivityAvailable, data.SearchOutcomes, now)
+	data.SourceIssues = dashboardSourceIssues(data)
 
 	var body bytes.Buffer
 	if err := dashboardTemplate.Execute(&body, data); err != nil {
@@ -219,7 +235,7 @@ func (h *handler) authorized(r *http.Request) bool {
 	// no plaintext or variable-length secret comparison on any auth path.
 	passwordHash := sha256.Sum256([]byte(password))
 	usernameHash := sha256.Sum256([]byte(username))
-	wantUsernameHash := sha256.Sum256([]byte("admin"))
+	wantUsernameHash := sha256.Sum256([]byte("recuerdame"))
 	basic := 0
 	if basicOK {
 		basic = 1
@@ -233,7 +249,7 @@ func setPrivateHeaders(h http.Header) {
 	h.Set("Cache-Control", "private, no-store, max-age=0")
 	h.Set("Pragma", "no-cache")
 	h.Set("X-Robots-Tag", "noindex, nofollow, noarchive")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -279,7 +295,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.InsightsError = "현재 저장소는 30일 운영 추세를 제공하지 않습니다"
 	} else {
 		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
-		data.SearchOutcomes = insights.Search
+		data.SearchQuality = buildSearchQualityView(insights.Search)
 		data.InsightsAvailable = true
 	}
 
@@ -329,9 +345,28 @@ type dashboardData struct {
 	ActivityAvailable bool
 	ActivityError     string
 
-	Growth growthView
+	SearchQuality searchQualityView
+	SourceIssues  []string
+}
 
-	SearchOutcomes serverstore.AdminSearchOutcomeCounts
+func dashboardSourceIssues(data dashboardData) []string {
+	issues := []string{
+		data.DBError, data.CountsError, data.WantedError, data.AdoptionError,
+		data.InsightsError,
+	}
+	if data.InsightsAvailable && !data.SearchQuality.Available {
+		issues = append(issues, "공개 검색 결과 집계가 아직 없습니다")
+	}
+	seen := make(map[string]bool, len(issues))
+	out := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue == "" || seen[issue] {
+			continue
+		}
+		seen[issue] = true
+		out = append(out, issue)
+	}
+	return out
 }
 
 func nonNegative(d time.Duration) time.Duration {

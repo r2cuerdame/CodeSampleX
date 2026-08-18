@@ -7,6 +7,25 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
+func TestJobQueueViewSeparatesClaimableLiveAndStaleLeases(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	view := buildJobQueueView(serverstore.AdminJobQueue{
+		Cross:         serverstore.AdminJobReasonCounts{Claimable: 3, Live: 1, Stale: 1},
+		Matrix:        serverstore.AdminJobReasonCounts{Claimable: 5, Live: 2, Stale: 2},
+		Other:         serverstore.AdminJobReasonCounts{Claimable: 1},
+		LiveClaimants: 2, HasOldest: true, OldestClaimable: now.Add(-26*time.Hour - 4*time.Minute),
+	}, now)
+	if view.Claimable != 9 || view.Live != 3 || view.Stale != 3 || view.LiveClaimants != 2 {
+		t.Fatalf("job queue totals = %+v", view)
+	}
+	if len(view.Rows) != 3 || view.Rows[0].Label != "Cross" || view.Rows[1].Label != "Matrix" || view.Rows[2].Label != "기타" {
+		t.Fatalf("job queue rows = %+v", view.Rows)
+	}
+	if !view.HasOldest || view.OldestAge != "1일 2시간" {
+		t.Fatalf("oldest claimable = %+v", view)
+	}
+}
+
 func TestInsightViewLeavesMissingDaysAsChartGaps(t *testing.T) {
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	rows := []serverstore.AdminDailyStat{

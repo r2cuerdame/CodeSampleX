@@ -10,6 +10,7 @@ package serverstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -60,6 +61,43 @@ func openTestPG(t *testing.T) *PG {
 		t.Fatalf("migrate: %v", err)
 	}
 	return pg
+}
+
+func TestIntegrationAuthoringSessionsPersistRefreshAndRevoke(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC)
+	row := AuthoringSessionRow{
+		TokenHash:     "f65ad1d2e47e11bd71619acda03e7c2fe6f0f80ea5f35d70f27097c12808e6d7",
+		SessionID:     "worker-persist-01",
+		Label:         "spring-lab",
+		Model:         "agy",
+		Reasoning:     "auto",
+		IssuedAt:      now,
+		IdleExpiresAt: now.Add(time.Hour),
+	}
+	if err := pg.IssueAuthoringSessions(ctx, []AuthoringSessionRow{row}, now); err != nil {
+		t.Fatalf("issue authoring session: %v", err)
+	}
+
+	listed, err := pg.ListAuthoringSessions(ctx, now.Add(time.Minute), MaxAuthoringSessions)
+	if err != nil || len(listed) != 1 || listed[0].TokenHash != row.TokenHash {
+		t.Fatalf("persisted sessions = %+v, err=%v", listed, err)
+	}
+	refreshedAt := now.Add(45 * time.Minute)
+	refreshed, err := pg.RefreshAuthoringSession(ctx, row.TokenHash, "198.51.100.24", "build-node-7", refreshedAt, refreshedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("refresh authoring session: %v", err)
+	}
+	if refreshed.LastRefreshIP != "198.51.100.24" || refreshed.ComputerName != "build-node-7" || !refreshed.IdleExpiresAt.Equal(refreshedAt.Add(time.Hour)) {
+		t.Fatalf("refreshed session = %+v", refreshed)
+	}
+	if ok, err := pg.RevokeAuthoringSession(ctx, row.SessionID, refreshedAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("revoke authoring session: ok=%v err=%v", ok, err)
+	}
+	if _, err := pg.RefreshAuthoringSession(ctx, row.TokenHash, "198.51.100.25", "other-node", refreshedAt.Add(2*time.Minute), refreshedAt.Add(62*time.Minute)); !errors.Is(err, ErrAuthoringSessionMissing) {
+		t.Fatalf("refresh revoked session err=%v", err)
+	}
 }
 
 func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {

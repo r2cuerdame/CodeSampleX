@@ -17,30 +17,74 @@ import (
 var versionRe = regexp.MustCompile(`v?(\d+\.\d+(?:\.\d+)?)`)
 
 // probeable maps tools we are willing to shell out to for a version.
-var probeable = map[string][]string{
-	"node":   {"--version"},
-	"npm":    {"--version"},
-	"pnpm":   {"--version"},
-	"yarn":   {"--version"},
-	"python": {"--version"},
-	"go":     {"version"},
-	"rustc":  {"--version"},
-	"cargo":  {"--version"},
-	"tsc":    {"--version"},
-	"uv":     {"--version"},
-	"pip":    {"--version"},
+type probeSpec struct {
+	command string
+	args    []string
+}
+
+func probe(command string, args ...string) probeSpec {
+	return probeSpec{command: command, args: args}
+}
+
+var probeable = map[string]probeSpec{
+	"node":               probe("node", "--version"),
+	"npm":                probe("npm", "--version"),
+	"pnpm":               probe("pnpm", "--version"),
+	"yarn":               probe("yarn", "--version"),
+	"python":             probe("python", "--version"),
+	"go":                 probe("go", "version"),
+	"rustc":              probe("rustc", "--version"),
+	"cargo":              probe("cargo", "--version"),
+	"tsc":                probe("tsc", "--version"),
+	"uv":                 probe("uv", "--version"),
+	"pip":                probe("pip", "--version"),
+	"bash":               probe("bash", "--version"),
+	"busybox":            probe("busybox"),
+	"coreutils":          probe("ls", "--version"),
+	"git":                probe("git", "--version"),
+	"curl":               probe("curl", "--version"),
+	"jq":                 probe("jq", "--version"),
+	"openssl":            probe("openssl", "version"),
+	"tar":                probe("tar", "--version"),
+	"grep":               probe("grep", "--version"),
+	"sed":                probe("sed", "--version"),
+	"findutils":          probe("find", "--version"),
+	"docker":             probe("docker", "--version"),
+	"docker-compose":     probe("docker", "compose", "version"),
+	"kubectl":            probe("kubectl", "version", "--client"),
+	"helm":               probe("helm", "version", "--short"),
+	"terraform":          probe("terraform", "version"),
+	"opentofu":           probe("tofu", "version"),
+	"ffmpeg":             probe("ffmpeg", "-version"),
+	"ripgrep":            probe("rg", "--version"),
+	"gh":                 probe("gh", "--version"),
+	"pwsh":               probe("pwsh", "--version"),
+	"powershell":         probe("powershell", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"),
+	"windows-powershell": probe("powershell", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"),
+	"cmd":                probe("cmd", "/d", "/c", "ver"),
+	"maven":              probe("mvn", "--version"),
+	"mvn":                probe("mvn", "--version"),
+	"gradle":             probe("gradle", "--version"),
+	"gem":                probe("gem", "--version"),
+	"bundler":            probe("bundle", "--version"),
+	"bundle":             probe("bundle", "--version"),
+	"composer":           probe("composer", "--version"),
+	"mix":                probe("mix", "--version"),
+	"dart":               probe("dart", "--version"),
+	"bun":                probe("bun", "--version"),
+	"deno":               probe("deno", "--version"),
 }
 
 // Probe returns the "major.minor(.patch)" version of a known tool, or ""
 // if the tool is missing, unknown, or times out.
 func Probe(ctx context.Context, tool string) string {
-	args, ok := probeable[tool]
+	spec, ok := probeable[tool]
 	if !ok {
 		return ""
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, tool, args...).Output()
+	out, err := exec.CommandContext(cctx, spec.command, spec.args...).CombinedOutput()
 	if err != nil {
 		return ""
 	}

@@ -36,6 +36,10 @@ func TestContributePageAnswersTheRefusal(t *testing.T) {
 	mustContain(t, body, i18n.T("en", "contribute.claim"))
 	mustContain(t, body, "https://codesamplex.dev/contribute") // canonical
 	mustContain(t, body, `id="install-worker"`)
+	mustContain(t, body, `id="worker-setup-prompt"`)
+	mustContain(t, body, `id="worker-run-prompt"`)
+	mustContain(t, body, `data-copy-target="#worker-setup-prompt"`)
+	mustContain(t, body, `data-copy-target="#worker-run-prompt"`)
 	mustContain(t, body, `csx init --community --yes --no-agents --no-daemon`)
 	mustContain(t, body, `csx worker start --mode verify --parallel 2 --budget idle`)
 	// Contribution is a first-class destination in the top menu, not only the
@@ -58,12 +62,15 @@ func TestContributePageIsTranslated(t *testing.T) {
 	for _, key := range []string{
 		"landing.worker_heading", "landing.worker_body",
 		"landing.worker_copy", "landing.worker_safety",
+		"landing.worker_setup_heading", "landing.worker_run_heading",
 	} {
 		mustContain(t, body, i18n.T("ko", key))
 	}
-	worker := workerPrompt("ko", "https://codesamplex.dev")
-	if worker == workerPrompt("en", "https://codesamplex.dev") {
-		t.Error("the Korean page is serving the English worker prompt")
+	setup := workerSetupPrompt("ko", "https://codesamplex.dev")
+	run := workerRunPrompt("ko")
+	if setup == workerSetupPrompt("en", "https://codesamplex.dev") || run == workerRunPrompt("en") {
+		t.Error("the Korean page is serving an English worker prompt")
 	}
-	mustContain(t, body, worker)
+	mustContain(t, body, setup)
+	mustContain(t, body, run)
 }

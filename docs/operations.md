@@ -106,7 +106,7 @@ The deploy verifies `/healthz` and then requires an unauthenticated `/admin`
 request to return `401` (a missing/malformed verifier returns `404`). It then
 uses the DPAPI credential through a local .NET HTTP client and requires an
 authenticated `200`; neither the Basic header nor response body is printed.
-Then open `https://codesamplex.dev/admin` and use username `admin`. Copy the password to
+Then open `https://codesamplex.dev/admin` and use username `recuerdame`. Copy the password to
 the clipboard only when you are ready to paste it:
 
 ```powershell
@@ -117,6 +117,21 @@ That explicit command decrypts through current-user DPAPI and copies the value;
 it still does not print it or place it in argv. Clear the clipboard after use.
 Never put the password in a URL or `curl -u` command, where it can enter browser
 history, shell history, process listings, or logs.
+
+The internal sample-worker panel can issue 1–16 independent authoring sessions
+for a selected model and reasoning level. The copy action returns complete
+prompts containing a ready-to-run `csx sample-worker refresh` command; it does
+not return a bare token field. Each session is listed by operator label, model,
+last refresh, idle expiry, reported computer name, and last fail-closed external IP, and can be revoked
+individually. There is no fixed total lifetime, but a session expires after one
+hour without a successful refresh. The session bearer authorizes refresh only:
+it is never accepted as an admin, seeder, sample publish, verification-job, or
+receipt credential. Run authoring agents with a new credential-free `CSX_HOME`,
+and stop at `csx sample preview`; publishing remains a separate human action.
+The production registry survives server restarts. PostgreSQL stores only each
+token's SHA-256 digest and the last refresh IP for the private operator list;
+it never stores the bearer. Expired or revoked rows are removed after a short
+audit tail.
 
 Re-run the authenticated status-only smoke at any time with:
 
@@ -203,5 +218,5 @@ CSX_PUBLIC_URL   https://codesamplex.dev
 POSTGRES_PASSWORD generated at first deploy
 CSX_PUBLIC_CHECK strict            (trust only for dev/e2e)
 CSX_GITHUB_CLIENT_ID/SECRET        optional; GitHub identity is 501 until set
-CSX_ADMIN_TOKEN_SHA256             optional; enables private read-only /admin
+CSX_ADMIN_TOKEN_SHA256             optional; enables private operator /admin
 ```

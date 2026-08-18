@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -83,6 +84,29 @@ func TestSampleUploadHappyPath(t *testing.T) {
 	}
 	if domain.SHA256Hex(got) != sampleID {
 		t.Fatal("artifact hash mismatch after round trip")
+	}
+}
+
+func TestAuthoringRefreshTokenCannotPublishSample(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"test/contract.mjs": "console.log('contract');\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+	// Correct prefix and canonical 32-byte payload: this is the exact shape
+	// of an internal authoring refresh capability, not merely malformed auth.
+	authoringToken := "csx_author_v1_" + base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
+	resp := postSample(t, srv.URL, manifest, sampleID, artifact, authoringToken)
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("authoring token publish status=%d body=%s, want 401", resp.StatusCode, body)
+	}
+	if _, ok, err := store.GetSample(t.Context(), sampleID); err != nil || ok {
+		t.Fatalf("authoring token wrote sample metadata: ok=%v err=%v", ok, err)
+	}
+	if jobs, err := store.JobsForSample(t.Context(), sampleID); err != nil || len(jobs) != 0 {
+		t.Fatalf("authoring token queued verification work: jobs=%+v err=%v", jobs, err)
 	}
 }
 

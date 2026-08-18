@@ -28,6 +28,35 @@ type growthMetric struct {
 	Tone        string
 }
 
+// searchQualityView is the small primary-dashboard view backed by the
+// successful public-search outcome aggregate. It intentionally excludes
+// every unavailable growth/retention guess from the operator's main scan.
+type searchQualityView struct {
+	Available   bool
+	Total       int64
+	SampleHits  int64
+	NoMatches   int64
+	HitRate     string
+	NoMatchRate string
+	RangeLabel  string
+}
+
+func buildSearchQualityView(search serverstore.AdminSearchOutcomeCounts) searchQualityView {
+	if !search.Available || search.Total() == 0 {
+		return searchQualityView{}
+	}
+	total := search.Total()
+	return searchQualityView{
+		Available:   true,
+		Total:       total,
+		SampleHits:  search.SampleHits,
+		NoMatches:   search.NoMatches,
+		HitRate:     fmt.Sprintf("%.1f%%", float64(search.SampleHits)/float64(total)*100),
+		NoMatchRate: fmt.Sprintf("%.1f%%", float64(search.NoMatches)/float64(total)*100),
+		RangeLabel:  fmt.Sprintf("UTC %s~%s · %d일", search.FirstDay, search.LastDay, search.Days),
+	}
+}
+
 // buildGrowthView derives only metrics supported by the already-retained
 // epoch-scoped activity aggregates. It never turns access-log requests,
 // deduplicated Wanted coordinates, or adoption reports into search outcomes.

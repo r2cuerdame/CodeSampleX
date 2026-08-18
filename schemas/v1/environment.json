@@ -6,7 +6,7 @@
   "required": ["schemaVersion", "ecosystem", "os", "arch"],
   "properties": {
     "schemaVersion": {"const": 1},
-    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang", "maven"]},
+    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang", "composer", "gem", "pub", "hex", "maven", "generic"]},
     "os": {"type": "string"},
     "osVersionBucket": {"type": "string"},
     "arch": {"type": "string"},
@@ -14,6 +14,8 @@
     "runtimeVersion": {"type": "string"},
     "language": {"type": "string"},
     "languageVersion": {"type": "string"},
+    "compiler": {"type": "string"},
+    "compilerVersion": {"type": "string"},
     "compiler": {"type": "string"},
     "compilerVersion": {"type": "string"},
     "packageManager": {"type": "string"},
@@ -44,6 +46,14 @@
     "libc": {
       "description": "musl (alpine) vs glibc. Prebuilt native modules routinely load on one and fail on the other while every other dimension looks identical.",
       "enum": ["musl", "glibc", ""]
+    },
+    "libcVersion": {
+      "type": "string",
+      "description": "Recorded glibc major.minor when available; empty for musl and unknown implementations."
+    },
+    "distro": {
+      "type": "string",
+      "description": "Lowercase /etc/os-release ID such as ubuntu, debian, rhel, amzn or alpine."
     },
     "ci": {
       "type": "boolean",

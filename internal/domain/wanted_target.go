@@ -3,9 +3,11 @@ package domain
 import "strings"
 
 // wantedTargetNames is the deliberately small public vocabulary that may be
-// derived from Environment.Frameworks and uploaded as a Wanted coordinate.
-// Arbitrary framework names are not eligible: they can contain a private SDK
-// or product name, while these names identify public toolchains only.
+// derived from an explicitly named environment descriptor and uploaded as a
+// Wanted coordinate.  It is broader than libraries on purpose: engines, SDKs,
+// operating systems and command-line tools all produce compatibility failures
+// worth measuring. Arbitrary names are not eligible because they can contain a
+// private SDK, executable or product name.
 var wantedTargetNames = map[string]string{
 	"unity":       "engine/unity",
 	"unreal":      "engine/unreal",
@@ -19,6 +21,59 @@ var wantedTargetNames = map[string]string{
 	"xcode":       "sdk/xcode",
 	"cuda":        "sdk/cuda",
 	"vulkan":      "sdk/vulkan",
+
+	// Operating-system families are targets only when the caller explicitly
+	// names one. Ordinary library searches still carry the OS in the private,
+	// coarse environment fingerprint and do not automatically file an OS Want.
+	"windows": "os/windows",
+	"ubuntu":  "os/ubuntu",
+	"debian":  "os/debian",
+	"rhel":    "os/rhel",
+	"alpine":  "os/alpine",
+	"macos":   "os/macos",
+
+	// Built-in and widely used CLI tools. These are generic public targets,
+	// not registry-library ecosystems. Exact versions remain mandatory so a
+	// future system-cli verifier can compare real implementations rather than
+	// the ambiguous word "shell".
+	"bash":               "cli/bash",
+	"busybox":            "cli/busybox",
+	"coreutils":          "cli/coreutils",
+	"powershell":         "cli/powershell",
+	"windows-powershell": "cli/windows-powershell",
+	"cmd":                "cli/cmd",
+	"git":                "cli/git",
+	"npm":                "cli/npm",
+	"pnpm":               "cli/pnpm",
+	"yarn":               "cli/yarn",
+	"bun":                "cli/bun",
+	"deno":               "cli/deno",
+	"maven":              "cli/maven",
+	"gradle":             "cli/gradle",
+	"pip":                "cli/pip",
+	"uv":                 "cli/uv",
+	"cargo":              "cli/cargo",
+	"gem":                "cli/gem",
+	"bundler":            "cli/bundler",
+	"composer":           "cli/composer",
+	"mix":                "cli/mix",
+	"dart":               "cli/dart",
+	"curl":               "cli/curl",
+	"jq":                 "cli/jq",
+	"openssl":            "cli/openssl",
+	"tar":                "cli/tar",
+	"grep":               "cli/grep",
+	"sed":                "cli/sed",
+	"findutils":          "cli/findutils",
+	"docker":             "cli/docker",
+	"docker-compose":     "cli/docker-compose",
+	"kubectl":            "cli/kubectl",
+	"helm":               "cli/helm",
+	"terraform":          "cli/terraform",
+	"opentofu":           "cli/opentofu",
+	"ffmpeg":             "cli/ffmpeg",
+	"ripgrep":            "cli/ripgrep",
+	"gh":                 "cli/gh",
 }
 
 var wantedTargetCoordinates = func() map[string]bool {
@@ -29,11 +84,12 @@ var wantedTargetCoordinates = func() map[string]bool {
 	return out
 }()
 
-// WantedTargetFromFramework converts a public, versioned framework/toolchain
-// descriptor such as "unity@6000.0.24f1" or "jdk@21" into a generic purl.
-// The generic namespace avoids pretending engines and SDKs are registry
-// ecosystems while still fitting the existing privacy-reduced Wanted wire.
-func WantedTargetFromFramework(value string) (PURL, bool) {
+// PublicTargetFromDescriptor converts a public, versioned target descriptor
+// such as "unity@6000.0.24f1", "jdk@21" or "git@2.51.0" into a generic purl.
+// generic namespace avoids pretending engines, SDKs, OSes and CLI tools are
+// library-registry ecosystems while still fitting the privacy-reduced Wanted
+// wire.
+func PublicTargetFromDescriptor(value string) (PURL, bool) {
 	value = strings.TrimSpace(value)
 	i := strings.LastIndexByte(value, '@')
 	if i <= 0 || i == len(value)-1 {
@@ -46,6 +102,13 @@ func WantedTargetFromFramework(value string) (PURL, bool) {
 		return PURL{}, false
 	}
 	return PURL{Ecosystem: "generic", Name: coordinate, Version: version}, true
+}
+
+// WantedTargetFromFramework keeps the original call surface used by clients
+// that derive engine/SDK targets from Environment.Frameworks. New callers that
+// name a CLI or OS explicitly should use PublicTargetFromDescriptor.
+func WantedTargetFromFramework(value string) (PURL, bool) {
+	return PublicTargetFromDescriptor(value)
 }
 
 // IsWantedTarget reports whether p is one of the fixed public engine/SDK

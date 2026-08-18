@@ -116,6 +116,7 @@ func configuredMuxFull(t *testing.T, store Store, access AccessMetricsReader, ac
 	if !Register(mux, Deps{
 		Store:         store,
 		TokenSHA256:   digest(secret),
+		PublicURL:     "https://codesamplex.dev",
 		Version:       "v1.2.3-test",
 		StartedAt:     now.Add(-26*time.Hour - 4*time.Minute),
 		Now:           func() time.Time { return now },
@@ -138,7 +139,7 @@ func TestExternalNetworkEstimatesAreKoreanHonestAndOwnerExcluded(t *testing.T) {
 	req.RemoteAddr = "198.51.100.77:4567"
 	req.Header.Set("X-Forwarded-For", "203.0.113.99")
 	req.Header.Set("User-Agent", "private-owner-agent")
-	req.SetBasicAuth("admin", secret)
+	req.SetBasicAuth("recuerdame", secret)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -227,7 +228,7 @@ func TestExternalNetworkEstimateNoRequestAndOwnerMarkFailureStates(t *testing.T)
 	t.Run("no request", func(t *testing.T) {
 		reader := &fakeActivityReader{}
 		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
-		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		body := serve(mux, http.MethodGet, "/admin", "recuerdame", secret).Body.String()
 		if !strings.Contains(body, "아직 의미 있는 API 요청 없음") {
 			t.Fatalf("no-request state missing: %s", body)
 		}
@@ -235,7 +236,7 @@ func TestExternalNetworkEstimateNoRequestAndOwnerMarkFailureStates(t *testing.T)
 	t.Run("owner mark error", func(t *testing.T) {
 		reader := &fakeActivityReader{markErr: errors.New("db down")}
 		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
-		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		body := serve(mux, http.MethodGet, "/admin", "recuerdame", secret).Body.String()
 		if !strings.Contains(body, "소유자 네트워크 제외를 확인할 수 없습니다") {
 			t.Fatalf("owner error missing: %s", body)
 		}
@@ -246,7 +247,7 @@ func TestExternalNetworkEstimateNoRequestAndOwnerMarkFailureStates(t *testing.T)
 	t.Run("invalid dedicated key", func(t *testing.T) {
 		reader := &fakeActivityReader{markErr: activity.ErrInvalidKey}
 		mux, secret := configuredMuxFull(t, &fakeStore{}, nil, reader)
-		body := serve(mux, http.MethodGet, "/admin", "admin", secret).Body.String()
+		body := serve(mux, http.MethodGet, "/admin", "recuerdame", secret).Body.String()
 		if !strings.Contains(body, "활동 해시 키 구성이 올바르지 않아") {
 			t.Fatalf("invalid-key state missing: %s", body)
 		}
@@ -297,9 +298,10 @@ func TestAuthUsesFixedHashSemanticsForEveryCredentialShape(t *testing.T) {
 		want     int
 	}{
 		{name: "missing", want: http.StatusUnauthorized},
-		{name: "wrong password", username: "admin", password: "wrong", want: http.StatusUnauthorized},
+		{name: "wrong password", username: "recuerdame", password: "wrong", want: http.StatusUnauthorized},
+		{name: "legacy username", username: "admin", password: secret, want: http.StatusUnauthorized},
 		{name: "wrong username", username: "operator", password: secret, want: http.StatusUnauthorized},
-		{name: "correct", username: "admin", password: secret, want: http.StatusOK},
+		{name: "correct", username: "recuerdame", password: secret, want: http.StatusOK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -328,9 +330,9 @@ func TestPrivateHeadersApplyToSuccessUnauthorizedAndRejectedMethod(t *testing.T)
 		pass   string
 		want   int
 	}{
-		{http.MethodGet, "admin", secret, http.StatusOK},
+		{http.MethodGet, "recuerdame", secret, http.StatusOK},
 		{http.MethodGet, "", "", http.StatusUnauthorized},
-		{http.MethodPost, "admin", secret, http.StatusMethodNotAllowed},
+		{http.MethodPost, "recuerdame", secret, http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
 		rec := serve(mux, tc.method, "/admin", tc.user, tc.pass)
@@ -390,6 +392,12 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 				Available: true, SampleHits: 75, NoMatches: 25, Days: 4,
 				FirstDay: "2026-08-14", LastDay: "2026-08-17",
 			},
+			Jobs: serverstore.AdminJobQueue{
+				Cross:         serverstore.AdminJobReasonCounts{Claimable: 4, Live: 1, Stale: 1},
+				Matrix:        serverstore.AdminJobReasonCounts{Claimable: 7, Live: 2, Stale: 2},
+				LiveClaimants: 2, HasOldest: true,
+				OldestClaimable: time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC),
+			},
 		},
 	}
 	access := &fakeAccessReader{metrics: AccessLogMetrics{
@@ -406,26 +414,27 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		DaysWithRequests:    2, SourceFiles: 2,
 	}}
 	mux, secret := configuredMuxWithAccess(t, store, access)
-	rec := serve(mux, http.MethodGet, "/admin", "admin", secret)
+	rec := serve(mux, http.MethodGet, "/admin", "recuerdame", secret)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "30일 성장 추이", "누적", "일일 순증감",
+		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "운영 요약", "검증 샘플 추이", "누적", "일일 순증감",
 		"1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
-		"누락 날짜는 0으로 채우거나 선으로 연결하지 않음", "전체 네트워크에 접수된 검증 영수증",
+		"누락 날짜는 0으로 채우거나 연결하지 않음", "전체 네트워크에 접수된 검증 영수증",
 		"최근 검증 생태계 구성", "npm · JavaScript/TypeScript", "maven · Java/JVM", "최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
-		"API 요청 활동", "사용자 수가 아니라", "69,467", "35,396", "일별 전체 API 요청", "많이 호출된 API 종류", "<th scope=\"col\">기타</th>", "POST 기여 · 기타 조정",
-		"API 종류별 요청 방식 및 응답 상태 집계", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
-		"Sample hit rate", "75.0%", "No match 비율", "25.0%", "성공한 검색 응답 100건",
-		"‘실패 회피’는 추정하지 않습니다", "해석할 때 제외해야 할 것", "활성 MCP 세션", "설치 및 다운로드",
+		"API·개인정보 진단", "69,467", "429", "5xx", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
+		"Sample hit rate", "75.0%", "No match 비율", "25.0%", "공개 검색 응답",
+		"검증 작업 큐", "Claim 가능", "만료 lease", "유효 claim 워커 ID 2개", "온라인·idle 워커 수나 heartbeat가 아닙니다",
+		"‘실패 회피’는 추정하지 않습니다", "측정 경계", "활성 MCP 세션·설치·다운로드",
+		"내부 샘플 워커", "LLM 모델", "추론 강도", "워커 수", "프롬프트 + CLI 발급·복사",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing honest label %q", want)
 		}
 	}
-	for _, forbidden := range []string{"<form", "<button", "ZgotmplZ", secret} {
+	for _, forbidden := range []string{"ZgotmplZ", secret, "claimed_by", "현재 기여 피어"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("body unexpectedly contains %q", forbidden)
 		}
@@ -436,8 +445,8 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 	if got := strings.Count(body, `<caption class="sr-only">`); got != 3 {
 		t.Errorf("accessible table captions = %d, want 3", got)
 	}
-	if got := strings.Count(body, `scope="col"`); got != 15 {
-		t.Errorf("scoped table headers = %d, want 15", got)
+	if got := strings.Count(body, `scope="col"`); got != 11 {
+		t.Errorf("scoped table headers = %d, want 11", got)
 	}
 	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
 		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",
@@ -463,7 +472,7 @@ func TestDashboardDoesNotInventZeroTargetWhenVerifiedCountIsUnavailable(t *testi
 		}}},
 	}
 	mux, secret := configuredMux(t, store)
-	rec := serve(mux, http.MethodGet, "/admin", "admin", secret)
+	rec := serve(mux, http.MethodGet, "/admin", "recuerdame", secret)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
@@ -482,7 +491,7 @@ func TestDashboardDoesNotInventZeroTargetWhenVerifiedCountIsUnavailable(t *testi
 
 func TestHeadHasHeadersAndNoBody(t *testing.T) {
 	mux, secret := configuredMux(t, &fakeStore{})
-	rec := serve(mux, http.MethodHead, "/admin", "admin", secret)
+	rec := serve(mux, http.MethodHead, "/admin", "recuerdame", secret)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -497,7 +506,7 @@ func TestHeadHasHeadersAndNoBody(t *testing.T) {
 func TestReadProbeFailureIsShownWithoutInventingHealth(t *testing.T) {
 	store := &fakeStore{statsErr: errors.New("database is down")}
 	mux, secret := configuredMux(t, store)
-	rec := serve(mux, http.MethodGet, "/admin", "admin", secret)
+	rec := serve(mux, http.MethodGet, "/admin", "recuerdame", secret)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 dashboard with partial state", rec.Code)
 	}

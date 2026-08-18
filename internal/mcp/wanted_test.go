@@ -118,6 +118,46 @@ func TestJavaMavenMissQueuesWantedWithoutClaimingAdapterSupport(t *testing.T) {
 	}
 }
 
+func TestExplicitCLITargetMissQueuesWantedWithoutBecomingEvidenceEcosystem(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Packages:      []string{"pkg:generic/cli/pnpm@10.15.0"},
+		Symbols:       []string{"pnpm deploy"},
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "generic", OS: "windows", OSVersionBucket: "11", Arch: "x64",
+			Runtime: "pnpm", RuntimeVersion: "10.15.0",
+		},
+	}
+	recordSearchOutcome(t.Context(), db, ident, cfg, req,
+		domain.SearchResponse{SchemaVersion: 2, Miss: true})
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Kind != evidence.WantedCandidateQueueKind ||
+		!strings.Contains(items[0].Payload, "pkg:generic/cli/pnpm@10.15.0") ||
+		!strings.Contains(items[0].Payload, "pnpm deploy") {
+		t.Fatalf("CLI miss did not become a privacy-reduced Wanted candidate: %+v", items)
+	}
+	if domain.AllowedEcosystems["generic"] {
+		t.Fatal("generic CLI targets must not become unverified automatic evidence")
+	}
+}
+
 func TestEngineOnlyMissQueuesFixedPublicTargetAndDropsPrivateFramework(t *testing.T) {
 	dir := t.TempDir()
 	db, err := localdb.Open(filepath.Join(dir, "csx.db"))

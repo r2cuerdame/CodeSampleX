@@ -772,6 +772,13 @@ func requestAddress(r *http.Request) (netip.Addr, bool) {
 	return rightmostForwarded(r.Header.Values("X-Forwarded-For"))
 }
 
+// ExternalRequestAddress exposes the same fail-closed proxy boundary to
+// private operational features that need to identify an internal machine.
+// Callers must not log or publish the returned address.
+func ExternalRequestAddress(r *http.Request) (netip.Addr, bool) {
+	return requestAddress(r)
+}
+
 // rightmostForwarded returns the last element of the last X-Forwarded-For
 // header. Go keeps repeated headers as separate values, and the proxy always
 // appends to the end, so anything the client supplied sits to the left of it.

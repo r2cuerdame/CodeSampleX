@@ -90,6 +90,40 @@ type AdminSearchOutcomeCounts struct {
 
 func (c AdminSearchOutcomeCounts) Total() int64 { return c.SampleHits + c.NoMatches }
 
+// AdminJobReasonCounts separates work a verifier may claim now from live
+// leases and abandoned leases. Stale jobs are also claimable; they remain a
+// separate count because a growing stale share is an operational fault signal.
+type AdminJobReasonCounts struct {
+	Claimable int64
+	Live      int64
+	Stale     int64
+}
+
+// AdminJobQueue is an aggregate of verification_jobs. It deliberately never
+// returns claimed_by: the dashboard needs workload and lease health, not a
+// list of contributor identities. LiveClaimants is the number of distinct
+// anonymous IDs holding a non-expired lease, not the number of online workers.
+type AdminJobQueue struct {
+	Cross           AdminJobReasonCounts
+	Matrix          AdminJobReasonCounts
+	Other           AdminJobReasonCounts
+	LiveClaimants   int64
+	OldestClaimable time.Time
+	HasOldest       bool
+}
+
+func (q AdminJobQueue) Claimable() int64 {
+	return q.Cross.Claimable + q.Matrix.Claimable + q.Other.Claimable
+}
+
+func (q AdminJobQueue) Live() int64 {
+	return q.Cross.Live + q.Matrix.Live + q.Other.Live
+}
+
+func (q AdminJobQueue) Stale() int64 {
+	return q.Cross.Stale + q.Matrix.Stale + q.Other.Stale
+}
+
 // AdminInsights is a bounded, read-only view for operator decisions.
 type AdminInsights struct {
 	WindowStart  time.Time
@@ -99,12 +133,14 @@ type AdminInsights struct {
 	Ecosystems   []AdminEcosystemCount
 	PackageDepth []AdminPackageDepth
 	Search       AdminSearchOutcomeCounts
+	Jobs         AdminJobQueue
 }
 
 var _ AdminInsightsReader = (*PG)(nil)
 
-// AdminInsights performs five bounded aggregate reads on indexed 30-day
-// windows. stats_daily returns at most 31 rows (30 visible days plus one
+// AdminInsights performs bounded aggregate reads on indexed 30-day windows
+// and the currently claimable/live verification-job set. stats_daily returns
+// at most 31 rows (30 visible days plus one
 // baseline); result and ecosystem groups are fixed buckets, and package
 // depth is length-bounded and limited to ten rows.
 func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, error) {
@@ -301,6 +337,36 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 		}
 		out.Search.FirstDay, out.Search.LastDay = firstDay, lastDay
 		out.Search.Available = out.Search.Days > 0 && out.Search.Total() > 0
+
+		cutoff := now.Add(-JobLease)
+		var oldest *time.Time
+		if err := conn.QueryRow(ctx, `
+			SELECT
+			  COUNT(*) FILTER (WHERE reason='cross' AND (status='open' OR (status='claimed' AND claimed_at < $1))),
+			  COUNT(*) FILTER (WHERE reason='cross' AND status='claimed' AND claimed_at >= $1),
+			  COUNT(*) FILTER (WHERE reason='cross' AND status='claimed' AND claimed_at < $1),
+			  COUNT(*) FILTER (WHERE reason='matrix' AND (status='open' OR (status='claimed' AND claimed_at < $1))),
+			  COUNT(*) FILTER (WHERE reason='matrix' AND status='claimed' AND claimed_at >= $1),
+			  COUNT(*) FILTER (WHERE reason='matrix' AND status='claimed' AND claimed_at < $1),
+			  COUNT(*) FILTER (WHERE reason NOT IN ('cross','matrix') AND (status='open' OR (status='claimed' AND claimed_at < $1))),
+			  COUNT(*) FILTER (WHERE reason NOT IN ('cross','matrix') AND status='claimed' AND claimed_at >= $1),
+			  COUNT(*) FILTER (WHERE reason NOT IN ('cross','matrix') AND status='claimed' AND claimed_at < $1),
+			  COUNT(DISTINCT claimed_by) FILTER (
+			    WHERE status='claimed' AND claimed_at >= $1 AND claimed_by IS NOT NULL AND claimed_by <> ''),
+			  MIN(created_at) FILTER (WHERE status='open' OR (status='claimed' AND claimed_at < $1))
+			FROM verification_jobs
+			WHERE status IN ('open','claimed')`, cutoff).Scan(
+			&out.Jobs.Cross.Claimable, &out.Jobs.Cross.Live, &out.Jobs.Cross.Stale,
+			&out.Jobs.Matrix.Claimable, &out.Jobs.Matrix.Live, &out.Jobs.Matrix.Stale,
+			&out.Jobs.Other.Claimable, &out.Jobs.Other.Live, &out.Jobs.Other.Stale,
+			&out.Jobs.LiveClaimants, &oldest,
+		); err != nil {
+			return err
+		}
+		if oldest != nil {
+			out.Jobs.OldestClaimable = oldest.UTC()
+			out.Jobs.HasOldest = true
+		}
 		return nil
 	})
 	return out, err

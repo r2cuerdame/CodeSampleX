@@ -665,13 +665,18 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 	type agg struct {
 		hit     web.PackageHit
 		symbols map[string]bool
+		exact   bool
+		prefix  bool
 	}
 	byPkg := map[string]*agg{}
-	query := strings.ToLower(filter.Query)
+	query := web.ParseRecordQuery(filter.Query)
 	add := func(purl, symbol, snapshotJSON string) {
 		p, err := domain.ParsePURL(purl)
-		if err != nil || (filter.Ecosystem != "" && p.Ecosystem != filter.Ecosystem) ||
-			(query != "" && !strings.Contains(strings.ToLower(p.Name), query)) {
+		if err != nil || (filter.Ecosystem != "" && p.Ecosystem != filter.Ecosystem) {
+			return
+		}
+		queryMatch, exact, prefix := query.MatchPackage(p.Name)
+		if !queryMatch {
 			return
 		}
 		if snapshotJSON != "" && !recordSnapshotMatches(snapshotJSON, filter) {
@@ -683,6 +688,8 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 			a = &agg{hit: web.PackageHit{Ecosystem: p.Ecosystem, Name: p.Name, LatestVersion: p.Version}, symbols: map[string]bool{}}
 			byPkg[key] = a
 		}
+		a.exact = a.exact || exact
+		a.prefix = a.prefix || prefix
 		if domain.CompareVersions(p.Version, a.hit.LatestVersion) > 0 {
 			a.hit.LatestVersion = p.Version
 		}
@@ -716,6 +723,13 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 		out = append(out, a.hit)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		ai, aj := byPkg[out[i].Ecosystem+"/"+out[i].Name], byPkg[out[j].Ecosystem+"/"+out[j].Name]
+		if ai.exact != aj.exact {
+			return ai.exact
+		}
+		if ai.prefix != aj.prefix {
+			return ai.prefix
+		}
 		if out[i].Symbols != out[j].Symbols {
 			return out[i].Symbols > out[j].Symbols
 		}

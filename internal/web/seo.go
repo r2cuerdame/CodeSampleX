@@ -284,7 +284,7 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// /stats and /adapters are permanent redirects and stay out of the map.
-	for _, p := range []string{"/records", "/findings", "/wanted", "/contribute"} {
+	for _, p := range []string{"/records", "/findings", "/wanted", "/features", "/contribute"} {
 		writeURL(base+p, nil)
 	}
 

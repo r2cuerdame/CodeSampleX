@@ -15,6 +15,14 @@ most useful thing this table says. A0–A2 are what the **local scanner** does
 to *your* project. A4 is what the **verifier** does to a *published sample*.
 An ecosystem can have one without the other, and five of them do.
 
+The evidence model is not limited to libraries. Engines, SDKs, operating
+systems, built-in commands and standalone CLIs are fixed public `generic`
+targets in the Wanted/search path. For example, npm-the-registry package
+`pkg:npm/npm@...` and npm-the-command `pkg:generic/cli/npm@...` are different
+subjects. The latter does not claim A4 until a pinned `system-cli` verifier
+image for that exact tool/OS combination exists; recording demand early is
+not the same as pretending it has already been verified.
+
 | Ecosystem | Adapter | Package managers | A0 | A1 | A2 | A3 | A4 | Symbol confidence |
 |-----------|---------------------|--------------------|----|----|----|----|----|-------------------|
 | npm | node-typescript@1 | npm, pnpm, yarn | ✓ | ✓ | ✓ | – | ✓ | PROBABLE |

@@ -35,6 +35,13 @@ func captureSampleIO(t *testing.T, stdin string) (*bytes.Buffer, *bytes.Buffer) 
 	return outBuf, errBuf
 }
 
+func bypassPublishApproval(t *testing.T) {
+	t.Helper()
+	old := publishApprovalForTest
+	publishApprovalForTest = func() bool { return true }
+	t.Cleanup(func() { publishApprovalForTest = old })
+}
+
 // sampleFixtureDir writes a minimal clean-room sample directory with a
 // csx.json manifest. extraFiles maps relative path → content.
 func sampleFixtureDir(t *testing.T, extraFiles map[string]string) string {
@@ -645,7 +652,7 @@ func TestSampleListShowsSamples(t *testing.T) {
 func TestSamplePublishHappyPathMultipartAndBearer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
-	t.Setenv("CSX_TEST_ASSUME_YES", "1")
+	bypassPublishApproval(t)
 	sampleID := createLocalSample(t, home, nil)
 
 	// Configure an API token + login so the Bearer header is attached.
@@ -663,7 +670,7 @@ func TestSamplePublishHappyPathMultipartAndBearer(t *testing.T) {
 	srv := newPublishServer(t, rec)
 
 	out, errBuf := captureSampleIO(t, "")
-	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL, "--assume-yes"})
+	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL})
 	if code != 0 {
 		t.Fatalf("publish exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
 	}
@@ -700,7 +707,7 @@ func TestSamplePublishHappyPathMultipartAndBearer(t *testing.T) {
 func TestSamplePublishAnonymousOmitsBearer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
-	t.Setenv("CSX_TEST_ASSUME_YES", "1")
+	bypassPublishApproval(t)
 	sampleID := createLocalSample(t, home, nil)
 
 	cfg, err := config.Load(home)
@@ -715,7 +722,7 @@ func TestSamplePublishAnonymousOmitsBearer(t *testing.T) {
 	rec := &publishRecord{}
 	srv := newPublishServer(t, rec)
 	out, errBuf := captureSampleIO(t, "")
-	code := Main([]string{"sample", "publish", sampleID, "--anonymous", "--server", srv.URL, "--assume-yes"})
+	code := Main([]string{"sample", "publish", sampleID, "--anonymous", "--server", srv.URL})
 	if code != 0 {
 		t.Fatalf("publish exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
 	}
@@ -744,10 +751,11 @@ func TestSamplePublishTypedYesGate(t *testing.T) {
 		t.Fatalf("expected abort message, got:\n%s", errBuf)
 	}
 
-	// --assume-yes WITHOUT CSX_TEST_ASSUME_YES=1 must still prompt.
+	// A process environment value cannot open a production approval bypass.
+	t.Setenv("CSX_TEST_ASSUME_YES", "1")
 	out, _ = captureSampleIO(t, "nah\n")
-	if code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL, "--assume-yes"}); code == 0 {
-		t.Fatal("--assume-yes without CSX_TEST_ASSUME_YES=1 skipped the typed-yes gate")
+	if code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL}); code == 0 {
+		t.Fatal("CSX_TEST_ASSUME_YES skipped the typed-yes gate")
 	}
 	if rec.calls != 0 {
 		t.Fatalf("server was called %d times, want 0", rec.calls)
@@ -776,7 +784,7 @@ func TestSamplePublishTypedYesGate(t *testing.T) {
 func TestSamplePublishRefusesOnLeakageFindings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
-	t.Setenv("CSX_TEST_ASSUME_YES", "1")
+	bypassPublishApproval(t)
 	// Plant a GitHub token — create succeeds (findings warn), publish must refuse.
 	token := "ghp_" + strings.Repeat("a1B2", 9) // 36 chars after prefix
 	sampleID := createLocalSample(t, home, map[string]string{
@@ -786,7 +794,7 @@ func TestSamplePublishRefusesOnLeakageFindings(t *testing.T) {
 	rec := &publishRecord{}
 	srv := newPublishServer(t, rec)
 	out, errBuf := captureSampleIO(t, "")
-	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL, "--assume-yes"})
+	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL})
 	if code == 0 {
 		t.Fatalf("publish with a planted token exited 0\nstdout: %s", out)
 	}
@@ -804,7 +812,7 @@ func TestSamplePublishRefusesOnLeakageFindings(t *testing.T) {
 func TestSamplePublishRejectsHashMismatchBeforeUpload(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
-	t.Setenv("CSX_TEST_ASSUME_YES", "1")
+	bypassPublishApproval(t)
 	sampleID := createLocalSample(t, home, nil)
 
 	// Tamper with the cached artifact so its content no longer hashes to
@@ -818,7 +826,7 @@ func TestSamplePublishRejectsHashMismatchBeforeUpload(t *testing.T) {
 	rec := &publishRecord{}
 	srv := newPublishServer(t, rec)
 	out, errBuf := captureSampleIO(t, "")
-	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL, "--assume-yes"})
+	code := Main([]string{"sample", "publish", sampleID, "--server", srv.URL})
 	if code == 0 {
 		t.Fatalf("publish of tampered artifact exited 0\nstdout: %s", out)
 	}

@@ -122,8 +122,10 @@ func (f *fakeStore) HotPackages(_ context.Context, limit int) ([]PackageHit, err
 
 func (f *fakeStore) RecordPackages(_ context.Context, filter RecordFilter, offset, limit int) ([]PackageHit, int, error) {
 	var all []PackageHit
+	query := ParseRecordQuery(filter.Query)
 	for _, p := range f.packages {
-		if (filter.Query == "" || strings.Contains(p.Name, filter.Query)) &&
+		queryMatch, _, _ := query.MatchPackage(p.Name)
+		if queryMatch &&
 			(filter.Ecosystem == "" || p.Ecosystem == filter.Ecosystem) &&
 			(filter.OS == "" || containsString(p.OperatingSystems, filter.OS)) &&
 			(filter.Runtime == "" || containsString(p.Runtimes, filter.Runtime)) &&

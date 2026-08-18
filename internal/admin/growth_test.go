@@ -86,18 +86,31 @@ func TestGrowthViewUnavailableDoesNotInventZeros(t *testing.T) {
 	}
 }
 
-func TestDashboardNamesRequestedMetricsAndTheirRealSources(t *testing.T) {
+func TestDashboardOmitsUnavailableMetricCardsAndReportsSourceOnce(t *testing.T) {
 	mux, secret := configuredMux(t, &fakeStore{})
-	body := serve(mux, "GET", "/admin", "admin", secret).Body.String()
-	for _, want := range []string{
-		"성장·재사용·검색 품질", "사용자 증가 속도", "재방문율", "MCP / CLI / API 반복 사용",
-		"Sample hit rate", "Finding hit rate", "No match 비율", "사용자 1,000명까지의 기울기",
-		"실제 저장 원천으로 계산되는 값만 표시합니다", "과거 값을 추정해 채우지 않습니다",
-		"일별 검색 결과 집계가 아직 없습니다", "데이터 없음",
-	} {
+	body := serve(mux, "GET", "/admin", "recuerdame", secret).Body.String()
+	for _, want := range []string{"운영 요약", "원천 상태", "측정 경계"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
+	}
+	for _, noisy := range []string{"성장·재사용·검색 품질", "사용자 증가 속도", "MCP / CLI / API 반복 사용", "사용자 1,000명까지의 기울기", "데이터 없음"} {
+		if strings.Contains(body, noisy) {
+			t.Errorf("dashboard retained unavailable primary metric %q", noisy)
+		}
+	}
+	if got := strings.Count(body, "현재 저장소는 30일 운영 추세를 제공하지 않습니다"); got != 1 {
+		t.Fatalf("insight source issue rendered %d times, want once", got)
+	}
+}
+
+func TestSearchQualityViewUsesRecordedOutcomeDenominator(t *testing.T) {
+	view := buildSearchQualityView(serverstore.AdminSearchOutcomeCounts{
+		Available: true, SampleHits: 75, NoMatches: 25, Days: 4,
+		FirstDay: "2026-08-15", LastDay: "2026-08-18",
+	})
+	if !view.Available || view.Total != 100 || view.HitRate != "75.0%" || view.NoMatchRate != "25.0%" || !strings.Contains(view.RangeLabel, "4일") {
+		t.Fatalf("search quality = %+v", view)
 	}
 }
 

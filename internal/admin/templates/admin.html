@@ -36,33 +36,49 @@
     table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.06em } th,td { padding:9px 7px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
     code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }.raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
     ul { margin:0; padding-left:20px } li+li { margin-top:7px }.empty { padding:14px 0; color:var(--muted) }.server { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
+    .sample-worker-form { display:grid; grid-template-columns:minmax(12rem,1.4fr) minmax(9rem,1fr) minmax(8rem,.8fr) minmax(6rem,.55fr) auto; gap:10px; align-items:end }
+    .sample-worker-form label { display:grid; gap:5px; color:var(--muted); font-size:11px; font-weight:700 }.sample-worker-form input,.sample-worker-form select { width:100%; min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:9px; background:#06142f; color:var(--ink); font:inherit }
+    .sample-worker-form button,.danger-button { border:0; border-radius:9px; padding:10px 13px; color:#fff; font-weight:800; cursor:pointer }.sample-worker-form button { background:var(--blue) }.danger-button { background:#8d2940 }.sample-worker-form button:disabled,.danger-button:disabled { opacity:.55; cursor:wait }
+    .sample-worker-sessions { display:grid; gap:8px; margin-top:14px }.sample-worker-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px; border:1px solid rgba(88,138,207,.35); border-radius:10px; background:rgba(3,14,34,.38) }.sample-worker-row strong,.sample-worker-row span { display:block }.sample-worker-row .note { margin-top:3px; overflow-wrap:anywhere }
+    details.panel > summary { cursor:pointer; font-size:18px; font-weight:800; list-style-position:inside } details.panel[open] > summary { margin-bottom:16px }
     @media(max-width:960px) { .trend-grid { grid-template-columns:1fr }.growth-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }.wide,.side,.half { grid-column:span 12 } }
-    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server,.growth-grid { grid-template-columns:1fr }.chart-pair { grid-template-columns:1fr }.chart { height:110px } }
+    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server,.growth-grid,.sample-worker-form { grid-template-columns:1fr }.chart-pair { grid-template-columns:1fr }.chart { height:110px }.sample-worker-row { align-items:flex-start; flex-direction:column }.danger-button { width:100% } }
   </style>
 </head>
 <body>
 <main>
   <div class="topline">
-    <div><div class="eyebrow">비공개 · 읽기 전용</div><h1>CodeSampleX 운영 대시보드</h1><p class="muted">지금 얼마나 커졌는지보다, 무엇이 얼마나 빠르게 쌓이는지 봅니다.</p></div>
+    <div><div class="eyebrow">비공개 · 운영 전용</div><h1>CodeSampleX 운영 대시보드</h1><p class="muted">지금 얼마나 커졌는지보다, 무엇이 얼마나 빠르게 쌓이는지 봅니다.</p></div>
     <div class="stamp">생성 시각 {{.GeneratedAt}}</div>
   </div>
 
   <div class="grid">
-    <section class="panel" aria-labelledby="growth-metrics-title">
-      <div class="section-head"><div><h2 id="growth-metrics-title">성장·재사용·검색 품질</h2><p class="note">실제 저장 원천으로 계산되는 값만 표시합니다. “데이터 없음”은 0%가 아니라 현재 개인정보 경계나 이벤트 계측으로는 산출할 수 없다는 뜻입니다.</p></div><span class="stamp">사용자·검색 결과를 다른 카운터로 추정하지 않음</span></div>
-      <div class="growth-grid">
-        {{range .Growth.Metrics}}<article class="growth-card {{.Tone}}"><span class="label">{{.Name}}</span><span class="value">{{.Value}}</span><p class="reason">{{.Description}}</p></article>{{end}}
+    {{if .SourceIssues}}<section class="panel" aria-labelledby="source-title"><h2 id="source-title">원천 상태</h2><ul class="muted">{{range .SourceIssues}}<li>{{.}}</li>{{end}}</ul></section>{{end}}
+
+    <section class="panel" aria-labelledby="summary-title">
+      <div class="section-head"><div><h2 id="summary-title">운영 요약</h2><p class="note">저장된 검색 결과·검증 영수증·작업 lease만 표시합니다.</p></div></div>
+      <div class="stats">
+        {{if .CountsAvailable}}<div class="metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span></div><div class="metric"><span class="label">공개 패키지</span><span class="value">{{number .Counts.Packages}}</span></div><div class="metric"><span class="label">사용 관측</span><span class="value">{{number .Counts.Observations}}</span></div>{{end}}
+        {{if .SearchQuality.Available}}<div class="metric"><span class="label">공개 검색 응답</span><span class="value">{{number .SearchQuality.Total}}</span><span class="note">{{.SearchQuality.RangeLabel}}</span></div><div class="metric"><span class="label">Sample hit rate</span><span class="value ok">{{.SearchQuality.HitRate}}</span><span class="note">샘플 반환 {{number .SearchQuality.SampleHits}}건</span></div><div class="metric"><span class="label">No match 비율</span><span class="value bad">{{.SearchQuality.NoMatchRate}}</span><span class="note">NO_SAFE_MATCH {{number .SearchQuality.NoMatches}}건</span></div>{{end}}
+        {{if .InsightsAvailable}}<div class="metric"><span class="label">Claim 가능 검증 일감</span><span class="value">{{number .Insights.Jobs.Claimable}}</span></div><div class="metric"><span class="label">진행 중 lease</span><span class="value">{{number .Insights.Jobs.Live}}</span></div><div class="metric"><span class="label">유효 claim 워커 ID</span><span class="value">{{number .Insights.Jobs.LiveClaimants}}</span></div>{{end}}
       </div>
-      <h3 style="margin-top:18px">개인정보를 추가 저장하지 않고 계산 가능한 운영 프록시</h3>
-      <div class="growth-grid" style="margin-top:10px">
-        {{range .Growth.Proxies}}<article class="growth-card {{.Tone}}"><span class="label">{{.Name}}</span><span class="value">{{.Value}}</span><p class="reason">{{.Description}}</p></article>{{end}}
-      </div>
-      <p class="note">활동 ID는 UTC 일·월별 HMAC 가명 버킷입니다. 사용자, 계정, 설치, 세션과 같지 않으며 공유 NAT에서는 여러 사람이 하나로 합쳐지고 한 사람이 네트워크를 바꾸면 여러 개로 보일 수 있습니다.</p>
+      {{if .SearchQuality.Available}}<p class="note">검색 품질은 성공한 공개 /v1·/v2 검색 응답의 UTC 일별 aggregate입니다. query·패키지·심벌·사용자 ID를 저장하지 않으며 로컬 MCP/CLI 캐시 검색은 포함하지 않습니다.</p>{{end}}
+    </section>
+    <section class="panel" id="sample-authoring" aria-labelledby="sample-authoring-title">
+      <div class="section-head"><div><h2 id="sample-authoring-title">내부 샘플 워커</h2><p class="note">모델·추론 강도·수량을 고르면 서로 다른 세션 토큰이 든 작업 프롬프트와 완성형 CLI 갱신 명령을 함께 복사합니다.</p></div><span class="stamp">45분 권장 갱신 · 1시간 미갱신 시 만료</span></div>
+      <form class="sample-worker-form" id="sample-worker-form">
+        <label>컴퓨터명 또는 IP<input name="label" maxlength="72" required placeholder="java-builder"></label>
+        <label>LLM 모델<input name="model" maxlength="80" required value="agy" list="sample-worker-models"><datalist id="sample-worker-models"><option value="agy"><option value="codex"><option value="claude-haiku"><option value="claude-sonnet"><option value="gemini-flash"></datalist></label>
+        <label>추론 강도<select name="reasoning"><option value="auto" selected>자동</option><option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option></select></label>
+        <label>워커 수<input name="count" type="number" min="1" max="16" value="1" required></label>
+        <button type="submit">프롬프트 + CLI 발급·복사</button>
+      </form>
+      <p id="sample-worker-status" class="note" role="status" aria-live="polite">토큰 원문은 발급 응답과 클립보드에만 있고 운영 화면·로그에는 다시 표시하지 않습니다.</p>
+      <div id="sample-worker-sessions" class="sample-worker-sessions" aria-live="polite"><p class="empty">활성 샘플 워커를 불러오는 중…</p></div>
     </section>
 
-    <section class="panel" aria-labelledby="growth-title">
-      <div class="section-head"><div><h2 id="growth-title">30일 성장 추이</h2><p class="note">UTC {{if .InsightsAvailable}}{{.Insights.WindowStart}} ~ {{.Insights.WindowEnd}} · 스냅샷 {{.Insights.SnapshotDays}}/30일{{if .Insights.MissingDays}} · 누락 {{.Insights.MissingDays}}일{{end}}{{else}}최근 30일{{end}}</p></div><span class="stamp">누락 날짜는 0으로 채우거나 선으로 연결하지 않음</span></div>
-      {{if .InsightsAvailable}}
+    {{if .InsightsAvailable}}<section class="panel" aria-labelledby="growth-title">
+      <div class="section-head"><div><h2 id="growth-title">검증 샘플 추이</h2><p class="note">UTC {{.Insights.WindowStart}} ~ {{.Insights.WindowEnd}} · 스냅샷 {{.Insights.SnapshotDays}}/30일{{if .Insights.MissingDays}} · 누락 {{.Insights.MissingDays}}일{{end}}</p></div><span class="stamp">누락 날짜는 0으로 채우거나 연결하지 않음</span></div>
       <div class="target">
         <div><span class="label">검증된 샘플 10K 목표</span>{{if .Insights.Target.HasCurrent}}<strong>{{number .Insights.Target.Current}} / {{number .Insights.Target.Target}}</strong>{{if .Insights.Target.Achieved}}<p class="remaining ok">목표 달성</p>{{else}}<p class="remaining">남은 샘플 {{number .Insights.Target.Remaining}}개</p>{{end}}
           <svg class="progress-svg" viewBox="0 0 100 8" preserveAspectRatio="none" aria-label="10K 목표 진행률"><rect width="100" height="8" rx="4" fill="rgba(158,179,212,.18)"/><rect width="{{.Insights.Target.Progress}}" height="8" rx="4" fill="#62d9ff"/></svg>{{else}}<strong>집계 없음</strong><p class="remaining">{{.Insights.Target.Reason}}</p>{{end}}
@@ -84,81 +100,36 @@
         {{end}}
       </div>
       <p class="note">오늘 스냅샷은 진행 중인 값입니다. 목표 예상일은 서로 연속인 완료 날짜 쌍의 음수를 포함한 순증감 단순 평균이며 계획이나 보장이 아닙니다.</p>
-      {{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
-    </section>
+    </section>{{end}}
 
-    <section class="panel" aria-labelledby="api-title">
-      <div class="section-head"><div><h2 id="api-title">API 요청 활동</h2><p class="note">사용자 수가 아니라 쿼리 문자열과 경로 식별자를 제거한 안전 로그의 HTTP 요청 수입니다.</p></div>{{if .AccessAvailable}}<span class="stamp">기록 범위 {{.Access.RangeLabel}}{{if .Access.PartialToday}} · 오늘 진행 중{{end}}</span>{{end}}</div>
-      <h3>API 활동 ID</h3>
-      <p class="note">여기 있는 수는 <strong>API 활동 ID의 개수</strong>입니다. 사람 수가 아니고, 실제 사용자 수도, MCP 클라이언트나 세션 수도, 설치 수도 아닙니다. 한 사람이 여러 네트워크에서 접속하면 여러 ID로, 여러 사람이 공유 NAT·통신사망·회사망을 사용하면 하나의 ID로 셉니다. 네트워크 추정치이며 소유자 네트워크 제외 후의 값이고, 사람/사용자 수가 아님을 다시 밝힙니다. 소유자 제외는 같은 네트워크의 다른 활동도 해당 UTC 일·월 동안 함께 제외하는 되돌릴 수 없는 버킷 승격이므로, 관리 화면은 공유망이 아닌 안정적인 전용 네트워크에서 여는 것이 안전합니다. ‘오늘’과 ‘이번 달’은 진행 중인 부분 기간입니다. ‘이번 달’은 최근 30일이 아니라 달력 기준 월(UTC 1일부터 말일까지)이며, 매월 1일 0시 UTC에 새로 시작합니다. 이 활동 추정 수집기는 IP·전달 헤더·User-Agent·경로·질의 문자열을 활동 추정 저장소에 저장하지 않으며, 일 ID와 월 ID는 키 도메인이 달라 서로 연결되지 않습니다. 다만 이 값은 익명값이 아니라 키 기반 가명값입니다. 같은 서버의 CSX_ACTIVITY_HASH_KEY가 개인정보 보호 경계이며, 키와 DB가 함께 유출되면 IPv4 버킷은 2^32 주소 공간 열거로 원래 주소 후보를 복원할 수 있습니다. 보존 범위는 키가 없거나 잘못되어 수집이 꺼진 동안에도 현재 UTC 기간을 포함해 일 버킷 35개·월 버킷 13개로 정리됩니다. 서버의 다른 기능이 사용하는 저장소에 대한 설명은 아닙니다.</p>
-      {{if .ActivityAvailable}}
-        <div class="stats" style="margin-top:12px"><div class="metric"><span class="label">오늘 API 활동 ID</span><span class="value">{{number .Activity.Counts.ExternalDAU}}</span><span class="note">오늘 UTC 진행 중 · 사람 수가 아닌 ID 수 · 소유자 제외 {{number .Activity.Counts.OwnerDAU}}개</span></div><div class="metric"><span class="label">이번 달 API 활동 ID</span><span class="value">{{number .Activity.Counts.ExternalMAU}}</span><span class="note">이번 달력 월 진행 중(UTC 1일~말일) · 최근 30일이 아님 · 사람 수가 아닌 ID 수 · 소유자 제외 {{number .Activity.Counts.OwnerMAU}}개</span></div><div class="metric"><span class="label">수집 상태</span><span class="value small">{{if or .Activity.Counts.DaySeen .Activity.Counts.MonthSeen}}관측됨{{else}}아직 의미 있는 API 요청 없음{{end}}</span></div></div>
-        <div class="chart-box" style="margin-top:14px"><div class="chart-label"><span>일별 API 활동 ID · 최근 31 UTC일</span><span>{{.ActivityDaily.DayFrom}} ~ {{.ActivityDaily.DayTo}}</span></div>
-          <svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="최근 31 UTC일 일별 API 활동 ID">
-            <line class="axis" x1="16" y1="116" x2="584" y2="116"/>
-            {{range .ActivityDaily.Pending}}<rect class="nodata" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"><title>{{.Day}} · {{.Label}}</title></rect>{{end}}
-            {{range .ActivityDaily.Gaps}}<rect class="gapmark" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"><title>{{.Day}} · {{.Label}}</title></rect>{{end}}
-            {{range .ActivityDaily.HealthyZeros}}<rect class="healthyzero" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"><title>{{.Day}} · {{.Label}}</title></rect>{{end}}
-            {{range .ActivityDaily.Bars}}<rect class="delta" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}" rx="2"><title>{{.Day}} · {{number .Value}} ID</title></rect>{{end}}
-          </svg>
-          <p class="note">{{.ActivityDaily.RangeNote}}. 파란 막대는 관측된 ID, 초록 칸은 독립 상태 표식이 확인한 정상 수집 0건, 회색 칸은 수집 시작 전 “측정 없음”, 주황 칸은 상태 표식도 요청 버킷도 없는 수집 공백입니다. 트래픽 부재만으로 장애나 0건을 추론하지 않습니다.</p></div>
-        <p class="note">비차단 수집 대기 {{.ActivityTelemetry.Pending}}건 · 대기열 포화 누락 {{numberu .ActivityTelemetry.Dropped}}건 · 저장 실패 {{numberu .ActivityTelemetry.StoreFailures}}건 · 성공 플러시 {{numberu .ActivityTelemetry.Flushes}}회. 누락이나 저장 실패가 있으면 표시된 ID 수는 실제보다 작을 수 있습니다.</p>
-      {{else}}<p class="empty">{{.ActivityError}}</p>{{if .ActivityTelemetry.StoreFailures}}<p class="note">저장 실패 {{numberu .ActivityTelemetry.StoreFailures}}건 · 대기열 포화 누락 {{numberu .ActivityTelemetry.Dropped}}건 · 성공 플러시 {{numberu .ActivityTelemetry.Flushes}}회</p>{{end}}{{end}}
-      <h3 style="margin-top:20px">안전 로그 요청량</h3>
-      {{if .AccessAvailable}}
-        {{if .Access.NoSource}}<p class="empty">연결된 안전 로그가 아직 없어 API 요청량을 주장하지 않습니다.</p>
-        {{else}}
-        <div class="stats"><div class="metric"><span class="label">보존 로그 내 전체 요청</span><span class="value">{{number .Access.Total.Requests}}</span></div><div class="metric"><span class="label">최근 관측일 · {{.Access.LatestDate}}</span><span class="value">{{number .Access.LatestRequests}}</span></div><div class="metric"><span class="label">요청이 있던 날 평균</span><span class="value">{{number .Access.AveragePerDay}}</span></div><div class="metric"><span class="label">GET / HEAD 요청</span><span class="value">{{number .Access.Total.GetHeadRequests}}</span></div><div class="metric"><span class="label">POST 요청</span><span class="value">{{number .Access.Total.PostRequests}}</span></div><div class="metric"><span class="label">429 제한 응답</span><span class="value">{{number .Access.Total.Status429}}</span></div></div>
-        <div class="chart-pair">
-          <div class="trend"><div class="chart-label"><span>일별 전체 API 요청 · 최근 31 UTC일</span><span>{{.Access.Daily.DayFrom}} ~ {{.Access.Daily.DayTo}}</span></div>{{if .Access.Daily.Empty}}<p class="empty">요청이 기록된 날짜가 없습니다.</p>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="일별 API 요청"><line class="axis" x1="16" y1="116" x2="584" y2="116"/>{{range .Access.Daily.Bars}}<rect class="delta" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}" rx="2"><title>{{.Day}} · {{number .Value}} 요청</title></rect>{{end}}</svg>{{end}}</div>
-          <div class="trend"><div class="chart-label"><span>활동군별 일일 요청</span><span>검색/기여/조정</span></div>{{if .Access.Daily.Empty}}<p class="empty">활동군 데이터가 없습니다.</p>{{else}}<svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="활동군별 일일 API 요청"><line class="axis" x1="16" y1="116" x2="584" y2="116"/>{{range .Access.Daily.Stacks}}<rect class="stack {{.Tone}}" x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"><title>{{.Day}} · {{.Label}} {{number .Value}} 요청</title></rect>{{end}}</svg>{{end}}</div>
-        </div>
-        <div class="grid" style="margin-top:16px">
-          <div class="half"><h3>활동군 구성</h3><div class="mix-list">{{range .Access.GroupRows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div></div>
-          <div class="half"><h3>응답 상태</h3><div class="mix-list">{{range .Access.StatusRows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div><p class="note">429는 4xx 안에 포함되며 위 핵심 수치에서 별도로 보여줍니다.</p></div>
-        </div>
-        {{if .Access.Routes}}<h3 style="margin-top:18px">많이 호출된 API 종류</h3><div class="table-wrap"><table><caption class="sr-only">API 종류별 요청 방식 및 응답 상태 집계</caption><thead><tr><th scope="col">API 종류</th><th scope="col">활동군</th><th scope="col">전체</th><th scope="col">GET/HEAD</th><th scope="col">POST</th><th scope="col">기타</th><th scope="col">429</th><th scope="col">5xx</th></tr></thead><tbody>{{range .Access.Routes}}<tr><td>{{.Label}}</td><td>{{.GroupLabel}}</td><td>{{number .Requests}}</td><td>{{number .GetHead}}</td><td>{{number .Post}}</td><td>{{number .Other}}</td><td>{{number .Status429}}</td><td>{{number .Status5xx}}</td></tr>{{end}}</tbody></table></div>{{end}}
-        <p class="note">로그 파일 {{.Access.SourceFiles}}개 · 요청 관측 {{.Access.DaysWithRequests}}일{{if .Access.CollectionStarted}} · 안전 로그 수집 시작 {{.Access.CollectionStarted}}{{end}}. 로그 보존 이전 기간은 0으로 간주하지 않습니다.{{if .Access.QualityNote}} {{.Access.QualityNote}}.{{end}}</p>
-        {{end}}
-      {{else}}<p class="empty">{{.AccessError}}</p>{{end}}
-    </section>
+    {{if .InsightsAvailable}}<section class="panel half" aria-labelledby="jobs-title"><div class="section-head"><div><h2 id="jobs-title">검증 작업 큐</h2><p class="note">만료된 lease는 다시 claim 가능하므로 Claim 가능 수에 포함됩니다.</p></div>{{if .Insights.Jobs.HasOldest}}<span class="stamp">최고 대기 {{.Insights.Jobs.OldestAge}}</span>{{end}}</div><div class="stats"><div class="metric"><span class="label">Claim 가능</span><span class="value">{{number .Insights.Jobs.Claimable}}</span></div><div class="metric"><span class="label">진행 중</span><span class="value">{{number .Insights.Jobs.Live}}</span></div><div class="metric"><span class="label">만료 lease</span><span class="value {{if .Insights.Jobs.Stale}}bad{{end}}">{{number .Insights.Jobs.Stale}}</span></div></div><div class="table-wrap" style="margin-top:12px"><table><caption class="sr-only">검증 이유별 작업 큐 상태</caption><thead><tr><th scope="col">종류</th><th scope="col">Claim 가능</th><th scope="col">진행 중</th><th scope="col">만료 lease</th></tr></thead><tbody>{{range .Insights.Jobs.Rows}}<tr><td>{{.Label}}</td><td>{{number .Claimable}}</td><td>{{number .Live}}</td><td>{{number .Stale}}</td></tr>{{end}}</tbody></table></div><p class="note">유효 claim 워커 ID {{number .Insights.Jobs.LiveClaimants}}개. 익명 ID의 30분 lease 집계이며 온라인·idle 워커 수나 heartbeat가 아닙니다.</p></section>{{end}}
 
-    <section class="panel wide" aria-labelledby="verification-title">
+    {{if .WantedAvailable}}<section class="panel half" aria-labelledby="wanted-title"><h2 id="wanted-title">요청 대기열 · 미응답 좌표 {{.WantedTotal}}개</h2>{{if .Wanted}}<div class="table-wrap"><table><caption class="sr-only">미응답 요청 패키지 좌표</caption><thead><tr><th scope="col">패키지</th><th scope="col">버전</th><th scope="col">심벌</th><th scope="col">익명 일별 보고</th><th scope="col">최근 기록</th></tr></thead><tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">대기 중인 미응답 좌표 0개</p>{{end}}<p class="note">질문 원문은 저장하지 않습니다. 익명 보고자/UTC일별로 중복 제거되므로 원시 API 요청 횟수가 아닙니다.</p></section>{{end}}
+
+    {{if .InsightsAvailable}}<section class="panel wide" aria-labelledby="verification-title">
       <div class="section-head"><div><h2 id="verification-title">최근 30일 검증 활동</h2><p class="note">전체 네트워크에 접수된 검증 영수증입니다. 전용 샘플 공장만 분리한 수치가 아닙니다.</p></div>{{if .InsightsAvailable}}<span class="value">{{number .Insights.Verification.Total}}</span>{{end}}</div>
-      {{if .InsightsAvailable}}
-        {{if .Insights.Verification.Total}}<div class="result-totals"><div><strong class="ok">{{number .Insights.Verification.Pass}}</strong><span>PASS</span></div><div><strong class="bad">{{number .Insights.Verification.Fail}}</strong><span>FAIL</span></div><div><strong>{{number .Insights.Verification.Skipped}}</strong><span>SKIPPED</span></div></div>
-        <div class="mix-list">{{range .Insights.Verification.Rows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">이 기간에 접수된 검증 영수증이 없습니다.</p>{{end}}
-      {{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
-    </section>
+      {{if .Insights.Verification.Total}}<div class="result-totals"><div><strong class="ok">{{number .Insights.Verification.Pass}}</strong><span>PASS</span></div><div><strong class="bad">{{number .Insights.Verification.Fail}}</strong><span>FAIL</span></div><div><strong>{{number .Insights.Verification.Skipped}}</strong><span>SKIPPED</span></div></div><div class="mix-list">{{range .Insights.Verification.Rows}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">최근 30일 검증 영수증 0건</p>{{end}}
+    </section>{{end}}
 
-    <section class="panel side" aria-labelledby="ecosystem-title">
+    {{if .InsightsAvailable}}<section class="panel side" aria-labelledby="ecosystem-title">
       <h2 id="ecosystem-title">최근 검증 생태계 구성</h2><p class="note">전체 네트워크의 최근 30일 PASS 영수증에 기록된 실제 실행 환경 기준입니다. 작성된 샘플 환경을 대신 쓰지 않으며 격리된 샘플은 제외합니다.</p>
-      {{if .InsightsAvailable}}{{if .Insights.Ecosystems}}<div class="mix-list">{{range .Insights.Ecosystems}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">최근 PASS 생태계 데이터가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
-    </section>
+      {{if .Insights.Ecosystems}}<div class="mix-list">{{range .Insights.Ecosystems}}<div><div class="mix-head"><strong>{{.Label}}</strong><span>{{number .Value}} · {{.Share}}</span></div><svg class="mix-track" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="mix-fill {{.Tone}}" width="{{.Width}}" height="8"/></svg></div>{{end}}</div>{{else}}<p class="empty">최근 PASS 영수증 0건</p>{{end}}
+    </section>{{end}}
 
-    <section class="panel half" aria-labelledby="depth-title">
+    {{if .InsightsAvailable}}<section class="panel half" aria-labelledby="depth-title">
       <h2 id="depth-title">최근 패키지 깊이</h2><p class="note">전체 네트워크의 최근 30일 v2 PASS 영수증에 기록된 실제 resolvedPackages 기준입니다. 버전을 합치고 샘플 하나는 패키지당 한 번만 셉니다. 해석할 수 없는 v1 영수증과 격리된 샘플은 제외합니다.</p>
-      {{if .InsightsAvailable}}{{if .Insights.PackageDepth}}<div class="table-wrap"><table><caption class="sr-only">최근 30일 패키지별 검증 샘플 수</caption><thead><tr><th scope="col">패키지</th><th scope="col">검증 샘플</th></tr></thead><tbody>{{range .Insights.PackageDepth}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{number .VerifiedSamples}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">최근 패키지 깊이 데이터가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.InsightsError}}</p>{{end}}
-    </section>
+      {{if .Insights.PackageDepth}}<div class="table-wrap"><table><caption class="sr-only">최근 30일 패키지별 검증 샘플 수</caption><thead><tr><th scope="col">패키지</th><th scope="col">검증 샘플</th></tr></thead><tbody>{{range .Insights.PackageDepth}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{number .VerifiedSamples}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">최근 v2 PASS resolvedPackages 0건</p>{{end}}
+    </section>{{end}}
 
-    <section class="panel half" aria-labelledby="counts-title">
-      <h2 id="counts-title">현재 네트워크 집계</h2>
-      {{if .CountsAvailable}}<div class="stats"><div class="metric"><span class="label">패키지</span><span class="value">{{number .Counts.Packages}}</span></div><div class="metric"><span class="label">증거(사용 관측)</span><span class="value">{{number .Counts.Observations}}</span></div><div class="metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span></div><div class="metric"><span class="label">오늘 익명 피어 버킷</span><span class="value">{{number .Counts.Peers}}</span></div><div class="metric"><span class="label">이번 달 프로젝트 버킷</span><span class="value">{{number .Counts.ProjectsMonth}}</span></div><div class="metric"><span class="label">현재 기여 피어</span><span class="value">{{number .Counts.ServingPeers}}</span></div></div>{{else}}<p class="empty">{{.CountsError}}</p>{{end}}
-      <p class="note">피어·프로젝트는 회전하는 익명 버킷이며 고유 사용자, 계정, 활성 MCP 세션 수가 아닙니다.</p>
-    </section>
+    {{if .AdoptionAvailable}}<section class="panel side" aria-labelledby="adoption-title"><h2 id="adoption-title">샘플 채택 보고</h2><div class="raw"><div><strong>{{number .Adoption.Reports}}</strong><span>전체 보고</span></div><div><strong>{{number .Adoption.Applied}}</strong><span>샘플 적용</span></div><div><strong>{{number .Adoption.BuildPass}}</strong><span>적용 후 빌드 PASS</span></div><div><strong>{{number .Adoption.BuildFail}}</strong><span>적용 후 빌드 FAIL</span></div></div><p class="note">샘플/익명 보고자/UTC일별 중복 제거 결과입니다. ‘실패 회피’는 추정하지 않습니다.</p></section>{{end}}
 
-    <section class="panel wide" aria-labelledby="wanted-title">
-      <h2 id="wanted-title">요청 대기열 {{if .WantedAvailable}}· 미응답 좌표 {{.WantedTotal}}개{{end}}</h2>
-      {{if .WantedAvailable}}{{if .Wanted}}<div class="table-wrap"><table><caption class="sr-only">미응답 요청 패키지 좌표</caption><thead><tr><th scope="col">패키지</th><th scope="col">버전</th><th scope="col">심벌</th><th scope="col">익명 일별 보고</th><th scope="col">최근 기록</th></tr></thead><tbody>{{range .Wanted}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{number .Asks}}</td><td>{{if .LastSeen.IsZero}}—{{else}}{{.LastSeen.UTC.Format "2006-01-02 15:04"}} UTC{{end}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">현재 기록된 미응답 좌표가 없습니다.</p>{{end}}{{else}}<p class="empty">{{.WantedError}}</p>{{end}}
-      <p class="note">질문 원문은 저장하지 않습니다. 보고는 익명 보고자/일자별로 중복 제거되므로 원시 API 요청 횟수가 아닙니다.</p>
-    </section>
+    <details class="panel"><summary>API·개인정보 진단</summary>{{if .ActivityAvailable}}<h3>API 활동 ID</h3><div class="stats" style="margin-top:12px"><div class="metric"><span class="label">오늘 API 활동 ID</span><span class="value">{{number .Activity.Counts.ExternalDAU}}</span><span class="note">오늘 UTC 진행 중 · 사람 수가 아닌 ID 수 · 소유자 제외 {{number .Activity.Counts.OwnerDAU}}개</span></div><div class="metric"><span class="label">이번 달 API 활동 ID</span><span class="value">{{number .Activity.Counts.ExternalMAU}}</span><span class="note">달력 기준 월(UTC 1일부터 말일까지) · 최근 30일이 아니라 · 소유자 제외 {{number .Activity.Counts.OwnerMAU}}개</span></div><div class="metric"><span class="label">수집 상태</span><span class="value small">{{if or .Activity.Counts.DaySeen .Activity.Counts.MonthSeen}}관측됨{{else}}아직 의미 있는 API 요청 없음{{end}}</span></div></div><p class="note">여기 있는 수는 <strong>API 활동 ID의 개수</strong>입니다. 사람 수가 아니고 실제 사용자 수도, MCP 클라이언트나 세션 수도, 설치 수도 아닙니다. 공유 NAT·통신사망·회사망에서는 여러 사람이 하나로 합쳐지고 한 사람이 네트워크를 바꾸면 여러 ID로 보일 수 있는 네트워크 추정치입니다. 소유자 네트워크 제외는 같은 공유망 활동도 해당 UTC 기간 동안 함께 제외하는 되돌릴 수 없는 버킷 승격이므로 사람/사용자 수가 아님을 전제로 봐야 합니다. 이 활동 추정 수집기는 IP·전달 헤더·User-Agent·경로·질의 문자열을 활동 추정 저장소에 저장하지 않으며 일 ID와 월 ID를 연결하지 않습니다. CSX_ACTIVITY_HASH_KEY가 개인정보 보호 경계인 키 기반 가명값으로, 키와 DB가 함께 유출되면 IPv4 버킷은 2^32 주소 공간 열거로 후보를 복원할 수 있습니다. 키가 없거나 잘못되어 수집이 꺼진 동안에도 현재 UTC 기간을 포함해 일 버킷 35개·월 버킷 13개로 정리됩니다. 서버의 다른 기능이 사용하는 저장소에 대한 설명은 아닙니다.</p><p class="note">비차단 수집 대기 {{.ActivityTelemetry.Pending}}건 · 대기열 포화 누락 {{numberu .ActivityTelemetry.Dropped}}건 · 저장 실패 {{numberu .ActivityTelemetry.StoreFailures}}건 · 성공 플러시 {{numberu .ActivityTelemetry.Flushes}}회. 누락이나 저장 실패가 있으면 표시된 ID 수는 실제보다 작을 수 있습니다.</p>{{else if .ActivityError}}<p class="empty">{{.ActivityError}}</p>{{end}}{{if and .AccessAvailable (not .Access.NoSource)}}<h3 style="margin-top:18px">안전 로그</h3><div class="stats"><div class="metric"><span class="label">보존 범위 요청</span><span class="value">{{number .Access.Total.Requests}}</span></div><div class="metric"><span class="label">429</span><span class="value">{{number .Access.Total.Status429}}</span></div><div class="metric"><span class="label">5xx</span><span class="value">{{number .Access.Total.Status5xx}}</span></div></div><p class="note">{{.Access.RangeLabel}} · 로그 파일 {{.Access.SourceFiles}}개. 쿼리 문자열과 경로 식별자를 제거한 요청 집계이며 로그 보존 이전 기간이나 수집 공백을 0으로 간주하지 않습니다.{{if .Access.QualityNote}} {{.Access.QualityNote}}.{{end}}</p>{{else if .AccessError}}<p class="empty">{{.AccessError}}</p>{{end}}</details>
 
-    <section class="panel side" aria-labelledby="adoption-title"><h2 id="adoption-title">샘플 채택 보고</h2>{{if .AdoptionAvailable}}<div class="raw"><div><strong>{{number .Adoption.Reports}}</strong><span>전체 보고</span></div><div><strong>{{number .Adoption.Applied}}</strong><span>샘플 적용</span></div><div><strong>{{number .Adoption.BuildPass}}</strong><span>적용 후 빌드 PASS</span></div><div><strong>{{number .Adoption.BuildFail}}</strong><span>적용 후 빌드 FAIL</span></div></div>{{else}}<p class="empty">{{.AdoptionError}}</p>{{end}}<p class="note">샘플/익명 보고자/일자별 중복 제거 결과입니다. ‘실패 회피’는 추정하지 않습니다.</p></section>
+    <section class="panel" aria-labelledby="runtime-title"><h2 id="runtime-title">서버 상태</h2><div class="server"><div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div><div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div><div class="metric"><span class="label">데이터베이스 읽기 점검</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}</div></div><p class="note">점검 지연 시간은 애플리케이션의 최신 통계 읽기 시간이며 PostgreSQL 내부 실행 시간은 아닙니다.</p></section>
 
-    <section class="panel" aria-labelledby="runtime-title"><h2 id="runtime-title">서버 상태</h2><div class="server"><div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div><div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div><div class="metric"><span class="label">데이터베이스 읽기 점검</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}{{if .DBError}}<p class="note">{{.DBError}}</p>{{end}}</div></div><p class="note">점검 지연 시간은 애플리케이션의 최신 통계 읽기 시간이며 PostgreSQL 내부 실행 시간은 아닙니다.</p></section>
-
-    <section class="panel" aria-labelledby="limits-title"><h2 id="limits-title">해석할 때 제외해야 할 것</h2><ul class="muted"><li>고유 사용자 또는 계정</li><li>활성 MCP 세션</li><li>설치 및 다운로드</li><li>전용 샘플 공장만의 처리량</li><li>회피한 실패 또는 절약 시간</li></ul></section>
+    <details class="panel"><summary>측정 경계</summary><ul class="muted"><li>고유 사용자·계정·재방문율</li><li>온라인 또는 idle 워커 수</li><li>활성 MCP 세션·설치·다운로드</li><li>Finding hit rate와 전용 샘플 공장만의 처리량</li><li>회피한 실패 또는 절약 시간</li></ul></details>
   </div>
 </main>
+<script src="/admin/admin.js" defer></script>
 </body>
 </html>

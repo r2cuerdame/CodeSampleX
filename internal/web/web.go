@@ -260,6 +260,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records", s.records)
 	handle("GET /findings", s.findings)
 	handle("GET /wanted", s.wanted)
+	handle("GET /features", s.features)
 	handle("GET /contribute", s.contribute)
 	// One rule for a trailing slash, applied everywhere: redirect to the
 	// slashless form. It was inconsistent — /records/ and /findings/ hard
@@ -270,6 +271,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records/{$}", redirectToSlashless)
 	handle("GET /findings/{$}", redirectToSlashless)
 	handle("GET /wanted/{$}", redirectToSlashless)
+	handle("GET /features/{$}", redirectToSlashless)
 	handle("GET /contribute/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
 	handle("GET /explore", s.explorePage)
@@ -294,7 +296,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "wanted", "package", "version",
+	pages := []string{"landing", "records", "findings", "wanted", "features", "package", "version",
 		"symbol", "sample", "seeder", "contribute", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

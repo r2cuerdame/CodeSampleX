@@ -31,7 +31,7 @@ func TestBuildMuxWiresPrivateAdminRoute(t *testing.T) {
 	mux := BuildMux(cfg, serverstore.NewFake())
 
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
-	req.SetBasicAuth("admin", secret)
+	req.SetBasicAuth("recuerdame", secret)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

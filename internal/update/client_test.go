@@ -43,6 +43,7 @@ func (r updateRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 
 func clientFixture(t *testing.T, binary []byte, sequence uint64) (*Client, string, string) {
 	t.Helper()
+	clearLauncherEnvironment(t)
 	home, dir := t.TempDir(), t.TempDir()
 	exe := filepath.Join(dir, "csx")
 	if runtime.GOOS == "windows" {
@@ -76,6 +77,21 @@ func clientFixture(t *testing.T, binary []byte, sequence uint64) (*Client, strin
 		return os.Rename(staged, current)
 	}
 	return c, home, exe
+}
+
+// Tests may themselves be launched through the installed Windows csx
+// launcher (for example `csx run -- go test ...`). Those process-wide values
+// describe the real installation and must never be mistaken for a fixture's
+// synthetic payload. Launcher-specific tests set their own values after this
+// helper returns.
+func clearLauncherEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"CSX_LAUNCHER_ROOT", "CSX_LAUNCHER_PATH", "CSX_LAUNCHER_VERSION",
+		"CSX_PAYLOAD_VERSION", "CSX_ACTIVE_SEQUENCE", "CSX_ACTIVE_SHA256",
+	} {
+		t.Setenv(name, "")
+	}
 }
 
 func TestClientAppliesVerifiedBinaryAndPreservesPrevious(t *testing.T) {

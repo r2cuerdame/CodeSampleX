@@ -128,10 +128,6 @@ func TestSearchOutcomeMigrationStoresOnlyDailyAggregates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := migs[len(migs)-1]
-	if last.Version != "0010_retire_unpreparable_matrix_jobs.sql" {
-		t.Fatalf("last migration = %q, want 0010_retire_unpreparable_matrix_jobs.sql", last.Version)
-	}
 	var search Migration
 	for _, migration := range migs {
 		if migration.Version == "0009_search_outcomes.sql" {
@@ -160,7 +156,17 @@ func TestLegacyMatrixRetirementIsNondestructiveAndExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := strings.ToLower(strings.Join(migs[len(migs)-1].Statements, "\n"))
+	var matrix Migration
+	for _, migration := range migs {
+		if migration.Version == "0010_retire_unpreparable_matrix_jobs.sql" {
+			matrix = migration
+			break
+		}
+	}
+	if matrix.Version == "" {
+		t.Fatal("0010_retire_unpreparable_matrix_jobs.sql not loaded")
+	}
+	last := strings.ToLower(strings.Join(matrix.Statements, "\n"))
 	for _, required := range []string{
 		"update verification_jobs", "reason = 'matrix'", "status in ('open', 'claimed')",
 		"set status = 'done'", "runtimeversion", "maven-java@1", "gradle-java@1",
@@ -173,6 +179,34 @@ func TestLegacyMatrixRetirementIsNondestructiveAndExact(t *testing.T) {
 	for _, forbidden := range []string{"delete from verification_jobs", "truncate", "drop table"} {
 		if strings.Contains(last, forbidden) {
 			t.Errorf("matrix retirement migration contains destructive operation %q", forbidden)
+		}
+	}
+}
+
+func TestAuthoringSessionMigrationStoresOnlyHashedPrivateCapabilities(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authoring Migration
+	for _, migration := range migs {
+		if migration.Version == "0011_authoring_sessions.sql" {
+			authoring = migration
+			break
+		}
+	}
+	if authoring.Version == "" {
+		t.Fatal("0011_authoring_sessions.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(authoring.Statements, "\n"))
+	for _, required := range []string{"token_hash", "session_id", "idle_expires_at", "revoked_at", "last_refresh_ip", "computer_name"} {
+		if !strings.Contains(all, required) {
+			t.Errorf("authoring migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"raw_token", "bearer_token", "prompt", "source", "project_path"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("authoring migration stores forbidden field %q", forbidden)
 		}
 	}
 }

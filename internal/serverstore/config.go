@@ -27,7 +27,7 @@ type ServerConfig struct {
 	SnapshotInterval   time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
 	GithubClientID     string        // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
 	GithubClientSecret string        // CSX_GITHUB_CLIENT_SECRET
-	// AdminTokenSHA256 enables the private read-only /admin route only when
+	// AdminTokenSHA256 enables the private /admin operator route only when
 	// it is a valid hexadecimal SHA-256 digest. It is intentionally separate
 	// from seeder credentials and never accepts a raw token.
 	AdminTokenSHA256 string // CSX_ADMIN_TOKEN_SHA256

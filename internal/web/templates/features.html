@@ -1,0 +1,98 @@
+{{define "content"}}
+<article class="feature-page">
+  <header class="feature-page__hero">
+    <p class="eyebrow mono">MCP</p>
+    <h1>{{.T "features.title"}}</h1>
+    <p class="lead">{{.T "features.lead"}}</p>
+    <p class="feature-page__scope dim small">{{.T "features.scope"}}</p>
+  </header>
+
+  <nav class="feature-page__summary" aria-labelledby="feature-summary-heading">
+    <h2 id="feature-summary-heading">{{.T "features.summary"}}</h2>
+    <ul>
+      {{range .Groups}}
+      <li>
+        <a href="#feature-group-{{.ID}}">
+          <strong>{{.Title}}</strong>
+          <span>{{.Summary}}</span>
+          <span class="feature-page__tool-count mono">{{len .Tools}} tools</span>
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </nav>
+
+  {{range .Groups}}
+  <section class="feature-page__group" id="feature-group-{{.ID}}" aria-labelledby="feature-group-{{.ID}}-heading">
+    <header class="feature-page__group-heading">
+      <h2 id="feature-group-{{.ID}}-heading">{{.Title}}</h2>
+      <p>{{.Summary}}</p>
+    </header>
+    <div class="feature-page__tools">
+      {{range .Tools}}
+      <details class="feature-page__tool" id="tool-{{.Name}}">
+        <summary>
+          <span>
+            <code>{{.Name}}</code>
+            <span>{{.Summary}}</span>
+          </span>
+          <span class="feature-page__disclosure" aria-hidden="true"></span>
+        </summary>
+        <div class="feature-page__tool-body">
+          <div class="feature-page__explain-grid">
+            <section>
+              <h3>{{$.T "features.what"}}</h3>
+              <p>{{.What}}</p>
+            </section>
+            <section>
+              <h3>{{$.T "features.when"}}</h3>
+              <p>{{.When}}</p>
+            </section>
+          </div>
+
+          <section class="feature-page__inputs">
+            <h3>{{$.T "features.inputs"}}</h3>
+            <div class="feature-page__input-grid">
+              <div>
+                <h4>{{$.T "features.required"}}</h4>
+                {{if .Required}}
+                <dl>
+                  {{range .Required}}<div><dt><code>{{.Name}}</code> <span>{{.Type}}</span></dt><dd>{{.Description}}</dd></div>{{end}}
+                </dl>
+                {{else}}<p class="dim small">{{$.T "features.none"}}</p>{{end}}
+              </div>
+              <div>
+                <h4>{{$.T "features.optional"}}</h4>
+                {{if .Optional}}
+                <dl>
+                  {{range .Optional}}<div><dt><code>{{.Name}}</code> <span>{{.Type}}</span></dt><dd>{{.Description}}</dd></div>{{end}}
+                </dl>
+                {{else}}<p class="dim small">{{$.T "features.none"}}</p>{{end}}
+              </div>
+            </div>
+          </section>
+
+          <div class="feature-page__json-grid">
+            <section>
+              <h3>{{$.T "features.input_example"}}</h3>
+              <pre><code>{{.InputExample}}</code></pre>
+            </section>
+            <section>
+              <h3>{{$.T "features.output"}}</h3>
+              <p class="small">{{.OutputShape}}</p>
+              <pre><code>{{.OutputExample}}</code></pre>
+            </section>
+          </div>
+
+          <aside class="feature-page__privacy">
+            <h3>{{$.T "features.privacy"}}</h3>
+            <p>{{.Privacy}}</p>
+          </aside>
+        </div>
+      </details>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+</article>
+{{end}}

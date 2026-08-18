@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
 func TestSymbolPageContextFirstMatrix(t *testing.T) {
@@ -169,9 +171,22 @@ func TestUnknownEcosystemAndPackage404(t *testing.T) {
 }
 
 func TestRecordsSearchAndList(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
+	mux, store := newTestMux(t, nil)
 	body := get(t, mux, "/records?q=axios").Body.String()
 	mustContain(t, body, `href="/npm/axios"`)
+	mustContain(t, body, `class="record-version mono"`)
+	mustContain(t, body, `class="record-symbols mono"`)
+	mustContain(t, body, i18n.T("en", "pkg.versions"))
+	mustContain(t, body, i18n.T("en", "pkg.symbols"))
+	mustContain(t, body, i18n.T("en", "records.query_note"))
+	store.packages = append(store.packages,
+		PackageHit{Ecosystem: "npm", Name: "react", LatestVersion: "19.2.8"},
+		PackageHit{Ecosystem: "npm", Name: "lodash", LatestVersion: "4.18.1"},
+	)
+	batch := get(t, mux, "/records?q=axios+react%2Clodash").Body.String()
+	for _, href := range []string{`href="/npm/axios"`, `href="/npm/react"`, `href="/npm/lodash"`} {
+		mustContain(t, batch, href)
+	}
 
 	all := get(t, mux, "/records").Body.String()
 	mustContain(t, all, `href="/npm/axios"`)

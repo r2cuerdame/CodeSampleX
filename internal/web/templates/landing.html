@@ -3,7 +3,6 @@
      real record search and the current size of the measured network. */}}
 <section class="hero home-hero">
   <div class="hero-copy">
-    <p class="eyebrow mono"><span class="eyebrow-mark" aria-hidden="true">✓</span> CodeSampleX</p>
     <h1 class="tagline">{{.T "landing.tagline"}}</h1>
     <p class="lead">{{.T "site.meta_description"}}</p>
     <div class="hero-actions">
@@ -15,7 +14,10 @@
 
   <div class="hero-evidence">
     <h2 class="eyebrow mono">{{.T "nav.records"}}</h2>
-    <p class="evidence-question">{{.T "landing.what_q"}}</p>
+    <a class="evidence-question" href="{{.WithLang "/npm/axios/1.12.2/axios.post"}}">
+      <span>{{.T "landing.example_result"}}</span>
+      <strong class="mono">{{.T "landing.example_open"}} →</strong>
+    </a>
     <form class="home-search" action="/records" method="get" role="search">
       <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
       <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
@@ -107,24 +109,11 @@
 {{/* Agent and ecosystem coverage answer one question: will this work with
      what I use? Keeping them together avoids two equally weighted cards. */}}
 {{$mcpCfg := `csx mcp-config`}}
-<section id="agents" class="support-shell">
-  <div class="agents support-agents">
-    <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
-    <ul class="agentlist">
-      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
-      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
-      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
-      <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
-    </ul>
-    <p class="dim small">{{.T "landing.agents_auto"}}</p>
-    <p class="small">{{.T "landing.agents_manual"}}</p>
-    <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
-    <p class="note">{{.T "landing.agents_models"}}</p>
-  </div>
-
+<section class="support-shell">
   {{if .Support}}
   <div class="support">
     <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
+    <p class="dim small">{{.T "landing.scope_note"}}</p>
     <ul class="ecos">
     {{- range .Support}}
       <li class="eco">
@@ -140,21 +129,39 @@
     </ul>
   </div>
   {{end}}
+
+  <details id="agents" class="agents support-agents agent-detail">
+    <summary><span class="eyebrow mono">{{.T "landing.agents_heading"}}</span></summary>
+    <div class="agent-detail-body">
+      <ul class="agentlist">
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
+      </ul>
+      <p class="dim small">{{.T "landing.agents_auto"}}</p>
+      <p class="small">{{.T "landing.agents_manual"}}</p>
+      <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+      <p class="note">{{.T "landing.agents_models"}}</p>
+    </div>
+  </details>
 </section>
 
 {{/* Full process and privacy detail remain available for due diligence, but
      no longer compete with search, measured evidence and installation. */}}
 <details class="home-detail how">
   <summary><span class="eyebrow mono">{{.T "landing.how_heading"}}</span><span class="detail-summary">{{.T "landing.what_q"}}</span></summary>
-  <p class="q">{{.T "landing.what_q"}}<span class="a dim"> {{.T "landing.what_a"}}</span></p>
-  <ol class="howsteps">
-    <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
-    <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
-  </ol>
-  <p class="note">{{.T "landing.for_agents"}}</p>
+  <div class="home-detail-body how-body">
+    <p class="q">{{.T "landing.what_q"}}<span class="a dim"> {{.T "landing.what_a"}}</span></p>
+    <ol class="howsteps">
+      <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
+      <li><span class="stepnum mono" aria-hidden="true">2</span>{{.T "stats.how_2"}}</li>
+      <li><span class="stepnum mono" aria-hidden="true">3</span>{{.T "stats.how_3"}}</li>
+      <li><span class="stepnum mono" aria-hidden="true">4</span>{{.T "stats.how_4"}}</li>
+      <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
+    </ol>
+    <p class="note">{{.T "landing.for_agents"}}</p>
+  </div>
 </details>
 
 <details id="contract" class="home-detail contract">

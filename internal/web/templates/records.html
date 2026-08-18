@@ -23,22 +23,24 @@
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
   <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasFilters}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>
-<p class="dim small filter-note">{{.T "records.filter_note"}}</p>
+<p class="dim small filter-note"><strong>{{.T "records.query_note"}}</strong> {{.T "records.filter_note"}}</p>
 
 {{if .Hits}}
 <p class="dim mono small">{{.RangeText}}</p>
 <ul class="pkglist">
 {{- range .Hits}}
   <li>
-    <a class="mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
-    {{if .LatestVersion}}<span class="dim mono">{{.LatestVersion}}</span>{{end}}
-    {{if .Symbols}}<span class="dim mono small">{{.Symbols}} · {{$.T "stats.symbols"}}</span>{{end}}
+    <a class="record-package mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
+    <span class="record-meta">
+      {{if .LatestVersion}}<span class="record-version mono"><span class="record-meta-label">{{$.T "pkg.versions"}}</span>{{.LatestVersion}}</span>{{end}}
+      {{if .Symbols}}<span class="record-symbols mono"><span class="record-meta-label">{{$.T "pkg.symbols"}}</span><strong>{{.Symbols}}</strong></span>{{end}}
     {{/* NOT stats.evidence: the network tile with that label is
      SUM(observation_count), and this number is the count of distinct
      (version, symbol) rows the network holds for this package. The same
      word for two different quantities made the per-package figure read as
      a tiny fraction of the network total, which is not what it is. */}}
-{{if .EvidenceCount}}<span class="dim mono small">{{$.N .EvidenceCount}} · {{$.T "records.entries"}}</span>{{end}}
+      {{if .EvidenceCount}}<span class="record-entries dim mono small">{{$.N .EvidenceCount}} · {{$.T "records.entries"}}</span>{{end}}
+    </span>
   </li>
 {{- end}}
 </ul>

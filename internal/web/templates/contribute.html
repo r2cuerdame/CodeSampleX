@@ -22,11 +22,25 @@
 <section id="install-worker" class="workerinstall">
   <h2 class="eyebrow mono">{{.T "landing.worker_heading"}}</h2>
   <p class="llmlead">{{.T "landing.worker_body"}}</p>
-  <div class="llmbox workerbox">
-    <div class="llmactions">
-      <button class="copy llmcopy mono" type="button" data-copy="{{.WorkerPrompt}}" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+  <div class="workerprompt-grid">
+    <div class="workerprompt-card">
+      <h3>{{.T "landing.worker_setup_heading"}}</h3>
+      <div class="llmbox workerbox">
+        <div class="llmactions">
+          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+        </div>
+        <pre id="worker-setup-prompt" class="llmtext mono" tabindex="0">{{.WorkerSetupPrompt}}</pre>
+      </div>
     </div>
-    <pre class="llmtext mono">{{.WorkerPrompt}}</pre>
+    <div class="workerprompt-card">
+      <h3>{{.T "landing.worker_run_heading"}}</h3>
+      <div class="llmbox workerbox">
+        <div class="llmactions">
+          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+        </div>
+        <pre id="worker-run-prompt" class="llmtext mono" tabindex="0">{{.WorkerRunPrompt}}</pre>
+      </div>
+    </div>
   </div>
   <p class="note">{{.T "landing.worker_safety"}}</p>
 </section>

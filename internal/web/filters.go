@@ -2,10 +2,63 @@ package web
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
+
+const maxRecordQueryTerms = 32
+
+// ParsedRecordQuery turns the record search box into a small batch query.
+// Package names are ORed: "react axios lodash" finds all three instead of
+// looking for that impossible literal phrase in one package name.
+type ParsedRecordQuery struct {
+	terms []string
+}
+
+func ParseRecordQuery(raw string) ParsedRecordQuery {
+	fields := strings.FieldsFunc(strings.ToLower(raw), func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(",;|，、", r)
+	})
+	seen := make(map[string]bool, min(len(fields), maxRecordQueryTerms))
+	terms := make([]string, 0, min(len(fields), maxRecordQueryTerms))
+	for _, field := range fields {
+		field = strings.Trim(field, "\"'`[](){}")
+		if field == "" || seen[field] {
+			continue
+		}
+		seen[field] = true
+		terms = append(terms, field)
+		if len(terms) == maxRecordQueryTerms {
+			break
+		}
+	}
+	return ParsedRecordQuery{terms: terms}
+}
+
+// MatchPackage reports a union match and two ranking hints. Exact package
+// names lead prefix matches, which lead other substring matches.
+func (q ParsedRecordQuery) MatchPackage(name string) (match, exact, prefix bool) {
+	if len(q.terms) == 0 {
+		return true, false, false
+	}
+	name = strings.ToLower(name)
+	for _, term := range q.terms {
+		if name == term {
+			match, exact, prefix = true, true, true
+			continue
+		}
+		if strings.HasPrefix(name, term) {
+			match, prefix = true, true
+			continue
+		}
+		if strings.Contains(name, term) {
+			match = true
+		}
+	}
+	return match, exact, prefix
+}
 
 // filterOption is rendered by the native select controls. Selected is
 // computed server-side so templates do not need clever string comparisons.
@@ -15,7 +68,7 @@ type filterOption struct {
 	Selected bool
 }
 
-var ecosystemFilterValues = []string{"npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub", "maven"}
+var ecosystemFilterValues = []string{"npm", "pypi", "cargo", "golang", "gem", "composer", "hex", "pub", "maven", "generic"}
 var osFilterValues = []string{"linux", "windows", "darwin"}
 var runtimeFilterValues = []string{"node", "python", "go", "rust", "ruby", "php", "elixir", "dart", "java", "browser", "bun", "deno"}
 var basisFilterValues = []string{"observed", "verified"}
@@ -48,7 +101,12 @@ func filterOptions(values []string, selected string, label func(string) string) 
 }
 
 func ecosystemOptions(selected string) []filterOption {
-	return filterOptions(ecosystemFilterValues, selected, func(value string) string { return value })
+	return filterOptions(ecosystemFilterValues, selected, func(value string) string {
+		if value == "generic" {
+			return "CLI / SDK / OS"
+		}
+		return value
+	})
 }
 
 func osOptions(selected string) []filterOption {

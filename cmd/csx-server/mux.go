@@ -61,13 +61,19 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	if accessLogPath := os.Getenv("CSX_ADMIN_ACCESS_LOG"); accessLogPath != "" {
 		accessMetrics = admin.NewAccessLogReader(accessLogPath)
 	}
+	var authoringStore serverstore.AuthoringSessionStore
+	if candidate, ok := store.(serverstore.AuthoringSessionStore); ok {
+		authoringStore = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
+		PublicURL:     cfg.PublicURL,
 		Version:       serverVersion(),
 		StartedAt:     processStartedAt,
 		AccessMetrics: accessMetrics,
 		Activity:      activityTracker,
+		Authoring:     authoringStore,
 	})
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},

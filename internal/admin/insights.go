@@ -21,6 +21,24 @@ type insightView struct {
 	Verification verificationView
 	Ecosystems   []mixBar
 	PackageDepth []serverstore.AdminPackageDepth
+	Jobs         jobQueueView
+}
+
+type jobQueueView struct {
+	Claimable     int64
+	Live          int64
+	Stale         int64
+	LiveClaimants int64
+	Rows          []jobReasonView
+	HasOldest     bool
+	OldestAge     string
+}
+
+type jobReasonView struct {
+	Label     string
+	Claimable int64
+	Live      int64
+	Stale     int64
 }
 
 type trendView struct {
@@ -124,9 +142,7 @@ func buildInsightView(raw serverstore.AdminInsights, current serverstore.Network
 		PackageDepth: raw.PackageDepth,
 	}
 	view.Trends = []trendView{
-		buildTrend("증거(사용 관측)", "누적 관측과 실제 일별 순증감", daily, start, today, func(r serverstore.AdminDailyStat) serverstore.AdminMetricValue { return r.Evidence }),
 		buildTrend("검증된 샘플", "계약 PASS 또는 이후 검증 상태", daily, start, today, func(r serverstore.AdminDailyStat) serverstore.AdminMetricValue { return r.VerifiedSamples }),
-		buildTrend("공개 패키지", "레지스트리 공개 확인을 통과한 패키지", daily, start, today, func(r serverstore.AdminDailyStat) serverstore.AdminMetricValue { return r.Packages }),
 	}
 
 	currentVerified, hasCurrent := latestMetric(daily, func(r serverstore.AdminDailyStat) serverstore.AdminMetricValue { return r.VerifiedSamples })
@@ -136,6 +152,25 @@ func buildInsightView(raw serverstore.AdminInsights, current serverstore.Network
 	view.Target = buildTarget(daily, currentVerified, hasCurrent, today)
 	view.Verification = buildVerification(raw.Verification)
 	view.Ecosystems = buildEcosystemMix(raw.Ecosystems)
+	view.Jobs = buildJobQueueView(raw.Jobs, now)
+	return view
+}
+
+func buildJobQueueView(raw serverstore.AdminJobQueue, now time.Time) jobQueueView {
+	view := jobQueueView{
+		Claimable: raw.Claimable(), Live: raw.Live(), Stale: raw.Stale(),
+		LiveClaimants: raw.LiveClaimants, HasOldest: raw.HasOldest,
+		Rows: []jobReasonView{
+			{Label: "Cross", Claimable: raw.Cross.Claimable, Live: raw.Cross.Live, Stale: raw.Cross.Stale},
+			{Label: "Matrix", Claimable: raw.Matrix.Claimable, Live: raw.Matrix.Live, Stale: raw.Matrix.Stale},
+		},
+	}
+	if raw.Other.Claimable+raw.Other.Live+raw.Other.Stale > 0 {
+		view.Rows = append(view.Rows, jobReasonView{Label: "기타", Claimable: raw.Other.Claimable, Live: raw.Other.Live, Stale: raw.Other.Stale})
+	}
+	if raw.HasOldest {
+		view.OldestAge = formatDuration(nonNegative(now.Sub(raw.OldestClaimable)))
+	}
 	return view
 }
 

@@ -143,7 +143,7 @@ function Invoke-CSXAdminAuthenticatedProbe([Security.SecureString]$Secret) {
     try {
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
         [int]$secretLength = [Runtime.InteropServices.Marshal]::ReadInt32($bstr, -4) / 2
-        $prefix = "admin:".ToCharArray()
+        $prefix = "recuerdame:".ToCharArray()
         $credentialChars = New-Object char[] ($prefix.Length + $secretLength)
         [Array]::Copy($prefix, 0, $credentialChars, 0, $prefix.Length)
         [Runtime.InteropServices.Marshal]::Copy($bstr, $credentialChars, $prefix.Length, $secretLength)

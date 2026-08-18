@@ -38,7 +38,7 @@
 	# the bounded retention window without improving this metric.
 	# Allowlist only route families owned by this server. If an unknown 404
 	# contains a user-controlled segment, it must never reach the safe log.
-	@skipAPIMetrics not path /v1/search /v1/evidence /v1/evidence/* /v1/registry /v1/registry/* /v1/shards /v1/shards/* /v1/samples /v1/samples/* /v1/wanted /v1/wanted/* /v1/adoptions /v1/adoptions/* /v1/verifications /v1/verifications/* /v1/verification /v1/verification/* /v1/peers /v1/peers/* /v1/stats /v1/adapters /v1/auth /v1/auth/*
+	@skipAPIMetrics not path /v1/search /v1/evidence /v1/evidence/* /v1/registry /v1/registry/* /v1/shards /v1/shards/* /v1/samples /v1/samples/* /v1/wanted /v1/wanted/* /v1/adoptions /v1/adoptions/* /v1/verifications /v1/verifications/* /v1/verification /v1/verification/* /v1/peers /v1/peers/* /v1/stats /v1/adapters /v1/auth /v1/auth/* /v1/authoring/session/refresh
 	log_skip @skipAPIMetrics
 	# Append the fixed label selected by Caddy's decoded path matcher, then
 	# delete the URI wholesale in the encoder below. Merely truncating the raw
@@ -71,6 +71,8 @@
 	log_append @apiAdapters csx_route adapters
 	@apiAuth path /v1/auth /v1/auth/*
 	log_append @apiAuth csx_route auth
+	@apiAuthoringRefresh path /v1/authoring/session/refresh
+	log_append @apiAuthoringRefresh csx_route authoring_refresh
 	# HTTP method tokens are client-controlled too. Store only the three
 	# buckets the dashboard uses, never the raw token.
 	@methodGetHead method GET HEAD

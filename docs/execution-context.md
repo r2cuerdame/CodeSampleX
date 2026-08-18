@@ -23,6 +23,8 @@ compiler / compilerVersion
 virtualization     container | vm | wsl | "" (bare metal 또는 미탐지)
 containerRuntime   docker | podman | containerd | kubernetes | lxc
 libc               musl | glibc | ""
+libcVersion        glibc major.minor (best effort)
+distro             /etc/os-release ID (ubuntu | debian | rhel | alpine | amzn | ...)
 ci                 자동화 러너 여부
 ```
 
@@ -33,13 +35,17 @@ ci                 자동화 러너 여부
   `/proc/1/cgroup`, `/proc/version`(WSL), DMI product name(VM), musl loader 경로,
   `/etc/os-release`, Windows는 BIOS 제조사 레지스트리 값. 호스트명·컨테이너 ID·머신 ID는
   읽지 않는다.
-- **검증 영수증**: Public v1 verifier 이미지는 전부 alpine이므로 CONTAINER_RUN 영수증은
-  `virtualization=container, libc=musl, osVersionBucket=alpine`을 싣는다. 이를 그냥
-  "linux"로 기록하면 glibc 배포판까지 검증한 것처럼 보이게 된다.
+- **검증 영수증**: 영수증은 호스트가 아니라 실제 pinned verifier image의 배포판과
+  libc를 기록한다. 대부분의 경량 lane은 Alpine/musl이고, Java exact matrix는 Amazon
+  Linux 2023/glibc다. 이를 그냥 "linux"로 기록하면 Ubuntu·Debian·RHEL 계열까지
+  검증한 것처럼 보이게 된다.
 - **CI**: CI 러너는 서로 복제본이므로 독립 개발 환경으로 세면 다양성이 과장된다. 지금은
   기록만 하고, 집계에서 할인하는 것은 후속 작업이다.
 
 - `executionContext`는 **open vocabulary**다. 새 runtime은 schema 변경 없이 추가된다.
+- CLI 자체가 질문의 대상이면 `executionContext/runtime`에 실제 도구 이름과 버전을
+  기록한다. `npm`, `maven`, `git`, `curl`, `gh`도 라이브러리의 부속물이 아니라 독립된
+  버전 대상이다. 공개 좌표는 `pkg:generic/cli/<name>@<exact-version>`을 사용한다.
 - `domain.EnvironmentFingerprint.Normalize()`: runtime이 node/bun/deno면 context를 자동 유도하고,
   browserFamily에서 engine을 무모순으로 유도한다.
 - `ContextLabel()`이 집계 row key와 UI 표시명을 만든다: `chrome 140`, `node 22.18`, `safari 19`.

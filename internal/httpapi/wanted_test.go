@@ -197,6 +197,13 @@ func TestWantedAcceptsKnownEngineTargetAndRejectsArbitraryGenericTarget(t *testi
 	if err != nil || len(rows) != 1 || rows[0].Name != "engine/unity" {
 		t.Fatalf("known Unity target rows = %+v, err = %v", rows, err)
 	}
+	cli := valid
+	cli.Packages = []string{"pkg:generic/cli/npm@11.5.2"}
+	cli.Symbols = []string{"npm ci"}
+	rows, err = rowsForWantedReport(cli, time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
+	if err != nil || len(rows) != 1 || rows[0].Name != "cli/npm" || rows[0].Symbol != "npm ci" {
+		t.Fatalf("known npm CLI target rows = %+v, err = %v", rows, err)
+	}
 
 	invalid := valid
 	invalid.Packages = []string{"pkg:generic/sdk/company-secret@1.0.0"}

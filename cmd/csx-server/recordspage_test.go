@@ -10,6 +10,15 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/web"
 )
 
+type recordTargetStore struct {
+	serverstore.Store
+	targets []serverstore.SnapshotTarget
+}
+
+func (s recordTargetStore) ListSnapshotTargets(context.Context) ([]serverstore.SnapshotTarget, error) {
+	return s.targets, nil
+}
+
 // Any browser could take the site's records page down with a URL:
 // ?page=9223372036854775807 survived Atoi, (page-1)*perPage overflowed to a
 // negative offset, and the store sliced with it. The website routes were
@@ -42,6 +51,28 @@ func TestRecordPackagesClampsANegativeOffset(t *testing.T) {
 	w := &webStore{s: serverstore.NewFake()}
 	if _, _, err := w.RecordPackages(context.Background(), web.RecordFilter{}, -80, 40); err != nil {
 		t.Fatalf("negative offset: %v", err)
+	}
+}
+
+func TestRecordPackagesUnionsBatchQueryTerms(t *testing.T) {
+	store := recordTargetStore{Store: serverstore.NewFake()}
+	for _, purl := range []string{
+		"pkg:npm/react@19.2.8", "pkg:npm/axios@1.12.0", "pkg:npm/lodash@4.18.1", "pkg:npm/vue@3.5.0",
+	} {
+		store.targets = append(store.targets, serverstore.SnapshotTarget{PURL: purl})
+	}
+	w := &webStore{s: store}
+	hits, total, err := w.RecordPackages(t.Context(), web.RecordFilter{Query: "react, axios lodash"}, 0, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(hits) != 3 {
+		t.Fatalf("batch search returned %d/%d hits, want 3/3: %+v", len(hits), total, hits)
+	}
+	for _, hit := range hits {
+		if hit.Name == "vue" {
+			t.Fatal("batch search included unrelated vue")
+		}
 	}
 }
 

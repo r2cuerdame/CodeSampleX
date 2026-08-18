@@ -38,6 +38,7 @@ type Fake struct {
 	wanted      map[[4]string]*WantedRow
 	adoptions   map[[3]string]AdoptionRow
 	wantedSeen  map[[6]string]bool
+	authoring   map[string]AuthoringSessionRow
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -82,6 +83,7 @@ func NewFake() *Fake {
 		wanted:     map[[4]string]*WantedRow{},
 		adoptions:  map[[3]string]AdoptionRow{},
 		wantedSeen: map[[6]string]bool{},
+		authoring:  map[string]AuthoringSessionRow{},
 	}
 }
 
