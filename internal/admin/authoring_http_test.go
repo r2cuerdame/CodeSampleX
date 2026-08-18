@@ -35,6 +35,7 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 		Workers []struct {
 			Command    string `json:"command"`
 			WindowsCMD string `json:"windowsCmd"`
+			LinuxSH    string `json:"linuxSh"`
 			Session    struct {
 				ID    string `json:"sessionId"`
 				Label string `json:"label"`
@@ -50,6 +51,9 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	}
 	if !strings.Contains(response.Workers[0].WindowsCMD, "@echo off") || !strings.Contains(response.Workers[0].WindowsCMD, "--dangerously-skip-permissions") {
 		t.Fatalf("worker CMD was not returned: %q", response.Workers[0].WindowsCMD)
+	}
+	if !strings.Contains(response.Workers[0].LinuxSH, "#!/usr/bin/env bash") || !strings.Contains(response.Workers[0].LinuxSH, "--dangerously-skip-permissions") {
+		t.Fatalf("worker Linux SH was not returned: %q", response.Workers[0].LinuxSH)
 	}
 	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh", "csx sample-worker next", "Wanted 일감", "spec.json을 csx.json으로 복사", "csx sample-worker submit <sampleId>"} {
 		if !strings.Contains(response.Prompt, want) {
@@ -76,13 +80,14 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 		Worker struct {
 			Command    string `json:"command"`
 			WindowsCMD string `json:"windowsCmd"`
+			LinuxSH    string `json:"linuxSh"`
 		} `json:"worker"`
 	}
 	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedResponse); err != nil {
 		t.Fatal(err)
 	}
 	rotatedToken := regexp.MustCompile(`--token "([^"]+)"`).FindStringSubmatch(rotatedResponse.Worker.Command)
-	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" || !strings.Contains(rotatedResponse.Worker.WindowsCMD, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.WindowsCMD, tokenMatch[1]) {
+	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" || !strings.Contains(rotatedResponse.Worker.WindowsCMD, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.WindowsCMD, tokenMatch[1]) || !strings.Contains(rotatedResponse.Worker.LinuxSH, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.LinuxSH, tokenMatch[1]) {
 		t.Fatalf("rotated response = %+v", rotatedResponse)
 	}
 	oldRefresh := httptest.NewRequest(http.MethodPost, "/v1/authoring/session/refresh", strings.NewReader("{}"))
@@ -185,7 +190,7 @@ func TestAdminPageContainsSampleWorkerControlsButNoSessionToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", "별도 창으로 계속 재조회하는 CMD", `src="/admin/admin.js"`} {
+	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", "Windows CMD 또는 Linux/WSL SH", `src="/admin/admin.js"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("admin page missing %q", want)
 		}

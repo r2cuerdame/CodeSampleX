@@ -504,6 +504,59 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
+func authoringLinuxSH(baseURL string, grant authoringGrant) string {
+	if !strings.EqualFold(strings.TrimSpace(grant.Model), "agy") {
+		return ""
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	sessionID := safeAuthoringCMDID(grant.ID)
+	prompt := strings.ReplaceAll(authoringWindowsAgentPrompt(baseURL, grant), "CMD supervisor", "Linux shell supervisor")
+	prompt = strings.ReplaceAll(prompt, "바깥 CMD supervisor", "바깥 Linux shell supervisor")
+	encoded := base64.StdEncoding.EncodeToString([]byte(prompt))
+	return strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -u",
+		`export PATH="$HOME/.local/bin:$PATH"`,
+		`CSX_SESSION_ID='` + sessionID + `'`,
+		`CSX_SERVER='` + baseURL + `'`,
+		`CSX_TOKEN='` + grant.Token + `'`,
+		`CSX_REASONING='` + grant.Reasoning + `'`,
+		`export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_SESSION_ID"`,
+		`CSX_WORKSPACE="$CSX_HOME/workspace"`,
+		`CSX_REFRESH_LOG="/tmp/csx-worker-$CSX_SESSION_ID-refresh.log"`,
+		`CSX_NEXT_LOG="/tmp/csx-worker-$CSX_SESSION_ID-next.log"`,
+		`CSX_AGY_LOG="/tmp/csx-worker-$CSX_SESSION_ID-agy.log"`,
+		`CSX_PROMPT_B64='` + encoded + `'`,
+		`mkdir -p "$CSX_HOME" "$CSX_WORKSPACE"`,
+		`cd "$CSX_WORKSPACE"`,
+		`command -v agy >/dev/null 2>&1 || { echo "AGY was not found. Install it with: curl -fsSL https://antigravity.google/cli/install.sh | bash"; exit 3; }`,
+		`command -v csx >/dev/null 2>&1 || { echo "csx was not found. Install it with: curl -fsSL https://codesamplex.dev/install.sh | bash"; exit 3; }`,
+		`printf '%s\n' 'CodeSampleX Linux sample worker is running. Press Ctrl+C to stop.'`,
+		`while true; do`,
+		`  if ! csx sample-worker refresh --server "$CSX_SERVER" --token "$CSX_TOKEN" >"$CSX_REFRESH_LOG" 2>&1; then`,
+		`    cat "$CSX_REFRESH_LOG"`,
+		`    if grep -q 'HTTP 410' "$CSX_REFRESH_LOG"; then echo 'This sample-worker token expired. Rotate it in the admin page and download a new SH file.'; exit 2; fi`,
+		`    echo 'Temporary refresh failure. Retrying in 60 seconds.'; sleep 60; continue`,
+		`  fi`,
+		`  cat "$CSX_REFRESH_LOG"`,
+		`  if ! csx sample-worker next --server "$CSX_SERVER" --token "$CSX_TOKEN" >"$CSX_NEXT_LOG" 2>&1; then`,
+		`    cat "$CSX_NEXT_LOG"; echo 'Work lookup failed. Retrying in 60 seconds.'; sleep 60; continue`,
+		`  fi`,
+		`  cat "$CSX_NEXT_LOG"`,
+		`  if grep -q '^NO_WORK:' "$CSX_NEXT_LOG"; then echo 'No uncovered work is available yet. Checking again in 5 minutes.'; sleep 300; continue; fi`,
+		`  prompt="$(printf '%s' "$CSX_PROMPT_B64" | base64 -d)"`,
+		`  agy_args=(--dangerously-skip-permissions --print-timeout 50m)`,
+		`  case "$CSX_REASONING" in low|medium|high) agy_args+=(--effort "$CSX_REASONING");; esac`,
+		`  printf 'AGY iteration started %s\n' "$(date -Iseconds)" >"$CSX_AGY_LOG"`,
+		`  agy "${agy_args[@]}" --print "$prompt" 2>&1 | tee -a "$CSX_AGY_LOG"`,
+		`  rc=${PIPESTATUS[0]}`,
+		`  printf 'AGY iteration exited %s %s\n' "$rc" "$(date -Iseconds)" >>"$CSX_AGY_LOG"`,
+		`  echo 'AGY iteration ended. Checking the same lease again in 10 seconds.'`,
+		`  sleep 10`,
+		`done`,
+	}, "\n") + "\n"
+}
+
 func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 	return fmt.Sprintf(`CodeSampleX CMD supervisor가 배정한 샘플 일감 하나를 처리한다.
 

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 func TestSampleWorkerRefreshUsesCompleteCLICommand(t *testing.T) {
@@ -63,14 +65,25 @@ func TestSampleWorkerNextPrintsExactProposeCommand(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/authoring/work/next" || r.Header.Get("Authorization") != "Bearer "+token {
 			t.Fatalf("request = %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
 		}
+		var profile struct {
+			SchemaVersion     int                      `json:"schemaVersion"`
+			SandboxCapability domain.SandboxCapability `json:"sandboxCapability"`
+			VerifierOS        []string                 `json:"verifierOS"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&profile); err != nil || profile.SchemaVersion != 1 || profile.SandboxCapability != domain.CapContainerRun || len(profile.VerifierOS) != 1 || profile.VerifierOS[0] != "linux" {
+			t.Fatalf("profile = %+v err=%v", profile, err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":"pkg:maven/org.apache.commons/commons-lang3@3.17.0","symbol":"org.apache.commons.lang3.StringUtils.isBlank","asks":4,"leaseExpiresAt":%q}}`, lease.Format(time.RFC3339))
 	}))
 	defer srv.Close()
 
-	oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
-	t.Cleanup(func() { sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr = oldClient, oldOut, oldErr })
+	oldClient, oldOut, oldErr, oldCapability := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability
+	t.Cleanup(func() {
+		sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability = oldClient, oldOut, oldErr, oldCapability
+	})
 	sampleWorkerClient = srv.Client()
+	sampleWorkerCapability = func(context.Context) domain.SandboxCapability { return domain.CapContainerRun }
 	var out, stderr bytes.Buffer
 	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
 	if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {

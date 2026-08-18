@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -139,17 +140,11 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	if limit > 200 {
 		limit = 200
 	}
-	type candidateKey struct{ ecosystem, name, version, symbol string }
+	type candidateKey struct{ ecosystem, name, version, symbol, targetOS string }
 	candidates := make(map[candidateKey]WantedRow)
 	eligible := func(pkg PackageRow, symbol string) bool {
 		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
 			return false
-		}
-		for _, work := range f.authoringWork {
-			if work.Ecosystem == pkg.Ecosystem && work.Name == pkg.Name && work.Version == pkg.Version &&
-				(work.Symbol == symbol || symbol == "") {
-				return false
-			}
 		}
 		for sampleID, sample := range f.samples {
 			if sample.Quarantined {
@@ -188,28 +183,36 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 				if pkg.Ecosystem != cluster.Ecosystem || pkg.Name != cluster.PackageName || pkg.Version != version || !eligible(pkg, cluster.Symbol) {
 					continue
 				}
-				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol}
+				targetOS := authoringEvidenceOS(cluster.EnvSummaryJSON)
+				if targetOS == "" {
+					targetOS = f.authoringObservationOS(pkg.PURL, cluster.Symbol, cluster.ErrorFingerprint)
+				}
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol, targetOS}
 				candidate := WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount}
+					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount, TargetOS: targetOS}
 				if old, ok := candidates[key]; !ok || candidate.Score > old.Score {
 					candidates[key] = candidate
 				}
 			}
 		}
 	}
-	observedScores := make(map[[2]string]int64)
+	observedScores := make(map[[3]string]int64)
 	for observed, score := range f.merge.observations {
-		observedScores[[2]string{observed.PURL, observed.Symbol}] += score
+		targetOS := ""
+		if meta := f.aggMeta[observed]; meta != nil {
+			targetOS = authoringEvidenceOS(meta.envJSON)
+		}
+		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
 	}
 	for _, pkg := range f.packages {
 		for observed, score := range observedScores {
 			if observed[0] != pkg.PURL || score == 0 || !eligible(pkg, observed[1]) {
 				continue
 			}
-			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1]}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1], observed[2]}
 			if existing, ok := candidates[key]; !ok || (existing.Kind != "FINDING" && score > existing.Score) {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Symbol: observed[1], Kind: "EXPANSION", Score: score}
+					Symbol: observed[1], Kind: "EXPANSION", Score: score, TargetOS: observed[2]}
 			}
 		}
 	}
@@ -239,6 +242,31 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func authoringEvidenceOS(raw string) string {
+	var env struct {
+		OS string `json:"os"`
+	}
+	if json.Unmarshal([]byte(raw), &env) != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(env.OS))
+}
+
+func (f *Fake) authoringObservationOS(purl, symbol, errorFingerprint string) string {
+	found := ""
+	for key, meta := range f.aggMeta {
+		if key.PURL != purl || key.Symbol != symbol || key.ErrorFP != errorFingerprint || meta == nil {
+			continue
+		}
+		current := authoringEvidenceOS(meta.envJSON)
+		if found != "" && current != found {
+			return ""
+		}
+		found = current
+	}
+	return found
 }
 
 func containsString(values []string, want string) bool {
@@ -299,13 +327,23 @@ func authoringWorkKey(ecosystem, name, version, symbol string) [4]string {
 func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	eligible := make(map[[4]string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		eligible[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)] = struct{}{}
+	}
 	for key, work := range f.authoringWork {
 		if work.SampleID == "" && !now.Before(work.LeaseExpiresAt) {
 			delete(f.authoringWork, key)
 			continue
 		}
 		if work.SessionID == sessionID && work.SampleID == "" && now.Before(work.LeaseExpiresAt) {
-			return work, true, nil
+			if _, stillEligible := eligible[key]; stillEligible {
+				return work, true, nil
+			}
+			// Candidate selection changed (for example an environment was
+			// discovered to be unsupported). Release the untouched lease so
+			// this session can immediately receive compatible work.
+			delete(f.authoringWork, key)
 		}
 	}
 	for _, candidate := range candidates {

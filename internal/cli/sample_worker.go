@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/samples"
+	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 )
 
 const sampleWorkerResponseLimit = 32 << 10
@@ -28,6 +29,7 @@ var (
 			return http.ErrUseLastResponse
 		},
 	}
+	sampleWorkerCapability = sandbox.Detect
 )
 
 func init() {
@@ -128,12 +130,17 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker: %v\n", err)
 		return 2
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", nil)
+	capability := sampleWorkerCapability(ctx)
+	payload, _ := json.Marshal(map[string]any{
+		"schemaVersion": 1, "sandboxCapability": capability, "verifierOS": []string{"linux"},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", bytes.NewReader(payload))
 	if err != nil {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
 		return 1
 	}
 	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := sampleWorkerClient.Do(req)
 	if err != nil {

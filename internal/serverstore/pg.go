@@ -2135,8 +2135,12 @@ type WantedRow struct {
 	Asks      int64
 	// Kind and Score are private authoring-queue metadata. Public Wanted
 	// responses keep using Asks and never serialize these fields directly.
-	Kind      string
-	Score     int64
+	Kind  string
+	Score int64
+	// TargetOS is the OS recorded by the evidence that produced a private
+	// authoring candidate. Public Wanted rows leave it empty because their
+	// reports do not currently carry an execution environment.
+	TargetOS  string
 	FirstSeen time.Time
 	LastSeen  time.Time
 	// HasPage is retained on the internal row for wire compatibility. Every

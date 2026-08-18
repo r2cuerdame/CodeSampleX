@@ -205,8 +205,31 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", claimed, ok, err)
 	}
 	remaining, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 1 || remaining[0].Symbol != "request" {
+	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
+	}
+	next, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer-2", remaining, now, now.Add(24*time.Hour))
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "request" {
+		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
+	}
+}
+
+func TestIntegrationAuthoringLeaseIsReassignedWhenEnvironmentBecomesIneligible(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	windows := []WantedRow{{Ecosystem: "golang", Name: "github.com/Microsoft/go-winio", Version: "0.6.2", Symbol: "ListenPipe", Kind: "FINDING", TargetOS: "windows"}}
+	if claimed, ok, err := pg.ClaimAuthoringWork(ctx, "pg-env-writer", windows, now, now.Add(24*time.Hour)); err != nil || !ok || claimed.Name == "" {
+		t.Fatalf("windows claim = %+v ok=%v err=%v", claimed, ok, err)
+	}
+	linux := []WantedRow{{Ecosystem: "npm", Name: "axios", Version: "1.12.0", Symbol: "axios.post", Kind: "EXPANSION", TargetOS: "linux"}}
+	reassigned, ok, err := pg.ClaimAuthoringWork(ctx, "pg-env-writer", linux, now.Add(time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reassigned.Name != "axios" {
+		t.Fatalf("reassigned = %+v ok=%v err=%v", reassigned, ok, err)
+	}
+	other, ok, err := pg.ClaimAuthoringWork(ctx, "pg-other-writer", windows, now.Add(time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || other.Name != "github.com/Microsoft/go-winio" {
+		t.Fatalf("released target unavailable = %+v ok=%v err=%v", other, ok, err)
 	}
 }
 

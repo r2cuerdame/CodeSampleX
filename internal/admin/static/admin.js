@@ -37,7 +37,8 @@
   };
 
   const download = (text, filename) => {
-    const blob = new Blob([text], {type: "application/x-msdos-program;charset=us-ascii"});
+    const type = filename.endsWith(".sh") ? "text/x-shellscript;charset=utf-8" : "application/x-msdos-program;charset=us-ascii";
+    const blob = new Blob([text], {type});
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -91,9 +92,14 @@
         downloadCMD.type = "button";
         downloadCMD.className = "copy-button";
         downloadCMD.textContent = "무한 CMD 내려받기";
+		const downloadLinux = document.createElement("button");
+		downloadLinux.type = "button";
+		downloadLinux.className = "copy-button";
+		downloadLinux.textContent = "무한 Linux SH 내려받기";
         const rotateAndDeliver = async (deliver, progress, success, failure) => {
           recopy.disabled = true;
           downloadCMD.disabled = true;
+		  downloadLinux.disabled = true;
           status.textContent = progress;
           try {
             const data = await request(`/admin/api/authoring-sessions/${encodeURIComponent(session.sessionId)}/rotate`, {method: "POST", body: "{}"});
@@ -104,6 +110,7 @@
             status.textContent = failure;
             recopy.disabled = false;
             downloadCMD.disabled = false;
+			downloadLinux.disabled = false;
           }
         };
         recopy.addEventListener("click", () => rotateAndDeliver(
@@ -122,6 +129,15 @@
             `${session.label}의 CMD를 내려받았습니다. 이전 프롬프트와 명령은 무효입니다. CMD 파일을 실행하면 별도 창에서 계속 재조회합니다.`,
             "CMD 생성에 실패했습니다. 다시 누르면 새 토큰으로 교체됩니다.",
           ));
+		  downloadLinux.addEventListener("click", () => rotateAndDeliver(
+			(data) => {
+			  if (!data.worker.linuxSh) throw new Error("Linux SH unavailable");
+			  download(data.worker.linuxSh, `codesamplex-${safeFilename(session.label)}.sh`);
+			},
+			`${session.label} 무한 Linux SH를 새 토큰으로 만드는 중…`,
+			`${session.label}의 Linux SH를 내려받았습니다. 이전 프롬프트와 명령은 무효입니다. WSL/Linux에서 bash로 실행하세요.`,
+			"Linux SH 생성에 실패했습니다. 다시 누르면 새 토큰으로 교체됩니다.",
+		  ));
         }
         const revoke = document.createElement("button");
         revoke.type = "button";
@@ -139,7 +155,7 @@
           }
         });
         actions.append(recopy);
-        if (session.model === "agy") actions.append(downloadCMD);
+		if (session.model === "agy") actions.append(downloadCMD, downloadLinux);
         actions.append(revoke);
         row.append(info, actions);
         list.appendChild(row);
@@ -203,7 +219,7 @@
         await load();
         throw error;
       }
-      status.textContent = `${data.workers.length}개 샘플 워커의 작업 프롬프트와 완성된 CLI 갱신 명령을 복사했습니다. AGY 세션은 각 행에서 무한 CMD도 내려받을 수 있습니다.`;
+	  status.textContent = `${data.workers.length}개 샘플 워커의 작업 프롬프트와 완성된 CLI 갱신 명령을 복사했습니다. AGY 세션은 각 행에서 무한 CMD와 Linux SH도 내려받을 수 있습니다.`;
       await load();
     } catch (_) {
       status.textContent = "발급 또는 복사에 실패했습니다.";

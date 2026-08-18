@@ -196,6 +196,58 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	}
 }
 
+func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
+	grant := authoringGrant{ID: "Session-456", Token: "sentinel", Label: `lab; rm unsafe`, Model: "agy", Reasoning: "high"}
+	script := authoringLinuxSH("https://codesamplex.dev/", grant)
+	for _, want := range []string{
+		"#!/usr/bin/env bash", `CSX_SESSION_ID='session-456'`, `export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_SESSION_ID"`,
+		`cd "$CSX_WORKSPACE"`, "while true; do", "sample-worker refresh", "sample-worker next", "sleep 300",
+		"--dangerously-skip-permissions", "--print-timeout 50m", `agy "${agy_args[@]}" --print "$prompt"`, "PIPESTATUS[0]",
+		"HTTP 410", "download a new SH file",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Linux SH missing %q", want)
+		}
+	}
+	if strings.Contains(script, grant.Label) || strings.Contains(script, "--prompt-interactive") {
+		t.Fatal("Linux SH interpolated an untrusted label or kept AGY interactive")
+	}
+	prefix := "CSX_PROMPT_B64='"
+	start := strings.Index(script, prefix)
+	if start < 0 {
+		t.Fatal("Linux SH prompt missing")
+	}
+	start += len(prefix)
+	end := strings.Index(script[start:], "'\n")
+	if end < 0 {
+		t.Fatal("Linux SH prompt terminator missing")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(script[start : start+end])
+	if err != nil || !strings.Contains(string(decoded), "Linux shell supervisor") {
+		t.Fatalf("Linux SH prompt = %q err=%v", decoded, err)
+	}
+	if got := authoringLinuxSH("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
+		t.Fatalf("non-AGY Linux SH = %q", got)
+	}
+}
+
+func TestAuthoringLinuxSHParsesInBash(t *testing.T) {
+	script := authoringLinuxSH("https://codesamplex.dev", authoringGrant{
+		ID: "session-parse", Token: "sentinel", Label: "parse", Model: "agy", Reasoning: "low",
+	})
+	name := "bash"
+	args := []string{"-n"}
+	if runtime.GOOS == "windows" {
+		name = "wsl.exe"
+		args = []string{"bash", "-n"}
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = strings.NewReader(script)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bash -n: %v\n%s", err, output)
+	}
+}
+
 func TestAuthoringWindowsCMDParsesInWindowsCommandProcessor(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows CMD parser test")

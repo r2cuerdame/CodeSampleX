@@ -157,6 +157,8 @@ func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
 	}
 	const purl = "pkg:npm/undici@8.10.0"
 	batch := testBatch(purl, "MockAgent", nodeEnv("esm"), domain.StageProjectCompile, domain.ResultFail, 23)
+	batch.Environment.OS = "linux"
+	batch.Environment.Virtualization = "container"
 	batch.ErrorFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	batch.ErrorCode = "ERR_MOCK_MATCH"
 	if accepted, rejected, err := store.IngestBatches(t.Context(), []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
@@ -196,6 +198,78 @@ func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
 	}
 	if assigned.Status != "ASSIGNED" || assigned.Work.Package != purl || assigned.Work.Symbol != "MockAgent" || assigned.Work.Kind != "FINDING" || assigned.Work.Score != 23 {
 		t.Fatalf("assigned = %+v", assigned)
+	}
+}
+
+func TestAuthoringWorkDoesNotAssignWindowsEvidenceToLinuxVerifier(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
+	sum := sha256.Sum256([]byte(token))
+	if err := store.IssueAuthoringSessions(t.Context(), []serverstore.AuthoringSessionRow{{
+		TokenHash: hex.EncodeToString(sum[:]), SessionID: "linux-author", Label: "linux-author",
+		Model: "agy", Reasoning: "high", IssuedAt: testNow, IdleExpiresAt: testNow.Add(time.Hour),
+	}}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	const purl = "pkg:golang/github.com/Microsoft/go-winio@0.6.2"
+	batch := testBatch(purl, "ListenPipe", nodeEnv("esm"), domain.StageProjectCompile, domain.ResultFail, 9)
+	batch.Environment.Ecosystem = "golang"
+	batch.Environment.Runtime = "go"
+	batch.Environment.RuntimeVersion = "1.26"
+	batch.Environment.OS = "windows"
+	batch.ErrorFingerprint = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	batch.ErrorCode = "WINDOWS_NAMED_PIPE"
+	if accepted, rejected, err := store.IngestBatches(t.Context(), []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := store.UpsertPackage(t.Context(), serverstore.PackageRow{PURL: purl, Ecosystem: "golang", Name: "github.com/Microsoft/go-winio", Version: "0.6.2", Publicness: "PUBLIC"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertFailureCluster(t.Context(), serverstore.ClusterRow{
+		Ecosystem: "golang", PackageName: "github.com/Microsoft/go-winio", Symbol: "ListenPipe",
+		ErrorFingerprint: batch.ErrorFingerprint, ErrorCode: batch.ErrorCode, ObservationCount: 9,
+		EnvSummaryJSON: `{"os":"windows","runtime":"go@1.26"}`, VersionsJSON: `["0.6.2"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result["status"] != "NO_WORK" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestAuthoringWorkCompileOnlyClientGetsNoWork(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
+	sum := sha256.Sum256([]byte(token))
+	if err := store.IssueAuthoringSessions(t.Context(), []serverstore.AuthoringSessionRow{{
+		TokenHash: hex.EncodeToString(sum[:]), SessionID: "compile-only", Label: "compile-only",
+		Model: "agy", Reasoning: "high", IssuedAt: testNow, IdleExpiresAt: testNow.Add(time.Hour),
+	}}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordWanted(t.Context(), testNow.Format("2006-01-02"), "0123456789abcdef", []serverstore.WantedRow{{Ecosystem: "npm", Name: "axios", Version: "1.12.0", Symbol: "axios.post"}}); err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"COMPILE_ONLY","verifierOS":[]}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result["status"] != "NO_WORK" {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
 

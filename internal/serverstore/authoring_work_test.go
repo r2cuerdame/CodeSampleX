@@ -29,6 +29,24 @@ func TestAuthoringWorkLeasesWantedWithoutDuplicateWriters(t *testing.T) {
 	}
 }
 
+func TestAuthoringWorkReleasesLeaseMissingFromCompatibleCandidates(t *testing.T) {
+	store := NewFake()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	windows := []WantedRow{{Ecosystem: "golang", Name: "github.com/Microsoft/go-winio", Version: "0.6.2", Symbol: "ListenPipe", Kind: "FINDING", TargetOS: "windows"}}
+	if claimed, ok, err := store.ClaimAuthoringWork(t.Context(), "writer-a", windows, now, now.Add(24*time.Hour)); err != nil || !ok || claimed.Name == "" {
+		t.Fatalf("windows claim = %+v ok=%v err=%v", claimed, ok, err)
+	}
+	linux := []WantedRow{{Ecosystem: "npm", Name: "axios", Version: "1.12.0", Symbol: "axios.post", Kind: "EXPANSION", TargetOS: "linux"}}
+	reassigned, ok, err := store.ClaimAuthoringWork(t.Context(), "writer-a", linux, now.Add(time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reassigned.Name != "axios" {
+		t.Fatalf("reassigned = %+v ok=%v err=%v", reassigned, ok, err)
+	}
+	other, ok, err := store.ClaimAuthoringWork(t.Context(), "writer-b", windows, now.Add(time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || other.Name != "github.com/Microsoft/go-winio" {
+		t.Fatalf("released target unavailable = %+v ok=%v err=%v", other, ok, err)
+	}
+}
+
 func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	store := NewFake()
 	ctx := context.Background()
@@ -82,8 +100,12 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", work, ok, err)
 	}
 	remaining, err := store.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 1 || remaining[0].Kind != "EXPANSION" || remaining[0].Symbol != "axios.get" {
+	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
+	}
+	next, ok, err := store.ClaimAuthoringWork(ctx, "writer-expansion", remaining, now, now.Add(24*time.Hour))
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "axios.get" {
+		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
 	}
 }
 

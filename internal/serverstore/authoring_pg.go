@@ -241,7 +241,12 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				) AS symbol(value)
 			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
-				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen
+				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
+				       COALESCE(NULLIF(fc.env_summary->>'os',''),(
+				         SELECT e2.env_json->>'os' FROM evidence_agg e2
+				         WHERE e2.purl=p.purl AND e2.symbol=fc.symbol AND e2.error_fp=fc.error_fp
+				         ORDER BY e2.observation_count DESC LIMIT 1
+				       ),'') AS target_os
 				FROM failure_clusters fc
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(fc.versions)='array' THEN fc.versions ELSE '[]'::jsonb END
@@ -251,24 +256,21 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
-				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen
+				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
+				       COALESCE(e.env_json->>'os','') AS target_os
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen
+				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
 			), ranked AS (
-				SELECT DISTINCT ON(ecosystem,name,version,symbol)
-				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen
+				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
+				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
 				FROM candidates
-				ORDER BY ecosystem,name,version,symbol,source_rank,score DESC
+				ORDER BY ecosystem,name,version,symbol,target_os,source_rank,score DESC
 			)
-			SELECT ecosystem,name,version,symbol,score,kind
+			SELECT ecosystem,name,version,symbol,score,kind,target_os
 			FROM ranked c
-			WHERE NOT EXISTS (
-				SELECT 1 FROM authoring_assignments a
-				WHERE a.ecosystem=c.ecosystem AND a.name=c.name AND a.version=c.version
-				  AND (a.symbol=c.symbol OR c.symbol=''))
-			  AND (c.symbol<>'' OR NOT EXISTS (
+			WHERE (c.symbol<>'' OR NOT EXISTS (
 				SELECT 1 FROM verified_packages v WHERE v.purl=c.purl))
 			  AND (c.symbol='' OR NOT EXISTS (
 				SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
@@ -280,7 +282,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 		defer rows.Close()
 		for rows.Next() {
 			var row WantedRow
-			if err := rows.Scan(&row.Ecosystem, &row.Name, &row.Version, &row.Symbol, &row.Score, &row.Kind); err != nil {
+			if err := rows.Scan(&row.Ecosystem, &row.Name, &row.Version, &row.Symbol, &row.Score, &row.Kind, &row.TargetOS); err != nil {
 				return err
 			}
 			out = append(out, row)
@@ -293,6 +295,10 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
 	var claimed AuthoringWorkRow
 	found := false
+	eligible := make(map[[4]string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		eligible[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)] = struct{}{}
+	}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tx, err := c.Begin(ctx)
 		if err != nil {
@@ -309,8 +315,18 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
 		if err == nil {
-			found = true
-			return tx.Commit(ctx)
+			key := authoringWorkKey(claimed.Ecosystem, claimed.Name, claimed.Version, claimed.Symbol)
+			if _, stillEligible := eligible[key]; stillEligible {
+				found = true
+				return tx.Commit(ctx)
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
+				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
+				  AND session_id=$5 AND sample_id IS NULL`, claimed.Ecosystem, claimed.Name,
+				claimed.Version, claimed.Symbol, sessionID); err != nil {
+				return err
+			}
+			err = pgx.ErrNoRows
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
