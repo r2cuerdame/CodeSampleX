@@ -1,0 +1,12 @@
+{
+  "name": "csx-puppeteer-244-page-evaluation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "puppeteer": "24.4.0"
+  }
+}

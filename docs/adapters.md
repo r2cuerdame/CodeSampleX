@@ -120,7 +120,15 @@ evidence until a dedicated adapter and runner produce a signed passing
 receipt.
 
 Verification jobs carry closed worker requirements (`sandboxCapability`,
-`ecosystem`, `runtime`, and any installed engine/SDK frameworks). A worker
-examines a bounded queue window and claims only a job its local runner can
-prepare. Thus broad Wanted collection never sends a Unity job to an ordinary
-Docker-only worker merely because that job was first in the queue.
+`ecosystem`, `runtime`, browser execution context/family/version/engine, and
+any installed engine/SDK frameworks). A worker examines a bounded queue window
+and claims only a job its local runner can prepare. Thus broad Wanted
+collection never sends an unsupported browser, Unity, or other engine job to
+an ordinary Docker-only worker merely because that job was first in the queue.
+
+Browser execution evidence is not inferred from an npm package name. The
+current pinned browser lane accepts only `browser / chrome 134 / chromium 134`
+jobs and runs them in the Puppeteer 24.4.0 image containing Chrome for Testing
+134. Node remains the harness runtime while the receipt records the actual
+execution context as browser. Unknown Chrome majors and Firefox/WebKit jobs
+are skipped before claim until a corresponding measured image exists.

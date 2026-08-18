@@ -20,6 +20,13 @@ import (
 // project. No host environment is passed into any container.
 type DockerRunner struct{}
 
+// chrome134Image is the measured browser verifier for Puppeteer 24.4.0.
+// It contains Node 22.14.0 and Chrome for Testing 134.0.6998.35. The image
+// was run under the same 512 MiB / 256 PID / network-off contract as stages
+// before being admitted here; a plain node image cannot produce browser
+// execution evidence merely because the package controlling it is Puppeteer.
+const chrome134Image = "ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5769b74c89135c663cbb2a76e07d3e261bb3e2da83be98409a68a"
+
 // imageFor maps an ecosystem AND runtime to its pinned verifier image.
 //
 // The runtime matters because an ecosystem is not a runtime: npm packages
@@ -83,12 +90,67 @@ func imageFor(ecosystem, runtime string) (string, error) {
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
 
+// imageForManifest selects the stage image from the execution environment,
+// not only the package ecosystem. A browser contract still uses Node as its
+// harness runtime, but its assertions execute in Chrome and need a real,
+// pinned browser image.
+func imageForManifest(m domain.SampleManifest) (string, error) {
+	env := m.Environment.Normalize()
+	if env.ExecutionContext != "browser" {
+		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
+			return "", fmt.Errorf("sandbox: browser dimensions require browser execution context")
+		}
+		img, err := imageFor(env.Ecosystem, env.Runtime)
+		if err != nil {
+			return "", err
+		}
+		rt, _, _ := imageRuntime(env.Ecosystem, env.Runtime)
+		if env.ExecutionContext != "" && env.ExecutionContext != rt {
+			return "", fmt.Errorf("sandbox: no verifier image for execution context %q", env.ExecutionContext)
+		}
+		return img, nil
+	}
+	if env.Ecosystem != "npm" || (env.Runtime != "" && env.Runtime != "node") {
+		return "", fmt.Errorf("sandbox: browser verifier requires npm with node runtime")
+	}
+	if env.BrowserFamily != "chrome" || env.BrowserMajor != "134" {
+		return "", fmt.Errorf("sandbox: no verifier image for browser %q major %q", env.BrowserFamily, env.BrowserMajor)
+	}
+	if env.Engine != "" && env.Engine != "chromium" {
+		return "", fmt.Errorf("sandbox: Chrome verifier cannot provide engine %q", env.Engine)
+	}
+	if env.EngineVersion != "" && env.EngineVersion != "134" {
+		return "", fmt.Errorf("sandbox: Chrome 134 verifier cannot provide engine version %q", env.EngineVersion)
+	}
+	return chrome134Image, nil
+}
+
 // ContainerSupports reports whether this binary has a pinned image for the
 // requested ecosystem/runtime. Workers use the same decision as the runner
 // before claiming work, so an unsupported job is never taken and failed just
 // because it happened to be first in the queue.
 func ContainerSupports(ecosystem, runtime string) bool {
 	_, err := imageFor(ecosystem, runtime)
+	return err == nil
+}
+
+// ContainerSupportsRequirements is the exact pre-claim decision used by a
+// public worker. Browser fields are part of the closed requirement rather
+// than an optimistic hint: a worker with Docker but no pinned Firefox image
+// must skip Firefox work and continue scanning the queue.
+func ContainerSupportsRequirements(w domain.WorkerRequirements) bool {
+	if w.Ecosystem == "" {
+		return w.Runtime == "" && w.ExecutionContext == "" && w.BrowserFamily == "" &&
+			w.BrowserMajor == "" && w.Engine == "" && w.EngineVersion == ""
+	}
+	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+		SchemaVersion: 1,
+		Ecosystem:     w.Ecosystem, Runtime: w.Runtime,
+		ExecutionContext: w.ExecutionContext,
+		BrowserFamily:    w.BrowserFamily, BrowserMajor: w.BrowserMajor,
+		Engine: w.Engine, EngineVersion: w.EngineVersion,
+	}}
+	_, err := imageForManifest(m)
 	return err == nil
 }
 
@@ -135,7 +197,7 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	if eco == "" {
 		eco = host.Ecosystem
 	}
-	img, _ := imageFor(eco, runtimeOf(m, host))
+	img, _ := imageForManifest(m)
 	// The sample's declared runtime picks the container, so it must also
 	// describe the receipt. Reading the HOST runtime here would stamp a
 	// bun contract as node whenever the operator happened to run node.
@@ -176,6 +238,13 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		Libc:             libc,
 		CI:               host.CI,
 	}
+	if img == chrome134Image {
+		env.ExecutionContext = "browser"
+		env.BrowserFamily = "chrome"
+		env.BrowserMajor = "134"
+		env.Engine = "chromium"
+		env.EngineVersion = "134"
+	}
 	return env.Normalize()
 }
 
@@ -191,6 +260,15 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name stri
 	if networkOff {
 		args = append(args, "--network=none")
 	}
+	if image == chrome134Image {
+		// The official image defaults to uid 10042, which cannot write a
+		// normal user's bind-mounted temporary workspace on Linux. Existing
+		// verifier images already run stages as container root. Chrome is
+		// launched by the sample with --no-sandbox inside this disposable
+		// outer Docker isolation, and the fixed cache points at the browser
+		// bundled in the image rather than /root.
+		args = append(args, "--init", "--user", "0:0")
+	}
 	args = append(args, "--memory=512m", "--pids-limit=256")
 	for _, e := range env {
 		args = append(args, "--env", e)
@@ -200,7 +278,7 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name stri
 }
 
 func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManifest, networkOff bool, cmd []string) StageResult {
-	img, err := imageFor(m.Environment.Ecosystem, m.Environment.Runtime)
+	img, err := imageForManifest(m)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
 	}
@@ -219,8 +297,11 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	// ceiling, so every timed-out verification permanently took a share of
 	// the pool. Over a night that is not a leak, it is the throughput.
 	name := containerName(abs, networkOff, cmd)
-	res := runStage(ctx, "", dockerArgs(img, abs, networkOff,
-		stageEnv(m.Environment.Ecosystem, m.Environment.Runtime), cmd, name))
+	env := stageEnv(m.Environment.Ecosystem, m.Environment.Runtime)
+	if img == chrome134Image {
+		env = append(env, "PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer")
+	}
+	res := runStage(ctx, "", dockerArgs(img, abs, networkOff, env, cmd, name))
 	if ctx.Err() != nil || res.Result == ResultFail {
 		reapContainer(name)
 	}
@@ -315,6 +396,7 @@ func runtimeOf(m domain.SampleManifest, host domain.EnvironmentFingerprint) stri
 // it true as the image set grows.
 var imageBases = map[string]struct{ bucket, libc string }{
 	"node:22-alpine":       {"alpine", "musl"},
+	chrome134Image:         {"debian", "glibc"},
 	"python:3.12-alpine":   {"alpine", "musl"},
 	"golang:1.26-alpine":   {"alpine", "musl"},
 	"rust:1-alpine":        {"alpine", "musl"},

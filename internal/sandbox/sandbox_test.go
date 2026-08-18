@@ -313,6 +313,89 @@ func TestRuntimePicksTheImage(t *testing.T) {
 	}
 }
 
+func TestBrowserContextPicksARealChromeImageAndReceiptContext(t *testing.T) {
+	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+		SchemaVersion: 1,
+		Ecosystem:     "npm", Runtime: "node", ExecutionContext: "browser",
+		BrowserFamily: "chrome", BrowserMajor: "134",
+		Engine: "chromium", EngineVersion: "134",
+	}}
+	img, err := imageForManifest(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img != chrome134Image {
+		t.Fatalf("browser image = %q, want %q", img, chrome134Image)
+	}
+
+	host := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"}
+	env := (DockerRunner{}).StageEnvironment(host, m)
+	if env.Runtime != "node" || env.RuntimeVersion != "22" {
+		t.Errorf("browser harness runtime = %s %s, want node 22", env.Runtime, env.RuntimeVersion)
+	}
+	if env.ExecutionContext != "browser" || env.BrowserFamily != "chrome" || env.BrowserMajor != "134" {
+		t.Errorf("browser receipt context = %+v", env)
+	}
+	if env.Engine != "chromium" || env.EngineVersion != "134" {
+		t.Errorf("browser receipt engine = %s %s", env.Engine, env.EngineVersion)
+	}
+	if env.Libc != "glibc" || env.OSVersionBucket != "debian" {
+		t.Errorf("browser receipt base = %s/%s, want glibc/debian", env.Libc, env.OSVersionBucket)
+	}
+}
+
+func TestBrowserImageSupportIsFailClosed(t *testing.T) {
+	supported := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun,
+		Ecosystem:         "npm", Runtime: "node", ExecutionContext: "browser",
+		BrowserFamily: "chrome", BrowserMajor: "134", Engine: "chromium", EngineVersion: "134",
+	}
+	if !ContainerSupportsRequirements(supported) {
+		t.Fatal("the pinned Chrome 134 image should be preparable")
+	}
+	for name, mutate := range map[string]func(*domain.WorkerRequirements){
+		"unknown browser major":  func(w *domain.WorkerRequirements) { w.BrowserMajor = "135" },
+		"unsupported family":     func(w *domain.WorkerRequirements) { w.BrowserFamily = "firefox"; w.Engine = "gecko" },
+		"browser without family": func(w *domain.WorkerRequirements) { w.BrowserFamily = "" },
+		"unsupported webworker": func(w *domain.WorkerRequirements) {
+			w.ExecutionContext = "webworker"
+			w.BrowserFamily, w.BrowserMajor, w.Engine, w.EngineVersion = "", "", "", ""
+		},
+		"browser fields on node": func(w *domain.WorkerRequirements) { w.ExecutionContext = "node" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			want := supported
+			mutate(&want)
+			if ContainerSupportsRequirements(want) {
+				t.Fatalf("unsupported browser requirements were accepted: %+v", want)
+			}
+		})
+	}
+}
+
+func TestBrowserDockerArgsUseBundledCacheAndWritableWorkspace(t *testing.T) {
+	args := dockerArgs(
+		chrome134Image,
+		"/tmp/browser-contract",
+		true,
+		[]string{"PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer"},
+		[]string{"node", "test/contract.mjs"},
+		"csx-browser-test",
+	)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, want := range []string{
+		" --network=none ",
+		" --init ",
+		" --user 0:0 ",
+		" --env PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer ",
+		" " + chrome134Image + " ",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("browser docker args missing %q: %s", want, joined)
+		}
+	}
+}
+
 func TestNPMResolverMatchesReceiptPackageManager(t *testing.T) {
 	host := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", Runtime: "node"}
 	for _, tc := range []struct {

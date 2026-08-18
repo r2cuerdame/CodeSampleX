@@ -244,6 +244,11 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 		SandboxCapability: domain.CapContainerRun,
 		Ecosystem:         manifest.Environment.Ecosystem,
 		Runtime:           manifest.Environment.Runtime,
+		ExecutionContext:  manifest.Environment.ExecutionContext,
+		BrowserFamily:     manifest.Environment.BrowserFamily,
+		BrowserMajor:      manifest.Environment.BrowserMajor,
+		Engine:            manifest.Environment.Engine,
+		EngineVersion:     manifest.Environment.EngineVersion,
 	}
 	// Only installed engines/SDKs are host requirements. Ordinary framework
 	// libraries are resolved inside the disposable container and must not

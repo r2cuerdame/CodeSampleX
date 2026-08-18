@@ -140,6 +140,11 @@ type WorkerRequirements struct {
 	SandboxCapability SandboxCapability `json:"sandboxCapability,omitempty"`
 	Ecosystem         string            `json:"ecosystem,omitempty"`
 	Runtime           string            `json:"runtime,omitempty"`
+	ExecutionContext  string            `json:"executionContext,omitempty"`
+	BrowserFamily     string            `json:"browserFamily,omitempty"`
+	BrowserMajor      string            `json:"browserMajor,omitempty"`
+	Engine            string            `json:"engine,omitempty"`
+	EngineVersion     string            `json:"engineVersion,omitempty"`
 	Frameworks        []string          `json:"frameworks,omitempty"`
 }
 

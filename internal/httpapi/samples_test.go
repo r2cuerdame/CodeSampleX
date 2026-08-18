@@ -86,6 +86,42 @@ func TestSampleUploadHappyPath(t *testing.T) {
 	}
 }
 
+func TestBrowserSampleQueuesExactWorkerRequirements(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	manifest.Environment.ExecutionContext = "browser"
+	manifest.Environment.BrowserFamily = "chrome"
+	manifest.Environment.BrowserMajor = "134"
+	manifest.Environment.Engine = "chromium"
+	manifest.Environment.EngineVersion = "134"
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"test/contract.mjs": "console.log('browser contract');\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+
+	resp := postSample(t, srv.URL, manifest, sampleID, artifact, "")
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 201", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	jobs, err := store.JobsForSample(context.Background(), sampleID)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %+v err=%v", jobs, err)
+	}
+	var want domain.WorkerRequirements
+	if err := json.Unmarshal([]byte(jobs[0].WantEnvJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	if want.ExecutionContext != "browser" || want.BrowserFamily != "chrome" || want.BrowserMajor != "134" {
+		t.Errorf("queued browser requirements = %+v", want)
+	}
+	if want.Engine != "chromium" || want.EngineVersion != "134" {
+		t.Errorf("queued engine requirements = %+v", want)
+	}
+}
+
 // TestRepublishDoesNotStackCrossJobs pins queue hygiene: re-publishing the
 // same content must not hand peers the same sandbox work again.
 func TestRepublishDoesNotStackCrossJobs(t *testing.T) {

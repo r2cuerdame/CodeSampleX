@@ -255,6 +255,37 @@ func TestCrossFetchSkipsUnpreparedEngineAndClaimsLaterContainerJob(t *testing.T)
 	}
 }
 
+func TestCrossWorkerClaimsOnlyThePinnedBrowserItCanPrepare(t *testing.T) {
+	cv := &CrossVerifier{Cap: domain.CapContainerRun}
+	encode := func(w domain.WorkerRequirements) json.RawMessage {
+		b, err := json.Marshal(w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	base := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun,
+		Ecosystem:         "npm", Runtime: "node", ExecutionContext: "browser",
+		BrowserFamily: "chrome", BrowserMajor: "134", Engine: "chromium", EngineVersion: "134",
+	}
+	if !cv.canPrepare(encode(base)) {
+		t.Fatal("worker rejected its pinned Chrome 134 container")
+	}
+	newer := base
+	newer.BrowserMajor = "135"
+	newer.EngineVersion = "135"
+	if cv.canPrepare(encode(newer)) {
+		t.Fatal("worker claimed an unconfigured Chrome 135 job")
+	}
+	firefox := base
+	firefox.BrowserFamily = "firefox"
+	firefox.Engine = "gecko"
+	if cv.canPrepare(encode(firefox)) {
+		t.Fatal("worker claimed a Firefox job without a Firefox image")
+	}
+}
+
 func TestCrossDownloadArtifactVerifiesHash(t *testing.T) {
 	f := newCrossFixture(t)
 	cv := f.verifier(t)

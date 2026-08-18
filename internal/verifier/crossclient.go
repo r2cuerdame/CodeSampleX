@@ -194,12 +194,12 @@ func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
 	if want.SandboxCapability != "" && want.SandboxCapability != cv.Cap {
 		return false
 	}
-	if want.Ecosystem != "" {
-		if cv.Cap == domain.CapContainerRun {
-			if !sandbox.ContainerSupports(want.Ecosystem, want.Runtime) {
-				return false
-			}
-		} else if cv.Env.Ecosystem != want.Ecosystem {
+	if cv.Cap == domain.CapContainerRun {
+		if !sandbox.ContainerSupportsRequirements(want) {
+			return false
+		}
+	} else if want.Ecosystem != "" {
+		if cv.Env.Ecosystem != want.Ecosystem {
 			return false
 		}
 	} else if want.Runtime != "" && cv.Env.Runtime != want.Runtime {
