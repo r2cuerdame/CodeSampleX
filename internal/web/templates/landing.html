@@ -1,136 +1,152 @@
 {{define "content"}}
-{{/* One block does the opening: what this is, how to get it, and why it is
-     worth having. The page used to say the same thing four times — a
-     what-paragraph, three value cards, five steps and a flywheel line. */}}
-<section class="hero">
-  <div class="hero-stage">
-    <div class="hero-copy">
-      <p class="eyebrow mono"><span class="eyebrow-mark" aria-hidden="true">✓</span> CodeSampleX</p>
-      <h1 class="tagline">{{.T "landing.tagline"}}<span class="caret" aria-hidden="true"></span></h1>
-      <p class="lead">{{.T "landing.what_body"}}</p>
+{{/* The home page starts with something useful, not an illustration: a
+     real record search and the current size of the measured network. */}}
+<section class="hero home-hero">
+  <div class="hero-copy">
+    <p class="eyebrow mono"><span class="eyebrow-mark" aria-hidden="true">✓</span> CodeSampleX</p>
+    <h1 class="tagline">{{.T "landing.tagline"}}</h1>
+    <p class="lead">{{.T "site.meta_description"}}</p>
+    <div class="hero-actions">
+      <button class="action primary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button>
+      <a class="action secondary" href="{{if .Findings}}#measured{{else}}{{.WithLang "/findings"}}{{end}}">{{.T "landing.findings_heading"}}</a>
     </div>
-    <img class="hero-art" src="/static/inspector-hero-v1.webp" width="1672" height="943" alt="" decoding="async" fetchpriority="high">
-    <div id="install" class="install">
-      <div class="cmd">
-        <span class="oslabel">{{.T "landing.install_windows"}}</span>
-        <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
-      </div>
-      <div class="cmd">
-        <span class="oslabel">{{.T "landing.install_unix"}}</span>
-        <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
-      </div>
-      <p class="dim small">{{.T "landing.install_note"}}</p>
-      {{/* Piping a stranger's script into a shell is the biggest thing this
-           page asks of a visitor, and everything that would justify it —
-           the source, the installer itself, the licence — was in the footer.
-           It belongs where the ask is made. */}}
-      <p class="trust small mono">
-        <a href="https://github.com/r2cuerdame/CodeSampleX">{{.T "landing.trust_source"}}</a> ·
-        <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
-        <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
-      </p>
-      {{/* The second way in, named where the first one is offered: a
-           visitor who does not want to run a shell command themselves is
-           standing right here, and the alternative was invisible from the
-           anchor every "Install" link in the site points at. */}}
-      <p class="small llmlink"><a href="#install-llm">{{.T "landing.llm_link"}}</a></p>
-    </div>
+    <p class="hero-trust dim small">{{.T "landing.install_note"}}</p>
   </div>
 
-  <ul class="claims">
-    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_1_t"}}</strong><span class="dim">{{.T "landing.value_1_b"}}</span></span></li>
-    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_2_t"}}</strong><span class="dim">{{.T "landing.value_2_b"}}</span></span></li>
-    <li><span class="claim-check" aria-hidden="true">✓</span><span><strong>{{.T "landing.value_3_t"}}</strong><span class="dim">{{.T "landing.value_3_b"}}</span></span></li>
-  </ul>
+  <div class="hero-evidence">
+    <h2 class="eyebrow mono">{{.T "nav.records"}}</h2>
+    <p class="evidence-question">{{.T "landing.what_q"}}</p>
+    <form class="home-search" action="/records" method="get" role="search">
+      <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
+      <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
+      {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+      <button type="submit">{{.T "explore.button"}}</button>
+    </form>
+    {{template "tiles" .}}
+  </div>
 </section>
 
-{{/* The install box asks the visitor to run a command. This asks nobody to
-     run anything: it hands the same install to the agent that is already
-     open in their editor, in words, and the words are on the page rather
-     than behind the button — the prompt a reader checks IS the prompt that
-     gets copied, because both render the same field.
-
-     What it deliberately does not do: invent a client. The four agents
-     below are the ones csx init detects; everything else is registered
-     from `csx mcp-config`, which is what the next section already says.
-     And it asks for no credential — csx has no account to have one — so a
-     prompt that made a visitor paste a token would be a new attack surface
-     on a page whose whole argument is that it takes nothing from you. */}}
-<section id="install-llm" class="llminstall">
-  <h2 class="eyebrow mono">{{.T "landing.llm_heading"}}</h2>
-  <p class="llmlead">{{.T "landing.llm_body"}}</p>
-  <div class="llmbox">
-    {{/* Visible and selectable: with JavaScript off the copy button does
-         nothing, and the prompt is still readable and copyable by hand. */}}
-    <div class="llmactions">
-      <button class="copy llmcopy mono" type="button" data-copy="{{.LLMPrompt}}" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.llm_copy"}}</button>
+{{/* Measured contradictions are the product proof. They appear before any
+     install request so a visitor can inspect the evidence first. */}}
+{{- if .Findings}}
+<section id="measured" class="homefindings evidence-section">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
+      <p class="dim small">{{.T "landing.findings_sub"}}</p>
     </div>
-    <pre class="llmtext mono">{{.LLMPrompt}}</pre>
+    <a class="small" href="{{.WithLang "/findings"}}">{{.T "landing.findings_more"}}</a>
+  </div>
+  <ul class="findinglist">
+  {{- range .Findings}}
+    <li class="finding-card">
+      <a class="fsubject mono" href="{{.Href}}"><span class="eco mono">{{.Ecosystem}}</span> {{.Subject}}</a>
+      <p class="believed"><span class="flabel mono">{{$.T "findings.believed"}}</span> {{.Believed}}</p>
+      <p class="measured"><span class="flabel mono">{{$.T "findings.measured"}}</span> {{.Measured}}</p>
+    </li>
+  {{- end}}
+  </ul>
+  <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
+</section>
+{{- end}}
+
+{{/* The agent-driven install is the primary path. The two shell commands
+     remain as a transparent, inspectable alternative rather than competing
+     with the product explanation in the first viewport. */}}
+<section id="install" class="delegate">
+  <div class="delegate-copy">
+    <h2>{{.T "landing.llm_heading"}}</h2>
+    <p>{{.T "landing.llm_body"}}</p>
+    <button class="action primary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_copy"}}</button>
+    <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>
+  </div>
+  <div class="manual-install">
+    <h3 class="eyebrow mono">{{.T "landing.install_heading"}}</h3>
+    <div class="cmd">
+      <span class="oslabel">{{.T "landing.install_windows"}}</span>
+      <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
+    </div>
+    <div class="cmd">
+      <span class="oslabel">{{.T "landing.install_unix"}}</span>
+      <div class="cmdline"><span class="prompt mono" aria-hidden="true">$</span><code class="mono">{{.InstallSH}}</code><button class="copy mono" type="button" data-copy="{{.InstallSH}}">copy</button></div>
+    </div>
+    <p class="trust small mono">
+      <a href="https://github.com/r2cuerdame/CodeSampleX">{{.T "landing.trust_source"}}</a> ·
+      <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
+      <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
+    </p>
+  </div>
+</section>
+
+{{/* The prompt exists once in normal DOM. Both home-page triggers open this
+     native modal and the copy action reads this exact text node. */}}
+<dialog id="install-llm-dialog" class="llmdialog" aria-labelledby="llm-dialog-title" aria-describedby="llm-dialog-body">
+  <div class="dialog-head">
+    <h2 id="llm-dialog-title">{{.T "landing.llm_heading"}}</h2>
+    <form method="dialog">
+      <button class="dialog-close" type="submit" aria-label="{{.T "landing.llm_close"}}"><span aria-hidden="true">×</span></button>
+    </form>
+  </div>
+  <p id="llm-dialog-body" class="llmlead">{{.T "landing.llm_body"}}</p>
+  <div class="llmbox">
+    <div class="llmactions">
+      <button class="copy llmcopy mono" type="button" data-copy-target="#llm-install-prompt" data-copied="{{.T "landing.llm_copied"}}" data-copy-failed="{{.T "landing.llm_copy_failed"}}">{{.T "landing.llm_copy"}}</button>
+      <span id="llm-copy-status" class="copy-status" role="status" aria-live="polite"></span>
+    </div>
+    <pre id="llm-install-prompt" class="llmtext mono" tabindex="0">{{.LLMPrompt}}</pre>
   </div>
   <p class="note">{{.T "landing.llm_safety"}}</p>
-  <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>
-</section>
+</dialog>
+<noscript>
+  <details class="nojs-prompt">
+    <summary>{{.T "landing.llm_copy"}}</summary>
+    <pre class="llmtext mono">{{.LLMPrompt}}</pre>
+  </details>
+</noscript>
 
-{{/* "Will this work with what I already use?" is the first thing a visitor
-     checks, so the agents are named right under the install command rather
-     than buried in the docs. The names are proper nouns — not translated. */}}
-{{/* The command that PRINTS the config, not the config itself.
-     This block used to hand out {"command":"csx"}, which is the one form
-     that does not work: the installer puts csx in ~/.local/bin, and an MCP
-     client is started by an editor rather than a login shell, so it
-     inherits none of the PATH the user just fixed. `csx init` already
-     registers the agents it detects by absolute path for that reason —
-     everyone else was copying the broken spelling off the front page.
-     mcp-config reads the path from the running binary, so it is right
-     wherever they installed it. */}}
+{{/* Agent and ecosystem coverage answer one question: will this work with
+     what I use? Keeping them together avoids two equally weighted cards. */}}
 {{$mcpCfg := `csx mcp-config`}}
-<section id="agents" class="agents">
-  <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
-  <ul class="agentlist">
-    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
-    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
-    <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
-    <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
-  </ul>
-  <p class="dim small">{{.T "landing.agents_auto"}}</p>
-  <p class="small">{{.T "landing.agents_manual"}}</p>
-  <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
-  <p class="note">{{.T "landing.agents_models"}}</p>
-</section>
+<section id="agents" class="support-shell">
+  <div class="agents support-agents">
+    <h2 class="eyebrow mono">{{.T "landing.agents_heading"}}</h2>
+    <ul class="agentlist">
+      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
+      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
+      <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
+      <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
+    </ul>
+    <p class="dim small">{{.T "landing.agents_auto"}}</p>
+    <p class="small">{{.T "landing.agents_manual"}}</p>
+    <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+    <p class="note">{{.T "landing.agents_models"}}</p>
+  </div>
 
-{{/* How healthy the network is. */}}
-<section class="network">
-  <h2 class="eyebrow mono">{{.T "landing.network_heading"}}</h2>
-{{- if .Findings}}
-  {{/* The rest of this page explains why the network is needed. These
-       prove it: one line of "the documentation says X, the contract
-       measured Y" does more than every paragraph above, because a reader
-       recognises the shape from their own week. */}}
-  <section class="homefindings">
-    <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
-    <p class="dim small">{{.T "landing.findings_sub"}}</p>
-    <ul class="findinglist">
-    {{- range .Findings}}
-      <li class="finding-card">
-        <a class="fsubject mono" href="{{.Href}}"><span class="eco mono">{{.Ecosystem}}</span> {{.Subject}}</a>
-        <p class="believed"><span class="flabel mono">{{$.T "findings.believed"}}</span> {{.Believed}}</p>
-        <p class="measured"><span class="flabel mono">{{$.T "findings.measured"}}</span> {{.Measured}}</p>
+  {{if .Support}}
+  <div class="support">
+    <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
+    <ul class="ecos">
+    {{- range .Support}}
+      <li class="eco">
+        <span class="econame mono">{{.Ecosystem}}</span>
+        <span class="dim mono small">{{.Managers}}</span>
+        {{if .Confidence}}<span class="chip conf-{{.ConfidenceClass}} mono small" title="{{$.T "adapters.conf_heading"}}: {{.ConfidenceTip}}">{{.Confidence}}</span>{{end}}
+        <span class="caps">
+          {{- range .Can}}<span class="cap on"><span class="y" aria-hidden="true">✓</span>{{.}}</span>{{end}}
+          {{- range .Missing}}<span class="cap off"><span class="n" aria-hidden="true">✕</span>{{.}}</span>{{end}}
+        </span>
+        {{if .Note}}<span class="econote dim small">{{.Note}}</span>{{end}}
       </li>
     {{- end}}
     </ul>
-    <p class="small"><a href="{{.WithLang "/findings"}}">{{.T "landing.findings_more"}}</a></p>
-  </section>
-{{- end}}
-
-  {{template "tiles" .}}
-  <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
+  </div>
+  {{end}}
 </section>
 
-{{/* The record itself is a page of its own (searchable, paged): a
-     hundreds-long package list does not belong on the front page. */}}
-
-<section class="how">
-  <h2 class="eyebrow mono">{{.T "landing.how_heading"}}</h2>
+{{/* Full process and privacy detail remain available for due diligence, but
+     no longer compete with search, measured evidence and installation. */}}
+<details class="home-detail how">
+  <summary><span class="eyebrow mono">{{.T "landing.how_heading"}}</span><span class="detail-summary">{{.T "landing.what_q"}}</span></summary>
   <p class="q">{{.T "landing.what_q"}}<span class="a dim"> {{.T "landing.what_a"}}</span></p>
   <ol class="howsteps">
     <li><span class="stepnum mono" aria-hidden="true">1</span>{{.T "stats.how_1"}}</li>
@@ -140,32 +156,10 @@
     <li><span class="stepnum mono" aria-hidden="true">5</span>{{.T "stats.how_5"}}</li>
   </ol>
   <p class="note">{{.T "landing.for_agents"}}</p>
-</section>
+</details>
 
-{{/* Support in words, one row per ecosystem. The A0–A4 matrix lives on
-     /adapters for whoever wants that level of detail. */}}
-{{if .Support}}
-<section class="support">
-  <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
-  <ul class="ecos">
-  {{- range .Support}}
-    <li class="eco">
-      <span class="econame mono">{{.Ecosystem}}</span>
-      <span class="dim mono small">{{.Managers}}</span>
-      {{if .Confidence}}<span class="chip conf-{{.ConfidenceClass}} mono small" title="{{$.T "adapters.conf_heading"}}: {{.ConfidenceTip}}">{{.Confidence}}</span>{{end}}
-      <span class="caps">
-        {{- range .Can}}<span class="cap on"><span class="y" aria-hidden="true">✓</span>{{.}}</span>{{end}}
-        {{- range .Missing}}<span class="cap off"><span class="n" aria-hidden="true">✕</span>{{.}}</span>{{end}}
-      </span>
-      {{if .Note}}<span class="econote dim small">{{.Note}}</span>{{end}}
-    </li>
-  {{- end}}
-  </ul>
-</section>
-{{end}}
-
-<section id="contract" class="contract">
-  <h2 class="eyebrow mono">{{.T "contract.heading"}}</h2>
+<details id="contract" class="home-detail contract">
+  <summary><span class="eyebrow mono">{{.T "contract.heading"}}</span></summary>
   <div class="cols">
     <div class="col panel">
       <h3>{{.T "contract.get"}}</h3>
@@ -198,5 +192,5 @@
       </ul>
     </div>
   </div>
-</section>
+</details>
 {{end}}

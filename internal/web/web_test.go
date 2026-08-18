@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -65,9 +66,14 @@ func TestLandingEnglish(t *testing.T) {
 	body := rec.Body.String()
 	mustContain(t, body, "Stop solving the same code twice.")
 	mustContain(t, body, `class="landing-page"`)
-	mustContain(t, body, `src="/static/inspector-hero-v1.webp"`)
+	if strings.Contains(body, `class="hero-art"`) || strings.Contains(body, `<img src="/static/inspector-hero-v1.webp"`) {
+		t.Error("landing still renders the old hero illustration")
+	}
+	// The existing social card remains stable even though the illustration no
+	// longer competes with search and measured evidence in the visible page.
 	mustContain(t, body, `content="https://codesamplex.dev/static/inspector-hero-v1.webp"`)
 	mustContain(t, body, `content="summary_large_image"`)
+	mustContain(t, body, `class="home-search" action="/records"`)
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters, the way in by
@@ -101,6 +107,53 @@ func TestLandingEnglish(t *testing.T) {
 	if strings.Contains(body, "cdn.") || strings.Contains(body, "googleapis") {
 		t.Error("landing references external assets")
 	}
+}
+
+func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/").Body.String()
+	ordered := []string{
+		`class="hero home-hero"`,
+		`class="home-search"`,
+		`id="measured"`,
+		`id="install"`,
+		`id="agents"`,
+	}
+	last := -1
+	for _, marker := range ordered {
+		at := strings.Index(body, marker)
+		if at < 0 {
+			t.Fatalf("landing hierarchy is missing %q", marker)
+		}
+		if at <= last {
+			t.Fatalf("landing hierarchy out of order at %q", marker)
+		}
+		last = at
+	}
+	for _, workerOnly := range []string{`id="install-worker"`, `csx worker start --mode verify`} {
+		if strings.Contains(body, workerOnly) {
+			t.Errorf("worker-only contribution content leaked onto the homepage: %q", workerOnly)
+		}
+	}
+}
+
+func TestLandingWithoutFeaturedFindingsHasNoBrokenMeasuredAnchor(t *testing.T) {
+	var out bytes.Buffer
+	page := landingPage{
+		basePage:  basePage{Lang: "en", Title: "CodeSampleX", IsLanding: true},
+		InstallPS: "install-windows",
+		InstallSH: "install-unix",
+		LLMPrompt: "install with an agent",
+		Findings:  nil,
+	}
+	if err := parseTemplates()["landing"].ExecuteTemplate(&out, "base.html", page); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	if strings.Contains(body, `href="#measured"`) {
+		t.Error("empty findings render links to an absent #measured section")
+	}
+	mustContain(t, body, `class="action secondary" href="/findings"`)
 }
 
 // TestEnglishReachableFromAnotherLanguage pins the fix for a switcher that

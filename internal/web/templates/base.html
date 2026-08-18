@@ -72,24 +72,56 @@
     </nav>
   </div>
 </footer>
-{{/* A green outline is the whole confirmation a copy button gives, which
-     nobody using a screen reader receives. A button carrying data-copied
-     swaps its own label instead (and announces it, being aria-live), then
-     restores; buttons without the attribute behave exactly as before. */}}
+{{/* Copy actions may carry text directly or point at the one visible source
+     of truth. Clipboard permission failures fall back to the old selection
+     API; if that is denied too, the visible source is selected by hand and
+     the localized status explains what happened. */}}
 <script>
 async function copyText(t){
-  try{await navigator.clipboard.writeText(t);return true}catch(_){
+  try{
+    if(!navigator.clipboard||!navigator.clipboard.writeText)throw new Error('clipboard unavailable');
+    await navigator.clipboard.writeText(t);return true
+  }catch(_){
     const a=document.createElement('textarea');
     a.value=t;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
     document.body.appendChild(a);a.focus();a.select();
-    const ok=document.execCommand('copy');a.remove();return ok
+    let ok=false;try{ok=document.execCommand('copy')}catch(_){ok=false}
+    a.remove();return ok
   }
 }
-for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('click',async()=>{
-  if(b.classList.contains('ok')||!await copyText(b.dataset.copy))return;
+function selectCopyTarget(target){
+  if(!target)return;
+  const selection=window.getSelection(),range=document.createRange();
+  range.selectNodeContents(target);selection.removeAllRanges();selection.addRange(range);target.focus()
+}
+for(const b of document.querySelectorAll('[data-copy],[data-copy-target]'))b.addEventListener('click',async()=>{
+  if(b.classList.contains('ok'))return;
+  const target=b.dataset.copyTarget?document.querySelector(b.dataset.copyTarget):null;
+  const value=target?target.textContent:b.dataset.copy;
+  const status=b.parentElement.querySelector('[role="status"]');
+  if(!value||!await copyText(value)){
+    selectCopyTarget(target);if(status)status.textContent=b.dataset.copyFailed||'';return
+  }
   const d=b.dataset.copied,o=b.textContent;b.classList.add('ok');if(d)b.textContent=d;
-  setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o},1200)
+  if(status)status.textContent=d||'';
+  setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o;if(status)status.textContent=''},1200)
 });
+let dialogReturnFocus=null;
+for(const trigger of document.querySelectorAll('[data-dialog-open]'))trigger.addEventListener('click',()=>{
+  const dialog=document.getElementById(trigger.dataset.dialogOpen);
+  if(!dialog||dialog.open)return;
+  dialogReturnFocus=trigger;
+  dialog.showModal();
+  const primary=dialog.querySelector('[data-copy-target]');if(primary)primary.focus()
+});
+for(const dialog of document.querySelectorAll('dialog')){
+  dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close()});
+  dialog.addEventListener('close',()=>{
+    const status=dialog.querySelector('[role="status"]');if(status)status.textContent='';
+    if(dialogReturnFocus&&document.contains(dialogReturnFocus))dialogReturnFocus.focus();
+    dialogReturnFocus=null
+  });
+}
 const badgeTriggers=[...document.querySelectorAll('[data-badge-help]')];
 function setBadgeHelp(help,open){
   const trigger=help.querySelector('[data-badge-help]');

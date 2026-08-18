@@ -18,8 +18,14 @@ func TestInstallSectionOffersTheAgentDrivenPath(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
 
-	mustContain(t, body, `href="#install-llm"`)
-	mustContain(t, body, `id="install-llm"`)
+	if got := strings.Count(body, `data-dialog-open="install-llm-dialog"`); got != 2 {
+		t.Fatalf("agent install dialog triggers = %d, want hero + install section", got)
+	}
+	if got := strings.Count(body, `aria-controls="install-llm-dialog"`); got != 2 {
+		t.Fatalf("dialog controls = %d, want 2", got)
+	}
+	mustContain(t, body, `aria-haspopup="dialog"`)
+	mustContain(t, body, `id="install-llm-dialog"`)
 	mustContain(t, body, "Let your coding agent install it")
 	// The manual per-client route stays one click away, and stays the only
 	// place any client name is claimed.
@@ -27,35 +33,45 @@ func TestInstallSectionOffersTheAgentDrivenPath(t *testing.T) {
 	mustContain(t, body, `href="#agents"`)
 }
 
-// The prompt a reader checks must be the prompt their agent receives. It is
-// rendered twice — visibly, and inside the copy button — from one field, so
-// this is what catches the two drifting apart.
+// The JavaScript path has one prompt source in the dialog. The only duplicate
+// is the explicit no-JavaScript fallback, where it must remain selectable.
 func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
 
 	want := html.EscapeString(llmPrompt("en", "https://codesamplex.dev"))
 	if strings.Count(body, want) != 2 {
-		t.Fatalf("prompt should appear exactly twice (visible text + data-copy), got %d",
+		t.Fatalf("prompt should appear exactly twice (dialog + noscript), got %d",
 			strings.Count(body, want))
 	}
-	mustContain(t, body, `<pre class="llmtext mono">`)
-	mustContain(t, body, `data-copy="`)
-	// Copy feedback that a screen reader receives, not just a green border.
+	mustContain(t, body, `<dialog id="install-llm-dialog"`)
+	mustContain(t, body, `aria-labelledby="llm-dialog-title"`)
+	mustContain(t, body, `aria-describedby="llm-dialog-body"`)
+	mustContain(t, body, `<form method="dialog">`)
+	mustContain(t, body, `<pre id="llm-install-prompt" class="llmtext mono" tabindex="0">`)
+	mustContain(t, body, `data-copy-target="#llm-install-prompt"`)
+	if strings.Contains(body, `data-copy="`+want) {
+		t.Error("the agent prompt is duplicated inside a data-copy attribute")
+	}
+	// Copy feedback reaches screen readers, and final clipboard denial also
+	// has visible localized text beside the button.
 	mustContain(t, body, `data-copied="Copied"`)
+	mustContain(t, body, `data-copy-failed="Copy failed. Select the prompt and copy it manually."`)
+	mustContain(t, body, `class="copy-status" role="status" aria-live="polite"`)
+	mustContain(t, body, `status.textContent=b.dataset.copyFailed`)
 	mustContain(t, body, `aria-live="polite"`)
 	// Clipboard permissions can be denied even on HTTPS (embedded browsers,
 	// unfocused tabs). The visible button must retain the old selection-based
 	// fallback instead of silently doing nothing.
 	mustContain(t, body, `document.execCommand('copy')`)
-	// No JavaScript: the prompt is still on the page, in full, selectable.
-	if !strings.Contains(body, ">"+want+"</pre>") {
-		t.Error("prompt is not rendered as readable page text")
-	}
+	mustContain(t, body, `selectCopyTarget(target)`)
+	mustContain(t, body, `dialog.showModal()`)
+	mustContain(t, body, `dialogReturnFocus.focus()`)
+	mustContain(t, body, `<noscript>`)
 	// The primary action comes before the long prompt. A reader arriving at
-	// the anchor must not have to scan or scroll to discover the copy button.
+	// the dialog must not have to scan or scroll to discover the copy button.
 	button := strings.Index(body, `class="copy llmcopy mono"`)
-	prompt := strings.Index(body, `<pre class="llmtext mono">`)
+	prompt := strings.Index(body, `<pre id="llm-install-prompt"`)
 	if button < 0 || prompt < 0 || button > prompt {
 		t.Errorf("copy action must precede prompt: button=%d prompt=%d", button, prompt)
 	}
@@ -166,8 +182,8 @@ func TestAgentInstallSectionIsTranslatedInEveryLocale(t *testing.T) {
 		body := get(t, mux, path).Body.String()
 		for _, key := range []string{
 			"landing.llm_heading", "landing.llm_body", "landing.llm_copy",
-			"landing.llm_copied", "landing.llm_safety", "landing.llm_clients",
-			"landing.llm_link",
+			"landing.llm_copied", "landing.llm_copy_failed", "landing.llm_close",
+			"landing.llm_safety", "landing.llm_clients",
 		} {
 			val := i18n.T(lang, key)
 			if strings.TrimSpace(val) == "" {
