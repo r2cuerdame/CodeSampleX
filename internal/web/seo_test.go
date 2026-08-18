@@ -21,8 +21,10 @@ func TestLandingAdvertisesMavenJavaVerificationHonestly(t *testing.T) {
 			path = "/"
 		}
 		body := get(t, mux, path).Body.String()
-		mustContain(t, body, "Maven / Java 21")
-		mustContain(t, body, "Gradle / Java 21")
+		mustContain(t, body, "Maven")
+		mustContain(t, body, "Gradle")
+		mustContain(t, body, "Java 8")
+		mustContain(t, body, "Java 25")
 		mustContain(t, body, `class="econote dim small"`)
 		mustContain(t, body, i18n.T(lang, "support.maven_java_note"))
 		mustContain(t, body, i18n.T(lang, "support.gradle_java_note"))

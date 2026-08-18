@@ -634,6 +634,32 @@ func (f *Fake) SaveReceipt(_ context.Context, r ReceiptRow) error {
 	return nil
 }
 
+func (f *Fake) SaveReceiptForJob(_ context.Context, r ReceiptRow, jobID int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var job *JobRow
+	for _, candidate := range f.jobs {
+		if candidate.ID == jobID {
+			job = candidate
+			break
+		}
+	}
+	if job == nil || job.Status != "claimed" || job.ClaimedBy != r.PeerID || job.SampleID != r.SampleID {
+		return false, nil
+	}
+	for _, prev := range f.receipts[r.SampleID] {
+		if prev.ReceiptID == r.ReceiptID {
+			return false, nil // a signed receipt cannot consume a second job
+		}
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = f.now()
+	}
+	f.receipts[r.SampleID] = append(f.receipts[r.SampleID], r)
+	job.Status = "done"
+	return true, nil
+}
+
 func (f *Fake) ReceiptsForSample(_ context.Context, sampleID string) ([]ReceiptRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -645,6 +671,13 @@ func (f *Fake) ReceiptsForSample(_ context.Context, sampleID string) ([]ReceiptR
 func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if j.Reason == "matrix" {
+		for _, existing := range f.jobs {
+			if existing.SampleID == j.SampleID && existing.Reason == j.Reason && existing.WantEnvJSON == j.WantEnvJSON {
+				return existing.ID, nil
+			}
+		}
+	}
 	f.nextJobID++
 	j.ID = f.nextJobID
 	if j.Status == "" {
@@ -657,13 +690,21 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 	return j.ID, nil
 }
 
-func (f *Fake) OpenJobs(_ context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
+func (f *Fake) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
+	return f.OpenJobsPage(ctx, capability, peerID, reason, limit, 0)
+}
+
+func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
 		limit = 10
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	var out []JobRow
+	eligible := 0
 	for _, j := range f.jobs {
 		// A claim that outlived JobLease is claimable again — otherwise a
 		// peer that died holding a job holds it forever.
@@ -678,7 +719,7 @@ func (f *Fake) OpenJobs(_ context.Context, capability, peerID, reason string, li
 		// A peer that already filed a receipt for this sample cannot
 		// cross-verify it; offering the job only takes it from someone who
 		// could.
-		if peerID != "" {
+		if peerID != "" && j.Reason == "cross" {
 			var mine bool
 			for _, r := range f.receipts[j.SampleID] {
 				if r.PeerID == peerID {
@@ -698,6 +739,11 @@ func (f *Fake) OpenJobs(_ context.Context, capability, peerID, reason string, li
 				}
 			}
 		}
+		if eligible < offset {
+			eligible++
+			continue
+		}
+		eligible++
 		out = append(out, *j)
 		if len(out) >= limit {
 			break
@@ -718,6 +764,17 @@ func (f *Fake) JobsForSample(_ context.Context, sampleID string) ([]JobRow, erro
 	return out, nil
 }
 
+func (f *Fake) Job(_ context.Context, id int64) (JobRow, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.ID == id {
+			return *j, true, nil
+		}
+	}
+	return JobRow{}, false, nil
+}
+
 func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -728,6 +785,12 @@ func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error
 		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
 			f.now().Sub(j.ClaimedAt) > JobLease
 		if j.Status == "open" || expired {
+			for _, other := range f.jobs {
+				if other.ID != j.ID && other.SampleID == j.SampleID && other.Status == "claimed" &&
+					other.ClaimedBy == peerID && !other.ClaimedAt.IsZero() && f.now().Sub(other.ClaimedAt) <= JobLease {
+					return false, nil
+				}
+			}
 			j.Status = "claimed"
 			j.ClaimedBy = peerID
 			j.ClaimedAt = f.now()
@@ -753,7 +816,7 @@ func (f *Fake) CompleteJobsForSample(_ context.Context, sampleID, peerID string)
 		}
 	}
 	for _, j := range f.jobs {
-		if j.SampleID != sampleID || (j.Status != "open" && j.Status != "claimed") {
+		if j.SampleID != sampleID || j.Reason != "cross" || (j.Status != "open" && j.Status != "claimed") {
 			continue
 		}
 		if j.Reason == "cross" && peerID != "" && peerID == origin {

@@ -78,7 +78,7 @@ func TestPrepareGradleResolverUsesOnlyExactManifestCoordinates(t *testing.T) {
 		}
 	}
 	runner := readSandboxFile(t, dir, gradleRunnerBuild)
-	for _, want := range []string{"id 'java'", "'/work/src/main/java'", "'/work/test'", "mainClass = 'Contract'", "options.release = 21"} {
+	for _, want := range []string{"id 'java'", "'/work/src/main/java'", "'/work/test'", "mainClass = 'Contract'", "options.release = 21", "JavaVersion.VERSION_1_8"} {
 		if !strings.Contains(runner, want) {
 			t.Errorf("generated offline runner missing %q: %s", want, runner)
 		}
@@ -141,7 +141,7 @@ func TestGradleResolveRunsTrustedGeneratedProjectAwayFromSample(t *testing.T) {
 	}
 	joined := strings.Join(argv, " ")
 	for _, want := range []string{
-		gradleJavaImage, "--user 0:0", "GRADLE_USER_HOME=/work/.csx-vendor/gradle-home",
+		gradleJavaImages["21"].image, "--user 0:0", "GRADLE_USER_HOME=/work/.csx-vendor/gradle-home",
 		"cp /work/" + gradleResolverBuild + " /tmp/csx-gradle-resolver/build.gradle",
 		"cp /work/" + gradleResolverSettings + " /tmp/csx-gradle-resolver/settings.gradle",
 		"--project-dir /tmp/csx-gradle-resolver resolveLocked", "gradle-resolved.sha256",
@@ -208,8 +208,8 @@ func TestGradleWorkerRequirementSelectsThePinnedGradleImage(t *testing.T) {
 		t.Fatal("worker rejected the pinned Gradle/Java 21 image")
 	}
 	want.RuntimeVersion = "17"
-	if ContainerSupportsRequirements(want) {
-		t.Fatal("worker claimed a Java 17 Gradle job with only Java 21 pinned")
+	if !ContainerSupportsRequirements(want) {
+		t.Fatal("worker rejected the pinned Gradle/Java 17 image")
 	}
 	want.RuntimeVersion = "21"
 	want.VerifierAdapter = "gradle-java@2"
@@ -219,12 +219,13 @@ func TestGradleWorkerRequirementSelectsThePinnedGradleImage(t *testing.T) {
 
 	m := gradleManifest("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
 	img, err := imageForManifest(m)
-	if err != nil || img != gradleJavaImage {
+	if err != nil || img != gradleJavaImages["21"].image {
 		t.Fatalf("Gradle image = %q, %v", img, err)
 	}
 	env := (DockerRunner{}).StageEnvironment(domain.EnvironmentFingerprint{SchemaVersion: 1, Arch: "x64"}, m)
 	if env.Runtime != "java" || env.RuntimeVersion != "21" || env.PackageManager != "gradle" ||
-		env.PackageManagerVersion != "8.14" || env.Compiler != "javac" || env.CompilerVersion != "21" {
+		env.PackageManagerVersion != "8.14.3" || env.Compiler != "javac" || env.CompilerVersion != "21" ||
+		env.Distro != "amzn" || env.Libc != "glibc" {
 		t.Fatalf("Gradle receipt environment = %+v", env)
 	}
 }

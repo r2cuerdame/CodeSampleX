@@ -43,6 +43,98 @@ const (
 	python314Image = "python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc"
 )
 
+type javaVerifierImage struct {
+	image                 string
+	runtimeVersion        string
+	packageManagerVersion string
+	bucket                string
+	distro                string
+	libc                  string
+}
+
+// An omitted Maven runtimeVersion is the compatibility lane that existed
+// before the JDK matrix. Keep its exact Alpine/Temurin image and coarse
+// package-manager receipt unchanged. Every explicit matrix line uses the same
+// Maven release, JDK vendor, distribution and libc so Java is the only moving
+// toolchain dimension.
+var mavenJavaImages = map[string]javaVerifierImage{
+	"":   {mavenJavaImage, "21", "3.9", "alpine", "", "musl"},
+	"8":  {"maven:3.9.11-amazoncorretto-8-al2023@sha256:80f411ee8dc37def5bb6808f3b2698d5fac5a16b6797ffc8fc1fbce2df71b49e", "8", "3.9.11", "2023", "amzn", "glibc"},
+	"11": {"maven:3.9.11-amazoncorretto-11-al2023@sha256:07b7514c1fce56f9dece12a9daea49312fff36f4b3449e8c314667587f997be0", "11", "3.9.11", "2023", "amzn", "glibc"},
+	"17": {"maven:3.9.11-amazoncorretto-17-al2023@sha256:6374befde1891b069f5297714525d2a6c03cd0f410070fb53b2842b4d8118c63", "17", "3.9.11", "2023", "amzn", "glibc"},
+	"21": {"maven:3.9.11-amazoncorretto-21-al2023@sha256:b0e00d2581674e0c12392bb88075a2835e73af86af48bbdb8eeec3d2e993ea40", "21", "3.9.11", "2023", "amzn", "glibc"},
+	"25": {"maven:3.9.11-amazoncorretto-25-al2023@sha256:3d55eb28eae103300391509a5ac8cfc918d4a35dbfd087ef5472023949682791", "25", "3.9.11", "2023", "amzn", "glibc"},
+}
+
+// Gradle 8.14.3 can run on Java 8 through 24. Java 25 requires Gradle 9.1+
+// and therefore necessarily changes two recorded axes; the receipt records
+// 9.7.0 rather than pretending that result is a pure-JDK comparison.
+var gradleJavaImages = map[string]javaVerifierImage{
+	"8":  {"gradle:8.14.3-jdk8-corretto-al2023@sha256:ec6379bf6453a09b608f7feb4e52a53f28edc2a1acc8a07aff6328b906bf20d6", "8", "8.14.3", "2023", "amzn", "glibc"},
+	"11": {"gradle:8.14.3-jdk11-corretto-al2023@sha256:93d9f84a044faf9b345b7c126772ba719195318b0e848e322c6f1a977232e012", "11", "8.14.3", "2023", "amzn", "glibc"},
+	"17": {"gradle:8.14.3-jdk17-corretto-al2023@sha256:9a40f91169b9685e9d25c73722b7f8dea9e1e7aa43dc4fc8a1acda1614a05eca", "17", "8.14.3", "2023", "amzn", "glibc"},
+	"21": {"gradle:8.14.3-jdk21-corretto-al2023@sha256:05cb2f8b4a77587b3de1cd7ae003204eb8c1dc9db48a52c9cebd29d0041c949b", "21", "8.14.3", "2023", "amzn", "glibc"},
+	"25": {"gradle:9.7.0-jdk25-corretto-al2023@sha256:bb35f016497202d8342ff68fe5d45b74a94a3d9043a3d2cced0061818abebeef", "25", "9.7.0", "2023", "amzn", "glibc"},
+}
+
+func javaImageForManifest(m domain.SampleManifest) (javaVerifierImage, bool, error) {
+	env := m.Environment.Normalize()
+	if env.Ecosystem != "maven" {
+		return javaVerifierImage{}, false, nil
+	}
+	if env.Runtime != "" && env.Runtime != "java" {
+		return javaVerifierImage{}, true, fmt.Errorf("sandbox: Java verifier requires runtime java, got %q", env.Runtime)
+	}
+	if env.ExecutionContext != "" && env.ExecutionContext != "java" {
+		return javaVerifierImage{}, true, fmt.Errorf("sandbox: no Java verifier image for execution context %q", env.ExecutionContext)
+	}
+	if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
+		return javaVerifierImage{}, true, fmt.Errorf("sandbox: Java verifier does not provide a browser environment")
+	}
+
+	var images map[string]javaVerifierImage
+	switch m.VerifierAdapter {
+	case "maven-java@1", "":
+		images = mavenJavaImages
+	case "gradle-java@1":
+		images = gradleJavaImages
+	default:
+		return javaVerifierImage{}, true, fmt.Errorf("sandbox: unsupported Maven verifier adapter %q", m.VerifierAdapter)
+	}
+	spec, ok := images[env.RuntimeVersion]
+	if !ok {
+		return javaVerifierImage{}, true, fmt.Errorf("sandbox: no %s verifier image for Java runtime version %q", m.VerifierAdapter, env.RuntimeVersion)
+	}
+	if env.LanguageVersion != "" {
+		language, ok := javaReleaseNumber(env.LanguageVersion)
+		if !ok {
+			return javaVerifierImage{}, true, fmt.Errorf("sandbox: unsupported Java language version %q", env.LanguageVersion)
+		}
+		runtime, _ := javaReleaseNumber(spec.runtimeVersion)
+		if language > runtime {
+			return javaVerifierImage{}, true, fmt.Errorf("sandbox: Java language version %q exceeds runtime version %q", env.LanguageVersion, spec.runtimeVersion)
+		}
+	}
+	return spec, true, nil
+}
+
+func javaReleaseNumber(version string) (int, bool) {
+	switch version {
+	case "8":
+		return 8, true
+	case "11":
+		return 11, true
+	case "17":
+		return 17, true
+	case "21":
+		return 21, true
+	case "25":
+		return 25, true
+	default:
+		return 0, false
+	}
+}
+
 // imageFor maps an ecosystem AND runtime to its pinned verifier image.
 //
 // The runtime matters because an ecosystem is not a runtime: npm packages
@@ -121,10 +213,11 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 	case "hex":
 		return "elixir:1.20.1-alpine", nil
 	case "maven":
-		if runtime != "" && runtime != "java" {
-			return "", fmt.Errorf("sandbox: no verifier image for maven runtime %q", runtime)
-		}
-		return mavenJavaImage, nil
+		m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "maven", Runtime: runtime, RuntimeVersion: runtimeVersion,
+		}, VerifierAdapter: "maven-java@1"}
+		spec, _, err := javaImageForManifest(m)
+		return spec.image, err
 	}
 	return "", fmt.Errorf("sandbox: no verifier image for ecosystem %q", ecosystem)
 }
@@ -135,23 +228,11 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 // pinned browser image.
 func imageForManifest(m domain.SampleManifest) (string, error) {
 	env := m.Environment.Normalize()
-	if m.VerifierAdapter == "gradle-java@1" {
-		if env.Ecosystem != "maven" || (env.Runtime != "" && env.Runtime != "java") {
-			return "", fmt.Errorf("sandbox: gradle-java@1 requires Maven coordinates and the Java runtime")
+	if spec, java, err := javaImageForManifest(m); java {
+		if err != nil {
+			return "", err
 		}
-		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
-			return "", fmt.Errorf("sandbox: Gradle Java verifier does not provide a browser environment")
-		}
-		if env.RuntimeVersion != "" && !runtimeVersionMatches("21", env.RuntimeVersion) {
-			return "", fmt.Errorf("sandbox: Gradle verifier Java version 21 cannot satisfy %q", env.RuntimeVersion)
-		}
-		if env.ExecutionContext != "" && env.ExecutionContext != "java" {
-			return "", fmt.Errorf("sandbox: no Gradle verifier image for execution context %q", env.ExecutionContext)
-		}
-		return gradleJavaImage, nil
-	}
-	if env.Ecosystem == "maven" && m.VerifierAdapter != "" && m.VerifierAdapter != "maven-java@1" {
-		return "", fmt.Errorf("sandbox: unsupported Maven verifier adapter %q", m.VerifierAdapter)
+		return spec.image, nil
 	}
 	if env.ExecutionContext != "browser" {
 		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
@@ -257,7 +338,10 @@ func imageRuntimeForVersion(ecosystem, runtime, runtimeVersion string) (rt, vers
 	case "hex":
 		return "elixir", "1", "elixir"
 	case "maven":
-		return "java", "21", "java"
+		if runtimeVersion == "" {
+			return "java", "21", "java"
+		}
+		return "java", runtimeVersion, "java"
 	}
 	return "", "", ""
 }
@@ -320,6 +404,11 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		Libc:             libc,
 		CI:               host.CI,
 	}
+	if spec, java, err := javaImageForManifest(m); java && err == nil {
+		env.OSVersionBucket = spec.bucket
+		env.Distro = spec.distro
+		env.Libc = spec.libc
+	}
 	if img == chrome134Image {
 		env.ExecutionContext = "browser"
 		env.BrowserFamily = "chrome"
@@ -328,13 +417,14 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		env.EngineVersion = "134"
 	}
 	if eco == "maven" {
-		env.LanguageVersion = "21"
+		env.LanguageVersion = m.Environment.LanguageVersion
+		if env.LanguageVersion == "" {
+			env.LanguageVersion = ver
+		}
 		env.Compiler = "javac"
-		env.CompilerVersion = "21"
-		if m.VerifierAdapter == "gradle-java@1" {
-			env.PackageManagerVersion = "8.14"
-		} else {
-			env.PackageManagerVersion = "3.9"
+		env.CompilerVersion = ver
+		if spec, java, err := javaImageForManifest(m); java && err == nil {
+			env.PackageManagerVersion = spec.packageManagerVersion
 		}
 	}
 	return env.Normalize()
@@ -352,7 +442,7 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name stri
 	if networkOff {
 		args = append(args, "--network=none")
 	}
-	if image == chrome134Image || image == gradleJavaImage {
+	if image == chrome134Image || isGradleJavaImage(image) {
 		// These official images default to non-root users (Chrome uid 10042,
 		// Gradle uid 1000) which cannot write an arbitrary host-owned temporary
 		// workspace on Linux. Existing verifier images already run stages as
@@ -398,7 +488,7 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 
 func stageEnvironmentForImage(image, ecosystem, runtime string) []string {
 	env := stageEnv(ecosystem, runtime)
-	if image == gradleJavaImage {
+	if isGradleJavaImage(image) {
 		env = []string{
 			"GRADLE_USER_HOME=" + vendorDir + "/gradle-home",
 			"JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8",
@@ -411,6 +501,15 @@ func stageEnvironmentForImage(image, ecosystem, runtime string) []string {
 		)
 	}
 	return env
+}
+
+func isGradleJavaImage(image string) bool {
+	for _, spec := range gradleJavaImages {
+		if spec.image == image {
+			return true
+		}
+	}
+	return image == gradleJavaImage
 }
 
 // containerName derives a name unique to this stage of this workspace.
@@ -536,6 +635,14 @@ var imageBases = map[string]struct{ bucket, libc string }{
 	"composer:2":           {"alpine", "musl"}, // Alpine, despite the tag
 	"dart:3.13.0":          {"debian", "glibc"},
 	mavenJavaImage:         {"alpine", "musl"},
+}
+
+func init() {
+	for _, images := range []map[string]javaVerifierImage{mavenJavaImages, gradleJavaImages} {
+		for _, spec := range images {
+			imageBases[spec.image] = struct{ bucket, libc string }{spec.bucket, spec.libc}
+		}
+	}
 }
 
 // imageBase reports the distribution bucket and libc of a verifier image.

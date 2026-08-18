@@ -150,6 +150,12 @@ type WorkerRequirements struct {
 	Frameworks        []string          `json:"frameworks,omitempty"`
 }
 
+// VerificationJobIDHeader binds a signed receipt submission to the exact
+// claimed verification job it answers. The value itself is not trusted; the
+// server checks the job's sample, reason, requirements and claimant against
+// the signed receipt before completing that one row.
+const VerificationJobIDHeader = "X-CSX-Verification-Job-ID"
+
 // ObservationBatch is the anonymous automatic-evidence wire unit
 // (goal.md §7.6). It must never carry source, paths, project names,
 // or raw logs — only the fields below.

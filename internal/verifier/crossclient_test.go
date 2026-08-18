@@ -21,16 +21,17 @@ import (
 // crossFixture builds a real canonical artifact and a server that serves
 // the full claim → download → report flow, recording what it saw.
 type crossFixture struct {
-	srv        *httptest.Server
-	sampleID   string
-	artifact   []byte
-	mu         sync.Mutex
-	jobServed  bool
-	claims     []string
-	receipts   []domain.VerificationReceipt
-	corruptArt bool
-	requests   int
-	reasonSeen string
+	srv           *httptest.Server
+	sampleID      string
+	artifact      []byte
+	mu            sync.Mutex
+	jobServed     bool
+	claims        []string
+	receipts      []domain.VerificationReceipt
+	receiptJobIDs []string
+	corruptArt    bool
+	requests      int
+	reasonSeen    string
 }
 
 func newCrossFixture(t *testing.T) *crossFixture {
@@ -103,6 +104,7 @@ func newCrossFixture(t *testing.T) *crossFixture {
 			return
 		}
 		f.receipts = append(f.receipts, rec)
+		f.receiptJobIDs = append(f.receiptJobIDs, r.Header.Get(domain.VerificationJobIDHeader))
 		json.NewEncoder(w).Encode(map[string]any{"status": "accepted"})
 	})
 	f.srv = httptest.NewServer(mux)
@@ -140,8 +142,8 @@ func TestCrossFetchJobClaims(t *testing.T) {
 	if len(f.claims) != 1 || f.claims[0] != "7:"+cv.Ident.PeerID() {
 		t.Fatalf("claims: %v", f.claims)
 	}
-	if f.reasonSeen != CrossJobReason {
-		t.Fatalf("job query reason = %q, want %q", f.reasonSeen, CrossJobReason)
+	if f.reasonSeen != "" {
+		t.Fatalf("job query reason = %q, want both cross and matrix", f.reasonSeen)
 	}
 
 	// No jobs left → nil, nil.
@@ -151,6 +153,48 @@ func TestCrossFetchJobClaims(t *testing.T) {
 	}
 	if job2 != nil {
 		t.Fatalf("expected no job, got %+v", job2)
+	}
+}
+
+func TestMatrixExecutionManifestOverlaysOnlySupportedJavaEnvironment(t *testing.T) {
+	m := domain.SampleManifest{
+		VerifierAdapter: "gradle-java@1",
+		Environment: domain.EnvironmentFingerprint{
+			Ecosystem: "maven", Runtime: "java", RuntimeVersion: "21",
+			LanguageVersion: "8", ExecutionContext: "java",
+		},
+	}
+	want := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun, VerifierAdapter: "gradle-java@1",
+		Ecosystem: "maven", Runtime: "java", RuntimeVersion: "25", ExecutionContext: "java",
+	}
+	raw, _ := json.Marshal(want)
+	got, err := matrixExecutionManifest(m, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Environment.RuntimeVersion != "25" || got.Environment.LanguageVersion != "8" {
+		t.Fatalf("execution manifest env = %+v", got.Environment)
+	}
+	if m.Environment.RuntimeVersion != "21" {
+		t.Fatal("matrix overlay mutated the artifact manifest value")
+	}
+
+	want.RuntimeVersion = "8"
+	m.Environment.LanguageVersion = "11"
+	raw, _ = json.Marshal(want)
+	if _, err := matrixExecutionManifest(m, raw); err == nil {
+		t.Fatal("JDK 8 accepted a Java 11 language target")
+	}
+
+	var injected map[string]any
+	if err := json.Unmarshal(raw, &injected); err != nil {
+		t.Fatal(err)
+	}
+	injected["runtimeVersion"] = "8; throw new Error()"
+	raw, _ = json.Marshal(injected)
+	if _, err := matrixExecutionManifest(m, raw); err == nil {
+		t.Fatal("non-numeric/injected Java line was accepted")
 	}
 }
 
@@ -183,6 +227,27 @@ func TestCrossFetchSkipsMatrixJobEvenIfServerIgnoresFilter(t *testing.T) {
 	}
 	if claims != 0 {
 		t.Fatalf("matrix job was claimed %d times", claims)
+	}
+}
+
+func TestWorkerClaimsOnlyCompleteSupportedJavaMatrix(t *testing.T) {
+	cv := &CrossVerifier{Cap: domain.CapContainerRun}
+	want := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun, VerifierAdapter: "maven-java@1",
+		Ecosystem: "maven", Runtime: "java", RuntimeVersion: "17", ExecutionContext: "java",
+	}
+	raw, _ := json.Marshal(want)
+	if !cv.canPrepareJob(Job{Reason: MatrixJobReason, WantEnv: raw}) {
+		t.Fatal("worker rejected a complete pinned Java matrix job")
+	}
+	partial := json.RawMessage(`{"runtime":"java","runtimeMajor":"17"}`)
+	if cv.canPrepareJob(Job{Reason: MatrixJobReason, WantEnv: partial}) {
+		t.Fatal("worker accepted a legacy partial matrix job")
+	}
+	want.RuntimeVersion = "22"
+	raw, _ = json.Marshal(want)
+	if cv.canPrepareJob(Job{Reason: MatrixJobReason, WantEnv: raw}) {
+		t.Fatal("worker accepted an unpinned Java line")
 	}
 }
 
@@ -378,6 +443,9 @@ func TestCrossVerifyAndReport(t *testing.T) {
 	}
 	if len(f.receipts) != 1 {
 		t.Fatalf("server received %d receipts", len(f.receipts))
+	}
+	if len(f.receiptJobIDs) != 1 || f.receiptJobIDs[0] != "7" {
+		t.Fatalf("receipt job ids = %v, want exact claimed job 7", f.receiptJobIDs)
 	}
 	posted := f.receipts[0]
 	if posted.SampleID != f.sampleID || posted.Stages["contract"] != "PASS" {

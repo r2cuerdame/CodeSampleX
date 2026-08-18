@@ -249,26 +249,39 @@ type Store interface {
 	SetSampleStatus(ctx context.Context, sampleID, status string) error
 
 	SaveReceipt(ctx context.Context, r ReceiptRow) error
+	// SaveReceiptForJob atomically consumes an exact live claim and stores its
+	// receipt. false means the claim no longer belongs to that peer/sample;
+	// callers must reject rather than attaching evidence to a recycled lease.
+	SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (bool, error)
 	ReceiptsForSample(ctx context.Context, sampleID string) ([]ReceiptRow, error)
 
 	// OpenJobs lists open verification jobs a peer with the given sandbox
 	// capability may claim ("" ⇒ any). A non-empty reason restricts the
 	// result to that declarative job class ("cross" or "matrix"). Jobs whose
 	// want_env pins a sandboxCapability only match that capability. A job for
-	// a sample peerID has already filed a receipt on is never offered to it:
-	// a peer cannot cross-verify its own work, and claiming the job took it
-	// away from someone who could.
+	// a sample peerID has already filed a receipt on is not offered as CROSS:
+	// a peer cannot independently cross-verify its own work. Matrix jobs stay
+	// visible sequentially because one pinned worker can measure several exact
+	// runtime lines; ClaimJob prevents simultaneous same-peer/sample claims.
 	OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error)
+	// OpenJobsPage is the same ordered claimable view with an offset. The HTTP
+	// layer uses it to skip missing CAS artifacts without letting stale head
+	// rows permanently hide valid work.
+	OpenJobsPage(ctx context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error)
 	// JobsForSample lists every verification job (any status) for a sample,
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.
 	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
+	// Job reads one job for receipt-to-claim binding.
+	Job(ctx context.Context, id int64) (JobRow, bool, error)
 	CreateJob(ctx context.Context, j JobRow) (int64, error)
 	// ClaimJob atomically moves an open job to claimed; false means someone
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
-	// CompleteJobsForSample closes the jobs a receipt has answered. The
+	// CompleteJobsForSample closes only cross jobs a receipt has answered.
+	// Matrix jobs are target-specific and are completed by exact id after
+	// their claim and requested environment have been checked. The
 	// receipt IS the completion, so nothing depends on a peer remembering
 	// to call anything else. A cross job is NOT answered by a receipt from
 	// the peer that originated the sample — that receipt proves only that

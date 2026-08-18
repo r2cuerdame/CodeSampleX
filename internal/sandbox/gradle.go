@@ -56,6 +56,13 @@ func prepareGradleResolver(dir string, m domain.SampleManifest) error {
 	if err != nil {
 		return err
 	}
+	spec, java, err := javaImageForManifest(m)
+	if err != nil || !java {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("sandbox: Gradle resolver requires a supported Java runtime")
+	}
 	for _, c := range coords {
 		// lockedMavenCoordinates already rejects ranges and SNAPSHOTs. This
 		// second, Gradle-specific constraint makes every generated Groovy
@@ -79,7 +86,7 @@ func prepareGradleResolver(dir string, m domain.SampleManifest) error {
 	files := map[string]string{
 		gradleResolverBuild:    resolverBuild,
 		gradleResolverSettings: gradleResolverSettingsText,
-		gradleRunnerBuild:      gradleRunnerBuildText,
+		gradleRunnerBuild:      renderGradleRunnerBuild(gradleLanguageRelease(m, spec)),
 		gradleRunnerSettings:   gradleRunnerSettingsText,
 	}
 	for rel, body := range files {
@@ -88,6 +95,13 @@ func prepareGradleResolver(dir string, m domain.SampleManifest) error {
 		}
 	}
 	return nil
+}
+
+func gradleLanguageRelease(m domain.SampleManifest, spec javaVerifierImage) string {
+	if m.Environment.LanguageVersion != "" {
+		return m.Environment.LanguageVersion
+	}
+	return spec.runtimeVersion
 }
 
 func sameCommand(got, want []string) bool {
@@ -208,7 +222,8 @@ const gradleRunnerSettingsText = `pluginManagement {
 rootProject.name = 'csx-offline-contract'
 `
 
-const gradleRunnerBuildText = `plugins {
+func renderGradleRunnerBuild(release string) string {
+	return fmt.Sprintf(`plugins {
     id 'java'
 }
 
@@ -228,7 +243,12 @@ sourceSets {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    options.release = 21
+    if (JavaVersion.current() == JavaVersion.VERSION_1_8) {
+        sourceCompatibility = '1.8'
+        targetCompatibility = '1.8'
+    } else {
+        options.release = %s
+    }
 }
 
 tasks.register('contract', JavaExec) {
@@ -236,4 +256,5 @@ tasks.register('contract', JavaExec) {
     classpath = sourceSets.contract.runtimeClasspath
     mainClass = 'Contract'
 }
-`
+`, release)
+}

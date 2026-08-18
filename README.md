@@ -130,11 +130,33 @@ csx worker start --once                  # claim at most one available job
 csx worker start --budget unlimited      # run until Ctrl-C
 ```
 
-The public worker currently supports **VERIFY only**. It requests only server-assigned jobs whose declarative reason is `cross`; the queue does not send an arbitrary host shell command. The worker downloads the content-addressed public artifact, verifies its hash before unpacking, and runs the artifact's declared stages in a disposable Docker workspace through the same pinned verifier pipeline used by CodeSampleX. Resolve is containerized; build and contract stages are containerized with the network disabled. Downloaded sample code is never executed directly on the host, and a missing or unreachable Docker daemon is a hard refusal rather than a native fallback. Each container already enforces the runner's fixed `512m` memory and `256` PID limits. An accepted result is submitted as the existing ed25519-signed v2 verification receipt; raw stage logs stay local.
+The public worker supports server-assigned **VERIFY** jobs with reason `cross`
+or `matrix`; the queue never sends an arbitrary host shell command. Before it
+claims a job, the worker compares the job's complete, closed requirements with
+the verifier environments it can prepare locally. An unsupported or only
+partly matching job is skipped, not run under a nearby environment.
+
+For both job kinds, the worker downloads the same content-addressed public
+artifact and verifies its hash before unpacking. A `matrix` job does not
+replace or edit that artifact: it overlays the job's exact execution
+environment onto an in-memory copy of the manifest, then runs the immutable
+source through the matching pinned verifier. Resolve is containerized; build
+and contract stages run in disposable Docker workspaces with the network
+disabled. Downloaded sample code is never executed directly on the host, and
+a missing or unreachable Docker daemon is a hard refusal rather than a native
+fallback. Each container enforces the runner's fixed `512m` memory and `256`
+PID limits. An accepted result is submitted as the existing ed25519-signed v2
+verification receipt; raw stage logs stay local.
 
 `--parallel` is deliberately bounded to `1..8`; `--budget` accepts `5m`, `15m`, `idle`, or `unlimited`; Ctrl-C cancels active stages and stops cleanly. The foreground display reports only this process's measured completed/failed counts. It does not claim global users or contributors.
 
-`EXPAND` (testing a sample against a different version/environment) and `CREATE` (authoring a new sample) are **not available** in this public MVP, because the worker does not yet enforce arbitrary requested environment matrices or run an authoring model. Consequently, this worker cross-verifies existing published samples; it does not itself create the new source needed to close a Wanted request.
+`EXPAND` is deliberately narrow: the worker can execute a server-selected
+matrix cell only when its exact requirements map to a locally available pinned
+verifier. It cannot improvise an arbitrary environment. `CREATE` (authoring a
+new sample) remains unavailable because the worker runs no authoring model.
+Consequently, this worker reproduces and expands evidence for existing
+published samples; it does not create the new source needed to close a Wanted
+request.
 
 ## How it works
 

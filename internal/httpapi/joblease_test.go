@@ -142,6 +142,20 @@ func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
 	if listed(mine, jobID) {
 		t.Error("the origin was offered its own sample to cross-verify")
 	}
+	// The same peer may still measure another exact runtime line. Receipt
+	// exclusion is a cross-independence rule, not a ban on sequential matrix
+	// evidence from one pinned worker.
+	matrixID, err := store.CreateJob(ctx, serverstore.JobRow{
+		SampleID: id, Reason: "matrix", Status: "open",
+		WantEnvJSON: `{"sandboxCapability":"CONTAINER_RUN","verifierAdapter":"maven-java@1","ecosystem":"maven","runtime":"java","runtimeVersion":"17","executionContext":"java"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, err = store.OpenJobs(ctx, "CONTAINER_RUN", origin, "matrix", 100)
+	if err != nil || !listed(mine, matrixID) {
+		t.Fatalf("peer with an earlier receipt cannot see sequential matrix work: %+v err=%v", mine, err)
+	}
 
 	// A second peer answers it, and that does close the job.
 	other := "ed25519:0000000000000002"
@@ -160,5 +174,24 @@ func TestAPeerCannotCrossVerifyItsOwnSample(t *testing.T) {
 	}
 	if listed(jobs, jobID) {
 		t.Error("a real cross-verification did not close the job")
+	}
+}
+
+func TestUnboundReceiptNeverCompletesMatrixJob(t *testing.T) {
+	_, store, _ := newTestServer(t, nil)
+	id := "sha256:" + strings.Repeat("c6", 32)
+	jobID, err := store.CreateJob(t.Context(), serverstore.JobRow{
+		SampleID: id, Reason: "matrix", Status: "open",
+		WantEnvJSON: `{"sandboxCapability":"CONTAINER_RUN","verifierAdapter":"maven-java@1","ecosystem":"maven","runtime":"java","runtimeVersion":"17","executionContext":"java"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteJobsForSample(t.Context(), id, "ed25519:0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	job, ok, err := store.Job(t.Context(), jobID)
+	if err != nil || !ok || job.Status != "open" {
+		t.Fatalf("unbound receipt changed matrix job: %+v ok=%v err=%v", job, ok, err)
 	}
 }

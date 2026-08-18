@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,73 @@ func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Symbol != "CanvasTexture" {
 		t.Fatalf("legacy answer policy left wrong rows: rows=%+v err=%v", rows, err)
 	}
+}
+
+func TestIntegrationMatrixJobBindingAndAtomicCreation(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	caseID := "case:sha256:matrix-binding"
+	if err := pg.SaveCase(ctx, domain.Case{SchemaVersion: 1, CaseID: caseID, Kind: "HOW", Goal: "matrix", Packages: []string{"pkg:maven/example/a@1"}, Contract: []string{"passes"}}); err != nil {
+		t.Fatal(err)
+	}
+	sampleID := "sha256:" + fmt.Sprintf("%064d", 91)
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: sampleID, CaseID: caseID, ManifestJSON: `{"schemaVersion":1}`}); err != nil {
+		t.Fatal(err)
+	}
+	want17 := `{"sandboxCapability":"CONTAINER_RUN","verifierAdapter":"maven-java@1","ecosystem":"maven","runtime":"java","runtimeVersion":"17","executionContext":"java"}`
+	jobID, err := pg.CreateJob(ctx, JobRow{SampleID: sampleID, Reason: "matrix", WantEnvJSON: want17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := pg.CreateJob(ctx, JobRow{SampleID: sampleID, Reason: "matrix", WantEnvJSON: want17})
+	if err != nil || duplicate != jobID {
+		t.Fatalf("atomic matrix creation: first=%d duplicate=%d err=%v", jobID, duplicate, err)
+	}
+	peer := "ed25519:0123456789abcdef"
+	if ok, err := pg.ClaimJob(ctx, jobID, peer); err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
+	}
+	receipt := ReceiptRow{ReceiptID: "sha256:bound", SampleID: sampleID, PeerID: peer, ReceiptJSON: `{}`, ContractResult: "PASS"}
+	if ok, err := pg.SaveReceiptForJob(ctx, receipt, jobID); err != nil || !ok {
+		t.Fatalf("save bound receipt: ok=%v err=%v", ok, err)
+	}
+
+	want21 := strings.Replace(want17, `"17"`, `"21"`, 1)
+	job21, err := pg.CreateJob(ctx, JobRow{SampleID: sampleID, Reason: "matrix", WantEnvJSON: want21})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := pg.ClaimJob(ctx, job21, peer); err != nil || !ok {
+		t.Fatalf("sequential claim: ok=%v err=%v", ok, err)
+	}
+	want25 := strings.Replace(want17, `"17"`, `"25"`, 1)
+	job25, err := pg.CreateJob(ctx, JobRow{SampleID: sampleID, Reason: "matrix", WantEnvJSON: want25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := pg.ClaimJob(ctx, job25, peer); err != nil || ok {
+		t.Fatalf("simultaneous same-peer/sample claim: ok=%v err=%v", ok, err)
+	}
+	if ok, err := pg.SaveReceiptForJob(ctx, receipt, job21); err != nil || ok {
+		t.Fatalf("receipt replay consumed second job: ok=%v err=%v", ok, err)
+	}
+	job, _, err := pg.Job(ctx, job21)
+	if err != nil || job.Status != "claimed" {
+		t.Fatalf("replay target = %+v err=%v", job, err)
+	}
+	visible, err := pg.OpenJobs(ctx, string(domain.CapContainerRun), peer, "matrix", 10)
+	if err != nil || !jobRowsContain(visible, job25) {
+		t.Fatalf("prior receipt hid sequential matrix work: %+v err=%v", visible, err)
+	}
+}
+
+func jobRowsContain(rows []JobRow, id int64) bool {
+	for _, row := range rows {
+		if row.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestIntegrationVerifiedSampleReadsRequireContractPass(t *testing.T) {

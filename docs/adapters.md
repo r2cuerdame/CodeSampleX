@@ -31,10 +31,10 @@ An ecosystem can have one without the other, and five of them do.
 ## Verifier images
 
 Every stage runs in a pinned image, and the receipt records the image's
-environment rather than the host's — a contract that ran in a linux
-container proves nothing about the Windows machine that started it. The
-images are alpine where one exists, so results carry `musl`, the dimension
-that most often decides whether a package with a native module loads at all.
+environment rather than the host's — a contract that ran in a Linux container
+proves nothing about the Windows machine that started it. Images use Alpine
+where that verifier provides it; the exact Java matrix uses Amazon Linux 2023
+and records `amzn`/`glibc` instead.
 
 | Ecosystem | Runtime | Image |
 |-----------|---------|-------|
@@ -49,8 +49,10 @@ that most often decides whether a package with a native module loads at all.
 | gem | ruby | `ruby:3-alpine` |
 | pub | dart | `dart:3.13.0` |
 | hex | elixir | `elixir:1.20.1-alpine` |
-| maven | Java | `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927…` |
-| maven | Java (Gradle) | `gradle:8.14.3-jdk21-alpine@sha256:d20561…` |
+| maven | Java (runtime omitted; legacy default) | Maven `3.9`, Java 21, `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927…` (`alpine`/`musl`) |
+| maven | Java 8 / 11 / 17 / 21 / 25 (exact opt-in) | Maven `3.9.11`, `maven:3.9.11-amazoncorretto-<jdk>-al2023@sha256:…` (`amzn` 2023/`glibc`) |
+| maven | Java 8 / 11 / 17 / 21 (Gradle, exact) | Gradle `8.14.3`, `gradle:8.14.3-jdk<jdk>-corretto-al2023@sha256:…` (`amzn` 2023/`glibc`) |
+| maven | Java 25 (Gradle, exact) | Gradle `9.7.0`, `gradle:9.7.0-jdk25-corretto-al2023@sha256:…` (`amzn` 2023/`glibc`) |
 
 npm keys on the **runtime**, not just the ecosystem, because "does this
 package work on Bun" is exactly the question this project exists to answer.
@@ -62,6 +64,15 @@ PyPI additionally keys on the manifest's runtime version. An omitted version
 or `3.12` keeps the established Python 3.12 verifier; exact `3.14` selects the
 digest-pinned Python 3.14 Alpine image. Other Python runtime lines are rejected
 before a worker claims the job rather than being run under a different Python.
+
+Java also keys on the manifest's exact runtime version. For `maven-java@1`, an
+omitted runtime retains the original Java 21 Temurin/Alpine lane for backward
+compatibility. Explicit `8`, `11`, `17`, `21`, or `25` selects the matching
+Maven 3.9.11 Corretto/AL2023 image. `gradle-java@1` always requires one of
+those exact versions: Java 8–21 use Gradle 8.14.3, while Java 25 uses Gradle
+9.7.0 because Gradle 8.14.3 cannot run there. That Java 25 receipt therefore
+records a package-manager change as well as a JDK change; it is not presented
+as a pure-JDK comparison.
 
 ## How the two stages stay honest
 
@@ -101,10 +112,13 @@ workspace path and hashed for receipt evidence.
 
 Build and contract are also fixed generated Gradle projects, but run in fresh
 containers with `--network=none` and Gradle `--offline`. The supported source
-convention is `src/main/java` plus a default-package `test/Contract.java`; the
-built-in Java plugin compiles with `--release 21`, and a built-in `JavaExec`
-task runs `Contract`. This proves Gradle itself performed the offline compile
-and contract without granting sample build logic network access.
+convention is `src/main/java` plus a default-package `test/Contract.java`.
+The generated build targets the manifest's declared Java language version, or
+the selected runtime line when that field is omitted (`sourceCompatibility`
+and `targetCompatibility` on Java 8; `--release` on newer JDKs), and a built-in
+`JavaExec` task runs `Contract`. This proves Gradle itself performed the
+offline compile and contract without granting sample build logic network
+access.
 
 ## Honest limitations, stated on purpose
 
@@ -153,11 +167,15 @@ evidence until a dedicated adapter and runner produce a signed passing
 receipt.
 
 Verification jobs carry closed worker requirements (`sandboxCapability`,
-`ecosystem`, `runtime`, browser execution context/family/version/engine, and
-any installed engine/SDK frameworks). A worker examines a bounded queue window
-and claims only a job its local runner can prepare. Thus broad Wanted
-collection never sends an unsupported browser, Unity, or other engine job to
-an ordinary Docker-only worker merely because that job was first in the queue.
+verifier adapter, `ecosystem`, `runtime`, exact runtime version, execution
+context, browser family/version/engine, and any installed engine/SDK
+frameworks). A worker polls both independent-cross and matrix work, examines a
+bounded queue window, and claims only a job its local runner can prepare
+exactly. Matrix work keeps the content-addressed artifact immutable: the
+requested environment is overlaid on an in-memory execution manifest, never
+written into the artifact. Thus broad Wanted collection never sends an
+unsupported browser, Unity, JDK, or other engine job to an ordinary
+Docker-only worker merely because that job was first in the queue.
 
 Browser execution evidence is not inferred from an npm package name. The
 current pinned browser lane accepts only `browser / chrome 134 / chromium 134`

@@ -941,6 +941,44 @@ func (p *PG) SaveReceipt(ctx context.Context, r ReceiptRow) error {
 	})
 }
 
+func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (bool, error) {
+	saved := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		tag, err := tx.Exec(ctx, `
+			UPDATE verification_jobs SET status='done'
+			 WHERE id=$1 AND sample_id=$2 AND status='claimed' AND claimed_by=$3`,
+			jobID, r.SampleID, r.PeerID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return nil
+		}
+		inserted, err := tx.Exec(ctx, `
+			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
+			VALUES($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (receipt_id) DO NOTHING`,
+			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
+		if err != nil {
+			return err
+		}
+		if inserted.RowsAffected() != 1 {
+			return nil // rollback the job update; this receipt answered another job already
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		saved = true
+		return nil
+	})
+	return saved, err
+}
+
 func (p *PG) ReceiptsForSample(ctx context.Context, sampleID string) ([]ReceiptRow, error) {
 	var out []ReceiptRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
@@ -979,10 +1017,40 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 	}
 	var id int64
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		return c.QueryRow(ctx, `
+		if j.Reason != "matrix" {
+			return c.QueryRow(ctx, `
 			INSERT INTO verification_jobs(sample_id, reason, want_env)
 			VALUES($1,$2,$3) RETURNING id`,
-			j.SampleID, j.Reason, wantEnv).Scan(&id)
+				j.SampleID, j.Reason, wantEnv).Scan(&id)
+		}
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		// Builder passes can overlap during deployment. Serialize the exact
+		// sample+matrix target before the read/create pair so only one durable
+		// cell exists without deleting any historical row.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			j.SampleID+"\x1f"+j.WantEnvJSON); err != nil {
+			return err
+		}
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM verification_jobs
+			 WHERE sample_id=$1 AND reason='matrix' AND want_env IS NOT DISTINCT FROM $2::jsonb
+			 ORDER BY id LIMIT 1`, j.SampleID, wantEnv).Scan(&id)
+		if err == nil {
+			return tx.Commit(ctx)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO verification_jobs(sample_id, reason, want_env)
+			VALUES($1,'matrix',$2::jsonb) RETURNING id`, j.SampleID, wantEnv).Scan(&id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	})
 	return id, err
 }
@@ -998,8 +1066,15 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
 func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
+	return p.OpenJobsPage(ctx, capability, peerID, reason, limit, 0)
+}
+
+func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	var out []JobRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
@@ -1014,11 +1089,11 @@ func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, li
 				OR want_env IS NULL
 				OR want_env->>'sandboxCapability' IS NULL
 				OR want_env->>'sandboxCapability' = $1)
-			  AND ($4 = '' OR NOT EXISTS (
+			  AND ($4 = '' OR j.reason <> 'cross' OR NOT EXISTS (
 				SELECT 1 FROM receipts r
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4))
 			ORDER BY created_at, id
-			LIMIT $2`, capability, limit, JobLease.String(), peerID, reason)
+			LIMIT $2 OFFSET $6`, capability, limit, JobLease.String(), peerID, reason, offset)
 		if err != nil {
 			return err
 		}
@@ -1061,6 +1136,26 @@ func (p *PG) JobsForSample(ctx context.Context, sampleID string) ([]JobRow, erro
 	return out, err
 }
 
+func (p *PG) Job(ctx context.Context, id int64) (JobRow, bool, error) {
+	var out JobRow
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var err error
+		out, err = scanJob(c.QueryRow(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs WHERE id=$1`, id))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err == nil {
+			found = true
+		}
+		return err
+	})
+	return out, found, err
+}
+
 func scanJob(row pgx.Row) (JobRow, error) {
 	var j JobRow
 	var claimedAt, createdAt *time.Time
@@ -1092,18 +1187,41 @@ const JobLease = 30 * time.Minute
 func (p *PG) ClaimJob(ctx context.Context, id int64, peerID string) (bool, error) {
 	claimed := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		tag, err := c.Exec(ctx, `
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) // no-op after commit
+		var sampleID string
+		if err := tx.QueryRow(ctx, `SELECT sample_id FROM verification_jobs WHERE id=$1`, id).Scan(&sampleID); errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		// Different matrix cells for one sample can race through separate HTTP
+		// requests. Serialize only this peer+sample pair so both statements
+		// cannot observe "no active claim" and take a job simultaneously.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, sampleID+"\x1f"+peerID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
 			UPDATE verification_jobs
 			SET status='claimed', claimed_by=$2, claimed_at=now()
 			WHERE id=$1
 			  AND (status='open'
-			       OR (status='claimed' AND claimed_at < now() - $3::interval))`,
+			       OR (status='claimed' AND claimed_at < now() - $3::interval))
+			  AND NOT EXISTS (
+			    SELECT 1 FROM verification_jobs other
+			     WHERE other.id <> verification_jobs.id
+			       AND other.sample_id = verification_jobs.sample_id
+			       AND other.status='claimed' AND other.claimed_by=$2
+			       AND other.claimed_at >= now() - $3::interval)`,
 			id, peerID, JobLease.String())
 		if err != nil {
 			return err
 		}
 		claimed = tag.RowsAffected() == 1
-		return nil
+		return tx.Commit(ctx)
 	})
 	return claimed, err
 }
@@ -1125,7 +1243,7 @@ func (p *PG) CompleteJobsForSample(ctx context.Context, sampleID, peerID string)
 		// job to explain why.
 		_, err := c.Exec(ctx,
 			`UPDATE verification_jobs j SET status='done'
-			 WHERE j.sample_id=$1 AND j.status IN ('open','claimed')
+			 WHERE j.sample_id=$1 AND j.reason='cross' AND j.status IN ('open','claimed')
 			   AND (j.reason <> 'cross' OR $2 = '' OR $2 IS DISTINCT FROM (
 			         SELECT r.peer_id FROM receipts r
 			          WHERE r.sample_id=$1 ORDER BY r.created_at, r.receipt_id LIMIT 1))`,

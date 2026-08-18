@@ -468,40 +468,17 @@ func TestBuilderRunOnce(t *testing.T) {
 		t.Fatalf("contractStages = %+v", shard.Packages[0].Samples[0].ContractStages)
 	}
 
-	// Matrix jobs: up to 3 one-variable-changed for the CROSS_PASS sample.
+	// Generic matrix wishes were not preparable by any pinned worker. Non-Java
+	// samples therefore create no matrix work; exact Java lines are covered by
+	// the focused test below.
 	jobs, err := store.JobsForSample(ctx, sampleID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	matrix := 0
 	for _, j := range jobs {
-		if j.Reason != "matrix" {
-			continue
+		if j.Reason == "matrix" {
+			t.Fatalf("generic npm sample created unpreparable matrix job: %+v", j)
 		}
-		matrix++
-		var want map[string]string
-		if err := json.Unmarshal([]byte(j.WantEnvJSON), &want); err != nil {
-			t.Fatalf("wantEnv %q: %v", j.WantEnvJSON, err)
-		}
-		if len(want) == 0 {
-			t.Fatal("matrix job without a changed variable")
-		}
-	}
-	if matrix == 0 || matrix > 3 {
-		t.Fatalf("matrix jobs = %d, want 1..3", matrix)
-	}
-	// windows+linux receipts exist → the os delta must be darwin.
-	sawDarwin := false
-	for _, j := range jobs {
-		if strings.Contains(j.WantEnvJSON, `"os":"darwin"`) {
-			sawDarwin = true
-		}
-		if strings.Contains(j.WantEnvJSON, `"os":"windows"`) || strings.Contains(j.WantEnvJSON, `"os":"linux"`) {
-			t.Fatalf("matrix job proposes an already-covered os: %s", j.WantEnvJSON)
-		}
-	}
-	if !sawDarwin {
-		t.Fatalf("expected a darwin os delta, jobs: %+v", jobs)
 	}
 
 	// Stats rollup written with the estimated flag.
@@ -533,14 +510,14 @@ func TestBuilderRunOnce(t *testing.T) {
 		t.Fatalf("shard etag changed across identical runs: %s → %s", etag1, etag2)
 	}
 	jobs, _ = store.JobsForSample(ctx, sampleID)
-	matrix = 0
+	matrix := 0
 	for _, j := range jobs {
 		if j.Reason == "matrix" {
 			matrix++
 		}
 	}
-	if matrix > 3 {
-		t.Fatalf("matrix jobs = %d after rerun, cap is 3", matrix)
+	if matrix != 0 {
+		t.Fatalf("matrix jobs = %d after rerun, want none for npm", matrix)
 	}
 }
 
@@ -562,6 +539,79 @@ func TestBuilderRunLoopStopsOnCancel(t *testing.T) {
 	}
 	if _, ok, _ := store.GetLatestStats(context.Background()); !ok {
 		t.Fatal("RunLoop never completed a pass")
+	}
+}
+
+func TestCreateMatrixJobsUsesOnlyExactPreparableJavaLines(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	b := &Builder{Store: store}
+	m := domain.SampleManifest{
+		VerifierAdapter: "maven-java@1",
+		Environment: domain.EnvironmentFingerprint{
+			Ecosystem: "maven", Runtime: "java", RuntimeVersion: "21", LanguageVersion: "17",
+		},
+	}
+	sample := sampleData{
+		row:      serverstore.SampleRow{SampleID: "sha256:java", Status: "CROSS_PASS"},
+		manifest: m,
+		receipts: []ReceiptInfo{{
+			VerifierAdapter: "maven-java@1", SandboxCapability: domain.CapContainerRun,
+			Env: domain.EnvironmentFingerprint{
+				SchemaVersion: 1, Ecosystem: "maven", OS: "linux", OSVersionBucket: "2023",
+				Distro: "amzn", Libc: "glibc", Runtime: "java", RuntimeVersion: "21",
+				Language: "java", LanguageVersion: "17", Compiler: "javac", CompilerVersion: "21",
+				PackageManager: "maven", PackageManagerVersion: "3.9.11", ExecutionContext: "java",
+				Virtualization: "container", ContainerRuntime: "docker",
+			},
+		}},
+	}
+	// A legacy partial wish neither counts toward the exact matrix nor gets
+	// recreated. Migration 0010 retires it in PostgreSQL.
+	if _, err := store.CreateJob(ctx, serverstore.JobRow{SampleID: sample.row.SampleID, Reason: "matrix", WantEnvJSON: `{"runtime":"java","runtimeMajor":"17"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.createMatrixJobs(ctx, []sampleData{sample}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.createMatrixJobs(ctx, []sampleData{sample}); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, err := store.JobsForSample(ctx, sample.row.SampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, job := range jobs {
+		var want domain.WorkerRequirements
+		if json.Unmarshal([]byte(job.WantEnvJSON), &want) != nil || !exactJavaMatrixRequirements(want, m) {
+			continue
+		}
+		got[want.RuntimeVersion]++
+		if want.SandboxCapability != domain.CapContainerRun || want.VerifierAdapter != "maven-java@1" ||
+			want.Ecosystem != "maven" || want.Runtime != "java" || want.ExecutionContext != "java" {
+			t.Fatalf("incomplete worker requirements: %+v", want)
+		}
+	}
+	if len(got) != 2 || got["17"] != 1 || got["25"] != 1 {
+		t.Fatalf("exact runtime jobs = %#v, want 17 and 25 once (8/11 below language target; 21 covered)", got)
+	}
+}
+
+func TestLegacyJavaReceiptDoesNotCoverPinnedMatrixCell(t *testing.T) {
+	m := domain.SampleManifest{VerifierAdapter: "maven-java@1", Environment: domain.EnvironmentFingerprint{LanguageVersion: "17"}}
+	legacy := ReceiptInfo{
+		VerifierAdapter: "maven-java@1", SandboxCapability: domain.CapContainerRun,
+		Env: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "maven", OS: "linux", OSVersionBucket: "alpine",
+			Distro: "alpine", Libc: "musl", Runtime: "java", RuntimeVersion: "21",
+			Compiler: "javac", CompilerVersion: "21", PackageManager: "maven", PackageManagerVersion: "3.9",
+			ExecutionContext: "java", Virtualization: "container", ContainerRuntime: "docker",
+		},
+	}
+	if receiptCoversExactJavaMatrix(legacy, m) {
+		t.Fatal("legacy Temurin/Alpine receipt suppressed the Corretto/AL2023 Java 21 cell")
 	}
 }
 

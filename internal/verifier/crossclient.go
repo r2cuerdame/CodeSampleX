@@ -25,11 +25,10 @@ import (
 // activity happened within this window (plan P8.3).
 const idleWindow = 10 * time.Minute
 
-// CrossJobReason is the only declarative job class a public contributor
-// worker may claim. Matrix jobs carry a requested environment that this
-// client does not yet enforce, so treating them as ordinary cross jobs would
-// sign a receipt for a different claim than the server asked it to prove.
-const CrossJobReason = "cross"
+const (
+	CrossJobReason  = "cross"
+	MatrixJobReason = "matrix"
+)
 
 // Job is one open cross/matrix verification job (plan C5).
 type Job struct {
@@ -119,7 +118,6 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	q := url.Values{}
 	q.Set("peerId", cv.Ident.PeerID())
 	q.Set("capability", string(cv.Cap))
-	q.Set("reason", CrossJobReason)
 	// Ask for a small window and choose locally. Capability is filtered by the
 	// server; ecosystem/runtime/SDK requirements are checked by this binary.
 	// Looking at one row let an incompatible head job hide compatible work.
@@ -145,12 +143,10 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	}
 	for i := range body.Jobs {
 		job := body.Jobs[i]
-		// Defense in depth against an old or misconfigured server ignoring
-		// the reason filter. Public workers never claim matrix/create work.
-		if job.Reason != CrossJobReason {
+		if job.Reason != CrossJobReason && job.Reason != MatrixJobReason {
 			continue
 		}
-		if !cv.canPrepare(job.WantEnv) {
+		if !cv.canPrepareJob(job) {
 			continue
 		}
 
@@ -174,6 +170,39 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	return nil, nil
 }
 
+func parseWorkerRequirements(raw json.RawMessage) (domain.WorkerRequirements, error) {
+	var want domain.WorkerRequirements
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&want); err != nil {
+		return want, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return want, errors.New("wantEnv must contain exactly one JSON object")
+	}
+	return want, nil
+}
+
+func exactJavaMatrixWant(want domain.WorkerRequirements) bool {
+	allowedLine := map[string]bool{"8": true, "11": true, "17": true, "21": true, "25": true}
+	return want.SandboxCapability == domain.CapContainerRun &&
+		(want.VerifierAdapter == "maven-java@1" || want.VerifierAdapter == "gradle-java@1") &&
+		want.Ecosystem == "maven" && want.Runtime == "java" && allowedLine[want.RuntimeVersion] &&
+		want.ExecutionContext == "java" && want.BrowserFamily == "" && want.BrowserMajor == "" &&
+		want.Engine == "" && want.EngineVersion == "" && len(want.Frameworks) == 0
+}
+
+func (cv *CrossVerifier) canPrepareJob(job Job) bool {
+	if !cv.canPrepare(job.WantEnv) {
+		return false
+	}
+	if job.Reason != MatrixJobReason {
+		return true
+	}
+	want, err := parseWorkerRequirements(job.WantEnv)
+	return err == nil && exactJavaMatrixWant(want)
+}
+
 // canPrepare is deliberately fail-closed. Legacy cross jobs with no
 // requirements remain claimable; malformed, unknown, or unsatisfied
 // requirements are treated as work for another machine.
@@ -182,13 +211,8 @@ func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return true
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	var want domain.WorkerRequirements
-	if err := dec.Decode(&want); err != nil {
-		return false
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
+	want, err := parseWorkerRequirements(raw)
+	if err != nil {
 		return false
 	}
 	if want.SandboxCapability != "" && want.SandboxCapability != cv.Cap {
@@ -218,6 +242,30 @@ func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
 		}
 	}
 	return true
+}
+
+func matrixExecutionManifest(m domain.SampleManifest, raw json.RawMessage) (domain.SampleManifest, error) {
+	want, err := parseWorkerRequirements(raw)
+	if err != nil || !exactJavaMatrixWant(want) {
+		return m, errors.New("verifier: matrix job does not contain exact supported Java requirements")
+	}
+	if m.VerifierAdapter != want.VerifierAdapter || m.Environment.Ecosystem != want.Ecosystem ||
+		m.Environment.Runtime != want.Runtime ||
+		(m.Environment.ExecutionContext != "" && m.Environment.ExecutionContext != want.ExecutionContext) {
+		return m, errors.New("verifier: matrix requirements do not match the immutable sample manifest")
+	}
+	lines := map[string]int{"8": 8, "11": 11, "17": 17, "21": 21, "25": 25}
+	if target := m.Environment.LanguageVersion; target != "" {
+		if lines[target] == 0 || lines[target] > lines[want.RuntimeVersion] {
+			return m, fmt.Errorf("verifier: Java language target %q cannot run on JDK %s", target, want.RuntimeVersion)
+		}
+	}
+	// This is an execution-only copy. The unpacked artifact and csx.json stay
+	// byte-for-byte immutable, so the rebuilt content-addressed sample id is
+	// still the job's sample id.
+	m.Environment.RuntimeVersion = want.RuntimeVersion
+	m.Environment.ExecutionContext = want.ExecutionContext
+	return m, nil
 }
 
 // RunOne claims and processes at most one cross-verification job. worked is
@@ -321,6 +369,12 @@ func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return zero, fmt.Errorf("verifier: parse csx.json: %w", err)
 	}
+	if job.Reason == MatrixJobReason {
+		m, err = matrixExecutionManifest(m, job.WantEnv)
+		if err != nil {
+			return zero, err
+		}
+	}
 
 	receipt, err := Run(ctx, cv.runner(), cv.Cap, dir, m, cv.Ident, cv.Env)
 	if err != nil {
@@ -340,6 +394,7 @@ func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.
 		return zero, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(domain.VerificationJobIDHeader, fmt.Sprintf("%d", job.ID))
 	resp, err := cv.client().Do(req)
 	if err != nil {
 		return zero, fmt.Errorf("verifier: post receipt: %w", err)

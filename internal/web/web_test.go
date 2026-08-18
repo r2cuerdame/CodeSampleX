@@ -227,7 +227,8 @@ func TestSupportRowsAreSelfExplaining(t *testing.T) {
 	mustContain(t, body, "Resolved from imports and call sites")
 	// Maven's A4 support is useful, but it must not read as project-scanner
 	// coverage. Keep the Java runtime and that boundary visible together.
-	mustContain(t, body, "Maven / Java 21 contract verification is supported")
+	mustContain(t, body, "Maven contract verification keeps omitted Java at the legacy Java 21")
+	mustContain(t, body, "supports exact Java 8, 11, 17, 21 and 25")
 	mustContain(t, body, "Local Java project scanning is not yet supported")
 	if strings.Contains(body, ">A0<") || strings.Contains(body, ">A4<") {
 		t.Error("landing shows raw capability codes instead of plain language")

@@ -356,6 +356,15 @@ entry, agent rule or background daemon. A worker still requires a reachable
 Docker daemon. If Docker is missing, stop: installing it or granting
 administrator access is a separate human decision.
 
+The verifier polls server-assigned `cross` and `matrix` jobs. It claims a job
+only when every closed requirement (adapter, ecosystem, runtime and exact
+runtime version, execution context, sandbox capability, and any declared
+browser/framework requirements) maps to an environment this machine's pinned
+runner can prepare. A matrix run reuses the downloaded content-addressed
+artifact unchanged and overlays only the requested execution environment onto
+an in-memory manifest copy. It never edits the artifact or substitutes a
+nearby locally available runtime.
+
 Run the worker in the foreground to inspect it:
 
 ```sh

@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +11,107 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
+
+func TestDockerSmokeMavenJDKMatrixClassfileMajors(t *testing.T) {
+	if os.Getenv("CSX_TEST_DOCKER") != "1" {
+		t.Skip("set CSX_TEST_DOCKER=1 to run the real-docker smoke test")
+	}
+	if Detect(context.Background()) != domain.CapContainerRun {
+		t.Skip("docker daemon not available")
+	}
+	for version, major := range map[string]uint16{"8": 52, "11": 55, "17": 61, "21": 65, "25": 69} {
+		t.Run("jdk"+version, func(t *testing.T) {
+			dir := t.TempDir()
+			specVersion := version
+			if version == "8" {
+				specVersion = "1.8"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "Contract.java"), []byte(`public final class Contract {
+  public static void main(String[] args) {
+    if (!System.getProperty("java.specification.version").equals("`+specVersion+`")) throw new AssertionError("wrong JDK");
+  }
+}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m := mavenManifest("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
+			m.Environment.RuntimeVersion = version
+			m.Environment.LanguageVersion = version
+			flags := "--release " + version
+			if version == "8" {
+				flags = "-source 8 -target 8"
+			}
+			m.BuildCommand = []string{"sh", "-c", "mkdir -p /work/.csx-vendor/classes && javac " + flags + " -d /work/.csx-vendor/classes Contract.java"}
+			m.ContractCommand = []string{"java", "-cp", "/work/.csx-vendor/classes", "Contract"}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			r := DockerRunner{}
+			if result := r.Build(ctx, dir, m); result.Result != ResultPass {
+				t.Fatalf("build: %s\n%s", result.Result, result.Log)
+			}
+			class, err := os.ReadFile(filepath.Join(dir, ".csx-vendor", "classes", "Contract.class"))
+			if err != nil || len(class) < 8 {
+				t.Fatalf("read class file: size=%d err=%v", len(class), err)
+			}
+			if got := binary.BigEndian.Uint16(class[6:8]); got != major {
+				t.Fatalf("classfile major = %d, want %d for Java %s", got, major, version)
+			}
+			if result := r.Contract(ctx, dir, m); result.Result != ResultPass {
+				t.Fatalf("contract: %s\n%s", result.Result, result.Log)
+			}
+		})
+	}
+}
+
+func TestDockerSmokeGradleJDKMatrixCanaries(t *testing.T) {
+	if os.Getenv("CSX_TEST_DOCKER") != "1" {
+		t.Skip("set CSX_TEST_DOCKER=1 to run the real-docker smoke test")
+	}
+	if Detect(context.Background()) != domain.CapContainerRun {
+		t.Skip("docker daemon not available")
+	}
+	for _, version := range []string{"8", "21", "25"} {
+		t.Run("jdk"+version, func(t *testing.T) {
+			dir := t.TempDir()
+			specVersion := version
+			if version == "8" {
+				specVersion = "1.8"
+			}
+			write := func(rel, content string) {
+				t.Helper()
+				path := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("src/main/java/BlankChecks.java", `import org.apache.commons.lang3.StringUtils;
+public final class BlankChecks { public static boolean blank(String s) { return StringUtils.isBlank(s); } }`)
+			write("test/Contract.java", fmt.Sprintf(`public final class Contract {
+  public static void main(String[] args) {
+    if (!BlankChecks.blank(" ")) throw new AssertionError("contract");
+    if (!System.getProperty("java.specification.version").equals("%s")) throw new AssertionError("wrong JDK");
+  }
+}`, specVersion))
+			m := gradleManifest("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
+			m.Environment.RuntimeVersion = version
+			m.Environment.LanguageVersion = version
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			r := DockerRunner{}
+			if result := r.Resolve(ctx, dir, m); result.Result != ResultPass {
+				t.Fatalf("resolve: %s\n%s", result.Result, result.Log)
+			}
+			if result := r.Build(ctx, dir, m); result.Result != ResultPass {
+				t.Fatalf("build: %s\n%s", result.Result, result.Log)
+			}
+			if result := r.Contract(ctx, dir, m); result.Result != ResultPass {
+				t.Fatalf("contract: %s\n%s", result.Result, result.Log)
+			}
+		})
+	}
+}
 
 // TestDockerSmokeNodeEcho drives the real Docker pipeline against a tiny
 // node echo-contract fixture. It only runs with CSX_TEST_DOCKER=1 and a

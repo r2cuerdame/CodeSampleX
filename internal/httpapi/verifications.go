@@ -148,6 +148,78 @@ func readVerificationReceipt(w http.ResponseWriter, r *http.Request, receipt *do
 	return true
 }
 
+func decodeWorkerRequirements(raw string) (domain.WorkerRequirements, error) {
+	var want domain.WorkerRequirements
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&want); err != nil {
+		return want, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return want, errors.New("wantEnv must contain exactly one JSON object")
+	}
+	return want, nil
+}
+
+func receiptMatchesRequirements(receipt domain.VerificationReceipt, want domain.WorkerRequirements) bool {
+	env := receipt.Environment.Normalize()
+	if want.SandboxCapability != "" && receipt.SandboxCapability != want.SandboxCapability {
+		return false
+	}
+	if want.VerifierAdapter != "" && receipt.VerifierAdapter != want.VerifierAdapter {
+		return false
+	}
+	checks := [][2]string{
+		{want.Ecosystem, env.Ecosystem}, {want.Runtime, env.Runtime},
+		{want.RuntimeVersion, env.RuntimeVersion}, {want.ExecutionContext, env.ExecutionContext},
+		{want.BrowserFamily, env.BrowserFamily}, {want.BrowserMajor, env.BrowserMajor},
+		{want.Engine, env.Engine}, {want.EngineVersion, env.EngineVersion},
+	}
+	for _, pair := range checks {
+		if pair[0] != "" && pair[0] != pair[1] {
+			return false
+		}
+	}
+	for _, required := range want.Frameworks {
+		found := false
+		for _, got := range env.Frameworks {
+			if strings.EqualFold(strings.TrimSpace(required), strings.TrimSpace(got)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func exactSupportedMatrixRequirements(want domain.WorkerRequirements) bool {
+	javaLine := map[string]bool{"8": true, "11": true, "17": true, "21": true, "25": true}
+	return want.SandboxCapability == domain.CapContainerRun &&
+		(want.VerifierAdapter == "maven-java@1" || want.VerifierAdapter == "gradle-java@1") &&
+		want.Ecosystem == "maven" && want.Runtime == "java" && javaLine[want.RuntimeVersion] &&
+		want.ExecutionContext == "java" && want.BrowserFamily == "" && want.BrowserMajor == "" &&
+		want.Engine == "" && want.EngineVersion == "" && len(want.Frameworks) == 0
+}
+
+func matrixRequirementsMatchManifest(receipt domain.VerificationReceipt, want domain.WorkerRequirements, manifest domain.SampleManifest) bool {
+	env := manifest.Environment.Normalize()
+	if manifest.VerifierAdapter != want.VerifierAdapter || env.Ecosystem != want.Ecosystem || env.Runtime != want.Runtime ||
+		(env.ExecutionContext != "" && env.ExecutionContext != want.ExecutionContext) ||
+		(env.Language != "" && env.Language != "java") {
+		return false
+	}
+	lines := map[string]int{"8": 8, "11": 11, "17": 17, "21": 21, "25": 25}
+	target := env.LanguageVersion
+	if target == "" {
+		target = want.RuntimeVersion
+	}
+	return lines[target] != 0 && lines[target] <= lines[want.RuntimeVersion] &&
+		receipt.Environment.Normalize().LanguageVersion == target
+}
+
 // handleVerification implements POST /v1/verifications: verify the ed25519
 // signature and the peerId↔pubkey binding, persist the immutable receipt,
 // then recompute the sample's status per the BINDING transition rules:
@@ -221,37 +293,81 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "unknown sample")
 		return
 	}
+	var manifest domain.SampleManifest
+	if err := json.Unmarshal([]byte(sample.ManifestJSON), &manifest); err != nil {
+		writeErr(w, http.StatusInternalServerError, "stored sample manifest is invalid")
+		return
+	}
 	if receipt.SchemaVersion == 2 {
-		var manifest domain.SampleManifest
-		if err := json.Unmarshal([]byte(sample.ManifestJSON), &manifest); err != nil {
-			writeErr(w, http.StatusInternalServerError, "stored sample manifest is invalid")
-			return
-		}
 		if err := receiptResolvedPackagesMatchSample(receipt, manifest); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 
+	var claimedJobID int64
+	if rawJobID := strings.TrimSpace(r.Header.Get(domain.VerificationJobIDHeader)); rawJobID != "" {
+		claimedJobID, err = strconv.ParseInt(rawJobID, 10, 64)
+		if err != nil || claimedJobID <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid verification job id")
+			return
+		}
+		job, found, lookupErr := a.d.Store.Job(ctx, claimedJobID)
+		if lookupErr != nil {
+			writeErr(w, http.StatusInternalServerError, "verification job lookup failed")
+			return
+		}
+		if !found {
+			writeErr(w, http.StatusNotFound, "verification job not found")
+			return
+		}
+		if job.Status != "claimed" || job.ClaimedBy != receipt.PeerID || job.SampleID != receipt.SampleID ||
+			(job.Reason != "cross" && job.Reason != "matrix") {
+			writeErr(w, http.StatusConflict, "receipt does not match the claimed verification job")
+			return
+		}
+		if job.WantEnvJSON != "" {
+			want, parseErr := decodeWorkerRequirements(job.WantEnvJSON)
+			if parseErr != nil || (job.Reason == "matrix" &&
+				(!exactSupportedMatrixRequirements(want) || !matrixRequirementsMatchManifest(receipt, want, manifest))) ||
+				!receiptMatchesRequirements(receipt, want) {
+				writeErr(w, http.StatusConflict, "receipt environment does not match the claimed verification job")
+				return
+			}
+		} else if job.Reason == "matrix" {
+			writeErr(w, http.StatusConflict, "matrix verification job has no exact environment")
+			return
+		}
+	}
+
 	contractResult := receipt.Stages["contract"]
-	if err := a.d.Store.SaveReceipt(ctx, serverstore.ReceiptRow{
+	receiptRow := serverstore.ReceiptRow{
 		ReceiptID:      receipt.ReceiptID(),
 		SampleID:       receipt.SampleID,
 		PeerID:         receipt.PeerID,
 		EnvHash:        receipt.EnvironmentHash,
 		ReceiptJSON:    string(domain.MustCanonicalJSON(receipt)),
 		ContractResult: contractResult,
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "saving receipt failed")
-		return
 	}
-
-	// A receipt is what a verification job asked for, so its arrival closes
-	// the job. Without this nothing ever completed one — CompleteJob had no
-	// route to it — and every claimed job stayed claimed for good.
-	// Not fatal if it fails: the receipt is saved either way, and the claim
-	// lease frees the job on its own.
-	_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID, receipt.PeerID)
+	if claimedJobID != 0 {
+		accepted, saveErr := a.d.Store.SaveReceiptForJob(ctx, receiptRow, claimedJobID)
+		if saveErr != nil {
+			writeErr(w, http.StatusInternalServerError, "saving job receipt failed")
+			return
+		}
+		if !accepted {
+			writeErr(w, http.StatusConflict, "verification job claim expired or changed")
+			return
+		}
+	} else {
+		if err := a.d.Store.SaveReceipt(ctx, receiptRow); err != nil {
+			writeErr(w, http.StatusInternalServerError, "saving receipt failed")
+			return
+		}
+		// An unbound receipt may answer generic independent-cross work only.
+		// Targeted matrix jobs require the exact atomic path above.
+		_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID, receipt.PeerID)
+	}
 
 	receipts, err := a.d.Store.ReceiptsForSample(ctx, receipt.SampleID)
 	if err != nil {
@@ -422,11 +538,6 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 	// peerId has always been sent by the client and never read. A peer
 	// that already filed a receipt for a sample cannot cross-verify it, and
 	// offering it the job takes that job away from a peer who could.
-	jobs, err := a.d.Store.OpenJobs(r.Context(), capability, q.Get("peerId"), reason, limit)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "job listing failed")
-		return
-	}
 	type jobOut struct {
 		ID       int64           `json:"id"`
 		SampleID string          `json:"sampleId"`
@@ -434,12 +545,37 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 		WantEnv  json.RawMessage `json:"wantEnv,omitempty"`
 	}
 	out := []jobOut{}
-	for _, j := range jobs {
-		jo := jobOut{ID: j.ID, SampleID: j.SampleID, Reason: j.Reason}
-		if j.WantEnvJSON != "" {
-			jo.WantEnv = json.RawMessage(j.WantEnvJSON)
+	// Page through the ordered queue until enough live artifacts are found.
+	// Missing blobs remain untouched for audit/recovery and can never form a
+	// permanent head-of-line barrier, even if there are more than one page.
+	const pageSize = 100
+	for offset := 0; len(out) < limit; {
+		jobs, err := a.d.Store.OpenJobsPage(r.Context(), capability, q.Get("peerId"), reason, pageSize, offset)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "job listing failed")
+			return
 		}
-		out = append(out, jo)
+		for _, j := range jobs {
+			if a.d.Blobs == nil {
+				continue
+			}
+			have, err := a.d.Blobs.Has(r.Context(), j.SampleID)
+			if err != nil || !have {
+				continue
+			}
+			jo := jobOut{ID: j.ID, SampleID: j.SampleID, Reason: j.Reason}
+			if j.WantEnvJSON != "" {
+				jo.WantEnv = json.RawMessage(j.WantEnvJSON)
+			}
+			out = append(out, jo)
+			if len(out) >= limit {
+				break
+			}
+		}
+		offset += len(jobs)
+		if len(jobs) < pageSize {
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
 }

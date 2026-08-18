@@ -49,7 +49,11 @@ type Snapshot struct {
 	Rows                 []SnapshotRow         `json:"rows"`
 	Failures             []FailureSummary      `json:"failures"`
 	RegressionCandidates []RegressionCandidate `json:"regressionCandidates,omitempty"`
-	GeneratedAt          string                `json:"generatedAt"`
+	// JDKBoundaryCandidates are kept separate from package-version
+	// regressions: the resolved package set is identical at both endpoints
+	// and the JDK line is the measured axis.
+	JDKBoundaryCandidates []JDKBoundaryCandidate `json:"jdkBoundaryCandidates,omitempty"`
+	GeneratedAt           string                 `json:"generatedAt"`
 }
 
 // BuildSnapshot computes the snapshot for one (purl, symbol) target from its

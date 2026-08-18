@@ -1,9 +1,11 @@
 package compatibility
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"sort"
 	"strings"
@@ -146,6 +148,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		return err
 	}
 	receiptRegressions := regressionsFromReceipts(samples)
+	jdkBoundaries := jdkBoundariesFromReceipts(samples)
 
 	// Evidence indexed by package → symbol → version → rows.
 	byPkg := map[pkgKey]symVer{}
@@ -235,6 +238,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 
 		receipts := receiptsForTarget(samples, p, t.Symbol)
 		snap := BuildSnapshot(t.PURL, t.Symbol, rows, receipts, regs, now)
+		snap.JDKBoundaryCandidates = jdkBoundaries[receiptTarget{purl: p.String(), symbol: t.Symbol}]
 		js, jerr := json.Marshal(snap)
 		if jerr != nil {
 			return fmt.Errorf("compatibility: marshal snapshot %s: %w", t.PURL, jerr)
@@ -878,35 +882,55 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) shardS
 	}
 }
 
-// createMatrixJobs opens up to 3 one-variable-changed verification jobs for
-// every sample at CROSS_PASS or beyond (§10.2): each wantEnv changes exactly
-// one of os, runtime major, or browser family relative to the environments
-// already covered by receipts.
+// createMatrixJobs opens only matrix work that the public container worker can
+// prepare exactly. The old generic generator emitted partial OS/runtimeMajor
+// wishes for environments no worker could prove; those rows are retired by
+// migration 0010 and must not be recreated.
 func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) error {
 	for _, sd := range samples {
 		if !isVerifiedStatus(sd.row.Status) || len(sd.receipts) == 0 {
+			continue
+		}
+		if sd.manifest.Environment.Ecosystem != "maven" ||
+			(sd.manifest.VerifierAdapter != "maven-java@1" && sd.manifest.VerifierAdapter != "gradle-java@1") ||
+			sd.manifest.Environment.Runtime != "java" {
 			continue
 		}
 		existing, err := b.Store.JobsForSample(ctx, sd.row.SampleID)
 		if err != nil {
 			return fmt.Errorf("compatibility: jobs for %s: %w", sd.row.SampleID, err)
 		}
-		matrixCount := 0
-		existingWant := map[string]bool{}
+		existingRuntime := map[string]bool{}
 		for _, j := range existing {
-			if j.Reason == "matrix" {
-				matrixCount++
-				existingWant[j.WantEnvJSON] = true
+			if j.Reason != "matrix" {
+				continue
+			}
+			want, wantErr := strictWorkerRequirements(j.WantEnvJSON)
+			if wantErr == nil && exactJavaMatrixRequirements(want, sd.manifest) {
+				existingRuntime[want.RuntimeVersion] = true
 			}
 		}
-		if matrixCount >= 3 {
-			continue
+		for _, rec := range sd.receipts {
+			if receiptCoversExactJavaMatrix(rec, sd.manifest) {
+				existingRuntime[javaRuntimeLine(rec.Env.RuntimeVersion)] = true
+			}
 		}
-		for _, want := range matrixWantEnvs(sd.receipts, 3-matrixCount, existingWant) {
+		for _, runtimeVersion := range []string{"8", "11", "17", "21", "25"} {
+			if existingRuntime[runtimeVersion] || !javaTargetFitsRuntime(sd.manifest.Environment.LanguageVersion, runtimeVersion) {
+				continue
+			}
+			want := domain.WorkerRequirements{
+				SandboxCapability: domain.CapContainerRun,
+				VerifierAdapter:   sd.manifest.VerifierAdapter,
+				Ecosystem:         "maven",
+				Runtime:           "java",
+				RuntimeVersion:    runtimeVersion,
+				ExecutionContext:  "java",
+			}
 			if _, err := b.Store.CreateJob(ctx, serverstore.JobRow{
 				SampleID:    sd.row.SampleID,
 				Reason:      "matrix",
-				WantEnvJSON: want,
+				WantEnvJSON: string(domain.MustCanonicalJSON(want)),
 				Status:      "open",
 			}); err != nil {
 				return fmt.Errorf("compatibility: create matrix job for %s: %w", sd.row.SampleID, err)
@@ -916,74 +940,75 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 	return nil
 }
 
+func strictWorkerRequirements(raw string) (domain.WorkerRequirements, error) {
+	var want domain.WorkerRequirements
+	dec := json.NewDecoder(bytes.NewBufferString(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&want); err != nil {
+		return want, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return want, fmt.Errorf("wantEnv must contain exactly one object")
+	}
+	return want, nil
+}
+
+func receiptCoversExactJavaMatrix(rec ReceiptInfo, manifest domain.SampleManifest) bool {
+	env := rec.Env.Normalize()
+	if rec.SandboxCapability != domain.CapContainerRun || rec.VerifierAdapter != manifest.VerifierAdapter ||
+		env.Ecosystem != "maven" || env.Runtime != "java" || env.ExecutionContext != "java" ||
+		env.OS != "linux" || env.OSVersionBucket != "2023" || env.Distro != "amzn" || env.Libc != "glibc" ||
+		env.Virtualization != "container" || env.ContainerRuntime != "docker" || env.Compiler != "javac" ||
+		env.CompilerVersion != env.RuntimeVersion || !javaTargetFitsRuntime(manifest.Environment.LanguageVersion, env.RuntimeVersion) {
+		return false
+	}
+	switch manifest.VerifierAdapter {
+	case "maven-java@1":
+		return env.PackageManager == "maven" && env.PackageManagerVersion == "3.9.11"
+	case "gradle-java@1":
+		want := "8.14.3"
+		if env.RuntimeVersion == "25" {
+			want = "9.7.0"
+		}
+		return env.PackageManager == "gradle" && env.PackageManagerVersion == want
+	}
+	return false
+}
+
+func exactJavaMatrixRequirements(want domain.WorkerRequirements, manifest domain.SampleManifest) bool {
+	return want.SandboxCapability == domain.CapContainerRun &&
+		want.VerifierAdapter == manifest.VerifierAdapter && want.Ecosystem == "maven" &&
+		want.Runtime == "java" && want.ExecutionContext == "java" &&
+		javaTargetFitsRuntime(manifest.Environment.LanguageVersion, want.RuntimeVersion) &&
+		len(want.Frameworks) == 0 && want.BrowserFamily == "" && want.BrowserMajor == "" &&
+		want.Engine == "" && want.EngineVersion == ""
+}
+
+func javaTargetFitsRuntime(target, runtimeVersion string) bool {
+	line := map[string]int{"8": 8, "11": 11, "17": 17, "21": 21, "25": 25}
+	runtime, ok := line[runtimeVersion]
+	if !ok {
+		return false
+	}
+	if target == "" {
+		return true
+	}
+	return line[target] != 0 && line[target] <= runtime
+}
+
+func javaRuntimeLine(version string) string {
+	if i := strings.IndexByte(version, '.'); i >= 0 {
+		return version[:i]
+	}
+	return version
+}
+
 func isVerifiedStatus(status string) bool {
 	switch status {
 	case "CROSS_PASS", "MATRIX_PASS", "STABLE":
 		return true
 	}
 	return false
-}
-
-// matrixWantEnvs proposes up to max one-variable-changed environment deltas
-// not yet covered by receipts and not already requested.
-func matrixWantEnvs(receipts []ReceiptInfo, max int, existing map[string]bool) []string {
-	coveredOS := map[string]bool{}
-	coveredRuntimeMajor := map[string]bool{}
-	coveredBrowser := map[string]bool{}
-	runtimeName := ""
-	browserSeen := false
-	for _, r := range receipts {
-		if r.Env.OS != "" {
-			coveredOS[r.Env.OS] = true
-		}
-		if r.Env.Runtime != "" {
-			runtimeName = r.Env.Runtime
-			coveredRuntimeMajor[majorOf(r.Env.RuntimeVersion)] = true
-		}
-		if r.Env.BrowserFamily != "" {
-			browserSeen = true
-			coveredBrowser[r.Env.BrowserFamily] = true
-		}
-	}
-
-	var out []string
-	add := func(m map[string]string) bool {
-		js := string(domain.MustCanonicalJSON(m))
-		if existing[js] {
-			return len(out) < max
-		}
-		existing[js] = true
-		out = append(out, js)
-		return len(out) < max
-	}
-
-	for _, os := range []string{"linux", "windows", "darwin"} {
-		if !coveredOS[os] {
-			if !add(map[string]string{"os": os}) {
-				return out
-			}
-		}
-	}
-	if runtimeName != "" {
-		for _, major := range []string{"22", "24", "20", "18"} {
-			if !coveredRuntimeMajor[major] {
-				if !add(map[string]string{"runtime": runtimeName, "runtimeMajor": major}) {
-					return out
-				}
-				break // one runtime-major delta is enough per pass
-			}
-		}
-	}
-	if browserSeen {
-		for _, fam := range []string{"chrome", "firefox", "safari"} {
-			if !coveredBrowser[fam] {
-				if !add(map[string]string{"browserFamily": fam}) {
-					return out
-				}
-			}
-		}
-	}
-	return out
 }
 
 func majorOf(version string) string {

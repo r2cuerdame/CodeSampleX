@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,8 +18,14 @@ import (
 
 func saveSampleForVerification(t *testing.T, store *serverstore.Fake, suffix string) string {
 	t.Helper()
-	manifest := testManifest()
 	sampleID := "sha256:" + strings.Repeat(suffix, 32)
+	saveSampleWithID(t, store, sampleID)
+	return sampleID
+}
+
+func saveSampleWithID(t *testing.T, store *serverstore.Fake, sampleID string) {
+	t.Helper()
+	manifest := testManifest()
 	if err := store.SaveSample(context.Background(), serverstore.SampleRow{
 		SampleID:     sampleID,
 		ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
@@ -24,7 +33,6 @@ func saveSampleForVerification(t *testing.T, store *serverstore.Fake, suffix str
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return sampleID
 }
 
 type verifyResponse struct {
@@ -185,8 +193,15 @@ func TestVerificationUnknownSample(t *testing.T) {
 // --- verification jobs ---------------------------------------------------------
 
 func TestJobsListAndClaim(t *testing.T) {
-	srv, store, _ := newTestServer(t, nil)
-	sampleID := saveSampleForVerification(t, store, "6f")
+	var sampleID string
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		var err error
+		sampleID, err = d.Blobs.Put(t.Context(), bytes.NewBufferString("job artifact"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	saveSampleWithID(t, store, sampleID)
 	ctx := context.Background()
 	id, err := store.CreateJob(ctx, serverstore.JobRow{SampleID: sampleID, Reason: "cross", Status: "open"})
 	if err != nil {
@@ -241,6 +256,96 @@ func TestJobsListAndClaim(t *testing.T) {
 		map[string]string{"peerId": "not-a-peer"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bad peer claim status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestVerificationReceiptCompletesOnlyItsExactClaimedMatrixJob(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	sampleID := "sha256:" + strings.Repeat("7a", 32)
+	manifest := testManifest()
+	manifest.Packages = []string{"pkg:maven/org.example/library@1.0.0"}
+	manifest.Environment = domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "maven", Runtime: "java", RuntimeVersion: "21",
+		Language: "java", LanguageVersion: "17", ExecutionContext: "java",
+	}
+	manifest.VerifierAdapter = "maven-java@1"
+	if err := store.SaveSample(t.Context(), serverstore.SampleRow{
+		SampleID: sampleID, ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+		Status: "PUBLISHED", License: "MIT-0", CreatedAt: testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	priv, peerID := newPeer(t)
+	want := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun, VerifierAdapter: "maven-java@1",
+		Ecosystem: "maven", Runtime: "java", RuntimeVersion: "17", ExecutionContext: "java",
+	}
+	jobID, err := store.CreateJob(t.Context(), serverstore.JobRow{
+		SampleID: sampleID, Reason: "matrix", Status: "open",
+		WantEnvJSON: string(domain.MustCanonicalJSON(want)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := store.CreateJob(t.Context(), serverstore.JobRow{
+		SampleID: sampleID, Reason: "matrix", Status: "open",
+		WantEnvJSON: `{"sandboxCapability":"CONTAINER_RUN","verifierAdapter":"maven-java@1","ecosystem":"maven","runtime":"java","runtimeVersion":"21","executionContext":"java"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.ClaimJob(t.Context(), jobID, peerID); err != nil || !ok {
+		t.Fatalf("claim exact job: ok=%v err=%v", ok, err)
+	}
+	if ok, err := store.ClaimJob(t.Context(), otherID, peerID); err != nil || ok {
+		t.Fatalf("same peer simultaneously claimed a second matrix for the sample: ok=%v err=%v", ok, err)
+	}
+
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "maven", OS: "linux", Arch: "amd64",
+		Runtime: "java", RuntimeVersion: "21", Language: "java", LanguageVersion: "17",
+		ExecutionContext: "java", Virtualization: "container", ContainerRuntime: "docker",
+		Distro: "amzn", OSVersionBucket: "2023", Libc: "glibc",
+	}
+	receipt := signedReceipt(t, priv, sampleID, env, "PASS")
+	receipt.VerifierAdapter = "maven-java@1"
+	receipt.PeerSignature = base64.StdEncoding.EncodeToString(signWith(t, priv, receipt))
+	post := func(rec domain.VerificationReceipt) *http.Response {
+		body, marshalErr := json.Marshal(rec)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		req, requestErr := http.NewRequest(http.MethodPost, srv.URL+"/v1/verifications", bytes.NewReader(body))
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(domain.VerificationJobIDHeader, strconv.FormatInt(jobID, 10))
+		resp, requestErr := srv.Client().Do(req)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	if resp := post(receipt); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("wrong JDK receipt status = %d, want 409", resp.StatusCode)
+	}
+	if rows, _ := store.ReceiptsForSample(t.Context(), sampleID); len(rows) != 0 {
+		t.Fatal("mismatched matrix receipt was persisted")
+	}
+
+	receipt.Environment.RuntimeVersion = "17"
+	receipt.EnvironmentHash = receipt.Environment.Hash()
+	receipt.PeerSignature = base64.StdEncoding.EncodeToString(signWith(t, priv, receipt))
+	if resp := post(receipt); resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("exact matrix receipt status = %d body=%s", resp.StatusCode, body)
+	}
+	job, _, _ := store.Job(t.Context(), jobID)
+	other, _, _ := store.Job(t.Context(), otherID)
+	if job.Status != "done" || other.Status != "open" {
+		t.Fatalf("job states exact=%s other=%s, want done/open", job.Status, other.Status)
 	}
 }
 
