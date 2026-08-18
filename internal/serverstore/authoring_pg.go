@@ -219,7 +219,27 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 	var out []WantedRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			WITH candidates AS (
+			WITH verified_samples AS MATERIALIZED (
+				SELECT DISTINCT s.sample_id,s.manifest
+				FROM samples s
+				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
+				WHERE NOT s.quarantined
+			), verified_packages AS MATERIALIZED (
+				SELECT DISTINCT package.value AS purl
+				FROM verified_samples s
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+			), verified_symbols AS MATERIALIZED (
+				SELECT DISTINCT package.value AS purl,symbol.value AS symbol
+				FROM verified_samples s
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
+				) AS symbol(value)
+			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
 				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen
 				FROM failure_clusters fc
@@ -248,12 +268,10 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				SELECT 1 FROM authoring_assignments a
 				WHERE a.ecosystem=c.ecosystem AND a.name=c.name AND a.version=c.version
 				  AND (a.symbol=c.symbol OR c.symbol=''))
-			  AND NOT EXISTS (
-				SELECT 1 FROM samples s
-				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
-				WHERE NOT s.quarantined
-				  AND s.manifest->'packages' @> jsonb_build_array(c.purl)
-				  AND (c.symbol='' OR s.manifest->'symbols' @> jsonb_build_array(c.symbol)))
+			  AND (c.symbol<>'' OR NOT EXISTS (
+				SELECT 1 FROM verified_packages v WHERE v.purl=c.purl))
+			  AND (c.symbol='' OR NOT EXISTS (
+				SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
 			ORDER BY source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
 			LIMIT $1`, limit)
 		if err != nil {
