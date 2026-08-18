@@ -1,0 +1,13 @@
+{
+  "name": "csx-sample-happy-dom-20112-global-window",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "happy-dom": "20.11.2"
+  }
+}
