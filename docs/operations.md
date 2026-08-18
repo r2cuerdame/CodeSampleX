@@ -133,6 +133,10 @@ token's SHA-256 digest and the last refresh IP for the private operator list;
 it never stores the bearer. Expired or revoked rows are removed after a short
 audit tail.
 
+Each active row has a per-worker re-copy action. Because plaintext bearers are
+never stored, re-copy atomically rotates that worker to a newly generated token,
+copies a fresh complete prompt and CLI command, and invalidates the old command.
+
 Re-run the authenticated status-only smoke at any time with:
 
 ```powershell

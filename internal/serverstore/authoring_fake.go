@@ -44,6 +44,28 @@ func (f *Fake) IssueAuthoringSessions(_ context.Context, rows []AuthoringSession
 	return nil
 }
 
+func (f *Fake) RotateAuthoringSession(_ context.Context, sessionID, tokenHash string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.authoring[tokenHash]; exists {
+		return AuthoringSessionRow{}, ErrAuthoringSessionMissing
+	}
+	for oldHash, row := range f.authoring {
+		if row.SessionID != sessionID || !row.RevokedAt.IsZero() || !now.Before(row.IdleExpiresAt) {
+			continue
+		}
+		delete(f.authoring, oldHash)
+		row.TokenHash = tokenHash
+		row.LastRefreshAt = time.Time{}
+		row.IdleExpiresAt = idleExpiresAt
+		row.LastRefreshIP = ""
+		row.ComputerName = ""
+		f.authoring[tokenHash] = row
+		return row, nil
+	}
+	return AuthoringSessionRow{}, ErrAuthoringSessionMissing
+}
+
 func (f *Fake) RefreshAuthoringSession(_ context.Context, tokenHash, ip, computerName string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

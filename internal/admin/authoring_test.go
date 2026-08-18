@@ -98,6 +98,30 @@ func TestAuthoringSessionsAreIndependentAndRevocableByID(t *testing.T) {
 	}
 }
 
+func TestAuthoringSessionRotateInvalidatesOldToken(t *testing.T) {
+	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+	r := newAuthoringRegistry(func() time.Time { return now })
+	r.random = strings.NewReader(strings.Repeat("a", 44) + strings.Repeat("b", 32))
+	issued, err := r.Issue("worker-a", "claude-haiku", "low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(10 * time.Minute)
+	rotated, err := r.RotateIDContext(t.Context(), issued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.ID != issued.ID || rotated.Token == issued.Token || rotated.IdleExpiresAt != now.Add(time.Hour) {
+		t.Fatalf("rotated grant = %+v", rotated)
+	}
+	if _, err := r.Refresh(issued.Token, ""); !errors.Is(err, errAuthoringInvalid) {
+		t.Fatalf("old token refresh = %v", err)
+	}
+	if _, err := r.Refresh(rotated.Token, "203.0.113.7"); err != nil {
+		t.Fatalf("new token refresh = %v", err)
+	}
+}
+
 func TestAuthoringTokenIsStrictAndPromptStopsBeforePublish(t *testing.T) {
 	for _, token := range []string{"", "csx_bad", authoringTokenPrefix + "not/base64", authoringTokenPrefix + "YQ"} {
 		if _, ok := validAuthoringToken(token); ok {

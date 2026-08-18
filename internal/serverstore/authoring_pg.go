@@ -50,6 +50,25 @@ func (p *PG) IssueAuthoringSessions(ctx context.Context, rows []AuthoringSession
 	})
 }
 
+func (p *PG) RotateAuthoringSession(ctx context.Context, sessionID, tokenHash string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error) {
+	var row AuthoringSessionRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `UPDATE authoring_sessions SET token_hash=$2,
+			last_refreshed_at=NULL,idle_expires_at=$4,last_refresh_ip=NULL,computer_name=NULL
+			WHERE session_id=$1 AND revoked_at IS NULL AND idle_expires_at > $3
+			RETURNING token_hash,session_id,label,model,reasoning,issued_at,
+				COALESCE(last_refreshed_at,'0001-01-01'::timestamptz),idle_expires_at,
+				COALESCE(last_refresh_ip,''),COALESCE(computer_name,''),COALESCE(revoked_at,'0001-01-01'::timestamptz)`,
+			sessionID, tokenHash, now, idleExpiresAt).Scan(
+			&row.TokenHash, &row.SessionID, &row.Label, &row.Model, &row.Reasoning,
+			&row.IssuedAt, &row.LastRefreshAt, &row.IdleExpiresAt, &row.LastRefreshIP, &row.ComputerName, &row.RevokedAt)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AuthoringSessionRow{}, ErrAuthoringSessionMissing
+	}
+	return row, err
+}
+
 func (p *PG) RefreshAuthoringSession(ctx context.Context, tokenHash, ip, computerName string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error) {
 	var row AuthoringSessionRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

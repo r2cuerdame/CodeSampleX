@@ -36,6 +36,7 @@ type AuthoringSessionRow struct {
 // boundary.
 type AuthoringSessionStore interface {
 	IssueAuthoringSessions(ctx context.Context, rows []AuthoringSessionRow, now time.Time) error
+	RotateAuthoringSession(ctx context.Context, sessionID, tokenHash string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error)
 	RefreshAuthoringSession(ctx context.Context, tokenHash, ip, computerName string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error)
 	RevokeAuthoringSession(ctx context.Context, sessionID string, now time.Time) (bool, error)
 	ListAuthoringSessions(ctx context.Context, now time.Time, limit int) ([]AuthoringSessionRow, error)

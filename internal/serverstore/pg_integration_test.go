@@ -84,6 +84,15 @@ func TestIntegrationAuthoringSessionsPersistRefreshAndRevoke(t *testing.T) {
 	if err != nil || len(listed) != 1 || listed[0].TokenHash != row.TokenHash {
 		t.Fatalf("persisted sessions = %+v, err=%v", listed, err)
 	}
+	rotatedHash := "b8b34ad5632dc27fb9d2f6ef35b9ec73fbb6d09a4e476cc0d6cf32d9888bc3f0"
+	rotated, err := pg.RotateAuthoringSession(ctx, row.SessionID, rotatedHash, now.Add(2*time.Minute), now.Add(62*time.Minute))
+	if err != nil || rotated.TokenHash != rotatedHash {
+		t.Fatalf("rotate authoring session = %+v, err=%v", rotated, err)
+	}
+	if _, err := pg.RefreshAuthoringSession(ctx, row.TokenHash, "", "", now.Add(3*time.Minute), now.Add(63*time.Minute)); !errors.Is(err, ErrAuthoringSessionMissing) {
+		t.Fatalf("old token refresh after rotate err=%v", err)
+	}
+	row.TokenHash = rotatedHash
 	refreshedAt := now.Add(45 * time.Minute)
 	refreshed, err := pg.RefreshAuthoringSession(ctx, row.TokenHash, "198.51.100.24", "build-node-7", refreshedAt, refreshedAt.Add(time.Hour))
 	if err != nil {

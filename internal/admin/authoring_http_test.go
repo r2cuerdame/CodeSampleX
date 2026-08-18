@@ -54,8 +54,40 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	if len(tokenMatch) != 2 {
 		t.Fatalf("complete CLI command = %q", response.Workers[0].Command)
 	}
+	rotate := httptest.NewRequest(http.MethodPost, "/admin/api/authoring-sessions/"+response.Workers[0].Session.ID+"/rotate", strings.NewReader("{}"))
+	rotate.SetBasicAuth("recuerdame", secret)
+	rotate.Header.Set("Origin", "https://codesamplex.dev")
+	rotate.Header.Set("Content-Type", "application/json")
+	rotate.Header.Set("X-CSX-CSRF", "1")
+	rotated := httptest.NewRecorder()
+	mux.ServeHTTP(rotated, rotate)
+	if rotated.Code != http.StatusOK || strings.Contains(rotated.Body.String(), `"token"`) {
+		t.Fatalf("rotate status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	var rotatedResponse struct {
+		Prompt string `json:"prompt"`
+		Worker struct {
+			Command string `json:"command"`
+		} `json:"worker"`
+	}
+	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedResponse); err != nil {
+		t.Fatal(err)
+	}
+	rotatedToken := regexp.MustCompile(`--token "([^"]+)"`).FindStringSubmatch(rotatedResponse.Worker.Command)
+	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" {
+		t.Fatalf("rotated response = %+v", rotatedResponse)
+	}
+	oldRefresh := httptest.NewRequest(http.MethodPost, "/v1/authoring/session/refresh", strings.NewReader("{}"))
+	oldRefresh.Header.Set("Authorization", "Bearer "+tokenMatch[1])
+	oldRefresh.Header.Set("Content-Type", "application/json")
+	oldRefreshRec := httptest.NewRecorder()
+	mux.ServeHTTP(oldRefreshRec, oldRefresh)
+	if oldRefreshRec.Code != http.StatusUnauthorized {
+		t.Fatalf("old token refresh status = %d", oldRefreshRec.Code)
+	}
+
 	refresh := httptest.NewRequest(http.MethodPost, "/v1/authoring/session/refresh", strings.NewReader("{}"))
-	refresh.Header.Set("Authorization", "Bearer "+tokenMatch[1])
+	refresh.Header.Set("Authorization", "Bearer "+rotatedToken[1])
 	refresh.Header.Set("Content-Type", "application/json")
 	refresh.RemoteAddr = "198.51.100.9:443"
 	refreshed := httptest.NewRecorder()
@@ -76,7 +108,7 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	}
 
 	refreshAgain := httptest.NewRequest(http.MethodPost, "/v1/authoring/session/refresh", strings.NewReader("{}"))
-	refreshAgain.Header.Set("Authorization", "Bearer "+tokenMatch[1])
+	refreshAgain.Header.Set("Authorization", "Bearer "+rotatedToken[1])
 	refreshAgain.Header.Set("Content-Type", "application/json")
 	refreshedAgain := httptest.NewRecorder()
 	mux.ServeHTTP(refreshedAgain, refreshAgain)
@@ -152,5 +184,21 @@ func TestAdminPageContainsSampleWorkerControlsButNoSessionToken(t *testing.T) {
 	}
 	if strings.Contains(body, authoringTokenPrefix) {
 		t.Fatal("dashboard HTML contains a session token")
+	}
+}
+
+func TestAdminScriptOffersPerWorkerRecopy(t *testing.T) {
+	mux, secret := configuredMux(t, &fakeStore{})
+	req := httptest.NewRequest(http.MethodGet, "/admin/admin.js", nil)
+	req.SetBasicAuth("recuerdame", secret)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	for _, want := range []string{"프롬프트 + CLI 재복사", "/rotate", "이전 명령은 무효"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("admin script missing %q", want)
+		}
 	}
 }

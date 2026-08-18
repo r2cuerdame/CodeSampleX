@@ -171,6 +171,43 @@ func (r *authoringRegistry) Refresh(token, ip string) (authoringGrant, error) {
 	return r.RefreshContext(context.Background(), token, ip, "")
 }
 
+func (r *authoringRegistry) RotateIDContext(ctx context.Context, id string) (authoringGrant, error) {
+	raw := make([]byte, 32)
+	if _, err := io.ReadFull(r.random, raw); err != nil {
+		return authoringGrant{}, err
+	}
+	token := authoringTokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
+	hash := sha256.Sum256([]byte(token))
+	now := r.now().UTC()
+	if r.store != nil {
+		row, err := r.store.RotateAuthoringSession(ctx, id, hex.EncodeToString(hash[:]), now, now.Add(authoringIdleLifetime))
+		if err != nil {
+			if errors.Is(err, serverstore.ErrAuthoringSessionMissing) {
+				return authoringGrant{}, errAuthoringInvalid
+			}
+			return authoringGrant{}, err
+		}
+		grant := grantFromStored(row)
+		grant.Token = token
+		return grant, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for oldHash, session := range r.session {
+		if session.id != id || !now.Before(session.idleExpiresAt) {
+			continue
+		}
+		delete(r.session, oldHash)
+		session.lastRefreshAt = time.Time{}
+		session.idleExpiresAt = now.Add(authoringIdleLifetime)
+		session.lastIP = ""
+		session.computerName = ""
+		r.session[hash] = session
+		return authoringGrant{ID: id, Token: token, Label: session.label, Model: session.model, Reasoning: session.reasoning, IdleExpiresAt: session.idleExpiresAt}, nil
+	}
+	return authoringGrant{}, errAuthoringInvalid
+}
+
 func (r *authoringRegistry) RefreshContext(ctx context.Context, token, ip, computerName string) (authoringGrant, error) {
 	hash, ok := validAuthoringToken(token)
 	if !ok {

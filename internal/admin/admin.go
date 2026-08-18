@@ -136,6 +136,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("GET /admin/api/authoring-sessions", h.authoringSessions)
 	mux.HandleFunc("POST /admin/api/authoring-sessions", h.authoringSessions)
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
+	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
 	mux.HandleFunc("POST /v1/authoring/session/refresh", h.refreshAuthoringSession)
 	return true
 }

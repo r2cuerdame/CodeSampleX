@@ -157,6 +157,30 @@ func (h *handler) revokeAuthoringSession(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *handler) rotateAuthoringSession(w http.ResponseWriter, r *http.Request) {
+	setPrivateHeaders(w.Header())
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if !h.validAdminMutation(r) {
+		http.Error(w, "허용되지 않은 요청입니다", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, authoringRequestLimit)
+	var payload struct{}
+	if err := decodeAdminJSON(r, &payload); err != nil {
+		http.Error(w, "잘못된 요청입니다", http.StatusBadRequest)
+		return
+	}
+	grant, err := h.authoring.RotateIDContext(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "세션을 찾을 수 없습니다", http.StatusNotFound)
+		return
+	}
+	worker := issuedAuthoringWorker{Command: authoringCommand(h.publicURL, grant.Token), Session: grant}
+	writeAdminJSON(w, http.StatusOK, map[string]any{"prompt": authoringPrompt(h.publicURL, grant), "worker": worker})
+}
+
 func (h *handler) refreshAuthoringSession(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
 	if r.Method != http.MethodPost {

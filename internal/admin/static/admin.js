@@ -65,6 +65,25 @@
         meta.className = "note";
         meta.textContent = `${session.model} · 추론 ${session.reasoning} · 컴퓨터 ${session.computerName || "확인 안 됨"} · IP ${session.lastIp || "확인 안 됨"} · 마지막 갱신 ${formatTime(session.lastRefreshedAt)} · 만료 ${formatTime(session.idleExpiresAt)}`;
         info.append(name, meta);
+		const actions = document.createElement("div");
+		actions.className = "sample-worker-actions";
+		const recopy = document.createElement("button");
+		recopy.type = "button";
+		recopy.className = "copy-button";
+		recopy.textContent = "프롬프트 + CLI 재복사";
+		recopy.addEventListener("click", async () => {
+		  recopy.disabled = true;
+		  status.textContent = `${session.label} 명령을 새 토큰으로 교체하는 중…`;
+		  try {
+			const data = await request(`/admin/api/authoring-sessions/${encodeURIComponent(session.sessionId)}/rotate`, {method: "POST", body: "{}"});
+			await copy(data.prompt);
+			status.textContent = `${session.label}의 새 프롬프트와 CLI를 복사했습니다. 이전 명령은 무효입니다.`;
+			await load();
+		  } catch (_) {
+			status.textContent = "재복사에 실패했습니다. 다시 누르면 새 명령으로 교체됩니다.";
+			recopy.disabled = false;
+		  }
+		});
         const revoke = document.createElement("button");
         revoke.type = "button";
         revoke.className = "danger-button";
@@ -80,7 +99,8 @@
             revoke.disabled = false;
           }
         });
-        row.append(info, revoke);
+		actions.append(recopy, revoke);
+		row.append(info, actions);
         list.appendChild(row);
       }
     } catch (_) {
