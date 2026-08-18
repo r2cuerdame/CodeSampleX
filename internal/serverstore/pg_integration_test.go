@@ -190,7 +190,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	}
 
 	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(candidates) != 2 {
+	if err != nil || len(candidates) != 3 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "MockAgent" || candidates[0].Score != 23 {
@@ -205,7 +205,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", claimed, ok, err)
 	}
 	remaining, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 2 {
+	if err != nil || len(remaining) != 3 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer-2", remaining, now, now.Add(24*time.Hour))
@@ -230,6 +230,18 @@ func TestIntegrationAuthoringLeaseIsReassignedWhenEnvironmentBecomesIneligible(t
 	other, ok, err := pg.ClaimAuthoringWork(ctx, "pg-other-writer", windows, now.Add(time.Minute), now.Add(24*time.Hour))
 	if err != nil || !ok || other.Name != "github.com/Microsoft/go-winio" {
 		t.Fatalf("released target unavailable = %+v ok=%v err=%v", other, ok, err)
+	}
+	packageExpansion := []WantedRow{{Ecosystem: "pypi", Name: "pandas", Version: "3.0.5", Kind: "EXPANSION", Score: 30, TargetOS: "linux"}}
+	blank, ok, err := pg.ClaimAuthoringWork(ctx, "pg-package-writer", packageExpansion, now.Add(2*time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok {
+		t.Fatalf("package claim = %+v ok=%v err=%v", blank, ok, err)
+	}
+	if attached, err := pg.AttachAuthoringWorkSample(ctx, "pg-package-writer", blank, "sha256:package-expansion", now.Add(3*time.Minute)); err != nil || !attached {
+		t.Fatalf("package attach = %v err=%v", attached, err)
+	}
+	reopened, ok, err := pg.ClaimAuthoringWork(ctx, "pg-package-writer-2", packageExpansion, now.Add(4*time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reopened.Name != "pandas" {
+		t.Fatalf("package reopened = %+v ok=%v err=%v", reopened, ok, err)
 	}
 }
 

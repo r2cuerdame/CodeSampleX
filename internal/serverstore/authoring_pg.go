@@ -262,6 +262,14 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				JOIN evidence_agg e ON e.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
 				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
+				UNION ALL
+				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
+				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
+				       COALESCE(e.env_json->>'os','') AS target_os
+				FROM packages p
+				JOIN evidence_agg e ON e.purl=p.purl
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				GROUP BY p.purl,p.ecosystem,p.name,p.version,p.last_seen,target_os
 			), ranked AS (
 				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
 				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
@@ -270,9 +278,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			)
 			SELECT ecosystem,name,version,symbol,score,kind,target_os
 			FROM ranked c
-			WHERE (c.symbol<>'' OR NOT EXISTS (
-				SELECT 1 FROM verified_packages v WHERE v.purl=c.purl))
-			  AND (c.symbol='' OR NOT EXISTS (
+			WHERE (c.symbol='' OR NOT EXISTS (
 				SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
 			ORDER BY source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
 			LIMIT $1`, limit)
@@ -377,6 +383,16 @@ func (p *PG) AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID
 func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error) {
 	attached := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		if work.Kind == "EXPANSION" && work.Symbol == "" {
+			tag, err := c.Exec(ctx, `DELETE FROM authoring_assignments
+				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=''
+				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5`,
+				work.Ecosystem, work.Name, work.Version, sessionID, now)
+			if err == nil {
+				attached = tag.RowsAffected() == 1
+			}
+			return err
+		}
 		tag, err := c.Exec(ctx, `UPDATE authoring_assignments SET sample_id=$7,completed_at=$8
 			WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
 			  AND session_id=$5 AND sample_id IS NULL AND lease_expires_at>$6`,

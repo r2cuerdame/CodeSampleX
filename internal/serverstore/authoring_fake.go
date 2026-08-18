@@ -167,7 +167,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil || !containsString(manifest.Packages, pkg.PURL) {
 				continue
 			}
-			if symbol == "" || containsString(manifest.Symbols, symbol) {
+			if symbol != "" && containsString(manifest.Symbols, symbol) {
 				return false
 			}
 		}
@@ -197,12 +197,26 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 	}
 	observedScores := make(map[[3]string]int64)
+	packageScores := make(map[[2]string]int64)
 	for observed, score := range f.merge.observations {
 		targetOS := ""
 		if meta := f.aggMeta[observed]; meta != nil {
 			targetOS = authoringEvidenceOS(meta.envJSON)
 		}
 		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
+		packageScores[[2]string{observed.PURL, targetOS}] += score
+	}
+	for _, pkg := range f.packages {
+		for observed, score := range packageScores {
+			if observed[0] != pkg.PURL || score == 0 || !eligible(pkg, "") {
+				continue
+			}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", observed[1]}
+			if _, exists := candidates[key]; !exists {
+				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
+					Kind: "EXPANSION", Score: score, TargetOS: observed[1]}
+			}
+		}
 	}
 	for _, pkg := range f.packages {
 		for observed, score := range observedScores {
@@ -223,6 +237,9 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Kind != out[j].Kind {
 			return out[i].Kind == "FINDING"
+		}
+		if out[i].Kind == "EXPANSION" && (out[i].Symbol == "") != (out[j].Symbol == "") {
+			return out[i].Symbol != ""
 		}
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
@@ -385,6 +402,10 @@ func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, wo
 	current, ok := f.authoringWork[key]
 	if !ok || current.SessionID != sessionID || current.SampleID != "" || !now.Before(current.LeaseExpiresAt) {
 		return false, nil
+	}
+	if current.Kind == "EXPANSION" && current.Symbol == "" {
+		delete(f.authoringWork, key)
+		return true, nil
 	}
 	current.SampleID = sampleID
 	f.authoringWork[key] = current

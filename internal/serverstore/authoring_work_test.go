@@ -85,14 +85,17 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	}
 
 	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(candidates) != 2 {
+	if err != nil || len(candidates) != 3 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "axios.post" || candidates[0].Score != 17 {
 		t.Fatalf("first candidate = %+v", candidates[0])
 	}
 	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "axios.get" || candidates[1].Score != 5 {
-		t.Fatalf("second candidate = %+v", candidates[1])
+		t.Fatalf("symbol expansion = %+v", candidates[1])
+	}
+	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "" || candidates[2].Score != 22 {
+		t.Fatalf("package expansion = %+v", candidates[2])
 	}
 
 	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-finding", candidates, now, now.Add(24*time.Hour))
@@ -100,12 +103,29 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", work, ok, err)
 	}
 	remaining, err := store.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 2 {
+	if err != nil || len(remaining) != 3 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := store.ClaimAuthoringWork(ctx, "writer-expansion", remaining, now, now.Add(24*time.Hour))
 	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "axios.get" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
+	}
+}
+
+func TestPackageExpansionReopensAfterACompletedDraft(t *testing.T) {
+	store := NewFake()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	candidate := WantedRow{Ecosystem: "npm", Name: "axios", Version: "1.12.0", Kind: "EXPANSION", Score: 20, TargetOS: "linux"}
+	work, ok, err := store.ClaimAuthoringWork(t.Context(), "writer-a", []WantedRow{candidate}, now, now.Add(24*time.Hour))
+	if err != nil || !ok {
+		t.Fatalf("first claim = %+v ok=%v err=%v", work, ok, err)
+	}
+	if attached, err := store.AttachAuthoringWorkSample(t.Context(), "writer-a", work, "sha256:package-expansion", now.Add(time.Minute)); err != nil || !attached {
+		t.Fatalf("attach = %v err=%v", attached, err)
+	}
+	reopened, ok, err := store.ClaimAuthoringWork(t.Context(), "writer-b", []WantedRow{candidate}, now.Add(2*time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reopened.Name != "axios" {
+		t.Fatalf("reopened = %+v ok=%v err=%v", reopened, ok, err)
 	}
 }
 

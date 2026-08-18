@@ -568,7 +568,7 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 1. 현재 CSX_HOME만 사용하고 다른 프로필·토큰·자격·워크트리는 읽지 않는다.
 2. supervisor가 이미 세션을 갱신하고 일감을 임대했다. 아래 명령을 다시 실행해 같은 현재 임대를 확인한다.
 %s
-3. 배정 종류는 사용자 Wanted, 반복 실패 기반 Finding, 사용량 기반 커버리지 확장 중 하나다. 커버리지 확장에서 심벌이 비어 있으면 정확히 배정된 패키지·버전 안에서 많이 쓰는 핵심 API 하나를 골라 구체적인 계약을 만들며, 다른 패키지로 바꾸지 않는다.
+3. 배정 종류는 사용자 Wanted, 반복 실패 기반 Finding, 사용량 기반 커버리지 확장 중 하나다. 커버리지 확장에서 심벌이 비어 있으면 정확히 배정된 패키지·버전의 기존 공개 샘플과 겹치지 않는 다음 핵심 API 하나를 골라 구체적인 계약을 만들며, 다른 패키지로 바꾸지 않는다.
 4. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
 5. 진짜 MISS를 해결해 PASS한 경우에만 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고, 생성된 csx.json 스캐폴드를 완성한다. spec.json을 csx.json으로 복사하거나 매니페스트를 기억으로 만들지 않는다.
 6. csx sample create, verify, preview를 순서대로 통과시키고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
