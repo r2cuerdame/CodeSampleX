@@ -80,8 +80,12 @@ func TestWindowsLauncherApplyRetryAndOldPayloadOwnership(t *testing.T) {
 	if a.Previous == nil || a.Previous.Version != "v1.0.0" {
 		t.Fatalf("retry lost previous: %+v", a)
 	}
+	wantStable, err := resolveExistingPath(filepath.Join(root, "csx.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	stable, err := StableExecutable(home, oldPath)
-	if err != nil || stable != filepath.Join(root, "csx.exe") {
+	if err != nil || stable != wantStable {
 		t.Fatalf("stable=%q err=%v", stable, err)
 	}
 	customHome := t.TempDir()
@@ -92,7 +96,7 @@ func TestWindowsLauncherApplyRetryAndOldPayloadOwnership(t *testing.T) {
 		t.Fatalf("custom-home ownership=%t err=%v", owned, err)
 	}
 	stable, err = StableExecutable(customHome, oldPath)
-	if err != nil || stable != filepath.Join(root, "csx.exe") {
+	if err != nil || stable != wantStable {
 		t.Fatalf("custom-home stable=%q err=%v", stable, err)
 	}
 	c.Home = customHome
