@@ -74,7 +74,7 @@ func TestLandingEnglish(t *testing.T) {
 	// name, and what the network can observe in each ecosystem.
 	for _, s := range []string{"Packages", "Evidence", "Verified Samples", "45.2K",
 		`title="45,213" aria-label="Evidence: 45,213"`,
-		"What it can observe today", "npm", "packages &amp; versions"} {
+		"Ecosystem support today", "npm", "packages &amp; versions"} {
 		mustContain(t, body, s)
 	}
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
@@ -216,7 +216,7 @@ func TestLandingExplainsHowItWorks(t *testing.T) {
 func TestSupportRowsAreSelfExplaining(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
-	for _, ecosystem := range []string{"npm", "pypi", "golang", "cargo"} {
+	for _, ecosystem := range []string{"npm", "pypi", "golang", "cargo", "maven"} {
 		mustContain(t, body, ecosystem)
 	}
 	// Capabilities in words, not level codes.
@@ -225,6 +225,10 @@ func TestSupportRowsAreSelfExplaining(t *testing.T) {
 	// Symbol confidence survives the page removal, with its meaning on hover.
 	mustContain(t, body, "PROBABLE")
 	mustContain(t, body, "Resolved from imports and call sites")
+	// Maven's A4 support is useful, but it must not read as project-scanner
+	// coverage. Keep the Java runtime and that boundary visible together.
+	mustContain(t, body, "Maven / Java 21 contract verification is supported")
+	mustContain(t, body, "Local Java project scanning is not yet supported")
 	if strings.Contains(body, ">A0<") || strings.Contains(body, ">A4<") {
 		t.Error("landing shows raw capability codes instead of plain language")
 	}

@@ -329,3 +329,22 @@ find ` + vendorDir + `/maven-jars -type f -name '*.jar' -exec sha256sum {} \; | 
 test -s ` + vendorDir + `/maven-resolved.sha256
 cat ` + vendorDir + `/maven-dependencies.txt
 cat ` + vendorDir + `/maven-resolved.sha256`
+
+// gradleResolveScript runs only the host-generated project copied into /tmp.
+// The sample's Gradle project, settings, init scripts, wrapper and plugins are
+// never parsed while networking is available. GRADLE_USER_HOME is a freshly
+// cleared directory under /work, so sample-authored init scripts cannot enter
+// through Gradle's per-user configuration either.
+const gradleResolveScript = `set -eu
+rm -rf ` + vendorDir + `/gradle-home ` + vendorDir + `/gradle-jars ` + vendorDir + `/gradle-resolved.tsv ` + vendorDir + `/gradle-resolved.sha256 /tmp/csx-gradle-resolver
+mkdir -p ` + vendorDir + `/gradle-home /tmp/csx-gradle-resolver
+cp /work/` + gradleResolverBuild + ` /tmp/csx-gradle-resolver/build.gradle
+cp /work/` + gradleResolverSettings + ` /tmp/csx-gradle-resolver/settings.gradle
+cd /tmp/csx-gradle-resolver
+gradle --no-daemon --no-scan --console=plain --project-dir /tmp/csx-gradle-resolver resolveLocked
+test -s ` + vendorDir + `/gradle-resolved.tsv
+cd ` + vendorDir + `
+find gradle-jars -type f -name '*.jar' -exec sha256sum {} \; | sort > gradle-resolved.sha256
+test -s gradle-resolved.sha256
+cat gradle-resolved.tsv
+cat gradle-resolved.sha256`

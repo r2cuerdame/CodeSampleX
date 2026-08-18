@@ -122,6 +122,88 @@ func TestBrowserSampleQueuesExactWorkerRequirements(t *testing.T) {
 	}
 }
 
+func TestPythonSampleQueuesRuntimeVersionRequirement(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	manifest.Environment = domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "pypi", Runtime: "python",
+		RuntimeVersion: "3.14", ExecutionContext: "python",
+	}
+	manifest.Packages = []string{"pkg:pypi/example@1.0.0"}
+	manifest.Symbols = []string{"example.run"}
+	manifest.ContractCommand = []string{"python", "test/contract.py"}
+	manifest.VerifierAdapter = "python@1"
+	manifest.Case.Packages = append([]string(nil), manifest.Packages...)
+	manifest.Case.Symbols = append([]string(nil), manifest.Symbols...)
+	manifest.Case.CaseID = ""
+	manifest.Case.CaseID = manifest.Case.ComputeID()
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"test/contract.py": "print('contract')\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+
+	resp := postSample(t, srv.URL, manifest, sampleID, artifact, "")
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 201", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+	jobs, err := store.JobsForSample(context.Background(), sampleID)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %+v err=%v", jobs, err)
+	}
+	var want domain.WorkerRequirements
+	if err := json.Unmarshal([]byte(jobs[0].WantEnvJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	if want.Ecosystem != "pypi" || want.Runtime != "python" || want.RuntimeVersion != "3.14" ||
+		want.ExecutionContext != "python" {
+		t.Fatalf("queued Python requirements = %+v", want)
+	}
+}
+
+func TestGradleSampleQueuesExactVerifierAdapterRequirement(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	manifest := testManifest()
+	manifest.Environment = domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "maven", Runtime: "java", RuntimeVersion: "21",
+		ExecutionContext: "java", PackageManager: "gradle",
+	}
+	manifest.Packages = []string{"pkg:maven/org.apache.commons/commons-lang3@3.17.0"}
+	manifest.Symbols = []string{"StringUtils.isBlank"}
+	manifest.BuildCommand = []string{"gradle", "--offline", "--no-daemon", "--no-scan", "--console=plain", "--project-dir", "/work/.csx-vendor/gradle-runner", "classes"}
+	manifest.ContractCommand = []string{"gradle", "--offline", "--no-daemon", "--no-scan", "--console=plain", "--project-dir", "/work/.csx-vendor/gradle-runner", "contract"}
+	manifest.VerifierAdapter = "gradle-java@1"
+	manifest.Case.Packages = append([]string(nil), manifest.Packages...)
+	manifest.Case.Symbols = append([]string(nil), manifest.Symbols...)
+	manifest.Case.CaseID = ""
+	manifest.Case.CaseID = manifest.Case.ComputeID()
+	artifact := buildArtifact(t, manifest, map[string]string{
+		"src/main/java/BlankChecks.java": "public final class BlankChecks {}\n",
+		"test/Contract.java":             "public final class Contract { public static void main(String[] args) {} }\n",
+	})
+	sampleID := domain.SHA256Hex(artifact)
+
+	resp := postSample(t, srv.URL, manifest, sampleID, artifact, "")
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 201", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+	jobs, err := store.JobsForSample(context.Background(), sampleID)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %+v err=%v", jobs, err)
+	}
+	var want domain.WorkerRequirements
+	if err := json.Unmarshal([]byte(jobs[0].WantEnvJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	if want.VerifierAdapter != "gradle-java@1" || want.Ecosystem != "maven" || want.Runtime != "java" ||
+		want.RuntimeVersion != "21" || want.ExecutionContext != "java" {
+		t.Fatalf("queued Gradle requirements = %+v", want)
+	}
+}
+
 // TestRepublishDoesNotStackCrossJobs pins queue hygiene: re-publishing the
 // same content must not hand peers the same sandbox work again.
 func TestRepublishDoesNotStackCrossJobs(t *testing.T) {

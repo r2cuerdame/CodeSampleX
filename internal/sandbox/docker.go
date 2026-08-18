@@ -33,6 +33,14 @@ const (
 	// instead of failing before launch while looking for their old cache key.
 	chrome134Executable = "/home/pptruser/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
 	mavenJavaImage      = "maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927df2c662cdd47ddb116443d6bec4696cfae3de1a0ddac8fcc7b87ce61ae"
+	// Docker Official Image multi-platform index measured 2026-08-18. The
+	// image contains Gradle 8.14.3 and Eclipse Temurin JDK 21 on Alpine.
+	gradleJavaImage = "gradle:8.14.3-jdk21-alpine@sha256:d20561a56ff27350ea778b8151f6af913c76e9d35b6a135f927ee16e3ce8193c"
+	// Docker Official Image index measured 2026-08-18. It resolves to
+	// Python 3.14.7 on Alpine 3.24 for linux/amd64 while retaining the
+	// matching arm and other published architectures behind the same
+	// immutable multi-platform digest.
+	python314Image = "python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc"
 )
 
 // imageFor maps an ecosystem AND runtime to its pinned verifier image.
@@ -45,6 +53,14 @@ const (
 // unusable — every sample in the network claimed executionContext "node"
 // because no other one could be produced.
 func imageFor(ecosystem, runtime string) (string, error) {
+	return imageForRuntimeVersion(ecosystem, runtime, "")
+}
+
+// imageForRuntimeVersion selects the runtime line promised by a manifest.
+// Python 3.12 remains the compatibility default for old manifests; 3.14 is
+// opt-in and immutable. Other Python lines are refused instead of silently
+// producing a receipt for a different interpreter.
+func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, error) {
 	switch ecosystem {
 	case "npm":
 		switch runtime {
@@ -57,7 +73,17 @@ func imageFor(ecosystem, runtime string) (string, error) {
 		}
 		return "", fmt.Errorf("sandbox: no verifier image for npm runtime %q", runtime)
 	case "pypi":
-		return "python:3.12-alpine", nil
+		if runtime != "" && runtime != "python" {
+			return "", fmt.Errorf("sandbox: no verifier image for pypi runtime %q", runtime)
+		}
+		switch runtimeVersion {
+		case "", "3.12":
+			return "python:3.12-alpine", nil
+		case "3.14":
+			return python314Image, nil
+		default:
+			return "", fmt.Errorf("sandbox: no verifier image for python runtime version %q", runtimeVersion)
+		}
 	case "golang":
 		return "golang:1.26-alpine", nil
 	case "cargo":
@@ -109,15 +135,37 @@ func imageFor(ecosystem, runtime string) (string, error) {
 // pinned browser image.
 func imageForManifest(m domain.SampleManifest) (string, error) {
 	env := m.Environment.Normalize()
+	if m.VerifierAdapter == "gradle-java@1" {
+		if env.Ecosystem != "maven" || (env.Runtime != "" && env.Runtime != "java") {
+			return "", fmt.Errorf("sandbox: gradle-java@1 requires Maven coordinates and the Java runtime")
+		}
+		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
+			return "", fmt.Errorf("sandbox: Gradle Java verifier does not provide a browser environment")
+		}
+		if env.RuntimeVersion != "" && !runtimeVersionMatches("21", env.RuntimeVersion) {
+			return "", fmt.Errorf("sandbox: Gradle verifier Java version 21 cannot satisfy %q", env.RuntimeVersion)
+		}
+		if env.ExecutionContext != "" && env.ExecutionContext != "java" {
+			return "", fmt.Errorf("sandbox: no Gradle verifier image for execution context %q", env.ExecutionContext)
+		}
+		return gradleJavaImage, nil
+	}
+	if env.Ecosystem == "maven" && m.VerifierAdapter != "" && m.VerifierAdapter != "maven-java@1" {
+		return "", fmt.Errorf("sandbox: unsupported Maven verifier adapter %q", m.VerifierAdapter)
+	}
 	if env.ExecutionContext != "browser" {
 		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
 			return "", fmt.Errorf("sandbox: browser dimensions require browser execution context")
 		}
-		img, err := imageFor(env.Ecosystem, env.Runtime)
+		img, err := imageForRuntimeVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion)
 		if err != nil {
 			return "", err
 		}
-		rt, _, _ := imageRuntime(env.Ecosystem, env.Runtime)
+		rt, providedVersion, _ := imageRuntimeForVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion)
+		if env.RuntimeVersion != "" && env.Ecosystem != "pypi" &&
+			!runtimeVersionMatches(providedVersion, env.RuntimeVersion) {
+			return "", fmt.Errorf("sandbox: verifier runtime version %q cannot satisfy %q", providedVersion, env.RuntimeVersion)
+		}
 		if env.ExecutionContext != "" && env.ExecutionContext != rt {
 			return "", fmt.Errorf("sandbox: no verifier image for execution context %q", env.ExecutionContext)
 		}
@@ -153,23 +201,35 @@ func ContainerSupports(ecosystem, runtime string) bool {
 // must skip Firefox work and continue scanning the queue.
 func ContainerSupportsRequirements(w domain.WorkerRequirements) bool {
 	if w.Ecosystem == "" {
-		return w.Runtime == "" && w.ExecutionContext == "" && w.BrowserFamily == "" &&
+		return w.Runtime == "" && w.RuntimeVersion == "" && w.ExecutionContext == "" && w.BrowserFamily == "" &&
 			w.BrowserMajor == "" && w.Engine == "" && w.EngineVersion == ""
 	}
 	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
 		SchemaVersion: 1,
 		Ecosystem:     w.Ecosystem, Runtime: w.Runtime,
+		RuntimeVersion:   w.RuntimeVersion,
 		ExecutionContext: w.ExecutionContext,
 		BrowserFamily:    w.BrowserFamily, BrowserMajor: w.BrowserMajor,
 		Engine: w.Engine, EngineVersion: w.EngineVersion,
-	}}
+	}, VerifierAdapter: w.VerifierAdapter}
 	_, err := imageForManifest(m)
 	return err == nil
+}
+
+// Runtime requirements outside Python historically name either the image's
+// recorded line ("22") or a more specific point on it ("22.18"). Preserve
+// that behavior while rejecting a genuinely different line such as Node 20.
+func runtimeVersionMatches(provided, requested string) bool {
+	return requested == provided || strings.HasPrefix(requested, provided+".")
 }
 
 // imageRuntime reports the runtime the pinned image provides and its major
 // version. Kept beside imageFor so the two never drift.
 func imageRuntime(ecosystem, runtime string) (rt, version, language string) {
+	return imageRuntimeForVersion(ecosystem, runtime, "")
+}
+
+func imageRuntimeForVersion(ecosystem, runtime, runtimeVersion string) (rt, version, language string) {
 	switch ecosystem {
 	case "npm":
 		switch runtime {
@@ -180,6 +240,9 @@ func imageRuntime(ecosystem, runtime string) (rt, version, language string) {
 		}
 		return "node", "22", "javascript"
 	case "pypi":
+		if runtimeVersion == "3.14" {
+			return "python", "3.14", "python"
+		}
 		return "python", "3.12", "python"
 	case "golang":
 		return "go", "1.26", "go"
@@ -216,7 +279,7 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	// The sample's declared runtime picks the container, so it must also
 	// describe the receipt. Reading the HOST runtime here would stamp a
 	// bun contract as node whenever the operator happened to run node.
-	rt, ver, lang := imageRuntime(eco, runtimeOf(m, host))
+	rt, ver, lang := imageRuntimeForVersion(eco, runtimeOf(m, host), m.Environment.RuntimeVersion)
 	// The base and the libc come from the IMAGE, not from a constant.
 	// "the verifier images are all alpine" stopped being true when Dart
 	// arrived: dart:3.13.0 is Debian, so every Dart receipt claimed
@@ -235,6 +298,8 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	packageManager := m.Environment.PackageManager
 	if eco == "npm" {
 		packageManager = NPMResolver(runtimeOf(m, host))
+	} else if m.VerifierAdapter == "gradle-java@1" {
+		packageManager = "gradle"
 	} else if eco == "maven" {
 		packageManager = "maven"
 	}
@@ -266,7 +331,11 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 		env.LanguageVersion = "21"
 		env.Compiler = "javac"
 		env.CompilerVersion = "21"
-		env.PackageManagerVersion = "3.9"
+		if m.VerifierAdapter == "gradle-java@1" {
+			env.PackageManagerVersion = "8.14"
+		} else {
+			env.PackageManagerVersion = "3.9"
+		}
 	}
 	return env.Normalize()
 }
@@ -283,13 +352,12 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name stri
 	if networkOff {
 		args = append(args, "--network=none")
 	}
-	if image == chrome134Image {
-		// The official image defaults to uid 10042, which cannot write a
-		// normal user's bind-mounted temporary workspace on Linux. Existing
-		// verifier images already run stages as container root. Chrome is
-		// launched by the sample with --no-sandbox inside this disposable
-		// outer Docker isolation, and the fixed cache points at the browser
-		// bundled in the image rather than /root.
+	if image == chrome134Image || image == gradleJavaImage {
+		// These official images default to non-root users (Chrome uid 10042,
+		// Gradle uid 1000) which cannot write an arbitrary host-owned temporary
+		// workspace on Linux. Existing verifier images already run stages as
+		// container root. The disposable outer Docker isolation exposes only
+		// /work; Chrome uses --no-sandbox and Gradle's fixed cache stays there.
 		args = append(args, "--init", "--user", "0:0")
 	}
 	args = append(args, "--memory=512m", "--pids-limit=256")
@@ -330,6 +398,12 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 
 func stageEnvironmentForImage(image, ecosystem, runtime string) []string {
 	env := stageEnv(ecosystem, runtime)
+	if image == gradleJavaImage {
+		env = []string{
+			"GRADLE_USER_HOME=" + vendorDir + "/gradle-home",
+			"JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8",
+		}
+	}
 	if image == chrome134Image {
 		env = append(env,
 			"PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer",
@@ -370,8 +444,18 @@ func reapContainer(name string) {
 // Resolve fetches dependencies with the network ON but lifecycle scripts OFF.
 func (r DockerRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
 	if m.Environment.Ecosystem == "maven" {
-		if err := prepareMavenResolver(dir, m); err != nil {
-			return StageResult{Result: ResultFail, Log: err.Error()}
+		switch m.VerifierAdapter {
+		case "maven-java@1":
+			if err := prepareMavenResolver(dir, m); err != nil {
+				return StageResult{Result: ResultFail, Log: err.Error()}
+			}
+		case "gradle-java@1":
+			if err := prepareGradleResolver(dir, m); err != nil {
+				return StageResult{Result: ResultFail, Log: err.Error()}
+			}
+			return r.stage(ctx, dir, m, false, []string{"sh", "-c", gradleResolveScript})
+		default:
+			return StageResult{Result: ResultFail, Log: fmt.Sprintf("sandbox: unsupported Maven verifier adapter %q", m.VerifierAdapter)}
 		}
 	}
 	cmd, err := resolveCommand(m.Environment.Ecosystem, m.Environment.Runtime)
@@ -383,6 +467,9 @@ func (r DockerRunner) Resolve(ctx context.Context, dir string, m domain.SampleMa
 
 // Build runs the manifest's build command with the network OFF.
 func (r DockerRunner) Build(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
+	if m.VerifierAdapter == "gradle-java@1" {
+		return r.stage(ctx, dir, m, true, append([]string(nil), gradleBuildCommand...))
+	}
 	if len(m.BuildCommand) == 0 {
 		return skipped("no build command in manifest")
 	}
@@ -391,6 +478,9 @@ func (r DockerRunner) Build(ctx context.Context, dir string, m domain.SampleMani
 
 // Contract runs the manifest's contract command with the network OFF.
 func (r DockerRunner) Contract(ctx context.Context, dir string, m domain.SampleManifest) StageResult {
+	if m.VerifierAdapter == "gradle-java@1" {
+		return r.stage(ctx, dir, m, true, append([]string(nil), gradleContractCommand...))
+	}
 	if len(m.ContractCommand) == 0 {
 		return skipped("no contract command in manifest")
 	}
@@ -434,6 +524,8 @@ var imageBases = map[string]struct{ bucket, libc string }{
 	"node:22-alpine":       {"alpine", "musl"},
 	chrome134Image:         {"debian", "glibc"},
 	"python:3.12-alpine":   {"alpine", "musl"},
+	python314Image:         {"alpine", "musl"},
+	gradleJavaImage:        {"alpine", "musl"},
 	"golang:1.26-alpine":   {"alpine", "musl"},
 	"rust:1-alpine":        {"alpine", "musl"},
 	"ruby:3-alpine":        {"alpine", "musl"},

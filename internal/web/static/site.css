@@ -342,6 +342,7 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .caps { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-left: auto; }
 .cap { display: inline-flex; gap: 0.3rem; align-items: baseline; font-size: 0.82rem; }
 .cap.off { color: var(--dim); }
+.econote { flex-basis: 100%; min-width: 0; }
 .network .chain { margin: 0.9rem 0 0; }
 .network, #install, #contract { scroll-margin-top: 6rem; }
 

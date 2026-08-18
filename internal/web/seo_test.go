@@ -6,7 +6,28 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
+
+// Maven verification is a supported, searchable landing-page fact in every
+// locale. The same visible sentence also preserves the important boundary:
+// A4 contract verification does not mean local Java projects are scanned.
+func TestLandingAdvertisesMavenJavaVerificationHonestly(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	for _, lang := range i18n.Supported {
+		path := "/" + lang + "/"
+		if lang == i18n.Default {
+			path = "/"
+		}
+		body := get(t, mux, path).Body.String()
+		mustContain(t, body, "Maven / Java 21")
+		mustContain(t, body, "Gradle / Java 21")
+		mustContain(t, body, `class="econote dim small"`)
+		mustContain(t, body, i18n.T(lang, "support.maven_java_note"))
+		mustContain(t, body, i18n.T(lang, "support.gradle_java_note"))
+	}
+}
 
 // TestSitemapURLsResolve walks every <loc> in the sitemap and fetches it.
 // A sitemap that advertises a URL the server does not serve spends crawl

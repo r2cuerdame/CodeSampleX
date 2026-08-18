@@ -138,8 +138,10 @@ const (
 // what must be available, not where a result already ran.
 type WorkerRequirements struct {
 	SandboxCapability SandboxCapability `json:"sandboxCapability,omitempty"`
+	VerifierAdapter   string            `json:"verifierAdapter,omitempty"`
 	Ecosystem         string            `json:"ecosystem,omitempty"`
 	Runtime           string            `json:"runtime,omitempty"`
+	RuntimeVersion    string            `json:"runtimeVersion,omitempty"`
 	ExecutionContext  string            `json:"executionContext,omitempty"`
 	BrowserFamily     string            `json:"browserFamily,omitempty"`
 	BrowserMajor      string            `json:"browserMajor,omitempty"`

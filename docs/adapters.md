@@ -26,6 +26,7 @@ An ecosystem can have one without the other, and five of them do.
 | pub | dart@1 | pub | – | – | – | – | ✓ | UNKNOWN |
 | hex | elixir@1 | mix | – | – | – | – | ✓ | UNKNOWN |
 | maven | maven-java@1 | Maven | – | – | – | – | ✓ | UNKNOWN |
+| maven | gradle-java@1 | Gradle | – | – | – | – | ✓ | UNKNOWN |
 
 ## Verifier images
 
@@ -40,7 +41,8 @@ that most often decides whether a package with a native module loads at all.
 | npm | node | `node:22-alpine` |
 | npm | bun | `oven/bun:1-alpine` |
 | npm | deno | `denoland/deno:alpine` |
-| pypi | python | `python:3.12-alpine` |
+| pypi | python 3.12 (default) | `python:3.12-alpine` |
+| pypi | python 3.14 | `python:3.14-alpine@sha256:05b2b8b7…` |
 | golang | go | `golang:1.26-alpine` |
 | cargo | rust | `rust:1-alpine` |
 | composer | php | `composer:2` |
@@ -48,12 +50,18 @@ that most often decides whether a package with a native module loads at all.
 | pub | dart | `dart:3.13.0` |
 | hex | elixir | `elixir:1.20.1-alpine` |
 | maven | Java | `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927…` |
+| maven | Java (Gradle) | `gradle:8.14.3-jdk21-alpine@sha256:d20561…` |
 
 npm keys on the **runtime**, not just the ecosystem, because "does this
 package work on Bun" is exactly the question this project exists to answer.
 Keying on ecosystem alone verified every npm sample under Node and made the
 execution-context axis (docs/execution-context.md) unusable: every sample in
 the network claimed `node` because nothing else could be produced.
+
+PyPI additionally keys on the manifest's runtime version. An omitted version
+or `3.12` keeps the established Python 3.12 verifier; exact `3.14` selects the
+digest-pinned Python 3.14 Alpine image. Other Python runtime lines are rejected
+before a worker claims the job rather than being run under a different Python.
 
 ## How the two stages stay honest
 
@@ -81,6 +89,23 @@ CodeSampleX generates a resolver project and Central-only settings, invokes the
 pinned dependency plugin from `/tmp` with transitive expansion disabled, and
 passes only the resulting JAR directory to offline `javac`/`java` stages.
 
+Gradle support keeps that boundary rather than weakening it. The network-on
+stage does **not** run the sample's `build.gradle`, `settings.gradle`, init
+scripts, wrapper, `gradle.properties`, or plugins. The host writes a trusted
+Central-only Gradle resolver, runs it from `/tmp` with an empty
+`GRADLE_USER_HOME`, disables transitive expansion, and fails unless the exact
+resolved coordinate set equals the manifest's complete Maven purl closure.
+Ranges, `SNAPSHOT`s, Gradle's dynamic `+` selectors, classifiers and non-JAR
+packaging are rejected. Each resolved JAR is copied into a coordinate-shaped
+workspace path and hashed for receipt evidence.
+
+Build and contract are also fixed generated Gradle projects, but run in fresh
+containers with `--network=none` and Gradle `--offline`. The supported source
+convention is `src/main/java` plus a default-package `test/Contract.java`; the
+built-in Java plugin compiles with `--release 21`, and a built-in `JavaExec`
+task runs `Contract`. This proves Gradle itself performed the offline compile
+and contract without granting sample build logic network access.
+
 ## Honest limitations, stated on purpose
 
 - **PROBABLE, not EXACT**: static import/member analysis without a type
@@ -99,9 +124,10 @@ passes only the resulting JAR directory to offline `javac`/`java` stages.
   macro-expanded usage report `UNKNOWN` rather than guessing (goal.md §13.3,
   §13.5).
 - **Deliberately narrow JVM support**: plain Java library contracts backed by a
-  complete exact Maven Central JAR set are verified; Gradle, arbitrary Maven
-  builds/plugins, classifiers, SNAPSHOTs and Kotlin compiler plugins remain
-  unsupported. See docs/kotlin-evaluation.md.
+  complete exact Maven Central JAR set are verified through generated Maven or
+  Gradle projects. Arbitrary sample builds/plugins, classifiers, SNAPSHOTs,
+  dynamic Gradle selectors and Kotlin compiler plugins remain unsupported. See
+  docs/kotlin-evaluation.md.
 
 Machine-readable source of truth: `schemas/v1/adapters.json`, served at
 `GET /v1/adapters` and rendered at `/adapters`.

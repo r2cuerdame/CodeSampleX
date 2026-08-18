@@ -344,6 +344,7 @@ func ecosystemDisplayName(ecosystem string) string {
 		"composer": "composer · PHP",
 		"pub":      "pub · Dart",
 		"hex":      "hex · Elixir/Erlang",
+		"maven":    "maven · Java/JVM",
 		"other":    "기타/알 수 없음",
 	}
 	if label, ok := labels[ecosystem]; ok {

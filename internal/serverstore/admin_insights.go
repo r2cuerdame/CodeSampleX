@@ -59,7 +59,7 @@ func (c AdminVerificationCounts) Total() int64 {
 // AdminEcosystemCount counts 30-day PASS receipts by the environment recorded
 // on the receipt itself. It never substitutes the sample author's manifest
 // environment for where a matrix verification actually ran. The PG reader
-// returns only eight fixed supported labels plus "other", never raw input.
+// returns only nine fixed supported labels plus "other", never raw input.
 type AdminEcosystemCount struct {
 	Ecosystem     string
 	Verifications int64
@@ -196,6 +196,7 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 						WHEN 'composer' THEN 'composer'
 						WHEN 'pub' THEN 'pub'
 						WHEN 'hex' THEN 'hex'
+						WHEN 'maven' THEN 'maven'
 						ELSE 'other'
 				       END AS ecosystem
 				FROM receipts r
@@ -209,7 +210,7 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 			FROM recent_pass_receipts
 			GROUP BY ecosystem
 			ORDER BY COUNT(*) DESC, ecosystem ASC
-			LIMIT 9`, windowStart, now)
+			LIMIT 10`, windowStart, now)
 		if err != nil {
 			return err
 		}
@@ -254,7 +255,8 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 				    OR purl LIKE 'pkg:gem/%@%'
 				    OR purl LIKE 'pkg:composer/%@%'
 				    OR purl LIKE 'pkg:pub/%@%'
-				    OR purl LIKE 'pkg:hex/%@%')
+				    OR purl LIKE 'pkg:hex/%@%'
+				    OR purl LIKE 'pkg:maven/%@%')
 			)
 			SELECT package_key, COUNT(*) AS verified_samples
 			FROM package_refs

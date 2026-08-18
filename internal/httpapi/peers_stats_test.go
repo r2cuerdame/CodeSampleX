@@ -289,19 +289,27 @@ func TestAdaptersMatchesSchemaFile(t *testing.T) {
 		t.Fatalf("adapters doc: %v, adapters=%d", err, len(doc.Adapters))
 	}
 	seen := map[string]bool{}
+	mavenAdapters := map[string]bool{}
 	for _, a := range doc.Adapters {
 		if a.Ecosystem == "" || a.Name == "" || len(a.Capabilities) == 0 {
 			t.Fatalf("incomplete adapter entry: %+v", a)
 		}
-		if seen[a.Ecosystem] {
-			t.Fatalf("duplicate adapter for ecosystem %q", a.Ecosystem)
+		key := a.Ecosystem + "/" + a.Name
+		if seen[key] {
+			t.Fatalf("duplicate adapter identity %q", key)
 		}
-		seen[a.Ecosystem] = true
+		seen[key] = true
+		if a.Ecosystem == "maven" {
+			mavenAdapters[a.Name] = true
+		}
 		for _, c := range a.Capabilities {
 			if c == "A3" {
 				t.Fatal("no Public v1 adapter may claim A3")
 			}
 		}
+	}
+	if !mavenAdapters["maven-java"] || !mavenAdapters["gradle-java"] {
+		t.Fatalf("Maven ecosystem adapters = %v, want Maven and Gradle verification lanes", mavenAdapters)
 	}
 }
 

@@ -75,6 +75,48 @@ console.log("contract ok");
 	}
 }
 
+// TestDockerSmokePython314 proves that a 3.14 manifest actually executes in
+// the digest-pinned Python 3.14 image, rather than merely receiving a 3.14
+// label in the receipt environment.
+func TestDockerSmokePython314(t *testing.T) {
+	if os.Getenv("CSX_TEST_DOCKER") != "1" {
+		t.Skip("set CSX_TEST_DOCKER=1 to run the real-docker smoke test")
+	}
+	if Detect(context.Background()) != domain.CapContainerRun {
+		t.Skip("docker daemon not available")
+	}
+
+	dir := t.TempDir()
+	contract := `import glob, platform, sys
+assert sys.version_info[:2] == (3, 14), sys.version
+assert glob.glob("/lib/ld-musl-*"), "musl loader not found"
+print(platform.python_version())
+`
+	if err := os.WriteFile(filepath.Join(dir, "contract.py"), []byte(contract), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := domain.SampleManifest{
+		SchemaVersion: 1,
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "pypi", Runtime: "python",
+			RuntimeVersion: "3.14", ExecutionContext: "python",
+		},
+		ContractCommand: []string{"python", "contract.py"},
+		VerifierAdapter: "python@1",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	r := DockerRunner{}
+	if res := r.Contract(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("Python 3.14 contract: %s\n%s", res.Result, res.Log)
+	}
+	env := r.StageEnvironment(domain.EnvironmentFingerprint{SchemaVersion: 1, Arch: "x64"}, m)
+	if env.Runtime != "python" || env.RuntimeVersion != "3.14" || env.Libc != "musl" {
+		t.Fatalf("Python 3.14 stage environment = %+v", env)
+	}
+}
+
 // TestDockerSmokeHexResolve drives the real hex resolve against a fixture
 // mix.lock. It exists because hexResolveScript is the one resolve step that
 // is a script rather than an argv, and a script can be syntactically fine
@@ -181,5 +223,74 @@ public final class Contract {
 	if env.Runtime != "java" || env.RuntimeVersion != "21" || env.Compiler != "javac" ||
 		env.PackageManager != "maven" || env.Libc != "musl" {
 		t.Fatalf("Maven stage environment is not the image that ran: %+v", env)
+	}
+}
+
+// TestDockerSmokeGradleJava proves the Gradle lane's three separate facts:
+// the network-on stage runs only a generated Central resolver from /tmp, the
+// network-off build runs real Gradle against the generated Java project, and
+// the network-off contract executes the compiled Contract class. Sample
+// Gradle files are intentionally hostile canaries and must remain irrelevant.
+func TestDockerSmokeGradleJava(t *testing.T) {
+	if os.Getenv("CSX_TEST_DOCKER") != "1" {
+		t.Skip("set CSX_TEST_DOCKER=1 to run the real-docker smoke test")
+	}
+	if Detect(context.Background()) != domain.CapContainerRun {
+		t.Skip("docker daemon not available")
+	}
+
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("build.gradle", `throw new GradleException('sample build.gradle must never run')`)
+	write("settings.gradle", `throw new GradleException('sample settings.gradle must never run')`)
+	write("init.gradle", `throw new GradleException('sample init.gradle must never run')`)
+	write("gradle.properties", `org.gradle.jvmargs=-javaagent:/work/does-not-exist.jar`)
+	write("gradlew", "#!/bin/sh\nexit 91\n")
+	write("src/main/java/BlankChecks.java", `import org.apache.commons.lang3.StringUtils;
+public final class BlankChecks {
+  public static boolean blank(String value) { return StringUtils.isBlank(value); }
+}
+`)
+	write("test/Contract.java", `public final class Contract {
+  public static void main(String[] args) {
+    if (!BlankChecks.blank(" \t")) throw new AssertionError("whitespace must be blank");
+    if (BlankChecks.blank("x")) throw new AssertionError("text must not be blank");
+    System.out.println("gradle contract ok");
+  }
+}
+`)
+
+	m := gradleManifest("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	r := DockerRunner{}
+	if res := r.Resolve(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("resolve: %s\n%s", res.Result, res.Log)
+	}
+	if res := r.Build(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("build: %s\n%s", res.Result, res.Log)
+	}
+	if res := r.Contract(ctx, dir, m); res.Result != ResultPass {
+		t.Fatalf("contract: %s\n%s", res.Result, res.Log)
+	}
+	for _, rel := range []string{gradleResolvedList, gradleResolvedHashes} {
+		info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil || info.Size() == 0 {
+			t.Fatalf("Gradle resolve evidence %s missing or empty: %v", rel, err)
+		}
+	}
+	env := r.StageEnvironment(domain.EnvironmentFingerprint{SchemaVersion: 1, Arch: "x64"}, m)
+	if env.Runtime != "java" || env.RuntimeVersion != "21" || env.Compiler != "javac" ||
+		env.PackageManager != "gradle" || env.PackageManagerVersion != "8.14" || env.Libc != "musl" {
+		t.Fatalf("Gradle stage environment is not the image that ran: %+v", env)
 	}
 }

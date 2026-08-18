@@ -36,7 +36,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification now runs in the pinned python:3.12-alpine image: pip resolves into the workspace vendor directory so the offline contract stage can import it (A4, proven by published samples)."
+      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification uses python:3.12-alpine when runtimeVersion is omitted or 3.12, and the digest-pinned python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc when runtimeVersion is 3.14. Other Python lines are rejected before claim. pip resolves into the workspace vendor directory so the offline contract stage can import it (A4, proven by published samples)."
     },
     {
       "ecosystem": "golang",
@@ -133,7 +133,20 @@
         "A4"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Verification-only Java adapter. The sample's pom.xml, .mvn directory, settings and build plugins are never used while networking is enabled. Exact canonical Maven purls in the manifest are the complete runtime lock (direct and companion JARs): CodeSampleX generates a fresh resolver POM and Central-only settings, runs only maven-dependency-plugin 3.9.0 from /tmp with transitive expansion disabled and strict checksums, then runs build/contract offline in the digest-pinned maven:3.9.11-eclipse-temurin-21-alpine image. This deliberately excludes Gradle, Maven classifiers/non-JAR packaging, SNAPSHOTs and dependency graphs not fully pinned in the manifest. No local project scanner yet, so Maven projects get no A0/A1/A2 detection."
+      "notes": "Verification-only Java adapter. The sample's pom.xml, .mvn directory, settings and build plugins are never used while networking is enabled. Exact canonical Maven purls in the manifest are the complete runtime lock (direct and companion JARs): CodeSampleX generates a fresh resolver POM and Central-only settings, runs only maven-dependency-plugin 3.9.0 from /tmp with transitive expansion disabled and strict checksums, then runs build/contract offline in the digest-pinned maven:3.9.11-eclipse-temurin-21-alpine image. This deliberately excludes Maven classifiers/non-JAR packaging, SNAPSHOTs and dependency graphs not fully pinned in the manifest. Gradle contracts use the separate gradle-java@1 adapter. No local project scanner yet, so Maven projects get no A0/A1/A2 detection."
+    },
+    {
+      "ecosystem": "maven",
+      "name": "gradle-java",
+      "version": "1.0.0",
+      "packageManagers": [
+        "gradle"
+      ],
+      "capabilities": [
+        "A4"
+      ],
+      "symbolConfidence": "UNKNOWN",
+      "notes": "Verification-only Gradle/Java adapter. The sample's build.gradle(.kts), settings.gradle(.kts), init scripts, wrapper, gradle.properties and plugins are never executed while networking is enabled. Exact canonical Maven purls are the complete JAR closure; ranges, dynamic + selectors, SNAPSHOTs, classifiers, non-JAR packaging and transitive expansion are rejected. CodeSampleX generates a Central-only Gradle resolver, runs it from /tmp with a clean workspace GRADLE_USER_HOME, verifies the resolved coordinate set, copies and hashes each JAR, then uses a second generated Gradle Java project for network-off compile and Contract execution. The digest-pinned image is gradle:8.14.3-jdk21-alpine@sha256:d20561a56ff27350ea778b8151f6af913c76e9d35b6a135f927ee16e3ce8193c. No local Java/Gradle project scanner exists, so this adapter claims no A0/A1/A2."
     }
   ],
   "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."

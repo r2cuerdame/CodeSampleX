@@ -110,9 +110,60 @@ func resolvedVersion(dir string, m domain.SampleManifest, p domain.PURL) string 
 	case "pypi":
 		return distInfoResolved(dir, p.Name)
 	case "maven":
+		if m.VerifierAdapter == "gradle-java@1" {
+			return gradleResolved(dir, p)
+		}
 		return mavenResolved(dir, p)
 	}
 	return ""
+}
+
+// gradleResolved proves that the trusted Central-only Gradle resolver copied
+// the exact manifest coordinate into its closed JAR tree. Both the coordinate
+// mapping and SHA-256 list are generated after the clean GRADLE_USER_HOME
+// resolve; neither is accepted without the referenced regular JAR and a hash
+// that still matches its bytes.
+func gradleResolved(dir string, p domain.PURL) string {
+	want := p.String() + "\t"
+	var rel string
+	for _, line := range strings.Split(readFile(dir, ".csx-vendor/gradle-resolved.tsv"), "\n") {
+		if !strings.HasPrefix(line, want) {
+			continue
+		}
+		if rel != "" {
+			return "" // duplicate evidence is ambiguous
+		}
+		rel = strings.TrimPrefix(line, want)
+	}
+	if rel == "" || filepath.IsAbs(rel) || filepath.ToSlash(filepath.Clean(rel)) != rel ||
+		!strings.HasPrefix(rel, "gradle-jars/") || !strings.HasSuffix(rel, ".jar") {
+		return ""
+	}
+	jarPath := filepath.Join(dir, ".csx-vendor", filepath.FromSlash(rel))
+	info, err := os.Lstat(jarPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() == 0 {
+		return ""
+	}
+
+	var recorded string
+	for _, line := range strings.Split(readFile(dir, ".csx-vendor/gradle-resolved.sha256"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[1] != rel {
+			continue
+		}
+		if recorded != "" {
+			return ""
+		}
+		recorded = strings.ToLower(fields[0])
+	}
+	if len(recorded) != 64 {
+		return ""
+	}
+	body, err := os.ReadFile(jarPath)
+	if err != nil || strings.TrimPrefix(domain.SHA256Hex(body), "sha256:") != recorded {
+		return ""
+	}
+	return p.Version
 }
 
 // mavenResolved proves one manifest-locked JAR was fetched by the generated

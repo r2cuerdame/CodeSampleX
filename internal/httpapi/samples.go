@@ -242,8 +242,10 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 	}
 	requirements := domain.WorkerRequirements{
 		SandboxCapability: domain.CapContainerRun,
+		VerifierAdapter:   manifest.VerifierAdapter,
 		Ecosystem:         manifest.Environment.Ecosystem,
 		Runtime:           manifest.Environment.Runtime,
+		RuntimeVersion:    manifest.Environment.RuntimeVersion,
 		ExecutionContext:  manifest.Environment.ExecutionContext,
 		BrowserFamily:     manifest.Environment.BrowserFamily,
 		BrowserMajor:      manifest.Environment.BrowserMajor,

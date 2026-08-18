@@ -3,6 +3,7 @@ package verifier
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -217,6 +218,55 @@ func TestResolvedPackagesReadsGoMVSBuildList(t *testing.T) {
 	got := resolvedPackages(dir, manifestWith("pkg:golang/golang.org/x/crypto@v0.19.0"))
 	if len(got) != 1 || got[0] != "pkg:golang/golang.org/x/crypto@v0.31.0" {
 		t.Errorf("resolved %v, want the selected build-list version", got)
+	}
+}
+
+func TestResolvedPackagesProvesGradleCopiedJarAndExactCoordinate(t *testing.T) {
+	dir := t.TempDir()
+	jar := []byte("a real resolved jar")
+	hash := strings.TrimPrefix(domain.SHA256Hex(jar), "sha256:")
+	writeAll(t, dir, map[string]string{
+		".csx-vendor/gradle-jars/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.jar": string(jar),
+		".csx-vendor/gradle-resolved.tsv":    "pkg:maven/org.apache.commons/commons-lang3@3.17.0\tgradle-jars/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.jar\n",
+		".csx-vendor/gradle-resolved.sha256": hash + "  gradle-jars/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.jar\n",
+	})
+	m := manifestWith("pkg:maven/org.apache.commons/commons-lang3@3.17.0")
+	m.Environment.Ecosystem = "maven"
+	m.VerifierAdapter = "gradle-java@1"
+	got := resolvedPackages(dir, m)
+	if len(got) != 1 || got[0] != "pkg:maven/org.apache.commons/commons-lang3@3.17.0" {
+		t.Fatalf("Gradle resolved packages = %v", got)
+	}
+}
+
+func TestGradleResolvedPackagesRejectsUnprovedOrMutatedJar(t *testing.T) {
+	const purl = "pkg:maven/org.apache.commons/commons-lang3@3.17.0"
+	const rel = "gradle-jars/org/apache/commons/commons-lang3/3.17.0/commons-lang3-3.17.0.jar"
+	m := manifestWith(purl)
+	m.Environment.Ecosystem = "maven"
+	m.VerifierAdapter = "gradle-java@1"
+	for name, files := range map[string]map[string]string{
+		"mapping only": {
+			".csx-vendor/gradle-resolved.tsv": purl + "\t" + rel + "\n",
+		},
+		"wrong hash": {
+			".csx-vendor/" + rel:                 "jar",
+			".csx-vendor/gradle-resolved.tsv":    purl + "\t" + rel + "\n",
+			".csx-vendor/gradle-resolved.sha256": strings.Repeat("0", 64) + "  " + rel + "\n",
+		},
+		"path traversal": {
+			"outside.jar":                        "jar",
+			".csx-vendor/gradle-resolved.tsv":    purl + "\tgradle-jars/../../outside.jar\n",
+			".csx-vendor/gradle-resolved.sha256": strings.Repeat("0", 64) + "  gradle-jars/../../outside.jar\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeAll(t, dir, files)
+			if got := resolvedPackages(dir, m); len(got) != 0 {
+				t.Fatalf("unproved Gradle JAR produced %v", got)
+			}
+		})
 	}
 }
 

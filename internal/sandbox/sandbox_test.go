@@ -315,6 +315,65 @@ func TestRuntimePicksTheImage(t *testing.T) {
 	}
 }
 
+func TestPythonRuntimeVersionPicksPinnedImageAndReceipt(t *testing.T) {
+	host := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"}
+	manifest := func(version string) domain.SampleManifest {
+		return domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "pypi", Runtime: "python",
+			RuntimeVersion: version, ExecutionContext: "python",
+		}}
+	}
+
+	for _, tc := range []struct {
+		version, wantImage, wantReceipt string
+	}{
+		{"", "python:3.12-alpine", "3.12"},
+		{"3.12", "python:3.12-alpine", "3.12"},
+		{"3.14", python314Image, "3.14"},
+	} {
+		m := manifest(tc.version)
+		img, err := imageForManifest(m)
+		if err != nil || img != tc.wantImage {
+			t.Errorf("python %q image = %q, %v; want %q", tc.version, img, err, tc.wantImage)
+			continue
+		}
+		env := (DockerRunner{}).StageEnvironment(host, m)
+		if env.Runtime != "python" || env.RuntimeVersion != tc.wantReceipt || env.ExecutionContext != "python" {
+			t.Errorf("python %q receipt runtime = %+v", tc.version, env)
+		}
+		if env.OS != "linux" || env.OSVersionBucket != "alpine" || env.Libc != "musl" {
+			t.Errorf("python %q receipt base = %+v", tc.version, env)
+		}
+		if !ContainerSupportsRequirements(domain.WorkerRequirements{
+			SandboxCapability: domain.CapContainerRun,
+			Ecosystem:         "pypi", Runtime: "python", RuntimeVersion: tc.version,
+			ExecutionContext: "python",
+		}) {
+			t.Errorf("worker rejected supported Python %q requirements", tc.version)
+		}
+	}
+
+	for _, version := range []string{"3.11", "3.13", "3.15", "3.14.1"} {
+		m := manifest(version)
+		if _, err := imageForManifest(m); err == nil {
+			t.Errorf("unsupported Python %q selected an image", version)
+		}
+		if ContainerSupportsRequirements(domain.WorkerRequirements{
+			SandboxCapability: domain.CapContainerRun,
+			Ecosystem:         "pypi", Runtime: "python", RuntimeVersion: version,
+			ExecutionContext: "python",
+		}) {
+			t.Errorf("worker would claim unsupported Python %q", version)
+		}
+	}
+	if ContainerSupportsRequirements(domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun,
+		Ecosystem:         "pypi", Runtime: "ruby", RuntimeVersion: "3.14",
+	}) {
+		t.Fatal("PyPI worker accepted a non-Python runtime")
+	}
+}
+
 func TestBrowserContextPicksARealChromeImageAndReceiptContext(t *testing.T) {
 	m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
 		SchemaVersion: 1,

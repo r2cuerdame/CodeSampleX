@@ -157,6 +157,7 @@
         {{- range .Can}}<span class="cap on"><span class="y" aria-hidden="true">✓</span>{{.}}</span>{{end}}
         {{- range .Missing}}<span class="cap off"><span class="n" aria-hidden="true">✕</span>{{.}}</span>{{end}}
       </span>
+      {{if .Note}}<span class="econote dim small">{{.Note}}</span>{{end}}
     </li>
   {{- end}}
   </ul>

@@ -139,10 +139,15 @@ type homeFinding struct {
 // GET /v1/adapters and docs/adapters.md; a visitor deciding whether to
 // install needs "does it see my stack, and how much can I trust it".
 type supportRow struct {
-	Ecosystem  string
-	Managers   string
-	Can        []string
-	Missing    []string
+	Ecosystem string
+	Managers  string
+	Can       []string
+	Missing   []string
+	// Note carries an adapter-specific boundary that would be misleading to
+	// reduce to a checkmark. Maven/Gradle are verification-only: Java 21
+	// contract support must not imply that local Java projects are scanned or
+	// that a sample build receives network access.
+	Note       string
 	Confidence string // EXACT | PROBABLE | UNKNOWN
 	// ConfidenceClass styles the chip; ConfidenceTip explains the value
 	// on hover so the word is never a bare label.
@@ -172,6 +177,12 @@ func buildSupport(lang string) []supportRow {
 			Ecosystem:  a.Ecosystem,
 			Managers:   strings.Join(a.PackageManagers, ", "),
 			Confidence: a.SymbolConfidence,
+		}
+		switch a.Name {
+		case "maven-java":
+			row.Note = i18n.T(lang, "support.maven_java_note")
+		case "gradle-java":
+			row.Note = i18n.T(lang, "support.gradle_java_note")
 		}
 		if key, ok := confidenceKey[strings.ToUpper(a.SymbolConfidence)]; ok {
 			row.ConfidenceClass = strings.ToLower(a.SymbolConfidence)

@@ -64,13 +64,11 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	if err != nil {
 		return nil, err
 	}
-	// Newest activity first, then newest version. The SQL tiebreak is
-	// ORDER BY version DESC, which is a string sort: it puts 7.0.3 above
-	// 14.0.1. This ordering is the one the reader sees, so it decides.
+	// This list labels its first item "latest", so version precedence must
+	// decide the order. last_seen is evidence recency, not release recency:
+	// an old release observed today must not become newer than a later release.
+	// The SQL string sort is also insufficient (it puts 7.0.3 above 14.0.1).
 	sort.SliceStable(rows, func(i, j int) bool {
-		if !rows[i].LastSeen.Equal(rows[j].LastSeen) {
-			return rows[i].LastSeen.After(rows[j].LastSeen)
-		}
 		return domain.CompareVersions(rows[i].Version, rows[j].Version) > 0
 	})
 	// Only versions that HAVE a page. The list came from the packages

@@ -46,6 +46,14 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 				`"stages":{"contract":"PASS"}}`,
 		},
 		{
+			ReceiptID: "receipt-admin-maven", SampleID: samples[1].SampleID, PeerID: "peer-java", EnvHash: "env-java", ContractResult: "PASS",
+			// Maven is a first-class Java/JVM ecosystem in both the receipt mix
+			// and resolved-package depth. It must not be folded into "other".
+			ReceiptJSON: `{"schemaVersion":2,"environment":{"ecosystem":"maven"},` +
+				`"stages":{"resolve":"PASS","contract":"PASS"},` +
+				`"resolvedPackages":["pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.21.4"]}`,
+		},
+		{
 			ReceiptID: "receipt-admin-fail", SampleID: samples[1].SampleID, PeerID: "peer-c", EnvHash: "env-c", ContractResult: "FAIL",
 			ReceiptJSON: `{"schemaVersion":2,"environment":{"ecosystem":"pypi"},` +
 				`"stages":{"resolve":"PASS","contract":"FAIL"},` +
@@ -100,18 +108,22 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 	if err != nil {
 		t.Fatalf("AdminInsights: %v", err)
 	}
-	if got.Verification.Pass != 4 || got.Verification.Fail != 1 || got.Verification.Unclassified != 1 || got.Verification.Total() != 6 {
-		t.Fatalf("verification = %+v, want PASS=4 FAIL=1 unclassified=1 total=6", got.Verification)
+	if got.Verification.Pass != 5 || got.Verification.Fail != 1 || got.Verification.Unclassified != 1 || got.Verification.Total() != 7 {
+		t.Fatalf("verification = %+v, want PASS=5 FAIL=1 unclassified=1 total=7", got.Verification)
 	}
 	ecosystems := map[string]int64{}
 	for _, row := range got.Ecosystems {
 		ecosystems[row.Ecosystem] = row.Verifications
 	}
-	if ecosystems["npm"] != 1 || ecosystems["cargo"] != 1 || ecosystems["other"] != 1 || ecosystems["pypi"] != 0 || ecosystems["hex"] != 0 {
-		t.Fatalf("receipt ecosystems = %+v, want npm=1 cargo=1 other=1 and no failed/mismatched pypi or hex", ecosystems)
+	if ecosystems["npm"] != 1 || ecosystems["cargo"] != 1 || ecosystems["maven"] != 1 || ecosystems["other"] != 1 || ecosystems["pypi"] != 0 || ecosystems["hex"] != 0 {
+		t.Fatalf("receipt ecosystems = %+v, want npm=1 cargo=1 maven=1 other=1 and no failed/mismatched pypi or hex", ecosystems)
 	}
-	if len(got.PackageDepth) != 1 || got.PackageDepth[0].Ecosystem != "npm" || got.PackageDepth[0].Name != "axios" || got.PackageDepth[0].VerifiedSamples != 1 {
-		t.Fatalf("resolved package depth = %+v, want only npm/axios from v2 receipt", got.PackageDepth)
+	depth := map[string]int64{}
+	for _, row := range got.PackageDepth {
+		depth[row.Ecosystem+"/"+row.Name] = row.VerifiedSamples
+	}
+	if len(depth) != 2 || depth["npm/axios"] != 1 || depth["maven/com.fasterxml.jackson.core/jackson-databind"] != 1 {
+		t.Fatalf("resolved package depth = %+v, want npm/axios and Maven jackson-databind", got.PackageDepth)
 	}
 	if len(got.Daily) == 0 || len(got.Daily) > 31 {
 		t.Fatalf("daily rows = %d, want 1..31", len(got.Daily))

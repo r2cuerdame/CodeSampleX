@@ -101,9 +101,10 @@ func TestEcosystemLabelsDoNotPretendNPMSeparatesLanguages(t *testing.T) {
 	rows := buildEcosystemMix([]serverstore.AdminEcosystemCount{
 		{Ecosystem: "npm", Verifications: 9},
 		{Ecosystem: "gem", Verifications: 1},
+		{Ecosystem: "maven", Verifications: 2},
 		{Ecosystem: "future", Verifications: 1},
 	})
-	if rows[0].Label != "npm · JavaScript/TypeScript" || rows[1].Label != "gem · Ruby" || rows[2].Label != "기타/알 수 없음" {
+	if rows[0].Label != "npm · JavaScript/TypeScript" || rows[1].Label != "gem · Ruby" || rows[2].Label != "maven · Java/JVM" || rows[3].Label != "기타/알 수 없음" {
 		t.Fatalf("ecosystem labels = %+v", rows)
 	}
 }
