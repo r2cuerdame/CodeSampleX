@@ -78,7 +78,7 @@ next command in this file fails with `sh: csx: not found` (exit 127):
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
-csx version    # prints e.g. `csx v0.1.3`; `csx --version` exits 2
+csx version    # prints the installed release, e.g. `csx v0.1.7`; `csx --version` exits 2
 ```
 
 Every step below calls `csx` by absolute path so it works either way.
@@ -193,9 +193,9 @@ Example output (paths differ per machine — use what your run prints):
 }
 ```
 
-`mcp-config` ships in `v0.1.3` and later, which is what
-`https://codesamplex.dev/dl/...` and the latest GitHub release serve today —
-verified in a clean container. Binaries that predate it (`v0.1.0`, `v0.1.2`)
+`mcp-config` was introduced in `v0.1.3`. The installer serves the current
+stable release; do not infer its version from this document. Binaries that
+predate the command (`v0.1.0`, `v0.1.2`)
 exit 2 with `csx: unknown command "mcp-config"`. This form produces the same
 object on every version, so it is safe to run unconditionally:
 
@@ -274,7 +274,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 Expected — one line of JSON on stdout:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"codesamplex","version":"v0.1.3"}}}
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"codesamplex","version":"<installed-version>"}}}
 ```
 
 `version` mirrors whatever binary you installed, so do not match on it. The
@@ -313,6 +313,20 @@ Use this path for a spare machine that should contribute Docker verification
 but must not be connected to an MCP client or inspect a local project. It runs
 one contributor process and deliberately skips both agent integration and the
 background sync daemon.
+
+This path requires **csx v0.1.7 or later**. `worker start` existed in v0.1.6,
+but that release did not yet support `csx init --no-daemon`; combining the
+current worker instructions with a v0.1.6 binary fails during initialization.
+After installing, verify the boundary before creating a service:
+
+```sh
+csx version
+csx init --help 2>&1 | grep -- --no-daemon
+```
+
+If either check shows an older or unsupported binary, upgrade first. Do not
+silently omit `--no-daemon`, because that would leave a second background
+process running on a machine intended to be worker-only.
 
 The normal installers run interactive `csx init`. Set `CSX_WORKER_ONLY=1` so
 the same first-party installers instead run the exact worker-only initialization:
@@ -428,6 +442,7 @@ machine because `--no-daemon` intentionally leaves only the contributor worker.
 | `csx: unknown command "--version"` (exit 2) | there is no `--version` flag | `csx version` |
 | Client reports the server failed to start; nothing in its log but a spawn error | config used bare `csx`; the client's PATH has no `~/.local/bin` | use the absolute path from step 3 |
 | `csx: unknown command "mcp-config"` (exit 2) | binary predates the command (`v0.1.0`, `v0.1.2`) | use the fallback snippet in step 3 |
+| `flag provided but not defined: -no-daemon` during worker-only setup | binary is v0.1.6 or older | upgrade to v0.1.7 or later, confirm `csx init --help` lists `--no-daemon`, then rerun worker-only initialization |
 | `csx mcp: config: resolve home: $HOME is not defined` | client launches servers with a stripped environment | set `CSX_HOME` in the entry's `env` |
 | Every search returns `NO_SAFE_MATCH` right after install | shards not cached yet | `csx sync` (step 4) |
 | `csx: command not found` in the user's own terminal | `~/.local/bin` not on their PATH | `export PATH="$HOME/.local/bin:$PATH"` in their shell profile |
@@ -447,9 +462,12 @@ from the agent files.
 
 ## What was verified, and where
 
-Every command and every output quoted above was run on 2026-08-14 against the
-published `v0.1.3` binary — `https://codesamplex.dev/dl/csx-<os>-<arch>` and
-the GitHub release assets — unless stated otherwise:
+The original MCP installation path was run on 2026-08-14 against the then
+published `v0.1.3` binary. The worker-only path is a later feature and requires
+v0.1.7 or newer as stated above. Version strings in example output are
+placeholders; `https://codesamplex.dev/dl/csx-<os>-<arch>` and the latest
+GitHub release assets are the current source of truth unless a section states
+an explicit historical minimum:
 
 - `docker run --rm alpine:3.22` and `docker run --rm debian:13-slim`, from an
   empty home directory, by agents given nothing but this page and the README.
