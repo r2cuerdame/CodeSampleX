@@ -543,7 +543,7 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 		`    cat "$CSX_NEXT_LOG"; echo 'Work lookup failed. Retrying in 60 seconds.'; sleep 60; continue`,
 		`  fi`,
 		`  cat "$CSX_NEXT_LOG"`,
-		`  if grep -q '^NO_WORK:' "$CSX_NEXT_LOG"; then echo 'No uncovered work is available yet. Checking again in 5 minutes.'; sleep 300; continue; fi`,
+		`  if grep -q -e '^NO_WORK:' -e 'No uncovered Wanted work' "$CSX_NEXT_LOG"; then echo 'No uncovered work is available yet. Checking again in 5 minutes.'; sleep 300; continue; fi`,
 		`  prompt="$(printf '%s' "$CSX_PROMPT_B64" | base64 -d)"`,
 		`  agy_args=(--dangerously-skip-permissions --print-timeout 50m)`,
 		`  case "$CSX_REASONING" in low|medium|high) agy_args+=(--effort "$CSX_REASONING");; esac`,

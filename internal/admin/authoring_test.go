@@ -201,7 +201,7 @@ func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	script := authoringLinuxSH("https://codesamplex.dev/", grant)
 	for _, want := range []string{
 		"#!/usr/bin/env bash", `CSX_SESSION_ID='session-456'`, `export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_SESSION_ID"`,
-		`cd "$CSX_WORKSPACE"`, "while true; do", "sample-worker refresh", "sample-worker next", "sleep 300",
+		`cd "$CSX_WORKSPACE"`, "while true; do", "sample-worker refresh", "sample-worker next", `grep -q -e '^NO_WORK:' -e 'No uncovered Wanted work'`, "sleep 300",
 		"--dangerously-skip-permissions", "--print-timeout 50m", `agy "${agy_args[@]}" --print "$prompt"`, "PIPESTATUS[0]",
 		"HTTP 410", "download a new SH file",
 	} {
