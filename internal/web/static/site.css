@@ -427,9 +427,9 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .network, #install, #contract { scroll-margin-top: 6rem; }
 .support-shell {
   display: grid; grid-template-columns: minmax(0, 1fr);
-  gap: 1rem; align-items: start;
+  gap: 1rem; align-items: start; margin-bottom: 1rem;
 }
-.support-shell > .agents, .support-shell > .support { margin: 0; min-width: 0; }
+.support-shell > .home-detail, .support-shell > .support { margin: 0; min-width: 0; }
 .support-agents { background: var(--panel); }
 .agent-detail > summary {
   display: flex; align-items: center; gap: 1rem; cursor: pointer; list-style: none;
@@ -438,8 +438,10 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .agent-detail > summary::after { content: "+"; margin-left: auto; color: var(--accent); font-size: 1.35rem; }
 .agent-detail[open] > summary::after { content: "−"; }
 .agent-detail .eyebrow { margin: 0; }
-.agent-detail-body { padding-top: 1rem; }
+.agent-detail-body { padding-top: 0.2rem; }
 .agent-detail-body > :last-child { margin-bottom: 0; }
+.agent-detail .cmdline { margin: 0.5rem 0 0; }
+.agent-detail .note { margin-top: 0.8rem; }
 .home-detail {
   margin: 0 0 1rem; border: 1px solid var(--line); border-radius: 1rem;
   background: rgba(255,255,255,0.78);
@@ -657,6 +659,9 @@ td.env { min-width: 16rem; }
   border: 0; border-radius: 0.65rem; padding: 0.5rem 1rem; font-weight: 750;
 }
 .filteractions a { font-size: 0.82rem; }
+.filterbar.filterbar-compact { grid-template-columns: minmax(0, 1fr) auto; }
+.filterbar.filterbar-compact .filterquery,
+.filterbar.filterbar-compact .filteractions { grid-column: auto; }
 .filter-note { margin: 0 0 1.4rem; }
 
 /* sample evidence -------------------------------------------------------- */

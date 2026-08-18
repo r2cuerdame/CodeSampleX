@@ -31,6 +31,32 @@ type AuthoringSessionRow struct {
 	RevokedAt     time.Time
 }
 
+// AuthoringDraftRow is an internal, non-public sample uploaded by a sample
+// worker. Its artifact is content-addressed in the server blob store, but it
+// is not inserted into samples and therefore cannot appear in public search.
+type AuthoringDraftRow struct {
+	SampleID           string
+	SessionID          string
+	WorkerLabel        string
+	ManifestJSON       string
+	LocalStatus        string
+	VerificationStatus string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type AuthoringWorkRow struct {
+	Ecosystem      string
+	Name           string
+	Version        string
+	Symbol         string
+	Asks           int64
+	SessionID      string
+	ClaimedAt      time.Time
+	LeaseExpiresAt time.Time
+	SampleID       string
+}
+
 // AuthoringSessionStore keeps internal authoring sessions alive across server
 // restarts while preserving their one-hour idle expiry and individual revoke
 // boundary.
@@ -40,4 +66,9 @@ type AuthoringSessionStore interface {
 	RefreshAuthoringSession(ctx context.Context, tokenHash, ip, computerName string, now, idleExpiresAt time.Time) (AuthoringSessionRow, error)
 	RevokeAuthoringSession(ctx context.Context, sessionID string, now time.Time) (bool, error)
 	ListAuthoringSessions(ctx context.Context, now time.Time, limit int) ([]AuthoringSessionRow, error)
+	SaveAuthoringDraft(ctx context.Context, row AuthoringDraftRow) error
+	ListAuthoringDrafts(ctx context.Context, limit int) ([]AuthoringDraftRow, error)
+	ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
+	AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error)
+	AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error)
 }

@@ -21,17 +21,19 @@ import (
 // crossFixture builds a real canonical artifact and a server that serves
 // the full claim → download → report flow, recording what it saw.
 type crossFixture struct {
-	srv           *httptest.Server
-	sampleID      string
-	artifact      []byte
-	mu            sync.Mutex
-	jobServed     bool
-	claims        []string
-	receipts      []domain.VerificationReceipt
-	receiptJobIDs []string
-	corruptArt    bool
-	requests      int
-	reasonSeen    string
+	srv             *httptest.Server
+	sampleID        string
+	artifact        []byte
+	mu              sync.Mutex
+	jobServed       bool
+	claims          []string
+	receipts        []domain.VerificationReceipt
+	receiptJobIDs   []string
+	artifactJobIDs  []string
+	artifactPeerIDs []string
+	corruptArt      bool
+	requests        int
+	reasonSeen      string
 }
 
 func newCrossFixture(t *testing.T) *crossFixture {
@@ -87,6 +89,8 @@ func newCrossFixture(t *testing.T) *crossFixture {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.requests++
+		f.artifactJobIDs = append(f.artifactJobIDs, r.Header.Get(domain.VerificationJobIDHeader))
+		f.artifactPeerIDs = append(f.artifactPeerIDs, r.Header.Get(domain.VerificationPeerIDHeader))
 		art := f.artifact
 		if f.corruptArt {
 			art = append([]byte("corrupt"), art...)
@@ -446,6 +450,9 @@ func TestCrossVerifyAndReport(t *testing.T) {
 	}
 	if len(f.receiptJobIDs) != 1 || f.receiptJobIDs[0] != "7" {
 		t.Fatalf("receipt job ids = %v, want exact claimed job 7", f.receiptJobIDs)
+	}
+	if len(f.artifactJobIDs) != 1 || f.artifactJobIDs[0] != "7" || len(f.artifactPeerIDs) != 1 || f.artifactPeerIDs[0] != cv.Ident.PeerID() {
+		t.Fatalf("artifact claim headers = jobs %v peers %v", f.artifactJobIDs, f.artifactPeerIDs)
 	}
 	posted := f.receipts[0]
 	if posted.SampleID != f.sampleID || posted.Stages["contract"] != "PASS" {

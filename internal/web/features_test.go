@@ -92,6 +92,33 @@ func TestFeaturesPageChromeIsLocalizedForEveryLocale(t *testing.T) {
 	}
 }
 
+func TestFeaturesPageKoreanLocalizesToolDocumentation(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/features?lang=ko").Body.String()
+	for _, want := range []string{
+		"증거 찾기와 확인",
+		"실행하며 관측하기",
+		"증거 순환 완성하기",
+		"이 설치 상태 확인하기",
+		"설명한 환경을 기준으로 등급이 매겨진 검증 해법을 찾습니다.",
+		"3 도구",
+	} {
+		mustContain(t, body, want)
+	}
+	for _, englishLeak := range []string{
+		"Find and inspect evidence",
+		"Run with observation",
+		"Close the evidence loop",
+		"Inspect this installation",
+		"What you are trying to do or fix, in plain words.",
+		"8 tools",
+	} {
+		if strings.Contains(body, englishLeak) {
+			t.Errorf("Korean feature page leaked English copy %q", englishLeak)
+		}
+	}
+}
+
 func TestFeaturesRouteSEOAndResponsiveLayout(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 

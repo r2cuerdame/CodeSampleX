@@ -136,6 +136,49 @@ func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *handler) authoringDrafts(w http.ResponseWriter, r *http.Request) {
+	setPrivateHeaders(w.Header())
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if h.authoring.store == nil {
+		writeAdminJSON(w, http.StatusOK, map[string]any{"drafts": []any{}})
+		return
+	}
+	rows, err := h.authoring.store.ListAuthoringDrafts(r.Context(), 100)
+	if err != nil {
+		http.Error(w, "샘플 초안함을 불러오지 못했습니다", http.StatusServiceUnavailable)
+		return
+	}
+	type draftView struct {
+		SampleID           string    `json:"sampleId"`
+		WorkerLabel        string    `json:"workerLabel"`
+		LocalStatus        string    `json:"localStatus"`
+		VerificationStatus string    `json:"verificationStatus"`
+		Goal               string    `json:"goal"`
+		Packages           []string  `json:"packages"`
+		Symbols            []string  `json:"symbols"`
+		UpdatedAt          time.Time `json:"updatedAt"`
+	}
+	out := make([]draftView, 0, len(rows))
+	for _, row := range rows {
+		var manifest struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+			Case     struct {
+				Goal string `json:"goal"`
+			} `json:"case"`
+		}
+		if err := json.Unmarshal([]byte(row.ManifestJSON), &manifest); err != nil {
+			continue
+		}
+		out = append(out, draftView{SampleID: row.SampleID, WorkerLabel: row.WorkerLabel,
+			LocalStatus: row.LocalStatus, VerificationStatus: row.VerificationStatus, Goal: manifest.Case.Goal, Packages: manifest.Packages,
+			Symbols: manifest.Symbols, UpdatedAt: row.UpdatedAt})
+	}
+	writeAdminJSON(w, http.StatusOK, map[string]any{"drafts": out})
+}
+
 func (h *handler) revokeAuthoringSession(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
 	if !h.requireAdmin(w, r) {

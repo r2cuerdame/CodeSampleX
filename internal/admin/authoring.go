@@ -30,8 +30,9 @@ var (
 
 // authoringRegistry issues narrowly scoped refresh bearers. Production stores
 // only their hashes in PostgreSQL so operator-started loops survive deploys;
-// unit tests can use the bounded in-memory fallback. No sample, identity,
-// admin, verification or publish endpoint accepts an authoring bearer.
+// unit tests can use the bounded in-memory fallback. The bearer is accepted
+// only by refresh and private-draft submission; public publish, identity,
+// admin, verification-job and receipt endpoints reject it.
 type authoringRegistry struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -376,6 +377,7 @@ func validAuthoringToken(token string) ([sha256.Size]byte, bool) {
 func authoringPrompt(baseURL string, grant authoringGrant) string {
 	baseURL = strings.TrimRight(baseURL, "/")
 	refreshCommand := authoringCommand(baseURL, grant.Token)
+	nextCommand := authoringNextCommand(baseURL, grant.Token)
 	return fmt.Sprintf(`CodeSampleX 샘플 작성 세션을 시작한다.
 
 작업 식별: %s
@@ -385,21 +387,34 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 %s
 
 목표:
-- 사용량이 많거나 실수가 잦은 공개 패키지의 핵심 API를 한 패키지씩 집중 공략한다.
+- 서버가 배정한 미해결 Wanted 패키지·버전·심벌 하나만 집중 공략한다.
 - 이 환경에서 실제로 준비·실행 가능한 일만 선택한다.
 - 문서상 기대와 실측이 다르거나, 런타임/JDK/버전을 바꾸면 결과가 달라지는 Finding 후보를 우선한다.
 
 필수 절차:
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
-2. 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
-3. 빌드·테스트는 CSX run_observed_command로 실행한다.
-4. MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
-5. csx sample create → csx sample verify → csx sample preview까지 수행하고 sample ID, 환경, PASS/FAIL, Finding을 보고한다.
-6. csx sample publish를 실행하지 않는다. HTTP 업로드나 yes 입력 우회도 금지한다. 게시는 사람이 미리보기 후 별도로 승인한다.
+2. 아래 명령으로 Wanted 일감 하나를 받는다. NO_WORK면 임의 샘플을 만들지 말고 멈춘다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
+%s
+3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
+4. 빌드·테스트는 CSX run_observed_command로 실행한다.
+5. MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
+6. 출력된 csx sample propose 명령으로 시작한다. 이 명령이 spec.json, PROMPT.md와 올바른 csx.json 스캐폴드를 함께 만든다. spec.json을 csx.json으로 복사하거나 csx.json을 기억으로 새로 만들지 않는다.
+7. 생성된 csx.json의 빈 contract와 환경·명령·verifierAdapter를 실제 파일에 맞게 완성한 뒤 csx sample create → csx sample verify → csx sample preview까지 수행하고 sample ID, 환경, PASS/FAIL, Finding을 보고한다.
+8. preview까지 확인한 로컬 샘플은 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한다.
+%s
+9. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
-이 명령에 포함된 토큰은 작업 세션 갱신 외의 권한이 없다. 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand)
+이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand, authoringSubmitCommand(baseURL, grant.Token))
 }
 
 func authoringCommand(baseURL, token string) string {
 	return fmt.Sprintf("csx sample-worker refresh --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+}
+
+func authoringSubmitCommand(baseURL, token string) string {
+	return fmt.Sprintf("csx sample-worker submit <sampleId> --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+}
+
+func authoringNextCommand(baseURL, token string) string {
+	return fmt.Sprintf("csx sample-worker next --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
 }

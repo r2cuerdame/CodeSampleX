@@ -295,6 +295,10 @@ func (cv *CrossVerifier) RunOne(ctx context.Context) (worked bool, err error) {
 // falls back to a direct server download, so a broken peer path can never
 // stall verification.
 func (cv *CrossVerifier) DownloadArtifact(ctx context.Context, sampleID string) ([]byte, error) {
+	return cv.downloadArtifact(ctx, sampleID, 0)
+}
+
+func (cv *CrossVerifier) downloadArtifact(ctx context.Context, sampleID string, jobID int64) ([]byte, error) {
 	if cv.Source != nil {
 		if body, _, err := cv.Source.Fetch(ctx, sampleID); err == nil {
 			// An oversized or wrong-hashed body from a peer is a reason to
@@ -320,6 +324,10 @@ func (cv *CrossVerifier) DownloadArtifact(ctx context.Context, sampleID string) 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
+	}
+	if jobID > 0 && cv.Ident != nil {
+		req.Header.Set(domain.VerificationJobIDHeader, fmt.Sprintf("%d", jobID))
+		req.Header.Set(domain.VerificationPeerIDHeader, cv.Ident.PeerID())
 	}
 	resp, err := cv.client().Do(req)
 	if err != nil {
@@ -347,7 +355,7 @@ func (cv *CrossVerifier) DownloadArtifact(ctx context.Context, sampleID string) 
 // the signed receipt to POST /v1/verifications.
 func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.VerificationReceipt, error) {
 	var zero domain.VerificationReceipt
-	tgz, err := cv.DownloadArtifact(ctx, job.SampleID)
+	tgz, err := cv.downloadArtifact(ctx, job.SampleID, job.ID)
 	if err != nil {
 		return zero, err
 	}

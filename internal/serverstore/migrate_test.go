@@ -210,3 +210,31 @@ func TestAuthoringSessionMigrationStoresOnlyHashedPrivateCapabilities(t *testing
 		}
 	}
 }
+
+func TestAuthoringDraftMigrationStaysOutsidePublicSamples(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft Migration
+	for _, migration := range migs {
+		if migration.Version == "0012_authoring_drafts.sql" {
+			draft = migration
+			break
+		}
+	}
+	if draft.Version == "" {
+		t.Fatal("0012_authoring_drafts.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(draft.Statements, "\n"))
+	for _, required := range []string{"create table authoring_drafts", "create table authoring_assignments", "sample_id", "session_id", "worker_label", "manifest", "local_status", "lease_expires_at", "live_session"} {
+		if !strings.Contains(all, required) {
+			t.Errorf("authoring draft migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"insert into samples", "verification_jobs", "raw_token", "bearer_token"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("authoring draft migration crosses private boundary with %q", forbidden)
+		}
+	}
+}

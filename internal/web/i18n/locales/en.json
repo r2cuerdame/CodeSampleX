@@ -121,6 +121,7 @@
   "features.scope": "This page documents the complete public MCP surface. There is deliberately no MCP tool that publishes a sample.",
   "features.summary": "Choose by purpose",
   "features.title": "Features",
+  "features.tools": "tools",
   "features.what": "What it does",
   "features.when": "When to use it",
   "landing.agents_auto": "csx init finds these and registers the MCP server for you. No config file to edit.",

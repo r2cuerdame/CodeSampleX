@@ -643,8 +643,8 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO samples(sample_id, case_id, manifest, status, origin_seeder,
-				license, size_bytes, hot_score)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+				license, size_bytes, hot_score, quarantined, quarantine_reason)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 			ON CONFLICT (sample_id) DO UPDATE SET
 				manifest = EXCLUDED.manifest,
 				-- NOT the status. A sample id is the sha256 of its content,
@@ -662,7 +662,7 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 				-- moves; this is not.
 				hot_score = EXCLUDED.hot_score`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
-			s.License, s.SizeBytes, s.HotScore)
+			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason)
 		return err
 	})
 }
@@ -969,6 +969,28 @@ func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (
 		}
 		if inserted.RowsAffected() != 1 {
 			return nil // rollback the job update; this receipt answered another job already
+		}
+		// A designated sample author already proved LOCAL_PASS before upload.
+		// The claimed verifier is the independent confirmation. Promote the
+		// quarantined draft atomically with its signed PASS receipt so there is
+		// no state where an unverified draft is public, or a verified draft is
+		// stranded after a process crash.
+		if r.ContractResult == "PASS" {
+			if _, err := tx.Exec(ctx, `UPDATE samples
+				SET status='CROSS_PASS', quarantined=false, quarantine_reason=NULL, updated_at=now()
+				WHERE sample_id=$1 AND status='DRAFT' AND quarantined
+				  AND EXISTS(SELECT 1 FROM verification_jobs WHERE id=$2 AND reason='cross')
+				  AND EXISTS(SELECT 1 FROM authoring_drafts d
+				    JOIN authoring_assignments a ON a.sample_id=d.sample_id
+				    WHERE d.sample_id=samples.sample_id)`, r.SampleID, jobID); err != nil {
+				return err
+			}
+		} else if r.ContractResult == "FAIL" {
+			if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
+				WHERE sample_id=$1 AND EXISTS(
+					SELECT 1 FROM verification_jobs WHERE id=$2 AND reason='cross')`, r.SampleID, jobID); err != nil {
+				return err
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return err

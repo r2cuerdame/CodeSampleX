@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) {
@@ -44,7 +47,7 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	if len(response.Workers) != 2 || response.Workers[0].Session.Label != "spring-lab-01" || response.Workers[1].Session.Label != "spring-lab-02" {
 		t.Fatalf("workers = %+v", response.Workers)
 	}
-	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh"} {
+	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh", "csx sample-worker next", "Wanted 일감", "spec.json을 csx.json으로 복사", "csx sample-worker submit <sampleId>"} {
 		if !strings.Contains(response.Prompt, want) {
 			t.Errorf("combined prompt missing %q", want)
 		}
@@ -177,13 +180,47 @@ func TestAdminPageContainsSampleWorkerControlsButNoSessionToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{"내부 샘플 워커", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", `src="/admin/admin.js"`} {
+	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", `src="/admin/admin.js"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("admin page missing %q", want)
 		}
 	}
 	if strings.Contains(body, authoringTokenPrefix) {
 		t.Fatal("dashboard HTML contains a session token")
+	}
+}
+
+func TestAdminListsOnlyBoundedPrivateDraftMetadata(t *testing.T) {
+	store := serverstore.NewFake()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	if err := store.SaveAuthoringDraft(context.Background(), serverstore.AuthoringDraftRow{
+		SampleID: "sha256:private-only", SessionID: "session-secret", WorkerLabel: "java-01",
+		ManifestJSON: `{"packages":["pkg:maven/org.example/lib@1.0.0"],"symbols":["Example.call"],"case":{"goal":"prove the Java call"},"privateSource":"must-not-leak"}`,
+		LocalStatus:  "LOCAL_PASS", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secret := "a-long-random-admin-secret"
+	mux := http.NewServeMux()
+	if !Register(mux, Deps{Store: &fakeStore{}, Authoring: store, TokenSHA256: digest(secret), PublicURL: "https://codesamplex.dev", Now: func() time.Time { return now }}) {
+		t.Fatal("register")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/authoring-drafts", nil)
+	req.SetBasicAuth("recuerdame", secret)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"sha256:private-only", "java-01", "LOCAL_PASS", "PENDING", "prove the Java call", "pkg:maven/org.example/lib@1.0.0", "Example.call"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("draft response missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"session-secret", "privateSource", "must-not-leak", "tokenHash"} {
+		if strings.Contains(rec.Body.String(), forbidden) {
+			t.Errorf("draft response leaked %q", forbidden)
+		}
 	}
 }
 

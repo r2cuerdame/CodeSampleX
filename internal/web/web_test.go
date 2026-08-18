@@ -143,11 +143,11 @@ func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) 
 	}
 	support := strings.Index(body, i18n.T("en", "landing.support_heading"))
 	agents := strings.Index(body, `id="agents"`)
-	if support < 0 || agents < 0 || support >= agents {
-		t.Errorf("ecosystem support must precede the folded agent section: support=%d agents=%d", support, agents)
+	if support < 0 || agents < 0 || agents >= support {
+		t.Errorf("folded agent section must sit directly above ecosystem support: agents=%d support=%d", agents, support)
 	}
-	mustContain(t, body, `<details id="agents" class="agents support-agents agent-detail">`)
-	if strings.Contains(body, `id="agents" class="agents support-agents agent-detail" open`) {
+	mustContain(t, body, `<details id="agents" class="home-detail agent-detail support-agents">`)
+	if strings.Contains(body, `id="agents" class="home-detail agent-detail support-agents" open`) {
 		t.Error("agent integration details must be collapsed by default")
 	}
 	if strings.Contains(body, "eyebrow-mark") {
@@ -525,7 +525,7 @@ func TestStaticCSSServed(t *testing.T) {
 	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
 	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
 	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
-	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);")
+	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);\n  gap: 1rem; align-items: start; margin-bottom: 1rem;")
 	mustContain(t, rec.Body.String(), ".how-body {\n  display: grid; grid-template-columns:")
 	mustContain(t, rec.Body.String(), ".flabel {\n  display: inline-block;")
 	mustContain(t, rec.Body.String(), ".record-version { padding:")

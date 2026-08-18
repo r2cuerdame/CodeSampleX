@@ -4,7 +4,8 @@
   const form = document.querySelector("#sample-worker-form");
   const list = document.querySelector("#sample-worker-sessions");
   const status = document.querySelector("#sample-worker-status");
-  if (!form || !list || !status) return;
+  const drafts = document.querySelector("#sample-worker-drafts");
+  if (!form || !list || !status || !drafts) return;
 
   const request = async (url, options = {}) => {
     const headers = new Headers(options.headers || {});
@@ -108,6 +109,40 @@
     }
   };
 
+  const loadDrafts = async () => {
+	try {
+	  const data = await request("/admin/api/authoring-drafts");
+	  drafts.replaceChildren();
+	  if (!data.drafts.length) {
+		const empty = document.createElement("p");
+		empty.className = "empty";
+		empty.textContent = "전송된 비공개 샘플 초안이 없습니다.";
+		drafts.appendChild(empty);
+		return;
+	  }
+	  for (const draft of data.drafts) {
+		const row = document.createElement("div");
+		row.className = "sample-worker-row";
+		const info = document.createElement("div");
+		const title = document.createElement("strong");
+		title.textContent = `${draft.workerLabel} · ${draft.localStatus} → ${draft.verificationStatus}`;
+		const goal = document.createElement("span");
+		goal.textContent = draft.goal || "목표 설명 없음";
+		const meta = document.createElement("span");
+		meta.className = "note";
+		meta.textContent = `${(draft.packages || []).join(", ")} · 심벌 ${(draft.symbols || []).join(", ") || "—"} · ${formatTime(draft.updatedAt)}`;
+		const sampleID = document.createElement("code");
+		sampleID.className = "note";
+		sampleID.textContent = draft.sampleId;
+		info.append(title, goal, meta, sampleID);
+		row.append(info);
+		drafts.appendChild(row);
+	  }
+	} catch (_) {
+	  status.textContent = "샘플 초안함을 불러오지 못했습니다.";
+	}
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector("button[type=submit]");
@@ -138,4 +173,6 @@
   });
 
   load();
+  loadDrafts();
+  window.setInterval(loadDrafts, 15000);
 })();

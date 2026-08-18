@@ -241,6 +241,21 @@ func TestSampleProposeWritesWorkspace(t *testing.T) {
 	if !strings.Contains(string(prompt), "pkg:npm/axios@1.12.0") {
 		t.Fatal("PROMPT.md does not mention the package")
 	}
+	if !strings.Contains(string(prompt), "csx.json manifest scaffold already exists") {
+		t.Fatal("PROMPT.md does not tell the agent to complete the scaffold")
+	}
+	manifestRaw, err := os.ReadFile(filepath.Join(work, "csx.json"))
+	if err != nil {
+		t.Fatalf("csx.json scaffold missing: %v", err)
+	}
+	var manifest domain.SampleManifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Case.Goal != spec.Goal || manifest.VerifierAdapter != "node-typescript@1" ||
+		len(manifest.ContractCommand) == 0 || len(manifest.Case.Contract) != 0 {
+		t.Fatalf("incomplete manifest scaffold: %+v", manifest)
+	}
 	// No llmCommand configured → the user's own agent generates the sample.
 	got := out.String()
 	if !strings.Contains(got, work) {
@@ -248,6 +263,18 @@ func TestSampleProposeWritesWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(got, "local LLM") && !strings.Contains(got, "agent") {
 		t.Fatalf("output does not instruct that the user's agent/LLM generates the sample:\n%s", got)
+	}
+}
+
+func TestProposalManifestDistinguishesMavenAndGradleAdapters(t *testing.T) {
+	spec := samples.SanitizedSpec{SchemaVersion: 1, Goal: "prove Java API", Kind: "HOW", Packages: []string{"pkg:maven/org.example/lib@1.0.0"}}
+	maven := proposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "maven"})
+	gradle := proposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "gradle"})
+	if maven.VerifierAdapter != "maven-java@1" || gradle.VerifierAdapter != "gradle-java@1" {
+		t.Fatalf("adapters: maven=%q gradle=%q", maven.VerifierAdapter, gradle.VerifierAdapter)
+	}
+	if maven.Case.Goal != spec.Goal || gradle.Case.Goal != spec.Goal {
+		t.Fatal("proposal goal was not preserved in Java scaffold")
 	}
 }
 

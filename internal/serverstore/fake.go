@@ -22,23 +22,25 @@ type Fake struct {
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta
 
-	packages    map[string]PackageRow
-	snapshots   map[[2]string]string
-	cases       map[string]domain.Case
-	samples     map[string]SampleRow
-	receipts    map[string][]ReceiptRow
-	jobs        []*JobRow
-	nextJobID   int64
-	peers       map[string]PeerRow
-	shards      map[string][2]string // key → {etag, json}
-	shardWrites int                  // PutShard calls, for incremental-rebuild tests
-	ids         map[string]IdentityRow
-	clusters    map[fakeClusterKey]ClusterRow
-	stats       map[string]string // day → stats JSON
-	wanted      map[[4]string]*WantedRow
-	adoptions   map[[3]string]AdoptionRow
-	wantedSeen  map[[6]string]bool
-	authoring   map[string]AuthoringSessionRow
+	packages        map[string]PackageRow
+	snapshots       map[[2]string]string
+	cases           map[string]domain.Case
+	samples         map[string]SampleRow
+	receipts        map[string][]ReceiptRow
+	jobs            []*JobRow
+	nextJobID       int64
+	peers           map[string]PeerRow
+	shards          map[string][2]string // key → {etag, json}
+	shardWrites     int                  // PutShard calls, for incremental-rebuild tests
+	ids             map[string]IdentityRow
+	clusters        map[fakeClusterKey]ClusterRow
+	stats           map[string]string // day → stats JSON
+	wanted          map[[4]string]*WantedRow
+	adoptions       map[[3]string]AdoptionRow
+	wantedSeen      map[[6]string]bool
+	authoring       map[string]AuthoringSessionRow
+	authoringDrafts map[string]AuthoringDraftRow
+	authoringWork   map[[4]string]AuthoringWorkRow
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -68,22 +70,24 @@ var _ Store = (*Fake)(nil)
 // NewFake returns an empty in-memory Store.
 func NewFake() *Fake {
 	return &Fake{
-		merge:      newMergeState(),
-		aggMeta:    map[aggKey]*fakeAggMeta{},
-		packages:   map[string]PackageRow{},
-		snapshots:  map[[2]string]string{},
-		cases:      map[string]domain.Case{},
-		samples:    map[string]SampleRow{},
-		receipts:   map[string][]ReceiptRow{},
-		peers:      map[string]PeerRow{},
-		shards:     map[string][2]string{},
-		ids:        map[string]IdentityRow{},
-		clusters:   map[fakeClusterKey]ClusterRow{},
-		stats:      map[string]string{},
-		wanted:     map[[4]string]*WantedRow{},
-		adoptions:  map[[3]string]AdoptionRow{},
-		wantedSeen: map[[6]string]bool{},
-		authoring:  map[string]AuthoringSessionRow{},
+		merge:           newMergeState(),
+		aggMeta:         map[aggKey]*fakeAggMeta{},
+		packages:        map[string]PackageRow{},
+		snapshots:       map[[2]string]string{},
+		cases:           map[string]domain.Case{},
+		samples:         map[string]SampleRow{},
+		receipts:        map[string][]ReceiptRow{},
+		peers:           map[string]PeerRow{},
+		shards:          map[string][2]string{},
+		ids:             map[string]IdentityRow{},
+		clusters:        map[fakeClusterKey]ClusterRow{},
+		stats:           map[string]string{},
+		wanted:          map[[4]string]*WantedRow{},
+		adoptions:       map[[3]string]AdoptionRow{},
+		wantedSeen:      map[[6]string]bool{},
+		authoring:       map[string]AuthoringSessionRow{},
+		authoringDrafts: map[string]AuthoringDraftRow{},
+		authoringWork:   map[[4]string]AuthoringWorkRow{},
 	}
 }
 
@@ -464,11 +468,10 @@ func (f *Fake) SaveSample(_ context.Context, s SampleRow) error {
 		if !prev.CreatedAt.IsZero() && s.CreatedAt.IsZero() {
 			s.CreatedAt = prev.CreatedAt
 		}
-		// Mirrors the SQL: a re-publish never lowers a status that
-		// receipts earned. Same id means same content.
-		if statusRank(prev.Status) > statusRank(s.Status) {
-			s.Status = prev.Status
-		}
+		// Mirrors the SQL conflict path: ingest never rewrites lifecycle
+		// status. Same id means the same immutable artifact; only receipt
+		// processing may move it.
+		s.Status = prev.Status
 		s.Quarantined, s.QuarantineReason = prev.Quarantined, prev.QuarantineReason
 	}
 	if s.CreatedAt.IsZero() {
@@ -659,6 +662,28 @@ func (f *Fake) SaveReceiptForJob(_ context.Context, r ReceiptRow, jobID int64) (
 	}
 	f.receipts[r.SampleID] = append(f.receipts[r.SampleID], r)
 	job.Status = "done"
+	if r.ContractResult == "PASS" && job.Reason == "cross" {
+		_, hasDraft := f.authoringDrafts[r.SampleID]
+		hasAssignment := false
+		for _, work := range f.authoringWork {
+			if work.SampleID == r.SampleID {
+				hasAssignment = true
+				break
+			}
+		}
+		if sample, ok := f.samples[r.SampleID]; ok && hasDraft && hasAssignment && sample.Status == "DRAFT" && sample.Quarantined {
+			sample.Status = "CROSS_PASS"
+			sample.Quarantined = false
+			sample.QuarantineReason = ""
+			f.samples[r.SampleID] = sample
+		}
+	} else if r.ContractResult == "FAIL" && job.Reason == "cross" {
+		for key, work := range f.authoringWork {
+			if work.SampleID == r.SampleID {
+				delete(f.authoringWork, key)
+			}
+		}
+	}
 	return true, nil
 }
 

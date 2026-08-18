@@ -32,8 +32,8 @@
 <p class="lead">{{.T "wanted.intro"}}</p>
 <p class="note dim small">{{.T "wanted.privacy"}}</p>
 
-<form class="filterbar" action="/wanted" method="get" role="search">
-  <label class="filterquery"><span>{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Query}}" placeholder="{{.T "explore.placeholder"}}"></label>
+<form class="filterbar filterbar-compact" action="/wanted" method="get" role="search">
+  <label class="filterquery"><span class="sr-only">{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Query}}" placeholder="{{.T "explore.placeholder"}}"></label>
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
   <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasQuery}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>

@@ -359,6 +359,15 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "verification job claim expired or changed")
 			return
 		}
+		// SaveReceiptForJob atomically promotes a quarantined authoring draft
+		// on an independently signed contract PASS. Reload so the response and
+		// the monotonic status calculation observe that committed state.
+		refreshed, found, reloadErr := a.d.Store.GetSample(ctx, receipt.SampleID)
+		if reloadErr != nil || !found {
+			writeErr(w, http.StatusInternalServerError, "reloading verified sample failed")
+			return
+		}
+		sample = refreshed
 	} else {
 		if err := a.d.Store.SaveReceipt(ctx, receiptRow); err != nil {
 			writeErr(w, http.StatusInternalServerError, "saving receipt failed")

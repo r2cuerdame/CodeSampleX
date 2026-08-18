@@ -134,6 +134,7 @@
   "features.scope": "Cette page documente toute l’interface MCP publique. Aucun outil MCP ne permet volontairement de publier un sample.",
   "features.summary": "Choisir par objectif",
   "features.title": "Fonctionnalités",
+  "features.tools": "outils",
   "features.what": "Fonction",
   "features.when": "Quand l’utiliser",
   "landing.agents_auto": "csx init les détecte et enregistre le serveur MCP à votre place. Aucun fichier de configuration à modifier.",

@@ -134,6 +134,7 @@
   "features.scope": "Esta página documenta toda la superficie MCP pública. Deliberadamente no existe una herramienta MCP para publicar samples.",
   "features.summary": "Elegir por objetivo",
   "features.title": "Funciones",
+  "features.tools": "herramientas",
   "features.what": "Qué hace",
   "features.when": "Cuándo usarla",
   "landing.agents_auto": "csx init los detecta y registra el servidor MCP por ti. No hay que editar ningún archivo de configuración.",

@@ -128,3 +128,102 @@ func (f *Fake) ListAuthoringSessions(_ context.Context, now time.Time, limit int
 }
 
 var _ AuthoringSessionStore = (*Fake)(nil)
+
+func (f *Fake) SaveAuthoringDraft(_ context.Context, row AuthoringDraftRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if existing, ok := f.authoringDrafts[row.SampleID]; ok && !existing.CreatedAt.IsZero() {
+		row.CreatedAt = existing.CreatedAt
+	}
+	f.authoringDrafts[row.SampleID] = row
+	return nil
+}
+
+func (f *Fake) ListAuthoringDrafts(_ context.Context, limit int) ([]AuthoringDraftRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]AuthoringDraftRow, 0, len(f.authoringDrafts))
+	for _, row := range f.authoringDrafts {
+		row.VerificationStatus = "PENDING"
+		if sample, ok := f.samples[row.SampleID]; ok && sample.Status == "CROSS_PASS" && !sample.Quarantined {
+			row.VerificationStatus = "CROSS_PASS"
+		} else {
+			for _, receipt := range f.receipts[row.SampleID] {
+				if receipt.ContractResult == "FAIL" {
+					row.VerificationStatus = "CROSS_FAIL"
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].SampleID < out[j].SampleID
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func authoringWorkKey(ecosystem, name, version, symbol string) [4]string {
+	return [4]string{ecosystem, name, version, symbol}
+}
+
+func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, work := range f.authoringWork {
+		if work.SampleID == "" && !now.Before(work.LeaseExpiresAt) {
+			delete(f.authoringWork, key)
+			continue
+		}
+		if work.SessionID == sessionID && work.SampleID == "" && now.Before(work.LeaseExpiresAt) {
+			return work, true, nil
+		}
+	}
+	for _, candidate := range candidates {
+		key := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
+		if _, exists := f.authoringWork[key]; exists {
+			continue
+		}
+		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
+			Symbol: candidate.Symbol, Asks: candidate.Asks, SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
+		f.authoringWork[key] = work
+		return work, true, nil
+	}
+	return AuthoringWorkRow{}, false, nil
+}
+
+func (f *Fake) AuthoringWorkForSubmission(_ context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, work := range f.authoringWork {
+		if work.SampleID == "" && !now.Before(work.LeaseExpiresAt) {
+			delete(f.authoringWork, key)
+			continue
+		}
+		if work.SessionID == sessionID && ((work.SampleID == "" && now.Before(work.LeaseExpiresAt)) || work.SampleID == sampleID) {
+			return work, true, nil
+		}
+	}
+	return AuthoringWorkRow{}, false, nil
+}
+
+func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := authoringWorkKey(work.Ecosystem, work.Name, work.Version, work.Symbol)
+	current, ok := f.authoringWork[key]
+	if !ok || current.SessionID != sessionID || current.SampleID != "" || !now.Before(current.LeaseExpiresAt) {
+		return false, nil
+	}
+	current.SampleID = sampleID
+	f.authoringWork[key] = current
+	return true, nil
+}

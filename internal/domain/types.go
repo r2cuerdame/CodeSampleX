@@ -156,6 +156,11 @@ type WorkerRequirements struct {
 // the signed receipt before completing that one row.
 const VerificationJobIDHeader = "X-CSX-Verification-Job-ID"
 
+// VerificationPeerIDHeader accompanies a claimed job's artifact download.
+// Public artifacts do not need it; quarantined authoring drafts require both
+// this peer id and VerificationJobIDHeader to match the live claim.
+const VerificationPeerIDHeader = "X-CSX-Verification-Peer-ID"
+
 // ObservationBatch is the anonymous automatic-evidence wire unit
 // (goal.md §7.6). It must never carry source, paths, project names,
 // or raw logs — only the fields below.

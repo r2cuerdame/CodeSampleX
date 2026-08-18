@@ -163,7 +163,8 @@ func TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims(t *testing.T) 
 	if got.Jobs.Matrix.Claimable != 1 || got.Jobs.Matrix.Live != 1 || got.Jobs.Matrix.Stale != 1 {
 		t.Fatalf("matrix job queue = %+v", got.Jobs.Matrix)
 	}
-	if got.Jobs.LiveClaimants != 2 || !got.Jobs.HasOldest || !got.Jobs.OldestClaimable.Equal(jobNow.Add(-5*time.Hour)) {
+	wantOldest := jobNow.Add(-5 * time.Hour).Truncate(time.Microsecond)
+	if got.Jobs.LiveClaimants != 2 || !got.Jobs.HasOldest || !got.Jobs.OldestClaimable.Equal(wantOldest) {
 		t.Fatalf("job queue summary = %+v", got.Jobs)
 	}
 }

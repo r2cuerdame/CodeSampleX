@@ -134,6 +134,7 @@
   "features.scope": "このページは公開 MCP 機能のすべてを説明します。サンプルを公開する MCP ツールは意図的に提供していません。",
   "features.summary": "目的から選ぶ",
   "features.title": "機能",
+  "features.tools": "ツール",
   "features.what": "できること",
   "features.when": "使うタイミング",
   "landing.agents_auto": "csx init が自動で検出し、MCP サーバーを登録します。設定ファイルを編集する必要はありません。",

@@ -40,6 +40,16 @@ func TestWantedPageRanksUnansweredQuestions(t *testing.T) {
 	}
 }
 
+func TestWantedSearchFormStaysOnOneRow(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/wanted?lang=ko").Body.String()
+	mustContain(t, body, `<form class="filterbar filterbar-compact"`)
+	mustContain(t, body, `<span class="sr-only">검색</span><input type="search"`)
+	css := get(t, mux, "/static/site.css").Body.String()
+	mustContain(t, css, ".filterbar.filterbar-compact { grid-template-columns: minmax(0, 1fr) auto; }")
+	mustContain(t, css, ".filterbar.filterbar-compact .filteractions { grid-column: auto; }")
+}
+
 // An empty board must say it is empty, not render as a broken page — and
 // it must say WHY, because "nobody asked" and "we lost the reports" look
 // identical to a visitor.

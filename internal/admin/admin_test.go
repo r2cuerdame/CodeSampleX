@@ -420,7 +420,7 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "운영 요약", "검증 샘플 추이", "누적", "일일 순증감",
+		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "운영 요약", "지금 개입할 것", "검증 샘플 추이", "누적", "일일 순증감",
 		"1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
 		"누락 날짜는 0으로 채우거나 연결하지 않음", "전체 네트워크에 접수된 검증 영수증",
 		"최근 검증 생태계 구성", "npm · JavaScript/TypeScript", "maven · Java/JVM", "최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
@@ -429,9 +429,20 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		"검증 작업 큐", "Claim 가능", "만료 lease", "유효 claim 워커 ID 2개", "온라인·idle 워커 수나 heartbeat가 아닙니다",
 		"‘실패 회피’는 추정하지 않습니다", "측정 경계", "활성 MCP 세션·설치·다운로드",
 		"내부 샘플 워커", "LLM 모델", "추론 강도", "워커 수", "프롬프트 + CLI 발급·복사",
+		"검색·네트워크 누적 지표", `<details class="panel"><summary>서버 상태 · 정상</summary>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing honest label %q", want)
+		}
+	}
+	for _, folded := range []string{
+		`<summary>검증 샘플 추이 · 10K 목표와 30일 차트</summary>`,
+		`<details class="panel wide"><summary>최근 30일 검증 활동 · 80건</summary>`,
+		`<details class="panel side"><summary>최근 검증 생태계 구성</summary>`,
+		`<details class="panel half"><summary>최근 패키지 깊이</summary>`,
+	} {
+		if !strings.Contains(body, folded) {
+			t.Errorf("detailed dashboard section is not folded: %q", folded)
 		}
 	}
 	for _, forbidden := range []string{"ZgotmplZ", secret, "claimed_by", "현재 기여 피어"} {

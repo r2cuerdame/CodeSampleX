@@ -343,6 +343,12 @@ func samplePropose(ctx context.Context, args []string) int {
 		return 1
 	}
 	prompt := spec.PromptText()
+	manifest := proposalManifest(spec, fp)
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample propose: %v\n", err)
+		return 1
+	}
 	if err := os.WriteFile(filepath.Join(work, "spec.json"), append(specJSON, '\n'), 0o644); err != nil {
 		fmt.Fprintf(sampleStderr, "csx sample propose: %v\n", err)
 		return 1
@@ -351,9 +357,13 @@ func samplePropose(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleStderr, "csx sample propose: %v\n", err)
 		return 1
 	}
+	if err := os.WriteFile(filepath.Join(work, "csx.json"), append(manifestJSON, '\n'), 0o644); err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample propose: %v\n", err)
+		return 1
+	}
 
 	fmt.Fprintf(sampleStdout, "Clean-room workspace: %s\n", work)
-	fmt.Fprintf(sampleStdout, "Spec: spec.json, instructions: PROMPT.md (packages: %s)\n", strings.Join(spec.Packages, ", "))
+	fmt.Fprintf(sampleStdout, "Spec: spec.json, manifest scaffold: csx.json, instructions: PROMPT.md (packages: %s)\n", strings.Join(spec.Packages, ", "))
 
 	if env.cfg.LLMCommand != "" {
 		// Generation always happens with the USER's local LLM/agent
@@ -365,9 +375,69 @@ func samplePropose(ctx context.Context, args []string) int {
 	fmt.Fprintln(sampleStdout, "No llmCommand configured. Next step (goal.md §9.3 — generation is done by")
 	fmt.Fprintln(sampleStdout, "YOUR local LLM/agent, never a server):")
 	fmt.Fprintf(sampleStdout, "  1. Point your agent/LLM at the workspace and PROMPT.md:\n       %s\n", filepath.Join(work, "PROMPT.md"))
-	fmt.Fprintln(sampleStdout, "  2. Let it generate the sample files there (spec.json is the only input).")
+	fmt.Fprintln(sampleStdout, "  2. Let it generate the sample files and complete the existing csx.json scaffold.")
 	fmt.Fprintf(sampleStdout, "  3. Then run: csx sample create %s\n", work)
 	return 0
+}
+
+func proposalManifest(spec samples.SanitizedSpec, fp domain.EnvironmentFingerprint) domain.SampleManifest {
+	if fp.Ecosystem == "" && len(spec.Packages) > 0 {
+		if parsed, err := domain.ParsePURL(spec.Packages[0]); err == nil {
+			fp.Ecosystem = parsed.Ecosystem
+		}
+	}
+	if fp.SchemaVersion == 0 {
+		fp.SchemaVersion = 1
+	}
+	if fp.PackageManager == "" {
+		fp.PackageManager = map[string]string{
+			"npm": "npm", "pypi": "pip", "golang": "go", "cargo": "cargo",
+			"composer": "composer", "gem": "bundler", "pub": "pub", "hex": "mix", "maven": "maven",
+		}[fp.Ecosystem]
+	}
+	kind := spec.Kind
+	if kind == "" {
+		kind = "HOW"
+	}
+	return domain.SampleManifest{
+		SchemaVersion: 1,
+		Case: domain.Case{
+			SchemaVersion: 1,
+			Kind:          kind,
+			Goal:          spec.Goal,
+			Packages:      append([]string(nil), spec.Packages...),
+			Symbols:       append([]string(nil), spec.Symbols...),
+			Constraints:   spec.Constraints,
+			Contract:      []string{},
+		},
+		Packages:        append([]string(nil), spec.Packages...),
+		Symbols:         append([]string(nil), spec.Symbols...),
+		Environment:     fp.Normalize(),
+		License:         samples.DefaultLicense,
+		ContractCommand: proposalContractCommand(fp.Ecosystem),
+		VerifierAdapter: proposalVerifierAdapter(fp),
+	}
+}
+
+func proposalVerifierAdapter(fp domain.EnvironmentFingerprint) string {
+	if strings.EqualFold(strings.TrimSpace(fp.Ecosystem), "maven") && strings.EqualFold(strings.TrimSpace(fp.PackageManager), "gradle") {
+		return "gradle-java@1"
+	}
+	return map[string]string{
+		"npm": "node-typescript@1", "pypi": "python@1", "golang": "golang@1",
+		"cargo": "cargo@1", "composer": "composer@1", "gem": "gem@1",
+		"pub": "pub@1", "hex": "hex@1", "maven": "maven-java@1",
+	}[strings.ToLower(strings.TrimSpace(fp.Ecosystem))]
+}
+
+func proposalContractCommand(ecosystem string) []string {
+	commands := map[string][]string{
+		"npm": {"node", "test/contract.mjs"}, "pypi": {"python", "test/contract.py"},
+		"golang": {"go", "run", "./test"}, "cargo": {"cargo", "run", "--offline"},
+		"composer": {"php", "test/contract.php"}, "gem": {"bundle", "exec", "ruby", "test/contract.rb"},
+		"pub": {"dart", "test", "--reporter=expanded"}, "hex": {"mix", "test", "--no-deps-check"},
+	}
+	return append([]string(nil), commands[strings.ToLower(strings.TrimSpace(ecosystem))]...)
 }
 
 // runLLMCommand runs the configured local LLM command inside the clean

@@ -134,6 +134,7 @@
   "features.scope": "Diese Seite dokumentiert die vollständige öffentliche MCP-Oberfläche. Ein MCP-Werkzeug zum Veröffentlichen von Samples gibt es bewusst nicht.",
   "features.summary": "Nach Zweck auswählen",
   "features.title": "Funktionen",
+  "features.tools": "Werkzeuge",
   "features.what": "Funktion",
   "features.when": "Wann verwenden",
   "landing.agents_auto": "csx init erkennt sie und registriert den MCP-Server für dich. Keine Konfigurationsdatei zu bearbeiten.",

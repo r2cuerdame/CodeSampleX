@@ -538,9 +538,19 @@ func (a *api) handleSampleArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	sampleID := r.PathValue("sampleId")
 	row, ok, err := a.d.Store.GetSample(r.Context(), sampleID)
-	if err != nil || !ok || row.Quarantined {
+	if err != nil || !ok {
 		writeErr(w, http.StatusNotFound, "sample not found")
 		return
+	}
+	if row.Quarantined {
+		jobID, parseErr := strconv.ParseInt(strings.TrimSpace(r.Header.Get(domain.VerificationJobIDHeader)), 10, 64)
+		peerID := strings.TrimSpace(r.Header.Get(domain.VerificationPeerIDHeader))
+		job, found, jobErr := a.d.Store.Job(r.Context(), jobID)
+		if row.Status != "DRAFT" || parseErr != nil || jobID <= 0 || !validPeerID(peerID) || jobErr != nil || !found ||
+			job.SampleID != sampleID || job.Reason != "cross" || job.Status != "claimed" || job.ClaimedBy != peerID {
+			writeErr(w, http.StatusNotFound, "sample not found")
+			return
+		}
 	}
 	rc, err := a.d.Blobs.Get(r.Context(), sampleID)
 	if err != nil {

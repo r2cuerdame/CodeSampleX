@@ -1,6 +1,6 @@
 // Package admin serves the private operator dashboard. Network metrics stay
-// read-only; the isolated sample-worker control plane only issues and revokes
-// in-memory refresh capabilities that cannot publish samples.
+// read-only; the isolated sample-worker control plane issues and revokes
+// narrowly scoped capabilities for refresh and private draft submission.
 //
 // It deliberately consumes only bounded aggregate reads. In particular it
 // does not infer users, active MCP sessions, downloads, or factory activity
@@ -137,6 +137,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("POST /admin/api/authoring-sessions", h.authoringSessions)
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
 	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
+	mux.HandleFunc("GET /admin/api/authoring-drafts", h.authoringDrafts)
 	mux.HandleFunc("POST /v1/authoring/session/refresh", h.refreshAuthoringSession)
 	return true
 }

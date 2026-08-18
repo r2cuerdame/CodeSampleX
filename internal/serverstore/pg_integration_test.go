@@ -101,6 +101,47 @@ func TestIntegrationAuthoringSessionsPersistRefreshAndRevoke(t *testing.T) {
 	if refreshed.LastRefreshIP != "198.51.100.24" || refreshed.ComputerName != "build-node-7" || !refreshed.IdleExpiresAt.Equal(refreshedAt.Add(time.Hour)) {
 		t.Fatalf("refreshed session = %+v", refreshed)
 	}
+	draft := AuthoringDraftRow{
+		SampleID: "sha256:private-draft", SessionID: row.SessionID, WorkerLabel: row.Label,
+		ManifestJSON: `{"schemaVersion":1,"case":{"goal":"private"}}`, LocalStatus: "LOCAL_PASS",
+		CreatedAt: refreshedAt, UpdatedAt: refreshedAt,
+	}
+	work, claimed, err := pg.ClaimAuthoringWork(ctx, row.SessionID, []WantedRow{{
+		Ecosystem: "npm", Name: "private-lib", Version: "1.0.0", Symbol: "private.call", Asks: 3,
+	}}, refreshedAt, refreshedAt.Add(24*time.Hour))
+	if err != nil || !claimed {
+		t.Fatalf("claim authoring work = %+v %v %v", work, claimed, err)
+	}
+	if attached, err := pg.AttachAuthoringWorkSample(ctx, row.SessionID, work, draft.SampleID, refreshedAt); err != nil || !attached {
+		t.Fatalf("attach authoring sample = %v %v", attached, err)
+	}
+	if err := pg.SaveAuthoringDraft(ctx, draft); err != nil {
+		t.Fatalf("save authoring draft: %v", err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: draft.SampleID, ManifestJSON: draft.ManifestJSON,
+		Status: "DRAFT", Quarantined: true, QuarantineReason: "private authoring draft"}); err != nil {
+		t.Fatalf("save private draft sample: %v", err)
+	}
+	jobID, err := pg.CreateJob(ctx, JobRow{SampleID: draft.SampleID, Reason: "cross"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const verifierPeer = "ed25519:0123456789abcdef"
+	if ok, err := pg.ClaimJob(ctx, jobID, verifierPeer); err != nil || !ok {
+		t.Fatalf("claim private draft: %v, %v", ok, err)
+	}
+	if ok, err := pg.SaveReceiptForJob(ctx, ReceiptRow{ReceiptID: "sha256:private-cross-pass",
+		SampleID: draft.SampleID, PeerID: verifierPeer, ContractResult: "PASS", ReceiptJSON: `{}`}, jobID); err != nil || !ok {
+		t.Fatalf("cross private draft: %v, %v", ok, err)
+	}
+	drafts, err := pg.ListAuthoringDrafts(ctx, 100)
+	if err != nil || len(drafts) != 1 || drafts[0].SampleID != draft.SampleID || drafts[0].WorkerLabel != row.Label || drafts[0].VerificationStatus != "CROSS_PASS" {
+		t.Fatalf("persisted drafts = %+v, err=%v", drafts, err)
+	}
+	promoted, ok, err := pg.GetSample(ctx, draft.SampleID)
+	if err != nil || !ok || promoted.Quarantined || promoted.Status != "CROSS_PASS" {
+		t.Fatalf("promoted draft = %+v ok=%v err=%v", promoted, ok, err)
+	}
 	if ok, err := pg.RevokeAuthoringSession(ctx, row.SessionID, refreshedAt.Add(time.Minute)); err != nil || !ok {
 		t.Fatalf("revoke authoring session: ok=%v err=%v", ok, err)
 	}

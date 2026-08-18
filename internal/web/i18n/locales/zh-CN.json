@@ -134,6 +134,7 @@
   "features.scope": "本页介绍完整的公开 MCP 功能。系统有意不提供用于发布样例的 MCP 工具。",
   "features.summary": "按用途选择",
   "features.title": "功能",
+  "features.tools": "个工具",
   "features.what": "功能说明",
   "features.when": "何时使用",
   "landing.agents_auto": "csx init 会自动检测并注册 MCP 服务器，无需手动修改配置文件。",

@@ -96,8 +96,9 @@ func BuildSpec(res ScanInputs) SanitizedSpec {
 func (s SanitizedSpec) PromptText() string {
 	var b strings.Builder
 	b.WriteString("Clean-room public code sample — generation instructions\n\n")
-	b.WriteString("Write a brand-new, minimal, self-contained code sample in the current EMPTY directory.\n")
+	b.WriteString("Write a brand-new, minimal, self-contained code sample in this clean-room directory.\n")
 	b.WriteString("Do not copy, paraphrase, or reference any existing project source. Work only from this spec.\n\n")
+	b.WriteString("A csx.json manifest scaffold already exists. Do not recreate it from memory. Preserve its case.goal, packages and symbols; fill its empty case.contract with exact assertions and correct its environment, commands and verifierAdapter for the files you generate.\n\n")
 
 	b.WriteString("Goal: " + s.Goal + "\n")
 	if s.Kind != "" {

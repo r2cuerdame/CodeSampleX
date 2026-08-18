@@ -110,6 +110,22 @@
      what I use? Keeping them together avoids two equally weighted cards. */}}
 {{$mcpCfg := `csx mcp-config`}}
 <section class="support-shell">
+  <details id="agents" class="home-detail agent-detail support-agents">
+    <summary><span class="eyebrow mono">{{.T "landing.agents_heading"}}</span></summary>
+    <div class="agent-detail-body">
+      <ul class="agentlist">
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
+        <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
+      </ul>
+      <p class="dim small">{{.T "landing.agents_auto"}}</p>
+      <p class="small">{{.T "landing.agents_manual"}}</p>
+      <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+      <p class="note">{{.T "landing.agents_models"}}</p>
+    </div>
+  </details>
+
   {{if .Support}}
   <div class="support">
     <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
@@ -129,22 +145,6 @@
     </ul>
   </div>
   {{end}}
-
-  <details id="agents" class="agents support-agents agent-detail">
-    <summary><span class="eyebrow mono">{{.T "landing.agents_heading"}}</span></summary>
-    <div class="agent-detail-body">
-      <ul class="agentlist">
-        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
-        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
-        <li class="agent on"><span class="y" aria-hidden="true">✓</span>Gemini CLI</li>
-        <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
-      </ul>
-      <p class="dim small">{{.T "landing.agents_auto"}}</p>
-      <p class="small">{{.T "landing.agents_manual"}}</p>
-      <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
-      <p class="note">{{.T "landing.agents_models"}}</p>
-    </div>
-  </details>
 </section>
 
 {{/* Full process and privacy detail remain available for due diligence, but

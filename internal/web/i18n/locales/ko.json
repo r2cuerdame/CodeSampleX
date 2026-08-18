@@ -121,6 +121,7 @@
   "features.scope": "이 페이지는 공개 MCP 기능 전체를 설명합니다. 샘플을 게시하는 MCP 도구는 의도적으로 제공하지 않습니다.",
   "features.summary": "목적별로 찾기",
   "features.title": "기능",
+  "features.tools": "도구",
   "features.what": "하는 일",
   "features.when": "사용할 때",
   "landing.agents_auto": "csx init이 알아서 찾아 MCP 서버를 등록합니다. 설정 파일을 직접 고칠 필요가 없습니다.",
