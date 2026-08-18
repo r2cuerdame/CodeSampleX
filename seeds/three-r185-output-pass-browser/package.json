@@ -1,0 +1,14 @@
+{
+  "name": "csx-three-r185-output-pass-browser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "puppeteer": "24.4.0",
+    "three": "0.185.1"
+  }
+}

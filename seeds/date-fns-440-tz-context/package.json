@@ -1,0 +1,14 @@
+{
+  "name": "csx-date-fns-440-tz-context",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "@date-fns/tz": "1.4.1",
+    "date-fns": "4.4.0"
+  }
+}

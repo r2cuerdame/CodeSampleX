@@ -1,0 +1,13 @@
+{
+  "name": "csx-zod-443-enum-records",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

@@ -1,0 +1,3 @@
+sqlalchemy==2.0.44
+typing-extensions==4.16.0
+greenlet==3.2.4
