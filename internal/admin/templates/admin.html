@@ -28,6 +28,7 @@
     .chart-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:13px }.chart-box { min-width:0 }.chart-label { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; margin-bottom:2px }
     .chart { width:100%; height:88px; display:block; overflow:visible }.axis { stroke:rgba(158,179,212,.25); stroke-width:1 }.series { stroke:var(--cyan); stroke-width:2; vector-effect:non-scaling-stroke }.dot { fill:var(--cyan) }.delta { fill:var(--blue) }.delta.negative { fill:var(--bad) }.delta.zero { fill:var(--muted) }.nodata { fill:rgba(158,179,212,.34) }.gapmark { fill:var(--warn); opacity:.72 }.healthyzero { fill:var(--ok); opacity:.75 }
     .stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px }.metric { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:14px; background:rgba(3,14,34,.38) }
+    .growth-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px }.growth-card { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:14px; background:rgba(3,14,34,.38) }.growth-card.unavailable { border-style:dashed }.growth-card .value { font-size:19px }.growth-card .reason { color:var(--muted); font-size:11px; margin:7px 0 0 }.growth-card.positive .value { color:var(--ok) }.growth-card.negative .value { color:var(--bad) }
     .label { display:block; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.06em }.value { display:block; margin-top:4px; font-size:23px; font-weight:820; letter-spacing:-.03em; overflow-wrap:anywhere }.value.small { font-size:17px; letter-spacing:0 }.ok { color:var(--ok) }.bad { color:var(--warn) }
     .mix-list { display:grid; gap:11px }.mix-head { align-items:center; font-size:12px }.mix-track { height:8px; margin-top:4px; border-radius:999px; overflow:hidden; background:rgba(158,179,212,.14) }.mix-fill { display:block; height:8px; fill:var(--blue) }.mix-fill.pass { fill:var(--ok) }.mix-fill.fail { fill:var(--bad) }.mix-fill.skip { fill:var(--warn) }.mix-fill.unknown { fill:var(--muted) }.mix-fill.ecosystem { fill:var(--purple) }.mix-fill.consume,.stack.consume { fill:var(--cyan) }.mix-fill.contribute,.stack.contribute { fill:var(--purple) }.mix-fill.coordinate,.stack.coordinate { fill:var(--warn) }.stack.unknown { fill:var(--muted) }
     .result-totals { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:14px }.result-totals div,.raw div { background:rgba(3,14,34,.35); border-radius:10px; padding:11px }.result-totals strong,.raw strong { display:block; font-size:20px }.result-totals span,.raw span { color:var(--muted); font-size:11px }
@@ -35,8 +36,8 @@
     table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.06em } th,td { padding:9px 7px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
     code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }.raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
     ul { margin:0; padding-left:20px } li+li { margin-top:7px }.empty { padding:14px 0; color:var(--muted) }.server { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
-    @media(max-width:960px) { .trend-grid { grid-template-columns:1fr }.wide,.side,.half { grid-column:span 12 } }
-    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server { grid-template-columns:1fr }.chart-pair { grid-template-columns:1fr }.chart { height:110px } }
+    @media(max-width:960px) { .trend-grid { grid-template-columns:1fr }.growth-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }.wide,.side,.half { grid-column:span 12 } }
+    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server,.growth-grid { grid-template-columns:1fr }.chart-pair { grid-template-columns:1fr }.chart { height:110px } }
   </style>
 </head>
 <body>
@@ -47,6 +48,18 @@
   </div>
 
   <div class="grid">
+    <section class="panel" aria-labelledby="growth-metrics-title">
+      <div class="section-head"><div><h2 id="growth-metrics-title">성장·재사용·검색 품질</h2><p class="note">실제 저장 원천으로 계산되는 값만 표시합니다. “데이터 없음”은 0%가 아니라 현재 개인정보 경계나 이벤트 계측으로는 산출할 수 없다는 뜻입니다.</p></div><span class="stamp">사용자·검색 결과를 다른 카운터로 추정하지 않음</span></div>
+      <div class="growth-grid">
+        {{range .Growth.Metrics}}<article class="growth-card {{.Tone}}"><span class="label">{{.Name}}</span><span class="value">{{.Value}}</span><p class="reason">{{.Description}}</p></article>{{end}}
+      </div>
+      <h3 style="margin-top:18px">개인정보를 추가 저장하지 않고 계산 가능한 운영 프록시</h3>
+      <div class="growth-grid" style="margin-top:10px">
+        {{range .Growth.Proxies}}<article class="growth-card {{.Tone}}"><span class="label">{{.Name}}</span><span class="value">{{.Value}}</span><p class="reason">{{.Description}}</p></article>{{end}}
+      </div>
+      <p class="note">활동 ID는 UTC 일·월별 HMAC 가명 버킷입니다. 사용자, 계정, 설치, 세션과 같지 않으며 공유 NAT에서는 여러 사람이 하나로 합쳐지고 한 사람이 네트워크를 바꾸면 여러 개로 보일 수 있습니다.</p>
+    </section>
+
     <section class="panel" aria-labelledby="growth-title">
       <div class="section-head"><div><h2 id="growth-title">30일 성장 추이</h2><p class="note">UTC {{if .InsightsAvailable}}{{.Insights.WindowStart}} ~ {{.Insights.WindowEnd}} · 스냅샷 {{.Insights.SnapshotDays}}/30일{{if .Insights.MissingDays}} · 누락 {{.Insights.MissingDays}}일{{end}}{{else}}최근 30일{{end}}</p></div><span class="stamp">누락 날짜는 0으로 채우거나 선으로 연결하지 않음</span></div>
       {{if .InsightsAvailable}}

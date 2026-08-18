@@ -216,6 +216,8 @@
   "sample.packages": "Paquets",
   "sample.receipts": "Reçus de vérification",
   "sample.status": "Statut",
+  "sample.status_help": "État de publication. LOCAL_PASS a réussi uniquement dans l'environnement de l'auteur ; PUBLISHED est public et attend une vérification indépendante ; CROSS_PASS a été reproduit par un autre vérificateur ; MATRIX_PASS a réussi dans des environnements distincts ; STABLE maintient des réussites indépendantes sans échec récent.",
+  "sample.level_help": "Force de la preuve. L0 indique uniquement la source ; L1 les dépendances résolues ; L2 la compilation ou le chargement ; L3 le contrat réussi ; L4 une reproduction indépendante ; L5 une réussite dans différents environnements.",
   "sample.title": "Exemple",
   "seeder.none": "Aucun exemple publié pour l'instant.",
   "seeder.samples": "Exemples publiés",

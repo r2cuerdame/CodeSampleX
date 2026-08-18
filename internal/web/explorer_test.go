@@ -256,6 +256,33 @@ func TestSamplePage(t *testing.T) {
 	}
 }
 
+func TestSampleBadgeHelpIsAccessibleAndLocalized(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/samples/sha256:d1e2f3").Body.String()
+
+	if got := strings.Count(body, `data-badge-help aria-expanded="false"`); got != 2 {
+		t.Fatalf("sample detail badge help triggers = %d, want 2", got)
+	}
+	for _, want := range []string{
+		`aria-controls="sample-status-help" aria-describedby="sample-status-help"`,
+		`aria-controls="sample-level-help" aria-describedby="sample-level-help"`,
+		`id="sample-status-help" role="tooltip"`,
+		`id="sample-level-help" role="tooltip"`,
+		"PUBLISHED is public and awaiting independent verification",
+		"L1 resolved dependencies",
+		"help.addEventListener('mouseenter'",
+		"trigger.addEventListener('focus'",
+		"document.addEventListener('click'",
+		"if(event.key==='Escape')",
+	} {
+		mustContain(t, body, want)
+	}
+
+	ko := get(t, mux, "/samples/sha256:d1e2f3?lang=ko").Body.String()
+	mustContain(t, ko, "PUBLISHED는 공개 후 독립 검증 대기")
+	mustContain(t, ko, "L1은 의존성 해결")
+}
+
 func TestSeederPage(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/seeders/alice")
@@ -267,6 +294,9 @@ func TestSeederPage(t *testing.T) {
 	mustContain(t, body, "POST JSON with axios and retries")
 	mustContain(t, body, `href="/samples/sha256:d1e2f3"`)
 	mustContain(t, body, "CROSS_PASS")
+	mustContain(t, body, `aria-controls="status-help-0" aria-describedby="status-help-0"`)
+	mustContain(t, body, `id="status-help-0" role="tooltip"`)
+	mustContain(t, body, "PUBLISHED is public and awaiting independent verification")
 }
 
 // TestAdaptersPathRedirects: the capability page folded into the front

@@ -216,6 +216,8 @@
   "sample.declared_environment": "Declared environment",
   "sample.verified_environments": "Verification-run environments",
   "sample.status": "Status",
+  "sample.status_help": "Publication state. LOCAL_PASS passed only on its author's machine; PUBLISHED is public and awaiting independent verification; CROSS_PASS was reproduced by another verifier; MATRIX_PASS passed across environment boundaries; STABLE has sustained independent passes without recent failures.",
+  "sample.level_help": "Evidence strength. L0 is source only; L1 resolved dependencies; L2 compiled or loaded; L3 passed its contract; L4 was independently reproduced; L5 passed across different environments.",
   "sample.title": "Sample",
   "seeder.none": "No published samples yet.",
   "seeder.samples": "Published samples",

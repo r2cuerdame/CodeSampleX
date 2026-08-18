@@ -90,11 +90,17 @@ func TestActivityMigrationIsAdditiveAndPrivacyBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := migs[len(migs)-1]
-	if last.Version != "0008_activity_buckets.sql" {
-		t.Fatalf("last migration = %q", last.Version)
+	var activityMigration Migration
+	for _, migration := range migs {
+		if migration.Version == "0008_activity_buckets.sql" {
+			activityMigration = migration
+			break
+		}
 	}
-	all := strings.ToLower(strings.Join(last.Statements, "\n"))
+	if activityMigration.Version == "" {
+		t.Fatal("0008_activity_buckets.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(activityMigration.Statements, "\n"))
 	for _, required := range []string{"create table if not exists activity_buckets", "create table if not exists activity_health", "octet_length(bucket) = 16", "kind", "epoch", "owner", "first_seen", "last_seen"} {
 		if !strings.Contains(all, required) {
 			t.Errorf("activity migration missing %q", required)
@@ -113,6 +119,28 @@ func TestActivityMigrationIsAdditiveAndPrivacyBounded(t *testing.T) {
 	for _, forbidden := range []string{"ip_address", "remote_addr", "forwarded_for", "user_agent", "route_param"} {
 		if strings.Contains(all, forbidden) {
 			t.Errorf("activity migration contains PII column %q", forbidden)
+		}
+	}
+}
+
+func TestSearchOutcomeMigrationStoresOnlyDailyAggregates(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := migs[len(migs)-1]
+	if last.Version != "0009_search_outcomes.sql" {
+		t.Fatalf("last migration = %q, want 0009_search_outcomes.sql", last.Version)
+	}
+	all := strings.ToLower(strings.Join(last.Statements, "\n"))
+	for _, required := range []string{"create table if not exists search_outcomes_daily", "day", "sample_hits", "no_matches", "updated_at"} {
+		if !strings.Contains(all, required) {
+			t.Errorf("search outcome migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"query", "package", "symbol", "path", "user", "bucket", "client", "request_id", "ip_address", "user_agent"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("search outcome schema contains identifying/raw field %q", forbidden)
 		}
 	}
 }

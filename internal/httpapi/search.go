@@ -97,17 +97,38 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	if len(results) == 0 || results[0].Score < noSafeMatchThreshold {
-		writeSearchResponse(w, responseVersion, domain.SearchResponse{
+		resp := domain.SearchResponse{
 			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,
-		})
+		}
+		a.recordSearchOutcome(r, now, resp)
+		writeSearchResponse(w, responseVersion, resp)
 		return
 	}
 	if len(results) > limit {
 		results = results[:limit]
 	}
-	writeSearchResponse(w, responseVersion, domain.SearchResponse{
+	resp := domain.SearchResponse{
 		SchemaVersion: responseVersion, Results: results, Miss: false,
-	})
+	}
+	a.recordSearchOutcome(r, now, resp)
+	writeSearchResponse(w, responseVersion, resp)
+}
+
+// recordSearchOutcome writes only the UTC day and one aggregate result class.
+// It runs after search has produced a successful response and never receives
+// the request, query, package list, symbols, path, client, or an identity.
+// Operational metrics must not make a valid search unavailable, so stores that
+// lack the optional capability and transient write failures both fail open.
+func (a *api) recordSearchOutcome(r *http.Request, at time.Time, resp domain.SearchResponse) {
+	recorder, ok := a.d.Store.(serverstore.SearchOutcomeRecorder)
+	if !ok {
+		return
+	}
+	outcome := serverstore.SearchOutcomeSampleHit
+	if resp.Miss {
+		outcome = serverstore.SearchOutcomeNoMatch
+	}
+	_ = recorder.RecordSearchOutcome(r.Context(), at, outcome)
 }
 
 // writeSearchResponse keeps /v1 byte-shape compatible with its original

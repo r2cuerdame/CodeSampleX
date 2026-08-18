@@ -419,6 +419,10 @@ func TestStaticCSSServed(t *testing.T) {
 	}
 	mustContain(t, rec.Body.String(), "prefers-color-scheme")
 	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
+	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
+	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
+	mustContain(t, rec.Body.String(), "@media (hover: none), (pointer: coarse)")
+	mustContain(t, rec.Body.String(), "@media (prefers-reduced-motion: reduce)")
 }
 
 func TestStaticInspectorHeroServed(t *testing.T) {

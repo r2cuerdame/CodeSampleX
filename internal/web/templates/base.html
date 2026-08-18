@@ -90,6 +90,49 @@ for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('clic
   const d=b.dataset.copied,o=b.textContent;b.classList.add('ok');if(d)b.textContent=d;
   setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o},1200)
 });
+const badgeTriggers=[...document.querySelectorAll('[data-badge-help]')];
+function setBadgeHelp(help,open){
+  const trigger=help.querySelector('[data-badge-help]');
+  help.classList.toggle('open',open);
+  trigger.setAttribute('aria-expanded',String(open));
+}
+function closeBadgeHelp(except,blur=false){
+  for(const trigger of badgeTriggers){
+    const help=trigger.closest('.badge-help');
+    if(help===except)continue;
+    delete help.dataset.pinned;setBadgeHelp(help,false);
+    if(blur&&document.activeElement===trigger)trigger.blur();
+  }
+}
+for(const trigger of badgeTriggers){
+  const help=trigger.closest('.badge-help');
+  help.addEventListener('mouseenter',()=>{
+    closeBadgeHelp(help);setBadgeHelp(help,true);
+  });
+  help.addEventListener('mouseleave',()=>{
+    if(!help.dataset.pinned&&document.activeElement!==trigger)setBadgeHelp(help,false);
+  });
+  trigger.addEventListener('focus',()=>{
+    closeBadgeHelp(help);setBadgeHelp(help,true);
+  });
+  trigger.addEventListener('blur',()=>{
+    if(!help.dataset.pinned&&!help.matches(':hover'))setBadgeHelp(help,false);
+  });
+  trigger.addEventListener('click',()=>{
+    if(help.dataset.pinned){
+      delete help.dataset.pinned;setBadgeHelp(help,false);trigger.blur();return;
+    }
+    closeBadgeHelp(help);help.dataset.pinned='true';setBadgeHelp(help,true);
+  });
+}
+document.addEventListener('click',event=>{
+  if(!event.target.closest('.badge-help'))closeBadgeHelp(null,true);
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'){
+    closeBadgeHelp();
+  }
+});
 </script>
 </body>
 </html>
@@ -163,12 +206,15 @@ for(const b of document.querySelectorAll('[data-copy]'))b.addEventListener('clic
      crawler) needs to see; the content address is not readable text. */}}
 {{define "samplelist"}}
 <ul class="samples">
-{{- range .Samples}}
+{{- range $i, $sample := .Samples}}
   <li>
-    <a href="/samples/{{.SampleID}}">{{if .Goal}}{{.Goal}}{{else}}{{.SampleID}}{{end}}</a>
-    <span class="chip status mono">{{.Status}}</span>
-    {{- if .Context}}<span class="dim mono small">{{.Context}}</span>{{end}}
-    <span class="dim mono small">{{.License}}{{if .CreatedAt}} · {{.CreatedAt}}{{end}}</span>
+    <a href="/samples/{{$sample.SampleID}}">{{if $sample.Goal}}{{$sample.Goal}}{{else}}{{$sample.SampleID}}{{end}}</a>
+    <span class="badge-help">
+      <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="status-help-{{$i}}" aria-describedby="status-help-{{$i}}">{{$sample.Status}} <span class="badge-mark" aria-hidden="true">?</span></button>
+      <span class="badge-tip" id="status-help-{{$i}}" role="tooltip">{{$.T "sample.status_help"}}</span>
+    </span>
+    {{- if $sample.Context}}<span class="dim mono small">{{$sample.Context}}</span>{{end}}
+    <span class="dim mono small">{{$sample.License}}{{if $sample.CreatedAt}} · {{$sample.CreatedAt}}{{end}}</span>
   </li>
 {{- end}}
 </ul>

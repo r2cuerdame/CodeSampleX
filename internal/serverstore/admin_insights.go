@@ -75,6 +75,21 @@ type AdminPackageDepth struct {
 	VerifiedSamples int64
 }
 
+// AdminSearchOutcomeCounts is the bounded aggregate of successful public
+// search responses recorded in the dashboard window. Available distinguishes
+// no collected rows from a measured zero; in normal operation every row has
+// at least one outcome. Dates are UTC calendar dates.
+type AdminSearchOutcomeCounts struct {
+	Available  bool
+	SampleHits int64
+	NoMatches  int64
+	Days       int64
+	FirstDay   string
+	LastDay    string
+}
+
+func (c AdminSearchOutcomeCounts) Total() int64 { return c.SampleHits + c.NoMatches }
+
 // AdminInsights is a bounded, read-only view for operator decisions.
 type AdminInsights struct {
 	WindowStart  time.Time
@@ -83,11 +98,12 @@ type AdminInsights struct {
 	Verification AdminVerificationCounts
 	Ecosystems   []AdminEcosystemCount
 	PackageDepth []AdminPackageDepth
+	Search       AdminSearchOutcomeCounts
 }
 
 var _ AdminInsightsReader = (*PG)(nil)
 
-// AdminInsights performs four bounded aggregate reads on indexed 30-day
+// AdminInsights performs five bounded aggregate reads on indexed 30-day
 // windows. stats_daily returns at most 31 rows (30 visible days plus one
 // baseline); result and ecosystem groups are fixed buckets, and package
 // depth is length-bounded and limited to ten rows.
@@ -267,6 +283,22 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 			return err
 		}
 		rows.Close()
+
+		var firstDay, lastDay string
+		if err := conn.QueryRow(ctx, `
+			SELECT COUNT(*),
+			       COALESCE(SUM(sample_hits), 0),
+			       COALESCE(SUM(no_matches), 0),
+			       COALESCE(MIN(day)::text, ''),
+			       COALESCE(MAX(day)::text, '')
+			FROM search_outcomes_daily
+			WHERE day >= $1::date AND day <= $2::date`,
+			windowStart.Format("2006-01-02"), today.Format("2006-01-02"),
+		).Scan(&out.Search.Days, &out.Search.SampleHits, &out.Search.NoMatches, &firstDay, &lastDay); err != nil {
+			return err
+		}
+		out.Search.FirstDay, out.Search.LastDay = firstDay, lastDay
+		out.Search.Available = out.Search.Days > 0 && out.Search.Total() > 0
 		return nil
 	})
 	return out, err

@@ -5,8 +5,14 @@
 <h1>{{if .Goal}}{{.Goal}}{{else}}<span class="mono">{{.Meta.SampleID}}</span>{{end}}</h1>
 <p class="dim mono small sample-id">{{.Meta.SampleID}}</p>
 <div class="badges">
-  <span class="chip status mono">{{.Meta.Status}}</span>
-  <span class="chip level mono">{{.Level}}</span>
+  <span class="badge-help">
+    <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="sample-status-help" aria-describedby="sample-status-help">{{.Meta.Status}} <span class="badge-mark" aria-hidden="true">?</span></button>
+    <span class="badge-tip" id="sample-status-help" role="tooltip">{{.T "sample.status_help"}}</span>
+  </span>
+  <span class="badge-help">
+    <button type="button" class="chip level mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="sample-level-help" aria-describedby="sample-level-help">{{.Level}} <span class="badge-mark" aria-hidden="true">?</span></button>
+    <span class="badge-tip" id="sample-level-help" role="tooltip">{{.T "sample.level_help"}}</span>
+  </span>
   {{if .Meta.License}}<span class="chip mono">{{.Meta.License}}</span>{{end}}
 </div>
 

@@ -192,12 +192,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			data.ActivityAvailable = true
 		}
 	}
-
 	if h.store == nil {
 		data.DBError = "저장소가 구성되지 않았습니다"
 	} else {
 		h.collect(ctx, now, &data)
 	}
+	data.Growth = buildGrowthView(data.Activity, data.ActivityAvailable, data.SearchOutcomes, now)
 
 	var body bytes.Buffer
 	if err := dashboardTemplate.Execute(&body, data); err != nil {
@@ -279,6 +279,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.InsightsError = "현재 저장소는 30일 운영 추세를 제공하지 않습니다"
 	} else {
 		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
+		data.SearchOutcomes = insights.Search
 		data.InsightsAvailable = true
 	}
 
@@ -327,6 +328,10 @@ type dashboardData struct {
 	ActivityTelemetry activity.Telemetry
 	ActivityAvailable bool
 	ActivityError     string
+
+	Growth growthView
+
+	SearchOutcomes serverstore.AdminSearchOutcomeCounts
 }
 
 func nonNegative(d time.Duration) time.Duration {

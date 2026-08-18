@@ -386,6 +386,10 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 			Verification: serverstore.AdminVerificationCounts{Pass: 72, Fail: 5, Skipped: 3},
 			Ecosystems:   []serverstore.AdminEcosystemCount{{Ecosystem: "npm", Verifications: 70}, {Ecosystem: "pypi", Verifications: 10}},
 			PackageDepth: []serverstore.AdminPackageDepth{{Ecosystem: "npm", Name: "three", VerifiedSamples: 16}},
+			Search: serverstore.AdminSearchOutcomeCounts{
+				Available: true, SampleHits: 75, NoMatches: 25, Days: 4,
+				FirstDay: "2026-08-14", LastDay: "2026-08-17",
+			},
 		},
 	}
 	access := &fakeAccessReader{metrics: AccessLogMetrics{
@@ -414,6 +418,7 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		"최근 검증 생태계 구성", "npm · JavaScript/TypeScript", "최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
 		"API 요청 활동", "사용자 수가 아니라", "69,467", "35,396", "일별 전체 API 요청", "많이 호출된 API 종류", "<th scope=\"col\">기타</th>", "POST 기여 · 기타 조정",
 		"API 종류별 요청 방식 및 응답 상태 집계", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
+		"Sample hit rate", "75.0%", "No match 비율", "25.0%", "성공한 검색 응답 100건",
 		"‘실패 회피’는 추정하지 않습니다", "해석할 때 제외해야 할 것", "활성 MCP 세션", "설치 및 다운로드",
 	} {
 		if !strings.Contains(body, want) {
