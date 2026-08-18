@@ -151,12 +151,21 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	for _, want := range []string{
 		"@echo off", "setlocal EnableExtensions DisableDelayedExpansion", `set "CSX_SESSION_ID=session-123"`,
 		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`, ":poll", "sample-worker refresh",
-		"sample-worker next", `findstr /b /c:"NO_WORK:"`, `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--prompt-interactive", "goto :poll",
+		"sample-worker next", `findstr /b /c:"NO_WORK:"`, `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--print", "CSX_AGY_LOG", "Tee-Object", "goto :poll",
 		"HTTP 410", "download a new CMD file",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("CMD missing %q", want)
 		}
+	}
+	if strings.Contains(script, "--prompt-interactive") {
+		t.Fatal("CMD must let each AGY turn exit so the supervisor can poll again")
+	}
+	if !strings.Contains(script, `@('--dangerously-skip-permissions','--print-timeout','50m','--print',$prompt)`) {
+		t.Fatal("--print consumes the next argument; the prompt must be the final AGY argument")
+	}
+	if !strings.Contains(script, `if($env:CSX_REASONING -in @('low','medium','high'))`) || strings.Contains(script, `--effort $env:CSX_REASONING`) {
+		t.Fatal("auto reasoning must omit --effort; AGY accepts only low, medium, or high")
 	}
 	if strings.Contains(script, grant.Label) {
 		t.Fatal("untrusted label was interpolated into CMD syntax")
