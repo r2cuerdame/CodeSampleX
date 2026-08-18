@@ -197,24 +197,56 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 	}
 	observedScores := make(map[[3]string]int64)
-	packageScores := make(map[[2]string]int64)
+	packageScores := make(map[string]int64)
 	for observed, score := range f.merge.observations {
 		targetOS := ""
 		if meta := f.aggMeta[observed]; meta != nil {
 			targetOS = authoringEvidenceOS(meta.envJSON)
 		}
 		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
-		packageScores[[2]string{observed.PURL, targetOS}] += score
+		packageScores[observed.PURL] += score
 	}
-	for _, pkg := range f.packages {
-		for observed, score := range packageScores {
-			if observed[0] != pkg.PURL || score == 0 || !eligible(pkg, "") {
+	packageTargets := make(map[string]map[string]bool)
+	for sampleID, sample := range f.samples {
+		if sample.Quarantined {
+			continue
+		}
+		var manifest struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		for _, receipt := range f.receipts[sampleID] {
+			if receipt.ContractResult != "PASS" {
 				continue
 			}
-			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", observed[1]}
+			var parsed struct {
+				Environment struct {
+					OS string `json:"os"`
+				} `json:"environment"`
+			}
+			if json.Unmarshal([]byte(receipt.ReceiptJSON), &parsed) != nil || parsed.Environment.OS == "" {
+				continue
+			}
+			for _, purl := range manifest.Packages {
+				if packageTargets[purl] == nil {
+					packageTargets[purl] = make(map[string]bool)
+				}
+				packageTargets[purl][strings.ToLower(parsed.Environment.OS)] = true
+			}
+		}
+	}
+	for _, pkg := range f.packages {
+		for targetOS := range packageTargets[pkg.PURL] {
+			score := packageScores[pkg.PURL]
+			if score == 0 || !eligible(pkg, "") {
+				continue
+			}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Kind: "EXPANSION", Score: score, TargetOS: observed[1]}
+					Kind: "EXPANSION", Score: score, TargetOS: targetOS}
 			}
 		}
 	}
@@ -235,11 +267,14 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		out = append(out, candidate)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if (out[i].TargetOS == "linux") != (out[j].TargetOS == "linux") {
+			return out[i].TargetOS == "linux"
+		}
 		if out[i].Kind != out[j].Kind {
 			return out[i].Kind == "FINDING"
 		}
 		if out[i].Kind == "EXPANSION" && (out[i].Symbol == "") != (out[j].Symbol == "") {
-			return out[i].Symbol != ""
+			return out[i].Symbol == ""
 		}
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score

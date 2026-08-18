@@ -83,6 +83,12 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:linux-proof", ManifestJSON: `{"packages":["pkg:npm/axios@1.12.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-linux-proof", SampleID: "sha256:linux-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"windows"}}`}); err != nil {
+		t.Fatal(err)
+	}
 
 	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 10)
 	if err != nil || len(candidates) != 3 {
@@ -91,11 +97,11 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "axios.post" || candidates[0].Score != 17 {
 		t.Fatalf("first candidate = %+v", candidates[0])
 	}
-	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "axios.get" || candidates[1].Score != 5 {
-		t.Fatalf("symbol expansion = %+v", candidates[1])
+	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "" || candidates[1].Score != 22 {
+		t.Fatalf("package expansion = %+v", candidates[1])
 	}
-	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "" || candidates[2].Score != 22 {
-		t.Fatalf("package expansion = %+v", candidates[2])
+	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "axios.get" || candidates[2].Score != 5 {
+		t.Fatalf("symbol expansion = %+v", candidates[2])
 	}
 
 	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-finding", candidates, now, now.Add(24*time.Hour))
@@ -107,7 +113,7 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := store.ClaimAuthoringWork(ctx, "writer-expansion", remaining, now, now.Add(24*time.Hour))
-	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "axios.get" {
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
 	}
 }

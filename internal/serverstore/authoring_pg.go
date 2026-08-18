@@ -239,6 +239,16 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
 				) AS symbol(value)
+			), verified_package_targets AS MATERIALIZED (
+				SELECT DISTINCT package.value AS purl,
+				       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS target_os
+				FROM samples s
+				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+				WHERE NOT s.quarantined
+				  AND LOWER(COALESCE(r.receipt->'environment'->>'os',''))<>''
 			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
 				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
@@ -256,7 +266,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
-				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
+				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
 				       COALESCE(e.env_json->>'os','') AS target_os
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
@@ -264,12 +274,13 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
-				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
-				       COALESCE(e.env_json->>'os','') AS target_os
-				FROM packages p
+				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
+				       target.target_os
+				FROM verified_package_targets target
+				JOIN packages p ON p.purl=target.purl
 				JOIN evidence_agg e ON e.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				GROUP BY p.purl,p.ecosystem,p.name,p.version,p.last_seen,target_os
+				GROUP BY p.purl,p.ecosystem,p.name,p.version,p.last_seen,target.target_os
 			), ranked AS (
 				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
 				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
@@ -280,7 +291,8 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			FROM ranked c
 			WHERE (c.symbol='' OR NOT EXISTS (
 				SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
-			ORDER BY source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
+			ORDER BY CASE WHEN target_os='linux' THEN 0 ELSE 1 END,
+			         source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
 			LIMIT $1`, limit)
 		if err != nil {
 			return err

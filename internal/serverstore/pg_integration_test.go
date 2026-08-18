@@ -188,6 +188,12 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:linux-expansion-proof", ManifestJSON: `{"packages":["pkg:npm/undici@8.10.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-linux-expansion-proof", SampleID: "sha256:linux-expansion-proof", PeerID: "linux-proof", EnvHash: "env-linux-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
 
 	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
 	if err != nil || len(candidates) != 3 {
@@ -196,8 +202,11 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "MockAgent" || candidates[0].Score != 23 {
 		t.Fatalf("finding candidate = %+v", candidates[0])
 	}
-	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "request" || candidates[1].Score != 7 {
-		t.Fatalf("expansion candidate = %+v", candidates[1])
+	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "" || candidates[1].Score != 30 {
+		t.Fatalf("package expansion candidate = %+v", candidates[1])
+	}
+	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "request" || candidates[2].Score != 7 {
+		t.Fatalf("symbol expansion candidate = %+v", candidates[2])
 	}
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	claimed, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer", candidates, now, now.Add(24*time.Hour))
@@ -209,7 +218,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer-2", remaining, now, now.Add(24*time.Hour))
-	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "request" {
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
 	}
 }
