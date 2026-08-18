@@ -523,6 +523,7 @@ func TestStaticCSSServed(t *testing.T) {
 	}
 	mustContain(t, rec.Body.String(), "prefers-color-scheme")
 	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
+	mustContain(t, rec.Body.String(), ".evidence-question {\n  display: grid; gap: 0.42rem;")
 	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
 	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
 	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);\n  gap: 1rem; align-items: start; margin-bottom: 1rem;")

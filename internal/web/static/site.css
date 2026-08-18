@@ -158,13 +158,13 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
   background: rgba(248,251,255,0.92); box-shadow: var(--shadow-soft);
 }
 .evidence-question {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem;
+  display: grid; gap: 0.42rem;
   margin: 0 0 1rem; padding: 0.72rem 0.8rem; color: var(--accent-2);
   border: 1px solid #c9daf8; border-radius: 0.7rem; background: #f4f8ff;
   font-weight: 720; text-decoration: none;
 }
 .evidence-question:hover { border-color: var(--accent); background: #edf4ff; }
-.evidence-question strong { flex: 0 0 auto; color: var(--accent); font-size: 0.72rem; }
+.evidence-question strong { color: var(--accent); font-size: 0.72rem; justify-self: start; }
 .home-search { display: flex; gap: 0.55rem; margin-bottom: 1.1rem; }
 .home-search input[type="search"] {
   min-width: 0; flex: 1 1 auto; padding: 0.73rem 0.85rem;
@@ -726,7 +726,6 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .lead { font-size: 1rem; }
   .hero-actions .action { flex: 1 1 100%; }
   .hero-evidence { padding: 1rem; border-radius: 1rem; }
-  .evidence-question { flex-direction: column; }
   .home-search { align-items: stretch; }
   .home-search button { padding-left: 0.75rem; padding-right: 0.75rem; }
   .hero-evidence .stat { padding: 0 0.45rem; }
