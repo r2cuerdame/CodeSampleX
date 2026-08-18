@@ -254,6 +254,7 @@
   "support.packages": "Pakete und Versionen",
   "support.samples": "per Contract verifizierte Samples",
   "support.symbols": "welche API genutzt wurde",
+  "support.verification_only_note": "Verifizierte öffentliche Samples werden unterstützt. Das automatische Scannen lokaler Projekte wird noch nicht unterstützt.",
   "symbol.callshape_note": "Diese Zahlen unterscheiden nicht, wie das Symbol aufgerufen wurde: Überladungen, Argumentformen und Optionen werden zusammengefasst. Was eine bestimmte Aufrufform tut, beweist der Vertrag eines Samples – nicht diese Zahlen.",
   "symbol.confidence_col": "Konfidenz",
   "symbol.env_col": "Umgebung",

@@ -142,11 +142,9 @@ type supportRow struct {
 	Ecosystem string
 	Managers  string
 	Can       []string
-	Missing   []string
 	// Note carries an adapter-specific boundary that would be misleading to
-	// reduce to a checkmark. Maven/Gradle are verification-only: Java 21
-	// contract support must not imply that local Java projects are scanned or
-	// that a sample build receives network access.
+	// reduce to a row of crosses. Verification-only support means contracts
+	// run, but must not imply that local projects are scanned.
 	Note       string
 	Confidence string // EXACT | PROBABLE | UNKNOWN
 	// ConfidenceClass styles the chip; ConfidenceTip explains the value
@@ -183,6 +181,10 @@ func buildSupport(lang string) []supportRow {
 			row.Note = i18n.T(lang, "support.maven_java_note")
 		case "gradle-java":
 			row.Note = i18n.T(lang, "support.gradle_java_note")
+		default:
+			if has["A4"] && !has["A0"] && !has["A1"] && !has["A2"] {
+				row.Note = i18n.T(lang, "support.verification_only_note")
+			}
 		}
 		if key, ok := confidenceKey[strings.ToUpper(a.SymbolConfidence)]; ok {
 			row.ConfidenceClass = strings.ToLower(a.SymbolConfidence)
@@ -191,8 +193,6 @@ func buildSupport(lang string) []supportRow {
 		for _, l := range labels {
 			if has[l.level] {
 				row.Can = append(row.Can, i18n.T(lang, l.key))
-			} else {
-				row.Missing = append(row.Missing, i18n.T(lang, l.key))
 			}
 		}
 		rows = append(rows, row)

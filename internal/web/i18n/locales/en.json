@@ -254,6 +254,7 @@
   "support.packages": "packages & versions",
   "support.samples": "verified samples with contracts",
   "support.symbols": "which API was used",
+  "support.verification_only_note": "Verified public samples are supported. Local project scanning is not yet supported.",
   "symbol.callshape_note": "These counts do not distinguish how the symbol was called: overloads, argument shapes and options are pooled together. What a particular call shape does is proven by a sample's contract, not by these numbers.",
   "symbol.confidence_col": "Confidence",
   "symbol.env_col": "Environment",

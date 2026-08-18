@@ -412,10 +412,10 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .network .chain { margin: 0.9rem 0 0; }
 .network, #install, #contract { scroll-margin-top: 6rem; }
 .support-shell {
-  display: grid; grid-template-columns: minmax(20rem, 0.78fr) minmax(0, 1.22fr);
+  display: grid; grid-template-columns: minmax(0, 1fr);
   gap: 1rem; align-items: start;
 }
-.support-shell > .agents, .support-shell > .support { margin: 0; min-width: 0; height: 100%; }
+.support-shell > .agents, .support-shell > .support { margin: 0; min-width: 0; }
 .support-agents { background: var(--panel); }
 .home-detail {
   margin: 0 0 1rem; border: 1px solid var(--line); border-radius: 1rem;
@@ -654,7 +654,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 54rem) {
 	.filterbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.filterquery { grid-column: 1 / -1; }
-  .home-hero, .delegate, .support-shell { grid-template-columns: 1fr; }
+  .home-hero, .delegate { grid-template-columns: 1fr; }
   .tagline { max-width: 15ch; }
 }
 

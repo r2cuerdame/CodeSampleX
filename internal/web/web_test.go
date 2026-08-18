@@ -318,6 +318,25 @@ func TestLandingNamesSupportedAgents(t *testing.T) {
 	}
 }
 
+func TestLandingDescribesVerificationOnlyEcosystemsAsSupported(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/").Body.String()
+	start := strings.Index(body, `<span class="econame mono">composer</span>`)
+	if start < 0 {
+		t.Fatal("landing is missing composer support")
+	}
+	end := strings.Index(body[start:], "</li>")
+	if end < 0 {
+		t.Fatal("composer support row is not closed")
+	}
+	row := body[start : start+end]
+	mustContain(t, row, "verified samples with contracts")
+	mustContain(t, row, "Verified public samples are supported")
+	if strings.Contains(row, `class="cap off"`) {
+		t.Error("verification-only composer support is presented as ecosystem failure")
+	}
+}
+
 func TestLandingKorean(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/ko/")
@@ -488,6 +507,7 @@ func TestStaticCSSServed(t *testing.T) {
 	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
 	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
 	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
+	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);")
 	mustContain(t, rec.Body.String(), "@media (hover: none), (pointer: coarse)")
 	mustContain(t, rec.Body.String(), "@media (prefers-reduced-motion: reduce)")
 }

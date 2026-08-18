@@ -254,6 +254,7 @@
   "support.packages": "paquets et versions",
   "support.samples": "échantillons vérifiés par contrat",
   "support.symbols": "quelle API a été utilisée",
+  "support.verification_only_note": "Les exemples publics vérifiés sont pris en charge. L’analyse automatique des projets locaux ne l’est pas encore.",
   "symbol.callshape_note": "Ces chiffres ne distinguent pas la façon dont le symbole a été appelé : surcharges, formes d'arguments et options sont regroupées. Ce que fait une forme d'appel précise est prouvé par le contrat d'un échantillon, pas par ces nombres.",
   "symbol.confidence_col": "Confiance",
   "symbol.env_col": "Environnement",
