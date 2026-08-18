@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -238,6 +239,10 @@ func TestAuthoringLinuxSHParsesInBash(t *testing.T) {
 	name := "bash"
 	args := []string{"-n"}
 	if runtime.GOOS == "windows" {
+		listed, err := exec.Command("wsl.exe", "--list", "--quiet").CombinedOutput()
+		if err != nil || len(bytes.TrimSpace(listed)) == 0 {
+			t.Skip("WSL bash parser test requires an installed distribution")
+		}
 		name = "wsl.exe"
 		args = []string{"bash", "-n"}
 	}
