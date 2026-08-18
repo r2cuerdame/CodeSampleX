@@ -65,7 +65,22 @@ func (d *DB) SaveSample(ctx context.Context, s SampleRow) error {
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(sample_id) DO UPDATE SET
 		  case_id = excluded.case_id, manifest_json = excluded.manifest_json,
-		  status = excluded.status, origin_seeder = excluded.origin_seeder,
+		  -- A sample id is the content hash, so a conflict is the exact same
+		  -- artifact arriving again. Re-indexing it must not erase verification
+		  -- already represented by the local row and its immutable receipts.
+		  -- SetSampleStatus remains the explicit path for derived lifecycle
+		  -- changes; ingestion only keeps or raises the known status.
+		  status = CASE
+		    WHEN (CASE samples.status
+		      WHEN 'STABLE' THEN 5 WHEN 'MATRIX_PASS' THEN 4
+		      WHEN 'CROSS_PASS' THEN 3 WHEN 'PUBLISHED' THEN 2
+		      WHEN 'LOCAL_PASS' THEN 1 WHEN 'LOCAL' THEN 0 ELSE -1 END)
+		    > (CASE excluded.status
+		      WHEN 'STABLE' THEN 5 WHEN 'MATRIX_PASS' THEN 4
+		      WHEN 'CROSS_PASS' THEN 3 WHEN 'PUBLISHED' THEN 2
+		      WHEN 'LOCAL_PASS' THEN 1 WHEN 'LOCAL' THEN 0 ELSE -1 END)
+		    THEN samples.status ELSE excluded.status END,
+		  origin_seeder = excluded.origin_seeder,
 		  license = excluded.license, created_at = excluded.created_at,
 		  pinned = excluded.pinned, hot_score = excluded.hot_score,
 		  last_used = excluded.last_used, has_artifact = excluded.has_artifact`,
@@ -193,4 +208,41 @@ func (d *DB) ReceiptsForSample(ctx context.Context, sampleID string) ([]domain.V
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// RemoveSample atomically removes one sample's local searchable evidence.
+// The case is deliberately retained: multiple sample artifacts may prove the
+// same case, and withdrawing one artifact must not invalidate the others.
+// Historical hits/interventions are retained as an audit trail, but receipts
+// and both locally- and shard-shaped FTS document ids are removed with the row.
+// It reports false without changing anything when sampleID is not present.
+func (d *DB) RemoveSample(ctx context.Context, sampleID string) (bool, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM receipts WHERE sample_id = ?`, sampleID); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM search_fts WHERE doc_id = ? OR doc_id = ?`, sampleID, "sample:"+sampleID); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM samples WHERE sample_id = ?`, sampleID)
+	if err != nil {
+		return false, err
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if removed == 0 {
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }

@@ -56,7 +56,7 @@ var (
 func init() {
 	Register(Command{
 		Name:    "sample",
-		Summary: "clean-room public sample workflow: propose|create|preview|verify|publish|list",
+		Summary: "clean-room public sample workflow: propose|create|preview|verify|publish|remove|list",
 		Run:     sampleMain,
 	})
 }
@@ -72,6 +72,8 @@ func sampleUsage(w io.Writer) {
 	fmt.Fprintln(w, "                       run verification, save the receipt, optionally print only receipt JSON")
 	fmt.Fprintln(w, "  publish <sampleId> [--seeder name | --anonymous] [--server URL]")
 	fmt.Fprintln(w, "          upload after leakage re-scan and explicit typed approval")
+	fmt.Fprintln(w, "  remove <fullSampleId>")
+	fmt.Fprintln(w, "          remove one exact local sample after typing its full id again")
 	fmt.Fprintln(w, "  list                list local samples")
 	fmt.Fprintln(w, "  pending             samples an agent prepared that nobody has reviewed yet")
 }
@@ -92,6 +94,8 @@ func sampleMain(ctx context.Context, args []string) int {
 		return sampleVerify(ctx, args[1:])
 	case "publish":
 		return samplePublish(ctx, args[1:])
+	case "remove":
+		return sampleRemove(ctx, args[1:])
 	case "list":
 		return sampleList(ctx, args[1:])
 	case "pending":
@@ -101,6 +105,22 @@ func sampleMain(ctx context.Context, args []string) int {
 		sampleUsage(sampleStderr)
 		return 2
 	}
+}
+
+// exactSampleID accepts only the complete canonical content address. Removal
+// intentionally does not inherit resolveLocalSample's prefix convenience:
+// destructive commands must identify exactly one immutable artifact.
+func exactSampleID(id string) bool {
+	const prefix = "sha256:"
+	if len(id) != len(prefix)+64 || !strings.HasPrefix(id, prefix) {
+		return false
+	}
+	for _, c := range id[len(prefix):] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // multiStringFlag collects a repeatable string flag.
@@ -1004,6 +1024,70 @@ func samplePublish(ctx context.Context, args []string) int {
 		_ = env.db.SetStat(ctx, "originSeeds", strconv.Itoa(n+1))
 	}
 	fmt.Fprintf(sampleStdout, "Published. Public URL: %s/samples/%s\n", serverURL, row.SampleID)
+	return 0
+}
+
+// --- remove ------------------------------------------------------------
+
+func sampleRemove(ctx context.Context, args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(sampleStderr, "usage: csx sample remove <fullSampleId>")
+		return 2
+	}
+	sampleID := args[0]
+	if !exactSampleID(sampleID) {
+		fmt.Fprintln(sampleStderr, "csx sample remove: sample id must be exactly sha256: followed by 64 lowercase hexadecimal characters")
+		return 2
+	}
+
+	env, err := openSampleEnv()
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample remove: %v\n", err)
+		return 1
+	}
+	defer env.Close()
+
+	row, ok, err := env.db.GetSample(ctx, sampleID)
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample remove: %v\n", err)
+		return 1
+	}
+	if !ok {
+		fmt.Fprintf(sampleStderr, "csx sample remove: local sample %s not found\n", sampleID)
+		return 1
+	}
+
+	fmt.Fprintf(sampleStdout, "Sample: %s\nStatus: %s\nCase:   %s\n", row.SampleID, row.Status, row.CaseID)
+	fmt.Fprintln(sampleStdout, "This removes the local sample, its verification receipts, search entry, and cached artifact.")
+	fmt.Fprint(sampleStdout, "Type the full sample id to confirm: ")
+	line, readErr := bufio.NewReader(sampleStdin).ReadString('\n')
+	if readErr != nil && readErr != io.EOF {
+		fmt.Fprintf(sampleStderr, "csx sample remove: read confirmation: %v\n", readErr)
+		return 1
+	}
+	if strings.TrimSpace(line) != sampleID {
+		fmt.Fprintln(sampleStderr, "csx sample remove: aborted — confirmation did not exactly match the full sample id")
+		return 1
+	}
+
+	removed, err := env.db.RemoveSample(ctx, sampleID)
+	if err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample remove: remove local evidence: %v\n", err)
+		return 1
+	}
+	if !removed {
+		fmt.Fprintf(sampleStderr, "csx sample remove: local sample %s disappeared before removal\n", sampleID)
+		return 1
+	}
+	if err := env.cas.Delete(sampleID); err != nil && !os.IsNotExist(err) {
+		// The searchable evidence is already gone. An unreferenced CAS object
+		// is inert and can be retried safely; do not pretend filesystem cleanup
+		// was complete when the exact-object deletion failed.
+		fmt.Fprintf(sampleStderr, "csx sample remove: local evidence removed, but cached artifact cleanup failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(sampleStdout, "Removed local sample %s. Shared case and unrelated CAS objects were kept.\n", sampleID)
 	return 0
 }
 

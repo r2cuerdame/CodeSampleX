@@ -17,6 +17,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/storage/cas"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -300,6 +301,203 @@ func TestSampleCreatePreviewVerifyHappyPath(t *testing.T) {
 	}
 	if row.Status != "LOCAL_PASS" {
 		t.Fatalf("status after contract-PASS verify = %q, want LOCAL_PASS", row.Status)
+	}
+}
+
+func TestSampleCreateAgainPreservesEarnedStatusAndReceipt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+	dir := sampleFixtureDir(t, nil)
+
+	create := func() {
+		t.Helper()
+		out, errBuf := captureSampleIO(t, "")
+		if code := Main([]string{"sample", "create", dir}); code != 0 {
+			t.Fatalf("sample create exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+		}
+	}
+	create()
+
+	db := openLocalDB(t, home)
+	rows, err := db.ListSamples(context.Background())
+	if err != nil || len(rows) != 1 {
+		db.Close()
+		t.Fatalf("created rows = %d, err = %v", len(rows), err)
+	}
+	sampleID := rows[0].SampleID
+	db.Close()
+
+	setVerifierSeams(t, fakeVerifyRunner{contract: sandbox.ResultPass}, domain.CapContainerRun)
+	out, errBuf := captureSampleIO(t, "")
+	if code := Main([]string{"sample", "verify", sampleID}); code != 0 {
+		t.Fatalf("sample verify exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+
+	assertState := func(wantStatus string) {
+		t.Helper()
+		db := openLocalDB(t, home)
+		defer db.Close()
+		row, ok, err := db.GetSample(context.Background(), sampleID)
+		if err != nil || !ok {
+			t.Fatalf("GetSample: found=%v err=%v", ok, err)
+		}
+		if row.Status != wantStatus {
+			t.Fatalf("status after repeated create = %q, want %q", row.Status, wantStatus)
+		}
+		receipts, err := db.ReceiptsForSample(context.Background(), sampleID)
+		if err != nil || len(receipts) != 1 || receipts[0].Stages["contract"] != "PASS" {
+			t.Fatalf("receipts after repeated create = %+v, err=%v", receipts, err)
+		}
+	}
+
+	// Re-creating the exact artifact used to overwrite LOCAL_PASS with LOCAL.
+	create()
+	assertState("LOCAL_PASS")
+
+	// The same local operation must not walk a published sample back into a
+	// draft state either; its receipt remains attached to the content id.
+	db = openLocalDB(t, home)
+	if err := db.SetSampleStatus(context.Background(), sampleID, "PUBLISHED"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	create()
+	assertState("PUBLISHED")
+}
+
+func TestSampleRemoveRequiresExactIDAndPreservesSharedState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+	ctx := context.Background()
+
+	create := func(dir string) {
+		t.Helper()
+		out, errBuf := captureSampleIO(t, "")
+		if code := Main([]string{"sample", "create", dir}); code != 0 {
+			t.Fatalf("sample create exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+		}
+	}
+	create(sampleFixtureDir(t, map[string]string{"variant.txt": "remove me\n"}))
+
+	db := openLocalDB(t, home)
+	rows, err := db.ListSamples(ctx)
+	if err != nil || len(rows) != 1 {
+		db.Close()
+		t.Fatalf("initial samples = %d, err = %v", len(rows), err)
+	}
+	removeID, sharedCaseID := rows[0].SampleID, rows[0].CaseID
+	db.Close()
+
+	setVerifierSeams(t, fakeVerifyRunner{contract: sandbox.ResultPass}, domain.CapContainerRun)
+	out, errBuf := captureSampleIO(t, "")
+	if code := Main([]string{"sample", "verify", removeID}); code != 0 {
+		t.Fatalf("sample verify exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+
+	// A distinct artifact proves the same case. Removing the first artifact
+	// must leave this sample, the shared case row, and its CAS object intact.
+	create(sampleFixtureDir(t, map[string]string{"variant.txt": "keep me\n"}))
+	db = openLocalDB(t, home)
+	rows, err = db.ListSamples(ctx)
+	if err != nil || len(rows) != 2 {
+		db.Close()
+		t.Fatalf("samples before removal = %d, err = %v", len(rows), err)
+	}
+	var keepID string
+	for _, row := range rows {
+		if row.SampleID != removeID {
+			keepID = row.SampleID
+			if row.CaseID != sharedCaseID {
+				db.Close()
+				t.Fatalf("second artifact case = %q, want shared case %q", row.CaseID, sharedCaseID)
+			}
+		}
+	}
+	db.Close()
+
+	store, err := cas.Open(filepath.Join(home, "cas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Has(removeID) || !store.Has(keepID) {
+		t.Fatalf("expected both CAS objects before removal: remove=%v keep=%v", store.Has(removeID), store.Has(keepID))
+	}
+
+	// Prefixes are never resolved for a destructive command.
+	out, errBuf = captureSampleIO(t, "")
+	if code := Main([]string{"sample", "remove", removeID[:20]}); code != 2 {
+		t.Fatalf("prefix removal exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+	if !strings.Contains(errBuf.String(), "exactly sha256:") {
+		t.Fatalf("prefix rejection did not explain exact-id requirement: %s", errBuf)
+	}
+
+	// The typed confirmation is also exact; a mismatch changes nothing.
+	out, errBuf = captureSampleIO(t, keepID+"\n")
+	if code := Main([]string{"sample", "remove", removeID}); code != 1 {
+		t.Fatalf("mismatched confirmation exit = %d, want 1\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+	db = openLocalDB(t, home)
+	if _, ok, err := db.GetSample(ctx, removeID); err != nil || !ok {
+		db.Close()
+		t.Fatalf("mismatched confirmation changed sample: found=%v err=%v", ok, err)
+	}
+	receipts, err := db.ReceiptsForSample(ctx, removeID)
+	db.Close()
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("mismatched confirmation changed receipts: count=%d err=%v", len(receipts), err)
+	}
+	if !store.Has(removeID) {
+		t.Fatal("mismatched confirmation deleted CAS object")
+	}
+
+	out, errBuf = captureSampleIO(t, removeID+"\n")
+	if code := Main([]string{"sample", "remove", removeID}); code != 0 {
+		t.Fatalf("sample remove exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+
+	db = openLocalDB(t, home)
+	defer db.Close()
+	if _, ok, err := db.GetSample(ctx, removeID); err != nil || ok {
+		t.Fatalf("removed sample: found=%v err=%v", ok, err)
+	}
+	receipts, err = db.ReceiptsForSample(ctx, removeID)
+	if err != nil || len(receipts) != 0 {
+		t.Fatalf("removed sample receipts = %d, err=%v", len(receipts), err)
+	}
+	if _, ok, err := db.GetSample(ctx, keepID); err != nil || !ok {
+		t.Fatalf("unrelated sample: found=%v err=%v", ok, err)
+	}
+	if _, ok, err := db.GetCase(ctx, sharedCaseID); err != nil || !ok {
+		t.Fatalf("shared case: found=%v err=%v", ok, err)
+	}
+	hits, err := db.FTSQuery(ctx, "post JSON body axios", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range hits {
+		if hit.DocID == removeID || hit.DocID == "sample:"+removeID {
+			t.Fatalf("removed sample remains searchable as %q", hit.DocID)
+		}
+	}
+	if store.Has(removeID) {
+		t.Fatal("removed sample CAS object still exists")
+	}
+	if !store.Has(keepID) {
+		t.Fatal("unrelated sample CAS object was deleted")
+	}
+
+	missingID := "sha256:" + strings.Repeat("0", 64)
+	out, errBuf = captureSampleIO(t, missingID+"\n")
+	if code := Main([]string{"sample", "remove", missingID}); code != 1 {
+		t.Fatalf("missing removal exit = %d, want 1\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+	if !strings.Contains(errBuf.String(), "not found") {
+		t.Fatalf("missing removal did not clearly report not found: %s", errBuf)
+	}
+	if _, ok, err := db.GetSample(ctx, keepID); err != nil || !ok || !store.Has(keepID) {
+		t.Fatalf("missing removal changed unrelated sample: found=%v cas=%v err=%v", ok, store.Has(keepID), err)
 	}
 }
 

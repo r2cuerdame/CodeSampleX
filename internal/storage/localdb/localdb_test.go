@@ -20,6 +20,46 @@ func openTemp(t *testing.T) *DB {
 	return db
 }
 
+func TestRemoveSampleRollsBackAllEvidenceOnFailure(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	const sampleID = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := db.SaveSample(ctx, SampleRow{
+		SampleID: sampleID, ManifestJSON: `{}`, Status: "LOCAL_PASS", HasArtifact: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx,
+		`INSERT INTO receipts(receipt_id, sample_id, json, created_at) VALUES('receipt:test', ?, '{}', '2026-01-01T00:00:00Z')`,
+		sampleID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.IndexDoc(ctx, sampleID, "sample", "rollback sentinel", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `
+		CREATE TRIGGER reject_sample_removal BEFORE DELETE ON samples
+		BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := db.RemoveSample(ctx, sampleID)
+	if err == nil || removed {
+		t.Fatalf("RemoveSample = (%v, %v), want false and trigger error", removed, err)
+	}
+	if _, ok, err := db.GetSample(ctx, sampleID); err != nil || !ok {
+		t.Fatalf("sample after rollback: found=%v err=%v", ok, err)
+	}
+	receipts, err := db.ReceiptsForSample(ctx, sampleID)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("receipts after rollback = %d, err=%v", len(receipts), err)
+	}
+	hits, err := db.FTSQuery(ctx, "rollback sentinel", 10)
+	if err != nil || len(hits) != 1 || hits[0].DocID != sampleID {
+		t.Fatalf("FTS after rollback = %+v, err=%v", hits, err)
+	}
+}
+
 func TestOpenMigrateIdempotent(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "csx.db")
