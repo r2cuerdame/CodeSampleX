@@ -1,0 +1,13 @@
+{
+  "name": "csx-sample-puppeteer-23111-screenshot-bytes",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT-0",
+  "scripts": {
+    "test": "node test/contract.mjs"
+  },
+  "dependencies": {
+    "puppeteer": "23.11.1"
+  }
+}

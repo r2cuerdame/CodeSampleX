@@ -25,7 +25,14 @@ type DockerRunner struct{}
 // was run under the same 512 MiB / 256 PID / network-off contract as stages
 // before being admitted here; a plain node image cannot produce browser
 // execution evidence merely because the package controlling it is Puppeteer.
-const chrome134Image = "ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5769b74c89135c663cbb2a76e07d3e261bb3e2da83be98409a68a"
+const (
+	chrome134Image = "ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5769b74c89135c663cbb2a76e07d3e261bb3e2da83be98409a68a"
+	// The digest-pinned image owns this path. Exporting it lets Puppeteer
+	// releases whose preferred browser revision differs from 134 exercise
+	// their API against the browser environment the manifest requested,
+	// instead of failing before launch while looking for their old cache key.
+	chrome134Executable = "/home/pptruser/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
+)
 
 // imageFor maps an ecosystem AND runtime to its pinned verifier image.
 //
@@ -297,15 +304,23 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	// ceiling, so every timed-out verification permanently took a share of
 	// the pool. Over a night that is not a leak, it is the throughput.
 	name := containerName(abs, networkOff, cmd)
-	env := stageEnv(m.Environment.Ecosystem, m.Environment.Runtime)
-	if img == chrome134Image {
-		env = append(env, "PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer")
-	}
+	env := stageEnvironmentForImage(img, m.Environment.Ecosystem, m.Environment.Runtime)
 	res := runStage(ctx, "", dockerArgs(img, abs, networkOff, env, cmd, name))
 	if ctx.Err() != nil || res.Result == ResultFail {
 		reapContainer(name)
 	}
 	return res
+}
+
+func stageEnvironmentForImage(image, ecosystem, runtime string) []string {
+	env := stageEnv(ecosystem, runtime)
+	if image == chrome134Image {
+		env = append(env,
+			"PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer",
+			"PUPPETEER_EXECUTABLE_PATH="+chrome134Executable,
+		)
+	}
+	return env
 }
 
 // containerName derives a name unique to this stage of this workspace.

@@ -374,11 +374,12 @@ func TestBrowserImageSupportIsFailClosed(t *testing.T) {
 }
 
 func TestBrowserDockerArgsUseBundledCacheAndWritableWorkspace(t *testing.T) {
+	env := stageEnvironmentForImage(chrome134Image, "npm", "node")
 	args := dockerArgs(
 		chrome134Image,
 		"/tmp/browser-contract",
 		true,
-		[]string{"PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer"},
+		env,
 		[]string{"node", "test/contract.mjs"},
 		"csx-browser-test",
 	)
@@ -388,6 +389,7 @@ func TestBrowserDockerArgsUseBundledCacheAndWritableWorkspace(t *testing.T) {
 		" --init ",
 		" --user 0:0 ",
 		" --env PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer ",
+		" --env PUPPETEER_EXECUTABLE_PATH=" + chrome134Executable + " ",
 		" " + chrome134Image + " ",
 	} {
 		if !strings.Contains(joined, want) {
