@@ -46,7 +46,7 @@ func ipcTransport(home string) *http.Transport {
 // so it survives the parent (CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS).
 func detachSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS | windows.CREATE_BREAKAWAY_FROM_JOB,
 		HideWindow:    true,
 	}
 }

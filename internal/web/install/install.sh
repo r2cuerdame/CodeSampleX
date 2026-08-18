@@ -34,19 +34,47 @@ echo "Downloading csx ($os/$arch) from $base ..."
 # is atomic: the running server keeps the file it already opened and the
 # next start gets the new one.
 staged="$dir/.csx.download.$$"
-trap 'rm -f "$staged"' EXIT
+checksums="$dir/.csx.checksums.$$"
+previous=""
+trap 'rm -f "$staged" "$checksums"; [ -z "$previous" ] || rm -f "$previous"' EXIT
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$base/dl/csx-$os-$arch" -o "$staged"
+    curl -fsSL "$base/dl/SHA256SUMS.txt" -o "$checksums"
 elif command -v wget >/dev/null 2>&1; then
     wget -qO "$staged" "$base/dl/csx-$os-$arch"
+    wget -qO "$checksums" "$base/dl/SHA256SUMS.txt"
 else
     echo "csx: need curl or wget" >&2
     exit 1
 fi
+asset="csx-$os-$arch"
+expected=$(awk -v name="$asset" '$2 == name || $2 == "*" name {print $1}' "$checksums")
+[ -n "$expected" ] || { echo "csx: checksum does not name $asset" >&2; exit 1; }
+if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$staged" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$staged" | awk '{print $1}')
+else
+    echo "csx: need sha256sum or shasum to verify the download" >&2; exit 1
+fi
+[ "$actual" = "$expected" ] || { echo "csx: downloaded binary checksum mismatch" >&2; exit 1; }
 chmod +x "$staged"
+reported=$("$staged" version) || { echo "csx: staged binary self-test failed" >&2; exit 1; }
+printf '%s\n' "$reported" | grep -Eq '^csx v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || { echo "csx: staged binary reported an invalid release version" >&2; exit 1; }
 upgrade=0
 [ -e "$dir/csx" ] && upgrade=1
+previous="$dir/.csx.previous-installer.$$"
+if [ "$upgrade" = "1" ]; then
+    cp -p "$dir/csx" "$previous"
+fi
 mv -f "$staged" "$dir/csx"
+if ! "$dir/csx" update adopt >/dev/null; then
+	if [ "$upgrade" = "1" ]; then mv -f "$previous" "$dir/csx"; previous=""; else rm -f "$dir/csx"; fi
+    echo "csx: update ownership registration failed; previous install restored" >&2
+    exit 1
+fi
+rm -f "$previous"
+previous=""
 
 case ":$PATH:" in
     *":$dir:"*) ;;

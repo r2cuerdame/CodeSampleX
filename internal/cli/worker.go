@@ -22,6 +22,9 @@ import (
 )
 
 const workerPollInterval = 10 * time.Second
+const workerUpdateExitCode = 75
+
+var errWorkerUpdateReady = errors.New("verified update installed; restart required")
 
 func init() {
 	Register(Command{
@@ -46,6 +49,47 @@ type workerOptions struct {
 	budget       string
 	once         bool
 	pollInterval time.Duration
+	drain        *workerDrain
+}
+
+// workerDrain makes the update boundary exact. A lane holds a read lock for
+// the whole already-admitted RunOne; Request waits for those lanes, blocks new
+// admissions, then lets the native service restart the fully drained worker.
+type workerDrain struct {
+	mu        sync.RWMutex
+	requested bool
+}
+
+func (d *workerDrain) begin() bool {
+	if d == nil {
+		return true
+	}
+	d.mu.RLock()
+	if d.requested {
+		d.mu.RUnlock()
+		return false
+	}
+	return true
+}
+func (d *workerDrain) end() {
+	if d != nil {
+		d.mu.RUnlock()
+	}
+}
+func (d *workerDrain) request() {
+	if d != nil {
+		d.mu.Lock()
+		d.requested = true
+		d.mu.Unlock()
+	}
+}
+func (d *workerDrain) isRequested() bool {
+	if d == nil {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.requested
 }
 
 type workerStats struct {
@@ -67,6 +111,7 @@ type workerEnv struct {
 	collect     func(context.Context, map[string]string) domain.EnvironmentFingerprint
 	newVerifier func(home string, cfg *config.Config, ident *identity.Identity, env domain.EnvironmentFingerprint) contributionVerifier
 	notify      func(context.Context) (context.Context, context.CancelFunc)
+	updates     func(context.Context, string, *config.Config, string) <-chan automaticUpdateResult
 }
 
 func defaultWorkerEnv() *workerEnv {
@@ -93,6 +138,7 @@ func defaultWorkerEnv() *workerEnv {
 		notify: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(ctx, os.Interrupt)
 		},
+		updates: automaticUpdates,
 	}
 }
 
@@ -103,7 +149,7 @@ func workerMain(ctx context.Context, args []string) int {
 func workerUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Usage: csx worker start [--mode verify] [--parallel 1..8] [--budget 5m|15m|idle|unlimited] [--once]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Runs only server-assigned VERIFY jobs with reason=cross in disposable Docker")
+	fmt.Fprintln(w, "Runs only server-assigned VERIFY jobs with reason=cross or reason=matrix in disposable Docker")
 	fmt.Fprintln(w, "workspaces. EXPAND and CREATE are not available in the public worker yet.")
 	fmt.Fprintln(w, "Community mode and a reachable Docker daemon are required; downloaded sample")
 	fmt.Fprintln(w, "code is never executed directly on the host.")
@@ -192,8 +238,31 @@ func workerMainWith(ctx context.Context, args []string, env *workerEnv) int {
 		once:         *values.once,
 		pollInterval: workerPollInterval,
 	}
+	if env.updates != nil {
+		if exe, exeErr := os.Executable(); exeErr == nil {
+			drain := &workerDrain{}
+			opts.drain = drain
+			go func() {
+				for outcome := range env.updates(runCtx, home, cfg, exe) {
+					if outcome.Result.Applied {
+						fmt.Fprintf(env.stdout, "Verified csx %s installed; draining active jobs before service restart.\n", outcome.Result.LatestVersion)
+						drain.request()
+						return
+					}
+					if outcome.Result.ManualInstallRequired {
+						fmt.Fprintf(env.stderr, "csx worker: signed update %s needs the Windows launcher migration or a newer launcher protocol; rerun the official installer\n", outcome.Result.LatestVersion)
+						continue
+					}
+					if outcome.Err != nil {
+						fmt.Fprintf(env.stderr, "csx worker: automatic update check failed: %v\n", outcome.Err)
+						continue
+					}
+				}
+			}()
+		}
+	}
 	fmt.Fprintln(env.stdout, "CodeSampleX Contributor Worker")
-	fmt.Fprintln(env.stdout, "  mode:      VERIFY (server-assigned cross jobs only)")
+	fmt.Fprintln(env.stdout, "  mode:      VERIFY (server-assigned cross + runnable matrix jobs)")
 	fmt.Fprintln(env.stdout, "  sandbox:   Docker / CONTAINER_RUN (no host fallback)")
 	fmt.Fprintf(env.stdout, "  parallel:  %d\n", effectiveWorkerParallel(opts))
 	fmt.Fprintf(env.stdout, "  budget:    %s\n", opts.budget)
@@ -204,8 +273,16 @@ func workerMainWith(ctx context.Context, args []string, env *workerEnv) int {
 
 	stats, runErr := runContributorWorker(runCtx, cv, opts, env.stdout)
 	fmt.Fprintf(env.stdout, "Worker stopped: completed=%d failed=%d\n", stats.Completed, stats.Failed)
+	return workerResultExitCode(stats, runErr, env.stdout, env.stderr)
+}
+
+func workerResultExitCode(stats workerStats, runErr error, stdout, stderr io.Writer) int {
 	if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
-		fmt.Fprintf(env.stderr, "csx worker: %v\n", runErr)
+		if errors.Is(runErr, errWorkerUpdateReady) {
+			fmt.Fprintln(stdout, "Worker drained cleanly; native service will activate the update.")
+			return workerUpdateExitCode
+		}
+		fmt.Fprintf(stderr, "csx worker: %v\n", runErr)
 		return 1
 	}
 	if stats.Failed > 0 {
@@ -304,6 +381,9 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 		go func() {
 			defer wg.Done()
 			for {
+				if opts.drain.isRequested() {
+					return
+				}
 				if err := runCtx.Err(); err != nil {
 					return
 				}
@@ -314,7 +394,18 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 					continue
 				}
 
+				if !opts.drain.begin() {
+					return
+				}
 				worked, err := cv.RunOne(runCtx)
+				opts.drain.end()
+				if opts.drain.isRequested() && err == nil {
+					if worked {
+						completed.Add(1)
+						printCounts("job completed:", nil)
+					}
+					return
+				}
 				if err != nil {
 					if runCtx.Err() != nil {
 						return
@@ -348,6 +439,9 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 	wg.Wait()
 
 	stats := workerStats{Completed: completed.Load(), Failed: failed.Load()}
+	if opts.drain.isRequested() {
+		return stats, errWorkerUpdateReady
+	}
 	if opts.once {
 		errMu.Lock()
 		defer errMu.Unlock()

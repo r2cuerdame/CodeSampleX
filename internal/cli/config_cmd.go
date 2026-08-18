@@ -81,6 +81,14 @@ func configMain(ctx context.Context, args []string) int {
 			fmt.Fprintf(os.Stderr, "csx: invalid value for %q: %v\n", key, err)
 			return 2
 		}
+		if cfg.AutoUpdate != "auto" && cfg.AutoUpdate != "on" && cfg.AutoUpdate != "off" {
+			fmt.Fprintln(os.Stderr, "csx: autoUpdate must be auto, on, or off")
+			return 2
+		}
+		if cfg.UpdateChannel != "stable" {
+			fmt.Fprintln(os.Stderr, "csx: updateChannel currently supports stable only")
+			return 2
+		}
 		var daemonWasRunning bool
 		if key == "mode" && oldMode != cfg.Mode {
 			// The daemon keeps its config in memory. A privacy downshift must

@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 // Mode values. Empty means uninitialized: csx init has not run yet.
@@ -52,6 +54,8 @@ type Config struct {
 	CacheBudgetMB    int      `json:"cacheBudgetMB"`
 	GithubLogin      string   `json:"githubLogin"`
 	APIToken         string   `json:"apiToken"`
+	AutoUpdate       string   `json:"autoUpdate"`    // auto | on | off
+	UpdateChannel    string   `json:"updateChannel"` // stable (preview is explicit opt-in later)
 }
 
 // Default returns a fresh Config with every default applied.
@@ -67,6 +71,8 @@ func Default() *Config {
 		ExcludedPackages: []string{},
 		PinnedPackages:   []string{},
 		CacheBudgetMB:    512,
+		AutoUpdate:       "auto",
+		UpdateChannel:    "stable",
 	}
 }
 
@@ -118,6 +124,10 @@ func Load(home string) (*Config, error) {
 
 // Save writes home/config.json with mode 0600 (it may hold apiToken).
 func (c *Config) Save(home string) error {
+	return csxupdate.WithLock(home, func() error { return c.saveUnlocked(home) })
+}
+
+func (c *Config) saveUnlocked(home string) error {
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("config: marshal: %w", err)

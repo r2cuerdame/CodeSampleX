@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
+
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -231,6 +233,9 @@ func spawnDetached(home string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("daemon: locate csx binary: %w", err)
+	}
+	if stable, stableErr := csxupdate.StableExecutable(home, exe); stableErr == nil {
+		exe = stable
 	}
 	cmd := exec.Command(exe, "daemon", "run")
 	cmd.Env = append(os.Environ(), "CSX_HOME="+home)

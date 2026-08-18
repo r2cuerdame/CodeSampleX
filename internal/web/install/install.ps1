@@ -7,6 +7,12 @@ $ErrorActionPreference = 'Stop'
 
 $base = '__CSX_BASE_URL__'
 
+function Write-Durable([string]$Path, [string]$Text) {
+    $data = [Text.Encoding]::UTF8.GetBytes($Text)
+    $file = [IO.File]::Open($Path, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $file.Write($data, 0, $data.Length); $file.Flush($true) } finally { $file.Dispose() }
+}
+
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     'ARM64' { 'arm64' }
     default { 'amd64' }
@@ -15,14 +21,64 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 $dir = Join-Path $env:LOCALAPPDATA 'csx'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $exe = Join-Path $dir 'csx.exe'
+$journal = Join-Path $dir 'migration.json'
+if (Test-Path $journal) {
+    try {
+        $pending = Get-Content $journal -Raw | ConvertFrom-Json
+		$backupPattern = '^' + [regex]::Escape($dir + [IO.Path]::DirectorySeparatorChar + 'csx.exe.legacy-') + '[0-9a-f]{8}$'
+        if ($pending.schema -ne 1 -or $pending.phase -ne 'old-renamed' -or $pending.backup -notmatch $backupPattern) { throw 'invalid migration journal' }
+        if (-not (Test-Path $exe) -and (Test-Path $pending.backup)) { Move-Item $pending.backup $exe -Force }
+    } finally { Remove-Item $journal -Force -ErrorAction SilentlyContinue }
+}
 
 # Clean up a previous upgrade's displaced binary, now that nothing holds it.
 Get-ChildItem -Path $dir -Filter 'csx.exe.old-*' -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
 
-Write-Host "Downloading csx (windows/$arch) from $base ..."
-$staged = "$exe.new"
+Write-Host "Downloading csx payload and stable launcher (windows/$arch) from $base ..."
+$staged = Join-Path $dir 'csx-payload.new.exe'
+$launcherStaged = Join-Path $dir 'csx-launcher.new.exe'
 Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
+Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
+$flush = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+try { $flush.Flush($true) } finally { $flush.Dispose() }
+$flush = [IO.File]::Open($launcherStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+try { $flush.Flush($true) } finally { $flush.Dispose() }
+$checksums = "$exe.checksums"
+Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/SHA256SUMS.txt" -OutFile $checksums
+$asset = "csx-windows-$arch.exe"
+$line = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))$" } | Select-Object -First 1
+$launcherAsset = "csx-launcher-windows-$arch.exe"
+$launcherLine = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($launcherAsset))$" } | Select-Object -First 1
+Remove-Item -LiteralPath $checksums -Force -ErrorAction SilentlyContinue
+if (-not $line -or -not $launcherLine) { throw 'release checksum does not name the Windows payload and launcher' }
+$expected = ($line -split '\s+', 2)[0].ToLowerInvariant()
+$actual = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'downloaded csx checksum mismatch' }
+$launcherExpected = ($launcherLine -split '\s+', 2)[0].ToLowerInvariant()
+$launcherActual = (Get-FileHash -LiteralPath $launcherStaged -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($launcherActual -ne $launcherExpected) { throw 'downloaded launcher checksum mismatch' }
+$stagedVersion = & $staged version
+if ($LASTEXITCODE -ne 0 -or $stagedVersion -notmatch '^csx v\d+\.\d+\.\d+$') { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'staged csx self-test failed' }
+$launcherVersion = & $launcherStaged --launcher-version
+if ($LASTEXITCODE -ne 0 -or $launcherVersion -ne 'csx-launcher v1.0.0') { throw 'staged launcher self-test failed' }
+
+$version = ($stagedVersion -split ' ', 2)[1]
+$alreadyLauncher = $false
+$installedLauncherVersion = ''
+if (Test-Path $exe) {
+    try {
+		$installedLauncherVersion = (& $exe --launcher-version 2>$null)
+		$alreadyLauncher = ($installedLauncherVersion -match '^csx-launcher v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
+	} catch { $alreadyLauncher = $false }
+}
+if ($alreadyLauncher -and $installedLauncherVersion -ne $launcherVersion) { throw 'launcher protocol transition requires a newer migration installer; no pointer was changed' }
+if ((Test-Path $exe) -and -not $alreadyLauncher) { & $staged update bootstrap-launcher $dir $staged $exe }
+else { & $staged update bootstrap-launcher $dir $staged }
+if ($LASTEXITCODE -ne 0) { throw 'signed launcher payload bootstrap failed' }
+Remove-Item $staged -Force -ErrorAction SilentlyContinue
+$replaceLauncher = -not $alreadyLauncher
+if ($alreadyLauncher) { $replaceLauncher = ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $launcherActual) }
 
 # Windows will not let anything WRITE a running executable, and after
 # `csx init` the MCP server is exactly that: a long-running process your
@@ -35,17 +91,29 @@ Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFil
 # the file it already opened, and the displaced copy is deleted on the next
 # install, once nothing holds it.
 $replaced = $false
-if (Test-Path $exe) {
-    $aside = Join-Path $dir ("csx.exe.old-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+if ((Test-Path $exe) -and $replaceLauncher) {
+    $aside = Join-Path $dir ("csx.exe.legacy-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+    Write-Durable $journal ((@{ schema = 1; phase = 'old-renamed'; backup = $aside } | ConvertTo-Json) + "`n")
     try {
         Move-Item -Path $exe -Destination $aside -Force
         $replaced = $true
     } catch {
-        Remove-Item $staged -Force -ErrorAction SilentlyContinue
-        throw "csx.exe is in use and could not be replaced. Close your editor (it runs the csx MCP server) and run the installer again."
+        throw "stable launcher migration failed; previous csx.exe remains installed"
     }
 }
-Move-Item -Path $staged -Destination $exe -Force
+try {
+    if ($replaceLauncher) { Move-Item -Path $launcherStaged -Destination $exe -Force }
+    else { Remove-Item $launcherStaged -Force }
+    & $exe update adopt | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "csx update ownership registration failed" }
+} catch {
+    if ($replaceLauncher) {
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        if ($replaced -and (Test-Path $aside)) { Move-Item -Path $aside -Destination $exe -Force }
+    }
+    throw
+}
+Remove-Item $journal -Force -ErrorAction SilentlyContinue
 
 # Add the install dir to the user PATH once, without changing anything else
 # about it.

@@ -307,6 +307,77 @@ publishing a sample requires explicit CLI approval by the human.
 
 Then restart the MCP client so it picks up the new server entry.
 
+## Signed automatic updates
+
+**Migration:** binaries through v0.1.11 cannot update themselves because they
+do not contain this updater or its trust root. Rerun the official installer one
+final time. Its `csx update adopt` step creates the standalone ownership marker;
+after that, signed updates can proceed automatically. The installer verifies
+`SHA256SUMS.txt` to catch partial or corrupt transfer, but the checksum is served
+from the same HTTPS origin as the binary. Initial installation therefore still
+trusts the install-script/download origin; the signed updater is the independent
+trust boundary only for releases after bootstrap.
+
+The first-party installers register the installed absolute path as a
+standalone CodeSampleX binary. Community installs then check the **stable**
+channel about every six hours, with per-installation jitter and persisted
+exponential backoff. Every update manifest is Ed25519-signed by the release
+key embedded in the installed binary; the client also verifies the selected
+OS/architecture, exact release URL, byte length and SHA-256 before a staged
+binary is allowed to replace the stable path. A partial download, bad
+signature, replayed sequence or failed staged-binary self-test leaves the old
+binary untouched.
+
+On Windows, the migration installer puts a stable `csx.exe` launcher at the
+public path and immutable payloads under `payloads/vMAJOR.MINOR.PATCH/`. A
+verified update writes the new payload completely, then atomically flips one
+`active.json` document containing current and previous descriptors. The launcher
+forwards arguments, stdio, environment and exit status without adding protocol
+output. Existing MCP sessions keep their current payload; the next client or
+worker restart selects the new one. A manifest requiring a newer launcher
+protocol fails closed and asks for the official installer; payload updates never
+self-modify the launcher.
+
+Useful commands:
+
+```sh
+csx update check       # verify the signed manifest, but do not install
+csx update             # verify, install atomically, preserve csx.previous
+csx update status      # version, last/next check, restart state
+csx update rollback    # restore the preserved previous binary
+csx config set autoUpdate off   # opt out
+csx config set autoUpdate auto  # default: automatic only in community mode
+```
+
+`local-only` and uninitialized installations make no automatic update request;
+running `csx update` yourself is an explicit one-shot request. Only the stable
+channel is accepted in v1.
+
+The two long-running roles activate safely in different ways:
+
+- A contributor worker finishes every already-admitted verification, admits
+  no new job, then exits with status 75. The native per-user service definitions
+  below treat that as a failure and immediately start the new stable binary.
+- A stdio MCP server belongs to the editor/client that launched it. It installs
+  the verified replacement on disk but never kills the active JSON-RPC session.
+  It emits a restart-required update notice; restart the MCP client/editor to
+  activate the new build.
+
+An MCPB is owned by the MCP client that installed it and is not self-modified.
+Use that client's Registry/package update flow instead. The preserved previous
+payload provides bounded manual rollback. The Windows launcher keeps both
+descriptors in one crash-consistent pointer, but deliberately does not guess
+that a newly activated payload is unhealthy and auto-toggle at startup; use
+`csx update rollback` explicitly so a deterministic startup failure cannot
+become a flip-flop loop.
+
+If an update command reports that `update.lock` already exists, first verify
+that no `csx update`, worker, or MCP process is currently checking an update.
+Only then remove `$CSX_HOME/update/update.lock` (default
+`~/.csx/update/update.lock`) and retry. The v1 lock fails closed after a crash;
+it never guesses that an old-looking lock is abandoned and risks two concurrent
+replacements. Native advisory locks are a future hardening item.
+
 ## Worker-only machine
 
 Use this path for a spare machine that should contribute Docker verification
@@ -380,6 +451,12 @@ failure, and refuse duplicate instances:
 | Linux | `systemd --user` unit | `csx-worker.service` |
 | macOS | LaunchAgent | `dev.codesamplex.worker` |
 | Windows | Scheduled Task | `CodeSampleX Contributor Worker` |
+
+The worker's successful update handoff uses exit status **75** after all active
+lanes drain. Keep the documented failure-restart settings: they are what turns
+that deliberate nonzero exit into activation of the new binary. Repeated exits
+from a genuinely broken build remain bounded by the native service manager;
+the preserved `.previous` binary is available for manual rollback.
 
 On Linux, write `~/.config/systemd/user/csx-worker.service`, replacing the
 executable path with the one printed by the installer:
@@ -461,7 +538,10 @@ machine because `--no-daemon` intentionally leaves only the contributor worker.
 
 | Path | What |
 |---|---|
-| `~/.local/bin/csx` (Windows: `%LOCALAPPDATA%\csx\csx.exe`) | the binary |
+| `~/.local/bin/csx` | macOS/Linux standalone binary |
+| `%LOCALAPPDATA%\csx\csx.exe` | Windows stable launcher |
+| `%LOCALAPPDATA%\csx\payloads\vMAJOR.MINOR.PATCH\csx-payload.exe` | immutable Windows payload selected by `active.json` |
+| `%LOCALAPPDATA%\csx\active.json` | atomic Windows current/previous/rollback-hold descriptors |
 | `~/.csx/` (or `$CSX_HOME`) | config.json, identity.json, csx.db, cas/, samples/, logs/ |
 | agent config files listed in step 2 | MCP entry + usage rule, marker-fenced |
 
@@ -487,9 +567,10 @@ an explicit historical minimum:
 - The no-pipe path was taken to a full handshake on `alpine:3.22` without ever
   piping a script into a shell: release binary and `.mcpb` (opened with
   `unzip`), `chmod +x`, `init --community --yes --no-agents`, `csx mcp`.
-- Windows 11: `mcp-config` in all three forms and the PowerShell handshake,
-  against a binary built from this repository with `CGO_ENABLED=0 go build
-  ./cmd/csx`. The container runs above did not cover Windows.
+- Windows 11: the historical direct-binary `mcp-config` forms and PowerShell
+  handshake were observed against `./cmd/csx`. The stable-launcher updater has
+  native Windows unit/integration coverage in the release workflow; a published
+  installer migration is not claimed until that release is deployed.
 - macOS was **not** tested. It takes the same `install.sh` path as Linux,
   and `csx-darwin-amd64` / `csx-darwin-arm64` are published, but no step on
   this page has been executed on a Mac.

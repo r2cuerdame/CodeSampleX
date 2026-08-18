@@ -298,7 +298,10 @@ $requiredReleaseAssets = @(
     "csx-server-linux-amd64",
     "csx-windows-amd64.exe",
     "csx-windows-arm64.exe",
+    "csx-launcher-windows-amd64.exe",
+    "csx-launcher-windows-arm64.exe",
     "SHA256SUMS.txt",
+	"csx-update-stable.json",
     "codesamplex-mcp.mcpb",
     "codesamplex-mcp.mcpb.sha256"
 )
@@ -322,7 +325,7 @@ function Assert-ReleaseDirectory([string]$Directory) {
         if ($have -ne $parts[0].ToLower()) { throw "checksum mismatch for $name" }
         $verified[$name] = $true
     }
-    foreach ($name in $requiredReleaseAssets[0..6]) {
+    foreach ($name in $requiredReleaseAssets[0..8]) {
         if (-not $verified[$name]) { throw "SHA256SUMS.txt does not cover $name" }
     }
 

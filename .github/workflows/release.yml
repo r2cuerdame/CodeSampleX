@@ -12,16 +12,39 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # create the release and upload assets
-  id-token: write # OIDC for the MCP Registry — no stored secret
+  contents: read
+
+# Serialize publication so each job's monotonic guard observes the release
+# created by the preceding tag job before deciding whether it may be latest.
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  windows-test:
+    permissions:
+      contents: read
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Native Windows launcher and updater tests
+        run: go test ./...
 
-      - uses: actions/setup-go@v5
+  release:
+    needs: windows-test
+    permissions:
+      contents: write # create the release and upload assets
+      id-token: write # OIDC for the MCP Registry — no stored secret
+    runs-on: ubuntu-latest
+    environment: codesamplex-release-signing
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -34,12 +57,35 @@ jobs:
         id: v
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
+      - name: Refuse a backfilled latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          LATEST=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -n "$LATEST" ]; then
+            go run ./scripts/update_manifest.go guard "$TAG" "$LATEST"
+          else
+            go run ./scripts/update_manifest.go guard "$TAG" "$TAG"
+          fi
+
+      - name: Derive updater trust root
+        id: update_key
+        env:
+          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
+          EXPECTED_UPDATE_PUBLIC_KEY_B64: ${{ vars.CSX_UPDATE_PUBLIC_KEY_B64 }}
+        run: |
+          PUB=$(go run ./scripts/update_manifest.go public)
+          test -n "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
+          test "$PUB" = "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
+          echo "public_key=$PUB" >> "$GITHUB_OUTPUT"
+
       - name: Cross-compile
         env:
           CGO_ENABLED: "0"
           # This exact path is why v0.1.0 first shipped reporting "dev (git)":
           # -X takes the fully qualified variable, not a bare name.
-          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }}
+          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} -X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.update_key.outputs.public_key }}
         run: |
           mkdir -p dist
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
@@ -48,9 +94,21 @@ jobs:
             GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$LDFLAGS" \
               -o "dist/csx-$os-$arch$ext" ./cmd/csx
           done
+          for arch in amd64 arm64; do
+            GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w" \
+              -o "dist/csx-launcher-windows-$arch.exe" ./cmd/csx-launcher
+          done
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
             -o dist/csx-server-linux-amd64 ./cmd/csx-server
           (cd dist && sha256sum csx-* > SHA256SUMS.txt)
+
+      - name: Sign stable updater manifest
+        env:
+          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
+        run: go run ./scripts/update_manifest.go sign "${GITHUB_REF#refs/tags/}" "${GITHUB_RUN_ID}" dist dist/csx-update-stable.json
+
+      - name: Verify signed updater manifest
+        run: go run ./scripts/update_manifest.go verify '${{ steps.update_key.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
 
       - name: Build MCPB bundle
         id: mcpb
@@ -77,7 +135,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          ASSETS=(dist/csx-* dist/SHA256SUMS.txt \
+          ASSETS=(dist/csx-darwin-amd64 dist/csx-darwin-arm64 \
+            dist/csx-linux-amd64 dist/csx-linux-arm64 \
+            dist/csx-windows-amd64.exe dist/csx-windows-arm64.exe \
+            dist/csx-launcher-windows-amd64.exe dist/csx-launcher-windows-arm64.exe \
+            dist/csx-server-linux-amd64 dist/SHA256SUMS.txt dist/csx-update-stable.json \
             dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256)
           # A registry publish can fail after the GitHub release exists. Make
           # reruns repair/replace that release's assets instead of failing at
@@ -86,8 +148,23 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             gh release create "$TAG" "${ASSETS[@]}" \
-              --title "$TAG" --generate-notes
+              --title "$TAG" --generate-notes --latest
           fi
+
+      - name: Verify exact published release asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          printf '%s\n' \
+            csx-darwin-amd64 csx-darwin-arm64 csx-linux-amd64 csx-linux-arm64 \
+            csx-windows-amd64.exe csx-windows-arm64.exe \
+            csx-launcher-windows-amd64.exe csx-launcher-windows-arm64.exe \
+            csx-server-linux-amd64 SHA256SUMS.txt csx-update-stable.json \
+            codesamplex-mcp.mcpb codesamplex-mcp.mcpb.sha256 | sort > /tmp/expected-assets
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '.assets[].name' | sort > /tmp/actual-assets
+          diff -u /tmp/expected-assets /tmp/actual-assets
 
       # The asset must exist and match before the registry is told about it;
       # publishing first would advertise a digest nobody can satisfy.
@@ -96,6 +173,11 @@ jobs:
           curl -fsSL -o /tmp/bundle.mcpb \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.v.outputs.version }}/codesamplex-mcp.mcpb"
           echo '${{ steps.mcpb.outputs.sha256 }}  /tmp/bundle.mcpb' | sha256sum -c -
+          curl -fsSL -o /tmp/csx-update-stable.json \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.v.outputs.version }}/csx-update-stable.json"
+          go run ./scripts/update_manifest.go verify \
+            '${{ steps.update_key.outputs.public_key }}' /tmp/csx-update-stable.json \
+            "v${{ steps.v.outputs.version }}"
 
       - name: Install mcp-publisher
         run: |

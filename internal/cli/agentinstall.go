@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/config"
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 // agentRule is the usage rule installed into each detected agent's
@@ -41,6 +44,11 @@ var mcpCommand = func() string {
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
+	}
+	if home, err := config.Home(); err == nil {
+		if stable, err := csxupdate.StableExecutable(home, exe); err == nil {
+			exe = stable
+		}
 	}
 	return exe
 }

@@ -317,7 +317,11 @@ func (s *Server) toolsCall(ctx context.Context, params json.RawMessage) (any, *r
 	if !isJSONObject(args) {
 		return nil, &rpcError{Code: codeInvalidParams, Message: "tools/call arguments must be a JSON object"}
 	}
-	return handler(ctx, args), nil
+	result := handler(ctx, args)
+	if n := staleBuildNotice(); n != "" {
+		result.Content = append(result.Content, contentItem{Type: "text", Text: "UPDATE NOTICE: " + n})
+	}
+	return result, nil
 }
 
 // isJSONObject reports whether raw is a JSON object, which is what the
@@ -453,12 +457,6 @@ type PackageOverview struct {
 // text to append (empty when the cache is warm) and whether this install
 // can answer at all.
 func (s *Server) readinessHint(ctx context.Context) (string, bool) {
-	// A stale build outranks every other explanation for a surprising
-	// answer, because it makes all of them untrustworthy: the code that
-	// produced this reply is not the code the user installed.
-	if n := staleBuildNotice(); n != "" {
-		return n, false
-	}
 	if s.Deps.LocalReadiness == nil {
 		return "", true
 	}

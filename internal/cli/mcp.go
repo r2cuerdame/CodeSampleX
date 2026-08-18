@@ -56,6 +56,34 @@ func serveMCP(ctx context.Context, home string, in io.Reader, out, errOut io.Wri
 	}
 	defer closeDB() //nolint:errcheck // process is exiting
 
+	// The client owns a stdio MCP subprocess. A verified update may replace
+	// the stable path on disk, but this process must keep the current JSON-RPC
+	// session alive and only ask the client to restart it.
+	if cfg, cfgErr := config.Load(home); cfgErr == nil && csxAutoUpdateAllowed(cfg) {
+		if exe, exeErr := os.Executable(); exeErr == nil {
+			autoCtx, cancelAuto := context.WithCancel(ctx)
+			defer cancelAuto()
+			go func() {
+				for outcome := range automaticUpdates(autoCtx, home, cfg, exe) {
+					if outcome.Result.Applied {
+						n := fmt.Sprintf("csx %s is installed on disk. This client-owned MCP process remains on %s; restart the MCP client to activate it.", outcome.Result.LatestVersion, Version)
+						mcp.SetUpdateNotice(n)
+						fmt.Fprintln(errOut, "csx mcp: "+n)
+					}
+					if outcome.Result.ManualInstallRequired {
+						n := fmt.Sprintf("A signed csx %s update is available, but this Windows install needs the launcher migration or a newer launcher protocol. Rerun the official installer, then restart the MCP client.", outcome.Result.LatestVersion)
+						mcp.SetUpdateNotice(n)
+						fmt.Fprintln(errOut, "csx mcp: "+n)
+					}
+					if outcome.Err != nil {
+						fmt.Fprintf(errOut, "csx mcp: automatic update check failed: %v\n", outcome.Err)
+						continue
+					}
+				}
+			}()
+		}
+	}
+
 	// Agent integrations launch `csx mcp` directly. Until this point that
 	// path never started the daemon, so evidence and wanted/adoption reports
 	// accumulated forever unless somebody happened to type `csx sync`.
@@ -77,4 +105,8 @@ func serveMCP(ctx context.Context, home string, in io.Reader, out, errOut io.Wri
 		return 1
 	}
 	return 0
+}
+
+func csxAutoUpdateAllowed(cfg *config.Config) bool {
+	return cfg != nil && cfg.Mode == config.ModeCommunity && cfg.AutoUpdate != "off"
 }

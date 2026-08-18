@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -185,6 +186,73 @@ func TestWorkerRunsVerificationLanesInParallel(t *testing.T) {
 	}
 	if got := fake.maxActive.Load(); got < 2 || got > 4 {
 		t.Fatalf("maximum parallelism = %d, want 2..4", got)
+	}
+}
+
+type drainingFakeVerifier struct {
+	calls   atomic.Int64
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *drainingFakeVerifier) RunOne(context.Context) (bool, error) {
+	f.calls.Add(1)
+	f.entered <- struct{}{}
+	<-f.release
+	return true, nil
+}
+func (*drainingFakeVerifier) IsIdle() bool { return true }
+
+func TestWorkerUpdateDrainFinishesAdmittedLanesAndStartsNoMore(t *testing.T) {
+	drain := &workerDrain{}
+	fake := &drainingFakeVerifier{entered: make(chan struct{}, 3), release: make(chan struct{})}
+	done := make(chan struct {
+		stats workerStats
+		err   error
+	}, 1)
+	go func() {
+		stats, err := runContributorWorker(context.Background(), fake, workerOptions{parallel: 3, budget: "unlimited", pollInterval: time.Millisecond, drain: drain}, &bytes.Buffer{})
+		done <- struct {
+			stats workerStats
+			err   error
+		}{stats, err}
+	}()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-fake.entered:
+		case <-time.After(time.Second):
+			t.Fatal("lane was not admitted")
+		}
+	}
+	drained := make(chan struct{})
+	go func() { drain.request(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("drain completed before active lanes finished")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(fake.release)
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("drain did not finish")
+	}
+	select {
+	case got := <-done:
+		if !errors.Is(got.err, errWorkerUpdateReady) {
+			t.Fatalf("err=%v", got.err)
+		}
+		if got.stats.Completed != 3 || fake.calls.Load() != 3 {
+			t.Fatalf("stats=%+v calls=%d", got.stats, fake.calls.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker did not exit after drain")
+	}
+}
+
+func TestWorkerUpdateReadyMapsToServiceRestartExit75(t *testing.T) {
+	if got := workerResultExitCode(workerStats{Completed: 3}, fmt.Errorf("durability warning: %w", errWorkerUpdateReady), &bytes.Buffer{}, &bytes.Buffer{}); got != 75 {
+		t.Fatalf("exit=%d want 75", got)
 	}
 }
 

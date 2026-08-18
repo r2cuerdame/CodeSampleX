@@ -203,6 +203,26 @@ Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use 
 
 If you will not pipe a script into a shell — or you are on an architecture the bundle omits — take the binary directly: the same release publishes `csx-{linux,darwin}-{amd64,arm64}`, `csx-windows-{amd64,arm64}.exe` and `SHA256SUMS.txt`, and `https://codesamplex.dev/dl/csx-<os>-<arch>` serves the same file. It is statically linked, so it runs on musl/alpine with no glibc. Copy-pasteable download + checksum + `chmod` steps are in [llms-install.md](llms-install.md).
 
+Standalone community installs securely check and apply the stable channel. On
+Windows the first installer rerun migrates the direct binary to a stable
+`csx.exe` launcher plus immutable versioned payloads; signed updates atomically
+flip `active.json`, so running MCP sessions keep their old payload and the next
+launcher start selects the new one. The
+release manifest is Ed25519-signed and binds the exact platform asset, size and
+SHA-256; replayed or partial releases are refused and the previous binary is
+kept for `csx update rollback`. Workers drain and let their native service
+restart them. Client-owned stdio MCP sessions are never killed: the update is
+staged on disk and the tool reports that the MCP client must be restarted.
+`local-only` makes no automatic update request, and MCPB copies remain owned by
+the MCP client/Registry updater. See [the signed update guide](llms-install.md#signed-automatic-updates).
+
+Existing installs through v0.1.11 predate the updater and embedded trust root.
+Run the official installer one final time to enter the signed update channel;
+that installer verifies the published checksum and registers the standalone
+ownership marker. The installer and checksum share one HTTPS origin, so this
+first bootstrap still trusts that origin. Signed manifests protect subsequent
+updates, not a compromised initial download source.
+
 Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Uploading sample source is deliberately **not** an MCP capability. `propose_public_sample` creates only a sanitized clean-room brief; an authorized seeder still has to use the CLI, review the complete preview, and type an explicit approval.
 
 ```bash

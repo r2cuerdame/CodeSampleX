@@ -74,6 +74,9 @@ func TestDefaults(t *testing.T) {
 	if c.GithubLogin != "" || c.APIToken != "" {
 		t.Error("GithubLogin/APIToken must default empty")
 	}
+	if c.AutoUpdate != "auto" || c.UpdateChannel != "stable" {
+		t.Errorf("update defaults = %q/%q, want auto/stable", c.AutoUpdate, c.UpdateChannel)
+	}
 }
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -139,6 +142,7 @@ func TestSaveFileModeAndJSONFieldNames(t *testing.T) {
 		"schemaVersion", "mode", "serverUrl", "peerListen", "peerPort",
 		"daemonPort", "idleVerification", "llmCommand", "excludedPackages",
 		"pinnedPackages", "cacheBudgetMB", "githubLogin", "apiToken",
+		"autoUpdate", "updateChannel",
 	} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("saved config missing JSON field %q; got keys %v", key, m)

@@ -419,6 +419,12 @@ func TestInstallScripts(t *testing.T) {
 	mustContain(t, ps, "$base/dl/csx-windows-$arch.exe")
 	mustContain(t, ps, "csx.exe")
 	mustContain(t, ps, "init")
+	mustContain(t, ps, "csx-payload.new.exe")
+	mustContain(t, ps, "csx-launcher.new.exe")
+	mustContain(t, ps, "bootstrap-launcher")
+	mustContain(t, ps, "SHA256SUMS.txt")
+	mustContain(t, ps, "update adopt")
+	mustContain(t, ps, "Move-Item -Path $aside -Destination $exe -Force")
 	if strings.Contains(ps, "__CSX_BASE_URL__") {
 		t.Error("install.ps1 placeholder not substituted")
 	}
@@ -430,6 +436,9 @@ func TestInstallScripts(t *testing.T) {
 	mustContain(t, sh, `base="https://codesamplex.dev"`)
 	mustContain(t, sh, "/dl/csx-$os-$arch")
 	mustContain(t, sh, "init")
+	mustContain(t, sh, "SHA256SUMS.txt")
+	mustContain(t, sh, "update adopt")
+	mustContain(t, sh, "previous install restored")
 	mustContain(t, sh, ".local/bin")
 }
 

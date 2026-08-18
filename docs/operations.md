@@ -31,6 +31,49 @@ The deploy also installs `backup.sh` and `restore-check.sh`, restores executable
 permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
 user.
 Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
+The exact release set also includes `csx-update-stable.json`. The release
+workflow runs only through the protected `codesamplex-release-signing` GitHub
+Environment (required reviewers and protected `v*` tag rules are mandatory), derives the updater public key from the environment-scoped
+`CSX_UPDATE_SIGNING_KEY_B64` GitHub secret, stamps that public key into all six
+client binaries, and signs a 90-day stable manifest binding the versioned
+GitHub URLs, sizes and SHA-256 digests. The secret is a base64-encoded 32-byte
+Ed25519 seed (or internally consistent 64-byte private key); it must never be stored in the repository
+or copied to the production host. A missing secret fails the release before
+cross-compilation. Rotating it requires a separately designed signed trust-root
+transition; simply replacing the secret would strand installed clients. The
+same protected Environment must define `CSX_UPDATE_PUBLIC_KEY_B64` as the pinned
+public variable. The workflow refuses to build when the secret-derived public
+key differs, preventing an accidental silent trust-root rotation.
+
+Treat the updater seed as an offline-grade release credential: restrict the
+Environment to the minimum release reviewers, keep an encrypted recovery copy
+outside GitHub, and review Environment access/audit events at each release.
+There is no trust-root delegation in updater v1. A planned rotation therefore
+requires publishing a final old-key-signed transition release before changing
+the key; if that is impossible, existing clients must rerun the official
+installer to receive the new pinned public key. On suspected compromise, stop
+release publication, revoke the Environment secret and affected repository
+credentials, replace both the signing seed and pinned public variable under
+review, publish a new launcher/payload installer, and notify users that manual
+reinstallation is required. A leaked signing key alone cannot replace GitHub
+assets; a leaked key plus release-write authority is a full updater compromise
+and must be handled as such.
+The Windows launcher trust boundary assumes the first-party install root keeps
+its default per-user ACL and rejects reparse points in the root/payload path.
+An already-compromised process running as that same user is outside this v1
+threat model; other-user/group-writable ACLs or moved/junctioned install roots
+must be repaired by rerunning the installer before updates are enabled.
+The workflow also refuses a canonical tag below the currently published latest
+release and marks a newly created release explicitly as latest. An equal tag is
+accepted only as repair of that exact release. Keep GitHub's `v*` tag protection
+and Environment reviewer rules enabled; repository code alone cannot enforce
+who is allowed to mint a tag or approve access to the signing secret.
+Before approving that Environment, inspect the tagged workflow and manifest
+signer diff, confirm all third-party Actions remain pinned to reviewed full
+commit SHAs, and confirm the derived public-key preflight is unchanged.
+The current single-maintainer Environment cannot provide independent review and
+has self-review prevention disabled. When another maintainer is added, enable
+prevent-self-review and require that independent reviewer for signing releases.
 `deploy.ps1` records the served release tag and skips re-downloading identical
 GitHub assets on code-only deploys, so GitHub's download counters are not
 inflated by our own rollout loop (CSX_DIST_DIR=/data/dist in compose).
