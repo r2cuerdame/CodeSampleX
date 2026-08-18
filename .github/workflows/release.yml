@@ -26,6 +26,12 @@ jobs:
       contents: read
     runs-on: windows-latest
     steps:
+      # Keep repository fixtures byte-identical to Linux. Several contracts
+      # intentionally freeze schema/document hashes and compose structure;
+      # Git's Windows CRLF conversion changes those inputs before Go sees
+      # them and produces unrelated failures.
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:

@@ -39,15 +39,16 @@ func InstallPath(home string) string { return filepath.Join(updateDir(home), "in
 func StatePath(home string) string   { return filepath.Join(updateDir(home), "state.json") }
 
 func AdoptStandalone(home, executable string) error {
-	abs, err := filepath.Abs(executable)
+	abs, err := normalizedPath(executable)
 	if err != nil {
 		return err
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
 	if root := os.Getenv("CSX_LAUNCHER_ROOT"); root != "" {
-		root, err = filepath.Abs(root)
+		abs, err = resolveExistingPath(executable)
+		if err != nil {
+			return err
+		}
+		root, err = resolveExistingPath(root)
 		if err != nil {
 			return err
 		}
@@ -59,8 +60,8 @@ func AdoptStandalone(home, executable string) error {
 		if err != nil {
 			return err
 		}
-		payload, _ = filepath.Abs(payload)
-		if !strings.EqualFold(filepath.Clean(abs), filepath.Clean(payload)) {
+		payload, err = resolveExistingPath(payload)
+		if err != nil || !strings.EqualFold(abs, payload) {
 			return errors.New("update: running payload does not match launcher's active descriptor")
 		}
 		launchPath := filepath.Join(root, "csx.exe")
@@ -89,14 +90,15 @@ func OwnsExecutable(home, executable string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	abs, err := filepath.Abs(executable)
+	abs, err := normalizedPath(executable)
 	if err != nil {
 		return false, err
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
 	if in.Kind == "launcher" {
+		abs, err = resolveExistingPath(executable)
+		if err != nil {
+			return false, err
+		}
 		a, err := launcher.Load(in.InstallRoot)
 		if err != nil {
 			return false, err
@@ -109,13 +111,15 @@ func OwnsExecutable(home, executable string) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			if strings.EqualFold(filepath.Clean(abs), filepath.Clean(payload)) {
+			payload, err = resolveExistingPath(payload)
+			if err == nil && strings.EqualFold(abs, payload) {
 				return true, nil
 			}
 		}
 		return false, nil
 	}
-	return filepath.Clean(abs) == filepath.Clean(in.ExecutablePath), nil
+	ownedPath, err := normalizedPath(in.ExecutablePath)
+	return err == nil && abs == ownedPath, err
 }
 
 // ResolveInstall uses the per-profile marker when present, then falls back to
@@ -135,12 +139,15 @@ func ResolveInstall(home, executable string) (Install, error) {
 }
 
 func resolveLauncherEnvironment(executable, root, launchPath string) (Install, error) {
-	rootAbs, err := filepath.Abs(root)
+	rootAbs, err := resolveExistingPath(root)
 	if err != nil {
 		return Install{}, err
 	}
 	local := os.Getenv("LOCALAPPDATA")
-	if local == "" || !strings.EqualFold(filepath.Clean(rootAbs), filepath.Clean(filepath.Join(local, "csx"))) || !strings.EqualFold(filepath.Clean(launchPath), filepath.Join(rootAbs, "csx.exe")) {
+	wantRoot, rootErr := resolveExistingPath(filepath.Join(local, "csx"))
+	launchAbs, launchErr := resolveExistingPath(launchPath)
+	wantLauncher, wantLaunchErr := resolveExistingPath(filepath.Join(rootAbs, "csx.exe"))
+	if local == "" || rootErr != nil || launchErr != nil || wantLaunchErr != nil || !strings.EqualFold(rootAbs, wantRoot) || !strings.EqualFold(launchAbs, wantLauncher) {
 		return Install{}, errors.New("update: launcher environment is outside the first-party install root")
 	}
 	fi, err := os.Lstat(launchPath)
@@ -159,7 +166,7 @@ func resolveLauncherEnvironment(executable, root, launchPath string) (Install, e
 		return Install{}, errors.New("update: launcher descriptor environment is invalid")
 	}
 	wantVersion, wantHash := os.Getenv("CSX_PAYLOAD_VERSION"), os.Getenv("CSX_ACTIVE_SHA256")
-	exeAbs, err := filepath.Abs(executable)
+	exeAbs, err := resolveExistingPath(executable)
 	if err != nil {
 		return Install{}, err
 	}
@@ -168,11 +175,39 @@ func resolveLauncherEnvironment(executable, root, launchPath string) (Install, e
 			continue
 		}
 		payload, _ := launcher.PayloadPath(rootAbs, d.Version)
-		if strings.EqualFold(filepath.Clean(exeAbs), filepath.Clean(payload)) {
-			return Install{Schema: 1, Kind: "launcher", ExecutablePath: exeAbs, InstallRoot: rootAbs, LauncherPath: filepath.Join(rootAbs, "csx.exe")}, nil
+		payload, err = resolveExistingPath(payload)
+		if err == nil && strings.EqualFold(exeAbs, payload) {
+			return Install{Schema: 1, Kind: "launcher", ExecutablePath: exeAbs, InstallRoot: rootAbs, LauncherPath: wantLauncher}, nil
 		}
 	}
 	return Install{}, errors.New("update: running payload does not match the verified launcher descriptor")
+}
+
+// resolveExistingPath normalizes both 8.3 and long Windows path spellings.
+// GitHub's Windows runner exposes TEMP through an 8.3 alias while
+// EvalSymlinks returns the long form, so comparing only one resolved side can
+// reject the launcher's own verified payload.
+func resolveExistingPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func normalizedPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		abs = resolved
+	}
+	return filepath.Clean(abs), nil
 }
 
 func StableExecutable(home, executable string) (string, error) {
