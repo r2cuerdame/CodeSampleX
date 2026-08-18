@@ -387,13 +387,14 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 %s
 
 목표:
-- 서버가 배정한 미해결 Wanted 패키지·버전·심벌 하나만 집중 공략한다.
+- 서버가 배정한 일감 하나만 집중 공략한다. 일감은 사용자 Wanted, 반복 실패가 관측된 Finding 후보, 많이 쓰이지만 검증 샘플이 없는 커버리지 확장 중 하나다.
 - 이 환경에서 실제로 준비·실행 가능한 일만 선택한다.
 - 문서상 기대와 실측이 다르거나, 런타임/JDK/버전을 바꾸면 결과가 달라지는 Finding 후보를 우선한다.
+- 커버리지 확장 일감에 심벌이 비어 있으면 해당 정확한 패키지·버전의 많이 쓰는 핵심 API 하나를 골라 구체적인 계약을 만든다. 배정되지 않은 다른 패키지로 바꾸지는 않는다.
 
 필수 절차:
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
-2. 아래 명령으로 Wanted 일감 하나를 받는다. NO_WORK면 임의 샘플을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
+2. 아래 명령으로 가장 우선순위가 높은 일감 하나를 받는다. 서버는 미해결 Wanted를 먼저 주고, 없으면 실패 관측과 사용량으로 새 Finding·커버리지 일감을 만든다. NO_WORK면 임의 샘플을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
 %s
 3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
 4. 빌드·테스트는 CSX run_observed_command로 실행한다.
@@ -474,6 +475,8 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`set "CSX_RC=%ERRORLEVEL%"`,
 		`type "%CSX_NEXT_LOG%"`,
 		`if not "%CSX_RC%"=="0" goto :retry_work`,
+		`findstr /b /c:"NO_WORK:" "%CSX_NEXT_LOG%" >nul 2>&1`,
+		`if not errorlevel 1 goto :idle`,
 		`findstr /c:"No uncovered Wanted work" "%CSX_NEXT_LOG%" >nul 2>&1`,
 		`if not errorlevel 1 goto :idle`,
 		`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$b64=`+strings.Join(refs, "+")+`; $prompt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)); & $env:CSX_AGY --effort $env:CSX_REASONING --dangerously-skip-permissions --prompt-interactive $prompt; exit $LASTEXITCODE"`,
@@ -481,7 +484,7 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`timeout /t 10 /nobreak >nul`,
 		`goto :poll`,
 		`:idle`,
-		`echo No uncovered Wanted work. Checking again in 5 minutes.`,
+		`echo No uncovered work is available yet. Checking again in 5 minutes.`,
 		`timeout /t 300 /nobreak >nul`,
 		`goto :poll`,
 		`:retry_work`,
@@ -511,13 +514,14 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 1. 현재 CSX_HOME만 사용하고 다른 프로필·토큰·자격·워크트리는 읽지 않는다.
 2. supervisor가 이미 세션을 갱신하고 일감을 임대했다. 아래 명령을 다시 실행해 같은 현재 임대를 확인한다.
 %s
-3. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
-4. 진짜 MISS를 해결해 PASS한 경우에만 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고, 생성된 csx.json 스캐폴드를 완성한다. spec.json을 csx.json으로 복사하거나 매니페스트를 기억으로 만들지 않는다.
-5. csx sample create, verify, preview를 순서대로 통과시키고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
+3. 배정 종류는 사용자 Wanted, 반복 실패 기반 Finding, 사용량 기반 커버리지 확장 중 하나다. 커버리지 확장에서 심벌이 비어 있으면 정확히 배정된 패키지·버전 안에서 많이 쓰는 핵심 API 하나를 골라 구체적인 계약을 만들며, 다른 패키지로 바꾸지 않는다.
+4. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
+5. 진짜 MISS를 해결해 PASS한 경우에만 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고, 생성된 csx.json 스캐폴드를 완성한다. spec.json을 csx.json으로 복사하거나 매니페스트를 기억으로 만들지 않는다.
+6. csx sample create, verify, preview를 순서대로 통과시키고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
 %s
-6. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
-7. 한 샘플을 제출하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
-8. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
+7. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
+8. 한 샘플을 제출하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
+9. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
 %s`, grant.Label, grant.Reasoning, authoringNextCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token), authoringCommand(baseURL, grant.Token))
 }
 

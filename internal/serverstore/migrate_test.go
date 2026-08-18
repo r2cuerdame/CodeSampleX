@@ -238,3 +238,31 @@ func TestAuthoringDraftMigrationStaysOutsidePublicSamples(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthoringExpansionMigrationAddsBoundedWorkKinds(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expansion Migration
+	for _, migration := range migs {
+		if migration.Version == "0013_authoring_expansion.sql" {
+			expansion = migration
+			break
+		}
+	}
+	if expansion.Version == "" {
+		t.Fatal("0013_authoring_expansion.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(expansion.Statements, "\n"))
+	for _, required := range []string{"alter table authoring_assignments", "kind", "score", "wanted", "finding", "expansion"} {
+		if !strings.Contains(all, required) {
+			t.Errorf("authoring expansion migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "insert into samples", "raw_token", "bearer_token"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("authoring expansion migration crosses boundary with %q", forbidden)
+		}
+	}
+}

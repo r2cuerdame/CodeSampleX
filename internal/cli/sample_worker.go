@@ -152,6 +152,8 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 			Package        string    `json:"package"`
 			Symbol         string    `json:"symbol"`
 			Asks           int64     `json:"asks"`
+			Kind           string    `json:"kind"`
+			Score          int64     `json:"score"`
 			LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
 		} `json:"work"`
 	}
@@ -160,7 +162,7 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		return 1
 	}
 	if result.Status == "NO_WORK" {
-		fmt.Fprintln(sampleWorkerStdout, "No uncovered Wanted work is available for this worker.")
+		fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no uncovered Wanted or evidence-driven expansion work is available for this worker.")
 		return 0
 	}
 	if result.Status != "ASSIGNED" || result.Work.Package == "" || result.Work.LeaseExpiresAt.IsZero() {
@@ -171,7 +173,13 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	if result.Work.Symbol != "" {
 		goal = "verify " + result.Work.Symbol + " in " + result.Work.Package
 	}
-	fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	if result.Work.Kind == "FINDING" {
+		fmt.Fprintf(sampleWorkerStdout, "Assigned Finding-miner work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else if result.Work.Kind == "EXPANSION" {
+		fmt.Fprintf(sampleWorkerStdout, "Assigned coverage-expansion work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	}
 	fmt.Fprintf(sampleWorkerStdout, "Package: %s\nSymbol: %s\n", result.Work.Package, result.Work.Symbol)
 	fmt.Fprintf(sampleWorkerStdout, "Start exactly here:\n  csx sample propose --goal %q --package %q", goal, result.Work.Package)
 	if result.Work.Symbol != "" {

@@ -45,6 +45,8 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	eligible := candidates[:0]
 	for _, candidate := range candidates {
 		if candidate.Version != "" && authoringSupportedEcosystems[candidate.Ecosystem] {
+			candidate.Kind = "WANTED"
+			candidate.Score = candidate.Asks
 			eligible = append(eligible, candidate)
 		}
 	}
@@ -54,15 +56,34 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "NO_WORK"})
-		return
+		expansion, expansionErr := store.ListAuthoringExpansionCandidates(r.Context(), 200)
+		if expansionErr != nil {
+			writeErr(w, http.StatusInternalServerError, "listing authoring expansion work failed")
+			return
+		}
+		eligible = expansion[:0]
+		for _, candidate := range expansion {
+			if candidate.Version != "" && authoringSupportedEcosystems[candidate.Ecosystem] &&
+				(candidate.Kind == "FINDING" || candidate.Kind == "EXPANSION") {
+				eligible = append(eligible, candidate)
+			}
+		}
+		work, found, err = store.ClaimAuthoringWork(r.Context(), session.SessionID, eligible, now, now.Add(authoringWorkLease))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "claiming authoring expansion work failed")
+			return
+		}
+		if !found {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "NO_WORK"})
+			return
+		}
 	}
 	purl := domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ASSIGNED",
 		"work": map[string]any{
 			"ecosystem": work.Ecosystem, "name": work.Name, "version": work.Version,
-			"symbol": work.Symbol, "asks": work.Asks, "package": purl,
+			"symbol": work.Symbol, "asks": work.Asks, "kind": work.Kind, "score": work.Score, "package": purl,
 			"leaseExpiresAt": work.LeaseExpiresAt.UTC(),
 		},
 	})

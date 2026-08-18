@@ -2133,6 +2133,10 @@ type WantedRow struct {
 	Version   string
 	Symbol    string
 	Asks      int64
+	// Kind and Score are private authoring-queue metadata. Public Wanted
+	// responses keep using Asks and never serialize these fields directly.
+	Kind      string
+	Score     int64
 	FirstSeen time.Time
 	LastSeen  time.Time
 	// HasPage is retained on the internal row for wire compatibility. Every

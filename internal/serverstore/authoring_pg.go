@@ -201,12 +201,75 @@ func (p *PG) ListAuthoringDrafts(ctx context.Context, limit int) ([]AuthoringDra
 func scanAuthoringWork(row pgx.Row) (AuthoringWorkRow, error) {
 	var work AuthoringWorkRow
 	var sampleID *string
-	err := row.Scan(&work.Ecosystem, &work.Name, &work.Version, &work.Symbol, &work.Asks,
+	err := row.Scan(&work.Ecosystem, &work.Name, &work.Version, &work.Symbol, &work.Asks, &work.Kind, &work.Score,
 		&work.SessionID, &work.ClaimedAt, &work.LeaseExpiresAt, &sampleID)
 	if sampleID != nil {
 		work.SampleID = *sampleID
 	}
 	return work, err
+}
+
+func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var out []WantedRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH candidates AS (
+				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
+				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen
+				FROM failure_clusters fc
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(fc.versions)='array' THEN fc.versions ELSE '[]'::jsonb END
+				) AS version(value)
+				JOIN packages p ON p.ecosystem=fc.ecosystem AND p.name=fc.package_name
+				  AND p.version=version.value
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				UNION ALL
+				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
+				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen
+				FROM packages p
+				JOIN evidence_agg e ON e.purl=p.purl
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen
+			), ranked AS (
+				SELECT DISTINCT ON(ecosystem,name,version,symbol)
+				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen
+				FROM candidates
+				ORDER BY ecosystem,name,version,symbol,source_rank,score DESC
+			)
+			SELECT ecosystem,name,version,symbol,score,kind
+			FROM ranked c
+			WHERE NOT EXISTS (
+				SELECT 1 FROM authoring_assignments a
+				WHERE a.ecosystem=c.ecosystem AND a.name=c.name AND a.version=c.version
+				  AND (a.symbol=c.symbol OR c.symbol=''))
+			  AND NOT EXISTS (
+				SELECT 1 FROM samples s
+				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
+				WHERE NOT s.quarantined
+				  AND s.manifest->'packages' @> jsonb_build_array(c.purl)
+				  AND (c.symbol='' OR s.manifest->'symbols' @> jsonb_build_array(c.symbol)))
+			ORDER BY source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
+			LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row WantedRow
+			if err := rows.Scan(&row.Ecosystem, &row.Name, &row.Version, &row.Symbol, &row.Score, &row.Kind); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
@@ -224,7 +287,7 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 		if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments WHERE sample_id IS NULL AND lease_expires_at <= $1`, now); err != nil {
 			return err
 		}
-		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,
+		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
 		if err == nil {
@@ -235,13 +298,17 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			return err
 		}
 		for _, candidate := range candidates {
+			kind := candidate.Kind
+			if kind == "" {
+				kind = "WANTED"
+			}
 			claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
-				ecosystem,name,version,symbol,asks,session_id,claimed_at,lease_expires_at)
-				VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+				ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 				ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
-				RETURNING ecosystem,name,version,symbol,asks,session_id,claimed_at,lease_expires_at,sample_id`,
+				RETURNING ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at,sample_id`,
 				candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
-				sessionID, now, leaseExpiresAt))
+				kind, candidate.Score, sessionID, now, leaseExpiresAt))
 			if err == nil {
 				found = true
 				return tx.Commit(ctx)
@@ -260,7 +327,7 @@ func (p *PG) AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID
 	found := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		var err error
-		work, err = scanAuthoringWork(c.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,
+		work, err = scanAuthoringWork(c.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND ((sample_id IS NULL AND lease_expires_at>$2) OR sample_id=$3)
 			ORDER BY CASE WHEN sample_id=$3 THEN 0 ELSE 1 END LIMIT 1`, sessionID, now, sampleID))

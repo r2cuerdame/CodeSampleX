@@ -145,6 +145,60 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	}
 }
 
+func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	const token = "csx_author_v1_YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI"
+	sum := sha256.Sum256([]byte(token))
+	if err := store.IssueAuthoringSessions(t.Context(), []serverstore.AuthoringSessionRow{{
+		TokenHash: hex.EncodeToString(sum[:]), SessionID: "expansion-worker", Label: "worker-expansion",
+		Model: "agy", Reasoning: "high", IssuedAt: testNow, IdleExpiresAt: testNow.Add(time.Hour),
+	}}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	const purl = "pkg:npm/undici@8.10.0"
+	batch := testBatch(purl, "MockAgent", nodeEnv("esm"), domain.StageProjectCompile, domain.ResultFail, 23)
+	batch.ErrorFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	batch.ErrorCode = "ERR_MOCK_MATCH"
+	if accepted, rejected, err := store.IngestBatches(t.Context(), []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := store.UpsertPackage(t.Context(), serverstore.PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "undici", Version: "8.10.0", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertFailureCluster(t.Context(), serverstore.ClusterRow{
+		Ecosystem: "npm", PackageName: "undici", Symbol: "MockAgent", Stage: "PROJECT_COMPILE",
+		ErrorFingerprint: batch.ErrorFingerprint, ErrorCode: batch.ErrorCode, ObservationCount: 23,
+		VersionsJSON: `["8.10.0"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var assigned struct {
+		Status string `json:"status"`
+		Work   struct {
+			Package string `json:"package"`
+			Symbol  string `json:"symbol"`
+			Kind    string `json:"kind"`
+			Score   int64  `json:"score"`
+		} `json:"work"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&assigned); err != nil {
+		t.Fatal(err)
+	}
+	if assigned.Status != "ASSIGNED" || assigned.Work.Package != purl || assigned.Work.Symbol != "MockAgent" || assigned.Work.Kind != "FINDING" || assigned.Work.Score != 23 {
+		t.Fatalf("assigned = %+v", assigned)
+	}
+}
+
 func TestAuthoringDraftRejectsSampleWithoutAssignedWantedWork(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"

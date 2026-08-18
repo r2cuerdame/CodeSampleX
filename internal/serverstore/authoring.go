@@ -51,6 +51,8 @@ type AuthoringWorkRow struct {
 	Version        string
 	Symbol         string
 	Asks           int64
+	Kind           string
+	Score          int64
 	SessionID      string
 	ClaimedAt      time.Time
 	LeaseExpiresAt time.Time
@@ -68,6 +70,11 @@ type AuthoringSessionStore interface {
 	ListAuthoringSessions(ctx context.Context, now time.Time, limit int) ([]AuthoringSessionRow, error)
 	SaveAuthoringDraft(ctx context.Context, row AuthoringDraftRow) error
 	ListAuthoringDrafts(ctx context.Context, limit int) ([]AuthoringDraftRow, error)
+	// ListAuthoringExpansionCandidates supplies ranked, exact public package
+	// coordinates when every unresolved Wanted row is already being authored.
+	// Failure-cluster symbols rank first, then observed package-version-symbol
+	// coordinates that still have no independently verified sample.
+	ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error)
 	ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
 	AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error)
 	AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error)

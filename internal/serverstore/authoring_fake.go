@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 )
@@ -129,6 +130,126 @@ func (f *Fake) ListAuthoringSessions(_ context.Context, now time.Time, limit int
 
 var _ AuthoringSessionStore = (*Fake)(nil)
 
+func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([]WantedRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if limit < 1 {
+		return nil, nil
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	type candidateKey struct{ ecosystem, name, version, symbol string }
+	candidates := make(map[candidateKey]WantedRow)
+	eligible := func(pkg PackageRow, symbol string) bool {
+		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
+			return false
+		}
+		for _, work := range f.authoringWork {
+			if work.Ecosystem == pkg.Ecosystem && work.Name == pkg.Name && work.Version == pkg.Version &&
+				(work.Symbol == symbol || symbol == "") {
+				return false
+			}
+		}
+		for sampleID, sample := range f.samples {
+			if sample.Quarantined {
+				continue
+			}
+			hasPass := false
+			for _, receipt := range f.receipts[sampleID] {
+				if receipt.ContractResult == "PASS" {
+					hasPass = true
+					break
+				}
+			}
+			if !hasPass {
+				continue
+			}
+			var manifest struct {
+				Packages []string `json:"packages"`
+				Symbols  []string `json:"symbols"`
+			}
+			if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil || !containsString(manifest.Packages, pkg.PURL) {
+				continue
+			}
+			if symbol == "" || containsString(manifest.Symbols, symbol) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, cluster := range f.clusters {
+		var versions []string
+		if json.Unmarshal([]byte(cluster.VersionsJSON), &versions) != nil {
+			continue
+		}
+		for _, version := range versions {
+			for _, pkg := range f.packages {
+				if pkg.Ecosystem != cluster.Ecosystem || pkg.Name != cluster.PackageName || pkg.Version != version || !eligible(pkg, cluster.Symbol) {
+					continue
+				}
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol}
+				candidate := WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
+					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount}
+				if old, ok := candidates[key]; !ok || candidate.Score > old.Score {
+					candidates[key] = candidate
+				}
+			}
+		}
+	}
+	observedScores := make(map[[2]string]int64)
+	for observed, score := range f.merge.observations {
+		observedScores[[2]string{observed.PURL, observed.Symbol}] += score
+	}
+	for _, pkg := range f.packages {
+		for observed, score := range observedScores {
+			if observed[0] != pkg.PURL || score == 0 || !eligible(pkg, observed[1]) {
+				continue
+			}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1]}
+			if existing, ok := candidates[key]; !ok || (existing.Kind != "FINDING" && score > existing.Score) {
+				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
+					Symbol: observed[1], Kind: "EXPANSION", Score: score}
+			}
+		}
+	}
+	out := make([]WantedRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, candidate)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind == "FINDING"
+		}
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		if out[i].Ecosystem != out[j].Ecosystem {
+			return out[i].Ecosystem < out[j].Ecosystem
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		if out[i].Version != out[j].Version {
+			return out[i].Version < out[j].Version
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *Fake) SaveAuthoringDraft(_ context.Context, row AuthoringDraftRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -193,7 +314,11 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 			continue
 		}
 		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
-			Symbol: candidate.Symbol, Asks: candidate.Asks, SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
+			Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
+			SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
+		if work.Kind == "" {
+			work.Kind = "WANTED"
+		}
 		f.authoringWork[key] = work
 		return work, true, nil
 	}

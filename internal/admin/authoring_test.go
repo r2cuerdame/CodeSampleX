@@ -136,7 +136,7 @@ func TestAuthoringTokenIsStrictAndPromptStopsBeforePublish(t *testing.T) {
 	prompt := authoringPrompt("https://codesamplex.dev/", authoringGrant{Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"})
 	for _, want := range []string{
 		`csx sample-worker refresh --server "https://codesamplex.dev" --token "sentinel"`,
-		"45분마다", "5분 기다린 뒤 다시 호출", "2번으로 돌아가 다음 일감", "worker-laptop", "agy", "auto", "CSX_HOME", "search_known_solution", "run_observed_command",
+		"45분마다", "5분 기다린 뒤 다시 호출", "2번으로 돌아가 다음 일감", "실패 관측과 사용량으로 새 Finding·커버리지 일감", "worker-laptop", "agy", "auto", "CSX_HOME", "search_known_solution", "run_observed_command",
 		"csx sample create", "csx sample verify", "csx sample preview", "csx sample publish를 실행하지 않는다",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -151,7 +151,7 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	for _, want := range []string{
 		"@echo off", "setlocal EnableExtensions DisableDelayedExpansion", `set "CSX_SESSION_ID=session-123"`,
 		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`, ":poll", "sample-worker refresh",
-		"sample-worker next", `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--prompt-interactive", "goto :poll",
+		"sample-worker next", `findstr /b /c:"NO_WORK:"`, `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--prompt-interactive", "goto :poll",
 		"HTTP 410", "download a new CMD file",
 	} {
 		if !strings.Contains(script, want) {
@@ -177,7 +177,7 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := string(decoded)
-	for _, want := range []string{"같은 현재 임대를 확인", "search_known_solution", "run_observed_command", "sample-worker submit <sampleId>", "바깥 CMD supervisor"} {
+	for _, want := range []string{"같은 현재 임대를 확인", "사용량 기반 커버리지 확장", "search_known_solution", "run_observed_command", "sample-worker submit <sampleId>", "바깥 CMD supervisor"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("CMD agent prompt missing %q", want)
 		}

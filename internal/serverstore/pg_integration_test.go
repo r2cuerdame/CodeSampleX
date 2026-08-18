@@ -150,6 +150,66 @@ func TestIntegrationAuthoringSessionsPersistRefreshAndRevoke(t *testing.T) {
 	}
 }
 
+func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const purl = "pkg:npm/undici@8.10.0"
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	failing := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "expansionpeer", ProjectBucket: "expansionproject",
+		Package: purl, Symbol: "MockAgent", SymbolConfidence: domain.SymbolProbable, Environment: env,
+		Stage: domain.StageProjectCompile, Result: domain.ResultFail,
+		ErrorFingerprint: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		ErrorCode:        "ERR_MOCK_MATCH", ObservationCount: 23,
+	}
+	passing := failing
+	passing.AnonID = "otherpeer"
+	passing.ProjectBucket = "otherproject"
+	passing.Symbol = "request"
+	passing.Result = domain.ResultPass
+	passing.ErrorFingerprint = ""
+	passing.ErrorCode = ""
+	passing.ObservationCount = 7
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{failing, passing}); err != nil || accepted != 2 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "undici", Version: "8.10.0", Major: "8", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.UpsertFailureCluster(ctx, ClusterRow{
+		Ecosystem: "npm", PackageName: "undici", Symbol: "MockAgent", Stage: "PROJECT_COMPILE",
+		ErrorFingerprint: failing.ErrorFingerprint, ErrorCode: failing.ErrorCode,
+		ObservationCount: 23, VersionsJSON: `["8.10.0"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("candidates = %+v err=%v", candidates, err)
+	}
+	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "MockAgent" || candidates[0].Score != 23 {
+		t.Fatalf("finding candidate = %+v", candidates[0])
+	}
+	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "request" || candidates[1].Score != 7 {
+		t.Fatalf("expansion candidate = %+v", candidates[1])
+	}
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	claimed, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer", candidates, now, now.Add(24*time.Hour))
+	if err != nil || !ok || claimed.Kind != "FINDING" || claimed.Score != 23 {
+		t.Fatalf("claim = %+v ok=%v err=%v", claimed, ok, err)
+	}
+	remaining, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil || len(remaining) != 1 || remaining[0].Symbol != "request" {
+		t.Fatalf("remaining = %+v err=%v", remaining, err)
+	}
+}
+
 func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
