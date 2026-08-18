@@ -128,7 +128,10 @@ func TestIntegrationWantedClosesOnlyExactVersionAndSymbol(t *testing.T) {
 	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:matrix", ManifestJSON: manifest}); err != nil {
 		t.Fatal(err)
 	}
-	manifest = `{"packages":["pkg:npm/%40scope/pkg@2.0.0"],"symbols":["scoped.call"]}`
+	// Upload validation accepts the human-readable scoped form while the v2
+	// resolver records the canonical percent-encoded PURL. Both spellings
+	// identify the same package and must close the same Wanted coordinate.
+	manifest = `{"packages":["pkg:npm/@scope/pkg@2.0.0"],"symbols":["scoped.call"]}`
 	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:scoped", ManifestJSON: manifest}); err != nil {
 		t.Fatal(err)
 	}

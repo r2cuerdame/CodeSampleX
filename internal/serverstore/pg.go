@@ -2100,7 +2100,8 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 			        WHERE NOT s.quarantined
 			          AND EXISTS (
 			              SELECT 1 FROM jsonb_array_elements_text(s.manifest->'packages') AS pkg
-			               WHERE strpos(pkg, 'pkg:' || w.ecosystem || '/' ||
+			               WHERE strpos(pkg, 'pkg:' || w.ecosystem || '/' || w.name || '@') = 1
+			                  OR strpos(pkg, 'pkg:' || w.ecosystem || '/' ||
 			                     CASE WHEN left(w.name, 1) = '@'
 			                          THEN '%40' || substring(w.name from 2)
 			                          ELSE w.name END || '@') = 1)
