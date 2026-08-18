@@ -167,6 +167,7 @@
   "landing.llm_safety": "发送前先读一遍。它不需要账号、令牌或密码 — csx 本来就不需要 — 并且要求智能体把 csx 添加到你现有的 MCP 服务器旁边，而不是覆盖你的配置。",
   "landing.worker_body": "如果这是一台只用于贡献验证的备用机器，请改为复制此提示。它不会注册 MCP，只会在登录后自动运行 Docker 隔离的 worker。",
   "landing.worker_copy": "复制 worker 提示",
+  "landing.worker_cmd_copy": "复制 Windows CMD",
   "landing.worker_heading": "仅运行 worker 的机器",
   "landing.worker_run_heading": "运行或检查",
   "landing.worker_run_prompt": "启动并检查此机器上已有的 `CodeSampleX Contributor Worker`。不要重新安装 csx，也不要更改 MCP 或编码代理设置。\n\n确认 Docker 正在运行，启动现有用户服务，并确认准确命令为 `csx worker start --mode verify --parallel 2 --budget idle`、服务处于运行状态、`csx version` 成功且 `csx daemon status` 为 `not running`。队列为空是正常情况。只报告服务状态和无法安全解决的错误。",

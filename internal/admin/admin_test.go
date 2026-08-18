@@ -429,20 +429,36 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		"검증 작업 큐", "Claim 가능", "만료 lease", "유효 claim 워커 ID 2개", "온라인·idle 워커 수나 heartbeat가 아닙니다",
 		"‘실패 회피’는 추정하지 않습니다", "측정 경계", "활성 MCP 세션·설치·다운로드",
 		"내부 샘플 워커", "LLM 모델", "추론 강도", "워커 수", "프롬프트 + CLI 발급·복사",
-		"검색·네트워크 누적 지표", `<details class="panel"><summary>서버 상태 · 정상</summary>`,
+		"검색 효용", "실제로 도움이 되는가", "샘플 채택 성과", "서비스 상태", "서버 정상",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing honest label %q", want)
 		}
 	}
+	for _, visible := range []string{
+		`<section class="panel" aria-labelledby="velocity-title">`,
+		`<section class="panel" aria-labelledby="quality-title">`,
+		`<section class="panel wide" aria-labelledby="verification-title">`,
+		`<section class="panel side" aria-labelledby="ecosystem-title">`,
+		`<section class="panel half" aria-labelledby="adoption-title">`,
+		`<section class="panel" aria-labelledby="health-title">`,
+	} {
+		if !strings.Contains(body, visible) {
+			t.Errorf("important dashboard section is not visible: %q", visible)
+		}
+	}
 	for _, folded := range []string{
-		`<summary>검증 샘플 추이 · 10K 목표와 30일 차트</summary>`,
-		`<details class="panel wide"><summary>최근 30일 검증 활동 · 80건</summary>`,
-		`<details class="panel side"><summary>최근 검증 생태계 구성</summary>`,
 		`<details class="panel half"><summary>최근 패키지 깊이</summary>`,
+		`<details class="panel"><summary>API·개인정보 진단</summary>`,
+		`<details class="panel"><summary>측정 경계</summary>`,
 	} {
 		if !strings.Contains(body, folded) {
-			t.Errorf("detailed dashboard section is not folded: %q", folded)
+			t.Errorf("diagnostic dashboard section is not folded: %q", folded)
+		}
+	}
+	for _, important := range []string{"검증 샘플 추이", "검색 효용", "검증 결과", "최근 검증 생태계 구성", "샘플 채택 성과", "서버 정상"} {
+		if strings.Contains(body, "<summary>"+important) {
+			t.Errorf("important dashboard section was hidden in details: %q", important)
 		}
 	}
 	for _, forbidden := range []string{"ZgotmplZ", secret, "claimed_by", "현재 기여 피어"} {

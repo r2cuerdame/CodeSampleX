@@ -85,8 +85,9 @@ type issueAuthoringResponse struct {
 }
 
 type issuedAuthoringWorker struct {
-	Command string         `json:"command"`
-	Session authoringGrant `json:"session"`
+	Command    string         `json:"command"`
+	WindowsCMD string         `json:"windowsCmd,omitempty"`
+	Session    authoringGrant `json:"session"`
 }
 
 func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +127,9 @@ func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 		workers := make([]issuedAuthoringWorker, 0, len(grants))
 		prompts := make([]string, 0, len(grants))
 		for index, grant := range grants {
-			workers = append(workers, issuedAuthoringWorker{Command: authoringCommand(h.publicURL, grant.Token), Session: grant})
+			workers = append(workers, issuedAuthoringWorker{
+				Command: authoringCommand(h.publicURL, grant.Token), WindowsCMD: authoringWindowsCMD(h.publicURL, grant), Session: grant,
+			})
 			prompts = append(prompts, fmt.Sprintf("===== SAMPLE WORKER %d/%d · %s =====\n%s", index+1, len(grants), grant.Label, authoringPrompt(h.publicURL, grant)))
 		}
 		writeAdminJSON(w, http.StatusCreated, issueAuthoringResponse{Prompt: strings.Join(prompts, "\n\n"), Workers: workers})
@@ -220,7 +223,9 @@ func (h *handler) rotateAuthoringSession(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "세션을 찾을 수 없습니다", http.StatusNotFound)
 		return
 	}
-	worker := issuedAuthoringWorker{Command: authoringCommand(h.publicURL, grant.Token), Session: grant}
+	worker := issuedAuthoringWorker{
+		Command: authoringCommand(h.publicURL, grant.Token), WindowsCMD: authoringWindowsCMD(h.publicURL, grant), Session: grant,
+	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"prompt": authoringPrompt(h.publicURL, grant), "worker": worker})
 }
 

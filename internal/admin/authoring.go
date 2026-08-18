@@ -393,14 +393,14 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 
 필수 절차:
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
-2. 아래 명령으로 Wanted 일감 하나를 받는다. NO_WORK면 임의 샘플을 만들지 말고 멈춘다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
+2. 아래 명령으로 Wanted 일감 하나를 받는다. NO_WORK면 임의 샘플을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
 %s
 3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
 4. 빌드·테스트는 CSX run_observed_command로 실행한다.
 5. MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
 6. 출력된 csx sample propose 명령으로 시작한다. 이 명령이 spec.json, PROMPT.md와 올바른 csx.json 스캐폴드를 함께 만든다. spec.json을 csx.json으로 복사하거나 csx.json을 기억으로 새로 만들지 않는다.
 7. 생성된 csx.json의 빈 contract와 환경·명령·verifierAdapter를 실제 파일에 맞게 완성한 뒤 csx sample create → csx sample verify → csx sample preview까지 수행하고 sample ID, 환경, PASS/FAIL, Finding을 보고한다.
-8. preview까지 확인한 로컬 샘플은 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한다.
+8. preview까지 확인한 로컬 샘플은 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한 뒤 2번으로 돌아가 다음 일감을 확인한다.
 %s
 9. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
@@ -417,4 +417,119 @@ func authoringSubmitCommand(baseURL, token string) string {
 
 func authoringNextCommand(baseURL, token string) string {
 	return fmt.Sprintf("csx sample-worker next --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+}
+
+func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
+	if !strings.EqualFold(strings.TrimSpace(grant.Model), "agy") {
+		return ""
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	sessionID := safeAuthoringCMDID(grant.ID)
+	prompt := authoringWindowsAgentPrompt(baseURL, grant)
+	encoded := base64.StdEncoding.EncodeToString([]byte(prompt))
+	const chunkSize = 3000
+	lines := []string{
+		"@echo off",
+		"setlocal EnableExtensions DisableDelayedExpansion",
+		"title CodeSampleX sample worker " + sessionID,
+		`set "CSX_SESSION_ID=` + sessionID + `"`,
+		`set "CSX_SERVER=` + baseURL + `"`,
+		`set "CSX_TOKEN=` + grant.Token + `"`,
+		`set "CSX_REASONING=` + grant.Reasoning + `"`,
+		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`,
+		`set "CSX_REFRESH_LOG=%TEMP%\csx-worker-%CSX_SESSION_ID%-refresh.log"`,
+		`set "CSX_NEXT_LOG=%TEMP%\csx-worker-%CSX_SESSION_ID%-next.log"`,
+		`set "CSX_AGY=%LOCALAPPDATA%\agy\bin\agy.exe"`,
+		`if exist "%CSX_AGY%" goto :agent_ready`,
+		`where agy.exe >nul 2>&1`,
+		`if errorlevel 1 goto :missing_agent`,
+		`set "CSX_AGY=agy.exe"`,
+		`:agent_ready`,
+		`if not exist "%CSX_HOME%" mkdir "%CSX_HOME%"`,
+	}
+	refs := make([]string, 0, (len(encoded)+chunkSize-1)/chunkSize)
+	for index, start := 0, 0; start < len(encoded); index, start = index+1, start+chunkSize {
+		end := start + chunkSize
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		name := fmt.Sprintf("CSX_PROMPT_B64_%04d", index+1)
+		lines = append(lines, fmt.Sprintf(`set "%s=%s"`, name, encoded[start:end]))
+		refs = append(refs, "$env:"+name)
+	}
+	lines = append(lines,
+		`echo CodeSampleX sample worker is running. Close this window or press Ctrl+C to stop.`,
+		`:poll`,
+		`csx sample-worker refresh --server "%CSX_SERVER%" --token "%CSX_TOKEN%" >"%CSX_REFRESH_LOG%" 2>&1`,
+		`set "CSX_RC=%ERRORLEVEL%"`,
+		`type "%CSX_REFRESH_LOG%"`,
+		`if "%CSX_RC%"=="0" goto :next_work`,
+		`findstr /c:"HTTP 410" "%CSX_REFRESH_LOG%" >nul 2>&1`,
+		`if not errorlevel 1 goto :expired`,
+		`echo Temporary refresh failure. Retrying in 60 seconds.`,
+		`timeout /t 60 /nobreak >nul`,
+		`goto :poll`,
+		`:next_work`,
+		`csx sample-worker next --server "%CSX_SERVER%" --token "%CSX_TOKEN%" >"%CSX_NEXT_LOG%" 2>&1`,
+		`set "CSX_RC=%ERRORLEVEL%"`,
+		`type "%CSX_NEXT_LOG%"`,
+		`if not "%CSX_RC%"=="0" goto :retry_work`,
+		`findstr /c:"No uncovered Wanted work" "%CSX_NEXT_LOG%" >nul 2>&1`,
+		`if not errorlevel 1 goto :idle`,
+		`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$b64=`+strings.Join(refs, "+")+`; $prompt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)); & $env:CSX_AGY --effort $env:CSX_REASONING --dangerously-skip-permissions --prompt-interactive $prompt; exit $LASTEXITCODE"`,
+		`echo AGY iteration ended. Checking the same lease again in 10 seconds.`,
+		`timeout /t 10 /nobreak >nul`,
+		`goto :poll`,
+		`:idle`,
+		`echo No uncovered Wanted work. Checking again in 5 minutes.`,
+		`timeout /t 300 /nobreak >nul`,
+		`goto :poll`,
+		`:retry_work`,
+		`echo Work lookup failed. Retrying in 60 seconds.`,
+		`timeout /t 60 /nobreak >nul`,
+		`goto :poll`,
+		`:expired`,
+		`echo This sample-worker token expired. Rotate it in the CodeSampleX admin page and download a new CMD file.`,
+		`pause`,
+		`exit /b 2`,
+		`:missing_agent`,
+		`echo AGY was not found. Install AGY or add agy.exe to PATH, then run this CMD again.`,
+		`pause`,
+		`exit /b 3`,
+	)
+	return strings.Join(lines, "\r\n") + "\r\n"
+}
+
+func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
+	return fmt.Sprintf(`CodeSampleX CMD supervisor가 배정한 샘플 일감 하나를 처리한다.
+
+작업 식별: %s
+지정 모델: agy
+추론 강도: %s
+
+규칙:
+1. 현재 CSX_HOME만 사용하고 다른 프로필·토큰·자격·워크트리는 읽지 않는다.
+2. supervisor가 이미 세션을 갱신하고 일감을 임대했다. 아래 명령을 다시 실행해 같은 현재 임대를 확인한다.
+%s
+3. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
+4. 진짜 MISS를 해결해 PASS한 경우에만 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고, 생성된 csx.json 스캐폴드를 완성한다. spec.json을 csx.json으로 복사하거나 매니페스트를 기억으로 만들지 않는다.
+5. csx sample create, verify, preview를 순서대로 통과시키고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
+%s
+6. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
+7. 한 샘플을 제출하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
+8. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
+%s`, grant.Label, grant.Reasoning, authoringNextCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token), authoringCommand(baseURL, grant.Token))
+}
+
+func safeAuthoringCMDID(raw string) string {
+	var b strings.Builder
+	for _, char := range strings.ToLower(strings.TrimSpace(raw)) {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-' {
+			b.WriteRune(char)
+		}
+	}
+	if b.Len() == 0 {
+		return "worker"
+	}
+	return b.String()
 }

@@ -1,7 +1,12 @@
 package admin
 
 import (
+	"encoding/base64"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -131,11 +136,80 @@ func TestAuthoringTokenIsStrictAndPromptStopsBeforePublish(t *testing.T) {
 	prompt := authoringPrompt("https://codesamplex.dev/", authoringGrant{Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"})
 	for _, want := range []string{
 		`csx sample-worker refresh --server "https://codesamplex.dev" --token "sentinel"`,
-		"45분마다", "worker-laptop", "agy", "auto", "CSX_HOME", "search_known_solution", "run_observed_command",
+		"45분마다", "5분 기다린 뒤 다시 호출", "2번으로 돌아가 다음 일감", "worker-laptop", "agy", "auto", "CSX_HOME", "search_known_solution", "run_observed_command",
 		"csx sample create", "csx sample verify", "csx sample preview", "csx sample publish를 실행하지 않는다",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+}
+
+func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
+	grant := authoringGrant{ID: "Session-123", Token: "sentinel", Label: `lab & echo unsafe`, Model: "agy", Reasoning: "high"}
+	script := authoringWindowsCMD("https://codesamplex.dev/", grant)
+	for _, want := range []string{
+		"@echo off", "setlocal EnableExtensions DisableDelayedExpansion", `set "CSX_SESSION_ID=session-123"`,
+		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`, ":poll", "sample-worker refresh",
+		"sample-worker next", `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--prompt-interactive", "goto :poll",
+		"HTTP 410", "download a new CMD file",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("CMD missing %q", want)
+		}
+	}
+	if strings.Contains(script, grant.Label) {
+		t.Fatal("untrusted label was interpolated into CMD syntax")
+	}
+	var encoded strings.Builder
+	for _, line := range strings.Split(script, "\r\n") {
+		if !strings.HasPrefix(line, `set "CSX_PROMPT_B64_`) {
+			continue
+		}
+		separator := strings.IndexByte(line, '=')
+		if separator < 0 || !strings.HasSuffix(line, `"`) {
+			t.Fatalf("malformed prompt chunk %q", line)
+		}
+		encoded.WriteString(line[separator+1 : len(line)-1])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := string(decoded)
+	for _, want := range []string{"같은 현재 임대를 확인", "search_known_solution", "run_observed_command", "sample-worker submit <sampleId>", "바깥 CMD supervisor"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("CMD agent prompt missing %q", want)
+		}
+	}
+	if got := authoringWindowsCMD("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
+		t.Fatalf("non-AGY CMD = %q", got)
+	}
+}
+
+func TestAuthoringWindowsCMDParsesInWindowsCommandProcessor(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows CMD parser test")
+	}
+	temp := t.TempDir()
+	script := authoringWindowsCMD("https://codesamplex.dev", authoringGrant{
+		ID: "session-parse", Token: "sentinel", Label: "parse", Model: "agy", Reasoning: "low",
+	})
+	path := filepath.Join(temp, "worker.cmd")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("cmd.exe", "/d", "/c", path)
+	command.Env = []string{
+		"ComSpec=" + os.Getenv("ComSpec"), "LOCALAPPDATA=" + temp,
+		"PATH=" + filepath.Join(os.Getenv("SystemRoot"), "System32"), "SystemRoot=" + os.Getenv("SystemRoot"), "TEMP=" + temp,
+	}
+	output, err := command.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Fatalf("CMD parse exit=%v output=%s", err, output)
+	}
+	if !strings.Contains(string(output), "AGY was not found") {
+		t.Fatalf("CMD did not reach the expected parsed branch: %s", output)
 	}
 }

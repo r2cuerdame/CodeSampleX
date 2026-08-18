@@ -40,8 +40,14 @@ func TestContributePageAnswersTheRefusal(t *testing.T) {
 	mustContain(t, body, `id="worker-run-prompt"`)
 	mustContain(t, body, `data-copy-target="#worker-setup-prompt"`)
 	mustContain(t, body, `data-copy-target="#worker-run-prompt"`)
+	mustContain(t, body, `data-copy-target="#worker-setup-cmd"`)
+	mustContain(t, body, `data-copy-target="#worker-run-cmd"`)
+	mustContain(t, body, `id="worker-setup-cmd"`)
+	mustContain(t, body, `id="worker-run-cmd"`)
 	mustContain(t, body, `csx init --community --yes --no-agents --no-daemon`)
 	mustContain(t, body, `csx worker start --mode verify --parallel 2 --budget idle`)
+	mustContain(t, body, `CSX_WORKER_ONLY`)
+	mustContain(t, body, `Register-ScheduledTask`)
 	// Contribution is a first-class destination in the top menu, not only the
 	// footer link that already existed.
 	home := get(t, mux, "/").Body.String()
@@ -61,7 +67,7 @@ func TestContributePageIsTranslated(t *testing.T) {
 	mustContain(t, body, i18n.T("ko", "contribute.claim"))
 	for _, key := range []string{
 		"landing.worker_heading", "landing.worker_body",
-		"landing.worker_copy", "landing.worker_safety",
+		"landing.worker_copy", "landing.worker_cmd_copy", "landing.worker_safety",
 		"landing.worker_setup_heading", "landing.worker_run_heading",
 	} {
 		mustContain(t, body, i18n.T("ko", key))
@@ -73,4 +79,35 @@ func TestContributePageIsTranslated(t *testing.T) {
 	}
 	mustContain(t, body, setup)
 	mustContain(t, body, run)
+}
+
+func TestWorkerCMDCommandsArePasteReadyAndKeepTheWorkerOnlyBoundary(t *testing.T) {
+	setup := workerSetupCMD("https://example.test/root/")
+	for _, want := range []string{
+		`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command`,
+		`https://example.test/root/install.ps1`,
+		`CSX_WORKER_ONLY`,
+		`docker info`,
+		`Register-ScheduledTask`,
+		`CodeSampleX Contributor Worker`,
+		`worker start --mode verify --parallel 2 --budget idle`,
+	} {
+		mustContain(t, setup, want)
+	}
+	if strings.Contains(setup, "--agents") || strings.Contains(setup, "daemon start") {
+		t.Fatalf("setup CMD crossed the worker-only boundary: %s", setup)
+	}
+	if quoted := workerSetupCMD("https://example.test/o'hare/"); !strings.Contains(quoted, `https://example.test/o''hare/install.ps1`) {
+		t.Fatalf("setup CMD did not preserve its PowerShell quoting boundary: %s", quoted)
+	}
+
+	run := workerRunCMD()
+	for _, want := range []string{"Start-ScheduledTask", `csx\csx.exe`, "csx daemon status"} {
+		mustContain(t, run, want)
+	}
+	for _, forbidden := range []string{"install.ps1", "Register-ScheduledTask", "CSX_WORKER_ONLY"} {
+		if strings.Contains(run, forbidden) {
+			t.Fatalf("run CMD unexpectedly contains %q: %s", forbidden, run)
+		}
+	}
 }

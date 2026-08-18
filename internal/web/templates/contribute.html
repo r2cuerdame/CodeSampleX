@@ -28,8 +28,10 @@
       <div class="llmbox workerbox">
         <div class="llmactions">
           <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
         </div>
         <pre id="worker-setup-prompt" class="llmtext mono" tabindex="0">{{.WorkerSetupPrompt}}</pre>
+        <pre id="worker-setup-cmd" class="sr-only">{{.WorkerSetupCMD}}</pre>
       </div>
     </div>
     <div class="workerprompt-card">
@@ -37,8 +39,10 @@
       <div class="llmbox workerbox">
         <div class="llmactions">
           <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
         </div>
         <pre id="worker-run-prompt" class="llmtext mono" tabindex="0">{{.WorkerRunPrompt}}</pre>
+        <pre id="worker-run-cmd" class="sr-only">{{.WorkerRunCMD}}</pre>
       </div>
     </div>
   </div>

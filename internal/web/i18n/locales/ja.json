@@ -167,6 +167,7 @@
   "landing.llm_safety": "送る前に読んでください。アカウントもトークンもパスワードも要求しません — csx には必要ありません。すでにある MCP サーバーの設定を上書きせず、その横に csx を追加するよう指示しています。",
   "landing.worker_body": "検証だけに使う予備マシンでは、代わりにこのプロンプトをコピーしてください。MCP は登録せず、Docker で隔離されたワーカーだけをログイン後に自動実行します。",
   "landing.worker_copy": "ワーカー用プロンプトをコピー",
+  "landing.worker_cmd_copy": "Windows CMD をコピー",
   "landing.worker_heading": "ワーカー専用マシン",
   "landing.worker_run_heading": "起動・状態確認",
   "landing.worker_run_prompt": "このマシンに既にある `CodeSampleX Contributor Worker` を起動して確認してください。csx の再インストールや MCP・コーディングエージェント設定の変更はしないでください。\n\nDocker が動作中か確認し、既存のユーザーサービスを起動してください。実行コマンドが正確に `csx worker start --mode verify --parallel 2 --budget idle` で、サービスが実行中、`csx version` が成功し、`csx daemon status` が `not running` であることを確認してください。キューが空でも正常です。サービス状態と安全に解決できなかったエラーだけを報告してください。",

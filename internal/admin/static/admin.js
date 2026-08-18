@@ -36,6 +36,21 @@
     if (!ok) throw new Error("copy failed");
   };
 
+  const download = (text, filename) => {
+    const blob = new Blob([text], {type: "application/x-msdos-program;charset=us-ascii"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const safeFilename = (value) => value.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "worker";
+
   const formatTime = (value) => value ? new Date(value).toLocaleString("ko-KR") : "—";
 
   const revokeIssued = async (workers) => {
@@ -66,25 +81,48 @@
         meta.className = "note";
         meta.textContent = `${session.model} · 추론 ${session.reasoning} · 컴퓨터 ${session.computerName || "확인 안 됨"} · IP ${session.lastIp || "확인 안 됨"} · 마지막 갱신 ${formatTime(session.lastRefreshedAt)} · 만료 ${formatTime(session.idleExpiresAt)}`;
         info.append(name, meta);
-		const actions = document.createElement("div");
-		actions.className = "sample-worker-actions";
-		const recopy = document.createElement("button");
-		recopy.type = "button";
-		recopy.className = "copy-button";
-		recopy.textContent = "프롬프트 + CLI 재복사";
-		recopy.addEventListener("click", async () => {
-		  recopy.disabled = true;
-		  status.textContent = `${session.label} 명령을 새 토큰으로 교체하는 중…`;
-		  try {
-			const data = await request(`/admin/api/authoring-sessions/${encodeURIComponent(session.sessionId)}/rotate`, {method: "POST", body: "{}"});
-			await copy(data.prompt);
-			status.textContent = `${session.label}의 새 프롬프트와 CLI를 복사했습니다. 이전 명령은 무효입니다.`;
-			await load();
-		  } catch (_) {
-			status.textContent = "재복사에 실패했습니다. 다시 누르면 새 명령으로 교체됩니다.";
-			recopy.disabled = false;
-		  }
-		});
+        const actions = document.createElement("div");
+        actions.className = "sample-worker-actions";
+        const recopy = document.createElement("button");
+        recopy.type = "button";
+        recopy.className = "copy-button";
+        recopy.textContent = "프롬프트 + CLI 재복사";
+        const downloadCMD = document.createElement("button");
+        downloadCMD.type = "button";
+        downloadCMD.className = "copy-button";
+        downloadCMD.textContent = "무한 CMD 내려받기";
+        const rotateAndDeliver = async (deliver, progress, success, failure) => {
+          recopy.disabled = true;
+          downloadCMD.disabled = true;
+          status.textContent = progress;
+          try {
+            const data = await request(`/admin/api/authoring-sessions/${encodeURIComponent(session.sessionId)}/rotate`, {method: "POST", body: "{}"});
+            await deliver(data);
+            status.textContent = success;
+            await load();
+          } catch (_) {
+            status.textContent = failure;
+            recopy.disabled = false;
+            downloadCMD.disabled = false;
+          }
+        };
+        recopy.addEventListener("click", () => rotateAndDeliver(
+          (data) => copy(data.prompt),
+          `${session.label} 명령을 새 토큰으로 교체하는 중…`,
+          `${session.label}의 새 프롬프트와 CLI를 복사했습니다. 이전 명령은 무효입니다.`,
+          "재복사에 실패했습니다. 다시 누르면 새 명령으로 교체됩니다.",
+        ));
+        if (session.model === "agy") {
+          downloadCMD.addEventListener("click", () => rotateAndDeliver(
+            (data) => {
+              if (!data.worker.windowsCmd) throw new Error("CMD unavailable");
+              download(data.worker.windowsCmd, `codesamplex-${safeFilename(session.label)}.cmd`);
+            },
+            `${session.label} 무한 CMD를 새 토큰으로 만드는 중…`,
+            `${session.label}의 CMD를 내려받았습니다. 이전 프롬프트와 명령은 무효입니다. CMD 파일을 실행하면 별도 창에서 계속 재조회합니다.`,
+            "CMD 생성에 실패했습니다. 다시 누르면 새 토큰으로 교체됩니다.",
+          ));
+        }
         const revoke = document.createElement("button");
         revoke.type = "button";
         revoke.className = "danger-button";
@@ -100,8 +138,10 @@
             revoke.disabled = false;
           }
         });
-		actions.append(recopy, revoke);
-		row.append(info, actions);
+        actions.append(recopy);
+        if (session.model === "agy") actions.append(downloadCMD);
+        actions.append(revoke);
+        row.append(info, actions);
         list.appendChild(row);
       }
     } catch (_) {
@@ -163,7 +203,7 @@
         await load();
         throw error;
       }
-      status.textContent = `${data.workers.length}개 샘플 워커의 작업 프롬프트와 완성된 CLI 갱신 명령을 복사했습니다.`;
+      status.textContent = `${data.workers.length}개 샘플 워커의 작업 프롬프트와 완성된 CLI 갱신 명령을 복사했습니다. AGY 세션은 각 행에서 무한 CMD도 내려받을 수 있습니다.`;
       await load();
     } catch (_) {
       status.textContent = "발급 또는 복사에 실패했습니다.";

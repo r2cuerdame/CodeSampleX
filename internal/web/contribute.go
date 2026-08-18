@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -26,6 +27,8 @@ type contributePage struct {
 	// one-time operation while checking or starting it is routine.
 	WorkerSetupPrompt string
 	WorkerRunPrompt   string
+	WorkerSetupCMD    string
+	WorkerRunCMD      string
 }
 
 func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +41,8 @@ func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
 		IssuesURL:         "https://github.com/r2cuerdame/CodeSampleX/issues/new",
 		WorkerSetupPrompt: workerSetupPrompt(lang, s.base(r)),
 		WorkerRunPrompt:   workerRunPrompt(lang),
+		WorkerSetupCMD:    workerSetupCMD(s.base(r)),
+		WorkerRunCMD:      workerRunCMD(),
 	})
 }
 
@@ -47,4 +52,17 @@ func workerSetupPrompt(lang, base string) string {
 
 func workerRunPrompt(lang string) string {
 	return i18n.T(lang, "landing.worker_run_prompt")
+}
+
+func workerSetupCMD(base string) string {
+	installer := powerShellQuote(strings.TrimRight(base, "/") + "/install.ps1")
+	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; docker info *> $null; if ($LASTEXITCODE -ne 0) { throw 'Docker must already be installed and running.' }; $env:CSX_WORKER_ONLY='1'; try { irm ` + installer + ` | iex } finally { Remove-Item Env:\CSX_WORKER_ONLY -ErrorAction SilentlyContinue }; $csx=Join-Path $env:LOCALAPPDATA 'csx\csx.exe'; if (-not (Test-Path -LiteralPath $csx)) { throw 'csx was not installed at the expected path.' }; $action=New-ScheduledTaskAction -Execute $csx -Argument 'worker start --mode verify --parallel 2 --budget idle'; $trigger=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; $settings=New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero); Register-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -Action $action -Trigger $trigger -Settings $settings -Description 'Docker-isolated CodeSampleX verification worker' -Force; Start-ScheduledTask -TaskName 'CodeSampleX Contributor Worker'; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' | Select-Object TaskName,State; & $csx version; & $csx daemon status"`
+}
+
+func workerRunCMD() string {
+	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; docker info *> $null; if ($LASTEXITCODE -ne 0) { throw 'Docker must already be installed and running.' }; $csx=Join-Path $env:LOCALAPPDATA 'csx\csx.exe'; if (-not (Test-Path -LiteralPath $csx)) { throw 'csx is not installed at the expected path.' }; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -ErrorAction Stop | Out-Null; Start-ScheduledTask -TaskName 'CodeSampleX Contributor Worker'; Start-Sleep -Seconds 2; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' | Select-Object TaskName,State; & $csx version; & $csx daemon status"`
+}
+
+func powerShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }

@@ -154,6 +154,7 @@
   "landing.llm_safety": "보내기 전에 한 번 읽어보세요. 계정도 토큰도 비밀번호도 요구하지 않습니다 — csx에는 그런 게 없습니다. 그리고 이미 쓰고 있는 MCP 서버 설정을 덮어쓰지 말고 csx를 그 옆에 추가하라고 지시합니다.",
   "landing.worker_body": "독립 교차 검증과 정확한 매트릭스 검증에 기여할 여분의 머신이라면 이 프롬프트를 복사하세요. MCP를 등록하지 않고 Docker 격리 워커만 로그인 후 자동 실행합니다.",
   "landing.worker_copy": "워커 전용 프롬프트 복사",
+  "landing.worker_cmd_copy": "Windows CMD 복사",
   "landing.worker_heading": "워커 전용 머신",
   "landing.worker_run_heading": "실행·상태 확인",
   "landing.worker_run_prompt": "이 머신에 이미 설치된 `CodeSampleX Contributor Worker`를 시작하고 상태를 확인해 줘. csx를 재설치하거나 MCP·코딩 에이전트 설정을 바꾸지 마.\n\nDocker가 실행 중인지 확인하고 기존 사용자 서비스를 시작해. 실행 명령이 정확히 `csx worker start --mode verify --parallel 2 --budget idle`인지, 서비스가 실행 중인지, `csx version`이 성공하는지, `csx daemon status`가 `not running`인지 확인해. 큐가 비어 있는 것은 정상이다. 서비스 상태와 안전하게 해결하지 못한 오류만 보고해 줘.",

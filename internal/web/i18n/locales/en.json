@@ -154,6 +154,7 @@
   "landing.llm_safety": "Read it before you send it. It asks for no account, token or password — csx needs none — and it tells the agent to add csx alongside the MCP servers you already have, never to overwrite your config.",
   "landing.worker_body": "For a spare machine that should contribute independent cross-verification and exact matrix verification, copy this prompt instead. It installs no MCP entry and runs the Docker-isolated worker automatically after login.",
   "landing.worker_copy": "Copy worker prompt",
+  "landing.worker_cmd_copy": "Copy Windows CMD",
   "landing.worker_heading": "Worker-only machine",
   "landing.worker_run_heading": "Run or check it",
   "landing.worker_run_prompt": "Start and check the existing CodeSampleX Contributor Worker on this machine. Do not reinstall csx or change any MCP or coding-agent settings.\n\nConfirm Docker is running, start the existing user service, and verify that its exact command is `csx worker start --mode verify --parallel 2 --budget idle`, the service is running, `csx version` succeeds, and `csx daemon status` is `not running`. An empty queue is normal. Report the service state and any error you could not fix safely.",

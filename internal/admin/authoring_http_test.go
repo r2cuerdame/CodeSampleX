@@ -33,8 +33,9 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	var response struct {
 		Prompt  string `json:"prompt"`
 		Workers []struct {
-			Command string `json:"command"`
-			Session struct {
+			Command    string `json:"command"`
+			WindowsCMD string `json:"windowsCmd"`
+			Session    struct {
 				ID    string `json:"sessionId"`
 				Label string `json:"label"`
 				Model string `json:"model"`
@@ -46,6 +47,9 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	}
 	if len(response.Workers) != 2 || response.Workers[0].Session.Label != "spring-lab-01" || response.Workers[1].Session.Label != "spring-lab-02" {
 		t.Fatalf("workers = %+v", response.Workers)
+	}
+	if !strings.Contains(response.Workers[0].WindowsCMD, "@echo off") || !strings.Contains(response.Workers[0].WindowsCMD, "--dangerously-skip-permissions") {
+		t.Fatalf("worker CMD was not returned: %q", response.Workers[0].WindowsCMD)
 	}
 	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh", "csx sample-worker next", "Wanted 일감", "spec.json을 csx.json으로 복사", "csx sample-worker submit <sampleId>"} {
 		if !strings.Contains(response.Prompt, want) {
@@ -70,14 +74,15 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	var rotatedResponse struct {
 		Prompt string `json:"prompt"`
 		Worker struct {
-			Command string `json:"command"`
+			Command    string `json:"command"`
+			WindowsCMD string `json:"windowsCmd"`
 		} `json:"worker"`
 	}
 	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedResponse); err != nil {
 		t.Fatal(err)
 	}
 	rotatedToken := regexp.MustCompile(`--token "([^"]+)"`).FindStringSubmatch(rotatedResponse.Worker.Command)
-	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" {
+	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" || !strings.Contains(rotatedResponse.Worker.WindowsCMD, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.WindowsCMD, tokenMatch[1]) {
 		t.Fatalf("rotated response = %+v", rotatedResponse)
 	}
 	oldRefresh := httptest.NewRequest(http.MethodPost, "/v1/authoring/session/refresh", strings.NewReader("{}"))
@@ -180,7 +185,7 @@ func TestAdminPageContainsSampleWorkerControlsButNoSessionToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", `src="/admin/admin.js"`} {
+	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", "별도 창으로 계속 재조회하는 CMD", `src="/admin/admin.js"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("admin page missing %q", want)
 		}
@@ -233,7 +238,7 @@ func TestAdminScriptOffersPerWorkerRecopy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	for _, want := range []string{"프롬프트 + CLI 재복사", "/rotate", "이전 명령은 무효"} {
+	for _, want := range []string{"프롬프트 + CLI 재복사", "무한 CMD 내려받기", "/rotate", "data.worker.windowsCmd", "CMD를 내려받았습니다", "이전 프롬프트와 명령은 무효", "URL.createObjectURL"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("admin script missing %q", want)
 		}

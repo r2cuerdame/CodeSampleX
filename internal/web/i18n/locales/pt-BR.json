@@ -167,6 +167,7 @@
   "landing.llm_safety": "Leia antes de enviar. Não pede conta, token nem senha — csx não precisa de nenhum — e manda o agente adicionar csx ao lado dos servidores MCP que você já tem, nunca sobrescrever sua configuração.",
   "landing.worker_body": "Para uma máquina livre que deve contribuir apenas com verificações, copie este prompt. Ele não registra MCP e executa automaticamente o worker isolado por Docker após o login.",
   "landing.worker_copy": "Copiar prompt do worker",
+  "landing.worker_cmd_copy": "Copiar CMD do Windows",
   "landing.worker_heading": "Máquina somente de worker",
   "landing.worker_run_heading": "Executar ou verificar",
   "landing.worker_run_prompt": "Inicie e verifique o `CodeSampleX Contributor Worker` já existente nesta máquina. Não reinstale o csx nem altere configurações de MCP ou do agente de código.\n\nConfirme que o Docker está ativo, inicie o serviço de usuário existente e verifique o comando exato `csx worker start --mode verify --parallel 2 --budget idle`, o serviço em execução, `csx version` com sucesso e `csx daemon status` = `not running`. Uma fila vazia é normal. Informe o estado e erros que não puderam ser corrigidos com segurança.",
