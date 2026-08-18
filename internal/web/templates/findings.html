@@ -3,8 +3,9 @@
      page is one new file plus its handler. Everything it can borrow from the
      shared stylesheet — panel, chip, mono, dim, eyebrow, note — it borrows. */}}
 <style>
-.findings { list-style: none; margin: 1.2rem 0 0; padding: 0; display: grid; gap: 1rem; }
-.finding { display: flex; flex-direction: column; gap: 0.55rem; }
+.findings { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.65rem; }
+.finding { display: flex; flex-direction: column; gap: 0.35rem; }
+.finding.panel { padding: 0.9rem 1rem; border-radius: 0.85rem; }
 .fhead { margin: 0; display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .fhead .subject { color: var(--accent); font-size: 0.88rem; overflow-wrap: anywhere; }
 .finding p.claim { margin: 0; max-width: 74ch; }
@@ -15,7 +16,7 @@
   font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
 }
 .finding .measured { border-left: 2px solid var(--accent); padding-left: 0.75rem; }
-.flinks { margin: 0.15rem 0 0; display: flex; gap: 1rem; flex-wrap: wrap; }
+.flinks { margin: 0.05rem 0 0; display: flex; gap: 0.8rem; flex-wrap: wrap; }
 .flinks a.src { color: var(--dim); }
 .flinks a.src:hover { color: var(--text); }
 .ecolist { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.9rem 0 0; padding: 0; list-style: none; }

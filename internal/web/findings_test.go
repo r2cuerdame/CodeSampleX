@@ -26,6 +26,7 @@ func TestFindingsPageRenders(t *testing.T) {
 	mustContain(t, body,
 		"/samples/sha256:e0a5abccbe96dde0a46b9b65aae94c3d5ffaa94f5eac58c72b82bec2141a0bfa")
 	mustContain(t, body, "https://codesamplex.dev/findings") // canonical
+	mustContain(t, body, ".finding.panel { padding: 0.9rem 1rem; border-radius: 0.85rem; }")
 }
 
 // A finding without a live sample is an opinion, so the invariant the page
