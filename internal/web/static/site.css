@@ -1618,7 +1618,12 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
   font: 0.72rem var(--mono); letter-spacing: 0.04em; text-transform: uppercase;
   color: #cedcf4;
 }
-.hoststep .llmtext { max-height: 9rem; }
+/* These are long one-liners nobody reads end to end — the copy button is
+   the point — so cap the box and scroll inside it. A max-height without
+   overflow does not clip: the command spills over whatever follows. */
+.hoststep .llmtext { max-height: 10rem; overflow: auto; overscroll-behavior: contain; }
+.hoststep .llmtext::-webkit-scrollbar { width: 0.5rem; }
+.hoststep .llmtext::-webkit-scrollbar-thumb { background: #3d5f92; border-radius: 0.25rem; }
 .hostcard .dim { color: #b9cdf0; }
 
 /* The CLI's own help, above the MCP tool list. */

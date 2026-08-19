@@ -632,3 +632,61 @@ func TestContributeUsesSupportedEngineSwitch(t *testing.T) {
 		t.Error("contribute page still uses the unsupported DockerCli.exe engine switch")
 	}
 }
+
+// A capped box that never scrolls does not clip: the text runs straight out
+// of it and over whatever follows. This shipped once on the contribute page,
+// so every height cap on a text box has to say what it does with the
+// overflow — in that rule or in another rule with the same selector, since a
+// media query commonly overrides only the cap.
+func TestStylesheetCapsHeightsWithOverflow(t *testing.T) {
+	css, err := staticFS.ReadFile("static/site.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Comments would otherwise ride along in the selector text and split one
+	// selector into two keys, so the cascade check would miss its match.
+	var stripped strings.Builder
+	for rest := string(css); rest != ""; {
+		i := strings.Index(rest, "/*")
+		if i < 0 {
+			stripped.WriteString(rest)
+			break
+		}
+		stripped.WriteString(rest[:i])
+		j := strings.Index(rest[i:], "*/")
+		if j < 0 {
+			break
+		}
+		rest = rest[i+j+2:]
+	}
+
+	type rule struct{ selector, decls string }
+	var rules []rule
+	scrolls := map[string]bool{}
+	for _, block := range strings.Split(stripped.String(), "}") {
+		open := strings.Index(block, "{")
+		if open < 0 {
+			continue
+		}
+		sel := strings.TrimSpace(block[:open])
+		if i := strings.LastIndex(sel, "{"); i >= 0 {
+			sel = strings.TrimSpace(sel[i+1:]) // shed an enclosing @media
+		}
+		decls := block[open+1:]
+		if strings.Contains(decls, "overflow:") {
+			scrolls[sel] = true
+		}
+		rules = append(rules, rule{sel, decls})
+	}
+	for _, r := range rules {
+		if !strings.Contains(r.decls, "max-height") || scrolls[r.selector] {
+			continue
+		}
+		// Caps on containers that only hold laid-out boxes are fine; the ones
+		// that matter wrap text the reader would otherwise lose.
+		if !strings.Contains(r.selector, "text") && !strings.Contains(r.selector, "pre") {
+			continue
+		}
+		t.Errorf("%q caps max-height without declaring overflow", r.selector)
+	}
+}
