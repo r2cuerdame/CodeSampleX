@@ -67,6 +67,12 @@ type pivotGrid struct {
 	// Trimmed is set when the caps dropped lower-evidence rows or columns,
 	// so the template can say the grid shows the most-measured slice.
 	Trimmed bool
+	// Scan-report strip: how many cells hold each verdict, how many hold
+	// any measurement at all, and the newest evidence date in the grid.
+	// All data values — the strip renders without translations.
+	CountPass, CountFail, CountMixed, CountObserved int
+	Measured                                        int
+	LastSeen                                        string // date part
 }
 
 // Empty reports whether the grid has nothing worth rendering.
@@ -325,6 +331,7 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 	}
 
 	g := pivotGrid{Cols: cols, Trimmed: trimmed}
+	lastSeen := ""
 	for _, rk := range rowsOrdered {
 		row := pivotGridRow{Label: rk, Cells: make([]pivotCell, 0, len(cols))}
 		for _, ck := range cols {
@@ -339,10 +346,32 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			if cell.Maybe {
 				g.HasMaybe = true
 			}
+			switch cell.State {
+			case "PASS":
+				g.CountPass++
+			case "FAIL":
+				g.CountFail++
+			case "MIXED":
+				g.CountMixed++
+			case "OBSERVED":
+				g.CountObserved++
+			}
+			if cell.Class != "empty" {
+				g.Measured++
+			}
+			if a != nil {
+				if a.obsLastSeen > lastSeen {
+					lastSeen = a.obsLastSeen
+				}
+				if a.verLastSeen > lastSeen {
+					lastSeen = a.verLastSeen
+				}
+			}
 			row.Cells = append(row.Cells, cell)
 		}
 		g.Rows = append(g.Rows, row)
 	}
+	g.LastSeen = datePart(lastSeen)
 	return g
 }
 

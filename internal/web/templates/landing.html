@@ -13,10 +13,6 @@
   </div>
   <div class="hero-evidence">
     {{template "tiles" .}}
-    <a class="evidence-question" href="{{.WithLang "/npm/axios/1.12.2/axios.post"}}">
-      <span>{{.T "landing.example_result"}}</span>
-      <strong class="mono">{{.T "landing.example_open"}} →</strong>
-    </a>
   </div>
 </section>
 
@@ -29,22 +25,42 @@
       <h2 class="eyebrow mono">{{.T "landing.matrix_heading"}}</h2>
       <p class="dim small">{{.T "landing.matrix_sub"}}</p>
     </div>
-    <a class="small" href="#evidence">{{.T "landing.legend_heading"}} →</a>
   </div>
   {{- if .Matrix}}
-  <nav class="mtabs mono small" aria-label="{{.T "landing.matrix_heading"}}">
-    {{- range .Matrix.Tabs}}
-    <a {{if .Selected}}aria-current="true" {{end}}href="{{.Href}}">{{.Label}}</a>
-    {{- end}}
-  </nav>
-  {{template "pivot" .Matrix.Grid}}
-  <p class="matrix-foot small">
-    <a class="mono" href="{{.Matrix.Href}}">{{.Matrix.Package}} · {{.Matrix.Eco}} — {{.T "landing.matrix_full_report"}} →</a>
-    {{if .Matrix.Grid.Trimmed}}<span class="dim">{{.T "landing.matrix_trimmed"}}</span>{{end}}
-  </p>
+  <div class="gridpanel">
+    <div class="gridbar">
+      <nav class="mtabs mono small" aria-label="{{.T "landing.matrix_heading"}}">
+        {{- range .Matrix.Tabs}}
+        <a {{if .Selected}}aria-current="true" {{end}}href="{{.Href}}">{{.Label}}</a>
+        {{- end}}
+      </nav>
+      <span class="axes mono small dim">{{.Matrix.YLabel}} × {{.Matrix.XLabel}}</span>
+    </div>
+    {{template "pivot" .Matrix.Grid}}
+    <p class="matrix-foot small">
+      <a class="mono" href="{{.Matrix.Href}}">{{.Matrix.Package}} · {{.Matrix.Eco}} — {{.T "landing.matrix_full_report"}} →</a>
+      {{if .Matrix.Grid.Trimmed}}<span class="dim">{{.T "landing.matrix_trimmed"}}</span>{{end}}
+    </p>
+  </div>
   {{- else}}
   <p class="dim">{{.T "landing.matrix_empty"}}</p>
   {{- end}}
+  {{/* The legend and the evidence ladder live where they are used: folded
+       under the grid, not as their own landing section. */}}
+  <details class="home-detail gridhelp">
+    <summary><span class="eyebrow mono">{{.T "landing.legend_heading"}}</span><span class="detail-summary">{{.T "landing.ladder_heading"}}</span></summary>
+    <div class="home-detail-body">
+      {{template "pivotlegend" .}}
+      <ol class="ladder">
+        <li><span class="rung mono">USAGE_OBSERVATION</span>{{.T "landing.ladder_observed"}}</li>
+        <li><span class="rung mono">SAMPLE_VERIFICATION</span>{{.T "landing.ladder_verified"}}</li>
+        <li><span class="rung mono">CROSS_PASS</span>{{.T "landing.ladder_cross"}}</li>
+        <li><span class="rung mono">MATRIX_PASS</span>{{.T "landing.ladder_multi"}}</li>
+        <li><span class="rung mono">STABLE</span>{{.T "landing.ladder_stable"}}</li>
+      </ol>
+      <p class="note">{{.T "landing.ladder_rule"}}</p>
+    </div>
+  </details>
   <form class="home-search" action="/records" method="get" role="search">
     <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
     <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
@@ -75,26 +91,6 @@
   </ul>
 </section>
 {{- end}}
-
-{{/* Why trust a cell? The evidence ladder maps every state to what was
-     actually done, in the network's own grade vocabulary. */}}
-<section id="evidence" class="evidence-ladder">
-  <div class="section-heading">
-    <div>
-      <h2 class="eyebrow mono">{{.T "landing.ladder_heading"}}</h2>
-      <p class="dim small">{{.T "landing.ladder_sub"}}</p>
-    </div>
-  </div>
-  <ol class="ladder">
-    <li><span class="rung mono">USAGE_OBSERVATION</span>{{.T "landing.ladder_observed"}}</li>
-    <li><span class="rung mono">SAMPLE_VERIFICATION</span>{{.T "landing.ladder_verified"}}</li>
-    <li><span class="rung mono">CROSS_PASS</span>{{.T "landing.ladder_cross"}}</li>
-    <li><span class="rung mono">MATRIX_PASS</span>{{.T "landing.ladder_multi"}}</li>
-    <li><span class="rung mono">STABLE</span>{{.T "landing.ladder_stable"}}</li>
-  </ol>
-  <p class="note">{{.T "landing.ladder_rule"}}</p>
-  {{template "pivotlegend" .}}
-</section>
 
 {{/* The CLI is the product's local tester. Install commands first, what it
      does second; the agent path follows as an integration, not the point. */}}

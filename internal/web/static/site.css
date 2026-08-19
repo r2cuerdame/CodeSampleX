@@ -1358,3 +1358,75 @@ td.pv .pvratio { font-size: 0.72rem; }
 .delegate .clican .dim, .delegate .delegate-copy .dim, .delegate .small.dim, .delegate .dim { color: #b9cdf0; }
 .delegate .action.secondary { color: #f4f8ff; border-color: rgba(255, 255, 255, 0.45); background: transparent; }
 .delegate .action.secondary:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* ------------------------------------------------------------------ */
+/* Instrument-panel pass: every compatibility grid reads as one meter —
+   toolbar strip, scan-summary chips, dense cells, sticky row labels. */
+
+.gridpanel {
+  border: 1px solid var(--line-strong);
+  border-radius: 0.8rem;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-soft);
+}
+.gridbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.gridbar .mtabs { margin: 0; }
+.gridbar .axes { margin-left: auto; white-space: nowrap; }
+.gridbar .cubeaxes { margin: 0; }
+
+.gridstats {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.9rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.gridstats .gs { font-weight: 700; letter-spacing: 0.02em; }
+.gridstats .gs.pass { color: var(--ok); }
+.gridstats .gs.fail { color: var(--bad); }
+.gridstats .gs.mixed { color: var(--mid); }
+.gridstats .gs.observed { color: var(--accent); }
+.gridstats .gs.when { margin-left: auto; font-weight: 400; }
+
+.gridpanel .tablewrap { margin: 0; border: 0; }
+.gridpanel table.pivot { width: 100%; }
+.gridpanel table.pivot thead th:first-child,
+.gridpanel table.pivot th.rowlabel { border-left: 0; }
+.gridpanel table.pivot thead th:last-child,
+.gridpanel table.pivot td:last-child { border-right: 0; }
+.gridpanel .matrix-foot {
+  display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline;
+  margin: 0; padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.gridpanel .matrix-foot:empty { display: none; }
+
+/* Denser, more tabular cells; the first column stays put on scroll. */
+table.pivot th, table.pivot td {
+  padding: 0.34rem 0.5rem;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+table.pivot th.rowlabel {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--panel-2);
+  box-shadow: 1px 0 0 var(--line);
+}
+table.pivot tbody tr:hover td.pv:not(.empty) {
+  filter: brightness(0.97);
+}
+td.pv .pvstate { font-size: 0.7rem; }
+
+/* Findings read as detected-issue report entries. */
+.finding-card {
+  border-left: 3px solid color-mix(in srgb, var(--bad) 55%, var(--panel));
+}
+
+.home-detail.gridhelp { margin-top: 0.9rem; }
+.homematrix .home-search { margin-top: 0.9rem; }

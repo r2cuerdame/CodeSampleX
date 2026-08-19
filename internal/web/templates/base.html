@@ -274,6 +274,15 @@ document.addEventListener('keydown',event=>{
      color alone; ! and ? are the anomaly and uncertainty markers, and a
      cell's title carries the full evidence line. */}}
 {{define "pivot"}}
+{{- if .Measured}}
+<div class="gridstats mono small">
+  {{- if .CountPass}}<span class="gs pass"><span class="glyph" aria-hidden="true">✓</span> {{.CountPass}}</span>{{end}}
+  {{- if .CountFail}}<span class="gs fail"><span class="glyph" aria-hidden="true">✕</span> {{.CountFail}}</span>{{end}}
+  {{- if .CountMixed}}<span class="gs mixed"><span class="glyph" aria-hidden="true">◐</span> {{.CountMixed}}</span>{{end}}
+  {{- if .CountObserved}}<span class="gs observed"><span class="glyph" aria-hidden="true">○</span> {{.CountObserved}}</span>{{end}}
+  {{- if .LastSeen}}<span class="gs when dim">{{.LastSeen}}</span>{{end}}
+</div>
+{{- end}}
 <div class="tablewrap">
 <table class="pivot">
 <thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{.}}</th>{{end}}</tr></thead>

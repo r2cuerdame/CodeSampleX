@@ -76,8 +76,10 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, `content="https://codesamplex.dev/static/inspector-hero-v1.webp"`)
 	mustContain(t, body, `content="summary_large_image"`)
 	mustContain(t, body, `class="home-search" action="/records"`)
-	mustContain(t, body, `class="evidence-question" href="/npm/axios/1.12.2/axios.post"`)
-	mustContain(t, body, "View environment results")
+	// The matrix IS the example now; the old hero example card is gone.
+	if strings.Contains(body, `class="evidence-question"`) {
+		t.Error("landing still renders the decorative hero example card")
+	}
 	if strings.Contains(body, "pnpm + Windows 11") {
 		t.Error("landing still advertises the old environment example that has no matching evidence page")
 	}
@@ -527,7 +529,8 @@ func TestStaticCSSServed(t *testing.T) {
 	}
 	mustContain(t, rec.Body.String(), "prefers-color-scheme")
 	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
-	mustContain(t, rec.Body.String(), ".evidence-question {\n  display: grid; gap: 0.42rem;")
+	mustContain(t, rec.Body.String(), ".gridpanel {")
+	mustContain(t, rec.Body.String(), ".gridstats {")
 	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
 	mustContain(t, rec.Body.String(), ".samples .badge-help { position: static; }")
 	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);\n  gap: 1rem; align-items: start; margin-bottom: 1rem;")

@@ -51,20 +51,28 @@
     {{- end}}
   </ul>
   {{- else}}
-  <form class="cubeaxes mono small" method="get" action="{{.Cube.Action}}">
-    <label>{{.T "cube.x_axis"}}
-      <select name="x">{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-    </label>
-    <label>{{.T "cube.y_axis"}}
-      <select name="y">{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-    </label>
-    {{- range .Cube.Chips}}<input type="hidden" name="f_{{.Dim}}" value="{{.Value}}">{{end}}
-    {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
-    <button type="submit">{{.T "cube.apply"}}</button>
-  </form>
-  {{template "pivot" .Cube.Grid}}
-  {{if .Cube.Grid.Trimmed}}<p class="dim small">{{.T "landing.matrix_trimmed"}}</p>{{end}}
-  {{if .Cube.WindowNote}}<p class="dim small">{{.T "cube.window_note"}}</p>{{end}}
+  <div class="gridpanel">
+    <div class="gridbar">
+      <form class="cubeaxes mono small" method="get" action="{{.Cube.Action}}">
+        <label>{{.T "cube.x_axis"}}
+          <select name="x">{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+        </label>
+        <label>{{.T "cube.y_axis"}}
+          <select name="y">{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+        </label>
+        {{- range .Cube.Chips}}<input type="hidden" name="f_{{.Dim}}" value="{{.Value}}">{{end}}
+        {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
+        <button type="submit">{{.T "cube.apply"}}</button>
+      </form>
+    </div>
+    {{template "pivot" .Cube.Grid}}
+    {{- if or .Cube.Grid.Trimmed .Cube.WindowNote}}
+    <p class="matrix-foot small">
+      {{if .Cube.Grid.Trimmed}}<span class="dim">{{.T "landing.matrix_trimmed"}}</span>{{end}}
+      {{if .Cube.WindowNote}}<span class="dim">{{.T "cube.window_note"}}</span>{{end}}
+    </p>
+    {{- end}}
+  </div>
   <p class="note dim small">{{.T "cube.drill_note"}}</p>
   {{template "pivotlegend" .}}
   {{- end}}

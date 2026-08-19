@@ -133,6 +133,9 @@ type heroMatrixData struct {
 	Href    string // the package's cube explorer
 	Grid    pivotGrid
 	Tabs    []heroTab
+	// XLabel/YLabel name the slice's axes in the page language
+	// (columns × rows), so the grid says what it is a map OF.
+	XLabel, YLabel string
 }
 
 // heroAxisPairs are the slices the hero considers, hottest-first: the
@@ -220,8 +223,10 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 				bestScore = score
 				best = &heroMatrixData{
 					Package: h.Name, Eco: h.Ecosystem,
-					Href: cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
-					Grid: grid,
+					Href:   cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
+					Grid:   grid,
+					XLabel: i18n.T(lang, "cube.dim_"+x),
+					YLabel: i18n.T(lang, "cube.dim_"+y),
 				}
 			}
 		}
