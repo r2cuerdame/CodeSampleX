@@ -125,12 +125,17 @@ func defaultWorkerEnv() *workerEnv {
 		ident:   identity.LoadOrCreate,
 		collect: environment.Collect,
 		newVerifier: func(home string, cfg *config.Config, ident *identity.Identity, env domain.EnvironmentFingerprint) contributionVerifier {
+			// Docker Desktop serves Linux or Windows containers, never both.
+			// Ask which, so a Windows machine contributes Windows evidence
+			// instead of quietly producing Linux receipts.
+			containerOS := sandbox.DetectContainerOS(context.Background())
 			return &verifier.CrossVerifier{
 				HTTP:             nil,
 				ServerURL:        cfg.ServerURL,
 				Ident:            ident,
 				Cap:              domain.CapContainerRun,
-				Runner:           sandbox.DockerRunner{},
+				Runner:           sandbox.DockerRunner{ContainerOS: containerOS},
+				ContainerOS:      containerOS,
 				Env:              env,
 				LastActivityFile: filepath.Join(home, "logs", "last-run.log"),
 			}

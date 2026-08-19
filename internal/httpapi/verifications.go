@@ -45,8 +45,13 @@ func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
 		if env.Virtualization != "container" {
 			return errors.New("receipt claims CONTAINER_RUN but its environment is not a container")
 		}
-		if env.OS != "linux" {
-			return errors.New("receipt claims CONTAINER_RUN but its environment is not linux")
+		// A Docker daemon serves Linux or Windows containers. Both are
+		// real containers and both are honest evidence; what the check
+		// above still refuses is the case that caused the incident in the
+		// first place — a HOST describing itself as the container it
+		// started. Anything that is neither is not a container OS we run.
+		if env.OS != "linux" && env.OS != "windows" {
+			return errors.New("receipt claims CONTAINER_RUN but its environment is neither linux nor windows")
 		}
 	}
 	// The graph groups by environmentHash, so a hash that does not belong to

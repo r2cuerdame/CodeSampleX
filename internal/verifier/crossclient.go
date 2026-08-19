@@ -52,6 +52,12 @@ type CrossVerifier struct {
 	// daemon that already detected capability). Nil picks Docker for
 	// CONTAINER_RUN and the native COMPILE_ONLY runner otherwise.
 	Runner sandbox.Runner
+	// ContainerOS is the kind of container this machine's Docker daemon
+	// serves ("linux" or "windows"; empty means linux). It decides both
+	// which jobs are claimable and which OS the receipt reports, so a
+	// Windows worker contributes Windows evidence instead of quietly
+	// producing Linux results on a Windows machine.
+	ContainerOS string
 	// Env is this peer's environment fingerprint stamped into receipts.
 	Env domain.EnvironmentFingerprint
 	// WorkDir hosts per-job temp workspaces; empty means the OS temp dir.
@@ -100,7 +106,7 @@ func (cv *CrossVerifier) runner() sandbox.Runner {
 		return cv.Runner
 	}
 	if cv.Cap == domain.CapContainerRun {
-		return sandbox.DockerRunner{}
+		return sandbox.DockerRunner{ContainerOS: cv.ContainerOS}
 	}
 	return sandbox.NativeRunner{}
 }
@@ -219,7 +225,7 @@ func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
 		return false
 	}
 	if cv.Cap == domain.CapContainerRun {
-		if !sandbox.ContainerSupportsRequirements(want) {
+		if !sandbox.ContainerSupportsRequirementsOn(cv.ContainerOS, want) {
 			return false
 		}
 	} else if want.Ecosystem != "" {

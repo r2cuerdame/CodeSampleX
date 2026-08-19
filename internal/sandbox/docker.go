@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,7 +19,75 @@ import (
 // reuse the same bind-mounted workdir with --network=none. The mounted
 // dir is always an unpacked sample in a temp workspace — never the host
 // project. No host environment is passed into any container.
-type DockerRunner struct{}
+type DockerRunner struct {
+	// ContainerOS is the operating system this Docker daemon runs
+	// containers as: "linux" (the default when empty) or "windows".
+	//
+	// A daemon serves one mode at a time — Docker Desktop switches between
+	// Linux and Windows containers and cannot host both — so this is a
+	// property of the machine, not of a job. It selects the image family,
+	// the workspace path inside the container, and the OS the receipt
+	// reports. Without it a Windows worker ran Linux containers and the
+	// compatibility map had no Windows verification in it at all.
+	ContainerOS string
+}
+
+// ContainerOSLinux and ContainerOSWindows are the two modes a Docker
+// daemon can serve.
+const (
+	ContainerOSLinux   = "linux"
+	ContainerOSWindows = "windows"
+)
+
+func containerOSOrLinux(os string) string {
+	if os == ContainerOSWindows {
+		return ContainerOSWindows
+	}
+	return ContainerOSLinux
+}
+
+func (r DockerRunner) containerOS() string { return containerOSOrLinux(r.ContainerOS) }
+
+// DetectContainerOS asks the daemon which kind of container it runs.
+// Anything unreadable is reported as Linux, the historical assumption.
+func DetectContainerOS(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Os}}").Output()
+	if err != nil {
+		return ContainerOSLinux
+	}
+	return containerOSOrLinux(strings.ToLower(strings.TrimSpace(string(out))))
+}
+
+// windowsImageFor selects the verifier image for a Windows container
+// daemon.
+//
+// Only ecosystems with an official Windows base image are offered. Node
+// publishes none — the Docker Official Image is Linux-only — so npm work
+// is left to Linux workers rather than verified against an image this
+// project would have to build and pin itself. A refusal here means the
+// worker skips the job and keeps scanning; it never means a wrong image.
+func windowsImageFor(ecosystem, runtime, runtimeVersion string) (string, error) {
+	switch ecosystem {
+	case "golang":
+		if runtime != "" && runtime != "go" {
+			return "", fmt.Errorf("sandbox: no Windows verifier image for golang runtime %q", runtime)
+		}
+		return "golang:1.26-windowsservercore-ltsc2022", nil
+	case "pypi":
+		if runtime != "" && runtime != "python" {
+			return "", fmt.Errorf("sandbox: no Windows verifier image for pypi runtime %q", runtime)
+		}
+		switch runtimeVersion {
+		case "", "3.12":
+			return "python:3.12-windowsservercore-ltsc2022", nil
+		case "3.14":
+			return "python:3.14-windowsservercore-ltsc2022", nil
+		default:
+			return "", fmt.Errorf("sandbox: no Windows verifier image for python runtime version %q", runtimeVersion)
+		}
+	}
+	return "", fmt.Errorf("sandbox: no Windows verifier image for ecosystem %q", ecosystem)
+}
 
 // chrome134Image is the measured browser verifier for Puppeteer 24.4.0.
 // It contains Node 22.14.0 and Chrome for Testing 134.0.6998.35. The image
@@ -227,6 +296,26 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 // harness runtime, but its assertions execute in Chrome and need a real,
 // pinned browser image.
 func imageForManifest(m domain.SampleManifest) (string, error) {
+	return imageForManifestOn(ContainerOSLinux, m)
+}
+
+// imageForManifestOn is imageForManifest for a daemon serving a given
+// container OS.
+func imageForManifestOn(containerOS string, m domain.SampleManifest) (string, error) {
+	if containerOSOrLinux(containerOS) == ContainerOSWindows {
+		env := m.Environment.Normalize()
+		if env.ExecutionContext == "browser" || env.BrowserFamily != "" {
+			return "", fmt.Errorf("sandbox: no Windows browser verifier image")
+		}
+		if _, java, _ := javaImageForManifest(m); java {
+			return "", fmt.Errorf("sandbox: no Windows Java verifier image")
+		}
+		return windowsImageFor(env.Ecosystem, runtimeOf(m, domain.EnvironmentFingerprint{}), env.RuntimeVersion)
+	}
+	return imageForManifestLinux(m)
+}
+
+func imageForManifestLinux(m domain.SampleManifest) (string, error) {
 	env := m.Environment.Normalize()
 	if spec, java, err := javaImageForManifest(m); java {
 		if err != nil {
@@ -281,7 +370,21 @@ func ContainerSupports(ecosystem, runtime string) bool {
 // than an optimistic hint: a worker with Docker but no pinned Firefox image
 // must skip Firefox work and continue scanning the queue.
 func ContainerSupportsRequirements(w domain.WorkerRequirements) bool {
+	return ContainerSupportsRequirementsOn(ContainerOSLinux, w)
+}
+
+// ContainerSupportsRequirementsOn is the same decision for a daemon
+// serving a given container OS. A Windows worker must skip work it has no
+// image for and keep scanning, exactly as a worker without a pinned
+// Firefox image does.
+func ContainerSupportsRequirementsOn(containerOS string, w domain.WorkerRequirements) bool {
 	if w.Ecosystem == "" {
+		if containerOSOrLinux(containerOS) == ContainerOSWindows {
+			// A requirement-free job is a legacy cross job that could be
+			// anything; a Windows daemon has images for two ecosystems and
+			// must not gamble on which one it is.
+			return false
+		}
 		return w.Runtime == "" && w.RuntimeVersion == "" && w.ExecutionContext == "" && w.BrowserFamily == "" &&
 			w.BrowserMajor == "" && w.Engine == "" && w.EngineVersion == ""
 	}
@@ -293,7 +396,7 @@ func ContainerSupportsRequirements(w domain.WorkerRequirements) bool {
 		BrowserFamily:    w.BrowserFamily, BrowserMajor: w.BrowserMajor,
 		Engine: w.Engine, EngineVersion: w.EngineVersion,
 	}, VerifierAdapter: w.VerifierAdapter}
-	_, err := imageForManifest(m)
+	_, err := imageForManifestOn(containerOS, m)
 	return err == nil
 }
 
@@ -354,12 +457,12 @@ func imageRuntimeForVersion(ecosystem, runtime, runtimeVersion string) (rt, vers
 // dimension that most often decides whether a package with a native
 // module loads at all. Recording these runs as plain "linux" would make
 // them look like they proved something about glibc distros too.
-func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint {
+func (r DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint {
 	eco := m.Environment.Ecosystem
 	if eco == "" {
 		eco = host.Ecosystem
 	}
-	img, _ := imageForManifest(m)
+	img, _ := imageForManifestOn(r.containerOS(), m)
 	// The sample's declared runtime picks the container, so it must also
 	// describe the receipt. Reading the HOST runtime here would stamp a
 	// bun contract as node whenever the operator happened to run node.
@@ -387,10 +490,17 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 	} else if eco == "maven" {
 		packageManager = "maven"
 	}
+	// The receipt describes the container, and on a Windows daemon that
+	// container really is Windows: the image family names the base and
+	// there is no libc to report.
+	osName := r.containerOS()
+	if osName == ContainerOSWindows {
+		bucket, libc = "windowsservercore", ""
+	}
 	env := domain.EnvironmentFingerprint{
 		SchemaVersion:    1,
 		Ecosystem:        eco,
-		OS:               "linux",
+		OS:               osName,
 		OSVersionBucket:  bucket,
 		Arch:             arch,
 		Runtime:          rt,
@@ -435,12 +545,29 @@ func (DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m domai
 // cache paths from stageEnv, all pointing inside the mounted workspace;
 // no host environment is ever forwarded.
 func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name string) []string {
+	return dockerArgsOn(ContainerOSLinux, image, dir, networkOff, env, cmd, name)
+}
+
+// dockerArgsOn builds the invocation for a daemon serving containerOS.
+// A Windows container mounts at C:\work and takes no --pids-limit: the
+// Windows isolation layer does not implement one, and passing it makes
+// docker refuse the run outright rather than tighten it.
+func dockerArgsOn(containerOS, image, dir string, networkOff bool, env, cmd []string, name string) []string {
+	windows := containerOSOrLinux(containerOS) == ContainerOSWindows
 	args := []string{"docker", "run", "--rm"}
 	if name != "" {
 		args = append(args, "--name", name)
 	}
 	if networkOff {
 		args = append(args, "--network=none")
+	}
+	if windows {
+		args = append(args, "--memory=512m")
+		for _, e := range env {
+			args = append(args, "--env", e)
+		}
+		args = append(args, "-v", dir+`:C:\work`, "-w", `C:\work`, image)
+		return append(args, cmd...)
 	}
 	if image == chrome134Image || isGradleJavaImage(image) {
 		// These official images default to non-root users (Chrome uid 10042,
@@ -458,8 +585,8 @@ func dockerArgs(image, dir string, networkOff bool, env, cmd []string, name stri
 	return append(args, cmd...)
 }
 
-func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManifest, networkOff bool, cmd []string) StageResult {
-	img, err := imageForManifest(m)
+func (r DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManifest, networkOff bool, cmd []string) StageResult {
+	img, err := imageForManifestOn(r.containerOS(), m)
 	if err != nil {
 		return StageResult{Result: ResultFail, Log: err.Error()}
 	}
@@ -479,7 +606,7 @@ func (DockerRunner) stage(ctx context.Context, dir string, m domain.SampleManife
 	// the pool. Over a night that is not a leak, it is the throughput.
 	name := containerName(abs, networkOff, cmd)
 	env := stageEnvironmentForImage(img, m.Environment.Ecosystem, m.Environment.Runtime)
-	res := runStage(ctx, "", dockerArgs(img, abs, networkOff, env, cmd, name))
+	res := runStage(ctx, "", dockerArgsOn(r.containerOS(), img, abs, networkOff, env, cmd, name))
 	if ctx.Err() != nil || res.Result == ResultFail {
 		reapContainer(name)
 	}
