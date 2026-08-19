@@ -92,32 +92,23 @@
 </section>
 {{- end}}
 
+{{/* One list. A sample answers one version of one API, so the count
+     belongs on the version's own row and the answers themselves live on
+     the version page — not in a second list of the same versions. */}}
 <h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
 {{if .Versions}}
 <ul class="verlist mono">
-{{- range $i, $v := .Versions}}
-  <li><a href="/{{$.Ecosystem}}/{{$.Name}}/{{$v}}">{{$v}}</a>{{if eq $i 0}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}</li>
+{{- range .Versions}}
+  <li>
+    <a href="{{.Href}}">{{.Version}}</a>
+    {{- if .Latest}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}
+    {{- if .Samples}} <span class="versamples small">{{$.N .Samples}} · {{$.T "seeder.samples"}}</span>{{end}}
+  </li>
 {{- end}}
 </ul>
 {{else}}
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
-
-{{- if .SampleVersions}}
-{{/* A sample answers one version of one API. Listing every one of them
-     here mixed versions into an undifferentiated pile — uuid alone has 96
-     — so the package says where the answers are and the version page
-     lists them. */}}
-<h2 class="eyebrow mono">{{.T "pkg.samples_by_version"}}</h2>
-<ul class="samplevers mono">
-{{- range .SampleVersions}}
-  <li>
-    {{if .Href}}<a href="{{.Href}}">{{.Version}}</a>{{else if .Version}}<span class="dim">{{.Version}}</span>{{else}}<span class="dim">{{$.T "pkg.samples_no_version"}}</span>{{end}}
-    <span class="dim small">{{$.N .Count}}</span>
-  </li>
-{{- end}}
-</ul>
-{{- end}}
 
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}

@@ -488,13 +488,8 @@ type packagePage struct {
 	basePage
 	Ecosystem string
 	Name      string
-	Versions  []string
-	Samples   []SampleListItem
-	// SampleVersions counts a package's published samples per version. A
-	// sample answers one version of one API, so the package page says
-	// where the answers are and the version page lists them.
-	SampleVersions []sampleVersionCount
-	Clusters       []clusterView
+	Versions []versionRow
+	Clusters []clusterView
 	Wanted    []WantedRow
 	Crumbs    []crumb
 	// Cube is the N-dimensional compatibility explorer: the page's primary
@@ -524,34 +519,53 @@ func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
 	return buildClusters(clusters)
 }
 
-// sampleVersionCount is one row of the package page's "answers live
-// here" summary.
-type sampleVersionCount struct {
+// versionRow is one row of the package's version list: what the network
+// measured for that version, and how many published answers were written
+// against it.
+//
+// These used to be two lists — the versions with evidence, then a second
+// "samples by version" summary — which named most versions twice and
+// made the reader diff them by eye.
+type versionRow struct {
 	Version string
-	Count   int64
 	Href    string
+	Latest  bool
+	Samples int64
 }
 
-// sampleVersionCounts groups a package's samples by the version they were
-// written against, newest first. Samples whose manifest named no version
-// keep their own row rather than being hidden.
-func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem) []sampleVersionCount {
-	// Any version a sample names now has a page — the version handler
-	// renders for published answers as well as for snapshot evidence — so
-	// the only unlinkable row is one whose manifest recorded no version at
-	// all. Measured on github.com/google/uuid, where 94 samples say
-	// v1.6.0 and 2 say 1.6.0 and only the first has evidence.
-	byVersion := map[string]int64{}
+// versionRows merges the versions the network measured with the versions
+// its published answers were written against, newest first.
+//
+// The union matters: a golang module is published as both "1.6.0" and
+// "v1.6.0" and only one spelling carries snapshot evidence, so a list of
+// measured versions alone would drop the samples filed under the other.
+// Every version named here has a page — the version handler renders for
+// published answers as well as for evidence.
+func versionRows(b basePage, eco, name string, versions []string, samples []SampleListItem) []versionRow {
+	counts := map[string]int64{}
 	for _, item := range samples {
-		byVersion[item.Version]++
-	}
-	out := make([]sampleVersionCount, 0, len(byVersion))
-	for version, count := range byVersion {
-		row := sampleVersionCount{Version: version, Count: count}
-		if version != "" {
-			row.Href = b.WithLang(versionHref(eco, name, version))
+		if item.Version != "" {
+			counts[item.Version]++
 		}
-		out = append(out, row)
+	}
+	seen := map[string]bool{}
+	out := make([]versionRow, 0, len(versions)+len(counts))
+	add := func(version string) {
+		if version == "" || seen[version] {
+			return
+		}
+		seen[version] = true
+		out = append(out, versionRow{
+			Version: version,
+			Href:    b.WithLang(versionHref(eco, name, version)),
+			Samples: counts[version],
+		})
+	}
+	for _, v := range versions {
+		add(v)
+	}
+	for v := range counts {
+		add(v)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if c := domain.CompareVersions(out[i].Version, out[j].Version); c != 0 {
@@ -559,6 +573,15 @@ func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem)
 		}
 		return out[i].Version > out[j].Version
 	})
+	// "Latest with evidence" is a claim about measurement, so it marks the
+	// newest version the network actually measured — not a sample-only
+	// spelling that happens to sort first.
+	for i := range out {
+		if len(versions) > 0 && out[i].Version == versions[0] {
+			out[i].Latest = true
+			break
+		}
+	}
 	return out
 }
 
@@ -599,10 +622,10 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	})}
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
-		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
-		SampleVersions: sampleVersionCounts(b, eco, name, samples),
-		Crumbs:         leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:           buildCubeView(s, r, lang, eco, name),
+		Versions: versionRows(b, eco, name, versions, samples),
+		Clusters: clusters, Wanted: wanted,
+		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:   buildCubeView(s, r, lang, eco, name),
 	})
 }
 

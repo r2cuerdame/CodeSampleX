@@ -1586,3 +1586,10 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
 }
 .windows-switch h3 { margin: 0 0 0.3rem; }
 .windows-switch > p { margin: 0 0 0.7rem; max-width: 60ch; }
+
+/* The sample count rides on the version row rather than repeating the
+   whole version list in a second section. */
+.verlist .versamples {
+  margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+  border-radius: 999px; background: var(--panel-2); color: var(--accent-2);
+}
