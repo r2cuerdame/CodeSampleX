@@ -279,3 +279,41 @@ func TestAuthoringWindowsCMDParsesInWindowsCommandProcessor(t *testing.T) {
 		t.Fatalf("CMD did not reach the expected parsed branch: %s", output)
 	}
 }
+
+// The operator no longer types a machine name: the session row already
+// carries ComputerName, which the worker reports about itself, so the typed
+// field duplicated it and could disagree with it. An empty label now derives
+// from the model, keeping the batch suffix that makes a list of sessions
+// readable.
+func TestAuthoringLabelDerivesFromModelWhenOperatorGivesNone(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	r := newAuthoringRegistry(func() time.Time { return now })
+
+	grants, err := r.IssueBatch("", "agy", "auto", 2)
+	if err != nil {
+		t.Fatalf("issuing without a label: %v", err)
+	}
+	if len(grants) != 2 {
+		t.Fatalf("got %d grants, want 2", len(grants))
+	}
+	for i, want := range []string{"agy-01", "agy-02"} {
+		if grants[i].Label != want {
+			t.Errorf("grant %d label = %q, want %q", i, grants[i].Label, want)
+		}
+	}
+}
+
+// An operator who does supply a label still gets it, so nothing that already
+// depends on the field breaks.
+func TestAuthoringLabelStillHonouredWhenGiven(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	r := newAuthoringRegistry(func() time.Time { return now })
+
+	grants, err := r.IssueBatch("java-builder", "agy", "auto", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grants[0].Label != "java-builder" {
+		t.Errorf("label = %q, want java-builder", grants[0].Label)
+	}
+}

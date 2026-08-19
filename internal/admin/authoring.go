@@ -101,11 +101,19 @@ func (r *authoringRegistry) IssueBatch(label, model, reasoning string, count int
 }
 
 func (r *authoringRegistry) IssueBatchContext(ctx context.Context, label, model, reasoning string, count int) ([]authoringGrant, error) {
-	label, err := cleanAuthoringLabel(label)
+	model, reasoning, err := cleanAuthoringModel(model, reasoning)
 	if err != nil {
 		return nil, err
 	}
-	model, reasoning, err = cleanAuthoringModel(model, reasoning)
+	// The operator used to type a machine name here. The session row already
+	// carries ComputerName, which the worker reports about itself, so the
+	// typed field duplicated it -- and could disagree with it, which is worse
+	// than not having it. An omitted label falls back to the model, keeping
+	// the batch suffix that makes a list of sessions readable.
+	if strings.TrimSpace(label) == "" {
+		label = model
+	}
+	label, err = cleanAuthoringLabel(label)
 	if err != nil {
 		return nil, err
 	}

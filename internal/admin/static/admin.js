@@ -202,16 +202,15 @@
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector("button[type=submit]");
-    const label = form.elements.label.value.trim();
     const model = form.elements.model.value.trim();
     const reasoning = form.elements.reasoning.value;
     const count = Number(form.elements.count.value);
-    if (!label) return;
+    if (!model) return;
     button.disabled = true;
     status.textContent = "샘플 워커 세션을 발급하는 중…";
     let data;
     try {
-      data = await request("/admin/api/authoring-sessions", {method: "POST", body: JSON.stringify({label, model, reasoning, count})});
+      data = await request("/admin/api/authoring-sessions", {method: "POST", body: JSON.stringify({model, reasoning, count})});
       try {
         await copy(data.prompt);
       } catch (error) {
