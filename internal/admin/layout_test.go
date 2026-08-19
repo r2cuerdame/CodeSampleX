@@ -105,3 +105,36 @@ func TestAdminDropsTheSectionsThatMeasuredNothing(t *testing.T) {
 		t.Error("the summary panel went with them")
 	}
 }
+
+// The operator's own name for a machine is not the machine's name for itself.
+// This field was removed as a duplicate of the self-reported computer_name;
+// that was wrong. A worker reports EC2AMAZ-G9R4PRD, which is a hostname nobody
+// wants to read, and the linux farm reports nothing at all on the CLI it is
+// running. The names actually in use were 회사-01 and 집-02 — typed, because
+// they say where the machine is, which is what the operator is tracking.
+func TestSampleWorkerFormTakesAnOperatorName(t *testing.T) {
+	body := adminBody(t)
+	form := regexp.MustCompile(`(?s)<form[^>]*id="sample-worker-form".*?</form>`).FindString(body)
+	if form == "" {
+		t.Fatal("the sample worker form is gone")
+	}
+	if !strings.Contains(form, `name="label"`) {
+		t.Errorf("the sample worker form has no name field: %s", form)
+	}
+	// Still optional: an omitted name falls back to the model, which is what
+	// lets a provisioning script issue workers without inventing one.
+	if regexp.MustCompile(`name="label"[^>]*required`).MatchString(form) {
+		t.Error("the name field is required again; blank must still fall back to the model")
+	}
+}
+
+// The draft inbox restated what the farm panel already reports per worker,
+// one row per draft, on a page whose problem was length.
+func TestAdminDropsTheDraftInbox(t *testing.T) {
+	body := adminBody(t)
+	for _, gone := range []string{"sample-worker-drafts", "샘플 검증 대기함"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the draft inbox is still on the page: %q", gone)
+		}
+	}
+}

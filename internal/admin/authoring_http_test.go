@@ -190,7 +190,7 @@ func TestAdminPageContainsSampleWorkerControlsButNoSessionToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{"내부 샘플 워커", "샘플 검증 대기함", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", "Windows CMD 또는 Linux/WSL SH", `src="/admin/admin.js"`} {
+	for _, want := range []string{"내부 샘플 워커", `name="model"`, `name="reasoning"`, `name="count"`, "프롬프트 + CLI 발급·복사", "Windows CMD 또는 Linux/WSL SH", `src="/admin/admin.js"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("admin page missing %q", want)
 		}
@@ -215,21 +215,21 @@ func TestAdminListsOnlyBoundedPrivateDraftMetadata(t *testing.T) {
 	if !Register(mux, Deps{Store: &fakeStore{}, Authoring: store, TokenSHA256: digest(secret), PublicURL: "https://codesamplex.dev", Now: func() time.Time { return now }}) {
 		t.Fatal("register")
 	}
+	// The draft inbox restated per-draft what the farm panel now reports per
+	// worker, so the panel went and the endpoint with it. This test guarded the
+	// boundary that endpoint had to hold — bounded metadata out, session
+	// secrets and private source never — and the strongest form of that
+	// guarantee is that nothing serves drafts at all.
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/authoring-drafts", nil)
 	req.SetBasicAuth("recuerdame", secret)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("draft metadata is still served: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{"sha256:private-only", "java-01", "LOCAL_PASS", "PENDING", "prove the Java call", "pkg:maven/org.example/lib@1.0.0", "Example.call"} {
-		if !strings.Contains(rec.Body.String(), want) {
-			t.Errorf("draft response missing %q", want)
-		}
-	}
-	for _, forbidden := range []string{"session-secret", "privateSource", "must-not-leak", "tokenHash"} {
+	for _, forbidden := range []string{"sha256:private-only", "session-secret", "privateSource", "must-not-leak", "tokenHash"} {
 		if strings.Contains(rec.Body.String(), forbidden) {
-			t.Errorf("draft response leaked %q", forbidden)
+			t.Errorf("response leaked %q", forbidden)
 		}
 	}
 }
