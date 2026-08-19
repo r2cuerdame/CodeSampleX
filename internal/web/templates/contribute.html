@@ -22,47 +22,72 @@
 <section id="install-worker" class="workerinstall">
   <h2 class="eyebrow mono">{{.T "landing.worker_heading"}}</h2>
   <p class="llmlead">{{.T "landing.worker_body"}}</p>
-  <div class="workerprompt-grid">
-    <div class="workerprompt-card">
-      <h3>{{.T "landing.worker_setup_heading"}}</h3>
-      <div class="llmbox workerbox">
-        <div class="llmactions">
-          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
-          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
-        </div>
-        <pre id="worker-setup-prompt" class="llmtext mono" tabindex="0">{{.WorkerSetupPrompt}}</pre>
-        <pre id="worker-setup-cmd" class="sr-only">{{.WorkerSetupCMD}}</pre>
-      </div>
-    </div>
-    <div class="workerprompt-card">
-      <h3>{{.T "landing.worker_run_heading"}}</h3>
-      <div class="llmbox workerbox">
-        <div class="llmactions">
-          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
-          <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
-        </div>
-        <pre id="worker-run-prompt" class="llmtext mono" tabindex="0">{{.WorkerRunPrompt}}</pre>
-        <pre id="worker-run-cmd" class="sr-only">{{.WorkerRunCMD}}</pre>
-      </div>
-    </div>
-  </div>
-  <p class="note">{{.T "landing.worker_safety"}}</p>
 
-  {{/* Which platform this machine measures FOR is a separate decision
-       from installing the worker: a Docker daemon serves Linux or Windows
-       containers, never both, so a Windows machine on the default setting
-       contributes Linux evidence the network already has plenty of. */}}
-  <div class="workerprompt-card windows-switch">
-    <h3>{{.T "contribute.windows_heading"}}</h3>
-    <p class="dim small">{{.T "contribute.windows_body"}}</p>
-    <div class="llmbox workerbox">
-      <div class="llmactions">
-        <button class="copy llmcopy mono" type="button" data-copy-target="#worker-windows-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
+  {{/* Split by the machine you have, because that is what decides what it
+       can contribute: a Docker daemon serves Linux or Windows containers,
+       never both, and only Windows can be switched. */}}
+  <div class="hostgrid">
+    <div class="hostcard">
+      <h3><span class="osicon-wrap">{{template "osicon" "windows"}}</span>{{.T "contribute.host_windows"}}</h3>
+      <ul class="hostcontrib mono small">
+        <li><span class="on">{{.T "contribute.contributes_linux"}}</span></li>
+        <li><span class="on">{{.T "contribute.contributes_windows"}}</span></li>
+      </ul>
+      <div class="hoststep">
+        <span class="steplabel">{{.T "landing.worker_setup_heading"}}</span>
+        <div class="llmbox workerbox">
+          <div class="llmactions">
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          </div>
+          <pre id="worker-setup-cmd" class="llmtext mono" tabindex="0">{{.WorkerSetupCMD}}</pre>
+          <pre id="worker-setup-prompt" class="sr-only">{{.WorkerSetupPrompt}}</pre>
+        </div>
       </div>
-      <pre id="worker-windows-cmd" class="llmtext mono" tabindex="0">{{.WindowsSwitchCMD}}</pre>
+      <div class="hoststep">
+        <span class="steplabel">{{.T "contribute.switch_windows"}}</span>
+        <div class="llmbox workerbox">
+          <div class="llmactions">
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-windows-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
+          </div>
+          <pre id="worker-windows-cmd" class="llmtext mono" tabindex="0">{{.WindowsSwitchCMD}}</pre>
+        </div>
+        <p class="dim small">{{.T "contribute.windows_note"}}</p>
+      </div>
+      <div class="hoststep">
+        <span class="steplabel">{{.T "landing.worker_run_heading"}}</span>
+        <div class="llmbox workerbox">
+          <div class="llmactions">
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          </div>
+          <pre id="worker-run-cmd" class="llmtext mono" tabindex="0">{{.WorkerRunCMD}}</pre>
+          <pre id="worker-run-prompt" class="sr-only">{{.WorkerRunPrompt}}</pre>
+        </div>
+      </div>
     </div>
-    <p class="note">{{.T "contribute.windows_note"}}</p>
+
+    <div class="hostcard">
+      <h3><span class="osicon-wrap">{{template "osicon" "linux"}}{{template "osicon" "macos"}}</span>{{.T "contribute.host_unix"}}</h3>
+      <ul class="hostcontrib mono small">
+        <li><span class="on">{{.T "contribute.contributes_linux"}}</span></li>
+        <li><span class="off">{{.T "contribute.contributes_windows"}}</span></li>
+      </ul>
+      <div class="hoststep">
+        <span class="steplabel">{{.T "landing.worker_setup_heading"}}</span>
+        <div class="llmbox workerbox">
+          <div class="llmactions">
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-unix-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "contribute.shell_copy"}}</button>
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-setup-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          </div>
+          <pre id="worker-unix-cmd" class="llmtext mono" tabindex="0">{{.WorkerUnixCMD}}</pre>
+        </div>
+      </div>
+      <p class="dim small">{{.T "contribute.unix_note"}}</p>
+    </div>
   </div>
+
+  <p class="note">{{.T "landing.worker_safety"}}</p>
 </section>
 
 <section>

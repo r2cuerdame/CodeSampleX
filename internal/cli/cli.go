@@ -70,7 +70,7 @@ func Main(argv []string) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "csx — the community-verified code sample network")
+	fmt.Fprintln(w, "csx — the developer compatibility testing network")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  csx <command> [arguments]")

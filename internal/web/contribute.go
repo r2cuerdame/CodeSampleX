@@ -34,6 +34,9 @@ type contributePage struct {
 	// WHICH platform this machine contributes evidence for, not another
 	// way to install.
 	WindowsSwitchCMD string
+	// WorkerUnixCMD is the same install for a shell, where the persistent
+	// service differs per init system and is left to the agent prompt.
+	WorkerUnixCMD string
 }
 
 func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +52,7 @@ func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
 		WorkerSetupCMD:    workerSetupCMD(s.base(r)),
 		WorkerRunCMD:      workerRunCMD(),
 		WindowsSwitchCMD:  windowsWorkerCMD(),
+		WorkerUnixCMD:     workerUnixCMD(s.base(r)),
 	})
 }
 
@@ -60,23 +64,31 @@ func workerRunPrompt(lang string) string {
 	return i18n.T(lang, "landing.worker_run_prompt")
 }
 
+// workerUnixCMD installs a worker-only csx and starts it in the
+// foreground. Making it survive a reboot needs systemd or launchd, which
+// differ enough that the agent prompt handles them.
+func workerUnixCMD(base string) string {
+	installer := strings.TrimRight(base, "/") + "/install.sh"
+	return "CSX_WORKER_ONLY=1 curl -fsSL " + installer + " | sh && " +
+		"csx worker start --mode verify --parallel 2 --budget idle"
+}
+
 // windowsWorkerCMD switches this machine's Docker daemon to Windows
 // containers and restarts the worker on it.
 //
 // A daemon serves one kind of container at a time, so this is the whole
 // decision: on Linux containers a Windows machine produces Linux
-// receipts, which the network already has plenty of. The command checks
-// the mode it ended in rather than assuming the switch worked —
-// DockerCli.exe is only present with Docker Desktop, and switching can
-// fail on a host whose Windows build does not match the images.
+// receipts, which the network already has plenty of. The command still
+// checks the mode it ended in rather than trusting the exit code alone,
+// because the switch can fail on a host whose Windows build does not
+// match the images.
 func windowsWorkerCMD() string {
 	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; ` +
-		`$cli=Join-Path $env:ProgramFiles 'Docker\Docker\DockerCli.exe'; ` +
-		`if (-not (Test-Path -LiteralPath $cli)) { throw 'Docker Desktop is required to switch container modes.' }; ` +
-		`& $cli -SwitchWindowsEngine; ` +
+		`docker desktop engine use windows; ` +
+		`if ($LASTEXITCODE -ne 0) { throw 'Switching engines failed; Docker Desktop 4.37 or newer is required.' }; ` +
 		`$deadline=(Get-Date).AddMinutes(3); ` +
-		`do { Start-Sleep -Seconds 5; $os=(docker version --format '{{.Server.Os}}' 2>$null) } ` +
-		`while ($os -ne 'windows' -and (Get-Date) -lt $deadline); ` +
+		`do { $os=(docker version --format '{{.Server.Os}}' 2>$null); if ($os -eq 'windows') { break }; Start-Sleep -Seconds 5 } ` +
+		`while ((Get-Date) -lt $deadline); ` +
 		`if ($os -ne 'windows') { throw \"Docker is still serving $os containers; the switch did not complete.\" }; ` +
 		`Restart-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -ErrorAction SilentlyContinue; ` +
 		`Write-Output \"Docker now serves windows containers; the worker will verify golang and pypi samples on Windows.\""`

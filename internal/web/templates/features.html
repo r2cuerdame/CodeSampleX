@@ -1,11 +1,22 @@
 {{define "content"}}
 <article class="feature-page">
   <header class="feature-page__hero">
-    <p class="eyebrow mono">MCP</p>
+    <p class="eyebrow mono">CLI · MCP</p>
     <h1>{{.T "features.title"}}</h1>
     <p class="lead">{{.T "features.lead"}}</p>
     <p class="feature-page__scope dim small">{{.T "features.scope"}}</p>
   </header>
+
+  {{/* The CLI is the product; these eight tools are how an agent reaches
+       the same network. Say where the CLI's own help is before the list. */}}
+  <section class="clihelp" aria-labelledby="feature-cli-heading">
+    <h2 class="eyebrow mono" id="feature-cli-heading">{{.T "features.cli_heading"}}</h2>
+    <p class="dim small">{{.T "features.cli_body"}}</p>
+    <ul class="clihelp-list mono small">
+      <li><code>csx help</code><span class="dim">{{.T "features.cli_help"}}</span></li>
+      <li><code>csx worker --help</code><span class="dim">{{.T "features.cli_sub"}}</span></li>
+    </ul>
+  </section>
 
   <nav class="feature-page__summary" aria-labelledby="feature-summary-heading">
     <h2 id="feature-summary-heading">{{.T "features.summary"}}</h2>

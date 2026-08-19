@@ -603,3 +603,32 @@ func (f *fakeStore) WantedForPackage(_ context.Context, ecosystem, name string) 
 	}
 	return out, nil
 }
+
+// The features page documents the MCP surface, but the CLI is the product;
+// it must name the CLI's own help before the tool list. And only help forms
+// the CLI actually accepts may appear there.
+func TestFeaturesShowsCLIHelpAboveMCP(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/features").Body.String()
+	for _, s := range []string{"Start from the CLI", "csx help", "csx worker --help"} {
+		mustContain(t, body, s)
+	}
+	cli := strings.Index(body, "Start from the CLI")
+	tools := strings.Index(body, "feature-summary-heading")
+	if cli < 0 || tools < 0 || cli > tools {
+		t.Fatalf("CLI help must precede the MCP tool list: cli=%d tools=%d", cli, tools)
+	}
+}
+
+// The Windows contributor switches engines with the supported Docker Desktop
+// CLI, which reports a real exit code; DockerCli.exe -SwitchWindowsEngine does
+// not, so it must not come back.
+func TestContributeUsesSupportedEngineSwitch(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/contribute").Body.String()
+	mustContain(t, body, "docker desktop engine use windows")
+	mustContain(t, body, "docker desktop engine use linux")
+	if strings.Contains(body, "SwitchWindowsEngine") || strings.Contains(body, "DockerCli.exe") {
+		t.Error("contribute page still uses the unsupported DockerCli.exe engine switch")
+	}
+}
