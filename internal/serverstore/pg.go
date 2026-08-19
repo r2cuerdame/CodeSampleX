@@ -412,7 +412,22 @@ func (p *PG) DeleteSnapshots(ctx context.Context, targets []SnapshotTarget) erro
 func (p *PG) SnapshotUpdatedAt(ctx context.Context) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `SELECT purl, max(generated_at) FROM compatibility_snapshots GROUP BY purl`)
+		// The evidence's own recency, not the builder's. generated_at is
+		// when the aggregation last WROTE the document, and a full pass
+		// rewrites every one of them — ordering by it produced a list where
+		// 1,965 packages all claimed the same date. Each snapshot row
+		// carries the lastSeen of the evidence behind it; that is the date
+		// a reader means by "recently measured". The write time remains the
+		// fallback for a document whose rows recorded none.
+		rows, err := c.Query(ctx, `
+			SELECT s.purl,
+			       COALESCE(
+			         MAX(CASE WHEN r.value ? 'lastSeen' AND r.value->>'lastSeen' <> ''
+			                  THEN (r.value->>'lastSeen')::timestamptz END),
+			         MAX(s.generated_at))
+			  FROM compatibility_snapshots s
+			  LEFT JOIN LATERAL jsonb_array_elements(s.snapshot->'rows') r ON true
+			 GROUP BY s.purl`)
 		if err != nil {
 			return err
 		}
