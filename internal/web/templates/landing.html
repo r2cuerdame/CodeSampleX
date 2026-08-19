@@ -76,20 +76,6 @@
 </section>
 {{- end}}
 
-{{/* Then how do I use it? Verified answers: each ran in a pinned container
-     and passed its own assertions before publication. */}}
-{{- if .Samples}}
-<section id="answers" class="homesamples evidence-section">
-  <div class="section-heading">
-    <div>
-      <h2 class="eyebrow mono">{{.T "landing.samples_heading"}}</h2>
-      <p class="dim small">{{.T "landing.samples_sub"}}</p>
-    </div>
-  </div>
-  {{template "samplelist" .}}
-</section>
-{{- end}}
-
 {{/* Why trust a cell? The evidence ladder maps every state to what was
      actually done, in the network's own grade vocabulary. */}}
 <section id="evidence" class="evidence-ladder">

@@ -135,9 +135,44 @@ type heroMatrixData struct {
 	Tabs    []heroTab
 }
 
-// heroMatrix picks the featured package: the ?m= selection when it is one
-// of the hot packages (never an arbitrary store read), else the first hot
-// package whose cube yields a grid.
+// heroAxisPairs are the slices the hero considers, hottest-first: the
+// classic environment grid leads, but version- and symbol-spread slices
+// take over when the environment barely varies (everything measured on
+// one runtime is a 1×1 strip, not a map).
+var heroAxisPairs = [][2]string{
+	{"runtime", "os"},
+	{"version", "os"},
+	{"version", "runtime"},
+	{"version", "symbol"},
+	{"symbol", "os"},
+}
+
+// heroGridScore ranks candidate grids: measured cells dominate, a real
+// 2D spread earns a bonus, and earlier axis pairs win ties so the
+// environment map stays preferred when it is equally rich.
+func heroGridScore(g pivotGrid, pairRank int) int {
+	if g.Empty() {
+		return 0
+	}
+	nonEmpty := 0
+	for _, r := range g.Rows {
+		for _, c := range r.Cells {
+			if c.Class != "empty" {
+				nonEmpty++
+			}
+		}
+	}
+	score := nonEmpty*10 + len(g.Rows)*len(g.Cols)
+	if len(g.Rows) >= 2 && len(g.Cols) >= 2 {
+		score += 40
+	}
+	score += (len(heroAxisPairs) - pairRank) * 10
+	return score
+}
+
+// heroMatrix picks the featured package and slice: the ?m= selection when
+// it is one of the hot packages (never an arbitrary store read), else the
+// probed package whose best axis pair yields the richest grid.
 func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *heroMatrixData {
 	if len(hits) == 0 {
 		return nil
@@ -149,21 +184,23 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	key := func(h PackageHit) string { return h.Ecosystem + "/" + h.Name }
 
 	ordered := make([]PackageHit, 0, len(hits))
+	selected := false
 	if sel := r.URL.Query().Get("m"); sel != "" {
 		for _, h := range hits {
 			if key(h) == sel {
 				ordered = append(ordered, h)
+				selected = true
 				break
 			}
 		}
 	}
-	for _, h := range hits {
-		if len(ordered) > 0 && key(ordered[0]) == key(h) {
-			continue
-		}
-		ordered = append(ordered, h)
+	if !selected {
+		ordered = hits
 	}
 
+	now := time.Now()
+	var best *heroMatrixData
+	bestScore := 0
 	for i, h := range ordered {
 		if i >= heroMatrixTries {
 			break
@@ -173,67 +210,38 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			continue
 		}
 		pagePath := pkgHref(h.Ecosystem, h.Name)
-		x, y := "runtime", "os"
-		href := func(row, col string) string {
-			return cubeHref(pagePath, cubeQuery(map[string]string{y: row, x: col}, "", "", lang))
-		}
-		grid := buildCubeGrid(facts, x, y, href, time.Now())
-		if grid.Empty() {
-			var ok bool
-			x, y, ok = defaultCubeAxes(facts, nil)
-			if !ok {
-				continue
+		for rank, pair := range heroAxisPairs {
+			x, y := pair[0], pair[1]
+			href := func(row, col string) string {
+				return cubeHref(pagePath, cubeQuery(map[string]string{y: row, x: col}, "", "", lang))
 			}
-			grid = buildCubeGrid(facts, x, y, href, time.Now())
-			if grid.Empty() {
-				continue
+			grid := buildCubeGrid(facts, x, y, href, now)
+			if score := heroGridScore(grid, rank); score > bestScore {
+				bestScore = score
+				best = &heroMatrixData{
+					Package: h.Name, Eco: h.Ecosystem,
+					Href: cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
+					Grid: grid,
+				}
 			}
 		}
-		data := &heroMatrixData{
-			Package: h.Name, Eco: h.Ecosystem,
-			Href: cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
-			Grid: grid,
-		}
-		for j, tab := range hits {
-			if j >= heroMatrixTabs {
-				break
-			}
-			data.Tabs = append(data.Tabs, heroTab{
-				Label:    tab.Name + " · " + tab.Ecosystem,
-				Href:     homePath + "?m=" + url.QueryEscape(key(tab)),
-				Selected: key(tab) == key(h),
-			})
-		}
-		return data
 	}
-	return nil
-}
-
-// homeSamplesShown is how many verified answers the landing lists.
-const homeSamplesShown = 3
-
-// homeSamples lists only independently verified answers. The section's
-// caption promises that every listed sample passed its contract; padding
-// the list with unproven PUBLISHED samples would make that a lie, so a
-// young network simply shows fewer (or no) entries.
-func (s *site) homeSamples(r *http.Request) []SampleListItem {
-	items, err := s.d.Store.ListSamples(r.Context(), 48)
-	if err != nil || len(items) == 0 {
+	if best == nil {
 		return nil
 	}
-	verified := map[string]bool{"CROSS_PASS": true, "MATRIX_PASS": true, "STABLE": true}
-	var out []SampleListItem
-	for _, it := range items {
-		if !verified[it.Status] {
-			continue
-		}
-		out = append(out, it)
-		if len(out) == homeSamplesShown {
+	for j, tab := range hits {
+		if j >= heroMatrixTabs {
 			break
 		}
+		best.Tabs = append(best.Tabs, heroTab{
+			Label:    tab.Name + " · " + tab.Ecosystem,
+			Href:     homePath + "?m=" + url.QueryEscape(key(tab)),
+			Selected: tab.Ecosystem == best.Eco && tab.Name == best.Package,
+		})
 	}
-	return out
+	return best
 }
+
 
 type landingPage struct {
 	basePage
@@ -257,10 +265,6 @@ type landingPage struct {
 	// when the network has no renderable cube yet; the page stays honest
 	// and simply says what will appear here.
 	Matrix *heroMatrixData
-	// Samples answers "then how do I use it?" with real published answers,
-	// cross-checked ones first. Named Samples so the shared samplelist
-	// template renders it exactly as it does on package and seeder pages.
-	Samples []SampleListItem
 }
 
 // homeFinding is one measured contradiction, trimmed for the home page.
@@ -371,7 +375,6 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		LLMPrompt: llmPrompt(lang, base),
 		Findings:  homeFindings(lang),
 		Matrix:    s.heroMatrix(r, lang, hits),
-		Samples:   s.homeSamples(r),
 	})
 }
 

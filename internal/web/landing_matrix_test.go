@@ -69,34 +69,32 @@ func TestLandingSkipsMatrixWhenNoSnapshots(t *testing.T) {
 	mustContain(t, body, `id="matrix"`)
 }
 
-// The landing's "then how do I use it?" section promises every listed
-// answer passed its contract — so it lists ONLY independently verified
-// samples, never padding with unproven PUBLISHED ones.
-func TestLandingListsOnlyVerifiedSamples(t *testing.T) {
-	mux, _ := newTestMux(t, func(d *Deps) {
-		f := newFakeStore()
-		f.sampleList = []SampleListItem{
-			{SampleID: "sha256:aaa1", Goal: "newest but unproven", Status: "PUBLISHED", License: "MIT-0", CreatedAt: "2026-08-18"},
-			{SampleID: "sha256:bbb2", Goal: "older but cross-checked", Status: "CROSS_PASS", License: "MIT-0", CreatedAt: "2026-08-01"},
+// A package whose environment never varies must not produce a 1×1 strip:
+// the hero switches to the axis pair with the widest measured spread —
+// here versions × symbols.
+func TestLandingPrefersTheWidestGrid(t *testing.T) {
+	f := newFakeStore()
+	f.packages = []PackageHit{{
+		Ecosystem: "cargo", Name: "tokioish", LatestVersion: "2.0.0",
+		Symbols: 2, EvidenceCount: 50_000,
+		OperatingSystems: []string{"linux"}, Runtimes: []string{"rust"},
+		EvidenceBases: []string{"verified"},
+	}}
+	f.versions["cargo|tokioish"] = []string{"2.0.0", "1.0.0"}
+	for _, v := range []string{"2.0.0", "1.0.0"} {
+		f.symbols["cargo|tokioish|"+v] = []string{"alpha", "beta"}
+		purl := "pkg:cargo/tokioish@" + v
+		for _, sym := range []string{"", "alpha", "beta"} {
+			f.snapshots[snapKey(purl, sym)] =
+				cubeSnap(purl, sym, "linux", "x64", "rust", "1.85", "cargo", "CONTRACT", 2, 0)
 		}
-		d.Store = f
-	})
+	}
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 	body := get(t, mux, "/").Body.String()
-	mustContain(t, body, `id="answers"`)
-	mustContain(t, body, "older but cross-checked")
-	if strings.Contains(body, "newest but unproven") {
-		t.Error("an unverified sample appears under copy claiming every entry passed its contract")
-	}
 
-	// With no verified sample at all, the section disappears entirely.
-	mux2, _ := newTestMux(t, func(d *Deps) {
-		f := newFakeStore()
-		f.sampleList = []SampleListItem{
-			{SampleID: "sha256:aaa1", Goal: "newest but unproven", Status: "PUBLISHED", License: "MIT-0", CreatedAt: "2026-08-18"},
-		}
-		d.Store = f
-	})
-	if strings.Contains(get(t, mux2, "/").Body.String(), `id="answers"`) {
-		t.Error("the answers section rendered with nothing verified to show")
+	// Version columns and symbol rows, not a single linux × rust cell.
+	for _, s := range []string{"2.0.0", "1.0.0", "alpha", "beta"} {
+		mustContain(t, body, s)
 	}
+	mustContain(t, body, `/cargo/tokioish?f_symbol=alpha&amp;f_version=2.0.0`)
 }
