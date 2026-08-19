@@ -216,6 +216,12 @@ type site struct {
 	handDocumented []finding
 	handBelieved   []finding
 	handAt         time.Time
+
+	// cube* caches assembled compatibility cubes per package (cube.go):
+	// one assembly reads dozens of snapshots, which is fine on a timer and
+	// not fine per request.
+	cubeMu    sync.Mutex
+	cubeCache map[string]cubeCacheEntry
 }
 
 // Register mounts every website route on mux.

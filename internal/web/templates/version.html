@@ -2,8 +2,18 @@
 <nav class="crumbs mono"><a href="/{{.Ecosystem}}/{{.Name}}">{{.Name}}</a> / {{.Ver}}</nav>
 <h1 class="mono">{{.Name}}@{{.Ver}}</h1>
 
+{{/* Which symbol ran on which OS — a cube slice with this version pinned;
+     each cell drills into the package explorer. */}}
+{{if .SymbolGrid.Rows}}
+<h2 class="eyebrow mono">{{.T "version.matrix_heading"}}</h2>
+<p class="dim small">{{.T "version.matrix_sub"}}</p>
+{{template "pivot" .SymbolGrid}}
+{{if .SymbolGrid.Trimmed}}<p class="dim small">{{.T "landing.matrix_trimmed"}}</p>{{end}}
+{{template "pivotlegend" .}}
+{{end}}
+
 {{if .Matrix}}
-<h2 class="eyebrow mono">{{.T "symbol.matrix_heading"}}</h2>
+<h2 class="eyebrow mono">{{.T "version.env_heading"}}</h2>
 <p class="note dim small">{{.T "symbol.evidence_note"}}</p>
 <p class="note dim small">{{.T "symbol.callshape_note"}}</p>
 {{template "matrix" .}}

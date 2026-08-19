@@ -65,7 +65,8 @@ func TestLandingEnglish(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	mustContain(t, body, "Stop solving the same code twice.")
+	mustContain(t, body, "Does it run there?")
+	mustContain(t, body, "Tested across real environments. Not guessed from documentation.")
 	mustContain(t, body, `class="landing-page"`)
 	if strings.Contains(body, `class="hero-art"`) || strings.Contains(body, `<img src="/static/inspector-hero-v1.webp"`) {
 		t.Error("landing still renders the old hero illustration")
@@ -100,9 +101,12 @@ func TestLandingEnglish(t *testing.T) {
 	// Project links belong on every page.
 	mustContain(t, body, "https://github.com/r2cuerdame/CodeSampleX")
 	mustContain(t, body, "https://github.com/sponsors/r2cuerdame")
-	// Flywheel copy.
-	mustContain(t, body, "More users")
-	mustContain(t, body, "Better answers")
+	// The evidence ladder names the real grade vocabulary.
+	for _, s := range []string{"USAGE_OBSERVATION", "SAMPLE_VERIFICATION", "CROSS_PASS", "MATRIX_PASS", "STABLE"} {
+		mustContain(t, body, s)
+	}
+	// The differentiation strip separates testing from documentation.
+	mustContain(t, body, "what was actually tested")
 	// §5.4 contract table verbatim.
 	for _, s := range []string{"You get", "You contribute", "Never shared automatically",
 		"Public compatibility knowledge", "Sanitized failure fingerprints",
@@ -171,7 +175,7 @@ func TestLandingWithoutFeaturedFindingsHasNoBrokenMeasuredAnchor(t *testing.T) {
 	if strings.Contains(body, `href="#measured"`) {
 		t.Error("empty findings render links to an absent #measured section")
 	}
-	mustContain(t, body, `class="action secondary" href="/findings"`)
+	mustContain(t, body, `class="action primary" href="#matrix"`)
 }
 
 // TestEnglishReachableFromAnotherLanguage pins the fix for a switcher that
@@ -198,7 +202,7 @@ func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
 		t.Fatalf("/en/ status = %d, want 200 (a redirect to / re-negotiates)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `lang="en"`) || !strings.Contains(body, "Stop solving the same code twice.") {
+	if !strings.Contains(body, `lang="en"`) || !strings.Contains(body, "Does it run there?") {
 		t.Errorf("/en/ did not render English:\n%s", truncate(body))
 	}
 	// The choice sticks, so the next page is not re-negotiated back.
@@ -362,7 +366,7 @@ func TestLandingKorean(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	mustContain(t, body, "같은 코드를 두 번 풀지 마세요.")
+	mustContain(t, body, "거기서도 돌아갈까?")
 	mustContain(t, body, `lang="ko"`)
 	// Localized contract heading.
 	mustContain(t, body, "자동으로 공유되지 않는 것")
@@ -560,7 +564,7 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 		t.Fatalf("landing must render without stats, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	mustContain(t, body, "Stop solving the same code twice.")
+	mustContain(t, body, "Does it run there?")
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
 		t.Errorf("unavailable stats cards = %d, want 3 placeholders", got)
 	}

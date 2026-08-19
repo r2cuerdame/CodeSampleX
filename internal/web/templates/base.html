@@ -254,14 +254,58 @@ document.addEventListener('keydown',event=>{
 {{end}}
 
 {{/* tiles renders the three homepage network counters. The compact number
-     is visual only; title and the accessibility tree retain the exact count. */}}
+     is visual only; title and the accessibility tree retain the exact count.
+     Each counter carries the one-line meaning of what it measures. */}}
 {{define "tiles"}}
 <div class="stats">
 {{- range .Tiles}}
   <div class="stat">
     <span class="num mono"{{if .Exact}} title="{{.Exact}}" aria-label="{{.Label}}: {{.Exact}}"{{end}}>{{.Value}}</span>
     <span class="lbl">{{.Label}}</span>
+    {{if .Sub}}<span class="sub dim small">{{.Sub}}</span>{{end}}
   </div>
 {{- end}}
 </div>
+{{end}}
+
+{{/* pivot renders a pivotGrid: one slice of the compatibility cube. Every
+     value in it is data (OS names, runtime lines, PASS/FAIL states), so the
+     template needs no translations. State is always word + glyph, never a
+     color alone; ! and ? are the anomaly and uncertainty markers, and a
+     cell's title carries the full evidence line. */}}
+{{define "pivot"}}
+<div class="tablewrap">
+<table class="pivot">
+<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr>
+  <th class="rowlabel mono">{{.Label}}</th>
+  {{- range .Cells}}
+  <td class="pv {{.Class}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
+    {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}
+  </td>
+  {{- end}}
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{end}}
+
+{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .State}}<span class="pvstate mono">{{.State}}</span>{{end}}{{if .Ratio}}<span class="pvratio mono dim">{{.Ratio}}</span>{{end}}{{if .Bang}}<b class="mark bang" aria-hidden="true">!</b>{{end}}{{if .Maybe}}<b class="mark maybe" aria-hidden="true">?</b>{{end}}{{if .Cross}}<span class="pvcross mono" aria-hidden="true">✓✓</span>{{end}}{{end}}
+
+{{/* pivotlegend explains the pivot glyphs and markers. It receives the
+     page (for .T); render it once near any pivot. */}}
+{{define "pivotlegend"}}
+<ul class="pivotlegend mono small">
+  <li><span class="glyph" aria-hidden="true">✓</span> {{.T "landing.legend_pass"}}</li>
+  <li><span class="glyph" aria-hidden="true">✕</span> {{.T "landing.legend_fail"}}</li>
+  <li><span class="glyph" aria-hidden="true">◐</span> {{.T "landing.legend_mixed"}}</li>
+  <li><span class="glyph" aria-hidden="true">○</span> {{.T "landing.legend_observed"}}</li>
+  <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
+  <li><b class="mark bang">!</b> {{.T "landing.legend_bang"}}</li>
+  <li><b class="mark maybe">?</b> {{.T "landing.legend_maybe"}}</li>
+  <li><span class="pvcross">✓✓</span> {{.T "landing.legend_cross"}}</li>
+</ul>
 {{end}}

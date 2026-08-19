@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -74,11 +75,13 @@ func (s *site) loadStats(r *http.Request) *netStats {
 
 // statTile is one homepage network counter. Value is compact for scanning;
 // Exact is the locale-formatted raw count exposed to assistive technology
-// and pointer users.
+// and pointer users. Sub says what the number MEANS — a count without its
+// meaning is decoration.
 type statTile struct {
 	Label string
 	Value string
 	Exact string
+	Sub   string
 }
 
 func buildTiles(lang string, st *netStats) []statTile {
@@ -87,7 +90,10 @@ func buildTiles(lang string, st *netStats) []statTile {
 		st = &netStats{}
 	}
 	counter := func(key string, n int64) statTile {
-		tile := statTile{Label: i18n.T(lang, key)}
+		tile := statTile{
+			Label: i18n.T(lang, key),
+			Sub:   i18n.T(lang, key+"_sub"),
+		}
 		if !have {
 			tile.Value = "—"
 			return tile
@@ -103,14 +109,138 @@ func buildTiles(lang string, st *netStats) []statTile {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Hero compatibility matrix: the landing's primary element. It is a real
+// slice — runtime × OS — of the most-measured package's cube, and every
+// cell drills into that package's explorer.
+
+// heroMatrixTabs is how many hot packages the switcher offers;
+// heroMatrixTries bounds how many are probed for a renderable grid.
+const (
+	heroMatrixTabs  = 6
+	heroMatrixTries = 6
+)
+
+type heroTab struct {
+	Label    string // "axios · npm" — data values, never translated
+	Href     string
+	Selected bool
+}
+
+type heroMatrixData struct {
+	Package string
+	Eco     string
+	Href    string // the package's cube explorer
+	Grid    pivotGrid
+	Tabs    []heroTab
+}
+
+// heroMatrix picks the featured package: the ?m= selection when it is one
+// of the hot packages (never an arbitrary store read), else the first hot
+// package whose cube yields a grid.
+func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *heroMatrixData {
+	if len(hits) == 0 {
+		return nil
+	}
+	homePath := "/"
+	if lang != i18n.Default {
+		homePath = "/" + lang + "/"
+	}
+	key := func(h PackageHit) string { return h.Ecosystem + "/" + h.Name }
+
+	ordered := make([]PackageHit, 0, len(hits))
+	if sel := r.URL.Query().Get("m"); sel != "" {
+		for _, h := range hits {
+			if key(h) == sel {
+				ordered = append(ordered, h)
+				break
+			}
+		}
+	}
+	for _, h := range hits {
+		if len(ordered) > 0 && key(ordered[0]) == key(h) {
+			continue
+		}
+		ordered = append(ordered, h)
+	}
+
+	for i, h := range ordered {
+		if i >= heroMatrixTries {
+			break
+		}
+		facts, _ := s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+		if len(facts) == 0 {
+			continue
+		}
+		pagePath := pkgHref(h.Ecosystem, h.Name)
+		x, y := "runtime", "os"
+		href := func(row, col string) string {
+			return cubeHref(pagePath, cubeQuery(map[string]string{y: row, x: col}, "", "", lang))
+		}
+		grid := buildCubeGrid(facts, x, y, href, time.Now())
+		if grid.Empty() {
+			var ok bool
+			x, y, ok = defaultCubeAxes(facts, nil)
+			if !ok {
+				continue
+			}
+			grid = buildCubeGrid(facts, x, y, href, time.Now())
+			if grid.Empty() {
+				continue
+			}
+		}
+		data := &heroMatrixData{
+			Package: h.Name, Eco: h.Ecosystem,
+			Href: cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
+			Grid: grid,
+		}
+		for j, tab := range hits {
+			if j >= heroMatrixTabs {
+				break
+			}
+			data.Tabs = append(data.Tabs, heroTab{
+				Label:    tab.Name + " · " + tab.Ecosystem,
+				Href:     homePath + "?m=" + url.QueryEscape(key(tab)),
+				Selected: key(tab) == key(h),
+			})
+		}
+		return data
+	}
+	return nil
+}
+
+// homeSamplesShown is how many verified answers the landing lists.
+const homeSamplesShown = 3
+
+// homeSamples lists only independently verified answers. The section's
+// caption promises that every listed sample passed its contract; padding
+// the list with unproven PUBLISHED samples would make that a lie, so a
+// young network simply shows fewer (or no) entries.
+func (s *site) homeSamples(r *http.Request) []SampleListItem {
+	items, err := s.d.Store.ListSamples(r.Context(), 48)
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	verified := map[string]bool{"CROSS_PASS": true, "MATRIX_PASS": true, "STABLE": true}
+	var out []SampleListItem
+	for _, it := range items {
+		if !verified[it.Status] {
+			continue
+		}
+		out = append(out, it)
+		if len(out) == homeSamplesShown {
+			break
+		}
+	}
+	return out
+}
+
 type landingPage struct {
 	basePage
-	Tiles       []statTile
-	GeneratedAt string
-	Hits        []PackageHit
-	Support     []supportRow
-	InstallPS   string
-	InstallSH   string
+	Tiles     []statTile
+	Support   []supportRow
+	InstallPS string
+	InstallSH string
 	// LLMPrompt is the ready-to-paste instruction for the coding agent the
 	// visitor already has open. It is rendered visibly AND carried in the
 	// copy button's data attribute, from this one field, so the text a
@@ -123,6 +253,14 @@ type landingPage struct {
 	// does more than every paragraph above it, because a reader recognises
 	// the shape of it from their own week.
 	Findings []homeFinding
+	// Matrix is the hero compatibility grid — the page's protagonist. nil
+	// when the network has no renderable cube yet; the page stays honest
+	// and simply says what will appear here.
+	Matrix *heroMatrixData
+	// Samples answers "then how do I use it?" with real published answers,
+	// cross-checked ones first. Named Samples so the shared samplelist
+	// template renders it exactly as it does on package and seeder pages.
+	Samples []SampleListItem
 }
 
 // homeFinding is one measured contradiction, trimmed for the home page.
@@ -219,25 +357,21 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	b.JSONLD = landingJSONLD(base, s.d.Version, lang)
 
 	st := s.loadStats(r)
-	generated := ""
-	if st != nil {
-		generated = st.GeneratedAt
-	}
 	hits, err := s.d.Store.HotPackages(r.Context(), 12)
 	if err != nil {
 		hits = nil // an empty map is still a usable landing page
 	}
 
 	s.render(w, "landing", http.StatusOK, landingPage{
-		basePage:    b,
-		Tiles:       buildTiles(lang, st),
-		GeneratedAt: generated,
-		Hits:        hits,
-		Support:     buildSupport(lang),
-		InstallPS:   "irm " + base + "/install.ps1 | iex",
-		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",
-		LLMPrompt:   llmPrompt(lang, base),
-		Findings:    homeFindings(lang),
+		basePage:  b,
+		Tiles:     buildTiles(lang, st),
+		Support:   buildSupport(lang),
+		InstallPS: "irm " + base + "/install.ps1 | iex",
+		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
+		LLMPrompt: llmPrompt(lang, base),
+		Findings:  homeFindings(lang),
+		Matrix:    s.heroMatrix(r, lang, hits),
+		Samples:   s.homeSamples(r),
 	})
 }
 

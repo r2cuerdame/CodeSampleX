@@ -1,35 +1,60 @@
 {{define "content"}}
-{{/* The home page starts with something useful, not an illustration: a
-     real record search and the current size of the measured network. */}}
+{{/* The home page leads with the question the network answers and the
+     measured map that answers it — results before product prose. */}}
 <section class="hero home-hero">
   <div class="hero-copy">
     <h1 class="tagline">{{.T "landing.tagline"}}</h1>
     <p class="lead">{{.T "site.meta_description"}}</p>
+    <p class="tested-line mono">{{.T "landing.tested_line"}}</p>
     <div class="hero-actions">
-      <button class="action primary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button>
-      <a class="action secondary" href="{{if .Findings}}#measured{{else}}{{.WithLang "/findings"}}{{end}}">{{.T "landing.findings_heading"}}</a>
+      <a class="action primary" href="#matrix">{{.T "landing.see_matrix"}}</a>
+      <a class="action secondary" href="#install">{{.T "landing.cli_install"}}</a>
     </div>
-    <p class="hero-trust dim small">{{.T "landing.install_note"}}</p>
   </div>
-
   <div class="hero-evidence">
-    <h2 class="eyebrow mono">{{.T "nav.records"}}</h2>
+    {{template "tiles" .}}
     <a class="evidence-question" href="{{.WithLang "/npm/axios/1.12.2/axios.post"}}">
       <span>{{.T "landing.example_result"}}</span>
       <strong class="mono">{{.T "landing.example_open"}} →</strong>
     </a>
-    <form class="home-search" action="/records" method="get" role="search">
-      <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
-      <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
-      {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
-      <button type="submit">{{.T "explore.button"}}</button>
-    </form>
-    {{template "tiles" .}}
   </div>
 </section>
 
-{{/* Measured contradictions are the product proof. They appear before any
-     install request so a visitor can inspect the evidence first. */}}
+{{/* The compatibility matrix IS the product. It is a real slice of the
+     most-measured package's cube; every cell drills into that package's
+     explorer, where any two dimensions can become the axes. */}}
+<section id="matrix" class="homematrix evidence-section">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "landing.matrix_heading"}}</h2>
+      <p class="dim small">{{.T "landing.matrix_sub"}}</p>
+    </div>
+    <a class="small" href="#evidence">{{.T "landing.legend_heading"}} →</a>
+  </div>
+  {{- if .Matrix}}
+  <nav class="mtabs mono small" aria-label="{{.T "landing.matrix_heading"}}">
+    {{- range .Matrix.Tabs}}
+    <a {{if .Selected}}aria-current="true" {{end}}href="{{.Href}}">{{.Label}}</a>
+    {{- end}}
+  </nav>
+  {{template "pivot" .Matrix.Grid}}
+  <p class="matrix-foot small">
+    <a class="mono" href="{{.Matrix.Href}}">{{.Matrix.Package}} · {{.Matrix.Eco}} — {{.T "landing.matrix_full_report"}} →</a>
+    {{if .Matrix.Grid.Trimmed}}<span class="dim">{{.T "landing.matrix_trimmed"}}</span>{{end}}
+  </p>
+  {{- else}}
+  <p class="dim">{{.T "landing.matrix_empty"}}</p>
+  {{- end}}
+  <form class="home-search" action="/records" method="get" role="search">
+    <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
+    <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
+    {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+    <button type="submit">{{.T "explore.button"}}</button>
+  </form>
+</section>
+
+{{/* Where does it break? Measured contradictions are the proof that
+     testing beats guessing — each links to the contract that measured it. */}}
 {{- if .Findings}}
 <section id="measured" class="homefindings evidence-section">
   <div class="section-heading">
@@ -48,22 +73,48 @@
     </li>
   {{- end}}
   </ul>
-  <p class="chain mono small">{{.T "landing.flywheel_1"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_2"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_3"}} <span class="arr" aria-hidden="true">→</span> {{.T "landing.flywheel_4"}}{{if .GeneratedAt}} <span class="dim">· {{.GeneratedAt}}</span>{{end}}</p>
 </section>
 {{- end}}
 
-{{/* The agent-driven install is the primary path. The two shell commands
-     remain as a transparent, inspectable alternative rather than competing
-     with the product explanation in the first viewport. */}}
-<section id="install" class="delegate">
-  <div class="delegate-copy">
-    <h2>{{.T "landing.llm_heading"}}</h2>
-    <p>{{.T "landing.llm_body"}}</p>
-    <button class="action primary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_copy"}}</button>
-    <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>
+{{/* Then how do I use it? Verified answers: each ran in a pinned container
+     and passed its own assertions before publication. */}}
+{{- if .Samples}}
+<section id="answers" class="homesamples evidence-section">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "landing.samples_heading"}}</h2>
+      <p class="dim small">{{.T "landing.samples_sub"}}</p>
+    </div>
   </div>
+  {{template "samplelist" .}}
+</section>
+{{- end}}
+
+{{/* Why trust a cell? The evidence ladder maps every state to what was
+     actually done, in the network's own grade vocabulary. */}}
+<section id="evidence" class="evidence-ladder">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "landing.ladder_heading"}}</h2>
+      <p class="dim small">{{.T "landing.ladder_sub"}}</p>
+    </div>
+  </div>
+  <ol class="ladder">
+    <li><span class="rung mono">USAGE_OBSERVATION</span>{{.T "landing.ladder_observed"}}</li>
+    <li><span class="rung mono">SAMPLE_VERIFICATION</span>{{.T "landing.ladder_verified"}}</li>
+    <li><span class="rung mono">CROSS_PASS</span>{{.T "landing.ladder_cross"}}</li>
+    <li><span class="rung mono">MATRIX_PASS</span>{{.T "landing.ladder_multi"}}</li>
+    <li><span class="rung mono">STABLE</span>{{.T "landing.ladder_stable"}}</li>
+  </ol>
+  <p class="note">{{.T "landing.ladder_rule"}}</p>
+  {{template "pivotlegend" .}}
+</section>
+
+{{/* The CLI is the product's local tester. Install commands first, what it
+     does second; the agent path follows as an integration, not the point. */}}
+<section id="install" class="delegate">
   <div class="manual-install">
-    <h3 class="eyebrow mono">{{.T "landing.install_heading"}}</h3>
+    <h2 class="eyebrow mono">{{.T "landing.install_heading"}}</h2>
     <div class="cmd">
       <span class="oslabel">{{.T "landing.install_windows"}}</span>
       <div class="cmdline"><span class="prompt mono" aria-hidden="true">&gt;</span><code class="mono">{{.InstallPS}}</code><button class="copy mono" type="button" data-copy="{{.InstallPS}}">copy</button></div>
@@ -77,11 +128,33 @@
       <a href="/install.sh">{{.T "landing.trust_installer"}}</a> ·
       <a href="https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE">Apache-2.0</a>
     </p>
+    <p class="hero-trust dim small">{{.T "landing.install_note"}}</p>
+  </div>
+  <div class="delegate-copy">
+    <h3 class="eyebrow mono">{{.T "landing.cli_can_heading"}}</h3>
+    <ul class="clican">
+      <li><code class="mono">csx run -- npm test</code><span class="dim small">{{.T "landing.cli_can_run"}}</span></li>
+      <li><code class="mono">csx search "axios multipart upload"</code><span class="dim small">{{.T "landing.cli_can_search"}}</span></li>
+      <li><code class="mono">csx scan</code><span class="dim small">{{.T "landing.cli_can_scan"}}</span></li>
+      <li><code class="mono">csx stats</code><span class="dim small">{{.T "landing.cli_can_stats"}}</span></li>
+    </ul>
+    <p class="small dim">{{.T "landing.llm_clients"}} <a href="#agents">{{.T "landing.agents_heading"}} →</a></p>
+    <button class="action secondary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_copy"}}</button>
   </div>
 </section>
 
-{{/* The prompt exists once in normal DOM. Both home-page triggers open this
-     native modal and the copy action reads this exact text node. */}}
+{{/* Documentation says what should work; the network records what did. */}}
+<section class="diffstrip">
+  <ul class="mono small">
+    <li><span class="k">{{.T "landing.diff_docs_k"}}</span>{{.T "landing.diff_docs"}}</li>
+    <li><span class="k">{{.T "landing.diff_code_k"}}</span>{{.T "landing.diff_code"}}</li>
+    <li><span class="k">{{.T "landing.diff_community_k"}}</span>{{.T "landing.diff_community"}}</li>
+    <li class="us"><span class="k">CodeSampleX</span>{{.T "landing.diff_csx"}}</li>
+  </ul>
+</section>
+
+{{/* The prompt exists once in normal DOM. The agent-install trigger opens
+     this native modal and the copy action reads this exact text node. */}}
 <dialog id="install-llm-dialog" class="llmdialog" aria-labelledby="llm-dialog-title" aria-describedby="llm-dialog-body">
   <div class="dialog-head">
     <h2 id="llm-dialog-title">{{.T "landing.llm_heading"}}</h2>
@@ -107,12 +180,14 @@
 </noscript>
 
 {{/* Agent and ecosystem coverage answer one question: will this work with
-     what I use? Keeping them together avoids two equally weighted cards. */}}
+     what I use? The MCP server is the adapter agents consume the network
+     through — an integration, not the product. */}}
 {{$mcpCfg := `csx mcp-config`}}
 <section class="support-shell">
   <details id="agents" class="home-detail agent-detail support-agents">
     <summary><span class="eyebrow mono">{{.T "landing.agents_heading"}}</span></summary>
     <div class="agent-detail-body">
+      <p class="dim small">{{.T "landing.agents_role"}}</p>
       <ul class="agentlist">
         <li class="agent on"><span class="y" aria-hidden="true">✓</span>Claude Code</li>
         <li class="agent on"><span class="y" aria-hidden="true">✓</span>Codex</li>
@@ -123,6 +198,7 @@
       <p class="small">{{.T "landing.agents_manual"}}</p>
       <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
       <p class="note">{{.T "landing.agents_models"}}</p>
+      <p class="small"><button class="copy mono" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button></p>
     </div>
   </details>
 
@@ -147,8 +223,7 @@
   {{end}}
 </section>
 
-{{/* Full process and privacy detail remain available for due diligence, but
-     no longer compete with search, measured evidence and installation. */}}
+{{/* Full process and privacy detail remain available for due diligence. */}}
 <details class="home-detail how">
   <summary><span class="eyebrow mono">{{.T "landing.how_heading"}}</span><span class="detail-summary">{{.T "landing.what_q"}}</span></summary>
   <div class="home-detail-body how-body">

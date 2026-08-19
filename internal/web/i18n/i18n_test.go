@@ -66,21 +66,21 @@ func keySet(t *testing.T, lang string) []string {
 }
 
 func TestI18nTagline(t *testing.T) {
-	if got := T("en", "landing.tagline"); got != "Stop solving the same code twice." {
+	if got := T("en", "landing.tagline"); got != "Does it run there?" {
 		t.Fatalf("en tagline = %q", got)
 	}
 	ko := T("ko", "landing.tagline")
 	if ko == "" || ko == T("en", "landing.tagline") {
 		t.Fatalf("ko tagline must be translated, got %q", ko)
 	}
-	if !strings.Contains(ko, "코드") {
+	if !strings.Contains(ko, "돌아갈까") {
 		t.Fatalf("ko tagline does not read as Korean: %q", ko)
 	}
 }
 
 func TestI18nFallbackAndArgs(t *testing.T) {
 	// Unknown language falls back to en.
-	if got := T("xx", "landing.tagline"); got != "Stop solving the same code twice." {
+	if got := T("xx", "landing.tagline"); got != "Does it run there?" {
 		t.Fatalf("fallback = %q", got)
 	}
 	// A missing key renders as NOTHING, never as its own name.

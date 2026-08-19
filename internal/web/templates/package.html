@@ -12,6 +12,65 @@
 </aside>
 {{end}}
 
+{{/* The cube explorer: pick any two dimensions as axes, pin the rest as
+     filters. A cell click pins one more slice; the drill-down bottoms out
+     in the exact measured combinations. */}}
+{{- if .Cube}}
+<section class="cube">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "cube.heading"}}</h2>
+      <p class="dim small">{{.T "cube.sub"}}</p>
+    </div>
+  </div>
+  {{- if .Cube.Chips}}
+  <div class="cubechips">
+    {{- range .Cube.Chips}}
+    <span class="chip filterchip mono small">{{.DimLabel}}={{.Value}} <a href="{{.RemoveHref}}" aria-label="{{$.T "cube.remove_filter"}}">×</a></span>
+    {{- end}}
+    <a class="small" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>
+  </div>
+  {{- end}}
+  {{- if .Cube.NoMatch}}
+  <p class="dim">{{.T "cube.no_match"}}</p>
+  {{if .Cube.WindowNote}}<p class="dim small">{{.T "cube.window_note"}}</p>{{end}}
+  {{- else if .Cube.Leaf}}
+  <h3 class="eyebrow mono">{{.T "cube.leaf_heading"}}</h3>
+  <p class="dim small">{{.T "cube.leaf_sub"}}</p>
+  <ul class="cubeleaf">
+    {{- range .Cube.Leaf}}
+    <li class="panel">
+      <div class="leafhead mono">
+        {{- if .SymbolHref}}<a href="{{$.WithLang .SymbolHref}}">{{.Symbol}}</a>{{else}}<span>{{.Symbol}}</span>{{end}}
+        <span class="dim">@{{.Version}}</span>
+      </div>
+      {{if .Env}}<div class="leafenv dim mono small">{{.Env}}</div>{{end}}
+      <div class="leafcell pv {{.Cell.Class}}">{{template "pivotcell" .Cell}}</div>
+      {{if .Cell.Tip}}<div class="dim mono small">{{.Cell.Tip}}</div>{{end}}
+    </li>
+    {{- end}}
+  </ul>
+  {{- else}}
+  <form class="cubeaxes mono small" method="get" action="{{.Cube.Action}}">
+    <label>{{.T "cube.x_axis"}}
+      <select name="x">{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+    </label>
+    <label>{{.T "cube.y_axis"}}
+      <select name="y">{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+    </label>
+    {{- range .Cube.Chips}}<input type="hidden" name="f_{{.Dim}}" value="{{.Value}}">{{end}}
+    {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
+    <button type="submit">{{.T "cube.apply"}}</button>
+  </form>
+  {{template "pivot" .Cube.Grid}}
+  {{if .Cube.Grid.Trimmed}}<p class="dim small">{{.T "landing.matrix_trimmed"}}</p>{{end}}
+  {{if .Cube.WindowNote}}<p class="dim small">{{.T "cube.window_note"}}</p>{{end}}
+  <p class="note dim small">{{.T "cube.drill_note"}}</p>
+  {{template "pivotlegend" .}}
+  {{- end}}
+</section>
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
 {{if .Versions}}
 <ul class="verlist mono">

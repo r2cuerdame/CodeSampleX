@@ -1245,3 +1245,116 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .feature-page__tool > summary { align-items: flex-start; padding: 0.9rem; }
   .feature-page__tool-body { padding: 0 0.9rem 0.9rem; }
 }
+
+/* ------------------------------------------------------------------ */
+/* Compatibility cube: pivot grids, drill-down chips, evidence ladder.
+   Cell states are word + glyph, never a color alone; ! and ? are the
+   anomaly and uncertainty markers. */
+
+.tested-line { margin: 0.35rem 0 0.9rem; color: var(--accent-2); font-size: 0.88rem; }
+
+.stat .sub { display: block; margin-top: 0.1rem; }
+
+.mtabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.6rem 0; }
+.mtabs a {
+  padding: 0.28rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  text-decoration: none;
+}
+.mtabs a[aria-current="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  font-weight: 700;
+}
+
+table.pivot { border-collapse: collapse; width: 100%; }
+table.pivot th, table.pivot td {
+  border: 1px solid var(--line);
+  padding: 0.42rem 0.55rem;
+  text-align: center;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+table.pivot thead th { background: var(--panel-2); font-weight: 700; }
+table.pivot th.corner { background: transparent; border-color: transparent transparent var(--line) var(--line); border-left-color: transparent; }
+table.pivot th.rowlabel { background: var(--panel-2); text-align: left; font-weight: 600; }
+td.pv a, td.pv .pvbody { display: inline-flex; align-items: baseline; gap: 0.3rem; text-decoration: none; color: inherit; }
+td.pv a:hover .pvstate { text-decoration: underline; }
+td.pv.pass { background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
+td.pv.fail { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+td.pv.mixed { background: color-mix(in srgb, var(--mid) 12%, var(--panel)); }
+td.pv.observed { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+td.pv.empty { color: var(--dim); background: var(--panel); }
+td.pv .pvstate { font-weight: 700; font-size: 0.74rem; letter-spacing: 0.02em; }
+td.pv.pass .glyph { color: var(--ok); }
+td.pv.fail .glyph { color: var(--bad); }
+td.pv.mixed .glyph { color: var(--mid); }
+td.pv .pvratio { font-size: 0.72rem; }
+.mark { font-weight: 800; font-style: normal; }
+.mark.bang { color: var(--bad); }
+.mark.maybe { color: var(--mid); }
+.pvcross { color: var(--ok); font-size: 0.72rem; letter-spacing: -0.12em; }
+
+.matrix-foot { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; margin-top: 0.5rem; }
+.homematrix .home-search { margin-top: 0.9rem; }
+
+.pivotlegend {
+  display: flex; flex-wrap: wrap; gap: 0.45rem 1.1rem;
+  margin: 0.6rem 0 0; padding: 0; list-style: none; color: var(--dim);
+}
+.pivotlegend .glyph, .pivotlegend .pvcross { color: var(--text); }
+.pivotlegend li { display: inline-flex; gap: 0.35rem; align-items: baseline; }
+
+.evidence-ladder { margin: 1.4rem 0; }
+.ladder { margin: 0.6rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.45rem; }
+.ladder li {
+  display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 0.7rem;
+  padding: 0.55rem 0.75rem; border: 1px solid var(--line); border-radius: 0.6rem;
+  background: var(--panel); font-size: 0.85rem; align-items: baseline;
+}
+.ladder .rung { color: var(--accent-2); font-weight: 700; font-size: 0.74rem; }
+
+.clican { margin: 0.5rem 0 0.8rem; padding: 0; list-style: none; display: grid; gap: 0.5rem; }
+.clican li { display: grid; gap: 0.15rem; }
+.clican code { color: var(--accent-2); font-weight: 650; }
+
+.diffstrip { margin: 1.2rem 0; }
+.diffstrip ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.3rem; }
+.diffstrip li { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 0.7rem; color: var(--dim); }
+.diffstrip .k { font-weight: 650; color: var(--text); }
+.diffstrip li.us { color: var(--text); }
+.diffstrip li.us .k { color: var(--accent); }
+
+.cube { margin: 1.1rem 0 1.5rem; }
+.cubechips { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.5rem 0; }
+.filterchip a { margin-left: 0.25rem; text-decoration: none; color: var(--bad); font-weight: 800; }
+.cubeaxes { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: end; margin: 0.5rem 0 0.7rem; }
+.cubeaxes label { display: grid; gap: 0.2rem; color: var(--dim); }
+.cubeaxes select {
+  font: 0.8rem var(--mono); padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line-strong); border-radius: 0.45rem;
+  background: var(--panel); color: var(--text);
+}
+.cubeaxes button {
+  font: 0.8rem var(--mono); padding: 0.34rem 0.8rem;
+  border: 1px solid var(--accent); border-radius: 0.45rem;
+  background: var(--accent); color: var(--accent-ink); cursor: pointer;
+}
+.cubeleaf { margin: 0.6rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.6rem; }
+.cubeleaf li { padding: 0.7rem 0.85rem; display: grid; gap: 0.3rem; }
+.leafhead { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
+.leafcell { justify-self: start; padding: 0.25rem 0.55rem; border: 1px solid var(--line); border-radius: 0.45rem; display: inline-flex; gap: 0.3rem; align-items: baseline; }
+
+@media (max-width: 40rem) {
+  .ladder li, .diffstrip li { grid-template-columns: 1fr; gap: 0.15rem; }
+  table.pivot th, table.pivot td { padding: 0.32rem 0.4rem; font-size: 0.72rem; }
+}
+
+/* Inside the navy install panel every foreground token must be light. */
+.delegate .eyebrow { color: #cedcf4; }
+.delegate .clican code { color: #ffffff; }
+.delegate .clican .dim, .delegate .delegate-copy .dim, .delegate .small.dim, .delegate .dim { color: #b9cdf0; }
+.delegate .action.secondary { color: #f4f8ff; border-color: rgba(255, 255, 255, 0.45); background: transparent; }
+.delegate .action.secondary:hover { background: rgba(255, 255, 255, 0.12); }

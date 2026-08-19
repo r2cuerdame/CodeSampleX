@@ -2,7 +2,16 @@
 <nav class="crumbs mono"><a href="/{{.Ecosystem}}/{{.Name}}">{{.Name}}</a> / <a href="/{{.Ecosystem}}/{{.Name}}/{{.Ver}}">{{.Ver}}</a> / {{.Symbol}}</nav>
 <h1 class="mono">{{.Symbol}} <span class="dim">/ {{.Name}}@{{.Ver}}</span></h1>
 
-<h2 class="eyebrow mono">{{.T "symbol.matrix_heading"}}</h2>
+{{/* OS × runtime at a glance; the detail table below is the drill-down
+     every summary cell anchors to. */}}
+{{if .Pivot.Rows}}
+<h2 class="eyebrow mono">{{.T "symbol.pivot_heading"}}</h2>
+{{template "pivot" .Pivot}}
+{{if .Pivot.Trimmed}}<p class="dim small">{{.T "landing.matrix_trimmed"}}</p>{{end}}
+{{template "pivotlegend" .}}
+{{end}}
+
+<h2 class="eyebrow mono" id="env-detail">{{.T "symbol.matrix_heading"}}</h2>
 <p class="note dim small">{{.T "symbol.evidence_note"}}</p>
 <p class="note dim small">{{.T "symbol.callshape_note"}}</p>
 {{template "matrix" .}}

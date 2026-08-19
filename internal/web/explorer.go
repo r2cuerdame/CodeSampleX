@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -451,6 +452,9 @@ type packagePage struct {
 	Samples   []SampleListItem
 	Clusters  []clusterView
 	Wanted    []WantedRow
+	// Cube is the N-dimensional compatibility explorer: the page's primary
+	// element. nil when the package has no snapshot evidence yet.
+	Cube *cubeView
 }
 
 // packageSampleLimit bounds the samples listed on a package page. It is a
@@ -511,6 +515,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
+		Cube: buildCubeView(s, r, lang, eco, name),
 	})
 }
 
@@ -524,6 +529,9 @@ type versionPage struct {
 	Ver       string
 	Symbols   []symbolLink
 	Matrix    []matrixRow
+	// SymbolGrid answers "which symbol ran on which OS" at a glance; its
+	// cells drill into the package cube with version, symbol and OS pinned.
+	SymbolGrid pivotGrid
 }
 
 type symbolLink struct {
@@ -567,7 +575,64 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
+		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
 	})
+}
+
+// versionSymbolGrid builds the "which symbol ran on which OS" grid of one
+// version from the package cube; cells drill into the cube explorer with
+// version, symbol and OS pinned. Empty when the version is outside the
+// cube's newest-versions window or a 1×1 grid would only repeat the
+// detail table.
+func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version string) pivotGrid {
+	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
+	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+	if len(facts) == 0 {
+		return pivotGrid{}
+	}
+	// With symbol as a row axis, the "(package)" row would repeat the same
+	// receipts the symbol rows already show (the producer files each
+	// receipt under "" AND every claimed symbol). Where a symbol row
+	// carries the verification, the package-level fact keeps only its own
+	// disjoint observations.
+	facts = suppressDuplicatePackageVerifications(facts)
+	href := func(row, col string) string {
+		return cubeHref(pkgHref(eco, name), cubeQuery(map[string]string{
+			"version": version, "symbol": row, "os": col,
+		}, "", "", lang))
+	}
+	g := buildCubeGrid(facts, "os", "symbol", href, time.Now())
+	if len(g.Rows) <= 1 && len(g.Cols) <= 1 {
+		return pivotGrid{}
+	}
+	return g
+}
+
+// suppressDuplicatePackageVerifications strips the verification side from
+// package-level facts whose (version, env bucket) is already verified by a
+// symbol fact — those are the same receipts filed twice by the producer.
+// Package-level facts with the only verification in their bucket keep it.
+func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
+	type key struct{ version, envHash string }
+	symbolVerified := map[key]bool{}
+	for _, f := range facts {
+		if !f.PackageLevel && f.Agg.verPass+f.Agg.verFail > 0 {
+			symbolVerified[key{f.Dims["version"], f.EnvHash}] = true
+		}
+	}
+	out := make([]cubeFact, 0, len(facts))
+	for _, f := range facts {
+		if f.PackageLevel && symbolVerified[key{f.Dims["version"], f.EnvHash}] {
+			f.Agg.verPass, f.Agg.verFail = 0, 0
+			f.Agg.cross = false
+			f.Agg.verLastSeen = ""
+			if f.Agg.events() == 0 {
+				continue
+			}
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -584,6 +649,9 @@ type symbolPage struct {
 	Matrix    []matrixRow
 	Clusters  []clusterView
 	Generated string
+	// Pivot is the OS × runtime summary of the same snapshot the detail
+	// table renders; its cells anchor down to that table.
+	Pivot pivotGrid
 }
 
 func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version, symbol string) {
@@ -600,6 +668,13 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	}
 	matrix := buildMatrix(lang, doc)
 	clusters := buildClusters(doc.Failures)
+	pivot := buildPivot(doc.Rows, osRowKey, contextColKey, func(row, col string) string {
+		return "#env-detail"
+	}, time.Now())
+	// A 1×1 pivot repeats the single detail row below it; skip the summary.
+	if len(pivot.Rows) == 1 && len(pivot.Cols) == 1 {
+		pivot = pivotGrid{}
+	}
 
 	// Descriptive title leads with the strongest context row:
 	// "axios.post axios 1.12.0 node 22 compatibility — CodeSampleX".
@@ -633,6 +708,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		basePage: b, Ecosystem: eco, Name: name, Ver: version, Symbol: symbol,
 		PURL: purl, Matrix: matrix, Clusters: clusters,
 		Generated: datePart(doc.GeneratedAt),
+		Pivot:     pivot,
 	})
 }
 
