@@ -233,35 +233,27 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 		}
 	}
 
-	// Warm cubes first. Probing every candidate for the richest grid used to
-	// assemble each one on the request path, and a cube assembly is dozens of
-	// round trips -- six of them made the home page the most expensive URL on
-	// the site. Reading only what is already cached costs nothing, and on a
-	// site with any traffic at all something is always warm.
+	// Candidates in rank order, and the FIRST that renders wins. Warmth is a
+	// cost decision, never a selection input: which cubes are warm is a
+	// function of what other visitors happened to browse in the last five
+	// minutes, and ranking the warm subset made the front page's featured
+	// package depend on other people's traffic — visibly, since the landing
+	// carries no Cache-Control and heroMatrix re-runs on every reload.
+	//
+	// The cost stays bounded: a cached cube is free, and a cold one is
+	// assembled only until something renders. Probing all six to pick the
+	// richest grid was what made this the most expensive URL on the site.
 	for i, h := range ordered {
 		if i >= heroMatrixTries {
 			break
 		}
-		if facts, ok := s.cubeFactsCached(h.Ecosystem, h.Name); ok {
-			consider(h, facts)
+		facts, ok := s.cubeFactsCached(h.Ecosystem, h.Name)
+		if !ok {
+			facts, _ = s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
 		}
-	}
-	// Nothing was warm, so assemble until something renders -- normally the
-	// first candidate, since hits arrive most-measured-first. The page needs a
-	// matrix, not the best matrix out of six: the reader cannot tell which
-	// candidate won, and every one of them is a real measured grid. Probing
-	// all six to rank them put six full fan-outs on the request path and made
-	// the home page the most expensive URL on the site.
-	if best == nil {
-		for i, h := range ordered {
-			if i >= heroMatrixTries {
-				break
-			}
-			facts, _ := s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
-			consider(h, facts)
-			if best != nil {
-				break
-			}
+		consider(h, facts)
+		if best != nil {
+			break
 		}
 	}
 	if best == nil {

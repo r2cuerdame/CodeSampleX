@@ -52,8 +52,14 @@ type cubeLeafRow struct {
 	Version    string
 	Symbol     string // cubePackageLevel for package-level evidence
 	SymbolHref string // "" when the row is package-level
-	Env        string // remaining recorded dimensions, " · " joined
-	Cell       pivotCell
+	// VersionHref is the way down. The leaf is where the drill-down bottoms
+	// out, and it used to emit a symbol link and nothing else — nothing at all
+	// for a package-level row — so the most engaged reader on the site arrived
+	// at the deepest node with no way further. The version page below it is
+	// the one that lists contract records.
+	VersionHref string
+	Env         string // remaining recorded dimensions, " · " joined
+	Cell        pivotCell
 }
 
 type cubeView struct {
@@ -317,6 +323,9 @@ func cubeLeafRows(facts []cubeFact, eco, name string) []cubeLeafRow {
 		}
 		if row.Symbol != cubePackageLevel && row.Symbol != "" {
 			row.SymbolHref = symbolHref(eco, name, row.Version, row.Symbol)
+		}
+		if row.Version != "" {
+			row.VersionHref = versionHref(eco, name, row.Version)
 		}
 		rows = append(rows, row)
 	}

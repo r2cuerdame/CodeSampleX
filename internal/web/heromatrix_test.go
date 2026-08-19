@@ -107,3 +107,38 @@ func TestHeroMatrixSkipsCandidatesWithNoFacts(t *testing.T) {
 		t.Errorf("assembled %d cubes, want 2 (the empty one, then the first that renders)", got)
 	}
 }
+
+// Which cubes are warm is a function of what other visitors happened to browse
+// in the last five minutes, so ranking the warm subset made the front page's
+// featured package a function of other people's traffic. Preferring warm is a
+// cost decision; it must not be a selection input.
+func TestHeroMatrixFeaturesTheTopHitRegardlessOfWhatIsWarm(t *testing.T) {
+	hits, store := heroHits(heroMatrixTries)
+	s := &site{d: Deps{Store: store}}
+
+	// Someone else browsed pkg3 a moment ago, so only its cube is warm.
+	if facts, _ := s.cubeFacts(context.Background(), "npm", "pkg3"); len(facts) == 0 {
+		t.Fatal("failed to warm the decoy cube")
+	}
+
+	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
+	if m == nil {
+		t.Fatal("no hero matrix rendered")
+	}
+	if m.Package != "pkg0" {
+		t.Errorf("featured %q, want pkg0 — the top hit, not whatever was warm", m.Package)
+	}
+}
+
+// The reader's own choice still wins over the ranking.
+func TestHeroMatrixHonoursTheExplicitSelection(t *testing.T) {
+	hits, store := heroHits(heroMatrixTries)
+	s := &site{d: Deps{Store: store}}
+	m := s.heroMatrix(httptest.NewRequest("GET", "/?m=npm/pkg4", nil), "en", hits)
+	if m == nil {
+		t.Fatal("no hero matrix rendered")
+	}
+	if m.Package != "pkg4" {
+		t.Errorf("featured %q, want the explicitly selected pkg4", m.Package)
+	}
+}

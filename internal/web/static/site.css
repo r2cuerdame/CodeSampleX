@@ -596,7 +596,7 @@ td.env { min-width: 16rem; }
 .pkglist, .verlist, .symlist, .samples, .files, .receipts, .clusters, .contractlist {
   list-style: none; margin: 0; padding: 0;
 }
-.pkglist li, .verlist li, .symlist li, .samples li, .files li, .receipts li {
+.pkglist li, .verlist li, .symlist li, .samples li, .files li, .receipts li, .clusters li {
   padding: 0.4rem 0; border-bottom: 1px solid var(--line);
   display: flex; gap: 0.8rem; align-items: baseline; flex-wrap: wrap;
   overflow-wrap: anywhere;
@@ -641,6 +641,11 @@ td.env { min-width: 16rem; }
   cursor: pointer; background: var(--accent); color: var(--accent-ink);
   border: none; border-radius: 0.75rem; padding: 0.55rem 1.2rem; font-weight: 750;
 }
+/* The track minimums below add up to 46rem, so this grid cannot compress
+   past ~815px of content box. The two-column fallback therefore has to arrive
+   before the viewport does — see the 55rem query, not 54rem like its
+   neighbours, which left a band around 864-878px where the bar pushed out
+   past its own panel border into the page gutter. */
 .filterbar {
   display: grid; grid-template-columns: minmax(14rem, 2fr) repeat(4, minmax(8rem, 1fr));
   gap: 0.7rem; align-items: end; margin: 1rem 0 0.55rem;
@@ -702,9 +707,12 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .langs a { color: var(--dim); }
 .langs a.on { color: var(--accent); font-weight: 750; }
 
-@media (max-width: 54rem) {
+@media (max-width: 55rem) {
 	.filterbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.filterquery { grid-column: 1 / -1; }
+}
+
+@media (max-width: 54rem) {
   .home-hero, .delegate { grid-template-columns: 1fr; }
   .how-body { grid-template-columns: 1fr; }
   .workerprompt-grid { grid-template-columns: 1fr; }

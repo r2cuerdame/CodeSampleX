@@ -125,3 +125,57 @@ func TestCubeFactsRecoversAfterAPanickingLoad(t *testing.T) {
 		t.Error("the package's cube never came back after one recovered panic")
 	}
 }
+
+// cancelAwareStore fails the way a real store does when its caller goes away:
+// the version list is already in hand, and everything after it stops.
+type cancelAwareStore struct {
+	*fakeStore
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+func (c *cancelAwareStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
+	versions, err := c.fakeStore.PackageVersions(ctx, ecosystem, name)
+	// The reader hits stop right after the first hop, mid fan-out.
+	c.mu.Lock()
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	c.mu.Unlock()
+	return versions, err
+}
+
+func (c *cancelAwareStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.fakeStore.PackageSymbols(ctx, ecosystem, name, version)
+}
+
+func (c *cancelAwareStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
+	if ctx.Err() != nil {
+		return "", false
+	}
+	return c.fakeStore.SnapshotJSON(ctx, purl, symbol)
+}
+
+// loadCubeFacts swallows per-hop failures on purpose -- a missing symbol list
+// is not a reason to lose the whole cube -- so a cancelled context does not
+// surface as an error. It surfaces as an empty assembly, which then gets
+// cached and served to everyone for cubeTTL. Singleflight makes it worse: the
+// readers parked on that load get the empty answer too. One reader pressing
+// stop must not take a package's cube off the site for five minutes.
+func TestCubeFactsDoesNotCacheAnAssemblyItsCallerAbandoned(t *testing.T) {
+	base := cubeSingleflightStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &cancelAwareStore{fakeStore: base.fakeStore, cancel: cancel}
+	s := &site{d: Deps{Store: store}}
+
+	s.cubeFacts(ctx, "npm", "axios")
+
+	facts, _ := s.cubeFacts(context.Background(), "npm", "axios")
+	if len(facts) == 0 {
+		t.Error("an abandoned assembly was cached, so the next reader got an empty cube")
+	}
+}

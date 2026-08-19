@@ -761,6 +761,22 @@ func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
 	return out
 }
 
+// symbolSamples lists the published samples that answer one exact symbol of
+// one exact version. A sample names the APIs it was written against, so this
+// is a filter over the version's list rather than a separate read.
+func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) []SampleListItem {
+	var out []SampleListItem
+	for _, item := range s.versionSamples(r, eco, name, version) {
+		for _, named := range item.Symbols {
+			if named == symbol {
+				out = append(out, item)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // versionSamples lists the published samples written against one exact
 // version, sorted so the APIs they answer for group together.
 func (s *site) versionSamples(r *http.Request, eco, name, version string) []SampleListItem {
@@ -808,6 +824,11 @@ type symbolPage struct {
 	// Pivot is the OS × runtime summary of the same snapshot the detail
 	// table renders; its cells anchor down to that table.
 	Pivot pivotGrid
+	// Samples are the contract records written against this exact symbol.
+	// Without them this page — the deepest node in the hierarchy — offered no
+	// link but an in-page anchor, so a reader who followed the cube all the
+	// way down had to climb back up to reach the evidence the descent was for.
+	Samples []SampleListItem
 }
 
 func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version, symbol string) {
@@ -866,6 +887,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		Generated: datePart(doc.GeneratedAt),
 		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,
+		Samples:   s.symbolSamples(r, eco, name, version, symbol),
 	})
 }
 

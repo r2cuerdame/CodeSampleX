@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -85,6 +86,55 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	return false
 }
 
+// authoringNewestVersions is how many releases of one package a worker is
+// steered towards. It matches the version axis the site renders, so the work
+// fills cells a reader can actually see.
+const authoringNewestVersions = 6
+
+// preferNewestVersions lifts the candidates for a package's newest releases
+// ahead of its older ones, leaving every row in place otherwise.
+//
+// It is a preference and never a filter. A candidate outside the window is
+// still the only work left when nothing better is claimable, and dropping it
+// would hand the worker NO_WORK instead of something to do.
+//
+// It exists in Go because this is where version precedence can be judged
+// correctly. The store caps the sibling branch by ordering versions as
+// strings, which is all SQL can express and which ranks 7.0.3 above 14.0.1 —
+// the same mistake the site's own version list was fixed for. The cap is a
+// safety bound and an imperfect six is acceptable there; the order work is
+// handed out in is not, so it is corrected here.
+func preferNewestVersions(candidates []serverstore.WantedRow, keep int) []serverstore.WantedRow {
+	if keep < 1 || len(candidates) < 2 {
+		return candidates
+	}
+	byName := map[[2]string][]string{}
+	for _, c := range candidates {
+		name := [2]string{c.Ecosystem, c.Name}
+		byName[name] = append(byName[name], c.Version)
+	}
+	preferred := map[[3]string]bool{}
+	for name, versions := range byName {
+		sort.SliceStable(versions, func(i, j int) bool {
+			return domain.CompareVersions(versions[i], versions[j]) > 0
+		})
+		for i, v := range versions {
+			if i >= keep {
+				break
+			}
+			preferred[[3]string{name[0], name[1], v}] = true
+		}
+	}
+	out := make([]serverstore.WantedRow, len(candidates))
+	copy(out, candidates)
+	sort.SliceStable(out, func(i, j int) bool {
+		ai := preferred[[3]string{out[i].Ecosystem, out[i].Name, out[i].Version}]
+		aj := preferred[[3]string{out[j].Ecosystem, out[j].Name, out[j].Version}]
+		return ai && !aj
+	})
+	return out
+}
+
 func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	store, ok := a.d.Store.(serverstore.AuthoringSessionStore)
 	if !ok {
@@ -128,11 +178,16 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "listing authoring expansion work failed")
 		return
 	}
+	// WANTED keeps its own order: it is somebody's explicit ask, and demand is
+	// the ranking. Expansion is the network choosing its own next move, so it
+	// is steered at the releases the site renders.
+	fresh := make([]serverstore.WantedRow, 0, len(expansion))
 	for _, candidate := range expansion {
 		if authoringCandidateEligible(candidate, request) {
-			eligible = append(eligible, candidate)
+			fresh = append(fresh, candidate)
 		}
 	}
+	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
 	work, found, err := store.ClaimAuthoringWork(r.Context(), session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "claiming authoring work failed")

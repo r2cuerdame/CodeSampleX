@@ -33,6 +33,9 @@ const (
 
 	// cubeTTL is how long one package's assembled cube is reused.
 	cubeTTL = 5 * time.Minute
+	// cubeLoadTimeout bounds one assembly. It replaces the initiating
+	// request's deadline, which is not the right clock for shared work.
+	cubeLoadTimeout = 30 * time.Second
 	// cubeCacheMax bounds the per-process cube cache.
 	cubeCacheMax = 64
 )
@@ -453,7 +456,15 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 				close(done)
 				s.cubeMu.Unlock()
 			}()
-			return loadCubeFacts(ctx, s.d.Store, eco, name)
+			// The assembly is shared, not this request's private work: readers
+			// are parked on it and the next one is served whatever it caches. Tied
+			// to the initiating context, one reader pressing stop mid fan-out
+			// yields a partial assembly — loadCubeFacts swallows per-hop failures
+			// on purpose, so cancellation arrives as emptiness rather than an
+			// error — and that emptiness gets cached for everyone for cubeTTL.
+			loadCtx, done := context.WithTimeout(context.WithoutCancel(ctx), cubeLoadTimeout)
+			defer done()
+			return loadCubeFacts(loadCtx, s.d.Store, eco, name)
 		}()
 		if err != nil {
 			return nil, false
