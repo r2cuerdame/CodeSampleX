@@ -510,8 +510,25 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 	for _, candidate := range candidates {
 		eligible[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)] = struct{}{}
 	}
+	sessionLive := func(id string) bool {
+		for _, row := range f.authoring {
+			if row.SessionID == id {
+				return row.RevokedAt.IsZero() && now.Before(row.IdleExpiresAt)
+			}
+		}
+		// A session the store never saw cannot be judged dead; leave its claim.
+		return true
+	}
 	for key, work := range f.authoringWork {
 		if work.SampleID == "" && !now.Before(work.LeaseExpiresAt) {
+			delete(f.authoringWork, key)
+			continue
+		}
+		// Revoking is not the only way a session stops. One that simply quits
+		// refreshing idles out in an hour while its claim runs for a day, and
+		// the assignment key does not record who holds it — so the coordinate
+		// is off the board for everybody until the lease expires.
+		if work.SampleID == "" && !sessionLive(work.SessionID) {
 			delete(f.authoringWork, key)
 			continue
 		}

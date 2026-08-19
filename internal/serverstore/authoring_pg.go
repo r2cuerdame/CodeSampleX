@@ -405,6 +405,16 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 		if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments WHERE sample_id IS NULL AND lease_expires_at <= $1`, now); err != nil {
 			return err
 		}
+		// Revoking is not the only way a session stops. One that simply quits
+		// refreshing idles out in an hour while its claim runs for a day, and
+		// the assignment key does not record who holds it — so the coordinate is
+		// off the board for everybody until the lease expires.
+		if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments a
+			USING authoring_sessions s
+			WHERE a.session_id = s.session_id AND a.sample_id IS NULL
+			  AND (s.revoked_at IS NOT NULL OR s.idle_expires_at <= $1)`, now); err != nil {
+			return err
+		}
 		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
