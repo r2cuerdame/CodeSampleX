@@ -235,6 +235,10 @@ type site struct {
 	// not fine per request.
 	cubeMu    sync.Mutex
 	cubeCache map[string]cubeCacheEntry
+	// cubeLoading holds one channel per package currently being assembled,
+	// closed when that assembly finishes. Concurrent readers wait on it
+	// rather than each running the same fan-out.
+	cubeLoading map[string]chan struct{}
 }
 
 // Register mounts every website route on mux.

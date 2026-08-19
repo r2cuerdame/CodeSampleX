@@ -945,7 +945,7 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 
 	// A moment after creation: nothing has changed since.
 	time.Sleep(1100 * time.Millisecond)
-	mark := time.Now().UTC()
+	mark := dbNow(t, pg)
 	changes, err := pg.ChangedSince(ctx, mark)
 	if err != nil {
 		t.Fatal(err)
@@ -968,7 +968,7 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 
 	// So must a quarantine — otherwise a taken-down sample keeps being
 	// served from the shard it is already in.
-	mark2 := time.Now().UTC()
+	mark2 := dbNow(t, pg)
 	time.Sleep(1100 * time.Millisecond)
 	if err := pg.SetSampleQuarantine(ctx, id, true, "abuse"); err != nil {
 		t.Fatal(err)
@@ -982,6 +982,30 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 	}
 }
 
+// dbNow reads the clock that stamps created_at and updated_at.
+//
+// A mark taken from the test process's clock compares two different clocks:
+// the tests run on the host while PostgreSQL runs in its own container, and a
+// skew of tens of milliseconds is enough to hide a row written microseconds
+// after the mark. Measured here at 81ms, which made
+// TestIntegrationChangedSinceSeesOutOfBandStatusChanges fail four runs in six.
+//
+// No production caller compares this way: the compatibility builder asks
+// ChangedSince for a full minute before its last pass (changeOverlap), and a
+// full rebuild every twelfth pass repairs anything a gap still swallowed. The
+// mismatch was the test's alone, so the fix belongs here.
+func dbNow(t *testing.T, pg *PG) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	var now time.Time
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT now()`).Scan(&now)
+	}); err != nil {
+		t.Fatalf("reading the database clock: %v", err)
+	}
+	return now.UTC()
+}
+
 func contains(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
@@ -989,4 +1013,82 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// The PostgreSQL twin of TestAuthoringExpansionOffersUnmeasuredSiblingVersions
+// and TestAuthoringExpansionSpreadsAcrossVersionsBeforeDeepening. The Fake
+// mirrors this query, and a divergence between them is a silent production
+// bug, so both properties are asserted against real SQL.
+func TestIntegrationAuthoringExpansionSpreadsAcrossVersions(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	base := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", ProjectBucket: "spreadproject",
+		Package: "pkg:npm/spreadpkg@3.0.0", SymbolConfidence: domain.SymbolProbable,
+		Environment: env, Stage: domain.StageProjectCompile, Result: domain.ResultPass,
+		ObservationCount: 40,
+	}
+	for i, symbol := range []string{"alpha", "beta", "gamma"} {
+		b := base
+		b.Symbol = symbol
+		b.AnonID = fmt.Sprintf("spreadpeer%d", i)
+		if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 || len(rejected) != 0 {
+			t.Fatalf("ingest %s = %d rejected=%v err=%v", symbol, accepted, rejected, err)
+		}
+	}
+	for _, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/spreadpkg@" + v, Ecosystem: "npm", Name: "spreadpkg",
+			Version: v, Major: v[:1], Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.UpsertFailureCluster(ctx, ClusterRow{
+		Ecosystem: "npm", PackageName: "spreadpkg", Symbol: "delta", Stage: "PROJECT_COMPILE",
+		ErrorFingerprint: "sha256:" + strings.Repeat("d", 64), ErrorCode: "ERR_SPREAD",
+		ObservationCount: 31, VersionsJSON: `["3.0.0"]`, EnvSummaryJSON: `{"os":"linux"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:spread-proof", ManifestJSON: `{"packages":["pkg:npm/spreadpkg@3.0.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		SampleID: "sha256:spread-proof", ReceiptID: "receipt-spread-proof", PeerID: "spread-proof",
+		EnvHash: "env-spread-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
+	seen := map[string]int{}
+	for i, c := range candidates {
+		if c.Name != "spreadpkg" {
+			continue
+		}
+		seen[c.Version]++
+		if seen[c.Version] < 2 {
+			continue
+		}
+		for _, v := range versions {
+			if seen[v] == 0 {
+				t.Fatalf("candidate %d is job #%d for %s while %s has none yet; order=%s",
+					i, seen[c.Version], c.Version, v, formatCandidateOrder(candidates))
+			}
+		}
+	}
+	for _, v := range versions {
+		if seen[v] == 0 {
+			t.Errorf("version %s never offered; order=%s", v, formatCandidateOrder(candidates))
+		}
+	}
 }

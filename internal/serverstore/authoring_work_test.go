@@ -2,6 +2,8 @@ package serverstore
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,4 +162,153 @@ func TestFailedCrossReleasesWantedForAnotherSampleWriter(t *testing.T) {
 	if err != nil || !ok || retry.Name != "axios" {
 		t.Fatalf("failed target was not released = %+v %v %v", retry, ok, err)
 	}
+}
+
+// A version nobody has measured yet is exactly the blank cell the matrix
+// shows. It only becomes reachable work if the candidate list can name a
+// sibling version that carries no evidence of its own, so this asserts the
+// unmeasured siblings appear at all -- ordering is a separate concern.
+func TestAuthoringExpansionOffersUnmeasuredSiblingVersions(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	// Only 3.0.0 was ever observed or proven. 1.0.0 and 2.0.0 are known
+	// public releases with no evidence row of their own.
+	batch := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "workerbucket", ProjectBucket: "projectbucket",
+		Package: "pkg:npm/axios@3.0.0", Symbol: "axios.get", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18"},
+		Stage:       domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 9,
+	}
+	if accepted, rejected, err := store.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	for _, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if err := store.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/axios@" + v, Ecosystem: "npm", Name: "axios", Version: v, Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:proof", ManifestJSON: `{"packages":["pkg:npm/axios@3.0.0"],"symbols":["axios.get"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-proof", SampleID: "sha256:proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1.0.0", "2.0.0"} {
+		found := false
+		for _, c := range candidates {
+			if c.Version == want && c.Symbol == "" {
+				found = true
+				if c.Kind != "EXPANSION" {
+					t.Errorf("sibling %s kind = %q, want EXPANSION", want, c.Kind)
+				}
+				// The verifier only claims work whose target OS it can
+				// actually execute, so an untargeted row is unclaimable.
+				if c.TargetOS != "linux" {
+					t.Errorf("sibling %s targetOS = %q, want linux", want, c.TargetOS)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("version %s missing from candidates; got %+v", want, candidates)
+		}
+	}
+}
+
+// Ranking by score alone deepens whatever version already carries the most
+// evidence: it hands out that version's second and third job before another
+// version has been measured once. Breadth across versions is the whole point
+// of the matrix, so every version earns its first job before any version
+// earns its second.
+func TestAuthoringExpansionSpreadsAcrossVersionsBeforeDeepening(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	base := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", ProjectBucket: "projectbucket",
+		Package: "pkg:npm/axios@3.0.0", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18"},
+		Stage:       domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 40,
+	}
+	for i, symbol := range []string{"axios.get", "axios.put", "axios.patch"} {
+		b := base
+		b.Symbol = symbol
+		b.AnonID = "worker" + string(rune('a'+i))
+		if accepted, _, err := store.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 {
+			t.Fatalf("ingest %s = %d err=%v", symbol, accepted, err)
+		}
+	}
+	for _, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if err := store.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/axios@" + v, Ecosystem: "npm", Name: "axios", Version: v, Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A finding is 3.0.0's first job; its package-level expansion is only its
+	// second. Without a version-aware order that second job outranks the
+	// untouched siblings purely because 3.0.0 carries more evidence.
+	if err := store.UpsertFailureCluster(ctx, ClusterRow{
+		Ecosystem: "npm", PackageName: "axios", Symbol: "axios.post", Stage: "PROJECT_COMPILE",
+		ErrorFingerprint: "sha256:" + strings.Repeat("b", 64), ErrorCode: "ERR_T", ObservationCount: 31,
+		VersionsJSON: `["3.0.0"]`, EnvSummaryJSON: `{"os":"linux"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:proof", ManifestJSON: `{"packages":["pkg:npm/axios@3.0.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-proof", SampleID: "sha256:proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
+	seen := map[string]int{}
+	for i, c := range candidates {
+		seen[c.Version]++
+		if seen[c.Version] < 2 {
+			continue
+		}
+		for _, v := range versions {
+			if seen[v] == 0 {
+				t.Fatalf("candidate %d is job #%d for %s while %s has none yet; order=%s",
+					i, seen[c.Version], c.Version, v, formatCandidateOrder(candidates))
+			}
+		}
+	}
+	for _, v := range versions {
+		if seen[v] == 0 {
+			t.Errorf("version %s never offered; order=%s", v, formatCandidateOrder(candidates))
+		}
+	}
+}
+
+func formatCandidateOrder(rows []WantedRow) string {
+	var b strings.Builder
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		symbol := r.Symbol
+		if symbol == "" {
+			symbol = "(package)"
+		}
+		fmt.Fprintf(&b, "%s/%s:%s", r.Version, symbol, r.Kind)
+	}
+	return b.String()
 }

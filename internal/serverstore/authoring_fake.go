@@ -207,6 +207,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		packageScores[observed.PURL] += score
 	}
 	packageTargets := make(map[string]map[string]bool)
+	verifiedPURLs := make(map[string]bool)
 	for sampleID, sample := range f.samples {
 		if sample.Quarantined {
 			continue
@@ -220,6 +221,9 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		for _, receipt := range f.receipts[sampleID] {
 			if receipt.ContractResult != "PASS" {
 				continue
+			}
+			for _, purl := range manifest.Packages {
+				verifiedPURLs[purl] = true
 			}
 			var parsed struct {
 				Environment struct {
@@ -247,6 +251,38 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Kind: "EXPANSION", Score: score, TargetOS: targetOS}
+			}
+		}
+	}
+	// Sibling versions of a package already proven at some version, but
+	// carrying no verified sample of their own. Every other branch reaches a
+	// version only through an evidence row keyed by the exact purl, so a
+	// release nobody has measured can never become work -- and its column in
+	// the matrix stays blank however long the workers run. Score 0 puts these
+	// last on merit; version_depth is what actually lifts them into reach.
+	nameTargets := make(map[[2]string]map[string]bool)
+	for purl, oses := range packageTargets {
+		proven, ok := f.packages[purl]
+		if !ok {
+			continue
+		}
+		key := [2]string{proven.Ecosystem, proven.Name}
+		if nameTargets[key] == nil {
+			nameTargets[key] = make(map[string]bool)
+		}
+		for targetOS := range oses {
+			nameTargets[key][targetOS] = true
+		}
+	}
+	for _, pkg := range f.packages {
+		if verifiedPURLs[pkg.PURL] || !eligible(pkg, "") {
+			continue
+		}
+		for targetOS := range nameTargets[[2]string{pkg.Ecosystem, pkg.Name}] {
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
+			if _, exists := candidates[key]; !exists {
+				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+					Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS}
 			}
 		}
 	}
@@ -290,6 +326,31 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 		return out[i].Symbol < out[j].Symbol
 	})
+	// Depth is how many jobs this version has already been offered further up
+	// the merit order. Ordering by it first means every version earns its
+	// first job before any version earns its second, so the grid fills by
+	// breadth across versions instead of deepening whichever version already
+	// carries the most evidence. Merit still decides ties within a depth.
+	type rankedCandidate struct {
+		row   WantedRow
+		depth int
+	}
+	ranked := make([]rankedCandidate, len(out))
+	depths := make(map[[3]string]int, len(out))
+	for i, row := range out {
+		key := [3]string{row.Ecosystem, row.Name, row.Version}
+		depths[key]++
+		ranked[i] = rankedCandidate{row: row, depth: depths[key]}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if (ranked[i].row.TargetOS == "linux") != (ranked[j].row.TargetOS == "linux") {
+			return ranked[i].row.TargetOS == "linux"
+		}
+		return ranked[i].depth < ranked[j].depth
+	})
+	for i, r := range ranked {
+		out[i] = r.row
+	}
 	if len(out) > limit {
 		out = out[:limit]
 	}

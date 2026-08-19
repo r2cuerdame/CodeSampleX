@@ -204,13 +204,9 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	now := time.Now()
 	var best *heroMatrixData
 	bestScore := 0
-	for i, h := range ordered {
-		if i >= heroMatrixTries {
-			break
-		}
-		facts, _ := s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+	consider := func(h PackageHit, facts []cubeFact) {
 		if len(facts) == 0 {
-			continue
+			return
 		}
 		pagePath := pkgHref(h.Ecosystem, h.Name)
 		for rank, pair := range heroAxisPairs {
@@ -233,6 +229,38 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 					XLabel: i18n.T(lang, "cube.dim_"+x),
 					YLabel: i18n.T(lang, "cube.dim_"+y),
 				}
+			}
+		}
+	}
+
+	// Warm cubes first. Probing every candidate for the richest grid used to
+	// assemble each one on the request path, and a cube assembly is dozens of
+	// round trips -- six of them made the home page the most expensive URL on
+	// the site. Reading only what is already cached costs nothing, and on a
+	// site with any traffic at all something is always warm.
+	for i, h := range ordered {
+		if i >= heroMatrixTries {
+			break
+		}
+		if facts, ok := s.cubeFactsCached(h.Ecosystem, h.Name); ok {
+			consider(h, facts)
+		}
+	}
+	// Nothing was warm, so assemble until something renders -- normally the
+	// first candidate, since hits arrive most-measured-first. The page needs a
+	// matrix, not the best matrix out of six: the reader cannot tell which
+	// candidate won, and every one of them is a real measured grid. Probing
+	// all six to rank them put six full fan-outs on the request path and made
+	// the home page the most expensive URL on the site.
+	if best == nil {
+		for i, h := range ordered {
+			if i >= heroMatrixTries {
+				break
+			}
+			facts, _ := s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+			consider(h, facts)
+			if best != nil {
+				break
 			}
 		}
 	}

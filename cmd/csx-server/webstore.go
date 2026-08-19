@@ -37,6 +37,15 @@ type webStore struct {
 	updatedMu     sync.Mutex
 	updatedAtRead time.Time
 	updatedAt     map[string]time.Time
+
+	// The whole-network (purl, symbol) inventory, cached for the same reason
+	// again. This one matters most: assembling a package's cube asks for it
+	// once for the version list and once more per version, so a package page
+	// issued seven of these and the landing page's six cubes issued
+	// forty-three -- each one two unbounded queries.
+	targetsMu   sync.Mutex
+	targetsAt   time.Time
+	targetsRows []serverstore.SnapshotTarget
 }
 
 const recordSnapshotCacheTTL = 30 * time.Second
@@ -73,6 +82,27 @@ func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.
 	return w.updatedAt
 }
 
+// cachedSnapshotTargets serves the whole-network snapshot-target inventory
+// from one read per TTL. Holding the lock across the miss also collapses a
+// stampede: on the production host the pool is eight connections, so
+// concurrent cold readers each issuing this read is what turns a slow page
+// into a stalled server.
+//
+// Callers only ever range over the result, so they share one slice.
+func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
+	w.targetsMu.Lock()
+	defer w.targetsMu.Unlock()
+	if !w.targetsAt.IsZero() && time.Since(w.targetsAt) < recordSnapshotCacheTTL {
+		return w.targetsRows, nil
+	}
+	rows, err := w.s.ListSnapshotTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	w.targetsRows, w.targetsAt = rows, time.Now()
+	return w.targetsRows, nil
+}
+
 func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
 	js, ok, err := w.s.GetLatestStats(ctx)
 	return js, err == nil && ok
@@ -102,9 +132,10 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	// listed versions under a heading whose empty state reads "No versions
 	// with evidence yet", and every one of those links was a 404.
 	//
-	// One extra scan per package page, the same one PackageSymbols already
-	// pays per version page. A link into a 404 is worse than a slow page.
-	targets, terr := w.s.ListSnapshotTargets(ctx)
+	// A link into a 404 is worse than a slow page. This read is shared with
+	// PackageSymbols through cachedSnapshotTargets, so the whole cube assembly
+	// pays for it once rather than once per version.
+	targets, terr := w.cachedSnapshotTargets(ctx)
 	if terr != nil {
 		return nil, terr
 	}
@@ -130,7 +161,7 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 }
 
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
-	targets, err := w.s.ListSnapshotTargets(ctx)
+	targets, err := w.cachedSnapshotTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +592,7 @@ func (w *webStore) packageHits(ctx context.Context, filter func(p domain.PURL) b
 // symbols with evidence, then raw evidence count, then name for a stable
 // order.
 func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL) bool) ([]web.PackageHit, error) {
-	targets, err := w.s.ListSnapshotTargets(ctx)
+	targets, err := w.cachedSnapshotTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -744,7 +775,7 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 			add(row.PURL, row.Symbol, row.SnapshotJSON)
 		}
 	} else {
-		targets, err := w.s.ListSnapshotTargets(ctx)
+		targets, err := w.cachedSnapshotTargets(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -752,8 +783,9 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 			add(target.PURL, target.Symbol, "")
 		}
 	}
-	// When a package's evidence last changed. One row per purl, so this
-	// costs a grouped index scan rather than reading any snapshot.
+	// When a package's evidence last changed. One row per purl, but the
+	// query expands every snapshot document to find it — a full pass over
+	// compatibility_snapshots, which is why it is read through the cache.
 	updated := w.cachedSnapshotUpdatedAt(ctx)
 	latest := map[string]time.Time{}
 	for purl, at := range updated {

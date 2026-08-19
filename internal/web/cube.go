@@ -396,40 +396,80 @@ type cubeCacheEntry struct {
 	at       time.Time
 }
 
-func (s *site) cubeFacts(ctx context.Context, eco, name string) (facts []cubeFact, windowed bool) {
-	key := eco + "|" + name
-	now := time.Now()
-	s.cubeMu.Lock()
-	if e, ok := s.cubeCache[key]; ok && now.Sub(e.at) < cubeTTL {
-		s.cubeMu.Unlock()
-		return e.facts, e.windowed
-	}
-	s.cubeMu.Unlock()
-
-	facts, windowed, err := loadCubeFacts(ctx, s.d.Store, eco, name)
-	if err != nil {
-		return nil, false
-	}
+// cubeFactsCached reports an already-assembled cube, and never assembles
+// one. It exists so a page can prefer what is warm over what is best: the
+// landing hero ranks candidates by grid richness, and doing that by loading
+// each candidate put the whole fan-out on the request path.
+func (s *site) cubeFactsCached(eco, name string) ([]cubeFact, bool) {
 	s.cubeMu.Lock()
 	defer s.cubeMu.Unlock()
-	if s.cubeCache == nil {
-		s.cubeCache = map[string]cubeCacheEntry{}
+	e, ok := s.cubeCache[eco+"|"+name]
+	if !ok || time.Since(e.at) >= cubeTTL {
+		return nil, false
 	}
-	if len(s.cubeCache) >= cubeCacheMax {
-		// Expired entries go first; only if none were expired does one
-		// arbitrary fresh entry make room.
-		for k, e := range s.cubeCache {
-			if now.Sub(e.at) >= cubeTTL {
-				delete(s.cubeCache, k)
+	return e.facts, true
+}
+
+func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, bool) {
+	key := eco + "|" + name
+	for {
+		now := time.Now()
+		s.cubeMu.Lock()
+		if e, ok := s.cubeCache[key]; ok && now.Sub(e.at) < cubeTTL {
+			s.cubeMu.Unlock()
+			return e.facts, e.windowed
+		}
+		// Someone is already assembling this package. Wait for them instead of
+		// repeating dozens of round trips: the production pool is eight
+		// connections, so a stampede on one cold cube is what stops every other
+		// page rather than merely slowing this one.
+		if wait, loading := s.cubeLoading[key]; loading {
+			s.cubeMu.Unlock()
+			select {
+			case <-wait:
+			case <-ctx.Done():
+				return nil, false
 			}
+			// Re-read: normally the loader has just filled the cache. If it
+			// failed it left nothing, and this waiter takes its turn loading.
+			continue
+		}
+		if s.cubeLoading == nil {
+			s.cubeLoading = map[string]chan struct{}{}
+		}
+		done := make(chan struct{})
+		s.cubeLoading[key] = done
+		s.cubeMu.Unlock()
+
+		facts, windowed, err := loadCubeFacts(ctx, s.d.Store, eco, name)
+
+		s.cubeMu.Lock()
+		delete(s.cubeLoading, key)
+		close(done)
+		if err != nil {
+			s.cubeMu.Unlock()
+			return nil, false
+		}
+		if s.cubeCache == nil {
+			s.cubeCache = map[string]cubeCacheEntry{}
 		}
 		if len(s.cubeCache) >= cubeCacheMax {
-			for k := range s.cubeCache {
-				delete(s.cubeCache, k)
-				break
+			// Expired entries go first; only if none were expired does one
+			// arbitrary fresh entry make room.
+			for k, e := range s.cubeCache {
+				if now.Sub(e.at) >= cubeTTL {
+					delete(s.cubeCache, k)
+				}
+			}
+			if len(s.cubeCache) >= cubeCacheMax {
+				for k := range s.cubeCache {
+					delete(s.cubeCache, k)
+					break
+				}
 			}
 		}
+		s.cubeCache[key] = cubeCacheEntry{facts: facts, windowed: windowed, at: now}
+		s.cubeMu.Unlock()
+		return facts, windowed
 	}
-	s.cubeCache[key] = cubeCacheEntry{facts: facts, windowed: windowed, at: now}
-	return facts, windowed
 }
