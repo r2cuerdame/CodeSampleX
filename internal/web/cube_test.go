@@ -135,7 +135,7 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	sliced := filterCubeFacts(facts, map[string]string{"os": "windows"})
-	g := buildCubeGrid(sliced, "version", "arch", nil, pivotNow)
+	g := buildCubeGrid(sliced, "version", "arch", pivotLinks{}, pivotNow)
 	if len(g.Cols) != 2 || g.Cols[0].Label != "19.1.0" || g.Cols[1].Label != "18.3.1" {
 		t.Fatalf("cols = %v, want versions newest first", g.Cols)
 	}
@@ -201,7 +201,7 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := buildCubeGrid(facts, "runtime", "os", nil, pivotNow)
+	g := buildCubeGrid(facts, "runtime", "os", pivotLinks{}, pivotNow)
 	c := cellAt(t, g, "linux", "node 22")
 	if c.Ver != 1 {
 		t.Fatalf("cell ver = %d, want the one real contract run counted once", c.Ver)
@@ -224,7 +224,7 @@ func TestCubeGridKeepsDistinctVerifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := buildCubeGrid(facts, "runtime", "os", nil, pivotNow)
+	g := buildCubeGrid(facts, "runtime", "os", pivotLinks{}, pivotNow)
 	if got := cellAt(t, g, "linux", "node 22").Ver; got != 2 {
 		t.Fatalf("cell ver = %d, want 2 — different env buckets are different runs", got)
 	}

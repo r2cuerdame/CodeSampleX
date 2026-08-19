@@ -535,16 +535,12 @@ type sampleVersionCount struct {
 // sampleVersionCounts groups a package's samples by the version they were
 // written against, newest first. Samples whose manifest named no version
 // keep their own row rather than being hidden.
-func sampleVersionCounts(b basePage, eco, name string, versions []string, samples []SampleListItem) []sampleVersionCount {
-	// Only versions that actually have a page may be linked. A golang
-	// module is published both as "1.6.0" and "v1.6.0" and only the
-	// spelling with evidence has a version page, so linking every spelling
-	// a manifest used would hand the reader a 404 — measured on
-	// github.com/google/uuid, where 94 samples say v1.6.0 and 2 say 1.6.0.
-	hasPage := make(map[string]bool, len(versions))
-	for _, v := range versions {
-		hasPage[v] = true
-	}
+func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem) []sampleVersionCount {
+	// Any version a sample names now has a page — the version handler
+	// renders for published answers as well as for snapshot evidence — so
+	// the only unlinkable row is one whose manifest recorded no version at
+	// all. Measured on github.com/google/uuid, where 94 samples say
+	// v1.6.0 and 2 say 1.6.0 and only the first has evidence.
 	byVersion := map[string]int64{}
 	for _, item := range samples {
 		byVersion[item.Version]++
@@ -552,7 +548,7 @@ func sampleVersionCounts(b basePage, eco, name string, versions []string, sample
 	out := make([]sampleVersionCount, 0, len(byVersion))
 	for version, count := range byVersion {
 		row := sampleVersionCount{Version: version, Count: count}
-		if hasPage[version] {
+		if version != "" {
 			row.Href = b.WithLang(versionHref(eco, name, version))
 		}
 		out = append(out, row)
@@ -604,7 +600,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
-		SampleVersions: sampleVersionCounts(b, eco, name, versions, samples),
+		SampleVersions: sampleVersionCounts(b, eco, name, samples),
 		Crumbs:         leaf(recordCrumbs(b, eco, name, "", "")),
 		Cube:           buildCubeView(s, r, lang, eco, name),
 	})
@@ -647,7 +643,12 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 			matrix = buildMatrix(lang, doc)
 		}
 	}
-	if len(symbols) == 0 && len(matrix) == 0 {
+	// Published answers are reason enough for a version to have a page. A
+	// golang module is published as both "1.6.0" and "v1.6.0" and only one
+	// spelling carries snapshot evidence, so requiring evidence here left
+	// the samples filed under the other spelling with nowhere to be read.
+	samples := s.versionSamples(r, eco, name, version)
+	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -670,7 +671,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
-		Samples:    s.versionSamples(r, eco, name, version),
+		Samples:    samples,
 		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
 	})
 }
@@ -692,12 +693,18 @@ func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version strin
 	// carries the verification, the package-level fact keeps only its own
 	// disjoint observations.
 	facts = suppressDuplicatePackageVerifications(facts)
-	href := func(row, col string) string {
-		return cubeHref(pkgHref(eco, name), cubeQuery(map[string]string{
-			"version": version, "symbol": row, "os": col,
-		}, "", "", lang))
+	pin := func(extra map[string]string) string {
+		q := map[string]string{"version": version}
+		for k, v := range extra {
+			q[k] = v
+		}
+		return cubeHref(pkgHref(eco, name), cubeQuery(q, "", "", lang))
 	}
-	g := buildCubeGrid(facts, "os", "symbol", href, time.Now())
+	g := buildCubeGrid(facts, "os", "symbol", pivotLinks{
+		Cell: func(row, col string) string { return pin(map[string]string{"symbol": row, "os": col}) },
+		Row:  func(row string) string { return pin(map[string]string{"symbol": row}) },
+		Col:  func(col string) string { return pin(map[string]string{"os": col}) },
+	}, time.Now())
 	if len(g.Rows) <= 1 && len(g.Cols) <= 1 {
 		return pivotGrid{}
 	}

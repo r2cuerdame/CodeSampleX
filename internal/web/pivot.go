@@ -60,12 +60,25 @@ type pivotCell struct {
 type pivotAxis struct {
 	Label string
 	Icon  string // "linux" | "windows" | "macos" | ""
+	// Href narrows the slice to this one value. A cell answers "this row
+	// AND this column"; a header answers "this column, whatever the rows
+	// say", which is the other half of reading a grid.
+	Href string
 }
 
 type pivotGridRow struct {
 	Label string
 	Icon  string
+	Href  string
 	Cells []pivotCell // aligned with pivotGrid.Cols by index
+}
+
+// pivotLinks are the three ways into a grid: one cell, one whole row, one
+// whole column. Any of them may be nil, which renders that part as text.
+type pivotLinks struct {
+	Cell func(row, col string) string
+	Row  func(row string) string
+	Col  func(col string) string
 }
 
 // osIcon names the icon family for an OS label, and the text that should
@@ -363,7 +376,8 @@ func buildPivot(rows []snapshotRow, rowKey, colKey func(r snapshotRow) string,
 		a.absorbRow(r)
 	}
 	// This pivot's rows are always the operating system.
-	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false, cellHref, now)
+	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false,
+		pivotLinks{Cell: cellHref}, now)
 }
 
 // assembleGrid turns aggregated cells into an ordered, capped, rendered
@@ -372,7 +386,7 @@ func buildPivot(rows []snapshotRow, rowKey, colKey func(r snapshotRow) string,
 func assembleGrid(aggs map[cellKey]*pivotAgg,
 	sortRowsFn, sortColsFn func([]string) []string,
 	rowsAreOS, colsAreOS bool,
-	cellHref func(row, col string) string, now time.Time) pivotGrid {
+	links pivotLinks, now time.Time) pivotGrid {
 
 	if len(aggs) == 0 {
 		return pivotGrid{}
@@ -403,6 +417,9 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 		if colsAreOS {
 			axis.Icon, axis.Label = osIcon(c)
 		}
+		if links.Col != nil {
+			axis.Href = links.Col(c)
+		}
 		g.Cols = append(g.Cols, axis)
 	}
 	lastSeen := ""
@@ -411,11 +428,14 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 		if rowsAreOS {
 			row.Icon, row.Label = osIcon(rk)
 		}
+		if links.Row != nil {
+			row.Href = links.Row(rk)
+		}
 		for _, ck := range cols {
 			a := aggs[cellKey{rk, ck}]
 			cell := buildPivotCell(a, now)
-			if cell.Class != "empty" && cellHref != nil {
-				cell.Href = cellHref(rk, ck)
+			if cell.Class != "empty" && links.Cell != nil {
+				cell.Href = links.Cell(rk, ck)
 			}
 			if cell.Bang {
 				g.HasBang = true

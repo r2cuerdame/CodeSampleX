@@ -215,10 +215,15 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 		pagePath := pkgHref(h.Ecosystem, h.Name)
 		for rank, pair := range heroAxisPairs {
 			x, y := pair[0], pair[1]
-			href := func(row, col string) string {
-				return cubeHref(pagePath, cubeQuery(map[string]string{y: row, x: col}, "", "", lang))
+			pin := func(dims map[string]string) string {
+				return cubeHref(pagePath, cubeQuery(dims, "", "", lang))
 			}
-			grid := buildCubeGrid(facts, x, y, href, now)
+			links := pivotLinks{
+				Cell: func(row, col string) string { return pin(map[string]string{y: row, x: col}) },
+				Row:  func(row string) string { return pin(map[string]string{y: row}) },
+				Col:  func(col string) string { return pin(map[string]string{x: col}) },
+			}
+			grid := buildCubeGrid(facts, x, y, links, now)
 			if score := heroGridScore(grid, rank); score > bestScore {
 				bestScore = score
 				best = &heroMatrixData{

@@ -308,7 +308,7 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 // buildCubeGrid pivots a fact slice on two dimensions. Facts that never
 // recorded either dimension stay out — the cube does not guess.
 func buildCubeGrid(facts []cubeFact, x, y string,
-	cellHref func(row, col string) string, now time.Time) pivotGrid {
+	links pivotLinks, now time.Time) pivotGrid {
 
 	cells := map[cellKey][]cubeFact{}
 	for _, f := range facts {
@@ -325,7 +325,7 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	}
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
-	return assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", cellHref, now)
+	return assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
 }
 
 // mergeCubeFacts folds one cell's facts together without double-counting.

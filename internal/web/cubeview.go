@@ -263,17 +263,25 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		view.YOptions = append(view.YOptions, cubeAxisOption{Key: dim, Label: label, Selected: dim == y})
 	}
 
-	href := func(row, col string) string {
+	// A cell pins both coordinates; a header pins just its own, which is
+	// how a reader asks "everything on node 22" rather than one square of
+	// it. Neither carries explicit axes: the next view re-defaults over
+	// whatever still varies.
+	pin := func(extra map[string]string) string {
 		next := map[string]string{}
 		for d, v := range filters {
 			next[d] = v
 		}
-		next[x] = col
-		next[y] = row
-		// No explicit axes: the next view re-defaults over what still varies.
+		for d, v := range extra {
+			next[d] = v
+		}
 		return cubeHref(pagePath, cubeQuery(next, "", "", lang))
 	}
-	view.Grid = buildCubeGrid(sliced, x, y, href, time.Now())
+	view.Grid = buildCubeGrid(sliced, x, y, pivotLinks{
+		Cell: func(row, col string) string { return pin(map[string]string{x: col, y: row}) },
+		Row:  func(row string) string { return pin(map[string]string{y: row}) },
+		Col:  func(col string) string { return pin(map[string]string{x: col}) },
+	}, time.Now())
 	return view
 }
 

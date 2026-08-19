@@ -174,13 +174,14 @@ func TestPackagePageExistsForASampledPackage(t *testing.T) {
 		t.Fatalf("/cargo/serde status = %d, want 200 (a sample names it)", rec.Code)
 	}
 	// The package page says which version the answers were written
-	// against. This one has no snapshot, so it has no version page either:
-	// the version is named as plain text rather than linked into a 404.
-	body := rec.Body.String()
-	mustContain(t, body, "1.0.229")
-	if strings.Contains(body, `href="/cargo/serde/1.0.229"`) {
-		t.Error("linked a version that has no page")
+	// against, and that version has a page even with no snapshot evidence:
+	// the samples are the reason to go there.
+	mustContain(t, rec.Body.String(), `href="/cargo/serde/1.0.229"`)
+	version := get(t, mux, "/cargo/serde/1.0.229")
+	if version.Code != http.StatusOK {
+		t.Fatalf("/cargo/serde/1.0.229 status = %d, want 200 (2 samples name it)", version.Code)
 	}
+	mustContain(t, version.Body.String(), `href="/samples/sha256:cafe01"`)
 }
 
 // Verified samples cover nine ecosystems. The package router originally

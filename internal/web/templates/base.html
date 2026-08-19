@@ -332,11 +332,11 @@ document.addEventListener('keydown',event=>{
 {{- end}}
 <div class="tablewrap">
 <table class="pivot">
-<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{template "osicon" .Icon}}{{.Label}}</th>{{end}}</tr></thead>
+<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}</th>{{end}}</tr></thead>
 <tbody>
 {{- range .Rows}}
 <tr>
-  <th class="rowlabel mono">{{template "osicon" .Icon}}{{.Label}}</th>
+  <th class="rowlabel mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}</th>
   {{- range .Cells}}
   <td class="pv {{.Class}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
     {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}
