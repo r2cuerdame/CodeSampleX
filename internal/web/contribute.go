@@ -29,6 +29,11 @@ type contributePage struct {
 	WorkerRunPrompt   string
 	WorkerSetupCMD    string
 	WorkerRunCMD      string
+	// WindowsSwitchCMD moves an already-installed worker onto Windows
+	// containers. It is separate from setup because it is a choice about
+	// WHICH platform this machine contributes evidence for, not another
+	// way to install.
+	WindowsSwitchCMD string
 }
 
 func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +48,7 @@ func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
 		WorkerRunPrompt:   workerRunPrompt(lang),
 		WorkerSetupCMD:    workerSetupCMD(s.base(r)),
 		WorkerRunCMD:      workerRunCMD(),
+		WindowsSwitchCMD:  windowsWorkerCMD(),
 	})
 }
 
@@ -52,6 +58,28 @@ func workerSetupPrompt(lang, base string) string {
 
 func workerRunPrompt(lang string) string {
 	return i18n.T(lang, "landing.worker_run_prompt")
+}
+
+// windowsWorkerCMD switches this machine's Docker daemon to Windows
+// containers and restarts the worker on it.
+//
+// A daemon serves one kind of container at a time, so this is the whole
+// decision: on Linux containers a Windows machine produces Linux
+// receipts, which the network already has plenty of. The command checks
+// the mode it ended in rather than assuming the switch worked —
+// DockerCli.exe is only present with Docker Desktop, and switching can
+// fail on a host whose Windows build does not match the images.
+func windowsWorkerCMD() string {
+	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; ` +
+		`$cli=Join-Path $env:ProgramFiles 'Docker\Docker\DockerCli.exe'; ` +
+		`if (-not (Test-Path -LiteralPath $cli)) { throw 'Docker Desktop is required to switch container modes.' }; ` +
+		`& $cli -SwitchWindowsEngine; ` +
+		`$deadline=(Get-Date).AddMinutes(3); ` +
+		`do { Start-Sleep -Seconds 5; $os=(docker version --format '{{.Server.Os}}' 2>$null) } ` +
+		`while ($os -ne 'windows' -and (Get-Date) -lt $deadline); ` +
+		`if ($os -ne 'windows') { throw \"Docker is still serving $os containers; the switch did not complete.\" }; ` +
+		`Restart-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -ErrorAction SilentlyContinue; ` +
+		`Write-Output \"Docker now serves windows containers; the worker will verify golang and pypi samples on Windows.\""`
 }
 
 func workerSetupCMD(base string) string {

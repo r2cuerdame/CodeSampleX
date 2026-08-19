@@ -47,6 +47,22 @@
     </div>
   </div>
   <p class="note">{{.T "landing.worker_safety"}}</p>
+
+  {{/* Which platform this machine measures FOR is a separate decision
+       from installing the worker: a Docker daemon serves Linux or Windows
+       containers, never both, so a Windows machine on the default setting
+       contributes Linux evidence the network already has plenty of. */}}
+  <div class="workerprompt-card windows-switch">
+    <h3>{{.T "contribute.windows_heading"}}</h3>
+    <p class="dim small">{{.T "contribute.windows_body"}}</p>
+    <div class="llmbox workerbox">
+      <div class="llmactions">
+        <button class="copy llmcopy mono" type="button" data-copy-target="#worker-windows-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_cmd_copy"}}</button>
+      </div>
+      <pre id="worker-windows-cmd" class="llmtext mono" tabindex="0">{{.WindowsSwitchCMD}}</pre>
+    </div>
+    <p class="note">{{.T "contribute.windows_note"}}</p>
+  </div>
 </section>
 
 <section>
