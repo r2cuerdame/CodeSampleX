@@ -421,26 +421,27 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`<html lang="ko">`, "CodeSampleX 운영 대시보드", "운영 요약", "지금 개입할 것", "검증 샘플 추이", "누적", "일일 순증감",
-		"1,234", "45,213", "951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
+		"951", "미응답 좌표 31개", "npm/three", "0.180.0", "Scene",
 		"누락 날짜는 0으로 채우거나 연결하지 않음", "전체 네트워크에 접수된 검증 영수증",
-		"최근 검증 생태계 구성", "npm · JavaScript/TypeScript", "maven · Java/JVM", "최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
+		"최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
 		"API·개인정보 진단", "69,467", "429", "5xx", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
-		"Sample hit rate", "75.0%", "No match 비율", "25.0%", "공개 검색 응답",
+		"No match 비율", "25.0%",
 		"검증 작업 큐", "Claim 가능", "만료 lease", "유효 claim 워커 ID 2개", "온라인·idle 워커 수나 heartbeat가 아닙니다",
-		"‘실패 회피’는 추정하지 않습니다", "측정 경계", "활성 MCP 세션·설치·다운로드",
+		"측정 경계", "활성 MCP 세션·설치·다운로드",
 		"내부 샘플 워커", "LLM 모델", "추론 강도", "워커 수", "프롬프트 + CLI 발급·복사",
-		"검색 효용", "실제로 도움이 되는가", "샘플 채택 성과", "서비스 상태", "서버 정상",
+		"서비스 상태", "서버 정상",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing honest label %q", want)
 		}
 	}
+	// 검색 효용, 생태계 구성 and 샘플 채택 성과 were removed rather than folded.
+	// The first drew a headline hit rate from search_outcomes_daily, which holds
+	// zero rows in production; the other two restate a corpus-wide distribution
+	// that does not move in a day. See TestAdminDropsTheSectionsThatMeasuredNothing.
 	for _, visible := range []string{
 		`<section class="panel" aria-labelledby="velocity-title">`,
-		`<section class="panel" aria-labelledby="quality-title">`,
 		`<section class="panel wide" aria-labelledby="verification-title">`,
-		`<section class="panel side" aria-labelledby="ecosystem-title">`,
-		`<section class="panel half" aria-labelledby="adoption-title">`,
 		`<section class="panel" aria-labelledby="health-title">`,
 	} {
 		if !strings.Contains(body, visible) {

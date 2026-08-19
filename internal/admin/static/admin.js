@@ -350,3 +350,96 @@
 
   load();
 })();
+
+(() => {
+  const list = document.querySelector("#farm-workers");
+  const health = document.querySelector("#farm-health");
+  const cost = document.querySelector("#farm-cost");
+  if (!list || !health || !cost) return;
+
+  const num = (n) => n.toLocaleString("ko-KR");
+  const since = (iso) => {
+    if (!iso) return null;
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    return mins < 1 ? "방금" : mins < 60 ? `${mins}분 전` : `${Math.round(mins / 60)}시간 전`;
+  };
+
+  const stat = (label, value, warn) => {
+    const box = document.createElement("div");
+    box.className = "stat";
+    const l = document.createElement("span");
+    l.className = "label";
+    l.textContent = label;
+    const v = document.createElement("strong");
+    v.textContent = value;
+    if (warn) v.className = "bad";
+    box.append(l, v);
+    return box;
+  };
+
+  const load = async () => {
+    let data;
+    try {
+      const response = await fetch("/admin/api/farm", {
+        headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      data = await response.json();
+    } catch (_) {
+      // Say nothing rather than zeros: "not measured" and "nothing wrong" must
+      // not look the same on this panel.
+      list.replaceChildren();
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "팜 지표를 불러오지 못했습니다.";
+      list.appendChild(p);
+      return;
+    }
+
+    list.replaceChildren();
+    if (!data.workers.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "활성 워커가 없습니다.";
+      list.appendChild(p);
+    }
+    for (const worker of data.workers) {
+      const row = document.createElement("div");
+      row.className = "sample-worker-row";
+      const info = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = worker.computerName || worker.label;
+      const meta = document.createElement("span");
+      meta.className = "note";
+      if (!worker.started) {
+        name.classList.add("bad");
+        meta.textContent = `세션 발급 ${since(worker.issuedAt)} · 아직 갱신 없음 · 초안 0건 — 워커가 뜨지 못했습니다`;
+      } else {
+        const rate = worker.perHour ? `${worker.perHour.toFixed(1)}건/시간` : "—";
+        const holding = worker.holding ? ` · 작업 중 ${worker.holding}` : "";
+        meta.textContent = `${rate} · 최근 1시간 ${worker.drafts}건(공개 ${worker.published}) · 갱신 ${since(worker.lastRefreshAt)}${holding}`;
+      }
+      info.append(name, meta);
+      row.append(info);
+      list.appendChild(row);
+    }
+
+    health.replaceChildren();
+    const h = data.health;
+    const dupRate = h.duplicateRate === undefined ? "—" : `${(h.duplicateRate * 100).toFixed(1)}%`;
+    health.append(
+      stat("공개 샘플", num(h.publicSamples)),
+      stat("중복 좌표", `${num(h.duplicateCoordinates)} · ${dupRate}`, h.duplicateCoordinates > 0),
+      stat("잠긴 좌표", num(h.staleClaims), h.staleClaims > 0),
+      stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
+        .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
+    );
+
+    cost.textContent = data.instances.length
+      ? `${data.instances.map((i) => `${i.name} $${i.monthlyUsd}`).join(" · ")} — 합계 $${data.monthlyTotalUsd}/월`
+      : "인스턴스 비용이 설정되지 않았습니다 (CSX_INSTANCES).";
+  };
+
+  load();
+  window.setInterval(load, 60000);
+})();
