@@ -92,18 +92,25 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The package-level row this used to expect is gone on purpose. The
+	// fixture's sample already proves axios@1.12.0 on windows, and offering
+	// that same coordinate again is what put 201 samples on one purl in
+	// production. Asserting it here is what kept the bug alive, so the
+	// assertion is inverted rather than relaxed.
 	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(candidates) != 3 {
+	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "axios.post" || candidates[0].Score != 17 {
 		t.Fatalf("first candidate = %+v", candidates[0])
 	}
-	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "" || candidates[1].Score != 22 {
-		t.Fatalf("package expansion = %+v", candidates[1])
+	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "axios.get" || candidates[1].Score != 5 {
+		t.Fatalf("symbol expansion = %+v", candidates[1])
 	}
-	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "axios.get" || candidates[2].Score != 5 {
-		t.Fatalf("symbol expansion = %+v", candidates[2])
+	for _, c := range candidates {
+		if c.Symbol == "" {
+			t.Fatalf("a package-level coordinate already proven on windows was offered: %+v", c)
+		}
 	}
 
 	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-finding", candidates, now, now.Add(24*time.Hour))
@@ -111,11 +118,11 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", work, ok, err)
 	}
 	remaining, err := store.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 3 {
+	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := store.ClaimAuthoringWork(ctx, "writer-expansion", remaining, now, now.Add(24*time.Hour))
-	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "" {
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "axios.get" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
 	}
 }
@@ -387,5 +394,104 @@ func TestAuthoringExpansionCapsSiblingsPerPackage(t *testing.T) {
 	if !smallReachable {
 		t.Errorf("smallpkg's work was pushed out of the window entirely; order=%s",
 			formatCandidateOrder(candidates))
+	}
+}
+
+// Package-level expansion exists to get a package-level sample for an
+// environment that has evidence but no proof yet. It was generated FROM the
+// already-proven (purl, os) pairs instead of excluded BY them, and the symbol
+// filter never applied to package-level rows at all — so a package proven on
+// linux was offered for linux again, and again, forever. In production that
+// produced 201 verified samples for one coordinate, all on the same OS, and
+// 37% of the whole corpus was redundant.
+func TestAuthoringExpansionStopsOfferingAProvenPackageLevelCoordinate(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	batch := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "peer", ProjectBucket: "proj",
+		Package: "pkg:npm/proven@1.0.0", Symbol: "proven.call", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18"},
+		Stage:       domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 12,
+	}
+	if accepted, _, err := store.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || accepted != 1 {
+		t.Fatalf("ingest = %d err=%v", accepted, err)
+	}
+	if err := store.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/proven@1.0.0", Ecosystem: "npm", Name: "proven", Version: "1.0.0", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A package-level sample already proves this package on linux.
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:pkglevel", ManifestJSON: `{"packages":["pkg:npm/proven@1.0.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-pkglevel", SampleID: "sha256:pkglevel", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range candidates {
+		if c.Name == "proven" && c.Version == "1.0.0" && c.Symbol == "" && c.TargetOS == "linux" {
+			t.Fatalf("a package-level coordinate already proven on linux was offered again: order=%s",
+				formatCandidateOrder(candidates))
+		}
+	}
+	// The symbol nobody has answered is still work worth doing.
+	foundSymbol := false
+	for _, c := range candidates {
+		if c.Symbol == "proven.call" {
+			foundSymbol = true
+		}
+	}
+	if !foundSymbol {
+		t.Errorf("the unanswered symbol was dropped along with the duplicate: order=%s",
+			formatCandidateOrder(candidates))
+	}
+}
+
+// Revoking a session marked the session and left its claim behind. The lease
+// runs 24 hours and the assignment key ignores who holds it, so one worker
+// stopped mid-job took its coordinates off the board for a day — for every
+// other worker too. Five coordinates were sitting like that in production.
+func TestRevokingASessionReleasesItsUnfinishedClaim(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	candidates := []WantedRow{{
+		Ecosystem: "npm", Name: "left", Version: "1.0.0", Symbol: "left.call",
+		Kind: "EXPANSION", Score: 9, TargetOS: "linux",
+	}}
+	if err := store.IssueAuthoringSessions(ctx, []AuthoringSessionRow{{
+		TokenHash: "hash-doomed", SessionID: "doomed", Label: "doomed", Model: "agy",
+		Reasoning: "auto", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour),
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+	work, ok, err := store.ClaimAuthoringWork(ctx, "doomed", candidates, now, now.Add(24*time.Hour))
+	if err != nil || !ok || work.Symbol != "left.call" {
+		t.Fatalf("claim = %+v ok=%v err=%v", work, ok, err)
+	}
+
+	if revoked, err := store.RevokeAuthoringSession(ctx, "doomed", now.Add(time.Minute)); err != nil || !revoked {
+		t.Fatalf("revoke = %v err=%v", revoked, err)
+	}
+
+	// A minute later, long before the 24h lease, somebody else must be able
+	// to pick the abandoned work up.
+	later := now.Add(2 * time.Minute)
+	next, ok, err := store.ClaimAuthoringWork(ctx, "successor", candidates, later, later.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || next.Symbol != "left.call" {
+		t.Errorf("the abandoned coordinate is still locked: got %+v ok=%v", next, ok)
 	}
 }

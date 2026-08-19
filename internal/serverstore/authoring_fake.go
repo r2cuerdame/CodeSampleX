@@ -99,6 +99,15 @@ func (f *Fake) RevokeAuthoringSession(_ context.Context, sessionID string, now t
 		if row.SessionID == sessionID && row.RevokedAt.IsZero() {
 			row.RevokedAt = now
 			f.authoring[key] = row
+			// Hand back whatever it was holding. The lease runs 24 hours and
+			// the assignment key does not record who holds it, so a claim left
+			// behind takes its coordinates off the board for every other worker
+			// for a day. Work already submitted keeps its row: it has a sample.
+			for akey, work := range f.authoringWork {
+				if work.SessionID == sessionID && work.SampleID == "" {
+					delete(f.authoringWork, akey)
+				}
+			}
 			return true, nil
 		}
 	}
@@ -213,6 +222,8 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	}
 	observedScores := make(map[[3]string]int64)
 	packageScores := make(map[string]int64)
+	// (purl, os) pairs evidence has actually seen, with their weight.
+	observedTargets := make(map[string]map[string]int64)
 	for observed, score := range f.merge.observations {
 		targetOS := ""
 		if meta := f.aggMeta[observed]; meta != nil {
@@ -220,6 +231,12 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
 		packageScores[observed.PURL] += score
+		if targetOS != "" {
+			if observedTargets[observed.PURL] == nil {
+				observedTargets[observed.PURL] = map[string]int64{}
+			}
+			observedTargets[observed.PURL][targetOS] += score
+		}
 	}
 	packageTargets := make(map[string]map[string]bool)
 	verifiedPURLs := make(map[string]bool)
@@ -256,10 +273,13 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			}
 		}
 	}
+	// Package-level work is for an environment that has evidence but no proof
+	// yet. Offering the pairs already proven — which is what this did — meant a
+	// package proven on linux was offered for linux again, forever, and the
+	// symbol filter never applies to a package-level row.
 	for _, pkg := range f.packages {
-		for targetOS := range packageTargets[pkg.PURL] {
-			score := packageScores[pkg.PURL]
-			if score == 0 || !eligible(pkg, "") {
+		for targetOS, score := range observedTargets[pkg.PURL] {
+			if score == 0 || packageTargets[pkg.PURL][targetOS] || !eligible(pkg, "") {
 				continue
 			}
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}

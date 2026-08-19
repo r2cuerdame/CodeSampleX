@@ -112,12 +112,29 @@ func (p *PG) RefreshAuthoringSession(ctx context.Context, tokenHash, ip, compute
 func (p *PG) RevokeAuthoringSession(ctx context.Context, sessionID string, now time.Time) (bool, error) {
 	var revoked bool
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		tag, err := c.Exec(ctx, `UPDATE authoring_sessions SET revoked_at=$2
-			WHERE session_id=$1 AND revoked_at IS NULL`, sessionID, now)
-		if err == nil {
-			revoked = tag.RowsAffected() == 1
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
 		}
-		return err
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		tag, err := tx.Exec(ctx, `UPDATE authoring_sessions SET revoked_at=$2
+			WHERE session_id=$1 AND revoked_at IS NULL`, sessionID, now)
+		if err != nil {
+			return err
+		}
+		revoked = tag.RowsAffected() == 1
+		if !revoked {
+			return tx.Commit(ctx)
+		}
+		// Hand back whatever it was holding. The lease runs 24 hours and the
+		// assignment key does not record who holds it, so a claim left behind
+		// takes its coordinates off the board for every other worker for a day.
+		// Work already submitted keeps its row: that one carries a sample_id.
+		if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
+			WHERE session_id=$1 AND sample_id IS NULL`, sessionID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	})
 	return revoked, err
 }
@@ -275,12 +292,23 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
 				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
-				       target.target_os
-				FROM verified_package_targets target
-				JOIN packages p ON p.purl=target.purl
+				       LOWER(COALESCE(e.env_json->>'os','')) AS target_os
+				-- Package-level work is for an environment that has evidence but no
+				-- proof yet. It used to be generated FROM verified_package_targets --
+				-- the pairs already proven -- instead of excluded BY them, and the
+				-- symbol filter below never applies to a package-level row. So a
+				-- package proven on linux was offered for linux again, forever. In
+				-- production that made 201 verified samples for one coordinate, all
+				-- on the same OS, and left 37% of the corpus redundant.
+				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				GROUP BY p.purl,p.ecosystem,p.name,p.version,p.last_seen,target.target_os
+				  AND LOWER(COALESCE(e.env_json->>'os',''))<>''
+				  AND NOT EXISTS (
+				        SELECT 1 FROM verified_package_targets t
+				        WHERE t.purl=p.purl
+				          AND t.target_os=LOWER(COALESCE(e.env_json->>'os','')))
+				GROUP BY p.purl,p.ecosystem,p.name,p.version,p.last_seen,target_os
 				UNION ALL
 				-- Sibling versions of a package already proven at some version, but
 				-- carrying no verified sample of their own. Every branch above reaches
