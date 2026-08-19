@@ -10,10 +10,11 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
-// Maven verification is a supported, searchable landing-page fact in every
-// locale. The same visible sentence also preserves the important boundary:
-// A4 contract verification does not mean local Java projects are scanned.
-func TestLandingAdvertisesMavenJavaVerificationHonestly(t *testing.T) {
+// The landing names every measured ecosystem as a plain link into its
+// filtered records inventory — and makes no capability claims there. The
+// honest per-adapter matrix lives in docs/adapters.md and GET /v1/adapters,
+// where a wrong nuance cannot mislead an installer.
+func TestLandingLinksEcosystemsWithoutCapabilityClaims(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	for _, lang := range i18n.Supported {
 		path := "/" + lang + "/"
@@ -21,13 +22,25 @@ func TestLandingAdvertisesMavenJavaVerificationHonestly(t *testing.T) {
 			path = "/"
 		}
 		body := get(t, mux, path).Body.String()
-		mustContain(t, body, "Maven")
-		mustContain(t, body, "Gradle")
-		mustContain(t, body, "Java 8")
-		mustContain(t, body, "Java 25")
-		mustContain(t, body, `class="econote dim small"`)
-		mustContain(t, body, i18n.T(lang, "support.maven_java_note"))
-		mustContain(t, body, i18n.T(lang, "support.gradle_java_note"))
+		for _, eco := range landingEcosystems {
+			href := `href="/records?eco=` + eco
+			if lang != i18n.Default {
+				href = `href="/records?eco=` + eco + `&amp;lang=` + lang
+			}
+			if !strings.Contains(body, href) {
+				t.Errorf("%s: missing ecosystem record link for %q", path, eco)
+			}
+		}
+		// No capability rows on the landing any more — claims live where
+		// they can carry their caveats.
+		for _, gone := range []string{
+			i18n.T(lang, "support.maven_java_note"),
+			`class="econote`,
+		} {
+			if strings.Contains(body, gone) {
+				t.Errorf("%s: landing still carries capability copy %q", path, gone)
+			}
+		}
 	}
 }
 

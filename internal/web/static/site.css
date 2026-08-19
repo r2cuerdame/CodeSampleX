@@ -1430,3 +1430,12 @@ td.pv .pvstate { font-size: 0.7rem; }
 
 .home-detail.gridhelp { margin-top: 0.9rem; }
 .homematrix .home-search { margin-top: 0.9rem; }
+
+/* Measured ecosystems: a plain linked inventory row under the counters. */
+.ecorow {
+  display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem;
+  margin-top: 0.8rem; padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+.ecorow a { text-decoration: none; color: var(--accent-2); font-weight: 650; }
+.ecorow a:hover { color: var(--accent); text-decoration: underline; }

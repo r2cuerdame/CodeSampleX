@@ -13,6 +13,11 @@
   </div>
   <div class="hero-evidence">
     {{template "tiles" .}}
+    <nav class="ecorow mono small" aria-label="{{.T "landing.support_heading"}}">
+      {{- range .Ecos}}
+      <a href="{{.Href}}">{{.Name}}</a>
+      {{- end}}
+    </nav>
   </div>
 </section>
 
@@ -183,26 +188,6 @@
       <p class="small"><button class="copy mono" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button></p>
     </div>
   </details>
-
-  {{if .Support}}
-  <div class="support">
-    <h2 class="eyebrow mono">{{.T "landing.support_heading"}}</h2>
-    <p class="dim small">{{.T "landing.scope_note"}}</p>
-    <ul class="ecos">
-    {{- range .Support}}
-      <li class="eco">
-        <span class="econame mono">{{.Ecosystem}}</span>
-        <span class="dim mono small">{{.Managers}}</span>
-        {{if .Confidence}}<span class="chip conf-{{.ConfidenceClass}} mono small" title="{{$.T "adapters.conf_heading"}}: {{.ConfidenceTip}}">{{.Confidence}}</span>{{end}}
-        <span class="caps">
-          {{- range .Can}}<span class="cap on"><span class="y" aria-hidden="true">✓</span>{{.}}</span>{{end}}
-        </span>
-        {{if .Note}}<span class="econote dim small">{{.Note}}</span>{{end}}
-      </li>
-    {{- end}}
-    </ul>
-  </div>
-  {{end}}
 </section>
 
 {{/* Full process and privacy detail remain available for due diligence. */}}

@@ -250,8 +250,10 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 
 type landingPage struct {
 	basePage
-	Tiles     []statTile
-	Support   []supportRow
+	Tiles []statTile
+	// Ecos links each measured ecosystem into its filtered records
+	// inventory, right under the counters.
+	Ecos      []heroEco
 	InstallPS string
 	InstallSH string
 	// LLMPrompt is the ready-to-paste instruction for the coding agent the
@@ -281,70 +283,27 @@ type homeFinding struct {
 	Href      string
 }
 
-// supportRow says what CodeSampleX can observe in one ecosystem, in plain
-// words. The A0–A4 codes and the long per-adapter caveats live in
-// GET /v1/adapters and docs/adapters.md; a visitor deciding whether to
-// install needs "does it see my stack, and how much can I trust it".
-type supportRow struct {
-	Ecosystem string
-	Managers  string
-	Can       []string
-	// Note carries an adapter-specific boundary that would be misleading to
-	// reduce to a row of crosses. Verification-only support means contracts
-	// run, but must not imply that local projects are scanned.
-	Note       string
-	Confidence string // EXACT | PROBABLE | UNKNOWN
-	// ConfidenceClass styles the chip; ConfidenceTip explains the value
-	// on hover so the word is never a bare label.
-	ConfidenceClass string
-	ConfidenceTip   string
+// heroEco is one measured ecosystem, linked straight into the filtered
+// records inventory. The landing names them without capability claims —
+// the honest per-adapter matrix stays in docs/adapters.md and
+// GET /v1/adapters.
+type heroEco struct {
+	Name string
+	Href string
 }
 
-func buildSupport(lang string) []supportRow {
-	doc := loadAdapters()
-	if doc == nil {
-		return nil
+// landingEcosystems is the fixed display order of the record-backed
+// ecosystems (the knownEcosystems route set).
+var landingEcosystems = []string{
+	"npm", "pypi", "golang", "cargo", "maven", "gem", "composer", "hex", "pub",
+}
+
+func buildHeroEcos(lang string) []heroEco {
+	ecos := make([]heroEco, 0, len(landingEcosystems))
+	for _, e := range landingEcosystems {
+		ecos = append(ecos, heroEco{Name: e, Href: recordsHref(RecordFilter{Ecosystem: e}, 1, lang)})
 	}
-	// Level → the plain-language thing it lets the network observe.
-	labels := []struct{ level, key string }{
-		{"A0", "support.packages"},
-		{"A1", "support.builds"},
-		{"A2", "support.symbols"},
-		{"A4", "support.samples"},
-	}
-	rows := make([]supportRow, 0, len(doc.Adapters))
-	for _, a := range doc.Adapters {
-		has := map[string]bool{}
-		for _, c := range a.Capabilities {
-			has[c] = true
-		}
-		row := supportRow{
-			Ecosystem:  a.Ecosystem,
-			Managers:   strings.Join(a.PackageManagers, ", "),
-			Confidence: a.SymbolConfidence,
-		}
-		switch a.Name {
-		case "maven-java":
-			row.Note = i18n.T(lang, "support.maven_java_note")
-		case "gradle-java":
-			row.Note = i18n.T(lang, "support.gradle_java_note")
-		default:
-			if has["A4"] && !has["A0"] && !has["A1"] && !has["A2"] {
-				row.Note = i18n.T(lang, "support.verification_only_note")
-			}
-		}
-		if key, ok := confidenceKey[strings.ToUpper(a.SymbolConfidence)]; ok {
-			row.ConfidenceClass = strings.ToLower(a.SymbolConfidence)
-			row.ConfidenceTip = i18n.T(lang, key)
-		}
-		for _, l := range labels {
-			if has[l.level] {
-				row.Can = append(row.Can, i18n.T(lang, l.key))
-			}
-		}
-		rows = append(rows, row)
-	}
-	return rows
+	return ecos
 }
 
 func (s *site) landingRoot(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +333,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	s.render(w, "landing", http.StatusOK, landingPage{
 		basePage:  b,
 		Tiles:     buildTiles(lang, st),
-		Support:   buildSupport(lang),
+		Ecos:      buildHeroEcos(lang),
 		InstallPS: "irm " + base + "/install.ps1 | iex",
 		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
 		LLMPrompt: llmPrompt(lang, base),

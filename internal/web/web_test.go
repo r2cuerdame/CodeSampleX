@@ -14,7 +14,6 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
-	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
 func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
@@ -85,11 +84,11 @@ func TestLandingEnglish(t *testing.T) {
 	}
 	mustContain(t, body, "irm https://codesamplex.dev/install.ps1 | iex")
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
-	// One page carries the whole story: the focused counters, the way in by
-	// name, and what the network can observe in each ecosystem.
+	// One page carries the whole story: the focused counters and the
+	// measured ecosystems linked straight into the records inventory.
 	for _, s := range []string{"Packages", "Evidence", "Verified Samples", "45.2K",
 		`title="45,213" aria-label="Evidence: 45,213"`,
-		"Ecosystem support today", "npm", "packages &amp; versions"} {
+		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
@@ -146,11 +145,6 @@ func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) 
 		if strings.Contains(body, workerOnly) {
 			t.Errorf("worker-only contribution content leaked onto the homepage: %q", workerOnly)
 		}
-	}
-	support := strings.Index(body, i18n.T("en", "landing.support_heading"))
-	agents := strings.Index(body, `id="agents"`)
-	if support < 0 || agents < 0 || agents >= support {
-		t.Errorf("folded agent section must sit directly above ecosystem support: agents=%d support=%d", agents, support)
 	}
 	mustContain(t, body, `<details id="agents" class="home-detail agent-detail support-agents">`)
 	if strings.Contains(body, `id="agents" class="home-detail agent-detail support-agents" open`) {
@@ -287,28 +281,16 @@ func TestLandingExplainsHowItWorks(t *testing.T) {
 	mustContain(t, body, "What is CodeSampleX?")
 }
 
-// TestSupportRowsAreSelfExplaining: with the capability page gone, the
-// front page must still answer "does it see my stack, and how much can I
-// trust the symbol data" without A0–A4 decoding.
-func TestSupportRowsAreSelfExplaining(t *testing.T) {
+// The hero's ecosystem row is an inventory, not a capability table: every
+// routed ecosystem is named and linked, and no A-level codes leak in.
+func TestLandingEcosystemRowIsAPlainInventory(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
-	for _, ecosystem := range []string{"npm", "pypi", "golang", "cargo", "maven"} {
-		mustContain(t, body, ecosystem)
+	for _, ecosystem := range landingEcosystems {
+		mustContain(t, body, `href="/records?eco=`+ecosystem+`"`)
 	}
-	// Capabilities in words, not level codes.
-	mustContain(t, body, "packages &amp; versions")
-	mustContain(t, body, "verified samples with contracts")
-	// Symbol confidence survives the page removal, with its meaning on hover.
-	mustContain(t, body, "PROBABLE")
-	mustContain(t, body, "Resolved from imports and call sites")
-	// Maven's A4 support is useful, but it must not read as project-scanner
-	// coverage. Keep the Java runtime and that boundary visible together.
-	mustContain(t, body, "Maven contract verification keeps omitted Java at the legacy Java 21")
-	mustContain(t, body, "supports exact Java 8, 11, 17, 21 and 25")
-	mustContain(t, body, "Local Java project scanning is not yet supported")
 	if strings.Contains(body, ">A0<") || strings.Contains(body, ">A4<") {
-		t.Error("landing shows raw capability codes instead of plain language")
+		t.Error("landing shows raw capability codes")
 	}
 }
 
@@ -339,25 +321,6 @@ func TestLandingNamesSupportedAgents(t *testing.T) {
 		if strings.Contains(body, `"command":"csx"`) {
 			t.Errorf("%s hands out the bare-name MCP config, which does not resolve", path)
 		}
-	}
-}
-
-func TestLandingDescribesVerificationOnlyEcosystemsAsSupported(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/").Body.String()
-	start := strings.Index(body, `<span class="econame mono">composer</span>`)
-	if start < 0 {
-		t.Fatal("landing is missing composer support")
-	}
-	end := strings.Index(body[start:], "</li>")
-	if end < 0 {
-		t.Fatal("composer support row is not closed")
-	}
-	row := body[start : start+end]
-	mustContain(t, row, "verified samples with contracts")
-	mustContain(t, row, "Verified public samples are supported")
-	if strings.Contains(row, `class="cap off"`) {
-		t.Error("verification-only composer support is presented as ecosystem failure")
 	}
 }
 
