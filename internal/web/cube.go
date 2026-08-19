@@ -441,15 +441,25 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 		s.cubeLoading[key] = done
 		s.cubeMu.Unlock()
 
-		facts, windowed, err := loadCubeFacts(ctx, s.d.Store, eco, name)
-
-		s.cubeMu.Lock()
-		delete(s.cubeLoading, key)
-		close(done)
+		// The key is released even if the load panics. A handler panic is
+		// recovered upstream (web.go handle), so the process survives -- and
+		// without this the key would keep pointing at a channel nobody closes,
+		// parking every later reader until its request context expires and
+		// taking that package's cube out of the site until a restart.
+		facts, windowed, err := func() ([]cubeFact, bool, error) {
+			defer func() {
+				s.cubeMu.Lock()
+				delete(s.cubeLoading, key)
+				close(done)
+				s.cubeMu.Unlock()
+			}()
+			return loadCubeFacts(ctx, s.d.Store, eco, name)
+		}()
 		if err != nil {
-			s.cubeMu.Unlock()
 			return nil, false
 		}
+
+		s.cubeMu.Lock()
 		if s.cubeCache == nil {
 			s.cubeCache = map[string]cubeCacheEntry{}
 		}

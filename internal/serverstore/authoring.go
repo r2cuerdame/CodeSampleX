@@ -17,6 +17,17 @@ var (
 // AuthoringSessionRow is private operator state. TokenHash is a lowercase
 // SHA-256 digest; the bearer itself is never stored. IP is retained only for
 // the private admin list and never joins public evidence or access logs.
+// authoringSiblingVersionsPerPackage caps how many unmeasured releases of one
+// package may enter the candidate window.
+//
+// Every unmeasured sibling is a first job, so every one of them lands at
+// version_depth 1. Uncapped, a package with a long release history fills the
+// whole window with score-0 rows and pushes every other package's real work
+// past the limit -- and because the window does not skip leased rows, the
+// fleet then reads NO_WORK while thousands of candidates sit just outside it.
+// Six matches the version axis the site actually renders.
+const authoringSiblingVersionsPerPackage = 6
+
 type AuthoringSessionRow struct {
 	TokenHash     string
 	SessionID     string

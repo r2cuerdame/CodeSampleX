@@ -79,3 +79,49 @@ func TestCubeFactsStillCachesAfterSingleflight(t *testing.T) {
 		t.Errorf("assembled the cube %d times for 3 sequential readers, want 1", got)
 	}
 }
+
+// panickingVersions fails the way a real store failure arrives: a panic out of
+// the load, which the site's own handler guard recovers (web.go handle).
+type panickingVersions struct {
+	*fakeStore
+	mu     sync.Mutex
+	panics int
+}
+
+func (p *panickingVersions) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
+	p.mu.Lock()
+	first := p.panics == 0
+	p.panics++
+	p.mu.Unlock()
+	if first {
+		panic("store exploded mid-assembly")
+	}
+	return p.fakeStore.PackageVersions(ctx, ecosystem, name)
+}
+
+// The in-flight key is published before the load and removed after it. A panic
+// skips the removal, so the key stays set to a channel nobody will ever close
+// and every later reader blocks on it until its request context expires. The
+// process survives the panic -- net/http recovers, and so does this repo's own
+// handler guard -- so what is left behind is a package whose cube is gone until
+// the server restarts.
+func TestCubeFactsRecoversAfterAPanickingLoad(t *testing.T) {
+	store := &panickingVersions{fakeStore: cubeSingleflightStore().fakeStore}
+	s := &site{d: Deps{Store: store}}
+
+	func() {
+		defer func() { _ = recover() }()
+		s.cubeFacts(context.Background(), "npm", "axios")
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	facts, _ := s.cubeFacts(ctx, "npm", "axios")
+	if waited := time.Since(start); waited > 250*time.Millisecond {
+		t.Errorf("a later reader blocked %s on a key the panicking load never released", waited)
+	}
+	if len(facts) == 0 {
+		t.Error("the package's cube never came back after one recovered panic")
+	}
+}

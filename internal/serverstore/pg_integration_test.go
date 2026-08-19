@@ -1092,3 +1092,78 @@ func TestIntegrationAuthoringExpansionSpreadsAcrossVersions(t *testing.T) {
 		}
 	}
 }
+
+// The PostgreSQL twin of TestAuthoringExpansionCapsSiblingsPerPackage, seeded
+// the way the review measured it: one package with a long release history must
+// not fill the candidate window with score-0 first jobs and push a
+// heavily-observed symbol past the LIMIT. Without the cap this returned 199
+// bigpkg rows and no smallpkg work at all.
+func TestIntegrationAuthoringExpansionCapsSiblingFlood(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	seed := func(purl, symbol, anon string, count int) {
+		t.Helper()
+		b := domain.ObservationBatch{
+			SchemaVersion: 1, Epoch: "2026-08-19", AnonID: anon, ProjectBucket: anon + "proj",
+			Package: purl, Symbol: symbol, SymbolConfidence: domain.SymbolProbable,
+			Environment: env, Stage: domain.StageProjectCompile, Result: domain.ResultPass,
+			ObservationCount: count,
+		}
+		if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 || len(rejected) != 0 {
+			t.Fatalf("ingest %s = %d rejected=%v err=%v", purl, accepted, rejected, err)
+		}
+	}
+	seed("pkg:npm/bigpkg@1.0.0", "big.call", "bigpeer", 3)
+	seed("pkg:npm/smallpkg@1.0.0", "small.wanted", "smallpeer", 5000)
+
+	for i := 1; i <= 60; i++ {
+		v := fmt.Sprintf("%d.0.0", i)
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/bigpkg@" + v, Ecosystem: "npm", Name: "bigpkg",
+			Version: v, Major: fmt.Sprint(i), Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/smallpkg@1.0.0", Ecosystem: "npm", Name: "smallpkg",
+		Version: "1.0.0", Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:big-proof", ManifestJSON: `{"packages":["pkg:npm/bigpkg@1.0.0"],"symbols":["big.call"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		SampleID: "sha256:big-proof", ReceiptID: "receipt-big-proof", PeerID: "big-proof",
+		EnvHash: "env-big-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblings, smallReachable := 0, false
+	for _, c := range candidates {
+		if c.Name == "bigpkg" && c.Version != "1.0.0" {
+			siblings++
+		}
+		if c.Name == "smallpkg" {
+			smallReachable = true
+		}
+	}
+	if siblings > authoringSiblingVersionsPerPackage {
+		t.Errorf("bigpkg contributed %d sibling rows, cap is %d; order=%s",
+			siblings, authoringSiblingVersionsPerPackage, formatCandidateOrder(candidates))
+	}
+	if !smallReachable {
+		t.Errorf("smallpkg's score-5000 work never entered the window; order=%s",
+			formatCandidateOrder(candidates))
+	}
+}

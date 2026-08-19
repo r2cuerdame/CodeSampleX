@@ -312,3 +312,80 @@ func formatCandidateOrder(rows []WantedRow) string {
 	}
 	return b.String()
 }
+
+// A package's unmeasured siblings are all first jobs, so they all land at
+// version_depth 1 -- and a package with a long release history therefore fills
+// the whole candidate window with score-0 rows, pushing every other package's
+// real work past the limit. One recently-crawled package must not be able to
+// hold the entire authoring fleet hostage.
+func TestAuthoringExpansionCapsSiblingsPerPackage(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	// bigpkg: proven at 1.0.0, plus 60 public releases nobody has measured.
+	big := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "bigpeer", ProjectBucket: "bigproject",
+		Package: "pkg:npm/bigpkg@1.0.0", Symbol: "big.call", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18"},
+		Stage:       domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 3,
+	}
+	if accepted, _, err := store.IngestBatches(ctx, []domain.ObservationBatch{big}); err != nil || accepted != 1 {
+		t.Fatalf("big ingest = %d err=%v", accepted, err)
+	}
+	for i := 1; i <= 60; i++ {
+		v := fmt.Sprintf("%d.0.0", i)
+		if err := store.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/bigpkg@" + v, Ecosystem: "npm", Name: "bigpkg", Version: v, Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:big-proof", ManifestJSON: `{"packages":["pkg:npm/bigpkg@1.0.0"],"symbols":["big.call"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "receipt-big", SampleID: "sha256:big-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	// smallpkg: one heavily observed symbol nobody has answered. This is real,
+	// high-value work that must stay reachable.
+	small := big
+	small.Package = "pkg:npm/smallpkg@1.0.0"
+	small.Symbol = "small.wanted"
+	small.AnonID = "smallpeer"
+	small.ProjectBucket = "smallproject"
+	small.ObservationCount = 5000
+	if accepted, _, err := store.IngestBatches(ctx, []domain.ObservationBatch{small}); err != nil || accepted != 1 {
+		t.Fatalf("small ingest = %d err=%v", accepted, err)
+	}
+	if err := store.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/smallpkg@1.0.0", Ecosystem: "npm", Name: "smallpkg", Version: "1.0.0", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigSiblings := 0
+	smallReachable := false
+	for _, c := range candidates {
+		if c.Name == "bigpkg" && c.Version != "1.0.0" {
+			bigSiblings++
+		}
+		if c.Name == "smallpkg" {
+			smallReachable = true
+		}
+	}
+	if bigSiblings > authoringSiblingVersionsPerPackage {
+		t.Errorf("bigpkg contributed %d sibling rows, cap is %d; order=%s",
+			bigSiblings, authoringSiblingVersionsPerPackage, formatCandidateOrder(candidates))
+	}
+	if !smallReachable {
+		t.Errorf("smallpkg's work was pushed out of the window entirely; order=%s",
+			formatCandidateOrder(candidates))
+	}
+}

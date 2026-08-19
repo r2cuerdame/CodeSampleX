@@ -293,14 +293,29 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
 				       0::bigint AS score,'EXPANSION'::text AS kind,3 AS source_rank,p.last_seen,
 				       sibling.target_os
-				FROM packages p
+				-- Newest few per package only. Every sibling is a first job and so
+				-- lands at version_depth 1; uncapped, one long release history fills
+				-- the entire window with score-0 rows and pushes every other
+				-- package's real work past the LIMIT. The ordering is last_seen then
+				-- version as a STRING -- not semver, which SQL cannot express and
+				-- which puts 7.0.3 above 14.0.1. That is acceptable because this is
+				-- a safety cap rather than a ranking, and because the Fake caps by
+				-- the identical rule: a bound the two stores disagree about would be
+				-- worse than one that picks an imperfect six.
+				FROM (
+				  SELECT purl,ecosystem,name,version,last_seen,
+				         ROW_NUMBER() OVER (PARTITION BY ecosystem,name
+				                            ORDER BY last_seen DESC,version DESC) AS sibling_rank
+				  FROM packages
+				  WHERE version<>'' AND publicness='PUBLIC'
+				    AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=packages.purl)
+				) p
 				JOIN (
 				  SELECT DISTINCT pk.ecosystem,pk.name,t.target_os
 				  FROM verified_package_targets t
 				  JOIN packages pk ON pk.purl=t.purl
 				) sibling ON sibling.ecosystem=p.ecosystem AND sibling.name=p.name
-				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				  AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=p.purl)
+				WHERE p.sibling_rank <= $2
 			), ranked AS (
 				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
 				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
@@ -326,7 +341,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			ORDER BY CASE WHEN target_os='linux' THEN 0 ELSE 1 END,
 			         version_depth,
 			         source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
-			LIMIT $1`, limit)
+			LIMIT $1`, limit, authoringSiblingVersionsPerPackage)
 		if err != nil {
 			return err
 		}

@@ -131,6 +131,14 @@ func (f *Fake) ListAuthoringSessions(_ context.Context, now time.Time, limit int
 
 var _ AuthoringSessionStore = (*Fake)(nil)
 
+// Source ranks mirror the branch order of the PostgreSQL expansion query.
+const (
+	authoringRankFinding      = 0
+	authoringRankPackageLevel = 1
+	authoringRankSymbol       = 2
+	authoringRankSibling      = 3
+)
+
 func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([]WantedRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -142,6 +150,12 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	}
 	type candidateKey struct{ ecosystem, name, version, symbol, targetOS string }
 	candidates := make(map[candidateKey]WantedRow)
+	// ranks mirror the PG query's branch order (source_rank there):
+	// FINDING 0, package-level expansion 1, symbol expansion 2, sibling 3.
+	// The Fake used to proxy this with "empty symbol sorts first", which
+	// promoted rank-3 siblings above scored symbol work and made the two
+	// stores dispatch different jobs for the same data.
+	ranks := make(map[candidateKey]int)
 	eligible := func(pkg PackageRow, symbol string) bool {
 		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
 			return false
@@ -192,6 +206,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount, TargetOS: targetOS}
 				if old, ok := candidates[key]; !ok || candidate.Score > old.Score {
 					candidates[key] = candidate
+					ranks[key] = authoringRankFinding
 				}
 			}
 		}
@@ -251,6 +266,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Kind: "EXPANSION", Score: score, TargetOS: targetOS}
+				ranks[key] = authoringRankPackageLevel
 			}
 		}
 	}
@@ -274,15 +290,41 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			nameTargets[key][targetOS] = true
 		}
 	}
+	// Only the newest few siblings per package. Uncapped, one long release
+	// history fills the whole window with score-0 rows -- see
+	// authoringSiblingVersionsPerPackage. The ordering (last_seen, then version
+	// descending as a STRING) is deliberately the one PostgreSQL can express in
+	// the same query: it is a safety cap, not a ranking, and a cap that the two
+	// stores disagree about is worse than a cap that picks an imperfect six.
+	siblingsByName := make(map[[2]string][]PackageRow)
 	for _, pkg := range f.packages {
 		if verifiedPURLs[pkg.PURL] || !eligible(pkg, "") {
 			continue
 		}
-		for targetOS := range nameTargets[[2]string{pkg.Ecosystem, pkg.Name}] {
-			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
-			if _, exists := candidates[key]; !exists {
-				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
-					Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS}
+		name := [2]string{pkg.Ecosystem, pkg.Name}
+		if len(nameTargets[name]) == 0 {
+			continue
+		}
+		siblingsByName[name] = append(siblingsByName[name], pkg)
+	}
+	for name, pkgs := range siblingsByName {
+		sort.Slice(pkgs, func(i, j int) bool {
+			if !pkgs[i].LastSeen.Equal(pkgs[j].LastSeen) {
+				return pkgs[i].LastSeen.After(pkgs[j].LastSeen)
+			}
+			return pkgs[i].Version > pkgs[j].Version
+		})
+		if len(pkgs) > authoringSiblingVersionsPerPackage {
+			pkgs = pkgs[:authoringSiblingVersionsPerPackage]
+		}
+		for _, pkg := range pkgs {
+			for targetOS := range nameTargets[name] {
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
+				if _, exists := candidates[key]; !exists {
+					candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+						Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS}
+					ranks[key] = authoringRankSibling
+				}
 			}
 		}
 	}
@@ -295,61 +337,65 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if existing, ok := candidates[key]; !ok || (existing.Kind != "FINDING" && score > existing.Score) {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Symbol: observed[1], Kind: "EXPANSION", Score: score, TargetOS: observed[2]}
+				ranks[key] = authoringRankSymbol
 			}
 		}
 	}
-	out := make([]WantedRow, 0, len(candidates))
-	for _, candidate := range candidates {
-		out = append(out, candidate)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if (out[i].TargetOS == "linux") != (out[j].TargetOS == "linux") {
-			return out[i].TargetOS == "linux"
-		}
-		if out[i].Kind != out[j].Kind {
-			return out[i].Kind == "FINDING"
-		}
-		if out[i].Kind == "EXPANSION" && (out[i].Symbol == "") != (out[j].Symbol == "") {
-			return out[i].Symbol == ""
-		}
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		if out[i].Ecosystem != out[j].Ecosystem {
-			return out[i].Ecosystem < out[j].Ecosystem
-		}
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		if out[i].Version != out[j].Version {
-			return out[i].Version < out[j].Version
-		}
-		return out[i].Symbol < out[j].Symbol
-	})
-	// Depth is how many jobs this version has already been offered further up
-	// the merit order. Ordering by it first means every version earns its
-	// first job before any version earns its second, so the grid fills by
-	// breadth across versions instead of deepening whichever version already
-	// carries the most evidence. Merit still decides ties within a depth.
-	type rankedCandidate struct {
+	// Mirror the PG query exactly. Two orders matter and they are different:
+	// depth is counted in the window's ORDER BY, which has no OS term, and only
+	// the final ordering puts linux first. Counting depth in the OS-first order
+	// let a windows row take depth 1 from a linux row of the same version.
+	type rankedRow struct {
 		row   WantedRow
+		rank  int
 		depth int
 	}
-	ranked := make([]rankedCandidate, len(out))
-	depths := make(map[[3]string]int, len(out))
-	for i, row := range out {
-		key := [3]string{row.Ecosystem, row.Name, row.Version}
-		depths[key]++
-		ranked[i] = rankedCandidate{row: row, depth: depths[key]}
+	ranked := make([]rankedRow, 0, len(candidates))
+	for key, candidate := range candidates {
+		ranked = append(ranked, rankedRow{row: candidate, rank: ranks[key]})
 	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if (ranked[i].row.TargetOS == "linux") != (ranked[j].row.TargetOS == "linux") {
-			return ranked[i].row.TargetOS == "linux"
+	// PG: ROW_NUMBER() OVER (PARTITION BY ecosystem,name,version
+	//                        ORDER BY source_rank,score DESC,last_seen DESC,symbol)
+	sort.Slice(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
 		}
-		return ranked[i].depth < ranked[j].depth
+		if a.row.Score != b.row.Score {
+			return a.row.Score > b.row.Score
+		}
+		if !a.row.LastSeen.Equal(b.row.LastSeen) {
+			return a.row.LastSeen.After(b.row.LastSeen)
+		}
+		if a.row.Ecosystem != b.row.Ecosystem {
+			return a.row.Ecosystem < b.row.Ecosystem
+		}
+		if a.row.Name != b.row.Name {
+			return a.row.Name < b.row.Name
+		}
+		if a.row.Version != b.row.Version {
+			return a.row.Version < b.row.Version
+		}
+		return a.row.Symbol < b.row.Symbol
 	})
-	for i, r := range ranked {
-		out[i] = r.row
+	depths := make(map[[3]string]int, len(ranked))
+	for i := range ranked {
+		key := [3]string{ranked[i].row.Ecosystem, ranked[i].row.Name, ranked[i].row.Version}
+		depths[key]++
+		ranked[i].depth = depths[key]
+	}
+	// PG: ORDER BY (linux first),version_depth,source_rank,score DESC,
+	//              last_seen DESC,ecosystem,name,version,symbol
+	sort.SliceStable(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		if (a.row.TargetOS == "linux") != (b.row.TargetOS == "linux") {
+			return a.row.TargetOS == "linux"
+		}
+		return a.depth < b.depth
+	})
+	out := make([]WantedRow, 0, len(ranked))
+	for _, r := range ranked {
+		out = append(out, r.row)
 	}
 	if len(out) > limit {
 		out = out[:limit]
