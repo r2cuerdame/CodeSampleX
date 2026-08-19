@@ -40,6 +40,7 @@ type Fake struct {
 	adoptions       map[[3]string]AdoptionRow
 	wantedSeen      map[[6]string]bool
 	authoring       map[string]AuthoringSessionRow
+	adminTokens     map[string]AdminTokenRow // token hash -> row
 	authoringDrafts map[string]AuthoringDraftRow
 	authoringWork   map[[4]string]AuthoringWorkRow
 

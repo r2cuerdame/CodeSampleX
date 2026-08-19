@@ -42,6 +42,8 @@
     ul { margin:0; padding-left:20px } li+li { margin-top:7px }.empty { padding:14px 0; color:var(--muted) }.server { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }
     .sample-worker-form { display:grid; grid-template-columns:minmax(12rem,1.4fr) minmax(9rem,1fr) minmax(8rem,.8fr) minmax(6rem,.55fr) auto; gap:10px; align-items:end }
     .sample-worker-form label { display:grid; gap:5px; color:var(--muted); font-size:11px; font-weight:700 }.sample-worker-form input,.sample-worker-form select { width:100%; min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:9px; background:#06142f; color:var(--ink); font:inherit }
+    .sample-worker-form label.checkbox { align-content:end }
+    .sample-worker-form label.checkbox input[type=checkbox] { width:auto; min-height:34px; justify-self:start; accent-color:#62d9ff }
     .sample-worker-form button,.danger-button { border:0; border-radius:9px; padding:10px 13px; color:#fff; font-weight:800; cursor:pointer }.sample-worker-form button { background:var(--blue) }.danger-button { background:#8d2940 }.sample-worker-form button:disabled,.danger-button:disabled { opacity:.55; cursor:wait }
     .sample-worker-sessions { display:grid; gap:8px; margin-top:14px }.sample-worker-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px; border:1px solid rgba(88,138,207,.35); border-radius:10px; background:rgba(3,14,34,.38) }.sample-worker-row strong,.sample-worker-row span { display:block }.sample-worker-row .note { margin-top:3px; overflow-wrap:anywhere }
     .sample-worker-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end }.copy-button { border:1px solid rgba(98,217,255,.55); border-radius:9px; padding:10px 13px; color:#dff8ff; background:#123568; font-weight:800; cursor:pointer }.copy-button:disabled { opacity:.55; cursor:wait }
@@ -73,7 +75,6 @@
     <section class="panel" id="sample-authoring" aria-labelledby="sample-authoring-title">
       <div class="section-head"><div><h2 id="sample-authoring-title">내부 샘플 워커</h2><p class="note">모델·추론 강도·수량을 고르면 서로 다른 세션 토큰이 든 작업 프롬프트와 완성형 CLI 갱신 명령을 함께 복사합니다. AGY 세션은 각 행에서 Windows CMD 또는 Linux/WSL SH를 내려받아 계속 재조회할 수 있습니다.</p></div><span class="stamp">5분 재조회 · 세션 자동 갱신</span></div>
       <form class="sample-worker-form" id="sample-worker-form">
-        <label>컴퓨터명 또는 IP<input name="label" maxlength="72" required placeholder="java-builder"></label>
         <label>LLM 모델<input name="model" maxlength="80" required value="agy" list="sample-worker-models"><datalist id="sample-worker-models"><option value="agy"><option value="codex"><option value="claude-haiku"><option value="claude-sonnet"><option value="gemini-flash"></datalist></label>
         <label>추론 강도<select name="reasoning"><option value="auto" selected>자동</option><option value="low">낮음</option><option value="medium">중간</option><option value="high">높음</option></select></label>
         <label>워커 수<input name="count" type="number" min="1" max="16" value="1" required></label>
@@ -83,6 +84,19 @@
       <div id="sample-worker-sessions" class="sample-worker-sessions" aria-live="polite"><p class="empty">활성 샘플 워커를 불러오는 중…</p></div>
       <div class="section-head" style="margin-top:18px"><div><h3>샘플 검증 대기함</h3><p class="note">LOCAL_PASS 초안은 자동으로 교차 검증 큐에 들어갑니다. 독립 검증 PASS면 CROSS_PASS로 공개되고, 실패한 초안만 비공개로 남습니다.</p></div><span class="stamp">자동 교차 검증</span></div>
       <div id="sample-worker-drafts" class="sample-worker-sessions" aria-live="polite"><p class="empty">초안을 불러오는 중…</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="admin-token-title">
+      <div class="section-head"><div><h2 id="admin-token-title">운영 API 토큰</h2><p class="note">브라우저 없이 API를 쓰기 위한 자격증명입니다. 코드 생성 팜처럼 여러 대가 돌 때는 개수를 지정해 <strong>머신마다 하나씩</strong> 발급하세요 — 하나를 공유하면 문제가 생긴 한 대만 끊을 수가 없습니다. 샘플 공개(POST /v1/samples)는 이 토큰으로 통과하지 않습니다.</p></div><span class="stamp">평문은 발급 직후 한 번만</span></div>
+      <form class="sample-worker-form" id="admin-token-form">
+        <label>이름<input name="label" maxlength="72" required placeholder="farm"></label>
+        <label>개수<input name="count" type="number" min="1" max="16" value="1" required></label>
+        <label>유효기간(일)<input name="ttlDays" type="number" min="1" max="3650" value="90"></label>
+        <label class="checkbox">무제한<input name="unlimited" type="checkbox"></label>
+        <button type="submit">발급·복사</button>
+      </form>
+      <p id="admin-token-status" class="note" role="status" aria-live="polite">무제한 토큰은 스스로 만료되지 않습니다. 목록의 마지막 사용 시각이 이상 여부를 알 수 있는 유일한 단서이니 가끔 확인하세요.</p>
+      <div id="admin-token-list" class="sample-worker-sessions" aria-live="polite"><p class="empty">운영 토큰을 불러오는 중…</p></div>
     </section>
 
     {{if .InsightsAvailable}}<section class="panel" aria-labelledby="velocity-title">

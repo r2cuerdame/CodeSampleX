@@ -65,6 +65,12 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	if candidate, ok := store.(serverstore.AuthoringSessionStore); ok {
 		authoringStore = candidate
 	}
+	// Nil when the store cannot keep operator tokens, which leaves the admin
+	// surface reachable only through the browser's password prompt.
+	var adminTokenStore serverstore.AdminTokenStore
+	if candidate, ok := store.(serverstore.AdminTokenStore); ok {
+		adminTokenStore = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
@@ -74,6 +80,7 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		AccessMetrics: accessMetrics,
 		Activity:      activityTracker,
 		Authoring:     authoringStore,
+		AdminTokens:   adminTokenStore,
 	})
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},

@@ -218,9 +218,11 @@ type Store interface {
 	// ListSnapshotTargets returns distinct (purl, symbol) pairs established
 	// by aggregated evidence or signed v2 receipt resolver output.
 	ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error)
-	// SnapshotUpdatedAt reports, per PURL, when its compatibility
-	// snapshot was last materialized. The record inventory orders by it,
-	// so one row per package is enough — no snapshot document is read.
+	// SnapshotUpdatedAt reports, per PURL, when the evidence behind its
+	// compatibility snapshot was last seen. It returns one row per package,
+	// but it reaches that row by expanding every snapshot document: the cost
+	// is a full pass over compatibility_snapshots, not an index scan. Read it
+	// through a cache, never once per request.
 	SnapshotUpdatedAt(ctx context.Context) (map[string]time.Time, error)
 	EvidenceForTarget(ctx context.Context, purl, symbol string) ([]EvidenceRow, error)
 

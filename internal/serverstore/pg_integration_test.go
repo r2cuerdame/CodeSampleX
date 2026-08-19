@@ -945,7 +945,7 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 
 	// A moment after creation: nothing has changed since.
 	time.Sleep(1100 * time.Millisecond)
-	mark := time.Now().UTC()
+	mark := dbNow(t, pg)
 	changes, err := pg.ChangedSince(ctx, mark)
 	if err != nil {
 		t.Fatal(err)
@@ -968,7 +968,7 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 
 	// So must a quarantine — otherwise a taken-down sample keeps being
 	// served from the shard it is already in.
-	mark2 := time.Now().UTC()
+	mark2 := dbNow(t, pg)
 	time.Sleep(1100 * time.Millisecond)
 	if err := pg.SetSampleQuarantine(ctx, id, true, "abuse"); err != nil {
 		t.Fatal(err)
@@ -982,6 +982,30 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 	}
 }
 
+// dbNow reads the clock that stamps created_at and updated_at.
+//
+// A mark taken from the test process's clock compares two different clocks:
+// the tests run on the host while PostgreSQL runs in its own container, and a
+// skew of tens of milliseconds is enough to hide a row written microseconds
+// after the mark. Measured here at 81ms, which made
+// TestIntegrationChangedSinceSeesOutOfBandStatusChanges fail four runs in six.
+//
+// No production caller compares this way: the compatibility builder asks
+// ChangedSince for a full minute before its last pass (changeOverlap), and a
+// full rebuild every twelfth pass repairs anything a gap still swallowed. The
+// mismatch was the test's alone, so the fix belongs here.
+func dbNow(t *testing.T, pg *PG) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	var now time.Time
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT now()`).Scan(&now)
+	}); err != nil {
+		t.Fatalf("reading the database clock: %v", err)
+	}
+	return now.UTC()
+}
+
 func contains(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
@@ -989,4 +1013,211 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// The PostgreSQL twin of TestAuthoringExpansionOffersUnmeasuredSiblingVersions
+// and TestAuthoringExpansionSpreadsAcrossVersionsBeforeDeepening. The Fake
+// mirrors this query, and a divergence between them is a silent production
+// bug, so both properties are asserted against real SQL.
+func TestIntegrationAuthoringExpansionSpreadsAcrossVersions(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	base := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", ProjectBucket: "spreadproject",
+		Package: "pkg:npm/spreadpkg@3.0.0", SymbolConfidence: domain.SymbolProbable,
+		Environment: env, Stage: domain.StageProjectCompile, Result: domain.ResultPass,
+		ObservationCount: 40,
+	}
+	for i, symbol := range []string{"alpha", "beta", "gamma"} {
+		b := base
+		b.Symbol = symbol
+		b.AnonID = fmt.Sprintf("spreadpeer%d", i)
+		if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 || len(rejected) != 0 {
+			t.Fatalf("ingest %s = %d rejected=%v err=%v", symbol, accepted, rejected, err)
+		}
+	}
+	for _, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/spreadpkg@" + v, Ecosystem: "npm", Name: "spreadpkg",
+			Version: v, Major: v[:1], Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.UpsertFailureCluster(ctx, ClusterRow{
+		Ecosystem: "npm", PackageName: "spreadpkg", Symbol: "delta", Stage: "PROJECT_COMPILE",
+		ErrorFingerprint: "sha256:" + strings.Repeat("d", 64), ErrorCode: "ERR_SPREAD",
+		ObservationCount: 31, VersionsJSON: `["3.0.0"]`, EnvSummaryJSON: `{"os":"linux"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:spread-proof", ManifestJSON: `{"packages":["pkg:npm/spreadpkg@3.0.0"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		SampleID: "sha256:spread-proof", ReceiptID: "receipt-spread-proof", PeerID: "spread-proof",
+		EnvHash: "env-spread-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
+	seen := map[string]int{}
+	for i, c := range candidates {
+		if c.Name != "spreadpkg" {
+			continue
+		}
+		seen[c.Version]++
+		if seen[c.Version] < 2 {
+			continue
+		}
+		for _, v := range versions {
+			if seen[v] == 0 {
+				t.Fatalf("candidate %d is job #%d for %s while %s has none yet; order=%s",
+					i, seen[c.Version], c.Version, v, formatCandidateOrder(candidates))
+			}
+		}
+	}
+	for _, v := range versions {
+		if seen[v] == 0 {
+			t.Errorf("version %s never offered; order=%s", v, formatCandidateOrder(candidates))
+		}
+	}
+}
+
+// The PostgreSQL twin of TestAuthoringExpansionCapsSiblingsPerPackage, seeded
+// the way the review measured it: one package with a long release history must
+// not fill the candidate window with score-0 first jobs and push a
+// heavily-observed symbol past the LIMIT. Without the cap this returned 199
+// bigpkg rows and no smallpkg work at all.
+func TestIntegrationAuthoringExpansionCapsSiblingFlood(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	seed := func(purl, symbol, anon string, count int) {
+		t.Helper()
+		b := domain.ObservationBatch{
+			SchemaVersion: 1, Epoch: "2026-08-19", AnonID: anon, ProjectBucket: anon + "proj",
+			Package: purl, Symbol: symbol, SymbolConfidence: domain.SymbolProbable,
+			Environment: env, Stage: domain.StageProjectCompile, Result: domain.ResultPass,
+			ObservationCount: count,
+		}
+		if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 || len(rejected) != 0 {
+			t.Fatalf("ingest %s = %d rejected=%v err=%v", purl, accepted, rejected, err)
+		}
+	}
+	seed("pkg:npm/bigpkg@1.0.0", "big.call", "bigpeer", 3)
+	seed("pkg:npm/smallpkg@1.0.0", "small.wanted", "smallpeer", 5000)
+
+	for i := 1; i <= 60; i++ {
+		v := fmt.Sprintf("%d.0.0", i)
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: "pkg:npm/bigpkg@" + v, Ecosystem: "npm", Name: "bigpkg",
+			Version: v, Major: fmt.Sprint(i), Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/smallpkg@1.0.0", Ecosystem: "npm", Name: "smallpkg",
+		Version: "1.0.0", Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:big-proof", ManifestJSON: `{"packages":["pkg:npm/bigpkg@1.0.0"],"symbols":["big.call"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		SampleID: "sha256:big-proof", ReceiptID: "receipt-big-proof", PeerID: "big-proof",
+		EnvHash: "env-big-proof", ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblings, smallReachable := 0, false
+	for _, c := range candidates {
+		if c.Name == "bigpkg" && c.Version != "1.0.0" {
+			siblings++
+		}
+		if c.Name == "smallpkg" {
+			smallReachable = true
+		}
+	}
+	if siblings > authoringSiblingVersionsPerPackage {
+		t.Errorf("bigpkg contributed %d sibling rows, cap is %d; order=%s",
+			siblings, authoringSiblingVersionsPerPackage, formatCandidateOrder(candidates))
+	}
+	if !smallReachable {
+		t.Errorf("smallpkg's score-5000 work never entered the window; order=%s",
+			formatCandidateOrder(candidates))
+	}
+}
+
+// The NULL-expiry column is the crux of the admin token table, and a Go zero
+// time round-tripping through it is exactly the sort of thing the Fake cannot
+// prove. Both halves are checked against real SQL.
+func TestIntegrationAdminTokenExpiryRevokeAndUse(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	issued := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	if err := pg.IssueAdminTokens(ctx, []AdminTokenRow{
+		{TokenHash: "hash-bounded", TokenID: "bounded", Label: "bounded", IssuedAt: issued, ExpiresAt: issued.Add(24 * time.Hour)},
+		{TokenHash: "hash-forever", TokenID: "forever", Label: "farm", IssuedAt: issued},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-bounded", "10.0.0.1", issued.Add(time.Hour)); err != nil || !ok {
+		t.Errorf("bounded inside window: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-bounded", "10.0.0.1", issued.Add(48*time.Hour)); err != nil || ok {
+		t.Errorf("bounded past expiry: ok=%v err=%v, want ok=false", ok, err)
+	}
+	distant := issued.Add(5 * 365 * 24 * time.Hour)
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-forever", "203.0.113.7", distant); err != nil || !ok {
+		t.Errorf("unlimited five years on: ok=%v err=%v, want ok=true", ok, err)
+	}
+
+	rows, err := pg.ListAdminTokens(ctx, 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list = %+v err=%v", rows, err)
+	}
+	var forever AdminTokenRow
+	for _, r := range rows {
+		if r.TokenID == "forever" {
+			forever = r
+		}
+	}
+	if !forever.ExpiresAt.IsZero() {
+		t.Errorf("unlimited token came back with expiry %s, want zero", forever.ExpiresAt)
+	}
+	if !forever.LastUsedAt.UTC().Equal(distant) || forever.LastUsedIP != "203.0.113.7" {
+		t.Errorf("use was not recorded: at=%s ip=%q", forever.LastUsedAt, forever.LastUsedIP)
+	}
+
+	if revoked, err := pg.RevokeAdminToken(ctx, "forever", distant); err != nil || !revoked {
+		t.Fatalf("revoke = %v err=%v", revoked, err)
+	}
+	if _, ok, _ := pg.ResolveAdminToken(ctx, "hash-forever", "10.0.0.1", distant); ok {
+		t.Error("a revoked unlimited token still resolves")
+	}
+	if revoked, err := pg.RevokeAdminToken(ctx, "forever", distant); err != nil || revoked {
+		t.Errorf("revoking twice = %v err=%v, want false", revoked, err)
+	}
 }

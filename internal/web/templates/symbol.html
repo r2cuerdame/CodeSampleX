@@ -11,6 +11,14 @@
 {{template "pivotlegend" .}}
 {{end}}
 
+{{- if .Samples}}
+{{/* The way down. This page is the deepest node in the hierarchy, and the
+     records written against this exact symbol are what the descent was for —
+     without them a reader had to climb back up to the version page. */}}
+<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
+{{template "samplelist" .}}
+{{- end}}
+
 <h2 class="eyebrow mono" id="env-detail">{{.T "symbol.matrix_heading"}}</h2>
 <p class="note dim small">{{.T "symbol.evidence_note"}}</p>
 <p class="note dim small">{{.T "symbol.callshape_note"}}</p>

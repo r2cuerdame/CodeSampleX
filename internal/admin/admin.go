@@ -76,6 +76,9 @@ type Deps struct {
 	AccessMetrics AccessMetricsReader
 	Activity      ActivityReader
 	Authoring     serverstore.AuthoringSessionStore
+	// AdminTokens backs the operator API credential. Nil leaves the admin
+	// surface reachable only through the browser's Basic prompt.
+	AdminTokens serverstore.AdminTokenStore
 }
 
 type handler struct {
@@ -89,6 +92,7 @@ type handler struct {
 	publicURL     string
 	authoring     *authoringRegistry
 	authoringRate *authoringRateLimiter
+	adminTokens   serverstore.AdminTokenStore
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -119,6 +123,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		publicURL:     strings.TrimRight(d.PublicURL, "/"),
 		authoring:     newAuthoringRegistry(now, d.Authoring),
 		authoringRate: newAuthoringRateLimiter(),
+		adminTokens:   d.AdminTokens,
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -138,6 +143,9 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
 	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
 	mux.HandleFunc("GET /admin/api/authoring-drafts", h.authoringDrafts)
+	mux.HandleFunc("GET /admin/api/admin-tokens", h.handleAdminTokens)
+	mux.HandleFunc("POST /admin/api/admin-tokens", h.handleAdminTokens)
+	mux.HandleFunc("DELETE /admin/api/admin-tokens/{id}", h.revokeAdminToken)
 	mux.HandleFunc("POST /v1/authoring/session/refresh", h.refreshAuthoringSession)
 	return true
 }

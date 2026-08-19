@@ -204,13 +204,9 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	now := time.Now()
 	var best *heroMatrixData
 	bestScore := 0
-	for i, h := range ordered {
-		if i >= heroMatrixTries {
-			break
-		}
-		facts, _ := s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+	consider := func(h PackageHit, facts []cubeFact) {
 		if len(facts) == 0 {
-			continue
+			return
 		}
 		pagePath := pkgHref(h.Ecosystem, h.Name)
 		for rank, pair := range heroAxisPairs {
@@ -234,6 +230,30 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 					YLabel: i18n.T(lang, "cube.dim_"+y),
 				}
 			}
+		}
+	}
+
+	// Candidates in rank order, and the FIRST that renders wins. Warmth is a
+	// cost decision, never a selection input: which cubes are warm is a
+	// function of what other visitors happened to browse in the last five
+	// minutes, and ranking the warm subset made the front page's featured
+	// package depend on other people's traffic — visibly, since the landing
+	// carries no Cache-Control and heroMatrix re-runs on every reload.
+	//
+	// The cost stays bounded: a cached cube is free, and a cold one is
+	// assembled only until something renders. Probing all six to pick the
+	// richest grid was what made this the most expensive URL on the site.
+	for i, h := range ordered {
+		if i >= heroMatrixTries {
+			break
+		}
+		facts, ok := s.cubeFactsCached(h.Ecosystem, h.Name)
+		if !ok {
+			facts, _ = s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+		}
+		consider(h, facts)
+		if best != nil {
+			break
 		}
 	}
 	if best == nil {
