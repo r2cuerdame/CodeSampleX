@@ -663,15 +663,12 @@ func (f *Fake) SaveReceiptForJob(_ context.Context, r ReceiptRow, jobID int64) (
 	f.receipts[r.SampleID] = append(f.receipts[r.SampleID], r)
 	job.Status = "done"
 	if r.ContractResult == "PASS" && job.Reason == "cross" {
+		// The draft row must exist — this is authoring output, not an
+		// anonymous upload — but a live assignment must not be required:
+		// the writing session expires long before some verifications land,
+		// and its absence says nothing about whether the contract ran.
 		_, hasDraft := f.authoringDrafts[r.SampleID]
-		hasAssignment := false
-		for _, work := range f.authoringWork {
-			if work.SampleID == r.SampleID {
-				hasAssignment = true
-				break
-			}
-		}
-		if sample, ok := f.samples[r.SampleID]; ok && hasDraft && hasAssignment && sample.Status == "DRAFT" && sample.Quarantined {
+		if sample, ok := f.samples[r.SampleID]; ok && hasDraft && sample.Status == "DRAFT" && sample.Quarantined {
 			sample.Status = "CROSS_PASS"
 			sample.Quarantined = false
 			sample.QuarantineReason = ""

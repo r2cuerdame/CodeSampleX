@@ -195,3 +195,27 @@ func majorBucket(v string) string {
 	}
 	return strings.SplitN(v, ".", 2)[0]
 }
+
+// RuntimeLine reduces a runtime version to the release LINE it belongs
+// to — the precision a job may demand of a machine it does not control.
+//
+// A pinned image promises a line, never a patch digit: asking a verifier
+// for node 22.23.2 or go 1.26.5 exactly is asking for something no image
+// can guarantee, and the returning receipt is refused for not matching
+// its own job. Which component names the line differs by runtime: Node,
+// Bun, Deno, Java and browser engines ship lines as majors (22, 21),
+// while Python, Go and Rust name theirs with the minor (3.14, 1.26).
+// Unknown runtimes keep major.minor — the stricter of the two, since a
+// requirement that is too loose accepts evidence from the wrong line.
+func RuntimeLine(runtime, version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "node", "nodejs", "bun", "deno", "java", "chrome", "chromium",
+		"firefox", "safari", "edge", "electron":
+		return majorBucket(version)
+	}
+	return versionBucket(version)
+}

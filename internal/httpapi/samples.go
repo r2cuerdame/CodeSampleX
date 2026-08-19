@@ -240,17 +240,29 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 			return nil // work is already queued or in flight
 		}
 	}
+	// A cross job asks a DIFFERENT machine to reproduce the result, so its
+	// requirements must describe the runtime LINE, not the author's exact
+	// patch level. Copying manifest.Environment.RuntimeVersion verbatim
+	// asked every verifier for node 22.23.2 or go 1.26.5 exactly; no pinned
+	// image can promise a patch digit, so the receipt was refused on
+	// arrival, and because that refusal is the same statement that would
+	// have closed the job, the job stayed claimed forever. Jobs pinned to a
+	// major completed normally throughout — that is the precision a cross
+	// job can actually ask for. Matrix jobs, which exist precisely to pin an
+	// exact version, are built elsewhere and keep their exactness.
 	requirements := domain.WorkerRequirements{
 		SandboxCapability: domain.CapContainerRun,
 		VerifierAdapter:   manifest.VerifierAdapter,
 		Ecosystem:         manifest.Environment.Ecosystem,
 		Runtime:           manifest.Environment.Runtime,
-		RuntimeVersion:    manifest.Environment.RuntimeVersion,
-		ExecutionContext:  manifest.Environment.ExecutionContext,
-		BrowserFamily:     manifest.Environment.BrowserFamily,
-		BrowserMajor:      manifest.Environment.BrowserMajor,
-		Engine:            manifest.Environment.Engine,
-		EngineVersion:     manifest.Environment.EngineVersion,
+		RuntimeVersion: domain.RuntimeLine(manifest.Environment.Runtime,
+			manifest.Environment.RuntimeVersion),
+		ExecutionContext: manifest.Environment.ExecutionContext,
+		BrowserFamily:    manifest.Environment.BrowserFamily,
+		// Browser and engine versions are already majors by construction.
+		BrowserMajor:  manifest.Environment.BrowserMajor,
+		Engine:        manifest.Environment.Engine,
+		EngineVersion: manifest.Environment.EngineVersion,
 	}
 	// Only installed engines/SDKs are host requirements. Ordinary framework
 	// libraries are resolved inside the disposable container and must not

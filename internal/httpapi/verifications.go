@@ -161,6 +161,35 @@ func decodeWorkerRequirements(raw string) (domain.WorkerRequirements, error) {
 	return want, nil
 }
 
+// versionSatisfies reports whether a measured version answers a wanted
+// one, comparing whole dot-separated components.
+//
+// A requirement states the precision it cares about: "21" is answered by
+// "21.0.5", and "21.0.5" is answered only by itself. String equality
+// refused the first case, so a job asking for a runtime LINE could never
+// be satisfied by a real machine — the container reports its patch level
+// and nothing else. Components are compared whole so "2" never matches
+// "21", which a plain string prefix would have allowed.
+func versionSatisfies(want, got string) bool {
+	want, got = strings.TrimSpace(want), strings.TrimSpace(got)
+	if want == "" {
+		return true
+	}
+	if want == got {
+		return true
+	}
+	wantParts, gotParts := strings.Split(want, "."), strings.Split(got, ".")
+	if len(wantParts) > len(gotParts) {
+		return false
+	}
+	for i, part := range wantParts {
+		if part != gotParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func receiptMatchesRequirements(receipt domain.VerificationReceipt, want domain.WorkerRequirements) bool {
 	env := receipt.Environment.Normalize()
 	if want.SandboxCapability != "" && receipt.SandboxCapability != want.SandboxCapability {
@@ -171,12 +200,22 @@ func receiptMatchesRequirements(receipt domain.VerificationReceipt, want domain.
 	}
 	checks := [][2]string{
 		{want.Ecosystem, env.Ecosystem}, {want.Runtime, env.Runtime},
-		{want.RuntimeVersion, env.RuntimeVersion}, {want.ExecutionContext, env.ExecutionContext},
-		{want.BrowserFamily, env.BrowserFamily}, {want.BrowserMajor, env.BrowserMajor},
-		{want.Engine, env.Engine}, {want.EngineVersion, env.EngineVersion},
+		{want.ExecutionContext, env.ExecutionContext},
+		{want.BrowserFamily, env.BrowserFamily},
+		{want.Engine, env.Engine},
 	}
 	for _, pair := range checks {
 		if pair[0] != "" && pair[0] != pair[1] {
+			return false
+		}
+	}
+	versions := [][2]string{
+		{want.RuntimeVersion, env.RuntimeVersion},
+		{want.BrowserMajor, env.BrowserMajor},
+		{want.EngineVersion, env.EngineVersion},
+	}
+	for _, pair := range versions {
+		if !versionSatisfies(pair[0], pair[1]) {
 			return false
 		}
 	}

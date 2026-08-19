@@ -975,13 +975,21 @@ func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (
 		// quarantined draft atomically with its signed PASS receipt so there is
 		// no state where an unverified draft is public, or a verified draft is
 		// stranded after a process crash.
+		//
+		// Promotion used to require a live authoring assignment as well. An
+		// authoring session expires an hour after its last refresh and its
+		// assignment is deleted with it, so a draft verified after that
+		// window kept its signed PASS receipt and stayed quarantined
+		// forever — verified, and invisible. The draft row still has to
+		// exist (this is authoring output, not an anonymous upload), but
+		// whether the writing session is still open says nothing about
+		// whether the contract ran.
 		if r.ContractResult == "PASS" {
 			if _, err := tx.Exec(ctx, `UPDATE samples
 				SET status='CROSS_PASS', quarantined=false, quarantine_reason=NULL, updated_at=now()
 				WHERE sample_id=$1 AND status='DRAFT' AND quarantined
 				  AND EXISTS(SELECT 1 FROM verification_jobs WHERE id=$2 AND reason='cross')
 				  AND EXISTS(SELECT 1 FROM authoring_drafts d
-				    JOIN authoring_assignments a ON a.sample_id=d.sample_id
 				    WHERE d.sample_id=samples.sample_id)`, r.SampleID, jobID); err != nil {
 				return err
 			}
