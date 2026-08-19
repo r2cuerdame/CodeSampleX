@@ -117,6 +117,25 @@ func sampleWorkerUsage() {
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL --token TOKEN")
 }
 
+// sampleWorkerContainerOS asks the Docker daemon which kind of container it
+// serves. A variable so a test can state the answer.
+var sampleWorkerContainerOS = sandbox.DetectContainerOS
+
+// sampleWorkerEnvelope describes this machine to the work endpoint.
+//
+// verifierOS was the literal []string{"linux"}. It happened to be true while
+// every worker ran Linux containers, and it would have stayed true-looking
+// after somebody switched their daemon to Windows containers — the work would
+// have been claimed as linux and the receipt stamped windows. A worker has to
+// report what it can actually execute, not what workers used to execute.
+func sampleWorkerEnvelope(ctx context.Context) map[string]any {
+	return map[string]any{
+		"schemaVersion":     1,
+		"sandboxCapability": sampleWorkerCapability(ctx),
+		"verifierOS":        []string{sampleWorkerContainerOS(ctx)},
+	}
+}
+
 func sampleWorkerNext(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("sample-worker next", flag.ContinueOnError)
 	fs.SetOutput(sampleWorkerStderr)
@@ -130,10 +149,7 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker: %v\n", err)
 		return 2
 	}
-	capability := sampleWorkerCapability(ctx)
-	payload, _ := json.Marshal(map[string]any{
-		"schemaVersion": 1, "sandboxCapability": capability, "verifierOS": []string{"linux"},
-	})
+	payload, _ := json.Marshal(sampleWorkerEnvelope(ctx))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", bytes.NewReader(payload))
 	if err != nil {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
