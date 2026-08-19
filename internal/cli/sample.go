@@ -686,11 +686,7 @@ func sampleVerify(ctx context.Context, args []string) int {
 	}
 	runner := verifierRunner
 	if runner == nil {
-		if capability == domain.CapContainerRun {
-			runner = sandbox.DockerRunner{}
-		} else {
-			runner = sandbox.NativeRunner{}
-		}
+		runner = sampleRunner(ctx, capability)
 	}
 
 	ident, err := identity.LoadOrCreate(env.home)
@@ -852,6 +848,24 @@ func originReceipt(ctx context.Context, env *sampleEnv, sampleID string) (domain
 // builds leave it nil, so no environment variable or command-line flag can
 // bypass the typed human approval. Tests in this package may install a
 // temporary function without shipping a remotely triggerable bypass.
+// sampleContainerOS asks the Docker daemon which kind of container it serves.
+// It is a variable so a test can state the answer.
+var sampleContainerOS = sandbox.DetectContainerOS
+
+// sampleRunner builds the sandbox this verification will run in.
+//
+// The container OS has to be asked for, not assumed. StageEnvironment stamps
+// the receipt from the runner's ContainerOS, and an unset one reads as linux —
+// so a machine serving Windows containers would have produced receipts
+// claiming linux, which is the one thing a compatibility network must never
+// say. The worker path (worker.go) already asks; this path did not.
+func sampleRunner(ctx context.Context, capability domain.SandboxCapability) sandbox.Runner {
+	if capability != domain.CapContainerRun {
+		return sandbox.NativeRunner{}
+	}
+	return sandbox.DockerRunner{ContainerOS: sampleContainerOS(ctx)}
+}
+
 var publishApprovalForTest func() bool
 
 func samplePublish(ctx context.Context, args []string) int {

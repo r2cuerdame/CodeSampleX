@@ -11,6 +11,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -51,35 +52,80 @@ func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoring
 		writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
 		return authoringWorkRequest{}, false
 	}
-	seen := map[string]bool{}
-	for i, targetOS := range request.VerifierOS {
-		targetOS = strings.ToLower(strings.TrimSpace(targetOS))
-		if targetOS != "linux" {
-			writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
-			return authoringWorkRequest{}, false
-		}
-		request.VerifierOS[i] = targetOS
-		seen[targetOS] = true
+	normalized, err := normalizeVerifierOS(request.VerifierOS)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
+		return authoringWorkRequest{}, false
 	}
-	if request.SandboxCapability == domain.CapContainerRun && !seen["linux"] {
+	request.VerifierOS = normalized
+	if request.SandboxCapability == domain.CapContainerRun && len(normalized) == 0 {
 		writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
 		return authoringWorkRequest{}, false
 	}
 	return request, true
 }
 
-func authoringCandidateEligible(candidate serverstore.WantedRow, request authoringWorkRequest) bool {
-	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" || !authoringSupportedEcosystems[candidate.Ecosystem] {
+// authoringVerifierOS are the container platforms this server hands work out
+// for. Windows was refused outright, which is why every receipt in the network
+// was stamped linux — not because nobody ran Windows, but because a worker
+// that did could not say so.
+var authoringVerifierOS = map[string]bool{"linux": true, "windows": true}
+
+func normalizeVerifierOS(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, targetOS := range raw {
+		targetOS = strings.ToLower(strings.TrimSpace(targetOS))
+		if !authoringVerifierOS[targetOS] {
+			return nil, errors.New("unsupported verifier OS")
+		}
+		if seen[targetOS] {
+			continue
+		}
+		seen[targetOS] = true
+		out = append(out, targetOS)
+	}
+	return out, nil
+}
+
+// authoringRunnableOn reports whether an ecosystem can be built on a platform.
+//
+// Every supported ecosystem runs on Linux. Windows has official base images
+// for only some of them, and the answer comes from sandbox rather than a list
+// beside it: a list that drifts from the images hands a Windows worker a job
+// that fails before its first stage.
+func authoringRunnableOn(ecosystem, targetOS string) bool {
+	if !authoringSupportedEcosystems[ecosystem] {
 		return false
 	}
+	if targetOS == "windows" {
+		return sandbox.SupportsWindows(ecosystem)
+	}
+	return true
+}
+
+func authoringCandidateEligible(candidate serverstore.WantedRow, request authoringWorkRequest) bool {
+	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" {
+		return false
+	}
+	// WANTED is somebody's explicit ask, so it is not pinned to an OS — but it
+	// still has to be a job this machine can start. Returning true for every
+	// WANTED regardless of environment meant a Windows worker was handed npm
+	// work that has no Windows image to run in.
 	if candidate.Kind == "WANTED" {
-		return true
+		for _, targetOS := range request.VerifierOS {
+			if authoringRunnableOn(candidate.Ecosystem, targetOS) {
+				return true
+			}
+		}
+		return false
 	}
 	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" {
 		return false
 	}
 	for _, targetOS := range request.VerifierOS {
-		if strings.EqualFold(candidate.TargetOS, targetOS) {
+		if strings.EqualFold(candidate.TargetOS, targetOS) &&
+			authoringRunnableOn(candidate.Ecosystem, targetOS) {
 			return true
 		}
 	}

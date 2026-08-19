@@ -58,6 +58,17 @@ func DetectContainerOS(ctx context.Context) string {
 	return containerOSOrLinux(strings.ToLower(strings.TrimSpace(string(out))))
 }
 
+// SupportsWindows reports whether an ecosystem can be verified on a Windows
+// container daemon at all.
+//
+// It answers from windowsImageFor rather than a second list, because a list
+// that drifts from the images is worse than no list: the server would hand a
+// Windows worker npm work it can never start.
+func SupportsWindows(ecosystem string) bool {
+	_, err := windowsImageFor(ecosystem, "", "")
+	return err == nil
+}
+
 // windowsImageFor selects the verifier image for a Windows container
 // daemon.
 //
