@@ -1167,3 +1167,57 @@ func TestIntegrationAuthoringExpansionCapsSiblingFlood(t *testing.T) {
 			formatCandidateOrder(candidates))
 	}
 }
+
+// The NULL-expiry column is the crux of the admin token table, and a Go zero
+// time round-tripping through it is exactly the sort of thing the Fake cannot
+// prove. Both halves are checked against real SQL.
+func TestIntegrationAdminTokenExpiryRevokeAndUse(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	issued := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	if err := pg.IssueAdminTokens(ctx, []AdminTokenRow{
+		{TokenHash: "hash-bounded", TokenID: "bounded", Label: "bounded", IssuedAt: issued, ExpiresAt: issued.Add(24 * time.Hour)},
+		{TokenHash: "hash-forever", TokenID: "forever", Label: "farm", IssuedAt: issued},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-bounded", "10.0.0.1", issued.Add(time.Hour)); err != nil || !ok {
+		t.Errorf("bounded inside window: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-bounded", "10.0.0.1", issued.Add(48*time.Hour)); err != nil || ok {
+		t.Errorf("bounded past expiry: ok=%v err=%v, want ok=false", ok, err)
+	}
+	distant := issued.Add(5 * 365 * 24 * time.Hour)
+	if _, ok, err := pg.ResolveAdminToken(ctx, "hash-forever", "203.0.113.7", distant); err != nil || !ok {
+		t.Errorf("unlimited five years on: ok=%v err=%v, want ok=true", ok, err)
+	}
+
+	rows, err := pg.ListAdminTokens(ctx, 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list = %+v err=%v", rows, err)
+	}
+	var forever AdminTokenRow
+	for _, r := range rows {
+		if r.TokenID == "forever" {
+			forever = r
+		}
+	}
+	if !forever.ExpiresAt.IsZero() {
+		t.Errorf("unlimited token came back with expiry %s, want zero", forever.ExpiresAt)
+	}
+	if !forever.LastUsedAt.UTC().Equal(distant) || forever.LastUsedIP != "203.0.113.7" {
+		t.Errorf("use was not recorded: at=%s ip=%q", forever.LastUsedAt, forever.LastUsedIP)
+	}
+
+	if revoked, err := pg.RevokeAdminToken(ctx, "forever", distant); err != nil || !revoked {
+		t.Fatalf("revoke = %v err=%v", revoked, err)
+	}
+	if _, ok, _ := pg.ResolveAdminToken(ctx, "hash-forever", "10.0.0.1", distant); ok {
+		t.Error("a revoked unlimited token still resolves")
+	}
+	if revoked, err := pg.RevokeAdminToken(ctx, "forever", distant); err != nil || revoked {
+		t.Errorf("revoking twice = %v err=%v, want false", revoked, err)
+	}
+}

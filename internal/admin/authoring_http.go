@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -93,7 +94,8 @@ type issuedAuthoringWorker struct {
 
 func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
-	if !h.requireAdmin(w, r) {
+	byToken, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	switch r.Method {
@@ -106,7 +108,7 @@ func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].IssuedAt.After(sessions[j].IssuedAt) })
 		writeAdminJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 	case http.MethodPost:
-		if !h.validAdminMutation(r) {
+		if !byToken && !h.validAdminMutation(r) {
 			http.Error(w, "허용되지 않은 요청입니다", http.StatusForbidden)
 			return
 		}
@@ -143,7 +145,8 @@ func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) authoringDrafts(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
-	if !h.requireAdmin(w, r) {
+	_, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	if h.authoring.store == nil {
@@ -186,7 +189,8 @@ func (h *handler) authoringDrafts(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) revokeAuthoringSession(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
-	if !h.requireAdmin(w, r) {
+	byToken, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodDelete {
@@ -194,7 +198,7 @@ func (h *handler) revokeAuthoringSession(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "허용되지 않은 요청 방식입니다", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.validAdminMutation(r) {
+	if !byToken && !h.validAdminMutation(r) {
 		http.Error(w, "허용되지 않은 요청입니다", http.StatusForbidden)
 		return
 	}
@@ -207,10 +211,11 @@ func (h *handler) revokeAuthoringSession(w http.ResponseWriter, r *http.Request)
 
 func (h *handler) rotateAuthoringSession(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
-	if !h.requireAdmin(w, r) {
+	byToken, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
-	if !h.validAdminMutation(r) {
+	if !byToken && !h.validAdminMutation(r) {
 		http.Error(w, "허용되지 않은 요청입니다", http.StatusForbidden)
 		return
 	}
@@ -299,7 +304,8 @@ func (h *handler) adminScript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.requireAdmin(w, r) {
+	_, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	body, err := adminStaticFS.ReadFile("static/admin.js")
@@ -314,13 +320,46 @@ func (h *handler) adminScript(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *handler) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+// requireAdmin authorizes a request and reports which credential did it.
+//
+// Two ways in, and they need different proofs. The browser's Basic credential
+// is ambient -- it rides along on any request the browser is talked into
+// making -- so a mutation with it must also prove it was not cross-site. An
+// operator API token is never attached by a browser on its own, so there is no
+// cross-site request to guard against and the CSRF headers do not apply. That
+// distinction is the whole reason the caller is told which one was used.
+func (h *handler) requireAdmin(w http.ResponseWriter, r *http.Request) (byToken bool, ok bool) {
+	if h.authorizedByToken(r) {
+		return true, true
+	}
 	if h.authorized(r) {
-		return true
+		return false, true
 	}
 	w.Header().Set("WWW-Authenticate", `Basic realm="CodeSampleX Admin", charset="UTF-8"`)
 	http.Error(w, "인증이 필요합니다", http.StatusUnauthorized)
-	return false
+	return false, false
+}
+
+// authorizedByToken resolves an operator API token from the Authorization
+// header. Only the digest is compared, and resolving stamps the row: a token
+// issued without an expiry has nothing else to watch, so its use is the signal
+// its owner gets that somebody else is holding it.
+func (h *handler) authorizedByToken(r *http.Request) bool {
+	if h.adminTokens == nil {
+		return false
+	}
+	raw, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	raw = strings.TrimSpace(raw)
+	if !found || raw == "" {
+		return false
+	}
+	sum := sha256.Sum256([]byte(raw))
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		ip = host
+	}
+	_, ok, err := h.adminTokens.ResolveAdminToken(r.Context(), hex.EncodeToString(sum[:]), ip, h.now().UTC())
+	return err == nil && ok
 }
 
 func (h *handler) validAdminMutation(r *http.Request) bool {

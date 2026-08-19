@@ -541,3 +541,36 @@ func TestReadProbeFailureIsShownWithoutInventingHealth(t *testing.T) {
 		t.Fatalf("database status was not honest: %s", body)
 	}
 }
+
+func configuredMuxWithTokens(t *testing.T, store Store, tokens serverstore.AdminTokenStore) *http.ServeMux {
+	t.Helper()
+	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
+	mux := http.NewServeMux()
+	if !Register(mux, Deps{
+		Store:       store,
+		TokenSHA256: digest("a-long-random-admin-secret"),
+		PublicURL:   "https://codesamplex.dev",
+		Version:     "v1.2.3-test",
+		StartedAt:   now.Add(-26 * time.Hour),
+		Now:         func() time.Time { return now },
+		AdminTokens: tokens,
+	}) {
+		t.Fatal("valid token hash did not register /admin")
+	}
+	return mux
+}
+
+func configuredMuxFullWithTokens(t *testing.T, store Store, tokens serverstore.AdminTokenStore) (*http.ServeMux, string) {
+	t.Helper()
+	secret := "a-long-random-admin-secret"
+	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
+	mux := http.NewServeMux()
+	if !Register(mux, Deps{
+		Store: store, TokenSHA256: digest(secret), PublicURL: "https://codesamplex.dev",
+		Version: "v1.2.3-test", StartedAt: now.Add(-26 * time.Hour),
+		Now: func() time.Time { return now }, AdminTokens: tokens,
+	}) {
+		t.Fatal("valid token hash did not register /admin")
+	}
+	return mux, secret
+}

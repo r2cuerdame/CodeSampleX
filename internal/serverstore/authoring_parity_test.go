@@ -34,7 +34,7 @@ func seedExpansion(t *testing.T, store expansionStore, rows []expansionSeed) {
 			SchemaVersion: 1, Epoch: "2026-08-19", AnonID: r.anon, ProjectBucket: r.anon + "proj",
 			Package: "pkg:npm/" + r.name + "@" + r.version, Symbol: r.symbol,
 			SymbolConfidence: domain.SymbolProbable, Environment: env,
-			Stage:            domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: r.count,
+			Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: r.count,
 		}
 		if accepted, rejected, err := store.IngestBatches(ctx, []domain.ObservationBatch{b}); err != nil || accepted != 1 || len(rejected) != 0 {
 			t.Fatalf("ingest %s: accepted=%d rejected=%v err=%v", r.name, accepted, rejected, err)
