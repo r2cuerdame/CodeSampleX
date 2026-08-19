@@ -61,6 +61,7 @@
   "contribute.verify_link": "검증된 런타임 보기",
   "cube.heading": "호환성 큐브",
   "cube.sub": "아무 차원 두 개를 골라 축으로 펼치고, 나머지는 필터가 됩니다. 셀을 클릭하면 그 조각이 고정되고 한 단계 더 들어갑니다.",
+  "cube.swap": "축 바꾸기",
   "cube.x_axis": "X 축",
   "cube.y_axis": "Y 축",
   "cube.filters": "필터",

@@ -61,6 +61,7 @@
   "contribute.verify_link": "Qué runtimes están verificados",
   "cube.heading": "Cubo de compatibilidad",
   "cube.sub": "Elige dos dimensiones cualesquiera como ejes; todo lo demás se convierte en filtro. Al hacer clic en una celda, su corte queda fijado y se baja un nivel más.",
+  "cube.swap": "Intercambiar ejes",
   "cube.x_axis": "Eje X",
   "cube.y_axis": "Eje Y",
   "cube.filters": "Filtrar",

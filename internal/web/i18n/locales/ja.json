@@ -61,6 +61,7 @@
   "contribute.verify_link": "検証済みのランタイム",
   "cube.heading": "互換性キューブ",
   "cube.sub": "任意の 2 つの次元を軸に選ぶと、残りはすべてフィルターになります。セルをクリックするとそのスライスが固定され、1 段深く掘り下げます。",
+  "cube.swap": "軸を入れ替える",
   "cube.x_axis": "X 軸",
   "cube.y_axis": "Y 軸",
   "cube.filters": "フィルター",

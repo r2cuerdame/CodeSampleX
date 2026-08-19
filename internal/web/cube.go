@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -85,11 +84,7 @@ func cubeFactFromRow(r snapshotRow, version, symbol string) (cubeFact, bool) {
 	if env := pivotEnv(r); env != nil {
 		fact.EnvHash = env.Bucketed().Hash()
 		e := env.Bucketed()
-		os := strings.ToLower(strings.TrimSpace(e.OS))
-		if os == "darwin" {
-			os = "macos"
-		}
-		dims["os"] = os
+		dims["os"] = osLabel(e)
 		dims["arch"] = e.Arch
 		if e.Runtime != "" {
 			rt := e.Runtime

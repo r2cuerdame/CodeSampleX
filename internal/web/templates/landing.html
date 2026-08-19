@@ -35,7 +35,7 @@
     <div class="gridbar">
       <nav class="mtabs mono small" aria-label="{{.T "landing.matrix_heading"}}">
         {{- range .Matrix.Tabs}}
-        <a {{if .Selected}}aria-current="true" {{end}}href="{{.Href}}">{{.Label}}</a>
+        <a {{if .Selected}}aria-current="true" {{end}}data-keepscroll href="{{.Href}}">{{.Label}}</a>
         {{- end}}
       </nav>
       <span class="axes mono small dim">{{.Matrix.YLabel}} × {{.Matrix.XLabel}}</span>
@@ -52,16 +52,9 @@
   {{/* The legend and the evidence ladder live where they are used: folded
        under the grid, not as their own landing section. */}}
   <details class="home-detail gridhelp">
-    <summary><span class="eyebrow mono">{{.T "landing.legend_heading"}}</span><span class="detail-summary">{{.T "landing.ladder_heading"}}</span></summary>
+    <summary><span class="eyebrow mono">{{.T "landing.legend_heading"}}</span></summary>
     <div class="home-detail-body">
       {{template "pivotlegend" .}}
-      <ol class="ladder">
-        <li><span class="rung mono">USAGE_OBSERVATION</span>{{.T "landing.ladder_observed"}}</li>
-        <li><span class="rung mono">SAMPLE_VERIFICATION</span>{{.T "landing.ladder_verified"}}</li>
-        <li><span class="rung mono">CROSS_PASS</span>{{.T "landing.ladder_cross"}}</li>
-        <li><span class="rung mono">MATRIX_PASS</span>{{.T "landing.ladder_multi"}}</li>
-        <li><span class="rung mono">STABLE</span>{{.T "landing.ladder_stable"}}</li>
-      </ol>
       <p class="note">{{.T "landing.ladder_rule"}}</p>
     </div>
   </details>

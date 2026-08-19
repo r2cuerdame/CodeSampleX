@@ -61,6 +61,7 @@
   "contribute.verify_link": "Which runtimes are verified",
   "cube.heading": "Compatibility cube",
   "cube.sub": "Pick any two dimensions as axes; everything else becomes a filter. Clicking a cell pins its slice and drills one level deeper.",
+  "cube.swap": "Swap axes",
   "cube.x_axis": "X axis",
   "cube.y_axis": "Y axis",
   "cube.filters": "Filter",

@@ -61,8 +61,11 @@ type cubeView struct {
 	// XLabel/YLabel name the spread axes in the page language, so the grid
 	// says what it is a map of without reading the pickers.
 	XLabel, YLabel string
-	XOptions       []cubeAxisOption
-	YOptions       []cubeAxisOption
+	// SwapHref transposes the grid — the same slice read the other way,
+	// which is one click instead of two dropdown changes.
+	SwapHref string
+	XOptions []cubeAxisOption
+	YOptions []cubeAxisOption
 	// Filters narrow the cube by any dimension, whether or not it is on an
 	// axis. They render as dropdowns beside the axis pickers.
 	Filters    []cubeFilterSelect
@@ -240,6 +243,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	}
 	view.X, view.Y = x, y
 	view.XLabel, view.YLabel = i18n.T(lang, "cube.dim_"+x), i18n.T(lang, "cube.dim_"+y)
+	view.SwapHref = cubeHref(pagePath, cubeQuery(filters, y, x, lang))
 
 	// Axis selectors offer every unpinned dimension with recorded values.
 	for _, dim := range cubeDimKeys {

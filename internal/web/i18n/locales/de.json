@@ -61,6 +61,7 @@
   "contribute.verify_link": "Welche Runtimes verifiziert sind",
   "cube.heading": "Kompatibilitätswürfel",
   "cube.sub": "Wähle zwei beliebige Dimensionen als Achsen; alles andere wird zum Filter. Ein Klick auf eine Zelle fixiert ihren Ausschnitt und steigt eine Ebene tiefer.",
+  "cube.swap": "Achsen tauschen",
   "cube.x_axis": "X-Achse",
   "cube.y_axis": "Y-Achse",
   "cube.filters": "Filter",

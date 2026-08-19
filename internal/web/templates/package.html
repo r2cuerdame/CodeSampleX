@@ -33,6 +33,7 @@
       <label>{{.T "cube.x_axis"}}
         <select name="x" data-autosubmit>{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>
+      {{if .Cube.SwapHref}}<a class="swapaxes" href="{{.Cube.SwapHref}}" data-keepscroll title="{{.T "cube.swap"}}" aria-label="{{.T "cube.swap"}}"><span aria-hidden="true">⇄</span></a>{{end}}
       <label>{{.T "cube.y_axis"}}
         <select name="y" data-autosubmit>{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>

@@ -61,6 +61,7 @@
   "contribute.verify_link": "Quais runtimes estão verificados",
   "cube.heading": "Cubo de compatibilidade",
   "cube.sub": "Escolha duas dimensões quaisquer como eixos; todo o resto vira filtro. Clicar em uma célula fixa a fatia dela e desce um nível.",
+  "cube.swap": "Trocar eixos",
   "cube.x_axis": "Eixo X",
   "cube.y_axis": "Eixo Y",
   "cube.filters": "Filtrar",

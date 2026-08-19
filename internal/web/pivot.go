@@ -132,15 +132,15 @@ func pivotEnv(r snapshotRow) *domain.EnvironmentFingerprint {
 	return r.EnvAlias
 }
 
-// osRowKey buckets a snapshot row by OS plus libc when recorded — musl vs
-// glibc decides whether a native module loads at all. "" means the
-// evidence never recorded an OS and the row joins no pivot row.
-func osRowKey(r snapshotRow) string {
-	env := pivotEnv(r)
-	if env == nil {
-		return ""
-	}
-	e := env.Bucketed()
+// osLabel names the operating system as precisely as the evidence
+// recorded it.
+//
+// "linux" alone is not an answer to "does it run there": alpine/musl and
+// debian/glibc are the difference between a native module loading and
+// not. The producer files the distribution under osVersionBucket (and
+// sometimes distro), so the label leads with that when it exists and
+// keeps libc beside it. "" means no OS was recorded — never guessed.
+func osLabel(e domain.EnvironmentFingerprint) string {
 	os := strings.ToLower(strings.TrimSpace(e.OS))
 	if os == "" {
 		return ""
@@ -148,10 +148,32 @@ func osRowKey(r snapshotRow) string {
 	if os == "darwin" {
 		os = "macos"
 	}
-	if e.Libc != "" {
-		os += " " + e.Libc
+	name := os
+	if d := strings.ToLower(strings.TrimSpace(e.Distro)); d != "" {
+		name = d
+	} else if b := strings.ToLower(strings.TrimSpace(e.OSVersionBucket)); b != "" {
+		// A bucket that is a release number stays attached to the OS
+		// ("windows 11"); one that names a distribution replaces it
+		// ("alpine"), because nobody needs telling that alpine is linux.
+		if b[0] >= '0' && b[0] <= '9' {
+			name = os + " " + b
+		} else {
+			name = b
+		}
 	}
-	return os
+	if e.Libc != "" {
+		name += " " + e.Libc
+	}
+	return name
+}
+
+// osRowKey buckets a snapshot row by its recorded operating system.
+func osRowKey(r snapshotRow) string {
+	env := pivotEnv(r)
+	if env == nil {
+		return ""
+	}
+	return osLabel(env.Bucketed())
 }
 
 // majorOf reduces "22.18" to "22"; a bare major passes through.
@@ -435,16 +457,21 @@ func sortPivotCols(cols []string) []string {
 // sortPivotRows keeps the familiar linux, macos, windows order; other
 // operating systems follow alphabetically, libc variants beside their base.
 func sortPivotRows(rows []string) []string {
+	// Familiar order, now that a row may be named for its distribution
+	// ("alpine musl") rather than its kernel: everything that is not
+	// macOS or Windows is a Linux-family row and leads.
 	rank := func(label string) int {
-		switch strings.Fields(label)[0] {
-		case "linux":
-			return 0
+		fields := strings.Fields(label)
+		if len(fields) == 0 {
+			return 3
+		}
+		switch fields[0] {
 		case "macos":
 			return 1
 		case "windows":
 			return 2
 		}
-		return 3
+		return 0
 	}
 	sorted := append([]string(nil), rows...)
 	sort.SliceStable(sorted, func(i, j int) bool {

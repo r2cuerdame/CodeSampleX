@@ -61,6 +61,7 @@
   "contribute.verify_link": "查看已验证的运行时",
   "cube.heading": "兼容性立方体",
   "cube.sub": "任选两个维度作为坐标轴，其余维度都成为筛选条件。点击单元格会固定这一切片，并向下钻取一层。",
+  "cube.swap": "交换坐标轴",
   "cube.x_axis": "X 轴",
   "cube.y_axis": "Y 轴",
   "cube.filters": "筛选",

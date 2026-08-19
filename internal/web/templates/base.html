@@ -111,15 +111,17 @@ for(const b of document.querySelectorAll('[data-copy],[data-copy-target]'))b.add
    to hunt for. The exact scroll position is carried across the reload so
    changing an axis or a filter never throws the reader back to the top
    of the page; the #cube anchor is the no-JavaScript fallback. */
+const keepScroll=()=>{try{sessionStorage.setItem('csx-cube-scroll',String(window.scrollY))}catch(e){}};
 for(const s of document.querySelectorAll('[data-autosubmit]'))s.addEventListener('change',()=>{
-  try{sessionStorage.setItem('csx-cube-scroll',String(window.scrollY))}catch(e){}
+  keepScroll();
   if(!s.form)return;
   /* An unset filter is absent, not empty: disabling it keeps the address
      bar readable and the link shareable. */
   for(const o of s.form.querySelectorAll('select'))if(!o.value)o.disabled=true;
   s.form.submit()
 });
-if(document.getElementById('cube')){
+for(const a of document.querySelectorAll('[data-keepscroll]'))a.addEventListener('click',keepScroll);
+if(document.getElementById('cube')||document.getElementById('matrix')){
   let y=null;try{y=sessionStorage.getItem('csx-cube-scroll');sessionStorage.removeItem('csx-cube-scroll')}catch(e){}
   if(y!==null){
     const to=parseInt(y,10)||0;

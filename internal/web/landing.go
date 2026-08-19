@@ -239,8 +239,10 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			break
 		}
 		best.Tabs = append(best.Tabs, heroTab{
-			Label:    tab.Name + " · " + tab.Ecosystem,
-			Href:     homePath + "?m=" + url.QueryEscape(key(tab)),
+			Label: tab.Name + " · " + tab.Ecosystem,
+			// Anchored so switching the featured package keeps the grid in
+			// view instead of returning the reader to the top of the page.
+			Href:     homePath + "?m=" + url.QueryEscape(key(tab)) + "#matrix",
 			Selected: tab.Ecosystem == best.Eco && tab.Name == best.Package,
 		})
 	}

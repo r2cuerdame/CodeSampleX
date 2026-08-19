@@ -1522,3 +1522,13 @@ table.pivot thead th.corner {
   table.pivot th, table.pivot td { padding: 0.3rem 0.38rem; font-size: 0.72rem; }
   .cubechips .filterchip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 }
+
+/* Transpose the grid in one click instead of two dropdown changes. */
+.swapaxes {
+  align-self: end; margin-bottom: 0.2rem;
+  padding: 0.2rem 0.42rem; line-height: 1;
+  border: 1px solid var(--line-strong); border-radius: 0.4rem;
+  background: var(--panel); color: var(--accent-2);
+  text-decoration: none; font-size: 0.9rem;
+}
+.swapaxes:hover { border-color: var(--accent); color: var(--accent); background: var(--panel-2); }

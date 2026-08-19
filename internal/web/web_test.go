@@ -101,9 +101,13 @@ func TestLandingEnglish(t *testing.T) {
 	// Project links belong on every page.
 	mustContain(t, body, "https://github.com/r2cuerdame/CodeSampleX")
 	mustContain(t, body, "https://github.com/sponsors/r2cuerdame")
-	// The evidence ladder names the real grade vocabulary.
-	for _, s := range []string{"USAGE_OBSERVATION", "SAMPLE_VERIFICATION", "CROSS_PASS", "MATRIX_PASS", "STABLE"} {
-		mustContain(t, body, s)
+	// The grid legend explains cells, and only cells: the sample-status
+	// ladder belongs where samples are, not under a compatibility grid.
+	mustContain(t, body, "How to read the grid")
+	for _, s := range []string{"USAGE_OBSERVATION", "SAMPLE_VERIFICATION", "CROSS_PASS", "MATRIX_PASS"} {
+		if strings.Contains(body, s) {
+			t.Errorf("sample-status vocabulary %q leaked into the grid legend", s)
+		}
 	}
 	// §5.4 contract table verbatim.
 	for _, s := range []string{"You get", "You contribute", "Never shared automatically",

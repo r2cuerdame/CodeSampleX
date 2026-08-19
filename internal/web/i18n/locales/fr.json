@@ -61,6 +61,7 @@
   "contribute.verify_link": "Quels environnements sont vérifiés",
   "cube.heading": "Cube de compatibilité",
   "cube.sub": "Choisissez deux dimensions comme axes ; tout le reste devient un filtre. Cliquer sur une cellule épingle sa tranche et descend d'un niveau.",
+  "cube.swap": "Inverser les axes",
   "cube.x_axis": "Axe X",
   "cube.y_axis": "Axe Y",
   "cube.filters": "Filtrer",

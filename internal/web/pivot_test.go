@@ -266,6 +266,41 @@ func TestPivotSkipsRowsWithoutTheAxis(t *testing.T) {
 	}
 }
 
+// "linux" is not an answer to "does it run there": the row says which
+// distribution and libc actually ran, because that is the difference
+// between a native module loading and not.
+func TestOSLabelNamesTheDistribution(t *testing.T) {
+	cases := []struct {
+		env  domain.EnvironmentFingerprint
+		want string
+	}{
+		// The shape production actually records: the distribution arrives
+		// in osVersionBucket, with distro empty.
+		{domain.EnvironmentFingerprint{OS: "linux", OSVersionBucket: "alpine", Libc: "musl"}, "alpine musl"},
+		{domain.EnvironmentFingerprint{OS: "linux", OSVersionBucket: "debian", Libc: "glibc"}, "debian glibc"},
+		{domain.EnvironmentFingerprint{OS: "linux", Distro: "ubuntu", OSVersionBucket: "24.04", Libc: "glibc"}, "ubuntu glibc"},
+		// A numeric bucket is a release of the OS, not a replacement for it.
+		{domain.EnvironmentFingerprint{OS: "windows", OSVersionBucket: "11"}, "windows 11"},
+		{domain.EnvironmentFingerprint{OS: "darwin"}, "macos"},
+		{domain.EnvironmentFingerprint{OS: "linux"}, "linux"},
+		{domain.EnvironmentFingerprint{}, ""},
+	}
+	for _, c := range cases {
+		if got := osLabel(c.env); got != c.want {
+			t.Errorf("osLabel(%+v) = %q, want %q", c.env, got, c.want)
+		}
+	}
+}
+
+// Distribution rows still sort with the Linux family first.
+func TestPivotRowOrderKeepsLinuxFamilyFirst(t *testing.T) {
+	got := sortPivotRows([]string{"windows 11", "macos", "debian glibc", "alpine musl"})
+	want := "alpine musl,debian glibc,macos,windows 11"
+	if strings.Join(got, ",") != want {
+		t.Errorf("rows = %v, want %s", got, want)
+	}
+}
+
 // Cells link where the caller says; empty cells never link.
 func TestPivotCellHref(t *testing.T) {
 	rows := []snapshotRow{
