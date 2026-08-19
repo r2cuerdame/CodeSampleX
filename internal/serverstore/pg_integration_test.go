@@ -195,18 +195,23 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The package-level row this used to expect is gone on purpose: the
+	// fixture's sample already proves undici@8.10.0 on linux, and re-offering
+	// a proven coordinate is what made 37% of the production corpus redundant.
 	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(candidates) != 3 {
+	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
 	if candidates[0].Kind != "FINDING" || candidates[0].Symbol != "MockAgent" || candidates[0].Score != 23 {
 		t.Fatalf("finding candidate = %+v", candidates[0])
 	}
-	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "" || candidates[1].Score != 30 {
-		t.Fatalf("package expansion candidate = %+v", candidates[1])
+	if candidates[1].Kind != "EXPANSION" || candidates[1].Symbol != "request" || candidates[1].Score != 7 {
+		t.Fatalf("symbol expansion candidate = %+v", candidates[1])
 	}
-	if candidates[2].Kind != "EXPANSION" || candidates[2].Symbol != "request" || candidates[2].Score != 7 {
-		t.Fatalf("symbol expansion candidate = %+v", candidates[2])
+	for _, c := range candidates {
+		if c.Symbol == "" {
+			t.Fatalf("a package-level coordinate already proven on linux was offered: %+v", c)
+		}
 	}
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	claimed, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer", candidates, now, now.Add(24*time.Hour))
@@ -214,11 +219,11 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", claimed, ok, err)
 	}
 	remaining, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
-	if err != nil || len(remaining) != 3 {
+	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
 	next, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer-2", remaining, now, now.Add(24*time.Hour))
-	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "" {
+	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "request" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
 	}
 }
