@@ -79,6 +79,10 @@ type Deps struct {
 	// AdminTokens backs the operator API credential. Nil leaves the admin
 	// surface reachable only through the browser's Basic prompt.
 	AdminTokens serverstore.AdminTokenStore
+	// Farm backs the operations panel. Nil hides it rather than showing zeros.
+	Farm serverstore.FarmStatsStore
+	// Instances are the machines being paid for, with their monthly price.
+	Instances []Instance
 }
 
 type handler struct {
@@ -93,6 +97,8 @@ type handler struct {
 	authoring     *authoringRegistry
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
+	farmStats     serverstore.FarmStatsStore
+	instances     []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -124,6 +130,8 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		authoring:     newAuthoringRegistry(now, d.Authoring),
 		authoringRate: newAuthoringRateLimiter(),
 		adminTokens:   d.AdminTokens,
+		farmStats:     d.Farm,
+		instances:     d.Instances,
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -143,6 +151,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
 	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
 	mux.HandleFunc("GET /admin/api/authoring-drafts", h.authoringDrafts)
+	mux.HandleFunc("GET /admin/api/farm", h.farm)
 	mux.HandleFunc("GET /admin/api/admin-tokens", h.handleAdminTokens)
 	mux.HandleFunc("POST /admin/api/admin-tokens", h.handleAdminTokens)
 	mux.HandleFunc("DELETE /admin/api/admin-tokens/{id}", h.revokeAdminToken)

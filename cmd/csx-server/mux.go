@@ -71,6 +71,10 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	if candidate, ok := store.(serverstore.AdminTokenStore); ok {
 		adminTokenStore = candidate
 	}
+	var farmStats serverstore.FarmStatsStore
+	if candidate, ok := store.(serverstore.FarmStatsStore); ok {
+		farmStats = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
@@ -81,6 +85,8 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		Activity:      activityTracker,
 		Authoring:     authoringStore,
 		AdminTokens:   adminTokenStore,
+		Farm:          farmStats,
+		Instances:     configuredInstances(),
 	})
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},

@@ -495,3 +495,39 @@ func TestRevokingASessionReleasesItsUnfinishedClaim(t *testing.T) {
 		t.Errorf("the abandoned coordinate is still locked: got %+v ok=%v", next, ok)
 	}
 }
+
+// Revoking is not the only way a session stops. One that simply quits
+// refreshing idles out, and its claim used to sit for the full 24 hours
+// exactly as a revoked one did — production had two coordinates locked that
+// way, by sessions that had been dead for four hours.
+func TestClaimReleasesWorkHeldByASessionThatIdledOut(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	candidates := []WantedRow{{
+		Ecosystem: "npm", Name: "stranded", Version: "1.0.0", Symbol: "stranded.call",
+		Kind: "EXPANSION", Score: 9, TargetOS: "linux",
+	}}
+	if err := store.IssueAuthoringSessions(ctx, []AuthoringSessionRow{{
+		TokenHash: "hash-quitter", SessionID: "quitter", Label: "quitter", Model: "agy",
+		Reasoning: "auto", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour),
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.ClaimAuthoringWork(ctx, "quitter", candidates, now, now.Add(24*time.Hour)); err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
+	}
+
+	// Two hours on: the session idled out an hour ago, and its lease still
+	// has 22 hours to run.
+	later := now.Add(2 * time.Hour)
+	next, ok, err := store.ClaimAuthoringWork(ctx, "successor", candidates, later, later.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || next.Symbol != "stranded.call" {
+		t.Errorf("work held by an idled-out session is still locked: got %+v ok=%v", next, ok)
+	}
+}
