@@ -305,6 +305,8 @@
   "sample.basis_source": "게시된 소스만 있음",
   "sample.declared_environment": "선언된 환경",
   "sample.verified_environments": "검증 실행 환경",
+  "sample.run_stages": "단계",
+  "sample.run_when": "실행일",
   "sample.status": "상태",
   "sample.status_help": "게시 상태입니다. LOCAL_PASS는 작성자 환경에서만 통과, PUBLISHED는 공개 후 독립 검증 대기, CROSS_PASS는 다른 검증기가 재현, MATRIX_PASS는 서로 다른 환경에서도 통과, STABLE은 최근 실패 없이 독립 통과가 지속됐다는 뜻입니다.",
   "sample.level_help": "증거 강도입니다. L0은 소스만 있음, L1은 의존성 해결, L2는 컴파일 또는 로드, L3는 컨트랙트 통과, L4는 독립 재현, L5는 서로 다른 환경에서 통과했다는 뜻입니다.",

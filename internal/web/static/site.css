@@ -1532,3 +1532,48 @@ table.pivot thead th.corner {
   text-decoration: none; font-size: 0.9rem;
 }
 .swapaxes:hover { border-color: var(--accent); color: var(--accent); background: var(--panel-2); }
+
+/* ------------------------------------------------------------------ */
+/* OS marks, breadcrumbs, and the sample's execution-evidence table. */
+
+.osicon {
+  width: 0.95em; height: 0.95em; vertical-align: -0.12em;
+  margin-right: 0.35em; fill: currentColor; opacity: 0.75;
+  flex: none;
+}
+table.pivot th.rowlabel .osicon, table.pivot thead th .osicon { opacity: 0.65; }
+
+.crumbs { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
+.crumbs .sep { color: var(--line-strong); }
+.crumbs [aria-current="page"] { color: var(--dim); }
+
+/* The declared environment is one line of facts, not a definition list:
+   it is context for the runs below, not the evidence itself. */
+.declared {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem;
+  padding: 0.55rem 0.75rem; margin: 0.6rem 0 0.9rem;
+  border-left: 3px solid var(--line-strong); border-radius: 0 0.6rem 0.6rem 0;
+  background: var(--panel-2);
+}
+.declared-label { color: var(--dim); }
+
+.runs-heading { margin: 0 0 0.45rem; }
+table.runs { border-collapse: separate; border-spacing: 0; width: 100%; }
+table.runs th, table.runs td {
+  border-width: 1px 1px 0 0; border-style: solid; border-color: var(--line);
+  padding: 0.5rem 0.6rem; text-align: left; vertical-align: top;
+  font-size: 0.82rem;
+}
+table.runs tr > :first-child { border-left-width: 1px; }
+table.runs tbody tr:last-child > * { border-bottom-width: 1px; }
+table.runs thead th {
+  background: var(--panel-2); font-size: 0.72rem; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--dim); font-weight: 700;
+}
+table.runs .runenv { display: block; font-weight: 650; }
+table.runs .runpeer { display: block; overflow-wrap: anywhere; }
+table.runs tbody tr:hover td { background: var(--panel-2); }
+
+@media (max-width: 40rem) {
+  table.runs th, table.runs td { padding: 0.4rem 0.45rem; font-size: 0.74rem; }
+}

@@ -53,14 +53,57 @@ type pivotCell struct {
 	Ver   int64 // verification events (RESOLVE…CONTRACT, SYMBOL_*)
 }
 
+// pivotAxis is one label along an axis, with the OS family it names when
+// that axis is the operating system — the icon carries the family so the
+// text beside it can spend its width on what actually differs
+// ("alpine musl", "11") instead of repeating "linux" on every row.
+type pivotAxis struct {
+	Label string
+	Icon  string // "linux" | "windows" | "macos" | ""
+}
+
 type pivotGridRow struct {
 	Label string
+	Icon  string
 	Cells []pivotCell // aligned with pivotGrid.Cols by index
+}
+
+// osIcon names the icon family for an OS label, and the text that should
+// sit beside it. "alpine musl" keeps all of its words; "windows 11" drops
+// the family the icon already shows; a bare "linux" or "macos" has
+// nothing left to say and shows the icon alone.
+func osIcon(label string) (icon, text string) {
+	fields := strings.Fields(label)
+	if len(fields) == 0 {
+		return "", label
+	}
+	// The family word is dropped only when something more specific
+	// follows it — "windows 11" becomes the icon plus "11" — never when
+	// dropping it would leave the row with no text at all.
+	drop := func(family string) (string, string) {
+		if rest := strings.Join(fields[1:], " "); rest != "" {
+			return family, rest
+		}
+		return family, label
+	}
+	switch fields[0] {
+	case "windows", "windowsservercore":
+		return drop("windows")
+	case "macos", "darwin":
+		return drop("macos")
+	case "linux":
+		// "linux musl" says nothing without its first word: musl alone is
+		// not an operating system.
+		return "linux", label
+	}
+	// Everything else on the OS axis is a Linux distribution, and its
+	// name is already the informative part.
+	return "linux", label
 }
 
 // pivotGrid is a rendered rows × columns compatibility grid.
 type pivotGrid struct {
-	Cols     []string
+	Cols     []pivotAxis
 	Rows     []pivotGridRow
 	HasBang  bool
 	HasMaybe bool
@@ -319,7 +362,8 @@ func buildPivot(rows []snapshotRow, rowKey, colKey func(r snapshotRow) string,
 		}
 		a.absorbRow(r)
 	}
-	return assembleGrid(aggs, sortPivotRows, sortPivotCols, cellHref, now)
+	// This pivot's rows are always the operating system.
+	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false, cellHref, now)
 }
 
 // assembleGrid turns aggregated cells into an ordered, capped, rendered
@@ -327,6 +371,7 @@ func buildPivot(rows []snapshotRow, rowKey, colKey func(r snapshotRow) string,
 // two classes.
 func assembleGrid(aggs map[cellKey]*pivotAgg,
 	sortRowsFn, sortColsFn func([]string) []string,
+	rowsAreOS, colsAreOS bool,
 	cellHref func(row, col string) string, now time.Time) pivotGrid {
 
 	if len(aggs) == 0 {
@@ -352,10 +397,20 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 		trimmed = true
 	}
 
-	g := pivotGrid{Cols: cols, Trimmed: trimmed}
+	g := pivotGrid{Trimmed: trimmed}
+	for _, c := range cols {
+		axis := pivotAxis{Label: c}
+		if colsAreOS {
+			axis.Icon, axis.Label = osIcon(c)
+		}
+		g.Cols = append(g.Cols, axis)
+	}
 	lastSeen := ""
 	for _, rk := range rowsOrdered {
 		row := pivotGridRow{Label: rk, Cells: make([]pivotCell, 0, len(cols))}
+		if rowsAreOS {
+			row.Icon, row.Label = osIcon(rk)
+		}
 		for _, ck := range cols {
 			a := aggs[cellKey{rk, ck}]
 			cell := buildPivotCell(a, now)

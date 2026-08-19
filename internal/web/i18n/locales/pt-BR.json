@@ -305,6 +305,8 @@
   "sample.origin": "Seeder de origem",
   "sample.packages": "Pacotes",
   "sample.receipts": "Recibos de verificação",
+  "sample.run_stages": "Etapas",
+  "sample.run_when": "Execução",
   "sample.status": "Status",
   "sample.status_help": "Estado de publicação. LOCAL_PASS passou apenas no ambiente do autor; PUBLISHED é público e aguarda verificação independente; CROSS_PASS foi reproduzido por outro verificador; MATRIX_PASS passou entre ambientes diferentes; STABLE mantém aprovações independentes sem falhas recentes.",
   "sample.level_help": "Força da evidência. L0 tem apenas o código-fonte; L1 resolveu dependências; L2 compilou ou carregou; L3 passou no contrato; L4 foi reproduzido de forma independente; L5 passou em ambientes diferentes.",

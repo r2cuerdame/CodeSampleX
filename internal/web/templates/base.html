@@ -290,6 +290,29 @@ document.addEventListener('keydown',event=>{
 </div>
 {{end}}
 
+{{/* osicon marks the operating-system family so the label beside it can
+     spend its width on what differs — "alpine musl", "11" — instead of
+     repeating the family on every row. Decorative: the label carries the
+     text, and an empty family renders nothing. */}}
+{{define "osicon"}}
+{{- if eq . "linux"}}<svg class="osicon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5c-2.2 0-3.6 1.7-3.6 4v2.2c0 .9-.5 1.6-1.2 2.5C6 11.7 5 13.4 5 15.4c0 1.3.5 2.3 1.3 3-.5.7-.8 1.4-.6 2 .3.9 1.5 1.2 3 1.2h6.6c1.5 0 2.7-.3 3-1.2.2-.6-.1-1.3-.6-2 .8-.7 1.3-1.7 1.3-3 0-2-1-3.7-2.2-5.2-.7-.9-1.2-1.6-1.2-2.5V5.5c0-2.3-1.4-4-3.6-4Zm-1.5 3.2a.85 1.15 0 1 1 0 2.3.85 1.15 0 0 1 0-2.3Zm3 0a.85 1.15 0 1 1 0 2.3.85 1.15 0 0 1 0-2.3ZM12 7.9c.9 0 1.7.5 1.7.9 0 .5-.8 1.1-1.7 1.1s-1.7-.6-1.7-1.1c0-.4.8-.9 1.7-.9Z"/></svg>
+{{- else if eq . "windows"}}<svg class="osicon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.2 10.3 4.2v7.1H3V5.2Zm8.5-1.2L21 2.7v8.6h-9.5V4Zm-8.5 8.5h7.3v7.1L3 18.6v-6.1Zm8.5 0H21v8.6l-9.5-1.3v-7.3Z"/></svg>
+{{- else if eq . "macos"}}<svg class="osicon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3.2c-.8.9-2 1.6-3.1 1.5-.2-1.2.4-2.4 1.1-3.2C14.8.6 16.1 0 17.2 0c.1 1.2-.4 2.4-1.2 3.2Zm1.2 1.9c-1.7-.1-3.2 1-4 1-.9 0-2.1-.9-3.5-.9-1.8 0-3.5 1.1-4.4 2.7-1.9 3.2-.5 8 1.3 10.6.9 1.3 2 2.7 3.4 2.6 1.4-.1 1.9-.9 3.5-.9 1.6 0 2.1.9 3.5.8 1.5 0 2.4-1.3 3.3-2.6 1-1.5 1.5-2.9 1.5-3-.1 0-2.8-1.1-2.8-4.2 0-2.6 2.1-3.9 2.2-3.9-1.2-1.8-3.1-2-3.8-2.1Z"/></svg>
+{{- end}}{{end}}
+
+{{/* crumbs is the path back up from any tracked object: records → the
+     ecosystem → the package → the version → the symbol. Every step is a
+     real page, so a reader who arrived from a search or an agent link can
+     climb to the level they actually wanted. */}}
+{{define "crumbs"}}
+{{- if .}}
+<nav class="crumbs mono" aria-label="breadcrumb">
+{{- range $i, $c := .}}{{if $i}} <span class="sep" aria-hidden="true">/</span> {{end}}
+{{- if $c.Href}}<a href="{{$c.Href}}">{{$c.Label}}</a>{{else}}<span aria-current="page">{{$c.Label}}</span>{{end}}
+{{- end}}
+</nav>
+{{- end}}{{end}}
+
 {{/* pivot renders a pivotGrid: one slice of the compatibility cube. Every
      value in it is data (OS names, runtime lines, PASS/FAIL states), so the
      template needs no translations. State is always word + glyph, never a
@@ -307,11 +330,11 @@ document.addEventListener('keydown',event=>{
 {{- end}}
 <div class="tablewrap">
 <table class="pivot">
-<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
+<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono">{{template "osicon" .Icon}}{{.Label}}</th>{{end}}</tr></thead>
 <tbody>
 {{- range .Rows}}
 <tr>
-  <th class="rowlabel mono">{{.Label}}</th>
+  <th class="rowlabel mono">{{template "osicon" .Icon}}{{.Label}}</th>
   {{- range .Cells}}
   <td class="pv {{.Class}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
     {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}

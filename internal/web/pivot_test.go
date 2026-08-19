@@ -26,11 +26,20 @@ func pvRow(os, libc, runtime, runtimeVersion, lastSeen string, byStage map[strin
 	}
 }
 
+// colLabels joins the grid's column labels for order assertions.
+func colLabels(g pivotGrid) string {
+	out := make([]string, 0, len(g.Cols))
+	for _, c := range g.Cols {
+		out = append(out, c.Label)
+	}
+	return strings.Join(out, ",")
+}
+
 func cellAt(t *testing.T, g pivotGrid, row, col string) pivotCell {
 	t.Helper()
 	ci := -1
 	for i, c := range g.Cols {
-		if c == col {
+		if c.Label == col {
 			ci = i
 		}
 	}
@@ -208,7 +217,7 @@ func TestPivotAxisBucketing(t *testing.T) {
 		pvRow("darwin", "", "node", "22.4", "2026-08-12T10:00:00Z", map[string]stageCount{"CONTRACT": {Pass: 1}}),
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
-	if len(g.Cols) != 1 || g.Cols[0] != "node 22" {
+	if len(g.Cols) != 1 || g.Cols[0].Label != "node 22" {
 		t.Fatalf("cols = %v, want the two patch versions merged into [node 22]", g.Cols)
 	}
 	merged := cellAt(t, g, "linux", "node 22")
@@ -237,7 +246,7 @@ func TestPivotColumnAndRowOrder(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	wantCols := []string{"bun 1", "node 24", "node 22", "node 20"}
-	if strings.Join(g.Cols, ",") != strings.Join(wantCols, ",") {
+	if colLabels(g) != strings.Join(wantCols, ",") {
 		t.Errorf("cols = %v, want %v", g.Cols, wantCols)
 	}
 	var gotRows []string
@@ -360,7 +369,7 @@ func TestPivotCapsColumnsToHighestEvidence(t *testing.T) {
 		t.Error("a capped grid must say it is trimmed")
 	}
 	for _, c := range g.Cols {
-		if c == "node 9" {
+		if c.Label == "node 9" {
 			t.Error("the lowest-evidence line survived the cap")
 		}
 	}

@@ -305,6 +305,8 @@
   "sample.origin": "オリジンシーダー",
   "sample.packages": "パッケージ",
   "sample.receipts": "検証レシート",
+  "sample.run_stages": "ステージ",
+  "sample.run_when": "実行日",
   "sample.status": "ステータス",
   "sample.status_help": "公開状態です。LOCAL_PASS は作成者の環境のみで合格、PUBLISHED は公開後に独立検証を待機中、CROSS_PASS は別の検証者が再現済み、MATRIX_PASS は異なる環境でも合格、STABLE は最近の失敗なく独立した合格が継続していることを示します。",
   "sample.level_help": "証拠の強さです。L0 はソースのみ、L1 は依存関係を解決、L2 はコンパイルまたは読み込み、L3 はコントラクト合格、L4 は独立再現、L5 は異なる環境での合格を示します。",

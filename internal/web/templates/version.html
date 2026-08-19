@@ -1,5 +1,5 @@
 {{define "content"}}
-<nav class="crumbs mono"><a href="/{{.Ecosystem}}/{{.Name}}">{{.Name}}</a> / {{.Ver}}</nav>
+{{template "crumbs" .Crumbs}}
 <h1 class="mono">{{.Name}}@{{.Ver}}</h1>
 
 {{/* Which symbol ran on which OS — a cube slice with this version pinned;

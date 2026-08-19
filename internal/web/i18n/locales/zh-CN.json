@@ -305,6 +305,8 @@
   "sample.origin": "原始种子者",
   "sample.packages": "包",
   "sample.receipts": "验证回执",
+  "sample.run_stages": "阶段",
+  "sample.run_when": "运行日期",
   "sample.status": "状态",
   "sample.status_help": "发布状态。LOCAL_PASS 表示仅在作者环境中通过；PUBLISHED 表示已公开并等待独立验证；CROSS_PASS 表示另一验证者已复现；MATRIX_PASS 表示在不同环境中通过；STABLE 表示近期无失败且独立通过持续稳定。",
   "sample.level_help": "证据强度。L0 仅有源码；L1 已解析依赖；L2 已编译或加载；L3 已通过契约；L4 已被独立复现；L5 已在不同环境中通过。",

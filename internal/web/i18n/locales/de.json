@@ -305,6 +305,8 @@
   "sample.origin": "Ursprungs-Seeder",
   "sample.packages": "Pakete",
   "sample.receipts": "Verifizierungsbelege",
+  "sample.run_stages": "Stufen",
+  "sample.run_when": "Lauf",
   "sample.status": "Status",
   "sample.status_help": "Veröffentlichungsstatus. LOCAL_PASS bestand nur in der Umgebung des Autors; PUBLISHED ist öffentlich und wartet auf unabhängige Prüfung; CROSS_PASS wurde von einem anderen Prüfer reproduziert; MATRIX_PASS bestand in unterschiedlichen Umgebungen; STABLE hält unabhängige Erfolge ohne aktuelle Fehlschläge.",
   "sample.level_help": "Belegstärke. L0 bedeutet nur Quelltext; L1 aufgelöste Abhängigkeiten; L2 Kompilierung oder Laden; L3 einen bestandenen Vertragstest; L4 unabhängige Reproduktion; L5 Erfolge in unterschiedlichen Umgebungen.",

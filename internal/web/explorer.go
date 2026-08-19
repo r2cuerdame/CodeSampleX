@@ -423,6 +423,46 @@ func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// crumb is one step of the path back up from a tracked object. Href
+// empty marks the page the reader is on.
+type crumb struct {
+	Label string
+	Href  string
+}
+
+// recordCrumbs builds the chain records → ecosystem → package → version →
+// symbol, stopping at the first empty coordinate. Every step is a real
+// page, so a reader who arrived from a search result or an agent link can
+// climb to the level they actually wanted instead of starting over.
+func recordCrumbs(b basePage, eco, name, version, symbol string) []crumb {
+	out := []crumb{{Label: i18n.T(b.Lang, "nav.records"), Href: b.WithLang("/records")}}
+	if eco == "" {
+		return out
+	}
+	out = append(out, crumb{Label: eco,
+		Href: b.WithLang(recordsHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default))})
+	if name == "" {
+		return out
+	}
+	out = append(out, crumb{Label: name, Href: b.WithLang(pkgHref(eco, name))})
+	if version == "" {
+		return out
+	}
+	out = append(out, crumb{Label: version, Href: b.WithLang(versionHref(eco, name, version))})
+	if symbol == "" {
+		return out
+	}
+	return append(out, crumb{Label: symbol, Href: b.WithLang(symbolHref(eco, name, version, symbol))})
+}
+
+// leaf marks the last crumb as the current page.
+func leaf(crumbs []crumb) []crumb {
+	if n := len(crumbs); n > 0 {
+		crumbs[n-1].Href = ""
+	}
+	return crumbs
+}
+
 func pkgHref(eco, name string) string {
 	return "/" + eco + "/" + escapePathSegments(name)
 }
@@ -452,6 +492,7 @@ type packagePage struct {
 	Samples   []SampleListItem
 	Clusters  []clusterView
 	Wanted    []WantedRow
+	Crumbs    []crumb
 	// Cube is the N-dimensional compatibility explorer: the page's primary
 	// element. nil when the package has no snapshot evidence yet.
 	Cube *cubeView
@@ -515,7 +556,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
-		Cube: buildCubeView(s, r, lang, eco, name),
+		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:   buildCubeView(s, r, lang, eco, name),
 	})
 }
 
@@ -529,6 +571,7 @@ type versionPage struct {
 	Ver       string
 	Symbols   []symbolLink
 	Matrix    []matrixRow
+	Crumbs    []crumb
 	// SymbolGrid answers "which symbol ran on which OS" at a glance; its
 	// cells drill into the package cube with version, symbol and OS pinned.
 	SymbolGrid pivotGrid
@@ -575,6 +618,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
+		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
 		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
 	})
 }
@@ -649,6 +693,7 @@ type symbolPage struct {
 	Matrix    []matrixRow
 	Clusters  []clusterView
 	Generated string
+	Crumbs    []crumb
 	// Pivot is the OS × runtime summary of the same snapshot the detail
 	// table renders; its cells anchor down to that table.
 	Pivot pivotGrid
@@ -708,6 +753,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		basePage: b, Ecosystem: eco, Name: name, Ver: version, Symbol: symbol,
 		PURL: purl, Matrix: matrix, Clusters: clusters,
 		Generated: datePart(doc.GeneratedAt),
+		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,
 	})
 }
@@ -926,6 +972,7 @@ type samplePageData struct {
 	Receipts            []receiptView
 	DeclaredEnvironment environmentView
 	EvidenceBasisKey    string
+	Crumbs              []crumb
 }
 
 // levelBadge maps a sample status to the honest verification level
@@ -1090,11 +1137,22 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 	case string(domain.L5MatrixPass):
 		basisKey = "sample.basis_matrix"
 	}
+	// The sample is a tracked object like any other: give it the same path
+	// back up through the package it is about.
+	sampleCrumbs := []crumb{{Label: i18n.T(lang, "nav.records"), Href: b.WithLang("/records")}}
+	if len(refs) > 0 {
+		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil && knownEcosystems[parsed.Ecosystem] {
+			sampleCrumbs = recordCrumbs(b, parsed.Ecosystem, parsed.Name, "", "")
+		}
+	}
+	sampleCrumbs = append(sampleCrumbs, crumb{Label: i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID)})
+
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
 		Level: level, Context: ctx, Goal: goal,
 		Packages: refs, Receipts: receipts,
 		DeclaredEnvironment: declaredEnvironment, EvidenceBasisKey: basisKey,
+		Crumbs:              sampleCrumbs,
 	})
 }
 

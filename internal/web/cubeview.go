@@ -203,10 +203,20 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		sel.Options = append(sel.Options, cubeFilterOption{
 			Label: i18n.T(lang, "cube.all"), Selected: filters[dim] == "",
 		})
-		for _, v := range values {
-			sel.Options = append(sel.Options, cubeFilterOption{
-				Value: v, Label: v, Selected: filters[dim] == v,
-			})
+		// The OS offers whole platforms as well as exact environments:
+		// "does it run on Linux at all" and "does it run on alpine musl"
+		// are different questions and a reader arrives with both.
+		choices := make([]cubeFilterOption, 0, len(values))
+		if dim == "os" {
+			choices = cubeOSFilterOptions(values)
+		} else {
+			for _, v := range values {
+				choices = append(choices, cubeFilterOption{Value: v, Label: v})
+			}
+		}
+		for _, c := range choices {
+			c.Selected = filters[dim] == c.Value
+			sel.Options = append(sel.Options, c)
 		}
 		view.Filters = append(view.Filters, sel)
 	}
@@ -220,12 +230,10 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	if !validCubeAxis(x) || !validCubeAxis(y) || x == y {
 		x, y = "", ""
 	}
-	// A dimension pinned to one value carries no spread; if a filter took
-	// over an axis, re-pick the axes over what still varies.
-	if _, pinned := filters[x]; pinned {
-		x, y = "", ""
-	}
-	if _, pinned := filters[y]; pinned {
+	// A dimension narrowed to a single value carries no spread; re-pick
+	// the axes over what still varies. A whole-platform OS pin does still
+	// vary, so it keeps its axis.
+	if x != "" && (len(cubeDimValues(sliced, x)) < 2 && len(cubeDimValues(sliced, y)) < 2) {
 		x, y = "", ""
 	}
 	// Explicitly chosen axes the slice never recorded would render an
@@ -245,12 +253,9 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	view.XLabel, view.YLabel = i18n.T(lang, "cube.dim_"+x), i18n.T(lang, "cube.dim_"+y)
 	view.SwapHref = cubeHref(pagePath, cubeQuery(filters, y, x, lang))
 
-	// Axis selectors offer every unpinned dimension with recorded values.
+	// Axis selectors offer every dimension the slice still spreads over.
 	for _, dim := range cubeDimKeys {
-		if _, pinned := filters[dim]; pinned {
-			continue
-		}
-		if len(cubeDimValues(sliced, dim)) == 0 {
+		if len(cubeDimValues(sliced, dim)) < 2 && dim != x && dim != y {
 			continue
 		}
 		label := i18n.T(lang, "cube.dim_"+dim)

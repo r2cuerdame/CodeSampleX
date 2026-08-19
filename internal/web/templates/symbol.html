@@ -1,5 +1,5 @@
 {{define "content"}}
-<nav class="crumbs mono"><a href="/{{.Ecosystem}}/{{.Name}}">{{.Name}}</a> / <a href="/{{.Ecosystem}}/{{.Name}}/{{.Ver}}">{{.Ver}}</a> / {{.Symbol}}</nav>
+{{template "crumbs" .Crumbs}}
 <h1 class="mono">{{.Symbol}} <span class="dim">/ {{.Name}}@{{.Ver}}</span></h1>
 
 {{/* OS × runtime at a glance; the detail table below is the drill-down

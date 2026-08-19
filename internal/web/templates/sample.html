@@ -1,4 +1,5 @@
 {{define "content"}}
+{{template "crumbs" .Crumbs}}
 <article class="sample-detail">
   {{/* The heading is the goal — the question this sample answers. The
        content address is identity, not a title, so it moves below. */}}
@@ -32,34 +33,50 @@
       <div><dt>{{.T "sample.level"}}</dt><dd class="mono">{{.Level}}</dd></div>
     </dl>
 
-    <div class="sample-detail__env-grid">
-      <section class="sample-detail__env-block" aria-labelledby="sample-declared-environment">
-        <h3 id="sample-declared-environment">{{.T "sample.declared_environment"}}</h3>
-        {{if .DeclaredEnvironment.Present}}
-        <dl class="envfacts">
-          {{range .DeclaredEnvironment.Facts}}<div><dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd></div>{{end}}
-        </dl>
-        {{else}}<p class="dim small">{{.T "sample.environment_missing"}}</p>{{end}}
-      </section>
-
-      {{if .Receipts}}
-      <section class="sample-detail__env-block sample-detail__verified" aria-labelledby="sample-verified-environments">
-        <h3 id="sample-verified-environments">{{.T "sample.verified_environments"}}</h3>
-        <div class="sample-detail__run-list">
-          {{range .Receipts}}
-          <article class="sample-detail__run">
-            <header class="sample-detail__run-heading">
-              <strong class="mono">{{if .Environment.Summary}}{{.Environment.Summary}}{{else}}{{.Context}}{{end}}</strong>
-              <span class="sample-detail__result mono" data-evidence-result="{{.Contract}}">{{.Contract}}</span>
-            </header>
-            {{if .Environment.Present}}<dl class="envfacts">{{range .Environment.Facts}}<div><dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd></div>{{end}}</dl>{{else}}<p class="dim small">{{$.T "sample.environment_missing"}}</p>{{end}}
-            <p class="sample-detail__run-meta mono small dim">{{.Capability}} · {{.Stages}} · {{.Verifier}} · {{.CreatedAt}}</p>
-          </article>
-          {{end}}
-        </div>
-      </section>
-      {{end}}
+    {{/* What the author declared, as one compact line of facts. */}}
+    <div class="declared">
+      <span class="declared-label eyebrow mono">{{.T "sample.declared_environment"}}</span>
+      {{if .DeclaredEnvironment.Present}}
+      <span class="declared-facts mono small">
+        {{- range $i, $f := .DeclaredEnvironment.Facts}}{{if $i}} <span class="dim" aria-hidden="true">·</span> {{end}}<span title="{{$f.Label}}">{{$f.Value}}</span>{{end}}
+      </span>
+      {{else}}<span class="dim small">{{.T "sample.environment_missing"}}</span>{{end}}
     </div>
+
+    {{/* Every verification run, once: the environment it ran in, what the
+         contract did there, and who signed it. This is the sample's whole
+         execution record — it used to be printed twice, as an environment
+         list here and a receipt list at the bottom of the page. */}}
+    {{if .Receipts}}
+    <h3 class="eyebrow mono runs-heading">{{.T "sample.verified_environments"}}</h3>
+    <div class="tablewrap">
+      <table class="runs">
+        <thead>
+          <tr>
+            <th>{{.T "sample.environment"}}</th>
+            <th>{{.T "sample.contract"}}</th>
+            <th>{{.T "sample.run_stages"}}</th>
+            <th>{{.T "sample.run_when"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+        {{- range .Receipts}}
+          <tr>
+            <td>
+              <span class="runenv mono">{{if .Environment.Summary}}{{.Environment.Summary}}{{else}}{{.Context}}{{end}}</span>
+              <span class="runpeer dim mono small">{{.PeerID}}</span>
+            </td>
+            <td><span class="sample-detail__result mono" data-evidence-result="{{.Contract}}">{{.Contract}}</span></td>
+            <td class="mono small dim">{{.Stages}}<br>{{.Capability}} · {{.Verifier}}</td>
+            <td class="mono small">{{.CreatedAt}}</td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="dim">{{.T "sample.no_receipts"}}</p>
+    {{end}}
   </section>
 
   {{if .Manifest}}
@@ -155,31 +172,5 @@
     </section>
   </div>
 
-  <section class="sample-detail__card" aria-labelledby="sample-receipts-heading">
-    <div class="sample-detail__section-heading">
-      <h2 class="eyebrow mono" id="sample-receipts-heading">{{.T "sample.receipts"}}</h2>
-    </div>
-    {{if .Receipts}}
-    <ul class="sample-detail__receipt-list">
-    {{- range .Receipts}}
-      <li>
-        <div class="sample-detail__receipt-primary">
-          <strong class="mono">{{if .Environment.Summary}}{{.Environment.Summary}}{{else}}{{.Context}}{{end}}</strong>
-          <span class="sample-detail__result mono" data-evidence-result="{{.Contract}}">{{.Contract}}</span>
-        </div>
-        <div class="sample-detail__receipt-meta mono small">
-          <span class="chip mono small">{{.Capability}}</span>
-          <span>{{.Stages}}</span>
-          <span>{{.Verifier}}</span>
-          <time>{{.CreatedAt}}</time>
-        </div>
-        <span class="sample-detail__hash dim mono small">{{.PeerID}}</span>
-      </li>
-    {{- end}}
-    </ul>
-    {{else}}
-    <p class="dim">{{.T "sample.no_receipts"}}</p>
-    {{end}}
-  </section>
 </article>
 {{end}}

@@ -158,6 +158,35 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 	return facts, windowed, nil
 }
 
+// osFamilies are the whole-platform values the OS filter accepts beside
+// the exact ones. "linux" answers "does it run on Linux at all", which is
+// a different question from "does it run on alpine musl" — and both are
+// questions a reader arrives with.
+var osFamilies = []string{"linux", "macos", "windows"}
+
+// dimValueMatches decides one pinned dimension. Every dimension is exact
+// except the OS, where a family name also matches every distribution in
+// it: pinning "linux" keeps alpine musl and debian glibc, while pinning
+// "alpine musl" keeps only that one.
+func dimValueMatches(dim, want, got string) bool {
+	if want == "" {
+		return true
+	}
+	if want == got {
+		return true
+	}
+	if dim != "os" || got == "" {
+		return false
+	}
+	for _, family := range osFamilies {
+		if want == family {
+			icon, _ := osIcon(got)
+			return icon == family
+		}
+	}
+	return false
+}
+
 // filterCubeFacts keeps the facts matching every pinned dimension.
 func filterCubeFacts(facts []cubeFact, filters map[string]string) []cubeFact {
 	if len(filters) == 0 {
@@ -167,13 +196,44 @@ func filterCubeFacts(facts []cubeFact, filters map[string]string) []cubeFact {
 	for _, f := range facts {
 		keep := true
 		for dim, want := range filters {
-			if want != "" && f.Dims[dim] != want {
+			if !dimValueMatches(dim, want, f.Dims[dim]) {
 				keep = false
 				break
 			}
 		}
 		if keep {
 			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// osFilterValues lists the OS filter's choices: each platform present,
+// then the exact recorded environments inside it.
+func cubeOSFilterOptions(exact []string) []cubeFilterOption {
+	seen := map[string]bool{}
+	for _, v := range exact {
+		if icon, _ := osIcon(v); icon != "" {
+			seen[icon] = true
+		}
+	}
+	var out []cubeFilterOption
+	for _, family := range osFamilies {
+		if !seen[family] {
+			continue
+		}
+		out = append(out, cubeFilterOption{Value: family, Label: family})
+		for _, v := range exact {
+			if icon, _ := osIcon(v); icon == family && v != family {
+				out = append(out, cubeFilterOption{Value: v, Label: "  " + v})
+			}
+		}
+	}
+	// Anything the family test did not recognise still has to be
+	// selectable; nothing recorded may become unreachable.
+	for _, v := range exact {
+		if icon, _ := osIcon(v); icon == "" {
+			out = append(out, cubeFilterOption{Value: v, Label: v})
 		}
 	}
 	return out
@@ -200,9 +260,10 @@ func cubeDimValues(facts []cubeFact, dim string) []string {
 func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, ok bool) {
 	varies := map[string]bool{}
 	for _, dim := range cubeDimKeys {
-		if _, isPinned := pinned[dim]; isPinned {
-			continue
-		}
+		// Whether a dimension can be an axis is decided by the slice, not
+		// by the filter list: pinning the OS to a whole platform still
+		// leaves alpine musl and debian glibc to spread along it, and a
+		// dimension pinned to one exact value has one value here anyway.
 		if len(cubeDimValues(facts, dim)) >= 2 {
 			varies[dim] = true
 		}
@@ -264,7 +325,7 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	}
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
-	return assembleGrid(aggs, sortRows, sortCols, cellHref, now)
+	return assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", cellHref, now)
 }
 
 // mergeCubeFacts folds one cell's facts together without double-counting.

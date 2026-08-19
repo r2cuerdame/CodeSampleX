@@ -1,5 +1,5 @@
 {{define "content"}}
-<nav class="crumbs mono"><a href="{{.WithLang "/records"}}">{{.T "nav.records"}}</a> / {{.Ecosystem}}</nav>
+{{template "crumbs" .Crumbs}}
 <h1 class="mono">{{.Name}} <span class="dim">· {{.Ecosystem}}</span></h1>
 
 {{if .Wanted}}

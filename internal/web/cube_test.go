@@ -136,7 +136,7 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 	}
 	sliced := filterCubeFacts(facts, map[string]string{"os": "windows"})
 	g := buildCubeGrid(sliced, "version", "arch", nil, pivotNow)
-	if len(g.Cols) != 2 || g.Cols[0] != "19.1.0" || g.Cols[1] != "18.3.1" {
+	if len(g.Cols) != 2 || g.Cols[0].Label != "19.1.0" || g.Cols[1].Label != "18.3.1" {
 		t.Fatalf("cols = %v, want versions newest first", g.Cols)
 	}
 	c := cellAt(t, g, "x64", "19.1.0")
