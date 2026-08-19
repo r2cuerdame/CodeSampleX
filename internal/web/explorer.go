@@ -535,7 +535,16 @@ type sampleVersionCount struct {
 // sampleVersionCounts groups a package's samples by the version they were
 // written against, newest first. Samples whose manifest named no version
 // keep their own row rather than being hidden.
-func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem) []sampleVersionCount {
+func sampleVersionCounts(b basePage, eco, name string, versions []string, samples []SampleListItem) []sampleVersionCount {
+	// Only versions that actually have a page may be linked. A golang
+	// module is published both as "1.6.0" and "v1.6.0" and only the
+	// spelling with evidence has a version page, so linking every spelling
+	// a manifest used would hand the reader a 404 — measured on
+	// github.com/google/uuid, where 94 samples say v1.6.0 and 2 say 1.6.0.
+	hasPage := make(map[string]bool, len(versions))
+	for _, v := range versions {
+		hasPage[v] = true
+	}
 	byVersion := map[string]int64{}
 	for _, item := range samples {
 		byVersion[item.Version]++
@@ -543,7 +552,7 @@ func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem)
 	out := make([]sampleVersionCount, 0, len(byVersion))
 	for version, count := range byVersion {
 		row := sampleVersionCount{Version: version, Count: count}
-		if version != "" {
+		if hasPage[version] {
 			row.Href = b.WithLang(versionHref(eco, name, version))
 		}
 		out = append(out, row)
@@ -595,7 +604,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
-		SampleVersions: sampleVersionCounts(b, eco, name, samples),
+		SampleVersions: sampleVersionCounts(b, eco, name, versions, samples),
 		Crumbs:         leaf(recordCrumbs(b, eco, name, "", "")),
 		Cube:           buildCubeView(s, r, lang, eco, name),
 	})

@@ -112,7 +112,7 @@
 <ul class="samplevers mono">
 {{- range .SampleVersions}}
   <li>
-    {{if .Href}}<a href="{{.Href}}">{{.Version}}</a>{{else}}<span class="dim">{{$.T "pkg.samples_no_version"}}</span>{{end}}
+    {{if .Href}}<a href="{{.Href}}">{{.Version}}</a>{{else if .Version}}<span class="dim">{{.Version}}</span>{{else}}<span class="dim">{{$.T "pkg.samples_no_version"}}</span>{{end}}
     <span class="dim small">{{$.N .Count}}</span>
   </li>
 {{- end}}
