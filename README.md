@@ -1,6 +1,6 @@
 # CodeSampleX
 
-> **Stop solving the same code twice.**
+> **Tested. Not guessed.**
 
 <p align="center">
   <img src="internal/web/static/inspector-hero-v1.webp" alt="CodeSampleX compatibility inspector" width="560">
@@ -8,50 +8,45 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
-CodeSampleX is a **local-first distributed reasoning cache** for coding LLMs. Instead of every agent on Earth re-deriving how a public library works — and re-hitting the same version incompatibilities — CodeSampleX collects anonymous compatibility **Evidence** from real development environments and serves **verified minimal Samples** with the exact delta between a known-good answer and your project.
+CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes: it runs real builds and contract tests in real, recorded environments — then shows you where things actually worked, where they broke, and how sure it is of both.
 
-- Website & Compatibility Explorer: **https://codesamplex.dev**
-- One question your LLM stops re-answering: *does `axios.post` actually work on axios 1.12 + Node 22 + pnpm + Windows 11 — and if not, at which stage does it break?*
-- Works with **Claude Code, Codex, Gemini CLI, OpenCode** — and any MCP client (Cursor, Windsurf, Cline, Zed, VS Code).
+- Compatibility map: **https://codesamplex.dev**
+- The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
+- The answer it gives: *we tested it; this is what happened.*
 
-## Live network
+## Does it run there?
 
-[Records](https://codesamplex.dev/records) · [Findings](https://codesamplex.dev/findings) · [Wanted](https://codesamplex.dev/wanted) · [Contribute](https://codesamplex.dev/contribute)
+Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — OS × runtime, version × architecture, symbol × OS. A real slice, from the live network (`axios.post`, measured August 2026):
 
-The public counters are a five-minute rollup, available as JSON without an account:
-
-```bash
-curl -fsSL https://codesamplex.dev/v1/stats
+```text
+axios.post · axios 1.12.2                node 22          node 24
+linux                                    ✓ PASS verified     —
+windows                                  ○ 3/9 observed ! ?  (process runs: 3 pass · 6 fail)
 ```
 
-Those counters describe network data and protocol activity, not an audience estimate:
+That row is not an illustration — it is [the live page](https://codesamplex.dev/npm/axios/1.12.2/axios.post). `PASS` on linux is a contract that executed in a pinned container; the windows cell is honest about being weaker evidence (`○` observed with the `?` uncertainty marker — build observations, not a contract run) and about its measured failures (`!`). Unknown stays `—`; nothing is inferred from the package's ecosystem or its docs.
 
-| Field | What it counts |
-|-------|----------------|
-| `verifiedSamples` | distinct samples with a sandbox contract-PASS receipt |
-| `evidence` | accepted observation records; not users, projects, executions, or independently verified samples |
-| `packages` / `symbols` | public package names and observed symbols represented in the compatibility data |
-| `peers` | distinct anonymous daily peer buckets that contributed evidence |
-| `projectsMonth` | distinct anonymous monthly project buckets that contributed evidence |
-| `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL after using a sample |
+The web explorer treats every 2D grid as a slice of an N-dimensional cube: pick any two dimensions as axes (OS, runtime, package version, symbol, architecture, package manager, execution context, libc), pin the rest as filters, and click a cell to drill one level deeper — down to the exact measured combinations, whose symbol pages hold the signed receipts.
 
-CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. HTTP requests and release/binary download responses can be counted separately, but retries, automation, mirrors, CI, and deployment traffic mean those numbers are not people or completed installs. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count.
+## Why testing matters
 
-### Demand-led coverage
+```text
+Documentation   → what should work
+Code search     → how somebody used it
+Community       → what somebody says worked
+CodeSampleX     → what was actually tested
+```
 
-In community mode, a `NO_SAFE_MATCH` contributes a privacy-safe Wanted tuple instead of the user's prompt: public package, exact version and, when the request contains one unambiguous package, each retained requested symbol within the bounded report. A multi-package v1 request stays package-only rather than inventing which symbol belongs to which dependency.
+The rules that keep the map honest:
 
-[Wanted](https://codesamplex.dev/wanted) ranks the unanswered tuples by demand, and the production queue takes them before broad hot-package expansion. A Wanted row closes only when a live, non-quarantined sample has a contract-PASS receipt and contains the exact canonical package version and requested symbol; a source-only upload or a sample for another release/API is not treated as the answer. `GET /v1/wanted` exposes the same privacy-safe actionable queue for contributors.
+- A project compiling is **never** presented as a symbol working. Observations and verifications are counted separately and never summed.
+- Unknown causes stay `UNKNOWN`. A wrong HIT is worse than a MISS — `NO_SAFE_MATCH` is a real answer.
+- Evidence decays: a result's weight halves every 90 days, and stale cells say so.
+- Failure causes are reported as probability distributions, never invented certainties.
 
-Package URLs can also render an explicit **Wanted-only** page before the first verified sample exists. That page reports demand and missing coverage only: it does not manufacture a compatibility result, version matrix, or evidence claim.
+## Install the CLI
 
-### Inspecting recorded environments
-
-[Records](https://codesamplex.dev/records) can be filtered by ecosystem, recorded operating system, recorded runtime/execution context, and evidence basis (`observed` or `verified`). [Findings](https://codesamplex.dev/findings) uses the same environment filters and separates finding source (`official`, `common belief`, or `sample contract`). Environment filters match recorded fingerprints only; CodeSampleX does not infer an OS or runtime from the package ecosystem. Sample detail pages show the declared environment alongside verification-run environments, sandbox capability, per-stage results, and receipt-backed verification level.
-
-The public deployment is **seeded-only for sample source**: official samples are clean-room projects whose provenance can be established. Search, evidence submission, verification receipts, the wanted board, and `NO_SAFE_MATCH` requests remain open without an account. See [Contribute](https://codesamplex.dev/contribute) for the paths that are open to everyone.
-
-## Install
+The CLI is the local tester: it wraps your real builds, turns their outcomes into anonymous evidence, and answers from the network.
 
 Windows (PowerShell):
 
@@ -65,7 +60,7 @@ macOS / Linux:
 curl -fsSL https://codesamplex.dev/install.sh | sh
 ```
 
-That line needs `curl` and CA certificates, which minimal images (debian-slim, alpine, most agent containers) do not have — and `curl … | sh` **exits 0 when curl is missing**, because a pipeline reports the last command's status, not curl's. So install the prerequisites first, or skip curl entirely; the installer falls back to wget once it is running:
+That line needs `curl` and CA certificates, which minimal images (debian-slim, alpine, most agent containers) do not have — and `curl … | sh` **exits 0 when curl is missing**, because a pipeline reports the last command's status. Install prerequisites first, or use wget:
 
 ```bash
 apt-get install -y curl ca-certificates            # debian / ubuntu slim
@@ -73,24 +68,122 @@ apk add --no-cache curl ca-certificates            # alpine
 wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
 ```
 
-The binary lands in `~/.local/bin`, which is on nobody's `PATH` by default. The installer prints this once and nothing repeats it, so the next command you run is `csx: not found` unless you do:
+The binary lands in `~/.local/bin`, which is on nobody's `PATH` by default:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 csx version    # the install check — `csx --version` is not a spelling csx accepts
 ```
 
-One binary, one question. `csx init` shows the community contract and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Everything else (daemon, MCP registration for Claude Code / Codex / Gemini CLI / OpenCode, agent rules) is automatic.
+One binary, one question. `csx init` shows the contract below and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Piped into `sh`, stdin is consumed by the download pipe, so `init` takes the advertised default: JOIN COMMUNITY. Opt out any time with `csx init --local-only`; both mode flags are re-runnable and non-interactive. For scripted or CI setups: `csx init --community --yes --no-agents`.
 
-Piped into `sh`, stdin is already consumed by the download pipe, so `init` cannot read an answer and takes the advertised default: **JOIN COMMUNITY**. Community mode receives the public compatibility network and contributes only sanitized public package/version/symbol/environment and build-result evidence — never source, paths, project names, secrets, private packages, or raw logs. To opt out, run `csx init --local-only` at any time. Both mode flags are re-runnable and non-interactive. You can also download and run the installer separately, which makes a failed download a failed command:
+## Test and check
 
 ```bash
-curl -fsSL https://codesamplex.dev/install.sh -o install.sh && sh install.sh
+csx run -- pnpm build              # wrap any build/test — its result becomes evidence
+csx search "axios multipart upload"  # a verified answer, graded for YOUR environment
+csx scan                           # record which public packages a project uses, no build
+csx stats                          # local dashboard: hits, adoptions, queue
+csx ui                             # browser dashboard + privacy preview
+csx sync                           # warm the shard cache — once, right after install
 ```
 
-Installing it as an MCP server from an agent, a script, or a directory listing: **[llms-install.md](llms-install.md)** — exact ordered steps for macOS, Linux and Windows, including a no-pipe binary download and an MCP handshake check.
+`csx sync` is not optional garnish: a fresh install has zero shards cached, so every search returns `NO_SAFE_MATCH` until it syncs. The daemon re-warms in the background afterwards.
 
-For scripted or CI setups: `csx init --community --yes --no-agents` does config + identity only and writes nothing outside `CSX_HOME` (default `~/.csx`); agent config paths otherwise honor `CSX_AGENT_HOME` when you need them somewhere other than your OS user home.
+`csx search` grades every result against your recorded environment — `EXACT`, `COMPATIBLE`, `ADAPTATION_REQUIRED`, `REFERENCE_ONLY`, or `NO_SAFE_MATCH` — and lists the exact delta (`different`, `adaptationNeeded`) between where the answer was proven and where you are.
+
+## Verified samples
+
+A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<hex>` of its canonical artifact) with a **contract**: assertions that were executed offline in a pinned container and passed. The clean-room authoring loop is CLI-only:
+
+```bash
+csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample create <dir>      # ingest the clean-room project
+csx sample verify <id>       # resolve → compile → contract, sandboxed
+csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
+```
+
+Publishing scans for secrets, paths, project names and private URLs — findings **block** publication with no override flag. Uploading sample source is deliberately not an MCP capability; only a human at the CLI can publish.
+
+## Findings
+
+Where does it break? [Findings](https://codesamplex.dev/findings) is the measured contradiction list: what the documentation (or common belief) says, next to what the contract measured — documentation mismatches, environment-specific failures, version boundaries. Every line links to the published sample whose contract proves it, so you can re-run the measurement and disagree.
+
+Machine-derived findings grow from published samples whose authors recorded the belief they correct; nobody edits a page to add them.
+
+## Evidence and grading
+
+Why trust a cell? Every result carries its evidence class, weak → strong:
+
+| Grade | What actually happened |
+|-------|------------------------|
+| `USAGE_OBSERVATION` | a real project built/typechecked/tested with the package — observed, weak |
+| `ADOPTION_EVIDENCE` | someone applied a sample and reported whether the build then passed |
+| `SAMPLE_VERIFICATION` | the sample's contract executed in a pinned container and passed |
+| `CROSS_PASS` | an independent peer re-ran it and it passed again |
+| `MATRIX_PASS` | passing runs span ≥2 OS/runtime/browser boundaries |
+| `STABLE` | ≥3 independent peers pass it, no failure recorded for 30 days |
+
+Sample pages also badge the verification ladder `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, and matrix cells carry confidence (`HIGH`/`MEDIUM`/`LOW`), elevated-failure flags, and last-seen dates. Only signed **v2 receipts** may claim `resolvedPackages` — the versions the verifier actually installed, not the versions an author typed; snapshots file each receipt under the version that really ran.
+
+The public counters are a rollup, available as JSON without an account:
+
+```bash
+curl -fsSL https://codesamplex.dev/v1/stats
+```
+
+| Field | What it counts |
+|-------|----------------|
+| `packages` / `symbols` | coverage: public package names and observed symbols in the compatibility data |
+| `evidence` | accepted observation records; not users, projects, or verified samples |
+| `verifiedSamples` | distinct samples with a sandbox contract-PASS receipt |
+| `peers` / `projectsMonth` | distinct anonymous daily/monthly contributor buckets |
+| `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL |
+
+CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count.
+
+## Contributor worker
+
+The network's environments are other people's machines. A spare one can contribute Docker-isolated verification without touching MCP or agent config:
+
+```bash
+csx init --community --yes --no-agents --no-daemon
+csx worker start                         # idle-aware, 2 Docker lanes
+csx worker start --parallel 4 --budget 15m
+```
+
+The worker accepts only server-assigned VERIFY jobs (`cross` / `matrix`) — the queue never sends an arbitrary shell command. Artifacts are content-addressed and hash-checked; resolve is containerized; compile and contract stages run network-off in disposable Docker workspaces with fixed `512m` memory / `256` PID limits; a missing Docker daemon is a hard refusal, never a host fallback. Results are ed25519-signed v2 receipts; raw stage logs stay local. See [Contribute](https://codesamplex.dev/contribute).
+
+## API
+
+The same data the website renders, as JSON, without an account:
+
+| Endpoint | What it serves |
+|----------|----------------|
+| `GET /v1/stats` | the daily network rollup |
+| `POST /v1/search`, `POST /v2/search` | graded answers for a query + environment fingerprint |
+| `GET /v1/registry/packages/{purl}` | package detail + package-level snapshot |
+| `GET /v1/registry/symbols/{eco}/{package}/{family}` | per-version snapshots for one symbol |
+| `GET /v1/shards/{eco}/{package}/{major}` | the pre-materialized compatibility shard (ETag-cached) |
+| `GET /v1/samples/{id}`, `…/artifact` | sample metadata, receipts, and the tar.gz source |
+| `GET /v1/wanted` | the demand queue: what was asked for and not answered |
+| `GET /v1/adapters` | the per-ecosystem capability matrix |
+
+## Agent adapter (MCP)
+
+Coding agents consume the same network through an adapter — MCP is a connector on top of the CLI and API, not the product:
+
+```text
+CodeSampleX
+├─ CLI   ← primary local tester
+├─ API   ← automation / integration
+├─ Web   ← compatibility map / reports
+└─ MCP   ← agent adapter
+```
+
+`csx init` configures Claude Code, Codex, Gemini CLI and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Eight tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
+
+Agent-directed install steps (including the MCPB bundle and direct binary downloads with `SHA256SUMS.txt`): [llms-install.md](llms-install.md). Standalone community installs auto-update over an Ed25519-signed manifest with `csx update rollback` available; `local-only` installs make no update request.
 
 ## The contract
 
@@ -107,147 +200,19 @@ Never shared automatically
 ✕ Raw compiler/runtime logs
 ```
 
-This is not hidden telemetry — it is the protocol. Community peers are consumers **and** producers. Local-only mode never sends anything. The privacy preview in `csx ui` shows the exact payloads before they leave your machine.
-
-## Contributor Worker (VERIFY MVP)
-
-The **Contribute** page at <https://codesamplex.dev/contribute> has a separate,
-visible prompt for turning a spare machine into a persistent worker without
-registering MCP or agent rules. The worker-only initialization is:
-
-```bash
-csx init --community --yes --no-agents --no-daemon
-```
-
-An installed `csx` binary can also contribute spare compute in the foreground
-without reading a user project:
-
-```bash
-csx init --community
-csx worker start                         # idle-aware, 2 Docker lanes
-csx worker start --parallel 4 --budget 15m
-csx worker start --once                  # claim at most one available job
-csx worker start --budget unlimited      # run until Ctrl-C
-```
-
-The public worker supports server-assigned **VERIFY** jobs with reason `cross`
-or `matrix`; the queue never sends an arbitrary host shell command. Before it
-claims a job, the worker compares the job's complete, closed requirements with
-the verifier environments it can prepare locally. An unsupported or only
-partly matching job is skipped, not run under a nearby environment.
-
-For both job kinds, the worker downloads the same content-addressed public
-artifact and verifies its hash before unpacking. A `matrix` job does not
-replace or edit that artifact: it overlays the job's exact execution
-environment onto an in-memory copy of the manifest, then runs the immutable
-source through the matching pinned verifier. Resolve is containerized; build
-and contract stages run in disposable Docker workspaces with the network
-disabled. Downloaded sample code is never executed directly on the host, and
-a missing or unreachable Docker daemon is a hard refusal rather than a native
-fallback. Each container enforces the runner's fixed `512m` memory and `256`
-PID limits. An accepted result is submitted as the existing ed25519-signed v2
-verification receipt; raw stage logs stay local.
-
-`--parallel` is deliberately bounded to `1..8`; `--budget` accepts `5m`, `15m`, `idle`, or `unlimited`; Ctrl-C cancels active stages and stops cleanly. The foreground display reports only this process's measured completed/failed counts. It does not claim global users or contributors.
-
-`EXPAND` is deliberately narrow: the worker can execute a server-selected
-matrix cell only when its exact requirements map to a locally available pinned
-verifier. It cannot improvise an arbitrary environment. `CREATE` (authoring a
-new sample) remains unavailable because the worker runs no authoring model.
-Consequently, this worker reproduces and expands evidence for existing
-published samples; it does not create the new source needed to close a Wanted
-request.
-
-## How it works
-
-```text
-you build/test through csx (or your agent does)
-→ local analysis: public packages, lockfile-resolved versions, symbols, environment
-→ raw errors sanitized locally into fingerprints (paths/names/secrets stripped)
-→ anonymous evidence batches → Compatibility Graph on codesamplex.dev
-→ your LLM asks CSX first: nearest verified Sample + environment delta
-→ it reasons about the DELTA, not the whole problem
-```
-
-Four layers, kept honestly separate:
-
-| Layer | What it is | Trust |
-|-------|------------|-------|
-| Evidence Network | anonymous package/version/symbol/env/stage/result facts | weak→strong, class-labeled |
-| Compatibility Graph | aggregated probabilistic map per environment (incl. execution context: Node/Chrome/Safari/Electron/…) | derived view |
-| Sample Pool | user-approved, clean-room, content-addressed minimal projects | contract-verified, cross-verified |
-| Agent Delivery | MCP/CLI: nearest sample + delta + known failures | graded EXACT→NO_SAFE_MATCH |
-
-A project compiling is never presented as a symbol working. Unknown causes stay `UNKNOWN`. A wrong HIT is worse than a MISS — `NO_SAFE_MATCH` is a feature.
-
-Verification receipts now have two wire versions. Legacy v1 receipts remain readable, but only a signed **v2 receipt** can carry `resolvedPackages`: canonical package URLs read after a successful resolve from what the verifier actually installed. Missing or ambiguous provenance produces no version claim. The server rejects unsorted, non-canonical, undeclared, cross-ecosystem, or resolve-without-PASS claims, and compatibility snapshots file each receipt under the version that actually ran rather than the version an author typed into a manifest.
-
-## Agent integration (MCP)
-
-**Configured automatically by `csx init`:** Claude Code · Codex · Gemini CLI · OpenCode.
-
-**Any other MCP client** — Cursor, Windsurf, Cline, Zed, VS Code — works too; `csx` is a standard stdio MCP server. Run this and paste what it prints:
-
-```
-csx mcp-config          # JSON for Cursor, Cline, Windsurf, Zed, VS Code
-csx mcp-config --toml   # TOML for Codex
-```
-
-It prints the **absolute path** of your install, which is the part that matters: the install script puts `csx` in `~/.local/bin`, and an MCP client is not started from a login shell — it inherits whatever environment its editor had. A bare `{"command": "csx"}` therefore fails even after you have fixed your own `PATH`. Run it *after* the `export PATH` above, or call it by full path.
-
-The server itself is `csx mcp` — stdio, one JSON-RPC message per line, no daemon required first. `mcp-config` emits it as `args`, but a client that asks for command and arguments in separate fields wants exactly: command = that absolute path, args = `["mcp"]`.
-
-Model-agnostic: the same compatibility evidence serves Claude, GPT and Codex, Gemini, Llama — any model that can call an MCP tool.
-
-Clients that install [MCPB](https://github.com/anthropics/mcpb) bundles can use `codesamplex-mcp.mcpb` from the [latest release](https://github.com/r2cuerdame/CodeSampleX/releases/latest) instead. It carries one binary per platform (darwin-arm64, linux-amd64, windows-amd64).
-
-If you will not pipe a script into a shell — or you are on an architecture the bundle omits — take the binary directly: the same release publishes `csx-{linux,darwin}-{amd64,arm64}`, `csx-windows-{amd64,arm64}.exe` and `SHA256SUMS.txt`, and `https://codesamplex.dev/dl/csx-<os>-<arch>` serves the same file. It is statically linked, so it runs on musl/alpine with no glibc. Copy-pasteable download + checksum + `chmod` steps are in [llms-install.md](llms-install.md).
-
-Standalone community installs securely check and apply the stable channel. On
-Windows the first installer rerun migrates the direct binary to a stable
-`csx.exe` launcher plus immutable versioned payloads; signed updates atomically
-flip `active.json`, so running MCP sessions keep their old payload and the next
-launcher start selects the new one. The
-release manifest is Ed25519-signed and binds the exact platform asset, size and
-SHA-256; replayed or partial releases are refused and the previous binary is
-kept for `csx update rollback`. Workers drain and let their native service
-restart them. Client-owned stdio MCP sessions are never killed: the update is
-staged on disk and the tool reports that the MCP client must be restarted.
-`local-only` makes no automatic update request, and MCPB copies remain owned by
-the MCP client/Registry updater. See [the signed update guide](llms-install.md#signed-automatic-updates).
-
-Existing installs through v0.1.11 predate the updater and embedded trust root.
-Run the official installer one final time to enter the signed update channel;
-that installer verifies the published checksum and registers the standalone
-ownership marker. The installer and checksum share one HTTPS origin, so this
-first bootstrap still trusts that origin. Signed manifests protect subsequent
-updates, not a compromised initial download source.
-
-Tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats`. Uploading sample source is deliberately **not** an MCP capability. `propose_public_sample` creates only a sanitized clean-room brief; an authorized seeder still has to use the CLI, review the complete preview, and type an explicit approval.
-
-```bash
-csx sync                   # warm the shard cache — once, right after install
-csx run -- pnpm build      # observed build → evidence
-csx search "axios multipart upload"
-csx sample propose --goal "upload a file with axios"
-csx ui                     # dashboard + privacy preview
-```
-
-`csx sync` is not optional garnish. A fresh install has zero shards cached, so every search returns `NO_SAFE_MATCH` until it syncs — indistinguishable, if you skip this, from a network that knows nothing. A long-running `csx daemon` re-warms in the background; a one-shot install calls `sync` once.
+This is not hidden telemetry — it is the protocol. Community peers are consumers **and** producers. Local-only mode never sends anything. Errors are sanitized locally into fingerprints before any use; private and unknown packages never leave the machine; the privacy preview in `csx ui` shows the exact payloads before they leave. A `NO_SAFE_MATCH` contributes a privacy-safe Wanted tuple — the public package, its exact version and, when the request named one unambiguous package, the requested public symbols — never the user's prompt. The public deployment is **seeded-only for sample source**; search, evidence, receipts and the wanted board are open without an account.
 
 ## Ecosystems (Public v1)
 
-**Scanned and verified** — your project is detected, its packages resolved from the lockfile, and samples are verified end to end: Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Node samples are verified on the runtime they declare, so Bun and Deno results are real rather than assumed.
+**Scanned and verified** — projects detected, packages lockfile-resolved, samples verified end to end: Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Node samples run on the runtime they declare, so Bun and Deno results are real rather than assumed.
 
-**Verified only** — no project scanner yet, but published samples are built and contract-tested in a pinned container, so a compatibility answer for these ecosystems is as trustworthy as any other: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex.
+**Verified only** — no project scanner yet, but published samples are built and contract-tested in a pinned container: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Java (Maven/Gradle) contract verification pins exact JDK 8/11/17/21/25 lanes.
 
-Honest capability matrix: [docs/adapters.md](docs/adapters.md) — no adapter claims runtime symbol instrumentation in v1, and symbol resolution confidence is always labeled (`EXACT`/`PROBABLE`/`UNKNOWN`).
+Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolution confidence is always labeled (`EXACT`/`PROBABLE`/`UNKNOWN`).
 
 ## Architecture
 
-Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered explorer behind Caddy). Samples are content-addressed (`sha256`) and distributed local-cache-first → peers → main seeder. Their case identity is derived from the claim itself; stale or hand-copied `caseId` values are refused.
-
-Downloaded samples never run on your host directly. Resolution runs in a pinned sandbox with install scripts disabled where the ecosystem supports it; the immutable artifact is re-hashed after resolve; compile and contract stages run network-off. The resulting ed25519-signed v2 receipt covers the stage verdicts, environment, logs digest, and any package versions the resolver could actually establish. Compatibility aggregation keeps receipt/package sets scoped together, so one run cannot be flattened into evidence for a version or dependency set it never executed. See [goal.md](goal.md) (product spec), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
+Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. See [goal.md](goal.md), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
 
 ## Building from source
 

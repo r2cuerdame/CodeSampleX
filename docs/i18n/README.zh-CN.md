@@ -1,16 +1,52 @@
 # CodeSampleX
 
-> **别再重复解决同一段代码。**（Stop solving the same code twice.）
+> **Tested. Not guessed.**（实测为证，而非猜测。）
+
+<p align="center">
+  <img src="../../internal/web/static/inspector-hero-v1.webp" alt="CodeSampleX 兼容性检查器" width="560">
+</p>
 
 **Languages:** [English](../../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (BR)](README.pt-BR.md) · [Русский](README.ru.md)
 
-CodeSampleX 是一个面向编程 LLM 的**本地优先分布式推理缓存**。与其让地球上每个智能体都重新推导一遍某个公共库的用法——并且反复踩中同样的版本兼容性坑——CodeSampleX 从真实开发环境中收集匿名的兼容性**证据（Evidence）**，并提供**经过验证的最小化样例（Sample）**，附带已知可用答案与你的项目之间的精确差异（delta）。
+CodeSampleX 是一个面向开发者库、运行时与工具链的**开放兼容性测试网络**。它不做文档摘要，也不收集道听途说：它在真实且被完整记录的环境中运行真实的构建与契约测试——然后告诉你哪些东西真的能用、哪些坏了，以及对这两者各有多大把握。
 
-- 官网与兼容性浏览器：**https://codesamplex.dev**
-- 一个你的 LLM 不必再反复回答的问题：*`axios.post` 在 axios 1.12 + Node 22 + pnpm + Windows 11 上到底能不能用——如果不能，具体在哪个阶段出问题？*
-- 开箱即用支持 **Claude Code、Codex、Gemini CLI、OpenCode**，也可接入其他 MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）。
+- 兼容性地图：**https://codesamplex.dev**
+- 它回答的问题：*在那个环境里能跑吗？*——这个 API，在这个版本、这个操作系统、这个运行时之上。
+- 它给出的答案：*我们实际测过了，结果就是这样。*
 
-## 安装
+## 在那个环境里能跑吗？
+
+每一条结果都是一次附带完整环境记录的真实执行，因此这些数据可以透视成兼容性矩阵——OS × 运行时、版本 × 架构、符号 × OS。下面是来自线上网络的真实切片（`axios.post`，2026 年 8 月实测）：
+
+```text
+axios.post · axios 1.12.2                node 22          node 24
+linux                                    ✓ PASS verified     —
+windows                                  ○ 3/9 observed ! ?  (process runs: 3 pass · 6 fail)
+```
+
+这一行不是示意图——它就是[线上页面](https://codesamplex.dev/npm/axios/1.12.2/axios.post)本身。linux 上的 `PASS` 是一份在固定（pinned）容器中真实执行过的契约；windows 单元格则诚实地承认自己的证据更弱（`○` observed 并带有 `?` 不确定性标记——是构建观察，而非一次契约运行），其实测失败也如实标出（`!`）。未知就保持 `—`；绝不会根据包所属的生态或它的文档去做推断。
+
+Web 端浏览器把每个二维网格都视为 N 维立方体的一个切片：任选两个维度作坐标轴（操作系统、运行时、包版本、符号、架构、包管理器、执行上下文、libc），把其余维度固定为筛选条件，点击任一单元格即可向下钻取一层——直达实际测量过的各个具体组合，而已签名的回执就保存在这些组合的符号页面上。
+
+## 为什么实测很重要
+
+```text
+Documentation   → what should work
+Code search     → how somebody used it
+Community       → what somebody says worked
+CodeSampleX     → what was actually tested
+```
+
+让这张地图保持诚实的规则：
+
+- 项目能编译，**绝不会**被呈现为某个符号可用。观察（observation）与验证（verification）分开计数，从不相加。
+- 原因不明就保持 `UNKNOWN`。错误的 HIT 比 MISS 更糟——`NO_SAFE_MATCH` 本身就是一个真正的答案。
+- 证据会衰减：每过 90 天，一条结果的权重减半，过期的单元格会明确标示出来。
+- 失败原因以概率分布的形式报告，绝不编造确定性。
+
+## 安装 CLI
+
+CLI 就是本地测试器：它包裹你的真实构建，把构建结果转化为匿名证据，并用网络中的数据回答你的问题。
 
 Windows（PowerShell）：
 
@@ -24,7 +60,130 @@ macOS / Linux：
 curl -fsSL https://codesamplex.dev/install.sh | sh
 ```
 
-一个二进制文件，一个问题。`csx init` 会展示社区契约，并只让你做一个选择——**JOIN COMMUNITY** 或 **LOCAL ONLY**。其余一切（守护进程、为 Claude Code / Codex / Gemini CLI / OpenCode 注册 MCP、智能体规则）都是自动完成的。
+这行命令需要 `curl` 和 CA 证书，而极简镜像（debian-slim、alpine、多数智能体容器）默认并没有它们——并且当 curl 缺失时，`curl … | sh` **会以退出码 0 结束**，因为管道汇报的是最后一个命令的状态。请先安装先决依赖，或改用 wget：
+
+```bash
+apt-get install -y curl ca-certificates            # debian / ubuntu slim
+apk add --no-cache curl ca-certificates            # alpine
+wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
+```
+
+二进制文件会安装到 `~/.local/bin`，而这个目录默认不在任何人的 `PATH` 里：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+csx version    # the install check — `csx --version` is not a spelling csx accepts
+```
+
+一个二进制文件，一个问题。`csx init` 会展示下文的契约，并只让你做一个选择——**JOIN COMMUNITY** 或 **LOCAL ONLY**。若通过管道交给 `sh` 执行，stdin 已被下载管道占用，此时 `init` 会采用其声明的默认值：JOIN COMMUNITY。任何时候都可以用 `csx init --local-only` 退出；两个模式标志都可重复运行且无需交互。脚本化或 CI 环境可用：`csx init --community --yes --no-agents`。
+
+## 测试与查询
+
+```bash
+csx run -- pnpm build              # wrap any build/test — its result becomes evidence
+csx search "axios multipart upload"  # a verified answer, graded for YOUR environment
+csx scan                           # record which public packages a project uses, no build
+csx stats                          # local dashboard: hits, adoptions, queue
+csx ui                             # browser dashboard + privacy preview
+csx sync                           # warm the shard cache — once, right after install
+```
+
+`csx sync` 不是可有可无的点缀：全新安装的本地没有缓存任何分片（shard），在同步之前每次搜索都会返回 `NO_SAFE_MATCH`。之后守护进程会在后台持续预热。
+
+`csx search` 会依据你被记录的环境为每条结果分级——`EXACT`、`COMPATIBLE`、`ADAPTATION_REQUIRED`、`REFERENCE_ONLY` 或 `NO_SAFE_MATCH`——并列出答案被证明之处与你所在环境之间的确切差异（`different`、`adaptationNeeded`）。
+
+## 经过验证的样例
+
+样例（sample）不是代码片段。它是一个最小化、内容寻址的项目（以其规范化构件的 `sha256:<hex>` 标识），并带有一份**契约**：一组在固定容器中离线执行并通过的断言。洁净室创作流程只能通过 CLI 完成：
+
+```bash
+csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample create <dir>      # ingest the clean-room project
+csx sample verify <id>       # resolve → compile → contract, sandboxed
+csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
+```
+
+发布前会扫描密钥、路径、项目名和私有 URL——一旦发现问题就会**阻断**发布，且没有任何可绕过的标志。上传样例源码被有意排除在 MCP 能力之外；只有在 CLI 前的人才能发布。
+
+## 发现（Findings）
+
+到底在哪里出问题？[Findings](https://codesamplex.dev/findings) 是一份经过实测的矛盾清单：文档（或普遍认知）怎么说，契约实测的结果又是什么——文档与现实不符、特定环境下的失败、版本边界。每一条都链接到以其契约证明该结论的已发布样例，你可以重新运行这次测量，然后提出异议。
+
+机器推导的发现，源自作者在发布样例时记录下的“它所纠正的既有认知”；没有人通过编辑页面来添加它们。
+
+## 证据与分级
+
+凭什么相信一个单元格？每条结果都带有它的证据等级，从弱到强：
+
+| 等级 | 实际发生了什么 |
+|-------|------------------------|
+| `USAGE_OBSERVATION` | 一个真实项目使用该包完成了构建/类型检查/测试——仅为观察，弱证据 |
+| `ADOPTION_EVIDENCE` | 有人采用了某个样例，并报告了之后的构建是否通过 |
+| `SAMPLE_VERIFICATION` | 样例的契约在固定容器中执行并通过 |
+| `CROSS_PASS` | 一个独立对等节点重新运行并再次通过 |
+| `MATRIX_PASS` | 通过的运行跨越了 ≥2 个操作系统/运行时/浏览器边界 |
+| `STABLE` | ≥3 个独立对等节点通过，且 30 天内没有失败记录 |
+
+样例页面还会标注验证阶梯 `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`；矩阵单元格带有置信度（`HIGH`/`MEDIUM`/`LOW`）、失败率偏高标记以及最近一次观测日期。只有经过签名的 **v2 回执**才可以声明 `resolvedPackages`——即验证器实际安装的版本，而不是作者手写的版本；快照会把每份回执归档到真正运行过的那个版本之下。
+
+公开计数器是一份汇总数据，无需账号即可以 JSON 形式获取：
+
+```bash
+curl -fsSL https://codesamplex.dev/v1/stats
+```
+
+| 字段 | 统计的是什么 |
+|-------|----------------|
+| `packages` / `symbols` | 覆盖范围：兼容性数据中的公共包名与被观测到的符号 |
+| `evidence` | 已接受的观察记录；不是用户数、项目数或已验证样例数 |
+| `verifiedSamples` | 拥有沙箱契约 PASS 回执的不同样例数 |
+| `peers` / `projectsMonth` | 按日/按月去重的匿名贡献者分桶数 |
+| `postHitBuildsReported` | 包含实测 PASS 或 FAIL 的采用报告数 |
+
+CodeSampleX **目前还无法可靠地统计独立/活跃用户数、存活的 MCP 进程数或成功安装数**。stats 响应中的任何 `estimated*` 字段都明确是按公式推算的，绝不能当作实测计数来解读。
+
+## 贡献者工作节点
+
+这个网络的环境就是其他人的机器。一台空闲的机器无需触碰任何 MCP 或智能体配置，即可贡献以 Docker 隔离的验证算力：
+
+```bash
+csx init --community --yes --no-agents --no-daemon
+csx worker start                         # idle-aware, 2 Docker lanes
+csx worker start --parallel 4 --budget 15m
+```
+
+工作节点只接受由服务器指派的 VERIFY 任务（`cross` / `matrix`）——队列绝不会下发任意 shell 命令。构件经过内容寻址并做哈希校验；依赖解析（resolve）在容器中进行；编译与契约阶段在一次性 Docker 工作区中断网运行，并施加固定的 `512m` 内存 / `256` PID 上限；Docker 守护进程缺失时会被硬性拒绝，绝不回退到宿主机执行。结果是 ed25519 签名的 v2 回执；各阶段的原始日志留在本地。参见 [Contribute](https://codesamplex.dev/contribute)。
+
+## API
+
+网站所呈现的同一份数据，以 JSON 提供，无需账号：
+
+| 端点 | 提供什么 |
+|----------|----------------|
+| `GET /v1/stats` | 每日网络汇总 |
+| `POST /v1/search`, `POST /v2/search` | 针对查询 + 环境指纹的分级答案 |
+| `GET /v1/registry/packages/{purl}` | 包详情 + 包级快照 |
+| `GET /v1/registry/symbols/{eco}/{package}/{family}` | 单个符号的逐版本快照 |
+| `GET /v1/shards/{eco}/{package}/{major}` | 预先物化的兼容性分片（ETag 缓存） |
+| `GET /v1/samples/{id}`, `…/artifact` | 样例元数据、回执及 tar.gz 源码包 |
+| `GET /v1/wanted` | 需求队列：被问到但尚未得到解答的问题 |
+| `GET /v1/adapters` | 各生态系统的能力矩阵 |
+
+## 智能体适配器（MCP）
+
+编码智能体通过一个适配器消费同一个网络——MCP 是架在 CLI 和 API 之上的连接器，而不是产品本身：
+
+```text
+CodeSampleX
+├─ CLI   ← primary local tester
+├─ API   ← automation / integration
+├─ Web   ← compatibility map / reports
+└─ MCP   ← agent adapter
+```
+
+`csx init` 会自动配置 Claude Code、Codex、Gemini CLI 和 OpenCode。其他任何 stdio MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）只需使用 `csx mcp-config` 打印的配置即可接入（Codex 用 `--toml`）——它输出的是二进制文件的绝对路径，而这正是由编辑器启动的客户端所需要的。服务器本身就是 `csx mcp`。共八个工具：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`——并且有意不提供发布工具。
+
+面向智能体的安装步骤（包括 MCPB 捆绑包，以及附带 `SHA256SUMS.txt` 的二进制直接下载）：[llms-install.md](../../llms-install.md)。独立的社区安装通过 Ed25519 签名的清单自动更新，并可用 `csx update rollback` 回滚；`local-only` 安装不会发出任何更新请求。
 
 ## 契约
 
@@ -41,61 +200,19 @@ Never shared automatically
 ✕ Raw compiler/runtime logs
 ```
 
-这不是暗中的遥测——它就是协议本身。社区节点既是消费者**也是**生产者。仅本地（local-only）模式绝不发送任何数据。`csx ui` 中的隐私预览会在数据离开你的机器之前，展示将要发送的确切载荷。
-
-## 工作原理
-
-```text
-you build/test through csx (or your agent does)
-→ local analysis: public packages, lockfile-resolved versions, symbols, environment
-→ raw errors sanitized locally into fingerprints (paths/names/secrets stripped)
-→ anonymous evidence batches → Compatibility Graph on codesamplex.dev
-→ your LLM asks CSX first: nearest verified Sample + environment delta
-→ it reasons about the DELTA, not the whole problem
-```
-
-四个层次，严格分离、各司其职：
-
-| 层次 | 是什么 | 可信度 |
-|-------|------------|-------|
-| Evidence Network | 匿名的包/版本/符号/环境/阶段/结果事实 | 弱→强，按类别标注 |
-| Compatibility Graph | 按环境聚合的概率化地图（含执行上下文：Node/Chrome/Safari/Electron/……） | 派生视图 |
-| Sample Pool | 经用户批准、洁净室构建、内容寻址的最小化项目 | 契约验证、交叉验证 |
-| Agent Delivery | MCP/CLI：最近的样例 + 差异 + 已知失败 | 分级 EXACT→NO_SAFE_MATCH |
-
-项目能编译，绝不会被当成某个符号可用来呈现。原因不明的情况保持为 `UNKNOWN`。错误的 HIT 比 MISS 更糟——`NO_SAFE_MATCH` 是一项特性，而非缺陷。
-
-## 智能体集成（MCP）
-
-**`csx init` 自动配置：** Claude Code · Codex · Gemini CLI · OpenCode。
-
-**其他 MCP 客户端**（Cursor、Windsurf、Cline、Zed、VS Code）同样可用。`csx` 是标准的 stdio MCP 服务器：
-
-```sh
-csx mcp-config          # JSON: Cursor, Cline, Windsurf, Zed, VS Code
-csx mcp-config --toml   # TOML: Codex
-```
-
-不要手写配置，直接粘贴这条命令的输出。它填入的是**安装路径的绝对路径**，这才是关键：MCP 客户端不是从登录 shell 启动的，它继承编辑器给的环境。所以只写 `"command": "csx"` 这样的名字，即使你已经修好了自己的 `PATH` 也起不来。
-
-与模型无关：同一份兼容性证据可供 Claude、GPT 与 Codex、Gemini、Llama 等任何能调用 MCP 工具的模型使用。
-
-工具包括：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`。发布样例被有意设计为**不是** MCP 能力——它需要你在完整预览之后通过 CLI 明确批准。
-
-```bash
-csx run -- pnpm build      # observed build → evidence
-csx search "axios multipart upload"
-csx sample propose --goal "upload a file with axios"
-csx ui                     # dashboard + privacy preview
-```
+这不是暗中的遥测——它就是协议本身。社区对等节点既是消费者，**也是**生产者。仅本地（local-only）模式绝不发送任何数据。错误在被使用之前就已在本地脱敏为指纹；私有包和未知包绝不离开你的机器；`csx ui` 中的隐私预览会在数据离开之前展示确切的载荷。一次 `NO_SAFE_MATCH` 会贡献一条隐私安全的 Wanted 元组——内容为该公共包、其确切版本，以及在请求明确指向唯一一个包时所请求的公共符号——绝不包含用户的提示词。公开部署中**只有种子节点可以上传样例源码**；搜索、证据、回执和 wanted 看板无需账号即可访问。
 
 ## 生态系统（Public v1）
 
-Node/TypeScript（npm、pnpm、yarn——参考实现）、Python（pip、uv）、Go、Rust/Cargo。诚实的能力矩阵见 [docs/adapters.md](../adapters.md)——v1 中没有任何适配器声称支持运行时符号插桩，符号解析的置信度始终带有标注（`EXACT`/`PROBABLE`/`UNKNOWN`）。
+**扫描 + 验证**——可检测项目、按锁文件解析包版本、端到端验证样例：Node/TypeScript（npm、pnpm、yarn——参考实现）、Python（pip、uv）、Go、Rust/Cargo。Node 样例在其声明的运行时上运行，因此 Bun 和 Deno 的结果是实测而非假设。
+
+**仅验证**——尚无项目扫描器，但已发布的样例会在固定容器中完成构建和契约测试：PHP/Composer、Ruby/Bundler、Dart/pub、Elixir/Hex。Java（Maven/Gradle）的契约验证固定使用精确的 JDK 8/11/17/21/25 通道。
+
+诚实的能力矩阵：[docs/adapters.md](../adapters.md)——符号解析的置信度始终带有标注（`EXACT`/`PROBABLE`/`UNKNOWN`）。
 
 ## 架构
 
-单个 Go 二进制文件（`csx`：守护进程 + CLI + MCP + 对等节点 + 验证器）加一个小型服务端（`csx-server`：PostgreSQL + 由 Caddy 反向代理的服务端渲染浏览器）。样例采用内容寻址（`sha256`），分发顺序为本地缓存优先 → 对等节点 → 主种子节点。下载的样例绝不会直接在你的主机上运行——使用 `--ignore-scripts` 解析依赖，在断网沙箱中编译并执行契约测试，回执使用 ed25519 签名。详见 [goal.md](../../goal.md)（产品规格）、[docs/execution-context.md](../execution-context.md)、[docs/operations.md](../operations.md)。
+单个 Go 二进制文件（`csx`：守护进程 + CLI + MCP + 对等节点 + 验证器）加一个小型服务端（`csx-server`：PostgreSQL + 由 Caddy 反向代理的服务端渲染兼容性浏览器）。样例采用内容寻址，分发顺序为本地缓存优先 → 对等节点 → 主种子节点。下载的样例绝不会直接在宿主机上运行：依赖解析在固定沙箱中进行，并在生态支持时禁用安装脚本；解析完成后会对构件重新哈希；编译与契约阶段断网运行。详见 [goal.md](../../goal.md)、[docs/execution-context.md](../execution-context.md)、[docs/operations.md](../operations.md)。
 
 ## 从源码构建
 
