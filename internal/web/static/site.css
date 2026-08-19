@@ -1464,7 +1464,10 @@ td.pv .pvstate { font-size: 0.7rem; }
 .cubecontrols select {
   font: 0.78rem var(--mono); padding: 0.26rem 0.4rem;
   border: 1px solid var(--line-strong); border-radius: 0.4rem;
-  background: var(--panel); color: var(--text); max-width: 100%;
+  background: var(--panel); color: var(--text);
+  /* A dimension whose values are long (symbols, module paths) must not
+     stretch the control bar to the width of its longest option. */
+  max-width: 12rem; text-overflow: ellipsis;
 }
 .cubecontrols label.on select { border-color: var(--accent); }
 .cubecontrols .clearfilters { align-self: center; }
