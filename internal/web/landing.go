@@ -254,7 +254,6 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	return best
 }
 
-
 type landingPage struct {
 	basePage
 	Tiles []statTile

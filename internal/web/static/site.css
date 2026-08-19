@@ -683,8 +683,12 @@ td.env { min-width: 16rem; }
 dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.2rem; margin: 0; }
 dl.kv dt { color: var(--dim); font-size: 0.85rem; }
 dl.kv dd { margin: 0; overflow-wrap: anywhere; }
-.note { max-width: 46rem; }
-.wanted-stub { max-width: none; margin-bottom: 1.6rem; }
+/* A note is a callout, not a column. Capping the box at 46rem left every
+   note short of the cards beside it and the page edge went ragged; cap the
+   text instead, so the box shares one right edge with everything else while
+   the line still stops at a readable measure. */
+.note { max-width: none; padding-right: max(0.95rem, calc(100% - 74ch)); }
+.wanted-stub { margin-bottom: 1.6rem; }
 .wanted-stub strong, .wanted-stub span { display: block; }
 .wanted-stub-list { margin: 0.55rem 0 0; padding-left: 1.2rem; }
 
@@ -1600,23 +1604,36 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
   display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
   gap: 1rem; margin: 0.9rem 0;
 }
+/* This card sits on the site's light canvas, not on a dark surface: it
+   takes the same panel tokens as every other card, and its labels take
+   --dim rather than a pale tint that vanishes against white. */
 .hostcard {
-  padding: 1rem; border-radius: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  padding: 1.1rem 1.15rem 1.2rem; border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--panel); box-shadow: var(--shadow-soft);
 }
-.hostcard h3 { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; }
+.hostcard h3 {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0 0 0.55rem; color: var(--text); font-size: 1.05rem;
+}
 .hostcard .osicon-wrap { display: inline-flex; align-items: center; }
 .hostcard .osicon { opacity: 1; margin-right: 0.15rem; }
-.hostcontrib { display: flex; flex-wrap: wrap; gap: 0.35rem 0.6rem; margin: 0 0 0.8rem; padding: 0; list-style: none; }
-.hostcontrib .on::before { content: "✓ "; color: #7ee2b8; }
-.hostcontrib .off { opacity: 0.45; }
+.hostcontrib {
+  display: flex; flex-wrap: wrap; gap: 0.3rem 0.55rem;
+  margin: 0 0 0.95rem; padding: 0; list-style: none;
+}
+.hostcontrib li { border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.6rem; }
+.hostcontrib .on { color: var(--text); font-weight: 650; }
+.hostcontrib .on::before { content: "✓ "; color: var(--ok); font-weight: 800; }
+/* Dimmed, never dimmed alone: the em dash says "not this machine" without
+   relying on a contrast difference the reader may not see. */
+.hostcontrib .off { color: var(--dim); }
 .hostcontrib .off::before { content: "— "; }
 .hoststep { margin-top: 0.7rem; }
 .hoststep .steplabel {
   display: block; margin-bottom: 0.3rem;
-  font: 0.72rem var(--mono); letter-spacing: 0.04em; text-transform: uppercase;
-  color: #cedcf4;
+  font: 650 0.74rem var(--mono); letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--dim);
 }
 /* These are long one-liners nobody reads end to end — the copy button is
    the point — so cap the box and scroll inside it. A max-height without
@@ -1624,7 +1641,8 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
 .hoststep .llmtext { max-height: 10rem; overflow: auto; overscroll-behavior: contain; }
 .hoststep .llmtext::-webkit-scrollbar { width: 0.5rem; }
 .hoststep .llmtext::-webkit-scrollbar-thumb { background: #3d5f92; border-radius: 0.25rem; }
-.hostcard .dim { color: #b9cdf0; }
+.hostcard .dim { color: var(--dim); }
+.hostcard .hostnote { margin: 0.55rem 0 0; line-height: 1.6; }
 
 /* The CLI's own help, above the MCP tool list. */
 .clihelp { margin: 1rem 0 1.4rem; }

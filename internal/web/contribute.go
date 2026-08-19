@@ -37,6 +37,9 @@ type contributePage struct {
 	// WorkerUnixCMD is the same install for a shell, where the persistent
 	// service differs per init system and is left to the agent prompt.
 	WorkerUnixCMD string
+	// WorkerUnixRunCMD is the shell counterpart of WorkerRunCMD: bring the
+	// worker back up and see what it reports.
+	WorkerUnixRunCMD string
 }
 
 func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +56,7 @@ func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
 		WorkerRunCMD:      workerRunCMD(),
 		WindowsSwitchCMD:  windowsWorkerCMD(),
 		WorkerUnixCMD:     workerUnixCMD(s.base(r)),
+		WorkerUnixRunCMD:  workerUnixRunCMD(),
 	})
 }
 
@@ -73,6 +77,15 @@ func workerUnixCMD(base string) string {
 		"csx worker start --mode verify --parallel 2 --budget idle"
 }
 
+// workerUnixRunCMD reports what is installed and running, then starts the
+// worker. The status lines come first because `csx worker start` runs in
+// the foreground and never returns while it is working — after it, nothing
+// else in the paste would ever print.
+func workerUnixRunCMD() string {
+	return "csx version && csx daemon status\n" +
+		"csx worker start --mode verify --parallel 2 --budget idle"
+}
+
 // windowsWorkerCMD switches this machine's Docker daemon to Windows
 // containers and restarts the worker on it.
 //
@@ -90,7 +103,13 @@ func windowsWorkerCMD() string {
 		`do { $os=(docker version --format '{{.Server.Os}}' 2>$null); if ($os -eq 'windows') { break }; Start-Sleep -Seconds 5 } ` +
 		`while ((Get-Date) -lt $deadline); ` +
 		`if ($os -ne 'windows') { throw \"Docker is still serving $os containers; the switch did not complete.\" }; ` +
-		`Restart-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -ErrorAction SilentlyContinue; ` +
+		// The ScheduledTasks module has no Restart-ScheduledTask, and a
+		// missing cmdlet is a CommandNotFoundException that -ErrorAction
+		// cannot suppress. Stop then start, and only if the task is there:
+		// switching engines before installing the worker is a fair order.
+		`$task='CodeSampleX Contributor Worker'; ` +
+		`if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { ` +
+		`Stop-ScheduledTask -TaskName $task; Start-ScheduledTask -TaskName $task }; ` +
 		`Write-Output \"Docker now serves windows containers; the worker will verify golang and pypi samples on Windows.\""`
 }
 

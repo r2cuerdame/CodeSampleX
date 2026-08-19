@@ -52,7 +52,7 @@
           </div>
           <pre id="worker-windows-cmd" class="llmtext mono" tabindex="0">{{.WindowsSwitchCMD}}</pre>
         </div>
-        <p class="dim small">{{.T "contribute.windows_note"}}</p>
+        <p class="dim small hostnote">{{.T "contribute.windows_note"}}</p>
       </div>
       <div class="hoststep">
         <span class="steplabel">{{.T "landing.worker_run_heading"}}</span>
@@ -83,7 +83,17 @@
           <pre id="worker-unix-cmd" class="llmtext mono" tabindex="0">{{.WorkerUnixCMD}}</pre>
         </div>
       </div>
-      <p class="dim small">{{.T "contribute.unix_note"}}</p>
+      <div class="hoststep">
+        <span class="steplabel">{{.T "landing.worker_run_heading"}}</span>
+        <div class="llmbox workerbox">
+          <div class="llmactions">
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-unix-run-cmd" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "contribute.shell_copy"}}</button>
+            <button class="copy llmcopy mono" type="button" data-copy-target="#worker-run-prompt" data-copied="{{.T "landing.llm_copied"}}" aria-live="polite">{{.T "landing.worker_copy"}}</button>
+          </div>
+          <pre id="worker-unix-run-cmd" class="llmtext mono" tabindex="0">{{.WorkerUnixRunCMD}}</pre>
+        </div>
+      </div>
+      <p class="dim small hostnote">{{.T "contribute.unix_note"}}</p>
     </div>
   </div>
 

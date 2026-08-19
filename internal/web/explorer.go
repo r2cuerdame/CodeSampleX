@@ -488,8 +488,8 @@ type packagePage struct {
 	basePage
 	Ecosystem string
 	Name      string
-	Versions []versionRow
-	Clusters []clusterView
+	Versions  []versionRow
+	Clusters  []clusterView
 	Wanted    []WantedRow
 	Crumbs    []crumb
 	// Cube is the N-dimensional compatibility explorer: the page's primary
@@ -1263,7 +1263,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 		Level: level, Context: ctx, Goal: goal,
 		Packages: refs, Receipts: receipts,
 		DeclaredEnvironment: declaredEnvironment, EvidenceBasisKey: basisKey,
-		Crumbs:              sampleCrumbs,
+		Crumbs: sampleCrumbs,
 	})
 }
 
