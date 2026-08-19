@@ -268,6 +268,8 @@ document.addEventListener('keydown',event=>{
       <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="status-help-{{$i}}" aria-describedby="status-help-{{$i}}">{{$sample.Status}} <span class="badge-mark" aria-hidden="true">?</span></button>
       <span class="badge-tip" id="status-help-{{$i}}" role="tooltip">{{$.T "sample.status_help"}}</span>
     </span>
+    {{- if $sample.Kind}}<span class="chip kind mono small">{{$sample.Kind}}</span>{{end}}
+    {{- range $sample.Symbols}}<span class="chip sym mono small">{{.}}</span>{{end}}
     {{- if $sample.Context}}<span class="dim mono small">{{$sample.Context}}</span>{{end}}
     <span class="dim mono small">{{$sample.License}}{{if $sample.CreatedAt}} · {{$sample.CreatedAt}}{{end}}</span>
   </li>

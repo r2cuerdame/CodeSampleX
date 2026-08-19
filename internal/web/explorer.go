@@ -490,7 +490,11 @@ type packagePage struct {
 	Name      string
 	Versions  []string
 	Samples   []SampleListItem
-	Clusters  []clusterView
+	// SampleVersions counts a package's published samples per version. A
+	// sample answers one version of one API, so the package page says
+	// where the answers are and the version page lists them.
+	SampleVersions []sampleVersionCount
+	Clusters       []clusterView
 	Wanted    []WantedRow
 	Crumbs    []crumb
 	// Cube is the N-dimensional compatibility explorer: the page's primary
@@ -498,10 +502,12 @@ type packagePage struct {
 	Cube *cubeView
 }
 
-// packageSampleLimit bounds the samples listed on a package page. It is a
-// reading list, not an archive; the sitemap is what guarantees every
-// sample is reachable.
-const packageSampleLimit = 25
+// packageSampleLimit bounds how many of a package's samples one page
+// reads. It is not a display cap: the package page shows counts per
+// version and the version page shows that version's samples, so the read
+// only has to cover a package's realistic sample count (uuid alone has
+// 96). The sitemap is what guarantees every sample is reachable.
+const packageSampleLimit = 200
 
 func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
 	raw, err := s.d.Store.FailureClusters(r.Context(), eco, name)
@@ -516,6 +522,39 @@ func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
 		}
 	}
 	return buildClusters(clusters)
+}
+
+// sampleVersionCount is one row of the package page's "answers live
+// here" summary.
+type sampleVersionCount struct {
+	Version string
+	Count   int64
+	Href    string
+}
+
+// sampleVersionCounts groups a package's samples by the version they were
+// written against, newest first. Samples whose manifest named no version
+// keep their own row rather than being hidden.
+func sampleVersionCounts(b basePage, eco, name string, samples []SampleListItem) []sampleVersionCount {
+	byVersion := map[string]int64{}
+	for _, item := range samples {
+		byVersion[item.Version]++
+	}
+	out := make([]sampleVersionCount, 0, len(byVersion))
+	for version, count := range byVersion {
+		row := sampleVersionCount{Version: version, Count: count}
+		if version != "" {
+			row.Href = b.WithLang(versionHref(eco, name, version))
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if c := domain.CompareVersions(out[i].Version, out[j].Version); c != 0 {
+			return c > 0
+		}
+		return out[i].Version > out[j].Version
+	})
+	return out
 }
 
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
@@ -556,8 +595,9 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versions, Samples: samples, Clusters: clusters, Wanted: wanted,
-		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:   buildCubeView(s, r, lang, eco, name),
+		SampleVersions: sampleVersionCounts(b, eco, name, samples),
+		Crumbs:         leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:           buildCubeView(s, r, lang, eco, name),
 	})
 }
 
@@ -572,6 +612,8 @@ type versionPage struct {
 	Symbols   []symbolLink
 	Matrix    []matrixRow
 	Crumbs    []crumb
+	// Samples are the published answers written against THIS version.
+	Samples []SampleListItem
 	// SymbolGrid answers "which symbol ran on which OS" at a glance; its
 	// cells drill into the package cube with version, symbol and OS pinned.
 	SymbolGrid pivotGrid
@@ -619,6 +661,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
+		Samples:    s.versionSamples(r, eco, name, version),
 		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
 	})
 }
@@ -676,6 +719,35 @@ func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
 		}
 		out = append(out, f)
 	}
+	return out
+}
+
+// versionSamples lists the published samples written against one exact
+// version, sorted so the APIs they answer for group together.
+func (s *site) versionSamples(r *http.Request, eco, name, version string) []SampleListItem {
+	all, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	if err != nil {
+		return nil
+	}
+	var out []SampleListItem
+	for _, item := range all {
+		if item.Version == version {
+			out = append(out, item)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := "", ""
+		if len(out[i].Symbols) > 0 {
+			a = out[i].Symbols[0]
+		}
+		if len(out[j].Symbols) > 0 {
+			b = out[j].Symbols[0]
+		}
+		if a != b {
+			return a < b
+		}
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
 	return out
 }
 

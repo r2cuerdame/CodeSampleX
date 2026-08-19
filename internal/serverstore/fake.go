@@ -24,6 +24,7 @@ type Fake struct {
 
 	packages        map[string]PackageRow
 	snapshots       map[[2]string]string
+	snapshotAt      map[[2]string]time.Time
 	cases           map[string]domain.Case
 	samples         map[string]SampleRow
 	receipts        map[string][]ReceiptRow
@@ -74,6 +75,7 @@ func NewFake() *Fake {
 		aggMeta:         map[aggKey]*fakeAggMeta{},
 		packages:        map[string]PackageRow{},
 		snapshots:       map[[2]string]string{},
+		snapshotAt:      map[[2]string]time.Time{},
 		cases:           map[string]domain.Case{},
 		samples:         map[string]SampleRow{},
 		receipts:        map[string][]ReceiptRow{},
@@ -254,6 +256,7 @@ func (f *Fake) ListSnapshots(_ context.Context) ([]SnapshotRow, error) {
 func (f *Fake) PutSnapshot(_ context.Context, purl, symbol, snapshotJSON string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.snapshotAt[[2]string{purl, symbol}] = f.now()
 	f.snapshots[[2]string{purl, symbol}] = snapshotJSON
 	return nil
 }
@@ -319,6 +322,22 @@ func (f *Fake) ChangedSince(ctx context.Context, since time.Time) (Changes, erro
 	}
 	sort.Strings(purls)
 	return Changes{Targets: targets, SamplePURLs: purls}, nil
+}
+
+func (f *Fake) SnapshotUpdatedAt(_ context.Context) (map[string]time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]time.Time{}
+	for k := range f.snapshots {
+		at, ok := f.snapshotAt[k]
+		if !ok {
+			continue
+		}
+		if prev, seen := out[k[0]]; !seen || at.After(prev) {
+			out[k[0]] = at
+		}
+	}
+	return out, nil
 }
 
 func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) {

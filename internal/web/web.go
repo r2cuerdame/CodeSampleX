@@ -159,6 +159,14 @@ type SampleListItem struct {
 	// ("node 22"), so a list row says which environment it answers for.
 	Context   string
 	CreatedAt string
+	// Version is the package version this sample is about, and Symbols the
+	// APIs it answers for. A sample answers one version of one API; without
+	// these a package's list is an undifferentiated pile — uuid alone has
+	// 96 published samples.
+	Version string
+	Symbols []string
+	// Kind is the case kind: HOW | FIX | MIGRATION | CONFIG.
+	Kind string
 }
 
 // PackageHit is one package search/hot result.
@@ -168,6 +176,11 @@ type PackageHit struct {
 	LatestVersion string
 	Symbols       int
 	EvidenceCount int64
+	// UpdatedAt is when this package's compatibility snapshot was last
+	// materialized — the date the records inventory orders by and prints.
+	// "Most symbols first" answered "what does the network know most
+	// about"; a log of measurements is read newest first.
+	UpdatedAt string
 	// Filter dimensions are populated by test stores and are not rendered.
 	// The production adapter matches the same dimensions directly against
 	// snapshot rows before it builds a PackageHit.

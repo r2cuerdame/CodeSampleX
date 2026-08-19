@@ -479,6 +479,17 @@ func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
 	if m, ok := parseManifest(r.ManifestJSON); ok {
 		item.Goal = m.Case.Goal
 		item.Context = m.Environment.ContextLabel()
+		item.Kind = m.Case.Kind
+		item.Symbols = m.Symbols
+		// A sample names the exact package version it was written against;
+		// the list row carries it so the page can file the sample under
+		// the version it answers for.
+		for _, p := range m.Packages {
+			if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+				item.Version = parsed.Version
+				break
+			}
+		}
 	}
 	return item
 }
@@ -717,21 +728,45 @@ func (w *webStore) rankedRecordPackages(ctx context.Context, filter web.RecordFi
 			add(target.PURL, target.Symbol, "")
 		}
 	}
+	// When a package's evidence last changed. One row per purl, so this
+	// costs a grouped index scan rather than reading any snapshot.
+	updated, err := w.s.SnapshotUpdatedAt(ctx)
+	if err != nil {
+		updated = nil
+	}
+	latest := map[string]time.Time{}
+	for purl, at := range updated {
+		p, err := domain.ParsePURL(purl)
+		if err != nil {
+			continue
+		}
+		key := p.Ecosystem + "/" + p.Name
+		if prev, ok := latest[key]; !ok || at.After(prev) {
+			latest[key] = at
+		}
+	}
+
 	out := make([]web.PackageHit, 0, len(byPkg))
-	for _, a := range byPkg {
+	for key, a := range byPkg {
 		a.hit.Symbols = len(a.symbols)
+		if at, ok := latest[key]; ok {
+			a.hit.UpdatedAt = at.UTC().Format("2006-01-02")
+		}
 		out = append(out, a.hit)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		ai, aj := byPkg[out[i].Ecosystem+"/"+out[i].Name], byPkg[out[j].Ecosystem+"/"+out[j].Name]
+		// A typed query still puts what was asked for first; without one
+		// this is an inventory of measurements and reads newest first.
 		if ai.exact != aj.exact {
 			return ai.exact
 		}
 		if ai.prefix != aj.prefix {
 			return ai.prefix
 		}
-		if out[i].Symbols != out[j].Symbols {
-			return out[i].Symbols > out[j].Symbols
+		ti, tj := latest[out[i].Ecosystem+"/"+out[i].Name], latest[out[j].Ecosystem+"/"+out[j].Name]
+		if !ti.Equal(tj) {
+			return ti.After(tj)
 		}
 		if out[i].EvidenceCount != out[j].EvidenceCount {
 			return out[i].EvidenceCount > out[j].EvidenceCount

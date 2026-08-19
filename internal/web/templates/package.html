@@ -103,11 +103,20 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
-{{- if .Samples}}
-{{/* A published source sample is useful even before it has a passing
-     receipt. Do not label every row as verified merely because some are. */}}
-<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
-{{template "samplelist" .}}
+{{- if .SampleVersions}}
+{{/* A sample answers one version of one API. Listing every one of them
+     here mixed versions into an undifferentiated pile — uuid alone has 96
+     — so the package says where the answers are and the version page
+     lists them. */}}
+<h2 class="eyebrow mono">{{.T "pkg.samples_by_version"}}</h2>
+<ul class="samplevers mono">
+{{- range .SampleVersions}}
+  <li>
+    {{if .Href}}<a href="{{.Href}}">{{.Version}}</a>{{else}}<span class="dim">{{$.T "pkg.samples_no_version"}}</span>{{end}}
+    <span class="dim small">{{$.N .Count}}</span>
+  </li>
+{{- end}}
+</ul>
 {{- end}}
 
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>

@@ -91,10 +91,17 @@ func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, li
 			break
 		}
 		for _, p := range f.samplePackages[it.SampleID] {
-			if strings.HasPrefix(p, prefix) {
-				out = append(out, it)
-				break
+			if !strings.HasPrefix(p, prefix) {
+				continue
 			}
+			// The real adapter reads the version out of the manifest purl;
+			// the fake derives it the same way so version-scoped pages are
+			// exercised rather than silently empty.
+			if it.Version == "" {
+				it.Version = strings.TrimPrefix(p, prefix)
+			}
+			out = append(out, it)
+			break
 		}
 	}
 	return out, nil
@@ -316,6 +323,7 @@ func newFakeStore() *fakeStore {
 		SampleID: "sha256:d1e2f3", Goal: "POST JSON with axios and retries",
 		Status: "CROSS_PASS", License: "MIT-0", Context: "node 22.18",
 		CreatedAt: "2026-08-01",
+		Version:   "1.12.0", Symbols: []string{"axios.post"}, Kind: "HOW",
 	}
 	f.seeders["alice"] = []SampleListItem{item}
 	f.sampleList = []SampleListItem{item}

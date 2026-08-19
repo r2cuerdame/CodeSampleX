@@ -40,6 +40,9 @@
      word for two different quantities made the per-package figure read as
      a tiny fraction of the network total, which is not what it is. */}}
       {{if .EvidenceCount}}<span class="record-entries dim mono small">{{$.N .EvidenceCount}} · {{$.T "records.entries"}}</span>{{end}}
+      {{/* The list is ordered by this date, so it has to be on the row:
+           an order nobody can see is indistinguishable from no order. */}}
+      {{if .UpdatedAt}}<span class="record-updated dim mono small" title="{{$.T "records.updated"}}">{{.UpdatedAt}}</span>{{end}}
     </span>
   </li>
 {{- end}}

@@ -409,6 +409,29 @@ func (p *PG) DeleteSnapshots(ctx context.Context, targets []SnapshotTarget) erro
 	})
 }
 
+func (p *PG) SnapshotUpdatedAt(ctx context.Context) (map[string]time.Time, error) {
+	out := map[string]time.Time{}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `SELECT purl, max(generated_at) FROM compatibility_snapshots GROUP BY purl`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl string
+			var at *time.Time
+			if err := rows.Scan(&purl, &at); err != nil {
+				return err
+			}
+			if at != nil {
+				out[purl] = *at
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) {
 	seen := map[SnapshotTarget]bool{}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

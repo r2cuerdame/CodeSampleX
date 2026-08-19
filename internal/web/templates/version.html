@@ -19,6 +19,13 @@
 {{template "matrix" .}}
 {{end}}
 
+{{- if .Samples}}
+{{/* The answers written against this exact version, grouped so the APIs
+     they cover sit together. */}}
+<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
+{{template "samplelist" .}}
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.symbols"}}</h2>
 {{if .Symbols}}
 <ul class="symlist mono">

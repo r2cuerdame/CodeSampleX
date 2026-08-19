@@ -173,7 +173,9 @@ func TestPackagePageExistsForASampledPackage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/cargo/serde status = %d, want 200 (a sample names it)", rec.Code)
 	}
-	mustContain(t, rec.Body.String(), `href="/samples/sha256:cafe01"`)
+	// The package page says which version the answers were written
+	// against; the samples themselves live on that version's page.
+	mustContain(t, rec.Body.String(), `href="/cargo/serde/1.0.229"`)
 }
 
 // Verified samples cover nine ecosystems. The package router originally
@@ -208,16 +210,31 @@ func TestPackagePagesExistForEverySampleEcosystem(t *testing.T) {
 	}
 }
 
-// TestPackagePageLinksSamples: the sitemap gets a crawler to the package
-// page, and this link is what gets it from there to the sample.
-func TestPackagePageLinksSamples(t *testing.T) {
+// A sample answers one version of one API, so the package page counts the
+// answers per version and the version page lists them. Dumping all of them
+// at package level mixed versions into one pile — uuid alone has 96
+// published samples — and truncated the rest at the read limit.
+func TestSamplesAreListedUnderTheirVersion(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/npm/axios").Body.String()
-	mustContain(t, body, `href="/samples/sha256:d1e2f3"`)
-	mustContain(t, body, "POST JSON with axios and retries")
+	pkg := get(t, mux, "/npm/axios").Body.String()
+	mustContain(t, pkg, `href="/npm/axios/1.12.0"`)
+	if strings.Contains(pkg, `href="/samples/sha256:d1e2f3"`) {
+		t.Error("the package page still dumps individual samples")
+	}
+
+	version := get(t, mux, "/npm/axios/1.12.0").Body.String()
+	mustContain(t, version, `href="/samples/sha256:d1e2f3"`)
+	mustContain(t, version, "POST JSON with axios and retries")
+	// Categorised, not a flat pile: the row says which API and which kind.
+	mustContain(t, version, `class="chip sym mono small">axios.post`)
+	mustContain(t, version, `class="chip kind mono small">HOW`)
+
+	// A version with no samples of its own must not borrow another's.
+	if other := get(t, mux, "/npm/axios/1.11.0").Body.String(); strings.Contains(other, `href="/samples/`) {
+		t.Error("a version page listed a sample written against another version")
+	}
 	// A package with no samples must not sprout an empty section.
-	other := get(t, mux, "/golang/github.com/a/b").Body.String()
-	if strings.Contains(other, `href="/samples/`) {
+	if other := get(t, mux, "/golang/github.com/a/b").Body.String(); strings.Contains(other, `href="/samples/`) {
 		t.Error("package page listed a sample that does not name it")
 	}
 }
