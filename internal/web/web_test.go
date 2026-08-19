@@ -65,7 +65,6 @@ func TestLandingEnglish(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "Does it run there?")
-	mustContain(t, body, "Tested across real environments. Not guessed from documentation.")
 	mustContain(t, body, `class="landing-page"`)
 	if strings.Contains(body, `class="hero-art"`) || strings.Contains(body, `<img src="/static/inspector-hero-v1.webp"`) {
 		t.Error("landing still renders the old hero illustration")
@@ -106,8 +105,6 @@ func TestLandingEnglish(t *testing.T) {
 	for _, s := range []string{"USAGE_OBSERVATION", "SAMPLE_VERIFICATION", "CROSS_PASS", "MATRIX_PASS", "STABLE"} {
 		mustContain(t, body, s)
 	}
-	// The differentiation strip separates testing from documentation.
-	mustContain(t, body, "what was actually tested")
 	// §5.4 contract table verbatim.
 	for _, s := range []string{"You get", "You contribute", "Never shared automatically",
 		"Public compatibility knowledge", "Sanitized failure fingerprints",

@@ -1439,3 +1439,83 @@ td.pv .pvstate { font-size: 0.7rem; }
 }
 .ecorow a { text-decoration: none; color: var(--accent-2); font-weight: 650; }
 .ecorow a:hover { color: var(--accent); text-decoration: underline; }
+
+/* ------------------------------------------------------------------ */
+/* Cube controls: axes and filters apply on change, so the bar is the
+   whole interface. Seams, radii and sticky edges are settled here so the
+   panel reads as one instrument rather than stacked boxes. */
+
+.cubecontrols {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem 1.1rem;
+  margin: 0.6rem 0 0.7rem; padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line); border-radius: 0.7rem;
+  background: var(--panel-2);
+}
+.cubecontrols .ctlgroup {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 0.45rem 0.7rem;
+  min-width: 0;
+}
+.cubecontrols .ctlgroup.filters {
+  padding-left: 1rem; border-left: 1px solid var(--line);
+}
+.cubecontrols .ctllabel { align-self: center; font-weight: 700; }
+.cubecontrols label { display: grid; gap: 0.15rem; color: var(--dim); min-width: 0; }
+.cubecontrols label.on { color: var(--accent-2); font-weight: 700; }
+.cubecontrols select {
+  font: 0.78rem var(--mono); padding: 0.26rem 0.4rem;
+  border: 1px solid var(--line-strong); border-radius: 0.4rem;
+  background: var(--panel); color: var(--text); max-width: 100%;
+}
+.cubecontrols label.on select { border-color: var(--accent); }
+.cubecontrols .clearfilters { align-self: center; }
+.cubecontrols button {
+  font: 0.8rem var(--mono); padding: 0.32rem 0.8rem;
+  border: 1px solid var(--accent); border-radius: 0.45rem;
+  background: var(--accent); color: var(--accent-ink); cursor: pointer;
+}
+
+/* One meter, not stacked boxes: no doubled seams where the strips meet,
+   and no inherited radius or shadow clipping the grid inside the panel. */
+.gridpanel .tablewrap { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.gridpanel table.pivot thead th { border-top: 0; }
+.gridpanel table.pivot tbody tr:last-child th,
+.gridpanel table.pivot tbody tr:last-child td { border-bottom: 0; }
+.gridpanel .matrix-foot:empty { display: none; }
+
+/* The pinned first column keeps its separators only with separate
+   borders; collapsed borders are painted by the table and do not travel
+   with a sticky cell. The corner pins too, or the headers slide under it. */
+table.pivot { border-collapse: separate; border-spacing: 0; }
+table.pivot th, table.pivot td { border-width: 1px 1px 0 0; }
+table.pivot tr > :first-child { border-left-width: 1px; }
+table.pivot tbody tr:last-child > * { border-bottom-width: 1px; }
+table.pivot thead th.corner {
+  position: sticky; left: 0; z-index: 2; background: var(--panel-2);
+}
+.mtabs a:hover { border-color: var(--accent); text-decoration: none; }
+
+/* The hero tiles are the first thing in their card now — the separator
+   above them belonged to content that no longer sits there. */
+.hero-evidence .stats { padding-top: 0; border-top: 0; }
+
+/* The CTA jumps to the grid; the sticky header must not cover it. */
+#matrix, #cube, #measured, #answers { scroll-margin-top: 5rem; }
+
+/* Install commands hold the width floor now that they lead the panel. */
+.delegate { grid-template-columns: minmax(22rem, 1.15fr) minmax(0, 0.85fr); }
+
+@media (max-width: 54rem) {
+  .delegate { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 40rem) {
+  .cubecontrols { gap: 0.5rem 0.7rem; }
+  .cubecontrols .ctlgroup { flex: 1 1 100%; }
+  .cubecontrols .ctlgroup.filters { padding-left: 0; border-left: 0; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+  .cubecontrols label { flex: 1 1 8rem; }
+  .cubecontrols select { width: 100%; font-size: 16px; }
+  .gridbar .axes { margin-left: 0; flex-basis: 100%; white-space: normal; }
+  table.pivot th.rowlabel { max-width: 42vw; white-space: normal; overflow-wrap: anywhere; }
+  table.pivot th, table.pivot td { padding: 0.3rem 0.38rem; font-size: 0.72rem; }
+  .cubechips .filterchip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+}

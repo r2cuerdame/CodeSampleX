@@ -63,6 +63,8 @@
   "cube.sub": "Escolha duas dimensões quaisquer como eixos; todo o resto vira filtro. Clicar em uma célula fixa a fatia dela e desce um nível.",
   "cube.x_axis": "Eixo X",
   "cube.y_axis": "Eixo Y",
+  "cube.filters": "Filtrar",
+  "cube.all": "todos",
   "cube.apply": "Aplicar",
   "cube.clear": "Limpar filtros",
   "cube.remove_filter": "Remover filtro",

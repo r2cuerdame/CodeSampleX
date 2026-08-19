@@ -30,6 +30,23 @@ type cubeChip struct {
 	RemoveHref string
 }
 
+// cubeFilterOption is one selectable value of a filter dropdown; the
+// empty value means "every value of this dimension".
+type cubeFilterOption struct {
+	Value    string // "" = all; otherwise the recorded data value
+	Label    string // data value, or the translated "all" label
+	Selected bool
+}
+
+// cubeFilterSelect narrows the slice by one dimension, independently of
+// which two dimensions are currently spread across the axes.
+type cubeFilterSelect struct {
+	Dim     string
+	Label   string
+	Options []cubeFilterOption
+	Active  bool
+}
+
 // cubeLeafRow is one measured combination at the bottom of a drill-down.
 type cubeLeafRow struct {
 	Version    string
@@ -40,13 +57,19 @@ type cubeLeafRow struct {
 }
 
 type cubeView struct {
-	X, Y       string
-	XOptions   []cubeAxisOption
-	YOptions   []cubeAxisOption
+	X, Y string
+	// XLabel/YLabel name the spread axes in the page language, so the grid
+	// says what it is a map of without reading the pickers.
+	XLabel, YLabel string
+	XOptions       []cubeAxisOption
+	YOptions       []cubeAxisOption
+	// Filters narrow the cube by any dimension, whether or not it is on an
+	// axis. They render as dropdowns beside the axis pickers.
+	Filters    []cubeFilterSelect
 	Chips      []cubeChip
 	Grid       pivotGrid
 	Leaf       []cubeLeafRow
-	Action     string // GET form action (the package page path)
+	Action     string // GET form action, anchored so the reload keeps the grid in view
 	Lang       string // hidden lang input value; "" for the default locale
 	ClearHref  string
 	HasFilters bool
@@ -88,11 +111,16 @@ func cubeQuery(filters map[string]string, x, y, lang string) url.Values {
 	return q
 }
 
+// cubeAnchor keeps the grid in view across the reload a filter or axis
+// change causes: without it every change scrolls the reader back to the
+// top of the page and they lose their place in the drill-down.
+const cubeAnchor = "#cube"
+
 func cubeHref(base string, q url.Values) string {
 	if enc := q.Encode(); enc != "" {
-		return base + "?" + enc
+		return base + "?" + enc + cubeAnchor
 	}
-	return base
+	return base + cubeAnchor
 }
 
 // validCubeAxis reports whether the query named a real dimension.
@@ -118,7 +146,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	sliced := filterCubeFacts(facts, filters)
 
 	view := &cubeView{
-		Action:     pagePath,
+		Action:     pagePath + cubeAnchor,
 		HasFilters: len(filters) > 0,
 		WindowNote: windowed,
 	}
@@ -148,6 +176,38 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		})
 	}
 
+	// Filter dropdowns for every dimension the cube recorded — usable
+	// whether or not that dimension is currently spread across an axis.
+	// Each dropdown's options come from the slice narrowed by the OTHER
+	// pins, so switching one filter can never offer a combination the
+	// network has no evidence for.
+	for _, dim := range cubeDimKeys {
+		rest := map[string]string{}
+		for d, v := range filters {
+			if d != dim {
+				rest[d] = v
+			}
+		}
+		values := cubeDimValues(filterCubeFacts(facts, rest), dim)
+		if len(values) == 0 {
+			continue
+		}
+		sel := cubeFilterSelect{
+			Dim:    dim,
+			Label:  i18n.T(lang, "cube.dim_"+dim),
+			Active: filters[dim] != "",
+		}
+		sel.Options = append(sel.Options, cubeFilterOption{
+			Label: i18n.T(lang, "cube.all"), Selected: filters[dim] == "",
+		})
+		for _, v := range values {
+			sel.Options = append(sel.Options, cubeFilterOption{
+				Value: v, Label: v, Selected: filters[dim] == v,
+			})
+		}
+		view.Filters = append(view.Filters, sel)
+	}
+
 	if len(sliced) == 0 {
 		view.NoMatch = true
 		return view
@@ -155,6 +215,14 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 
 	x, y := q.Get("x"), q.Get("y")
 	if !validCubeAxis(x) || !validCubeAxis(y) || x == y {
+		x, y = "", ""
+	}
+	// A dimension pinned to one value carries no spread; if a filter took
+	// over an axis, re-pick the axes over what still varies.
+	if _, pinned := filters[x]; pinned {
+		x, y = "", ""
+	}
+	if _, pinned := filters[y]; pinned {
 		x, y = "", ""
 	}
 	// Explicitly chosen axes the slice never recorded would render an
@@ -171,6 +239,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		}
 	}
 	view.X, view.Y = x, y
+	view.XLabel, view.YLabel = i18n.T(lang, "cube.dim_"+x), i18n.T(lang, "cube.dim_"+y)
 
 	// Axis selectors offer every unpinned dimension with recorded values.
 	for _, dim := range cubeDimKeys {

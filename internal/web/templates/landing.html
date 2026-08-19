@@ -5,7 +5,6 @@
   <div class="hero-copy">
     <h1 class="tagline">{{.T "landing.tagline"}}</h1>
     <p class="lead">{{.T "site.meta_description"}}</p>
-    <p class="tested-line mono">{{.T "landing.tested_line"}}</p>
     <div class="hero-actions">
       <a class="action primary" href="#matrix">{{.T "landing.see_matrix"}}</a>
       <a class="action secondary" href="#install">{{.T "landing.cli_install"}}</a>
@@ -130,16 +129,6 @@
   </div>
 </section>
 
-{{/* Documentation says what should work; the network records what did. */}}
-<section class="diffstrip">
-  <ul class="mono small">
-    <li><span class="k">{{.T "landing.diff_docs_k"}}</span>{{.T "landing.diff_docs"}}</li>
-    <li><span class="k">{{.T "landing.diff_code_k"}}</span>{{.T "landing.diff_code"}}</li>
-    <li><span class="k">{{.T "landing.diff_community_k"}}</span>{{.T "landing.diff_community"}}</li>
-    <li class="us"><span class="k">CodeSampleX</span>{{.T "landing.diff_csx"}}</li>
-  </ul>
-</section>
-
 {{/* The prompt exists once in normal DOM. The agent-install trigger opens
      this native modal and the copy action reads this exact text node. */}}
 <dialog id="install-llm-dialog" class="llmdialog" aria-labelledby="llm-dialog-title" aria-describedby="llm-dialog-body">
@@ -185,7 +174,7 @@
       <p class="small">{{.T "landing.agents_manual"}}</p>
       <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
       <p class="note">{{.T "landing.agents_models"}}</p>
-      <p class="small"><button class="copy mono" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button></p>
+      <p class="small"><button class="action secondary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button></p>
     </div>
   </details>
 </section>

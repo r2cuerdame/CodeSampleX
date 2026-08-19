@@ -63,6 +63,8 @@
   "cube.sub": "아무 차원 두 개를 골라 축으로 펼치고, 나머지는 필터가 됩니다. 셀을 클릭하면 그 조각이 고정되고 한 단계 더 들어갑니다.",
   "cube.x_axis": "X 축",
   "cube.y_axis": "Y 축",
+  "cube.filters": "필터",
+  "cube.all": "전체",
   "cube.apply": "적용",
   "cube.clear": "필터 지우기",
   "cube.remove_filter": "필터 제거",

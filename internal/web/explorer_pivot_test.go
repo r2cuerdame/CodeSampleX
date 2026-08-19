@@ -12,8 +12,16 @@ func TestPackagePageRendersCubeExplorer(t *testing.T) {
 	body := get(t, mux, "/npm/reactish").Body.String()
 
 	mustContain(t, body, "Compatibility cube")
-	mustContain(t, body, `<select name="x">`)
-	mustContain(t, body, `<select name="y">`)
+	// Axes and filters apply on change; the Apply button is the
+	// no-JavaScript fallback only.
+	mustContain(t, body, `<select name="x" data-autosubmit>`)
+	mustContain(t, body, `<select name="y" data-autosubmit>`)
+	mustContain(t, body, `<select name="f_os" data-autosubmit>`)
+	mustContain(t, body, `<select name="f_version" data-autosubmit>`)
+	mustContain(t, body, `<noscript><button type="submit">`)
+	// The reload lands back on the grid instead of the top of the page.
+	mustContain(t, body, `action="/npm/reactish#cube"`)
+	mustContain(t, body, `id="cube"`)
 	mustContain(t, body, `<table class="pivot">`)
 	// Default axes on this data: runtime × os.
 	mustContain(t, body, "node 22")
@@ -29,7 +37,9 @@ func TestPackagePageCubeDrillDown(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
 	body := get(t, mux, "/npm/reactish?f_os=linux").Body.String()
 
-	mustContain(t, body, "OS=linux")
+	// The pinned dimension shows as the selected option of its own filter,
+	// which is also how it is cleared (back to "all").
+	mustContain(t, body, `<option value="linux" selected>linux</option>`)
 	mustContain(t, body, "Clear filters")
 	// linux facts: 19.1.0 package-level + createRoot (node 22) and
 	// 18.3.1 is windows/darwin — so version no longer varies; symbol does.

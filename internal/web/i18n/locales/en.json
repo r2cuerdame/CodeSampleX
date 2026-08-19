@@ -63,6 +63,8 @@
   "cube.sub": "Pick any two dimensions as axes; everything else becomes a filter. Clicking a cell pins its slice and drills one level deeper.",
   "cube.x_axis": "X axis",
   "cube.y_axis": "Y axis",
+  "cube.filters": "Filter",
+  "cube.all": "all",
   "cube.apply": "Apply",
   "cube.clear": "Clear filters",
   "cube.remove_filter": "Remove filter",

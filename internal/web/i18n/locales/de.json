@@ -63,6 +63,8 @@
   "cube.sub": "Wähle zwei beliebige Dimensionen als Achsen; alles andere wird zum Filter. Ein Klick auf eine Zelle fixiert ihren Ausschnitt und steigt eine Ebene tiefer.",
   "cube.x_axis": "X-Achse",
   "cube.y_axis": "Y-Achse",
+  "cube.filters": "Filter",
+  "cube.all": "alle",
   "cube.apply": "Anwenden",
   "cube.clear": "Filter löschen",
   "cube.remove_filter": "Filter entfernen",

@@ -63,6 +63,8 @@
   "cube.sub": "Choisissez deux dimensions comme axes ; tout le reste devient un filtre. Cliquer sur une cellule épingle sa tranche et descend d'un niveau.",
   "cube.x_axis": "Axe X",
   "cube.y_axis": "Axe Y",
+  "cube.filters": "Filtrer",
+  "cube.all": "tous",
   "cube.apply": "Appliquer",
   "cube.clear": "Effacer les filtres",
   "cube.remove_filter": "Retirer le filtre",

@@ -63,6 +63,8 @@
   "cube.sub": "任选两个维度作为坐标轴，其余维度都成为筛选条件。点击单元格会固定这一切片，并向下钻取一层。",
   "cube.x_axis": "X 轴",
   "cube.y_axis": "Y 轴",
+  "cube.filters": "筛选",
+  "cube.all": "全部",
   "cube.apply": "应用",
   "cube.clear": "清除筛选",
   "cube.remove_filter": "移除筛选",

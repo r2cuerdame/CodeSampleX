@@ -107,6 +107,26 @@ for(const b of document.querySelectorAll('[data-copy],[data-copy-target]'))b.add
   if(status)status.textContent=d||'';
   setTimeout(()=>{b.classList.remove('ok');if(d)b.textContent=o;if(status)status.textContent=''},1200)
 });
+/* Cube controls apply the moment they change — there is no Apply button
+   to hunt for. The exact scroll position is carried across the reload so
+   changing an axis or a filter never throws the reader back to the top
+   of the page; the #cube anchor is the no-JavaScript fallback. */
+for(const s of document.querySelectorAll('[data-autosubmit]'))s.addEventListener('change',()=>{
+  try{sessionStorage.setItem('csx-cube-scroll',String(window.scrollY))}catch(e){}
+  if(!s.form)return;
+  /* An unset filter is absent, not empty: disabling it keeps the address
+     bar readable and the link shareable. */
+  for(const o of s.form.querySelectorAll('select'))if(!o.value)o.disabled=true;
+  s.form.submit()
+});
+if(document.getElementById('cube')){
+  let y=null;try{y=sessionStorage.getItem('csx-cube-scroll');sessionStorage.removeItem('csx-cube-scroll')}catch(e){}
+  if(y!==null){
+    const to=parseInt(y,10)||0;
+    window.scrollTo(0,to);
+    requestAnimationFrame(()=>window.scrollTo(0,to))
+  }
+}
 let dialogReturnFocus=null;
 for(const trigger of document.querySelectorAll('[data-dialog-open]'))trigger.addEventListener('click',()=>{
   const dialog=document.getElementById(trigger.dataset.dialogOpen);

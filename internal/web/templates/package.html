@@ -1,5 +1,5 @@
 {{define "content"}}
-<nav class="crumbs mono"><a href="{{.WithLang "/records"}}">{{.T "nav.explore"}}</a> / {{.Ecosystem}}</nav>
+<nav class="crumbs mono"><a href="{{.WithLang "/records"}}">{{.T "nav.records"}}</a> / {{.Ecosystem}}</nav>
 <h1 class="mono">{{.Name}} <span class="dim">· {{.Ecosystem}}</span></h1>
 
 {{if .Wanted}}
@@ -16,21 +16,43 @@
      filters. A cell click pins one more slice; the drill-down bottoms out
      in the exact measured combinations. */}}
 {{- if .Cube}}
-<section class="cube">
+<section id="cube" class="cube">
   <div class="section-heading">
     <div>
       <h2 class="eyebrow mono">{{.T "cube.heading"}}</h2>
       <p class="dim small">{{.T "cube.sub"}}</p>
     </div>
   </div>
-  {{- if .Cube.Chips}}
-  <div class="cubechips">
-    {{- range .Cube.Chips}}
-    <span class="chip filterchip mono small">{{.DimLabel}}={{.Value}} <a href="{{.RemoveHref}}" aria-label="{{$.T "cube.remove_filter"}}">×</a></span>
+
+  {{/* One control bar: two axes to spread, every other dimension as a
+       filter. Each control applies on change; the Apply button exists
+       only for readers without JavaScript. */}}
+  <form class="cubecontrols mono small" method="get" action="{{.Cube.Action}}">
+    {{- if .Cube.XOptions}}
+    <div class="ctlgroup">
+      <label>{{.T "cube.x_axis"}}
+        <select name="x" data-autosubmit>{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+      <label>{{.T "cube.y_axis"}}
+        <select name="y" data-autosubmit>{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+    </div>
     {{- end}}
-    <a class="small" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>
-  </div>
-  {{- end}}
+    {{- if .Cube.Filters}}
+    <div class="ctlgroup filters">
+      <span class="ctllabel dim">{{.T "cube.filters"}}</span>
+      {{- range .Cube.Filters}}
+      <label{{if .Active}} class="on"{{end}}>{{.Label}}
+        <select name="f_{{.Dim}}" data-autosubmit>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+      {{- end}}
+      {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
+    </div>
+    {{- end}}
+    {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
+    <noscript><button type="submit">{{.T "cube.apply"}}</button></noscript>
+  </form>
+
   {{- if .Cube.NoMatch}}
   <p class="dim">{{.T "cube.no_match"}}</p>
   {{if .Cube.WindowNote}}<p class="dim small">{{.T "cube.window_note"}}</p>{{end}}
@@ -53,17 +75,7 @@
   {{- else}}
   <div class="gridpanel">
     <div class="gridbar">
-      <form class="cubeaxes mono small" method="get" action="{{.Cube.Action}}">
-        <label>{{.T "cube.x_axis"}}
-          <select name="x">{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-        </label>
-        <label>{{.T "cube.y_axis"}}
-          <select name="y">{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-        </label>
-        {{- range .Cube.Chips}}<input type="hidden" name="f_{{.Dim}}" value="{{.Value}}">{{end}}
-        {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
-        <button type="submit">{{.T "cube.apply"}}</button>
-      </form>
+      <span class="axes mono small dim">{{.Cube.YLabel}} × {{.Cube.XLabel}}</span>
     </div>
     {{template "pivot" .Cube.Grid}}
     {{- if or .Cube.Grid.Trimmed .Cube.WindowNote}}
