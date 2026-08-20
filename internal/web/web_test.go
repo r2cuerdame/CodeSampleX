@@ -178,7 +178,13 @@ func TestLandingWithoutFeaturedFindingsHasNoBrokenMeasuredAnchor(t *testing.T) {
 	if strings.Contains(body, `href="#measured"`) {
 		t.Error("empty findings render links to an absent #measured section")
 	}
-	mustContain(t, body, `class="action primary" href="#matrix"`)
+	// The hero's one action is the install. The map button was removed: it
+	// only scrolled to a grid already on the page, and the search beside the
+	// counters answers what a visitor arrives with.
+	mustContain(t, body, `class="action primary" href="#install"`)
+	if strings.Contains(body, `href="#matrix"`) {
+		t.Error("the hero still offers to scroll to the grid below it")
+	}
 }
 
 // TestEnglishReachableFromAnotherLanguage pins the fix for a switcher that

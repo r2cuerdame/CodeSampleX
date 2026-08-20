@@ -6,8 +6,10 @@
     <h1 class="tagline">{{.T "landing.tagline"}}</h1>
     <p class="lead">{{.T "site.meta_description"}}</p>
     <div class="hero-actions">
-      <a class="action primary" href="#matrix">{{.T "landing.see_matrix"}}</a>
-      <a class="action secondary" href="#install">{{.T "landing.cli_install"}}</a>
+      {{/* The map button only scrolled down to a grid already on the page,
+           and the search beside the counters now answers the question a
+           visitor actually arrives with. */}}
+      <a class="action primary" href="#install">{{.T "landing.cli_install"}}</a>
     </div>
   </div>
   <div class="hero-evidence">
