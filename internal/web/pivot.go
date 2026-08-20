@@ -182,6 +182,14 @@ func (g pivotGrid) Empty() bool { return len(g.Rows) == 0 || len(g.Cols) == 0 }
 // because the cell's verdict comes from the verification side.
 type pivotAgg struct {
 	obsPass, obsFail int64
+	// obsAttributed is the subset of obsFail whose sanitizer named a cause.
+	// Observation evidence is co-occurrence, so an unattributed failure says
+	// a build CONTAINING this package broke — one tsc failure wrote a FAIL
+	// for all 412 packages in a lockfile, and 82% of production's failures
+	// are that shape. They stay in the rate and the tooltip says how many
+	// could be named, because otherwise a package that breaks and a package
+	// that was merely installed read identically.
+	obsAttributed int64
 	// obsPeers is how many distinct peer buckets reported, as a PEAK and
 	// never a sum: the same machine across two epochs is one machine. It is
 	// what the cell weighs its rate by, because the event count answers a
@@ -417,6 +425,7 @@ func (a *pivotAgg) absorbRow(r snapshotRow) {
 		if isObservationStageName(stage) {
 			a.obsPass += c.Pass
 			a.obsFail += c.Fail
+			a.obsAttributed += c.FailAttributed
 			hasObs = hasObs || c.Pass+c.Fail > 0
 		} else {
 			a.verPass += c.Pass
@@ -470,6 +479,7 @@ func (a *pivotAgg) merge(b pivotAgg) {
 func (a *pivotAgg) mergeObservations(b pivotAgg) {
 	a.obsPass += b.obsPass
 	a.obsFail += b.obsFail
+	a.obsAttributed += b.obsAttributed
 	a.used += b.used
 	if b.obsPeers > a.obsPeers {
 		a.obsPeers = b.obsPeers
@@ -808,6 +818,10 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 		// so the events outnumber the builds several times over and both
 		// readings overstate what happened.
 		parts = append(parts, fmt.Sprintf("%d observations", obs))
+	}
+	if a.obsFail > 0 && a.obsAttributed < a.obsFail {
+		parts = append(parts, fmt.Sprintf("%d of %d failures with an identified cause",
+			a.obsAttributed, a.obsFail))
 	}
 	if a.used > 0 {
 		// Stated separately because it answers a different question. These

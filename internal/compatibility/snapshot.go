@@ -2,6 +2,7 @@ package compatibility
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -116,6 +117,9 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 			sc.Pass += row.ObservationCount
 		} else {
 			sc.Fail += row.ObservationCount
+			if strings.TrimSpace(row.ErrorCode) != "" {
+				sc.FailAttributed += row.ObservationCount
+			}
 		}
 		g.byStage[row.Stage] = sc
 		g.obsCount += row.ObservationCount

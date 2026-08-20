@@ -75,6 +75,18 @@ func resolvedPURLsFromReceipt(rec domain.VerificationReceipt) []domain.PURL {
 type StageCount struct {
 	Pass int64 `json:"pass"`
 	Fail int64 `json:"fail"`
+	// FailAttributed is the subset of Fail whose sanitizer produced an error
+	// code — the failures anyone could name a cause for.
+	//
+	// An observation failure with no code says a build containing this
+	// package broke, and nothing about which package broke it. One tsc
+	// failure wrote a FAIL row for all 412 packages in the lockfile, under a
+	// single fingerprint, and 82% of production's failures are that shape.
+	// They stay in the rate, because the build really did fail and this is
+	// co-occurrence evidence by definition. What was missing was any way for
+	// a reader to tell a package that breaks from a package that was merely
+	// installed when something else broke.
+	FailAttributed int64 `json:"failAttributed,omitempty"`
 }
 
 // parseEnv decodes an evidence row's env JSON. A row with unparsable env is

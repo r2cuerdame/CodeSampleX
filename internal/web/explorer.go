@@ -25,6 +25,10 @@ import (
 type stageCount struct {
 	Pass int64 `json:"pass"`
 	Fail int64 `json:"fail"`
+	// FailAttributed is the subset of Fail whose sanitizer named a cause. The
+	// rest say a build containing this package broke and nothing about which
+	// package broke it.
+	FailAttributed int64 `json:"failAttributed"`
 }
 
 type snapshotRow struct {
