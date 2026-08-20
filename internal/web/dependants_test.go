@@ -16,7 +16,7 @@ func TestPackagePageNamesWhoPulledEachVersion(t *testing.T) {
 		{ParentName: "c", ParentVersion: "3.0.0", ChildVersion: "2.1.0", Projects: 1},
 	}
 	body := mustGet(t, mux, "/npm/axios")
-	mustContain(t, body, `class="dependants"`)
+	mustContain(t, body, `class="shipswith"`)
 	mustContain(t, body, "a@1.2.0")
 	mustContain(t, body, "c@3.0.0")
 	// The child version leads, because the question is "who wanted THIS one".
@@ -28,7 +28,7 @@ func TestPackagePageNamesWhoPulledEachVersion(t *testing.T) {
 func TestPackagePageStaysQuietWithNoDependants(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.dependants = nil
-	if strings.Contains(mustGet(t, mux, "/npm/axios"), `class="dependants"`) {
+	if strings.Contains(mustGet(t, mux, "/npm/axios"), "pkg.dependants") {
 		t.Error("the block rendered with nothing in it")
 	}
 }

@@ -152,13 +152,24 @@
      is the thing a person moves. */}}
 <h2 class="eyebrow mono">{{.T "pkg.dependants"}}</h2>
 <p class="note dim small">{{.T "pkg.dependants_sub"}}</p>
-<ul class="dependants">
+<div class="tablewrap">
+<table class="shipswith">
+<thead><tr>
+  <th>{{.T "pkg.dependants_col_version"}}</th>
+  <th>{{.T "pkg.dependants_col_by"}}</th>
+  <th class="num">{{.T "pkg.dependants_col_projects"}}</th>
+</tr></thead>
+<tbody>
 {{- range .Dependants}}
-  <li><span class="mono">{{.ChildVersion}}</span> <span class="dim">←</span>
-    <span class="mono">{{.ParentName}}@{{.ParentVersion}}</span>
-    <span class="dim small">{{$.N .Projects}}</span></li>
+<tr>
+  <th class="rowlabel mono">{{.ChildVersion}}</th>
+  <td class="mono">{{.ParentName}}@{{.ParentVersion}}</td>
+  <td class="num mono">{{$.N .Projects}}</td>
+</tr>
 {{- end}}
-</ul>
+</tbody>
+</table>
+</div>
 {{- end}}
 
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
