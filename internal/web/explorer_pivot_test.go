@@ -37,8 +37,14 @@ func TestPackagePageRendersCubeExplorer(t *testing.T) {
 	mustContain(t, body, `f_symbol=hydrateRoot`)
 }
 
-// Drilling into a slice turns the pinned dimensions into removable chips
-// and pivots what still varies.
+// Drilling into a slice turns the pinned dimensions into removable chips and
+// shows what is left.
+//
+// linux holds 19.1.0 package-level plus createRoot on node 22, so neither
+// version nor symbol spreads: one real symbol beside the package-level
+// aggregate is not an axis. It used to render as a one-row grid of
+// createRoot, which dropped the package-level record entirely — the exact
+// records show both.
 func TestPackagePageCubeDrillDown(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
 	body := get(t, mux, "/npm/reactish?f_os=linux").Body.String()
@@ -47,10 +53,8 @@ func TestPackagePageCubeDrillDown(t *testing.T) {
 	// which is also how it is cleared (back to "all").
 	mustContain(t, body, `<option value="linux" selected>linux</option>`)
 	mustContain(t, body, "Clear filters")
-	// linux facts: 19.1.0 package-level + createRoot (node 22) and
-	// 18.3.1 is windows/darwin — so version no longer varies; symbol does.
-	mustContain(t, body, `<table class="pivot">`)
 	mustContain(t, body, "createRoot")
+	mustContain(t, body, "whole package")
 }
 
 // A slice narrowed to one measured combination renders the exact record,

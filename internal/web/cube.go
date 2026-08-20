@@ -272,6 +272,22 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 		if dim == "symbol" && !cubeHasRealSymbol(facts) {
 			continue
 		}
+		// An axis has to spread. The symbol dimension counts "whole package"
+		// among its values, so one real symbol beside the aggregate read as
+		// two and qualified — and then the grid dropped the aggregate and
+		// rendered a single row. hasown opened exactly that way: one green
+		// cell on alpine, with every windows run it has, and every failure,
+		// off screen because they were recorded against the package.
+		//
+		// Counting the symbols that would actually survive the drop is the
+		// same rule the other dimensions get, applied to what a symbol axis
+		// really holds.
+		if dim == "symbol" {
+			if len(cubeDimValues(cubeFactsOnAxes(facts, "symbol", ""), "symbol")) >= 2 {
+				varies[dim] = true
+			}
+			continue
+		}
 		// Whether a dimension can be an axis is decided by the slice, not
 		// by the filter list: pinning the OS to a whole platform still
 		// leaves alpine musl and debian glibc to spread along it, and a
