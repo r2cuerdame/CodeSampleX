@@ -5,32 +5,37 @@ import (
 	"time"
 )
 
-// A grid with one row and one column has nothing left to narrow. Pinning its
-// row, its column or its single cell all produce the slice already on screen,
-// so every link on it is an invitation to arrive where you started.
-//
-// The symbol page already refuses to draw a 1x1 summary above the detail it
-// repeats. This is the same fact one layer down: a link that cannot narrow
-// anything is not a link.
-func TestASingleCellGridOffersNoDrillDown(t *testing.T) {
-	rows := []snapshotRow{pvRow("linux", "", "node", "22", "2026-08-19T00:00:00Z",
-		map[string]stageCount{"PROJECT_TEST": {Pass: 3}})}
+// Pinning a version opens something this page does not show — the release's
+// own dependency list — so the version axis keeps its link however small the
+// grid is. Pinning anything else on a one-cell grid narrows to the slice
+// already on screen and shows nothing new, which is what the symbol row was
+// doing: a link that arrives where you started.
+func TestOnAOneCellGridOnlyTheVersionAxisLinks(t *testing.T) {
+	facts := []cubeFact{{
+		Dims: map[string]string{"version": "2.0.4", "symbol": "hasOwn"},
+		Agg:  pivotAgg{verPass: 1},
+	}}
 	links := pivotLinks{
 		Cell: func(r, c string) string { return "/cell" },
 		Row:  func(r string) string { return "/row" },
 		Col:  func(c string) string { return "/col" },
 	}
-	one := assembleGridFor(rows, links)
-	if len(one.Rows) != 1 || len(one.Cols) != 1 {
-		t.Fatalf("fixture is %dx%d, want 1x1", len(one.Rows), len(one.Cols))
+	// symbol down the side, version across: the version header still links.
+	g := buildCubeGrid(facts, "version", "symbol", links, time.Now())
+	if len(g.Rows) != 1 || len(g.Cols) != 1 {
+		t.Fatalf("fixture is %dx%d, want 1x1", len(g.Rows), len(g.Cols))
 	}
-	if one.Rows[0].Href != "" || one.Cols[0].Href != "" || one.Rows[0].Cells[0].Href != "" {
-		t.Errorf("a 1x1 grid still links: row=%q col=%q cell=%q",
-			one.Rows[0].Href, one.Cols[0].Href, one.Rows[0].Cells[0].Href)
+	if g.Cols[0].Href == "" {
+		t.Error("the version axis lost its link; pinning it opens the dependency list")
+	}
+	if g.Rows[0].Href != "" {
+		t.Error("the symbol row still links, and pinning it shows nothing new")
+	}
+	if g.Rows[0].Cells[0].Href != "" {
+		t.Error("the only cell still links to the slice already on screen")
 	}
 }
 
-// A grid that can actually narrow keeps its links.
 func TestAGridWithSomewhereToGoKeepsItsLinks(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("linux", "", "node", "22", "2026-08-19T00:00:00Z", map[string]stageCount{"PROJECT_TEST": {Pass: 3}}),

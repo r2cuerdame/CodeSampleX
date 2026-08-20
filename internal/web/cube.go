@@ -353,7 +353,36 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	}
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
-	return assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
+	g := assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
+	return dropLinksThatShowNothingNew(g, x, y)
+}
+
+// dropLinksThatShowNothingNew strips the links on a one-cell grid that cannot
+// take the reader anywhere.
+//
+// One row and one column means pinning either narrows to the slice already on
+// screen. That was the symbol row: a link whose destination was the page it
+// was on.
+//
+// The version axis is the exception and the reason this is not a blanket
+// rule. Pinning a version opens something the unpinned page does not show —
+// that release's own dependency list — so however small the grid is, the
+// version header is still a door.
+func dropLinksThatShowNothingNew(g pivotGrid, x, y string) pivotGrid {
+	if len(g.Rows) != 1 || len(g.Cols) != 1 {
+		return g
+	}
+	if x != "version" {
+		g.Cols[0].Href = ""
+	}
+	if y != "version" {
+		g.Rows[0].Href = ""
+	}
+	// The cell pins BOTH, so it opens a door only when neither axis was
+	// already the version — and then the version header beside it is the
+	// clearer place to click.
+	g.Rows[0].Cells[0].Href = ""
+	return g
 }
 
 // mergeCubeFacts folds one cell's facts together without double-counting.

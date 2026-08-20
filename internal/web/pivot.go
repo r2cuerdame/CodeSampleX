@@ -615,15 +615,6 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 		trimmed = true
 	}
 
-	// A grid with one row and one column has nothing left to narrow. Pinning
-	// its row, its column or its only cell all produce the slice already on
-	// screen, so every link on it invites the reader to arrive where they
-	// started. The symbol page already refuses to draw a 1x1 summary above
-	// the detail it repeats; this is the same fact one layer down.
-	if len(rowsOrdered) == 1 && len(cols) == 1 {
-		links = pivotLinks{}
-	}
-
 	g := pivotGrid{Trimmed: trimmed}
 	for _, c := range cols {
 		axis := pivotAxis{Label: c}
