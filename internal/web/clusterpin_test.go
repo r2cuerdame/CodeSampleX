@@ -74,3 +74,30 @@ func TestWithNothingPinnedEveryClusterStays(t *testing.T) {
 		t.Error("the unpinned overview dropped a cluster")
 	}
 }
+
+// The page used to be handed twelve clusters, chosen by how many machines
+// reported them across the WHOLE package, and only then narrowed to the
+// coordinate. escalade has sixteen — fifteen on windows, one on linux — so a
+// reader who had drilled to the linux environment where that one was recorded
+// was shown nothing, because it ranked sixteenth overall.
+//
+// Narrow first, bound second.
+func TestACoordinatesClusterIsNotCutForRankingLowOverall(t *testing.T) {
+	clusters := make([]failureCluster, 0, 16)
+	for i := 0; i < 15; i++ {
+		c := hasownCluster("node@24.13", "3.2.0", "")
+		c.EnvSummary["os"] = "windows"
+		clusters = append(clusters, c)
+	}
+	onLinux := hasownCluster("node@22.23", "3.2.0", "")
+	onLinux.EnvSummary["os"] = "linux"
+	onLinux.ErrorCode = "ERR_THE_ONE_THAT_MATTERS"
+	clusters = append(clusters, onLinux)
+
+	got := filterClustersToPins(clusters, map[string]string{
+		"os": "ubuntu glibc", "runtime": "node 22", "version": "3.2.0",
+	})
+	if len(got) != 1 || got[0].ErrorCode != "ERR_THE_ONE_THAT_MATTERS" {
+		t.Fatalf("kept %d clusters, want the one recorded on this coordinate", len(got))
+	}
+}

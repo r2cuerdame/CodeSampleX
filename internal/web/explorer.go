@@ -562,6 +562,11 @@ func (s *site) packageDeps(r *http.Request, eco, name, version string) []Package
 // 96). The sitemap is what guarantees every sample is reachable.
 const packageSampleLimit = 200
 
+// renderedClusterLimit bounds one page of failure clusters. They arrive
+// ordered by how many machines reported them, so the head is the story and
+// the tail is single-report noise; the page says how many it did not show.
+const renderedClusterLimit = 12
+
 // loadClusters returns a page of failure clusters and how many the package
 // actually has, so the page can say what it did not show. pgx/v5 carries 133;
 // rendering all of them was a wall, and truncating silently would read as
@@ -606,6 +611,14 @@ func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]
 		// from one coordinate would invite the reader to look for 130 more
 		// that were never about this place.
 		total = len(clusters)
+	}
+	// Bounded HERE, after the coordinate has done its narrowing. Bounding
+	// first — which is what the store used to do — meant a cluster recorded
+	// on exactly the environment the reader had drilled to was cut for
+	// ranking low across the whole package, and the coordinate that caused
+	// it showed nothing at all.
+	if len(clusters) > renderedClusterLimit {
+		clusters = clusters[:renderedClusterLimit]
 	}
 	return buildClusters(clusters), total
 }

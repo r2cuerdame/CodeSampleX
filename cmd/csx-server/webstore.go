@@ -871,11 +871,12 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 	if err != nil {
 		return nil, 0, err
 	}
-	// pgx/v5 carries 133 failure clusters and the list had no bound at all,
-	// so its package page rendered every one. They arrive ordered by
-	// observation count, so the tail is single-report noise; the page takes
-	// the head and says how many it did not show. Truncating silently would
-	// read as "this is all of them", which is the one thing it must not say.
+	// A safety bound, not a display cap. Twelve used to be cut here, before
+	// the page had narrowed to a coordinate — so a reader standing on the
+	// exact environment where a cluster was recorded saw nothing, because
+	// that cluster ranked thirteenth across the whole package. escalade has
+	// sixteen: fifteen on windows and the one on linux that the linux
+	// coordinate needed. The page does its own bounding, after filtering.
 	var out []string
 	kept := 0
 	matched := 0
@@ -884,7 +885,7 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			continue
 		}
 		matched++
-		if kept >= maxRenderedClusters {
+		if kept >= maxClustersToPage {
 			continue
 		}
 		kept++
@@ -912,10 +913,10 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 	return out, matched, nil
 }
 
-// maxRenderedClusters bounds one package page. Clusters arrive ordered by how
-// many machines reported them, so the head is the whole story and the tail is
-// single-report noise.
-const maxRenderedClusters = 12
+// maxClustersToPage bounds what one package hands the page. It is a guard
+// against an unbounded response, not a choice about what to render: the page
+// narrows to a coordinate and bounds what is left.
+const maxClustersToPage = 500
 
 func orEmptyObj(s string) string {
 	if strings.TrimSpace(s) == "" {
