@@ -90,9 +90,11 @@ func TestMissRelaysWhatWasRecorded(t *testing.T) {
 	}
 }
 
-// One machine reporting all afternoon is one data point. Below the floor the
-// relay says nothing rather than dressing a single reporter as a pattern.
-func TestThinObservationsAreNotRelayed(t *testing.T) {
+// A single reporting machine is still relayed — withholding it would be a
+// judgement about sufficiency, and this payload makes none. What must never
+// happen is relaying it WITHOUT saying how thin it is, so the count travels
+// on every cell and the rendered text leads with it.
+func TestASingleReporterIsRelayedAndSaysSo(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 	js, err := json.Marshal(relaySnapshot(1))
 	if err != nil {
@@ -111,8 +113,11 @@ func TestThinObservationsAreNotRelayed(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Observed != nil {
-		t.Errorf("a single reporter was relayed as a pattern: %+v", got.Observed)
+	if got.Observed == nil || len(got.Observed.Cells) == 0 {
+		t.Fatal("a single reporter's recorded runs were withheld")
+	}
+	if got.Observed.Cells[0].Reporters != 1 {
+		t.Errorf("reporters = %d, want the honest 1", got.Observed.Cells[0].Reporters)
 	}
 }
 

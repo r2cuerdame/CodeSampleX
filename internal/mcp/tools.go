@@ -1094,8 +1094,15 @@ func renderObserved(o *domain.ObservedReports) string {
 		if env == "" {
 			env = "environment not recorded"
 		}
-		fmt.Fprintf(&b, "- %s · %s: %d of %d passed · %d reporting machines",
-			env, c.Stage, c.Pass, c.Pass+c.Fail, c.Reporters)
+		// The reporter count leads. "297 of 312 passed" from one machine and
+		// from two hundred are different facts, and the count is the only
+		// thing that separates them.
+		machines := "machines"
+		if c.Reporters == 1 {
+			machines = "machine"
+		}
+		fmt.Fprintf(&b, "- %d reporting %s · %s · %s: %d of %d passed",
+			c.Reporters, machines, env, c.Stage, c.Pass, c.Pass+c.Fail)
 		if c.LastSeen != "" {
 			b.WriteString(" · last " + c.LastSeen)
 		}

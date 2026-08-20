@@ -12,16 +12,26 @@ import (
 )
 
 const (
-	// relayMinReporters is the floor below which recorded runs are not worth
-	// relaying. It is not a trust threshold — nothing here is asserted, so
-	// there is nothing to trust — it is a volume threshold. One machine
-	// building all afternoon is one data point, and a lone reporter dressed
-	// as a pattern is the only way this payload can mislead.
+	// relayMinReporters is 1 on purpose, and the reasoning matters more than
+	// the number.
 	//
-	// It reads UniquePeerBuckets, which the ingest path already maintains as
-	// the PEAK distinct reporters within a single epoch (never a sum across
-	// days), so the number cannot be inflated by repetition over time.
-	relayMinReporters = 3
+	// It was 3, to stop a lone reporter being dressed as a pattern. Measured
+	// against the live corpus that silenced the feature completely: the
+	// coordinates that carry observations carry them from ONE machine,
+	// because adoption is small — and breaking that cold start is the entire
+	// reason a miss relays anything at all.
+	//
+	// Withholding thin data is also the wrong instrument. Hiding a row
+	// because it is thin is a judgement about sufficiency, and judgements are
+	// what this payload does not make. The honest form is to relay the row
+	// and SAY it came from one machine; every cell carries Reporters, and the
+	// rendered text leads with it. A reader can weigh one machine against a
+	// hundred far better than we can weigh it for them.
+	//
+	// Reporters reads UniquePeerBuckets, which ingest maintains as the PEAK
+	// distinct reporters within a single epoch and never a sum across days,
+	// so it cannot be inflated by one machine repeating.
+	relayMinReporters = 1
 	// relayMaxCells and relayMaxErrors bound the payload. A miss is the
 	// network's most common outcome and this rides on every one of them.
 	relayMaxCells  = 12
