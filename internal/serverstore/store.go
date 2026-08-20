@@ -123,6 +123,16 @@ type PeerRow struct {
 	ExpiresAt        time.Time
 }
 
+// PresenceCoverage is one ecosystem's split between packages seen installed
+// and packages actually exercised.
+type PresenceCoverage struct {
+	Ecosystem string
+	// PresenceOnly is package versions with USED records and no run at all.
+	PresenceOnly int
+	// Exercised is package versions with at least one recorded run.
+	Exercised int
+}
+
 // NetworkCounts are the honest headline numbers behind /v1/stats
 // (goal.md §14.5). Estimated values are computed elsewhere and always
 // labeled; these are raw counts only.
@@ -288,6 +298,12 @@ type Store interface {
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
+	// PresenceOnlyCoverage counts, per ecosystem, the package versions this
+	// network has only ever seen INSTALLED against the ones it has actually
+	// exercised. It is the instrument's thinnest place and the one a reader
+	// cannot infer: "packages with evidence" reads as packages that were
+	// run, and in production 1,167 npm versions had never been run once.
+	PresenceOnlyCoverage(ctx context.Context) ([]PresenceCoverage, error)
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier

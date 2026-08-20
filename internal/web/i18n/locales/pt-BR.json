@@ -47,6 +47,7 @@
   "coverage.heading": "Onde este instrumento olhou e onde não olhou",
   "coverage.lead": "As observações chegam de máquinas de desenvolvimento; as provas saem de contêineres que nós executamos. As duas não se encontram sozinhas, e onde não se encontraram, esta tabela diz.",
   "coverage.no_overlap": "As duas metades nunca se encontraram: nada observado aqui foi provado aqui, e nada provado aqui foi observado aqui.",
+  "coverage.presence_only": "Vistos apenas instalados, nunca executados:",
   "coverage.selection": "Todas as verificações registradas passaram. Isso é uma regra de publicação, não um achado — uma amostra vira amostra ao passar — então a taxa de acerto no nosso eixo mede como publicamos, não como o ecossistema se comporta.",
   "coverage.unreachable": "Nenhum contêiner pode preencher, então um zero aqui está fechado, não pendente:",
   "cube.all": "todos",

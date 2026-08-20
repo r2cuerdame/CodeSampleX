@@ -1195,6 +1195,54 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 	return f.stats[best], true, nil
 }
 
+// PresenceOnlyCoverage counts, per ecosystem, package versions seen only as
+// installed against ones actually exercised.
+func (f *Fake) PresenceOnlyCoverage(_ context.Context) ([]PresenceCoverage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ran := map[string]bool{}
+	seen := map[string]bool{}
+	eco := map[string]string{}
+	for k := range f.aggMeta {
+		if k.Symbol != "" {
+			continue
+		}
+		p, err := domain.ParsePURL(k.PURL)
+		if err != nil {
+			continue
+		}
+		seen[k.PURL] = true
+		eco[k.PURL] = p.Ecosystem
+		if isRunStage(k.Stage) {
+			ran[k.PURL] = true
+		}
+	}
+	byEco := map[string]*PresenceCoverage{}
+	for purl := range seen {
+		e := eco[purl]
+		row := byEco[e]
+		if row == nil {
+			row = &PresenceCoverage{Ecosystem: e}
+			byEco[e] = row
+		}
+		if ran[purl] {
+			row.Exercised++
+		} else {
+			row.PresenceOnly++
+		}
+	}
+	names := make([]string, 0, len(byEco))
+	for e := range byEco {
+		names = append(names, e)
+	}
+	sort.Strings(names)
+	out := make([]PresenceCoverage, 0, len(names))
+	for _, e := range names {
+		out = append(out, *byEco[e])
+	}
+	return out, nil
+}
+
 // isRunStage reports whether a stage records something being exercised, as
 // opposed to merely being present. It is the same split the compatibility
 // grid draws between a pass rate and a usage count.

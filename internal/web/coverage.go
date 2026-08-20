@@ -1,6 +1,11 @@
 package web
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+
+	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
+)
 
 // CoverageRow is one (platform, ecosystem) cell of the network's own
 // coverage, counted in distinct public packages.
@@ -15,6 +20,21 @@ type CoverageRow struct {
 	Measured       int
 	Proven         int
 	ObservedProven int
+}
+
+// PresenceCoverage is one ecosystem's split between packages this network has
+// only ever seen INSTALLED and packages it has actually exercised.
+type PresenceCoverage struct {
+	Ecosystem    string
+	PresenceOnly int
+	Exercised    int
+}
+
+// PresenceGap is one ecosystem's never-exercised share, rendered.
+type PresenceGap struct {
+	Ecosystem string
+	Count     string // "1,167"
+	Share     string // "51%"
 }
 
 // CoverageDisclosure is the instrument describing its own shape.
@@ -44,6 +64,32 @@ type CoverageDisclosure struct {
 	// because it passed, so the pass rate on our own axis measures our
 	// publishing rule and not the ecosystem.
 	SelectionNote bool
+	// PresenceGaps names the ecosystems whose packages this network has
+	// largely only seen installed. It is the larger of the two skews and the
+	// one a reader cannot infer: "packages with evidence" reads as packages
+	// that were run, and in production 1,167 of npm's 2,289 versions had
+	// never been run once.
+	PresenceGaps []PresenceGap
+}
+
+// buildPresenceGaps renders the never-exercised share per ecosystem, keeping
+// only the ecosystems that actually have a gap. A disclosure that cries skew
+// everywhere is one nobody reads.
+func buildPresenceGaps(lang string, rows []PresenceCoverage) []PresenceGap {
+	var out []PresenceGap
+	for _, r := range rows {
+		total := r.PresenceOnly + r.Exercised
+		if r.PresenceOnly == 0 || total == 0 {
+			continue
+		}
+		out = append(out, PresenceGap{
+			Ecosystem: r.Ecosystem,
+			Count:     i18n.FormatInt(lang, int64(r.PresenceOnly)),
+			Share:     fmt.Sprintf("%d%%", int(float64(r.PresenceOnly)/float64(total)*100+0.5)),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Ecosystem < out[j].Ecosystem })
+	return out
 }
 
 func buildCoverageDisclosure(rows []CoverageRow, unreachable []string) CoverageDisclosure {
