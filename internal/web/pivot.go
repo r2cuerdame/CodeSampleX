@@ -777,10 +777,17 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	if ver > 0 {
 		parts = append(parts, fmt.Sprintf("%d verified", ver))
 	}
+	// Both rates, each named. A cell with usage AND our own runs showed 85%
+	// on its face and "pass 100%" in its tooltip, and nothing said the first
+	// was the world's builds and the second was our sandbox — so the tooltip
+	// read as a contradiction of the number it was explaining.
+	if obs > 0 {
+		parts = append(parts, fmt.Sprintf("observed pass %d%%",
+			int(float64(a.obsPass)/float64(obs)*100+0.5)))
+	}
 	if ver > 0 {
-		parts = append(parts, fmt.Sprintf("pass %d%%", int(float64(a.verPass)/float64(ver)*100+0.5)))
-	} else if obs > 0 {
-		parts = append(parts, fmt.Sprintf("pass %d%%", int(float64(a.obsPass)/float64(obs)*100+0.5)))
+		parts = append(parts, fmt.Sprintf("verified pass %d%%",
+			int(float64(a.verPass)/float64(ver)*100+0.5)))
 	}
 	if c := confName(a.conf); c != "" {
 		parts = append(parts, c)
