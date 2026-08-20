@@ -192,11 +192,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Uptime:      formatDuration(nonNegative(now.Sub(h.startedAt))),
 
-		WorkerWindowsSetupCMD:  WorkerSetupCMD(workerInstallBase),
-		WorkerWindowsRunCMD:    WorkerRunCMD(),
-		WorkerWindowsSwitchCMD: WindowsWorkerCMD(),
-		WorkerUnixSetupCMD:     WorkerUnixCMD(workerInstallBase),
-		WorkerUnixRunCMD:       WorkerUnixRunCMD(),
+		WorkerUnixSetupCMD: WorkerUnixCMD(workerInstallBase),
+		WorkerUnixRunCMD:   WorkerUnixRunCMD(),
 	}
 	if data.Version == "" {
 		data.Version = "알 수 없음"
@@ -344,11 +341,8 @@ type dashboardData struct {
 	// observations -- except for running samples, and the project runs those
 	// itself. What is left is an operator task, so it sits folded beside the
 	// internal sample workers it pairs with.
-	WorkerWindowsSetupCMD  string
-	WorkerWindowsRunCMD    string
-	WorkerWindowsSwitchCMD string
-	WorkerUnixSetupCMD     string
-	WorkerUnixRunCMD       string
+	WorkerUnixSetupCMD string
+	WorkerUnixRunCMD   string
 
 	DBHealthy bool
 	DBProbe   string

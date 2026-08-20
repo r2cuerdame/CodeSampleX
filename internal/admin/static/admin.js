@@ -408,3 +408,45 @@
   load();
   window.setInterval(load, 60000);
 })();
+
+(() => {
+  // A worker install command is one long single line: it cannot be selected
+  // by hand, and reading it is the whole point of not hiding it behind a
+  // shortener, so it gets a button instead. Self-contained because the other
+  // copy helper lives inside a different closure.
+  const write = async (text) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(area);
+    if (!ok) throw new Error("copy failed");
+  };
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest(".cmd-copy");
+    if (!button) return;
+    const box = button.closest(".cmdbox");
+    const pre = box && box.querySelector("pre.cmd");
+    if (!pre) return;
+    const original = button.textContent;
+    try {
+      await write(pre.textContent);
+      button.textContent = "복사됨";
+    } catch (err) {
+      button.textContent = "복사 실패";
+    }
+    button.disabled = true;
+    window.setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+    }, 1500);
+  });
+})();
