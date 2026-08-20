@@ -225,7 +225,6 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	now := time.Now()
 	var best *heroMatrixData
 	bestScore := 0
-	bestUsage := 0
 	consider := func(h PackageHit, facts []cubeFact) {
 		if len(facts) == 0 {
 			return
@@ -250,7 +249,6 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			grid := buildCubeGrid(facts, x, y, links, now)
 			if score := heroGridScore(grid, rank); score > bestScore {
 				bestScore = score
-				bestUsage = gridUsageCells(grid)
 				best = &heroMatrixData{
 					Package: h.Name, Eco: h.Ecosystem,
 					Href:   cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
@@ -297,7 +295,16 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 		if best != nil && fallback == nil {
 			fallback = best
 		}
-		if bestUsage > 0 {
+		// "Carries any usage at all" was too low a bar: the top hit clears it
+		// with two cells in eighteen and the scan stopped there. The exit
+		// needs a grid that is actually MOSTLY measured, which is what the
+		// page is for.
+		//
+		// Worst case is one assembly per candidate on a cold cache, which is
+		// what this loop was once optimised away from. Cubes hold for five
+		// minutes, so only the first request after an expiry pays, and the
+		// alternative is a permanently near-empty front page.
+		if best != nil && gridUsageCells(best.Grid)*2 >= gridCells(best.Grid) {
 			break
 		}
 	}
@@ -518,6 +525,15 @@ func gridUsageCells(g pivotGrid) int {
 				n++
 			}
 		}
+	}
+	return n
+}
+
+// gridCells counts every cell in the grid, empty ones included.
+func gridCells(g pivotGrid) int {
+	n := 0
+	for _, r := range g.Rows {
+		n += len(r.Cells)
 	}
 	return n
 }

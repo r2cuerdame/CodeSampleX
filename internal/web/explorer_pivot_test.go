@@ -16,8 +16,12 @@ func TestPackagePageRendersCubeExplorer(t *testing.T) {
 	// no-JavaScript fallback only.
 	mustContain(t, body, `<select name="x" data-autosubmit>`)
 	mustContain(t, body, `<select name="y" data-autosubmit>`)
+	// Filters cover the dimensions NOT on an axis. Version and symbol are the
+	// axes here, so pinning them from a dropdown would collapse the grid the
+	// reader is looking at.
 	mustContain(t, body, `<select name="f_os" data-autosubmit>`)
-	mustContain(t, body, `<select name="f_version" data-autosubmit>`)
+	mustNotContain(t, body, `<select name="f_version" data-autosubmit>`)
+	mustNotContain(t, body, `<select name="f_symbol" data-autosubmit>`)
 	mustContain(t, body, `<noscript><button type="submit">`)
 	// The reload lands back on the grid instead of the top of the page.
 	mustContain(t, body, `action="/npm/reactish#cube"`)

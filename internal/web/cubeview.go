@@ -185,10 +185,16 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		})
 	}
 
-	// Filter dropdowns for every dimension the cube recorded — usable
-	// whether or not that dimension is currently spread across an axis.
-	// Each dropdown's options come from the slice narrowed by the OTHER
-	// pins, so switching one filter can never offer a combination the
+	// Filter dropdowns for the dimensions NOT currently on an axis.
+	//
+	// A dimension spread across an axis is already fully visible: every one
+	// of its values has its own row or column, so offering it again as a
+	// dropdown asks the reader to pin the thing they are looking at. Picking
+	// a value there collapses the axis to one line, which reads as the grid
+	// breaking rather than as a filter working.
+	//
+	// Each remaining dropdown's options come from the slice narrowed by the
+	// OTHER pins, so switching one filter can never offer a combination the
 	// network has no evidence for.
 	for _, dim := range cubeDimKeys {
 		rest := map[string]string{}
@@ -256,6 +262,22 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		}
 	}
 	view.X, view.Y = x, y
+	// A dimension spread across an axis is already fully visible: every one
+	// of its values has its own row or column. Offering it again as a
+	// dropdown asks the reader to pin the thing they are looking at, and
+	// picking a value there collapses the axis to a single line -- which
+	// reads as the grid breaking rather than as a filter working.
+	//
+	// The dropdowns are built before the axes are known, so they are dropped
+	// here rather than skipped there.
+	kept := view.Filters[:0]
+	for _, f := range view.Filters {
+		if f.Dim == x || f.Dim == y {
+			continue
+		}
+		kept = append(kept, f)
+	}
+	view.Filters = kept
 	view.XLabel, view.YLabel = i18n.T(lang, "cube.dim_"+x), i18n.T(lang, "cube.dim_"+y)
 	view.SwapHref = cubeHref(pagePath, cubeQuery(filters, y, x, lang))
 

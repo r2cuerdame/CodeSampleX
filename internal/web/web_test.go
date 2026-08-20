@@ -50,6 +50,13 @@ func mustContain(t *testing.T, body, sub string) {
 	}
 }
 
+func mustNotContain(t *testing.T, body, sub string) {
+	t.Helper()
+	if strings.Contains(body, sub) {
+		t.Errorf("body unexpectedly contains %q", sub)
+	}
+}
+
 func truncate(s string) string {
 	if len(s) > 4000 {
 		return s[:4000] + "…"
