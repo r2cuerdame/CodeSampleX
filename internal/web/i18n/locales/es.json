@@ -257,6 +257,7 @@
   "pkg.shipswith": "Qué se distribuyó con él",
   "pkg.shipswith_sub": "Las dependencias de primer nivel que resolvió cada versión. Al subir esta, estas se mueven.",
   "pkg.shipswith_col": "Biblioteca",
+  "pkg.deps": "Dependencias",
   "pkg.no_symbols": "Aún no hay símbolos con evidencia.",
   "pkg.no_versions": "Aún no hay versiones con evidencia.",
   "pkg.requested": "Se solicitó cubrir este vacío.",

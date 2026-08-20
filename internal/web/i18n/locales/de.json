@@ -257,6 +257,7 @@
   "pkg.shipswith": "Was mitgeliefert wurde",
   "pkg.shipswith_sub": "Die direkten Abhängigkeiten je Release. Aktualisiert man dieses, bewegen sich jene mit.",
   "pkg.shipswith_col": "Bibliothek",
+  "pkg.deps": "Abhängigkeiten",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.requested": "Abdeckungslücke gemeldet.",

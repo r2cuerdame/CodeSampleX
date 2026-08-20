@@ -110,62 +110,17 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
-{{- if not .ShipsWith.Empty}}
-{{/* Vertical the referenced library, horizontal this package's own versions.
-     First-level children only: the version that moved under an upgrade is the
-     one that broke the build, and nothing deeper is needed to say which. */}}
-<h2 class="eyebrow mono">{{.T "pkg.shipswith"}}</h2>
-<p class="note dim small">{{.T "pkg.shipswith_sub"}}</p>
+{{- if .Deps}}
+{{/* Only with a version pinned. Across releases the same library appears at
+     several versions and the page has to pick one to show, which is a choice
+     nobody asked it to make; pinned, there is exactly one answer. */}}
+<h2 class="eyebrow mono">{{.T "pkg.deps"}}</h2>
 <div class="tablewrap">
 <table class="shipswith">
-<thead><tr><th>{{.T "pkg.shipswith_col"}}</th>
-{{- range .ShipsWith.Versions}}<th class="num mono">{{.}}</th>{{end}}
-</tr></thead>
+<thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th></tr></thead>
 <tbody>
-{{- range .ShipsWith.Rows}}
-<tr><th class="rowlabel mono">{{.Library}}</th>
-{{- range .Cells}}<td class="num mono">{{if .}}{{.}}{{else}}—{{end}}</td>{{end}}
-</tr>
-{{- end}}
-</tbody>
-</table>
-</div>
-{{- end}}
-
-{{- if .Coresident}}
-{{/* Reported by the machine that held the lockfile, never inferred here: the
-     server receives one package per record, so a resolution arrives already
-     shredded and only the scanner ever sees both versions together. */}}
-<h2 class="eyebrow mono">{{.T "pkg.coresident"}}</h2>
-<p class="note dim small">{{.T "pkg.coresident_sub"}}</p>
-<ul class="coresident">
-{{- range .Coresident}}
-  <li><span class="mono">{{.Lower}}</span> <span class="dim">+</span> <span class="mono">{{.Higher}}</span>
-    <span class="dim small">{{$.N .Projects}}{{if .Failing}} · {{$.N .Failing}}✕{{end}}</span></li>
-{{- end}}
-</ul>
-{{- end}}
-
-{{- if .Dependants}}
-{{/* The other half of a co-residence. "Two versions are installed" is the
-     half nobody can act on; this says which dependency wanted which, which
-     is the thing a person moves. */}}
-<h2 class="eyebrow mono">{{.T "pkg.dependants"}}</h2>
-<p class="note dim small">{{.T "pkg.dependants_sub"}}</p>
-<div class="tablewrap">
-<table class="shipswith">
-<thead><tr>
-  <th>{{.T "pkg.dependants_col_version"}}</th>
-  <th>{{.T "pkg.dependants_col_by"}}</th>
-  <th class="num">{{.T "pkg.dependants_col_projects"}}</th>
-</tr></thead>
-<tbody>
-{{- range .Dependants}}
-<tr>
-  <th class="rowlabel mono">{{.ChildVersion}}</th>
-  <td class="mono">{{.ParentName}}@{{.ParentVersion}}</td>
-  <td class="num mono">{{$.N .Projects}}</td>
-</tr>
+{{- range .Deps}}
+<tr><th class="rowlabel mono">{{.Library}}</th><td class="mono">{{.Version}}</td></tr>
 {{- end}}
 </tbody>
 </table>

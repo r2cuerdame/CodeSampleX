@@ -23,8 +23,6 @@ type fakeStore struct {
 	clusters  map[string][]string // eco+"|"+name → cluster JSON
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
-	coresidence    []VersionCoresidence
-	dependants     []DependencyEdge
 	dependencies   []DependencyEdge
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
@@ -339,14 +337,6 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Coverage(context.Context) ([]CoverageRow, error) { return f.coverage, nil }
-
-func (f *fakeStore) VersionCoresidence(context.Context, string, string) ([]VersionCoresidence, error) {
-	return f.coresidence, nil
-}
-
-func (f *fakeStore) Dependants(context.Context, string, string) ([]DependencyEdge, error) {
-	return f.dependants, nil
-}
 
 func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
 	return f.dependencies, nil

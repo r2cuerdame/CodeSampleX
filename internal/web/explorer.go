@@ -526,52 +526,34 @@ type packagePage struct {
 	// Cube is the N-dimensional compatibility explorer: the page's primary
 	// element. nil when the package has no snapshot evidence yet.
 	Cube *cubeView
-	// Coresident are the version pairs a scanner saw in ONE resolution. Not
-	// inferred: the server receives one package per record, so only the
-	// machine that held the lockfile could report the pair.
-	Coresident []VersionCoresidence
-	// Dependants is what pulled each version of this library. It is the half
-	// of a co-residence a person can act on: not "there are two" but "this
-	// dependency wanted that one".
-	Dependants []DependencyEdge
-	// ShipsWith is the library × version grid: what came with each release of
-	// this package. First-level children only — the version that moved under
-	// an upgrade is the one that broke the build, and nothing deeper is
-	// needed to say which.
-	ShipsWith ShipsWithGrid
+	// Deps are the first-level dependencies of ONE pinned release. Empty
+	// without ?f_version, deliberately: across releases the same library
+	// appears at several versions and the page would have to choose one.
+	Deps []PackageDep
 }
 
-// coresidentVersions lists the version pairs a scanner saw in one resolution.
+// packageDeps lists the first-level dependencies of one PINNED release.
 //
-// A store that cannot answer returns nothing rather than an error page: the
-// rest of the package is still worth serving.
-func (s *site) coresidentVersions(r *http.Request, eco, name string) []VersionCoresidence {
-	rows, err := s.d.Store.VersionCoresidence(r.Context(), eco, name)
-	if err != nil {
+// Without ?f_version it returns nothing, and that is the whole design: across
+// releases the same library appears at several versions, so an unpinned page
+// would have to choose which to show — a choice nobody asked for and one the
+// reader cannot check.
+func (s *site) packageDeps(r *http.Request, eco, name string) []PackageDep {
+	version := r.URL.Query().Get("f_version")
+	if version == "" {
 		return nil
 	}
-	return rows
-}
-
-// dependants lists what pulled each version of this library.
-func (s *site) dependants(r *http.Request, eco, name string) []DependencyEdge {
-	rows, err := s.d.Store.Dependants(r.Context(), eco, name)
-	if err != nil {
-		return nil
-	}
-	// The same pin the cube honours. A page that says it is filtered has to
-	// be: ?f_version narrowed the cube and left these tables showing every
-	// release.
-	return filterDependantsToVersion(rows, r.URL.Query().Get("f_version"))
-}
-
-// shipsWith builds the library × version grid for one package.
-func (s *site) shipsWith(r *http.Request, eco, name string) ShipsWithGrid {
 	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
 	if err != nil {
-		return ShipsWithGrid{}
+		return nil
 	}
-	return buildShipsWith(filterEdgesToVersion(rows, r.URL.Query().Get("f_version")))
+	kept := make([]DependencyEdge, 0, len(rows))
+	for _, e := range rows {
+		if e.ParentVersion == version {
+			kept = append(kept, e)
+		}
+	}
+	return buildPackageDeps(kept)
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -705,11 +687,9 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
 		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
-		Crumbs:     leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:       buildCubeView(s, r, lang, eco, name),
-		Coresident: s.coresidentVersions(r, eco, name),
-		Dependants: s.dependants(r, eco, name),
-		ShipsWith:  s.shipsWith(r, eco, name),
+		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:   buildCubeView(s, r, lang, eco, name),
+		Deps:   s.packageDeps(r, eco, name),
 	})
 }
 

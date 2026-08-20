@@ -257,6 +257,7 @@
   "pkg.shipswith": "함께 배포된 것",
   "pkg.shipswith_sub": "릴리즈마다 해석된 1차 의존성입니다. 이걸 올리면 이것들이 같이 움직입니다.",
   "pkg.shipswith_col": "라이브러리",
+  "pkg.deps": "의존성",
   "pkg.no_symbols": "아직 증거가 있는 심벌이 없습니다.",
   "pkg.no_versions": "아직 증거가 있는 버전이 없습니다.",
   "pkg.requested": "커버리지 공백이 요청되었습니다.",

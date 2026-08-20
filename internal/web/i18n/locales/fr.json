@@ -257,6 +257,7 @@
   "pkg.shipswith": "Ce qui l'accompagnait",
   "pkg.shipswith_sub": "Les dépendances de premier niveau résolues par chaque version. Mettez à jour et elles bougent.",
   "pkg.shipswith_col": "Bibliothèque",
+  "pkg.deps": "Dépendances",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",
   "pkg.no_versions": "Pas encore de versions avec des preuves.",
   "pkg.requested": "Lacune de couverture demandée.",

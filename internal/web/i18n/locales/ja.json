@@ -257,6 +257,7 @@
   "pkg.shipswith": "一緒に配布されたもの",
   "pkg.shipswith_sub": "各リリースが解決した一次依存です。これを上げると、これらが一緒に動きます。",
   "pkg.shipswith_col": "ライブラリ",
+  "pkg.deps": "依存関係",
   "pkg.no_symbols": "エビデンスのあるシンボルはまだありません。",
   "pkg.no_versions": "エビデンスのあるバージョンはまだありません。",
   "pkg.requested": "カバレッジの空白がリクエストされています。",

@@ -257,6 +257,7 @@
   "pkg.shipswith": "What shipped with it",
   "pkg.shipswith_sub": "The first-level dependencies each release resolved to. Upgrade this and these move under you.",
   "pkg.shipswith_col": "Library",
+  "pkg.deps": "Dependencies",
   "pkg.no_symbols": "No symbols with evidence yet.",
   "pkg.no_versions": "No versions with evidence yet.",
   "pkg.requested": "Coverage gap requested.",

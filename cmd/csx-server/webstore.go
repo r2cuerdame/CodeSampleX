@@ -316,40 +316,6 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
-// VersionCoresidence adapts the store's pairs to the web's own type; the web
-// package does not import serverstore.
-func (w *webStore) VersionCoresidence(ctx context.Context, ecosystem, name string) ([]web.VersionCoresidence, error) {
-	rows, err := w.s.VersionCoresidence(ctx, ecosystem, name)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.VersionCoresidence, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.VersionCoresidence{
-			Lower: r.Lower, Higher: r.Higher,
-			Projects: int64(r.Projects), Failing: int64(r.Failing),
-		})
-	}
-	return out, nil
-}
-
-// Dependants adapts the store's edges to the web's own type.
-func (w *webStore) Dependants(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
-	rows, err := w.s.Dependants(ctx, ecosystem, name)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.DependencyEdge, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.DependencyEdge{
-			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
-			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
-			Projects: int64(r.Projects),
-		})
-	}
-	return out, nil
-}
-
 // Dependencies adapts the parent-side view of the same edges.
 func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
 	rows, err := w.s.Dependencies(ctx, ecosystem, name)
