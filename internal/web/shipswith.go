@@ -103,5 +103,39 @@ func buildShipsWith(edges []DependencyEdge) ShipsWithGrid {
 	return grid
 }
 
+// filterEdgesToVersion keeps the edges of ONE release of this package.
+//
+// Pinning a version filters the page, and half the page was ignoring it:
+// ?f_version=2.0.4 narrowed the cube and left these tables showing every
+// release. A page that says it is filtered has to be.
+func filterEdgesToVersion(edges []DependencyEdge, version string) []DependencyEdge {
+	if version == "" {
+		return edges
+	}
+	out := make([]DependencyEdge, 0, len(edges))
+	for _, e := range edges {
+		if e.ParentVersion == version {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// filterDependantsToVersion keeps what pulled ONE version of this package.
+// The table already answers "who pulled this version", so pinning one is the
+// question it was shaped for.
+func filterDependantsToVersion(edges []DependencyEdge, version string) []DependencyEdge {
+	if version == "" {
+		return edges
+	}
+	out := make([]DependencyEdge, 0, len(edges))
+	for _, e := range edges {
+		if e.ChildVersion == version {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Empty reports whether there is nothing to draw.
 func (g ShipsWithGrid) Empty() bool { return len(g.Rows) == 0 || len(g.Versions) == 0 }

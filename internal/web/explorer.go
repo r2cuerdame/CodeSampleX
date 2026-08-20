@@ -559,7 +559,10 @@ func (s *site) dependants(r *http.Request, eco, name string) []DependencyEdge {
 	if err != nil {
 		return nil
 	}
-	return rows
+	// The same pin the cube honours. A page that says it is filtered has to
+	// be: ?f_version narrowed the cube and left these tables showing every
+	// release.
+	return filterDependantsToVersion(rows, r.URL.Query().Get("f_version"))
 }
 
 // shipsWith builds the library × version grid for one package.
@@ -568,7 +571,7 @@ func (s *site) shipsWith(r *http.Request, eco, name string) ShipsWithGrid {
 	if err != nil {
 		return ShipsWithGrid{}
 	}
-	return buildShipsWith(rows)
+	return buildShipsWith(filterEdgesToVersion(rows, r.URL.Query().Get("f_version")))
 }
 
 // packageSampleLimit bounds how many of a package's samples one page

@@ -48,3 +48,37 @@ func TestACellHoldsEveryVersionThatShipped(t *testing.T) {
 }
 
 func equalCols(a, b []string) bool { return strings.Join(a, "|") == strings.Join(b, "|") }
+
+// Pinning a version filters the page, and half the page was ignoring it:
+// ?f_version=2.0.4 narrowed the cube and left the dependency tables showing
+// every release. A page that says it is filtered has to be.
+func TestPinningAVersionNarrowsTheGrid(t *testing.T) {
+	edges := []DependencyEdge{
+		{ParentVersion: "2.0.4", ChildName: "function-bind", ChildVersion: "1.1.2", Projects: 1},
+		{ParentVersion: "2.0.3", ChildName: "function-bind", ChildVersion: "1.1.1", Projects: 4},
+	}
+	all := buildShipsWith(edges)
+	if len(all.Versions) != 2 {
+		t.Fatalf("unpinned versions = %v, want both", all.Versions)
+	}
+	pinned := buildShipsWith(filterEdgesToVersion(edges, "2.0.4"))
+	if len(pinned.Versions) != 1 || pinned.Versions[0] != "2.0.4" {
+		t.Errorf("pinned versions = %v, want only 2.0.4", pinned.Versions)
+	}
+	if len(pinned.Rows) != 1 || pinned.Rows[0].Cells[0] != "1.1.2" {
+		t.Errorf("pinned rows = %+v, want the 2.0.4 row only", pinned.Rows)
+	}
+}
+
+// The dependants table answers "who pulled THIS version", so pinning one is
+// exactly the question it was already shaped for.
+func TestPinningAVersionNarrowsTheDependants(t *testing.T) {
+	edges := []DependencyEdge{
+		{ParentName: "a", ParentVersion: "1.0.0", ChildVersion: "2.0.4", Projects: 1},
+		{ParentName: "b", ParentVersion: "9.0.0", ChildVersion: "2.0.3", Projects: 2},
+	}
+	got := filterDependantsToVersion(edges, "2.0.4")
+	if len(got) != 1 || got[0].ParentName != "a" {
+		t.Errorf("dependants = %+v, want only what pulled 2.0.4", got)
+	}
+}
