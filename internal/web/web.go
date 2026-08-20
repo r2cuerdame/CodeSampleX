@@ -79,6 +79,11 @@ type Store interface {
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
+	// Coverage reports the network's own coverage per (platform, ecosystem).
+	// A nil slice is not an error: the section simply does not render, which
+	// is honest — an instrument that cannot describe itself should say
+	// nothing rather than imply completeness.
+	Coverage(ctx context.Context) ([]CoverageRow, error)
 	// WantedRows returns one searchable, ranked page plus the number of
 	// unanswered rows matching that query.
 	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)

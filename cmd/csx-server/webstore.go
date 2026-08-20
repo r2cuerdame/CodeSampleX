@@ -32,6 +32,12 @@ type webStore struct {
 	snapshotAt   time.Time
 	snapshotRows []serverstore.SnapshotRow
 
+	// The coverage disclosure is a full scan of two aggregates. It changes
+	// on the hourly compatibility pass, so it is cached off the render path.
+	coverageMu   sync.Mutex
+	coverageAt   time.Time
+	coverageRows []web.CoverageRow
+
 	// The per-package evidence recency the record inventory orders by,
 	// cached on the same terms and for the same reason.
 	updatedMu     sync.Mutex
@@ -937,4 +943,35 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 		})
 	}
 	return out, nil
+}
+
+// coverageTTL keeps the disclosure off the render path. It changes on the
+// hourly compatibility pass, so a minute of staleness costs nothing and a
+// full scan per page view would undo the landing page's own budget.
+const coverageTTL = time.Minute
+
+func (w *webStore) Coverage(ctx context.Context) ([]web.CoverageRow, error) {
+	w.coverageMu.Lock()
+	defer w.coverageMu.Unlock()
+	if w.coverageAt.After(time.Now().Add(-coverageTTL)) {
+		return w.coverageRows, nil
+	}
+	store, ok := w.s.(serverstore.FarmStatsStore)
+	if !ok {
+		return nil, nil
+	}
+	cells, err := store.FarmCoverage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]web.CoverageRow, 0, len(cells))
+	for _, c := range cells {
+		rows = append(rows, web.CoverageRow{
+			OS: c.OS, Ecosystem: c.Ecosystem,
+			Observed: c.Observed, Measured: c.Measured,
+			Proven: c.Proven, ObservedProven: c.ObservedProven,
+		})
+	}
+	w.coverageRows, w.coverageAt = rows, time.Now()
+	return rows, nil
 }

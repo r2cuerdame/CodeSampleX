@@ -188,6 +188,39 @@
   </div>
 </details>
 
+{{if .HasCoverage}}
+<details id="coverage" class="home-detail">
+  <summary><span class="eyebrow mono">{{.T "coverage.heading"}}</span></summary>
+  <p class="note">{{.T "coverage.lead"}}</p>
+  {{if eq .Coverage.Overlap 0}}<p class="note"><strong>{{.T "coverage.no_overlap"}}</strong></p>{{end}}
+  {{if .Coverage.SelectionNote}}<p class="note">{{.T "coverage.selection"}}</p>{{end}}
+  <div class="table-wrap">
+    <table class="coverage">
+      <caption class="sr-only">{{.T "coverage.heading"}}</caption>
+      <thead><tr>
+        <th scope="col">{{.T "coverage.col_platform"}}</th>
+        <th scope="col">{{.T "coverage.col_ecosystem"}}</th>
+        <th scope="col">{{.T "coverage.col_observed"}}</th>
+        <th scope="col">{{.T "coverage.col_measured"}}</th>
+        <th scope="col">{{.T "coverage.col_overlap"}}</th>
+      </tr></thead>
+      <tbody>
+      {{range .Coverage.Rows}}
+        <tr>
+          <td class="mono">{{.OS}}</td>
+          <td class="mono">{{.Ecosystem}}</td>
+          <td class="mono">{{.Observed}}</td>
+          <td class="mono">{{.Measured}}</td>
+          <td class="mono">{{.ObservedProven}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if .Coverage.Unreachable}}<p class="note dim small">{{.T "coverage.unreachable"}} <span class="mono">{{range $i, $c := .Coverage.Unreachable}}{{if $i}}, {{end}}{{$c}}{{end}}</span></p>{{end}}
+</details>
+{{end}}
+
 <details id="contract" class="home-detail contract">
   <summary><span class="eyebrow mono">{{.T "contract.heading"}}</span></summary>
   <div class="cols">

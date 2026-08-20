@@ -179,3 +179,5 @@ func TestCubeFactsDoesNotCacheAnAssemblyItsCallerAbandoned(t *testing.T) {
 		t.Error("an abandoned assembly was cached, so the next reader got an empty cube")
 	}
 }
+
+func (c *countingVersions) Coverage(context.Context) ([]CoverageRow, error) { return nil, nil }

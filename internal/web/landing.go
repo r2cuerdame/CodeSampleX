@@ -294,6 +294,11 @@ type landingPage struct {
 	// does more than every paragraph above it, because a reader recognises
 	// the shape of it from their own week.
 	Findings []homeFinding
+	// Coverage is the instrument describing its own shape. An observatory's
+	// failure mode is not a false claim but an unstated skew, and this one is
+	// extreme enough to publish rather than let a reader discover it.
+	Coverage    CoverageDisclosure
+	HasCoverage bool
 	// Matrix is the hero compatibility grid — the page's protagonist. nil
 	// when the network has no renderable cube yet; the page stays honest
 	// and simply says what will appear here.
@@ -355,6 +360,12 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	if err != nil {
 		hits = nil // an empty map is still a usable landing page
 	}
+	// A disclosure that cannot be read says nothing rather than implying
+	// completeness by its absence being invisible.
+	var coverage CoverageDisclosure
+	if rows, cerr := s.d.Store.Coverage(r.Context()); cerr == nil {
+		coverage = buildCoverageDisclosure(rows, unreachableCells(rows))
+	}
 
 	s.render(w, "landing", http.StatusOK, landingPage{
 		basePage:  b,
@@ -365,6 +376,8 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		LLMPrompt: llmPrompt(lang, base),
 		Findings:  homeFindings(lang),
 		Matrix:    s.heroMatrix(r, lang, hits),
+		Coverage:  coverage,
+		HasCoverage: len(coverage.Rows) > 0,
 	})
 }
 
