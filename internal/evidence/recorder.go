@@ -59,6 +59,7 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 
 	// Upsert the full inventory locally; collect the PUBLIC subset.
 	public := map[string]domain.PURL{}
+	direct := map[string]bool{}
 	var publicNames []string
 	for _, p := range res.Packages {
 		if err := r.DB.UpsertPackage(ctx, p.PURL, p.Publicness); err != nil {
@@ -76,6 +77,12 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			if _, dup := public[key]; !dup {
 				public[key] = p.PURL
 				publicNames = append(publicNames, p.PURL.Name)
+			}
+			// Direct wins over transitive: the same package can appear both
+			// ways in one resolution, and having been chosen is the fact
+			// worth keeping.
+			if p.Direct {
+				direct[key] = true
 			}
 		}
 	}
@@ -127,6 +134,7 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			Result:    result,
 			ErrorFP:   errFP,
 			ErrorCode: errCode,
+			Direct:    direct[key],
 		}, 1)
 		if err != nil {
 			return err
@@ -151,6 +159,7 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			Result:           result,
 			ErrorFP:          errFP,
 			ErrorCode:        errCode,
+			Direct:           direct[key],
 		}, 1)
 		if err != nil {
 			return err

@@ -28,6 +28,10 @@ var (
 // Six matches the version axis the site actually renders.
 const authoringSiblingVersionsPerPackage = 6
 
+// authoringDirectWeight is how much more a directly-chosen sighting counts
+// than a carried one. Mirrored in the PG query.
+const authoringDirectWeight = 1000
+
 type AuthoringSessionRow struct {
 	TokenHash     string
 	SessionID     string

@@ -1,0 +1,13 @@
+-- Whether the reporter listed this package in their own manifest, or received
+-- it through somebody else's dependency.
+--
+-- Every adapter already worked this out from the lockfile and it never left
+-- the machine, so the network could not tell demand from gravity: a
+-- transitive dependency pulled into a thousand lockfiles outranks a package
+-- fifty people actually chose, and the authoring queue -- which ranks by
+-- observation volume -- was ranking the shadow of popular packages.
+--
+-- Existing rows default to false. That is not a claim they were transitive;
+-- it is that they were recorded before anyone asked, and the queue treats an
+-- unflagged row as it always did.
+ALTER TABLE evidence_agg ADD COLUMN direct BOOLEAN NOT NULL DEFAULT FALSE;

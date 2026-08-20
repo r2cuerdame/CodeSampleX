@@ -23,6 +23,9 @@ type ObsKey struct {
 	Result           domain.Result
 	ErrorFP          string
 	ErrorCode        string
+	// Direct says the reporter listed this package in their own manifest
+	// rather than receiving it through somebody else's dependency.
+	Direct bool
 }
 
 // ObsRow is one aggregate with its accumulated count.
@@ -42,15 +45,19 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 		conf = domain.SymbolUnknown
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code, uploaded)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code, direct, uploaded)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(epoch, purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 		  count = count + excluded.count,
 		  symbol_confidence = excluded.symbol_confidence,
 		  error_code = excluded.error_code,
+		  -- Chosen wins: one build resolving a package transitively does not
+		  -- unsay another that listed it.
+		  direct = MAX(observations.direct, excluded.direct),
 		  uploaded = 0`,
 		key.Epoch, key.PURL, key.Symbol, string(conf), key.EnvHash,
-		string(key.Stage), string(key.Result), incr, key.ErrorFP, key.ErrorCode)
+		string(key.Stage), string(key.Result), incr, key.ErrorFP, key.ErrorCode,
+		boolToInt(key.Direct))
 	return err
 }
 
@@ -58,7 +65,7 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 // deterministic order.
 func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code, count
+		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code, direct, count
 		FROM observations WHERE uploaded = 0
 		ORDER BY epoch, purl, symbol, env_hash, stage, result, error_fp
 		LIMIT ?`, limit)
@@ -69,10 +76,12 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 	var out []ObsRow
 	for rows.Next() {
 		var r ObsRow
+		var direct int
 		if err := rows.Scan(&r.Epoch, &r.PURL, &r.Symbol, &r.SymbolConfidence,
-			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode, &r.Count); err != nil {
+			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode, &direct, &r.Count); err != nil {
 			return nil, err
 		}
+		r.Direct = direct != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -172,4 +181,11 @@ func (d *DB) SymbolUsages(ctx context.Context, purl domain.PURL) ([]SymbolUsageR
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

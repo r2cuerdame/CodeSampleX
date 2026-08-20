@@ -136,16 +136,19 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	var aggID int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO evidence_agg
-			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result, error_fp, error_code)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result, error_fp, error_code, direct)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 			last_seen = now(),
 			symbol_confidence = EXCLUDED.symbol_confidence,
 			error_code = CASE WHEN evidence_agg.error_code = ''
-				THEN EXCLUDED.error_code ELSE evidence_agg.error_code END
+				THEN EXCLUDED.error_code ELSE evidence_agg.error_code END,
+			-- Chosen wins and never unsays itself: one project resolving a
+			-- package transitively does not undo another that listed it.
+			direct = evidence_agg.direct OR EXCLUDED.direct
 		RETURNING id`,
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
-		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode,
+		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
 	).Scan(&aggID); err != nil {
 		return err
 	}

@@ -55,8 +55,11 @@ type fakeAggMeta struct {
 	symbolConfidence string
 	envJSON          string
 	errorCode        string
-	firstSeen        time.Time
-	lastSeen         time.Time
+	// direct: the reporter listed this package in their own manifest. Chosen
+	// wins and never unsays itself.
+	direct    bool
+	firstSeen time.Time
+	lastSeen  time.Time
 }
 
 type fakeClusterKey struct {
@@ -154,6 +157,7 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 		}
 		f.aggMeta[k] = meta
 	}
+	meta.direct = meta.direct || b.Direct
 	if meta.errorCode == "" {
 		meta.errorCode = b.ErrorCode
 	}
@@ -425,7 +429,7 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			SymbolConfidence: meta.symbolConfidence,
 			EnvHash:          k.EnvHash, EnvJSON: meta.envJSON,
 			Stage: k.Stage, Result: k.Result,
-			ErrorFingerprint: k.ErrorFP, ErrorCode: meta.errorCode,
+			ErrorFingerprint: k.ErrorFP, ErrorCode: meta.errorCode, Direct: meta.direct,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),

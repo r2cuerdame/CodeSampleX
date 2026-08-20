@@ -27,8 +27,8 @@ type FarmWorker struct {
 // without appearing anywhere an operator could see it.
 type FarmHealth struct {
 	PublicSamples   int
-	DuplicateCoords int            // coordinates carrying more than one public sample
-	StaleClaims     int            // open claims whose session is no longer live
+	DuplicateCoords int // coordinates carrying more than one public sample
+	StaleClaims     int // open claims whose session is no longer live
 	// QuarantinedByReason is why things were withdrawn, counted by reason.
 	//
 	// Every withdrawal already recorded one; none of it reached the operator,
@@ -38,7 +38,7 @@ type FarmHealth struct {
 	// empty key is deliberate: a withdrawal nobody explained is the row most
 	// worth surfacing.
 	QuarantinedByReason map[string]int
-	ReceiptsByOS    map[string]int // PASS receipts per operating system
+	ReceiptsByOS        map[string]int // PASS receipts per operating system
 }
 
 // FarmAxisCoverage is one (os, ecosystem) cell of the compatibility map:

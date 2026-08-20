@@ -64,8 +64,11 @@ type EvidenceRow struct {
 	ObservationCount     int64
 	UniquePeerBuckets    int
 	UniqueProjectBuckets int
-	FirstSeen            time.Time
-	LastSeen             time.Time
+	// Direct: at least one reporter listed this package in their own
+	// manifest rather than receiving it through somebody else's.
+	Direct    bool
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
 // SampleRow is one samples-table row. ManifestJSON is the csx.json document.

@@ -178,6 +178,18 @@ type ObservationBatch struct {
 	ObservationCount int                    `json:"observationCount"`
 	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
 	ErrorCode        string                 `json:"errorCode,omitempty"`
+	// Direct says the reporter listed this package in their own manifest
+	// rather than receiving it through somebody else's.
+	//
+	// Every adapter already works this out from the lockfile and it never
+	// left the machine, so the network could not tell demand from gravity: a
+	// transitive dependency pulled into a thousand lockfiles outranks a
+	// package fifty people actually chose, and ranking authoring work by raw
+	// observation count ranked the shadow of popular packages.
+	//
+	// It costs nothing in privacy. One bit about a public package, and that
+	// somebody wrote it down is already implied by observing it at all.
+	Direct bool `json:"direct,omitempty"`
 }
 
 // Case describes a problem being solved — never code (goal.md §7.4).

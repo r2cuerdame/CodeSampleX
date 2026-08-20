@@ -31,6 +31,7 @@ var ddl = []string{
 	  symbol_confidence TEXT NOT NULL DEFAULT 'UNKNOWN', env_hash TEXT NOT NULL,
 	  stage TEXT NOT NULL, result TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
 	  error_fp TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
+	  direct INTEGER NOT NULL DEFAULT 0,
 	  uploaded INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
 	`CREATE TABLE IF NOT EXISTS environments(hash TEXT PRIMARY KEY, json TEXT NOT NULL)`,
@@ -142,6 +143,19 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	obsColumns, err := tableColumns(ctx, tx, "observations")
+	if err != nil {
+		return err
+	}
+	// Additive: local databases created before the flag existed. Every
+	// adapter already worked out direct-versus-transitive from the lockfile
+	// and threw it away at the wire, so old rows default to transitive.
+	if !obsColumns["direct"] {
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE observations ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
 	if !columns["offer_id"] {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE interventions ADD COLUMN offer_id TEXT`); err != nil {
 			return err
@@ -161,4 +175,26 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_id_unique
 		ON interventions(hit_id) WHERE hit_id IS NOT NULL`)
 	return err
+}
+
+// tableColumns reads a table's column names so an additive migration can
+// tell a fresh database (already carrying the column) from an old one.
+func tableColumns(ctx context.Context, tx migrationExecutor, table string) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
 }

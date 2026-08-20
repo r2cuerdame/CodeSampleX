@@ -283,7 +283,8 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
-				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
+				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
+				       'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
 				       COALESCE(e.env_json->>'os','') AS target_os
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
@@ -291,7 +292,8 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
-				       SUM(e.observation_count) AS score,'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
+				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
+				       'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
 				       LOWER(COALESCE(e.env_json->>'os','')) AS target_os
 				-- Package-level work is for an environment that has evidence but no
 				-- proof yet. It used to be generated FROM verified_package_targets --
@@ -388,6 +390,14 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			-- Depth first: it is what stops one package with a long release
 			-- history filling the window. Then USAGE -- authoring follows
 			-- what people actually run.
+			--
+			-- Usage is weighted by whether the reporter CHOSE the package.
+			-- Raw volume ranked the shadow of popular libraries: a transitive
+			-- dependency pulled into a thousand lockfiles beat a package
+			-- fifty developers listed themselves, and the queue wrote samples
+			-- for the shadow. A direct sighting counts a thousand carried
+			-- ones, which is the ratio between "somebody wanted this" and
+			-- "somebody received this".
 			--
 			-- A "linux first" term used to lead this. It was arbitrary when
 			-- written and became actively wrong: every observation this

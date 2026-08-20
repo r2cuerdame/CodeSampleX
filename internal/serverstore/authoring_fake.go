@@ -229,6 +229,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		targetOS := ""
 		if meta := f.aggMeta[observed]; meta != nil {
 			targetOS = authoringEvidenceOS(meta.envJSON)
+			score *= authoringChoiceWeight(meta.direct)
 		}
 		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
 		packageScores[observed.PURL] += score
@@ -631,4 +632,18 @@ func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, wo
 	current.SampleID = sampleID
 	f.authoringWork[key] = current
 	return true, nil
+}
+
+// authoringChoiceWeight is how much more a chosen sighting counts than a
+// carried one when ranking authoring work.
+//
+// Raw volume ranked the shadow of popular libraries: a transitive dependency
+// pulled into a thousand lockfiles beat a package fifty developers listed
+// themselves, and the queue then wrote samples for the shadow. The ratio is
+// the distance between "somebody wanted this" and "somebody received this".
+func authoringChoiceWeight(direct bool) int64 {
+	if direct {
+		return authoringDirectWeight
+	}
+	return 1
 }
