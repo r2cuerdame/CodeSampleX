@@ -92,8 +92,8 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters and the
 	// measured ecosystems linked straight into the records inventory.
-	for _, s := range []string{"Packages", "Evidence", "Verified Samples", "45.2K",
-		`title="45,213" aria-label="Evidence: 45,213"`,
+	for _, s := range []string{"Packages", "APIs covered", "Verified Samples", "1.2K",
+		`title="1,200" aria-label="APIs covered: 1,200"`,
 		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
@@ -238,7 +238,7 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	body := get(t, mux, "/").Body.String()
 	for _, want := range []string{
 		`title="17,500" aria-label="Packages: 17,500">17.5K</span>`,
-		`title="45,213" aria-label="Evidence: 45,213">45.2K</span>`,
+		`title="9,876" aria-label="APIs covered: 9,876">9.9K</span>`,
 		`title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -249,8 +249,13 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
 		t.Errorf("homepage stat cards = %d, want exactly 3", got)
 	}
-	if strings.Contains(body, `<span class="lbl">Symbols</span>`) || strings.Contains(body, `>9.9K</span>`) {
-		t.Errorf("symbol count leaked into the homepage stat cards:\n%s", truncate(body))
+	// The guard is "exactly three, and they are coverage". It used to forbid
+	// the symbol count as a fourth card; the API count IS one of the three
+	// now, and what must not come back is the raw volume figure — a build-run
+	// total means whatever its population means, and reporters are anonymous
+	// by design so the page can never say which.
+	if strings.Contains(body, `<span class="lbl">Evidence</span>`) || strings.Contains(body, `>45.2K</span>`) {
+		t.Errorf("a raw volume counter returned to the homepage:\n%s", truncate(body))
 	}
 	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 0 {
 		t.Errorf("%d counters rendered as a placeholder, want none:\n%s",
@@ -391,7 +396,7 @@ func TestLangQueryAndCookie(t *testing.T) {
 func TestNetworkCountersKeepExactAccessibleValues(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
-	mustContain(t, body, `title="45,213" aria-label="Evidence: 45,213">45.2K</span>`)
+	mustContain(t, body, `title="1,200" aria-label="APIs covered: 1,200">1.2K</span>`)
 	if strings.Contains(body, `<span class="lbl">Estimated reasoning avoided</span>`) {
 		t.Error("non-headline estimate still renders as a homepage card")
 	}

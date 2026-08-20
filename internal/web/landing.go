@@ -102,21 +102,21 @@ func buildTiles(lang string, st *netStats) []statTile {
 		tile.Exact = i18n.FormatInt(lang, n)
 		return tile
 	}
-	tiles := []statTile{
+	// Coverage, not volume. The middle tile used to be a count of recorded
+	// build runs, and a volume number means whatever its population means:
+	// the same figure is a thriving network or one developer's afternoon,
+	// and the reader cannot tell which. Reporters are anonymous by design, so
+	// the page cannot resolve that even in principle.
+	//
+	// What the network actually knows is a coverage question, and it answers
+	// honestly however few machines drew the map: an API covered by ten
+	// machines is still an API covered. Symbols are recorded package-
+	// qualified ("axios.post"), so distinct symbols are distinct APIs.
+	return []statTile{
 		counter("stats.packages", st.Packages),
-		counter("stats.evidence", st.Evidence),
+		counter("stats.apis", st.Symbols),
 		counter("stats.verified_samples", st.VerifiedSamples),
 	}
-	// The build figure has to say what it rests on. Sixty-nine thousand runs
-	// reads as tens of thousands of independent reporters; it came from ten
-	// peer buckets across a few hundred projects, and a volume number without
-	// its population is the most flattering false impression this page can
-	// give. The reporters are named in the same breath as the volume.
-	if have && st.Evidence > 0 && st.ProjectsMonth > 0 {
-		tiles[1].Sub = i18n.T(lang, "stats.evidence_sub_from",
-			i18n.FormatInt(lang, st.ProjectsMonth))
-	}
-	return tiles
 }
 
 // ---------------------------------------------------------------------------

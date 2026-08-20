@@ -30,7 +30,7 @@ func TestHomepageUsesExactlyThreeNetworkCountersInEveryLocale(t *testing.T) {
 			}
 			wantLabels := []string{
 				i18n.T(lang, "stats.packages"),
-				i18n.T(lang, "stats.evidence"),
+				i18n.T(lang, "stats.apis"),
 				i18n.T(lang, "stats.verified_samples"),
 			}
 			for i, want := range wantLabels {
