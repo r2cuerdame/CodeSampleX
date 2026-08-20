@@ -326,7 +326,24 @@ func (w *webStore) VersionCoresidence(ctx context.Context, ecosystem, name strin
 	out := make([]web.VersionCoresidence, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, web.VersionCoresidence{
-			Lower: r.Lower, Higher: r.Higher, Projects: r.Projects, Failing: r.Failing,
+			Lower: r.Lower, Higher: r.Higher,
+			Projects: int64(r.Projects), Failing: int64(r.Failing),
+		})
+	}
+	return out, nil
+}
+
+// Dependants adapts the store's edges to the web's own type.
+func (w *webStore) Dependants(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
+	rows, err := w.s.Dependants(ctx, ecosystem, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DependencyEdge, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.DependencyEdge{
+			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
+			ChildVersion: r.ChildVersion, Projects: int64(r.Projects),
 		})
 	}
 	return out, nil

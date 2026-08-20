@@ -249,6 +249,8 @@
   "pkg.no_clusters": "No se han observado clústeres de fallos.",
   "pkg.coresident": "Dos versiones en una instalación",
   "pkg.coresident_sub": "El escáner encontró ambas en una sola resolución. Proyectos · fallos con causa identificada.",
+  "pkg.dependants": "Quién trajo cada versión",
+  "pkg.dependants_sub": "Del lockfile que la resolvió — la mitad del choque de versiones sobre la que puedes actuar.",
   "pkg.no_symbols": "Aún no hay símbolos con evidencia.",
   "pkg.no_versions": "Aún no hay versiones con evidencia.",
   "pkg.requested": "Se solicitó cubrir este vacío.",

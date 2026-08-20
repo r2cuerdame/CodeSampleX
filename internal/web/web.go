@@ -94,6 +94,8 @@ type Store interface {
 	// VersionCoresidence lists the version pairs of one library a scanner saw
 	// in a single resolution.
 	VersionCoresidence(ctx context.Context, ecosystem, name string) ([]VersionCoresidence, error)
+	// Dependants lists what pulled each version of one library.
+	Dependants(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -195,8 +197,23 @@ type SampleListItem struct {
 type VersionCoresidence struct {
 	Lower    string
 	Higher   string
-	Projects int
-	Failing  int
+	Projects int64
+	Failing  int64
+}
+
+// DependencyEdge is one "this package pulled that version" relationship, as
+// the machine holding the lockfile saw it.
+//
+// VersionCoresidence says two versions were installed together; this says who
+// wanted each, which is the half a person can act on.
+type DependencyEdge struct {
+	ParentName    string
+	ParentVersion string
+	ChildVersion  string
+	// int64 so the template's number formatter takes it directly. A mismatch
+	// here does not fail loudly: html/template aborts mid-render and the page
+	// simply stops, which looks like a missing item rather than an error.
+	Projects int64
 }
 
 // PackageHit is one package search/hot result.

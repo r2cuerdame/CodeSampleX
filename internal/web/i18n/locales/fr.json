@@ -249,6 +249,8 @@
   "pkg.no_clusters": "Aucun cluster d'échec observé.",
   "pkg.coresident": "Deux versions dans une installation",
   "pkg.coresident_sub": "Le scanner a trouvé les deux dans une seule résolution. Projets · échecs de cause identifiée.",
+  "pkg.dependants": "Qui a tiré quelle version",
+  "pkg.dependants_sub": "Du lockfile qui l'a résolue — la moitié du conflit sur laquelle on peut agir.",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",
   "pkg.no_versions": "Pas encore de versions avec des preuves.",
   "pkg.requested": "Lacune de couverture demandée.",

@@ -249,6 +249,8 @@
   "pkg.no_clusters": "Keine Fehler-Cluster beobachtet.",
   "pkg.coresident": "Zwei Versionen in einer Installation",
   "pkg.coresident_sub": "Der Scanner fand beide in einer Auflösung. Projekte · Fehlschläge mit benannter Ursache.",
+  "pkg.dependants": "Wer welche Version zog",
+  "pkg.dependants_sub": "Aus der Lockdatei, die sie auflöste — die Hälfte eines Versionskonflikts, an der man ansetzen kann.",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.requested": "Abdeckungslücke gemeldet.",

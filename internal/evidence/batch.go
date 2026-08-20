@@ -204,6 +204,7 @@ func (b *Batcher) build(ctx context.Context) ([]domain.ObservationBatch, []local
 			ErrorCode:        row.ErrorCode,
 			Direct:           row.Direct,
 			Coresident:       row.Coresident,
+			DependsOn:        row.DependsOn,
 		}
 		if row.Symbol != "" {
 			batch.SymbolConfidence = row.SymbolConfidence

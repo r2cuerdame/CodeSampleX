@@ -153,6 +153,25 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		return err
 	}
 
+	// Who pulled what, one row per (edge, project, day). The server cannot
+	// derive this: a batch carries one package, so a resolution arrives
+	// already shredded.
+	if b.ProjectBucket != "" {
+		for _, pair := range edgeClaims(b) {
+			parent, child := pair[0], pair[1]
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO dependency_edge
+					(ecosystem, parent_name, parent_version, child_name, child_version, bucket, epoch)
+				VALUES($1,$2,$3,$4,$5,$6,$7)
+				ON CONFLICT (ecosystem, parent_name, parent_version, child_name, child_version, bucket, epoch)
+				DO UPDATE SET last_seen = now()`,
+				parent.Ecosystem, parent.Name, parent.Version,
+				child.Name, child.Version, b.ProjectBucket, b.Epoch); err != nil {
+				return err
+			}
+		}
+	}
+
 	// The pair the scanner saw, one row per (pair, project, day). Recorded
 	// even when nothing failed: a pair that never breaks is worth knowing
 	// about, and the reader decides what that means.
@@ -1246,6 +1265,35 @@ func (p *PG) VersionCoresidence(ctx context.Context, ecosystem, name string) ([]
 		return rows.Err()
 	})
 	return out, err
+}
+
+// Dependants lists what pulled each version of one library.
+func (p *PG) Dependants(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error) {
+	var out []DependencyEdge
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT parent_name, parent_version, child_version, count(*) AS projects
+			  FROM dependency_edge
+			 WHERE ecosystem = $1 AND child_name = $2
+			 GROUP BY 1, 2, 3`, ecosystem, name)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e DependencyEdge
+			if err := rows.Scan(&e.ParentName, &e.ParentVersion, &e.ChildVersion, &e.Projects); err != nil {
+				return err
+			}
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	sortDependencyEdges(out)
+	return out, nil
 }
 
 // StrandedDrafts lists quarantined authoring drafts that have no verification

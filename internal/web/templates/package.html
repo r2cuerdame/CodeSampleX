@@ -124,6 +124,21 @@
 </ul>
 {{- end}}
 
+{{- if .Dependants}}
+{{/* The other half of a co-residence. "Two versions are installed" is the
+     half nobody can act on; this says which dependency wanted which, which
+     is the thing a person moves. */}}
+<h2 class="eyebrow mono">{{.T "pkg.dependants"}}</h2>
+<p class="note dim small">{{.T "pkg.dependants_sub"}}</p>
+<ul class="dependants">
+{{- range .Dependants}}
+  <li><span class="mono">{{.ChildVersion}}</span> <span class="dim">←</span>
+    <span class="mono">{{.ParentName}}@{{.ParentVersion}}</span>
+    <span class="dim small">{{$.N .Projects}}</span></li>
+{{- end}}
+</ul>
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}

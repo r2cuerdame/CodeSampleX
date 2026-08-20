@@ -24,6 +24,7 @@ type fakeStore struct {
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
 	coresidence    []VersionCoresidence
+	dependants     []DependencyEdge
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
 	derived        []DerivedFinding
@@ -340,4 +341,8 @@ func (f *fakeStore) Coverage(context.Context) ([]CoverageRow, error) { return f.
 
 func (f *fakeStore) VersionCoresidence(context.Context, string, string) ([]VersionCoresidence, error) {
 	return f.coresidence, nil
+}
+
+func (f *fakeStore) Dependants(context.Context, string, string) ([]DependencyEdge, error) {
+	return f.dependants, nil
 }

@@ -530,6 +530,10 @@ type packagePage struct {
 	// inferred: the server receives one package per record, so only the
 	// machine that held the lockfile could report the pair.
 	Coresident []VersionCoresidence
+	// Dependants is what pulled each version of this library. It is the half
+	// of a co-residence a person can act on: not "there are two" but "this
+	// dependency wanted that one".
+	Dependants []DependencyEdge
 }
 
 // coresidentVersions lists the version pairs a scanner saw in one resolution.
@@ -538,6 +542,15 @@ type packagePage struct {
 // rest of the package is still worth serving.
 func (s *site) coresidentVersions(r *http.Request, eco, name string) []VersionCoresidence {
 	rows, err := s.d.Store.VersionCoresidence(r.Context(), eco, name)
+	if err != nil {
+		return nil
+	}
+	return rows
+}
+
+// dependants lists what pulled each version of this library.
+func (s *site) dependants(r *http.Request, eco, name string) []DependencyEdge {
+	rows, err := s.d.Store.Dependants(r.Context(), eco, name)
 	if err != nil {
 		return nil
 	}
@@ -678,6 +691,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Crumbs:     leaf(recordCrumbs(b, eco, name, "", "")),
 		Cube:       buildCubeView(s, r, lang, eco, name),
 		Coresident: s.coresidentVersions(r, eco, name),
+		Dependants: s.dependants(r, eco, name),
 	})
 }
 

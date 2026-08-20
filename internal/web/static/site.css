@@ -1711,3 +1711,7 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
    dim -- the same shape as the failure clusters above them. */
 .coresident { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
 .coresident li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+
+/* Who pulled which version. Same shape as the co-residence list above it. */
+.dependants { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+.dependants li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }

@@ -99,6 +99,9 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 	// from the whole scan because that is the only place the whole lockfile
 	// exists: the server receives one package per record.
 	coresident := coresidentVersions(publicPURLs(public))
+	// Who pulled what, when this ecosystem's lockfile says. Both ends public:
+	// the rule is applied here, where the edges are chosen.
+	edges := publicEdges(res.Edges, public)
 
 	publicKeys := make([]string, 0, len(public))
 	for k := range public {
@@ -150,6 +153,7 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			ErrorCode:  errCode,
 			Direct:     direct[key],
 			Coresident: coresident[key],
+			DependsOn:  edges[key],
 		}, 1)
 		if err != nil {
 			return err

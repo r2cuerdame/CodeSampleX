@@ -25,6 +25,9 @@ type Fake struct {
 	// (library, pair), holding the project-days that saw it and whether a
 	// build failed there with a named cause.
 	coresidence map[coresKey]map[string]bool
+	// edges mirrors dependency_edge: one entry per relationship, holding the
+	// project-days that saw it.
+	edges map[edgeKey]map[string]bool
 
 	packages        map[string]PackageRow
 	snapshots       map[[2]string]string
@@ -58,6 +61,11 @@ type Fake struct {
 // coresKey identifies one version pair of one library.
 type coresKey struct{ ecosystem, name, lo, hi string }
 
+// edgeKey identifies one dependency relationship between exact versions.
+type edgeKey struct {
+	ecosystem, parentName, parentVersion, childName, childVersion string
+}
+
 type fakeAggMeta struct {
 	symbolConfidence string
 	envJSON          string
@@ -85,6 +93,7 @@ func NewFake() *Fake {
 		merge:           newMergeState(),
 		aggMeta:         map[aggKey]*fakeAggMeta{},
 		coresidence:     map[coresKey]map[string]bool{},
+		edges:           map[edgeKey]map[string]bool{},
 		packages:        map[string]PackageRow{},
 		snapshots:       map[[2]string]string{},
 		snapshotAt:      map[[2]string]time.Time{},
@@ -178,6 +187,18 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 			}
 			f.coresidence[ck][projectDay] = f.coresidence[ck][projectDay] ||
 				batchNamesAnAttributedFailure(b)
+		}
+	}
+	// Who pulled what, one entry per project-day.
+	if b.ProjectBucket != "" {
+		projectDay := b.ProjectBucket + "" + b.Epoch
+		for _, pair := range edgeClaims(b) {
+			parent, child := pair[0], pair[1]
+			ek := edgeKey{parent.Ecosystem, parent.Name, parent.Version, child.Name, child.Version}
+			if f.edges[ek] == nil {
+				f.edges[ek] = map[string]bool{}
+			}
+			f.edges[ek][projectDay] = true
 		}
 	}
 	if meta.errorCode == "" {
@@ -1262,6 +1283,24 @@ func (f *Fake) VersionCoresidence(_ context.Context, ecosystem, name string) ([]
 		}
 		return out[i].Lower < out[j].Lower
 	})
+	return out, nil
+}
+
+// Dependants lists what pulled each version of one library.
+func (f *Fake) Dependants(_ context.Context, ecosystem, name string) ([]DependencyEdge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []DependencyEdge
+	for k, projectDays := range f.edges {
+		if k.ecosystem != ecosystem || k.childName != name {
+			continue
+		}
+		out = append(out, DependencyEdge{
+			ParentName: k.parentName, ParentVersion: k.parentVersion,
+			ChildVersion: k.childVersion, Projects: len(projectDays),
+		})
+	}
+	sortDependencyEdges(out)
 	return out, nil
 }
 

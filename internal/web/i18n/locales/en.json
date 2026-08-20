@@ -249,6 +249,8 @@
   "pkg.no_clusters": "No failure clusters observed.",
   "pkg.coresident": "Two versions in one install",
   "pkg.coresident_sub": "A scanner found both in a single resolution. Projects · builds that failed there with a named cause.",
+  "pkg.dependants": "Who pulled which version",
+  "pkg.dependants_sub": "From the lockfile that resolved it — the half of a version clash you can act on.",
   "pkg.no_symbols": "No symbols with evidence yet.",
   "pkg.no_versions": "No versions with evidence yet.",
   "pkg.requested": "Coverage gap requested.",

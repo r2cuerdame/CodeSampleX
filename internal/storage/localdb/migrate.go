@@ -33,6 +33,7 @@ var ddl = []string{
 	  error_fp TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
 	  direct INTEGER NOT NULL DEFAULT 0,
 	  coresident TEXT NOT NULL DEFAULT '',
+	  depends_on TEXT NOT NULL DEFAULT '',
 	  uploaded INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
 	`CREATE TABLE IF NOT EXISTS environments(hash TEXT PRIMARY KEY, json TEXT NOT NULL)`,
@@ -151,6 +152,14 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 	// Additive: local databases created before the flag existed. Every
 	// adapter already worked out direct-versus-transitive from the lockfile
 	// and threw it away at the wire, so old rows default to transitive.
+	if !obsColumns["depends_on"] {
+		// Who this package pulled in the same resolution. Coresident says two
+		// versions were installed together; this says who wanted each.
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE observations ADD COLUMN depends_on TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if !obsColumns["coresident"] {
 		// The other versions of this library present in the same resolution,
 		// comma separated. One library at two versions is the commonest

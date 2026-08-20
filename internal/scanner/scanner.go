@@ -21,7 +21,11 @@ type ScanResult struct {
 	Adapters []Adapter
 	Packages []ResolvedPackage
 	Symbols  []SymbolUsage
-	Env      domain.EnvironmentFingerprint
+	// Edges is the dependency tree, when the adapter's lockfile records one.
+	// Empty is not "no dependencies": it is "this ecosystem's lockfile does
+	// not say", which is the case for go.mod.
+	Edges []Edge
+	Env   domain.EnvironmentFingerprint
 
 	// TargetContext is a best-effort TARGET execution-context hint detected
 	// from project clues (bun.lock/bun.lockb → "bun", deno.json(c) → "deno",
@@ -55,6 +59,14 @@ func Scan(ctx context.Context, dir string, ads []Adapter, checker PackageChecker
 			res.Packages = append(res.Packages, pkgs...)
 		}
 		spans[i] = span{start, len(res.Packages)}
+		// The tree, when this ecosystem's lockfile records one. Best-effort
+		// like everything else here: an adapter that errors contributes no
+		// edges and never breaks the wrapped command.
+		if es, ok := a.(EdgeScanner); ok {
+			if edges, err := es.ScanEdges(ctx, dir); err == nil {
+				res.Edges = append(res.Edges, edges...)
+			}
+		}
 		for k, v := range a.EnvironmentHints(ctx, dir) {
 			if _, seen := hints[k]; !seen {
 				hints[k] = v // first adapter wins per key

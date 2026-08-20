@@ -204,6 +204,16 @@ type ObservationBatch struct {
 	// Version strings of a package whose name is already being sent. Nothing
 	// new about the project leaves the machine.
 	Coresident []string `json:"coresident,omitempty"`
+	// DependsOn is the packages THIS one pulled in this resolution, as purls.
+	//
+	// Coresident says two versions of a library were installed together;
+	// this says who wanted each. Knowing only that there are two is the half
+	// of the answer nobody can act on.
+	//
+	// Both ends are public — an edge between two public packages is already
+	// registry information, and npm will tell anyone that a@1.2.0 depends on
+	// b. Edges with a private end are dropped before this is built.
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // Case describes a problem being solved — never code (goal.md §7.4).
