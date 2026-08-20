@@ -133,6 +133,10 @@ func sampleWorkerEnvelope(ctx context.Context) map[string]any {
 		"schemaVersion":     1,
 		"sandboxCapability": sampleWorkerCapability(ctx),
 		"verifierOS":        []string{sampleWorkerContainerOS(ctx)},
+		// The server refuses a worker that cannot say which release it is,
+		// because a worker it cannot identify is exactly the one it must not
+		// trust to describe its own environment.
+		"clientVersion": Version,
 	}
 }
 
