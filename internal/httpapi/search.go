@@ -96,6 +96,10 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	}
 
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	// One answer per coordinate. A duplicate is not a second opinion -- it is
+	// the same coordinate measured twice by the same fleet -- and returning
+	// both spends the caller's budget while reading as corroboration.
+	results = dedupeByCoordinate(results)
 	if len(results) == 0 || results[0].Score < noSafeMatchThreshold {
 		resp := domain.SearchResponse{
 			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,

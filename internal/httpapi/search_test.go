@@ -189,12 +189,55 @@ func TestSearchVerifiedSampleOutranksUnverified(t *testing.T) {
 	}
 	var out domain.SearchResponse
 	postJSON(t, srv.URL+"/v1/search", req, &out)
-	if len(out.Results) != 2 {
-		t.Fatalf("results = %d, want 2", len(out.Results))
+	// Both samples carry the SAME manifest, so they are one coordinate
+	// measured twice -- exactly what the corpus filled up with, and exactly
+	// what is now folded before the answer is returned. The ranking is still
+	// what is under test; its visible consequence is which one survives.
+	if len(out.Results) != 1 {
+		t.Fatalf("results = %d, want the duplicate coordinate folded to one", len(out.Results))
 	}
 	if out.Results[0].SampleID != verified {
-		t.Fatalf("top result = %s (status %s), want the CROSS_PASS sample first",
+		t.Fatalf("survivor = %s (status %s), want the CROSS_PASS sample kept",
 			out.Results[0].SampleID, out.Results[0].SampleStatus)
+	}
+}
+
+// The ranking itself, on two genuinely different coordinates so nothing is
+// folded: a verified sample must score above an unverified one.
+func TestVerifiedScoresAboveUnverified(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	ctx := context.Background()
+
+	unverified := "sha256:" + strings.Repeat("cc", 32)
+	verified := "sha256:" + strings.Repeat("dd", 32)
+	for _, s := range []struct {
+		id, status, symbol string
+	}{{unverified, "PUBLISHED", "axios.get"}, {verified, "CROSS_PASS", "axios.post"}} {
+		manifest := testManifest()
+		manifest.Case.Symbols = []string{s.symbol}
+		manifest.Symbols = []string{s.symbol}
+		if err := store.SaveSample(ctx, serverstore.SampleRow{
+			SampleID:     s.id,
+			ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+			Status:       s.status, License: "MIT-0", SizeBytes: 512, CreatedAt: testNow,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1, Query: "post JSON with axios",
+		Packages:    []string{"pkg:npm/axios@1.12.0"},
+		Environment: nodeEnv("esm"),
+		Limit:       2,
+	}
+	var out domain.SearchResponse
+	postJSON(t, srv.URL+"/v1/search", req, &out)
+	if len(out.Results) != 2 {
+		t.Fatalf("results = %d, want both distinct coordinates", len(out.Results))
+	}
+	if out.Results[0].SampleID != verified {
+		t.Fatalf("top result = %s, want the CROSS_PASS sample first", out.Results[0].SampleID)
 	}
 	if out.Results[0].Score <= out.Results[1].Score {
 		t.Fatalf("verified score %v must beat unverified %v",

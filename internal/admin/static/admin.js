@@ -320,6 +320,7 @@
   const list = document.querySelector("#farm-workers");
   const health = document.querySelector("#farm-health");
   const cost = document.querySelector("#farm-cost");
+  const coverage = document.querySelector("#farm-coverage");
   if (!list || !health || !cost) return;
 
   const num = (n) => n.toLocaleString("ko-KR");
@@ -352,8 +353,12 @@
       data = await response.json();
     } catch (_) {
       // Say nothing rather than zeros: "not measured" and "nothing wrong" must
-      // not look the same on this panel.
+      // not look the same on this panel. Every region is cleared, not just the
+      // worker list -- a stale coverage table beside a failed load is the same
+      // lie in a different place.
       list.replaceChildren();
+      health.replaceChildren();
+      if (coverage) coverage.replaceChildren();
       const p = document.createElement("p");
       p.className = "empty";
       p.textContent = "팜 지표를 불러오지 못했습니다.";
@@ -399,6 +404,32 @@
       stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
         .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
     );
+
+    if (coverage) {
+      coverage.replaceChildren();
+      const rows = data.coverage || [];
+      if (!rows.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "커버리지 자료가 아직 없습니다";
+        coverage.appendChild(empty);
+      }
+      for (const c of rows) {
+        // An unbuildable cell reports no proven count at all. Showing 0 there
+        // would read as a backlog somebody is behind on, when the cell is
+        // closed: npm on Windows has no base image and never will.
+        const label = `${c.os} · ${c.ecosystem}`;
+        if (!c.buildable) {
+          coverage.appendChild(stat(label, `관측 ${num(c.observed)} · 검증 불가`, false));
+          continue;
+        }
+        const proven = c.observedProven || 0;
+        const value = c.observed > 0
+          ? `${num(proven)} / ${num(c.observed)}`
+          : `관측 없음 · 증명 ${num(c.proven || 0)}`;
+        coverage.appendChild(stat(label, value, c.observed > 0 && proven === 0));
+      }
+    }
 
     cost.textContent = data.instances.length
       ? `${data.instances.map((i) => `${i.name} $${i.monthlyUsd}`).join(" · ")} — 합계 $${data.monthlyTotalUsd}/월`

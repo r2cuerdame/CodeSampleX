@@ -2,8 +2,10 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -78,9 +80,16 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		total += instance.MonthlyUSD
 	}
 
+	coverage, err := h.farmStats.FarmCoverage(r.Context())
+	if err != nil {
+		http.Error(w, "커버리지를 불러오지 못했습니다", http.StatusServiceUnavailable)
+		return
+	}
+
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"workers":         views,
 		"health":          farmHealthView(health),
+		"coverage":        farmCoverageView(coverage),
 		"instances":       instances,
 		"monthlyTotalUsd": total,
 	})
@@ -99,3 +108,61 @@ func farmHealthView(health serverstore.FarmHealth) map[string]any {
 	}
 	return view
 }
+
+// farmCoverageView reports coverage per (platform, ecosystem).
+//
+// buildable is the field that matters. npm on Windows is thousands of
+// packages observed and zero proven, and it will stay zero forever because no
+// Windows Node image exists -- rendered as a progress bar it would read as a
+// backlog somebody is behind on. An unbuildable cell omits proven entirely
+// rather than reporting a zero, which is this file's existing idiom for
+// "not measurable" versus "measured as none".
+func farmCoverageView(cells []serverstore.FarmAxisCoverage) []map[string]any {
+	out := make([]map[string]any, 0, len(cells))
+	for i, c := range cells {
+		if i >= maxFarmCoverageRows {
+			break
+		}
+		row := map[string]any{
+			"os":        clampAdminLabel(c.OS),
+			"ecosystem": clampAdminLabel(c.Ecosystem),
+			"observed":  c.Observed,
+			"buildable": farmBuildable(c.OS, c.Ecosystem),
+		}
+		if row["buildable"].(bool) {
+			row["measured"] = c.Measured
+			row["proven"] = c.Proven
+			row["observedProven"] = c.ObservedProven
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// farmBuildable answers whether a verifier could ever run this ecosystem on
+// this platform. macOS cannot be containerised at all, and on Windows only
+// golang and pypi publish a base image.
+func farmBuildable(os, ecosystem string) bool {
+	switch strings.ToLower(strings.TrimSpace(os)) {
+	case "linux":
+		return true
+	case "windows":
+		return sandbox.SupportsWindows(ecosystem)
+	}
+	return false
+}
+
+// clampAdminLabel bounds a value that came from recorded evidence rather than
+// from a fixed vocabulary. validEnv imposes no length limit on either field.
+func clampAdminLabel(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > maxAdminLabelBytes {
+		return v[:maxAdminLabelBytes]
+	}
+	return v
+}
+
+const (
+	maxFarmCoverageRows = 64
+	maxAdminLabelBytes  = 48
+)
