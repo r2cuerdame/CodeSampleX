@@ -19,18 +19,15 @@ CodeSampleX ist ein **offenes Kompatibilitäts-Testnetzwerk** für Entwickler-Li
 Jedes Ergebnis ist eine aufgezeichnete Ausführung mit angehängter Umgebung, deshalb lassen sich die Daten in Kompatibilitätsmatrizen pivotieren — OS × Runtime, Version × Architektur, Symbol × OS. Ein echter Ausschnitt aus dem Live-Netzwerk (`axios.post`, gemessen im August 2026):
 
 ```text
-axios.post · axios 1.12.2                node 22            node 24
-linux                                    ■ verified 4/4       —
-windows                                  ○ observed 3/9 ! ?
+github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
+whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
+Batch                                    ✓ 91% 240   —         —
+Identifier                                 60% 15    —         ✓ —
 ```
 
-Diese Zeile ist keine Illustration — sie ist [die Live-Seite](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+Dieses Raster ist keine Illustration, sondern [die Live-Seite](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
 
-**Eine Zelle nennt eine Quote und ihre Grundlage. Nie ein Urteil.** `■ verified` heißt, dass wir selbst einen Vertrag in einem gepinnten Container ausgeführt haben; `○ observed` heißt, dass echte Maschinen Läufe aufgezeichnet und gemeldet haben. Die Zahl ist die Messung — Erfolge pro Lauf — und ein einzelnes `1/1` sagt deshalb, wie dünn der Beleg ist, statt sich hinter einem Zeichen zu verstecken, das wie hundert übereinstimmende Läufe aussah. Es gibt kein `PASS` mehr: PASS las sich als die allgemeine Behauptung *das funktioniert hier*, während gemessen wurde *vier Läufe, vier erfolgreich*.
-
-Die Grundlage verschwimmt nie, denn sie ist die Unterscheidung, auf die es ankommt. Beobachtungszahlen übersteigen Verifikationszahlen bei Weitem, also ließen zwei nackte Quoten eine anonyme Zelle maßgeblicher wirken als eine bewiesene. Das Zeichen ist ausgefüllt für einen Lauf, den wir gemacht haben, und hohl für eine Meldung, die wir erhalten haben — ohne Farbe unterscheidbar; Farbe trägt nur, wie die Quote ausfiel, denn ein Fehlschlag ist das seltene, informationsreiche Ereignis und muss ins Auge fallen. `!` markiert eine gemessene Anomalie, `?` schwache oder alte Belege, `—` bleibt unbekannt. Aus dem Ökosystem eines Pakets oder seiner Dokumentation wird nichts abgeleitet.
-
-Der Web-Explorer behandelt jedes 2D-Raster als Schnitt durch einen N-dimensionalen Würfel: Wähle zwei beliebige Dimensionen als Achsen (OS, Runtime, Paketversion, Symbol, Architektur, Paketmanager, Execution Context, libc), fixiere den Rest als Filter und klicke auf eine Zelle, um eine Ebene tiefer zu bohren — bis hinunter zu den exakt gemessenen Kombinationen, deren Symbolseiten die signierten Receipts enthalten.
+**Eine Zelle trägt eine Quote und eine Markierung, nie ein Urteil.** Der Prozentsatz und die Zahl daneben sind, was echte Maschinen getan haben; das Häkchen heißt, dass unser Beispiel dort läuft. Unsere Läufe sind ein wiederholter, festgepinnter Container, tausend gemeldete sind tausend verschiedene Situationen — sie werden nicht addiert. `✓ —` heißt: funktionierender Code ist da, benutzt gesehen hat ihn noch niemand. `—` bleibt unbekannt.
 
 ## Warum Testen zählt
 

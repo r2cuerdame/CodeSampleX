@@ -9,7 +9,10 @@
     :root { color-scheme:dark; --bg:#07132b; --panel:#0c1d3d; --line:#25477d; --ink:#edf5ff; --muted:#9eb3d4; --blue:#4387ff; --cyan:#62d9ff; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --purple:#a78bfa }
     * { box-sizing:border-box }
     body { margin:0; background:radial-gradient(circle at 12% 0,#16396f 0,transparent 32rem),var(--bg); color:var(--ink); font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif }
-    main { width:min(1240px,calc(100% - 32px)); margin:0 auto; padding:34px 0 64px }
+    /* This is an operator console on a desktop, not a reading column. Tables of
+   workers, coverage cells and withdrawal reasons all want width, and 1240px
+   left most of a modern screen empty while the panels inside scrolled. */
+    main { width:min(1800px,calc(100% - 48px)); margin:0 auto; padding:34px 0 64px }
     h1,h2,h3,p { margin-top:0 } h1 { font-size:clamp(25px,4vw,38px); margin-bottom:5px } h2 { font-size:18px; margin-bottom:4px } h3 { font-size:14px; margin:0 }
     .eyebrow { color:var(--cyan); font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase }
     .muted,.note { color:var(--muted) } .note { font-size:12px; margin:10px 0 0 }

@@ -24,21 +24,22 @@ Which is why a miss is not empty. When nothing has been proven for your case the
 
 ## Does it run there?
 
-Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — OS × runtime, version × architecture, symbol × OS. A real slice, from the live network (`axios.post`, measured August 2026):
+Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — version × symbol, OS × runtime, version × architecture. A real slice, from the live network (measured August 2026):
 
 ```text
-axios.post · axios 1.12.2                node 22            node 24
-linux                                    ■ verified 4/4       —
-windows                                  ○ observed 3/9 ! ?
+github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
+whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
+Batch                                    ✓ 91% 240   —         —
+Identifier                                 60% 15    —         ✓ —
 ```
 
-That row is not an illustration — it is [the live page](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
 
-**A cell states a rate and names its basis. It never states a verdict.** `■ verified` means we ran a contract in a pinned container ourselves; `○ observed` means real machines recorded runs and reported them. The number is the measurement — passes over runs — so a lone `1/1` says how thin the evidence is instead of hiding behind a mark that looked identical to a hundred agreeing runs. There is no `PASS`: "PASS" read as the general claim *this works here*, when what was measured is *four runs, four passed*.
+**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are what real machines did: 85% of 1,156 recorded runs got through. The check means our own sample runs there — one clean run or a hundred, the fact is binary, and a run of ours that failed carries no check at all. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
 
-The basis never blurs, because it is the distinction that matters. Observation counts dwarf verification counts — the network holds thousands of reported runs against a far smaller body of receipts — so two bare rates would make an anonymous cell look more authoritative than a proven one. The glyph is solid for a run we made and hollow for a report we received, legibly different without colour; colour carries only how the rate came out, since a failure is the rare, high-information event and has to catch the eye. `!` marks a measured anomaly, `?` marks weak or aged evidence, `—` stays unknown. Nothing is inferred from the package's ecosystem or its docs.
+The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported runs are a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `✓ —` says exactly that: we have working code for it, and nobody has been seen using it yet.
 
-The web explorer treats every 2D grid as a slice of an N-dimensional cube: pick any two dimensions as axes (OS, runtime, package version, symbol, architecture, package manager, execution context, libc), pin the rest as filters, and click a cell to drill one level deeper — down to the exact measured combinations, whose symbol pages hold the signed receipts.
+Colour carries how the runs came out, so a mostly-failing cell reddens without another glyph to learn. `—` stays unknown — never "works", never "broken". Nothing is inferred from the package's ecosystem or its docs.
 
 ## Why testing matters
 

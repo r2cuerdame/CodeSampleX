@@ -2081,7 +2081,12 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 				(SELECT COUNT(*) FROM (SELECT DISTINCT ecosystem, name FROM packages
 					WHERE publicness = 'PUBLIC') t),
 				(SELECT COUNT(DISTINCT symbol) FROM evidence_agg WHERE symbol <> ''),
-				(SELECT COALESCE(SUM(observation_count),0) FROM evidence_agg),
+				-- Package-level rows only. One build writes a package-level
+				-- observation AND one per detected symbol, so summing every
+				-- row counts the same build again for each symbol found in
+				-- it -- 38% of this figure was that.
+				(SELECT COALESCE(SUM(observation_count),0)
+				   FROM evidence_agg WHERE symbol = ''),
 				-- "Verified" means a contract actually passed in a sandbox,
 				-- which is a receipt fact. Counting only CROSS_PASS+ reported
 				-- zero for every contract-verified sample still waiting for a

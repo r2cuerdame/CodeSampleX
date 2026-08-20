@@ -19,18 +19,15 @@ CodeSampleX es una **red abierta de pruebas de compatibilidad** para librerías,
 Cada resultado es una ejecución registrada con su entorno adjunto, de modo que los datos pivotan en matrices de compatibilidad — OS × runtime, versión × arquitectura, símbolo × OS. Un corte real, de la red en vivo (`axios.post`, medido en agosto de 2026):
 
 ```text
-axios.post · axios 1.12.2                node 22            node 24
-linux                                    ■ verified 4/4       —
-windows                                  ○ observed 3/9 ! ?
+github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
+whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
+Batch                                    ✓ 91% 240   —         —
+Identifier                                 60% 15    —         ✓ —
 ```
 
-Esa fila no es una ilustración: es [la página en vivo](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+Esta cuadrícula no es una ilustración: es [la página en vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
 
-**Una celda indica una tasa y nombra su base. Nunca un veredicto.** `■ verified` significa que nosotros mismos ejecutamos un contrato en un contenedor fijado; `○ observed` significa que máquinas reales registraron ejecuciones y las informaron. El número es la medición — aciertos por ejecución — de modo que un solitario `1/1` dice lo delgada que es la evidencia en lugar de esconderse tras una marca idéntica a la de cien ejecuciones concordantes. Ya no hay `PASS`: PASS se leía como la afirmación general *esto funciona aquí*, cuando lo medido es *cuatro ejecuciones, cuatro aciertos*.
-
-La base nunca se difumina, porque es la distinción que importa. Los recuentos de observación superan con creces a los de verificación, así que dos tasas desnudas harían que una celda anónima pareciera más autorizada que una probada. El glifo es sólido para una ejecución nuestra y hueco para un informe recibido, distinguibles sin color; el color solo indica cómo salió la tasa, porque un fallo es el evento raro y de alta información y tiene que captar la vista. `!` marca una anomalía medida, `?` evidencia débil o antigua, `—` permanece desconocido. Nada se infiere del ecosistema del paquete ni de su documentación.
-
-El explorador web trata cada cuadrícula 2D como un corte de un cubo N-dimensional: elige dos dimensiones cualesquiera como ejes (OS, runtime, versión del paquete, símbolo, arquitectura, gestor de paquetes, contexto de ejecución, libc), fija el resto como filtros y haz clic en una celda para bajar un nivel más — hasta las combinaciones exactas medidas, cuyas páginas de símbolo contienen los recibos firmados.
+**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son lo que hicieron máquinas reales; la marca significa que nuestra muestra funciona allí. Nuestras ejecuciones son un contenedor fijado repetido; mil ejecuciones informadas son mil situaciones distintas, así que no se suman. `✓ —` significa: hay código que funciona y nadie ha sido visto usándolo todavía. `—` permanece desconocido.
 
 ## Por qué importan las pruebas
 

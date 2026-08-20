@@ -493,8 +493,11 @@ func TestBuilderRunOnce(t *testing.T) {
 	if !stats.EstimatedReasoningAvoided.Estimated {
 		t.Fatal("estimatedReasoningAvoided must always carry estimated:true")
 	}
-	if stats.Evidence != 22 {
-		t.Fatalf("evidence = %d, want 22", stats.Evidence)
+	// Package-level rows only. The fixture's symbol rows are the same builds
+	// recorded a second time under each symbol found in them, and counting
+	// both made one build look like several.
+	if stats.Evidence != 0 {
+		t.Fatalf("evidence = %d; this fixture records symbol rows only", stats.Evidence)
 	}
 	if stats.VerifiedSamples != 1 {
 		t.Fatalf("verifiedSamples = %d, want 1", stats.VerifiedSamples)

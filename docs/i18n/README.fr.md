@@ -19,18 +19,15 @@ CodeSampleX est un **réseau ouvert de tests de compatibilité** pour les biblio
 Chaque résultat est une exécution enregistrée accompagnée de son environnement, si bien que les données pivotent en matrices de compatibilité — OS × runtime, version × architecture, symbole × OS. Une tranche réelle, issue du réseau en direct (`axios.post`, mesurée en août 2026) :
 
 ```text
-axios.post · axios 1.12.2                node 22            node 24
-linux                                    ■ verified 4/4       —
-windows                                  ○ observed 3/9 ! ?
+github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
+whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
+Batch                                    ✓ 91% 240   —         —
+Identifier                                 60% 15    —         ✓ —
 ```
 
-Cette ligne n'est pas une illustration : c'est [la page en direct](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+Cette grille n’est pas une illustration : c’est [la page en direct](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
 
-**Une cellule indique un taux et nomme sa base. Jamais un verdict.** `■ verified` signifie que nous avons nous-mêmes exécuté un contrat dans un conteneur épinglé ; `○ observed` signifie que de vraies machines ont enregistré des exécutions et les ont signalées. Le nombre est la mesure — succès par exécution — de sorte qu'un `1/1` isolé dit à quel point la preuve est mince, au lieu de se cacher derrière une marque identique à celle de cent exécutions concordantes. Il n'y a plus de `PASS` : PASS se lisait comme l'affirmation générale *cela fonctionne ici*, alors que ce qui est mesuré est *quatre exécutions, quatre succès*.
-
-La base ne se brouille jamais, car c'est la distinction qui compte. Les comptes d'observation écrasent ceux de vérification : deux taux nus feraient paraître une cellule anonyme plus autorisée qu'une cellule prouvée. Le glyphe est plein pour une exécution que nous avons faite et creux pour un rapport reçu, distinguables sans couleur ; la couleur ne porte que le résultat du taux, car un échec est l'événement rare et riche en information, et doit attirer l'œil. `!` marque une anomalie mesurée, `?` une preuve faible ou ancienne, `—` reste inconnu. Rien n'est déduit de l'écosystème du paquet ni de sa documentation.
-
-L'explorateur web traite chaque grille 2D comme une tranche d'un cube à N dimensions : choisissez deux dimensions comme axes (OS, runtime, version du paquet, symbole, architecture, gestionnaire de paquets, contexte d'exécution, libc), épinglez le reste comme filtres, et cliquez sur une cellule pour descendre d'un niveau — jusqu'aux combinaisons exactes mesurées, dont les pages de symboles détiennent les reçus signés.
+**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont ce qu’ont fait de vraies machines ; la coche signifie que notre exemple y fonctionne. Nos exécutions sont un conteneur épinglé répété, mille exécutions signalées sont mille situations différentes : elles ne s’additionnent pas. `✓ —` veut dire : du code qui fonctionne existe, et personne n’a encore été vu s’en servir. `—` reste inconnu.
 
 ## Pourquoi les tests comptent
 

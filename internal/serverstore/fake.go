@@ -1188,7 +1188,12 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 		if k.Symbol != "" && !symbols[k.Symbol] {
 			symbols[k.Symbol] = true
 		}
-		c.Observations += f.merge.observations[k]
+		// Package-level rows only: the same build is written once for the
+		// package and again for every symbol detected in it, and counting
+		// both makes one build look like several.
+		if k.Symbol == "" {
+			c.Observations += f.merge.observations[k]
+		}
 	}
 	c.Symbols = int64(len(symbols))
 	for id, s := range f.samples {
