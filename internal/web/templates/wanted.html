@@ -46,12 +46,13 @@
     <span class="wantedrank">{{.RankText}}</span>
     <span class="wantedname">
       {{if .Href}}<a class="mono" href="{{.Href}}">{{.Ecosystem}}/{{.Name}}{{if .Version}}@{{.Version}}{{end}}</a>{{else}}<span class="mono">{{.Ecosystem}}/{{.Name}}{{if .Version}}@{{.Version}}{{end}}</span>{{end}}
-      {{if .Symbol}}<span class="wantedsym mono"> · {{.Symbol}}</span>{{end}}
+      {{if .DetailText}}<span class="wantedsym mono"> · {{.DetailText}}</span>{{end}}
     </span>
     <span class="wantedasks">{{.AsksText}}</span>
   </li>
   {{end}}
 </ol>
+{{if .Windowed}}<p class="note dim small">{{.T "wanted.windowed"}}</p>{{end}}
 <p class="note dim small">{{.T "wanted.contribute"}}</p>
 
 {{if gt .Pages 1}}

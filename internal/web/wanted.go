@@ -17,16 +17,20 @@ const wantedPerPage = 40
 // multiplication. It is deliberately aligned with /records.
 const maxWantedPage = 1 << 20
 
-// WantedItem is one unanswered question on the board.
+// WantedItem is one unanswered coordinate on the board, with the separate
+// questions asked about it folded in behind.
 type WantedItem struct {
 	Ecosystem string
 	Name      string
 	Version   string
-	Symbol    string
 	Asks      int64
 	AsksText  string
-	RankText  string
-	Href      string
+	// DetailText says what the fold covered — how many distinct APIs were
+	// asked about and on which platforms. Without it the board hid the fact
+	// that four separate questions had been reported.
+	DetailText string
+	RankText   string
+	Href       string
 }
 
 type wantedPage struct {
@@ -37,7 +41,10 @@ type wantedPage struct {
 	HasQuery           bool
 	ClearHref          string
 	Page, Pages        int
-	RangeText          string
+	// Windowed says the fold ran over a bounded read, so a package may have
+	// rows beyond it. An absent row must never read as "nobody asked".
+	Windowed  bool
+	RangeText string
 	PageText           string
 	PrevHref, NextHref string
 }
@@ -63,11 +70,23 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 		page = min(p, maxWantedPage)
 	}
 
-	rows, total, err := s.d.Store.WantedRows(r.Context(), query, (page-1)*wantedPerPage, wantedPerPage)
+	// The board reads by package version, but the stored row is a work unit
+	// down to symbol and platform, so it has to be folded before it can be
+	// paged — folding one page at a time would split a package across the
+	// boundary. The window is read whole and the page taken from the fold.
+	raw, _, err := s.d.Store.WantedRows(r.Context(), query, 0, wantedRollupWindow)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
+	rolled, windowed := rollUpWanted(raw, wantedRollupWindow)
+	total := len(rolled)
+	start := (page - 1) * wantedPerPage
+	if start > total {
+		start = total
+	}
+	end := min(start+wantedPerPage, total)
+	rows := rolled[start:end]
 	pages := (total + wantedPerPage - 1) / wantedPerPage
 	if pages == 0 {
 		pages = 1
@@ -82,13 +101,13 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 	items := make([]WantedItem, 0, len(rows))
 	for i, row := range rows {
 		items = append(items, WantedItem{
-			Ecosystem: row.Ecosystem,
-			Name:      row.Name,
-			Version:   row.Version,
-			Symbol:    row.Symbol,
-			Asks:      row.Asks,
-			AsksText:  i18n.FormatInt(lang, row.Asks),
-			RankText:  i18n.FormatInt(lang, int64((page-1)*wantedPerPage+i+1)),
+			Ecosystem:  row.Ecosystem,
+			Name:       row.Name,
+			Version:    row.Version,
+			Asks:       row.Asks,
+			AsksText:   i18n.FormatInt(lang, row.Asks),
+			DetailText: wantedDetail(lang, row),
+			RankText:   i18n.FormatInt(lang, int64((page-1)*wantedPerPage+i+1)),
 			// Every supported row has a stable, honest wanted-only page even
 			// before compatibility evidence exists.
 			Href: b.WithLang(pkgHref(row.Ecosystem, row.Name)),
@@ -97,6 +116,7 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
 	view := wantedPage{
 		basePage: b, Items: items, Total: total, Query: query, HasQuery: query != "",
+		Windowed: windowed,
 		ClearHref: wantedHref("", 1, lang), Page: page, Pages: pages,
 		PageText: i18n.T(lang, "records.page", n(page), n(pages)),
 	}

@@ -903,7 +903,7 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	for _, r := range rows {
 		out = append(out, web.WantedRow{
 			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
-			Asks: r.Asks, HasPage: r.HasPage,
+			Asks: r.Asks, TargetOS: r.TargetOS, HasPage: r.HasPage,
 		})
 	}
 	return out, nil
@@ -918,7 +918,7 @@ func (w *webStore) WantedRows(ctx context.Context, query string, offset, limit i
 	for _, r := range rows {
 		out = append(out, web.WantedRow{
 			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
-			Asks: r.Asks, HasPage: r.HasPage,
+			Asks: r.Asks, TargetOS: r.TargetOS, HasPage: r.HasPage,
 		})
 	}
 	return out, total, nil

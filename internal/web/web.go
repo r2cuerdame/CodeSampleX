@@ -131,6 +131,11 @@ type WantedRow struct {
 	Version   string
 	Symbol    string
 	Asks      int64
+	// TargetOS is the platform the miss was reported from, empty when the
+	// reporter named none. A report about a platform is a different question
+	// from a report about the package, which is why it is part of the row
+	// rather than a note beside it.
+	TargetOS string
 	// HasPage reports whether an explorer page exists for this package.
 	// A wanted package usually has neither sample nor evidence, so linking
 	// every row made a board of 404s.
