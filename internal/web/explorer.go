@@ -284,38 +284,87 @@ func buildMatrix(lang string, doc snapshotDoc) []matrixRow {
 	return rows
 }
 
+// buildClusters renders failure clusters, grouping the ones that describe the
+// same failure.
+//
+// The recorder files one observation against the package AND one against every
+// symbol it detected, so a single broken build arrives as several clusters
+// sharing a fingerprint. pgx v5.10.0 listed the same 181 failures twice — once
+// as the package, once as pgx/v5.Conn — and left the reader to work out they
+// were one event.
+//
+// Same fingerprint, stage, code and environment is one failure seen at two
+// grains: it is listed once, and the symbol the package-level row could not
+// name is carried onto it. The count is the largest of them, never the sum,
+// because the package-level count already contains the symbol's. The same
+// fingerprint in ANOTHER environment stays its own row — that it reproduces
+// there too is the thing worth knowing.
 func buildClusters(clusters []failureCluster) []clusterView {
+	type groupKey struct{ fp, stage, code, env string }
 	out := make([]clusterView, 0, len(clusters))
+	at := map[groupKey]int{}
 	for _, c := range clusters {
 		count := c.Count
 		if count == 0 {
 			count = c.ObservationCount
 		}
-		keys := make([]string, 0, len(c.EnvSummary))
-		for k := range c.EnvSummary {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		envParts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			envParts = append(envParts, k+"="+c.EnvSummary[k])
+		env := joinEnvSummary(c.EnvSummary)
+		key := groupKey{c.Fingerprint, c.Stage, c.ErrorCode, env}
+		if i, seen := at[key]; seen && c.Fingerprint != "" {
+			g := &out[i]
+			if count > g.Count {
+				g.Count = count
+			}
+			if g.Symbol == "" {
+				g.Symbol = c.Symbol
+			}
+			if c.RegressionCandidate {
+				g.RegressionCandidate = true
+			}
+			if v := strings.Join(c.Versions, " → "); len(v) > len(g.Versions) {
+				g.Versions = v
+			}
+			continue
 		}
 		hyps := make([]hypothesisView, 0, len(c.Hypotheses))
 		for _, h := range c.Hypotheses {
+			// UNKNOWN at full confidence is the sanitizer saying it could not
+			// tell, which the missing error code beside it already says. A
+			// chip reading "UNKNOWN 100%" under a note explaining that
+			// hypotheses are inference is noise dressed as analysis.
+			if h.Domain == domain.FailUnknown {
+				continue
+			}
 			hyps = append(hyps, hypothesisView{
 				Domain: string(h.Domain),
 				Pct:    i18n.FormatPercent("en", h.Confidence),
 			})
 		}
+		at[key] = len(out)
 		out = append(out, clusterView{
 			Symbol: c.Symbol, Stage: c.Stage, ErrorCode: c.ErrorCode,
 			Fingerprint: shortHash(c.Fingerprint), Count: count,
-			EnvSummary: strings.Join(envParts, " · "), Hypotheses: hyps,
+			EnvSummary: env, Hypotheses: hyps,
 			RegressionCandidate: c.RegressionCandidate,
 			Versions:            strings.Join(c.Versions, " → "),
 		})
 	}
 	return out
+}
+
+// joinEnvSummary renders an environment fingerprint in a stable order, so two
+// clusters recorded in the same place produce the same string.
+func joinEnvSummary(env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+env[k])
+	}
+	return strings.Join(parts, " · ")
 }
 
 func datePart(rfc3339 string) string {
