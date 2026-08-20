@@ -622,9 +622,11 @@ td.env { min-width: 16rem; }
 }
 .cluster .row { margin-bottom: 0.4rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: baseline; }
 .cluster .row:last-child { margin-bottom: 0; }
+/* The label hugs its text. A 6.5rem floor was sized for "OBSERVED" and left
+   a hole beside the shorter word every other language uses, and 0.12em of
+   tracking that flatters uppercase Latin pulls Hangul and kana apart. */
 .cluster .k {
-  color: var(--dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em;
-  min-width: 6.5rem;
+  color: var(--dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
 }
 .cluster .code { color: var(--bad); font-weight: 600; }
 
