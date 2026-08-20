@@ -437,14 +437,23 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		depths[key]++
 		ranked[i].depth = depths[key]
 	}
-	// PG: ORDER BY (linux first),version_depth,source_rank,score DESC,
+	// PG: ORDER BY version_depth,score DESC,source_rank,
 	//              last_seen DESC,ecosystem,name,version,symbol
+	//
+	// The linux-first term that used to lead this is gone. It was arbitrary
+	// when written and became actively wrong: every observation this network
+	// holds is recorded on Windows, so preferring Linux pushed the entire
+	// measured demand behind work nobody asked for.
+	//
+	// Depth still leads, because it is what stops one package with a long
+	// release history filling the whole window. Within a depth, the most-used
+	// coordinate wins -- authoring should follow what people actually run.
 	sort.SliceStable(ranked, func(i, j int) bool {
 		a, b := ranked[i], ranked[j]
-		if (a.row.TargetOS == "linux") != (b.row.TargetOS == "linux") {
-			return a.row.TargetOS == "linux"
+		if a.depth != b.depth {
+			return a.depth < b.depth
 		}
-		return a.depth < b.depth
+		return a.row.Score > b.row.Score
 	})
 	out := make([]WantedRow, 0, len(ranked))
 	for _, r := range ranked {

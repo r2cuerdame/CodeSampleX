@@ -29,7 +29,7 @@ const (
 	// cubePackageLevel labels evidence recorded against the package as a
 	// whole (snapshot symbol ""). It is disjoint from per-symbol evidence,
 	// not a roll-up of it.
-	cubePackageLevel = "(package)"
+	cubePackageLevel = "whole package"
 
 	// cubeTTL is how long one package's assembled cube is reused.
 	cubeTTL = 5 * time.Minute

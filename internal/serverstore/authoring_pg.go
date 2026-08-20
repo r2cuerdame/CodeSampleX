@@ -385,9 +385,16 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			)
 			SELECT ecosystem,name,version,symbol,score,kind,target_os
 			FROM spread
-			ORDER BY CASE WHEN target_os='linux' THEN 0 ELSE 1 END,
-			         version_depth,
-			         source_rank,score DESC,last_seen DESC,ecosystem,name,version,symbol
+			-- Depth first: it is what stops one package with a long release
+			-- history filling the window. Then USAGE -- authoring follows
+			-- what people actually run.
+			--
+			-- A "linux first" term used to lead this. It was arbitrary when
+			-- written and became actively wrong: every observation this
+			-- network holds is recorded on Windows, so preferring Linux
+			-- pushed the entire measured demand behind work nobody asked for.
+			ORDER BY version_depth,
+			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
 			LIMIT $1`, limit, authoringSiblingVersionsPerPackage)
 		if err != nil {
 			return err

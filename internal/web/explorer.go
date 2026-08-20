@@ -710,7 +710,7 @@ func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version strin
 	if len(facts) == 0 {
 		return pivotGrid{}
 	}
-	// With symbol as a row axis, the "(package)" row would repeat the same
+	// With symbol as a row axis, the package-level row would repeat the same
 	// receipts the symbol rows already show (the producer files each
 	// receipt under "" AND every claimed symbol). Where a symbol row
 	// carries the verification, the package-level fact keeps only its own
