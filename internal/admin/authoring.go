@@ -355,6 +355,44 @@ func cleanAuthoringLabel(raw string) (string, error) {
 	return label, nil
 }
 
+// authoringWorkerKey derives the directory name a worker's CSX_HOME lives
+// under.
+//
+// It is DERIVED, never taken. cleanAuthoringLabel rejects only newlines and
+// NUL because a label is free text shown in the console; as a path component
+// inside a generated .bat and .sh it would carry "..\..\Windows" or
+// `a" & del /q * & set "x=` straight into the script. So the key keeps only
+// characters that are inert in both shells and in a path, and carries a short
+// hash of the raw label so two labels that differ only in stripped characters
+// cannot land on the same home — which would mean two workers sharing one
+// identity.
+//
+// Keying on the WORKER rather than the session is the point: a session is
+// disposable and a worker is not. A per-session home means a per-session
+// identity, so a day of sessions reports as a day of distinct peers, and the
+// peer-bucket count stops meaning anything. It also means csx init would have
+// to run on every session instead of once per worker.
+func authoringWorkerKey(label string) string {
+	var b strings.Builder
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	slug := strings.Trim(b.String(), "-_")
+	if len(slug) > 40 {
+		slug = slug[:40]
+	}
+	sum := sha256.Sum256([]byte(label))
+	digest := hex.EncodeToString(sum[:])[:8]
+	if slug == "" {
+		return "w-" + digest
+	}
+	return slug + "-" + digest
+}
+
 func cleanAuthoringModel(rawModel, rawReasoning string) (string, string, error) {
 	model := strings.TrimSpace(rawModel)
 	if model == "" || len(model) > 80 || strings.ContainsAny(model, "\r\n\x00") {
@@ -445,7 +483,8 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`set "CSX_SERVER=` + baseURL + `"`,
 		`set "CSX_TOKEN=` + grant.Token + `"`,
 		`set "CSX_REASONING=` + grant.Reasoning + `"`,
-		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`,
+		`set "CSX_WORKER=` + authoringWorkerKey(grant.Label) + `"`,
+		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_WORKER%"`,
 		`set "CSX_REFRESH_LOG=%TEMP%\csx-worker-%CSX_SESSION_ID%-refresh.log"`,
 		`set "CSX_NEXT_LOG=%TEMP%\csx-worker-%CSX_SESSION_ID%-next.log"`,
 		`set "CSX_AGY_LOG=%TEMP%\csx-worker-%CSX_SESSION_ID%-agy.log"`,
@@ -456,6 +495,17 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`set "CSX_AGY=agy.exe"`,
 		`:agent_ready`,
 		`if not exist "%CSX_HOME%" mkdir "%CSX_HOME%"`,
+		// The home is keyed on the WORKER, so this runs once and later
+		// sessions find it already done. Without it the home stays
+		// uninitialized, and that mode is excluded from contacting registries
+		// on purpose -- "before csx init, no mode has been chosen, so no
+		// permission has been given" -- which silently made every
+		// run_observed_command in step 4 record nothing at all.
+		//
+		// --no-agents and --no-daemon keep the isolation this home exists for:
+		// a fresh identity and config here, and nothing written to the
+		// operator's agent registrations or daemon.
+		`if not exist "%CSX_HOME%\config.json" csx init --community --no-agents --no-daemon`,
 	}
 	refs := make([]string, 0, (len(encoded)+chunkSize-1)/chunkSize)
 	for index, start := 0, 0; start < len(encoded); index, start = index+1, start+chunkSize {
@@ -529,13 +579,16 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 		`CSX_SERVER='` + baseURL + `'`,
 		`CSX_TOKEN='` + grant.Token + `'`,
 		`CSX_REASONING='` + grant.Reasoning + `'`,
-		`export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_SESSION_ID"`,
+		`export CSX_WORKER="` + authoringWorkerKey(grant.Label) + `"`,
+		`export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_WORKER"`,
 		`CSX_WORKSPACE="$CSX_HOME/workspace"`,
 		`CSX_REFRESH_LOG="/tmp/csx-worker-$CSX_SESSION_ID-refresh.log"`,
 		`CSX_NEXT_LOG="/tmp/csx-worker-$CSX_SESSION_ID-next.log"`,
 		`CSX_AGY_LOG="/tmp/csx-worker-$CSX_SESSION_ID-agy.log"`,
 		`CSX_PROMPT_B64='` + encoded + `'`,
 		`mkdir -p "$CSX_HOME" "$CSX_WORKSPACE"`,
+		// Once per worker, not once per session -- see the Windows script.
+		`[ -f "$CSX_HOME/config.json" ] || csx init --community --no-agents --no-daemon`,
 		`cd "$CSX_WORKSPACE"`,
 		`command -v agy >/dev/null 2>&1 || { echo "AGY was not found. Install it with: curl -fsSL https://antigravity.google/cli/install.sh | bash"; exit 3; }`,
 		`command -v csx >/dev/null 2>&1 || { echo "csx was not found. Install it with: curl -fsSL https://codesamplex.dev/install.sh | bash"; exit 3; }`,

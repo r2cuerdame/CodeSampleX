@@ -151,7 +151,7 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	script := authoringWindowsCMD("https://codesamplex.dev/", grant)
 	for _, want := range []string{
 		"@echo off", "setlocal EnableExtensions DisableDelayedExpansion", `set "CSX_SESSION_ID=session-123"`,
-		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_SESSION_ID%"`, ":poll", "sample-worker refresh",
+		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_WORKER%"`, ":poll", "sample-worker refresh",
 		"sample-worker next", `findstr /b /c:"NO_WORK:"`, `timeout /t 300 /nobreak`, "--dangerously-skip-permissions", "--print", "CSX_AGY_LOG", "Tee-Object", "goto :poll",
 		"HTTP 410", "download a new CMD file",
 	} {
@@ -201,7 +201,7 @@ func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	grant := authoringGrant{ID: "Session-456", Token: "sentinel", Label: `lab; rm unsafe`, Model: "agy", Reasoning: "high"}
 	script := authoringLinuxSH("https://codesamplex.dev/", grant)
 	for _, want := range []string{
-		"#!/usr/bin/env bash", `CSX_SESSION_ID='session-456'`, `export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_SESSION_ID"`,
+		"#!/usr/bin/env bash", `CSX_SESSION_ID='session-456'`, `export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_WORKER"`,
 		`cd "$CSX_WORKSPACE"`, "while true; do", "sample-worker refresh", "sample-worker next", `grep -q -e '^NO_WORK:' -e 'No uncovered Wanted work'`, "sleep 300",
 		"--dangerously-skip-permissions", "--print-timeout 50m", `agy "${agy_args[@]}" --print "$prompt"`, "PIPESTATUS[0]",
 		"HTTP 410", "download a new SH file",

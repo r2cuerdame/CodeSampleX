@@ -815,7 +815,13 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 		parts = append(parts, fmt.Sprintf("%d usage records", a.used))
 	}
 	if obs > 0 || a.used > 0 {
-		parts = append(parts, fmt.Sprintf("%s reporting machine%s",
+		// "machines" claimed more than a peer bucket is. A peer id is a hash
+		// of a self-generated key with no registration behind it, so this
+		// counts distinct KEYS that reported — one operator can hold as many
+		// as they run workers, and a worker's key is stable per worker rather
+		// than per machine. It still means something real: the same coordinate
+		// was reported from more than one place. It is not a head count.
+		parts = append(parts, fmt.Sprintf("%s reporting peer%s",
 			plural(a.obsPeers), suffix(a.obsPeers)))
 	}
 	if ver > 0 {

@@ -52,7 +52,7 @@ func TestTooltipNamesObservationsAsBuilds(t *testing.T) {
 	if !strings.Contains(cell.Tip, "1361 observations") {
 		t.Errorf("tip = %q, want it to name the events as observations", cell.Tip)
 	}
-	if !strings.Contains(cell.Tip, "1 reporting machine") {
-		t.Errorf("tip = %q, want it to state how many machines reported", cell.Tip)
+	if !strings.Contains(cell.Tip, "1 reporting peer") {
+		t.Errorf("tip = %q, want it to state how many peers reported", cell.Tip)
 	}
 }
