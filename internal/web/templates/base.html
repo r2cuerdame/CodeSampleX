@@ -209,12 +209,15 @@ document.addEventListener('keydown',event=>{
 {{- range .Matrix}}
 <tr>
   <td class="env"><span class="ctx mono">{{.Context}}</span>{{if .Detail}}<span class="dim mono"> · {{.Detail}}</span>{{end}}
-    {{- if or .ObservedStages .VerifiedStages}}
-    <div class="stages dim mono">{{if .ObservedStages}}{{$.T "symbol.observations_col"}}: {{.ObservedStages}}{{end}}{{if .VerifiedStages}}{{if .ObservedStages}} — {{end}}{{$.T "symbol.verified_col"}}: {{.VerifiedStages}}{{end}}</div>
+    {{- if or .ObservedStages .UsageStages .VerifiedStages}}
+    {{/* Usage sits beside the runs, never inside them: it says the package
+         was installed, which has no failing form and so can only ever make
+         a rate look better than it measured. */}}
+    <div class="stages dim mono">{{if .ObservedStages}}{{$.T "symbol.observations_col"}}: {{.ObservedStages}}{{end}}{{if .UsageStages}}{{if .ObservedStages}} — {{end}}{{$.T "symbol.usage_col"}}: {{.UsageStages}}{{end}}{{if .VerifiedStages}}{{if or .ObservedStages .UsageStages}} — {{end}}{{$.T "symbol.verified_col"}}: {{.VerifiedStages}}{{end}}</div>
     {{- end}}
   </td>
   <td><span class="chip {{.ChipClass}} mono"><span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{.Chip}}</span>{{if .NoEvidence}} <span class="dim small">({{$.T "symbol.no_evidence"}})</span>{{end}}</td>
-  <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Observations}}{{end}}</td>
+  <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Observations}}{{if .Usage}} <span class="dim" title="{{$.T "symbol.usage_col"}}">+{{.Usage}}</span>{{end}}{{end}}</td>
   <td class="num mono">{{if .NoEvidence}}—{{else}}{{.Verifications}}{{end}}</td>
   <td class="num mono">{{if .PassRate}}{{.PassRate}}{{else}}—{{end}}</td>
   <td class="num mono" title="{{$.T "symbol.observations_col"}}: {{.Peers}} — {{$.T "symbol.verified_col"}}: {{.VerifyingPeers}}">{{if .NoEvidence}}—{{else}}{{.Peers}}{{if .VerifyingPeers}} <span class="dim">· {{.VerifyingPeers}}✓</span>{{end}}{{end}}</td>

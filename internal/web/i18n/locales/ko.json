@@ -349,6 +349,7 @@
   "symbol.no_error_code": "에러 코드 기록 없음",
   "symbol.no_evidence": "증거 없음",
   "symbol.observations_col": "관측",
+  "symbol.usage_col": "사용",
   "symbol.observed": "관측됨",
   "symbol.pass_rate_col": "통과율",
   "symbol.peers_col": "피어",

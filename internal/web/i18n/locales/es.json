@@ -349,6 +349,7 @@
   "symbol.no_error_code": "código de error no registrado",
   "symbol.no_evidence": "sin evidencia",
   "symbol.observations_col": "Observaciones",
+  "symbol.usage_col": "Uso",
   "symbol.observed": "observado",
   "symbol.pass_rate_col": "Tasa de éxito",
   "symbol.peers_col": "Pares",

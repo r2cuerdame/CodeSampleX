@@ -72,6 +72,12 @@ type Snapshot struct {
 	GeneratedAt           string                 `json:"generatedAt"`
 }
 
+// isPresenceStage names the stage that records a package being present
+// rather than being exercised.
+func isPresenceStage(stage string) bool {
+	return stage == string(domain.StageUsed)
+}
+
 // BuildSnapshot computes the snapshot for one (purl, symbol) target from its
 // aggregated evidence rows and the receipts of samples covering the target.
 // Pure: no I/O, unit-testable without a database.
@@ -113,12 +119,27 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 		}
 		g.byStage[row.Stage] = sc
 		g.obsCount += row.ObservationCount
-		g.samples = append(g.samples, Sample{
-			Class:  domain.ClassUsageObservation,
-			Result: domain.Result(row.Result),
-			Count:  row.ObservationCount,
-			Age:    now.Sub(row.LastSeen),
-		})
+		// Presence is tallied but never weighed.
+		//
+		// USED records that a package was installed. It has no failing form,
+		// so every one of them entered the confidence computation as a PASS
+		// — and that computation is where the pass rate, the confidence tier
+		// and the elevated-failure flag all come from. A coordinate where
+		// six of eight runs failed reported 94% passing and raised no flag,
+		// because a hundred people having the dependency installed outvoted
+		// the runs that actually failed.
+		//
+		// The tally above keeps it. The web renders it as its own line, and
+		// the count of projects carrying a package is worth knowing. It is
+		// simply not an outcome, and only outcomes may move a rate.
+		if !isPresenceStage(row.Stage) {
+			g.samples = append(g.samples, Sample{
+				Class:  domain.ClassUsageObservation,
+				Result: domain.Result(row.Result),
+				Count:  row.ObservationCount,
+				Age:    now.Sub(row.LastSeen),
+			})
+		}
 		if row.UniquePeerBuckets > g.maxPeers {
 			g.maxPeers = row.UniquePeerBuckets
 		}

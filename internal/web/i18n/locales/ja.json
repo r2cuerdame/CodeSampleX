@@ -349,6 +349,7 @@
   "symbol.no_error_code": "エラーコードの記録なし",
   "symbol.no_evidence": "エビデンスなし",
   "symbol.observations_col": "観測",
+  "symbol.usage_col": "使用",
   "symbol.observed": "観測済み",
   "symbol.pass_rate_col": "成功率",
   "symbol.peers_col": "ピア",

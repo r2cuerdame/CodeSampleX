@@ -349,6 +349,7 @@
   "symbol.no_error_code": "kein Fehlercode aufgezeichnet",
   "symbol.no_evidence": "keine Evidenz",
   "symbol.observations_col": "Beobachtungen",
+  "symbol.usage_col": "Nutzung",
   "symbol.observed": "beobachtet",
   "symbol.pass_rate_col": "Erfolgsquote",
   "symbol.peers_col": "Peers",

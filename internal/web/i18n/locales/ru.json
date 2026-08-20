@@ -349,6 +349,7 @@
   "symbol.no_error_code": "код ошибки не записан",
   "symbol.no_evidence": "нет свидетельств",
   "symbol.observations_col": "Наблюдения",
+  "symbol.usage_col": "Использование",
   "symbol.observed": "наблюдалось",
   "symbol.pass_rate_col": "Доля успешных",
   "symbol.peers_col": "Пиры",

@@ -88,15 +88,22 @@ type snapshotDoc struct {
 // Observations (USED/PROJECT_*) and verifications (SYMBOL_*/verification
 // stages/CONTRACT) are carried separately and never summed (§3.5).
 type matrixRow struct {
-	Context        string // leading dimension: "node 22", "safari 19"
-	Detail         string // remaining env dims: "TS 5.9 · pnpm · windows"
-	Chip           string // HIGH | MEDIUM | LOW | ELEVATED FAILURE | UNKNOWN
-	ChipClass      string // high | medium | low | elevated | unknown
-	Glyph          string // non-color marker for the chip
-	NoEvidence     bool
-	Observations   int64
+	Context      string // leading dimension: "node 22", "safari 19"
+	Detail       string // remaining env dims: "TS 5.9 · pnpm · windows"
+	Chip         string // HIGH | MEDIUM | LOW | ELEVATED FAILURE | UNKNOWN
+	ChipClass    string // high | medium | low | elevated | unknown
+	Glyph        string // non-color marker for the chip
+	NoEvidence   bool
+	Observations int64
+	// Usage counts presence records: the package was installed, nothing was
+	// exercised. It was inside Observations, which made a column headed
+	// "observations" partly a count of installed dependencies — and since
+	// presence has no failing form, it could only ever make a coordinate
+	// look better than it measured.
+	Usage          int64
 	Verifications  int64
 	ObservedStages string // "PROJECT_COMPILE 100✓ 4✕"
+	UsageStages    string // "USED 229✓"
 	VerifiedStages string // "CONTRACT 6✓ 1✕"
 	PassRate       string // formatted, "" when no evidence
 	Peers          int64
@@ -209,41 +216,58 @@ func rowLabels(row snapshotRow) (ctx, detail string) {
 
 // splitStageCounts separates weak project observations from strong
 // verification evidence and renders each group's per-stage counts.
-func splitStageCounts(byStage map[string]stageCount) (obs, ver int64, obsText, verText string) {
+type stageSplit struct {
+	obs, used, ver             int64
+	obsText, usedText, verText string
+}
+
+func splitStageCounts(byStage map[string]stageCount) stageSplit {
 	names := make([]string, 0, len(byStage))
 	for k := range byStage {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	var obsParts, verParts []string
+	var obsParts, usedParts, verParts []string
+	var out stageSplit
 	for _, stage := range names {
 		c := byStage[stage]
 		txt := stage + " " + i18n.FormatInt("en", c.Pass) + "✓"
 		if c.Fail > 0 {
 			txt += " " + i18n.FormatInt("en", c.Fail) + "✕"
 		}
-		if stage == string(domain.StageUsed) || strings.HasPrefix(stage, "PROJECT_") {
-			obs += c.Pass + c.Fail
+		switch {
+		case isUsageStageName(stage):
+			// Presence, not an outcome: kept and shown, never added to the
+			// runs whose rate the row reports.
+			out.used += c.Pass + c.Fail
+			usedParts = append(usedParts, txt)
+		case strings.HasPrefix(stage, "PROJECT_"):
+			out.obs += c.Pass + c.Fail
 			obsParts = append(obsParts, txt)
-		} else {
-			ver += c.Pass + c.Fail
+		default:
+			out.ver += c.Pass + c.Fail
 			verParts = append(verParts, txt)
 		}
 	}
-	return obs, ver, strings.Join(obsParts, " · "), strings.Join(verParts, " · ")
+	out.obsText = strings.Join(obsParts, " · ")
+	out.usedText = strings.Join(usedParts, " · ")
+	out.verText = strings.Join(verParts, " · ")
+	return out
 }
 
 func buildMatrix(lang string, doc snapshotDoc) []matrixRow {
 	rows := make([]matrixRow, 0, len(doc.Rows))
 	for _, r := range doc.Rows {
-		obs, ver, obsText, verText := splitStageCounts(r.ByStage)
-		chip, class, glyph, noEvidence := chipFor(r, obs, ver)
+		sp := splitStageCounts(r.ByStage)
+		obs, ver := sp.obs, sp.ver
+		chip, class, glyph, noEvidence := chipFor(r, obs+sp.used, ver)
 		ctx, detail := rowLabels(r)
 		row := matrixRow{
 			Context: ctx, Detail: detail,
 			Chip: chip, ChipClass: class, Glyph: glyph, NoEvidence: noEvidence,
-			Observations: obs, Verifications: ver,
-			ObservedStages: obsText, VerifiedStages: verText,
+			Observations: obs, Usage: sp.used, Verifications: ver,
+			ObservedStages: sp.obsText, UsageStages: sp.usedText,
+			VerifiedStages: sp.verText,
 			Peers:          r.UniquePeerBuckets,
 			VerifyingPeers: r.VerificationCounts["distinctVerifyingPeers"],
 			LastSeen:       datePart(r.LastSeen),

@@ -349,6 +349,7 @@
   "symbol.no_error_code": "未记录错误代码",
   "symbol.no_evidence": "无证据",
   "symbol.observations_col": "观测",
+  "symbol.usage_col": "使用",
   "symbol.observed": "已观测",
   "symbol.pass_rate_col": "通过率",
   "symbol.peers_col": "节点",

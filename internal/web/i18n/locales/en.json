@@ -349,6 +349,7 @@
   "symbol.no_error_code": "error code not recorded",
   "symbol.no_evidence": "no evidence",
   "symbol.observations_col": "Observations",
+  "symbol.usage_col": "Usage",
   "symbol.observed": "observed",
   "symbol.pass_rate_col": "Pass rate",
   "symbol.peers_col": "Peers",
