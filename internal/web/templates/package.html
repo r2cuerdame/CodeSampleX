@@ -132,10 +132,11 @@
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
 {{- end}}
 
-{{/* Folded, and last. Choosing a version is what the cube's version axis is
-     for; this is the plain list a crawler follows and a reader falls back
-     to, and open it competed with the grid for the top of the page. */}}
-{{- if .Versions}}
+{{/* Only where there is no cube. Choosing a version is what the cube's
+     version axis is for, and a second list of the same versions underneath
+     it asked the reader to decide which of the two was the page. Without a
+     cube there is nothing else to navigate by, so it stays as the fallback. */}}
+{{- if and .Versions (not .Cube)}}
 <details class="home-detail verlist-fold">
   <summary><span class="eyebrow mono">{{.T "pkg.versions"}}</span></summary>
   <div class="home-detail-body">

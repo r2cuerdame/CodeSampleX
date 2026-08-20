@@ -351,6 +351,50 @@ func cubeFactsOnAxes(facts []cubeFact, x, y string) []cubeFact {
 	return out
 }
 
+// keepEmptyAxisValues puts back the rows and columns the symbol drop emptied.
+//
+// hasown was measured at two versions but only 2.0.4 at symbol grain, so
+// spreading version by symbol produced one column and the version axis simply
+// did not offer 2.0.3 — a version the package has, gone from the only control
+// that selects one. The column stays and its cell is empty, which is exactly
+// what it is: nothing measured at this grain, not nothing measured.
+//
+// Only the non-symbol axis: a symbol that was never recorded has no row to be
+// missing, and the package-level aggregate is deliberately not a symbol.
+func keepEmptyAxisValues(aggs map[cellKey]*pivotAgg, facts []cubeFact, x, y string) {
+	if len(aggs) == 0 {
+		return
+	}
+	var anyRow, anyCol string
+	for k := range aggs {
+		anyRow, anyCol = k.row, k.col
+		break
+	}
+	seen := func(pick func(cellKey) string) map[string]bool {
+		out := map[string]bool{}
+		for k := range aggs {
+			out[pick(k)] = true
+		}
+		return out
+	}
+	if x != "symbol" {
+		have := seen(func(k cellKey) string { return k.col })
+		for _, v := range cubeDimValues(facts, x) {
+			if !have[v] {
+				aggs[cellKey{anyRow, v}] = &pivotAgg{}
+			}
+		}
+	}
+	if y != "symbol" {
+		have := seen(func(k cellKey) string { return k.row })
+		for _, v := range cubeDimValues(facts, y) {
+			if !have[v] {
+				aggs[cellKey{v, anyCol}] = &pivotAgg{}
+			}
+		}
+	}
+}
+
 func buildCubeGrid(facts []cubeFact, x, y string,
 	links pivotLinks, now time.Time) pivotGrid {
 
@@ -362,6 +406,7 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	for key, cellFacts := range cells {
 		aggs[key] = mergeCubeFacts(cellFacts)
 	}
+	keepEmptyAxisValues(aggs, facts, x, y)
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
 	g := assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
@@ -388,10 +433,15 @@ func dropLinksThatShowNothingNew(g pivotGrid, x, y string, moreToPin bool) pivot
 	if len(g.Rows) != 1 || len(g.Cols) != 1 {
 		return g
 	}
-	if x != "version" && !moreToPin {
+	// A header pins one axis into a slice whose other axis has a single value
+	// anyway, so it lands exactly where the cell lands. Two links to one
+	// destination read as two choices, and the label looks like a link that
+	// goes nowhere new. The cell is the door; the version header is the one
+	// exception, because a version is a thing a reader wants to hold alone.
+	if x != "version" {
 		g.Cols[0].Href = ""
 	}
-	if y != "version" && !moreToPin {
+	if y != "version" {
 		g.Rows[0].Href = ""
 	}
 	if !moreToPin {

@@ -71,28 +71,30 @@ func TestEveryOfferedOptionLeadsToEvidence(t *testing.T) {
 	}
 }
 
-// The control bar must describe the grid beside it. A symbol axis drops the
-// package-level aggregate — it is the total OVER the symbols, not one of
-// them — and any dimension whose only evidence was package-level disappears
-// from the grid with it. Built from the raw slice, the bar went on offering
-// those values, so hasown showed one runtime column under a runtime control
-// that listed two.
-func TestTheControlBarDescribesTheGridBesideIt(t *testing.T) {
+// A package-level fact is dropped from a symbol-axis GRID, but it still
+// carries a real version, OS and package manager. Building the bar from what
+// the grid renders took hasown 2.0.3 — measured only at package level — out
+// of the version list entirely, so the reader could not select a version the
+// package has.
+func TestTheBarOffersValuesTheSymbolAxisDropped(t *testing.T) {
 	facts := []cubeFact{
-		{Dims: map[string]string{"symbol": "hasOwn", "runtime": "node 22", "tool": "npm 11"},
+		{Dims: map[string]string{"symbol": "hasOwn", "version": "2.0.4", "tool": "npm 11"},
 			Agg: pivotAgg{obsPass: 1}},
-		{Dims: map[string]string{"symbol": cubePackageLevel, "runtime": "node 24", "tool": "npm 10"},
+		{Dims: map[string]string{"symbol": cubePackageLevel, "version": "2.0.3", "tool": "npm 10"},
 			PackageLevel: true, Agg: pivotAgg{obsPass: 1}},
 	}
-	onAxes := cubeFactsOnAxes(facts, "runtime", "symbol")
-	sel, ok := cubeFilterFor(onAxes, "tool", map[string]string{}, "en")
+	sel, ok := cubeFilterFor(facts, "version", map[string]string{}, "en")
 	if !ok {
-		t.Fatal("no tool control")
+		t.Fatal("no version control")
 	}
-	for _, opt := range sel.Options {
-		if opt.Value == "npm 10" {
-			t.Error("the bar offers npm 10, whose only evidence the symbol axis drops")
+	var got []string
+	for _, o := range sel.Options {
+		if o.Value != "" {
+			got = append(got, o.Value)
 		}
+	}
+	if len(got) != 2 {
+		t.Errorf("versions offered = %v, want both the package has", got)
 	}
 }
 

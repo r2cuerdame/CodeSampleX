@@ -1497,8 +1497,13 @@ td.pv .pvbasis { font-size: 0.7rem; }
   display: flex; flex-wrap: wrap; align-items: end; gap: 0.45rem 0.7rem;
   min-width: 0;
 }
+/* Its own line, always. The group sat beside the axis pickers with
+   min-width:0, so flex shrank the whole group to a few pixels rather than
+   wrapping it — and the labels inside, which cannot shrink, overflowed and
+   overlapped into an unreadable stack. Two filters fitted; eight never
+   could. */
 .cubecontrols .ctlgroup.filters {
-  padding-left: 1rem; border-left: 1px solid var(--line);
+  flex: 1 1 100%; padding-top: 0.5rem; border-top: 1px solid var(--line);
 }
 .cubecontrols .ctllabel { align-self: center; font-weight: 700; }
 /* A dimension with one value keeps its dropdown — the bar must not change
@@ -1564,7 +1569,6 @@ table.pivot thead th.corner {
 @media (max-width: 40rem) {
   .cubecontrols { gap: 0.5rem 0.7rem; }
   .cubecontrols .ctlgroup { flex: 1 1 100%; }
-  .cubecontrols .ctlgroup.filters { padding-left: 0; border-left: 0; padding-top: 0.5rem; border-top: 1px solid var(--line); }
   .cubecontrols label { flex: 1 1 8rem; }
   .cubecontrols select { width: 100%; font-size: 16px; }
   .gridbar .axes { margin-left: 0; flex-basis: 100%; white-space: normal; }

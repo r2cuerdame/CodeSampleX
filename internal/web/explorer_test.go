@@ -77,8 +77,13 @@ func TestPackagePage(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	mustContain(t, body, `href="/npm/axios/1.12.0"`)
-	mustContain(t, body, `href="/npm/axios/1.11.0"`)
+	// The version list is gone from a package that has a cube: choosing a
+	// version is what the cube's version axis is for, and a second list of the
+	// same versions underneath it asked the reader which of the two was the
+	// page. Version pages stay reachable through the sitemap.
+	if strings.Contains(body, `href="/npm/axios/1.11.0"`) {
+		t.Error("the package page still carries a second version list beside the cube")
+	}
 	mustContain(t, body, "ERR_REQUIRE_ESM")
 	mustContain(t, body, "regression candidate")
 }

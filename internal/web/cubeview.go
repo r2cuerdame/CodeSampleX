@@ -133,19 +133,24 @@ func cubeCoordDecided(sliced []cubeFact) bool {
 	return true
 }
 
-// cubeFilterBar builds the control bar from the evidence THIS grid renders.
+// cubeFilterBar builds the control bar for the dimensions not on an axis.
+//
+// It reads the whole slice, not what the grid renders. A symbol axis drops
+// the package-level aggregate, but that fact still carries a real version, OS
+// and package manager — hasown 2.0.3 was measured only at package level, and
+// building the bar from the grid's evidence took 2.0.3 out of the version
+// list entirely, so the reader could not select a version the package has.
 //
 // A dimension on an axis needs no dropdown — every value already has its own
 // row or column, and picking one there collapses the axis to a single line,
 // which reads as the grid breaking rather than as a filter working.
 func cubeFilterBar(facts []cubeFact, x, y string, filters map[string]string, lang string) []cubeFilterSelect {
-	onAxes := cubeFactsOnAxes(facts, x, y)
 	var out []cubeFilterSelect
 	for _, dim := range cubeDimKeys {
 		if dim != "" && (dim == x || dim == y) {
 			continue
 		}
-		if sel, ok := cubeFilterFor(onAxes, dim, filters, lang); ok {
+		if sel, ok := cubeFilterFor(facts, dim, filters, lang); ok {
 			out = append(out, sel)
 		}
 	}
