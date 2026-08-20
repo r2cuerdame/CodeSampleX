@@ -244,7 +244,7 @@
   "nav.stats": "통계",
   "nav.wanted": "요청",
   "pkg.clusters": "최근 실패 클러스터",
-  "pkg.clusters_truncated": "기록된 실패 클러스터 %s개 중 가장 많이 보고된 %s개를 보여줍니다. 나머지는 단발 보고입니다.",
+  "pkg.clusters_truncated": "가장 많이 보고된 %s개를 보여줍니다. 이 좌표에 기록된 실패 클러스터는 %s개입니다. 나머지는 단발 보고입니다.",
   "pkg.latest": "증거 기준 최신",
   "pkg.no_clusters": "관측된 실패 클러스터가 없습니다.",
   "pkg.coresident": "한 설치에 두 버전",

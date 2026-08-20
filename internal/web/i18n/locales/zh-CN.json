@@ -244,7 +244,7 @@
   "nav.stats": "统计",
   "nav.wanted": "Wanted",
   "pkg.clusters": "近期失败聚类",
-  "pkg.clusters_truncated": "显示已记录的 %s 个失败聚类中报告最多的 %s 个。其余为单次报告。",
+  "pkg.clusters_truncated": "显示报告最多的 %s 个。此坐标记录的失败聚类共 %s 个。其余为单次报告。",
   "pkg.latest": "有证据的最新版本",
   "pkg.no_clusters": "未观测到失败聚类。",
   "pkg.coresident": "一次安装中的两个版本",

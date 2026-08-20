@@ -655,21 +655,21 @@ func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]
 	}
 	if len(coord) > 0 {
 		clusters = filterClustersToPins(clusters, coord)
-		// total counted the package; it no longer describes what is on
-		// screen, and printing "showing 3 of 133" beside three clusters
-		// from one coordinate would invite the reader to look for 130 more
-		// that were never about this place.
-		total = len(clusters)
 	}
-	// Bounded HERE, after the coordinate has done its narrowing. Bounding
-	// first — which is what the store used to do — meant a cluster recorded
-	// on exactly the environment the reader had drilled to was cut for
-	// ranking low across the whole package, and the coordinate that caused
-	// it showed nothing at all.
-	if len(clusters) > renderedClusterLimit {
-		clusters = clusters[:renderedClusterLimit]
+	// Narrow, then GROUP, then bound — in that order.
+	//
+	// Bounding first, which is what the store used to do, cut a cluster
+	// recorded on exactly the environment the reader had drilled to because it
+	// ranked low across the whole package. Bounding before grouping was the
+	// same mistake one step later: pgx's twelve rows were two failures written
+	// twelve times, so the cap spent itself on duplicates and the count beside
+	// them described the raw rows rather than the failures.
+	views := buildClusters(clusters)
+	total = len(views)
+	if len(views) > renderedClusterLimit {
+		views = views[:renderedClusterLimit]
 	}
-	return buildClusters(clusters), total
+	return views, total
 }
 
 // versionRow is one row of the package's version list: what the network
