@@ -19,6 +19,15 @@
 {{template "matrix" .}}
 {{end}}
 
+{{/* What broke, on this release. A cluster names the versions it was
+     recorded against, so only this one's are here — the rest belong to the
+     releases they happened to. */}}
+{{- if .Clusters}}
+<h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
+{{template "clusters" .}}
+{{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.symbols"}}</h2>
 {{if .Symbols}}
 <ul class="symlist mono">

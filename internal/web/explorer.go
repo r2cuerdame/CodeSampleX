@@ -768,6 +768,11 @@ type versionPage struct {
 	// SymbolGrid answers "which symbol ran on which OS" at a glance; its
 	// cells drill into the package cube with version, symbol and OS pinned.
 	SymbolGrid pivotGrid
+	// Clusters are the failures recorded against THIS release. The page is
+	// where a search result lands and where the cube's exact records link,
+	// and it used to name none of them.
+	Clusters     []clusterView
+	ClusterTotal int
 }
 
 type symbolLink struct {
@@ -812,12 +817,17 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		{version, base + versionHref(eco, name, version)},
 	})}
 	links, residue := symbolLinks(b, eco, name, version, symbols, samples)
+	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
 		Samples:    residue,
 		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
+		// A cluster names its own versions, so this release's failures can be
+		// picked out exactly and the rest left to the package page.
+		Clusters:     clusters,
+		ClusterTotal: clusterTotal,
 	})
 }
 
