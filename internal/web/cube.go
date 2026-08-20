@@ -44,12 +44,18 @@ const (
 // also the ?f_<key>= query parameter that pins it.
 var cubeDimKeys = []string{"os", "runtime", "version", "symbol", "arch", "tool", "context", "libc"}
 
-// Axis defaults: X prefers the dimension a visitor compares along
-// (runtime line, then version, then symbol); Y prefers where they live
-// (OS first). The first entries with ≥2 remaining values win.
+// Axis defaults: version across, symbol down. That is the question the site
+// exists to answer -- does this API work in this release -- and it is the
+// pair that produces a grid rather than a diagonal.
+//
+// It used to be runtime across and OS down, which on this corpus guarantees
+// emptiness: every observation is recorded on Windows and every verification
+// runs on Linux, so an OS axis files the two halves into different rows and
+// no cell can ever hold both. OS remains a filter, where a degenerate
+// dimension belongs.
 var (
-	cubeXAxisPriority = []string{"runtime", "version", "symbol", "context", "tool", "arch", "libc", "os"}
-	cubeYAxisPriority = []string{"os", "arch", "libc", "tool", "version", "symbol", "runtime", "context"}
+	cubeXAxisPriority = []string{"version", "runtime", "symbol", "context", "tool", "arch", "libc", "os"}
+	cubeYAxisPriority = []string{"symbol", "os", "arch", "libc", "tool", "runtime", "version", "context"}
 )
 
 // cubeFact is one snapshot row placed in the cube.

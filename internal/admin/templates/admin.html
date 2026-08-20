@@ -54,7 +54,17 @@
       white-space:pre; margin:0; padding:12px 92px 12px 12px; border-radius:8px;
       background:var(--panel-2,#11151c); border:1px solid var(--line,#232a35);
       font-size:12px; line-height:1.5 }
-    .cmdbox .copy-button { position:absolute; top:8px; right:8px; z-index:1 }.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0 }
+    .cmdbox .copy-button { position:absolute; top:8px; right:8px; z-index:1 }
+    /* .stat had no rule at all, so a label was whatever length the data was:
+       a quarantine reason runs to 160 characters and stretched its column
+       until the grid could not fit three. Labels wrap; values do not. */
+    .stat { min-width:0; display:flex; flex-direction:column; gap:4px;
+      padding:12px; border:1px solid var(--line,#232a35); border-radius:8px;
+      background:var(--panel-2,#11151c) }
+    .stat .label { min-width:0; font-size:12px; line-height:1.45;
+      color:var(--dim,#8b95a6); overflow-wrap:anywhere; hyphens:auto }
+    .stat strong { font-size:18px; font-variant-numeric:tabular-nums }
+    .stat strong.bad { color:var(--bad,#e5534b) }.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0 }
     table { width:100%; border-collapse:collapse; font-size:13px } th { color:var(--muted); text-align:left; font-size:11px; letter-spacing:.06em } th,td { padding:9px 7px; border-bottom:1px solid rgba(91,132,190,.24); vertical-align:top } tbody tr:last-child td { border-bottom:0 }
     code { color:#d9e8ff; font:12px ui-monospace,SFMono-Regular,Consolas,monospace }.raw { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
     ul { margin:0; padding-left:20px } li+li { margin-top:7px }.empty { padding:14px 0; color:var(--muted) }.server { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px }

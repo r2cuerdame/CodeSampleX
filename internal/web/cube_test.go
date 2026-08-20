@@ -152,13 +152,13 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 }
 
 // Default axes follow the priority lists over dimensions that still vary:
-// the first unfiltered slice of this store pivots runtime × os.
+// the first unfiltered slice of this store pivots version × symbol.
 func TestCubeDefaultAxes(t *testing.T) {
 	f := newCubeStore()
 	facts, _, _ := loadCubeFacts(context.Background(), f, "npm", "reactish")
 	x, y, ok := defaultCubeAxes(facts, nil)
-	if !ok || x != "runtime" || y != "os" {
-		t.Fatalf("axes = %s × %s ok=%v, want runtime × os", x, y, ok)
+	if !ok || x != "version" || y != "symbol" {
+		t.Fatalf("axes = %s × %s ok=%v, want version × symbol", x, y, ok)
 	}
 	// Pin both: version still varies inside windows/node 22? No — drill to
 	// a slice where only one combination remains and the cube says leaf.
@@ -236,5 +236,56 @@ func TestCubeGridKeepsDistinctVerifications(t *testing.T) {
 	g := buildCubeGrid(facts, "runtime", "os", pivotLinks{}, pivotNow)
 	if got := cellAt(t, g, "linux", "node 22").Ver; got != 2 {
 		t.Fatalf("cell ver = %d, want 2 — different env buckets are different runs", got)
+	}
+}
+
+// The cube's default axes decide whether a reader sees a grid or a diagonal.
+//
+// They used to be runtime × OS, which on this corpus guarantees emptiness:
+// every observation is recorded on Windows and every verification runs on
+// Linux, so splitting by OS puts the two halves in different rows and no cell
+// ever holds both. Version × symbol is also the question the site exists to
+// answer — does this API work in this release — and it is dense.
+func TestCubeDefaultsToVersionBySymbol(t *testing.T) {
+	facts := []cubeFact{}
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		for _, symbol := range []string{"a.Call", "b.Call"} {
+			for _, os := range []string{"linux", "windows"} {
+				facts = append(facts, cubeFact{Dims: map[string]string{
+					"version": version, "symbol": symbol, "os": os,
+					"runtime": "node 22", "arch": "x64",
+				}})
+			}
+		}
+	}
+	x, y, ok := defaultCubeAxes(facts, nil)
+	if !ok {
+		t.Fatal("no axes chosen for a cube that varies in four dimensions")
+	}
+	if x != "version" || y != "symbol" {
+		t.Errorf("axes = %s × %s, want version × symbol", x, y)
+	}
+}
+
+// With one release there is nothing to compare along the version axis, so it
+// must fall through rather than render a single column.
+func TestCubeFallsBackWhenVersionDoesNotVary(t *testing.T) {
+	facts := []cubeFact{}
+	for _, symbol := range []string{"a.Call", "b.Call"} {
+		for _, runtime := range []string{"node 20", "node 22"} {
+			facts = append(facts, cubeFact{Dims: map[string]string{
+				"version": "1.0.0", "symbol": symbol, "runtime": runtime, "os": "linux",
+			}})
+		}
+	}
+	x, y, ok := defaultCubeAxes(facts, nil)
+	if !ok {
+		t.Fatal("no axes chosen")
+	}
+	if x == "version" {
+		t.Errorf("x = %s; a single release is not an axis", x)
+	}
+	if y != "symbol" {
+		t.Errorf("y = %s, want symbol", y)
 	}
 }

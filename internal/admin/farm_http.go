@@ -210,5 +210,5 @@ func quarantineReasonView(byReason map[string]int) []map[string]any {
 
 const (
 	maxQuarantineReasons     = 12
-	maxQuarantineReasonBytes = 160
+	maxQuarantineReasonBytes = 96
 )

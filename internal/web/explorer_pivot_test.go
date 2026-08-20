@@ -23,12 +23,14 @@ func TestPackagePageRendersCubeExplorer(t *testing.T) {
 	mustContain(t, body, `action="/npm/reactish#cube"`)
 	mustContain(t, body, `id="cube"`)
 	mustContain(t, body, `<table class="pivot">`)
-	// Default axes on this data: runtime × os.
-	mustContain(t, body, "node 22")
-	mustContain(t, body, "windows")
-	// A cell drills down by pinning its coordinates (html/template
-	// escapes "+" as &#43; inside href attributes).
-	mustContain(t, body, `/npm/reactish?f_os=windows&amp;f_runtime=node&#43;22`)
+	// Default axes on this data: version × symbol — the question the site
+	// exists to answer, and the pair that fills cells. An OS axis would file
+	// every observation into one row and every verification into another.
+	mustContain(t, body, "19.1.0")
+	mustContain(t, body, "hydrateRoot")
+	// A cell drills down by pinning its coordinates.
+	mustContain(t, body, `f_version=19.1.0`)
+	mustContain(t, body, `f_symbol=hydrateRoot`)
 }
 
 // Drilling into a slice turns the pinned dimensions into removable chips
