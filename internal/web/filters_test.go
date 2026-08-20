@@ -28,12 +28,14 @@ func TestHexRuntimeFilterUsesRecordedElixir(t *testing.T) {
 		OperatingSystems: []string{"linux"}, Runtimes: []string{"elixir"},
 		EvidenceBases: []string{"verified"},
 	})
+	// The dropdown is gone -- runtime is very nearly a restatement of the
+	// ecosystem (npm is node, pypi is python, golang is go), so it offered a
+	// second control for a choice already made. The PARAMETER still filters,
+	// because links carrying it were published and must keep working.
 	body := get(t, mux, "/records?eco=hex&runtime=elixir").Body.String()
 	mustContain(t, body, `href="/hex/req"`)
-	mustContain(t, body, `<option value="elixir" selected>`)
-	if strings.Contains(body, `<option value="beam"`) {
-		t.Error("runtime filter still exposes an unrecorded beam bucket")
-	}
+	mustNotContain(t, body, `<select name="runtime">`)
+	mustNotContain(t, body, `<select name="basis">`)
 }
 
 func TestMavenJavaFiltersAreAccepted(t *testing.T) {

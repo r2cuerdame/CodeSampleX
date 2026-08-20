@@ -12,14 +12,6 @@
     <option value="">{{.T "filters.all"}}</option>
     {{range .OSOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
   </select></label>
-  <label><span>{{.T "filters.runtime"}}</span><select name="runtime">
-    <option value="">{{.T "filters.all"}}</option>
-    {{range .RuntimeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-  </select></label>
-  <label><span>{{.T "filters.basis"}}</span><select name="basis">
-    <option value="">{{.T "filters.all"}}</option>
-    {{range .BasisOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-  </select></label>
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
   <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasFilters}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>
