@@ -1505,7 +1505,11 @@ td.pv .pvbasis { font-size: 0.7rem; }
    shape as the reader drills — but it is decided, not chosen, so it sits
    quieter than a filter the reader placed themselves. */
 .cubecontrols label.fixed select { color: var(--dim); border-style: dashed; }
-.cubecontrols label { display: grid; gap: 0.15rem; color: var(--dim); min-width: 0; }
+/* min-width:0 let every control shrink instead of wrapping. With two filters
+   that was invisible; with all eight dimensions offered it crushed the labels
+   into each other and squeezed the dropdowns to a few pixels. A control that
+   cannot fit on this line belongs on the next one. */
+.cubecontrols label { display: grid; gap: 0.15rem; color: var(--dim); min-width: 6.5rem; }
 .cubecontrols label.on { color: var(--accent-2); font-weight: 700; }
 .cubecontrols select {
   font: 0.78rem var(--mono); padding: 0.26rem 0.4rem;
@@ -1513,7 +1517,7 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--panel); color: var(--text);
   /* A dimension whose values are long (symbols, module paths) must not
      stretch the control bar to the width of its longest option. */
-  max-width: 12rem; text-overflow: ellipsis;
+  max-width: 12rem; min-width: 6.5rem; width: 100%; text-overflow: ellipsis;
 }
 .cubecontrols label.on select { border-color: var(--accent); }
 .cubecontrols .clearfilters { align-self: center; }
