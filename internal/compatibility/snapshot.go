@@ -30,13 +30,29 @@ type SnapshotRow struct {
 	LastSeen           string           `json:"lastSeen,omitempty"`
 }
 
-// FailureSummary is one failure signature aggregated inside a snapshot.
+// FailureSummary is one failure signature in one environment.
+//
+// It used to be one signature across ALL environments, with EnvSummary set to
+// the intersection of every failing environment's dimensions -- so the moment
+// windows and linux shared a fingerprint the platform disappeared, and the
+// cell a reader actually wants ("windows / node 20 failed at COMPILE with
+// ERR_REQUIRE_ESM") existed nowhere in the document.
 type FailureSummary struct {
 	Stage       string            `json:"stage"`
 	ErrorCode   string            `json:"errorCode,omitempty"`
 	Fingerprint string            `json:"fingerprint,omitempty"`
 	Count       int64             `json:"count"`
 	EnvSummary  map[string]string `json:"envSummary,omitempty"`
+	// Reporters and Projects are how WIDESPREAD the failure is, and they are
+	// the honest ranking axis. Count is observations, which one machine
+	// building all afternoon inflates without telling anyone anything: a
+	// looping local developer outranked a fleet-wide break.
+	//
+	// Both are peaks within a single epoch and never sums across days -- the
+	// dedup ledger is per epoch by design, and adding them would let one
+	// machine manufacture a fleet.
+	Reporters int `json:"reporters,omitempty"`
+	Projects  int `json:"projects,omitempty"`
 }
 
 // Snapshot is the §7.8 read-optimized compatibility document stored per
@@ -211,11 +227,17 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 	}
 }
 
-// failureSummaries groups FAIL evidence by (stage, fingerprint, code).
+// failureSummaries groups FAIL evidence by (stage, fingerprint, code) AND by
+// the environment it happened in, ranked by how many distinct machines saw it.
 func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
-	type fkey struct{ stage, fp, code string }
-	counts := map[fkey]int64{}
-	envs := map[fkey][]domain.EnvironmentFingerprint{}
+	type fkey struct{ stage, fp, code, envHash string }
+	type agg struct {
+		count               int64
+		reporters, projects int
+		env                 domain.EnvironmentFingerprint
+		hasEnv              bool
+	}
+	groups := map[fkey]*agg{}
 	for _, row := range evidence {
 		if row.Result != string(domain.ResultFail) {
 			continue
@@ -223,34 +245,59 @@ func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
 		if row.ErrorFingerprint == "" && row.ErrorCode == "" {
 			continue
 		}
-		k := fkey{row.Stage, row.ErrorFingerprint, row.ErrorCode}
-		counts[k] += row.ObservationCount
-		if env, ok := parseEnv(row.EnvJSON); ok {
-			envs[k] = append(envs[k], env)
+		k := fkey{row.Stage, row.ErrorFingerprint, row.ErrorCode, row.EnvHash}
+		a := groups[k]
+		if a == nil {
+			a = &agg{}
+			groups[k] = a
+		}
+		a.count += row.ObservationCount
+		// Peak, not sum. Two epochs of the same machine are one machine.
+		if row.UniquePeerBuckets > a.reporters {
+			a.reporters = row.UniquePeerBuckets
+		}
+		if row.UniqueProjectBuckets > a.projects {
+			a.projects = row.UniqueProjectBuckets
+		}
+		if env, ok := parseEnv(row.EnvJSON); ok && !a.hasEnv {
+			a.env, a.hasEnv = env, true
 		}
 	}
-	keys := make([]fkey, 0, len(counts))
-	for k := range counts {
+	keys := make([]fkey, 0, len(groups))
+	for k := range groups {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if counts[keys[i]] != counts[keys[j]] {
-			return counts[keys[i]] > counts[keys[j]]
+		a, b := groups[keys[i]], groups[keys[j]]
+		if a.reporters != b.reporters {
+			return a.reporters > b.reporters
+		}
+		if a.count != b.count {
+			return a.count > b.count
 		}
 		if keys[i].stage != keys[j].stage {
 			return keys[i].stage < keys[j].stage
 		}
-		return keys[i].fp < keys[j].fp
+		if keys[i].fp != keys[j].fp {
+			return keys[i].fp < keys[j].fp
+		}
+		return keys[i].envHash < keys[j].envHash
 	})
 	out := make([]FailureSummary, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, FailureSummary{
+		a := groups[k]
+		f := FailureSummary{
 			Stage:       k.stage,
 			ErrorCode:   k.code,
 			Fingerprint: k.fp,
-			Count:       counts[k],
-			EnvSummary:  envSummary(envs[k]),
-		})
+			Count:       a.count,
+			Reporters:   a.reporters,
+			Projects:    a.projects,
+		}
+		if a.hasEnv {
+			f.EnvSummary = envSummary([]domain.EnvironmentFingerprint{a.env})
+		}
+		out = append(out, f)
 	}
 	return out
 }

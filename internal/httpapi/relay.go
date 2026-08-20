@@ -113,9 +113,19 @@ func (a *api) relayObservations(ctx context.Context, purls []domain.PURL, symbol
 			Fingerprint: f.Fingerprint,
 			Count:       f.Count,
 			Environment: f.EnvSummary,
+			Reporters:   f.Reporters,
+			Projects:    f.Projects,
 		})
 	}
-	sort.SliceStable(out.Errors, func(i, j int) bool { return out.Errors[i].Count > out.Errors[j].Count })
+	// Ranked by how many machines saw it, not by how many times it happened.
+	// A developer looping locally reports thousands of occurrences from one
+	// machine, and ordering by Count puts them above a fleet-wide break.
+	sort.SliceStable(out.Errors, func(i, j int) bool {
+		if out.Errors[i].Reporters != out.Errors[j].Reporters {
+			return out.Errors[i].Reporters > out.Errors[j].Reporters
+		}
+		return out.Errors[i].Count > out.Errors[j].Count
+	})
 	if len(out.Errors) > relayMaxErrors {
 		out.Errors = out.Errors[:relayMaxErrors]
 	}

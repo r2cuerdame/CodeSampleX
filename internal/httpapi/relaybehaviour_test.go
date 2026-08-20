@@ -143,3 +143,51 @@ func TestV1MissCarriesNoRelay(t *testing.T) {
 		t.Error("v1 response gained an observed key")
 	}
 }
+
+// A developer looping locally reports thousands of occurrences from one
+// machine. Ordering the distribution by occurrence count puts them above a
+// break that hit a hundred machines once each, which inverts the only thing
+// the reader wants to know.
+func TestRelayedErrorsRankByMachinesNotOccurrences(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	snap := relaySnapshot(9)
+	snap.Failures = []compatibility.FailureSummary{
+		{Stage: "PROJECT_COMPILE", ErrorCode: "LOCAL_LOOP", Fingerprint: "sha256:bbb",
+			Count: 5000, Reporters: 1, Projects: 1,
+			EnvSummary: map[string]string{"os": "linux"}},
+		{Stage: "PROJECT_COMPILE", ErrorCode: "ERR_REQUIRE_ESM", Fingerprint: "sha256:aaa",
+			Count: 300, Reporters: 184, Projects: 152,
+			EnvSummary: map[string]string{"os": "windows"}},
+	}
+	js, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutSnapshot(context.Background(), "pkg:npm/lonely@1.0.0", "", string(js)); err != nil {
+		t.Fatal(err)
+	}
+	var got domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v2/search", map[string]any{
+		"schemaVersion": 1, "goal": "use lonely",
+		"packages":    []string{"pkg:npm/lonely@1.0.0"},
+		"environment": map[string]any{"schemaVersion": 1, "ecosystem": "npm", "os": "windows"},
+	}, nil)
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed == nil || len(got.Observed.Errors) != 2 {
+		t.Fatalf("errors = %+v", got.Observed)
+	}
+	first := got.Observed.Errors[0]
+	if first.ErrorCode != "ERR_REQUIRE_ESM" {
+		t.Errorf("ranked %q first; 5,000 occurrences from one machine is one data point",
+			first.ErrorCode)
+	}
+	if first.Reporters != 184 || first.Projects != 152 {
+		t.Errorf("machine and project counts did not survive the relay: %+v", first)
+	}
+	if first.Environment["os"] != "windows" {
+		t.Errorf("the failure lost the platform it happened on: %+v", first.Environment)
+	}
+}

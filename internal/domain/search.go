@@ -151,6 +151,11 @@ type ObservedError struct {
 	Fingerprint string            `json:"fingerprint,omitempty"`
 	Count       int64             `json:"count"`
 	Environment map[string]string `json:"environment,omitempty"`
+	// Reporters and Projects say how widespread the failure is. Count alone
+	// is misleading: one machine building all afternoon reports thousands of
+	// occurrences and proves nothing about anyone else.
+	Reporters int `json:"reporters,omitempty"`
+	Projects  int `json:"projects,omitempty"`
 }
 
 // ObservedReports is what the network already recorded about a coordinate
@@ -161,9 +166,9 @@ type ObservedError struct {
 // between saying so with an empty hand and saying so while handing over
 // everything already known.
 type ObservedReports struct {
-	PURL   string         `json:"purl"`
-	Symbol string         `json:"symbol,omitempty"`
-	Cells  []ObservedCell `json:"cells,omitempty"`
+	PURL   string          `json:"purl"`
+	Symbol string          `json:"symbol,omitempty"`
+	Cells  []ObservedCell  `json:"cells,omitempty"`
 	Errors []ObservedError `json:"errors,omitempty"`
 	// Basis is always ObservedBasis. It is stated on the wire so a reader
 	// cannot mistake the payload for verification by omission.
