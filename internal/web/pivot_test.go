@@ -72,14 +72,15 @@ func TestPivotSeparatesObservationFromVerification(t *testing.T) {
 	if c.Basis != "verified" || c.Class != "verified" {
 		t.Errorf("basis = %q/%q, want verified/verified", c.Basis, c.Class)
 	}
-	if c.Bang || c.Maybe {
-		t.Errorf("clean verified pass carries markers: bang=%v maybe=%v", c.Bang, c.Maybe)
+	if c.Bang {
+		t.Errorf("clean verified pass carries an anomaly marker")
 	}
 }
 
-// A cell with only build observations is honest about its weakness: it
-// renders OBSERVED with the "?" marker, never PASS.
-func TestPivotObservationOnlyCellIsMarkedUncertain(t *testing.T) {
+// A cell with only build observations says so by carrying no verification
+// mark. The old "?" said the same thing twice, and its other meaning --
+// stale -- no longer applies to a pinned release in a pinned environment.
+func TestPivotObservationOnlyCellCarriesNoVerificationMark(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("linux", "", "node", "22.18", "2026-08-12T10:00:00Z", map[string]stageCount{
 			"PROJECT_COMPILE": {Pass: 40},
@@ -90,14 +91,11 @@ func TestPivotObservationOnlyCellIsMarkedUncertain(t *testing.T) {
 	if c.Basis != "observed" || c.Class != "observed" {
 		t.Fatalf("basis = %q/%q, want observed/observed", c.Basis, c.Class)
 	}
-	if !c.Maybe {
-		t.Error("observation-only cell must carry the ? marker")
+	if c.Glyph != "" {
+		t.Errorf("observation-only cell carries a mark %q; absence is the signal", c.Glyph)
 	}
 	if c.Bang {
 		t.Error("passing observations are not an anomaly")
-	}
-	if !g.HasMaybe {
-		t.Error("grid must know it contains a ? marker for the legend")
 	}
 }
 
@@ -115,13 +113,13 @@ func TestPivotVerificationFailureIsMarkedBang(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	mixed := cellAt(t, g, "windows", "node 24")
-	if mixed.Basis != "verified" || mixed.Ratio != "1/2" || !mixed.Bang {
-		t.Errorf("mixed cell = %q %q bang=%v, want verified 1/2 with !",
+	if mixed.Basis != "verified" || mixed.Ratio != "50%" || !mixed.Bang {
+		t.Errorf("mixed cell = %q %q bang=%v, want verified 50%% with !",
 			mixed.Basis, mixed.Ratio, mixed.Bang)
 	}
 	fail := cellAt(t, g, "linux", "node 24")
-	if fail.Basis != "verified" || fail.Class != "verified" || fail.Ratio != "0/3" || !fail.Bang {
-		t.Errorf("fail cell = %q/%q %q bang=%v, want verified/verified 0/3 with !",
+	if fail.Basis != "verified" || fail.Class != "verified" || fail.Ratio != "0%" || !fail.Bang {
+		t.Errorf("fail cell = %q/%q %q bang=%v, want verified/verified 0%% with !",
 			fail.Basis, fail.Class, fail.Ratio, fail.Bang)
 	}
 	if !g.HasBang {
@@ -143,8 +141,12 @@ func TestPivotElevatedObservationIsMarkedBang(t *testing.T) {
 }
 
 // Evidence older than the 90-day recency half-life is stale — marked "?"
-// and named stale in the tooltip.
-func TestPivotStaleCellIsMarkedMaybe(t *testing.T) {
+// Age is not a defect here. A cell is one pinned release in one environment
+// bucket, and neither moves: that axios 1.6.0 failed on node 20 does not
+// become less true in ninety days. What can change is the environment, and a
+// new environment is a different cell -- so the date is reported and nothing
+// is marked stale.
+func TestPivotDoesNotAgeAPinnedCoordinate(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("linux", "", "node", "22.1", "2026-05-01T00:00:00Z", map[string]stageCount{
 			"CONTRACT": {Pass: 3},
@@ -152,42 +154,17 @@ func TestPivotStaleCellIsMarkedMaybe(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	c := cellAt(t, g, "linux", "node 22")
-	if !c.Stale || !c.Maybe {
-		t.Fatalf("stale=%v maybe=%v, want both true for 110-day-old evidence", c.Stale, c.Maybe)
+	if strings.Contains(c.Tip, "stale") {
+		t.Errorf("tooltip %q still ages a pinned coordinate", c.Tip)
 	}
-	if !strings.Contains(c.Tip, "stale") {
-		t.Errorf("tooltip %q does not say stale", c.Tip)
+	if !strings.Contains(c.Tip, "last seen 2026-05-01") {
+		t.Errorf("tooltip %q must still date the evidence", c.Tip)
 	}
-}
-
-// A fresh build observation must not freshen a stale verification: the
-// cell's verdict comes from the verification side, so its staleness does
-// too.
-func TestPivotStaleFollowsVerificationRecency(t *testing.T) {
-	rows := []snapshotRow{
-		// 230-day-old contract pass decides the state…
-		pvRow("linux", "", "node", "22.14", "2026-01-01T00:00:00Z", map[string]stageCount{
-			"CONTRACT": {Pass: 1},
-		}),
-		// …while a fresh observation arrives in the same bucket.
-		pvRow("linux", "", "node", "22.18", "2026-08-18T00:00:00Z", map[string]stageCount{
-			"PROJECT_COMPILE": {Pass: 1},
-		}),
-	}
-	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
-	c := cellAt(t, g, "linux", "node 22")
-	if c.Basis != "verified" {
-		t.Fatalf("basis = %q, want verified from the verification", c.Basis)
-	}
-	if !c.Stale || !c.Maybe {
-		t.Errorf("stale=%v maybe=%v — the fresh observation hid the verification's age", c.Stale, c.Maybe)
-	}
-	if !strings.Contains(c.Tip, "last seen 2026-01-01") {
-		t.Errorf("tooltip %q must date the evidence the verdict rests on", c.Tip)
+	if c.Glyph != "◆" {
+		t.Errorf("glyph = %q; old evidence is still evidence we ran", c.Glyph)
 	}
 }
 
-// Cross-checked needs at least two distinct verifying peers.
 func TestPivotCrossCheckedNeedsTwoPeers(t *testing.T) {
 	one := pvRow("linux", "", "node", "22.1", "2026-08-12T10:00:00Z", map[string]stageCount{
 		"CONTRACT": {Pass: 2},
@@ -227,10 +204,10 @@ func TestPivotAxisBucketing(t *testing.T) {
 	if merged.Ver != 2 {
 		t.Errorf("linux cell ver = %d, want the 22.18 and 22.4 rows merged to 2", merged.Ver)
 	}
-	if cellAt(t, g, "linux musl", "node 22").Ratio != "0/1" {
+	if cellAt(t, g, "linux musl", "node 22").Ratio != "0%" {
 		t.Error("musl is a separate row from glibc linux")
 	}
-	if cellAt(t, g, "macos", "node 22").Ratio != "1/1" {
+	if cellAt(t, g, "macos", "node 22").Ratio != "100%" {
 		t.Error("darwin must display as macos")
 	}
 }
@@ -345,17 +322,20 @@ func TestPivotCellRatioShowsHiddenDepth(t *testing.T) {
 		}),
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
-	if got := cellAt(t, g, "linux", "node 22").Ratio; got != "15/18" {
-		t.Errorf("mixed cell ratio = %q, want 15/18", got)
+	if got := cellAt(t, g, "linux", "node 22").Ratio; got != "83%" {
+		t.Errorf("mixed cell ratio = %q, want 83%%", got)
 	}
-	// A single run states its rate too. Blanking it rendered one run exactly
-	// like eighteen agreeing ones, and how thin the evidence is IS part of
-	// the measurement.
-	if got := cellAt(t, g, "windows", "node 22").Ratio; got != "1/1" {
-		t.Errorf("single-event cell ratio = %q, want 1/1", got)
+	// A single run states its rate too, and the run count beside it is what
+	// keeps 100%-of-one from reading like 100%-of-eighteen.
+	single := cellAt(t, g, "windows", "node 22")
+	if single.Ratio != "100%" || single.Runs != 1 {
+		t.Errorf("single-event cell = %q of %d, want 100%% of 1", single.Ratio, single.Runs)
 	}
-	if got := cellAt(t, g, "macos", "node 22").Ratio; got != "7/8" {
-		t.Errorf("observation-only cell ratio = %q, want 7/8", got)
+	if deep := cellAt(t, g, "linux", "node 22"); deep.Runs != 18 {
+		t.Errorf("mixed cell runs = %d, want the 18 the percentage rests on", deep.Runs)
+	}
+	if got := cellAt(t, g, "macos", "node 22").Ratio; got != "88%" {
+		t.Errorf("observation-only cell ratio = %q, want 88%%", got)
 	}
 }
 

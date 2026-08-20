@@ -31,7 +31,7 @@ func TestLandingRendersHotPackageMatrix(t *testing.T) {
 	}
 	// The Windows/node-22 slice holds hydrateRoot's contract failure — the
 	// cell says FAIL and carries the anomaly marker, never a bare color.
-	mustContain(t, body, `class="glyph" aria-hidden="true">✓</span>`)
+	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
 	mustContain(t, body, `<b class="mark bang" aria-hidden="true">!</b>`)
 	// Cells link into the package cube with their coordinates pinned
 	// (html/template escapes "+" as &#43; inside href attributes).

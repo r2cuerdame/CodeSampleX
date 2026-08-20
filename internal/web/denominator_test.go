@@ -34,7 +34,11 @@ func TestAdoptionMetricsNeverExpandHomepageStats(t *testing.T) {
 			if got := strings.Count(body, `<div class="stat">`); got != 3 {
 				t.Errorf("reports=%d rendered %d stat cards, want 3", reports, got)
 			}
-			for _, omitted := range []string{"Post-hit success rate", "Estimated reasoning avoided", "reported build", "100%"} {
+			// "100%" left this list when cells started stating a percentage:
+			// a matrix cell reading 100% is a measurement, not an adoption
+			// metric, and the named phrases are what this guard is actually
+			// about.
+			for _, omitted := range []string{"Post-hit success rate", "Estimated reasoning avoided", "reported build"} {
 				if strings.Contains(body, omitted) {
 					t.Errorf("reports=%d rendered adoption metric %q", reports, omitted)
 				}

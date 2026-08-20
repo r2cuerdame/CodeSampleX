@@ -24,7 +24,8 @@ const (
 	pivotMaxCols = 8
 	pivotMaxRows = 6
 
-	// pivotStaleAfter mirrors the 90-day half-life of RecencyDecay
+	// pivotStaleAfter is retained only by callers outside the cell; cells
+	// no longer age. It mirrors the 90-day half-life of RecencyDecay
 	// (internal/compatibility/confidence.go): evidence that old still
 	// renders, but carries the "?" marker and says "stale".
 	pivotStaleAfter = 90 * 24 * time.Hour
@@ -59,25 +60,38 @@ type pivotCell struct {
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
 	Tone  string
-	// Glyph marks the rare thing. A cell we proved carries the verification
-	// mark; an unproven one carries nothing here and is already marked weak
-	// by Maybe. Badging the exception is the point: a mark on 95% of cells
-	// says nothing.
-	Glyph string // "✓" | "" | "—"
+	// Glyph marks the rare thing: a cell WE RAN carries it, doubled when two
+	// independent peers reproduced it. An unproven cell carries nothing here
+	// and needs none -- badging the exception is the
+	// point, since a mark on 95% of cells says nothing.
+	//
+	// It is deliberately not a check mark. A check means "passed" everywhere
+	// it appears, and this marks the BASIS, so a cell we ran and that failed
+	// rendered as a red tick beside 0/1 -- putting the verdict back into the
+	// glyph after taking it out of the word.
+	Glyph string // "◆" | "◆◆" | "" | "—"
 	// Bang marks a measured anomaly: an elevated failure rate or any
-	// verification FAIL. Maybe marks weak or aged evidence: a cell proven
-	// only by project observations, or one whose newest evidence is stale.
-	Bang  bool
-	Maybe bool
-	Stale bool
+	// verification FAIL.
+	//
+	// There is no second marker beside it. "?" meant unverified OR stale,
+	// and both halves went: unverified is what the ABSENCE of the
+	// verification mark already says, and a pinned release in a pinned
+	// environment does not go stale. Two markers plus a mark plus a colour
+	// plus a rate was more legend than a reader will hold.
+	Bang bool
 	// Cross is set when ≥2 distinct peers verified inside this bucket.
 	Cross bool
 	Href  string
 	Tip   string // title attribute; English data values, never translated
-	// Ratio is the measurement itself: passes over runs, on the basis the
-	// cell names. It is present whenever anything was recorded -- a lone
-	// "1/1" says how thin the evidence is, which a bare mark concealed.
+	// Ratio is the measurement, as a percentage a reader can scan down a
+	// column: "95%". Runs is the denominator that percentage threw away.
+	//
+	// Both are rendered, and that is the point. 100% from one run and 100%
+	// from a hundred are the same percentage and very different evidence, so
+	// dropping the count would restore exactly the overstatement the rate
+	// was introduced to remove.
 	Ratio string
+	Runs  int64
 	Obs   int64 // observation events (USED / PROJECT_*)
 	Ver   int64 // verification events (RESOLVE…CONTRACT, SYMBOL_*)
 	// PassCount and FailCount are the numerator and the remainder of Ratio,
@@ -152,7 +166,6 @@ type pivotGrid struct {
 	Cols     []pivotAxis
 	Rows     []pivotGridRow
 	HasBang  bool
-	HasMaybe bool
 	// Trimmed is set when the caps dropped lower-evidence rows or columns,
 	// so the template can say the grid shows the most-measured slice.
 	Trimmed bool
@@ -473,9 +486,6 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			if cell.Bang {
 				g.HasBang = true
 			}
-			if cell.Maybe {
-				g.HasMaybe = true
-			}
 			switch {
 			case cell.Basis == "observed":
 				g.CountObserved++
@@ -602,8 +612,15 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// the basis is about who ran it, never about how many said so.
 	switch {
 	case ver > 0:
-		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "✓"
+		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "◆"
 		cell.PassCount, cell.FailCount = a.verPass, a.verFail
+		// One mark that escalates, not two marks that collide. Cross
+		// verification already implies verification, so a cell reproduced by
+		// two independent peers rendered "✓ 4/4 ✓✓" -- three check marks
+		// carrying two meanings, one before the number and two after.
+		if a.cross {
+			cell.Glyph = "◆◆"
+		}
 	case obs > 0:
 		cell.Basis, cell.Class, cell.Glyph = "observed", "observed", ""
 		cell.PassCount, cell.FailCount = a.obsPass, a.obsFail
@@ -618,23 +635,23 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	default:
 		cell.Tone = "mixed"
 	}
-	// Staleness follows the evidence class the cell's verdict comes from:
-	// a fresh observation never freshens a stale verification's PASS.
+	// Last-seen is still reported in the tooltip, but nothing is marked
+	// stale any more. A cell is one pinned release in one environment
+	// bucket, and neither moves: evidence that axios 1.6.0 failed on
+	// node 20 does not become less true in ninety days. What can change is
+	// the environment, and a new environment is a different cell.
 	basisLastSeen := a.verLastSeen
 	if ver == 0 {
 		basisLastSeen = a.obsLastSeen
 	}
-	if basisLastSeen != "" {
-		if ts, err := time.Parse(time.RFC3339, basisLastSeen); err == nil && now.Sub(ts) > pivotStaleAfter {
-			cell.Stale = true
-		}
-	}
 	cell.Bang = a.elevated || a.verFail > 0
-	cell.Maybe = ver == 0 || cell.Stale
-	// Always rendered, including "1/1". Suppressing the single-event case
-	// hid exactly how thin a cell was behind a mark that looked the same as
-	// a hundred agreeing runs.
-	cell.Ratio = fmt.Sprintf("%d/%d", cell.PassCount, cell.PassCount+cell.FailCount)
+	// Always rendered, including a single run. Suppressing the one-event
+	// case hid exactly how thin a cell was behind a mark that looked the
+	// same as a hundred agreeing runs.
+	cell.Runs = cell.PassCount + cell.FailCount
+	if cell.Runs > 0 {
+		cell.Ratio = fmt.Sprintf("%d%%", int(float64(cell.PassCount)/float64(cell.Runs)*100+0.5))
+	}
 
 	var parts []string
 	if obs > 0 {
@@ -659,9 +676,6 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	}
 	if cell.Cross {
 		parts = append(parts, "cross-checked")
-	}
-	if cell.Stale {
-		parts = append(parts, "stale")
 	}
 	cell.Tip = strings.Join(parts, " · ")
 	return cell

@@ -349,18 +349,23 @@ document.addEventListener('keydown',event=>{
 </div>
 {{end}}
 
-{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono dim">{{.Ratio}}</span>{{end}}{{if .Bang}}<b class="mark bang" aria-hidden="true">!</b>{{end}}{{if .Maybe}}<b class="mark maybe" aria-hidden="true">?</b>{{end}}{{if .Cross}}<span class="pvcross mono" aria-hidden="true">✓✓</span>{{end}}{{end}}
+{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono">{{.Ratio}}</span><span class="pvruns mono dim">{{.Runs}}</span>{{end}}{{if .Bang}}<b class="mark bang" aria-hidden="true">!</b>{{end}}{{end}}
 
-{{/* pivotlegend explains the pivot glyphs and markers. It receives the
-     page (for .T); render it once near any pivot. */}}
+{{/* pivotlegend teaches the cell before it lists the marks. A symbol list
+     answers "what is this glyph"; a reader's actual question is "what does
+     this cell say", and two worked examples answer it in one pass. Render it
+     once near any pivot; it receives the page for .T. */}}
 {{define "pivotlegend"}}
-<ul class="pivotlegend mono small">
-  <li><span class="glyph" aria-hidden="true">✓</span> {{.T "landing.legend_verified"}}</li>
-  <li><span class="glyph" aria-hidden="true">·</span> {{.T "landing.legend_observed"}}</li>
-  <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
-  <li><span class="pvratio mono dim">n/m</span> {{.T "landing.legend_rate"}}</li>
-  <li><b class="mark bang">!</b> {{.T "landing.legend_bang"}}</li>
-  <li><b class="mark maybe">?</b> {{.T "landing.legend_maybe"}}</li>
-  <li><span class="pvcross">✓✓</span> {{.T "landing.legend_cross"}}</li>
-</ul>
+<div class="pivotlegend">
+  <p class="small"><strong>{{.T "legend.how_heading"}}</strong> {{.T "legend.how_rate"}}</p>
+  <ul class="legendexamples mono small">
+    <li><span class="ex"><span class="glyph">◆</span> <span class="pvratio">100%</span><span class="pvruns dim">4</span></span> {{.T "legend.example_verified"}}</li>
+    <li><span class="ex"><span class="pvratio">95%</span><span class="pvruns dim">312</span></span> {{.T "legend.example_observed"}}</li>
+  </ul>
+  <ul class="pivotlegend-marks mono small">
+    <li><span class="glyph" aria-hidden="true">◆◆</span> {{.T "landing.legend_cross"}}</li>
+    <li><b class="mark bang">!</b> {{.T "landing.legend_bang"}}</li>
+    <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
+  </ul>
+</div>
 {{end}}

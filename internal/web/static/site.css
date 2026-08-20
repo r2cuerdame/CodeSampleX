@@ -1312,7 +1312,12 @@ td.pv.t-mixed .glyph { color: var(--mid); }
 td.pv.observed .glyph, td.pv.observed .pvbasis { opacity: 0.72; }
 td.pv.observed .pvbasis { font-weight: 500; }
 td.pv.verified .pvbasis { font-weight: 800; }
-td.pv .pvratio { font-size: 0.72rem; }
+td.pv .pvratio { font-size: 0.78rem; font-weight: 700; }
+/* The run count is the denominator the percentage threw away. 100% from one
+   run and 100% from a hundred are the same percentage and very different
+   evidence, so it is always beside it -- smaller, never absent. */
+td.pv .pvruns { font-size: 0.66rem; }
+td.pv .pvruns::before { content: " d7"; opacity: 0.6; }
 .mark { font-weight: 800; font-style: normal; }
 .mark.bang { color: var(--bad); }
 .mark.maybe { color: var(--mid); }
@@ -1673,3 +1678,13 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
    and says what it is. */
 .cluster .hyprow { opacity: 0.78; }
 .cluster .hyprow .k { font-weight: 500; }
+
+/* The legend teaches the cell before listing marks: a symbol list answers
+   "what is this glyph", but a reader is asking "what does this cell say". */
+.pivotlegend .legendexamples { list-style: none; padding: 0; margin: 6px 0 8px; }
+.pivotlegend .legendexamples li { display: flex; align-items: baseline; gap: 0.6rem; margin: 3px 0; }
+.pivotlegend .legendexamples .ex { display: inline-flex; align-items: baseline; gap: 0.3rem;
+  min-width: 7.5rem; padding: 2px 8px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--line); }
+.pivotlegend-marks { list-style: none; padding: 0; margin: 0; display: flex;
+  flex-wrap: wrap; gap: 0.4rem 1.1rem; }

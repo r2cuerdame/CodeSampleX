@@ -140,8 +140,9 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 		t.Fatalf("cols = %v, want versions newest first", g.Cols)
 	}
 	c := cellAt(t, g, "x64", "19.1.0")
-	if c.Basis != "verified" || c.Ratio != "0/2" || !c.Bang {
-		t.Errorf("windows/x64/19.1.0 = %q %q bang=%v, want verified 0/2 !", c.Basis, c.Ratio, c.Bang)
+	if c.Basis != "verified" || c.Ratio != "0%" || c.Runs != 2 || !c.Bang {
+		t.Errorf("windows/x64/19.1.0 = %q %q x%d bang=%v, want verified 0%% of 2 !",
+			c.Basis, c.Ratio, c.Runs, c.Bang)
 	}
 	if got := cellAt(t, g, "arm64", "18.3.1").Basis; got != "observed" {
 		t.Errorf("windows/arm64/18.3.1 = %q, want OBSERVED", got)
@@ -209,8 +210,9 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	// "1/1" is deliberate. Suppressing the rate on a single run rendered it
 	// identically to a hundred agreeing runs, which is the overstatement the
 	// rate exists to prevent -- how thin the evidence is IS the measurement.
-	if c.Ratio != "1/1" {
-		t.Errorf("single deduped run must still state its rate, got %q", c.Ratio)
+	if c.Ratio != "100%" || c.Runs != 1 {
+		t.Errorf("single deduped run = %q of %d; the count is what says how thin it is",
+			c.Ratio, c.Runs)
 	}
 }
 

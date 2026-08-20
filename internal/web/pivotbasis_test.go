@@ -34,16 +34,16 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	if proven.Basis != "verified" {
 		t.Errorf("basis = %q, want verified", proven.Basis)
 	}
-	if proven.Ratio != "3/3" {
-		t.Errorf("ratio = %q, want 3/3 — the rate is the result", proven.Ratio)
+	if proven.Ratio != "100%" || proven.Runs != 3 {
+		t.Errorf("ratio = %q of %d, want 100%% of 3", proven.Ratio, proven.Runs)
 	}
 
 	reported := buildPivotCell(agg(297, 15, 0, 0), now)
 	if reported.Basis != "observed" {
 		t.Errorf("basis = %q, want observed", reported.Basis)
 	}
-	if reported.Ratio != "297/312" {
-		t.Errorf("ratio = %q, want 297/312", reported.Ratio)
+	if reported.Ratio != "95%" || reported.Runs != 312 {
+		t.Errorf("ratio = %q of %d, want 95%% of 312", reported.Ratio, reported.Runs)
 	}
 }
 
@@ -62,12 +62,13 @@ func TestALargeObservationRatioNeverBorrowsTheVerifiedBasis(t *testing.T) {
 	if big.Glyph == small.Glyph {
 		t.Errorf("both bases render as %q — basis must be legible without colour", big.Glyph)
 	}
-	// Weak-evidence marking still follows the basis, not the size.
-	if !big.Maybe {
-		t.Error("an observation-only cell lost its weak-evidence marker")
+	// The mark follows the basis, not the size: absence of a mark is what
+	// says "reported, not proven", however large the number beside it.
+	if big.Glyph != "" {
+		t.Errorf("a 50,000-report cell carries a verification mark %q", big.Glyph)
 	}
-	if small.Maybe {
-		t.Error("a verified cell gained a weak-evidence marker")
+	if small.Glyph == "" {
+		t.Error("a single verified run lost its mark to a larger observed one")
 	}
 }
 
@@ -80,5 +81,52 @@ func TestEmptyCellHasNoBasis(t *testing.T) {
 	}
 	if cell.Ratio != "" {
 		t.Errorf("empty cell shows a rate %q", cell.Ratio)
+	}
+}
+
+// Cross verification implies verification, so two marks for it rendered
+// "◆ 4/4 ✓✓" — two marks carrying two meanings, one before the number and one
+// after. One mark, one position, escalating.
+func TestCrossVerificationEscalatesTheMarkInsteadOfAddingOne(t *testing.T) {
+	now := time.Now()
+	single := buildPivotCell(agg(0, 0, 4, 0), now)
+	if single.Glyph != "◆" {
+		t.Errorf("verified glyph = %q, want a single mark", single.Glyph)
+	}
+
+	both := agg(0, 0, 4, 0)
+	both.cross = true
+	crossed := buildPivotCell(both, now)
+	if crossed.Glyph != "◆◆" {
+		t.Errorf("cross-verified glyph = %q, want the escalated mark", crossed.Glyph)
+	}
+	if !crossed.Cross {
+		t.Error("the cross flag must survive for the legend and the label")
+	}
+	// An observation-only cell carries no mark here at all; it is already
+	// marked weak by the ? it always had.
+	if reported := buildPivotCell(agg(300, 12, 0, 0), now); reported.Glyph != "" {
+		t.Errorf("observed glyph = %q, want no mark", reported.Glyph)
+	}
+}
+
+// The mark says who ran it, never how it went. A check means "passed"
+// everywhere it appears, so a cell we ran and that failed rendered as a tick
+// beside 0/1 in red — the verdict smuggled back into the glyph after being
+// taken out of the word.
+func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
+	now := time.Now()
+	failed := buildPivotCell(agg(0, 0, 0, 3), now)
+	if failed.Glyph == "✓" || failed.Glyph == "✓✓" {
+		t.Errorf("a cell that failed carries a pass mark: %q with rate %q",
+			failed.Glyph, failed.Ratio)
+	}
+	passed := buildPivotCell(agg(0, 0, 3, 0), now)
+	if failed.Glyph != passed.Glyph {
+		t.Errorf("the mark changed with the outcome: failed %q, passed %q — it marks the basis",
+			failed.Glyph, passed.Glyph)
+	}
+	if failed.Ratio != "0%" || passed.Ratio != "100%" {
+		t.Errorf("the rate must carry the outcome: %q and %q", failed.Ratio, passed.Ratio)
 	}
 }
