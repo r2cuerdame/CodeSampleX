@@ -92,13 +92,13 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters and the
 	// measured ecosystems linked straight into the records inventory.
-	for _, s := range []string{"Packages", "APIs covered", "Verified Samples", "1.2K",
+	for _, s := range []string{"Packages", "APIs covered", "1.2K",
 		`title="1,200" aria-label="APIs covered: 1,200"`,
 		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 2 {
+		t.Errorf("homepage stat cards = %d, want exactly 2", got)
 	}
 	for _, omitted := range []string{"Symbols", "Projects this month", "Peers today", "Post-hit success rate"} {
 		if strings.Contains(body, `<span class="lbl">`+omitted+`</span>`) {
@@ -239,15 +239,14 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	for _, want := range []string{
 		`title="17,500" aria-label="Packages: 17,500">17.5K</span>`,
 		`title="9,876" aria-label="APIs covered: 9,876">9.9K</span>`,
-		`title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("counter %q missing from the front page:\n%s",
 				want, truncate(body))
 		}
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 2 {
+		t.Errorf("homepage stat cards = %d, want exactly 2", got)
 	}
 	// The guard is "exactly three, and they are coverage". It used to forbid
 	// the symbol count as a fourth card; the API count IS one of the three
@@ -544,11 +543,11 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "Does it run there?")
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("unavailable stats cards = %d, want 3 placeholders", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 2 {
+		t.Errorf("unavailable stats cards = %d, want 2 placeholders", got)
 	}
-	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 3 {
-		t.Errorf("unavailable stat placeholders = %d, want 3", got)
+	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 2 {
+		t.Errorf("unavailable stat placeholders = %d, want 2", got)
 	}
 }
 

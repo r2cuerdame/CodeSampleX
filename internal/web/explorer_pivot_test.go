@@ -107,9 +107,11 @@ func TestVersionPageSymbolByOSGrid(t *testing.T) {
 	mustContain(t, body, `<table class="pivot">`)
 	mustContain(t, body, "createRoot")
 	mustContain(t, body, "hydrateRoot")
-	// The package-level row is not a symbol, so it no longer wears a name
-	// shaped like one on a symbol axis.
-	mustContain(t, body, "whole package")
+	// The package-level row is not a symbol and is no longer listed among
+	// them: it is the total OVER these rows, and every observation is
+	// recorded against the package, so it carried all the numbers above a
+	// field of blanks.
+	mustNotContain(t, body, "whole package")
 	// Cells pin version + symbol + OS into the explorer.
 	mustContain(t, body, `/npm/reactish?f_os=windows&amp;f_symbol=hydrateRoot&amp;f_version=19.1.0`)
 }

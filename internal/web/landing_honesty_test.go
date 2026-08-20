@@ -10,7 +10,7 @@ import (
 // packages have coverage, how much evidence backs it, and how many runnable
 // samples were verified. The producer still carries the other raw fields for
 // API and detail consumers; even large values there must not grow this strip.
-func TestHomepageUsesExactlyThreeNetworkCountersInEveryLocale(t *testing.T) {
+func TestHomepageUsesExactlyTwoCoverageCountersInEveryLocale(t *testing.T) {
 	stats := &netStats{
 		Peers:                     99,
 		ProjectsMonth:             88,
@@ -25,13 +25,16 @@ func TestHomepageUsesExactlyThreeNetworkCountersInEveryLocale(t *testing.T) {
 	for _, lang := range i18n.Supported {
 		t.Run(lang, func(t *testing.T) {
 			tiles := buildTiles(lang, stats)
-			if len(tiles) != 3 {
-				t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
+			// Two, and both measure the ecosystem. The verified-sample count
+			// was the third and the largest, and it is the only one that
+			// measures US: a reader taking the row as one kind of thing read
+			// our own production as coverage.
+			if len(tiles) != 2 {
+				t.Fatalf("tiles = %d, want 2: %#v", len(tiles), tiles)
 			}
 			wantLabels := []string{
 				i18n.T(lang, "stats.packages"),
 				i18n.T(lang, "stats.apis"),
-				i18n.T(lang, "stats.verified_samples"),
 			}
 			for i, want := range wantLabels {
 				if tiles[i].Label != want {
@@ -45,11 +48,11 @@ func TestHomepageUsesExactlyThreeNetworkCountersInEveryLocale(t *testing.T) {
 	}
 }
 
-func TestUnavailableHomepageStatsRemainThreeHonestPlaceholders(t *testing.T) {
+func TestUnavailableHomepageStatsRemainHonestPlaceholders(t *testing.T) {
 	tiles := buildTiles(i18n.Default, nil)
-	if len(tiles) != 3 {
-		t.Fatalf("tiles = %d, want 3", len(tiles))
-	}
+	if len(tiles) != 2 {
+				t.Fatalf("tiles = %d, want 2: %#v", len(tiles), tiles)
+			}
 	for _, tile := range tiles {
 		if tile.Value != "—" {
 			t.Errorf("%s value = %q, want placeholder", tile.Label, tile.Value)

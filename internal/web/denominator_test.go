@@ -31,8 +31,8 @@ func TestAdoptionMetricsNeverExpandHomepageStats(t *testing.T) {
 			store.statsJSON, store.statsOK = statsWithReports(t, reports), true
 
 			body := get(t, mux, "/").Body.String()
-			if got := strings.Count(body, `<div class="stat">`); got != 3 {
-				t.Errorf("reports=%d rendered %d stat cards, want 3", reports, got)
+			if got := strings.Count(body, `<div class="stat">`); got != 2 {
+				t.Errorf("reports=%d rendered %d stat cards, want 2", reports, got)
 			}
 			// "100%" left this list when cells started stating a percentage:
 			// a matrix cell reading 100% is a measurement, not an adoption

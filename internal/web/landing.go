@@ -112,10 +112,16 @@ func buildTiles(lang string, st *netStats) []statTile {
 	// honestly however few machines drew the map: an API covered by ten
 	// machines is still an API covered. Symbols are recorded package-
 	// qualified ("axios.post"), so distinct symbols are distinct APIs.
+	// Two, and both measure the ecosystem.
+	//
+	// The verified-sample count used to sit here as a third. It is the only
+	// one of them that measures US -- our own output, not what the network
+	// knows -- and it was the largest, so a reader taking the row as one kind
+	// of thing read our production as coverage. The samples are still one
+	// click away in the record inventory, where they read as what they are.
 	return []statTile{
 		counter("stats.packages", st.Packages),
 		counter("stats.apis", st.Symbols),
-		counter("stats.verified_samples", st.VerifiedSamples),
 	}
 }
 

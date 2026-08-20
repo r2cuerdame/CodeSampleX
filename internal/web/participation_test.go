@@ -10,8 +10,8 @@ import (
 func TestParticipationNumbersNeverExpandHomepageStats(t *testing.T) {
 	for _, peers := range []int64{0, 1, 5, 5_000} {
 		tiles := buildTiles("en", &netStats{Peers: peers, ProjectsMonth: 73_000, Packages: 10})
-		if len(tiles) != 3 {
-			t.Errorf("peers=%d produced %d tiles, want 3", peers, len(tiles))
+		if len(tiles) != 2 {
+			t.Errorf("peers=%d produced %d tiles, want 2", peers, len(tiles))
 		}
 		for _, tile := range tiles {
 			if strings.Contains(tile.Label, "Projects this month") || strings.Contains(tile.Label, "Peers today") {

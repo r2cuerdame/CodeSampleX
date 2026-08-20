@@ -327,3 +327,26 @@ func TestSymbolIsNotAnAxisWithoutRealSymbols(t *testing.T) {
 		t.Errorf("axes = %s × %s; symbol has only the aggregate value", x, y)
 	}
 }
+
+// The package-level row is the total OVER the symbols, so on a symbol axis it
+// sat among its own parts — and because every observation is recorded against
+// the package, it carried all the numbers: one row of real counts above a
+// field of blanks, which made the grid look far richer than the per-symbol
+// evidence actually is.
+func TestSymbolAxisListsSymbolsOnly(t *testing.T) {
+	facts := []cubeFact{
+		{Dims: map[string]string{"version": "1.0.0", "symbol": cubePackageLevel},
+			PackageLevel: true, Agg: pivotAgg{obsPass: 1000}},
+		{Dims: map[string]string{"version": "1.0.0", "symbol": "a.Call"},
+			Agg: pivotAgg{obsPass: 3}},
+	}
+	g := buildCubeGrid(facts, "version", "symbol", pivotLinks{}, pivotNow)
+	for _, r := range g.Rows {
+		if r.Label == cubePackageLevel {
+			t.Errorf("the package total is listed as one of its own symbols: %+v", g.Rows)
+		}
+	}
+	if len(g.Rows) != 1 {
+		t.Fatalf("rows = %d, want just the one real symbol", len(g.Rows))
+	}
+}

@@ -335,6 +335,19 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 		if rk == "" || ck == "" {
 			continue
 		}
+		// The package-level aggregate is not a symbol and does not belong on
+		// a symbol axis. It is the total OVER the symbols beside it, so it
+		// sat among its own parts, and because every observation is recorded
+		// against the package it carried all the numbers -- one row of real
+		// counts above a field of blanks, which made the grid look far
+		// richer than the per-symbol evidence actually is.
+		//
+		// Package-level evidence is not lost: it is what every non-symbol
+		// axis shows.
+		if (x == "symbol" || y == "symbol") &&
+			(f.Dims["symbol"] == cubePackageLevel || f.PackageLevel) {
+			continue
+		}
 		key := cellKey{rk, ck}
 		cells[key] = append(cells[key], f)
 	}

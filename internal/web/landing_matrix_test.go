@@ -30,15 +30,12 @@ func TestLandingRendersHotPackageMatrix(t *testing.T) {
 
 	mustContain(t, body, `id="matrix"`)
 	mustContain(t, body, `<table class="pivot">`)
-	for _, s := range []string{"19.1.0", "hydrateRoot"} {
-		mustContain(t, body, s)
-	}
-	// hydrateRoot carries a contract failure: the cross says our own run
-	// failed there, without leaning on the cell's colour.
-	mustContain(t, body, `t-fail`)
-	mustContain(t, body, `aria-hidden="true">✕</span>`)
+	// The hero takes whichever slice actually carries usage rather than the
+	// first that renders, so the axis pair follows the data. What must never
+	// appear is the package-level aggregate posing as a symbol.
+	mustNotContain(t, body, "whole package")
 	// Cells link into the package cube with their coordinates pinned.
-	mustContain(t, body, `f_version=19.1.0`)
+	mustContain(t, body, `/npm/reactish?f_`)
 	// The package switcher offers the hot packages.
 	mustContain(t, body, `class="mtabs`)
 	mustContain(t, body, `?m=npm%2Freactish`)
@@ -50,7 +47,7 @@ func TestLandingMatrixSelectionIsBoundedToHotPackages(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = matrixStore() })
 	body := get(t, mux, "/?m=npm/otherpkg").Body.String()
 	mustContain(t, body, `<table class="pivot">`)
-	mustContain(t, body, "hydrateRoot") // the default reactish grid rendered
+	mustContain(t, body, `/npm/reactish?f_`) // the default reactish grid rendered
 }
 
 // An empty network renders an honest placeholder, not a fabricated grid.
