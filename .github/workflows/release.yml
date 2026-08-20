@@ -198,3 +198,139 @@ jobs:
         run: |
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+
+  # The farm is part of this release, not something that finds out about it
+  # later. Its nodes do self-converge within ten minutes, and that stays the
+  # safety net — but a rollout nobody watched cannot drain a worker before it
+  # swaps, cannot canary one before the rest, and cannot tell this workflow
+  # that a target never came back. Dispatching it here is what makes a failed
+  # farm target visible as a failed release rather than a green run beside a
+  # red one nobody opened.
+  #
+  # Deliberately a separate job. The updater signing seed lives in the release
+  # job's protected environment; a token that can start a workflow in another
+  # repository has no business sharing a process with it.
+  #
+  # workflow_dispatch, not repository_dispatch, and the difference is the whole
+  # security argument. The repository_dispatch endpoint requires Contents:write
+  # on the target — and the farm repo's workflows run on self-hosted runners
+  # that sit on the farm nodes, so write access to that repository is arbitrary
+  # code execution as root on every node in the fleet. This secret lives in a
+  # PUBLIC repository at repository scope, where no environment protection
+  # gates it. Contents:write there would have been the single worst credential
+  # in the system. Dispatching an existing workflow on an existing ref needs
+  # only Actions:write, which cannot introduce code.
+  farm:
+    name: Roll the farm
+    needs: release
+    runs-on: ubuntu-latest
+    # Nothing in this repository. The dispatch authenticates as the farm token;
+    # GITHUB_TOKEN is not used here and is given nothing.
+    permissions: {}
+    # Must exceed the farm's own budget (its linux job caps at 25 minutes) plus
+    # the time a job can sit queued for a self-hosted runner. A watcher that
+    # gives up first reports a healthy rollout as a failed release and then
+    # abandons it mid-flight.
+    timeout-minutes: 60
+    steps:
+      - name: Dispatch the release to the farm
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.CSX_FARM_DISPATCH_TOKEN }}
+          FARM_REPO: r2cuerdame/CodeSampleX-Farm
+        run: |
+          set +e
+          TAG="${GITHUB_REF#refs/tags/}"
+          # An absent secret is a supported state, not a failure: the farm still
+          # picks the release up on its own schedule. Failing a release over a
+          # missing convenience would be worse than the latency.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::CSX_FARM_DISPATCH_TOKEN is not set; the farm will converge on $TAG within ten minutes on its own."
+            echo "dispatched=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A farm with no runner online cannot roll out, and the wait below
+          # would sit against a queued run until this job times out — an hour of
+          # nothing, then a red release. Say so in seconds instead. This is
+          # still a failure: §8.4 wants an unreachable target to be visible.
+          ONLINE=$(gh api "repos/${FARM_REPO}/actions/runners" \
+            --jq '[.runners[] | select(.status == "online" and ([.labels[].name] | index("csx-farm")))] | length')
+          if [ "${ONLINE:-0}" -eq 0 ]; then
+            {
+              echo "### Farm: DEGRADED — no farm runner is online"
+              echo ""
+              echo "The release published successfully. No farm node was reachable to roll"
+              echo "it out, so the fleet is still on the previous version. Each node will"
+              echo "converge on its own within ten minutes of coming back."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::no online csx-farm runner; the farm was not rolled out"
+            exit 1
+          fi
+          # Record what the farm had already run, so the wait can tell this
+          # rollout apart from the previous one.
+          BEFORE=$(gh run list --repo "$FARM_REPO" --workflow deploy.yml \
+            --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+          echo "before=${BEFORE:-0}" >> "$GITHUB_OUTPUT"
+          # --input with real JSON: inputs is a nested object, and building it
+          # out of -f flags is the kind of quoting that works until it does not.
+          jq -n --arg tag "$TAG" '{
+            ref: "main",
+            inputs: { release: $tag, csx_version: ($tag | ltrimstr("v")) }
+          }' | gh api -X POST "repos/${FARM_REPO}/actions/workflows/deploy.yml/dispatches" --input -
+          if [ $? -ne 0 ]; then
+            echo "::error::could not dispatch the farm rollout"
+            exit 1
+          fi
+          echo "dispatched=true" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the farm to report
+        if: steps.dispatch.outputs.dispatched == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CSX_FARM_DISPATCH_TOKEN }}
+          FARM_REPO: r2cuerdame/CodeSampleX-Farm
+          BEFORE: ${{ steps.dispatch.outputs.before }}
+        run: |
+          set +e
+          # A dispatch does not hand back a run id, so wait for a run newer than
+          # the one recorded above rather than assuming the first listed is ours.
+          RUN=0
+          for _ in $(seq 1 30); do
+            sleep 10
+            RUN=$(gh run list --repo "$FARM_REPO" --workflow deploy.yml \
+              --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+            if [ -n "$RUN" ] && [ "$RUN" != "$BEFORE" ]; then break; fi
+            RUN=0
+          done
+          if [ "$RUN" = 0 ]; then
+            echo "::error::the farm never started a rollout for this release"
+            exit 1
+          fi
+          echo "Watching ${FARM_REPO} run ${RUN}"
+          # Poll for the conclusion rather than `gh run watch`. The farm repo is
+          # private and this repository's logs are world-readable; streaming its
+          # job names, step names and failure annotations in here would publish
+          # them. A status word is all this job needs.
+          STATUS=""
+          CONCLUSION=""
+          for _ in $(seq 1 180); do
+            read -r STATUS CONCLUSION <<<"$(gh run view "$RUN" --repo "$FARM_REPO" \
+              --json status,conclusion --jq '"\(.status) \(.conclusion // "")"')"
+            [ "$STATUS" = "completed" ] && break
+            sleep 15
+          done
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "### Farm: rolled out and healthy" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### Farm: DEGRADED"
+            echo ""
+            echo "The release itself published successfully — binaries, updater manifest"
+            echo "and registry listing are all live. What failed is the farm rollout:"
+            echo "at least one target did not reach this release."
+            echo ""
+            echo "Rollout status: \`${STATUS:-unknown}\` / \`${CONCLUSION:-none}\`"
+            echo "https://github.com/${FARM_REPO}/actions/runs/${RUN}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::farm rollout ${CONCLUSION:-did not complete}"
+          exit 1
