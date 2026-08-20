@@ -95,21 +95,6 @@
 {{/* One list. A sample answers one version of one API, so the count
      belongs on the version's own row and the answers themselves live on
      the version page — not in a second list of the same versions. */}}
-<h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
-{{if .Versions}}
-<ul class="verlist mono">
-{{- range .Versions}}
-  <li>
-    <a href="{{.Href}}">{{.Version}}</a>
-    {{- if .Latest}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}
-    {{- if .Samples}} <span class="versamples small">{{$.N .Samples}} · {{$.T "seeder.samples"}}</span>{{end}}
-  </li>
-{{- end}}
-</ul>
-{{else}}
-<p class="dim">{{.T "pkg.no_versions"}}</p>
-{{end}}
-
 {{- if .Deps}}
 {{/* Only with a version pinned. Across releases the same library appears at
      several versions and the page has to pick one to show, which is a choice
@@ -130,4 +115,20 @@
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
+
+<h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
+{{if .Versions}}
+<ul class="verlist mono">
+{{- range .Versions}}
+  <li>
+    <a href="{{.Href}}">{{.Version}}</a>
+    {{- if .Latest}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}
+    {{- if .Samples}} <span class="versamples small">{{$.N .Samples}} · {{$.T "seeder.samples"}}</span>{{end}}
+  </li>
+{{- end}}
+</ul>
+{{else}}
+<p class="dim">{{.T "pkg.no_versions"}}</p>
+{{end}}
+
 {{end}}

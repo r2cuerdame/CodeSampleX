@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "Beispiele nach Version",
   "pkg.samples_no_version": "keine Version erfasst",
   "pkg.symbols": "Symbole",
-  "pkg.versions": "Versionen",
+  "pkg.versions": "Alle Versionen",
   "records.entries": "Einträge",
   "records.filter_note": "Umgebungsfilter treffen nur aufgezeichnete Zeilen; unbekannte Umgebungen werden nicht abgeleitet.",
   "records.intro": "Alle öffentlichen Pakete, für die das Netzwerk Belege hat — zuletzt gemessene zuerst.",

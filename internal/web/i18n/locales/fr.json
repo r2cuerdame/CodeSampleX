@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "Échantillons par version",
   "pkg.samples_no_version": "aucune version enregistrée",
   "pkg.symbols": "Symboles",
-  "pkg.versions": "Versions",
+  "pkg.versions": "Toutes les versions",
   "records.entries": "entrées",
   "records.filter_note": "Les filtres ne correspondent qu'aux lignes enregistrées ; un environnement inconnu n'est pas déduit.",
   "records.intro": "Tous les paquets publics pour lesquels le réseau a des preuves, les plus récemment mesurés en premier.",

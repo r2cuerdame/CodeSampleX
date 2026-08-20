@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "Samples by version",
   "pkg.samples_no_version": "no version recorded",
   "pkg.symbols": "Symbols",
-  "pkg.versions": "Versions",
+  "pkg.versions": "All versions",
   "records.entries": "entries",
   "records.filter_note": "Environment filters match recorded snapshot rows. Unknown environments are excluded rather than inferred from the package ecosystem.",
   "records.intro": "Every public package the network has evidence for, most recently measured first.",

@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "Muestras por versión",
   "pkg.samples_no_version": "sin versión registrada",
   "pkg.symbols": "Símbolos",
-  "pkg.versions": "Versiones",
+  "pkg.versions": "Todas las versiones",
   "records.entries": "entradas",
   "records.filter_note": "Los filtros solo coinciden con filas registradas; un entorno desconocido no se infiere.",
   "records.intro": "Todos los paquetes públicos con evidencia en la red, los medidos más recientemente primero.",

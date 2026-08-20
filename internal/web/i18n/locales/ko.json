@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "버전별 샘플",
   "pkg.samples_no_version": "버전 기록 없음",
   "pkg.symbols": "심벌",
-  "pkg.versions": "버전",
+  "pkg.versions": "전체 버전",
   "records.entries": "항목",
   "records.filter_note": "환경 필터는 실제로 기록된 스냅샷 행과 일치시킵니다. 알 수 없는 환경을 생태계만 보고 추측하지 않고 제외합니다.",
   "records.intro": "네트워크가 증거를 가진 공개 패키지 전체입니다. 최근에 측정된 순서로 표시됩니다.",

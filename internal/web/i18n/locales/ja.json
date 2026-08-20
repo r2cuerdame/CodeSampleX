@@ -265,7 +265,7 @@
   "pkg.samples_by_version": "バージョン別サンプル",
   "pkg.samples_no_version": "バージョン記録なし",
   "pkg.symbols": "シンボル",
-  "pkg.versions": "バージョン",
+  "pkg.versions": "全バージョン",
   "records.entries": "エントリ",
   "records.filter_note": "環境フィルターは記録済みの行だけに一致し、不明な環境を推測しません。",
   "records.intro": "ネットワークが証拠を持つ公開パッケージの全件です。最近測定された順に表示します。",
