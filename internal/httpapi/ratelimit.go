@@ -38,6 +38,16 @@ var (
 	wantedBatchLimit = rate{burst: 4, per: time.Minute}
 	// readLimit covers search and the shard/registry reads a warm-up storms.
 	readLimit = rate{burst: 300, per: time.Minute}
+	// queueLimit is the fleet asking its own server what to do next.
+	//
+	// A verifier polling its queue is not a search storm, and sharing the read
+	// budget meant it competed with shard traffic on one address-keyed bucket:
+	// 1,145 job listings against 4,074 shard requests, and the fleet
+	// throttled itself out of the work it was asking for. Polling is cheap
+	// and answering it is the point of the server, so it gets its own budget
+	// and a wide one — the abuse this guards against is a stranger scraping
+	// the queue, which this bound still stops.
+	queueLimit = rate{burst: 600, per: time.Minute}
 	// authLimit covers the GitHub device flow: brute-forcing a device code
 	// is the one thing here worth guessing at.
 	authLimit = rate{burst: 20, per: time.Minute}
@@ -101,6 +111,26 @@ func (l *limiter) clock() time.Time {
 	return time.Now()
 }
 
+// refund returns one token to key, capped at the burst.
+//
+// The budget exists to bound WORK, and a conditional GET answered 304 did
+// almost none: the client sent an ETag, the server compared it and sent
+// nothing back. Charging that the same as a search is backwards — the polite
+// client pays like the expensive one — and in production it is what actually
+// exhausted the budget. Of 4,074 shard requests in one window 2,606 were
+// revalidations, and 345 real reads were refused while they sailed through.
+func (l *limiter) refund(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[key]
+	if !ok {
+		return
+	}
+	if b.tokens += 1; b.tokens > float64(l.rate.burst) {
+		b.tokens = float64(l.rate.burst)
+	}
+}
+
 // allow takes one token for key. It returns false and the wait until the
 // next token when the bucket is empty.
 func (l *limiter) allow(key string) (bool, time.Duration) {
@@ -149,6 +179,8 @@ func (l *limiter) sweepLocked(now time.Time) {
 // limiters holds one limiter per endpoint class.
 type limiters struct {
 	write, feedback, wantedBatch, read, auth, publish *limiter
+	// queue is the fleet's own polling: verification jobs and authoring work.
+	queue *limiter
 	// seededPublish is the identified-seeder budget, keyed by login.
 	seededPublish *limiter
 }
@@ -159,6 +191,7 @@ func newLimiters() *limiters {
 		feedback:      newLimiter(feedbackLimit),
 		wantedBatch:   newLimiter(wantedBatchLimit),
 		read:          newLimiter(readLimit),
+		queue:         newLimiter(queueLimit),
 		auth:          newLimiter(authLimit),
 		publish:       newLimiter(publishLimit),
 		seededPublish: newLimiter(seededPublishLimit),
@@ -206,6 +239,28 @@ func (a *api) limitPublish(lim *limiters, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// statusRecorder remembers the status a handler wrote, so the limiter can
+// tell a revalidation from a read. A handler that writes a body without
+// calling WriteHeader answered 200 and is charged for it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
 // limit wraps h so each client gets its own budget for this class. Over
 // budget answers 429 with Retry-After, never a silent drop: a client that
 // cannot tell it was throttled retries immediately and makes it worse.
@@ -226,6 +281,10 @@ func (a *api) limit(l *limiter, h http.HandlerFunc) http.HandlerFunc {
 				"rate limit exceeded; retry in "+strconv.Itoa(seconds)+"s")
 			return
 		}
-		h(w, r)
+		rec := &statusRecorder{ResponseWriter: w}
+		h(rec, r)
+		if rec.status == http.StatusNotModified {
+			l.refund(key)
+		}
 	}
 }

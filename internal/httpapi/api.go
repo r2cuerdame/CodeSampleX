@@ -108,7 +108,10 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/wanted/batches", a.limit(lim.wantedBatch, a.handleWantedBatch))
 	a.route(mux, "POST /v1/adoptions", a.limit(lim.feedback, a.handleAdoption))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
-	a.route(mux, "GET /v1/verification/jobs", a.limit(lim.read, a.handleJobsList))
+	// The fleet asking its own server what to do next, not a public read: it
+	// polls constantly and cheaply, and sharing the read budget let shard
+	// traffic throttle it out of the work it was asking for.
+	a.route(mux, "GET /v1/verification/jobs", a.limit(lim.queue, a.handleJobsList))
 	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.limit(lim.write, a.handleJobClaim))
 	a.route(mux, "POST /v1/peers/announce", a.limit(lim.write, a.handlePeerAnnounce))
 	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.limit(lim.read, a.handlePeersForSample))
