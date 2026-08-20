@@ -69,7 +69,7 @@
   "cube.remove_filter": "Remove filter",
   "cube.sub": "Pick any two dimensions as axes; everything else becomes a filter. Clicking a cell pins its slice and drills one level deeper.",
   "cube.swap": "Swap axes",
-  "cube.window_note": "The cube reads the newest 6 versions and the first 10 symbols of each; the complete version list is below.",
+  "cube.window_note": "The cube reads the newest 6 versions and the first 10 symbols of each, so an empty cell here can mean \"outside that window\" rather than \"never measured\".",
   "cube.x_axis": "X axis",
   "cube.y_axis": "Y axis",
   "env.arch": "Architecture",

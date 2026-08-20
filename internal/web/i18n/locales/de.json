@@ -69,7 +69,7 @@
   "cube.remove_filter": "Filter entfernen",
   "cube.sub": "Wähle zwei beliebige Dimensionen als Achsen; alles andere wird zum Filter. Ein Klick auf eine Zelle fixiert ihren Ausschnitt und steigt eine Ebene tiefer.",
   "cube.swap": "Achsen tauschen",
-  "cube.window_note": "Der Würfel liest die 6 neuesten Versionen und die ersten 10 Symbole jeder Version; die vollständige Versionsliste steht unten.",
+  "cube.window_note": "Der Würfel liest die neuesten 6 Versionen und die ersten 10 Symbole jeder Version; eine leere Zelle kann hier „außerhalb dieses Fensters“ bedeuten statt „nie gemessen“.",
   "cube.x_axis": "X-Achse",
   "cube.y_axis": "Y-Achse",
   "env.arch": "Architektur",

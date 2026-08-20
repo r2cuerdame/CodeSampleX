@@ -69,7 +69,7 @@
   "cube.remove_filter": "Quitar filtro",
   "cube.sub": "Elige dos dimensiones cualesquiera como ejes; todo lo demás se convierte en filtro. Al hacer clic en una celda, su corte queda fijado y se baja un nivel más.",
   "cube.swap": "Intercambiar ejes",
-  "cube.window_note": "El cubo lee las 6 versiones más recientes y los primeros 10 símbolos de cada una; la lista completa de versiones está más abajo.",
+  "cube.window_note": "El cubo lee las 6 versiones más recientes y los primeros 10 símbolos de cada una, así que una celda vacía aquí puede significar «fuera de esa ventana» y no «nunca medido».",
   "cube.x_axis": "Eje X",
   "cube.y_axis": "Eje Y",
   "env.arch": "Arquitectura",

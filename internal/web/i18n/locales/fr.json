@@ -69,7 +69,7 @@
   "cube.remove_filter": "Retirer le filtre",
   "cube.sub": "Choisissez deux dimensions comme axes ; tout le reste devient un filtre. Cliquer sur une cellule épingle sa tranche et descend d'un niveau.",
   "cube.swap": "Inverser les axes",
-  "cube.window_note": "Le cube lit les 6 versions les plus récentes et les 10 premiers symboles de chacune ; la liste complète des versions se trouve ci-dessous.",
+  "cube.window_note": "Le cube lit les 6 versions les plus récentes et les 10 premiers symboles de chacune ; une cellule vide ici peut donc signifier « hors de cette fenêtre » plutôt que « jamais mesuré ».",
   "cube.x_axis": "Axe X",
   "cube.y_axis": "Axe Y",
   "env.arch": "Architecture",

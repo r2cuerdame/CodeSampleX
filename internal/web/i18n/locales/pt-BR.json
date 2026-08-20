@@ -69,7 +69,7 @@
   "cube.remove_filter": "Remover filtro",
   "cube.sub": "Escolha duas dimensões quaisquer como eixos; todo o resto vira filtro. Clicar em uma célula fixa a fatia dela e desce um nível.",
   "cube.swap": "Trocar eixos",
-  "cube.window_note": "O cubo lê as 6 versões mais recentes e os primeiros 10 símbolos de cada uma; a lista completa de versões está abaixo.",
+  "cube.window_note": "O cubo lê as 6 versões mais recentes e os primeiros 10 símbolos de cada uma, então uma célula vazia aqui pode significar “fora dessa janela” e não “nunca medido”.",
   "cube.x_axis": "Eixo X",
   "cube.y_axis": "Eixo Y",
   "env.arch": "Arquitetura",
