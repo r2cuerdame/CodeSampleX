@@ -29,6 +29,15 @@ type FarmHealth struct {
 	PublicSamples   int
 	DuplicateCoords int            // coordinates carrying more than one public sample
 	StaleClaims     int            // open claims whose session is no longer live
+	// QuarantinedByReason is why things were withdrawn, counted by reason.
+	//
+	// Every withdrawal already recorded one; none of it reached the operator,
+	// so seeing why anything was pulled meant opening a database. A bare
+	// count cannot be acted on -- "983 quarantined" is alarming and "983
+	// duplicate coordinates, superseded" is a finished piece of work. The
+	// empty key is deliberate: a withdrawal nobody explained is the row most
+	// worth surfacing.
+	QuarantinedByReason map[string]int
 	ReceiptsByOS    map[string]int // PASS receipts per operating system
 }
 

@@ -359,6 +359,8 @@
       list.replaceChildren();
       health.replaceChildren();
       if (coverage) coverage.replaceChildren();
+      const w = document.querySelector("#farm-withdrawn");
+      if (w) w.replaceChildren();
       const p = document.createElement("p");
       p.className = "empty";
       p.textContent = "팜 지표를 불러오지 못했습니다.";
@@ -404,6 +406,25 @@
       stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
         .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
     );
+
+    const withdrawn = document.querySelector("#farm-withdrawn");
+    if (withdrawn) {
+      withdrawn.replaceChildren();
+      const reasons = data.quarantinedByReason || [];
+      if (!reasons.length) {
+        const none = document.createElement("p");
+        none.className = "empty";
+        none.textContent = "격리된 샘플 없음";
+        withdrawn.appendChild(none);
+      }
+      for (const r of reasons) {
+        // An unexplained withdrawal is the row worth acting on: something was
+        // pulled and nobody wrote down why. Blank text would read as a
+        // rendering gap instead.
+        const label = r.unexplained ? "사유 기록 없음" : r.reason;
+        withdrawn.appendChild(stat(label, num(r.count), r.unexplained));
+      }
+    }
 
     if (coverage) {
       coverage.replaceChildren();

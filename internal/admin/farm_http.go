@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,7 @@ func farmHealthView(health serverstore.FarmHealth) map[string]any {
 		"duplicateCoordinates": health.DuplicateCoords,
 		"staleClaims":          health.StaleClaims,
 		"receiptsByOs":         health.ReceiptsByOS,
+		"quarantinedByReason":  quarantineReasonView(health.QuarantinedByReason),
 	}
 	// The rate is what an operator reads; the count is what they act on.
 	if health.PublicSamples > 0 {
@@ -165,4 +167,48 @@ func clampAdminLabel(v string) string {
 const (
 	maxFarmCoverageRows = 64
 	maxAdminLabelBytes  = 48
+)
+
+// quarantineReasonView orders withdrawals by how many share a reason, and
+// clamps the text: the reason is operator-written prose, not a vocabulary.
+//
+// The unexplained bucket is labelled rather than dropped. Something was
+// pulled and nobody wrote down why, which is the row an operator most needs
+// to see; leaving it blank would make it look like a rendering gap.
+func quarantineReasonView(byReason map[string]int) []map[string]any {
+	type row struct {
+		reason string
+		n      int
+	}
+	rows := make([]row, 0, len(byReason))
+	for reason, n := range byReason {
+		rows = append(rows, row{reason, n})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].n != rows[j].n {
+			return rows[i].n > rows[j].n
+		}
+		return rows[i].reason < rows[j].reason
+	})
+	out := make([]map[string]any, 0, len(rows))
+	for i, r := range rows {
+		if i >= maxQuarantineReasons {
+			break
+		}
+		reason := strings.TrimSpace(r.reason)
+		if len(reason) > maxQuarantineReasonBytes {
+			reason = reason[:maxQuarantineReasonBytes] + "…"
+		}
+		out = append(out, map[string]any{
+			"reason":      reason,
+			"count":       r.n,
+			"unexplained": reason == "",
+		})
+	}
+	return out
+}
+
+const (
+	maxQuarantineReasons     = 12
+	maxQuarantineReasonBytes = 160
 )

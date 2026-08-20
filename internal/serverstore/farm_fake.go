@@ -48,8 +48,13 @@ func (f *Fake) FarmWorkers(_ context.Context, since, now time.Time) ([]FarmWorke
 func (f *Fake) FarmHealthNow(_ context.Context, now time.Time) (FarmHealth, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	health := FarmHealth{ReceiptsByOS: map[string]int{}}
+	health := FarmHealth{ReceiptsByOS: map[string]int{}, QuarantinedByReason: map[string]int{}}
 	coords := map[string]int{}
+	for _, sample := range f.samples {
+		if sample.Quarantined {
+			health.QuarantinedByReason[sample.QuarantineReason]++
+		}
+	}
 	for id, sample := range f.samples {
 		if sample.Quarantined {
 			continue

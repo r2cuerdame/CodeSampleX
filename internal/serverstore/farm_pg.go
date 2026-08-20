@@ -48,7 +48,7 @@ func (p *PG) FarmWorkers(ctx context.Context, since, now time.Time) ([]FarmWorke
 }
 
 func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, error) {
-	health := FarmHealth{ReceiptsByOS: map[string]int{}}
+	health := FarmHealth{ReceiptsByOS: map[string]int{}, QuarantinedByReason: map[string]int{}}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		// One pass over the public manifests. The corpus is thousands of rows,
 		// not millions, and this number is the reason the panel exists: it sat
@@ -83,6 +83,29 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 			Scan(&health.StaleClaims); err != nil {
 			return err
 		}
+		// Why things were withdrawn, not just how many. The reason was always
+		// recorded and never read.
+		reasons, err := c.Query(ctx, `
+			SELECT COALESCE(quarantine_reason,''), count(*)
+			  FROM samples WHERE quarantined GROUP BY 1 ORDER BY 2 DESC LIMIT 32`)
+		if err != nil {
+			return err
+		}
+		for reasons.Next() {
+			var reason string
+			var n int
+			if err := reasons.Scan(&reason, &n); err != nil {
+				reasons.Close()
+				return err
+			}
+			health.QuarantinedByReason[reason] = n
+		}
+		if err := reasons.Err(); err != nil {
+			reasons.Close()
+			return err
+		}
+		reasons.Close()
+
 		rows, err := c.Query(ctx, `
 			SELECT LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os, count(*)
 			  FROM receipts r JOIN samples s ON s.sample_id=r.sample_id AND NOT s.quarantined
