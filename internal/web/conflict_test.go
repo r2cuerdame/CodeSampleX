@@ -25,15 +25,12 @@ func TestPackagePageNamesVersionsThatCollidedInOneProject(t *testing.T) {
 	}
 }
 
-// A pair nobody ever saw break is a coexistence, not a conflict. Reporting it
-// as one would turn a normal resolution into an accusation.
-func TestPackagePageStaysQuietAboutPairsThatNeverBroke(t *testing.T) {
+// Nothing to report is silence, not an empty heading.
+func TestPackagePageStaysQuietWithNoConflicts(t *testing.T) {
 	mux, store := newTestMux(t, nil)
-	store.conflicts = []VersionConflict{
-		{Lower: "1.0.0", Higher: "1.1.0", Projects: 9, Failing: 0},
-	}
+	store.conflicts = nil
 	body := mustGet(t, mux, "/npm/axios")
 	if strings.Contains(body, `class="conflicts"`) {
-		t.Error("a pair that never failed was reported as a conflict")
+		t.Error("the conflicts block rendered with nothing in it")
 	}
 }

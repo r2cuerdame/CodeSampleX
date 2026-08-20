@@ -533,25 +533,19 @@ type packagePage struct {
 	Conflicts []VersionConflict
 }
 
-// versionConflicts lists the version pairs that collided in one project and
-// broke there.
+// versionConflicts lists the version pairs that collided in one project-day
+// and broke there with a named cause.
 //
-// Pairs that never failed are dropped: a resolver installing two versions is
-// ordinary, and only the ones a build actually died on are evidence of
-// anything. A store that cannot answer returns nothing rather than an error
-// page — the rest of the package is still worth serving.
+// What counts as a conflict is decided in the store, in one place: a pair
+// nobody saw break is a coexistence, and a failure nobody could attribute is
+// not evidence about this package. A store that cannot answer returns nothing
+// rather than an error page — the rest of the package is still worth serving.
 func (s *site) versionConflicts(r *http.Request, eco, name string) []VersionConflict {
 	rows, err := s.d.Store.VersionConflicts(r.Context(), eco, name)
 	if err != nil {
 		return nil
 	}
-	var out []VersionConflict
-	for _, c := range rows {
-		if c.Failing > 0 {
-			out = append(out, c)
-		}
-	}
-	return out
+	return rows
 }
 
 // packageSampleLimit bounds how many of a package's samples one page

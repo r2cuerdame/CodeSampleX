@@ -1212,14 +1212,24 @@ func (f *Fake) VersionConflicts(_ context.Context, ecosystem, name string) ([]Ve
 		if err != nil || k.Symbol != "" || p.Ecosystem != ecosystem || p.Name != name {
 			continue
 		}
-		for _, byEpoch := range buckets {
-			for project := range byEpoch {
-				if byProject[project] == nil {
-					byProject[project] = map[string]bool{}
+		for epoch, byBucket := range buckets {
+			for project := range byBucket {
+				// Project AND day. The bucket alone lasts a month, which made
+				// every upgrade look like a collision.
+				key := project + "" + epoch
+				if byProject[key] == nil {
+					byProject[key] = map[string]bool{}
 				}
-				byProject[project][p.Version] = true
-				if k.Result == string(domain.ResultFail) {
-					failedIn[project] = true
+				byProject[key][p.Version] = true
+				// Only a failure someone could name a cause for. An
+				// unattributed one says a build containing this package
+				// broke and nothing about which package broke it: one tsc
+				// failure wrote a FAIL for all 412 packages in a lockfile,
+				// and reading that as a version conflict turned it into six
+				// accusations against fs-extra.
+				meta := f.aggMeta[k]
+				if k.Result == string(domain.ResultFail) && meta != nil && meta.errorCode != "" {
+					failedIn[key] = true
 				}
 			}
 		}

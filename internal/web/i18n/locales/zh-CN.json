@@ -248,7 +248,7 @@
   "pkg.latest": "有证据的最新版本",
   "pkg.no_clusters": "未观测到失败聚类。",
   "pkg.conflicts": "发生冲突的版本",
-  "pkg.conflicts_sub": "同一个项目同时解析了两者，并且构建在那里失败了。",
+  "pkg.conflicts_sub": "同一个项目在一天内同时用了两者，并出现了可归因的失败。",
   "pkg.no_symbols": "暂无带证据的符号。",
   "pkg.no_versions": "暂无带证据的版本。",
   "pkg.requested": "已请求填补覆盖空白。",

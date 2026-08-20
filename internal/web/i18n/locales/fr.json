@@ -248,7 +248,7 @@
   "pkg.latest": "dernière avec preuve",
   "pkg.no_clusters": "Aucun cluster d'échec observé.",
   "pkg.conflicts": "Versions en collision",
-  "pkg.conflicts_sub": "Un projet a résolu les deux à la fois et le build y a échoué.",
+  "pkg.conflicts_sub": "Le même projet a utilisé les deux en un jour, avec un échec de cause identifiée.",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",
   "pkg.no_versions": "Pas encore de versions avec des preuves.",
   "pkg.requested": "Lacune de couverture demandée.",
