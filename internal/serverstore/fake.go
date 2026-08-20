@@ -735,10 +735,10 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 }
 
 func (f *Fake) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return f.OpenJobsPage(ctx, capability, peerID, reason, limit, 0)
+	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
 }
 
-func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error) {
+func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
@@ -775,11 +775,23 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason string
 				continue
 			}
 		}
-		if capability != "" && j.WantEnvJSON != "" {
+		if j.WantEnvJSON != "" {
 			var want map[string]any
 			if json.Unmarshal([]byte(j.WantEnvJSON), &want) == nil {
-				if pinned, ok := want["sandboxCapability"].(string); ok && pinned != capability {
-					continue
+				if capability != "" {
+					if pinned, ok := want["sandboxCapability"].(string); ok && pinned != capability {
+						continue
+					}
+				}
+				// A job names the platform its sample needs. Offering a Linux
+				// verifier the Windows rows fills its window with work it cannot
+				// run, and the one Windows verifier waits behind that. A job that
+				// names no OS runs anywhere and is never hidden.
+				if verifierOS != "" {
+					if pinned, ok := want["os"].(string); ok && pinned != "" &&
+						!strings.EqualFold(pinned, verifierOS) {
+						continue
+					}
 				}
 			}
 		}

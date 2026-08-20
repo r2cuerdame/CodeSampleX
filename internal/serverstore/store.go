@@ -273,7 +273,7 @@ type Store interface {
 	// OpenJobsPage is the same ordered claimable view with an offset. The HTTP
 	// layer uses it to skip missing CAS artifacts without letting stale head
 	// rows permanently hide valid work.
-	OpenJobsPage(ctx context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error)
+	OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error)
 	// JobsForSample lists every verification job (any status) for a sample,
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.

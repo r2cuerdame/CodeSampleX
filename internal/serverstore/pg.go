@@ -1134,10 +1134,10 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
 func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return p.OpenJobsPage(ctx, capability, peerID, reason, limit, 0)
+	return p.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
 }
 
-func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason string, limit, offset int) ([]JobRow, error) {
+func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -1160,8 +1160,17 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason string
 			  AND ($4 = '' OR j.reason <> 'cross' OR NOT EXISTS (
 				SELECT 1 FROM receipts r
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4))
+			  -- A job names the platform its sample needs. Without this the queue
+			  -- handed a Linux verifier the Windows rows too: the window is twenty
+			  -- deep, and whatever it could actually run was whatever was left. The
+			  -- one Windows verifier on the network waited behind that. A job that
+			  -- names no OS runs anywhere and is never hidden.
+			  AND ($7 = ''
+				OR want_env IS NULL
+				OR want_env->>'os' IS NULL
+				OR lower(want_env->>'os') = lower($7))
 			ORDER BY created_at, id
-			LIMIT $2 OFFSET $6`, capability, limit, JobLease.String(), peerID, reason, offset)
+			LIMIT $2 OFFSET $6`, capability, limit, JobLease.String(), peerID, reason, offset, verifierOS)
 		if err != nil {
 			return err
 		}

@@ -603,7 +603,11 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 	// permanent head-of-line barrier, even if there are more than one page.
 	const pageSize = 100
 	for offset := 0; len(out) < limit; {
-		jobs, err := a.d.Store.OpenJobsPage(r.Context(), capability, q.Get("peerId"), reason, pageSize, offset)
+		// containerOs is what the verifier's Docker daemon actually serves.
+		// Absent, the queue is unfiltered by platform, which is how it was
+		// before any verifier could report one.
+		jobs, err := a.d.Store.OpenJobsPage(r.Context(), capability, q.Get("peerId"), reason,
+			q.Get("containerOs"), pageSize, offset)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "job listing failed")
 			return

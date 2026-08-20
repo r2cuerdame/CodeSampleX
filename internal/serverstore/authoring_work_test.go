@@ -531,3 +531,71 @@ func TestClaimReleasesWorkHeldByASessionThatIdledOut(t *testing.T) {
 		t.Errorf("work held by an idled-out session is still locked: got %+v ok=%v", next, ok)
 	}
 }
+
+// A coordinate whose draft is waiting for cross-verification is not proven
+// yet, so it stayed a candidate and a second worker claimed it minutes after
+// the first submitted. With one worker that rarely showed; with two it
+// produced six duplicate coordinates in six hours, each pair three or four
+// minutes apart. Work in flight is work done.
+func TestAuthoringExpansionSkipsCoordinatesWithADraftInFlight(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store.NowFn = func() time.Time { return now }
+
+	batch := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "peer", ProjectBucket: "proj",
+		Package: "pkg:npm/inflight@1.0.0", Symbol: "inflight.call", SymbolConfidence: domain.SymbolProbable,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18"},
+		Stage:       domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 30,
+	}
+	if accepted, _, err := store.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || accepted != 1 {
+		t.Fatalf("ingest = %d err=%v", accepted, err)
+	}
+	if err := store.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/inflight@1.0.0", Ecosystem: "npm", Name: "inflight", Version: "1.0.0", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := store.ListAuthoringExpansionCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offered := func(rows []WantedRow) bool {
+		for _, c := range rows {
+			if c.Name == "inflight" && c.Symbol == "inflight.call" {
+				return true
+			}
+		}
+		return false
+	}
+	if !offered(before) {
+		t.Fatalf("the symbol was never offered to begin with: %s", formatCandidateOrder(before))
+	}
+
+	// A worker submits a draft for it. The sample is not public yet — it is
+	// waiting on an independent verification — so nothing about "proven"
+	// changes, and that was exactly the hole.
+	if err := store.SaveSample(ctx, SampleRow{
+		SampleID: "sha256:inflight-draft", Status: "DRAFT", Quarantined: true,
+		ManifestJSON: `{"packages":["pkg:npm/inflight@1.0.0"],"symbols":["inflight.call"]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAuthoringDraft(ctx, AuthoringDraftRow{
+		SampleID: "sha256:inflight-draft", SessionID: "writer", WorkerLabel: "w1",
+		ManifestJSON: `{"packages":["pkg:npm/inflight@1.0.0"],"symbols":["inflight.call"]}`,
+		LocalStatus:  "LOCAL_PASS", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := store.ListAuthoringExpansionCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offered(after) {
+		t.Errorf("a coordinate with a draft in flight was offered again: %s", formatCandidateOrder(after))
+	}
+}

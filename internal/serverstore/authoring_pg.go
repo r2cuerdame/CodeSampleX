@@ -349,12 +349,31 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
 				FROM candidates
 				ORDER BY ecosystem,name,version,symbol,target_os,source_rank,score DESC
+			), in_flight AS MATERIALIZED (
+				-- Coordinates a worker has already answered and is waiting on an
+				-- independent verification for. Nothing about "proven" changes until
+				-- that verification lands, so without this the coordinate stayed a
+				-- candidate and the next worker claimed it minutes after the first
+				-- submitted. One worker rarely raced itself; two produced six
+				-- duplicate coordinates in six hours. Work in flight is work done.
+				SELECT DISTINCT package.value AS purl,
+				       COALESCE(symbol.value,'') AS symbol
+				FROM authoring_drafts d
+				JOIN samples s ON s.sample_id=d.sample_id AND s.status='DRAFT'
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+				LEFT JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
+				) AS symbol(value) ON true
 			), fresh AS (
 				-- The already-answered symbols drop out BEFORE depth is counted, or a
 				-- version would be charged for work nobody can be given.
 				SELECT * FROM ranked c
 				WHERE (c.symbol='' OR NOT EXISTS (
 					SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
+				  AND NOT EXISTS (
+					SELECT 1 FROM in_flight f WHERE f.purl=c.purl AND f.symbol=c.symbol)
 			), spread AS (
 				-- How many jobs this version has already been offered higher up the
 				-- merit order. Ordering by it first means every version earns its
