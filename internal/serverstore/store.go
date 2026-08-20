@@ -288,6 +288,10 @@ type Store interface {
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
+	// VersionCoresidence lists the version pairs of one library that a
+	// scanner saw in a SINGLE resolution — the fact the server cannot infer,
+	// because a batch carries one package and a lockfile arrives shredded.
+	VersionCoresidence(ctx context.Context, ecosystem, name string) ([]VersionCoresidence, error)
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier

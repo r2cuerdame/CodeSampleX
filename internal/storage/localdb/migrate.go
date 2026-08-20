@@ -32,6 +32,7 @@ var ddl = []string{
 	  stage TEXT NOT NULL, result TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
 	  error_fp TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
 	  direct INTEGER NOT NULL DEFAULT 0,
+	  coresident TEXT NOT NULL DEFAULT '',
 	  uploaded INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
 	`CREATE TABLE IF NOT EXISTS environments(hash TEXT PRIMARY KEY, json TEXT NOT NULL)`,
@@ -150,6 +151,16 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 	// Additive: local databases created before the flag existed. Every
 	// adapter already worked out direct-versus-transitive from the lockfile
 	// and threw it away at the wire, so old rows default to transitive.
+	if !obsColumns["coresident"] {
+		// The other versions of this library present in the same resolution,
+		// comma separated. One library at two versions is the commonest
+		// reason a build does not work and the server cannot see it: a batch
+		// carries one package, so a lockfile arrives already shredded.
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE observations ADD COLUMN coresident TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if !obsColumns["direct"] {
 		if _, err := tx.ExecContext(ctx,
 			`ALTER TABLE observations ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`); err != nil {

@@ -153,6 +153,26 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		return err
 	}
 
+	// The pair the scanner saw, one row per (pair, project, day). Recorded
+	// even when nothing failed: a pair that never breaks is worth knowing
+	// about, and the reader decides what that means.
+	if b.ProjectBucket != "" {
+		failed := batchNamesAnAttributedFailure(b)
+		for _, pair := range coresidencePairs(b) {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO version_coresidence
+					(ecosystem, name, lower_version, higher_version, bucket, epoch, failing)
+				VALUES($1,$2,$3,$4,$5,$6,$7)
+				ON CONFLICT (ecosystem, name, lower_version, higher_version, bucket, epoch)
+				DO UPDATE SET failing = version_coresidence.failing OR EXCLUDED.failing,
+				              last_seen = now()`,
+				purl.Ecosystem, purl.Name, pair.Lower, pair.Higher,
+				b.ProjectBucket, b.Epoch, failed); err != nil {
+				return err
+			}
+		}
+	}
+
 	// The peer bucket's previous contribution for this agg row + epoch
 	// decides the delta; FOR UPDATE serializes concurrent re-sends.
 	incoming := int64(b.ObservationCount)
@@ -1198,6 +1218,36 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 }
 
 // JobsForSample lists every job for a sample regardless of status.
+// VersionCoresidence lists the version pairs of one library that a scanner
+// saw in a single resolution, counted by distinct project-days.
+func (p *PG) VersionCoresidence(ctx context.Context, ecosystem, name string) ([]VersionCoresidence, error) {
+	var out []VersionCoresidence
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT lower_version, higher_version,
+			       count(*) AS projects,
+			       count(*) FILTER (WHERE failing) AS failing
+			  FROM version_coresidence
+			 WHERE ecosystem = $1 AND name = $2
+			 GROUP BY 1, 2
+			 ORDER BY failing DESC, projects DESC, lower_version, higher_version`,
+			ecosystem, name)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r VersionCoresidence
+			if err := rows.Scan(&r.Lower, &r.Higher, &r.Projects, &r.Failing); err != nil {
+				return err
+			}
+			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // StrandedDrafts lists quarantined authoring drafts that have no verification
 // left to wait for.
 //

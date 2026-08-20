@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "显示已记录的 %s 个失败聚类中报告最多的 %s 个。其余为单次报告。",
   "pkg.latest": "有证据的最新版本",
   "pkg.no_clusters": "未观测到失败聚类。",
+  "pkg.coresident": "一次安装中的两个版本",
+  "pkg.coresident_sub": "扫描器在一次解析中同时发现了两者。项目数 · 其中可归因的失败。",
   "pkg.no_symbols": "暂无带证据的符号。",
   "pkg.no_versions": "暂无带证据的版本。",
   "pkg.requested": "已请求填补覆盖空白。",

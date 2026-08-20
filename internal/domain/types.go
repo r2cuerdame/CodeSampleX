@@ -190,6 +190,20 @@ type ObservationBatch struct {
 	// It costs nothing in privacy. One bit about a public package, and that
 	// somebody wrote it down is already implied by observing it at all.
 	Direct bool `json:"direct,omitempty"`
+	// Coresident is the other versions of THIS library present in the same
+	// resolution.
+	//
+	// One library installed at two versions is the commonest reason a build
+	// does not work, and the server cannot work it out: this batch carries a
+	// single package, so a lockfile arrives already shredded and the finest
+	// grouping left is a project and a day. A project that builds twice in an
+	// afternoon against different lockfiles produces exactly the input that
+	// would be read as a collision, so pairing server-side is inference. The
+	// scanner holds the lockfile at once, so it reports the fact instead.
+	//
+	// Version strings of a package whose name is already being sent. Nothing
+	// new about the project leaves the machine.
+	Coresident []string `json:"coresident,omitempty"`
 }
 
 // Case describes a problem being solved — never code (goal.md §7.4).

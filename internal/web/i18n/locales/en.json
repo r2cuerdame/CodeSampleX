@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Showing the %s most-reported of %s recorded failure clusters. The rest are single reports.",
   "pkg.latest": "latest with evidence",
   "pkg.no_clusters": "No failure clusters observed.",
+  "pkg.coresident": "Two versions in one install",
+  "pkg.coresident_sub": "A scanner found both in a single resolution. Projects · builds that failed there with a named cause.",
   "pkg.no_symbols": "No symbols with evidence yet.",
   "pkg.no_versions": "No versions with evidence yet.",
   "pkg.requested": "Coverage gap requested.",

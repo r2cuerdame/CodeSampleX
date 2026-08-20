@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Se muestran los %s más reportados de %s grupos de fallos registrados. El resto son reportes únicos.",
   "pkg.latest": "más reciente con evidencia",
   "pkg.no_clusters": "No se han observado clústeres de fallos.",
+  "pkg.coresident": "Dos versiones en una instalación",
+  "pkg.coresident_sub": "El escáner encontró ambas en una sola resolución. Proyectos · fallos con causa identificada.",
   "pkg.no_symbols": "Aún no hay símbolos con evidencia.",
   "pkg.no_versions": "Aún no hay versiones con evidencia.",
   "pkg.requested": "Se solicitó cubrir este vacío.",

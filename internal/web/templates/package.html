@@ -110,6 +110,20 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
+{{- if .Coresident}}
+{{/* Reported by the machine that held the lockfile, never inferred here: the
+     server receives one package per record, so a resolution arrives already
+     shredded and only the scanner ever sees both versions together. */}}
+<h2 class="eyebrow mono">{{.T "pkg.coresident"}}</h2>
+<p class="note dim small">{{.T "pkg.coresident_sub"}}</p>
+<ul class="coresident">
+{{- range .Coresident}}
+  <li><span class="mono">{{.Lower}}</span> <span class="dim">+</span> <span class="mono">{{.Higher}}</span>
+    <span class="dim small">{{$.N .Projects}}{{if .Failing}} · {{$.N .Failing}}✕{{end}}</span></li>
+{{- end}}
+</ul>
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}

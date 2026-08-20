@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -26,6 +27,9 @@ type ObsKey struct {
 	// Direct says the reporter listed this package in their own manifest
 	// rather than receiving it through somebody else's dependency.
 	Direct bool
+	// Coresident is the other versions of this library in the same
+	// resolution, in sorted order.
+	Coresident []string
 }
 
 // ObsRow is one aggregate with its accumulated count.
@@ -45,8 +49,8 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 		conf = domain.SymbolUnknown
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code, direct, uploaded)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code, direct, coresident, uploaded)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(epoch, purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 		  count = count + excluded.count,
 		  symbol_confidence = excluded.symbol_confidence,
@@ -54,10 +58,13 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 		  -- Chosen wins: one build resolving a package transitively does not
 		  -- unsay another that listed it.
 		  direct = MAX(observations.direct, excluded.direct),
+		  -- Last resolution wins: a project that FIXED its duplicate should
+		  -- stop reporting one, and MAX would pin the old collision forever.
+		  coresident = excluded.coresident,
 		  uploaded = 0`,
 		key.Epoch, key.PURL, key.Symbol, string(conf), key.EnvHash,
 		string(key.Stage), string(key.Result), incr, key.ErrorFP, key.ErrorCode,
-		boolToInt(key.Direct))
+		boolToInt(key.Direct), strings.Join(key.Coresident, ","))
 	return err
 }
 
@@ -65,7 +72,7 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 // deterministic order.
 func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code, direct, count
+		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code, direct, coresident, count
 		FROM observations WHERE uploaded = 0
 		ORDER BY epoch, purl, symbol, env_hash, stage, result, error_fp
 		LIMIT ?`, limit)
@@ -77,11 +84,16 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 	for rows.Next() {
 		var r ObsRow
 		var direct int
+		var coresident string
 		if err := rows.Scan(&r.Epoch, &r.PURL, &r.Symbol, &r.SymbolConfidence,
-			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode, &direct, &r.Count); err != nil {
+			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode, &direct,
+			&coresident, &r.Count); err != nil {
 			return nil, err
 		}
 		r.Direct = direct != 0
+		if coresident != "" {
+			r.Coresident = strings.Split(coresident, ",")
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

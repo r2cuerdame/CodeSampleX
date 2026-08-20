@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Es werden die %s meistgemeldeten von %s aufgezeichneten Fehlerclustern gezeigt. Der Rest sind Einzelmeldungen.",
   "pkg.latest": "neueste mit Evidenz",
   "pkg.no_clusters": "Keine Fehler-Cluster beobachtet.",
+  "pkg.coresident": "Zwei Versionen in einer Installation",
+  "pkg.coresident_sub": "Der Scanner fand beide in einer Auflösung. Projekte · Fehlschläge mit benannter Ursache.",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.requested": "Abdeckungslücke gemeldet.",

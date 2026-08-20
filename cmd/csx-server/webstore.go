@@ -316,6 +316,22 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
+// VersionCoresidence adapts the store's pairs to the web's own type; the web
+// package does not import serverstore.
+func (w *webStore) VersionCoresidence(ctx context.Context, ecosystem, name string) ([]web.VersionCoresidence, error) {
+	rows, err := w.s.VersionCoresidence(ctx, ecosystem, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.VersionCoresidence, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.VersionCoresidence{
+			Lower: r.Lower, Higher: r.Higher, Projects: r.Projects, Failing: r.Failing,
+		})
+	}
+	return out, nil
+}
+
 // derivedFindingScan bounds how many recent samples are read looking for
 // declared beliefs. Only a minority of samples state one, so the scan is
 // wider than the number of findings it can return.

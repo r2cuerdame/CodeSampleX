@@ -21,6 +21,10 @@ type Fake struct {
 
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta
+	// coresidence mirrors the version_coresidence table: one entry per
+	// (library, pair), holding the project-days that saw it and whether a
+	// build failed there with a named cause.
+	coresidence map[coresKey]map[string]bool
 
 	packages        map[string]PackageRow
 	snapshots       map[[2]string]string
@@ -51,6 +55,9 @@ type Fake struct {
 	ChangedSinceFn func(context.Context, time.Time) (Changes, error)
 }
 
+// coresKey identifies one version pair of one library.
+type coresKey struct{ ecosystem, name, lo, hi string }
+
 type fakeAggMeta struct {
 	symbolConfidence string
 	envJSON          string
@@ -77,6 +84,7 @@ func NewFake() *Fake {
 	return &Fake{
 		merge:           newMergeState(),
 		aggMeta:         map[aggKey]*fakeAggMeta{},
+		coresidence:     map[coresKey]map[string]bool{},
 		packages:        map[string]PackageRow{},
 		snapshots:       map[[2]string]string{},
 		snapshotAt:      map[[2]string]time.Time{},
@@ -158,6 +166,20 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 		f.aggMeta[k] = meta
 	}
 	meta.direct = meta.direct || b.Direct
+	// The pair the scanner saw, one entry per project-day. Recorded even when
+	// nothing failed: a pair that never breaks is worth knowing about, and
+	// the caller decides what to show.
+	if p, err := domain.ParsePURL(b.Package); err == nil && b.ProjectBucket != "" {
+		projectDay := b.ProjectBucket + "" + b.Epoch
+		for _, pair := range coresidencePairs(b) {
+			ck := coresKey{p.Ecosystem, p.Name, pair.Lower, pair.Higher}
+			if f.coresidence[ck] == nil {
+				f.coresidence[ck] = map[string]bool{}
+			}
+			f.coresidence[ck][projectDay] = f.coresidence[ck][projectDay] ||
+				batchNamesAnAttributedFailure(b)
+		}
+	}
 	if meta.errorCode == "" {
 		meta.errorCode = b.ErrorCode
 	}
@@ -1198,6 +1220,49 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 		return "", false, nil
 	}
 	return f.stats[best], true, nil
+}
+
+// VersionCoresidence lists the version pairs of one library that a scanner
+// saw in a single resolution.
+func (f *Fake) VersionCoresidence(_ context.Context, ecosystem, name string) ([]VersionCoresidence, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	type key struct{ lo, hi string }
+	projects := map[key]map[string]bool{}
+	failing := map[key]map[string]bool{}
+	for k, seen := range f.coresidence {
+		if k.ecosystem != ecosystem || k.name != name {
+			continue
+		}
+		pk := key{k.lo, k.hi}
+		if projects[pk] == nil {
+			projects[pk] = map[string]bool{}
+			failing[pk] = map[string]bool{}
+		}
+		for projectDay, failed := range seen {
+			projects[pk][projectDay] = true
+			if failed {
+				failing[pk][projectDay] = true
+			}
+		}
+	}
+	out := make([]VersionCoresidence, 0, len(projects))
+	for pk, seen := range projects {
+		out = append(out, VersionCoresidence{
+			Lower: pk.lo, Higher: pk.hi,
+			Projects: len(seen), Failing: len(failing[pk]),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Failing != out[j].Failing {
+			return out[i].Failing > out[j].Failing
+		}
+		if out[i].Projects != out[j].Projects {
+			return out[i].Projects > out[j].Projects
+		}
+		return out[i].Lower < out[j].Lower
+	})
+	return out, nil
 }
 
 // isRunStage reports whether a stage records something being exercised, as

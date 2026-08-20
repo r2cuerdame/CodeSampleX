@@ -526,6 +526,22 @@ type packagePage struct {
 	// Cube is the N-dimensional compatibility explorer: the page's primary
 	// element. nil when the package has no snapshot evidence yet.
 	Cube *cubeView
+	// Coresident are the version pairs a scanner saw in ONE resolution. Not
+	// inferred: the server receives one package per record, so only the
+	// machine that held the lockfile could report the pair.
+	Coresident []VersionCoresidence
+}
+
+// coresidentVersions lists the version pairs a scanner saw in one resolution.
+//
+// A store that cannot answer returns nothing rather than an error page: the
+// rest of the package is still worth serving.
+func (s *site) coresidentVersions(r *http.Request, eco, name string) []VersionCoresidence {
+	rows, err := s.d.Store.VersionCoresidence(r.Context(), eco, name)
+	if err != nil {
+		return nil
+	}
+	return rows
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -659,8 +675,9 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
 		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
-		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:   buildCubeView(s, r, lang, eco, name),
+		Crumbs:     leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:       buildCubeView(s, r, lang, eco, name),
+		Coresident: s.coresidentVersions(r, eco, name),
 	})
 }
 

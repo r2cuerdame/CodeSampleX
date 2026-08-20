@@ -14,6 +14,15 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
+// publicPURLs is the public subset of a scan as a slice, for co-residence.
+func publicPURLs(public map[string]domain.PURL) []domain.PURL {
+	out := make([]domain.PURL, 0, len(public))
+	for _, p := range public {
+		out = append(out, p)
+	}
+	return out
+}
+
 // Recorder turns one wrapped command run into local aggregate
 // observations (contract C14 steps 4–5). Only PUBLIC packages ever reach
 // the observations table; PRIVATE and UNKNOWN packages are recorded in
@@ -86,6 +95,11 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			}
 		}
 	}
+	// The other versions of each library present in THIS resolution. Computed
+	// from the whole scan because that is the only place the whole lockfile
+	// exists: the server receives one package per record.
+	coresident := coresidentVersions(publicPURLs(public))
+
 	publicKeys := make([]string, 0, len(public))
 	for k := range public {
 		publicKeys = append(publicKeys, k)
@@ -127,14 +141,15 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 
 	for _, key := range publicKeys {
 		err := r.DB.RecordObservation(ctx, localdb.ObsKey{
-			Epoch:     epoch,
-			PURL:      key,
-			EnvHash:   envHash,
-			Stage:     profile.Stage,
-			Result:    result,
-			ErrorFP:   errFP,
-			ErrorCode: errCode,
-			Direct:    direct[key],
+			Epoch:      epoch,
+			PURL:       key,
+			EnvHash:    envHash,
+			Stage:      profile.Stage,
+			Result:     result,
+			ErrorFP:    errFP,
+			ErrorCode:  errCode,
+			Direct:     direct[key],
+			Coresident: coresident[key],
 		}, 1)
 		if err != nil {
 			return err

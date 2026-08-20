@@ -91,6 +91,9 @@ type Store interface {
 	// unanswered rows matching that query.
 	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
+	// VersionCoresidence lists the version pairs of one library a scanner saw
+	// in a single resolution.
+	VersionCoresidence(ctx context.Context, ecosystem, name string) ([]VersionCoresidence, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -180,6 +183,20 @@ type SampleListItem struct {
 	Symbols []string
 	// Kind is the case kind: HOW | FIX | MIGRATION | CONFIG.
 	Kind string
+}
+
+// VersionCoresidence is one pair of versions of the same library that a
+// scanner saw in a SINGLE resolution — the fact the server cannot infer,
+// because an observation batch carries one package and a lockfile arrives
+// already shredded.
+//
+// Projects counts distinct project-days, not rebuilds. Failing is the subset
+// where a build failed with a cause someone could name.
+type VersionCoresidence struct {
+	Lower    string
+	Higher   string
+	Projects int
+	Failing  int
 }
 
 // PackageHit is one package search/hot result.

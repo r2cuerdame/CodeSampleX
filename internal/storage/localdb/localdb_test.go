@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -204,7 +205,7 @@ func TestObservationUpsertIncrements(t *testing.T) {
 	if rows[0].Count != 3 {
 		t.Fatalf("count = %d, want 3", rows[0].Count)
 	}
-	if rows[0].ObsKey != key {
+	if !reflect.DeepEqual(rows[0].ObsKey, key) {
 		t.Fatalf("key round-trip: %+v != %+v", rows[0].ObsKey, key)
 	}
 
