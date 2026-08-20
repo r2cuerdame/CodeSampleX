@@ -117,3 +117,24 @@ func TestTheBottomedOutViewKeepsItsEvidence(t *testing.T) {
 		t.Error("the pinned version has no control at the bottom: the pin cannot be cleared")
 	}
 }
+
+// The OS control offers whole platforms as well as exact environments, so a
+// slice measured only on alpine still renders two entries — "linux" and
+// "alpine musl". Counting entries called that a choice and left the control
+// asking the reader to pick between a group and its only member.
+func TestOneOSIsDecidedEvenThoughItOffersItsPlatform(t *testing.T) {
+	facts := []cubeFact{
+		{Dims: map[string]string{"os": "alpine musl", "version": "2.0.4"}, Agg: pivotAgg{obsPass: 1}},
+		{Dims: map[string]string{"os": "alpine musl", "version": "2.0.3"}, Agg: pivotAgg{obsPass: 1}},
+	}
+	sel, ok := cubeFilterFor(facts, "os", map[string]string{}, "en")
+	if !ok {
+		t.Fatal("no OS control")
+	}
+	if !sel.Fixed {
+		t.Fatalf("OS = %+v, want it fixed to the one environment measured", sel.Options)
+	}
+	if len(sel.Options) != 1 || sel.Options[0].Value != "alpine musl" {
+		t.Errorf("options = %+v, want just alpine musl", sel.Options)
+	}
+}

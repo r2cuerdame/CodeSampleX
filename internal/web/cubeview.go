@@ -177,20 +177,23 @@ func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang
 		Label:  i18n.T(lang, "cube.dim_"+dim),
 		Active: filters[dim] != "",
 	}
+	// Fixed on the count of values MEASURED, not of entries offered: the OS
+	// control adds whole platforms beside exact environments, so a slice
+	// measured only on alpine renders "linux" and "alpine musl" and counting
+	// entries read that as a choice between a group and its only member.
+	sel.Fixed = len(values) == 1 && filters[dim] == ""
 	// The OS offers whole platforms as well as exact environments: "does it
 	// run on Linux at all" and "does it run on alpine musl" are different
-	// questions and a reader arrives with both.
+	// questions and a reader arrives with both. Decided, there is only the
+	// environment itself to state.
 	choices := make([]cubeFilterOption, 0, len(values))
-	if dim == "os" {
+	if dim == "os" && !sel.Fixed {
 		choices = cubeOSFilterOptions(values)
 	} else {
 		for _, v := range values {
 			choices = append(choices, cubeFilterOption{Value: v, Label: v})
 		}
 	}
-	// Fixed only where the reader has not pinned anything: a pin they placed
-	// themselves must stay removable even when it left one value standing.
-	sel.Fixed = len(choices) == 1 && filters[dim] == ""
 	if !sel.Fixed {
 		sel.Options = append(sel.Options, cubeFilterOption{
 			Label: i18n.T(lang, "cube.all"), Selected: filters[dim] == "",
