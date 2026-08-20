@@ -79,17 +79,15 @@ type pivotCell struct {
 	Cross bool
 	Href  string
 	Tip   string // title attribute; English data values, never translated
-	// Ratio is the measurement, as a percentage a reader can scan down a
-	// column: "95%". Runs is the denominator that percentage threw away.
-	//
-	// Both are rendered, and that is the point. 100% from one run and 100%
-	// from a hundred are the same percentage and very different evidence, so
-	// dropping the count would restore exactly the overstatement the rate
-	// was introduced to remove.
-	Ratio string
-	Runs  int64
-	Obs   int64 // observation events (USED / PROJECT_*)
-	Ver   int64 // verification events (RESOLVE…CONTRACT, SYMBOL_*)
+	// Ratio is the observed pass rate a reader scans down a column ("95%"),
+	// and Passes is the count it rests on ("297"). Both render: a percentage
+	// alone discards how much evidence there is, and 100% of one run is not
+	// 100% of a hundred.
+	Ratio  string
+	Passes string
+	Runs   int64
+	Obs    int64 // observation events (USED / PROJECT_*)
+	Ver    int64 // verification events (RESOLVE…CONTRACT, SYMBOL_*)
 	// PassCount and FailCount are the numerator and the remainder of Ratio,
 	// on whichever basis the cell names.
 	PassCount int64
@@ -626,13 +624,14 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	}
 	// The mark is our own working code, and only when it worked. One clean
 	// verification is as much of that fact as a hundred: either a sample runs
-	// here or it does not. Cross reproduction escalates the same mark rather
-	// than adding a second one after the number.
+	// here or it does not.
+	//
+	// Cross reproduction does not get a second symbol. It is a strictly
+	// better version of the same fact, not a different one, and every extra
+	// glyph is one more thing to learn before the grid can be read at all —
+	// it stays in the tooltip.
 	if a.verPass > 0 && a.verFail == 0 {
 		cell.Glyph = "✓"
-		if a.cross {
-			cell.Glyph = "✓✓"
-		}
 	}
 	switch {
 	case cell.FailCount == 0:
@@ -662,17 +661,20 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// The number is how many real machines got through it. Observations are
 	// the asset here -- they reach platforms no container can -- and our own
 	// runs are the mark, not the count.
+	// Ratio scans, Passes weighs. A percentage can be compared down a column
+	// at a glance and a raw count cannot; a percentage alone throws away how
+	// much evidence it rests on, and 100% of one is not 100% of a hundred.
+	// Both come from observations: our own runs are the mark, not the count.
 	cell.Runs = obs
 	switch {
-	case a.obsPass > 0:
-		cell.Ratio = fmt.Sprintf("%d", a.obsPass)
-	case obs == 0:
-		// Verified, never seen used. The dash sits where the count would,
-		// so the cell says "no usage recorded" rather than implying zero
+	case obs > 0:
+		cell.Ratio = fmt.Sprintf("%d%%", int(float64(a.obsPass)/float64(obs)*100+0.5))
+		cell.Passes = fmt.Sprintf("%d", a.obsPass)
+	default:
+		// Verified, never seen used. The dash sits where the rate would, so
+		// the cell says "no usage recorded" rather than implying that zero
 		// machines got through.
 		cell.Ratio = "—"
-	default:
-		cell.Ratio = "0"
 	}
 
 	var parts []string

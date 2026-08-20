@@ -1321,7 +1321,10 @@ td.pv .pvratio { font-size: 0.78rem; font-weight: 700; }
 /* The number is a PASS count, so a mostly-failing cell shows a small one
    and would read as thin evidence rather than as trouble. The "?" has to
    carry that weight on its own. */
-td.pv .mark.bang { font-size: 0.95rem; }
+/* The percentage scans; the pass count beside it says how much evidence the
+   percentage rests on. 100% of one run and 100% of a hundred are the same
+   percentage and very different facts. */
+td.pv .pvpasses { font-size: 0.66rem; }
 .mark { font-weight: 800; font-style: normal; }
 .mark.bang { color: var(--bad); }
 .mark.maybe { color: var(--mid); }

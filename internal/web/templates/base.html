@@ -349,7 +349,7 @@ document.addEventListener('keydown',event=>{
 </div>
 {{end}}
 
-{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono">{{.Ratio}}</span>{{end}}{{end}}
+{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono">{{.Ratio}}</span>{{end}}{{if .Passes}}<span class="pvpasses mono dim">{{.Passes}}</span>{{end}}{{end}}
 
 {{/* pivotlegend teaches the cell before it lists the marks. A symbol list
      answers "what is this glyph"; a reader's actual question is "what does
@@ -359,12 +359,11 @@ document.addEventListener('keydown',event=>{
 <div class="pivotlegend">
   <p class="small"><strong>{{.T "legend.how_heading"}}</strong> {{.T "legend.how_rate"}}</p>
   <ul class="legendexamples mono small">
-    <li><span class="ex"><span class="glyph">✓</span> <span class="pvratio">132</span></span> {{.T "legend.example_verified"}}</li>
-    <li><span class="ex"><span class="pvratio">297</span></span> {{.T "legend.example_observed"}}</li>
+    <li><span class="ex"><span class="glyph">✓</span> <span class="pvratio">95%</span> <span class="pvpasses dim">297</span></span> {{.T "legend.example_verified"}}</li>
+    <li><span class="ex"><span class="pvratio">95%</span> <span class="pvpasses dim">297</span></span> {{.T "legend.example_observed"}}</li>
   </ul>
   <ul class="pivotlegend-marks mono small">
-    <li><span class="glyph" aria-hidden="true">✓✓</span> {{.T "landing.legend_cross"}}</li>
-      <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
+        <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
   </ul>
 </div>
 {{end}}

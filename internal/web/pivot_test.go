@@ -333,8 +333,8 @@ func TestPivotCellRatioShowsHiddenDepth(t *testing.T) {
 	}
 	// The observation-only cell is the one that carries a number: it is the
 	// count of real machines that got through.
-	if got := cellAt(t, g, "macos", "node 22"); got.Ratio != "7" || got.Runs != 8 {
-		t.Errorf("observed cell = %q of %d, want 7 passes of 8 runs", got.Ratio, got.Runs)
+	if got := cellAt(t, g, "macos", "node 22"); got.Ratio != "88%" || got.Passes != "7" {
+		t.Errorf("observed cell = %q %q, want 88%% with 7 passes", got.Ratio, got.Passes)
 	}
 
 }

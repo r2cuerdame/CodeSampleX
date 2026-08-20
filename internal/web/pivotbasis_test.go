@@ -46,8 +46,9 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	if reported.Basis != "observed" || reported.Glyph != "" {
 		t.Errorf("basis = %q glyph = %q, want observed with no mark", reported.Basis, reported.Glyph)
 	}
-	if reported.Ratio != "297" || reported.Runs != 312 {
-		t.Errorf("ratio = %q of %d, want 297 passes of 312", reported.Ratio, reported.Runs)
+	if reported.Ratio != "95%" || reported.Passes != "297" || reported.Runs != 312 {
+		t.Errorf("cell = %q %q of %d, want 95%% with 297 passes of 312",
+			reported.Ratio, reported.Passes, reported.Runs)
 	}
 }
 
@@ -90,34 +91,24 @@ func TestEmptyCellHasNoBasis(t *testing.T) {
 
 // Cross verification implies verification, so two marks for it rendered
 // two marks carrying two meanings, one before the number and one after.
-// One mark, one position, escalating.
-func TestCrossVerificationEscalatesTheMarkInsteadOfAddingOne(t *testing.T) {
+// Cross reproduction is a strictly better version of the same fact, not a
+// different one, so it earns no second symbol. The grid carries at most one
+// glyph, and the tooltip carries the rest.
+func TestCrossReproductionAddsNoSecondMark(t *testing.T) {
 	now := time.Now()
-	single := buildPivotCell(agg(0, 0, 4, 0), now)
-	if single.Glyph != "✓" {
-		t.Errorf("verified glyph = %q, want a single mark", single.Glyph)
-	}
-
 	both := agg(0, 0, 4, 0)
 	both.cross = true
 	crossed := buildPivotCell(both, now)
-	if crossed.Glyph != "✓✓" {
-		t.Errorf("cross-verified glyph = %q, want the escalated mark", crossed.Glyph)
+	if crossed.Glyph != "✓" {
+		t.Errorf("cross-verified glyph = %q, want the single mark", crossed.Glyph)
 	}
 	if !crossed.Cross {
-		t.Error("the cross flag must survive for the legend and the label")
+		t.Error("the cross flag must survive for the tooltip")
 	}
-	// An observation-only cell carries no mark here at all; it is already
-	// marked weak by the ? it always had.
-	if reported := buildPivotCell(agg(300, 12, 0, 0), now); reported.Glyph != "" {
-		t.Errorf("observed glyph = %q, want no mark", reported.Glyph)
+	if !strings.Contains(crossed.Tip, "cross-checked") {
+		t.Errorf("tooltip %q lost the cross-verification fact", crossed.Tip)
 	}
 }
-
-// The mark says who ran it, never how it went. A check means "passed"
-// everywhere it appears, so a cell we ran and that failed rendered as a tick
-// beside 0/1 in red — the verdict smuggled back into the glyph after being
-// taken out of the word.
 func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 	now := time.Now()
 	failed := buildPivotCell(agg(0, 0, 0, 3), now)
