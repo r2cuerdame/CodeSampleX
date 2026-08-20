@@ -128,6 +128,13 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	// server; ecosystem/runtime/SDK requirements are checked by this binary.
 	// Looking at one row let an incompatible head job hide compatible work.
 	q.Set("limit", "20")
+	// Say which kind of container this daemon serves, so the window is not
+	// filled with rows this machine cannot run. Without it a Linux verifier
+	// was handed the Windows jobs too, and the one Windows verifier on the
+	// network waited behind them.
+	if cv.ContainerOS != "" {
+		q.Set("containerOs", cv.ContainerOS)
+	}
 	u := cv.base() + "/v1/verification/jobs?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

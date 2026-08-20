@@ -3,6 +3,7 @@ package serverstore
 import (
 	"context"
 	"encoding/json"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"sort"
 	"strings"
 	"time"
@@ -370,6 +371,38 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		rank  int
 		depth int
 	}
+	// Coordinates a worker has already answered and is waiting on an
+	// independent verification for. Nothing about "proven" changes until that
+	// verification lands, so without this the coordinate stayed a candidate and
+	// the next worker claimed it minutes after the first submitted.
+	inFlight := make(map[[2]string]bool)
+	for _, draft := range f.authoringDrafts {
+		sample, ok := f.samples[draft.SampleID]
+		if !ok || sample.Status != "DRAFT" {
+			continue
+		}
+		var manifest struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+		}
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		for _, purl := range manifest.Packages {
+			inFlight[[2]string{purl, ""}] = true
+			for _, symbol := range manifest.Symbols {
+				inFlight[[2]string{purl, symbol}] = true
+			}
+		}
+	}
+	for key, candidate := range candidates {
+		purl := domain.PURL{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version}.String()
+		if inFlight[[2]string{purl, candidate.Symbol}] {
+			delete(candidates, key)
+			delete(ranks, key)
+		}
+	}
+
 	ranked := make([]rankedRow, 0, len(candidates))
 	for key, candidate := range candidates {
 		ranked = append(ranked, rankedRow{row: candidate, rank: ranks[key]})
