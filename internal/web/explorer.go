@@ -1099,8 +1099,11 @@ type symbolPage struct {
 	PURL      string
 	Matrix    []matrixRow
 	Clusters  []clusterView
-	Generated string
-	Crumbs    []crumb
+	// ClusterTotal is how many this symbol's release has, so a bounded list
+	// cannot read as the whole of it.
+	ClusterTotal int
+	Generated    string
+	Crumbs       []crumb
 	// Pivot is the OS × runtime summary of the same snapshot the detail
 	// table renders; its cells anchor down to that table.
 	Pivot pivotGrid
@@ -1133,7 +1136,20 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		return
 	}
 	matrix := buildMatrix(lang, doc)
-	clusters := buildClusters(doc.Failures)
+	// The symbol's own failures, plus the release's. A package-level failure
+	// is a failure of every symbol in it — the build broke, and which API the
+	// reader was on does not change that — and the page used to show only what
+	// was filed under this exact symbol, so a heading stood over an empty
+	// section while the release beneath it had failures recorded. The filter
+	// keeps a package-level cluster under a symbol pin and drops another
+	// symbol's, which is the same rule the cube applies to a coordinate.
+	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{
+		"version": version, "symbol": symbol,
+	})
+	if len(clusters) == 0 {
+		clusters = buildClusters(doc.Failures)
+		clusterTotal = len(clusters)
+	}
 	pivot := buildPivot(doc.Rows, osRowKey, contextColKey, func(row, col string) string {
 		return "#env-detail"
 	}, time.Now())
@@ -1172,7 +1188,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	})}
 	s.render(w, "symbol", http.StatusOK, symbolPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version, Symbol: symbol,
-		PURL: purl, Matrix: matrix, Clusters: clusters,
+		PURL: purl, Matrix: matrix, Clusters: clusters, ClusterTotal: clusterTotal,
 		Generated: datePart(doc.GeneratedAt),
 		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,
