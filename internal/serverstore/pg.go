@@ -1198,6 +1198,52 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 }
 
 // JobsForSample lists every job for a sample regardless of status.
+// VersionConflicts lists the version pairs of one package that a single
+// project resolved at the same time.
+//
+// The join is through evidence_dedup, which is where the project bucket
+// lives. A bucket rotates monthly, so grouping by bucket alone identifies a
+// project for as long as that bucket exists and never merges two.
+func (p *PG) VersionConflicts(ctx context.Context, ecosystem, name string) ([]VersionConflict, error) {
+	byProject := map[string]map[string]bool{}
+	failedIn := map[string]bool{}
+	prefix := "pkg:" + ecosystem + "/" + name + "@"
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT d.bucket, split_part(e.purl, '@', 2) AS version, e.result
+			  FROM evidence_dedup d
+			  JOIN evidence_agg e ON e.id = d.agg_id
+			 WHERE d.bucket_kind = 'project'
+			   AND e.symbol = ''
+			   AND e.purl LIKE $1 || '%'`, prefix)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var bucket, version, result string
+			if err := rows.Scan(&bucket, &version, &result); err != nil {
+				return err
+			}
+			if version == "" {
+				continue
+			}
+			if byProject[bucket] == nil {
+				byProject[bucket] = map[string]bool{}
+			}
+			byProject[bucket][version] = true
+			if result == string(domain.ResultFail) {
+				failedIn[bucket] = true
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return conflictsFromProjectVersions(byProject, failedIn), nil
+}
+
 // StrandedDrafts lists quarantined authoring drafts that have no verification
 // left to wait for.
 //

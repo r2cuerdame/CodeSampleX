@@ -110,6 +110,21 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
+{{- if .Conflicts}}
+{{/* A resolver that installed two versions of one library has already said
+     where to look. Only pairs a build actually died on are listed: two
+     versions coexisting is ordinary, and calling that a conflict would turn
+     a normal resolution into an accusation. */}}
+<h2 class="eyebrow mono">{{.T "pkg.conflicts"}}</h2>
+<p class="note dim small">{{.T "pkg.conflicts_sub"}}</p>
+<ul class="conflicts">
+{{- range .Conflicts}}
+  <li><span class="mono">{{.Lower}}</span> <span class="dim">+</span> <span class="mono">{{.Higher}}</span>
+    <span class="dim small">{{$.N .Projects}} · {{$.N .Failing}}</span></li>
+{{- end}}
+</ul>
+{{- end}}
+
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}

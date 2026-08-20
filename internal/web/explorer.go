@@ -526,6 +526,32 @@ type packagePage struct {
 	// Cube is the N-dimensional compatibility explorer: the page's primary
 	// element. nil when the package has no snapshot evidence yet.
 	Cube *cubeView
+	// Conflicts are the version pairs a single project resolved at the same
+	// time AND saw fail. A pair that never broke is a coexistence, not a
+	// conflict, and reporting it would turn a normal resolution into an
+	// accusation.
+	Conflicts []VersionConflict
+}
+
+// versionConflicts lists the version pairs that collided in one project and
+// broke there.
+//
+// Pairs that never failed are dropped: a resolver installing two versions is
+// ordinary, and only the ones a build actually died on are evidence of
+// anything. A store that cannot answer returns nothing rather than an error
+// page — the rest of the package is still worth serving.
+func (s *site) versionConflicts(r *http.Request, eco, name string) []VersionConflict {
+	rows, err := s.d.Store.VersionConflicts(r.Context(), eco, name)
+	if err != nil {
+		return nil
+	}
+	var out []VersionConflict
+	for _, c := range rows {
+		if c.Failing > 0 {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -659,8 +685,9 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
 		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
-		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:   buildCubeView(s, r, lang, eco, name),
+		Crumbs:    leaf(recordCrumbs(b, eco, name, "", "")),
+		Cube:      buildCubeView(s, r, lang, eco, name),
+		Conflicts: s.versionConflicts(r, eco, name),
 	})
 }
 

@@ -1200,6 +1200,33 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 	return f.stats[best], true, nil
 }
 
+// VersionConflicts lists the version pairs of one package that a single
+// project resolved at the same time.
+func (f *Fake) VersionConflicts(_ context.Context, ecosystem, name string) ([]VersionConflict, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	byProject := map[string]map[string]bool{}
+	failedIn := map[string]bool{}
+	for k, buckets := range f.merge.projectBuckets {
+		p, err := domain.ParsePURL(k.PURL)
+		if err != nil || k.Symbol != "" || p.Ecosystem != ecosystem || p.Name != name {
+			continue
+		}
+		for _, byEpoch := range buckets {
+			for project := range byEpoch {
+				if byProject[project] == nil {
+					byProject[project] = map[string]bool{}
+				}
+				byProject[project][p.Version] = true
+				if k.Result == string(domain.ResultFail) {
+					failedIn[project] = true
+				}
+			}
+		}
+	}
+	return conflictsFromProjectVersions(byProject, failedIn), nil
+}
+
 // isRunStage reports whether a stage records something being exercised, as
 // opposed to merely being present. It is the same split the compatibility
 // grid draws between a pass rate and a usage count.

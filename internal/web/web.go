@@ -91,6 +91,9 @@ type Store interface {
 	// unanswered rows matching that query.
 	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
+	// VersionConflicts lists the version pairs of one package that a single
+	// project resolved at the same time.
+	VersionConflicts(ctx context.Context, ecosystem, name string) ([]VersionConflict, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -180,6 +183,19 @@ type SampleListItem struct {
 	Symbols []string
 	// Kind is the case kind: HOW | FIX | MIGRATION | CONFIG.
 	Kind string
+}
+
+// VersionConflict is one pair of versions of the same package that a project
+// resolved AT THE SAME TIME — the shape of dependency hell, and the fact that
+// usually explains why a build does not work.
+//
+// Failing is what makes it worth reading: a pair nobody ever saw break is a
+// coexistence, not a conflict.
+type VersionConflict struct {
+	Lower    string
+	Higher   string
+	Projects int
+	Failing  int
 }
 
 // PackageHit is one package search/hot result.

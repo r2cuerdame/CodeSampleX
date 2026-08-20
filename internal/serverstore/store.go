@@ -288,6 +288,10 @@ type Store interface {
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
+	// VersionConflicts lists the version pairs of one package that a single
+	// project resolved at the same time — the shape of dependency hell, and
+	// the fact that usually explains why a build does not work.
+	VersionConflicts(ctx context.Context, ecosystem, name string) ([]VersionConflict, error)
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier

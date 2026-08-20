@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Mostrando os %s mais relatados de %s grupos de falhas registrados. O resto são relatos únicos.",
   "pkg.latest": "mais recente com evidência",
   "pkg.no_clusters": "Nenhum cluster de falha observado.",
+  "pkg.conflicts": "Versões que colidiram",
+  "pkg.conflicts_sub": "Um projeto resolveu as duas ao mesmo tempo e o build falhou ali.",
   "pkg.no_symbols": "Ainda não há símbolos com evidências.",
   "pkg.no_versions": "Ainda não há versões com evidências.",
   "pkg.requested": "Lacuna de cobertura solicitada.",

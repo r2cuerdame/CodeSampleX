@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Es werden die %s meistgemeldeten von %s aufgezeichneten Fehlerclustern gezeigt. Der Rest sind Einzelmeldungen.",
   "pkg.latest": "neueste mit Evidenz",
   "pkg.no_clusters": "Keine Fehler-Cluster beobachtet.",
+  "pkg.conflicts": "Versionen, die kollidierten",
+  "pkg.conflicts_sub": "Ein Projekt löste beide gleichzeitig auf, und der Build schlug dort fehl.",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.requested": "Abdeckungslücke gemeldet.",

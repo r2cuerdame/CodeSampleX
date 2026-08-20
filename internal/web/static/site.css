@@ -1706,3 +1706,8 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
   background: var(--panel-2); border: 1px solid var(--line); }
 .pivotlegend-marks { list-style: none; padding: 0; margin: 0; display: flex;
   flex-wrap: wrap; gap: 0.4rem 1.1rem; }
+
+/* Version pairs one project resolved at once and broke on. Read like the
+   failure clusters above them: one fact per line, counts dim. */
+.conflicts { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+.conflicts li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }

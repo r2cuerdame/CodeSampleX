@@ -247,6 +247,8 @@
   "pkg.clusters_truncated": "Affichage des %s plus signalés parmi %s groupes d’échecs enregistrés. Le reste sont des signalements uniques.",
   "pkg.latest": "dernière avec preuve",
   "pkg.no_clusters": "Aucun cluster d'échec observé.",
+  "pkg.conflicts": "Versions en collision",
+  "pkg.conflicts_sub": "Un projet a résolu les deux à la fois et le build y a échoué.",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",
   "pkg.no_versions": "Pas encore de versions avec des preuves.",
   "pkg.requested": "Lacune de couverture demandée.",
