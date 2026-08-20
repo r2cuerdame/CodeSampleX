@@ -47,6 +47,11 @@ type pivotCell struct {
 	// "observed" (real machines reported a build), "" when nothing was
 	// recorded. The vocabulary is the one the basis filter already emits
 	// (filters.go), so the grid and the filter speak the same two words.
+	// Basis is who ran it: "verified" or "observed", "" when nothing was
+	// recorded. It is NOT rendered as text in the cell -- verification is the
+	// scarce case (hundreds of packages against thousands observed), so
+	// labelling the common one was noise on nearly every cell. It survives
+	// for the class, the accessible label and the filter vocabulary.
 	Basis string
 	Class string // "verified" | "observed" | "empty"
 	// Tone colours the cell by how the rate came out: "pass" | "fail" |
@@ -54,7 +59,11 @@ type pivotCell struct {
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
 	Tone  string
-	Glyph string // "■" | "○" | "—"
+	// Glyph marks the rare thing. A cell we proved carries the verification
+	// mark; an unproven one carries nothing here and is already marked weak
+	// by Maybe. Badging the exception is the point: a mark on 95% of cells
+	// says nothing.
+	Glyph string // "✓" | "" | "—"
 	// Bang marks a measured anomaly: an elevated failure rate or any
 	// verification FAIL. Maybe marks weak or aged evidence: a cell proven
 	// only by project observations, or one whose newest evidence is stale.
@@ -593,10 +602,10 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// the basis is about who ran it, never about how many said so.
 	switch {
 	case ver > 0:
-		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "■"
+		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "✓"
 		cell.PassCount, cell.FailCount = a.verPass, a.verFail
 	case obs > 0:
-		cell.Basis, cell.Class, cell.Glyph = "observed", "observed", "○"
+		cell.Basis, cell.Class, cell.Glyph = "observed", "observed", ""
 		cell.PassCount, cell.FailCount = a.obsPass, a.obsFail
 	default:
 		return pivotCell{Class: "empty", Glyph: "—"}
