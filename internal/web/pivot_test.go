@@ -19,11 +19,22 @@ func pvRow(os, libc, runtime, runtimeVersion, lastSeen string, byStage map[strin
 		SchemaVersion: 1, OS: os, Libc: libc,
 		Runtime: runtime, RuntimeVersion: runtimeVersion,
 	}
-	return snapshotRow{
+	row := snapshotRow{
 		Env:      env,
 		LastSeen: lastSeen,
 		ByStage:  byStage,
 	}
+	// Every observation the producer writes carries the peer-bucket count
+	// it was aggregated from, and the cell weighs its rate by that rather
+	// than by the event total. A fixture without one exercises a snapshot
+	// shape that predates the field.
+	for stage, c := range byStage {
+		if isObservationStageName(stage) && c.Pass+c.Fail > 0 {
+			row.UniquePeerBuckets = 2
+			break
+		}
+	}
+	return row
 }
 
 // colLabels joins the grid's column labels for order assertions.
@@ -330,8 +341,9 @@ func TestPivotCellRatioShowsHiddenDepth(t *testing.T) {
 	}
 	// The observation-only cell is the one that carries a number: it is the
 	// count of real machines that got through.
-	if got := cellAt(t, g, "macos", "node 22"); got.Ratio != "88%" || got.Passes != "7" {
-		t.Errorf("observed cell = %q %q, want 88%% with 7 passes", got.Ratio, got.Passes)
+	if got := cellAt(t, g, "macos", "node 22"); got.Ratio != "88%" || got.Passes != "2" {
+		t.Errorf("observed cell = %q %q, want 88%% weighed by the 2 machines that reported",
+			got.Ratio, got.Passes)
 	}
 
 }

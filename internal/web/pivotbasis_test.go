@@ -8,8 +8,15 @@ import (
 	"unicode/utf8"
 )
 
+// agg builds a cell aggregate. Observations carry a peer-bucket count
+// because that is what the cell weighs its rate by — the event count says
+// how many builds ran, not how many machines ran them.
 func agg(obsPass, obsFail, verPass, verFail int64) *pivotAgg {
-	return &pivotAgg{obsPass: obsPass, obsFail: obsFail, verPass: verPass, verFail: verFail}
+	a := &pivotAgg{obsPass: obsPass, obsFail: obsFail, verPass: verPass, verFail: verFail}
+	if obsPass+obsFail > 0 {
+		a.obsPeers = 4
+	}
+	return a
 }
 
 // A verdict word claims more than was measured. "PASS" reads as "this works
@@ -46,8 +53,8 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	if reported.Basis != "observed" || reported.Glyph != "" {
 		t.Errorf("basis = %q glyph = %q, want observed with no mark", reported.Basis, reported.Glyph)
 	}
-	if reported.Ratio != "95%" || reported.Passes != "297" || reported.Runs != 312 {
-		t.Errorf("cell = %q %q of %d, want 95%% with 297 passes of 312",
+	if reported.Ratio != "95%" || reported.Passes != "4" || reported.Runs != 312 {
+		t.Errorf("cell = %q %q of %d, want 95%% weighed by 4 machines over 312 builds",
 			reported.Ratio, reported.Passes, reported.Runs)
 	}
 }

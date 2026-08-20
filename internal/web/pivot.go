@@ -182,12 +182,36 @@ func (g pivotGrid) Empty() bool { return len(g.Rows) == 0 || len(g.Cols) == 0 }
 // because the cell's verdict comes from the verification side.
 type pivotAgg struct {
 	obsPass, obsFail int64
+	// obsPeers is how many distinct peer buckets reported, as a PEAK and
+	// never a sum: the same machine across two epochs is one machine. It is
+	// what the cell weighs its rate by, because the event count answers a
+	// different question — pgx v5.10.0 on go 1.26 carried 1,361 build
+	// observations from a single bucket, and printing 1,154 beside the rate
+	// read as 1,154 machines agreeing.
+	obsPeers         int64
 	verPass, verFail int64
 	elevated         bool
 	cross            bool
 	obsLastSeen      string // max RFC3339 (UTC strings compare lexically)
 	verLastSeen      string
 	conf             int // best confidence seen: 3 HIGH, 2 MEDIUM, 1 LOW
+}
+
+// plural renders a bucket count, and says so when the producer recorded
+// none: a zero here means the snapshot predates the field, not that nobody
+// reported.
+func plural(n int64) string {
+	if n <= 0 {
+		return "an unrecorded number of"
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func suffix(n int64) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func confRank(c string) int {
@@ -383,6 +407,9 @@ func (a *pivotAgg) absorbRow(r snapshotRow) {
 	if r.ElevatedFailure {
 		a.elevated = true
 	}
+	if int64(r.UniquePeerBuckets) > a.obsPeers {
+		a.obsPeers = int64(r.UniquePeerBuckets)
+	}
 	if r.VerificationCounts["distinctVerifyingPeers"] >= 2 {
 		a.cross = true
 	}
@@ -423,6 +450,9 @@ func (a *pivotAgg) merge(b pivotAgg) {
 func (a *pivotAgg) mergeObservations(b pivotAgg) {
 	a.obsPass += b.obsPass
 	a.obsFail += b.obsFail
+	if b.obsPeers > a.obsPeers {
+		a.obsPeers = b.obsPeers
+	}
 	a.elevated = a.elevated || b.elevated
 	if b.obsLastSeen > a.obsLastSeen {
 		a.obsLastSeen = b.obsLastSeen
@@ -728,7 +758,7 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	switch {
 	case obs > 0:
 		cell.Ratio = fmt.Sprintf("%d%%", int(float64(a.obsPass)/float64(obs)*100+0.5))
-		cell.Passes = fmt.Sprintf("%d", a.obsPass)
+		cell.Passes = fmt.Sprintf("%d", a.obsPeers)
 	default:
 		// Verified, never seen used. The dash sits where the rate would, so
 		// the cell says "no usage recorded" rather than implying that zero
@@ -738,7 +768,11 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 
 	var parts []string
 	if obs > 0 {
-		parts = append(parts, fmt.Sprintf("%d observed", obs))
+		// "observed" alone was read as a count of people. It is a count of
+		// builds, and one machine contributes as many as it runs.
+		parts = append(parts, fmt.Sprintf("%d build observations", obs))
+		parts = append(parts, fmt.Sprintf("%s reporting machine%s",
+			plural(a.obsPeers), suffix(a.obsPeers)))
 	}
 	if ver > 0 {
 		parts = append(parts, fmt.Sprintf("%d verified", ver))
