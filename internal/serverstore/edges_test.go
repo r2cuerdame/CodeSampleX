@@ -67,3 +67,34 @@ func TestDependantsCountProjectsNotRebuilds(t *testing.T) {
 func equalStrings(a, b []string) bool {
 	return strings.Join(a, "|") == strings.Join(b, "|")
 }
+
+// The question that matters most is not "who pulled this" but "what shipped
+// WITH this": upgrade fastapi and pydantic moves under you, and the version
+// that moved is the one that breaks the build. Same table, read from the
+// parent end.
+func TestDependenciesShowWhatShippedAlongsideEachVersion(t *testing.T) {
+	f := NewFake()
+	edgeObs(t, f, "pkg:npm/app@1.0.0", "proj-1", "2026-08-20", "pkg:npm/lib@2.0.0")
+	edgeObs(t, f, "pkg:npm/app@1.1.0", "proj-1", "2026-08-20", "pkg:npm/lib@3.0.0")
+	edgeObs(t, f, "pkg:npm/app@1.1.0", "proj-2", "2026-08-20", "pkg:npm/lib@3.0.0")
+
+	rows, err := f.Dependencies(t.Context(), "npm", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	projects := map[string]int{}
+	for _, r := range rows {
+		got[r.ParentVersion] = r.ChildName + "@" + r.ChildVersion
+		projects[r.ParentVersion] = r.Projects
+	}
+	if got["1.0.0"] != "lib@2.0.0" {
+		t.Errorf("app 1.0.0 shipped with %q, want lib@2.0.0", got["1.0.0"])
+	}
+	if got["1.1.0"] != "lib@3.0.0" {
+		t.Errorf("app 1.1.0 shipped with %q, want lib@3.0.0", got["1.1.0"])
+	}
+	if projects["1.1.0"] != 2 {
+		t.Errorf("app 1.1.0 + lib 3.0.0 seen by %d projects, want 2", projects["1.1.0"])
+	}
+}

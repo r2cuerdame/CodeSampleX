@@ -1715,3 +1715,12 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
 /* Who pulled which version. Same shape as the co-residence list above it. */
 .dependants { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
 .dependants li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+
+/* What shipped with each release: rows are referenced libraries, columns are
+   this package's own versions. Same furniture as the compatibility matrix. */
+table.shipswith { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+table.shipswith th, table.shipswith td {
+  border: 1px solid var(--line); padding: 0.35rem 0.55rem; text-align: left;
+}
+table.shipswith td.num, table.shipswith th.num { text-align: right; }
+table.shipswith th.rowlabel { color: var(--accent); white-space: nowrap; }

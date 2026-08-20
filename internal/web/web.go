@@ -96,6 +96,10 @@ type Store interface {
 	VersionCoresidence(ctx context.Context, ecosystem, name string) ([]VersionCoresidence, error)
 	// Dependants lists what pulled each version of one library.
 	Dependants(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// Dependencies lists what shipped ALONGSIDE each version of one package —
+	// its first-level children, which is all anyone needs: the version that
+	// moved under an upgrade is the one that broke the build.
+	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -209,6 +213,7 @@ type VersionCoresidence struct {
 type DependencyEdge struct {
 	ParentName    string
 	ParentVersion string
+	ChildName     string
 	ChildVersion  string
 	// int64 so the template's number formatter takes it directly. A mismatch
 	// here does not fail loudly: html/template aborts mid-render and the page

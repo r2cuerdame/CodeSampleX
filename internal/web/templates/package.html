@@ -110,6 +110,28 @@
 <p class="dim">{{.T "pkg.no_versions"}}</p>
 {{end}}
 
+{{- if not .ShipsWith.Empty}}
+{{/* Vertical the referenced library, horizontal this package's own versions.
+     First-level children only: the version that moved under an upgrade is the
+     one that broke the build, and nothing deeper is needed to say which. */}}
+<h2 class="eyebrow mono">{{.T "pkg.shipswith"}}</h2>
+<p class="note dim small">{{.T "pkg.shipswith_sub"}}</p>
+<div class="tablewrap">
+<table class="shipswith">
+<thead><tr><th>{{.T "coverage.col_ecosystem"}}</th>
+{{- range .ShipsWith.Versions}}<th class="num mono">{{.}}</th>{{end}}
+</tr></thead>
+<tbody>
+{{- range .ShipsWith.Rows}}
+<tr><th class="rowlabel mono">{{.Library}}</th>
+{{- range .Cells}}<td class="num mono">{{if .}}{{.}}{{else}}—{{end}}</td>{{end}}
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{- end}}
+
 {{- if .Coresident}}
 {{/* Reported by the machine that held the lockfile, never inferred here: the
      server receives one package per record, so a resolution arrives already

@@ -1272,17 +1272,17 @@ func (p *PG) Dependants(ctx context.Context, ecosystem, name string) ([]Dependen
 	var out []DependencyEdge
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT parent_name, parent_version, child_version, count(*) AS projects
+			SELECT parent_name, parent_version, child_name, child_version, count(*) AS projects
 			  FROM dependency_edge
 			 WHERE ecosystem = $1 AND child_name = $2
-			 GROUP BY 1, 2, 3`, ecosystem, name)
+			 GROUP BY 1, 2, 3, 4`, ecosystem, name)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var e DependencyEdge
-			if err := rows.Scan(&e.ParentName, &e.ParentVersion, &e.ChildVersion, &e.Projects); err != nil {
+			if err := rows.Scan(&e.ParentName, &e.ParentVersion, &e.ChildName, &e.ChildVersion, &e.Projects); err != nil {
 				return err
 			}
 			out = append(out, e)
@@ -1293,6 +1293,39 @@ func (p *PG) Dependants(ctx context.Context, ecosystem, name string) ([]Dependen
 		return nil, err
 	}
 	sortDependencyEdges(out)
+	return out, nil
+}
+
+// Dependencies lists what shipped ALONGSIDE each version of one package.
+//
+// Upgrade a library and its dependencies move under you; the one that moved
+// is usually the one that broke the build. Same table as Dependants, read
+// from the parent end.
+func (p *PG) Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error) {
+	var out []DependencyEdge
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT parent_name, parent_version, child_name, child_version, count(*) AS projects
+			  FROM dependency_edge
+			 WHERE ecosystem = $1 AND parent_name = $2
+			 GROUP BY 1, 2, 3, 4`, ecosystem, name)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e DependencyEdge
+			if err := rows.Scan(&e.ParentName, &e.ParentVersion, &e.ChildName, &e.ChildVersion, &e.Projects); err != nil {
+				return err
+			}
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	sortShippedWith(out)
 	return out, nil
 }
 

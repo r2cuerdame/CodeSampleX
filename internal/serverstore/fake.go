@@ -1297,10 +1297,34 @@ func (f *Fake) Dependants(_ context.Context, ecosystem, name string) ([]Dependen
 		}
 		out = append(out, DependencyEdge{
 			ParentName: k.parentName, ParentVersion: k.parentVersion,
-			ChildVersion: k.childVersion, Projects: len(projectDays),
+			ChildName: k.childName, ChildVersion: k.childVersion,
+			Projects: len(projectDays),
 		})
 	}
 	sortDependencyEdges(out)
+	return out, nil
+}
+
+// Dependencies lists what shipped ALONGSIDE each version of one package.
+//
+// Upgrade a library and its dependencies move under you; the one that moved
+// is usually the one that broke the build. Same table as Dependants, read
+// from the parent end.
+func (f *Fake) Dependencies(_ context.Context, ecosystem, name string) ([]DependencyEdge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []DependencyEdge
+	for k, projectDays := range f.edges {
+		if k.ecosystem != ecosystem || k.parentName != name {
+			continue
+		}
+		out = append(out, DependencyEdge{
+			ParentName: k.parentName, ParentVersion: k.parentVersion,
+			ChildName: k.childName, ChildVersion: k.childVersion,
+			Projects: len(projectDays),
+		})
+	}
+	sortShippedWith(out)
 	return out, nil
 }
 

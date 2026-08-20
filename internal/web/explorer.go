@@ -534,6 +534,11 @@ type packagePage struct {
 	// of a co-residence a person can act on: not "there are two" but "this
 	// dependency wanted that one".
 	Dependants []DependencyEdge
+	// ShipsWith is the library × version grid: what came with each release of
+	// this package. First-level children only — the version that moved under
+	// an upgrade is the one that broke the build, and nothing deeper is
+	// needed to say which.
+	ShipsWith ShipsWithGrid
 }
 
 // coresidentVersions lists the version pairs a scanner saw in one resolution.
@@ -555,6 +560,15 @@ func (s *site) dependants(r *http.Request, eco, name string) []DependencyEdge {
 		return nil
 	}
 	return rows
+}
+
+// shipsWith builds the library × version grid for one package.
+func (s *site) shipsWith(r *http.Request, eco, name string) ShipsWithGrid {
+	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
+	if err != nil {
+		return ShipsWithGrid{}
+	}
+	return buildShipsWith(rows)
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -692,6 +706,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Cube:       buildCubeView(s, r, lang, eco, name),
 		Coresident: s.coresidentVersions(r, eco, name),
 		Dependants: s.dependants(r, eco, name),
+		ShipsWith:  s.shipsWith(r, eco, name),
 	})
 }
 

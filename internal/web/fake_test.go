@@ -25,6 +25,7 @@ type fakeStore struct {
 	// package pages); samplePackages is the purl list of each one.
 	coresidence    []VersionCoresidence
 	dependants     []DependencyEdge
+	dependencies   []DependencyEdge
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
 	derived        []DerivedFinding
@@ -345,4 +346,8 @@ func (f *fakeStore) VersionCoresidence(context.Context, string, string) ([]Versi
 
 func (f *fakeStore) Dependants(context.Context, string, string) ([]DependencyEdge, error) {
 	return f.dependants, nil
+}
+
+func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
+	return f.dependencies, nil
 }

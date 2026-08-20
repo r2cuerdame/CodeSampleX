@@ -343,7 +343,25 @@ func (w *webStore) Dependants(ctx context.Context, ecosystem, name string) ([]we
 	for _, r := range rows {
 		out = append(out, web.DependencyEdge{
 			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
-			ChildVersion: r.ChildVersion, Projects: int64(r.Projects),
+			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
+			Projects: int64(r.Projects),
+		})
+	}
+	return out, nil
+}
+
+// Dependencies adapts the parent-side view of the same edges.
+func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
+	rows, err := w.s.Dependencies(ctx, ecosystem, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DependencyEdge, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.DependencyEdge{
+			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
+			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
+			Projects: int64(r.Projects),
 		})
 	}
 	return out, nil

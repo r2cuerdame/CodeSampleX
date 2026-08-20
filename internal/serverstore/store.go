@@ -295,6 +295,10 @@ type Store interface {
 	// Dependants lists what pulled each version of one library — the other
 	// half of a co-residence, and the half a person can act on.
 	Dependants(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// Dependencies lists what shipped ALONGSIDE each version of one package:
+	// upgrade a library and its dependencies move under you, and the one that
+	// moved is usually the one that broke the build.
+	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier

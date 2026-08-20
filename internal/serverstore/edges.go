@@ -18,6 +18,7 @@ import (
 type DependencyEdge struct {
 	ParentName    string
 	ParentVersion string
+	ChildName     string
 	ChildVersion  string
 	Projects      int
 }
@@ -46,8 +47,8 @@ func edgeClaims(b domain.ObservationBatch) [][2]domain.PURL {
 	return out
 }
 
-// sortDependencyEdges orders by how many projects saw the edge, then by name,
-// so the parent most people have leads.
+// sortDependencyEdges groups by the child version being explained, then puts
+// the parent most projects have first.
 func sortDependencyEdges(out []DependencyEdge) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ChildVersion != out[j].ChildVersion {
@@ -60,5 +61,23 @@ func sortDependencyEdges(out []DependencyEdge) {
 			return out[i].ParentName < out[j].ParentName
 		}
 		return out[i].ParentVersion < out[j].ParentVersion
+	})
+}
+
+// sortShippedWith groups by this package's own version, newest question
+// first: what moved when I upgraded. Within a version the library most
+// projects carry leads.
+func sortShippedWith(out []DependencyEdge) {
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ParentVersion != out[j].ParentVersion {
+			return domain.CompareVersions(out[i].ParentVersion, out[j].ParentVersion) > 0
+		}
+		if out[i].Projects != out[j].Projects {
+			return out[i].Projects > out[j].Projects
+		}
+		if out[i].ChildName != out[j].ChildName {
+			return out[i].ChildName < out[j].ChildName
+		}
+		return out[i].ChildVersion < out[j].ChildVersion
 	})
 }
