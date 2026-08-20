@@ -49,8 +49,8 @@ func TestPeerBucketsPeakRatherThanSum(t *testing.T) {
 // as a count of people.
 func TestTooltipNamesObservationsAsBuilds(t *testing.T) {
 	cell := buildPivotCell(&pivotAgg{obsPass: 1154, obsFail: 207, obsPeers: 1}, time.Now())
-	if !strings.Contains(cell.Tip, "1361 build observations") {
-		t.Errorf("tip = %q, want it to name the events as builds", cell.Tip)
+	if !strings.Contains(cell.Tip, "1361 observations") {
+		t.Errorf("tip = %q, want it to name the events as observations", cell.Tip)
 	}
 	if !strings.Contains(cell.Tip, "1 reporting machine") {
 		t.Errorf("tip = %q, want it to state how many machines reported", cell.Tip)

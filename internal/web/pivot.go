@@ -773,9 +773,13 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 
 	var parts []string
 	if obs > 0 {
-		// "observed" alone was read as a count of people. It is a count of
-		// builds, and one machine contributes as many as it runs.
-		parts = append(parts, fmt.Sprintf("%d build observations", obs))
+		// "observed" alone was read as a count of people, and "build
+		// observations" as a count of builds. It is neither: one build files
+		// an observation per stage it reached — compile, test, typecheck —
+		// plus one for having used the package at all, so the events
+		// outnumber the builds several times over and both readings
+		// overstate what happened.
+		parts = append(parts, fmt.Sprintf("%d observations", obs))
 		parts = append(parts, fmt.Sprintf("%s reporting machine%s",
 			plural(a.obsPeers), suffix(a.obsPeers)))
 	}
