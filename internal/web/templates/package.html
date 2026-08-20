@@ -42,15 +42,14 @@
     <div class="ctlgroup filters">
       <span class="ctllabel dim">{{.T "cube.filters"}}</span>
       {{- range .Cube.Filters}}
-      {{- if .Fixed}}
-      {{/* One value and no pin: nothing to choose, so it states the
-           coordinate rather than pretending to offer a decision. */}}
-      <span class="ctlfixed">{{.Label}} <b>{{(index .Options 0).Label}}</b></span>
-      {{- else}}
-      <label{{if .Active}} class="on"{{end}}>{{.Label}}
+      {{/* Every dimension keeps its dropdown, decided or not: a bar whose
+           controls change shape as the reader drills is harder to read than
+           one that stays put. A decided dimension holds its one value
+           selected and offers no "all", so the control says where you are
+           without pretending there is a choice. */}}
+      <label{{if .Active}} class="on"{{else if .Fixed}} class="fixed"{{end}}>{{.Label}}
         <select name="f_{{.Dim}}" data-autosubmit>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>
-      {{- end}}
       {{- end}}
       {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
     </div>
