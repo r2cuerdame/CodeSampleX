@@ -95,3 +95,44 @@ func seedVerifiedSample(t *testing.T, f *Fake, ctx context.Context, purl, os str
 		t.Fatal(err)
 	}
 }
+
+// A FINDING is about a failure, not about coverage. Excluding symbol-less
+// coordinates that a verified sample already covers was right for expansion —
+// expansion asks "is this answered" — and wrong for everything else: 77% of
+// production's failure clusters carry no symbol, and a package having some
+// verified sample says nothing about whether its failure has been explained.
+// Scoping the exclusion to expansion is the difference between stopping a
+// loop and stopping the work.
+func TestSymbollessFindingSurvivesAnAlreadyVerifiedPackage(t *testing.T) {
+	f := NewFake()
+	ctx := t.Context()
+	now := time.Now().UTC()
+	const purl = "pkg:npm/three@0.185.1"
+
+	if err := f.UpsertPackage(ctx, PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "three", Version: "0.185.1",
+		Publicness: "PUBLIC", LastSeen: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedVerifiedSample(t, f, ctx, purl, "linux", now)
+	if err := f.UpsertFailureCluster(ctx, ClusterRow{
+		Ecosystem: "npm", PackageName: "three", Symbol: "",
+		Stage: "PROJECT_TEST", ErrorFingerprint: "fp-1", ErrorCode: "ERR_X",
+		ObservationCount: 12, EnvSummaryJSON: `{"os":"windows"}`,
+		VersionsJSON: `["0.185.1"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := f.ListAuthoringExpansionCandidates(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Kind == "FINDING" && r.Symbol == "" && r.Name == "three" {
+			return
+		}
+	}
+	t.Errorf("the symbol-less finding was excluded as though it were coverage: %+v", rows)
+}

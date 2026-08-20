@@ -374,17 +374,24 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				--
 				-- "symbol='' OR ..." exempted symbol-less rows from the check
 				-- entirely, and package-level observations produce exactly those.
-				-- So a package with a verified sample stayed a candidate forever
-				-- and this branch reissued it: production wrote eight samples for
-				-- three@0.185.1 in twenty-eight minutes, each with a placeholder
-				-- goal and no symbols, bounded by nothing but the corpus running
-				-- out of packages. A symbol-less coordinate asks "has this PACKAGE
-				-- been answered", so it is checked against verified_packages.
+				-- So an answered package stayed a candidate forever and the
+				-- expansion branch reissued it: production wrote eight samples
+				-- for three@0.185.1 in twenty-eight minutes, each a placeholder
+				-- goal with no symbols, bounded by nothing but the corpus
+				-- running out of packages.
+				--
+				-- A symbol-less EXPANSION asks "has this package been answered",
+				-- so it is checked against verified_packages. FINDING and WANTED
+				-- are not: a finding is about a failure, and 77% of production's
+				-- clusters carry no symbol, so filtering them this way stopped
+				-- the work rather than the loop.
 				SELECT * FROM ranked c
-				WHERE (CASE WHEN c.symbol='' THEN NOT EXISTS (
-					SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
-				  ELSE NOT EXISTS (
-					SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol) END)
+				WHERE (CASE
+				    WHEN c.symbol<>'' THEN NOT EXISTS (
+				      SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol)
+				    WHEN c.kind='EXPANSION' THEN NOT EXISTS (
+				      SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
+				    ELSE true END)
 				  AND NOT EXISTS (
 					SELECT 1 FROM in_flight f WHERE f.purl=c.purl AND f.symbol=c.symbol)
 			), spread AS (

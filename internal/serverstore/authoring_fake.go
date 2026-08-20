@@ -191,14 +191,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil || !containsString(manifest.Packages, pkg.PURL) {
 				continue
 			}
-			// A symbol-less coordinate asks "has this PACKAGE been answered",
-			// and the answer is the sample we just found. Requiring symbol!=""
-			// skipped the check entirely for those, so a package with a
-			// verified sample stayed eligible forever and the expansion branch
-			// reissued it: production wrote eight samples for three@0.185.1 in
-			// twenty-eight minutes, each with a placeholder goal and no
-			// symbols, bounded by nothing.
-			if symbol == "" || containsString(manifest.Symbols, symbol) {
+			if symbol != "" && containsString(manifest.Symbols, symbol) {
 				return false
 			}
 		}
@@ -288,7 +281,14 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	// symbol filter never applies to a package-level row.
 	for _, pkg := range f.packages {
 		for targetOS, score := range observedTargets[pkg.PURL] {
-			if score == 0 || packageTargets[pkg.PURL][targetOS] || !eligible(pkg, "") {
+			// A proof anywhere ends package-level coverage work. The OS-keyed
+			// guard beside it asks a different question and cannot answer this
+			// one: a work row's target_os is where the package was OBSERVED
+			// (Windows, always) and the guard's is where the contract RAN
+			// (Linux, always), so it compares linux against windows and never
+			// matches.
+			if score == 0 || packageTargets[pkg.PURL][targetOS] ||
+				verifiedPURLs[pkg.PURL] || !eligible(pkg, "") {
 				continue
 			}
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
@@ -359,7 +359,20 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	}
 	for _, pkg := range f.packages {
 		for observed, score := range observedScores {
+			// An observation with no symbol asks for package coverage, and
+			// eligible() cannot answer that: it only compares symbol names, so
+			// a symbol-less row was never excluded by anything and this branch
+			// reissued an answered package forever — eight samples for
+			// three@0.185.1 in twenty-eight minutes, each a placeholder goal
+			// with no symbols.
+			//
+			// FINDING and WANTED rows are NOT filtered this way. A finding is
+			// about a failure, not about coverage, and 77% of production's
+			// clusters carry no symbol.
 			if observed[0] != pkg.PURL || score == 0 || !eligible(pkg, observed[1]) {
+				continue
+			}
+			if observed[1] == "" && verifiedPURLs[pkg.PURL] {
 				continue
 			}
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1], observed[2]}
