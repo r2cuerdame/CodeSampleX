@@ -358,35 +358,57 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 
 // mergeCubeFacts folds one cell's facts together without double-counting.
 //
-// Observations are disjoint per symbol and sum across all facts. The same
-// verification receipt, however, is filed by the producer into the
-// package-level snapshot AND every claimed symbol's snapshot — so within
-// one (version, environment bucket) only ONE fact may contribute
-// verification counts: the package-level one (the superset), or failing
-// that, the symbol fact with the most verification events (a safe lower
-// bound; the duplicates are copies of the same receipts).
+// Within one (version, environment bucket) exactly ONE fact contributes, and
+// that now holds for observations as well as verifications.
+//
+// It was only ever applied to verifications, on the stated belief that
+// observations are disjoint per symbol. They are not: the recorder writes a
+// package-level observation for a build AND one for every symbol detected in
+// that same build (internal/evidence/recorder.go), so summing them counts one
+// build once for the package and again for each symbol. A cell on a
+// non-symbol axis therefore reported far more runs than ever happened -- the
+// same inflation the network-wide evidence counter carried until it was
+// changed to count package-level rows only.
+//
+// The package-level fact is the superset and wins. Failing that, the symbol
+// fact with the most events is a safe lower bound: the others are copies of
+// the same builds.
 func mergeCubeFacts(facts []cubeFact) *pivotAgg {
 	agg := &pivotAgg{}
 	type verKey struct{ version, envHash string }
-	chosen := map[verKey]cubeFact{}
-	for _, f := range facts {
-		agg.mergeObservations(f.Agg)
-		if f.Agg.verPass+f.Agg.verFail == 0 && !f.Agg.cross {
-			continue
-		}
-		key := verKey{f.Dims["version"], f.EnvHash}
-		cur, ok := chosen[key]
+	pick := func(cur cubeFact, ok bool, f cubeFact, weight func(pivotAgg) int64) bool {
 		switch {
 		case !ok:
-			chosen[key] = f
+			return true
 		case f.PackageLevel && !cur.PackageLevel:
-			chosen[key] = f
-		case f.PackageLevel == cur.PackageLevel &&
-			f.Agg.verPass+f.Agg.verFail > cur.Agg.verPass+cur.Agg.verFail:
-			chosen[key] = f
+			return true
+		case f.PackageLevel == cur.PackageLevel && weight(f.Agg) > weight(cur.Agg):
+			return true
+		}
+		return false
+	}
+	obsWeight := func(a pivotAgg) int64 { return a.obsPass + a.obsFail }
+	verWeight := func(a pivotAgg) int64 { return a.verPass + a.verFail }
+
+	observed := map[verKey]cubeFact{}
+	verified := map[verKey]cubeFact{}
+	for _, f := range facts {
+		key := verKey{f.Dims["version"], f.EnvHash}
+		if obsWeight(f.Agg) > 0 {
+			if cur, ok := observed[key]; pick(cur, ok, f, obsWeight) {
+				observed[key] = f
+			}
+		}
+		if verWeight(f.Agg) > 0 || f.Agg.cross {
+			if cur, ok := verified[key]; pick(cur, ok, f, verWeight) {
+				verified[key] = f
+			}
 		}
 	}
-	for _, f := range chosen {
+	for _, f := range observed {
+		agg.mergeObservations(f.Agg)
+	}
+	for _, f := range verified {
 		agg.mergeVerifications(f.Agg)
 	}
 	return agg

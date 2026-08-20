@@ -350,3 +350,27 @@ func TestSymbolAxisListsSymbolsOnly(t *testing.T) {
 		t.Fatalf("rows = %d, want just the one real symbol", len(g.Rows))
 	}
 }
+
+// The recorder writes a package-level observation for a build AND one for
+// every symbol detected in that same build, so summing them counts one build
+// once for the package and again per symbol. On a non-symbol axis both land
+// in the same cell, and the number a reader saw was inflated by however many
+// symbols happened to be detected.
+func TestCellDoesNotCountOneBuildPerSymbol(t *testing.T) {
+	env := "envhash"
+	facts := []cubeFact{
+		// One build: 100 runs, 85 passed, recorded against the package.
+		{Dims: map[string]string{"version": "1.0.0", "runtime": "go 1.26"}, EnvHash: env,
+			PackageLevel: true, Agg: pivotAgg{obsPass: 85, obsFail: 15}},
+		// The same build, recorded again under each symbol it touched.
+		{Dims: map[string]string{"version": "1.0.0", "runtime": "go 1.26"}, EnvHash: env,
+			Agg: pivotAgg{obsPass: 85, obsFail: 15}},
+		{Dims: map[string]string{"version": "1.0.0", "runtime": "go 1.26"}, EnvHash: env,
+			Agg: pivotAgg{obsPass: 40, obsFail: 5}},
+	}
+	got := mergeCubeFacts(facts)
+	if got.obsPass != 85 || got.obsFail != 15 {
+		t.Errorf("cell = %d/%d, want the one build's 85/15 — the symbol rows are the same builds",
+			got.obsPass, got.obsFail)
+	}
+}
