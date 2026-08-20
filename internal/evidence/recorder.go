@@ -14,6 +14,27 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
+// usageFacts is what one scan learned about one package without building it.
+type usageFacts struct {
+	Epoch, PURL, EnvHash  string
+	Direct                bool
+	Coresident, DependsOn []string
+}
+
+// usageObsKey builds the USED observation for one package.
+func usageObsKey(f usageFacts) localdb.ObsKey {
+	return localdb.ObsKey{
+		Epoch:      f.Epoch,
+		PURL:       f.PURL,
+		EnvHash:    f.EnvHash,
+		Stage:      domain.StageUsed,
+		Result:     domain.ResultPass,
+		Direct:     f.Direct,
+		Coresident: f.Coresident,
+		DependsOn:  f.DependsOn,
+	}
+}
+
 // publicPURLs is the public subset of a scan as a slice, for co-residence.
 func publicPURLs(public map[string]domain.PURL) []domain.PURL {
 	out := make([]domain.PURL, 0, len(public))
@@ -119,14 +140,22 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 
 	if !profile.Known {
 		// Unclassified command: usage evidence only (C14).
+		//
+		// Nothing was built, but a lockfile WAS resolved, and USED is exactly
+		// "this resolution contained X" — so what the resolution said belongs
+		// here at least as much as on a build. It used to record the package
+		// and drop the rest, and in production every observation arriving was
+		// USED, so the edges and the direct flag were computed on every scan
+		// and thrown away.
 		for _, key := range publicKeys {
-			err := r.DB.RecordObservation(ctx, localdb.ObsKey{
-				Epoch:   epoch,
-				PURL:    key,
-				EnvHash: envHash,
-				Stage:   domain.StageUsed,
-				Result:  domain.ResultPass,
-			}, 1)
+			err := r.DB.RecordObservation(ctx, usageObsKey(usageFacts{
+				Epoch:      epoch,
+				PURL:       key,
+				EnvHash:    envHash,
+				Direct:     direct[key],
+				Coresident: coresident[key],
+				DependsOn:  edges[key],
+			}), 1)
 			if err != nil {
 				return err
 			}
