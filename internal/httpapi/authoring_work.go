@@ -3,8 +3,10 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -26,7 +28,38 @@ type authoringWorkRequest struct {
 	SchemaVersion     int                      `json:"schemaVersion"`
 	SandboxCapability domain.SandboxCapability `json:"sandboxCapability"`
 	VerifierOS        []string                 `json:"verifierOS"`
+	ClientVersion     string                   `json:"clientVersion"`
 }
+
+// minAuthoringClient is the first release whose worker asks the Docker daemon
+// which kind of container it serves. Everything before it sent the literal
+// "linux" whatever daemon it was talking to, so on a Windows daemon it
+// produced receipts stamped linux — false evidence in a network whose product
+// is that the environment recorded is the environment that ran.
+//
+// The server cannot tell an old worker on Linux from an old worker on Windows:
+// both say the same thing. So the gate is on the client's ability to answer at
+// all, not on the answer.
+const minAuthoringClient = "v0.1.22"
+
+// authoringClientGateStatus is 426: the request is fine, the client is not.
+const authoringClientGateStatus = http.StatusUpgradeRequired
+
+// checkAuthoringClient refuses a worker that cannot report its own platform.
+// An unparseable or absent version is refused too — a worker the network
+// cannot identify is exactly the one it must not trust to describe itself.
+func checkAuthoringClient(version string) error {
+	v := strings.TrimSpace(version)
+	if v == "" || !authoringClientVersion.MatchString(v) {
+		return fmt.Errorf("this worker does not report a release version; run `csx update` to %s or newer", minAuthoringClient)
+	}
+	if domain.CompareVersions(v, minAuthoringClient) < 0 {
+		return fmt.Errorf("worker %s cannot report its container platform; run `csx update` to %s or newer", v, minAuthoringClient)
+	}
+	return nil
+}
+
+var authoringClientVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoringWorkRequest, bool) {
 	// v0.1.18 and older send an empty body. Their verifier adapters are all
@@ -34,7 +67,11 @@ func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoring
 	// the Windows host itself is the execution target.
 	request := authoringWorkRequest{SchemaVersion: 1, SandboxCapability: domain.CapContainerRun, VerifierOS: []string{"linux"}}
 	if r.ContentLength == 0 {
-		return request, true
+		// An empty body is a pre-v0.1.19 worker. It cannot report its
+		// platform, so it is refused for the same reason as any other client
+		// that cannot: the server has no way to know what it actually ran on.
+		writeErr(w, authoringClientGateStatus, checkAuthoringClient("").Error())
+		return authoringWorkRequest{}, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	dec := json.NewDecoder(r.Body)
@@ -50,6 +87,10 @@ func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoring
 	}
 	if request.SchemaVersion != 1 || (request.SandboxCapability != domain.CapContainerRun && request.SandboxCapability != domain.CapCompileOnly) || len(request.VerifierOS) > 4 {
 		writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
+		return authoringWorkRequest{}, false
+	}
+	if err := checkAuthoringClient(request.ClientVersion); err != nil {
+		writeErr(w, authoringClientGateStatus, err.Error())
 		return authoringWorkRequest{}, false
 	}
 	normalized, err := normalizeVerifierOS(request.VerifierOS)

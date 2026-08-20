@@ -32,7 +32,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	next, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", nil)
+	next, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"CONTAINER_RUN","verifierOS":["linux"],"clientVersion":"v0.1.22"}`))
 	next.Header.Set("Authorization", "Bearer "+token)
 	nextResp, err := http.DefaultClient.Do(next)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", nil)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"CONTAINER_RUN","verifierOS":["linux"],"clientVersion":"v0.1.22"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -232,7 +232,7 @@ func TestAuthoringWorkDoesNotAssignWindowsEvidenceToLinuxVerifier(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", nil)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"CONTAINER_RUN","verifierOS":["linux"],"clientVersion":"v0.1.22"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -258,7 +258,7 @@ func TestAuthoringWorkCompileOnlyClientGetsNoWork(t *testing.T) {
 	if err := store.RecordWanted(t.Context(), testNow.Format("2006-01-02"), "0123456789abcdef", []serverstore.WantedRow{{Ecosystem: "npm", Name: "axios", Version: "1.12.0", Symbol: "axios.post"}}); err != nil {
 		t.Fatal(err)
 	}
-	body := bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"COMPILE_ONLY","verifierOS":[]}`)
+	body := bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"COMPILE_ONLY","verifierOS":[],"clientVersion":"v0.1.22"}`)
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
