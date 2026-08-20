@@ -20,7 +20,6 @@
   <div class="section-heading">
     <div>
       <h2 class="eyebrow mono">{{.T "cube.heading"}}</h2>
-      <p class="dim small">{{.T "cube.sub"}}</p>
     </div>
   </div>
 
@@ -86,8 +85,12 @@
     </p>
     {{- end}}
   </div>
-  <p class="note dim small">{{.T "cube.drill_note"}}</p>
-  {{template "pivotlegend" .}}
+  {{/* Folded. It teaches the grid once, and a reader who already knows it
+       should not have to scroll past the lesson every time. */}}
+  <details class="home-detail gridhelp">
+    <summary><span class="eyebrow mono">{{.T "landing.legend_heading"}}</span></summary>
+    <div class="home-detail-body">{{template "pivotlegend" .}}</div>
+  </details>
   {{- end}}
 </section>
 {{- end}}
@@ -105,7 +108,10 @@
 <thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th></tr></thead>
 <tbody>
 {{- range .Deps}}
-<tr><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Library}}</a></th><td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td></tr>
+{{/* The name is not a link. It promises "the package" and would land on one
+     exact version, which is a different thing from what it says; the version
+     beside it promises that version and goes there. */}}
+<tr><th class="rowlabel mono">{{.Library}}</th><td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td></tr>
 {{- end}}
 </tbody>
 </table>
