@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func agg(obsPass, obsFail, verPass, verFail int64) *pivotAgg {
@@ -128,5 +130,21 @@ func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 	}
 	if failed.Ratio != "0%" || passed.Ratio != "100%" {
 		t.Errorf("the rate must carry the outcome: %q and %q", failed.Ratio, passed.Ratio)
+	}
+}
+
+// A stray NUL byte reached the stylesheet once, through an escape that Python
+// read as octal rather than as CSS. It rendered as a broken glyph beside
+// every run count and turned a text asset into a binary one.
+func TestStylesheetIsCleanText(t *testing.T) {
+	css, err := staticFS.ReadFile("static/site.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := bytes.IndexByte(css, 0); i >= 0 {
+		t.Errorf("site.css carries a NUL byte at offset %d", i)
+	}
+	if !utf8.Valid(css) {
+		t.Error("site.css is not valid UTF-8")
 	}
 }

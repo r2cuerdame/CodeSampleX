@@ -1315,9 +1315,11 @@ td.pv.verified .pvbasis { font-weight: 800; }
 td.pv .pvratio { font-size: 0.78rem; font-weight: 700; }
 /* The run count is the denominator the percentage threw away. 100% from one
    run and 100% from a hundred are the same percentage and very different
-   evidence, so it is always beside it -- smaller, never absent. */
+   evidence, so it sits beside it -- smaller, never absent.
+   "n=" rather than a bare number or a multiplication sign: it is the standard
+   notation for a sample size and nobody reads it as arithmetic. */
 td.pv .pvruns { font-size: 0.66rem; }
-td.pv .pvruns::before { content: " d7"; opacity: 0.6; }
+td.pv .pvruns::before { content: "n="; opacity: 0.55; }
 .mark { font-weight: 800; font-style: normal; }
 .mark.bang { color: var(--bad); }
 .mark.maybe { color: var(--mid); }
@@ -1683,6 +1685,8 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
    "what is this glyph", but a reader is asking "what does this cell say". */
 .pivotlegend .legendexamples { list-style: none; padding: 0; margin: 6px 0 8px; }
 .pivotlegend .legendexamples li { display: flex; align-items: baseline; gap: 0.6rem; margin: 3px 0; }
+/* The legend example writes "n=" inline, so it must not get the pseudo-element too. */
+.pivotlegend .legendexamples .pvruns::before { content: none; }
 .pivotlegend .legendexamples .ex { display: inline-flex; align-items: baseline; gap: 0.3rem;
   min-width: 7.5rem; padding: 2px 8px; border-radius: 6px;
   background: var(--panel-2); border: 1px solid var(--line); }
