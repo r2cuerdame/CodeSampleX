@@ -138,34 +138,48 @@ type heroMatrixData struct {
 	XLabel, YLabel string
 }
 
-// heroAxisPairs are the slices the hero considers, hottest-first: the
-// classic environment grid leads, but version- and symbol-spread slices
-// take over when the environment barely varies (everything measured on
-// one runtime is a 1×1 strip, not a map).
+// heroAxisPairs are the slices the hero considers, best-first.
+//
+// Version × symbol leads. An OS axis looks like the natural map and is the
+// worst choice on this corpus: every observation is recorded on Windows and
+// every verification runs on Linux, so it files the two halves into separate
+// rows and no cell can ever hold both. Version × symbol is also the question
+// the site exists to answer -- does this API work in this release.
 var heroAxisPairs = [][2]string{
+	{"version", "symbol"},
+	{"version", "runtime"},
+	{"symbol", "runtime"},
 	{"runtime", "os"},
 	{"version", "os"},
-	{"version", "runtime"},
-	{"version", "symbol"},
-	{"symbol", "os"},
 }
 
-// heroGridScore ranks candidate grids: measured cells dominate, a real
-// 2D spread earns a bonus, and earlier axis pairs win ties so the
-// environment map stays preferred when it is equally rich.
+// heroGridScore ranks candidate grids. Observed volume dominates, then
+// filled cells, then a real 2D spread; earlier axis pairs win ties.
+//
+// Volume leads because the front page is a demonstration, and a grid whose
+// cells rest on thousands of real runs demonstrates something a grid of
+// single measurements does not -- both look identical if you only count
+// which cells are non-empty.
 func heroGridScore(g pivotGrid, pairRank int) int {
 	if g.Empty() {
 		return 0
 	}
 	nonEmpty := 0
+	observed := int64(0)
 	for _, r := range g.Rows {
 		for _, c := range r.Cells {
 			if c.Class != "empty" {
 				nonEmpty++
 			}
+			observed += c.Runs
 		}
 	}
-	score := nonEmpty*10 + len(g.Rows)*len(g.Cols)
+	// Damped so a single very busy cell cannot beat a genuine spread.
+	volume := 0
+	for v := observed; v > 0; v /= 10 {
+		volume += 15
+	}
+	score := volume + nonEmpty*10 + len(g.Rows)*len(g.Cols)
 	if len(g.Rows) >= 2 && len(g.Cols) >= 2 {
 		score += 40
 	}

@@ -18,24 +18,27 @@ func matrixStore() *fakeStore {
 	return f
 }
 
-// The landing hero renders a real slice of the most-measured package's
-// cube: runtime columns, OS rows, and cells that drill into the explorer.
+// The landing hero renders a real slice of the most-observed package's cube:
+// version columns, symbol rows, and cells that drill into the explorer.
+//
+// It used to lead with runtime × OS, which is the worst pair this corpus can
+// be shown on -- every observation is recorded on Windows and every
+// verification runs on Linux, so an OS axis guarantees no cell holds both.
 func TestLandingRendersHotPackageMatrix(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = matrixStore() })
 	body := get(t, mux, "/").Body.String()
 
 	mustContain(t, body, `id="matrix"`)
 	mustContain(t, body, `<table class="pivot">`)
-	for _, s := range []string{"node 22", "node 20", "linux", "windows", "macos"} {
+	for _, s := range []string{"19.1.0", "hydrateRoot"} {
 		mustContain(t, body, s)
 	}
-	// The Windows/node-22 slice holds hydrateRoot's contract failure. A
-	// failure carries NO mark — the check means our sample ran and passed —
-	// so what says so is the failing tone on the cell.
+	// hydrateRoot carries a contract failure: the cross says our own run
+	// failed there, without leaning on the cell's colour.
 	mustContain(t, body, `t-fail`)
-	// Cells link into the package cube with their coordinates pinned
-	// (html/template escapes "+" as &#43; inside href attributes).
-	mustContain(t, body, `/npm/reactish?f_os=windows&amp;f_runtime=node&#43;22`)
+	mustContain(t, body, `aria-hidden="true">✕</span>`)
+	// Cells link into the package cube with their coordinates pinned.
+	mustContain(t, body, `f_version=19.1.0`)
 	// The package switcher offers the hot packages.
 	mustContain(t, body, `class="mtabs`)
 	mustContain(t, body, `?m=npm%2Freactish`)
@@ -47,7 +50,7 @@ func TestLandingMatrixSelectionIsBoundedToHotPackages(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = matrixStore() })
 	body := get(t, mux, "/?m=npm/otherpkg").Body.String()
 	mustContain(t, body, `<table class="pivot">`)
-	mustContain(t, body, "node 22") // the default reactish grid rendered
+	mustContain(t, body, "hydrateRoot") // the default reactish grid rendered
 }
 
 // An empty network renders an honest placeholder, not a fabricated grid.
