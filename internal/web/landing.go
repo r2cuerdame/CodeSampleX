@@ -225,6 +225,7 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	now := time.Now()
 	var best *heroMatrixData
 	bestScore := 0
+	bestUsage := 0
 	consider := func(h PackageHit, facts []cubeFact) {
 		if len(facts) == 0 {
 			return
@@ -249,6 +250,7 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			grid := buildCubeGrid(facts, x, y, links, now)
 			if score := heroGridScore(grid, rank); score > bestScore {
 				bestScore = score
+				bestUsage = gridUsageCells(grid)
 				best = &heroMatrixData{
 					Package: h.Name, Eco: h.Ecosystem,
 					Href:   cubeHref(pagePath, cubeQuery(nil, "", "", lang)),
@@ -270,6 +272,19 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	// The cost stays bounded: a cached cube is free, and a cold one is
 	// assembled only until something renders. Probing all six to pick the
 	// richest grid was what made this the most expensive URL on the site.
+	// Candidates in RANK order, and warmth is never a selection input: which
+	// cubes are warm is a function of what other visitors happened to browse
+	// in the last five minutes, and letting that decide made the featured
+	// package a function of other people's traffic.
+	//
+	// What changed is when to stop. Stopping at the first candidate that
+	// rendered anything meant the featured slice was simply the first hot
+	// package -- and on this corpus that is a grid where one cell in eighteen
+	// has a number in it, because symbol-level observations exist for 138
+	// packages out of 2,729. The scan now continues until a grid actually
+	// carries usage, and keeps the first renderable one as the fallback for
+	// when none does.
+	var fallback *heroMatrixData
 	for i, h := range ordered {
 		if i >= heroMatrixTries {
 			break
@@ -279,9 +294,15 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			facts, _ = s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
 		}
 		consider(h, facts)
-		if best != nil {
+		if best != nil && fallback == nil {
+			fallback = best
+		}
+		if bestUsage > 0 {
 			break
 		}
+	}
+	if best == nil {
+		best = fallback
 	}
 	if best == nil {
 		return nil
@@ -395,15 +416,15 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	}
 
 	s.render(w, "landing", http.StatusOK, landingPage{
-		basePage:  b,
-		Tiles:     buildTiles(lang, st),
-		Ecos:      buildHeroEcos(lang),
-		InstallPS: "irm " + base + "/install.ps1 | iex",
-		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
-		LLMPrompt: llmPrompt(lang, base),
-		Findings:  homeFindings(lang),
-		Matrix:    s.heroMatrix(r, lang, hits),
-		Coverage:  coverage,
+		basePage:    b,
+		Tiles:       buildTiles(lang, st),
+		Ecos:        buildHeroEcos(lang),
+		InstallPS:   "irm " + base + "/install.ps1 | iex",
+		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",
+		LLMPrompt:   llmPrompt(lang, base),
+		Findings:    homeFindings(lang),
+		Matrix:      s.heroMatrix(r, lang, hits),
+		Coverage:    coverage,
 		HasCoverage: len(coverage.Rows) > 0,
 	})
 }
@@ -484,4 +505,19 @@ func (s *site) redirectTo(w http.ResponseWriter, r *http.Request, target string)
 		}
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// gridUsageCells counts cells that carry an observed run count. A cell
+// reading "✓ —" is not empty and holds no usage, and the difference is
+// what separates a grid that demonstrates something from one that does not.
+func gridUsageCells(g pivotGrid) int {
+	n := 0
+	for _, r := range g.Rows {
+		for _, c := range r.Cells {
+			if c.Runs > 0 {
+				n++
+			}
+		}
+	}
+	return n
 }

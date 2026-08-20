@@ -142,3 +142,26 @@ func TestHeroMatrixHonoursTheExplicitSelection(t *testing.T) {
 		t.Errorf("featured %q, want the explicitly selected pkg4", m.Package)
 	}
 }
+
+// Stopping at the first candidate that rendered anything made the featured
+// slice simply the first hot package. On this corpus that is a grid where one
+// cell in eighteen has a number in it: symbol-level observations exist for
+// 138 packages out of 2,729, so which candidate is chosen decides whether the
+// front page shows the network at its most measured or at its emptiest.
+func TestHeroMatrixPrefersASliceThatCarriesUsage(t *testing.T) {
+	hits, store := heroHits(heroMatrixTries)
+	// pkg0 renders, but its only evidence is a contract run: the cell shows
+	// the verification mark and no usage at all.
+	purl := "pkg:npm/pkg0@1.0.0"
+	store.fakeStore.snapshots[snapKey(purl, "")] =
+		cubeSnap(purl, "", "linux", "amd64", "node", "22", "npm", "CONTRACT", 3, 0)
+
+	s := &site{d: Deps{Store: store}}
+	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
+	if m == nil {
+		t.Fatal("no hero matrix rendered")
+	}
+	if gridUsageCells(m.Grid) == 0 {
+		t.Errorf("featured %q, whose grid carries no usage at all", m.Package)
+	}
+}
