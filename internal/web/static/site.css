@@ -1720,4 +1720,7 @@ table.shipswith th, table.shipswith td {
   border: 1px solid var(--line); padding: 0.35rem 0.55rem; text-align: left;
 }
 table.shipswith td.num, table.shipswith th.num { text-align: right; }
-table.shipswith th.rowlabel { color: var(--accent); white-space: nowrap; }
+/* Plain text, plainly coloured. The library name is not a link — it promises
+   "the package" and the row goes to one version — and an accent colour made
+   it look like one anyway. */
+table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space: nowrap; }

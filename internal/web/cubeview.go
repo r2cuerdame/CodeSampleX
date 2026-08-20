@@ -91,6 +91,19 @@ type cubeView struct {
 	WindowNote bool
 }
 
+// cubeFilterWorthOffering reports whether a dimension deserves a dropdown.
+//
+// One value means the only choice is "all", which filters nothing. On a
+// narrow slice most dimensions are that — a package with one environment
+// offered OS, arch, package manager, execution context and libc as five
+// controls that do nothing, burying the one or two that do.
+//
+// A dimension the reader has already pinned always stays, or they cannot
+// unpin it.
+func cubeFilterWorthOffering(values []string, pinned string) bool {
+	return pinned != "" || len(values) >= 2
+}
+
 // parseCubeFilters reads the pinned dimensions from ?f_<dim>= parameters.
 func parseCubeFilters(q url.Values) map[string]string {
 	filters := map[string]string{}
@@ -204,7 +217,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 			}
 		}
 		values := cubeDimValues(filterCubeFacts(facts, rest), dim)
-		if len(values) == 0 {
+		if !cubeFilterWorthOffering(values, filters[dim]) {
 			continue
 		}
 		sel := cubeFilterSelect{
