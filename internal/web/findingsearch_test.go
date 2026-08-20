@@ -42,9 +42,14 @@ func TestFindingsPaginatesTheDerivedGroup(t *testing.T) {
 	if !strings.Contains(p2, "pkg-25@1.0.0") {
 		t.Error("page two does not continue where page one stopped")
 	}
-	// The hand-written groups lead on every page: they are the editorial
-	// substance and they are what a reader landing on page 3 came for.
-	mustContain(t, p2, "Contradicts an official source")
+	// Paging stays inside the tab. The hand-written groups are a tab of
+	// their own now — they stopped leading once the group that grows on its
+	// own passed five hundred entries against their thirty-one — so page 3
+	// of the growing group is page 3 of the growing group.
+	if strings.Contains(p2, "Contradicts an official source") {
+		t.Error("the curated group is rendering inside the growing tab")
+	}
+	mustContain(t, p2, `href="/findings?tab=curated"`)
 }
 
 // A page number past the end is a stale link, not an error.

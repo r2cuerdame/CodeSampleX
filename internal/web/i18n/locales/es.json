@@ -126,6 +126,8 @@
   "findings.group_derived_note": "Nadie escribe este grupo. Cada entrada es una muestra publicada cuyo autor anotó la creencia que corrige, junto a la primera línea del contrato que se ejecutó. Crece cuando se publican muestras, no cuando se edita esta página; por eso encabezan los grupos revisados a mano.",
   "findings.group_docs": "Contradice una fuente oficial",
   "findings.group_docs_note": "Aquí la creencia no es folclore: es lo que dice la documentación del propio proyecto, o la especificación que implementa. Ambas mitades se pueden comprobar: la cita está a un enlace, la medición a una ejecución en contenedor.",
+  "findings.tab_curated": "Verificado a mano",
+  "findings.tab_growing": "Crece con las muestras",
   "findings.intro": "Cada línea de abajo es una medición, no una opinión. Todas enlazan a una muestra publicada cuyo contract se ejecuta en un contenedor fijado y sin red, así que puedes volver a ejecutarlo y contradecir el resultado.",
   "findings.measured": "Medido",
   "findings.method_body": "Abre la muestra, lee su contract y ejecútalo. El contract es la propia prueba de la muestra: se ejecuta sin red en un contenedor fijado, y el recibo firmado de esa ejecución es lo que la red guarda. Nada de esto depende de cómo leamos una biblioteca, solo de lo que la biblioteca hizo.",

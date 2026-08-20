@@ -216,11 +216,13 @@ func TestPackagePagesExistForEverySampleEcosystem(t *testing.T) {
 	}
 }
 
-// A sample answers one version of one API, so the package page counts the
-// answers per version and the version page lists them. Dumping all of them
-// at package level mixed versions into one pile — uuid alone has 96
-// published samples — and truncated the rest at the read limit.
-func TestSamplesAreListedUnderTheirVersion(t *testing.T) {
+// A sample answers one version of one API, so each page narrows: the
+// package page counts the answers per version, the version page counts them
+// per API, and the API's own page lists them. Dumping all of them at package
+// level mixed versions into one pile — uuid alone has 96 published samples;
+// dumping them at version level mixed APIs into one pile — pgx v5.10.0 alone
+// printed 128 rows under a single heading.
+func TestSamplesAreListedUnderTheirSymbol(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	pkg := get(t, mux, "/npm/axios").Body.String()
 	mustContain(t, pkg, `href="/npm/axios/1.12.0"`)
@@ -229,11 +231,19 @@ func TestSamplesAreListedUnderTheirVersion(t *testing.T) {
 	}
 
 	version := get(t, mux, "/npm/axios/1.12.0").Body.String()
-	mustContain(t, version, `href="/samples/sha256:d1e2f3"`)
-	mustContain(t, version, "POST JSON with axios and retries")
+	if strings.Contains(version, `href="/samples/sha256:d1e2f3"`) {
+		t.Error("the version page still dumps samples that belong to an API")
+	}
+	// What the version page keeps is the count, beside the API it belongs to.
+	mustContain(t, version, `href="/npm/axios/1.12.0/axios.post`)
+	mustContain(t, version, `class="symcount dim small">1</span>`)
+
+	symbol := get(t, mux, "/npm/axios/1.12.0/axios.post").Body.String()
+	mustContain(t, symbol, `href="/samples/sha256:d1e2f3"`)
+	mustContain(t, symbol, "POST JSON with axios and retries")
 	// Categorised, not a flat pile: the row says which API and which kind.
-	mustContain(t, version, `class="chip sym mono small">axios.post`)
-	mustContain(t, version, `class="chip kind mono small">HOW`)
+	mustContain(t, symbol, `class="chip sym mono small">axios.post`)
+	mustContain(t, symbol, `class="chip kind mono small">HOW`)
 
 	// A version with no samples of its own must not borrow another's.
 	if other := get(t, mux, "/npm/axios/1.11.0").Body.String(); strings.Contains(other, `href="/samples/`) {

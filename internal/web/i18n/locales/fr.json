@@ -126,6 +126,8 @@
   "findings.group_derived_note": "Personne n'écrit ce groupe. Chaque entrée est un échantillon publié dont l'auteur a consigné la croyance qu'il corrige, à côté de la première ligne du contrat qui s'est exécuté. Il grandit quand des échantillons sont publiés, pas quand cette page est modifiée — d'où la priorité donnée aux groupes vérifiés à la main.",
   "findings.group_docs": "Contredit une source officielle",
   "findings.group_docs_note": "Ici la croyance n'est pas une rumeur : c'est ce qu'écrit la documentation du projet lui-même, ou la spécification qu'il implémente. Les deux moitiés se vérifient : la citation est à un lien, la mesure à une exécution en conteneur.",
+  "findings.tab_curated": "Vérifié à la main",
+  "findings.tab_growing": "Grandit avec les échantillons",
   "findings.intro": "Chaque ligne ci-dessous est une mesure, pas un avis. Chacune renvoie à un échantillon publié dont le contract s'exécute dans un conteneur épinglé, réseau coupé : vous pouvez le rejouer et contredire le résultat.",
   "findings.measured": "Mesuré",
   "findings.method_body": "Ouvrez l'échantillon, lisez son contract, exécutez-le. Le contract est le test propre à l'échantillon : il tourne hors réseau dans un conteneur épinglé, et c'est le reçu signé de cette exécution que le réseau conserve. Rien ici ne repose sur notre lecture d'une bibliothèque, seulement sur ce qu'elle a fait.",

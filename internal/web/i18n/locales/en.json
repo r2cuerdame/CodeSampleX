@@ -126,6 +126,8 @@
   "findings.group_derived_note": "Nobody writes this group. Each entry is a published sample whose author recorded the belief it corrects, beside the first line of the contract that ran against it. It grows when samples are published, not when this page is edited — so the entries above, which are hand-checked, lead.",
   "findings.group_docs": "Contradicts an official source",
   "findings.group_docs_note": "Here the belief is not folklore: it is what the project's own documentation, or the specification it implements, says. Both halves are checkable — the quote is one link away, the measurement one container run.",
+  "findings.tab_curated": "Hand-checked",
+  "findings.tab_growing": "Grows with the samples",
   "findings.intro": "Every line below is a measurement, not an opinion. Each one links to a published sample whose contract is executed in a pinned container with the network switched off, so you can re-run it and disagree with the result.",
   "findings.measured": "Measured",
   "findings.method_body": "Open the sample, read its contract, run it. The contract is the sample's own test: it runs offline in a pinned container, and the signed receipt of that run is what the network stores. Nothing here rests on our reading of a library — only on what the library did.",

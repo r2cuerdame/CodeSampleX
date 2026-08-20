@@ -19,21 +19,21 @@
 {{template "matrix" .}}
 {{end}}
 
-{{- if .Samples}}
-{{/* The answers written against this exact version, grouped so the APIs
-     they cover sit together. */}}
-<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
-{{template "samplelist" .}}
-{{- end}}
-
 <h2 class="eyebrow mono">{{.T "pkg.symbols"}}</h2>
 {{if .Symbols}}
 <ul class="symlist mono">
 {{- range .Symbols}}
-  <li><a href="{{.Href}}">{{.Name}}</a></li>
+  <li><a href="{{.Href}}">{{.Name}}</a>{{if .Samples}} <span class="symcount dim small">{{.Samples}}</span>{{end}}</li>
 {{- end}}
 </ul>
 {{else}}
 <p class="dim">{{.T "pkg.no_symbols"}}</p>
 {{end}}
+
+{{- if .Samples}}
+{{/* Answers that name no API at all. Everything else is read under the
+     symbol it answers for; these have nowhere else to go. */}}
+<h2 class="eyebrow mono">{{.T "seeder.samples"}}</h2>
+{{template "samplelist" .}}
+{{- end}}
 {{end}}

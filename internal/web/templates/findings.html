@@ -19,6 +19,14 @@
 .flinks { margin: 0.05rem 0 0; display: flex; gap: 0.8rem; flex-wrap: wrap; }
 .flinks a.src { color: var(--dim); }
 .flinks a.src:hover { color: var(--text); }
+.ftabs { display: flex; gap: 0.4rem; margin: 1rem 0 0.2rem; padding: 0; list-style: none; flex-wrap: wrap; }
+.ftabs a {
+  display: inline-block; padding: 0.35rem 0.8rem; border-radius: 0.6rem;
+  border: 1px solid var(--line); color: var(--dim); text-decoration: none;
+  font-family: var(--mono); font-size: 0.78rem;
+}
+.ftabs a:hover { color: var(--text); }
+.ftabs a[aria-current="page"] { color: var(--accent); border-color: #b7cdf6; background: #e5efff; font-weight: 700; }
 .ecolist { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.9rem 0 0; padding: 0; list-style: none; }
 </style>
 
@@ -31,7 +39,7 @@
   <label><span>{{.T "adapters.ecosystem"}}</span><select name="eco"><option value="">{{.T "filters.all"}}</option>{{range .EcosystemOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
   <label><span>{{.T "filters.os"}}</span><select name="os"><option value="">{{.T "filters.all"}}</option>{{range .OSOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
   <label><span>{{.T "filters.runtime"}}</span><select name="runtime"><option value="">{{.T "filters.all"}}</option>{{range .RuntimeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
-  <label><span>{{.T "findings.source"}}</span><select name="basis"><option value="">{{.T "filters.all"}}</option>{{range .BasisOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+  {{if eq .Filter.Tab "curated"}}<input type="hidden" name="tab" value="curated">{{end}}
   {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
   <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasFilters}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
 </form>
@@ -44,7 +52,40 @@
 {{- end}}
 </ul>
 
+<ul class="ftabs">
+  <li><a href="{{.GrowingHref}}"{{if eq .Filter.Tab "growing"}} aria-current="page"{{end}}>{{.T "findings.tab_growing"}}</a></li>
+  <li><a href="{{.CuratedHref}}"{{if eq .Filter.Tab "curated"}} aria-current="page"{{end}}>{{.T "findings.tab_curated"}}</a></li>
+</ul>
+
 {{if .Empty}}<p class="dim">{{.T "findings.none"}}</p>{{end}}
+
+{{- if .Derived}}
+<section>
+  <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
+  <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
+  {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
+  {{if .Capped}}<p class="note dim small">{{.T "findings.capped"}}</p>{{end}}
+  <ol class="findings">
+  {{- range .Derived}}
+    <li class="finding panel">
+      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="chip mono">{{$.T .BasisKey}}</span>{{if .Environment}}<span class="chip mono">{{.Environment}}</span>{{end}}<span class="mono subject">{{.Subject}}</span></p>
+      <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
+      <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
+      <p class="flinks small">
+        <a class="mono" href="{{$.WithLang .SampleHref}}">{{$.T "findings.contract"}} · {{.ShortID}}</a>
+      </p>
+    </li>
+  {{- end}}
+  </ol>
+  {{if gt .Pages 1}}
+  <nav class="pager" aria-label="{{.T "findings.title"}}">
+    {{if .PrevHref}}<a class="pagebtn mono" href="{{.PrevHref}}" rel="prev">← {{.T "records.prev"}}</a>{{else}}<span class="pagebtn mono off">← {{.T "records.prev"}}</span>{{end}}
+    <span class="dim mono small">{{.PageText}}</span>
+    {{if .NextHref}}<a class="pagebtn mono" href="{{.NextHref}}" rel="next">{{.T "records.next"}} →</a>{{else}}<span class="pagebtn mono off">{{.T "records.next"}} →</span>{{end}}
+  </nav>
+  {{end}}
+</section>
+{{- end}}
 
 {{- if .Documented}}
 <section>
@@ -87,34 +128,6 @@
     </li>
   {{- end}}
   </ol>
-</section>
-{{- end}}
-
-{{- if .Derived}}
-<section>
-  <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
-  <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
-  {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
-  {{if .Capped}}<p class="note dim small">{{.T "findings.capped"}}</p>{{end}}
-  <ol class="findings">
-  {{- range .Derived}}
-    <li class="finding panel">
-      <p class="fhead"><span class="chip mono">{{.Ecosystem}}</span><span class="chip mono">{{$.T .BasisKey}}</span>{{if .Environment}}<span class="chip mono">{{.Environment}}</span>{{end}}<span class="mono subject">{{.Subject}}</span></p>
-      <p class="claim"><span class="k">{{$.T "findings.believed"}}</span>{{.Believed}}</p>
-      <p class="claim measured"><span class="k">{{$.T "findings.measured"}}</span>{{.Measured}}</p>
-      <p class="flinks small">
-        <a class="mono" href="{{$.WithLang .SampleHref}}">{{$.T "findings.contract"}} · {{.ShortID}}</a>
-      </p>
-    </li>
-  {{- end}}
-  </ol>
-  {{if gt .Pages 1}}
-  <nav class="pager" aria-label="{{.T "findings.title"}}">
-    {{if .PrevHref}}<a class="pagebtn mono" href="{{.PrevHref}}" rel="prev">← {{.T "records.prev"}}</a>{{else}}<span class="pagebtn mono off">← {{.T "records.prev"}}</span>{{end}}
-    <span class="dim mono small">{{.PageText}}</span>
-    {{if .NextHref}}<a class="pagebtn mono" href="{{.NextHref}}" rel="next">{{.T "records.next"}} →</a>{{else}}<span class="pagebtn mono off">{{.T "records.next"}} →</span>{{end}}
-  </nav>
-  {{end}}
 </section>
 {{- end}}
 

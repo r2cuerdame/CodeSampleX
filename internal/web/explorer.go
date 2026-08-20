@@ -657,6 +657,11 @@ type versionPage struct {
 type symbolLink struct {
 	Name string
 	Href string
+	// Samples is how many published answers this API has. It replaces the
+	// flat list the version page used to print: the count is what a reader
+	// scanning the symbols actually needs, and the answers themselves are
+	// one click away under the API they answer for.
+	Samples int
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
@@ -690,20 +695,78 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		{name, base + pkgHref(eco, name)},
 		{version, base + versionHref(eco, name, version)},
 	})}
-	links := make([]symbolLink, 0, len(symbols))
-	for _, symbol := range symbols {
-		links = append(links, symbolLink{
-			Name: symbol,
-			Href: b.WithLang(symbolHref(eco, name, version, symbol)),
-		})
-	}
+	links, residue := symbolLinks(b, eco, name, version, symbols, samples)
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
-		Samples:    samples,
+		Samples:    residue,
 		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
 	})
+}
+
+// symbolLinks builds the version page's symbol list and returns the samples
+// no entry on it claims.
+//
+// The list is the union of two sources. What the store observed is one; the
+// APIs the published samples name is the other, and they do not agree — of
+// pgx v5.10.0's 128 samples, 60 answered for APIs that had never been
+// observed and so appeared in no symbol list. Taking only the observed set
+// left those 60 with no page to be read on, which is why every one of them
+// was still being printed in a flat list on the version page.
+//
+// The residue is what remains: a sample that names no API at all. It is
+// usually one or two, and it is listed on the version page because there is
+// nowhere else for it to go — dropping it would publish a sample into a
+// page nobody can reach.
+func symbolLinks(b basePage, eco, name, version string, observed []string, samples []SampleListItem) ([]symbolLink, []SampleListItem) {
+	counts := map[string]int{}
+	display := map[string]string{}
+	for _, sym := range observed {
+		if m := symbolMember(sym); m != "" {
+			display[m] = sym
+		}
+	}
+	var residue []SampleListItem
+	for _, item := range samples {
+		named := false
+		for _, sym := range item.Symbols {
+			m := symbolMember(sym)
+			if m == "" {
+				continue
+			}
+			named = true
+			counts[m]++
+			if _, ok := display[m]; !ok {
+				// The sample's own spelling is the only one on record for
+				// this API, so it names the entry — but by its member, so
+				// the link reads "CollectRows" beside the observed ones
+				// rather than a module path nobody scans.
+				display[m] = m
+			}
+		}
+		if !named {
+			residue = append(residue, item)
+		}
+	}
+	members := make([]string, 0, len(display))
+	for m := range display {
+		members = append(members, m)
+	}
+	sort.Strings(members)
+	links := make([]symbolLink, 0, len(members))
+	for _, m := range members {
+		links = append(links, symbolLink{
+			// The observed spelling when there is one: an ecosystem that
+			// records "axios.post" must keep saying so, not shrink to
+			// "post". Only an API known solely from samples is labeled by
+			// its member.
+			Name:    display[m],
+			Href:    b.WithLang(symbolHref(eco, name, version, display[m])),
+			Samples: counts[m],
+		})
+	}
+	return links, residue
 }
 
 // versionSymbolGrid builds the "which symbol ran on which OS" grid of one
@@ -774,14 +837,48 @@ func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
 func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) []SampleListItem {
 	var out []SampleListItem
 	for _, item := range s.versionSamples(r, eco, name, version) {
-		for _, named := range item.Symbols {
-			if named == symbol {
-				out = append(out, item)
-				break
-			}
+		if sampleNamesSymbol(item.Symbols, symbol) {
+			out = append(out, item)
 		}
 	}
 	return out
+}
+
+// sampleNamesSymbol reports whether a sample answers for one symbol.
+//
+// It compares the member rather than the whole string because authors write
+// the same API three ways and all three are correct: the full module path
+// with the member ("github.com/jackc/pgx/v5.Batch"), the import alias with
+// the member ("pgx.Batch"), and the member alone ("Batch"). An exact match
+// claimed only the last, which is the rarest — pgx v5.10.0 carried 192 of
+// the first spelling against 22 of the third — so the symbol pages showed
+// almost nothing and the version page showed everything in one flat list.
+//
+// The comparison stays on the whole member. Prefix matching would hand a
+// reader who followed a link to Batch the samples for BatchResults, and a
+// sample filed under the wrong API is worse than one that is hard to find.
+func sampleNamesSymbol(named []string, symbol string) bool {
+	want := symbolMember(symbol)
+	if want == "" {
+		return false
+	}
+	for _, n := range named {
+		if symbolMember(n) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// symbolMember takes the last dot- or slash-separated segment of a symbol
+// name. Both separators appear: Go and Python qualify with dots, and the Go
+// module path in front of the dot carries slashes of its own.
+func symbolMember(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndexAny(s, "./"); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
 }
 
 // versionSamples lists the published samples written against one exact
@@ -840,14 +937,23 @@ type symbolPage struct {
 
 func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version, symbol string) {
 	purl := domain.PURL{Ecosystem: eco, Name: name, Version: version}.String()
-	raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, symbol)
-	if !ok {
-		s.notFound(w, r, lang)
-		return
-	}
+	// Published answers are reason enough for a symbol to have a page, the
+	// same rule the version page already applies one level up. Requiring a
+	// snapshot here meant an API that samples answer for but nothing has
+	// observed had no page at all — and pgx v5.10.0 alone had 60 samples
+	// naming such APIs (CollectRows, Begin, ErrNoRows), which is why they
+	// were all still piled onto the version page instead.
+	samples := s.symbolSamples(r, eco, name, version, symbol)
 	var doc snapshotDoc
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		s.unavailable(w, r, lang)
+	raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, symbol)
+	switch {
+	case ok:
+		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+			s.unavailable(w, r, lang)
+			return
+		}
+	case len(samples) == 0:
+		s.notFound(w, r, lang)
 		return
 	}
 	matrix := buildMatrix(lang, doc)
@@ -894,7 +1000,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		Generated: datePart(doc.GeneratedAt),
 		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,
-		Samples:   s.symbolSamples(r, eco, name, version, symbol),
+		Samples:   samples,
 	})
 }
 

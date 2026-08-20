@@ -126,6 +126,8 @@
   "findings.group_derived_note": "Ninguém escreve este grupo. Cada entrada é uma amostra publicada cujo autor registrou a crença que ela corrige, ao lado da primeira linha do contrato que rodou. Ele cresce quando amostras são publicadas, não quando esta página é editada — por isso os grupos conferidos à mão vêm antes.",
   "findings.group_docs": "Contradiz uma fonte oficial",
   "findings.group_docs_note": "Aqui a crença não é boato: é o que diz a documentação do próprio projeto, ou a especificação que ele implementa. As duas metades são verificáveis — a citação está a um link, a medição a uma execução em contêiner.",
+  "findings.tab_curated": "Verificado à mão",
+  "findings.tab_growing": "Cresce com as amostras",
   "findings.intro": "Cada linha abaixo é uma medição, não uma opinião. Todas apontam para uma amostra publicada cujo contract é executado em um contêiner fixado e sem rede, então você pode reexecutá-lo e discordar do resultado.",
   "findings.measured": "Medido",
   "findings.method_body": "Abra a amostra, leia o contract dela e execute. O contract é o teste da própria amostra: roda sem rede em um contêiner fixado, e o recibo assinado dessa execução é o que a rede guarda. Nada aqui depende de como lemos uma biblioteca, apenas do que ela fez.",

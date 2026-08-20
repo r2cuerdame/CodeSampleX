@@ -483,6 +483,8 @@ type findingsPage struct {
 	NextHref         string
 	Empty            bool
 	Capped           bool
+	GrowingHref      string
+	CuratedHref      string
 	EcosystemOptions []filterOption
 	OSOptions        []filterOption
 	RuntimeOptions   []filterOption
@@ -497,7 +499,20 @@ type findingsFilter struct {
 	OS        string
 	Runtime   string
 	Basis     string // docs | belief | sample | ""
+	// Tab splits the page in two. The growing tab is the machine-derived
+	// group; the curated tab is the two hand-checked ones. They were three
+	// sections on one page until the derived group passed five hundred
+	// entries against the curated thirty-one, at which point leading with
+	// the frozen list made the page read as a list of thirty-one things.
+	Tab string // growing | curated
 }
+
+const (
+	tabGrowing = "growing"
+	tabCurated = "curated"
+)
+
+var findingTabValues = []string{tabGrowing, tabCurated}
 
 var findingBasisValues = []string{"docs", "belief", "sample"}
 
@@ -507,6 +522,15 @@ func cleanFindingsFilter(f findingsFilter) findingsFilter {
 	f.OS = cleanFilterValue(f.OS, osFilterValues)
 	f.Runtime = cleanFilterValue(f.Runtime, runtimeFilterValues)
 	f.Basis = cleanFilterValue(f.Basis, findingBasisValues)
+	f.Tab = cleanFilterValue(f.Tab, findingTabValues)
+	// A published link naming a hand-checked basis has to land on the
+	// entries it named, and those now live behind a tab.
+	if f.Tab == "" && (f.Basis == "docs" || f.Basis == "belief") {
+		f.Tab = tabCurated
+	}
+	if f.Tab == "" {
+		f.Tab = tabGrowing
+	}
 	return f
 }
 
@@ -666,6 +690,7 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		OS:        r.URL.Query().Get("os"),
 		Runtime:   r.URL.Query().Get("runtime"),
 		Basis:     r.URL.Query().Get("basis"),
+		Tab:       r.URL.Query().Get("tab"),
 	})
 	page := 1
 	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 1 {
@@ -683,6 +708,27 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	believed = filterFindings(believed, filter)
 	derived = filterFindings(derived, filter)
 
+	// The total and the ecosystem chips describe the whole collection, so
+	// they are taken before the tab narrows what renders: a reader on either
+	// tab is told how many findings the page holds, not how many this half
+	// of it holds.
+	total := len(documented) + len(believed) + len(derived)
+	ecos := findingEcosystems(documented, believed, derived)
+	switch {
+	case filter.Query != "":
+		// A search cuts across the tabs. Someone typing "timeout" wants the
+		// finding about timeouts, and which half of the page it files under
+		// is an authoring detail they never chose.
+	case filter.Tab == tabCurated:
+		derived = nil
+	case len(derived) == 0:
+		// Nothing has grown yet — an empty default tab would read as an
+		// empty page. The curated group is what there is, so it is shown.
+		filter.Tab = tabCurated
+	default:
+		documented, believed = nil, nil
+	}
+
 	pages := (len(derived) + findingsPerPage - 1) / findingsPerPage
 	if pages == 0 {
 		pages = 1
@@ -695,18 +741,6 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	from := (page - 1) * findingsPerPage
 	to := min(from+findingsPerPage, len(derived))
 	shown := derived[from:to]
-
-	seen := map[string]bool{}
-	var ecos []string
-	for _, list := range [][]finding{documented, believed, derived} {
-		for _, f := range list {
-			if !seen[f.Ecosystem] {
-				seen[f.Ecosystem] = true
-				ecos = append(ecos, f.Ecosystem)
-			}
-		}
-	}
-	sort.Strings(ecos)
 
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
 	b := s.page(r, lang, i18n.T(lang, "findings.title")+" — CodeSampleX",
@@ -725,7 +759,7 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		Documented:       documented,
 		Believed:         believed,
 		Derived:          shown,
-		Total:            len(documented) + len(believed) + len(derived),
+		Total:            total,
 		Ecosystems:       ecos,
 		Page:             page,
 		Pages:            pages,
@@ -734,7 +768,9 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		RuntimeOptions:   runtimeOptions(filter.Runtime),
 		BasisOptions:     findingBasisOptions(lang, filter.Basis),
 		HasFilters:       filter.Query != "" || filter.Ecosystem != "" || filter.OS != "" || filter.Runtime != "" || filter.Basis != "",
-		ClearHref:        findingsHref(findingsFilter{}, 1, lang),
+		ClearHref:        findingsHref(findingsFilter{Tab: filter.Tab}, 1, lang),
+		GrowingHref:      findingsHref(findingsFilter{Tab: tabGrowing}, 1, lang),
+		CuratedHref:      findingsHref(findingsFilter{Tab: tabCurated}, 1, lang),
 	}
 	// The count of derived findings is stated whether or not they all fit,
 	// because a page that shows twenty-five of four hundred and says
@@ -757,6 +793,23 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	view.Capped = rawDerivedTotal >= derivedCap
 
 	s.render(w, "findings", http.StatusOK, view)
+}
+
+// findingEcosystems lists, once and in order, every ecosystem the whole
+// collection carries.
+func findingEcosystems(lists ...[]finding) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range lists {
+		for _, f := range list {
+			if !seen[f.Ecosystem] {
+				seen[f.Ecosystem] = true
+				out = append(out, f.Ecosystem)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // matchFindings keeps the findings mentioning every word of the query, in
@@ -802,6 +855,11 @@ func findingsHref(filter findingsFilter, page int, lang string) string {
 	}
 	if filter.Basis != "" {
 		v.Set("basis", filter.Basis)
+	}
+	// The growing tab is the default, so it stays out of the URL: one page,
+	// one canonical address.
+	if filter.Tab == tabCurated {
+		v.Set("tab", tabCurated)
 	}
 	if page > 1 {
 		v.Set("page", strconv.Itoa(page))
