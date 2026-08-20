@@ -84,10 +84,18 @@ type statTile struct {
 	Sub   string
 }
 
-func buildTiles(lang string, st *netStats) []statTile {
+func buildTiles(lang string, st *netStats, findings int64) []statTile {
 	have := st != nil
 	if st == nil {
 		st = &netStats{}
+	}
+	known := func(key string, n int64) statTile {
+		return statTile{
+			Label: i18n.T(lang, key),
+			Sub:   i18n.T(lang, key+"_sub"),
+			Value: i18n.FormatCompactInt(lang, n),
+			Exact: i18n.FormatInt(lang, n),
+		}
 	}
 	counter := func(key string, n int64) statTile {
 		tile := statTile{
@@ -122,7 +130,11 @@ func buildTiles(lang string, st *netStats) []statTile {
 	return []statTile{
 		counter("stats.packages", st.Packages),
 		counter("stats.verified_samples", st.VerifiedSamples),
-		counter("stats.apis", st.Symbols),
+		// Not gated on the stats document, because it does not come from
+		// one: the count is read where the findings page reads it. Blanking
+		// a number the page knows, because a different number is missing,
+		// would say "unmeasured" about the one thing here that is ours.
+		known("stats.findings", findings),
 	}
 }
 
@@ -441,7 +453,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 
 	s.render(w, "landing", http.StatusOK, landingPage{
 		basePage:    b,
-		Tiles:       buildTiles(lang, st),
+		Tiles:       buildTiles(lang, st, s.findingsTotal(r)),
 		Ecos:        buildHeroEcos(lang),
 		InstallPS:   "irm " + base + "/install.ps1 | iex",
 		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",

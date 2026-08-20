@@ -21,14 +21,17 @@ func believedResult(believed string) domain.SearchResult {
 }
 
 // The belief is the sentence that changes what the caller writes next, so
-// it has to appear above the proof rather than after it.
-func TestContractBlockLeadsWithTheBelief(t *testing.T) {
+// it moved out of this block entirely and now leads the whole hit — above
+// the match deltas, the evidence counts and the failure clusters, not merely
+// above the contract lines at the bottom of them. What this block must not
+// do is print it a second time.
+func TestContractBlockNoLongerRepeatsTheBelief(t *testing.T) {
 	out := contractBlock(believedResult("a timeout of 5 covers the whole request"))
-	if !strings.Contains(out, "a timeout of 5 covers the whole request") {
-		t.Fatalf("the belief must reach the caller, got:\n%s", out)
+	if strings.Contains(out, "a timeout of 5 covers the whole request") {
+		t.Errorf("the belief is printed twice in one answer, got:\n%s", out)
 	}
-	if i, j := strings.Index(out, "Commonly assumed"), strings.Index(out, "Proven by its contract"); i < 0 || i > j {
-		t.Errorf("the belief must come before the proof, got:\n%s", out)
+	if !strings.HasPrefix(out, "Proven by its contract") {
+		t.Errorf("block = %q, want it to open with the proof", out)
 	}
 }
 

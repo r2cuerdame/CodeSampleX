@@ -554,6 +554,12 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 			b.WriteString(" — " + why)
 		}
 		b.WriteString("\n\n")
+		// The finding leads the hit. Everything under it describes how well
+		// this sample matches and how much ran; the finding is the sentence
+		// that says the answer the caller was about to write is wrong, and
+		// it used to sit at the bottom, inside the contract block, below the
+		// deltas and the evidence counts and the failure clusters.
+		writeFinding(&b, r)
 		writeSection(&b, "Exact", r.Exact)
 		writeSection(&b, "Different", r.Different)
 		writeSection(&b, "Adaptation needed", r.Adaptation)
@@ -609,6 +615,23 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		b.WriteString(contractBlock(r))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// writeFinding prints the belief this hit's contract contradicts.
+//
+// It is guarded on a contract having actually passed, the same guard the
+// contract block uses: a belief with nothing measured against it is an
+// opinion, and an opinion is what the network exists not to publish.
+func writeFinding(b *strings.Builder, r domain.SearchResult) {
+	if r.Case == nil || r.Evidence.ContractPasses == 0 {
+		return
+	}
+	believed := strings.TrimSpace(r.Case.Believed)
+	if believed == "" {
+		return
+	}
+	b.WriteString("FINDING — commonly assumed: " + believed + "\n")
+	b.WriteString("  The contract below measured otherwise.\n\n")
 }
 
 // renderDecision is deliberately the first, compact line of an MCP search
@@ -672,14 +695,9 @@ func contractBlock(r domain.SearchResult) string {
 	}
 
 	var b strings.Builder
-	// The belief goes FIRST, above the proof, because it is addressed to the
-	// reader rather than about the sample: it names the answer the caller was
-	// about to write. A model that reads only the top of this block still
-	// gets the one sentence that changes what it does next.
-	if believed := strings.TrimSpace(r.Case.Believed); believed != "" {
-		b.WriteString("Commonly assumed: " + believed + "\n")
-		b.WriteString("  The contract below measured otherwise.\n")
-	}
+	// The belief is NOT repeated here. It leads the hit now — writeFinding
+	// prints it above the match deltas — and printing it twice in one answer
+	// reads as two findings.
 	b.WriteString("Proven by its contract for " + scope + "\n")
 	b.WriteString("  (it ran in a pinned container with the network off and passed;\n")
 	b.WriteString("   these are the author's own lines about that run)\n")

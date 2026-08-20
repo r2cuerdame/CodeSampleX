@@ -301,6 +301,8 @@
   "seeder.title": "시더",
   "site.meta_description": "CodeSampleX는 공개 호환성 테스트 네트워크입니다. 실제 개발 환경에서 실제 빌드와 계약 테스트를 실행하고, 실제로 무슨 일이 있었는지를 기록합니다. 추측이 아니라 테스트입니다.",
   "site.name": "CodeSampleX",
+  "stats.findings": "발견",
+  "stats.findings_sub": "널리 믿어지던 것을 측정으로 뒤집은 사례, 각각 증명하는 샘플과 함께",
   "stats.apis": "커버된 API",
   "stats.apis_sub": "패키지가 아니라 네트워크가 실제로 측정한 개별 호출",
   "stats.estimated": "추정치",

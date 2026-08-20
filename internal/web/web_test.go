@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,13 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
+
+// handFindingCount is what the front page must report when the store has no
+// derived findings: the hand-checked groups, counted the same way the
+// findings page counts them.
+func handFindingCount() string {
+	return strconv.Itoa(len(documentedFindings) + len(believedFindings))
+}
 
 func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
 	t.Helper()
@@ -92,8 +100,8 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters and the
 	// measured ecosystems linked straight into the records inventory.
-	for _, s := range []string{"Packages", "Verified Samples", "APIs covered", "1.2K",
-		`title="1,200" aria-label="APIs covered: 1,200"`,
+	for _, s := range []string{"Packages", "Verified Samples", "Findings",
+		`aria-label="Findings: ` + handFindingCount() + `"`,
 		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
@@ -238,7 +246,7 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	body := get(t, mux, "/").Body.String()
 	for _, want := range []string{
 		`title="17,500" aria-label="Packages: 17,500">17.5K</span>`,
-		`title="9,876" aria-label="APIs covered: 9,876">9.9K</span>`,
+		`title="` + handFindingCount() + `" aria-label="Findings: ` + handFindingCount() + `">` + handFindingCount() + `</span>`,
 		`title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -393,10 +401,16 @@ func TestLangQueryAndCookie(t *testing.T) {
 	mustContain(t, rec3.Body.String(), "記録")
 }
 
+// A compacted counter must still carry its exact value where a screen
+// reader and a hover will find it: "17.5K" alone is not a number anyone can
+// check.
 func TestNetworkCountersKeepExactAccessibleValues(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
+	mux, f := newTestMux(t, nil)
+	f.statsJSON = `{"packages":17500,"verifiedSamples":1234,"symbols":1200}`
+	f.statsOK = true
 	body := get(t, mux, "/").Body.String()
-	mustContain(t, body, `title="1,200" aria-label="APIs covered: 1,200">1.2K</span>`)
+	mustContain(t, body, `title="17,500" aria-label="Packages: 17,500">17.5K</span>`)
+	mustContain(t, body, `title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`)
 	if strings.Contains(body, `<span class="lbl">Estimated reasoning avoided</span>`) {
 		t.Error("non-headline estimate still renders as a homepage card")
 	}
@@ -545,10 +559,12 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 	body := rec.Body.String()
 	mustContain(t, body, "Does it run there?")
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("unavailable stats cards = %d, want 3 placeholders", got)
+		t.Errorf("unavailable stats cards = %d, want 3", got)
 	}
-	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 3 {
-		t.Errorf("unavailable stat placeholders = %d, want 3", got)
+	// Two, not three: the findings counter is not read from the stats
+	// document, so a stats outage has nothing to say about it.
+	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 2 {
+		t.Errorf("unavailable stat placeholders = %d, want 2", got)
 	}
 }
 

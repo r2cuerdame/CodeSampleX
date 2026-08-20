@@ -301,6 +301,8 @@
   "seeder.title": "Seeder",
   "site.meta_description": "CodeSampleX est un réseau ouvert de tests de compatibilité : il exécute de vrais builds et des tests de contrat dans de vrais environnements de développement et enregistre ce qui s'est réellement passé. Testé. Pas deviné.",
   "site.name": "CodeSampleX",
+  "stats.findings": "Découvertes",
+  "stats.findings_sub": "corrections mesurées d'une croyance répandue, chacune avec l'échantillon qui la prouve",
   "stats.apis": "API couvertes",
   "stats.apis_sub": "appels précis que le réseau a mesurés, pas seulement des paquets",
   "stats.estimated": "estimation",

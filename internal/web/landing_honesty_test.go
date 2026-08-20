@@ -24,18 +24,18 @@ func TestHomepageUsesExactlyThreeCountersInEveryLocale(t *testing.T) {
 	}
 	for _, lang := range i18n.Supported {
 		t.Run(lang, func(t *testing.T) {
-			tiles := buildTiles(lang, stats)
-			// Coverage on the outside, our own output in the middle. The
-			// verified-sample count is the one number here that measures US
-			// rather than the ecosystem, and it is the largest: ending the row
-			// on it let it read as the conclusion of a coverage story.
+			tiles := buildTiles(lang, stats, 574)
+			// The row ends on what the project stands behind. The third
+			// counter used to be distinct APIs observed, which measures the
+			// ecosystem; a finding is a measured correction with the sample
+			// that proves it, which measures us.
 			if len(tiles) != 3 {
 				t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
 			}
 			wantLabels := []string{
 				i18n.T(lang, "stats.packages"),
 				i18n.T(lang, "stats.verified_samples"),
-				i18n.T(lang, "stats.apis"),
+				i18n.T(lang, "stats.findings"),
 			}
 			for i, want := range wantLabels {
 				if tiles[i].Label != want {
@@ -49,17 +49,24 @@ func TestHomepageUsesExactlyThreeCountersInEveryLocale(t *testing.T) {
 	}
 }
 
+// A stats outage blanks the counters that come from the stats document, and
+// only those. The findings count is read straight from the findings the site
+// already holds, so an em dash there would claim the page does not know a
+// number it does know.
 func TestUnavailableHomepageStatsRemainHonestPlaceholders(t *testing.T) {
-	tiles := buildTiles(i18n.Default, nil)
+	tiles := buildTiles(i18n.Default, nil, 574)
 	if len(tiles) != 3 {
-				t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
-			}
-	for _, tile := range tiles {
+		t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
+	}
+	for _, tile := range tiles[:2] {
 		if tile.Value != "—" {
 			t.Errorf("%s value = %q, want placeholder", tile.Label, tile.Value)
 		}
 		if tile.Exact != "" {
 			t.Errorf("%s unavailable value exposed exact text %q", tile.Label, tile.Exact)
 		}
+	}
+	if got := tiles[2]; got.Value != "574" || got.Exact != "574" {
+		t.Errorf("findings counter = %q/%q, want the count it knows", got.Value, got.Exact)
 	}
 }

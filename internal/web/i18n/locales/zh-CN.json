@@ -301,6 +301,8 @@
   "seeder.title": "种子者",
   "site.meta_description": "CodeSampleX 是一个开放的兼容性测试网络：它在真实的开发者环境中运行真实构建与契约测试，并记录实际发生了什么。实测过，不是猜的。",
   "site.name": "CodeSampleX",
+  "stats.findings": "发现",
+  "stats.findings_sub": "对普遍看法的实测更正，每条都附带证明它的样本",
   "stats.apis": "已覆盖的 API",
   "stats.apis_sub": "网络实际测量过的具体调用，而不只是包",
   "stats.estimated": "估算值",

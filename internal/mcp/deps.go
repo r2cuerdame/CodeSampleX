@@ -356,9 +356,17 @@ type explainChange struct {
 }
 
 type explainSampleE struct {
-	SampleID       string            `json:"sampleId"`
-	Goal           string            `json:"goal"`
-	Status         string            `json:"status"`
+	SampleID string `json:"sampleId"`
+	Goal     string `json:"goal"`
+	Status   string `json:"status"`
+	// Believed is what the sample's author says a competent developer or
+	// model expects, which the contract then contradicts. It is the finding,
+	// and it is the reason to read this reply at all.
+	Believed string `json:"believed"`
+	// Symbols scopes the finding. A package's findings are not all about the
+	// API that was asked for, and answering "axios.post" with a correction
+	// about axios.get is answering a question nobody asked.
+	Symbols        []string          `json:"symbols"`
 	ContractStages map[string]string `json:"contractStages"`
 }
 
@@ -482,6 +490,12 @@ func explainFromShards(ctx context.Context, db *localdb.DB, purlStr, symbol stri
 			" — evidence from other contexts does not transfer automatically.\n")
 	}
 
+	// Findings first. Everything below this is a measurement of how often
+	// something ran; a finding is the sentence that says the answer the
+	// caller was about to write is wrong, and a model that reads only the
+	// top of the reply must still get it.
+	writeExplainFindings(&b, shard, p, symbol)
+
 	matchedSymbols := 0
 	var sampleLines []string
 	// A shard lists one sample under every package version it is relevant
@@ -565,6 +579,75 @@ func explainFromShards(ctx context.Context, db *localdb.DB, purlStr, symbol stri
 		b.WriteString("\nVerification evidence [SAMPLE_VERIFICATION]: none cached — observation counts above are NOT verification.\n")
 	}
 	return b.String(), json.RawMessage(row.JSON), nil
+}
+
+// writeExplainFindings prints the corrections the cached shard holds for
+// this package, scoped to the symbol when one was named.
+//
+// A sample is listed under every package version it is relevant to, so the
+// same finding appears in several buckets of one shard; it is printed once.
+func writeExplainFindings(b *strings.Builder, shard explainShard, p domain.PURL, symbol string) {
+	seen := map[string]bool{}
+	var lines []string
+	for _, pkg := range shard.Packages {
+		pp, err := domain.ParsePURL(pkg.PURL)
+		if err != nil || !strings.EqualFold(pp.Name, p.Name) || pp.Ecosystem != p.Ecosystem {
+			continue
+		}
+		for _, smp := range pkg.Samples {
+			believed := strings.TrimSpace(smp.Believed)
+			if believed == "" || seen[smp.SampleID] {
+				continue
+			}
+			if symbol != "" && !sampleCoversSymbol(smp.Symbols, symbol) {
+				continue
+			}
+			seen[smp.SampleID] = true
+			line := "- Commonly assumed: " + believed + "\n"
+			line += "  Measured otherwise by " + smp.SampleID
+			if smp.Goal != "" {
+				line += " — " + smp.Goal
+			}
+			lines = append(lines, line+"\n")
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	b.WriteString("\nFindings [the contract measured something other than what is widely assumed]:\n")
+	for _, l := range lines {
+		b.WriteString(l)
+	}
+	b.WriteString("  Read the contract with get_sample before relying on any of this.\n")
+}
+
+// sampleCoversSymbol reports whether a sample answers for the named API.
+//
+// The comparison is on the member, because the same API is written three
+// ways across the corpus — the full module path with the member, an import
+// alias with the member, and the member alone — and an exact match claims
+// only the rarest of them. A sample that declares no symbol at all is about
+// the package, so it answers a symbol question too.
+func sampleCoversSymbol(named []string, symbol string) bool {
+	if len(named) == 0 {
+		return true
+	}
+	want := symbolMember(symbol)
+	for _, n := range named {
+		if strings.EqualFold(symbolMember(n), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// symbolMember is the last dot- or slash-separated segment of a symbol name.
+func symbolMember(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndexAny(s, "./"); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
 }
 
 func envSummaryText(summary map[string]string) string {

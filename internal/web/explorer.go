@@ -708,12 +708,13 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 // symbolLinks builds the version page's symbol list and returns the samples
 // no entry on it claims.
 //
-// The list is the union of two sources. What the store observed is one; the
-// APIs the published samples name is the other, and they do not agree — of
-// pgx v5.10.0's 128 samples, 60 answered for APIs that had never been
-// observed and so appeared in no symbol list. Taking only the observed set
-// left those 60 with no page to be read on, which is why every one of them
-// was still being printed in a flat list on the version page.
+// The list is the union of two sources: what the store observed, and the
+// APIs the published samples name. They overlap heavily but spell things
+// differently, so the union is taken by member — pgx v5.10.0's observed list
+// held 146 entries that were only 84 distinct APIs, the same API listed
+// twice under two spellings, and 85 of its 128 samples matched none of them
+// exactly. That is why every one of those 85 was still being printed in a
+// flat list on the version page.
 //
 // The residue is what remains: a sample that names no API at all. It is
 // usually one or two, and it is listed on the version page because there is
@@ -939,10 +940,10 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	purl := domain.PURL{Ecosystem: eco, Name: name, Version: version}.String()
 	// Published answers are reason enough for a symbol to have a page, the
 	// same rule the version page already applies one level up. Requiring a
-	// snapshot here meant an API that samples answer for but nothing has
-	// observed had no page at all — and pgx v5.10.0 alone had 60 samples
-	// naming such APIs (CollectRows, Begin, ErrNoRows), which is why they
-	// were all still piled onto the version page instead.
+	// snapshot meant the page existed only under the exact spelling the
+	// snapshot was filed as: /v5.10.0/pgx.CollectRows answered while
+	// /v5.10.0/CollectRows did not, though both name the same API and the
+	// second is what the symbol list now links.
 	samples := s.symbolSamples(r, eco, name, version, symbol)
 	var doc snapshotDoc
 	raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, symbol)

@@ -301,6 +301,8 @@
   "seeder.title": "シーダー",
   "site.meta_description": "CodeSampleX はオープンな互換性テストネットワークです。実際の開発環境で実際のビルドと契約テストを実行し、実際に何が起きたかを記録します。推測ではなく、テストです。",
   "site.name": "CodeSampleX",
+  "stats.findings": "発見",
+  "stats.findings_sub": "広く信じられていたことを測定が覆した事例。それぞれ証明するサンプル付き",
   "stats.apis": "カバーされた API",
   "stats.apis_sub": "パッケージ単位ではなく、ネットワークが実際に測定した個々の呼び出し",
   "stats.estimated": "推定値",

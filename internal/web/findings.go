@@ -795,6 +795,14 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "findings", http.StatusOK, view)
 }
 
+// findingsTotal is how many findings the page holds, counted the same way
+// the page counts them so the front-page number and the /findings header can
+// never disagree. Both groups are cached, so this is a read of two slices.
+func (s *site) findingsTotal(r *http.Request) int64 {
+	documented, believed := s.handFindings(r)
+	return int64(len(documented) + len(believed) + len(s.derivedFindings(r)))
+}
+
 // findingEcosystems lists, once and in order, every ecosystem the whole
 // collection carries.
 func findingEcosystems(lists ...[]finding) []string {
