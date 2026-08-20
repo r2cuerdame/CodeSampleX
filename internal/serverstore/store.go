@@ -288,6 +288,12 @@ type Store interface {
 	// else got there first (or the job is gone).
 	ClaimJob(ctx context.Context, id int64, peerID string) (bool, error)
 	CompleteJob(ctx context.Context, id int64) error
+	// StrandedDrafts lists quarantined authoring drafts with no verification
+	// left to wait for: no passing receipt, no open or claimed job, and fewer
+	// than maxAttempts cross jobs already spent. They are what a verifier
+	// that cannot resolve leaves behind, and without this they are invisible
+	// — verified by nobody and waiting on nothing.
+	StrandedDrafts(ctx context.Context, maxAttempts, limit int) ([]string, error)
 	// CompleteJobsForSample closes only cross jobs a receipt has answered.
 	// Matrix jobs are target-specific and are completed by exact id after
 	// their claim and requested environment have been checked. The

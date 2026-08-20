@@ -220,9 +220,88 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 // already has outstanding work or has already been cross-verified.
 // Without this, every re-publish of identical content queued another job
 // and peers burned sandbox time re-proving the same artifact.
+// maxCrossAttempts bounds how many times one sample may be offered for
+// cross verification.
+//
+// A sample nothing can resolve would otherwise cycle through every verifier
+// forever, and the queue it crowds is the one real work waits in. Four is
+// enough to outlast a single misconfigured machine — production ran four
+// verifiers, two of which failed every resolve they touched — without
+// letting a genuinely unbuildable sample become permanent work.
+const maxCrossAttempts = 4
+
+// requeueCrossVerification offers a sample for cross verification again
+// after an attempt ended without the contract running.
+//
+// SKIPPED is not FAIL. A FAIL is a measurement OF the sample: the contract
+// ran and did not hold, and asking another machine to run it again is asking
+// the network to keep trying until it hears what it wants. A SKIPPED contract
+// is the verifier reporting that it measured nothing — dependency resolution
+// died before the sample was ever exercised — and closing the work on that
+// throws away the sample rather than the verifier.
+//
+// Production stranded 159 authoring drafts on exactly this: two of its four
+// verifiers failed resolve on every job they claimed, each failure marked the
+// sample's only cross job done, and nothing ever queued another.
+func (a *api) requeueCrossVerification(ctx context.Context, sampleID, contractResult string) {
+	if !strings.EqualFold(strings.TrimSpace(contractResult), "SKIPPED") {
+		return
+	}
+	jobs, err := a.d.Store.JobsForSample(ctx, sampleID)
+	if err != nil {
+		return
+	}
+	attempts := 0
+	for _, j := range jobs {
+		if j.Reason == "cross" {
+			attempts++
+		}
+	}
+	if attempts >= maxCrossAttempts {
+		return
+	}
+	// Best effort. A draft that misses its retry is no worse off than it was
+	// before this existed, and a failed enqueue must not fail the receipt the
+	// verifier just signed.
+	_ = a.queueCrossVerification(ctx, sampleID)
+}
+
 func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error {
+	return queueCrossVerificationOn(ctx, a.d.Store, sampleID)
+}
+
+// ReconcileStrandedDrafts offers every stranded authoring draft for cross
+// verification again, and reports how many it woke.
+//
+// The retry on the receipt path only fires when an attempt CLOSES a job, so
+// the drafts stranded before that code existed have no future event to reach
+// them: their job is done, no receipt passed, and nothing will ever look at
+// them again. This runs once at boot, which is often enough — deploys are
+// frequent and the backlog is finite — and stays off every request path.
+//
+// It is idempotent by construction: queueCrossVerificationOn declines a
+// sample that already has work queued, and StrandedDrafts excludes anything
+// that has spent its attempts.
+func ReconcileStrandedDrafts(ctx context.Context, store serverstore.Store, limit int) (int, error) {
+	ids, err := store.StrandedDrafts(ctx, maxCrossAttempts, limit)
+	if err != nil {
+		return 0, err
+	}
+	woken := 0
+	for _, id := range ids {
+		if err := queueCrossVerificationOn(ctx, store, id); err != nil {
+			// One unqueueable draft must not stop the rest: the next boot
+			// tries again, and the others are waiting now.
+			continue
+		}
+		woken++
+	}
+	return woken, nil
+}
+
+func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, sampleID string) error {
 	var manifest domain.SampleManifest
-	if row, ok, err := a.d.Store.GetSample(ctx, sampleID); err == nil && ok {
+	if row, ok, err := store.GetSample(ctx, sampleID); err == nil && ok {
 		switch strings.ToUpper(row.Status) {
 		case "CROSS_PASS", "MATRIX_PASS", "STABLE":
 			return nil // already reproduced by another peer
@@ -231,7 +310,7 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 			return fmt.Errorf("decode sample manifest for worker requirements: %w", err)
 		}
 	}
-	jobs, err := a.d.Store.JobsForSample(ctx, sampleID)
+	jobs, err := store.JobsForSample(ctx, sampleID)
 	if err != nil {
 		return err
 	}
@@ -272,7 +351,7 @@ func (a *api) queueCrossVerification(ctx context.Context, sampleID string) error
 			requirements.Frameworks = append(requirements.Frameworks, framework)
 		}
 	}
-	_, err = a.d.Store.CreateJob(ctx, serverstore.JobRow{
+	_, err = store.CreateJob(ctx, serverstore.JobRow{
 		SampleID: sampleID, Reason: "cross", Status: "open",
 		WantEnvJSON: string(domain.MustCanonicalJSON(requirements)),
 	})

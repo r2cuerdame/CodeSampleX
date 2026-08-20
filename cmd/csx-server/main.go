@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -43,6 +44,11 @@ const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompu
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
+
+// strandedReconcileLimit bounds one boot's reconcile. It is a backlog, not a
+// queue: draining it over a few restarts is fine, and flooding the verifier
+// queue in one pass would bury the fresh work the network is waiting on.
+const strandedReconcileLimit = 200
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -109,6 +115,21 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 
 	// Aggregation pipeline: snapshots/shards/stats on CSX_SNAPSHOT_INTERVAL.
 	StartBuilder(ctx, cfg, pg)
+
+	// Wake authoring drafts that have nothing left to wait for.
+	//
+	// A verifier that cannot resolve dependencies files a SKIPPED receipt,
+	// which closes the sample's only cross job without measuring anything.
+	// The receipt path queues another attempt now, but the drafts stranded
+	// before that existed have no future event to reach them — production
+	// held 159, verified by nobody and waiting on nothing. Boot is a good
+	// enough clock for a finite backlog, and it keeps this off every
+	// request path.
+	if woken, err := httpapi.ReconcileStrandedDrafts(ctx, pg, strandedReconcileLimit); err != nil {
+		fmt.Fprintf(stderr, "csx-server: stranded draft reconcile failed: %v\n", err)
+	} else if woken > 0 {
+		fmt.Fprintf(stdout, "csx-server: requeued %d stranded authoring drafts\n", woken)
+	}
 
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a
 	// trickled request body pins a goroutine and, once a handler starts, a

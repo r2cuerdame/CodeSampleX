@@ -824,6 +824,53 @@ func (f *Fake) JobsForSample(_ context.Context, sampleID string) ([]JobRow, erro
 	return out, nil
 }
 
+// StrandedDrafts lists quarantined authoring drafts that have no verification
+// left to wait for: no passing receipt, no open or claimed job, and fewer than
+// maxAttempts cross jobs already spent.
+func (f *Fake) StrandedDrafts(_ context.Context, maxAttempts, limit int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	passed := map[string]bool{}
+	for sampleID, rows := range f.receipts {
+		for _, r := range rows {
+			if r.ContractResult == "PASS" {
+				passed[sampleID] = true
+				break
+			}
+		}
+	}
+	live := map[string]bool{}
+	attempts := map[string]int{}
+	for _, j := range f.jobs {
+		if j.Status == "open" || j.Status == "claimed" {
+			live[j.SampleID] = true
+		}
+		if j.Reason == "cross" {
+			attempts[j.SampleID]++
+		}
+	}
+	ids := make([]string, 0, len(f.samples))
+	for id := range f.samples {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []string
+	for _, id := range ids {
+		s := f.samples[id]
+		if s.Status != "DRAFT" || !s.Quarantined {
+			continue
+		}
+		if passed[id] || live[id] || attempts[id] >= maxAttempts {
+			continue
+		}
+		out = append(out, id)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (f *Fake) Job(_ context.Context, id int64) (JobRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

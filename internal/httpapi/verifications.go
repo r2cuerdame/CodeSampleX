@@ -434,6 +434,12 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The attempt closed the job whatever it reported. If the contract never
+	// ran, the sample has not been measured and still needs a machine that
+	// can measure it.
+	if claimedJobID != 0 && statusRank(newStatus) < statusRank("CROSS_PASS") {
+		a.requeueCrossVerification(ctx, receipt.SampleID, contractResult)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":       "accepted",

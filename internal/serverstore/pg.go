@@ -1191,6 +1191,45 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 }
 
 // JobsForSample lists every job for a sample regardless of status.
+// StrandedDrafts lists quarantined authoring drafts that have no verification
+// left to wait for.
+//
+// A verifier that cannot resolve dependencies files a SKIPPED receipt, which
+// closes the sample's only cross job without measuring anything. Before the
+// retry existed nothing queued another, and production accumulated 159 drafts
+// in exactly that state — verified by nobody, waiting on nothing, invisible.
+// This is how the reconcile finds them.
+func (p *PG) StrandedDrafts(ctx context.Context, maxAttempts, limit int) ([]string, error) {
+	var out []string
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT s.sample_id
+			  FROM samples s
+			 WHERE s.status='DRAFT' AND s.quarantined
+			   AND NOT EXISTS (SELECT 1 FROM receipts r
+			                    WHERE r.sample_id=s.sample_id AND r.contract_result='PASS')
+			   AND NOT EXISTS (SELECT 1 FROM verification_jobs j
+			                    WHERE j.sample_id=s.sample_id AND j.status IN ('open','claimed'))
+			   AND (SELECT count(*) FROM verification_jobs j
+			         WHERE j.sample_id=s.sample_id AND j.reason='cross') < $1
+			 ORDER BY s.created_at
+			 LIMIT $2`, maxAttempts, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			out = append(out, id)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error) {
 	var out []JobRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
