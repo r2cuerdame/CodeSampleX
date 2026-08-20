@@ -43,6 +43,13 @@ type contributionVerifier interface {
 	IsIdle() bool
 }
 
+// stageLogAnnouncer is implemented by a verifier that keeps the stage output
+// of failed runs. It is optional so the small interface above stays small and
+// test fakes are not made to carry a diagnostic they do not produce.
+type stageLogAnnouncer interface {
+	SetStageLogSink(func(path string))
+}
+
 type workerOptions struct {
 	mode         string
 	parallel     int
@@ -138,6 +145,11 @@ func defaultWorkerEnv() *workerEnv {
 				ContainerOS:      containerOS,
 				Env:              env,
 				LastActivityFile: filepath.Join(home, "logs", "last-run.log"),
+				// A failed cross-verification used to leave nothing readable:
+				// the workspace is disposable and the receipt keeps only a
+				// digest, so a reproducible failure could not be diagnosed at
+				// all. These stay on this machine and are never uploaded.
+				StageLogs: &verifier.StageLogStore{Home: home},
 			}
 		},
 		notify: func(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -368,6 +380,17 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 			firstErr = err
 		}
 		errMu.Unlock()
+	}
+	// A kept log is announced once, as it is written. Without this the only
+	// thing stdout said about a failed job was that the counter went up, and
+	// an operator had no way to know a diagnosis had been saved, let alone
+	// where.
+	if announcer, ok := cv.(stageLogAnnouncer); ok {
+		announcer.SetStageLogSink(func(path string) {
+			printMu.Lock()
+			defer printMu.Unlock()
+			fmt.Fprintf(out, "verification failed; stage logs kept locally: %s\n", path)
+		})
 	}
 	printCounts := func(label string, err error) {
 		printMu.Lock()

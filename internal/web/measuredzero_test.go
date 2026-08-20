@@ -26,7 +26,7 @@ func TestMeasuredAdoptionResultStaysOutOfHomepageCards(t *testing.T) {
 	if strings.Contains(body, `<span class="num mono">0%</span>`) || strings.Contains(body, "Post-hit success rate") {
 		t.Errorf("adoption rate leaked into focused homepage stats:\n%s", truncate(body))
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 2 {
-		t.Errorf("homepage stat cards = %d, want 2", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("homepage stat cards = %d, want 3", got)
 	}
 }

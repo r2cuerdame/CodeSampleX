@@ -10,7 +10,7 @@ import (
 // packages have coverage, how much evidence backs it, and how many runnable
 // samples were verified. The producer still carries the other raw fields for
 // API and detail consumers; even large values there must not grow this strip.
-func TestHomepageUsesExactlyTwoCoverageCountersInEveryLocale(t *testing.T) {
+func TestHomepageUsesExactlyThreeCountersInEveryLocale(t *testing.T) {
 	stats := &netStats{
 		Peers:                     99,
 		ProjectsMonth:             88,
@@ -25,15 +25,16 @@ func TestHomepageUsesExactlyTwoCoverageCountersInEveryLocale(t *testing.T) {
 	for _, lang := range i18n.Supported {
 		t.Run(lang, func(t *testing.T) {
 			tiles := buildTiles(lang, stats)
-			// Two, and both measure the ecosystem. The verified-sample count
-			// was the third and the largest, and it is the only one that
-			// measures US: a reader taking the row as one kind of thing read
-			// our own production as coverage.
-			if len(tiles) != 2 {
-				t.Fatalf("tiles = %d, want 2: %#v", len(tiles), tiles)
+			// Coverage on the outside, our own output in the middle. The
+			// verified-sample count is the one number here that measures US
+			// rather than the ecosystem, and it is the largest: ending the row
+			// on it let it read as the conclusion of a coverage story.
+			if len(tiles) != 3 {
+				t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
 			}
 			wantLabels := []string{
 				i18n.T(lang, "stats.packages"),
+				i18n.T(lang, "stats.verified_samples"),
 				i18n.T(lang, "stats.apis"),
 			}
 			for i, want := range wantLabels {
@@ -50,8 +51,8 @@ func TestHomepageUsesExactlyTwoCoverageCountersInEveryLocale(t *testing.T) {
 
 func TestUnavailableHomepageStatsRemainHonestPlaceholders(t *testing.T) {
 	tiles := buildTiles(i18n.Default, nil)
-	if len(tiles) != 2 {
-				t.Fatalf("tiles = %d, want 2: %#v", len(tiles), tiles)
+	if len(tiles) != 3 {
+				t.Fatalf("tiles = %d, want 3: %#v", len(tiles), tiles)
 			}
 	for _, tile := range tiles {
 		if tile.Value != "—" {

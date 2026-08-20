@@ -65,6 +65,14 @@ type CrossVerifier struct {
 	// LastActivityFile is touched by csx run; its mtime drives the
 	// "idle" budget (only verify when the user is not actively working).
 	LastActivityFile string
+	// StageLogs keeps the output of a verification that failed, on this
+	// machine only. Nil disables it entirely, which is what tests and any
+	// caller without a home directory want.
+	StageLogs *StageLogStore
+	// OnStageLogs is called with the path of a kept log so the worker can
+	// print it. Without it a failed job left no trace an operator could
+	// follow: stdout carried a "job completed" counter and nothing else.
+	OnStageLogs func(path string)
 	// OnVerified is called after each job whose receipt was accepted.
 	//
 	// Nothing counted them. The dashboard reads a crossVerifications
@@ -397,9 +405,20 @@ func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.
 		}
 	}
 
-	receipt, err := Run(ctx, cv.runner(), cv.Cap, dir, m, cv.Ident, cv.Env)
+	// RunLogged, not Run: Run drops the stage output on the floor, and this
+	// is the one caller that most needs it. A cross-verification workspace is
+	// disposable and the receipt keeps only a digest, so a reproducible
+	// failure here left nothing at all to read -- two peers hit the same
+	// Django 6.1 resolve failure a day apart and neither could be diagnosed.
+	receipt, stageLogs, err := RunLogged(ctx, cv.runner(), cv.Cap, dir, m, cv.Ident, cv.Env)
 	if err != nil {
 		return zero, err
+	}
+	// Kept locally and never uploaded. A failure to keep them is reported to
+	// the caller for its stdout line and nothing more: logs are a diagnostic
+	// aid, not a precondition of the evidence this job exists to produce.
+	if path, logErr := cv.StageLogs.Keep(receipt.SampleID, stageLogs, stageResults(receipt)); logErr == nil && path != "" {
+		cv.noteStageLogs(path)
 	}
 	if receipt.SampleID != job.SampleID {
 		return zero, fmt.Errorf("verifier: rebuilt sample id %s != job sample id %s", receipt.SampleID, job.SampleID)
@@ -483,4 +502,27 @@ func (cv *CrossVerifier) IsIdle() bool {
 		return true
 	}
 	return time.Since(fi.ModTime()) >= idleWindow
+}
+
+// SetStageLogSink installs the callback that announces a kept log. The worker
+// uses it to print the path; without one, a failed job left no trace anyone
+// could follow.
+func (cv *CrossVerifier) SetStageLogSink(fn func(path string)) {
+	cv.OnStageLogs = fn
+}
+
+func (cv *CrossVerifier) noteStageLogs(path string) {
+	if cv.OnStageLogs != nil {
+		cv.OnStageLogs(path)
+	}
+}
+
+// stageResults reads the per-stage verdicts out of a receipt so the log store
+// can tell a run worth keeping from a clean one.
+func stageResults(r domain.VerificationReceipt) map[string]string {
+	out := make(map[string]string, len(r.Stages))
+	for k, v := range r.Stages {
+		out[k] = string(v)
+	}
+	return out
 }
