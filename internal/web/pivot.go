@@ -106,6 +106,8 @@ type pivotAxis struct {
 	// AND this column"; a header answers "this column, whatever the rows
 	// say", which is the other half of reading a grid.
 	Href string
+	// Aggregate marks the total over the other columns, not one of them.
+	Aggregate bool
 }
 
 type pivotGridRow struct {
@@ -113,6 +115,9 @@ type pivotGridRow struct {
 	Icon  string
 	Href  string
 	Cells []pivotCell // aligned with pivotGrid.Cols by index
+	// Aggregate marks a row that is the TOTAL over the others rather than one
+	// of them. It is drawn apart from them so it cannot be read as a peer.
+	Aggregate bool
 }
 
 // pivotLinks are the three ways into a grid: one cell, one whole row, one
@@ -581,16 +586,22 @@ func buildPivot(rows []snapshotRow, rowKey, colKey func(r snapshotRow) string,
 	}
 	// This pivot's rows are always the operating system.
 	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false,
-		pivotLinks{Cell: cellHref}, now)
+		pivotLinks{Cell: cellHref}, now, "")
 }
 
-// assembleGrid turns aggregated cells into an ordered, capped, rendered
-// grid. Evidence totals rank what the caps keep; display never sums the
-// two classes.
+// assembleGrid turns aggregated cells into an ordered, capped, rendered grid.
+// Evidence totals rank what the caps keep; display never sums the two classes.
+//
+// aggLabel names the row or column that is
+// an AGGREGATE over the others rather than one of them — the package-level
+// total on a symbol axis. It is rendered and marked, because a failure
+// recorded against the package is still a failure the reader must see, and it
+// is left out of the tallies, because adding a total to its own parts counts
+// every observation twice.
 func assembleGrid(aggs map[cellKey]*pivotAgg,
 	sortRowsFn, sortColsFn func([]string) []string,
 	rowsAreOS, colsAreOS bool,
-	links pivotLinks, now time.Time) pivotGrid {
+	links pivotLinks, now time.Time, aggLabel string) pivotGrid {
 
 	if len(aggs) == 0 {
 		return pivotGrid{}
@@ -617,7 +628,7 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 
 	g := pivotGrid{Trimmed: trimmed}
 	for _, c := range cols {
-		axis := pivotAxis{Label: c}
+		axis := pivotAxis{Label: c, Aggregate: aggLabel != "" && c == aggLabel}
 		if colsAreOS {
 			axis.Icon, axis.Label = osIcon(c)
 		}
@@ -628,7 +639,8 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 	}
 	lastSeen := ""
 	for _, rk := range rowsOrdered {
-		row := pivotGridRow{Label: rk, Cells: make([]pivotCell, 0, len(cols))}
+		row := pivotGridRow{Label: rk, Cells: make([]pivotCell, 0, len(cols)),
+			Aggregate: aggLabel != "" && rk == aggLabel}
 		if rowsAreOS {
 			row.Icon, row.Label = osIcon(rk)
 		}
@@ -644,18 +656,23 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			if cell.Bang {
 				g.HasBang = true
 			}
-			switch {
-			case cell.Basis == "observed":
-				g.CountObserved++
-			case cell.Basis != "" && cell.FailCount == 0:
-				g.CountPass++
-			case cell.Basis != "" && cell.PassCount == 0:
-				g.CountFail++
-			case cell.Basis != "":
-				g.CountMixed++
-			}
-			if cell.Class != "empty" {
-				g.Measured++
+			// The total is shown but not counted: it is the sum of the rows
+			// beside it, and adding it to them counts everything twice.
+			isAgg := row.Aggregate || (aggLabel != "" && ck == aggLabel)
+			if !isAgg {
+				switch {
+				case cell.Basis == "observed":
+					g.CountObserved++
+				case cell.Basis != "" && cell.FailCount == 0:
+					g.CountPass++
+				case cell.Basis != "" && cell.PassCount == 0:
+					g.CountFail++
+				case cell.Basis != "":
+					g.CountMixed++
+				}
+				if cell.Class != "empty" {
+					g.Measured++
+				}
 			}
 			if a != nil {
 				if a.obsLastSeen > lastSeen {

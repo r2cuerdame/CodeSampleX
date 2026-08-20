@@ -27,7 +27,7 @@ func hasownFacts() []cubeFact {
 func TestTheCellStaysADoorWhileAnythingIsStillUndecided(t *testing.T) {
 	g := buildCubeGrid(hasownFacts(), "runtime", "symbol", pivotLinks{
 		Cell: func(row, col string) string { return "/npm/hasown?f_symbol=" + row },
-	}, pivotNow)
+	}, pivotNow, false)
 	if len(g.Rows) != 1 || len(g.Rows[0].Cells) != 1 {
 		t.Fatalf("grid is %dx%d, want the 1x1 this test is about", len(g.Rows), len(g.Rows[0].Cells))
 	}
@@ -44,7 +44,7 @@ func TestTheCellStopsBeingADoorOnceEverythingIsDecided(t *testing.T) {
 	}}
 	g := buildCubeGrid(facts, "runtime", "symbol", pivotLinks{
 		Cell: func(row, col string) string { return "/npm/hasown?f_symbol=" + row },
-	}, pivotNow)
+	}, pivotNow, false)
 	if g.Rows[0].Cells[0].Href != "" {
 		t.Errorf("cell links to %q, but there is nothing further to pin", g.Rows[0].Cells[0].Href)
 	}
@@ -70,7 +70,7 @@ func TestOnOneCellOnlyTheCellAndTheVersionAreLinks(t *testing.T) {
 		Cell: func(row, col string) string { return "/cell" },
 		Row:  func(row string) string { return "/row" },
 		Col:  func(col string) string { return "/col" },
-	}, pivotNow)
+	}, pivotNow, false)
 	if len(g.Rows) != 1 || len(g.Cols) != 1 {
 		t.Fatalf("grid is %dx%d, want the one-cell grid this test is about", len(g.Rows), len(g.Cols))
 	}
@@ -96,7 +96,7 @@ func TestAVersionWithoutSymbolEvidenceKeepsItsColumn(t *testing.T) {
 		{Dims: map[string]string{"version": "2.0.3", "symbol": cubePackageLevel},
 			PackageLevel: true, Agg: pivotAgg{obsPass: 1, obsPeers: 1}},
 	}
-	g := buildCubeGrid(facts, "version", "symbol", pivotLinks{}, pivotNow)
+	g := buildCubeGrid(facts, "version", "symbol", pivotLinks{}, pivotNow, false)
 	var cols []string
 	for _, c := range g.Cols {
 		cols = append(cols, c.Label)

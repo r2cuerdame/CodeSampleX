@@ -283,7 +283,7 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 		// same rule the other dimensions get, applied to what a symbol axis
 		// really holds.
 		if dim == "symbol" {
-			if len(cubeDimValues(cubeFactsOnAxes(facts, "symbol", ""), "symbol")) >= 2 {
+			if len(cubeRealSymbols(facts)) >= 2 {
 				varies[dim] = true
 			}
 			continue
@@ -338,28 +338,43 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 
 // buildCubeGrid pivots a fact slice on two dimensions. Facts that never
 // recorded either dimension stay out — the cube does not guess.
-// cubeFactsOnAxes is the evidence a grid on these axes actually renders.
+// cubeFactsOnAxes is the evidence a grid on these axes actually renders: a
+// fact missing either coordinate has no cell to sit in.
 //
-// A fact missing either coordinate has no cell to sit in, and the
-// package-level aggregate is not a symbol: it is the total OVER the symbols
-// beside it, so on a symbol axis it sat among its own parts carrying all the
-// numbers — one row of real counts above a field of blanks, which made the
-// grid look far richer than the per-symbol evidence is. Package-level
-// evidence is not lost; it is what every non-symbol axis shows.
+// The package-level aggregate used to be dropped from a symbol axis, because
+// it is the total OVER the symbols and sat among its own parts carrying all
+// the numbers. Dropping it cost more than it saved: yaml is measured at
+// symbol grain on alpine and at package grain on windows, where all 42 of its
+// failure clusters were recorded, so the page opened on six green rows for a
+// package with 42 recorded failures. It is kept and marked as a total —
+// sorted below its parts, outside the tallies.
+// cubeFactsWithoutTotal removes the package-level aggregate from a symbol
+// axis. It is the right thing where the grid answers a question about the
+// symbols themselves — "which symbol ran where" on the version page, and the
+// hero, which must not open on a row that is not one of the parts beside it.
 //
-// The control bar is built from this too. Built from the raw slice it went on
-// offering values whose only evidence the grid had just dropped, so the bar
-// described a grid that was not on screen.
+// The package cube keeps it: that grid is where a reader drills, and the
+// failures of a package measured mainly at package grain live nowhere else.
+func cubeFactsWithoutTotal(facts []cubeFact, x, y string) []cubeFact {
+	if x != "symbol" && y != "symbol" {
+		return facts
+	}
+	out := make([]cubeFact, 0, len(facts))
+	for _, f := range facts {
+		if f.Dims["symbol"] == cubePackageLevel || f.PackageLevel {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func cubeFactsOnAxes(facts []cubeFact, x, y string) []cubeFact {
-	symbolAxis := x == "symbol" || y == "symbol"
 	out := make([]cubeFact, 0, len(facts))
 	for _, f := range facts {
 		// No axis means no cell to be missing from: the bottomed-out view has
 		// no grid, and requiring coordinates there dropped every fact it had.
 		if (x != "" && f.Dims[x] == "") || (y != "" && f.Dims[y] == "") {
-			continue
-		}
-		if symbolAxis && (f.Dims["symbol"] == cubePackageLevel || f.PackageLevel) {
 			continue
 		}
 		out = append(out, f)
@@ -412,10 +427,14 @@ func keepEmptyAxisValues(aggs map[cellKey]*pivotAgg, facts []cubeFact, x, y stri
 }
 
 func buildCubeGrid(facts []cubeFact, x, y string,
-	links pivotLinks, now time.Time) pivotGrid {
+	links pivotLinks, now time.Time, withTotal bool) pivotGrid {
 
+	onAxes := cubeFactsOnAxes(facts, x, y)
+	if !withTotal {
+		onAxes = cubeFactsWithoutTotal(onAxes, x, y)
+	}
 	cells := map[cellKey][]cubeFact{}
-	for _, f := range cubeFactsOnAxes(facts, x, y) {
+	for _, f := range onAxes {
 		cells[cellKey{f.Dims[y], f.Dims[x]}] = append(cells[cellKey{f.Dims[y], f.Dims[x]}], f)
 	}
 	aggs := make(map[cellKey]*pivotAgg, len(cells))
@@ -425,7 +444,12 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	keepEmptyAxisValues(aggs, facts, x, y)
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
-	g := assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
+	// The package-level row is a total over the symbols, not one of them.
+	aggLabel := ""
+	if withTotal && (x == "symbol" || y == "symbol") {
+		aggLabel = cubePackageLevel
+	}
+	g := assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now, aggLabel)
 	return dropLinksThatShowNothingNew(g, x, y, anyDimStillVaries(facts, x, y))
 }
 
@@ -687,6 +711,23 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 // cubeHasRealSymbol reports whether the slice knows any symbol beyond the
 // package-level aggregate. Without one, "symbol" is a dimension with a single
 // synthetic value and must not be offered as an axis.
+// cubeRealSymbols lists the symbols on a slice, without the package-level
+// total. The total is a value of the symbol dimension but not a symbol, so
+// counting it made one measured API look like a spread of two.
+func cubeRealSymbols(facts []cubeFact) []string {
+	seen := map[string]bool{}
+	for _, f := range facts {
+		if sym := f.Dims["symbol"]; sym != "" && sym != cubePackageLevel && !f.PackageLevel {
+			seen[sym] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	return out
+}
+
 func cubeHasRealSymbol(facts []cubeFact) bool {
 	for _, f := range facts {
 		if sym := f.Dims["symbol"]; sym != "" && sym != cubePackageLevel {

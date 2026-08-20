@@ -1532,6 +1532,16 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--accent); color: var(--accent-ink); cursor: pointer;
 }
 
+/* The package total. It is the sum of the symbol rows beside it — every
+   observation is recorded against the package as well as its symbols — so it
+   must never be read as one more row of the same kind. A rule under it and a
+   quieter label say so, and the grid's own tallies leave it out. */
+table.pivot tr.aggregate > th.rowlabel { color: var(--dim); font-style: normal; }
+table.pivot tr.aggregate > th, table.pivot tr.aggregate > td {
+  border-bottom: 2px solid var(--line-strong); background: var(--panel-2);
+}
+table.pivot th.aggregate { color: var(--dim); }
+
 /* One meter, not stacked boxes: no doubled seams where the strips meet,
    and no inherited radius or shadow clipping the grid inside the panel. */
 .gridpanel .tablewrap { margin: 0; border: 0; border-radius: 0; box-shadow: none; }

@@ -21,7 +21,7 @@ func TestOnAOneCellGridOnlyTheVersionAxisLinks(t *testing.T) {
 		Col:  func(c string) string { return "/col" },
 	}
 	// symbol down the side, version across: the version header still links.
-	g := buildCubeGrid(facts, "version", "symbol", links, time.Now())
+	g := buildCubeGrid(facts, "version", "symbol", links, time.Now(), false)
 	if len(g.Rows) != 1 || len(g.Cols) != 1 {
 		t.Fatalf("fixture is %dx%d, want 1x1", len(g.Rows), len(g.Cols))
 	}
@@ -64,5 +64,5 @@ func assembleGridFor(rows []snapshotRow, links pivotLinks) pivotGrid {
 		}
 		aggs[key].absorbRow(r)
 	}
-	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false, links, time.Now())
+	return assembleGrid(aggs, sortPivotRows, sortPivotCols, true, false, links, time.Now(), "")
 }

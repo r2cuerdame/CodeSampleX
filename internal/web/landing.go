@@ -278,7 +278,7 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			// but a front page whose grid has a row labelled "node (version
 			// not recorded)" is answering a question about our instrument
 			// instead of "does it run there".
-			grid := dropUnrecordedAxes(buildCubeGrid(facts, x, y, links, now))
+			grid := dropUnrecordedAxes(buildCubeGrid(facts, x, y, links, now, false))
 			if score := heroGridScore(grid, rank); score > bestScore {
 				bestScore = score
 				best = &heroMatrixData{

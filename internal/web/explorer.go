@@ -901,7 +901,7 @@ func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version strin
 		Cell: func(row, col string) string { return pin(map[string]string{"symbol": row, "os": col}) },
 		Row:  func(row string) string { return pin(map[string]string{"symbol": row}) },
 		Col:  func(col string) string { return pin(map[string]string{"os": col}) },
-	}, time.Now())
+	}, time.Now(), false)
 	if len(g.Rows) <= 1 && len(g.Cols) <= 1 {
 		return pivotGrid{}
 	}

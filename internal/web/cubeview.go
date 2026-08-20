@@ -403,7 +403,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		Cell: func(row, col string) string { return pin(map[string]string{x: col, y: row}) },
 		Row:  func(row string) string { return pin(map[string]string{y: row}) },
 		Col:  func(col string) string { return pin(map[string]string{x: col}) },
-	}, time.Now())
+	}, time.Now(), true)
 	return view
 }
 

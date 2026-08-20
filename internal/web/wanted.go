@@ -35,16 +35,16 @@ type WantedItem struct {
 
 type wantedPage struct {
 	basePage
-	Items              []WantedItem
-	Total              int
-	Query              string
-	HasQuery           bool
-	ClearHref          string
-	Page, Pages        int
+	Items       []WantedItem
+	Total       int
+	Query       string
+	HasQuery    bool
+	ClearHref   string
+	Page, Pages int
 	// Windowed says the fold ran over a bounded read, so a package may have
 	// rows beyond it. An absent row must never read as "nobody asked".
-	Windowed  bool
-	RangeText string
+	Windowed           bool
+	RangeText          string
 	PageText           string
 	PrevHref, NextHref string
 }
@@ -116,7 +116,7 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
 	view := wantedPage{
 		basePage: b, Items: items, Total: total, Query: query, HasQuery: query != "",
-		Windowed: windowed,
+		Windowed:  windowed,
 		ClearHref: wantedHref("", 1, lang), Page: page, Pages: pages,
 		PageText: i18n.T(lang, "records.page", n(page), n(pages)),
 	}

@@ -265,4 +265,3 @@ func TestOGTypeDefaultsToWebsite(t *testing.T) {
 		}
 	}
 }
-
