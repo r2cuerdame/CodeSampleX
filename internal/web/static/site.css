@@ -1501,6 +1501,15 @@ td.pv .pvbasis { font-size: 0.7rem; }
   padding-left: 1rem; border-left: 1px solid var(--line);
 }
 .cubecontrols .ctllabel { align-self: center; font-weight: 700; }
+/* A dimension with one value: decided, not choosable. It sits at the same
+   height as the controls beside it but carries no chrome, so the bar reads
+   as "windows, and there is only windows" rather than offering a dropdown
+   that cannot change anything. */
+.cubecontrols .ctlfixed {
+  align-self: center; color: var(--dim);
+  display: inline-flex; gap: 0.35rem; align-items: baseline;
+}
+.cubecontrols .ctlfixed b { color: var(--text); font-weight: 700; }
 .cubecontrols label { display: grid; gap: 0.15rem; color: var(--dim); min-width: 0; }
 .cubecontrols label.on { color: var(--accent-2); font-weight: 700; }
 .cubecontrols select {

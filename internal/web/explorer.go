@@ -538,8 +538,7 @@ type packagePage struct {
 // releases the same library appears at several versions, so an unpinned page
 // would have to choose which to show — a choice nobody asked for and one the
 // reader cannot check.
-func (s *site) packageDeps(r *http.Request, eco, name string) []PackageDep {
-	version := r.URL.Query().Get("f_version")
+func (s *site) packageDeps(r *http.Request, eco, name, version string) []PackageDep {
 	if version == "" {
 		return nil
 	}
@@ -567,7 +566,28 @@ const packageSampleLimit = 200
 // actually has, so the page can say what it did not show. pgx/v5 carries 133;
 // rendering all of them was a wall, and truncating silently would read as
 // "this is all of them".
-func (s *site) loadClusters(r *http.Request, eco, name string) ([]clusterView, int) {
+// decidedVersion is the one release the page is standing on: the reader's
+// pin, or the only version there has ever been. Empty means the page covers
+// several releases and cannot speak for any single one of them.
+func decidedVersion(r *http.Request, cube *cubeView) string {
+	if v := r.URL.Query().Get("f_version"); v != "" {
+		return v
+	}
+	if cube != nil {
+		return cube.Coord["version"]
+	}
+	return ""
+}
+
+// hasAnyClusters answers the 404 question, which is about the PACKAGE and
+// not about the coordinate: a package whose only evidence is failures still
+// has a page, even standing on an undecided slice that shows none of them.
+func (s *site) hasAnyClusters(r *http.Request, eco, name string) bool {
+	_, total, err := s.d.Store.FailureClusters(r.Context(), eco, name)
+	return err == nil && total > 0
+}
+
+func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int) {
 	raw, total, err := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if err != nil {
 		return nil, 0
@@ -578,6 +598,14 @@ func (s *site) loadClusters(r *http.Request, eco, name string) ([]clusterView, i
 		if json.Unmarshal([]byte(doc), &c) == nil {
 			clusters = append(clusters, c)
 		}
+	}
+	if len(coord) > 0 {
+		clusters = filterClustersToPins(clusters, coord)
+		// total counted the package; it no longer describes what is on
+		// screen, and printing "showing 3 of 133" beside three clusters
+		// from one coordinate would invite the reader to look for 130 more
+		// that were never about this place.
+		total = len(clusters)
 	}
 	return buildClusters(clusters), total
 }
@@ -654,7 +682,6 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	clusters, clusterTotal := s.loadClusters(r, eco, name)
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
@@ -669,7 +696,26 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	if rows, err := s.d.Store.WantedForPackage(r.Context(), eco, name); err == nil {
 		wanted = rows
 	}
-	if len(versions) == 0 && len(clusters) == 0 && len(samples) == 0 && len(wanted) == 0 {
+	// The cube is the page. Everything under it belongs to ONE coordinate, so
+	// it is built from what the cube decided rather than from the package: on
+	// an undecided slice there is no release whose dependencies these are and
+	// no environment whose failures these are, and the page showed both
+	// anyway. That pile is what a reader had to read past to find the grid.
+	cube := buildCubeView(s, r, lang, eco, name)
+	var clusters []clusterView
+	var clusterTotal int
+	var deps []PackageDep
+	// A dependency list belongs to the RELEASE and to nothing else: the same
+	// lockfile resolves the same way whichever symbol or runtime the reader is
+	// looking at. Deciding the version is the whole requirement — by pinning
+	// it, or by the package only ever having had one.
+	deps = s.packageDeps(r, eco, name, decidedVersion(r, cube))
+	// A failure cluster belongs to the whole coordinate — this release, this
+	// runtime, this OS — so it waits until nothing is left to choose.
+	if cube != nil && cube.Decided {
+		clusters, clusterTotal = s.loadClusters(r, eco, name, cube.Coord)
+	}
+	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && !s.hasAnyClusters(r, eco, name) {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -688,8 +734,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Versions: versionRows(b, eco, name, versions, samples),
 		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
 		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
-		Cube:   buildCubeView(s, r, lang, eco, name),
-		Deps:   s.packageDeps(r, eco, name),
+		Cube:   cube,
+		Deps:   deps,
 	})
 }
 

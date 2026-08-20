@@ -322,30 +322,41 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 
 // buildCubeGrid pivots a fact slice on two dimensions. Facts that never
 // recorded either dimension stay out — the cube does not guess.
+// cubeFactsOnAxes is the evidence a grid on these axes actually renders.
+//
+// A fact missing either coordinate has no cell to sit in, and the
+// package-level aggregate is not a symbol: it is the total OVER the symbols
+// beside it, so on a symbol axis it sat among its own parts carrying all the
+// numbers — one row of real counts above a field of blanks, which made the
+// grid look far richer than the per-symbol evidence is. Package-level
+// evidence is not lost; it is what every non-symbol axis shows.
+//
+// The control bar is built from this too. Built from the raw slice it went on
+// offering values whose only evidence the grid had just dropped, so the bar
+// described a grid that was not on screen.
+func cubeFactsOnAxes(facts []cubeFact, x, y string) []cubeFact {
+	symbolAxis := x == "symbol" || y == "symbol"
+	out := make([]cubeFact, 0, len(facts))
+	for _, f := range facts {
+		// No axis means no cell to be missing from: the bottomed-out view has
+		// no grid, and requiring coordinates there dropped every fact it had.
+		if (x != "" && f.Dims[x] == "") || (y != "" && f.Dims[y] == "") {
+			continue
+		}
+		if symbolAxis && (f.Dims["symbol"] == cubePackageLevel || f.PackageLevel) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func buildCubeGrid(facts []cubeFact, x, y string,
 	links pivotLinks, now time.Time) pivotGrid {
 
 	cells := map[cellKey][]cubeFact{}
-	for _, f := range facts {
-		rk, ck := f.Dims[y], f.Dims[x]
-		if rk == "" || ck == "" {
-			continue
-		}
-		// The package-level aggregate is not a symbol and does not belong on
-		// a symbol axis. It is the total OVER the symbols beside it, so it
-		// sat among its own parts, and because every observation is recorded
-		// against the package it carried all the numbers -- one row of real
-		// counts above a field of blanks, which made the grid look far
-		// richer than the per-symbol evidence actually is.
-		//
-		// Package-level evidence is not lost: it is what every non-symbol
-		// axis shows.
-		if (x == "symbol" || y == "symbol") &&
-			(f.Dims["symbol"] == cubePackageLevel || f.PackageLevel) {
-			continue
-		}
-		key := cellKey{rk, ck}
-		cells[key] = append(cells[key], f)
+	for _, f := range cubeFactsOnAxes(facts, x, y) {
+		cells[cellKey{f.Dims[y], f.Dims[x]}] = append(cells[cellKey{f.Dims[y], f.Dims[x]}], f)
 	}
 	aggs := make(map[cellKey]*pivotAgg, len(cells))
 	for key, cellFacts := range cells {
@@ -354,7 +365,7 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	sortRows := func(vals []string) []string { return sortCubeDimValues(y, vals) }
 	sortCols := func(vals []string) []string { return sortCubeDimValues(x, vals) }
 	g := assembleGrid(aggs, sortRows, sortCols, y == "os", x == "os", links, now)
-	return dropLinksThatShowNothingNew(g, x, y)
+	return dropLinksThatShowNothingNew(g, x, y, anyDimStillVaries(facts, x, y))
 }
 
 // dropLinksThatShowNothingNew strips the links on a one-cell grid that cannot
@@ -364,25 +375,44 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 // screen. That was the symbol row: a link whose destination was the page it
 // was on.
 //
-// The version axis is the exception and the reason this is not a blanket
-// rule. Pinning a version opens something the unpinned page does not show —
-// that release's own dependency list — so however small the grid is, the
-// version header is still a door.
-func dropLinksThatShowNothingNew(g pivotGrid, x, y string) pivotGrid {
+// But a grid narrow in ITS TWO AXES is not a decided coordinate. hasown spread
+// runtime by symbol renders one cell while the version is still undecided, and
+// stripping the link there left the reader on a hub with no way in — which is
+// why the page ended up showing every version's failures at once and reading
+// as a pile. While any other dimension still varies the cell is a door: it
+// pins both axes and the next view re-spreads over what is left.
+//
+// The version axis is a door on the same principle: pinning a version opens
+// that release's own dependency list, which the unpinned page cannot show.
+func dropLinksThatShowNothingNew(g pivotGrid, x, y string, moreToPin bool) pivotGrid {
 	if len(g.Rows) != 1 || len(g.Cols) != 1 {
 		return g
 	}
-	if x != "version" {
+	if x != "version" && !moreToPin {
 		g.Cols[0].Href = ""
 	}
-	if y != "version" {
+	if y != "version" && !moreToPin {
 		g.Rows[0].Href = ""
 	}
-	// The cell pins BOTH, so it opens a door only when neither axis was
-	// already the version — and then the version header beside it is the
-	// clearer place to click.
-	g.Rows[0].Cells[0].Href = ""
+	if !moreToPin {
+		g.Rows[0].Cells[0].Href = ""
+	}
 	return g
+}
+
+// anyDimStillVaries reports whether pinning both axes would leave the reader
+// anything further to narrow — the test for whether a one-cell grid is a dead
+// end or a step on the way to a decided coordinate.
+func anyDimStillVaries(facts []cubeFact, x, y string) bool {
+	for _, dim := range cubeDimKeys {
+		if dim == x || dim == y {
+			continue
+		}
+		if len(cubeDimValues(facts, dim)) >= 2 {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeCubeFacts folds one cell's facts together without double-counting.

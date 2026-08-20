@@ -42,9 +42,15 @@
     <div class="ctlgroup filters">
       <span class="ctllabel dim">{{.T "cube.filters"}}</span>
       {{- range .Cube.Filters}}
+      {{- if .Fixed}}
+      {{/* One value and no pin: nothing to choose, so it states the
+           coordinate rather than pretending to offer a decision. */}}
+      <span class="ctlfixed">{{.Label}} <b>{{(index .Options 0).Label}}</b></span>
+      {{- else}}
       <label{{if .Active}} class="on"{{end}}>{{.Label}}
         <select name="f_{{.Dim}}" data-autosubmit>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>
+      {{- end}}
       {{- end}}
       {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
     </div>
@@ -118,23 +124,33 @@
 </div>
 {{- end}}
 
+{{/* Only at a decided coordinate. A failure cluster is a fact about one
+     release in one environment, and listing every one the package has beside
+     an undecided grid made the reader diff them against the cube by eye. */}}
+{{- if .Clusters}}
 <h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
-
-<h2 class="eyebrow mono">{{.T "pkg.versions"}}</h2>
-{{if .Versions}}
-<ul class="verlist mono">
-{{- range .Versions}}
-  <li>
-    <a href="{{.Href}}">{{.Version}}</a>
-    {{- if .Latest}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}
-    {{- if .Samples}} <span class="versamples small">{{$.N .Samples}} · {{$.T "seeder.samples"}}</span>{{end}}
-  </li>
 {{- end}}
-</ul>
-{{else}}
-<p class="dim">{{.T "pkg.no_versions"}}</p>
-{{end}}
+
+{{/* Folded, and last. Choosing a version is what the cube's version axis is
+     for; this is the plain list a crawler follows and a reader falls back
+     to, and open it competed with the grid for the top of the page. */}}
+{{- if .Versions}}
+<details class="home-detail verlist-fold">
+  <summary><span class="eyebrow mono">{{.T "pkg.versions"}}</span></summary>
+  <div class="home-detail-body">
+    <ul class="verlist mono">
+    {{- range .Versions}}
+      <li>
+        <a href="{{.Href}}">{{.Version}}</a>
+        {{- if .Latest}} <span class="dim small">({{$.T "pkg.latest"}})</span>{{end}}
+        {{- if .Samples}} <span class="versamples small">{{$.N .Samples}} · {{$.T "seeder.samples"}}</span>{{end}}
+      </li>
+    {{- end}}
+    </ul>
+  </div>
+</details>
+{{- end}}
 
 {{end}}

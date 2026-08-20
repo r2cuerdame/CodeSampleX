@@ -41,6 +41,9 @@ type cubeFilterOption struct {
 // cubeFilterSelect narrows the slice by one dimension, independently of
 // which two dimensions are currently spread across the axes.
 type cubeFilterSelect struct {
+	// Fixed marks a dimension with exactly one value and no pin: it is
+	// already decided, so the control shows that value and nothing else.
+	Fixed   bool
 	Dim     string
 	Label   string
 	Options []cubeFilterOption
@@ -89,19 +92,115 @@ type cubeView struct {
 	// first symbols) dropped snapshots, so an empty cell must not read as
 	// "never measured anywhere".
 	WindowNote bool
+	// Coord is the coordinate the slice has been narrowed to: every
+	// dimension down to one value, pinned or not. Decided reports that
+	// NOTHING is left to choose, which is when the page can speak about
+	// this exact place rather than about the package in general.
+	Coord   map[string]string
+	Decided bool
 }
 
-// cubeFilterWorthOffering reports whether a dimension deserves a dropdown.
+// cubeCoord reads the coordinate out of a slice.
 //
-// One value means the only choice is "all", which filters nothing. On a
-// narrow slice most dimensions are that — a package with one environment
-// offered OS, arch, package manager, execution context and libc as five
-// controls that do nothing, burying the one or two that do.
+// A pinned dimension is decided because the reader said so; a dimension with
+// exactly one value is decided because the evidence leaves no alternative.
+// Both are the same fact to a reader, and treating the second as undecided
+// asked for a click that could only ever pick what was already on screen.
+func cubeCoord(sliced []cubeFact, filters map[string]string) map[string]string {
+	coord := map[string]string{}
+	for _, dim := range cubeDimKeys {
+		if v := filters[dim]; v != "" {
+			coord[dim] = v
+			continue
+		}
+		if vals := cubeDimValues(sliced, dim); len(vals) == 1 {
+			coord[dim] = vals[0]
+		}
+	}
+	return coord
+}
+
+// cubeCoordDecided reports that no dimension still offers a choice — the
+// bottom of the drill-down, and the only place the page can name one
+// release's dependencies or one environment's failures without guessing
+// which release or which environment the reader meant.
+func cubeCoordDecided(sliced []cubeFact) bool {
+	for _, dim := range cubeDimKeys {
+		if len(cubeDimValues(sliced, dim)) >= 2 {
+			return false
+		}
+	}
+	return true
+}
+
+// cubeFilterBar builds the control bar from the evidence THIS grid renders.
 //
-// A dimension the reader has already pinned always stays, or they cannot
-// unpin it.
-func cubeFilterWorthOffering(values []string, pinned string) bool {
-	return pinned != "" || len(values) >= 2
+// A dimension on an axis needs no dropdown — every value already has its own
+// row or column, and picking one there collapses the axis to a single line,
+// which reads as the grid breaking rather than as a filter working.
+func cubeFilterBar(facts []cubeFact, x, y string, filters map[string]string, lang string) []cubeFilterSelect {
+	onAxes := cubeFactsOnAxes(facts, x, y)
+	var out []cubeFilterSelect
+	for _, dim := range cubeDimKeys {
+		if dim != "" && (dim == x || dim == y) {
+			continue
+		}
+		if sel, ok := cubeFilterFor(onAxes, dim, filters, lang); ok {
+			out = append(out, sel)
+		}
+	}
+	return out
+}
+
+// cubeFilterFor builds one dimension's control from the slice narrowed by
+// the OTHER pins, so switching a filter can never offer a combination the
+// network has no evidence for.
+//
+// A dimension with one value gets a control too, fixed to that value. It used
+// to be dropped on the reasoning that a control with no alternative filters
+// nothing — but a missing control does not read as "decided", it reads as
+// "not measured", and a reader standing on the only OS there is could not
+// tell the difference. Fixed, the bar states the coordinate.
+func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang string) (cubeFilterSelect, bool) {
+	rest := map[string]string{}
+	for d, v := range filters {
+		if d != dim {
+			rest[d] = v
+		}
+	}
+	values := cubeDimValues(filterCubeFacts(facts, rest), dim)
+	if len(values) == 0 && filters[dim] == "" {
+		return cubeFilterSelect{}, false
+	}
+	sel := cubeFilterSelect{
+		Dim:    dim,
+		Label:  i18n.T(lang, "cube.dim_"+dim),
+		Active: filters[dim] != "",
+	}
+	// The OS offers whole platforms as well as exact environments: "does it
+	// run on Linux at all" and "does it run on alpine musl" are different
+	// questions and a reader arrives with both.
+	choices := make([]cubeFilterOption, 0, len(values))
+	if dim == "os" {
+		choices = cubeOSFilterOptions(values)
+	} else {
+		for _, v := range values {
+			choices = append(choices, cubeFilterOption{Value: v, Label: v})
+		}
+	}
+	// Fixed only where the reader has not pinned anything: a pin they placed
+	// themselves must stay removable even when it left one value standing.
+	sel.Fixed = len(choices) == 1 && filters[dim] == ""
+	if !sel.Fixed {
+		sel.Options = append(sel.Options, cubeFilterOption{
+			Label: i18n.T(lang, "cube.all"), Selected: filters[dim] == "",
+		})
+	}
+	for _, c := range choices {
+		c.Selected = sel.Fixed || filters[dim] == c.Value
+		sel.Options = append(sel.Options, c)
+	}
+	return sel, true
 }
 
 // parseCubeFilters reads the pinned dimensions from ?f_<dim>= parameters.
@@ -209,47 +308,20 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	// Each remaining dropdown's options come from the slice narrowed by the
 	// OTHER pins, so switching one filter can never offer a combination the
 	// network has no evidence for.
-	for _, dim := range cubeDimKeys {
-		rest := map[string]string{}
-		for d, v := range filters {
-			if d != dim {
-				rest[d] = v
-			}
-		}
-		values := cubeDimValues(filterCubeFacts(facts, rest), dim)
-		if !cubeFilterWorthOffering(values, filters[dim]) {
-			continue
-		}
-		sel := cubeFilterSelect{
-			Dim:    dim,
-			Label:  i18n.T(lang, "cube.dim_"+dim),
-			Active: filters[dim] != "",
-		}
-		sel.Options = append(sel.Options, cubeFilterOption{
-			Label: i18n.T(lang, "cube.all"), Selected: filters[dim] == "",
-		})
-		// The OS offers whole platforms as well as exact environments:
-		// "does it run on Linux at all" and "does it run on alpine musl"
-		// are different questions and a reader arrives with both.
-		choices := make([]cubeFilterOption, 0, len(values))
-		if dim == "os" {
-			choices = cubeOSFilterOptions(values)
-		} else {
-			for _, v := range values {
-				choices = append(choices, cubeFilterOption{Value: v, Label: v})
-			}
-		}
-		for _, c := range choices {
-			c.Selected = filters[dim] == c.Value
-			sel.Options = append(sel.Options, c)
-		}
-		view.Filters = append(view.Filters, sel)
-	}
 
 	if len(sliced) == 0 {
 		view.NoMatch = true
 		return view
 	}
+
+	// What the reader has actually narrowed to. Everything below the cube on
+	// the package page is a fact about ONE coordinate — that release's
+	// dependencies, that environment's failures — and until the coordinate is
+	// decided there is no honest way to show them. The page used to show them
+	// anyway, all versions and all environments at once, which is why it read
+	// as a pile rather than an answer.
+	view.Coord = cubeCoord(sliced, filters)
+	view.Decided = cubeCoordDecided(sliced)
 
 	x, y := q.Get("x"), q.Get("y")
 	if !validCubeAxis(x) || !validCubeAxis(y) || x == y {
@@ -270,6 +342,10 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		var ok bool
 		x, y, ok = defaultCubeAxes(sliced, filters)
 		if !ok {
+			// The bottom of the drill-down. It still needs its controls: this
+			// is where a reader arrives having pinned four things, and without
+			// them there is no way back out of the coordinate they reached.
+			view.Filters = cubeFilterBar(facts, "", "", filters, lang)
 			view.Leaf = cubeLeafRows(sliced, eco, name)
 			return view
 		}
@@ -283,14 +359,11 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	//
 	// The dropdowns are built before the axes are known, so they are dropped
 	// here rather than skipped there.
-	kept := view.Filters[:0]
-	for _, f := range view.Filters {
-		if f.Dim == x || f.Dim == y {
-			continue
-		}
-		kept = append(kept, f)
-	}
-	view.Filters = kept
+	// Built here, not earlier, and from the evidence THIS grid renders. A
+	// dimension on an axis needs no dropdown — every value already has its
+	// own row or column, and picking one there collapses the axis to a single
+	// line, which reads as the grid breaking rather than as a filter working.
+	view.Filters = cubeFilterBar(facts, x, y, filters, lang)
 	view.XLabel, view.YLabel = i18n.T(lang, "cube.dim_"+x), i18n.T(lang, "cube.dim_"+y)
 	view.SwapHref = cubeHref(pagePath, cubeQuery(filters, y, x, lang))
 
