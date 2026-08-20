@@ -105,7 +105,7 @@
 <thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th></tr></thead>
 <tbody>
 {{- range .Deps}}
-<tr><th class="rowlabel mono">{{.Library}}</th><td class="mono">{{.Version}}</td></tr>
+<tr><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Library}}</a></th><td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td></tr>
 {{- end}}
 </tbody>
 </table>

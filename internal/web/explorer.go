@@ -553,7 +553,7 @@ func (s *site) packageDeps(r *http.Request, eco, name string) []PackageDep {
 			kept = append(kept, e)
 		}
 	}
-	return buildPackageDeps(kept)
+	return buildPackageDeps(eco, kept)
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
