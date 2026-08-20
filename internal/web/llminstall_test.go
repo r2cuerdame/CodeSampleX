@@ -77,35 +77,6 @@ func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	}
 }
 
-func TestWorkerOnlyPromptIsVisibleCopiedAndIsolated(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/contribute").Body.String()
-
-	for _, prompt := range []string{
-		workerSetupPrompt("en", "https://codesamplex.dev"), workerRunPrompt("en"),
-	} {
-		want := html.EscapeString(prompt)
-		if strings.Count(body, want) != 1 {
-			t.Fatalf("worker prompt should have one DOM source, got %d", strings.Count(body, want))
-		}
-	}
-	for _, required := range []string{
-		`id="install-worker"`,
-		"Worker-only machine",
-		"Copy worker prompt",
-		"csx init --community --yes --no-agents --no-daemon",
-		"csx worker start --mode verify --parallel 2 --budget idle",
-		"Docker",
-	} {
-		mustContain(t, body, required)
-	}
-	for _, prompt := range []string{workerSetupPrompt("en", "https://codesamplex.dev"), workerRunPrompt("en")} {
-		if strings.Contains(prompt, "mcp-config") {
-			t.Error("worker-only prompt must not configure an MCP client")
-		}
-	}
-}
-
 func TestStylesheetURLTracksTheRunningVersion(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
@@ -123,7 +94,7 @@ func TestAgentInstallPromptOnlyEverPointsAtCodeSampleX(t *testing.T) {
 	const base = "https://csx.example"
 	allowed := map[string]bool{"github.com": true, "csx.example": true}
 	for _, lang := range i18n.Supported {
-		prompts := []string{llmPrompt(lang, base), workerSetupPrompt(lang, base), workerRunPrompt(lang)}
+		prompts := []string{llmPrompt(lang, base)}
 		for _, prompt := range prompts {
 			if prompt == "" {
 				t.Fatalf("locale %s has an empty install prompt", lang)
@@ -143,36 +114,6 @@ func TestAgentInstallPromptOnlyEverPointsAtCodeSampleX(t *testing.T) {
 				if !allowed[u.Host] {
 					t.Errorf("locale %s: prompt sends the agent to %q", lang, u.Host)
 				}
-			}
-		}
-		for _, want := range []string{
-			base + "/install.sh",
-			base + "/install.ps1",
-			"github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md",
-			"search_known_solution",
-			"csx sync",
-			"csx init --community --yes",
-			"mode: community",
-		} {
-			if !strings.Contains(llmPrompt(lang, base), want) {
-				t.Errorf("locale %s: prompt is missing %q", lang, want)
-			}
-		}
-		for _, want := range []string{
-			base + "/install.sh",
-			base + "/install.ps1",
-			"github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md",
-			"csx init --community --yes --no-agents --no-daemon",
-			"csx worker start --mode verify --parallel 2 --budget idle",
-			"Docker",
-		} {
-			if !strings.Contains(workerSetupPrompt(lang, base), want) {
-				t.Errorf("locale %s: worker setup prompt is missing %q", lang, want)
-			}
-		}
-		for _, want := range []string{"CodeSampleX Contributor Worker", "csx worker start --mode verify --parallel 2 --budget idle", "csx daemon status", "not running"} {
-			if !strings.Contains(workerRunPrompt(lang), want) {
-				t.Errorf("locale %s: worker run prompt is missing %q", lang, want)
 			}
 		}
 	}

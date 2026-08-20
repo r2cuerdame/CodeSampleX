@@ -53,7 +53,7 @@ type pivotCell struct {
 	// "mixed" | "". It is a visual affordance only and is never rendered as
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
-	Tone string
+	Tone  string
 	Glyph string // "■" | "○" | "—"
 	// Bang marks a measured anomaly: an elevated failure rate or any
 	// verification FAIL. Maybe marks weak or aged evidence: a cell proven

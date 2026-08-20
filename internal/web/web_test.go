@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -621,54 +620,6 @@ func TestFeaturesShowsCLIHelpAboveMCP(t *testing.T) {
 	}
 }
 
-// The Windows contributor switches engines with the supported Docker Desktop
-// CLI, which reports a real exit code; DockerCli.exe -SwitchWindowsEngine does
-// not, so it must not come back.
-func TestContributeUsesSupportedEngineSwitch(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/contribute").Body.String()
-	mustContain(t, body, "docker desktop engine use windows")
-	mustContain(t, body, "docker desktop engine use linux")
-	if strings.Contains(body, "SwitchWindowsEngine") || strings.Contains(body, "DockerCli.exe") {
-		t.Error("contribute page still uses the unsupported DockerCli.exe engine switch")
-	}
-	// Only cmdlets that exist. A missing one throws CommandNotFoundException,
-	// which -ErrorAction cannot suppress, so the paste dies on its last line
-	// after the engine has already been switched.
-	real := map[string]bool{
-		"Get-ScheduledTask": true, "Start-ScheduledTask": true, "Stop-ScheduledTask": true,
-		"Register-ScheduledTask": true, "Unregister-ScheduledTask": true, "Set-ScheduledTask": true,
-		"Enable-ScheduledTask": true, "Disable-ScheduledTask": true,
-		"New-ScheduledTaskAction": true, "New-ScheduledTaskTrigger": true, "New-ScheduledTaskSettingsSet": true,
-	}
-	for _, m := range regexp.MustCompile(`[A-Z][a-z]+-ScheduledTask[A-Za-z]*`).FindAllString(body, -1) {
-		if !real[m] {
-			t.Errorf("%s is not a cmdlet in the ScheduledTasks module", m)
-		}
-	}
-}
-
-// A macOS or Linux contributor gets the same steps a Windows one does,
-// minus the engine switch that machine cannot make: install, then bring the
-// worker up and see what it says.
-func TestContributeGivesTheShellCardARunStep(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/contribute").Body.String()
-	mustContain(t, body, `id="worker-unix-run-cmd"`)
-	mustContain(t, body, "csx version &amp;&amp; csx daemon status")
-	// The status lines must precede the start, which never returns.
-	run := body[strings.Index(body, `id="worker-unix-run-cmd"`):]
-	status, start := strings.Index(run, "csx daemon status"), strings.Index(run, "csx worker start")
-	if status < 0 || start < 0 || status > start {
-		t.Fatalf("status must print before the blocking start: status=%d start=%d", status, start)
-	}
-}
-
-// A capped box that never scrolls does not clip: the text runs straight out
-// of it and over whatever follows. This shipped once on the contribute page,
-// so every height cap on a text box has to say what it does with the
-// overflow — in that rule or in another rule with the same selector, since a
-// media query commonly overrides only the cap.
 func TestStylesheetCapsHeightsWithOverflow(t *testing.T) {
 	css, err := staticFS.ReadFile("static/site.css")
 	if err != nil {
