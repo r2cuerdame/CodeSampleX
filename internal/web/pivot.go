@@ -375,9 +375,56 @@ func runtimeBucket(runtime, version string) string {
 	}
 	line := runtimeLineOf(runtime, version)
 	if line == "" {
-		return runtime + " (version not recorded)"
+		return runtime + unrecordedAxisSuffix
 	}
 	return runtime + " " + line
+}
+
+// unrecordedAxisSuffix marks an axis value whose dimension was never
+// captured. It is a constant so the front page can recognise the label where
+// it is MADE rather than hunting for English in a page that ships in nine
+// languages.
+const unrecordedAxisSuffix = " (version not recorded)"
+
+// isUnrecordedAxisLabel reports whether an axis value stands for a dimension
+// nothing recorded.
+func isUnrecordedAxisLabel(label string) bool {
+	return strings.HasSuffix(label, unrecordedAxisSuffix)
+}
+
+// dropUnrecordedAxes removes the rows and columns that stand for a gap.
+//
+// The full explorer keeps them: there completeness is the point, and a reader
+// who drilled in wants to know the dimension was never captured. The front
+// page is the showcase, and a row reading "node (version not recorded)" is
+// the worst thing to put in a shop window — it is a true statement about our
+// instrument, not an answer to "does it run there".
+func dropUnrecordedAxes(g pivotGrid) pivotGrid {
+	keep := make([]int, 0, len(g.Cols))
+	cols := make([]pivotAxis, 0, len(g.Cols))
+	for i, c := range g.Cols {
+		if !isUnrecordedAxisLabel(c.Label) {
+			keep = append(keep, i)
+			cols = append(cols, c)
+		}
+	}
+	out := g
+	out.Cols = cols
+	out.Rows = nil
+	for _, r := range g.Rows {
+		if isUnrecordedAxisLabel(r.Label) {
+			continue
+		}
+		trimmed := r
+		trimmed.Cells = make([]pivotCell, 0, len(keep))
+		for _, i := range keep {
+			if i < len(r.Cells) {
+				trimmed.Cells = append(trimmed.Cells, r.Cells[i])
+			}
+		}
+		out.Rows = append(out.Rows, trimmed)
+	}
+	return out
 }
 
 // contextColKey buckets by browser family or runtime line + MAJOR version

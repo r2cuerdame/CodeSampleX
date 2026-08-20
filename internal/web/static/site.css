@@ -1427,6 +1427,15 @@ td.pv .pvpasses { font-size: 0.66rem; }
 .gridstats .gs.when { margin-left: auto; font-weight: 400; }
 
 .gridpanel .tablewrap { margin: 0; border: 0; }
+/* The legend belongs to the grid, so it sits flush under the panel instead of
+   opening a second box beneath it. Three rules stacked in a centimetre --
+   the footer's top border, the panel's bottom border, then the box's own top
+   border -- read as a stutter rather than as structure. */
+.gridpanel + .home-detail.gridhelp {
+  margin-top: -1px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
 .gridpanel table.pivot { width: 100%; }
 .gridpanel table.pivot thead th:first-child,
 .gridpanel table.pivot th.rowlabel { border-left: 0; }
