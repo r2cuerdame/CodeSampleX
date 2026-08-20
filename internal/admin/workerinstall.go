@@ -1,77 +1,15 @@
-package web
+package admin
 
-import (
-	"net/http"
-	"strings"
+import "strings"
 
-	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
-)
-
-// This file is /contribute: what the network accepts from strangers, and
-// what it does not.
+// Worker install commands live here rather than on a public page.
 //
-// It exists because the publish endpoint refuses anonymous uploads and
-// points here. A gate that says only "forbidden" teaches nothing and reads
-// as a closed project; the same gate beside a page naming three open
-// channels reads as a policy. The refusal message and this page are one
-// thing in two places, and they must not drift — publishgate_test.go pins
-// the message, and TestContributePageAnswersTheRefusal pins that this page
-// answers it.
-type contributePage struct {
-	basePage
-	// SourceURL is the repository. Everything on this page is checkable
-	// there, which is the only reason a stranger should believe it.
-	SourceURL string
-	IssuesURL string
-	// Setup and run are separate because installing a persistent worker is a
-	// one-time operation while checking or starting it is routine.
-	WorkerSetupPrompt string
-	WorkerRunPrompt   string
-	WorkerSetupCMD    string
-	WorkerRunCMD      string
-	// WindowsSwitchCMD moves an already-installed worker onto Windows
-	// containers. It is separate from setup because it is a choice about
-	// WHICH platform this machine contributes evidence for, not another
-	// way to install.
-	WindowsSwitchCMD string
-	// WorkerUnixCMD is the same install for a shell, where the persistent
-	// service differs per init system and is left to the agent prompt.
-	WorkerUnixCMD string
-	// WorkerUnixRunCMD is the shell counterpart of WorkerRunCMD: bring the
-	// worker back up and see what it reports.
-	WorkerUnixRunCMD string
-}
-
-func (s *site) contribute(w http.ResponseWriter, r *http.Request) {
-	lang := s.negotiate(w, r)
-	b := s.page(r, lang, i18n.T(lang, "contribute.title")+" — CodeSampleX",
-		i18n.T(lang, "meta.contribute"))
-	s.render(w, "contribute", http.StatusOK, contributePage{
-		basePage:          b,
-		SourceURL:         "https://github.com/r2cuerdame/CodeSampleX",
-		IssuesURL:         "https://github.com/r2cuerdame/CodeSampleX/issues/new",
-		WorkerSetupPrompt: workerSetupPrompt(lang, s.base(r)),
-		WorkerRunPrompt:   workerRunPrompt(lang),
-		WorkerSetupCMD:    workerSetupCMD(s.base(r)),
-		WorkerRunCMD:      workerRunCMD(),
-		WindowsSwitchCMD:  windowsWorkerCMD(),
-		WorkerUnixCMD:     workerUnixCMD(s.base(r)),
-		WorkerUnixRunCMD:  workerUnixRunCMD(),
-	})
-}
-
-func workerSetupPrompt(lang, base string) string {
-	return i18n.T(lang, "landing.worker_setup_prompt", base, base)
-}
-
-func workerRunPrompt(lang string) string {
-	return i18n.T(lang, "landing.worker_run_prompt")
-}
-
-// workerUnixCMD installs a worker-only csx and starts it in the
-// foreground. Making it survive a reboot needs systemd or launchd, which
-// differ enough that the agent prompt handles them.
-func workerUnixCMD(base string) string {
+// They were the call to action on /contribute, which is gone: a contributor
+// turned out to do exactly what any user does -- installing csx is what emits
+// observations -- except for running samples to verify them, and the project
+// runs those on its own machines. So this is an operator tool, and it belongs
+// beside the internal sample workers it pairs with.
+func WorkerUnixCMD(base string) string {
 	installer := strings.TrimRight(base, "/") + "/install.sh"
 	return "CSX_WORKER_ONLY=1 curl -fsSL " + installer + " | sh && " +
 		"csx worker start --mode verify --parallel 2 --budget idle"
@@ -81,7 +19,7 @@ func workerUnixCMD(base string) string {
 // worker. The status lines come first because `csx worker start` runs in
 // the foreground and never returns while it is working — after it, nothing
 // else in the paste would ever print.
-func workerUnixRunCMD() string {
+func WorkerUnixRunCMD() string {
 	return "csx version && csx daemon status\n" +
 		"csx worker start --mode verify --parallel 2 --budget idle"
 }
@@ -95,7 +33,7 @@ func workerUnixRunCMD() string {
 // checks the mode it ended in rather than trusting the exit code alone,
 // because the switch can fail on a host whose Windows build does not
 // match the images.
-func windowsWorkerCMD() string {
+func WindowsWorkerCMD() string {
 	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; ` +
 		`docker desktop engine use windows; ` +
 		`if ($LASTEXITCODE -ne 0) { throw 'Switching engines failed; Docker Desktop 4.37 or newer is required.' }; ` +
@@ -113,15 +51,20 @@ func windowsWorkerCMD() string {
 		`Write-Output \"Docker now serves windows containers; the worker will verify golang and pypi samples on Windows.\""`
 }
 
-func workerSetupCMD(base string) string {
+func WorkerSetupCMD(base string) string {
 	installer := powerShellQuote(strings.TrimRight(base, "/") + "/install.ps1")
 	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; docker info *> $null; if ($LASTEXITCODE -ne 0) { throw 'Docker must already be installed and running.' }; $env:CSX_WORKER_ONLY='1'; try { irm ` + installer + ` | iex } finally { Remove-Item Env:\CSX_WORKER_ONLY -ErrorAction SilentlyContinue }; $csx=Join-Path $env:LOCALAPPDATA 'csx\csx.exe'; if (-not (Test-Path -LiteralPath $csx)) { throw 'csx was not installed at the expected path.' }; $action=New-ScheduledTaskAction -Execute $csx -Argument 'worker start --mode verify --parallel 2 --budget idle'; $trigger=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; $settings=New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero); Register-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -Action $action -Trigger $trigger -Settings $settings -Description 'Docker-isolated CodeSampleX verification worker' -Force; Start-ScheduledTask -TaskName 'CodeSampleX Contributor Worker'; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' | Select-Object TaskName,State; & $csx version; & $csx daemon status"`
 }
 
-func workerRunCMD() string {
+func WorkerRunCMD() string {
 	return `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; docker info *> $null; if ($LASTEXITCODE -ne 0) { throw 'Docker must already be installed and running.' }; $csx=Join-Path $env:LOCALAPPDATA 'csx\csx.exe'; if (-not (Test-Path -LiteralPath $csx)) { throw 'csx is not installed at the expected path.' }; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' -ErrorAction Stop | Out-Null; Start-ScheduledTask -TaskName 'CodeSampleX Contributor Worker'; Start-Sleep -Seconds 2; Get-ScheduledTask -TaskName 'CodeSampleX Contributor Worker' | Select-Object TaskName,State; & $csx version; & $csx daemon status"`
 }
 
 func powerShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
+
+// workerInstallBase is where the installers are published. The admin page is
+// reached over whatever host the operator typed, which may be an IP or a
+// tunnel, so the command must not be built from the request.
+const workerInstallBase = "https://codesamplex.dev"

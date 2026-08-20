@@ -1296,3 +1296,87 @@ func TestIntegrationFarmStats(t *testing.T) {
 		t.Errorf("receipts by OS = %v", health.ReceiptsByOS)
 	}
 }
+
+// The coverage query reads two differently-shaped jsonb documents -- evidence
+// keeps the OS at the top level, receipts nest it under "environment" -- and
+// picking the wrong path yields a plausible zero rather than an error. Only
+// real PostgreSQL can prove the paths are right.
+func TestIntegrationFarmCoverageSeparatesObservedFromProven(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct{ name, observedOS, provenOS string }{
+		{"seen", "windows", "linux"},
+		{"both", "windows", "windows"},
+	} {
+		purl := "pkg:golang/example.com/" + tc.name + "@v1.0.0"
+		if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{{
+			SchemaVersion: 1, Epoch: "2026-08-20", AnonID: "peercov" + tc.name, ProjectBucket: "projcover",
+			Package: purl, Symbol: tc.name + ".Call", SymbolConfidence: domain.SymbolProbable,
+			Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "golang",
+				OS: tc.observedOS, Arch: "amd64", Runtime: "go", RuntimeVersion: "1.26"},
+			Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 3,
+		}}); err != nil || accepted != 1 {
+			t.Fatalf("ingest %s: accepted=%d rejected=%v err=%v", tc.name, accepted, rejected, err)
+		}
+		if err := pg.UpsertPackage(ctx, PackageRow{PURL: purl, Ecosystem: "golang",
+			Name: "example.com/" + tc.name, Version: "v1.0.0", Publicness: "PUBLIC"}); err != nil {
+			t.Fatal(err)
+		}
+		id := "sha256:cover" + tc.name
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: id,
+			ManifestJSON: `{"packages":["` + purl + `"],"symbols":[]}`}); err != nil {
+			t.Fatal(err)
+		}
+		if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "r-cover-" + tc.name, SampleID: id,
+			PeerID: "p", EnvHash: "e-cover-" + tc.name, ContractResult: "PASS",
+			ReceiptJSON: `{"environment":{"os":"` + tc.provenOS + `"}}`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := pg.FarmCoverage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var win FarmAxisCoverage
+	for _, r := range rows {
+		if r.OS == "windows" && r.Ecosystem == "golang" {
+			win = r
+		}
+	}
+	if win.Observed != 2 {
+		t.Errorf("windows/golang observed = %d, want 2 (rows: %+v)", win.Observed, rows)
+	}
+	if win.ObservedProven != 1 {
+		t.Errorf("windows/golang observed-and-proven = %d, want 1 — a linux proof is not a windows proof",
+			win.ObservedProven)
+	}
+	if win.Measured != win.Proven {
+		t.Errorf("no FAIL receipts were seeded, so measured (%d) must equal proven (%d)",
+			win.Measured, win.Proven)
+	}
+}
+
+// A manifest with no packages serializes to jsonb null, and expanding a
+// scalar raises rather than yielding zero rows. One such sample must not
+// take the whole coverage query down with it.
+func TestIntegrationFarmCoverageSurvivesAnEmptyManifest(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:nullmanifest",
+		ManifestJSON: `{"packages":null,"symbols":null}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "r-nullmanifest",
+		SampleID: "sha256:nullmanifest", PeerID: "p", EnvHash: "e-null",
+		ContractResult: "PASS", ReceiptJSON: `{"environment":{"os":"linux"}}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.FarmCoverage(ctx); err != nil {
+		t.Fatalf("FarmCoverage aborted on a scalar manifest: %v", err)
+	}
+	if _, err := pg.FarmHealthNow(ctx, dbNow(t, pg)); err != nil {
+		t.Fatalf("FarmHealthNow aborted on a scalar manifest: %v", err)
+	}
+}

@@ -8,23 +8,35 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
-CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes: it runs real builds and contract tests in real, recorded environments — then shows you where things actually worked, where they broke, and how sure it is of both.
+CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and on whose machine.
+
+Two things are the asset, and a third is a bonus:
+
+- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container can: macOS has no container runtime at all, npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
+- **Findings** — the contradictions we detected in that evidence: what a competent developer or model expects, measured against what happened. These are ours to stand behind, and they are what a model most often gets wrong, because they are exactly what the documentation does not say.
+- **Samples** — runnable code we write and verify ourselves. A bonus, deliberately: a container farm can never cover the space, so a verified sample is a confidence tier above the evidence, never the condition for having an answer at all.
+
+Which is why a miss is not empty. When nothing has been proven for your case the grade stays `NO_SAFE_MATCH` — and the recorded runs come back with it, as recorded.
 
 - Compatibility map: **https://codesamplex.dev**
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
-- The answer it gives: *we tested it; this is what happened.*
+- The answer it gives: *here is what happened, and here is who ran it.*
 
 ## Does it run there?
 
 Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — OS × runtime, version × architecture, symbol × OS. A real slice, from the live network (`axios.post`, measured August 2026):
 
 ```text
-axios.post · axios 1.12.2                node 22          node 24
-linux                                    ✓ PASS verified     —
-windows                                  ○ 3/9 observed ! ?  (process runs: 3 pass · 6 fail)
+axios.post · axios 1.12.2                node 22            node 24
+linux                                    ■ verified 4/4       —
+windows                                  ○ observed 3/9 ! ?
 ```
 
-That row is not an illustration — it is [the live page](https://codesamplex.dev/npm/axios/1.12.2/axios.post). `PASS` on linux is a contract that executed in a pinned container; the windows cell is honest about being weaker evidence (`○` observed with the `?` uncertainty marker — build observations, not a contract run) and about its measured failures (`!`). Unknown stays `—`; nothing is inferred from the package's ecosystem or its docs.
+That row is not an illustration — it is [the live page](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+
+**A cell states a rate and names its basis. It never states a verdict.** `■ verified` means we ran a contract in a pinned container ourselves; `○ observed` means real machines recorded runs and reported them. The number is the measurement — passes over runs — so a lone `1/1` says how thin the evidence is instead of hiding behind a mark that looked identical to a hundred agreeing runs. There is no `PASS`: "PASS" read as the general claim *this works here*, when what was measured is *four runs, four passed*.
+
+The basis never blurs, because it is the distinction that matters. Observation counts dwarf verification counts — the network holds thousands of reported runs against a far smaller body of receipts — so two bare rates would make an anonymous cell look more authoritative than a proven one. The glyph is solid for a run we made and hollow for a report we received, legibly different without colour; colour carries only how the rate came out, since a failure is the rare, high-information event and has to catch the eye. `!` marks a measured anomaly, `?` marks weak or aged evidence, `—` stays unknown. Nothing is inferred from the package's ecosystem or its docs.
 
 The web explorer treats every 2D grid as a slice of an N-dimensional cube: pick any two dimensions as axes (OS, runtime, package version, symbol, architecture, package manager, execution context, libc), pin the rest as filters, and click a cell to drill one level deeper — down to the exact measured combinations, whose symbol pages hold the signed receipts.
 

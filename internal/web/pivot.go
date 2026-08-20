@@ -30,11 +30,31 @@ const (
 	pivotStaleAfter = 90 * 24 * time.Hour
 )
 
-// pivotCell is one (row, column) verdict of a pivoted compatibility grid.
+// pivotCell is one (row, column) measurement of a pivoted compatibility grid.
+//
+// It states a RATE and names its BASIS, and it never speaks a verdict. "PASS"
+// read as the general claim "this works here" when what was measured is
+// "3 runs, 3 passed" -- and this project stands behind only the code it ran
+// and the findings it detected, never behind a judgement it inferred from
+// counts.
+//
+// The glyph carries the basis rather than the outcome for a specific reason:
+// observation counts dwarf verification counts, so two bare ratios would make
+// an anonymous cell look more authoritative than a proven one. Basis is the
+// distinction that must never blur; pass-versus-fail is carried by the number.
 type pivotCell struct {
-	State string // "PASS" | "FAIL" | "MIXED" | "OBSERVED" | "" (no evidence)
-	Class string // "pass" | "fail" | "mixed" | "observed" | "empty"
-	Glyph string // "✓" | "✕" | "◐" | "○" | "—"
+	// Basis is who ran it: "verified" (the fleet ran a contract) or
+	// "observed" (real machines reported a build), "" when nothing was
+	// recorded. The vocabulary is the one the basis filter already emits
+	// (filters.go), so the grid and the filter speak the same two words.
+	Basis string
+	Class string // "verified" | "observed" | "empty"
+	// Tone colours the cell by how the rate came out: "pass" | "fail" |
+	// "mixed" | "". It is a visual affordance only and is never rendered as
+	// text -- failure has to catch the eye, but the WORD claimed more than
+	// the measurement supported, so only the colour survives.
+	Tone  string
+	Glyph string // "■" | "○" | "—"
 	// Bang marks a measured anomaly: an elevated failure rate or any
 	// verification FAIL. Maybe marks weak or aged evidence: a cell proven
 	// only by project observations, or one whose newest evidence is stale.
@@ -45,12 +65,16 @@ type pivotCell struct {
 	Cross bool
 	Href  string
 	Tip   string // title attribute; English data values, never translated
-	// Ratio says how much variation a state summarizes: "15/18" verified
-	// passes (or observed passes when nothing is verified). Empty for a
-	// single-event cell — a bare PASS there is already the whole truth.
+	// Ratio is the measurement itself: passes over runs, on the basis the
+	// cell names. It is present whenever anything was recorded -- a lone
+	// "1/1" says how thin the evidence is, which a bare mark concealed.
 	Ratio string
 	Obs   int64 // observation events (USED / PROJECT_*)
 	Ver   int64 // verification events (RESOLVE…CONTRACT, SYMBOL_*)
+	// PassCount and FailCount are the numerator and the remainder of Ratio,
+	// on whichever basis the cell names.
+	PassCount int64
+	FailCount int64
 }
 
 // pivotAxis is one label along an axis, with the OS family it names when
@@ -443,15 +467,15 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			if cell.Maybe {
 				g.HasMaybe = true
 			}
-			switch cell.State {
-			case "PASS":
-				g.CountPass++
-			case "FAIL":
-				g.CountFail++
-			case "MIXED":
-				g.CountMixed++
-			case "OBSERVED":
+			switch {
+			case cell.Basis == "observed":
 				g.CountObserved++
+			case cell.Basis != "" && cell.FailCount == 0:
+				g.CountPass++
+			case cell.Basis != "" && cell.PassCount == 0:
+				g.CountFail++
+			case cell.Basis != "":
+				g.CountMixed++
 			}
 			if cell.Class != "empty" {
 				g.Measured++
@@ -565,17 +589,25 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	obs := a.obsPass + a.obsFail
 	ver := a.verPass + a.verFail
 	cell := pivotCell{Obs: obs, Ver: ver, Cross: a.cross}
+	// A verification, however small, outranks any volume of observation:
+	// the basis is about who ran it, never about how many said so.
 	switch {
-	case a.verPass > 0 && a.verFail == 0:
-		cell.State, cell.Class, cell.Glyph = "PASS", "pass", "✓"
-	case a.verFail > 0 && a.verPass == 0:
-		cell.State, cell.Class, cell.Glyph = "FAIL", "fail", "✕"
-	case a.verPass > 0 && a.verFail > 0:
-		cell.State, cell.Class, cell.Glyph = "MIXED", "mixed", "◐"
+	case ver > 0:
+		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "■"
+		cell.PassCount, cell.FailCount = a.verPass, a.verFail
 	case obs > 0:
-		cell.State, cell.Class, cell.Glyph = "OBSERVED", "observed", "○"
+		cell.Basis, cell.Class, cell.Glyph = "observed", "observed", "○"
+		cell.PassCount, cell.FailCount = a.obsPass, a.obsFail
 	default:
 		return pivotCell{Class: "empty", Glyph: "—"}
+	}
+	switch {
+	case cell.FailCount == 0:
+		cell.Tone = "pass"
+	case cell.PassCount == 0:
+		cell.Tone = "fail"
+	default:
+		cell.Tone = "mixed"
 	}
 	// Staleness follows the evidence class the cell's verdict comes from:
 	// a fresh observation never freshens a stale verification's PASS.
@@ -590,11 +622,10 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	}
 	cell.Bang = a.elevated || a.verFail > 0
 	cell.Maybe = ver == 0 || cell.Stale
-	if ver > 1 {
-		cell.Ratio = fmt.Sprintf("%d/%d", a.verPass, ver)
-	} else if ver == 0 && obs > 1 {
-		cell.Ratio = fmt.Sprintf("%d/%d", a.obsPass, obs)
-	}
+	// Always rendered, including "1/1". Suppressing the single-event case
+	// hid exactly how thin a cell was behind a mark that looked the same as
+	// a hundred agreeing runs.
+	cell.Ratio = fmt.Sprintf("%d/%d", cell.PassCount, cell.PassCount+cell.FailCount)
 
 	var parts []string
 	if obs > 0 {

@@ -149,13 +149,18 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" {
 		return false
 	}
-	// WANTED is somebody's explicit ask, so it is not pinned to an OS — but it
+	// A WANTED row that names an OS is an ask about that platform, and a proof
+	// from another one does not answer it. A row without an OS is a question
+	// about the package itself, so anyone who can run it may answer -- but it
 	// still has to be a job this machine can start. Returning true for every
 	// WANTED regardless of environment meant a Windows worker was handed npm
 	// work that has no Windows image to run in.
 	if candidate.Kind == "WANTED" {
 		for _, targetOS := range request.VerifierOS {
-			if authoringRunnableOn(candidate.Ecosystem, targetOS) {
+			if !authoringRunnableOn(candidate.Ecosystem, targetOS) {
+				continue
+			}
+			if candidate.TargetOS == "" || strings.EqualFold(candidate.TargetOS, targetOS) {
 				return true
 			}
 		}

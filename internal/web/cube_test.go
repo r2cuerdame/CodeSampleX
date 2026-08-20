@@ -140,10 +140,10 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 		t.Fatalf("cols = %v, want versions newest first", g.Cols)
 	}
 	c := cellAt(t, g, "x64", "19.1.0")
-	if c.State != "FAIL" || !c.Bang {
-		t.Errorf("windows/x64/19.1.0 = %q bang=%v, want FAIL !", c.State, c.Bang)
+	if c.Basis != "verified" || c.Ratio != "0/2" || !c.Bang {
+		t.Errorf("windows/x64/19.1.0 = %q %q bang=%v, want verified 0/2 !", c.Basis, c.Ratio, c.Bang)
 	}
-	if got := cellAt(t, g, "arm64", "18.3.1").State; got != "OBSERVED" {
+	if got := cellAt(t, g, "arm64", "18.3.1").Basis; got != "observed" {
 		t.Errorf("windows/arm64/18.3.1 = %q, want OBSERVED", got)
 	}
 }
@@ -206,8 +206,11 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	if c.Ver != 1 {
 		t.Fatalf("cell ver = %d, want the one real contract run counted once", c.Ver)
 	}
-	if c.Ratio != "" {
-		t.Errorf("single deduped run must not fabricate a ratio, got %q", c.Ratio)
+	// "1/1" is deliberate. Suppressing the rate on a single run rendered it
+	// identically to a hundred agreeing runs, which is the overstatement the
+	// rate exists to prevent -- how thin the evidence is IS the measurement.
+	if c.Ratio != "1/1" {
+		t.Errorf("single deduped run must still state its rate, got %q", c.Ratio)
 	}
 }
 

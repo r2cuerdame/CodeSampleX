@@ -191,6 +191,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Version:     h.version,
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Uptime:      formatDuration(nonNegative(now.Sub(h.startedAt))),
+
+		WorkerWindowsSetupCMD:  WorkerSetupCMD(workerInstallBase),
+		WorkerWindowsRunCMD:    WorkerRunCMD(),
+		WorkerWindowsSwitchCMD: WindowsWorkerCMD(),
+		WorkerUnixSetupCMD:     WorkerUnixCMD(workerInstallBase),
+		WorkerUnixRunCMD:       WorkerUnixRunCMD(),
 	}
 	if data.Version == "" {
 		data.Version = "알 수 없음"
@@ -331,6 +337,18 @@ type dashboardData struct {
 	Version     string
 	GeneratedAt string
 	Uptime      string
+
+	// Verification worker install commands. They used to be the call to
+	// action on the public /contribute page, which is gone: a contributor
+	// did exactly what any user does -- installing csx is what emits
+	// observations -- except for running samples, and the project runs those
+	// itself. What is left is an operator task, so it sits folded beside the
+	// internal sample workers it pairs with.
+	WorkerWindowsSetupCMD  string
+	WorkerWindowsRunCMD    string
+	WorkerWindowsSwitchCMD string
+	WorkerUnixSetupCMD     string
+	WorkerUnixRunCMD       string
 
 	DBHealthy bool
 	DBProbe   string

@@ -19,12 +19,16 @@ CodeSampleX est un **réseau ouvert de tests de compatibilité** pour les biblio
 Chaque résultat est une exécution enregistrée accompagnée de son environnement, si bien que les données pivotent en matrices de compatibilité — OS × runtime, version × architecture, symbole × OS. Une tranche réelle, issue du réseau en direct (`axios.post`, mesurée en août 2026) :
 
 ```text
-axios.post · axios 1.12.2                node 22          node 24
-linux                                    ✓ PASS verified     —
-windows                                  ○ 3/9 observed ! ?  (process runs: 3 pass · 6 fail)
+axios.post · axios 1.12.2                node 22            node 24
+linux                                    ■ verified 4/4       —
+windows                                  ○ observed 3/9 ! ?
 ```
 
-Cette ligne n'est pas une illustration — c'est [la page en direct](https://codesamplex.dev/npm/axios/1.12.2/axios.post). Le `PASS` sous linux est un contrat qui s'est exécuté dans un conteneur épinglé ; la cellule windows est honnête sur la relative faiblesse de sa preuve (`○` observé avec le marqueur d'incertitude `?` — des observations de build, pas une exécution de contrat) et sur ses échecs mesurés (`!`). L'inconnu reste `—` ; rien n'est inféré de l'écosystème du paquet ni de sa documentation.
+Cette ligne n'est pas une illustration : c'est [la page en direct](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+
+**Une cellule indique un taux et nomme sa base. Jamais un verdict.** `■ verified` signifie que nous avons nous-mêmes exécuté un contrat dans un conteneur épinglé ; `○ observed` signifie que de vraies machines ont enregistré des exécutions et les ont signalées. Le nombre est la mesure — succès par exécution — de sorte qu'un `1/1` isolé dit à quel point la preuve est mince, au lieu de se cacher derrière une marque identique à celle de cent exécutions concordantes. Il n'y a plus de `PASS` : PASS se lisait comme l'affirmation générale *cela fonctionne ici*, alors que ce qui est mesuré est *quatre exécutions, quatre succès*.
+
+La base ne se brouille jamais, car c'est la distinction qui compte. Les comptes d'observation écrasent ceux de vérification : deux taux nus feraient paraître une cellule anonyme plus autorisée qu'une cellule prouvée. Le glyphe est plein pour une exécution que nous avons faite et creux pour un rapport reçu, distinguables sans couleur ; la couleur ne porte que le résultat du taux, car un échec est l'événement rare et riche en information, et doit attirer l'œil. `!` marque une anomalie mesurée, `?` une preuve faible ou ancienne, `—` reste inconnu. Rien n'est déduit de l'écosystème du paquet ni de sa documentation.
 
 L'explorateur web traite chaque grille 2D comme une tranche d'un cube à N dimensions : choisissez deux dimensions comme axes (OS, runtime, version du paquet, symbole, architecture, gestionnaire de paquets, contexte d'exécution, libc), épinglez le reste comme filtres, et cliquez sur une cellule pour descendre d'un niveau — jusqu'aux combinaisons exactes mesurées, dont les pages de symboles détiennent les reçus signés.
 

@@ -113,6 +113,73 @@ type SearchResult struct {
 	KnownFailures       []KnownFailure  `json:"knownFailures,omitempty"`
 }
 
+// ObservedEnvironment is the closed set of environment dimensions a relayed
+// observation may carry. It is a fixed projection rather than the whole
+// fingerprint: the full record has ~25 fields including distro, libc version,
+// container runtime, virtualization, frameworks and CI, and shipping those
+// against a stable anonymous id is a fingerprint, not a measurement.
+type ObservedEnvironment struct {
+	OS             string `json:"os,omitempty"`
+	Arch           string `json:"arch,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
+	RuntimeVersion string `json:"runtimeVersion,omitempty"`
+	PackageManager string `json:"packageManager,omitempty"`
+	Libc           string `json:"libc,omitempty"`
+	Context        string `json:"context,omitempty"`
+}
+
+// ObservedCell is one (environment, stage) tally exactly as recorded. It is
+// counts and coordinates — no grade, no confidence, no score, no sample.
+type ObservedCell struct {
+	Environment ObservedEnvironment `json:"environment"`
+	Stage       string              `json:"stage"`
+	Pass        int64               `json:"pass"`
+	Fail        int64               `json:"fail"`
+	// Reporters is the peak number of distinct reporting machines in a single
+	// epoch, never a sum across days: one machine building all afternoon is
+	// one data point, and summing would let a single caller manufacture
+	// volume.
+	Reporters int    `json:"reporters"`
+	LastSeen  string `json:"lastSeen,omitempty"`
+}
+
+// ObservedError is one recorded failure signature. ErrorCode is a public
+// identifier such as ERR_REQUIRE_ESM; no error text ever travels.
+type ObservedError struct {
+	Stage       string            `json:"stage"`
+	ErrorCode   string            `json:"errorCode,omitempty"`
+	Fingerprint string            `json:"fingerprint,omitempty"`
+	Count       int64             `json:"count"`
+	Environment map[string]string `json:"environment,omitempty"`
+}
+
+// ObservedReports is what the network already recorded about a coordinate
+// when it has no verified sample to offer. It is RELAYED, never asserted:
+// the project stands behind the samples it ran and the findings it detected,
+// and these are neither. The grade stays NO_SAFE_MATCH — nothing here has
+// been proven for the caller's case — and this payload is the difference
+// between saying so with an empty hand and saying so while handing over
+// everything already known.
+type ObservedReports struct {
+	PURL   string         `json:"purl"`
+	Symbol string         `json:"symbol,omitempty"`
+	Cells  []ObservedCell `json:"cells,omitempty"`
+	Errors []ObservedError `json:"errors,omitempty"`
+	// Basis is always ObservedBasis. It is stated on the wire so a reader
+	// cannot mistake the payload for verification by omission.
+	Basis string `json:"basis"`
+	// Note restates the limit in words for a model that skims structure.
+	Note string `json:"note"`
+}
+
+const (
+	// ObservedBasis is the only basis an ObservedReports may claim.
+	ObservedBasis = "observed"
+	// ObservedNote travels with every relay.
+	ObservedNote = "Reported by machines that ran this, not verified by this project. " +
+		"No sample was proven for your case; these are the recorded runs, as recorded."
+)
+
 // VerifiedOffer reports whether this result is safe to offer as already
 // verified in the caller's environment. A contract PASS is necessary but
 // not sufficient: adaptation, any disclosed difference, and reference-only
@@ -162,4 +229,8 @@ type SearchResponse struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Results       []SearchResult `json:"results"`
 	Miss          bool           `json:"miss"`
+	// Observed rides on a MISS and only on a miss. It hangs off the response
+	// rather than off a result so it can never be read as a property of a
+	// sample, and so the grade path never has it in scope.
+	Observed *ObservedReports `json:"observed,omitempty"`
 }

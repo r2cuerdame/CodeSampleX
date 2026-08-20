@@ -19,12 +19,16 @@ CodeSampleX es una **red abierta de pruebas de compatibilidad** para librerías,
 Cada resultado es una ejecución registrada con su entorno adjunto, de modo que los datos pivotan en matrices de compatibilidad — OS × runtime, versión × arquitectura, símbolo × OS. Un corte real, de la red en vivo (`axios.post`, medido en agosto de 2026):
 
 ```text
-axios.post · axios 1.12.2                node 22          node 24
-linux                                    ✓ PASS verified     —
-windows                                  ○ 3/9 observed ! ?  (process runs: 3 pass · 6 fail)
+axios.post · axios 1.12.2                node 22            node 24
+linux                                    ■ verified 4/4       —
+windows                                  ○ observed 3/9 ! ?
 ```
 
-Esa fila no es una ilustración: es [la página en vivo](https://codesamplex.dev/npm/axios/1.12.2/axios.post). El `PASS` en linux es un contrato que se ejecutó en un contenedor fijado; la celda de windows es honesta sobre ser evidencia más débil (`○` observado con el marcador de incertidumbre `?` — observaciones de build, no la ejecución de un contrato) y sobre sus fallos medidos (`!`). Lo desconocido permanece en `—`; nada se infiere del ecosistema del paquete ni de su documentación.
+Esa fila no es una ilustración: es [la página en vivo](https://codesamplex.dev/npm/axios/1.12.2/axios.post).
+
+**Una celda indica una tasa y nombra su base. Nunca un veredicto.** `■ verified` significa que nosotros mismos ejecutamos un contrato en un contenedor fijado; `○ observed` significa que máquinas reales registraron ejecuciones y las informaron. El número es la medición — aciertos por ejecución — de modo que un solitario `1/1` dice lo delgada que es la evidencia en lugar de esconderse tras una marca idéntica a la de cien ejecuciones concordantes. Ya no hay `PASS`: PASS se leía como la afirmación general *esto funciona aquí*, cuando lo medido es *cuatro ejecuciones, cuatro aciertos*.
+
+La base nunca se difumina, porque es la distinción que importa. Los recuentos de observación superan con creces a los de verificación, así que dos tasas desnudas harían que una celda anónima pareciera más autorizada que una probada. El glifo es sólido para una ejecución nuestra y hueco para un informe recibido, distinguibles sin color; el color solo indica cómo salió la tasa, porque un fallo es el evento raro y de alta información y tiene que captar la vista. `!` marca una anomalía medida, `?` evidencia débil o antigua, `—` permanece desconocido. Nada se infiere del ecosistema del paquete ni de su documentación.
 
 El explorador web trata cada cuadrícula 2D como un corte de un cubo N-dimensional: elige dos dimensiones cualesquiera como ejes (OS, runtime, versión del paquete, símbolo, arquitectura, gestor de paquetes, contexto de ejecución, libc), fija el resto como filtros y haz clic en una celda para bajar un nivel más — hasta las combinaciones exactas medidas, cuyas páginas de símbolo contienen los recibos firmados.
 
