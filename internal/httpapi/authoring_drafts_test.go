@@ -201,7 +201,7 @@ func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
 	}
 }
 
-func TestAuthoringWorkDoesNotAssignWindowsEvidenceToLinuxVerifier(t *testing.T) {
+func TestAuthoringWorkAssignsWindowsEvidenceToALinuxAuthor(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
 	sum := sha256.Sum256([]byte(token))
@@ -239,9 +239,18 @@ func TestAuthoringWorkDoesNotAssignWindowsEvidenceToLinuxVerifier(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+	// Writing a sample is not the same act as proving one on the platform the
+	// coordinate was observed on. Refusing this starved the queue completely:
+	// every observation the network holds is recorded on Windows and the only
+	// authoring fleet runs Linux containers, so the whole candidate window
+	// came back unclaimable and workers sat idle asking for work that was
+	// there.
+	//
+	// What must stay true is that the RECEIPT does not claim Windows, and it
+	// cannot: the verifier stamps the platform it actually ran on.
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result["status"] != "NO_WORK" {
-		t.Fatalf("result=%+v err=%v", result, err)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result["status"] != "ASSIGNED" {
+		t.Fatalf("a Linux author was refused Windows-observed work: result=%+v err=%v", result, err)
 	}
 }
 

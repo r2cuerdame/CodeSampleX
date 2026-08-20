@@ -169,9 +169,21 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" {
 		return false
 	}
+	// TargetOS on a FINDING or an EXPANSION says where the coordinate was
+	// OBSERVED, and writing a sample is not the same act as proving one on
+	// that platform. Requiring the author's OS to match the observation
+	// starved the queue completely: every observation this network holds is
+	// recorded on Windows and the only authoring fleet runs Linux containers,
+	// so the whole 200-row candidate window came back unclaimable and the
+	// workers sat idle for hours asking for work that was there.
+	//
+	// The sample a Linux worker writes is verified on Linux and its receipt
+	// says Linux, which is honest -- the coverage disclosure already states
+	// that what this network observes and what it proves are different
+	// platforms. A WANTED row still pins, because that is somebody's explicit
+	// ask about a platform rather than a coordinate we picked ourselves.
 	for _, targetOS := range request.VerifierOS {
-		if strings.EqualFold(candidate.TargetOS, targetOS) &&
-			authoringRunnableOn(candidate.Ecosystem, targetOS) {
+		if authoringRunnableOn(candidate.Ecosystem, targetOS) {
 			return true
 		}
 	}
