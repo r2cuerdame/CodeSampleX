@@ -253,6 +253,7 @@
   "pkg.dependants_sub": "来自完成解析的锁文件——版本冲突中你能动手的那一半。",
   "pkg.shipswith": "随之发布的依赖",
   "pkg.shipswith_sub": "各版本解析到的一级依赖。升级它，这些会跟着动。",
+  "pkg.shipswith_col": "库",
   "pkg.no_symbols": "暂无带证据的符号。",
   "pkg.no_versions": "暂无带证据的版本。",
   "pkg.requested": "已请求填补覆盖空白。",

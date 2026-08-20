@@ -253,6 +253,7 @@
   "pkg.dependants_sub": "Aus der Lockdatei, die sie auflöste — die Hälfte eines Versionskonflikts, an der man ansetzen kann.",
   "pkg.shipswith": "Was mitgeliefert wurde",
   "pkg.shipswith_sub": "Die direkten Abhängigkeiten je Release. Aktualisiert man dieses, bewegen sich jene mit.",
+  "pkg.shipswith_col": "Bibliothek",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",
   "pkg.no_versions": "Noch keine Versionen mit Evidenz.",
   "pkg.requested": "Abdeckungslücke gemeldet.",

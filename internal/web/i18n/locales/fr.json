@@ -253,6 +253,7 @@
   "pkg.dependants_sub": "Du lockfile qui l'a résolue — la moitié du conflit sur laquelle on peut agir.",
   "pkg.shipswith": "Ce qui l'accompagnait",
   "pkg.shipswith_sub": "Les dépendances de premier niveau résolues par chaque version. Mettez à jour et elles bougent.",
+  "pkg.shipswith_col": "Bibliothèque",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",
   "pkg.no_versions": "Pas encore de versions avec des preuves.",
   "pkg.requested": "Lacune de couverture demandée.",

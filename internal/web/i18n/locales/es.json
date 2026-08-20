@@ -253,6 +253,7 @@
   "pkg.dependants_sub": "Del lockfile que la resolvió — la mitad del choque de versiones sobre la que puedes actuar.",
   "pkg.shipswith": "Qué se distribuyó con él",
   "pkg.shipswith_sub": "Las dependencias de primer nivel que resolvió cada versión. Al subir esta, estas se mueven.",
+  "pkg.shipswith_col": "Biblioteca",
   "pkg.no_symbols": "Aún no hay símbolos con evidencia.",
   "pkg.no_versions": "Aún no hay versiones con evidencia.",
   "pkg.requested": "Se solicitó cubrir este vacío.",

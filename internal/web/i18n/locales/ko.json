@@ -253,6 +253,7 @@
   "pkg.dependants_sub": "해석한 락파일에서 나온 것 — 버전 충돌에서 손댈 수 있는 쪽입니다.",
   "pkg.shipswith": "함께 배포된 것",
   "pkg.shipswith_sub": "릴리즈마다 해석된 1차 의존성입니다. 이걸 올리면 이것들이 같이 움직입니다.",
+  "pkg.shipswith_col": "라이브러리",
   "pkg.no_symbols": "아직 증거가 있는 심벌이 없습니다.",
   "pkg.no_versions": "아직 증거가 있는 버전이 없습니다.",
   "pkg.requested": "커버리지 공백이 요청되었습니다.",
