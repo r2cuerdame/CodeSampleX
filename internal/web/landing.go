@@ -128,6 +128,13 @@ func buildTiles(lang string, st *netStats, findings int64) []statTile {
 	// is plainly the thing between what exists and what we have measured of
 	// it, which is what a sample is.
 	return []statTile{
+		// What the network measured, first: builds that really ran. It came
+		// off this row this morning because the figure was wrong three ways
+		// — the same build counted once per symbol found in it, presence
+		// records that cannot fail folded in, and events named as though
+		// they were people. All three are fixed, and it is the plainest true
+		// thing this project can say about itself.
+		counter("stats.observations", st.Evidence),
 		counter("stats.packages", st.Packages),
 		counter("stats.verified_samples", st.VerifiedSamples),
 		// Not gated on the stats document, because it does not come from

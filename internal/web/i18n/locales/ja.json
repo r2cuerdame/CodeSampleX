@@ -316,6 +316,8 @@
   "stats.how_intro": "上の数値はすべてこの流れから生まれます。あなたのコードへの推測ではなく、実際の開発環境で実際に起きたことです。",
   "stats.of_n_builds": "報告されたビルド %s 件中",
   "stats.of_one_build": "報告されたビルド 1 件中",
+  "stats.observations": "観測記録",
+  "stats.observations_sub": "実際に走ったビルドを、走った環境ごと記録したもの",
   "stats.packages": "パッケージ",
   "stats.packages_sub": "カバレッジ — 証拠が記録された対象",
   "stats.peers": "本日のピア",

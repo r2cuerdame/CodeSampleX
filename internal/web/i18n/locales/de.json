@@ -316,6 +316,8 @@
   "stats.how_intro": "Jede Zahl oben entsteht aus diesem Kreislauf. Nichts davon ist eine Vermutung über deinen Code — es ist das, was in echten Entwicklungsumgebungen tatsächlich passiert ist.",
   "stats.of_n_builds": "von %s gemeldeten Builds",
   "stats.of_one_build": "von 1 gemeldeten Build",
+  "stats.observations": "Beobachtungen",
+  "stats.observations_sub": "Builds, die wirklich liefen, mit der Umgebung, in der sie liefen",
   "stats.packages": "Pakete",
   "stats.packages_sub": "Abdeckung — Ziele mit aufgezeichneter Evidenz",
   "stats.peers": "Peers heute",

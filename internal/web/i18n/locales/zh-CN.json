@@ -316,6 +316,8 @@
   "stats.how_intro": "上面的每个数字都来自这个闭环。它不是对你代码的猜测，而是真实开发环境中真实发生的事。",
   "stats.of_n_builds": "共 %s 次已报告构建",
   "stats.of_one_build": "共 1 次已报告构建",
+  "stats.observations": "观测记录",
+  "stats.observations_sub": "真实运行过的构建，连同运行环境一并记录",
   "stats.packages": "包",
   "stats.packages_sub": "覆盖范围——已记录证据的目标",
   "stats.peers": "今日节点",

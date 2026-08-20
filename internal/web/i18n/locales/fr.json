@@ -316,6 +316,8 @@
   "stats.how_intro": "Chaque chiffre ci-dessus provient de cette boucle. Ce n'est pas une supposition sur votre code : c'est ce qui s'est réellement produit dans de vrais environnements de développement.",
   "stats.of_n_builds": "sur %s builds signalés",
   "stats.of_one_build": "sur 1 build signalé",
+  "stats.observations": "Observations",
+  "stats.observations_sub": "des builds réellement exécutés, enregistrés avec leur environnement",
   "stats.packages": "Paquets",
   "stats.packages_sub": "couverture — cibles avec des preuves enregistrées",
   "stats.peers": "Peers aujourd'hui",

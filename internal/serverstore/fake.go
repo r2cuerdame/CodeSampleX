@@ -1195,6 +1195,13 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 	return f.stats[best], true, nil
 }
 
+// isRunStage reports whether a stage records something being exercised, as
+// opposed to merely being present. It is the same split the compatibility
+// grid draws between a pass rate and a usage count.
+func isRunStage(stage string) bool {
+	return strings.HasPrefix(stage, "PROJECT")
+}
+
 func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1238,7 +1245,12 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 		// Package-level rows only: the same build is written once for the
 		// package and again for every symbol detected in it, and counting
 		// both makes one build look like several.
-		if k.Symbol == "" {
+		//
+		// And runs only. USED records that a package was PRESENT, not that
+		// anything was exercised — it has no failing form and carried 8,686
+		// of production's 42,808 package-level events, so counting it made
+		// "observations" partly a head count of installed dependencies.
+		if k.Symbol == "" && isRunStage(k.Stage) {
 			c.Observations += f.merge.observations[k]
 		}
 	}

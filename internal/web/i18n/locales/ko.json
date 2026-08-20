@@ -316,6 +316,8 @@
   "stats.how_intro": "위 숫자는 모두 이 흐름에서 나옵니다. 당신의 코드에 대한 추측이 아니라, 실제 개발 환경에서 실제로 일어난 일입니다.",
   "stats.of_n_builds": "보고된 빌드 %s건 중",
   "stats.of_one_build": "보고된 빌드 1건 중",
+  "stats.observations": "관측 기록",
+  "stats.observations_sub": "실제로 돌아간 빌드, 돌아간 환경과 함께 기록됨",
   "stats.packages": "패키지",
   "stats.packages_sub": "커버리지 — 증거가 기록된 대상",
   "stats.peers": "오늘 활동한 피어",

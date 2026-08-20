@@ -316,6 +316,8 @@
   "stats.how_intro": "Cada número de arriba sale de este ciclo. No es una suposición sobre tu código: es lo que ocurrió de verdad en entornos de desarrollo reales.",
   "stats.of_n_builds": "de %s compilaciones reportadas",
   "stats.of_one_build": "de 1 compilación reportada",
+  "stats.observations": "Observaciones",
+  "stats.observations_sub": "compilaciones que se ejecutaron de verdad, con el entorno en que corrieron",
   "stats.packages": "Paquetes",
   "stats.packages_sub": "cobertura — objetivos con evidencia registrada",
   "stats.peers": "Peers hoy",

@@ -105,8 +105,8 @@ func TestLandingEnglish(t *testing.T) {
 		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 4 {
+		t.Errorf("homepage stat cards = %d, want exactly 4", got)
 	}
 	for _, omitted := range []string{"Symbols", "Projects this month", "Peers today", "Post-hit success rate"} {
 		if strings.Contains(body, `<span class="lbl">`+omitted+`</span>`) {
@@ -254,16 +254,26 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 				want, truncate(body))
 		}
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("homepage stat cards = %d, want exactly 3", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 4 {
+		t.Errorf("homepage stat cards = %d, want exactly 4", got)
 	}
-	// The guard is "exactly three, and they are coverage". It used to forbid
-	// the symbol count as a fourth card; the API count IS one of the three
-	// now, and what must not come back is the raw volume figure — a build-run
-	// total means whatever its population means, and reporters are anonymous
-	// by design so the page can never say which.
-	if strings.Contains(body, `<span class="lbl">Evidence</span>`) || strings.Contains(body, `>45.2K</span>`) {
-		t.Errorf("a raw volume counter returned to the homepage:\n%s", truncate(body))
+	// This guard used to forbid the observation total outright, on the
+	// grounds that a run total means whatever its population means and
+	// reporters are anonymous by design. That reasoning was overturned
+	// deliberately: the record is of builds that actually ran, in
+	// environments actually recorded, and refusing to state it because the
+	// runs are largely our own would say our own measurements are worth less
+	// than a stranger's. They are not — we know their environment exactly.
+	//
+	// What the figure must never do is claim to be something it is not, so
+	// the guard now holds its NAME. "Evidence" is a word that could mean
+	// anything; "Observations" with its sub-line says builds. The three
+	// arithmetic defects that made the old number wrong — the same build
+	// counted once per symbol, presence records that cannot fail, events
+	// named as people — are enforced where they are computed.
+	mustContain(t, body, `<span class="lbl">Observations</span>`)
+	if strings.Contains(body, `<span class="lbl">Evidence</span>`) {
+		t.Errorf("the observation counter lost its name:\n%s", truncate(body))
 	}
 	if n := strings.Count(body, `<span class="num mono">—</span>`); n != 0 {
 		t.Errorf("%d counters rendered as a placeholder, want none:\n%s",
@@ -558,13 +568,13 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "Does it run there?")
-	if got := strings.Count(body, `<div class="stat">`); got != 3 {
-		t.Errorf("unavailable stats cards = %d, want 3", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 4 {
+		t.Errorf("unavailable stats cards = %d, want 4", got)
 	}
 	// Two, not three: the findings counter is not read from the stats
 	// document, so a stats outage has nothing to say about it.
-	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 2 {
-		t.Errorf("unavailable stat placeholders = %d, want 2", got)
+	if got := strings.Count(body, `<span class="num mono">—</span>`); got != 3 {
+		t.Errorf("unavailable stat placeholders = %d, want 3", got)
 	}
 }
 

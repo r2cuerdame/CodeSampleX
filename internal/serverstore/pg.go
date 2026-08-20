@@ -2124,8 +2124,14 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 				-- observation AND one per detected symbol, so summing every
 				-- row counts the same build again for each symbol found in
 				-- it -- 38% of this figure was that.
+				--
+				-- And runs only. USED records that a package was PRESENT,
+				-- not that anything was exercised: it has no failing form,
+				-- and it carried 8,686 of the 42,808 package-level events,
+				-- so counting it made "observations" partly a head count of
+				-- installed dependencies.
 				(SELECT COALESCE(SUM(observation_count),0)
-				   FROM evidence_agg WHERE symbol = ''),
+				   FROM evidence_agg WHERE symbol = '' AND stage LIKE 'PROJECT%'),
 				-- "Verified" means a contract actually passed in a sandbox,
 				-- which is a receipt fact. Counting only CROSS_PASS+ reported
 				-- zero for every contract-verified sample still waiting for a

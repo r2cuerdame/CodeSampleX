@@ -316,6 +316,8 @@
   "stats.how_intro": "Every number above comes out of this loop. None of it is a guess about your code — it is what actually happened in real development environments.",
   "stats.of_n_builds": "of %s reported builds",
   "stats.of_one_build": "of 1 reported build",
+  "stats.observations": "Observations",
+  "stats.observations_sub": "builds that really ran, recorded with the environment they ran in",
   "stats.packages": "Packages",
   "stats.packages_sub": "coverage — targets with recorded evidence",
   "stats.peers": "Peers today",
