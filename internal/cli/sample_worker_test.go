@@ -79,11 +79,19 @@ func TestSampleWorkerNextPrintsExactProposeCommand(t *testing.T) {
 	defer srv.Close()
 
 	oldClient, oldOut, oldErr, oldCapability := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability
+	oldContainerOS := sampleWorkerContainerOS
 	t.Cleanup(func() {
 		sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability = oldClient, oldOut, oldErr, oldCapability
+		sampleWorkerContainerOS = oldContainerOS
 	})
 	sampleWorkerClient = srv.Client()
 	sampleWorkerCapability = func(context.Context) domain.SandboxCapability { return domain.CapContainerRun }
+	// The envelope now reports the daemon's container mode, so this test would
+	// otherwise assert whatever the machine running it happens to serve — and
+	// it fails on a Windows CI runner, where Docker defaults to Windows
+	// containers. What this test is about is the propose command it prints.
+	// sampleWorkerContainerOS is covered on its own in windowsevidence_test.go.
+	sampleWorkerContainerOS = func(context.Context) string { return "linux" }
 	var out, stderr bytes.Buffer
 	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
 	if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {
