@@ -277,6 +277,15 @@ func newFakeStore() *fakeStore {
 	  "hypotheses": [{"domain": "CONFIGURATION", "confidence": 0.72}],
 	  "regressionCandidate": true,
 	  "versions": ["1.11.0", "1.12.0"]
+	}`, `{
+	  "stage": "PROJECT_TEST",
+	  "errorCode": "",
+	  "fingerprint": "sha256:ddeeff",
+	  "observationCount": 3,
+	  "envSummary": {"os": "windows", "runtime": "node@22.16"},
+	  "hypotheses": [],
+	  "regressionCandidate": false,
+	  "versions": ["1.12.0"]
 	}`}
 
 	manifest := `{

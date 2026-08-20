@@ -1532,6 +1532,10 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--accent); color: var(--accent-ink); cursor: pointer;
 }
 
+/* The release a cluster happened to: stated, not dimmed into the
+   environment string beside it. */
+.cluster .ver { color: var(--text); font-weight: 600; }
+
 /* The package total. It is the sum of the symbol rows beside it — every
    observation is recorded against the package as well as its symbols — so it
    must never be read as one more row of the same kind. A rule under it and a

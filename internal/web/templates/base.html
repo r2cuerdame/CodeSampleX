@@ -240,6 +240,10 @@ document.addEventListener('keydown',event=>{
     <span class="mono">{{.Stage}}</span>
     {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{else}}<span class="dim mono small">{{$.T "symbol.no_error_code"}}</span>{{end}}
     <span class="dim mono">×{{.Count}}</span>
+    {{/* The release it happened to. It used to appear only on a cluster
+         flagged as a regression candidate, so an ordinary cluster — most of
+         them — named its environment and never said which version. */}}
+    {{if .Versions}}<span class="ver mono">{{.Versions}}</span>{{end}}
     {{if .EnvSummary}}<span class="dim mono">{{.EnvSummary}}</span>{{end}}
     {{if .Symbol}}<span class="dim mono">{{.Symbol}}</span>{{end}}
     <span class="dim mono small">{{.Fingerprint}}</span>
@@ -251,7 +255,7 @@ document.addEventListener('keydown',event=>{
   </div>
   {{- end}}
   {{- if .RegressionCandidate}}
-  <div class="row"><span class="chip elevated mono"><span class="glyph" aria-hidden="true">▲</span>{{$.T "symbol.regression_flag"}}</span>{{if .Versions}} <span class="dim mono">{{.Versions}}</span>{{end}}</div>
+  <div class="row"><span class="chip elevated mono"><span class="glyph" aria-hidden="true">▲</span>{{$.T "symbol.regression_flag"}}</span></div>
   {{- end}}
 </li>
 {{- end}}
