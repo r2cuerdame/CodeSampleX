@@ -371,9 +371,20 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			), fresh AS (
 				-- The already-answered symbols drop out BEFORE depth is counted, or a
 				-- version would be charged for work nobody can be given.
+				--
+				-- "symbol='' OR ..." exempted symbol-less rows from the check
+				-- entirely, and package-level observations produce exactly those.
+				-- So a package with a verified sample stayed a candidate forever
+				-- and this branch reissued it: production wrote eight samples for
+				-- three@0.185.1 in twenty-eight minutes, each with a placeholder
+				-- goal and no symbols, bounded by nothing but the corpus running
+				-- out of packages. A symbol-less coordinate asks "has this PACKAGE
+				-- been answered", so it is checked against verified_packages.
 				SELECT * FROM ranked c
-				WHERE (c.symbol='' OR NOT EXISTS (
-					SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol))
+				WHERE (CASE WHEN c.symbol='' THEN NOT EXISTS (
+					SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
+				  ELSE NOT EXISTS (
+					SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol) END)
 				  AND NOT EXISTS (
 					SELECT 1 FROM in_flight f WHERE f.purl=c.purl AND f.symbol=c.symbol)
 			), spread AS (

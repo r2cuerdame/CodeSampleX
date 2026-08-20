@@ -191,7 +191,14 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil || !containsString(manifest.Packages, pkg.PURL) {
 				continue
 			}
-			if symbol != "" && containsString(manifest.Symbols, symbol) {
+			// A symbol-less coordinate asks "has this PACKAGE been answered",
+			// and the answer is the sample we just found. Requiring symbol!=""
+			// skipped the check entirely for those, so a package with a
+			// verified sample stayed eligible forever and the expansion branch
+			// reissued it: production wrote eight samples for three@0.185.1 in
+			// twenty-eight minutes, each with a placeholder goal and no
+			// symbols, bounded by nothing.
+			if symbol == "" || containsString(manifest.Symbols, symbol) {
 				return false
 			}
 		}
