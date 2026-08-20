@@ -25,7 +25,8 @@ const (
 	pivotMaxRows = 6
 
 	// pivotStaleAfter is retained only by callers outside the cell; cells
-	// no longer age. It mirrors the 90-day half-life of RecencyDecay
+	// no longer age, and neither does evidence anywhere else now. It once
+	// mirrored a 90-day half-life
 	// (internal/compatibility/confidence.go): evidence that old still
 	// renders, but carries the "?" marker and says "stale".
 	pivotStaleAfter = 90 * 24 * time.Hour

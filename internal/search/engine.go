@@ -1091,14 +1091,14 @@ func ecosystemOf(samP domain.PURL, reqEnv domain.EnvironmentFingerprint, c *cand
 	return reqEnv.Ecosystem
 }
 
-// recency applies the C7 half-life to the sample's local age; unknown age
-// (shard-only candidates) is not penalized.
-func recency(c *candidate, now time.Time) float64 {
-	if c.createdAt.IsZero() {
-		return 1
-	}
-	return compatibility.RecencyDecay(now.Sub(c.createdAt))
-}
+// recency is 1 for everything: samples do not rot.
+//
+// It applied a 90-day half-life to a sample's local age, which ranked by when
+// it happened to be published rather than by how well it answered the
+// question. A sample is about one pinned release and stays as true as the day
+// it was verified. The function is kept so callers read as they did; there is
+// nothing left to weigh.
+func recency(*candidate, time.Time) float64 { return 1 }
 
 // ageFrom parses an RFC3339 stamp into an age; unparseable means age 0.
 func ageFrom(stamp string, now time.Time) time.Duration {

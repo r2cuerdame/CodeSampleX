@@ -328,9 +328,9 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	}
 	score *= delta.fit
 
-	contractPasses, passPeers, lastReceipt := receiptStrength(strengthReceipts)
+	contractPasses, passPeers, _ := receiptStrength(strengthReceipts)
 	if hasSelected {
-		contractPasses, passPeers, lastReceipt = receiptVariantStrength(strengthReceipts)
+		contractPasses, passPeers, _ = receiptVariantStrength(strengthReceipts)
 	}
 	exactFailureMatched := candidateFailureMatched && hasNonemptyContract(manifest.Case.Contract) &&
 		hasSelected && selectedServerContractPassed(selected, fingerprintPackages, reqPURLs)
@@ -341,14 +341,11 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 		score *= 2
 	}
 
-	// Recency decay.
-	last := row.CreatedAt
-	if lastReceipt.After(last) {
-		last = lastReceipt
-	}
-	if !last.IsZero() {
-		score *= compatibility.RecencyDecay(now.Sub(last))
-	}
+	// No recency decay. A sample is about one pinned release, so it does not
+	// rot on the shelf, and decaying it by publication date sank every sample
+	// nobody had capacity to re-verify -- which is nearly all of them. That
+	// made findability a function of when something was published, the same
+	// defect already removed from candidate selection above.
 
 	grade := delta.grade
 

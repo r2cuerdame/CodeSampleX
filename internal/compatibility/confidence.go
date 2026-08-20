@@ -4,7 +4,6 @@
 package compatibility
 
 import (
-	"math"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -25,14 +24,21 @@ func ClassWeight(c domain.EvidenceClass) float64 {
 	return 1
 }
 
-// RecencyDecay halves an observation's weight every 90 days.
-func RecencyDecay(age time.Duration) float64 {
-	days := age.Hours() / 24
-	if days < 0 {
-		days = 0
-	}
-	return math.Pow(0.5, days/90)
-}
+// Evidence does not decay, and there is deliberately no function here that
+// says it does.
+//
+// A 90-day half-life used to weight every observation by its age. What an
+// observation records is one pinned release, in one pinned environment
+// bucket, at one stage -- and none of those move. That axios 1.6.0 failed to
+// compile on node 20 is exactly as true a year later; what CAN change is the
+// environment, and a different environment is a different coordinate with its
+// own evidence.
+//
+// Halving instead made confidence a function of when a coordinate was last
+// touched. Verification capacity is small, so most coordinates are never
+// revisited: the decay applied to nearly everything and mostly reproduced
+// publication order, which is the same defect this project already removed
+// from search candidate selection.
 
 // Sample is one aggregated evidence line entering a confidence computation.
 type Sample struct {
@@ -56,7 +62,7 @@ type Verdict struct {
 func Compute(samples []Sample, independence int64) Verdict {
 	var wPass, wFail float64
 	for _, s := range samples {
-		w := ClassWeight(s.Class) * float64(s.Count) * RecencyDecay(s.Age)
+		w := ClassWeight(s.Class) * float64(s.Count)
 		if s.Result == domain.ResultPass {
 			wPass += w
 		} else {
