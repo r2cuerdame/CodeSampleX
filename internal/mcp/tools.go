@@ -418,9 +418,10 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		hint, ready := s.readinessHint(ctx)
-		if len(overview) > 0 || hint != "" {
-			return textResult(renderMiss(overview, hint), map[string]any{
+		if len(overview) > 0 || hint != "" || resp.Observed != nil {
+			return textResult(renderMiss(overview, hint, resp.Observed), map[string]any{
 				"response": resp, "packageOverview": overview, "localReady": ready,
+				"observed": resp.Observed,
 			})
 		}
 	}
@@ -478,7 +479,7 @@ func (s *Server) readinessHint(ctx context.Context) (string, bool) {
 
 // renderMiss writes NO_SAFE_MATCH, any readiness hint, and the per-package
 // evidence summary.
-func renderMiss(overview []PackageOverview, hint string) string {
+func renderMiss(overview []PackageOverview, hint string, observed *domain.ObservedReports) string {
 	var b strings.Builder
 	b.WriteString("DECISION: UNKNOWN — no safe verified match.\n\n")
 	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
@@ -487,6 +488,7 @@ func renderMiss(overview []PackageOverview, hint string) string {
 	if hint != "" {
 		b.WriteString(hint + "\n\n")
 	}
+	b.WriteString(renderObserved(observed))
 	if len(overview) == 0 {
 		return b.String()
 	}
@@ -1063,4 +1065,63 @@ func validContentAddress(id string) bool {
 		}
 	}
 	return true
+}
+
+// renderObserved writes the relayed record beneath a miss.
+//
+// The framing is doing real work here. An agent handed "297 of 312 passed"
+// will read it as a green light whatever label sits above it, so the text
+// says twice what it is and never once suggests an action: no snippet, no
+// recommendation, no version to prefer. The grade above it is still
+// NO_SAFE_MATCH and this changes nothing about that — it is the record, not
+// an answer derived from the record.
+func renderObserved(o *domain.ObservedReports) string {
+	if o == nil || len(o.Cells) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("RECORDED RUNS for " + o.PURL)
+	if o.Symbol != "" {
+		b.WriteString(" · " + o.Symbol)
+	}
+	b.WriteString("\n[OBSERVED — reported by machines that ran this, NOT verified by this " +
+		"project. This is not a match and does not become one.]\n")
+	for _, c := range o.Cells {
+		env := strings.Join(nonEmptyParts(
+			c.Environment.OS, c.Environment.Arch,
+			strings.TrimSpace(c.Environment.Runtime+" "+c.Environment.RuntimeVersion),
+			c.Environment.PackageManager, c.Environment.Libc, c.Environment.Context), " / ")
+		if env == "" {
+			env = "environment not recorded"
+		}
+		fmt.Fprintf(&b, "- %s · %s: %d of %d passed · %d reporting machines",
+			env, c.Stage, c.Pass, c.Pass+c.Fail, c.Reporters)
+		if c.LastSeen != "" {
+			b.WriteString(" · last " + c.LastSeen)
+		}
+		b.WriteString("\n")
+	}
+	if len(o.Errors) > 0 {
+		b.WriteString("Recorded failures (public error codes; no log text ever leaves a machine):\n")
+		for _, e := range o.Errors {
+			code := e.ErrorCode
+			if code == "" {
+				code = e.Fingerprint
+			}
+			fmt.Fprintf(&b, "- %s at %s · %d occurrences\n", code, e.Stage, e.Count)
+		}
+	}
+	b.WriteString("Use these as facts about other people's machines, not as a verdict about " +
+		"yours. Nothing here was proven for your case.\n\n")
+	return b.String()
+}
+
+func nonEmptyParts(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
 }

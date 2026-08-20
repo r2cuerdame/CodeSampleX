@@ -100,6 +100,10 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 		resp := domain.SearchResponse{
 			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,
 		}
+		// The grade is honest and stays; the empty hand does not. Relayed
+		// observations never change Miss, never produce a grade, and never
+		// enter the outcome record — this is still NO_SAFE_MATCH.
+		a.relayOnMiss(r, responseVersion, &resp, reqPURLs, req.Symbols)
 		a.recordSearchOutcome(r, now, resp)
 		writeSearchResponse(w, responseVersion, resp)
 		return
