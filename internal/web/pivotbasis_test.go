@@ -53,8 +53,8 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	if reported.Basis != "observed" || reported.Glyph != "" {
 		t.Errorf("basis = %q glyph = %q, want observed with no mark", reported.Basis, reported.Glyph)
 	}
-	if reported.Ratio != "95%" || reported.Passes != "4" || reported.Runs != 312 {
-		t.Errorf("cell = %q %q of %d, want 95%% weighed by 4 machines over 312 builds",
+	if reported.Ratio != "95%" || reported.Passes != "312" || reported.Runs != 312 {
+		t.Errorf("cell = %q %q of %d, want 95%% of the 312 builds it rests on",
 			reported.Ratio, reported.Passes, reported.Runs)
 	}
 }

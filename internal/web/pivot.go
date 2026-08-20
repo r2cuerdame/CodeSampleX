@@ -758,7 +758,12 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	switch {
 	case obs > 0:
 		cell.Ratio = fmt.Sprintf("%d%%", int(float64(a.obsPass)/float64(obs)*100+0.5))
-		cell.Passes = fmt.Sprintf("%d", a.obsPeers)
+		// The DENOMINATOR, which is what a rate rests on. It printed the
+		// numerator once (1,154 beside 85%) and the peer-bucket count once
+		// (1 beside 85%, which reads as 85% of one); neither is the number
+		// the percentage divides by. How many machines reported is a real
+		// and separate fact, and the tooltip carries it.
+		cell.Passes = fmt.Sprintf("%d", obs)
 	default:
 		// Verified, never seen used. The dash sits where the rate would, so
 		// the cell says "no usage recorded" rather than implying that zero
