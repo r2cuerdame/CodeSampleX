@@ -149,6 +149,30 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" {
 		return false
 	}
+	// A package whose NAME is a platform installs on that platform and nowhere
+	// else. npm publishes native code that way — @tailwindcss/oxide-darwin-arm64
+	// is macOS — and the ecosystem check waves it through because npm runs on
+	// Linux. The worker then cannot install what it was told to write a sample
+	// for, so the assignment is spent on work that can never finish.
+	//
+	// Only the OS is checked. The request says which platforms this verifier
+	// serves and not which architecture, so a linux/x64 worker is still
+	// offered linux/arm64 builds; that needs a field the client does not send
+	// yet, and the platforms above are where the waste actually was.
+	if candidate.Ecosystem == "npm" {
+		if platform, locked := npmPackagePlatform(candidate.Name); locked {
+			matched := false
+			for _, os := range request.VerifierOS {
+				if strings.EqualFold(os, platform) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+	}
 	// A WANTED row that names an OS is an ask about that platform, and a proof
 	// from another one does not answer it. A row without an OS is a question
 	// about the package itself, so anyone who can run it may answer -- but it
