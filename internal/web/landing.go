@@ -223,8 +223,14 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			return
 		}
 		pagePath := pkgHref(h.Ecosystem, h.Name)
+		hasSymbols := cubeHasRealSymbol(facts)
 		for rank, pair := range heroAxisPairs {
 			x, y := pair[0], pair[1]
+			// Same guard the explorer uses: a symbol axis with only the
+			// package-level aggregate is one row reading "whole package".
+			if (x == "symbol" || y == "symbol") && !hasSymbols {
+				continue
+			}
 			pin := func(dims map[string]string) string {
 				return cubeHref(pagePath, cubeQuery(dims, "", "", lang))
 			}

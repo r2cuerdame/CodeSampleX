@@ -307,3 +307,23 @@ func TestPackageRowSortsAboveTheSymbolsItAggregates(t *testing.T) {
 		t.Errorf("order = %v, want the symbols sorted behind the package row", got)
 	}
 }
+
+// A symbol axis whose only value is the package-level aggregate is not a
+// symbol axis: it renders one row reading "whole package", the total with
+// none of its parts beside it.
+func TestSymbolIsNotAnAxisWithoutRealSymbols(t *testing.T) {
+	facts := []cubeFact{}
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		facts = append(facts, cubeFact{Dims: map[string]string{
+			"version": version, "symbol": cubePackageLevel,
+			"os": "windows", "runtime": "node 22",
+		}})
+	}
+	x, y, ok := defaultCubeAxes(facts, nil)
+	if !ok {
+		t.Fatal("no axes chosen")
+	}
+	if x == "symbol" || y == "symbol" {
+		t.Errorf("axes = %s × %s; symbol has only the aggregate value", x, y)
+	}
+}

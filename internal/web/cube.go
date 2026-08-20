@@ -269,6 +269,13 @@ func cubeDimValues(facts []cubeFact, dim string) []string {
 func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, ok bool) {
 	varies := map[string]bool{}
 	for _, dim := range cubeDimKeys {
+		// A symbol axis whose only value is the package-level aggregate is
+		// not a symbol axis. It renders one row reading "whole package",
+		// which is the total with none of its parts beside it -- a grid that
+		// says nothing a single number would not.
+		if dim == "symbol" && !cubeHasRealSymbol(facts) {
+			continue
+		}
 		// Whether a dimension can be an axis is decided by the slice, not
 		// by the filter list: pinning the OS to a whole platform still
 		// leaves alpine musl and debian glibc to spread along it, and a
@@ -300,6 +307,9 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 				continue
 			}
 			if _, isPinned := pinned[dim]; isPinned {
+				continue
+			}
+			if dim == "symbol" && !cubeHasRealSymbol(facts) {
 				continue
 			}
 			if len(cubeDimValues(facts, dim)) >= 1 {
@@ -516,4 +526,16 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 		s.cubeMu.Unlock()
 		return facts, windowed
 	}
+}
+
+// cubeHasRealSymbol reports whether the slice knows any symbol beyond the
+// package-level aggregate. Without one, "symbol" is a dimension with a single
+// synthetic value and must not be offered as an axis.
+func cubeHasRealSymbol(facts []cubeFact) bool {
+	for _, f := range facts {
+		if sym := f.Dims["symbol"]; sym != "" && sym != cubePackageLevel {
+			return true
+		}
+	}
+	return false
 }
