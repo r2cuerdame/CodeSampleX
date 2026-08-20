@@ -228,10 +228,25 @@ func (c Case) ComputeID() string {
 // SampleManifest is the csx.json descriptor inside a sample artifact
 // (goal.md §7.5).
 type SampleManifest struct {
-	SchemaVersion   int                    `json:"schemaVersion"`
-	Case            Case                   `json:"case"`
-	Packages        []string               `json:"packages"`
-	Symbols         []string               `json:"symbols,omitempty"`
+	SchemaVersion int      `json:"schemaVersion"`
+	Case          Case     `json:"case"`
+	Packages      []string `json:"packages"`
+	Symbols       []string `json:"symbols,omitempty"`
+	// Subject is the ONE package this sample is about, when it is known.
+	//
+	// A receipt resolves the whole lockfile, and the snapshot targets used to
+	// be the cartesian product of that against every declared symbol. A
+	// Sinatra sample tested with minitest therefore filed Sinatra::Base under
+	// minitest, rack and three more; production had 680 symbols claimed by
+	// more than one package and one claimed by 21. Without this the owner has
+	// to be inferred from which sample resolved the fewest packages, which
+	// works and is a guess.
+	//
+	// The authoring queue assigns an exact coordinate, so the guess is
+	// unnecessary for anything it produced. Optional and omitempty: every
+	// sample authored before this field existed still hashes to the same
+	// content address, and the inference covers them.
+	Subject         string                 `json:"subject,omitempty"`
 	Environment     EnvironmentFingerprint `json:"environment"`
 	License         string                 `json:"license"` // default MIT-0
 	BuildCommand    []string               `json:"buildCommand,omitempty"`

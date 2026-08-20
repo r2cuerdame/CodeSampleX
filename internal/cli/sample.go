@@ -380,6 +380,14 @@ func samplePropose(ctx context.Context, args []string) int {
 	return 0
 }
 
+// subjectOf names the one package a sample is about, or nothing.
+func subjectOf(packages []string) string {
+	if len(packages) == 1 {
+		return packages[0]
+	}
+	return ""
+}
+
 func proposalManifest(spec samples.SanitizedSpec, fp domain.EnvironmentFingerprint) domain.SampleManifest {
 	if fp.Ecosystem == "" && len(spec.Packages) > 0 {
 		if parsed, err := domain.ParsePURL(spec.Packages[0]); err == nil {
@@ -410,8 +418,14 @@ func proposalManifest(spec samples.SanitizedSpec, fp domain.EnvironmentFingerpri
 			Constraints:   spec.Constraints,
 			Contract:      []string{},
 		},
-		Packages:        append([]string(nil), spec.Packages...),
-		Symbols:         append([]string(nil), spec.Symbols...),
+		Packages: append([]string(nil), spec.Packages...),
+		Symbols:  append([]string(nil), spec.Symbols...),
+		// One package named means the sample is about that package, and the
+		// authoring queue assigns exactly one. Several means nobody can say
+		// which is the subject, and naming the first would be a guess wearing
+		// a fact's clothes — the snapshot's narrowest-claim inference exists
+		// for that case and is honest about being an inference.
+		Subject:         subjectOf(spec.Packages),
 		Environment:     fp.Normalize(),
 		License:         samples.DefaultLicense,
 		ContractCommand: proposalContractCommand(fp.Ecosystem),

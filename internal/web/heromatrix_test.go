@@ -165,3 +165,34 @@ func TestHeroMatrixPrefersASliceThatCarriesUsage(t *testing.T) {
 		t.Errorf("featured %q, whose grid carries no usage at all", m.Package)
 	}
 }
+
+// "Mostly measured" was half the cells, and the scan stopped at the first
+// candidate that cleared it. On this corpus that is a low bar — symbol-level
+// observations exist for a small share of packages — so the front page could
+// settle for a grid half full while a denser one sat two candidates later.
+//
+// The exit now wants a grid that is nearly all measured, which is what the
+// page is for: the reader should meet the network where it has the most to
+// show, not at the first slice that was not embarrassing.
+func TestHeroMatrixKeepsLookingPastAHalfMeasuredGrid(t *testing.T) {
+	hits, store := heroHits(heroMatrixTries)
+
+	// The first candidate clears half and no more.
+	half := "pkg:npm/pkg0@1.0.0"
+	store.fakeStore.snapshots[snapKey(half, "")] =
+		cubeSnap(half, "", "linux", "amd64", "node", "22", "npm", "PROJECT_TEST", 4, 1)
+
+	s := &site{d: Deps{Store: store}}
+	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
+	if m == nil {
+		t.Fatal("no hero matrix rendered")
+	}
+	total, used := gridCells(m.Grid), gridUsageCells(m.Grid)
+	if total == 0 {
+		t.Fatal("featured an empty grid")
+	}
+	if used*4 < total*3 {
+		t.Errorf("featured %q with %d of %d cells measured; the scan settled early",
+			m.Package, used, total)
+	}
+}

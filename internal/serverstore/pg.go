@@ -452,6 +452,10 @@ func (p *PG) SnapshotUpdatedAt(ctx context.Context) (map[string]time.Time, error
 
 func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) {
 	seen := map[SnapshotTarget]bool{}
+	// Receipt claims are collected first and attributed together:
+	// snapshotTargetsFromClaims needs to see every claim on a symbol before it
+	// can tell which is narrowest.
+	var claims []receiptClaim
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `SELECT DISTINCT purl, symbol FROM evidence_agg`)
 		if err != nil {
@@ -491,21 +495,24 @@ func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) 
 			}
 			var manifest struct {
 				Symbols []string `json:"symbols"`
+				Subject string   `json:"subject"`
 			}
 			if json.Unmarshal([]byte(manifestJSON), &manifest) != nil {
 				continue
 			}
-			symbols := append([]string{""}, manifest.Symbols...)
-			for _, purl := range resolvedPackageStrings(receiptJSON) {
-				for _, symbol := range symbols {
-					seen[SnapshotTarget{PURL: purl, Symbol: symbol}] = true
-				}
-			}
+			claims = append(claims, receiptClaim{
+				Packages: resolvedPackageStrings(receiptJSON),
+				Symbols:  manifest.Symbols,
+				Subject:  manifest.Subject,
+			})
 		}
 		return receipts.Err()
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, t := range snapshotTargetsFromClaims(claims) {
+		seen[t] = true
 	}
 	out := make([]SnapshotTarget, 0, len(seen))
 	for target := range seen {

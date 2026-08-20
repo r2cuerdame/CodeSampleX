@@ -350,6 +350,7 @@ func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) 
 	defer f.mu.Unlock()
 	seen := map[SnapshotTarget]bool{}
 	var out []SnapshotTarget
+	var claims []receiptClaim
 	for k := range f.aggMeta {
 		t := SnapshotTarget{PURL: k.PURL, Symbol: k.Symbol}
 		if !seen[t] {
@@ -367,21 +368,25 @@ func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) 
 		}
 		var manifest struct {
 			Symbols []string `json:"symbols"`
+			Subject string   `json:"subject"`
 		}
 		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
 			continue
 		}
-		symbols := append([]string{""}, manifest.Symbols...)
 		for _, receipt := range receipts {
-			for _, purl := range resolvedPackageStrings(receipt.ReceiptJSON) {
-				for _, symbol := range symbols {
-					t := SnapshotTarget{PURL: purl, Symbol: symbol}
-					if !seen[t] {
-						seen[t] = true
-						out = append(out, t)
-					}
-				}
-			}
+			claims = append(claims, receiptClaim{
+				Packages: resolvedPackageStrings(receipt.ReceiptJSON),
+				Symbols:  manifest.Symbols,
+				Subject:  manifest.Subject,
+			})
+		}
+	}
+	// Attributed together, never per receipt: the narrowest claim on a symbol
+	// cannot be known until every claim has been seen.
+	for _, t := range snapshotTargetsFromClaims(claims) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -323,15 +323,18 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 			fallback = best
 		}
 		// "Carries any usage at all" was too low a bar: the top hit clears it
-		// with two cells in eighteen and the scan stopped there. The exit
-		// needs a grid that is actually MOSTLY measured, which is what the
-		// page is for.
+		// with two cells in eighteen and the scan stopped there. Half was too
+		// low as well — on this corpus a grid can reach it and still be half
+		// dashes, and the reader should meet the network where it has the
+		// most to show rather than at the first slice that was not
+		// embarrassing. Three quarters is the bar; a grid that clears it is
+		// dense enough that continuing buys little.
 		//
 		// Worst case is one assembly per candidate on a cold cache, which is
 		// what this loop was once optimised away from. Cubes hold for five
 		// minutes, so only the first request after an expiry pays, and the
 		// alternative is a permanently near-empty front page.
-		if best != nil && gridUsageCells(best.Grid)*2 >= gridCells(best.Grid) {
+		if best != nil && gridUsageCells(best.Grid)*4 >= gridCells(best.Grid)*3 {
 			break
 		}
 	}
