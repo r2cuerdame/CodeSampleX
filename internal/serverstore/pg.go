@@ -1198,57 +1198,6 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 }
 
 // JobsForSample lists every job for a sample regardless of status.
-// VersionConflicts lists the version pairs of one package that a single
-// project resolved at the same time.
-//
-// The join is through evidence_dedup, which is where the project bucket and
-// the day live. Both are the key: a bucket lasts a month, so grouping by it
-// alone called every upgrade a conflict.
-func (p *PG) VersionConflicts(ctx context.Context, ecosystem, name string) ([]VersionConflict, error) {
-	byProject := map[string]map[string]bool{}
-	failedIn := map[string]bool{}
-	prefix := "pkg:" + ecosystem + "/" + name + "@"
-	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			SELECT d.bucket || E'' || d.epoch AS project_day,
-			       split_part(e.purl, '@', 2) AS version,
-			       e.result, e.error_code
-			  FROM evidence_dedup d
-			  JOIN evidence_agg e ON e.id = d.agg_id
-			 WHERE d.bucket_kind = 'project'
-			   AND e.symbol = ''
-			   AND e.purl LIKE $1 || '%'`, prefix)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var key, version, result, code string
-			if err := rows.Scan(&key, &version, &result, &code); err != nil {
-				return err
-			}
-			if version == "" {
-				continue
-			}
-			if byProject[key] == nil {
-				byProject[key] = map[string]bool{}
-			}
-			byProject[key][version] = true
-			// Only a failure someone could name a cause for. 82% of
-			// production's failures carry no code, and one of them was a
-			// single tsc run recorded against all 412 packages in a lockfile.
-			if result == string(domain.ResultFail) && code != "" {
-				failedIn[key] = true
-			}
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return conflictsFromProjectVersions(byProject, failedIn), nil
-}
-
 // StrandedDrafts lists quarantined authoring drafts that have no verification
 // left to wait for.
 //

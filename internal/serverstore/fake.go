@@ -1200,43 +1200,6 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 	return f.stats[best], true, nil
 }
 
-// VersionConflicts lists the version pairs of one package that a single
-// project resolved at the same time.
-func (f *Fake) VersionConflicts(_ context.Context, ecosystem, name string) ([]VersionConflict, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	byProject := map[string]map[string]bool{}
-	failedIn := map[string]bool{}
-	for k, buckets := range f.merge.projectBuckets {
-		p, err := domain.ParsePURL(k.PURL)
-		if err != nil || k.Symbol != "" || p.Ecosystem != ecosystem || p.Name != name {
-			continue
-		}
-		for epoch, byBucket := range buckets {
-			for project := range byBucket {
-				// Project AND day. The bucket alone lasts a month, which made
-				// every upgrade look like a collision.
-				key := project + "" + epoch
-				if byProject[key] == nil {
-					byProject[key] = map[string]bool{}
-				}
-				byProject[key][p.Version] = true
-				// Only a failure someone could name a cause for. An
-				// unattributed one says a build containing this package
-				// broke and nothing about which package broke it: one tsc
-				// failure wrote a FAIL for all 412 packages in a lockfile,
-				// and reading that as a version conflict turned it into six
-				// accusations against fs-extra.
-				meta := f.aggMeta[k]
-				if k.Result == string(domain.ResultFail) && meta != nil && meta.errorCode != "" {
-					failedIn[key] = true
-				}
-			}
-		}
-	}
-	return conflictsFromProjectVersions(byProject, failedIn), nil
-}
-
 // isRunStage reports whether a stage records something being exercised, as
 // opposed to merely being present. It is the same split the compatibility
 // grid draws between a pass rate and a usage count.

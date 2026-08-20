@@ -247,8 +247,6 @@
   "pkg.clusters_truncated": "기록된 실패 클러스터 %s개 중 가장 많이 보고된 %s개를 보여줍니다. 나머지는 단발 보고입니다.",
   "pkg.latest": "증거 기준 최신",
   "pkg.no_clusters": "관측된 실패 클러스터가 없습니다.",
-  "pkg.conflicts": "충돌한 버전",
-  "pkg.conflicts_sub": "같은 프로젝트가 하루 안에 둘 다 썼고, 원인이 특정된 실패가 있었습니다.",
   "pkg.no_symbols": "아직 증거가 있는 심벌이 없습니다.",
   "pkg.no_versions": "아직 증거가 있는 버전이 없습니다.",
   "pkg.requested": "커버리지 공백이 요청되었습니다.",
