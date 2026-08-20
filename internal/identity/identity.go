@@ -43,7 +43,15 @@ func LoadOrCreate(home string) (*Identity, error) {
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return create(home, path)
 	}
-	return loadExisting(path)
+	// loadWhenComplete, not loadExisting: the file EXISTING is not the file
+	// being finished. O_EXCL makes it appear atomically and its contents
+	// arrive a moment later, so a caller whose Stat lands inside that window
+	// reads zero bytes and fails with "unexpected end of JSON input".
+	//
+	// The retry already existed for the caller that loses the O_EXCL race.
+	// This path -- the far more common one, where the file was simply already
+	// there -- went straight to a bare read and had no such cover.
+	return loadWhenComplete(path)
 }
 
 // loadWhenComplete reads an identity another process is in the middle of
