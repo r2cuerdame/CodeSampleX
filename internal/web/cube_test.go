@@ -140,9 +140,11 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 		t.Fatalf("cols = %v, want versions newest first", g.Cols)
 	}
 	c := cellAt(t, g, "x64", "19.1.0")
-	if c.Basis != "verified" || c.Ratio != "0%" || c.Runs != 2 || !c.Bang {
-		t.Errorf("windows/x64/19.1.0 = %q %q x%d bang=%v, want verified 0%% of 2 !",
-			c.Basis, c.Ratio, c.Runs, c.Bang)
+	// Verified with no observation: the mark stays, and the count says no
+	// usage was recorded rather than claiming zero machines got through.
+	if c.Basis != "verified" || c.Ratio != "—" || c.Glyph != "" {
+		t.Errorf("windows/x64/19.1.0 = %q %q glyph=%q, want verified with no usage",
+			c.Basis, c.Ratio, c.Glyph)
 	}
 	if got := cellAt(t, g, "arm64", "18.3.1").Basis; got != "observed" {
 		t.Errorf("windows/arm64/18.3.1 = %q, want OBSERVED", got)
@@ -210,9 +212,11 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	// "1/1" is deliberate. Suppressing the rate on a single run rendered it
 	// identically to a hundred agreeing runs, which is the overstatement the
 	// rate exists to prevent -- how thin the evidence is IS the measurement.
-	if c.Ratio != "100%" || c.Runs != 1 {
-		t.Errorf("single deduped run = %q of %d; the count is what says how thin it is",
-			c.Ratio, c.Runs)
+	// One clean contract run and no observations: the mark is the fact, and
+	// the count reports that nobody has been seen using it.
+	if c.Glyph != "✓" || c.Ratio != "—" {
+		t.Errorf("deduped run = glyph %q count %q, want the mark and no usage",
+			c.Glyph, c.Ratio)
 	}
 }
 

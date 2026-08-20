@@ -33,19 +33,21 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	}
 
 	proven := buildPivotCell(agg(0, 0, 3, 0), now)
-	if proven.Basis != "verified" {
-		t.Errorf("basis = %q, want verified", proven.Basis)
+	if proven.Basis != "verified" || proven.Glyph != "✓" {
+		t.Errorf("basis = %q glyph = %q, want verified with the mark", proven.Basis, proven.Glyph)
 	}
-	if proven.Ratio != "100%" || proven.Runs != 3 {
-		t.Errorf("ratio = %q of %d, want 100%% of 3", proven.Ratio, proven.Runs)
+	// Our own runs are the mark, not the count: nobody has been seen using
+	// this, and the cell says so instead of reporting our runs as usage.
+	if proven.Ratio != "—" {
+		t.Errorf("ratio = %q, want no usage recorded", proven.Ratio)
 	}
 
 	reported := buildPivotCell(agg(297, 15, 0, 0), now)
-	if reported.Basis != "observed" {
-		t.Errorf("basis = %q, want observed", reported.Basis)
+	if reported.Basis != "observed" || reported.Glyph != "" {
+		t.Errorf("basis = %q glyph = %q, want observed with no mark", reported.Basis, reported.Glyph)
 	}
-	if reported.Ratio != "95%" || reported.Runs != 312 {
-		t.Errorf("ratio = %q of %d, want 95%% of 312", reported.Ratio, reported.Runs)
+	if reported.Ratio != "297" || reported.Runs != 312 {
+		t.Errorf("ratio = %q of %d, want 297 passes of 312", reported.Ratio, reported.Runs)
 	}
 }
 
@@ -69,7 +71,7 @@ func TestALargeObservationRatioNeverBorrowsTheVerifiedBasis(t *testing.T) {
 	if big.Glyph != "" {
 		t.Errorf("a 50,000-report cell carries a verification mark %q", big.Glyph)
 	}
-	if small.Glyph == "" {
+	if small.Glyph != "✓" {
 		t.Error("a single verified run lost its mark to a larger observed one")
 	}
 }
@@ -87,19 +89,19 @@ func TestEmptyCellHasNoBasis(t *testing.T) {
 }
 
 // Cross verification implies verification, so two marks for it rendered
-// "◆ 4/4 ✓✓" — two marks carrying two meanings, one before the number and one
-// after. One mark, one position, escalating.
+// two marks carrying two meanings, one before the number and one after.
+// One mark, one position, escalating.
 func TestCrossVerificationEscalatesTheMarkInsteadOfAddingOne(t *testing.T) {
 	now := time.Now()
 	single := buildPivotCell(agg(0, 0, 4, 0), now)
-	if single.Glyph != "◆" {
+	if single.Glyph != "✓" {
 		t.Errorf("verified glyph = %q, want a single mark", single.Glyph)
 	}
 
 	both := agg(0, 0, 4, 0)
 	both.cross = true
 	crossed := buildPivotCell(both, now)
-	if crossed.Glyph != "◆◆" {
+	if crossed.Glyph != "✓✓" {
 		t.Errorf("cross-verified glyph = %q, want the escalated mark", crossed.Glyph)
 	}
 	if !crossed.Cross {
@@ -119,17 +121,18 @@ func TestCrossVerificationEscalatesTheMarkInsteadOfAddingOne(t *testing.T) {
 func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 	now := time.Now()
 	failed := buildPivotCell(agg(0, 0, 0, 3), now)
-	if failed.Glyph == "✓" || failed.Glyph == "✓✓" {
-		t.Errorf("a cell that failed carries a pass mark: %q with rate %q",
-			failed.Glyph, failed.Ratio)
+	if failed.Glyph != "" {
+		t.Errorf("a cell whose run failed carries a mark %q", failed.Glyph)
 	}
 	passed := buildPivotCell(agg(0, 0, 3, 0), now)
-	if failed.Glyph != passed.Glyph {
-		t.Errorf("the mark changed with the outcome: failed %q, passed %q — it marks the basis",
-			failed.Glyph, passed.Glyph)
+	if passed.Glyph != "✓" {
+		t.Errorf("a clean run lost its mark: %q", passed.Glyph)
 	}
-	if failed.Ratio != "0%" || passed.Ratio != "100%" {
-		t.Errorf("the rate must carry the outcome: %q and %q", failed.Ratio, passed.Ratio)
+	if failed.Tone != "fail" || passed.Tone != "pass" {
+		t.Errorf("tone must carry the outcome: %q and %q", failed.Tone, passed.Tone)
+	}
+	if failed.Ratio != "—" || passed.Ratio != "—" {
+		t.Errorf("neither verified cell has usage to report: %q and %q", failed.Ratio, passed.Ratio)
 	}
 }
 

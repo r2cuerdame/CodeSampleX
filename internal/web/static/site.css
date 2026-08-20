@@ -1318,8 +1318,10 @@ td.pv .pvratio { font-size: 0.78rem; font-weight: 700; }
    evidence, so it sits beside it -- smaller, never absent.
    "n=" rather than a bare number or a multiplication sign: it is the standard
    notation for a sample size and nobody reads it as arithmetic. */
-td.pv .pvruns { font-size: 0.66rem; }
-td.pv .pvruns::before { content: "n="; opacity: 0.55; }
+/* The number is a PASS count, so a mostly-failing cell shows a small one
+   and would read as thin evidence rather than as trouble. The "?" has to
+   carry that weight on its own. */
+td.pv .mark.bang { font-size: 0.95rem; }
 .mark { font-weight: 800; font-style: normal; }
 .mark.bang { color: var(--bad); }
 .mark.maybe { color: var(--mid); }

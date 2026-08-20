@@ -59,7 +59,7 @@ type pivotCell struct {
 	// "mixed" | "". It is a visual affordance only and is never rendered as
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
-	Tone  string
+	Tone string
 	// Glyph marks the rare thing: a cell WE RAN carries it, doubled when two
 	// independent peers reproduced it. An unproven cell carries nothing here
 	// and needs none -- badging the exception is the
@@ -70,14 +70,10 @@ type pivotCell struct {
 	// rendered as a red tick beside 0/1 -- putting the verdict back into the
 	// glyph after taking it out of the word.
 	Glyph string // "◆" | "◆◆" | "" | "—"
-	// Bang marks a measured anomaly: an elevated failure rate or any
-	// verification FAIL.
-	//
-	// There is no second marker beside it. "?" meant unverified OR stale,
-	// and both halves went: unverified is what the ABSENCE of the
-	// verification mark already says, and a pinned release in a pinned
-	// environment does not go stale. Two markers plus a mark plus a colour
-	// plus a rate was more legend than a reader will hold.
+	// Bang is retained as a field for the tooltip only; no marker renders.
+	// A cell carries at most one symbol now -- the check -- and colour says
+	// how the runs went. Every extra glyph was one more thing to learn
+	// before the grid could be read at all.
 	Bang bool
 	// Cross is set when ≥2 distinct peers verified inside this bucket.
 	Cross bool
@@ -163,9 +159,9 @@ func osIcon(label string) (icon, text string) {
 
 // pivotGrid is a rendered rows × columns compatibility grid.
 type pivotGrid struct {
-	Cols     []pivotAxis
-	Rows     []pivotGridRow
-	HasBang  bool
+	Cols    []pivotAxis
+	Rows    []pivotGridRow
+	HasBang bool
 	// Trimmed is set when the caps dropped lower-evidence rows or columns,
 	// so the template can say the grid shows the most-measured slice.
 	Trimmed bool
@@ -610,22 +606,33 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	cell := pivotCell{Obs: obs, Ver: ver, Cross: a.cross}
 	// A verification, however small, outranks any volume of observation:
 	// the basis is about who ran it, never about how many said so.
-	switch {
-	case ver > 0:
-		cell.Basis, cell.Class, cell.Glyph = "verified", "verified", "◆"
-		cell.PassCount, cell.FailCount = a.verPass, a.verFail
-		// One mark that escalates, not two marks that collide. Cross
-		// verification already implies verification, so a cell reproduced by
-		// two independent peers rendered "✓ 4/4 ✓✓" -- three check marks
-		// carrying two meanings, one before the number and two after.
-		if a.cross {
-			cell.Glyph = "◆◆"
-		}
-	case obs > 0:
-		cell.Basis, cell.Class, cell.Glyph = "observed", "observed", ""
-		cell.PassCount, cell.FailCount = a.obsPass, a.obsFail
-	default:
+	if obs == 0 && ver == 0 {
 		return pivotCell{Class: "empty", Glyph: "—"}
+	}
+	// The number is usage; the mark is our own code. They answer different
+	// questions, so a cell can hold either alone: a sample we verified that
+	// nobody has been seen using keeps its mark and reports "—" where the
+	// count would go. Blanking it entirely would erase the verified corpus
+	// from the grid, because in production every verified cell has zero
+	// observations -- the fleet proves on Linux and the world reports from
+	// Windows.
+	cell.Basis, cell.Class = "observed", "observed"
+	cell.PassCount, cell.FailCount = a.obsPass, a.obsFail
+	if ver > 0 {
+		cell.Basis, cell.Class = "verified", "verified"
+	}
+	if obs == 0 {
+		cell.PassCount, cell.FailCount = a.verPass, a.verFail
+	}
+	// The mark is our own working code, and only when it worked. One clean
+	// verification is as much of that fact as a hundred: either a sample runs
+	// here or it does not. Cross reproduction escalates the same mark rather
+	// than adding a second one after the number.
+	if a.verPass > 0 && a.verFail == 0 {
+		cell.Glyph = "✓"
+		if a.cross {
+			cell.Glyph = "✓✓"
+		}
 	}
 	switch {
 	case cell.FailCount == 0:
@@ -635,6 +642,7 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	default:
 		cell.Tone = "mixed"
 	}
+	cell.Bang = a.elevated || a.verFail > 0
 	// Last-seen is still reported in the tooltip, but nothing is marked
 	// stale any more. A cell is one pinned release in one environment
 	// bucket, and neither moves: evidence that axios 1.6.0 failed on
@@ -644,13 +652,27 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	if ver == 0 {
 		basisLastSeen = a.obsLastSeen
 	}
-	cell.Bang = a.elevated || a.verFail > 0
+	// Trouble is carried by COLOUR alone now. A marker for it was one more
+	// symbol to hold, and Tone already reddens a cell whose runs mostly
+	// failed -- the same fact without the extra glyph to learn.
+	_ = a.elevated
 	// Always rendered, including a single run. Suppressing the one-event
 	// case hid exactly how thin a cell was behind a mark that looked the
 	// same as a hundred agreeing runs.
-	cell.Runs = cell.PassCount + cell.FailCount
-	if cell.Runs > 0 {
-		cell.Ratio = fmt.Sprintf("%d%%", int(float64(cell.PassCount)/float64(cell.Runs)*100+0.5))
+	// The number is how many real machines got through it. Observations are
+	// the asset here -- they reach platforms no container can -- and our own
+	// runs are the mark, not the count.
+	cell.Runs = obs
+	switch {
+	case a.obsPass > 0:
+		cell.Ratio = fmt.Sprintf("%d", a.obsPass)
+	case obs == 0:
+		// Verified, never seen used. The dash sits where the count would,
+		// so the cell says "no usage recorded" rather than implying zero
+		// machines got through.
+		cell.Ratio = "—"
+	default:
+		cell.Ratio = "0"
 	}
 
 	var parts []string

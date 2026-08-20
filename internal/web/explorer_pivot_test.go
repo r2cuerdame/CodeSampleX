@@ -56,9 +56,10 @@ func TestPackagePageCubeLeaf(t *testing.T) {
 	mustContain(t, body, "Exact records")
 	mustContain(t, body, "hydrateRoot")
 	mustContain(t, body, "@19.1.0")
-	// The exact record carries its environment and verdict.
+	// The exact record carries its environment; the cell's tone carries how
+	// the runs went, and only a clean pass earns the check.
 	mustContain(t, body, "windows · x64 · node 22 · pnpm")
-	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
+	mustContain(t, body, `class="leafcell pv verified`)
 }
 
 // Explicit axes the slice never recorded fall back to real axes instead
@@ -121,7 +122,7 @@ func TestVersionPageDoesNotRepeatPackageLevelReceipts(t *testing.T) {
 	if strings.Contains(body, "(package)") {
 		t.Error("the (package) row repeats receipts the symbol rows already carry")
 	}
-	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
+	mustContain(t, body, `class="glyph" aria-hidden="true">✓</span>`)
 }
 
 // The symbol page opens with an OS × runtime summary anchored to the
@@ -153,5 +154,5 @@ func TestSymbolPageShowsOSPivotAboveDetail(t *testing.T) {
 		t.Fatalf("pivot must render above the env detail anchor: pivot=%d detail=%d", pivot, detail)
 	}
 	mustContain(t, body, `href="#env-detail"`)
-	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
+	mustContain(t, body, `class="glyph" aria-hidden="true">✓</span>`)
 }

@@ -29,10 +29,10 @@ func TestLandingRendersHotPackageMatrix(t *testing.T) {
 	for _, s := range []string{"node 22", "node 20", "linux", "windows", "macos"} {
 		mustContain(t, body, s)
 	}
-	// The Windows/node-22 slice holds hydrateRoot's contract failure — the
-	// cell says FAIL and carries the anomaly marker, never a bare color.
-	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
-	mustContain(t, body, `<b class="mark bang" aria-hidden="true">!</b>`)
+	// The Windows/node-22 slice holds hydrateRoot's contract failure. A
+	// failure carries NO mark — the check means our sample ran and passed —
+	// so what says so is the failing tone on the cell.
+	mustContain(t, body, `t-fail`)
 	// Cells link into the package cube with their coordinates pinned
 	// (html/template escapes "+" as &#43; inside href attributes).
 	mustContain(t, body, `/npm/reactish?f_os=windows&amp;f_runtime=node&#43;22`)

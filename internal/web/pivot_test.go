@@ -99,10 +99,10 @@ func TestPivotObservationOnlyCellCarriesNoVerificationMark(t *testing.T) {
 	}
 }
 
-// A verification failure is a measured anomaly: "!" appears. The cell no
-// longer says FAIL -- a verdict word claimed more than was measured -- so the
-// failure is read off the rate, on a cell whose basis stays "verified".
-func TestPivotVerificationFailureIsMarkedBang(t *testing.T) {
+// A verification that failed carries no mark at all: the check means our
+// sample RAN AND PASSED here, so its absence is what a failure looks like.
+// Colour, not a glyph, says how the runs went.
+func TestPivotVerificationFailureCarriesNoMark(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("windows", "", "node", "24.1", "2026-08-12T10:00:00Z", map[string]stageCount{
 			"CONTRACT": {Pass: 1, Fail: 1},
@@ -113,17 +113,17 @@ func TestPivotVerificationFailureIsMarkedBang(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	mixed := cellAt(t, g, "windows", "node 24")
-	if mixed.Basis != "verified" || mixed.Ratio != "50%" || !mixed.Bang {
-		t.Errorf("mixed cell = %q %q bang=%v, want verified 50%% with !",
-			mixed.Basis, mixed.Ratio, mixed.Bang)
+	if mixed.Glyph != "" || mixed.Tone != "mixed" {
+		t.Errorf("mixed cell = glyph %q tone %q, want no mark and a mixed tone",
+			mixed.Glyph, mixed.Tone)
 	}
 	fail := cellAt(t, g, "linux", "node 24")
-	if fail.Basis != "verified" || fail.Class != "verified" || fail.Ratio != "0%" || !fail.Bang {
-		t.Errorf("fail cell = %q/%q %q bang=%v, want verified/verified 0%% with !",
-			fail.Basis, fail.Class, fail.Ratio, fail.Bang)
+	if fail.Glyph != "" || fail.Tone != "fail" {
+		t.Errorf("fail cell = glyph %q tone %q, want no mark and a failing tone",
+			fail.Glyph, fail.Tone)
 	}
 	if !g.HasBang {
-		t.Error("grid must know it contains a ! marker for the legend")
+		t.Error("grid must still record the anomaly for the tooltip")
 	}
 }
 
@@ -160,7 +160,7 @@ func TestPivotDoesNotAgeAPinnedCoordinate(t *testing.T) {
 	if !strings.Contains(c.Tip, "last seen 2026-05-01") {
 		t.Errorf("tooltip %q must still date the evidence", c.Tip)
 	}
-	if c.Glyph != "◆" {
+	if c.Glyph != "✓" {
 		t.Errorf("glyph = %q; old evidence is still evidence we ran", c.Glyph)
 	}
 }
@@ -204,10 +204,10 @@ func TestPivotAxisBucketing(t *testing.T) {
 	if merged.Ver != 2 {
 		t.Errorf("linux cell ver = %d, want the 22.18 and 22.4 rows merged to 2", merged.Ver)
 	}
-	if cellAt(t, g, "linux musl", "node 22").Ratio != "0%" {
+	if cellAt(t, g, "linux musl", "node 22").Ratio != "—" {
 		t.Error("musl is a separate row from glibc linux")
 	}
-	if cellAt(t, g, "macos", "node 22").Ratio != "100%" {
+	if cellAt(t, g, "macos", "node 22").Ratio != "—" {
 		t.Error("darwin must display as macos")
 	}
 }
@@ -322,21 +322,21 @@ func TestPivotCellRatioShowsHiddenDepth(t *testing.T) {
 		}),
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
-	if got := cellAt(t, g, "linux", "node 22").Ratio; got != "83%" {
-		t.Errorf("mixed cell ratio = %q, want 83%%", got)
+	// Verified runs are the mark, not the count, so a cell with contract
+	// evidence and no observation reports no usage.
+	if got := cellAt(t, g, "linux", "node 22").Ratio; got != "—" {
+		t.Errorf("verified-only cell ratio = %q, want no usage recorded", got)
 	}
-	// A single run states its rate too, and the run count beside it is what
-	// keeps 100%-of-one from reading like 100%-of-eighteen.
 	single := cellAt(t, g, "windows", "node 22")
-	if single.Ratio != "100%" || single.Runs != 1 {
-		t.Errorf("single-event cell = %q of %d, want 100%% of 1", single.Ratio, single.Runs)
+	if single.Ratio != "—" {
+		t.Errorf("verified-only cell = %q, want no usage recorded", single.Ratio)
 	}
-	if deep := cellAt(t, g, "linux", "node 22"); deep.Runs != 18 {
-		t.Errorf("mixed cell runs = %d, want the 18 the percentage rests on", deep.Runs)
+	// The observation-only cell is the one that carries a number: it is the
+	// count of real machines that got through.
+	if got := cellAt(t, g, "macos", "node 22"); got.Ratio != "7" || got.Runs != 8 {
+		t.Errorf("observed cell = %q of %d, want 7 passes of 8 runs", got.Ratio, got.Runs)
 	}
-	if got := cellAt(t, g, "macos", "node 22").Ratio; got != "88%" {
-		t.Errorf("observation-only cell ratio = %q, want 88%%", got)
-	}
+
 }
 
 // More lines than fit keep the highest-evidence columns and say so.
