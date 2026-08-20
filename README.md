@@ -8,11 +8,19 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
-CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes: it runs real builds and contract tests in real, recorded environments — then shows you where things actually worked, where they broke, and how sure it is of both.
+CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and on whose machine.
+
+Two things are the asset, and a third is a bonus:
+
+- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container can: macOS has no container runtime at all, npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
+- **Findings** — the contradictions we detected in that evidence: what a competent developer or model expects, measured against what happened. These are ours to stand behind, and they are what a model most often gets wrong, because they are exactly what the documentation does not say.
+- **Samples** — runnable code we write and verify ourselves. A bonus, deliberately: a container farm can never cover the space, so a verified sample is a confidence tier above the evidence, never the condition for having an answer at all.
+
+Which is why a miss is not empty. When nothing has been proven for your case the grade stays `NO_SAFE_MATCH` — and the recorded runs come back with it, as recorded.
 
 - Compatibility map: **https://codesamplex.dev**
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
-- The answer it gives: *we tested it; this is what happened.*
+- The answer it gives: *here is what happened, and here is who ran it.*
 
 ## Does it run there?
 
