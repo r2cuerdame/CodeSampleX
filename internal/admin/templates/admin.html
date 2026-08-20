@@ -49,7 +49,21 @@
     .tabs .tab:hover { color:var(--fg,#e6edf3) }
     .tabs .tab[aria-selected="true"] { color:var(--fg,#e6edf3); border-bottom-color:var(--accent,#4c8eda) }
     .tabs .tab:focus-visible { outline:2px solid var(--accent,#4c8eda); outline-offset:2px }
+    /* The panel is a grid child, so without a span it took 1 of 12 columns and
+       squeezed every section inside into a hand's width -- the page went
+       vertical and the widening did nothing. It spans the row and carries the
+       same 12-column grid the sections were written against. */
+    .tabpanel { grid-column:span 12; display:grid; grid-template-columns:repeat(12,1fr); gap:16px }
     .tabpanel[hidden] { display:none }
+    /* Every .panel spans all twelve columns, which was right at 1240px and
+       wastes half a wide console: the forms an operator fills in are narrow
+       and were stacked a screen apart. Panels that hold tables keep the full
+       width; the two form panels pair up, as do the two summary panels. */
+    @media(min-width:1500px) {
+      #sample-authoring, .tabpanel section[aria-labelledby="admin-token-title"] { grid-column:span 6 }
+      .tabpanel section[aria-labelledby="health-title"] { grid-column:span 5 }
+      .tabpanel .priority-panel { grid-column:span 7 }
+    }
     /* The worker install command is a single ~1,100 character line. Without a
        box of its own it widened the whole dashboard instead of scrolling. */
     .cmdbox { position:relative; margin:8px 0 14px }
