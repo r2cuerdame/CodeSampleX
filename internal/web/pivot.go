@@ -188,7 +188,14 @@ type pivotAgg struct {
 	// different question — pgx v5.10.0 on go 1.26 carried 1,361 build
 	// observations from a single bucket, and printing 1,154 beside the rate
 	// read as 1,154 machines agreeing.
-	obsPeers         int64
+	obsPeers int64
+	// used counts USED records: "this package was in the project". It is a
+	// presence marker with no failing form — across the whole corpus it
+	// carried 8,697 passes and zero failures, structurally, because there is
+	// nothing for it to fail at — so it is kept out of the pass rate, where
+	// it was 12.5% of every pass the network had recorded and could only
+	// ever push a rate upward.
+	used             int64
 	verPass, verFail int64
 	elevated         bool
 	cross            bool
@@ -242,7 +249,15 @@ func confName(rank int) string {
 // USED and PROJECT_* are weak project observations, everything else is
 // verification evidence.
 func isObservationStageName(stage string) bool {
-	return stage == string(domain.StageUsed) || strings.HasPrefix(stage, "PROJECT_")
+	return isUsageStageName(stage) || strings.HasPrefix(stage, "PROJECT_")
+}
+
+// isUsageStageName names the stage that records presence rather than an
+// outcome. It is an observation — the package really was there, in a real
+// project — but it is not a run, and a rate built from it measures how many
+// people had the dependency installed.
+func isUsageStageName(stage string) bool {
+	return stage == string(domain.StageUsed)
 }
 
 // pivotEnv resolves the row's environment, honouring the legacy alias.
@@ -394,6 +409,11 @@ type cellKey struct{ row, col string }
 func (a *pivotAgg) absorbRow(r snapshotRow) {
 	var hasObs, hasVer bool
 	for stage, c := range r.ByStage {
+		if isUsageStageName(stage) {
+			a.used += c.Pass + c.Fail
+			hasObs = hasObs || c.Pass+c.Fail > 0
+			continue
+		}
 		if isObservationStageName(stage) {
 			a.obsPass += c.Pass
 			a.obsFail += c.Fail
@@ -450,6 +470,7 @@ func (a *pivotAgg) merge(b pivotAgg) {
 func (a *pivotAgg) mergeObservations(b pivotAgg) {
 	a.obsPass += b.obsPass
 	a.obsFail += b.obsFail
+	a.used += b.used
 	if b.obsPeers > a.obsPeers {
 		a.obsPeers = b.obsPeers
 	}
@@ -475,8 +496,11 @@ func (a *pivotAgg) mergeVerifications(b pivotAgg) {
 	}
 }
 
+// events is whether this aggregate holds anything at all. Usage counts: a
+// package seen in real projects is not an empty cell, even when nothing has
+// been run against it.
 func (a pivotAgg) events() int64 {
-	return a.obsPass + a.obsFail + a.verPass + a.verFail
+	return a.obsPass + a.obsFail + a.used + a.verPass + a.verFail
 }
 
 // buildPivot folds snapshot rows into a rowKey × colKey grid. cellHref may
@@ -687,7 +711,7 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	cell := pivotCell{Obs: obs, Ver: ver, Cross: a.cross}
 	// A verification, however small, outranks any volume of observation:
 	// the basis is about who ran it, never about how many said so.
-	if obs == 0 && ver == 0 {
+	if obs == 0 && ver == 0 && a.used == 0 {
 		return pivotCell{Class: "empty", Glyph: "—"}
 	}
 	// The number is usage; the mark is our own code. They answer different
@@ -723,6 +747,11 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 		cell.Glyph = "✕"
 	}
 	switch {
+	case obs == 0 && ver == 0:
+		// Usage only: the package was there, and nothing ran. "No failures"
+		// is satisfied by zero runs, so the pass colour was being granted to
+		// cells that had no outcome to colour.
+		cell.Tone = ""
 	case cell.FailCount == 0:
 		cell.Tone = "pass"
 	case cell.PassCount == 0:
@@ -776,10 +805,16 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 		// "observed" alone was read as a count of people, and "build
 		// observations" as a count of builds. It is neither: one build files
 		// an observation per stage it reached — compile, test, typecheck —
-		// plus one for having used the package at all, so the events
-		// outnumber the builds several times over and both readings
-		// overstate what happened.
+		// so the events outnumber the builds several times over and both
+		// readings overstate what happened.
 		parts = append(parts, fmt.Sprintf("%d observations", obs))
+	}
+	if a.used > 0 {
+		// Stated separately because it answers a different question. These
+		// are projects that HAD the package, not runs that exercised it.
+		parts = append(parts, fmt.Sprintf("%d usage records", a.used))
+	}
+	if obs > 0 || a.used > 0 {
 		parts = append(parts, fmt.Sprintf("%s reporting machine%s",
 			plural(a.obsPeers), suffix(a.obsPeers)))
 	}
