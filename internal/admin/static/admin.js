@@ -481,3 +481,36 @@
     }, 1500);
   });
 })();
+
+(() => {
+  // The tab lives in the URL fragment so a reload, a bookmark or a shared
+  // link lands where the operator was. Without it every refresh threw them
+  // back to the dashboard, which is the screen they were not looking at.
+  const buttons = Array.from(document.querySelectorAll(".tabs .tab"));
+  const panels = Array.from(document.querySelectorAll(".tabpanel"));
+  if (!buttons.length || !panels.length) return;
+
+  const show = (id, push) => {
+    if (!panels.some((p) => p.id === id)) id = panels[0].id;
+    for (const panel of panels) panel.hidden = panel.id !== id;
+    for (const button of buttons) {
+      button.setAttribute("aria-selected", String(button.getAttribute("aria-controls") === id));
+    }
+    if (push && window.location.hash !== "#" + id) {
+      window.history.replaceState(null, "", "#" + id);
+    }
+  };
+
+  for (const button of buttons) {
+    button.addEventListener("click", () => show(button.getAttribute("aria-controls"), true));
+    button.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      event.preventDefault();
+      const next = buttons[(buttons.indexOf(button) + step + buttons.length) % buttons.length];
+      next.focus();
+      show(next.getAttribute("aria-controls"), true);
+    });
+  }
+  show(window.location.hash.replace(/^#/, "") || panels[0].id, false);
+})();
