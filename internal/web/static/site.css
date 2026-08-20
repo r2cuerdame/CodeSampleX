@@ -1724,3 +1724,9 @@ table.shipswith td.num, table.shipswith th.num { text-align: right; }
    "the package" and the row goes to one version — and an accent colour made
    it look like one anyway. */
 table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space: nowrap; }
+
+/* The search sits with the counters, not under the grid. Someone who already
+   knows the package they came for should not have to scroll past a
+   demonstration to type its name. */
+.hero-evidence .home-search { margin: 1rem 0 0; }
+.hero-evidence .home-search input { min-width: 0; }
