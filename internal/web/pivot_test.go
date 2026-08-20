@@ -222,7 +222,7 @@ func TestPivotColumnAndRowOrder(t *testing.T) {
 		mk("linux", "bun", "1.2"),
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
-	wantCols := []string{"bun 1", "node 24", "node 22", "node 20"}
+	wantCols := []string{"bun 1.2", "node 24", "node 22", "node 20"}
 	if colLabels(g) != strings.Join(wantCols, ",") {
 		t.Errorf("cols = %v, want %v", g.Cols, wantCols)
 	}

@@ -96,11 +96,7 @@ func cubeFactFromRow(r snapshotRow, version, symbol string) (cubeFact, bool) {
 		dims["os"] = osLabel(e)
 		dims["arch"] = e.Arch
 		if e.Runtime != "" {
-			rt := e.Runtime
-			if e.RuntimeVersion != "" {
-				rt += " " + majorOf(e.RuntimeVersion)
-			}
-			dims["runtime"] = rt
+			dims["runtime"] = runtimeBucket(e.Runtime, e.RuntimeVersion)
 		}
 		if e.PackageManager != "" {
 			tool := e.PackageManager

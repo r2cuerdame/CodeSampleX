@@ -142,3 +142,29 @@ func TestStylesheetIsCleanText(t *testing.T) {
 		t.Error("site.css is not valid UTF-8")
 	}
 }
+
+// Go's major has not moved in a decade, so bucketing by it collapsed every Go
+// version into one meaningless "go 1" column — and beside a versionless "go"
+// row it read as the same runtime listed twice.
+func TestRuntimeBucketsWhereTheRuntimeActuallyBreaks(t *testing.T) {
+	for _, tc := range []struct{ runtime, version, want string }{
+		{"go", "1.26", "go 1.26"},
+		{"go", "1.25.3", "go 1.25"},
+		{"python", "3.12.1", "python 3.12"},
+		// node and bun really do break on the major.
+		{"node", "22.18", "node 22"},
+		{"bun", "1.3.14", "bun 1.3"},
+	} {
+		if got := runtimeBucket(tc.runtime, tc.version); got != tc.want {
+			t.Errorf("%s %s bucketed as %q, want %q", tc.runtime, tc.version, got, tc.want)
+		}
+	}
+	// An unrecorded version says so. Rendering a bare "go" beside "go 1.26"
+	// reads as a duplicate rather than as the gap it is.
+	if got := runtimeBucket("go", ""); got != "go (version not recorded)" {
+		t.Errorf("versionless runtime = %q, want it to name the gap", got)
+	}
+	if got := runtimeBucket("", "1.26"); got != "" {
+		t.Errorf("no runtime should bucket to nothing, got %q", got)
+	}
+}

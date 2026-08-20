@@ -281,6 +281,58 @@ func majorOf(v string) string {
 	return v
 }
 
+// runtimeLineOf buckets a runtime version at the precision where that runtime
+// actually breaks compatibility.
+//
+// The major alone is right for node and bun, where 20 and 22 are different
+// lines. It is useless for Go and Python, whose major has not moved in a
+// decade: every Go version buckets to "1", so a whole axis collapses into one
+// meaningless column -- and beside a versionless "go" row it reads as the same
+// thing listed twice.
+func runtimeLineOf(runtime, version string) string {
+	if version == "" {
+		return ""
+	}
+	major := majorOf(version)
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "go", "golang", "python", "python3", "ruby", "php", "elixir", "erlang":
+		return minorOf(version)
+	}
+	// Backstop for runtimes not named above: a major of 0 or 1 has almost
+	// certainly not moved in years, so it buckets everything into one column.
+	// This corrects itself when such a runtime finally ships a 2.
+	if major == "0" || major == "1" {
+		return minorOf(version)
+	}
+	return major
+}
+
+// minorOf keeps two segments: "1.25.3" becomes "1.25".
+func minorOf(v string) string {
+	i := strings.IndexByte(v, '.')
+	if i < 0 {
+		return v
+	}
+	if j := strings.IndexByte(v[i+1:], '.'); j >= 0 {
+		return v[:i+1+j]
+	}
+	return v
+}
+
+// runtimeBucket names a runtime for an axis, saying so when the version was
+// never recorded rather than rendering a bare name beside versioned ones,
+// where it reads as a duplicate of the runtime rather than as a gap.
+func runtimeBucket(runtime, version string) string {
+	if runtime == "" {
+		return ""
+	}
+	line := runtimeLineOf(runtime, version)
+	if line == "" {
+		return runtime + " (version not recorded)"
+	}
+	return runtime + " " + line
+}
+
 // contextColKey buckets by browser family or runtime line + MAJOR version
 // ("node 22", "safari 19"), falling back to the materialized context label.
 func contextColKey(r snapshotRow) string {
@@ -294,7 +346,7 @@ func contextColKey(r snapshotRow) string {
 		}
 		if e.Runtime != "" {
 			if e.RuntimeVersion != "" {
-				return e.Runtime + " " + majorOf(e.RuntimeVersion)
+				return runtimeBucket(e.Runtime, e.RuntimeVersion)
 			}
 			return e.Runtime
 		}
