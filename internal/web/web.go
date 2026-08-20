@@ -91,10 +91,6 @@ type Store interface {
 	// unanswered rows matching that query.
 	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
-	// PresenceOnlyCoverage counts, per ecosystem, package versions seen only
-	// as installed against ones actually exercised. It is the instrument's
-	// largest unstated skew.
-	PresenceOnlyCoverage(ctx context.Context) ([]PresenceCoverage, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.

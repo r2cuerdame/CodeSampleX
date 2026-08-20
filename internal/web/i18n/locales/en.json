@@ -47,7 +47,6 @@
   "coverage.heading": "What this instrument has and has not looked at",
   "coverage.lead": "Observations arrive from developer machines; proofs come from containers we run. The two do not automatically meet, and where they have not, this table says so rather than leaving a reader to assume coverage.",
   "coverage.no_overlap": "The two halves have never met: nothing observed here has been proven here, and nothing proven here has been observed here.",
-  "coverage.presence_only": "Only ever seen installed, never run:",
   "coverage.selection": "Every recorded verification passed. That is a publishing rule, not a finding — a sample becomes a sample by passing — so the pass rate on our own axis measures how we publish, not how the ecosystem behaves.",
   "coverage.unreachable": "Cannot be filled by any container, so a zero here is closed rather than owed:",
   "cube.all": "all",

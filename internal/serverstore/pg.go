@@ -1191,45 +1191,6 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 }
 
 // JobsForSample lists every job for a sample regardless of status.
-// PresenceOnlyCoverage counts, per ecosystem, package versions this network
-// has only ever seen INSTALLED against ones it has actually exercised.
-//
-// The ecosystem comes from the purl rather than from the recorded
-// environment: a package belongs to its registry, and the environment says
-// where somebody ran it, which for a presence record is not the same claim.
-func (p *PG) PresenceOnlyCoverage(ctx context.Context) ([]PresenceCoverage, error) {
-	var out []PresenceCoverage
-	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			WITH per_purl AS (
-			  SELECT purl,
-			         split_part(substring(purl from 5), '/', 1) AS ecosystem,
-			         bool_or(stage LIKE 'PROJECT%') AS exercised
-			    FROM evidence_agg
-			   WHERE symbol = ''
-			   GROUP BY 1, 2)
-			SELECT ecosystem,
-			       COUNT(*) FILTER (WHERE NOT exercised),
-			       COUNT(*) FILTER (WHERE exercised)
-			  FROM per_purl
-			 GROUP BY 1
-			 ORDER BY 1`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var r PresenceCoverage
-			if err := rows.Scan(&r.Ecosystem, &r.PresenceOnly, &r.Exercised); err != nil {
-				return err
-			}
-			out = append(out, r)
-		}
-		return rows.Err()
-	})
-	return out, err
-}
-
 // StrandedDrafts lists quarantined authoring drafts that have no verification
 // left to wait for.
 //

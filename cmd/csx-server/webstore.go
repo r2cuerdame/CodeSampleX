@@ -316,23 +316,6 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
-// PresenceOnlyCoverage adapts the store's per-ecosystem presence split to the
-// web's own type, which is how every other coverage figure crosses this
-// boundary: the web package does not import serverstore.
-func (w *webStore) PresenceOnlyCoverage(ctx context.Context) ([]web.PresenceCoverage, error) {
-	rows, err := w.s.PresenceOnlyCoverage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.PresenceCoverage, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.PresenceCoverage{
-			Ecosystem: r.Ecosystem, PresenceOnly: r.PresenceOnly, Exercised: r.Exercised,
-		})
-	}
-	return out, nil
-}
-
 // derivedFindingScan bounds how many recent samples are read looking for
 // declared beliefs. Only a minority of samples state one, so the scan is
 // wider than the number of findings it can return.

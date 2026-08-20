@@ -448,12 +448,6 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	if rows, cerr := s.d.Store.Coverage(r.Context()); cerr == nil {
 		coverage = buildCoverageDisclosure(rows, unreachableCells(rows))
 	}
-	// The larger skew, and the one a reader cannot infer from the grid above
-	// it: most of what this network knows about, it has only ever seen
-	// installed.
-	if rows, perr := s.d.Store.PresenceOnlyCoverage(r.Context()); perr == nil {
-		coverage.PresenceGaps = buildPresenceGaps(lang, rows)
-	}
 
 	s.render(w, "landing", http.StatusOK, landingPage{
 		basePage:    b,
@@ -465,7 +459,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		Findings:    homeFindings(lang),
 		Matrix:      s.heroMatrix(r, lang, hits),
 		Coverage:    coverage,
-		HasCoverage: len(coverage.Rows) > 0 || len(coverage.PresenceGaps) > 0,
+		HasCoverage: len(coverage.Rows) > 0,
 	})
 }
 

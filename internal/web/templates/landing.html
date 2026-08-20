@@ -218,10 +218,6 @@
     </table>
   </div>
   {{if .Coverage.Unreachable}}<p class="note dim small">{{.T "coverage.unreachable"}} <span class="mono">{{range $i, $c := .Coverage.Unreachable}}{{if $i}}, {{end}}{{$c}}{{end}}</span></p>{{end}}
-  {{/* The larger skew: most of what this network knows about, it has only
-       ever seen installed. A reader takes "packages with evidence" as
-       packages that were run, and for npm half of them never were. */}}
-  {{if .Coverage.PresenceGaps}}<p class="note presencegap">{{.T "coverage.presence_only"}} <span class="mono">{{range $i, $g := .Coverage.PresenceGaps}}{{if $i}} · {{end}}{{$g.Ecosystem}} {{$g.Count}} ({{$g.Share}}){{end}}</span></p>{{end}}
 </details>
 {{end}}
 

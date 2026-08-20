@@ -23,7 +23,6 @@ type fakeStore struct {
 	clusters  map[string][]string // eco+"|"+name → cluster JSON
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
-	presence       []PresenceCoverage
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
 	derived        []DerivedFinding
@@ -337,7 +336,3 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Coverage(context.Context) ([]CoverageRow, error) { return f.coverage, nil }
-
-func (f *fakeStore) PresenceOnlyCoverage(context.Context) ([]PresenceCoverage, error) {
-	return f.presence, nil
-}
