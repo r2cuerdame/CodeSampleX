@@ -75,7 +75,10 @@ type Store interface {
 	// has evidence for, plus the total so the page can be navigated.
 	RecordPackages(ctx context.Context, filter RecordFilter, offset, limit int) (hits []PackageHit, total int, err error)
 	// FailureClusters returns failure-cluster JSON documents for a package.
-	FailureClusters(ctx context.Context, ecosystem, name string) ([]string, error)
+	// FailureClusters returns at most a page of clusters plus how many the
+	// package actually has. pgx/v5 carries 133; rendering all of them was a
+	// wall, and truncating without the total would read as "this is all".
+	FailureClusters(ctx context.Context, ecosystem, name string) (clusters []string, total int, err error)
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)

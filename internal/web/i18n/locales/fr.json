@@ -242,6 +242,7 @@
   "nav.stats": "Statistiques",
   "nav.wanted": "Wanted",
   "pkg.clusters": "Clusters d'échecs récents",
+  "pkg.clusters_truncated": "Affichage des %s plus signalés parmi %s groupes d’échecs enregistrés. Le reste sont des signalements uniques.",
   "pkg.latest": "dernière avec preuve",
   "pkg.no_clusters": "Aucun cluster d'échec observé.",
   "pkg.no_symbols": "Pas encore de symboles avec des preuves.",

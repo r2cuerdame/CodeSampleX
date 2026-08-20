@@ -291,3 +291,19 @@ func TestCubeFallsBackWhenVersionDoesNotVary(t *testing.T) {
 		t.Errorf("y = %s, want symbol", y)
 	}
 }
+
+// The package-level row is the aggregate over every symbol, not one of them.
+// Sorted alphabetically it landed among its own parts — after ParseConfig on
+// pgx — so a reader met the total partway down the list of what it totals.
+func TestPackageRowSortsAboveTheSymbolsItAggregates(t *testing.T) {
+	got := sortCubeDimValues("symbol", []string{
+		"ParseConfig", cubePackageLevel, "AppendRows", "Batch",
+	})
+	if len(got) == 0 || got[0] != cubePackageLevel {
+		t.Fatalf("order = %v, want the package row first", got)
+	}
+	// The symbols keep their own order behind it.
+	if got[1] != "AppendRows" || got[2] != "Batch" {
+		t.Errorf("order = %v, want the symbols sorted behind the package row", got)
+	}
+}

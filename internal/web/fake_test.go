@@ -161,8 +161,9 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) ([]string, error) {
-	return f.clusters[ecosystem+"|"+name], nil
+func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) ([]string, int, error) {
+	rows := f.clusters[ecosystem+"|"+name]
+	return rows, len(rows), nil
 }
 
 // newFakeStore builds the shared fixture: axios with a context-first

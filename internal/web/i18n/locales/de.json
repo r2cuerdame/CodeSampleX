@@ -242,6 +242,7 @@
   "nav.stats": "Statistiken",
   "nav.wanted": "Wanted",
   "pkg.clusters": "Aktuelle Fehler-Cluster",
+  "pkg.clusters_truncated": "Es werden die %s meistgemeldeten von %s aufgezeichneten Fehlerclustern gezeigt. Der Rest sind Einzelmeldungen.",
   "pkg.latest": "neueste mit Evidenz",
   "pkg.no_clusters": "Keine Fehler-Cluster beobachtet.",
   "pkg.no_symbols": "Noch keine Symbole mit Evidenz.",

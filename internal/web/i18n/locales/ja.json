@@ -242,6 +242,7 @@
   "nav.stats": "統計",
   "nav.wanted": "Wanted",
   "pkg.clusters": "最近の失敗クラスター",
+  "pkg.clusters_truncated": "記録された失敗クラスタ %s 件のうち、最も多く報告された %s 件を表示しています。残りは単発の報告です。",
   "pkg.latest": "証拠のある最新版",
   "pkg.no_clusters": "失敗クラスターは観測されていません。",
   "pkg.no_symbols": "エビデンスのあるシンボルはまだありません。",

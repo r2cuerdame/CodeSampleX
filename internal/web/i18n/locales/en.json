@@ -242,6 +242,7 @@
   "nav.stats": "Stats",
   "nav.wanted": "Wanted",
   "pkg.clusters": "Recent failure clusters",
+  "pkg.clusters_truncated": "Showing the %s most-reported of %s recorded failure clusters. The rest are single reports.",
   "pkg.latest": "latest with evidence",
   "pkg.no_clusters": "No failure clusters observed.",
   "pkg.no_symbols": "No symbols with evidence yet.",

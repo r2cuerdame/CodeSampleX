@@ -490,8 +490,11 @@ type packagePage struct {
 	Name      string
 	Versions  []versionRow
 	Clusters  []clusterView
-	Wanted    []WantedRow
-	Crumbs    []crumb
+	// ClusterTotal is how many the package has, so the page can say what it
+	// did not show rather than letting a bounded list read as complete.
+	ClusterTotal int
+	Wanted       []WantedRow
+	Crumbs       []crumb
 	// Cube is the N-dimensional compatibility explorer: the page's primary
 	// element. nil when the package has no snapshot evidence yet.
 	Cube *cubeView
@@ -504,10 +507,14 @@ type packagePage struct {
 // 96). The sitemap is what guarantees every sample is reachable.
 const packageSampleLimit = 200
 
-func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
-	raw, err := s.d.Store.FailureClusters(r.Context(), eco, name)
+// loadClusters returns a page of failure clusters and how many the package
+// actually has, so the page can say what it did not show. pgx/v5 carries 133;
+// rendering all of them was a wall, and truncating silently would read as
+// "this is all of them".
+func (s *site) loadClusters(r *http.Request, eco, name string) ([]clusterView, int) {
+	raw, total, err := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	clusters := make([]failureCluster, 0, len(raw))
 	for _, doc := range raw {
@@ -516,7 +523,7 @@ func (s *site) loadClusters(r *http.Request, eco, name string) []clusterView {
 			clusters = append(clusters, c)
 		}
 	}
-	return buildClusters(clusters)
+	return buildClusters(clusters), total
 }
 
 // versionRow is one row of the package's version list: what the network
@@ -591,7 +598,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	clusters := s.loadClusters(r, eco, name)
+	clusters, clusterTotal := s.loadClusters(r, eco, name)
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
@@ -623,7 +630,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
-		Clusters: clusters, Wanted: wanted,
+		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
 		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
 		Cube:   buildCubeView(s, r, lang, eco, name),
 	})

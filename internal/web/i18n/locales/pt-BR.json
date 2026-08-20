@@ -242,6 +242,7 @@
   "nav.stats": "Estatísticas",
   "nav.wanted": "Wanted",
   "pkg.clusters": "Clusters de falha recentes",
+  "pkg.clusters_truncated": "Mostrando os %s mais relatados de %s grupos de falhas registrados. O resto são relatos únicos.",
   "pkg.latest": "mais recente com evidência",
   "pkg.no_clusters": "Nenhum cluster de falha observado.",
   "pkg.no_symbols": "Ainda não há símbolos com evidências.",

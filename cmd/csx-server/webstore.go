@@ -849,16 +849,28 @@ func (w *webStore) HotPackages(ctx context.Context, limit int) ([]web.PackageHit
 	return w.packageHits(ctx, nil, limit)
 }
 
-func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, error) {
+func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
 	rows, err := w.s.ListFailureClusters(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	// pgx/v5 carries 133 failure clusters and the list had no bound at all,
+	// so its package page rendered every one. They arrive ordered by
+	// observation count, so the tail is single-report noise; the page takes
+	// the head and says how many it did not show. Truncating silently would
+	// read as "this is all of them", which is the one thing it must not say.
 	var out []string
+	kept := 0
+	matched := 0
 	for _, c := range rows {
 		if c.Ecosystem != ecosystem {
 			continue
 		}
+		matched++
+		if kept >= maxRenderedClusters {
+			continue
+		}
+		kept++
 		doc := map[string]any{
 			// The symbol the cluster is ABOUT. It was never serialized, so
 			// the template's {{if .Symbol}} was false on every package page
@@ -880,8 +892,13 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		}
 		out = append(out, string(b))
 	}
-	return out, nil
+	return out, matched, nil
 }
+
+// maxRenderedClusters bounds one package page. Clusters arrive ordered by how
+// many machines reported them, so the head is the whole story and the tail is
+// single-report noise.
+const maxRenderedClusters = 12
 
 func orEmptyObj(s string) string {
 	if strings.TrimSpace(s) == "" {

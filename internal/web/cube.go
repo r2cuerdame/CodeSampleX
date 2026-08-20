@@ -389,6 +389,23 @@ func sortCubeDimValues(dim string, vals []string) []string {
 		return sorted
 	case "os":
 		return sortPivotRows(vals)
+	case "symbol":
+		// The package-level row is not a symbol and must not sort among them.
+		// Alphabetically it landed after ParseConfig, so the aggregate over
+		// every symbol appeared partway down the list of its own parts.
+		sorted := sortPivotCols(vals)
+		out := make([]string, 0, len(sorted))
+		for _, v := range sorted {
+			if v == cubePackageLevel {
+				out = append(out, v)
+			}
+		}
+		for _, v := range sorted {
+			if v != cubePackageLevel {
+				out = append(out, v)
+			}
+		}
+		return out
 	default:
 		return sortPivotCols(vals)
 	}
