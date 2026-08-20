@@ -153,8 +153,8 @@ var heroAxisPairs = [][2]string{
 	{"version", "os"},
 }
 
-// heroGridScore ranks candidate grids. Observed volume dominates, then
-// filled cells, then a real 2D spread; earlier axis pairs win ties.
+// heroGridScore ranks candidate grids. Observed volume leads, then cells that
+// actually carry usage, then merely filled cells and a real 2D spread.
 //
 // Volume leads because the front page is a demonstration, and a grid whose
 // cells rest on thousands of real runs demonstrates something a grid of
@@ -165,11 +165,18 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 		return 0
 	}
 	nonEmpty := 0
+	withUsage := 0
 	observed := int64(0)
 	for _, r := range g.Rows {
 		for _, c := range r.Cells {
 			if c.Class != "empty" {
 				nonEmpty++
+			}
+			// A cell reading "✓ —" is not empty and carries no usage. Counting
+			// it as density picked a grid of six rows where exactly one cell
+			// had a number in it, over a slice where most cells did.
+			if c.Runs > 0 {
+				withUsage++
 			}
 			observed += c.Runs
 		}
@@ -179,7 +186,7 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 	for v := observed; v > 0; v /= 10 {
 		volume += 15
 	}
-	score := volume + nonEmpty*10 + len(g.Rows)*len(g.Cols)
+	score := volume + withUsage*25 + nonEmpty*4 + len(g.Rows)*len(g.Cols)
 	if len(g.Rows) >= 2 && len(g.Cols) >= 2 {
 		score += 40
 	}

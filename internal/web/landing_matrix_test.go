@@ -101,3 +101,25 @@ func TestLandingPrefersTheWidestGrid(t *testing.T) {
 	}
 	mustContain(t, body, `/cargo/tokioish?f_symbol=alpha&amp;f_version=2.0.0`)
 }
+
+// A cell reading "✓ —" is not empty and carries no usage. Scoring counted it
+// as density, which picked a six-row grid where exactly one cell had a number
+// in it over a slice where most cells did — on a page whose whole job is to
+// demonstrate what the network measured.
+func TestHeroPrefersCellsThatCarryUsage(t *testing.T) {
+	withUsage := pivotGrid{Rows: []pivotGridRow{{Cells: []pivotCell{
+		{Class: "observed", Runs: 40}, {Class: "observed", Runs: 30},
+	}}, {Cells: []pivotCell{
+		{Class: "observed", Runs: 20}, {Class: "observed", Runs: 10},
+	}}}, Cols: []pivotAxis{{}, {}}}
+	marksOnly := pivotGrid{Rows: []pivotGridRow{{Cells: []pivotCell{
+		{Class: "verified"}, {Class: "verified"}, {Class: "verified"},
+	}}, {Cells: []pivotCell{
+		{Class: "verified"}, {Class: "verified"}, {Class: "verified"},
+	}}}, Cols: []pivotAxis{{}, {}, {}}}
+
+	if heroGridScore(withUsage, 0) <= heroGridScore(marksOnly, 0) {
+		t.Errorf("a grid with usage (%d) did not beat one of bare marks (%d)",
+			heroGridScore(withUsage, 0), heroGridScore(marksOnly, 0))
+	}
+}
