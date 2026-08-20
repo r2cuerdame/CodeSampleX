@@ -68,7 +68,7 @@
         {{- if .VersionHref}}<a class="dim" href="{{$.WithLang .VersionHref}}">@{{.Version}}</a>{{else}}<span class="dim">@{{.Version}}</span>{{end}}
       </div>
       {{if .Env}}<div class="leafenv dim mono small">{{.Env}}</div>{{end}}
-      <div class="leafcell pv {{.Cell.Class}}">{{template "pivotcell" .Cell}}</div>
+      <div class="leafcell pv {{.Cell.Class}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">{{template "pivotcell" .Cell}}</div>
       {{if .Cell.Tip}}<div class="dim mono small">{{.Cell.Tip}}</div>{{end}}
     </li>
     {{- end}}

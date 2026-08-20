@@ -338,8 +338,8 @@ document.addEventListener('keydown',event=>{
 <tr>
   <th class="rowlabel mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}</th>
   {{- range .Cells}}
-  <td class="pv {{.Class}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
-    {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.State}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}
+  <td class="pv {{.Class}}{{if .Tone}} t-{{.Tone}}{{end}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
+    {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}
   </td>
   {{- end}}
 </tr>
@@ -349,17 +349,16 @@ document.addEventListener('keydown',event=>{
 </div>
 {{end}}
 
-{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .State}}<span class="pvstate mono">{{.State}}</span>{{end}}{{if .Ratio}}<span class="pvratio mono dim">{{.Ratio}}</span>{{end}}{{if .Bang}}<b class="mark bang" aria-hidden="true">!</b>{{end}}{{if .Maybe}}<b class="mark maybe" aria-hidden="true">?</b>{{end}}{{if .Cross}}<span class="pvcross mono" aria-hidden="true">✓✓</span>{{end}}{{end}}
+{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Basis}}<span class="pvbasis mono">{{.Basis}}</span>{{end}}{{if .Ratio}}<span class="pvratio mono dim">{{.Ratio}}</span>{{end}}{{if .Bang}}<b class="mark bang" aria-hidden="true">!</b>{{end}}{{if .Maybe}}<b class="mark maybe" aria-hidden="true">?</b>{{end}}{{if .Cross}}<span class="pvcross mono" aria-hidden="true">✓✓</span>{{end}}{{end}}
 
 {{/* pivotlegend explains the pivot glyphs and markers. It receives the
      page (for .T); render it once near any pivot. */}}
 {{define "pivotlegend"}}
 <ul class="pivotlegend mono small">
-  <li><span class="glyph" aria-hidden="true">✓</span> {{.T "landing.legend_pass"}}</li>
-  <li><span class="glyph" aria-hidden="true">✕</span> {{.T "landing.legend_fail"}}</li>
-  <li><span class="glyph" aria-hidden="true">◐</span> {{.T "landing.legend_mixed"}}</li>
+  <li><span class="glyph" aria-hidden="true">■</span> {{.T "landing.legend_verified"}}</li>
   <li><span class="glyph" aria-hidden="true">○</span> {{.T "landing.legend_observed"}}</li>
   <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
+  <li><span class="pvratio mono dim">n/m</span> {{.T "landing.legend_rate"}}</li>
   <li><b class="mark bang">!</b> {{.T "landing.legend_bang"}}</li>
   <li><b class="mark maybe">?</b> {{.T "landing.legend_maybe"}}</li>
   <li><span class="pvcross">✓✓</span> {{.T "landing.legend_cross"}}</li>

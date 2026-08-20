@@ -2239,9 +2239,9 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 		for _, report := range reports {
 			for _, r := range report.Rows {
 				tag, err := tx.Exec(ctx, `
-				INSERT INTO wanted_dedup(ecosystem, name, version, symbol, epoch, anon_id)
-				VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
-					r.Ecosystem, r.Name, r.Version, r.Symbol, report.Epoch, report.AnonID)
+				INSERT INTO wanted_dedup(ecosystem, name, version, symbol, target_os, epoch, anon_id)
+				VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+					r.Ecosystem, r.Name, r.Version, r.Symbol, r.TargetOS, report.Epoch, report.AnonID)
 				if err != nil {
 					return err
 				}
@@ -2249,11 +2249,11 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 					continue // this reporter already counted today
 				}
 				if _, err := tx.Exec(ctx, `
-				INSERT INTO wanted(ecosystem, name, version, symbol, asks, first_seen, last_seen)
-				VALUES($1,$2,$3,$4,1,now(),now())
-				ON CONFLICT (ecosystem, name, version, symbol) DO UPDATE
+				INSERT INTO wanted(ecosystem, name, version, symbol, target_os, asks, first_seen, last_seen)
+				VALUES($1,$2,$3,$4,$5,1,now(),now())
+				ON CONFLICT (ecosystem, name, version, symbol, target_os) DO UPDATE
 				  SET asks = wanted.asks + 1, last_seen = now()`,
-					r.Ecosystem, r.Name, r.Version, r.Symbol); err != nil {
+					r.Ecosystem, r.Name, r.Version, r.Symbol, r.TargetOS); err != nil {
 					return err
 				}
 			}
@@ -2293,7 +2293,7 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			WITH unanswered AS (
-				SELECT w.ecosystem, w.name, w.version, w.symbol,
+				SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
 				       w.asks, w.first_seen, w.last_seen,
 				       TRUE AS has_page
 				  FROM wanted w
@@ -2312,6 +2312,12 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 			              SELECT 1 FROM receipts answer_receipt
 			               WHERE answer_receipt.sample_id = s.sample_id
 			                 AND answer_receipt.contract_result = 'PASS'
+			                 -- A row that names a platform is answered only by
+			                 -- a proof from that platform. Any-pass closure
+			                 -- would delete the ask before the platform it was
+			                 -- about had been measured at all.
+			                 AND (w.target_os = ''
+			                      OR LOWER(COALESCE(answer_receipt.receipt->'environment'->>'os','')) = w.target_os)
 			                 AND (
 			                     -- Pre-version Wanted rows cannot recover the
 			                     -- release that was originally requested. Keep
@@ -2347,7 +2353,7 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 			)
 			SELECT COALESCE(p.ecosystem, ''), COALESCE(p.name, ''),
 			       COALESCE(p.version, ''), COALESCE(p.symbol, ''),
-			       COALESCE(p.asks, 0),
+			       COALESCE(p.target_os, ''), COALESCE(p.asks, 0),
 			       COALESCE(p.first_seen, 'epoch'::timestamptz),
 			       COALESCE(p.last_seen, 'epoch'::timestamptz),
 			       COALESCE(p.has_page, FALSE), counted.total,
@@ -2364,7 +2370,7 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 		for rows.Next() {
 			var r WantedRow
 			var present bool
-			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Version, &r.Symbol, &r.Asks,
+			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Version, &r.Symbol, &r.TargetOS, &r.Asks,
 				&r.FirstSeen, &r.LastSeen, &r.HasPage, &total, &present); err != nil {
 				return err
 			}

@@ -50,7 +50,21 @@ type wantedReport struct {
 	AnonID        string   `json:"anonId"`
 	Packages      []string `json:"packages"`
 	Symbols       []string `json:"symbols,omitempty"`
+	// OS is the platform the miss happened on, and it is optional: a report
+	// without one is a question about the package rather than about a
+	// platform, and any verifier that can run it may answer.
+	//
+	// It is restricted to wantedReportOSes rather than accepting whatever the
+	// client calls itself. A free-text environment string attached to a
+	// stable anonymous id is a fingerprint, and the coarse platform name is
+	// the only part of it the work queue can act on.
+	OS string `json:"os,omitempty"`
 }
+
+// wantedReportOSes is the entire vocabulary a report may name. It matches the
+// platforms verification can actually target; anything else is refused rather
+// than stored and quietly ignored.
+var wantedReportOSes = map[string]bool{"linux": true, "windows": true, "darwin": true}
 
 type wantedBatch struct {
 	SchemaVersion int            `json:"schemaVersion"`
@@ -196,6 +210,10 @@ func rowsForWantedReport(req wantedReport, now time.Time) ([]serverstore.WantedR
 	if _, err := hex.DecodeString(req.AnonID); err != nil {
 		return nil, fmt.Errorf("wanted report anonId must be 16 hexadecimal characters")
 	}
+	reportedOS := strings.ToLower(strings.TrimSpace(req.OS))
+	if reportedOS != "" && !wantedReportOSes[reportedOS] {
+		return nil, fmt.Errorf("wanted report os must be one of linux, windows, darwin")
+	}
 	if len(req.Packages) == 0 || len(req.Packages) > maxWantedPerReport {
 		return nil, fmt.Errorf("wanted report requires 1..%d packages", maxWantedPerReport)
 	}
@@ -272,6 +290,7 @@ func rowsForWantedReport(req wantedReport, now time.Time) ([]serverstore.WantedR
 		for _, symbol := range symbols {
 			rows = append(rows, serverstore.WantedRow{
 				Ecosystem: p.Ecosystem, Name: p.Name, Version: p.Version, Symbol: symbol,
+				TargetOS: reportedOS,
 			})
 			if len(rows) >= maxWantedPerReport {
 				break

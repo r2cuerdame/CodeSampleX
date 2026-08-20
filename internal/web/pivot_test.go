@@ -69,8 +69,8 @@ func TestPivotSeparatesObservationFromVerification(t *testing.T) {
 	if c.Obs != 10 || c.Ver != 2 {
 		t.Fatalf("obs/ver = %d/%d, want 10/2 — never summed", c.Obs, c.Ver)
 	}
-	if c.State != "PASS" || c.Class != "pass" {
-		t.Errorf("state = %q/%q, want verified PASS", c.State, c.Class)
+	if c.Basis != "verified" || c.Class != "verified" {
+		t.Errorf("basis = %q/%q, want verified/verified", c.Basis, c.Class)
 	}
 	if c.Bang || c.Maybe {
 		t.Errorf("clean verified pass carries markers: bang=%v maybe=%v", c.Bang, c.Maybe)
@@ -87,8 +87,8 @@ func TestPivotObservationOnlyCellIsMarkedUncertain(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	c := cellAt(t, g, "linux", "node 22")
-	if c.State != "OBSERVED" || c.Class != "observed" {
-		t.Fatalf("state = %q/%q, want OBSERVED/observed", c.State, c.Class)
+	if c.Basis != "observed" || c.Class != "observed" {
+		t.Fatalf("basis = %q/%q, want observed/observed", c.Basis, c.Class)
 	}
 	if !c.Maybe {
 		t.Error("observation-only cell must carry the ? marker")
@@ -101,8 +101,9 @@ func TestPivotObservationOnlyCellIsMarkedUncertain(t *testing.T) {
 	}
 }
 
-// A verification failure is a measured anomaly: "!" appears and the state
-// says FAIL (or MIXED when passes exist beside it).
+// A verification failure is a measured anomaly: "!" appears. The cell no
+// longer says FAIL -- a verdict word claimed more than was measured -- so the
+// failure is read off the rate, on a cell whose basis stays "verified".
 func TestPivotVerificationFailureIsMarkedBang(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("windows", "", "node", "24.1", "2026-08-12T10:00:00Z", map[string]stageCount{
@@ -114,12 +115,14 @@ func TestPivotVerificationFailureIsMarkedBang(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	mixed := cellAt(t, g, "windows", "node 24")
-	if mixed.State != "MIXED" || !mixed.Bang {
-		t.Errorf("mixed cell = %q bang=%v, want MIXED with !", mixed.State, mixed.Bang)
+	if mixed.Basis != "verified" || mixed.Ratio != "1/2" || !mixed.Bang {
+		t.Errorf("mixed cell = %q %q bang=%v, want verified 1/2 with !",
+			mixed.Basis, mixed.Ratio, mixed.Bang)
 	}
 	fail := cellAt(t, g, "linux", "node 24")
-	if fail.State != "FAIL" || fail.Class != "fail" || !fail.Bang {
-		t.Errorf("fail cell = %q/%q bang=%v, want FAIL/fail with !", fail.State, fail.Class, fail.Bang)
+	if fail.Basis != "verified" || fail.Class != "verified" || fail.Ratio != "0/3" || !fail.Bang {
+		t.Errorf("fail cell = %q/%q %q bang=%v, want verified/verified 0/3 with !",
+			fail.Basis, fail.Class, fail.Ratio, fail.Bang)
 	}
 	if !g.HasBang {
 		t.Error("grid must know it contains a ! marker for the legend")
@@ -173,8 +176,8 @@ func TestPivotStaleFollowsVerificationRecency(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	c := cellAt(t, g, "linux", "node 22")
-	if c.State != "PASS" {
-		t.Fatalf("state = %q, want PASS from the verification", c.State)
+	if c.Basis != "verified" {
+		t.Fatalf("basis = %q, want verified from the verification", c.Basis)
 	}
 	if !c.Stale || !c.Maybe {
 		t.Errorf("stale=%v maybe=%v — the fresh observation hid the verification's age", c.Stale, c.Maybe)
@@ -224,10 +227,10 @@ func TestPivotAxisBucketing(t *testing.T) {
 	if merged.Ver != 2 {
 		t.Errorf("linux cell ver = %d, want the 22.18 and 22.4 rows merged to 2", merged.Ver)
 	}
-	if cellAt(t, g, "linux musl", "node 22").State != "FAIL" {
+	if cellAt(t, g, "linux musl", "node 22").Ratio != "0/1" {
 		t.Error("musl is a separate row from glibc linux")
 	}
-	if cellAt(t, g, "macos", "node 22").State != "PASS" {
+	if cellAt(t, g, "macos", "node 22").Ratio != "1/1" {
 		t.Error("darwin must display as macos")
 	}
 }
@@ -345,8 +348,11 @@ func TestPivotCellRatioShowsHiddenDepth(t *testing.T) {
 	if got := cellAt(t, g, "linux", "node 22").Ratio; got != "15/18" {
 		t.Errorf("mixed cell ratio = %q, want 15/18", got)
 	}
-	if got := cellAt(t, g, "windows", "node 22").Ratio; got != "" {
-		t.Errorf("single-event cell ratio = %q, want empty", got)
+	// A single run states its rate too. Blanking it rendered one run exactly
+	// like eighteen agreeing ones, and how thin the evidence is IS part of
+	// the measurement.
+	if got := cellAt(t, g, "windows", "node 22").Ratio; got != "1/1" {
+		t.Errorf("single-event cell ratio = %q, want 1/1", got)
 	}
 	if got := cellAt(t, g, "macos", "node 22").Ratio; got != "7/8" {
 		t.Errorf("observation-only cell ratio = %q, want 7/8", got)

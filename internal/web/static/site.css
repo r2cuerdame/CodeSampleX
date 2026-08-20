@@ -1293,16 +1293,25 @@ table.pivot thead th { background: var(--panel-2); font-weight: 700; }
 table.pivot th.corner { background: transparent; border-color: transparent transparent var(--line) var(--line); border-left-color: transparent; }
 table.pivot th.rowlabel { background: var(--panel-2); text-align: left; font-weight: 600; }
 td.pv a, td.pv .pvbody { display: inline-flex; align-items: baseline; gap: 0.3rem; text-decoration: none; color: inherit; }
-td.pv a:hover .pvstate { text-decoration: underline; }
-td.pv.pass { background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
-td.pv.fail { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
-td.pv.mixed { background: color-mix(in srgb, var(--mid) 12%, var(--panel)); }
-td.pv.observed { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+td.pv a:hover .pvbasis { text-decoration: underline; }
+/* Tone colours how the rate came out; basis decides the glyph and the weight.
+   Failure has to catch the eye -- it is the rare, high-information event --
+   but the colour is the only thing that says so, because the WORD claimed
+   more than the count supported. */
+td.pv.t-pass { background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
+td.pv.t-fail { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+td.pv.t-mixed { background: color-mix(in srgb, var(--mid) 12%, var(--panel)); }
 td.pv.empty { color: var(--dim); background: var(--panel); }
-td.pv .pvstate { font-weight: 700; font-size: 0.74rem; letter-spacing: 0.02em; }
-td.pv.pass .glyph { color: var(--ok); }
-td.pv.fail .glyph { color: var(--bad); }
-td.pv.mixed .glyph { color: var(--mid); }
+td.pv .pvbasis { font-weight: 700; font-size: 0.74rem; letter-spacing: 0.02em; }
+td.pv.t-pass .glyph { color: var(--ok); }
+td.pv.t-fail .glyph { color: var(--bad); }
+td.pv.t-mixed .glyph { color: var(--mid); }
+/* Basis is legible without colour: a solid mark for a run we made, a hollow
+   one for a report we received. An observation-only cell is dimmed so a large
+   anonymous count can never outweigh a small proven one at a glance. */
+td.pv.observed .glyph, td.pv.observed .pvbasis { opacity: 0.72; }
+td.pv.observed .pvbasis { font-weight: 500; }
+td.pv.verified .pvbasis { font-weight: 800; }
 td.pv .pvratio { font-size: 0.72rem; }
 .mark { font-weight: 800; font-style: normal; }
 .mark.bang { color: var(--bad); }
@@ -1433,7 +1442,7 @@ table.pivot th.rowlabel {
 table.pivot tbody tr:hover td.pv:not(.empty) {
   filter: brightness(0.97);
 }
-td.pv .pvstate { font-size: 0.7rem; }
+td.pv .pvbasis { font-size: 0.7rem; }
 
 /* Findings read as detected-issue report entries. */
 .finding-card {

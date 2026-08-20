@@ -55,10 +55,18 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 		// at 37% for a day with nowhere to show itself.
 		if err := c.QueryRow(ctx, `
 			WITH pub AS (
+			  -- jsonb_array_elements_text raises "cannot extract elements
+			  -- from a scalar" on jsonb null, and a manifest with no packages
+			  -- serializes to null rather than SQL NULL -- so one such sample
+			  -- would fail this whole panel instead of skipping itself.
 			  SELECT s.sample_id,
-			         (SELECT p FROM jsonb_array_elements_text(s.manifest->'packages') p LIMIT 1) AS purl,
+			         (SELECT p FROM jsonb_array_elements_text(
+			              CASE WHEN jsonb_typeof(s.manifest->'packages') = 'array'
+			                   THEN s.manifest->'packages' ELSE '[]'::jsonb END) p LIMIT 1) AS purl,
 			         COALESCE((SELECT string_agg(y,',' ORDER BY y)
-			                     FROM jsonb_array_elements_text(s.manifest->'symbols') y),'') AS syms
+			                     FROM jsonb_array_elements_text(
+			              CASE WHEN jsonb_typeof(s.manifest->'symbols') = 'array'
+			                   THEN s.manifest->'symbols' ELSE '[]'::jsonb END) y),'') AS syms
 			    FROM samples s WHERE NOT s.quarantined
 			)
 			SELECT (SELECT count(*) FROM pub),
@@ -96,6 +104,83 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 		return rows.Err()
 	})
 	return health, err
+}
+
+// FarmCoverage measures the compatibility map against itself: for every
+// (os, ecosystem) the network has seen used, how much of it has actually been
+// proven there.
+//
+// Observations arrive from developer machines and proofs from containers, so
+// the two axes can disagree entirely -- and did: every observation recorded
+// was windows while every receipt was linux. Counting them together hid that
+// for months behind a single healthy-looking coverage number.
+func (p *PG) FarmCoverage(ctx context.Context) ([]FarmAxisCoverage, error) {
+	var out []FarmAxisCoverage
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH observed AS (
+			  SELECT DISTINCT LOWER(BTRIM(e.env_json->>'os')) AS os, p.ecosystem, p.purl
+			    FROM evidence_agg e
+			    JOIN packages p ON p.purl=e.purl AND p.publicness='PUBLIC'
+			   WHERE COALESCE(BTRIM(e.env_json->>'os'),'') <> ''
+			), ran AS (
+			  -- jsonb_array_elements_text raises on a scalar, and a manifest
+			  -- with no packages serializes to jsonb null rather than SQL
+			  -- NULL, so one such row would abort the whole query instead of
+			  -- skipping itself. Guard it the way admin_insights.go already
+			  -- guards the identical expansion.
+			  SELECT DISTINCT LOWER(BTRIM(r.receipt->'environment'->>'os')) AS os,
+			         p.ecosystem, p.purl, r.contract_result
+			    FROM receipts r
+			    JOIN samples s ON s.sample_id=r.sample_id AND NOT s.quarantined
+			   CROSS JOIN LATERAL jsonb_array_elements_text(
+			         CASE WHEN jsonb_typeof(r.receipt->'resolvedPackages') = 'array'
+			                   AND jsonb_array_length(r.receipt->'resolvedPackages') > 0
+			              THEN r.receipt->'resolvedPackages'
+			              WHEN jsonb_typeof(s.manifest->'packages') = 'array'
+			              THEN s.manifest->'packages'
+			              ELSE '[]'::jsonb END) AS m(purl)
+			    JOIN packages p ON p.purl=m.purl AND p.publicness='PUBLIC'
+			   WHERE r.contract_result IN ('PASS','FAIL')
+			     AND COALESCE(BTRIM(r.receipt->'environment'->>'os'),'') <> ''
+			), measured AS (
+			  SELECT DISTINCT os, ecosystem, purl FROM ran
+			), proven AS (
+			  SELECT DISTINCT os, ecosystem, purl FROM ran WHERE contract_result = 'PASS'
+			), keys AS (
+			  SELECT os, ecosystem FROM observed
+			  UNION
+			  SELECT os, ecosystem FROM measured
+			)
+			SELECT k.os, k.ecosystem,
+			       (SELECT count(*) FROM observed o
+			         WHERE o.os = k.os AND o.ecosystem = k.ecosystem),
+			       (SELECT count(*) FROM measured m
+			         WHERE m.os = k.os AND m.ecosystem = k.ecosystem),
+			       (SELECT count(*) FROM proven v
+			         WHERE v.os = k.os AND v.ecosystem = k.ecosystem),
+			       (SELECT count(*) FROM observed o
+			          JOIN proven v ON v.os = o.os AND v.ecosystem = o.ecosystem
+			                       AND v.purl = o.purl
+			         WHERE o.os = k.os AND o.ecosystem = k.ecosystem)
+			  FROM keys k
+			 ORDER BY 1 ASC, 3 DESC, 2 ASC
+			 LIMIT 500`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row FarmAxisCoverage
+			if err := rows.Scan(&row.OS, &row.Ecosystem, &row.Observed,
+				&row.Measured, &row.Proven, &row.ObservedProven); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 var _ FarmStatsStore = (*PG)(nil)

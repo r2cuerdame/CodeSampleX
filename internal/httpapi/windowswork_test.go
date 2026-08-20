@@ -67,3 +67,27 @@ func TestWorkRequestAcceptsAWindowsVerifier(t *testing.T) {
 		t.Errorf("normalize = %v err=%v", got, err)
 	}
 }
+
+// A reporter who hit the problem on Windows is asking for a Windows answer.
+// Until the report could carry an OS, every ask was unpinned and the farm
+// answered all of them on Linux — which is how the network came to observe
+// 2,729 packages on Windows and prove none of them there.
+func TestWantedHonorsTheOSItWasReportedFrom(t *testing.T) {
+	windows := req(domain.CapContainerRun, "windows")
+	linux := req(domain.CapContainerRun, "linux")
+
+	asked := serverstore.WantedRow{Ecosystem: "golang", Version: "1.0.0", Kind: "WANTED", TargetOS: "windows"}
+	if !authoringCandidateEligible(asked, windows) {
+		t.Error("a Windows ask was refused by a Windows verifier")
+	}
+	if authoringCandidateEligible(asked, linux) {
+		t.Error("a Windows ask was handed to a Linux verifier — a Linux proof does not answer it")
+	}
+
+	// A report with no OS is a question about the package, not about a
+	// platform. Anyone who can run it should be able to answer it.
+	unpinned := serverstore.WantedRow{Ecosystem: "golang", Version: "1.0.0", Kind: "WANTED"}
+	if !authoringCandidateEligible(unpinned, linux) || !authoringCandidateEligible(unpinned, windows) {
+		t.Error("an unpinned ask stopped being answerable by whoever can run it")
+	}
+}

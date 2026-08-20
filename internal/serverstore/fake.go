@@ -36,9 +36,9 @@ type Fake struct {
 	ids             map[string]IdentityRow
 	clusters        map[fakeClusterKey]ClusterRow
 	stats           map[string]string // day → stats JSON
-	wanted          map[[4]string]*WantedRow
+	wanted          map[[5]string]*WantedRow
 	adoptions       map[[3]string]AdoptionRow
-	wantedSeen      map[[6]string]bool
+	wantedSeen      map[[7]string]bool
 	authoring       map[string]AuthoringSessionRow
 	adminTokens     map[string]AdminTokenRow // token hash -> row
 	authoringDrafts map[string]AuthoringDraftRow
@@ -85,9 +85,9 @@ func NewFake() *Fake {
 		ids:             map[string]IdentityRow{},
 		clusters:        map[fakeClusterKey]ClusterRow{},
 		stats:           map[string]string{},
-		wanted:          map[[4]string]*WantedRow{},
+		wanted:          map[[5]string]*WantedRow{},
 		adoptions:       map[[3]string]AdoptionRow{},
-		wantedSeen:      map[[6]string]bool{},
+		wantedSeen:      map[[7]string]bool{},
 		authoring:       map[string]AuthoringSessionRow{},
 		authoringDrafts: map[string]AuthoringDraftRow{},
 		authoringWork:   map[[4]string]AuthoringWorkRow{},
@@ -549,7 +549,7 @@ func (f *Fake) VerifiedSamplesForPackages(ctx context.Context, patterns []string
 	defer f.mu.Unlock()
 	out := make([]SampleRow, 0, len(all))
 	for _, row := range all {
-		if !f.hasContractPass(row.SampleID) {
+		if !f.hasContractPass(row.SampleID, "") {
 			continue
 		}
 		out = append(out, row)
@@ -569,7 +569,7 @@ func (f *Fake) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow,
 	defer f.mu.Unlock()
 	out := make([]SampleRow, 0, len(all))
 	for _, row := range all {
-		if !f.hasContractPass(row.SampleID) {
+		if !f.hasContractPass(row.SampleID, "") {
 			continue
 		}
 		out = append(out, row)
@@ -1188,7 +1188,7 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 	}
 	c.Symbols = int64(len(symbols))
 	for id, s := range f.samples {
-		if verifiedStatus(s.Status) || f.hasContractPass(id) {
+		if verifiedStatus(s.Status) || f.hasContractPass(id, "") {
 			c.VerifiedSamples++
 		}
 	}
@@ -1196,22 +1196,33 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 }
 
 // hasContractPass reports whether any receipt proved the sample's contract.
-func (f *Fake) hasContractPass(sampleID string) bool {
+func (f *Fake) hasContractPass(sampleID, targetOS string) bool {
 	for _, r := range f.receipts[sampleID] {
-		if strings.EqualFold(r.ContractResult, "PASS") {
+		if strings.EqualFold(r.ContractResult, "PASS") && receiptAnswersOS(r.ReceiptJSON, targetOS) {
 			return true
 		}
 	}
 	return false
 }
 
+// receiptAnswersOS reports whether a receipt can answer a request for
+// targetOS. An unpinned request ("") is a question about the package, so any
+// platform answers it; a pinned one is a question about that platform, and a
+// pass from elsewhere is a different measurement wearing the same name.
+func receiptAnswersOS(receiptJSON, targetOS string) bool {
+	if targetOS == "" {
+		return true
+	}
+	return strings.EqualFold(farmReceiptOS(receiptJSON), targetOS)
+}
+
 // hasExactResolvedContractPass is the versioned Wanted answer boundary.
 // A manifest version is author input; only a PASS receipt whose valid v2
 // resolvedPackages list names the coordinate proves that release actually
 // ran. Legacy v1 receipts intentionally establish no exact version.
-func (f *Fake) hasExactResolvedContractPass(sampleID, purl string) bool {
+func (f *Fake) hasExactResolvedContractPass(sampleID, purl, targetOS string) bool {
 	for _, r := range f.receipts[sampleID] {
-		if !strings.EqualFold(r.ContractResult, "PASS") {
+		if !strings.EqualFold(r.ContractResult, "PASS") || !receiptAnswersOS(r.ReceiptJSON, targetOS) {
 			continue
 		}
 		for _, resolved := range resolvedPackageStrings(r.ReceiptJSON) {
@@ -1246,16 +1257,16 @@ func (f *Fake) RecordWantedBatch(_ context.Context, reports []WantedSubmission) 
 	defer f.mu.Unlock()
 	for _, report := range reports {
 		for _, r := range report.Rows {
-			seen := [6]string{r.Ecosystem, r.Name, r.Version, r.Symbol, report.Epoch, report.AnonID}
+			seen := [7]string{r.Ecosystem, r.Name, r.Version, r.Symbol, r.TargetOS, report.Epoch, report.AnonID}
 			if f.wantedSeen[seen] {
 				continue
 			}
 			f.wantedSeen[seen] = true
-			key := [4]string{r.Ecosystem, r.Name, r.Version, r.Symbol}
+			key := [5]string{r.Ecosystem, r.Name, r.Version, r.Symbol, r.TargetOS}
 			w := f.wanted[key]
 			if w == nil {
 				w = &WantedRow{Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
-					FirstSeen: f.now()}
+					TargetOS: r.TargetOS, FirstSeen: f.now()}
 				f.wanted[key] = w
 			}
 			w.Asks++
@@ -1328,13 +1339,16 @@ func (f *Fake) listWanted(query string, offset, limit int, ecosystem, name strin
 			if !packageMatch {
 				continue
 			}
+			// A row that names a platform is answered only by a proof from
+			// that platform. Closing it on any pass would delete the ask
+			// before the platform it was about had been measured at all.
 			if w.Version == "" {
-				if !f.hasContractPass(s.SampleID) {
+				if !f.hasContractPass(s.SampleID, w.TargetOS) {
 					continue
 				}
 			} else {
 				exact := domain.PURL{Ecosystem: w.Ecosystem, Name: w.Name, Version: w.Version}.String()
-				if !f.hasExactResolvedContractPass(s.SampleID, exact) {
+				if !f.hasExactResolvedContractPass(s.SampleID, exact, w.TargetOS) {
 					continue
 				}
 			}
