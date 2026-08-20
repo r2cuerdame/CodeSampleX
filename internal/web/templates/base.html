@@ -235,15 +235,16 @@ document.addEventListener('keydown',event=>{
 <li class="cluster">
   <div class="row"><span class="k mono">{{$.T "symbol.observed"}}</span>
     <span class="mono">{{.Stage}}</span>
-    {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{end}}
+    {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{else}}<span class="dim mono small">{{$.T "symbol.no_error_code"}}</span>{{end}}
     <span class="dim mono">×{{.Count}}</span>
     {{if .EnvSummary}}<span class="dim mono">{{.EnvSummary}}</span>{{end}}
     {{if .Symbol}}<span class="dim mono">{{.Symbol}}</span>{{end}}
     <span class="dim mono small">{{.Fingerprint}}</span>
   </div>
   {{- if .Hypotheses}}
-  <div class="row"><span class="k mono">{{$.T "symbol.hypotheses"}}</span>
+  <div class="row hyprow"><span class="k mono dim">{{$.T "symbol.hypotheses"}}</span>
     {{range .Hypotheses}}<span class="chip hyp mono">{{.Domain}} {{.Pct}}</span> {{end}}
+    <span class="dim mono small">{{$.T "symbol.hypotheses_note"}}</span>
   </div>
   {{- end}}
   {{- if .RegressionCandidate}}

@@ -1666,3 +1666,10 @@ table.runs tbody tr:hover td { background: var(--panel-2); }
 .clihelp-list { margin: 0.5rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.35rem; }
 .clihelp-list li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
 .clihelp-list code { color: var(--accent-2); font-weight: 650; }
+
+/* A hypothesis is our inference about a cause; the recorded error is the
+   fact. Two thirds of clusters carry no error code, and on those the guess
+   was the only substantial thing on the row. It is now visibly subordinate
+   and says what it is. */
+.cluster .hyprow { opacity: 0.78; }
+.cluster .hyprow .k { font-weight: 500; }
