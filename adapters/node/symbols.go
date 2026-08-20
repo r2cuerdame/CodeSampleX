@@ -193,9 +193,27 @@ func extractUses(content string) []rawUse {
 
 	var uses []rawUse
 	for local, spec := range bindings {
-		reMem := regexp.MustCompile(`\b` + regexp.QuoteMeta(local) + `\.([A-Za-z_$][\w$]*)\s*[(\x60]`)
+		// ANY member access, not only an immediate call.
+		//
+		// This used to require "(" or a template backtick straight after the
+		// member, so `axios.defaults.baseURL = x`, `const c = axios.create`,
+		// `new pg.Client()` and `if (axios.isCancel)` all recorded nothing.
+		// The package-level row already says the package was imported, so a
+		// dropped member is the only part that was ever going to be new --
+		// and 84% of the most-observed packages carry no symbol evidence.
+		//
+		// The local name is an import binding, so `local.member` is a member
+		// of that package whatever punctuation follows it. Widening the
+		// terminator cannot attribute anything to a package nobody imported.
+		// The call/reference distinction is real and stays: a member that is
+		// invoked is a method, one that is only read is a property.
+		reMem := regexp.MustCompile(`\b` + regexp.QuoteMeta(local) + `\.([A-Za-z_$][\w$]*)(\s*[(\x60])?`)
 		for _, m := range reMem.FindAllStringSubmatch(body, -1) {
-			uses = append(uses, rawUse{spec, m[1], "method", domain.SymbolProbable})
+			kind := "property"
+			if strings.TrimSpace(m[2]) != "" {
+				kind = "method"
+			}
+			uses = append(uses, rawUse{spec, m[1], kind, domain.SymbolProbable})
 			pkgHasFamily[spec] = true
 		}
 	}
