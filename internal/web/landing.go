@@ -84,18 +84,10 @@ type statTile struct {
 	Sub   string
 }
 
-func buildTiles(lang string, st *netStats, findings int64) []statTile {
+func buildTiles(lang string, st *netStats) []statTile {
 	have := st != nil
 	if st == nil {
 		st = &netStats{}
-	}
-	known := func(key string, n int64) statTile {
-		return statTile{
-			Label: i18n.T(lang, key),
-			Sub:   i18n.T(lang, key+"_sub"),
-			Value: i18n.FormatCompactInt(lang, n),
-			Exact: i18n.FormatInt(lang, n),
-		}
 	}
 	counter := func(key string, n int64) statTile {
 		tile := statTile{
@@ -135,13 +127,12 @@ func buildTiles(lang string, st *netStats, findings int64) []statTile {
 		// they were people. All three are fixed, and it is the plainest true
 		// thing this project can say about itself.
 		counter("stats.observations", st.Evidence),
-		counter("stats.packages", st.Packages),
+		// Our own output stays in the middle, which is where it has been
+		// since the row was three. The findings count sat here as a fourth
+		// card; it has a page of its own with a tab, and a four-card row
+		// made the reader weigh four different units at once.
 		counter("stats.verified_samples", st.VerifiedSamples),
-		// Not gated on the stats document, because it does not come from
-		// one: the count is read where the findings page reads it. Blanking
-		// a number the page knows, because a different number is missing,
-		// would say "unmeasured" about the one thing here that is ours.
-		known("stats.findings", findings),
+		counter("stats.packages", st.Packages),
 	}
 }
 
@@ -460,7 +451,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 
 	s.render(w, "landing", http.StatusOK, landingPage{
 		basePage:    b,
-		Tiles:       buildTiles(lang, st, s.findingsTotal(r)),
+		Tiles:       buildTiles(lang, st),
 		Ecos:        buildHeroEcos(lang),
 		InstallPS:   "irm " + base + "/install.ps1 | iex",
 		InstallSH:   "curl -fsSL " + base + "/install.sh | sh",

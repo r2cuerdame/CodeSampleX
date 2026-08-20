@@ -21,25 +21,24 @@ func TestHomepageReportsTheObservationRecord(t *testing.T) {
 	body := get(t, mux, "/").Body.String()
 
 	mustContain(t, body, `aria-label="Observations: 34,122"`)
-	if got := strings.Count(body, `<div class="stat">`); got != 4 {
-		t.Errorf("stat cards = %d, want 4", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("stat cards = %d, want 3", got)
 	}
 }
 
-// Four counters, in every language, in one order: what was measured, how far
-// it reaches, what we produced, what we learned.
+// Three counters, in every language, in one order: what was measured, what
+// we made of it, how far it reaches.
 func TestHomepageCountersReadInOneOrderInEveryLocale(t *testing.T) {
 	stats := &netStats{Packages: 1888, Evidence: 34122, VerifiedSamples: 2736}
 	for _, lang := range i18n.Supported {
-		tiles := buildTiles(lang, stats, 572)
-		if len(tiles) != 4 {
+		tiles := buildTiles(lang, stats)
+		if len(tiles) != 3 {
 			t.Fatalf("%s: tiles = %d, want 4", lang, len(tiles))
 		}
 		want := []string{
 			i18n.T(lang, "stats.observations"),
-			i18n.T(lang, "stats.packages"),
 			i18n.T(lang, "stats.verified_samples"),
-			i18n.T(lang, "stats.findings"),
+			i18n.T(lang, "stats.packages"),
 		}
 		for i, label := range want {
 			if tiles[i].Label != label {

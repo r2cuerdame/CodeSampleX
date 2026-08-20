@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,13 +15,6 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
-
-// handFindingCount is what the front page must report when the store has no
-// derived findings: the hand-checked groups, counted the same way the
-// findings page counts them.
-func handFindingCount() string {
-	return strconv.Itoa(len(documentedFindings) + len(believedFindings))
-}
 
 func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
 	t.Helper()
@@ -100,13 +92,12 @@ func TestLandingEnglish(t *testing.T) {
 	mustContain(t, body, "curl -fsSL https://codesamplex.dev/install.sh | sh")
 	// One page carries the whole story: the focused counters and the
 	// measured ecosystems linked straight into the records inventory.
-	for _, s := range []string{"Packages", "Verified Samples", "Findings",
-		`aria-label="Findings: ` + handFindingCount() + `"`,
+	for _, s := range []string{"Observations", "Verified Samples", "Packages",
 		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
 		mustContain(t, body, s)
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 4 {
-		t.Errorf("homepage stat cards = %d, want exactly 4", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("homepage stat cards = %d, want exactly 3", got)
 	}
 	for _, omitted := range []string{"Symbols", "Projects this month", "Peers today", "Post-hit success rate"} {
 		if strings.Contains(body, `<span class="lbl">`+omitted+`</span>`) {
@@ -246,7 +237,6 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 	body := get(t, mux, "/").Body.String()
 	for _, want := range []string{
 		`title="17,500" aria-label="Packages: 17,500">17.5K</span>`,
-		`title="` + handFindingCount() + `" aria-label="Findings: ` + handFindingCount() + `">` + handFindingCount() + `</span>`,
 		`title="1,234" aria-label="Verified Samples: 1,234">1.2K</span>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -254,8 +244,8 @@ func TestStatsPageRendersProducerJSON(t *testing.T) {
 				want, truncate(body))
 		}
 	}
-	if got := strings.Count(body, `<div class="stat">`); got != 4 {
-		t.Errorf("homepage stat cards = %d, want exactly 4", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("homepage stat cards = %d, want exactly 3", got)
 	}
 	// This guard used to forbid the observation total outright, on the
 	// grounds that a run total means whatever its population means and
@@ -568,8 +558,8 @@ func TestStatsUnavailableStillRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	mustContain(t, body, "Does it run there?")
-	if got := strings.Count(body, `<div class="stat">`); got != 4 {
-		t.Errorf("unavailable stats cards = %d, want 4", got)
+	if got := strings.Count(body, `<div class="stat">`); got != 3 {
+		t.Errorf("unavailable stats cards = %d, want 3", got)
 	}
 	// Two, not three: the findings counter is not read from the stats
 	// document, so a stats outage has nothing to say about it.
