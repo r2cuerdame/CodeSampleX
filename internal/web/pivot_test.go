@@ -99,10 +99,9 @@ func TestPivotObservationOnlyCellCarriesNoVerificationMark(t *testing.T) {
 	}
 }
 
-// A verification that failed carries no mark at all: the check means our
-// sample RAN AND PASSED here, so its absence is what a failure looks like.
-// Colour, not a glyph, says how the runs went.
-func TestPivotVerificationFailureCarriesNoMark(t *testing.T) {
+// A verification that failed carries the check's counterpart. Colour alone
+// was carrying it, and a red "—" reads as "missing data, and somehow bad".
+func TestPivotVerificationFailureIsMarked(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("windows", "", "node", "24.1", "2026-08-12T10:00:00Z", map[string]stageCount{
 			"CONTRACT": {Pass: 1, Fail: 1},
@@ -113,14 +112,12 @@ func TestPivotVerificationFailureCarriesNoMark(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	mixed := cellAt(t, g, "windows", "node 24")
-	if mixed.Glyph != "" || mixed.Tone != "mixed" {
-		t.Errorf("mixed cell = glyph %q tone %q, want no mark and a mixed tone",
-			mixed.Glyph, mixed.Tone)
+	if mixed.Glyph != "✕" || mixed.Tone != "mixed" {
+		t.Errorf("mixed cell = glyph %q tone %q, want the failure mark", mixed.Glyph, mixed.Tone)
 	}
 	fail := cellAt(t, g, "linux", "node 24")
-	if fail.Glyph != "" || fail.Tone != "fail" {
-		t.Errorf("fail cell = glyph %q tone %q, want no mark and a failing tone",
-			fail.Glyph, fail.Tone)
+	if fail.Glyph != "✕" || fail.Tone != "fail" {
+		t.Errorf("fail cell = glyph %q tone %q, want the failure mark", fail.Glyph, fail.Tone)
 	}
 	if !g.HasBang {
 		t.Error("grid must still record the anomaly for the tooltip")

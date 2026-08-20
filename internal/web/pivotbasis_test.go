@@ -112,8 +112,8 @@ func TestCrossReproductionAddsNoSecondMark(t *testing.T) {
 func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 	now := time.Now()
 	failed := buildPivotCell(agg(0, 0, 0, 3), now)
-	if failed.Glyph != "" {
-		t.Errorf("a cell whose run failed carries a mark %q", failed.Glyph)
+	if failed.Glyph != "✕" {
+		t.Errorf("a failed run = %q, want the check's counterpart", failed.Glyph)
 	}
 	passed := buildPivotCell(agg(0, 0, 3, 0), now)
 	if passed.Glyph != "✓" {

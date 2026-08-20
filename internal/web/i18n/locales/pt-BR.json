@@ -225,6 +225,7 @@
   "legend.how_heading": "Como ler uma célula:",
   "legend.how_rate": "o número é quantas máquinas reais passaram, e a marca significa que a nossa amostra funciona aqui. Uma execução limpa ou cem, a marca é o mesmo fato: existe código funcionando para esta célula.",
   "legend.mark_check": "nossa amostra funciona aqui",
+  "legend.mark_cross": "nossa amostra falhou aqui",
   "meta.adapters": "Quais ecossistemas o CodeSampleX suporta e até onde: detecção de pacotes, observação de builds, resolução de símbolos e verificação por contrato.",
   "meta.explore": "Pesquise pacotes públicos e veja evidências reais de compatibilidade: contextos de execução, confiança, clusters de falha e amostras verificadas.",
   "meta.explorer": "Evidências de compatibilidade em ambientes reais para %s: contextos de execução, confiança, clusters de falha e exemplos verificados.",

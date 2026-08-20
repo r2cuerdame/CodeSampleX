@@ -142,8 +142,10 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 	c := cellAt(t, g, "x64", "19.1.0")
 	// Verified with no observation: the mark stays, and the count says no
 	// usage was recorded rather than claiming zero machines got through.
-	if c.Basis != "verified" || c.Ratio != "—" || c.Glyph != "" {
-		t.Errorf("windows/x64/19.1.0 = %q %q glyph=%q, want verified with no usage",
+	// Our run failed here and nobody has been seen using it: the cross says
+	// the first part and the dash says the second, without relying on hue.
+	if c.Basis != "verified" || c.Ratio != "—" || c.Glyph != "✕" {
+		t.Errorf("windows/x64/19.1.0 = %q %q glyph=%q, want a failed run and no usage",
 			c.Basis, c.Ratio, c.Glyph)
 	}
 	if got := cellAt(t, g, "arm64", "18.3.1").Basis; got != "observed" {

@@ -225,6 +225,7 @@
   "legend.how_heading": "Lire une cellule :",
   "legend.how_rate": "le nombre indique combien de machines réelles ont réussi, et la coche signifie que notre exemple fonctionne ici. Une exécution propre ou cent, la marque est le même fait : du code qui fonctionne existe pour cette cellule.",
   "legend.mark_check": "notre exemple fonctionne ici",
+  "legend.mark_cross": "notre exemple a échoué ici",
   "meta.adapters": "Quels écosystèmes CodeSampleX prend en charge et jusqu'où : détection de paquets, observation des builds, résolution de symboles et vérification par contrat.",
   "meta.explore": "Recherchez des paquets publics et consultez les preuves de compatibilité réelles : contextes d'exécution, confiance, clusters d'échec et échantillons vérifiés.",
   "meta.explorer": "Preuves de compatibilité en environnements réels pour %s : contextes d'exécution, confiance, clusters d'échecs et exemples vérifiés.",

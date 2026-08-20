@@ -225,6 +225,7 @@
   "legend.how_heading": "Reading a cell:",
   "legend.how_rate": "the number is how many real machines got through it, and the check means our own sample runs here. One clean run or a hundred, the mark is the same fact: working code exists for this cell.",
   "legend.mark_check": "our own sample runs here",
+  "legend.mark_cross": "our sample failed here",
   "meta.adapters": "Which ecosystems CodeSampleX supports and exactly how far: package detection, build observation, symbol resolution and contract verification per adapter.",
   "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and verified samples.",
   "meta.explorer": "Real-environment compatibility evidence for %s: execution contexts, confidence, failure clusters and verified samples.",

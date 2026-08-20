@@ -622,16 +622,22 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	if obs == 0 {
 		cell.PassCount, cell.FailCount = a.verPass, a.verFail
 	}
-	// The mark is our own working code, and only when it worked. One clean
-	// verification is as much of that fact as a hundred: either a sample runs
-	// here or it does not.
+	// The mark is our own run and how it went: a check when our sample passed
+	// here, a cross when it failed, nothing when we have no sample for this
+	// cell at all. One clean run is as much of that fact as a hundred.
 	//
-	// Cross reproduction does not get a second symbol. It is a strictly
-	// better version of the same fact, not a different one, and every extra
-	// glyph is one more thing to learn before the grid can be read at all —
-	// it stays in the tooltip.
-	if a.verPass > 0 && a.verFail == 0 {
+	// The cross exists because the alternative was colour alone. A verified
+	// FAILURE with no observations rendered as a red "—", which reads as
+	// "missing data, and somehow bad" -- the information was real and only
+	// the hue carried it. Marks are also legible without colour.
+	//
+	// Cross reproduction gets no third symbol: it is a strictly better
+	// version of the same fact and stays in the tooltip.
+	switch {
+	case a.verPass > 0 && a.verFail == 0:
 		cell.Glyph = "✓"
+	case a.verFail > 0:
+		cell.Glyph = "✕"
 	}
 	switch {
 	case cell.FailCount == 0:
