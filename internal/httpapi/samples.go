@@ -338,7 +338,7 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 		// cross attempts.
 		OS:        crossJobOS(manifest.Environment),
 		Ecosystem: manifest.Environment.Ecosystem,
-		Runtime:           manifest.Environment.Runtime,
+		Runtime:   manifest.Environment.Runtime,
 		RuntimeVersion: domain.RuntimeLine(manifest.Environment.Runtime,
 			manifest.Environment.RuntimeVersion),
 		ExecutionContext: manifest.Environment.ExecutionContext,

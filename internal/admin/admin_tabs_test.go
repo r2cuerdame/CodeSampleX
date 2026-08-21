@@ -49,8 +49,8 @@ func TestDashboardSplitsReadingFromActing(t *testing.T) {
 	}
 	// Exactly one panel starts visible, or the page opens showing both and
 	// the split buys nothing until the script runs.
-	opsTag := body[ops:strings.Index(body[ops:], ">")+ops]
-	farmTag := body[farm:strings.Index(body[farm:], ">")+farm]
+	opsTag := body[ops : strings.Index(body[ops:], ">")+ops]
+	farmTag := body[farm : strings.Index(body[farm:], ">")+farm]
 	if strings.Contains(opsTag, "hidden") {
 		t.Error("the dashboard panel starts hidden; the page opens on nothing")
 	}

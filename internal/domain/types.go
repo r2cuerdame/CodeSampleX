@@ -143,16 +143,16 @@ type WorkerRequirements struct {
 	// ("linux", "windows"). The queue filters offers on it and the receipt
 	// check refuses a run from anywhere else; empty runs anywhere, which is
 	// every job created before the field existed.
-	OS        string `json:"os,omitempty"`
-	Ecosystem string `json:"ecosystem,omitempty"`
-	Runtime           string            `json:"runtime,omitempty"`
-	RuntimeVersion    string            `json:"runtimeVersion,omitempty"`
-	ExecutionContext  string            `json:"executionContext,omitempty"`
-	BrowserFamily     string            `json:"browserFamily,omitempty"`
-	BrowserMajor      string            `json:"browserMajor,omitempty"`
-	Engine            string            `json:"engine,omitempty"`
-	EngineVersion     string            `json:"engineVersion,omitempty"`
-	Frameworks        []string          `json:"frameworks,omitempty"`
+	OS               string   `json:"os,omitempty"`
+	Ecosystem        string   `json:"ecosystem,omitempty"`
+	Runtime          string   `json:"runtime,omitempty"`
+	RuntimeVersion   string   `json:"runtimeVersion,omitempty"`
+	ExecutionContext string   `json:"executionContext,omitempty"`
+	BrowserFamily    string   `json:"browserFamily,omitempty"`
+	BrowserMajor     string   `json:"browserMajor,omitempty"`
+	Engine           string   `json:"engine,omitempty"`
+	EngineVersion    string   `json:"engineVersion,omitempty"`
+	Frameworks       []string `json:"frameworks,omitempty"`
 }
 
 // VerificationJobIDHeader binds a signed receipt submission to the exact

@@ -3,10 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"crypto/ed25519"
-	"net/http/httptest"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"

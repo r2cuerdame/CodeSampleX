@@ -37,10 +37,10 @@ export const t = axios.CanceledError;
 `
 	got := families(t, src)
 	for _, want := range []string{
-		"axios.defaults",     // chained property assignment
-		"axios.create",       // reference without a call
-		"pg.Client",          // constructor
-		"axios.isCancel",     // condition
+		"axios.defaults",      // chained property assignment
+		"axios.create",        // reference without a call
+		"pg.Client",           // constructor
+		"axios.isCancel",      // condition
 		"axios.CanceledError", // re-export
 	} {
 		if !got[want] {
