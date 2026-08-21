@@ -83,6 +83,71 @@ func TestAnMCPMissQueuesWantedCandidateWithoutRegistryIO(t *testing.T) {
 	}
 }
 
+// A reporter who hit the problem on Windows is asking for a Windows answer.
+// The server stores target_os, the queue pins WANTED work on it, and the
+// /wanted page renders it — but none of that runs unless the miss RECORDS the
+// platform it happened on, and this is the only producer.
+func TestAMissCarriesTheOSItHappenedOn(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	ctx := t.Context()
+
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		Packages:      []string{"pkg:npm/dotenv@17.2.3"},
+		Environment:   domain.EnvironmentFingerprint{OS: "Windows"},
+	}
+	recordSearchOutcome(ctx, db, ident, cfg, req, domain.SearchResponse{SchemaVersion: 1, Miss: true})
+
+	items, err := db.QueuePending(ctx, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %+v err=%v", items, err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(items[0].Payload), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["os"] != "windows" {
+		t.Errorf("os = %v, want the platform the miss happened on, normalized", m["os"])
+	}
+
+	// No recorded OS stays no OS: a question about the package, answerable by
+	// anyone who can run it.
+	req.Packages = []string{"pkg:npm/ms@2.1.3"}
+	req.Environment = domain.EnvironmentFingerprint{}
+	recordSearchOutcome(ctx, db, ident, cfg, req, domain.SearchResponse{SchemaVersion: 1, Miss: true})
+	items, _ = db.QueuePending(ctx, 10)
+	found := false
+	for _, it := range items {
+		if !strings.Contains(it.Payload, "pkg:npm/ms@2.1.3") {
+			continue
+		}
+		found = true
+		// A fresh map: Unmarshal merges into an existing one and would
+		// carry the first report's os over.
+		var second map[string]any
+		if err := json.Unmarshal([]byte(it.Payload), &second); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := second["os"]; present {
+			t.Errorf("an unreported OS was invented: %v", second["os"])
+		}
+	}
+	if !found {
+		t.Fatal("the second miss recorded nothing")
+	}
+}
+
 func TestJavaMavenMissQueuesWantedWithoutClaimingAdapterSupport(t *testing.T) {
 	dir := t.TempDir()
 	db, err := localdb.Open(filepath.Join(dir, "csx.db"))

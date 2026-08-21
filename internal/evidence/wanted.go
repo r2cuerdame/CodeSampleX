@@ -44,6 +44,27 @@ type WantedReport struct {
 	AnonID        string   `json:"anonId"`
 	Packages      []string `json:"packages"`
 	Symbols       []string `json:"symbols,omitempty"`
+	// OS is the platform the miss happened on, optional: a report without
+	// one is a question about the package rather than about a platform. It
+	// is what lets the work queue hand a Windows ask to a Windows verifier
+	// instead of closing it with a Linux pass.
+	OS string `json:"os,omitempty"`
+}
+
+// wantedReportOSes is the entire vocabulary a report may name — the platforms
+// verification can actually target, matching the server's own list. A
+// free-text environment string against a stable anonymous id is a
+// fingerprint, so the coarse platform name is all that may travel.
+var wantedReportOSes = map[string]bool{"linux": true, "windows": true, "darwin": true}
+
+// wantedReportOS normalizes an OS to the wire vocabulary, and to "" for
+// anything outside it — fail-closed, like every other field on this path.
+func wantedReportOS(raw string) string {
+	os := strings.ToLower(strings.TrimSpace(raw))
+	if wantedReportOSes[os] {
+		return os
+	}
+	return ""
 }
 
 // QueueWanted records that the network had no answer, so the question can
@@ -125,6 +146,7 @@ func QueueWanted(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 		AnonID:        ident.AnonID(epoch),
 		Packages:      pkgs,
 		Symbols:       symbols,
+		OS:            wantedReportOS(req.Environment.OS),
 	})
 	if err != nil {
 		return
@@ -162,6 +184,11 @@ func PrepareWantedForUpload(ctx context.Context, payload string,
 	} else {
 		report.Symbols = sanitizeWantedSymbols(report.Symbols)
 	}
+	// A hand-edited queue row must not smuggle a free-text environment
+	// string past this gate — and the server 400s a whole BATCH on an
+	// unknown os, so a poisoned row is cleaned here rather than left to
+	// block every report travelling with it.
+	report.OS = wantedReportOS(report.OS)
 
 	confirmed := make([]string, 0, len(report.Packages))
 	seen := map[string]bool{}
