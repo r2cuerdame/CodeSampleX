@@ -483,7 +483,7 @@ func renderMiss(overview []PackageOverview, hint string, observed *domain.Observ
 	var b strings.Builder
 	b.WriteString("DECISION: UNKNOWN — no safe verified match.\n\n")
 	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
-	b.WriteString("No verified sample matches this goal in your environment. Solve it fresh — " +
+	b.WriteString("No sample this network built matches this goal here. Solve it fresh — " +
 		"a wrong HIT is worse than a MISS (goal.md §3.8).\n\n")
 	if hint != "" {
 		b.WriteString(hint + "\n\n")
@@ -507,7 +507,7 @@ func renderMiss(overview []PackageOverview, hint string, observed *domain.Observ
 		fmt.Fprintf(&b, "- %s: %d observations across %d independent peer buckets, pass rate %.2f",
 			o.PURL, o.Observations, o.PeerBuckets, o.PassRate)
 		if o.Samples > 0 {
-			fmt.Fprintf(&b, "; %d verified sample(s) exist for other goals [SAMPLE_VERIFICATION]", o.Samples)
+			fmt.Fprintf(&b, "; %d sample(s) that built exist for other goals [SAMPLE_VERIFICATION]", o.Samples)
 		}
 		if o.TopFailure != "" {
 			b.WriteString("; most common recorded failure: " + o.TopFailure)

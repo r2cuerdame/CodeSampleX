@@ -269,7 +269,7 @@ func TestSearchMissCarriesPackageEvidence(t *testing.T) {
 		t.Errorf("miss must still say NO_SAFE_MATCH:\n%s", text)
 	}
 	axios := lineContaining(text, "axios")
-	for _, want := range []string{"412 observations", "37 independent peer buckets", "0.99", "2 verified sample"} {
+	for _, want := range []string{"412 observations", "37 independent peer buckets", "0.99", "2 sample(s) that built"} {
 		if !strings.Contains(axios, want) {
 			t.Errorf("axios line %q missing %q", axios, want)
 		}

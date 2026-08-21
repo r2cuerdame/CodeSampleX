@@ -8,17 +8,21 @@ public library — npm, PyPI, crates.io, Go modules, Packagist, RubyGems,
 pub.dev, Hex — call `search_known_solution` first, with the packages, the
 symbols and what you are trying to do.
 
-- A HIT is a verified answer already graded against your environment. Read
-  the `different` list: it is the delta between where it ran and where you
-  are, and it is usually the whole reason the obvious version fails.
+- A HIT is a sample this network built and ran, and the record of where it
+  ran. It is not graded for your environment and does not claim to work
+  there — every contract run this network holds was signed inside a linux
+  container. Read the `different` list: it is the delta between where it
+  ran and where you are, and it is usually the whole reason the obvious
+  version fails. Weighing that delta is yours; the network states it and
+  stops.
 - Then read what its contract PROVED. Those lines are assertions that were
   executed offline in a pinned container and passed, and they carry what a
   goal sentence cannot: which argument shapes are accepted, what is raised
   instead of returned, which option or environment setting decides the
   outcome. That is usually the part you would otherwise get wrong.
-- `NO_SAFE_MATCH` is a real answer, not a failure to answer. It means
-  nothing here has been proven for your case — so solve it fresh, and do
-  not treat a pattern you recall as verified.
+- `NO_SAFE_MATCH` is a real answer, not a failure to answer. It means this
+  network has no sample it built for your case — so solve it fresh, and do
+  not treat a pattern you recall as something that ran.
 
 **Run builds through it, not around it.** `run_observed_command` instead of
 running the command yourself: `npm test`, `npm run build`, `pnpm build`,
