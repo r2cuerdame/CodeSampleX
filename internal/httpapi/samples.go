@@ -332,7 +332,12 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 	requirements := domain.WorkerRequirements{
 		SandboxCapability: domain.CapContainerRun,
 		VerifierAdapter:   manifest.VerifierAdapter,
-		Ecosystem:         manifest.Environment.Ecosystem,
+		// The OS the sample ran on is the OS a reproduction must run on. The
+		// queue filters offers on it, so a Linux verifier is no longer handed
+		// Windows-only work to fail resolve on and burn the sample's bounded
+		// cross attempts.
+		OS:        crossJobOS(manifest.Environment),
+		Ecosystem: manifest.Environment.Ecosystem,
 		Runtime:           manifest.Environment.Runtime,
 		RuntimeVersion: domain.RuntimeLine(manifest.Environment.Runtime,
 			manifest.Environment.RuntimeVersion),
@@ -356,6 +361,21 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 		WantEnvJSON: string(domain.MustCanonicalJSON(requirements)),
 	})
 	return err
+}
+
+// crossJobOS pins the platform a reproduction must run on — and only when the
+// manifest's environment IS an execution environment. A farm-authored draft
+// records the container it ran in (virtualization "container"), and that OS
+// is the platform the sample answers for. A user proposal records the
+// author's HOST — a Windows laptop proposing an npm sample — and pinning
+// that OS would strand the sample: no npm verifier serves Windows. Those
+// stay unpinned, which is every cross job's behaviour before the field
+// existed.
+func crossJobOS(env domain.EnvironmentFingerprint) string {
+	if !strings.EqualFold(strings.TrimSpace(env.Virtualization), "container") {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(env.OS))
 }
 
 // checkArtifactStatic enforces the C13 static artifact rules on the raw

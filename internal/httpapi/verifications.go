@@ -203,6 +203,12 @@ func receiptMatchesRequirements(receipt domain.VerificationReceipt, want domain.
 	if want.VerifierAdapter != "" && receipt.VerifierAdapter != want.VerifierAdapter {
 		return false
 	}
+	// A job that pins an OS is answered only by a receipt that ran there; a
+	// claim that slipped past the queue filter must not stamp the wrong
+	// platform.
+	if want.OS != "" && !strings.EqualFold(want.OS, env.OS) {
+		return false
+	}
 	checks := [][2]string{
 		{want.Ecosystem, env.Ecosystem}, {want.Runtime, env.Runtime},
 		{want.ExecutionContext, env.ExecutionContext},

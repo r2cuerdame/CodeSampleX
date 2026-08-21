@@ -239,6 +239,11 @@ func (cv *CrossVerifier) canPrepare(raw json.RawMessage) bool {
 	if want.SandboxCapability != "" && want.SandboxCapability != cv.Cap {
 		return false
 	}
+	// Container work answers the OS question from the daemon's container OS
+	// (inside ContainerSupportsRequirementsOn); native work runs on the host.
+	if cv.Cap != domain.CapContainerRun && want.OS != "" && !strings.EqualFold(want.OS, cv.Env.OS) {
+		return false
+	}
 	if cv.Cap == domain.CapContainerRun {
 		if !sandbox.ContainerSupportsRequirementsOn(cv.ContainerOS, want) {
 			return false

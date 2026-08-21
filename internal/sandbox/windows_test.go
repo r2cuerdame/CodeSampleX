@@ -60,6 +60,34 @@ func TestWindowsDaemonRefusesEcosystemsWithNoWindowsImage(t *testing.T) {
 	}
 }
 
+// A job that names an OS is work for a daemon serving that OS. The queue
+// already filters on it; the pre-claim decision must agree, or a worker
+// claims work it cannot run and burns the sample's bounded cross attempts.
+func TestOSRequirementGatesTheClaim(t *testing.T) {
+	windowsWork := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun, Ecosystem: "golang", OS: "windows",
+	}
+	if ContainerSupportsRequirementsOn(ContainerOSLinux, windowsWork) {
+		t.Error("a Linux daemon would claim windows-pinned work")
+	}
+	if !ContainerSupportsRequirementsOn(ContainerOSWindows, windowsWork) {
+		t.Error("a Windows daemon was refused windows-pinned golang work")
+	}
+	linuxWork := domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun, Ecosystem: "golang", OS: "linux",
+	}
+	if !ContainerSupportsRequirementsOn(ContainerOSLinux, linuxWork) {
+		t.Error("a Linux daemon was refused linux-pinned work")
+	}
+	// An empty container OS has always meant linux.
+	if !ContainerSupportsRequirementsOn("", linuxWork) {
+		t.Error("the default daemon stopped being linux")
+	}
+	if ContainerSupportsRequirementsOn(ContainerOSWindows, linuxWork) {
+		t.Error("a Windows daemon would claim linux-pinned work")
+	}
+}
+
 // The receipt has to describe the container it actually ran in.
 func TestWindowsStageEnvironmentReportsWindows(t *testing.T) {
 	m := windowsManifest("golang", "go", "")

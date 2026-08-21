@@ -922,10 +922,14 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 			want := domain.WorkerRequirements{
 				SandboxCapability: domain.CapContainerRun,
 				VerifierAdapter:   sd.manifest.VerifierAdapter,
-				Ecosystem:         "maven",
-				Runtime:           "java",
-				RuntimeVersion:    runtimeVersion,
-				ExecutionContext:  "java",
+				// Only Linux publishes a Java image; without the pin the row
+				// fills a Windows verifier's queue window with work it can
+				// never run.
+				OS:               "linux",
+				Ecosystem:        "maven",
+				Runtime:          "java",
+				RuntimeVersion:   runtimeVersion,
+				ExecutionContext: "java",
 			}
 			if _, err := b.Store.CreateJob(ctx, serverstore.JobRow{
 				SampleID:    sd.row.SampleID,

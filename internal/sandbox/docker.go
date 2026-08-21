@@ -389,6 +389,12 @@ func ContainerSupportsRequirements(w domain.WorkerRequirements) bool {
 // image for and keep scanning, exactly as a worker without a pinned
 // Firefox image does.
 func ContainerSupportsRequirementsOn(containerOS string, w domain.WorkerRequirements) bool {
+	// A job that names an OS is work for a daemon serving that OS, whatever
+	// else it asks for. The queue filters offers the same way; this is the
+	// pre-claim decision agreeing with it.
+	if w.OS != "" && !strings.EqualFold(w.OS, containerOSOrLinux(containerOS)) {
+		return false
+	}
 	if w.Ecosystem == "" {
 		if containerOSOrLinux(containerOS) == ContainerOSWindows {
 			// A requirement-free job is a legacy cross job that could be

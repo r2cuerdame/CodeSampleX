@@ -139,7 +139,12 @@ const (
 type WorkerRequirements struct {
 	SandboxCapability SandboxCapability `json:"sandboxCapability,omitempty"`
 	VerifierAdapter   string            `json:"verifierAdapter,omitempty"`
-	Ecosystem         string            `json:"ecosystem,omitempty"`
+	// OS is the container platform the sample's contract must run on
+	// ("linux", "windows"). The queue filters offers on it and the receipt
+	// check refuses a run from anywhere else; empty runs anywhere, which is
+	// every job created before the field existed.
+	OS        string `json:"os,omitempty"`
+	Ecosystem string `json:"ecosystem,omitempty"`
 	Runtime           string            `json:"runtime,omitempty"`
 	RuntimeVersion    string            `json:"runtimeVersion,omitempty"`
 	ExecutionContext  string            `json:"executionContext,omitempty"`

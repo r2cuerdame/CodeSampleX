@@ -592,8 +592,12 @@ func TestCreateMatrixJobsUsesOnlyExactPreparableJavaLines(t *testing.T) {
 			continue
 		}
 		got[want.RuntimeVersion]++
+		// os is pinned: only Linux publishes a Java image, and without the pin
+		// the row fills a Windows verifier's queue window with work it can
+		// never run.
 		if want.SandboxCapability != domain.CapContainerRun || want.VerifierAdapter != "maven-java@1" ||
-			want.Ecosystem != "maven" || want.Runtime != "java" || want.ExecutionContext != "java" {
+			want.Ecosystem != "maven" || want.Runtime != "java" || want.ExecutionContext != "java" ||
+			want.OS != "linux" {
 			t.Fatalf("incomplete worker requirements: %+v", want)
 		}
 	}
