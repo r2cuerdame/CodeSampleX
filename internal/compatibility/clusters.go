@@ -163,15 +163,38 @@ func Hypotheses(errorCode string, failEnvs, passEnvs []domain.EnvironmentFingerp
 	return []domain.FailureHypothesis{{Domain: domain.FailUnknown, Confidence: 1.0}}
 }
 
-// isESMCode recognizes module-system error codes (ERR_REQUIRE_ESM and
-// friends).
+// isESMCode reports whether an error code NAMES the module system.
+//
+// It used to match ERR_MODULE_NOT_FOUND and anything containing "ESM", and
+// that is the whole reason to be careful here: production carries 303
+// clusters with a named cause and 2,246 with UNKNOWN, and every one of the
+// 303 is ERR_MODULE_NOT_FOUND. There has never been an ERR_REQUIRE_ESM
+// cluster. The entire published output of this classifier came from a code
+// the function was not written for.
+//
+// The distribution below was reasoned about for ERR_REQUIRE_ESM, which names
+// the module system: the code already asserts CONFIGURATION and the numbers
+// only shade it. ERR_MODULE_NOT_FOUND says a specifier did not resolve, and
+// its usual causes are a package moving or dropping a subpath in its exports
+// map, or an install that did not finish. Putting .72 on CONFIGURATION and
+// .07 on LIBRARY_REGRESSION is backwards for it, so the page printed "your
+// module configuration is wrong" over a library that had quietly moved an
+// export.
+//
+// The substring branch was worse than the misreading: strings.Contains(u,
+// "ESM") claimed ESMTP_TIMEOUT -- an SMTP timeout -- as a module-system
+// configuration fault.
+//
+// Nothing replaces those 303. A flat spread over CONFIGURATION, RESOURCE and
+// LIBRARY_REGRESSION would be a way of writing UNKNOWN that renders as three
+// confident chips, because the page drops the UNKNOWN residual and the reader
+// never sees the mass that was withheld.
 func isESMCode(code string) bool {
-	if code == "" {
-		return false
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "ERR_REQUIRE_ESM", "ERR_UNSUPPORTED_DIR_IMPORT":
+		return true
 	}
-	u := strings.ToUpper(code)
-	return u == "ERR_REQUIRE_ESM" || strings.Contains(u, "ESM") ||
-		u == "ERR_MODULE_NOT_FOUND" || u == "ERR_UNSUPPORTED_DIR_IMPORT"
+	return false
 }
 
 // concentratedEngine reports the single engine shared by ALL failing envs,
