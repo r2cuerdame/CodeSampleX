@@ -72,6 +72,25 @@ func TestDaemonLivingLessThanUploadEveryStillFlushesEvidence(t *testing.T) {
 		cancel()
 		t.Fatal("daemon waited for uploadEvery instead of its bounded first delay")
 	}
+	// The flush includes READING the ack. Cancelling the moment the server
+	// saw the request races the response read — and the uploader marks rows
+	// uploaded BEFORE the post, so a zero pending count says only that a
+	// request is in flight. A delivery whose ack was never read is
+	// ambiguous, and the uploader now restores it to pending on purpose
+	// (the dedup ledger makes the re-send safe), where it used to lose it
+	// because the restore ran on the already-dead context. statLastUpload
+	// is stamped after the ack is processed; that is the settle signal.
+	settle := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok, _ := d.DB.GetStat(t.Context(), statLastUpload); ok {
+			break
+		}
+		if time.Now().After(settle) {
+			cancel()
+			t.Fatal("the upload never stamped statLastUpload, so its ack was never processed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	select {
 	case err := <-runDone:

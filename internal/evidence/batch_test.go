@@ -235,6 +235,40 @@ func TestUploadFailureKeepsRowsPending(t *testing.T) {
 	}
 }
 
+// cancelMidFlight is a transport standing in for the commonest failed
+// delivery there is: the caller's context dying while the request is on the
+// wire (the daemon shutting down mid-sync).
+type cancelMidFlight struct{ cancel context.CancelFunc }
+
+func (c cancelMidFlight) RoundTrip(*http.Request) (*http.Response, error) {
+	c.cancel()
+	return nil, context.Canceled
+}
+
+// A canceled sync must not lose the chunk. The pending restore ran on the
+// SAME dead context that killed the delivery, so it silently did nothing:
+// the rows stayed marked uploaded and the evidence was gone.
+func TestACanceledUploadDoesNotLoseTheChunk(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := communityCfg("http://server.invalid")
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	if err := rec.RecordRun(context.Background(), t.TempDir(), fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	client := &http.Client{Transport: cancelMidFlight{cancel}}
+	if _, err := b.Upload(ctx, client, "http://server.invalid"); err == nil {
+		t.Fatal("Upload succeeded against a dead delivery")
+	}
+	if rows := pendingRows(t, db); len(rows) != 2 {
+		t.Fatalf("want 2 rows still pending after a canceled upload, got %d", len(rows))
+	}
+}
+
 // TestUploadChunksToServerLimit pins the fix for a backlog that could
 // never drain: the client posted a whole 1000-row drain in one request
 // while the server rejects anything over 500, so a first sync after

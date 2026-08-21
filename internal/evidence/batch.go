@@ -102,8 +102,15 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 			if err != nil {
 				// Failed delivery: flip the rows back to pending. A
 				// zero-count re-record touches nothing but the flag.
+				//
+				// The restore must outlive ctx. The delivery often failed
+				// BECAUSE ctx is dead — the daemon shutting down mid-sync is
+				// the commonest failure here — and restoring on the same dead
+				// context silently did nothing: the rows stayed marked
+				// uploaded and the evidence was gone.
+				restore := context.WithoutCancel(ctx)
 				for _, k := range chunkKeys {
-					_ = b.DB.RecordObservation(ctx, k, 0)
+					_ = b.DB.RecordObservation(restore, k, 0)
 				}
 				return sent, err
 			}
@@ -121,12 +128,15 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 			// indexes. They remain durable for a later upload, while accepted
 			// rows stay complete and contribute to sent.
 			seen := make(map[int]bool, len(rejected))
+			// Same rule as the failed-delivery restore: rows already marked
+			// uploaded must be restorable even if ctx died after the reply.
+			restore := context.WithoutCancel(ctx)
 			for _, rejection := range rejected {
 				if rejection.Index < 0 || rejection.Index >= len(chunkKeys) || seen[rejection.Index] {
 					continue
 				}
 				seen[rejection.Index] = true
-				if err := b.DB.RecordObservation(ctx, chunkKeys[rejection.Index], 0); err != nil {
+				if err := b.DB.RecordObservation(restore, chunkKeys[rejection.Index], 0); err != nil {
 					return sent, fmt.Errorf("evidence: restore refused batch %d: %w", rejection.Index, err)
 				}
 			}
