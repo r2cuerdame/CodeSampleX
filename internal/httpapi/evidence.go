@@ -58,6 +58,24 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	// on how many NEW names can reach a third-party registry.
 	seenPublicness := map[string]string{}
 	lookups := 0
+	publicness := func(p domain.PURL) string {
+		if a.d.Checker == nil {
+			return scanner.PublicnessUnknown
+		}
+		key := p.String()
+		if status := seenPublicness[key]; status != "" {
+			// Already resolved in this request: free, and the common
+			// case, since batches cluster on a handful of packages.
+			return status
+		}
+		if lookups >= maxRegistryLookupsPerRequest {
+			return scanner.PublicnessUnknown
+		}
+		lookups++
+		status := a.d.Checker.Check(r.Context(), p)
+		seenPublicness[key] = status
+		return status
+	}
 	for i, b := range req.Batches {
 		if err := serverstore.ValidateBatch(b); err != nil {
 			rejected = append(rejected, serverstore.RejectedBatch{Index: i, Reason: err.Error()})
@@ -65,26 +83,20 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		}
 		if !a.trustMode() {
 			p, _ := domain.ParsePURL(b.Package) // parse checked by ValidateBatch
-			status := scanner.PublicnessUnknown
-			key := p.String()
-			switch {
-			case a.d.Checker == nil:
-			case seenPublicness[key] != "":
-				// Already resolved in this request: free, and the common
-				// case, since batches cluster on a handful of packages.
-				status = seenPublicness[key]
-			case lookups < maxRegistryLookupsPerRequest:
-				lookups++
-				status = a.d.Checker.Check(r.Context(), p)
-				seenPublicness[key] = status
-			}
-			if status != scanner.PublicnessPublic {
+			if status := publicness(p); status != scanner.PublicnessPublic {
 				// UNKNOWN is treated as private — the safe default (§25.E).
 				rejected = append(rejected, serverstore.RejectedBatch{
 					Index: i, Reason: "package is not public (" + status + ")",
 				})
 				continue
 			}
+			// A dependsOn child is a package name too, and the gate above
+			// covers only the batch's own package. An edge with a private end
+			// must not enter storage — it would be served on public pages —
+			// but it is an auxiliary fact, so the child is dropped rather
+			// than the batch: the observation itself is about a public
+			// package and stays.
+			b.DependsOn = publicDependsOn(b.DependsOn, publicness)
 		}
 		keep = append(keep, b)
 		keepIdx = append(keepIdx, i)
@@ -109,4 +121,21 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		"accepted": accepted,
 		"rejected": rejected,
 	})
+}
+
+// publicDependsOn keeps the edges whose child resolved as public. UNKNOWN is
+// treated as private, the same safe default the package gate uses — including
+// when the child was past the per-request registry lookup cap.
+func publicDependsOn(edges []string, publicness func(domain.PURL) string) []string {
+	var out []string
+	for _, raw := range edges {
+		child, err := domain.ParsePURL(raw) // parse checked by ValidateBatch
+		if err != nil {
+			continue
+		}
+		if publicness(child) == scanner.PublicnessPublic {
+			out = append(out, raw)
+		}
+	}
+	return out
 }

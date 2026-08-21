@@ -52,6 +52,12 @@ func coresidentVersions(packages []domain.PURL) map[string][]string {
 			}
 		}
 		sort.Strings(others)
+		// Clamped to the wire cap: the server refuses a longer list, and a
+		// refused batch loses the observation riding in it. Sorted first, so
+		// which entries survive is deterministic.
+		if len(others) > domain.MaxCoresidentPerBatch {
+			others = others[:domain.MaxCoresidentPerBatch]
+		}
 		out[p.String()] = others
 	}
 	return out

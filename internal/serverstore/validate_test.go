@@ -1,6 +1,7 @@
 package serverstore
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -37,6 +38,12 @@ func TestValidateBatchAccepts(t *testing.T) {
 		}},
 		{"USED stage", func(b *domain.ObservationBatch) {
 			b.Stage = domain.StageUsed
+		}},
+		{"coresident versions and dependency edges", func(b *domain.ObservationBatch) {
+			b.Stage = domain.StageUsed
+			b.Direct = true
+			b.Coresident = []string{"2.0.0", "v0.0.0-20230129092748-24d4a6f8daec"}
+			b.DependsOn = []string{"pkg:npm/lodash@4.17.21", "pkg:npm/@scope/pkg@1.0.0"}
 		}},
 	}
 	for _, tc := range cases {
@@ -77,6 +84,34 @@ func TestValidateBatchRejects(t *testing.T) {
 		{"error code with spaces (raw log)", func(b *domain.ObservationBatch) {
 			b.ErrorCode = "error TS2345: Argument of type"
 		}, "errorCode"},
+		{"too many coresident versions", func(b *domain.ObservationBatch) {
+			for i := 0; i < 33; i++ {
+				b.Coresident = append(b.Coresident, fmt.Sprintf("1.0.%d", i))
+			}
+		}, "coresident"},
+		{"coresident holds a range, not a release", func(b *domain.ObservationBatch) {
+			b.Coresident = []string{"^1.2.0"}
+		}, "coresident"},
+		{"coresident version overlong", func(b *domain.ObservationBatch) {
+			b.Coresident = []string{strings.Repeat("9", 65)}
+		}, "coresident"},
+		{"too many dependsOn edges", func(b *domain.ObservationBatch) {
+			for i := 0; i < 257; i++ {
+				b.DependsOn = append(b.DependsOn, fmt.Sprintf("pkg:npm/dep%d@1.0.0", i))
+			}
+		}, "dependsOn"},
+		{"dependsOn bad purl", func(b *domain.ObservationBatch) {
+			b.DependsOn = []string{"lodash@4.17.21"}
+		}, "dependsOn"},
+		{"dependsOn crosses ecosystems", func(b *domain.ObservationBatch) {
+			b.DependsOn = []string{"pkg:pypi/requests@2.31.0"}
+		}, "dependsOn"},
+		{"dependsOn holds a range, not a release", func(b *domain.ObservationBatch) {
+			b.DependsOn = []string{"pkg:npm/lodash@^4"}
+		}, "dependsOn"},
+		{"dependsOn entry overlong", func(b *domain.ObservationBatch) {
+			b.DependsOn = []string{"pkg:npm/" + strings.Repeat("a", 600) + "@1.0.0"}
+		}, "dependsOn"},
 		{"env missing ecosystem", func(b *domain.ObservationBatch) { b.Environment.Ecosystem = "" }, "environment"},
 		{"env missing os", func(b *domain.ObservationBatch) { b.Environment.OS = "" }, "environment"},
 		{"env missing arch", func(b *domain.ObservationBatch) { b.Environment.Arch = "" }, "environment"},

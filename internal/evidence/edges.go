@@ -38,6 +38,12 @@ func publicEdges(edges []scanner.Edge, public map[string]domain.PURL) map[string
 			list = append(list, c)
 		}
 		sort.Strings(list)
+		// Clamped to the wire cap: the server refuses a longer list, and a
+		// refused batch loses the observation riding in it. Sorted first, so
+		// which entries survive is deterministic.
+		if len(list) > domain.MaxDependsOnPerBatch {
+			list = list[:domain.MaxDependsOnPerBatch]
+		}
 		out[parent] = list
 	}
 	return out

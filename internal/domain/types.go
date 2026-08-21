@@ -216,6 +216,15 @@ type ObservationBatch struct {
 	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
+// Wire caps for a batch's edge facts, shared by the server that refuses a
+// batch past them and the client that clamps before sending. One lockfile
+// holds a handful of coresident versions of one library and a package's own
+// direct dependencies; anything past these is abuse or a bug.
+const (
+	MaxCoresidentPerBatch = 32
+	MaxDependsOnPerBatch  = 256
+)
+
 // Case describes a problem being solved — never code (goal.md §7.4).
 type Case struct {
 	SchemaVersion int               `json:"schemaVersion"`

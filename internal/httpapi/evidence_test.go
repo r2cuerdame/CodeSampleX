@@ -138,6 +138,52 @@ func TestIngestRejectsPrivatePackage(t *testing.T) {
 	}
 }
 
+// TestIngestFiltersPrivateDependsOn pins the publicness rule onto the edge
+// facts a batch carries: the batch itself is gated on its own package, but a
+// dependsOn child is a package name too, and one with a private end must not
+// enter dependency_edge — it would be served on public pages.
+func TestIngestFiltersPrivateDependsOn(t *testing.T) {
+	fakeRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "secret-internal") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeRegistry.Close()
+
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		d.Cfg.PublicCheck = "strict"
+		d.Checker = &registry.Checker{
+			Cache:    &registry.ServerCache{Store: d.Store},
+			HTTP:     fakeRegistry.Client(),
+			BaseURLs: map[string]string{"npm": fakeRegistry.URL},
+		}
+	})
+
+	b := testBatch("pkg:npm/axios@1.12.0", "", nodeEnv("esm"),
+		domain.StageUsed, domain.ResultPass, 1)
+	b.DependsOn = []string{"pkg:npm/lodash@4.17.21", "pkg:npm/secret-internal@1.0.0"}
+	var out ingestResponse
+	resp := postJSON(t, srv.URL+"/v1/evidence/batches",
+		map[string]any{"batches": []domain.ObservationBatch{b}}, &out)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	// The batch itself is about a public package and stays accepted; only the
+	// private edge is dropped.
+	if out.Accepted != 1 || len(out.Rejected) != 0 {
+		t.Fatalf("resp = %+v", out)
+	}
+	edges, err := store.Dependencies(context.Background(), "npm", "axios")
+	if err != nil {
+		t.Fatalf("Dependencies: %v", err)
+	}
+	if len(edges) != 1 || edges[0].ChildName != "lodash" {
+		t.Fatalf("edges = %+v, want exactly the lodash edge", edges)
+	}
+}
+
 // --- registry reads ----------------------------------------------------------
 
 func TestRegistryPackageAndSymbol(t *testing.T) {

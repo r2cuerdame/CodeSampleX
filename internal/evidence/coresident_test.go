@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -25,6 +26,22 @@ func purls(list ...string) []domain.PURL {
 // lockfile arrives already shredded and the finest grouping left is a whole
 // day. The scanner holds the lockfile at once, so here it is an observation
 // rather than an inference.
+// The server refuses a batch whose coresident list is bigger than any honest
+// lockfile — and a refused batch loses the observation riding in it. So the
+// clamp lives here too: a pathological monorepo resolution keeps its first
+// entries rather than costing the whole batch.
+func TestCoresidentVersionsClampToTheWireCap(t *testing.T) {
+	list := []string{"pkg:npm/postcss@9.0.0"}
+	for i := 0; i < domain.MaxCoresidentPerBatch+8; i++ {
+		list = append(list, fmt.Sprintf("pkg:npm/postcss@1.0.%d", i))
+	}
+	got := coresidentVersions(purls(list...))
+	others := got["pkg:npm/postcss@9.0.0"]
+	if len(others) != domain.MaxCoresidentPerBatch {
+		t.Fatalf("len(others) = %d, want the wire cap %d", len(others), domain.MaxCoresidentPerBatch)
+	}
+}
+
 func TestCoresidentVersionsAreFoundWithinOneResolution(t *testing.T) {
 	got := coresidentVersions(purls(
 		"pkg:npm/ws@8.19.0",

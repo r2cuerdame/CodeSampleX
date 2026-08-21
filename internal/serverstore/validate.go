@@ -86,6 +86,69 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err := validEnv(b.Environment); err != nil {
 		return err
 	}
+	if err := validCoresident(b.Coresident); err != nil {
+		return err
+	}
+	if err := validDependsOn(p, b.DependsOn); err != nil {
+		return err
+	}
+	return nil
+}
+
+// A batch's edge facts turn into one INSERT each, and their strings land in
+// indexed columns, so both need the caps ObservationCount already has. The
+// count caps are the shared wire contract (the client clamps to them before
+// sending); the byte caps stop an oversized string aborting the whole batch's
+// transaction at the index instead of being refused here.
+const (
+	maxCoresidentPerBatch = domain.MaxCoresidentPerBatch
+	maxDependsOnPerBatch  = domain.MaxDependsOnPerBatch
+	maxCoresidentBytes    = 64
+	maxDependsOnBytes     = 512
+)
+
+// validCoresident checks the other-version list: each entry must have the
+// shape of a resolver-selected release. A range, a URL or free text is not a
+// version anything installed, and an oversized string would abort the whole
+// batch's transaction at the index instead of being refused here.
+func validCoresident(versions []string) error {
+	if len(versions) > maxCoresidentPerBatch {
+		return fmt.Errorf("coresident lists %d versions, max %d", len(versions), maxCoresidentPerBatch)
+	}
+	for _, v := range versions {
+		if len(v) > maxCoresidentBytes {
+			return fmt.Errorf("coresident version longer than %d bytes", maxCoresidentBytes)
+		}
+		if !domain.ConcreteResolvedVersion(v) {
+			return fmt.Errorf("coresident version %q is not a resolved release", v)
+		}
+	}
+	return nil
+}
+
+// validDependsOn checks the edge list: every child must be a parseable purl
+// in the parent's own ecosystem, pinned to a resolved release. A lockfile
+// never crosses an ecosystem, so an edge that claims to is a parse error
+// wearing a fact's clothes.
+func validDependsOn(parent domain.PURL, edges []string) error {
+	if len(edges) > maxDependsOnPerBatch {
+		return fmt.Errorf("dependsOn lists %d edges, max %d", len(edges), maxDependsOnPerBatch)
+	}
+	for _, raw := range edges {
+		if len(raw) > maxDependsOnBytes {
+			return fmt.Errorf("dependsOn entry longer than %d bytes", maxDependsOnBytes)
+		}
+		child, err := domain.ParsePURL(raw)
+		if err != nil {
+			return fmt.Errorf("dependsOn: bad purl: %v", err)
+		}
+		if child.Ecosystem != parent.Ecosystem {
+			return fmt.Errorf("dependsOn edge crosses ecosystems (%q under %q)", child.Ecosystem, parent.Ecosystem)
+		}
+		if !domain.ConcreteResolvedVersion(child.Version) {
+			return fmt.Errorf("dependsOn version %q is not a resolved release", child.Version)
+		}
+	}
 	return nil
 }
 

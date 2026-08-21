@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -39,6 +40,28 @@ func TestOnlyEdgesBetweenPublicPackagesTravel(t *testing.T) {
 	want := map[string][]string{"pkg:npm/a@1.2.0": {"pkg:npm/b@1.9.0"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("edges = %v, want %v", got, want)
+	}
+}
+
+// The server refuses a batch whose edge list is bigger than any honest
+// package's direct dependencies — and a refused batch loses the observation
+// riding in it. The clamp lives here so a pathological parent keeps its first
+// children instead of costing the whole batch.
+func TestPublicEdgesClampToTheWireCap(t *testing.T) {
+	public := map[string]domain.PURL{}
+	parent := "pkg:npm/mega@1.0.0"
+	p, _ := domain.ParsePURL(parent)
+	public[parent] = p
+	var edges []scanner.Edge
+	for i := 0; i < domain.MaxDependsOnPerBatch+8; i++ {
+		child := fmt.Sprintf("pkg:npm/dep%d@1.0.0", i)
+		c, _ := domain.ParsePURL(child)
+		public[child] = c
+		edges = append(edges, scanner.Edge{Parent: p, Child: c})
+	}
+	got := publicEdges(edges, public)
+	if len(got[parent]) != domain.MaxDependsOnPerBatch {
+		t.Fatalf("len(children) = %d, want the wire cap %d", len(got[parent]), domain.MaxDependsOnPerBatch)
 	}
 }
 
