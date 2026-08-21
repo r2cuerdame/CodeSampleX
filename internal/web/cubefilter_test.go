@@ -1,6 +1,9 @@
 package web
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A dimension with one value used to be dropped from the control bar, on the
 // reasoning that a dropdown whose only choice is "all" filters nothing.
@@ -30,20 +33,21 @@ func TestAFilterWithOneValueStatesThatValue(t *testing.T) {
 	}
 }
 
-// A pin among several values keeps its "all" option, or the reader cannot get
-// back out. A pin on the ONLY value does not: clearing it produces the
-// identical slice, so the option would be a choice between a thing and itself.
-func TestAPinnedFilterCanAlwaysBeCleared(t *testing.T) {
-	facts := []cubeFact{
-		{Dims: map[string]string{"version": "1.0.0", "os": "linux"}, Agg: pivotAgg{obsPass: 1}},
-		{Dims: map[string]string{"version": "1.0.0", "os": "windows 11"}, Agg: pivotAgg{obsPass: 1}},
+// A pinned dimension no longer carries its own way out. Its dropdown reads
+// the slice the reader is standing in, so inside the pin there is one value
+// and the control states it; the pin beside the bar is what removes it.
+//
+// The way out must still exist, and it must drop only that one pin.
+func TestAPinnedDimensionStillHasAWayOut(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/npm/axios?f_version=1.12.0&f_os=linux").Body.String()
+	for _, want := range []string{"f_os=linux", "f_version=1.12.0"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("no pin carries %s, so it cannot be removed on its own", want)
+		}
 	}
-	sel, ok := cubeFilterFor(facts, "os", map[string]string{"os": "linux"}, "en")
-	if !ok {
-		t.Fatal("a pinned filter vanished, so it cannot be cleared")
-	}
-	if sel.Fixed || sel.Options[0].Value != "" {
-		t.Errorf("pinned control = %+v, want a clearable one", sel.Options)
+	if !strings.Contains(body, `class="pinoff"`) {
+		t.Error("a pin with no way off it")
 	}
 }
 

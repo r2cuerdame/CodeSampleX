@@ -164,15 +164,3 @@ func TestOneValueIsDecidedEvenWhenTheReaderPinnedIt(t *testing.T) {
 		t.Errorf("options = %+v, want just x64", sel.Options)
 	}
 }
-
-// Two values pinned to one is a real choice and keeps its way back out.
-func TestAPinAmongSeveralValuesStaysClearable(t *testing.T) {
-	facts := []cubeFact{
-		{Dims: map[string]string{"runtime": "node 22"}, Agg: pivotAgg{obsPass: 1}},
-		{Dims: map[string]string{"runtime": "node 24"}, Agg: pivotAgg{obsPass: 1}},
-	}
-	sel, _ := cubeFilterFor(facts, "runtime", map[string]string{"runtime": "node 22"}, "en")
-	if sel.Fixed || sel.Options[0].Value != "" {
-		t.Errorf("runtime = %+v, want the all option kept", sel.Options)
-	}
-}

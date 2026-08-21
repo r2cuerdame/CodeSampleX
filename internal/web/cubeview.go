@@ -167,13 +167,15 @@ func cubeFilterBar(facts []cubeFact, x, y string, filters map[string]string, lan
 // "not measured", and a reader standing on the only OS there is could not
 // tell the difference. Fixed, the bar states the coordinate.
 func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang string) (cubeFilterSelect, bool) {
-	rest := map[string]string{}
-	for d, v := range filters {
-		if d != dim {
-			rest[d] = v
-		}
-	}
-	values := cubeDimValues(filterCubeFacts(facts, rest), dim)
+	// The slice the reader is standing in, this dimension's own pin included.
+	//
+	// It used to exclude that pin, so a pinned dimension advertised every
+	// value the pin had excluded: an exact record for windows 11 sat under an
+	// OS control offering five entries, and one live-looking control was the
+	// only thing on screen suggesting there was anywhere left to go. A live
+	// control now means one thing — this dimension still holds a choice — and
+	// leaving a coordinate you chose is what the pin beside the bar is for.
+	values := cubeDimValues(filterCubeFacts(facts, filters), dim)
 	if len(values) == 0 && filters[dim] == "" {
 		return cubeFilterSelect{}, false
 	}
