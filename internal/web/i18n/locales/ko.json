@@ -137,7 +137,7 @@
   "findings.method_heading": "여기 있는 줄을 확인하는 방법",
   "findings.method_missing": "샘플이 실제로 게시되어 있는지 확인되지 않은 발견은 이 페이지에 넣지 않았습니다. 목록이 샘플 풀보다 짧은 것은 의도한 것입니다.",
   "findings.none": "이 필터에 맞는 발견 기록이 없습니다. 네트워크는 근거를 댈 수 있는 측정만 보여줍니다.",
-  "findings.range": "발행된 샘플이 측정한 %s개 중 %s–%s번째.",
+  "findings.range": "발행된 샘플이 측정한 결과 중 %s–%s번째입니다(전체 %s개).",
   "findings.rerun": "샘플 id는 콘텐츠 주소입니다. GET /v1/samples/<id>는 이 페이지가 연결하는 바로 그 샘플을 돌려주고, csx는 네트워크가 검증했던 것과 같은 컨테이너에서 contract를 실행합니다.",
   "findings.search": "발견 검색 — 패키지, API, 주장 속의 단어",
   "findings.source": "출처",

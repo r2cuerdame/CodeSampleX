@@ -148,7 +148,7 @@
   "footer.sponsor": "Apoiar",
   "landing.agents_auto": "O csx init detecta e registra o servidor MCP para você. Não há arquivo de configuração para editar.",
   "landing.agents_heading": "Integração com agentes (adaptador MCP)",
-  "landing.agents_manual": "Any other MCP client works too — Cursor, Windsurf, Cline, Zed, VS Code. csx is a standard stdio MCP server. Run this and paste what it prints; it fills in the absolute path of your install, which a client started by your editor will not find on its own:",
+  "landing.agents_manual": "Qualquer outro cliente MCP também funciona — Cursor, Windsurf, Cline, Zed, VS Code. O csx é um servidor MCP stdio padrão. Execute isto e cole o que for impresso; ele preenche o caminho absoluto da sua instalação, que um cliente iniciado pelo seu editor não encontraria sozinho:",
   "landing.agents_models": "Independente de modelo. A mesma evidência de compatibilidade serve a Claude, GPT e Codex, Gemini, Llama — qualquer modelo que consiga chamar uma ferramenta MCP.",
   "landing.agents_role": "MCP é como os agentes de código consomem a mesma rede — um adaptador sobre a CLI e a API, não um produto separado.",
   "landing.cli_can_heading": "O que a CLI faz",
