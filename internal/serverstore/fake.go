@@ -476,8 +476,14 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []EvidenceRow
+	// One symbol is filed under both the scanner's spelling and the author's;
+	// see symbolSpellings. Both stores ask the same question through it.
+	want := map[string]bool{}
+	for _, s := range symbolSpellings(purl, symbol) {
+		want[s] = true
+	}
 	for k, meta := range f.aggMeta {
-		if k.PURL != purl || k.Symbol != symbol {
+		if k.PURL != purl || !want[k.Symbol] {
 			continue
 		}
 		out = append(out, EvidenceRow{

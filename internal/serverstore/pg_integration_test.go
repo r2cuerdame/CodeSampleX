@@ -229,7 +229,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 }
 
 // A symbol-scoped draft holds the whole package coordinate. PG's in_flight
-// used to yield the package-level (purl,'') pair only when the draft named no
+// used to yield the package-level (purl,”) pair only when the draft named no
 // symbols — while the fake has always marked it for every draft — so a purl
 // whose symbol draft was awaiting verification was re-offered as
 // package-level EXPANSION work minutes later: exactly the duplicate-sample

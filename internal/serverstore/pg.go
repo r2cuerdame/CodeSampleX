@@ -670,8 +670,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 			       stage, result, error_fp, error_code, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
-			WHERE purl=$1 AND symbol=$2
-			ORDER BY env_hash, stage, result, error_fp`, purl, symbol)
+			WHERE purl=$1 AND symbol = ANY($2)
+			ORDER BY env_hash, stage, result, error_fp`, purl, symbolSpellings(purl, symbol))
 		if err != nil {
 			return err
 		}
