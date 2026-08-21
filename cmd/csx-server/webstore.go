@@ -336,8 +336,9 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	// package — @tanstack, @babel, @modelcontextprotocol, a large share of
 	// npm — showed an empty sample list on its own page while its samples
 	// sat published and unreachable.
-	prefix := strings.TrimSuffix(
-		domain.PURL{Ecosystem: ecosystem, Name: name, Version: ""}.String(), "")
+	// An empty version still renders its "@", which is what makes this an
+	// exact-name prefix rather than one "foo" shares with "foo-bar".
+	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
 	rows, err := w.s.VerifiedSamplesForPackages(ctx, []string{prefix + "%"}, limit)
 	if err != nil {
 		return nil, err
