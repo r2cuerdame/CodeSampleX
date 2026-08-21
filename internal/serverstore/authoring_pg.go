@@ -358,16 +358,24 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				-- candidate and the next worker claimed it minutes after the first
 				-- submitted. One worker rarely raced itself; two produced six
 				-- duplicate coordinates in six hours. Work in flight is work done.
+				-- The appended "" holds the PACKAGE-LEVEL coordinate (purl,'')
+				-- in flight for every draft, not only a symbol-less one. The
+				-- LEFT JOIN it replaces yielded (purl,'') only when the symbols
+				-- array was empty — while the fake marked it for every draft —
+				-- so a purl whose symbol-scoped draft was awaiting verification
+				-- was re-offered as package-level EXPANSION work minutes later,
+				-- and every test passed on the fake while production duplicated.
 				SELECT DISTINCT package.value AS purl,
-				       COALESCE(symbol.value,'') AS symbol
+				       symbol.value AS symbol
 				FROM authoring_drafts d
 				JOIN samples s ON s.sample_id=d.sample_id AND s.status='DRAFT'
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
 				) AS package(value)
-				LEFT JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
-				) AS symbol(value) ON true
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  (CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END)
+				  || '[""]'::jsonb
+				) AS symbol(value)
 			), fresh AS (
 				-- The already-answered symbols drop out BEFORE depth is counted, or a
 				-- version would be charged for work nobody can be given.

@@ -417,6 +417,13 @@ func (f *Fake) ListSnapshotTargets(_ context.Context) ([]SnapshotTarget, error) 
 			continue
 		}
 		for _, receipt := range receipts {
+			// Same filter as PG: only a v2 receipt whose resolve PASSED
+			// establishes what a sample resolved. Without it a v1 receipt,
+			// or one whose resolve failed, still filed the manifest's
+			// symbols — a target production would never create.
+			if !receiptEstablishesClaim(receipt.ReceiptJSON) {
+				continue
+			}
 			claims = append(claims, receiptClaim{
 				Packages: resolvedPackageStrings(receipt.ReceiptJSON),
 				Symbols:  manifest.Symbols,

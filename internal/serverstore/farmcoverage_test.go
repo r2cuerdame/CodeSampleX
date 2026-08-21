@@ -68,3 +68,42 @@ func TestFarmCoverageSeparatesObservedFromProven(t *testing.T) {
 		t.Errorf("windows/golang proven = %d, want 1 — a linux proof is not a windows proof", win.Proven)
 	}
 }
+
+// resolvedPackages is credited only from a v2 receipt whose resolve stage
+// passed; anything else falls back to the manifest. This pins the Fake's
+// long-standing rule as the parity reference for PG's coverage query, which
+// used to credit any receipt's list — coverage on a package the run never
+// resolved.
+func TestFarmCoverageCreditsOnlyResolvedV2Lists(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	const declared = "pkg:golang/example.com/declared@v1.0.0"
+	const claimed = "pkg:golang/example.com/claimed@v9.9.9"
+	for name, purl := range map[string]string{"declared": declared, "claimed": claimed} {
+		if err := store.UpsertPackage(ctx, PackageRow{PURL: purl, Ecosystem: "golang",
+			Name: "example.com/" + name, Version: "v1.0.0", Publicness: "PUBLIC"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveSample(ctx, SampleRow{SampleID: "sha256:v1credit",
+		ManifestJSON: `{"packages":["` + declared + `"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveReceipt(ctx, ReceiptRow{ReceiptID: "r-v1credit", SampleID: "sha256:v1credit",
+		ContractResult: "PASS",
+		ReceiptJSON:    `{"schemaVersion":1,"environment":{"os":"linux"},"resolvedPackages":["` + claimed + `"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.FarmCoverage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.OS != "linux" || r.Ecosystem != "golang" {
+			continue
+		}
+		if r.Proven != 1 {
+			t.Errorf("linux/golang proven = %d, want only the manifest package credited: %+v", r.Proven, rows)
+		}
+	}
+}

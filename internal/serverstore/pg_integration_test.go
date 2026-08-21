@@ -228,6 +228,85 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	}
 }
 
+// A symbol-scoped draft holds the whole package coordinate. PG's in_flight
+// used to yield the package-level (purl,'') pair only when the draft named no
+// symbols — while the fake has always marked it for every draft — so a purl
+// whose symbol draft was awaiting verification was re-offered as
+// package-level EXPANSION work minutes later: exactly the duplicate-sample
+// loop in_flight exists to stop, surviving because every test ran on the
+// fake.
+func TestIntegrationSymbolDraftHoldsThePackageCoordinate(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const purl = "pkg:npm/three@0.185.1"
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	usage := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-19", AnonID: "threepeer", ProjectBucket: "threeproject",
+		Package: purl, Environment: env,
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 40,
+	}
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{usage}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "three", Version: "0.185.1", Major: "0", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offered := false
+	for _, c := range candidates {
+		if c.Name == "three" && c.Symbol == "" {
+			offered = true
+		}
+	}
+	if !offered {
+		t.Fatalf("no package-level candidate to begin with: %+v", candidates)
+	}
+
+	// A worker answers it with a SYMBOL-scoped draft, now awaiting its cross
+	// verification.
+	now := time.Date(2026, 8, 19, 13, 0, 0, 0, time.UTC)
+	session := AuthoringSessionRow{
+		TokenHash:     "0a5ad1d2e47e11bd71619acda03e7c2fe6f0f80ea5f35d70f27097c12808e6d7",
+		SessionID:     "worker-three-01",
+		Label:         "three-lab",
+		IssuedAt:      now,
+		IdleExpiresAt: now.Add(time.Hour),
+	}
+	if err := pg.IssueAuthoringSessions(ctx, []AuthoringSessionRow{session}, now); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schemaVersion":1,"packages":["` + purl + `"],"symbols":["three.WebGLRenderer"]}`
+	if err := pg.SaveAuthoringDraft(ctx, AuthoringDraftRow{
+		SampleID: "sha256:three-draft", SessionID: session.SessionID, WorkerLabel: session.Label,
+		ManifestJSON: manifest, LocalStatus: "LOCAL_PASS", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:three-draft", ManifestJSON: manifest,
+		Status: "DRAFT", Quarantined: true, QuarantineReason: "private authoring draft"}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range after {
+		if c.Name == "three" {
+			t.Fatalf("a purl with a draft in flight was re-offered: %+v", c)
+		}
+	}
+}
+
 func TestIntegrationAuthoringLeaseIsReassignedWhenEnvironmentBecomesIneligible(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
@@ -1362,6 +1441,45 @@ func TestIntegrationFarmCoverageSeparatesObservedFromProven(t *testing.T) {
 	if win.Measured != win.Proven {
 		t.Errorf("no FAIL receipts were seeded, so measured (%d) must equal proven (%d)",
 			win.Measured, win.Proven)
+	}
+}
+
+// resolvedPackages is credited only from a v2 receipt whose resolve stage
+// passed — the rule the Fake's resolvedPackageStrings has always applied.
+// The SQL credited any receipt's list, so a v1 (or failed-resolve) receipt
+// carrying a resolvedPackages array put coverage on a package the run never
+// resolved, while the Fake fell back to the manifest.
+func TestIntegrationFarmCoverageCreditsOnlyResolvedV2Lists(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const declared = "pkg:golang/example.com/declared@v1.0.0"
+	const claimed = "pkg:golang/example.com/claimed@v9.9.9"
+	for name, purl := range map[string]string{"declared": declared, "claimed": claimed} {
+		if err := pg.UpsertPackage(ctx, PackageRow{PURL: purl, Ecosystem: "golang",
+			Name: "example.com/" + name, Version: "v1.0.0", Publicness: "PUBLIC"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:v1credit",
+		ManifestJSON: `{"packages":["` + declared + `"],"symbols":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "r-v1credit", SampleID: "sha256:v1credit",
+		PeerID: "p", EnvHash: "e-v1credit", ContractResult: "PASS",
+		ReceiptJSON: `{"schemaVersion":1,"environment":{"os":"linux"},"resolvedPackages":["` + claimed + `"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pg.FarmCoverage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.OS != "linux" || r.Ecosystem != "golang" {
+			continue
+		}
+		if r.Proven != 1 {
+			t.Errorf("linux/golang proven = %d, want only the manifest package credited (rows: %+v)", r.Proven, rows)
+		}
 	}
 }
 

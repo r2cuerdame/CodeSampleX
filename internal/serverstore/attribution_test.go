@@ -21,6 +21,62 @@ func targetSet(rows []SnapshotTarget) map[SnapshotTarget]bool {
 // A symbol belongs to one package. When several claim it, the narrowest claim
 // wins: the sample that resolved the fewest packages to demonstrate it is the
 // one that says most about where it lives.
+// Only a v2 receipt whose resolve stage PASSED establishes what a sample
+// resolved — the rule PG has always applied when building claims. The fake
+// accepted every receipt: a v1 receipt, or one whose resolve failed, still
+// filed the manifest's symbols under its subject, so tests saw targets that
+// production would never create.
+func TestOnlyAResolvedV2ReceiptEstablishesAClaim(t *testing.T) {
+	f := NewFake()
+	ctx := t.Context()
+	manifest := `{"schemaVersion":1,"subject":"pkg:gem/faraday@2.9.0","symbols":["Faraday::Adapter::NetHttp"]}`
+	if err := f.SaveSample(ctx, SampleRow{SampleID: "sha256:claimtest", ManifestJSON: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	for i, receiptJSON := range []string{
+		`{"schemaVersion":1}`,
+		`{"schemaVersion":2,"stages":{"resolve":"FAIL"},"resolvedPackages":["pkg:gem/faraday@2.9.0"]}`,
+	} {
+		if err := f.SaveReceipt(ctx, ReceiptRow{
+			ReceiptID: "sha256:claimreceipt-" + string(rune('a'+i)), SampleID: "sha256:claimtest",
+			PeerID: "peer", ContractResult: "PASS", ReceiptJSON: receiptJSON,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, err := f.ListSnapshotTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		if target.Symbol != "" {
+			t.Errorf("an unestablished receipt filed a symbol target: %+v", target)
+		}
+	}
+
+	// The real thing still files its claim.
+	if err := f.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "sha256:claimreceipt-ok", SampleID: "sha256:claimtest",
+		PeerID: "peer", ContractResult: "PASS",
+		ReceiptJSON: `{"schemaVersion":2,"stages":{"resolve":"PASS"},"resolvedPackages":["pkg:gem/faraday@2.9.0"]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = f.ListSnapshotTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, target := range targets {
+		if target.PURL == "pkg:gem/faraday@2.9.0" && target.Symbol == "Faraday::Adapter::NetHttp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a resolved v2 receipt established no target: %+v", targets)
+	}
+}
+
 func TestSymbolGoesToTheNarrowestClaim(t *testing.T) {
 	got := targetSet(snapshotTargetsFromClaims([]receiptClaim{
 		{ // the subject sample: faraday alone

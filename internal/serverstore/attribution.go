@@ -1,6 +1,24 @@
 package serverstore
 
-import "sort"
+import (
+	"encoding/json"
+	"sort"
+)
+
+// receiptEstablishesClaim mirrors the SQL filter PG applies before building
+// claims: only a v2 receipt whose resolve stage PASSED establishes what a
+// sample resolved. A v1 receipt establishes no version, and a failed resolve
+// resolved nothing.
+func receiptEstablishesClaim(raw string) bool {
+	var parsed struct {
+		SchemaVersion int               `json:"schemaVersion"`
+		Stages        map[string]string `json:"stages"`
+	}
+	if json.Unmarshal([]byte(raw), &parsed) != nil {
+		return false
+	}
+	return parsed.SchemaVersion == 2 && parsed.Stages["resolve"] == "PASS"
+}
 
 // receiptClaim is one verified receipt's contribution to the snapshot target
 // list: the packages it resolved, the symbols its sample declared, and the

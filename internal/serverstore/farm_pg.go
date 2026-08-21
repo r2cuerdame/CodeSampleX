@@ -152,12 +152,20 @@ func (p *PG) FarmCoverage(ctx context.Context) ([]FarmAxisCoverage, error) {
 			  -- NULL, so one such row would abort the whole query instead of
 			  -- skipping itself. Guard it the way admin_insights.go already
 			  -- guards the identical expansion.
+			  --
+			  -- resolvedPackages is credited only from a v2 receipt whose
+			  -- resolve stage PASSED — the rule resolvedPackageStrings applies
+			  -- on the Fake, and the same reason: a list a failed resolve
+			  -- claims to have installed installed nothing. Anything else
+			  -- falls back to the manifest, exactly as the Fake does.
 			  SELECT DISTINCT LOWER(BTRIM(r.receipt->'environment'->>'os')) AS os,
 			         p.ecosystem, p.purl, r.contract_result
 			    FROM receipts r
 			    JOIN samples s ON s.sample_id=r.sample_id AND NOT s.quarantined
 			   CROSS JOIN LATERAL jsonb_array_elements_text(
-			         CASE WHEN jsonb_typeof(r.receipt->'resolvedPackages') = 'array'
+			         CASE WHEN r.receipt->>'schemaVersion' = '2'
+			                   AND r.receipt->'stages'->>'resolve' = 'PASS'
+			                   AND jsonb_typeof(r.receipt->'resolvedPackages') = 'array'
 			                   AND jsonb_array_length(r.receipt->'resolvedPackages') > 0
 			              THEN r.receipt->'resolvedPackages'
 			              WHEN jsonb_typeof(s.manifest->'packages') = 'array'
