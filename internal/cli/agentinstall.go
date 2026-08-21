@@ -182,7 +182,86 @@ func installClaude(userHome string) ([]string, error) {
 		return actions, err
 	}
 	actions = append(actions, verb(changed, "usage rule", mdPath))
+
+	// The rule asks the agent to look things up. Asking is what has not been
+	// working: an agent that hits a compile error already has a fix it
+	// believes in, so it does not stop to ask, and six searches reached the
+	// server in a week while 648 misses did.
+	//
+	// The hook does not ask. When a build fails the agent runs this without
+	// deciding to, which is the only version of the feature that fires at the
+	// moment it is worth anything.
+	settingsPath := filepath.Join(userHome, ".claude", "settings.json")
+	changed, err = mergeJSONFile(settingsPath, upsertFailureHook)
+	if err != nil {
+		return actions, err
+	}
+	actions = append(actions, verb(changed, "build-failure lookup", settingsPath))
 	return actions, nil
+}
+
+// failureEvent is the event a shell command's non-zero exit raises.
+//
+// Measured, not assumed. The documentation defines it as "after a tool call
+// fails" without saying whether an ordinary failing build counts, and the
+// obvious safe reading — listen on PostToolUse and check the exit code — is
+// wrong: a Bash command exiting 3 fires PostToolUseFailure and does not fire
+// PostToolUse at all. Registering the cautious one would have installed a
+// hook that never ran.
+const failureEvent = "PostToolUseFailure"
+
+// hookTimeoutSeconds bounds the wait. This sits between somebody's failed
+// build and their agent's next move.
+const hookTimeoutSeconds = 30
+
+// upsertFailureHook adds the build-failure lookup to a Claude Code settings
+// map, leaving every other hook — and every other setting — alone.
+//
+// Ours is the entry whose command is this install's binary, so re-running the
+// installer rewrites that one entry instead of stacking another copy beside
+// it. Every update runs the installer again; without this the file would grow
+// a duplicate each time and the lookup would answer twice.
+func upsertFailureHook(m map[string]any) {
+	ours := map[string]any{
+		"type":    "command",
+		"command": mcpCommand(),
+		// Exec form. The Windows install path is
+		// C:\Users\<name>\AppData\Local\csx\csx.exe, and a user whose name
+		// has a space in it breaks any shell string we could write instead.
+		"args":    []any{"hook", "agent"},
+		"timeout": hookTimeoutSeconds,
+	}
+
+	hooks, _ := m["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	events, _ := hooks[failureEvent].([]any)
+
+	replaced := false
+	for _, e := range events {
+		entry, _ := e.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		inner, _ := entry["hooks"].([]any)
+		for i, h := range inner {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); cmd == mcpCommand() {
+				inner[i] = ours
+				entry["hooks"] = inner
+				replaced = true
+			}
+		}
+	}
+	if !replaced {
+		events = append(events, map[string]any{
+			"matcher": "Bash",
+			"hooks":   []any{ours},
+		})
+	}
+	hooks[failureEvent] = events
+	m["hooks"] = hooks
 }
 
 // installCodex appends a marker-fenced [mcp_servers.csx] block to

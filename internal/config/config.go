@@ -56,6 +56,12 @@ type Config struct {
 	APIToken         string   `json:"apiToken"`
 	AutoUpdate       string   `json:"autoUpdate"`    // auto | on | off
 	UpdateChannel    string   `json:"updateChannel"` // stable (preview is explicit opt-in later)
+	// FailureHook is the one switch for the build-failure lookup that
+	// csx init registers with a coding agent. It is a config flag rather
+	// than a registration the user must remove, because the agents do not
+	// offer a per-hook disable and nobody who had to re-run an installer
+	// to turn something back on ever turns it back on.
+	FailureHook string `json:"failureHook"` // on | off
 }
 
 // Default returns a fresh Config with every default applied.
@@ -73,6 +79,7 @@ func Default() *Config {
 		CacheBudgetMB:    512,
 		AutoUpdate:       "auto",
 		UpdateChannel:    "stable",
+		FailureHook:      "on",
 	}
 }
 
