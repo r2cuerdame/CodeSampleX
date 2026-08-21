@@ -1449,9 +1449,15 @@ func packageRefs(purls []string) []pkgRef {
 
 type samplePageData struct {
 	basePage
-	Meta                SampleMeta
-	Manifest            *domain.SampleManifest
-	Level               string
+	Meta     SampleMeta
+	Manifest *domain.SampleManifest
+	// PassingKeys is how many DISTINCT signing keys filed a passing
+	// contract receipt. It replaced the L0..L5 level badge, which was
+	// derived from the sample status and inherited every one of the
+	// 1,001 CROSS_PASS labels that do not hold under their own rule —
+	// so a sample with a single receipt wore L4_CROSS_PASS, which means
+	// independently reproduced.
+	PassingKeys         int
 	Context             string
 	Goal                string
 	Packages            []pkgRef
@@ -1459,6 +1465,23 @@ type samplePageData struct {
 	DeclaredEnvironment environmentView
 	EvidenceBasisKey    string
 	Crumbs              []crumb
+}
+
+// passingKeys counts the DISTINCT signing keys that filed a passing
+// contract receipt for this sample.
+//
+// It is the fact the ladder was standing in for: one key is the author
+// alone, two or more is somebody else. A count cannot be granted under a
+// rule that later turns out to be wrong, which is what happened to the
+// 1,001 CROSS_PASS labels the ladder handed out.
+func passingKeys(receipts []receiptView) int {
+	keys := map[string]bool{}
+	for _, r := range receipts {
+		if r.Contract == string(domain.ResultPass) && r.PeerID != "" {
+			keys[r.PeerID] = true
+		}
+	}
+	return len(keys)
 }
 
 // levelBadge maps a sample status to the honest verification level
@@ -1613,15 +1636,12 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 			sampleJSONLD(pageURL, goal, desc, meta.CreatedAt, meta.License, purls, syms, env))
 	}
 
-	level := levelBadge(meta.Status, anyContractPass(receipts))
+	// The basis is what the evidence IS, not what rung it earns. It used
+	// to switch on the level, so it repeated the ladder in words:
+	// "independent cross verification" printed beside a single receipt.
 	basisKey := "sample.basis_source"
-	switch level {
-	case string(domain.L3ContractPass):
+	if anyContractPass(receipts) {
 		basisKey = "sample.basis_contract"
-	case string(domain.L4CrossPass):
-		basisKey = "sample.basis_cross"
-	case string(domain.L5MatrixPass):
-		basisKey = "sample.basis_matrix"
 	}
 	// The sample is a tracked object like any other: give it the same path
 	// back up through the package it is about.
@@ -1635,7 +1655,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
-		Level: level, Context: ctx, Goal: goal,
+		PassingKeys: passingKeys(receipts), Context: ctx, Goal: goal,
 		Packages: refs, Receipts: receipts,
 		DeclaredEnvironment: declaredEnvironment, EvidenceBasisKey: basisKey,
 		Crumbs: sampleCrumbs,

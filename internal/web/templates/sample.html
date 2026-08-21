@@ -13,7 +13,7 @@
         <span class="badge-tip" id="sample-status-help" role="tooltip">{{.T "sample.status_help"}}</span>
       </span>
       <span class="badge-help">
-        <button type="button" class="chip level mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="sample-level-help" aria-describedby="sample-level-help">{{.Level}} <span class="badge-mark" aria-hidden="true">?</span></button>
+        <button type="button" class="chip level mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="sample-level-help" aria-describedby="sample-level-help">{{.T "sample.passing_keys" (printf "%d" .PassingKeys)}} <span class="badge-mark" aria-hidden="true">?</span></button>
         <span class="badge-tip" id="sample-level-help" role="tooltip">{{.T "sample.level_help"}}</span>
       </span>
       {{if .Meta.License}}<span class="chip mono">{{.Meta.License}}</span>{{end}}
@@ -30,7 +30,7 @@
     <dl class="sample-detail__metrics">
       <div><dt>{{.T "filters.basis"}}</dt><dd>{{.T .EvidenceBasisKey}}</dd></div>
       <div><dt>{{.T "sample.receipts"}}</dt><dd>{{len .Receipts}}</dd></div>
-      <div><dt>{{.T "sample.level"}}</dt><dd class="mono">{{.Level}}</dd></div>
+      <div><dt>{{.T "sample.signing_keys"}}</dt><dd class="mono">{{.PassingKeys}}</dd></div>
     </dl>
 
     {{/* What the author declared, as one compact line of facts. */}}

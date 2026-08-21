@@ -92,7 +92,10 @@ func TestSamplePageShowsEvidenceEnvironmentPanel(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/samples/sha256:d1e2f3").Body.String()
 	mustContain(t, body, "Execution evidence")
-	mustContain(t, body, "Independent cross-verification")
+	// The basis says what the evidence IS, not what rung it earns. It used
+	// to switch on the level ladder, so "independent cross-verification"
+	// printed beside a single receipt.
+	mustContain(t, body, "Signed contract pass")
 	mustContain(t, body, "linux")
 	mustContain(t, body, "amd64")
 	mustContain(t, body, "node 22.18")

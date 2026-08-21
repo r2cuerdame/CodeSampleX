@@ -261,9 +261,14 @@ func TestSamplePage(t *testing.T) {
 	mustContain(t, body, "test/contract.mjs")
 	mustContain(t, body, "Origin Seeder")
 	mustContain(t, body, `href="/seeders/alice"`)
-	mustContain(t, body, "CROSS_PASS")
-	mustContain(t, body, "L4_CROSS_PASS")
-	mustContain(t, body, "Verification level")
+	// No rung. The ladder was derived from the sample status and inherited
+	// every one of the 1,001 CROSS_PASS labels that do not hold under their
+	// own rule, so a sample with one receipt wore L4_CROSS_PASS — which
+	// means independently reproduced. The page counts signing keys instead:
+	// one is the author alone, more than one is somebody else.
+	mustNotContain(t, body, "L4_CROSS_PASS")
+	mustContain(t, body, "signing key")
+	mustContain(t, body, "Signing keys that built it")
 	mustContain(t, body, "Verification-run environments")
 	mustContain(t, body, "Download the source artifact")
 	mustContain(t, body, "MIT-0")
@@ -293,7 +298,9 @@ func TestSampleBadgeHelpIsAccessibleAndLocalized(t *testing.T) {
 		// production's CROSS_PASS labels do not hold under the rule that
 		// grants them. The badge says what it is: a sample that built.
 		"grades nothing and warrants nothing",
-		"L1 resolved dependencies",
+		// The level ladder is gone; the badge beside it counts signing keys,
+		// and its help says what a key is and is not.
+		"counts keys, not people",
 		"help.addEventListener('mouseenter'",
 		"trigger.addEventListener('focus'",
 		"document.addEventListener('click'",
@@ -304,7 +311,7 @@ func TestSampleBadgeHelpIsAccessibleAndLocalized(t *testing.T) {
 
 	ko := get(t, mux, "/samples/sha256:d1e2f3?lang=ko").Body.String()
 	mustContain(t, ko, "등급을 매기지 않고 무엇도 보증하지 않습니다")
-	mustContain(t, ko, "L1은 의존성 해결")
+	mustContain(t, ko, "세는 것은 사람이 아니라 키입니다")
 }
 
 func TestSeederPage(t *testing.T) {
