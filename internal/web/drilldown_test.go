@@ -43,13 +43,14 @@ func TestCubeLeafPackageLevelRowStillDescends(t *testing.T) {
 	rows := cubeLeafRows(leafFacts(), "npm", "axios")
 	found := false
 	for _, row := range rows {
-		if row.Symbol != cubePackageLevel {
+		// The aggregate is called by the package's own name on screen — a
+		// reader on this page knows which package they are on and read one
+		// generic phrase among a column of API names. It is still the row
+		// with no symbol link.
+		if row.SymbolHref != "" {
 			continue
 		}
 		found = true
-		if row.SymbolHref != "" {
-			t.Errorf("package-level row got a symbol link: %q", row.SymbolHref)
-		}
 		if row.VersionHref == "" {
 			t.Error("package-level leaf row is a dead end")
 		}

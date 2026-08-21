@@ -51,18 +51,24 @@
     <div class="ctlgroup filters">
       <span class="ctllabel dim">{{.T "cube.filters"}}</span>
       {{- range .Cube.Filters}}
-      {{/* Every dimension keeps its dropdown, decided or not: a bar whose
-           controls change shape as the reader drills is harder to read than
-           one that stays put. A decided dimension holds its one value
-           selected and offers no "all", so the control says where you are
+      {{- if .Active}}
+      {{/* The reader pinned this one. It is already above, as a chip they can
+           take off, and drawing it here again as a dropdown they cannot use
+           said the same thing twice — a fully drilled coordinate showed five
+           chips and then the same five values greyed out beside three more.
+           It stays IN the form, because a field is the only thing that
+           carries the pin through the next submit; it just is not drawn. */}}
+      <input type="hidden" name="f_{{.Dim}}" value="{{.Pinned}}">
+      {{- else}}
+      {{/* Everything the reader did not pin keeps its dropdown, decided or
+           not: a bar whose controls change shape as they drill is harder to
+           read than one that stays put. A decided dimension holds its one
+           value selected and offers no "all", so it says where you are
            without pretending there is a choice. */}}
-      <label{{if .Fixed}} class="fixed"{{else if .Active}} class="on"{{end}}>{{.Label}}
+      <label{{if .Fixed}} class="fixed"{{end}}>{{.Label}}
         <select name="f_{{.Dim}}"{{if .Fixed}} disabled aria-disabled="true"{{else}} data-autosubmit{{end}}>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-        {{- /* A disabled control is never submitted, so a reader-placed pin
-             on a decided dimension travels as a hidden input; without it the
-             next dropdown change rebuilds the URL with the pin gone. */ -}}
-        {{- if and .Fixed .Active}}<input type="hidden" name="f_{{.Dim}}" value="{{.Pinned}}">{{end}}
       </label>
+      {{- end}}
       {{- end}}
       {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
     </div>

@@ -419,6 +419,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		Row:  func(row string) string { return pin(map[string]string{y: row}) },
 		Col:  func(col string) string { return pin(map[string]string{x: col}) },
 	}, time.Now(), true)
+	nameThePackageLevelRows(&view.Grid, x, y, name)
 	// A symbol axis names APIs, and one build's detected symbols are
 	// attributed to every package in its closure — which is how a logging
 	// facade came to have MockHttpServletRequest on its axis. Where several
@@ -428,6 +429,36 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		markSharedSymbolAxis(s, r, eco, &view.Grid, x, y, lang)
 	}
 	return view
+}
+
+// nameThePackageLevelRows calls the package-level aggregate by the package's
+// own name wherever it sits on a symbol axis.
+//
+// "whole package" is what the row IS — the total over the APIs beside it —
+// but a reader on typescript's page already knows which package they are
+// on, and read a column of API names with one generic phrase among them.
+// The name says the same thing and says which.
+//
+// Display only. The stored value is a filter value in URLs and does not
+// move, so a link built from it still resolves.
+func nameThePackageLevelRows(g *pivotGrid, x, y, name string) {
+	if name == "" {
+		return
+	}
+	if x == "symbol" {
+		for i := range g.Cols {
+			if g.Cols[i].Label == cubePackageLevel {
+				g.Cols[i].Label = name
+			}
+		}
+	}
+	if y == "symbol" {
+		for i := range g.Rows {
+			if g.Rows[i].Label == cubePackageLevel {
+				g.Rows[i].Label = name
+			}
+		}
+	}
 }
 
 // markSharedSymbolAxis qualifies the symbol labels of a grid with how many
@@ -497,8 +528,15 @@ func cubeLeafRows(facts []cubeFact, eco, name string) []cubeLeafRow {
 			Env:     key.env,
 			Cell:    buildPivotCell(mergeCubeFacts(merged[key]), now),
 		}
-		if row.Symbol != cubePackageLevel && row.Symbol != "" {
-			row.SymbolHref = symbolHref(eco, name, row.Version, row.Symbol)
+		// The link is decided from the STORED symbol, before the display name
+		// is applied. Renaming first gave the package-level row a link to a
+		// symbol page named after the package, which does not exist.
+		if key.symbol != cubePackageLevel && key.symbol != "" {
+			row.SymbolHref = symbolHref(eco, name, row.Version, key.symbol)
+		} else if name != "" {
+			// The record names the package rather than saying "whole package"
+			// at a reader who is standing on that package.
+			row.Symbol = name
 		}
 		if row.Version != "" {
 			row.VersionHref = versionHref(eco, name, row.Version)

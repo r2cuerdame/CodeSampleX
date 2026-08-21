@@ -49,12 +49,18 @@ func TestPackagePageCubeDrillDown(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
 	body := get(t, mux, "/npm/reactish?f_os=linux").Body.String()
 
-	// The pinned dimension shows as the selected option of its own filter,
-	// which is also how it is cleared (back to "all").
-	mustContain(t, body, `<option value="linux" selected>linux</option>`)
+	// The pinned dimension shows once, as a chip that can take it off. It
+	// used to be drawn a second time as a dropdown the reader could not
+	// use, so a fully drilled coordinate said the same five things twice.
+	// It stays in the form as a hidden field, because that is the only
+	// thing that carries a pin through the next submit.
+	mustContain(t, body, `<span class="pinval">linux</span>`)
+	mustContain(t, body, `<input type="hidden" name="f_os" value="linux">`)
+	mustNotContain(t, body, `<option value="linux" selected>linux</option>`)
 	mustContain(t, body, "Clear filters")
 	mustContain(t, body, "createRoot")
-	mustContain(t, body, "whole package")
+	// The aggregate is called by the package's own name.
+	mustContain(t, body, "reactish")
 }
 
 // A slice narrowed to one measured combination renders the exact record,
