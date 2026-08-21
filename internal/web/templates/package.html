@@ -47,8 +47,8 @@
            one that stays put. A decided dimension holds its one value
            selected and offers no "all", so the control says where you are
            without pretending there is a choice. */}}
-      <label{{if .Active}} class="on"{{else if .Fixed}} class="fixed"{{end}}>{{.Label}}
-        <select name="f_{{.Dim}}" data-autosubmit>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      <label{{if .Fixed}} class="fixed"{{else if .Active}} class="on"{{end}}>{{.Label}}
+        <select name="f_{{.Dim}}"{{if .Fixed}} disabled aria-disabled="true"{{else}} data-autosubmit{{end}}>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>
       {{- end}}
       {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}

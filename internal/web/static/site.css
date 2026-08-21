@@ -1509,9 +1509,13 @@ td.pv .pvbasis { font-size: 0.7rem; }
 }
 .cubecontrols .ctllabel { align-self: center; font-weight: 700; }
 /* A dimension with one value keeps its dropdown — the bar must not change
-   shape as the reader drills — but it is decided, not chosen, so it sits
-   quieter than a filter the reader placed themselves. */
-.cubecontrols label.fixed select { color: var(--dim); border-style: dashed; }
+   shape as the reader drills — but there is nothing to choose, so it reads as
+   a stated value rather than an offer. A dashed border said "provisional",
+   which is the opposite of what a decided coordinate is. */
+.cubecontrols label.fixed select {
+  color: var(--text); background: var(--panel-2);
+  border-color: var(--line); cursor: default; opacity: 1;
+}
 /* min-width:0 let every control shrink instead of wrapping. With two filters
    that was invisible; with all eight dimensions offered it crushed the labels
    into each other and squeezed the dropdowns to a few pixels. A control that

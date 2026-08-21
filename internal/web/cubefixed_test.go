@@ -140,3 +140,39 @@ func TestOneOSIsDecidedEvenThoughItOffersItsPlatform(t *testing.T) {
 		t.Errorf("options = %+v, want just alpine musl", sel.Options)
 	}
 }
+
+// A pin the reader placed themselves used to keep its "all" option so they
+// could get back out. Where the dimension holds ONE value that escape leads
+// nowhere: clearing the pin produces the identical slice, so the control
+// offered a choice between a thing and itself — and it is what the reader
+// meets after every drill, since drilling is what leaves one value standing.
+//
+// One value is decided, pinned or not. "Clear filters" still clears it.
+func TestOneValueIsDecidedEvenWhenTheReaderPinnedIt(t *testing.T) {
+	facts := []cubeFact{
+		{Dims: map[string]string{"arch": "x64", "version": "1.0.0"}, Agg: pivotAgg{obsPass: 1}},
+		{Dims: map[string]string{"arch": "x64", "version": "2.0.0"}, Agg: pivotAgg{obsPass: 1}},
+	}
+	sel, ok := cubeFilterFor(facts, "arch", map[string]string{"arch": "x64"}, "en")
+	if !ok {
+		t.Fatal("no arch control")
+	}
+	if !sel.Fixed {
+		t.Errorf("arch = %+v, want it decided: x64 is the only value there is", sel.Options)
+	}
+	if len(sel.Options) != 1 || sel.Options[0].Value != "x64" {
+		t.Errorf("options = %+v, want just x64", sel.Options)
+	}
+}
+
+// Two values pinned to one is a real choice and keeps its way back out.
+func TestAPinAmongSeveralValuesStaysClearable(t *testing.T) {
+	facts := []cubeFact{
+		{Dims: map[string]string{"runtime": "node 22"}, Agg: pivotAgg{obsPass: 1}},
+		{Dims: map[string]string{"runtime": "node 24"}, Agg: pivotAgg{obsPass: 1}},
+	}
+	sel, _ := cubeFilterFor(facts, "runtime", map[string]string{"runtime": "node 22"}, "en")
+	if sel.Fixed || sel.Options[0].Value != "" {
+		t.Errorf("runtime = %+v, want the all option kept", sel.Options)
+	}
+}

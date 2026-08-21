@@ -182,11 +182,18 @@ func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang
 		Label:  i18n.T(lang, "cube.dim_"+dim),
 		Active: filters[dim] != "",
 	}
-	// Fixed on the count of values MEASURED, not of entries offered: the OS
-	// control adds whole platforms beside exact environments, so a slice
-	// measured only on alpine renders "linux" and "alpine musl" and counting
-	// entries read that as a choice between a group and its only member.
-	sel.Fixed = len(values) == 1 && filters[dim] == ""
+	// One value is decided, whether the reader pinned it or the evidence left
+	// it standing. A pin used to keep its "all" option as a way back out, but
+	// where the dimension holds one value that leads nowhere — clearing it
+	// produces the identical slice — so the control offered a choice between a
+	// thing and itself, on exactly the page a reader reaches by drilling.
+	// "Clear filters" still clears it.
+	//
+	// Counted on values MEASURED, not entries offered: the OS control adds
+	// whole platforms beside exact environments, so a slice measured only on
+	// alpine renders "linux" and "alpine musl", and counting entries read that
+	// as a choice between a group and its only member.
+	sel.Fixed = len(values) == 1
 	// The OS offers whole platforms as well as exact environments: "does it
 	// run on Linux at all" and "does it run on alpine musl" are different
 	// questions and a reader arrives with both. Decided, there is only the

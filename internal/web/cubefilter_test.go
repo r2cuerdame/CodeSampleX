@@ -30,11 +30,13 @@ func TestAFilterWithOneValueStatesThatValue(t *testing.T) {
 	}
 }
 
-// A dimension the reader pinned themselves keeps its "all" option even when
-// the pin leaves one value standing, or they cannot get back out.
+// A pin among several values keeps its "all" option, or the reader cannot get
+// back out. A pin on the ONLY value does not: clearing it produces the
+// identical slice, so the option would be a choice between a thing and itself.
 func TestAPinnedFilterCanAlwaysBeCleared(t *testing.T) {
 	facts := []cubeFact{
 		{Dims: map[string]string{"version": "1.0.0", "os": "linux"}, Agg: pivotAgg{obsPass: 1}},
+		{Dims: map[string]string{"version": "1.0.0", "os": "windows 11"}, Agg: pivotAgg{obsPass: 1}},
 	}
 	sel, ok := cubeFilterFor(facts, "os", map[string]string{"os": "linux"}, "en")
 	if !ok {
