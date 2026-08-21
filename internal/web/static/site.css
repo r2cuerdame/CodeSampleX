@@ -1535,6 +1535,12 @@ td.pv .pvbasis { font-size: 0.7rem; }
 .cubecontrols label.fixed select {
   color: var(--text); background: var(--panel-2);
   border-color: var(--line); cursor: default; opacity: 1;
+  /* No arrow. The whole instrument turns on one rule -- a control you can
+     open still holds a choice, and an open control is why the grid is still
+     a grid -- so a decided dimension must not wear the same affordance as a
+     live one. Greying it out would say "unavailable"; it is not unavailable,
+     it is settled. */
+  appearance: none; -webkit-appearance: none; padding-right: 0.5rem;
 }
 /* min-width:0 let every control shrink instead of wrapping. With two filters
    that was invisible; with all eight dimensions offered it crushed the labels
