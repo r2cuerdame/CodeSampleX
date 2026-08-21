@@ -26,18 +26,24 @@ func hit(diff []string, passes int, status string) domain.SearchResponse {
 // below the deltas. Every windows caller reads that, because every verifier
 // is a linux container: the one thing the network owns outright was the one
 // thing it buried.
-func TestTheAnswerLeadsWithWhatThisNetworkVerified(t *testing.T) {
+func TestTheAnswerLeadsWithTheOnlyThingOffered(t *testing.T) {
 	out := renderSearchResponse(hit([]string{"os windows (sample: linux)"}, 2, "CROSS_PASS"))
 
-	v := strings.Index(out, "VERIFIED BY THIS NETWORK")
+	v := strings.Index(out, "BUILT:")
 	if v < 0 {
-		t.Fatalf("the answer never states that this network verified the sample:\n%s", out)
+		t.Fatalf("the answer never states the one thing on offer: that the sample built:\n%s", out)
 	}
 	if m := strings.Index(out, "MATCH:"); m >= 0 && m < v {
-		t.Error("the grade about the caller's environment comes before what the network actually ran")
+		t.Error("a grade about the caller's environment comes before the fact that it built")
 	}
-	if !strings.Contains(out, "CROSS_PASS") || !strings.Contains(out, "2") {
-		t.Error("the verification line does not say how much ran")
+	if !strings.Contains(out, "2") {
+		t.Error("the line does not say how many times it built")
+	}
+	// The ladder grades, and a grade is the one thing this network does not
+	// offer — half of production's CROSS_PASS labels do not hold under the
+	// rule that grants them.
+	if strings.Contains(out, "CROSS_PASS") {
+		t.Error("the answer still shows a status grade")
 	}
 }
 

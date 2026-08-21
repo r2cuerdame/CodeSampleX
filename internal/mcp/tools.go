@@ -551,7 +551,7 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 	// — which every windows caller reads, because every verifier is a linux
 	// container. The one thing the network owns outright was the one thing
 	// it buried.
-	b.WriteString(renderVerified(resp.Results[0]))
+	b.WriteString(renderBuilt(resp.Results[0]))
 	for i, r := range resp.Results {
 		if i > 0 {
 			b.WriteString("\n--- alternative " + strconv.Itoa(i+1) + " ---\n\n")
@@ -611,11 +611,11 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		}
 
 		if r.SampleID != "" {
-			b.WriteString("\nSample: " + r.SampleID)
-			if r.SampleStatus != "" {
-				b.WriteString(" (status " + r.SampleStatus + ")")
-			}
-			b.WriteString(" — fetch files with get_sample\n")
+			// No status. The ladder grades, and a grade is the one thing this
+			// network does not offer — half of production's CROSS_PASS labels do
+			// not hold under the rule that grants them, and the line at the top
+			// already states the fact the label was standing in for.
+			b.WriteString("\nSample: " + r.SampleID + " — fetch files with get_sample\n")
 		}
 		if r.Case != nil && r.Case.Goal != "" {
 			b.WriteString("Goal: " + r.Case.Goal + "\n")
@@ -642,30 +642,37 @@ func writeFinding(b *strings.Builder, r domain.SearchResult) {
 	b.WriteString("  The contract below measured otherwise.\n\n")
 }
 
-// renderVerified states what this network ran, and hands back the part it
-// did not.
+// renderBuilt states the only thing this network offers: a sample that
+// builds, and where it built.
 //
-// A sample it verified is a verified sample: it ran the contract in a sandbox
-// and holds the receipt. Whether the same code also runs on the caller's
-// platform is a different question and one the network never measured —
-// which is exactly why the delta is listed rather than folded into a score.
-func renderVerified(r domain.SearchResult) string {
+// It said VERIFIED. The word is an integrity claim — it invites "verified,
+// therefore safe, therefore correct here" — and the network warrants none of
+// that. What it did was run the contract in a sandbox and keep the signed
+// receipt. Whether the same code builds on the caller's platform it never
+// measured, which is why the delta is a list rather than a score.
+//
+// There is nothing beyond this. No grade, no integrity: a sample that built,
+// and the record of where.
+func renderBuilt(r domain.SearchResult) string {
 	if r.Evidence.ContractPasses <= 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "VERIFIED BY THIS NETWORK: contract passed %d time(s)",
+	fmt.Fprintf(&b, "BUILT: this sample built and its contract passed %d time(s)",
 		r.Evidence.ContractPasses)
 	if r.Evidence.IndependentCrossPeers > 0 {
 		fmt.Fprintf(&b, " across %d verifying peer key(s)", r.Evidence.IndependentCrossPeers)
 	}
 	if r.SampleStatus != "" {
-		fmt.Fprintf(&b, " (status %s)", r.SampleStatus)
+		// The status ladder is not shown. It grades, and a grade is the one
+		// thing this network does not offer; half of production's CROSS_PASS
+		// labels do not even hold under the rule that grants them.
+		_ = r.SampleStatus
 	}
 	b.WriteString(".\n")
 	if len(r.Different) > 0 {
-		b.WriteString("It ran somewhere that differs from where you are — see Different below. " +
-			"Whether it holds there is not something this network measured.\n")
+		b.WriteString("It built somewhere that differs from where you are — see Different below. " +
+			"Whether it builds there is not something this network measured, and not something it claims.\n")
 	}
 	b.WriteString("\n")
 	return b.String()

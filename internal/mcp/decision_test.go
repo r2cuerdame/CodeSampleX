@@ -42,7 +42,7 @@ func TestASampleWithNoContractPassClaimsNoVerification(t *testing.T) {
 		SampleID: "sha256:bbb",
 		Evidence: domain.EvidenceSummary{ContractPasses: 0},
 	}
-	if got := renderVerified(r); got != "" {
-		t.Errorf("renderVerified = %q, want nothing: no contract ever ran", got)
+	if got := renderBuilt(r); got != "" {
+		t.Errorf("renderBuilt = %q, want nothing: no contract ever ran", got)
 	}
 }

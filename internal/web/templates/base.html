@@ -272,7 +272,7 @@ document.addEventListener('keydown',event=>{
   <li>
     <a href="/samples/{{$sample.SampleID}}">{{if $sample.Goal}}{{$sample.Goal}}{{else}}{{$sample.SampleID}}{{end}}</a>
     <span class="badge-help">
-      <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="status-help-{{$i}}" aria-describedby="status-help-{{$i}}">{{$sample.Status}} <span class="badge-mark" aria-hidden="true">?</span></button>
+      <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="status-help-{{$i}}" aria-describedby="status-help-{{$i}}">{{$.T "sample.built"}} <span class="badge-mark" aria-hidden="true">?</span></button>
       <span class="badge-tip" id="status-help-{{$i}}" role="tooltip">{{$.T "sample.status_help"}}</span>
     </span>
     {{- if $sample.Kind}}<span class="chip kind mono small">{{$sample.Kind}}</span>{{end}}

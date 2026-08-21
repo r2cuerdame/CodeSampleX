@@ -288,7 +288,11 @@ func TestSampleBadgeHelpIsAccessibleAndLocalized(t *testing.T) {
 		`aria-controls="sample-level-help" aria-describedby="sample-level-help"`,
 		`id="sample-status-help" role="tooltip"`,
 		`id="sample-level-help" role="tooltip"`,
-		"PUBLISHED is public and awaiting independent verification",
+		// The badge no longer names a rung of the publication ladder. The
+		// ladder grades, and this network offers no grade — 1,001 of
+		// production's CROSS_PASS labels do not hold under the rule that
+		// grants them. The badge says what it is: a sample that built.
+		"grades nothing and warrants nothing",
 		"L1 resolved dependencies",
 		"help.addEventListener('mouseenter'",
 		"trigger.addEventListener('focus'",
@@ -299,7 +303,7 @@ func TestSampleBadgeHelpIsAccessibleAndLocalized(t *testing.T) {
 	}
 
 	ko := get(t, mux, "/samples/sha256:d1e2f3?lang=ko").Body.String()
-	mustContain(t, ko, "PUBLISHED는 공개 후 독립 검증 대기")
+	mustContain(t, ko, "등급을 매기지 않고 무엇도 보증하지 않습니다")
 	mustContain(t, ko, "L1은 의존성 해결")
 }
 
@@ -313,10 +317,11 @@ func TestSeederPage(t *testing.T) {
 	mustContain(t, body, "alice")
 	mustContain(t, body, "POST JSON with axios and retries")
 	mustContain(t, body, `href="/samples/sha256:d1e2f3"`)
-	mustContain(t, body, "CROSS_PASS")
+	// The rung is gone from the badge; the fact is what is left.
+	mustContain(t, body, "Built")
 	mustContain(t, body, `aria-controls="status-help-0" aria-describedby="status-help-0"`)
 	mustContain(t, body, `id="status-help-0" role="tooltip"`)
-	mustContain(t, body, "PUBLISHED is public and awaiting independent verification")
+	mustContain(t, body, "grades nothing and warrants nothing")
 }
 
 // TestAdaptersPathRedirects: the capability page folded into the front
