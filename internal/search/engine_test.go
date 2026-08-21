@@ -581,15 +581,15 @@ func TestSearchCrossPassOutranksLocalPass(t *testing.T) {
 		Packages:      []string{"pkg:npm/axios@1.12.0"},
 		Environment:   env,
 	})
-	if resp.Miss || len(resp.Results) < 2 {
-		t.Fatalf("expected 2 results, got miss=%v n=%d", resp.Miss, len(resp.Results))
+	// The two samples share one coordinate, so the answer is folded to one
+	// result — and which one survives IS the ranking claim: the fold keeps
+	// the highest-scored, so only CROSS_PASS outscoring LOCAL_PASS puts the
+	// verified sample here.
+	if resp.Miss || len(resp.Results) != 1 {
+		t.Fatalf("expected the folded best result, got miss=%v n=%d", resp.Miss, len(resp.Results))
 	}
 	if resp.Results[0].SampleID != "sha256:crossc" {
-		t.Fatalf("results[0] = %s, want CROSS_PASS sample first", resp.Results[0].SampleID)
-	}
-	if resp.Results[0].Score <= resp.Results[1].Score {
-		t.Errorf("CROSS_PASS should outscore LOCAL_PASS: %f <= %f",
-			resp.Results[0].Score, resp.Results[1].Score)
+		t.Fatalf("results[0] = %s, want the CROSS_PASS sample to win the coordinate", resp.Results[0].SampleID)
 	}
 	ev := resp.Results[0].Evidence
 	if ev.ContractPasses != 2 {
@@ -603,6 +603,50 @@ func TestSearchCrossPassOutranksLocalPass(t *testing.T) {
 	}
 }
 
+// Two samples for the same (packages, symbols) coordinate are the same
+// answer twice. The HTTP search already folds them; this is the LOCAL engine
+// — the path serving search_known_solution, the primary agent surface —
+// where duplicates still consumed the 3-result budget and displaced the
+// distinct second-best answer.
+func TestDuplicateCoordinatesDoNotConsumeTheResultBudget(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	env := nodeEnv("cjs")
+	for i, id := range []string{"sha256:dup1", "sha256:dup2", "sha256:dup3"} {
+		m := mkManifest("post json with axios variant "+string(rune('a'+i)),
+			[]string{"pkg:npm/axios@1.12.0"}, env, "axios.post")
+		if err := SeedSampleDoc(ctx, db, m, id, "LOCAL_PASS"); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	distinct := mkManifest("post json with axios interceptors",
+		[]string{"pkg:npm/axios@1.12.0"}, env, "axios.interceptors")
+	if err := SeedSampleDoc(ctx, db, distinct, "sha256:distinct", "LOCAL_PASS"); err != nil {
+		t.Fatalf("seed distinct: %v", err)
+	}
+
+	resp := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 1, Query: "post json axios",
+		Packages:    []string{"pkg:npm/axios@1.12.0"},
+		Environment: env,
+	})
+	if resp.Miss {
+		t.Fatal("unexpected miss")
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("results = %d, want one per coordinate: %+v", len(resp.Results), resp.Results)
+	}
+	found := false
+	for _, r := range resp.Results {
+		if r.SampleID == "sha256:distinct" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the distinct second-best answer was displaced by duplicates")
+	}
+}
+
 // The default limit is 3 even when more candidates clear the threshold.
 func TestSearchDefaultLimit(t *testing.T) {
 	db := openDB(t)
@@ -613,8 +657,11 @@ func TestSearchDefaultLimit(t *testing.T) {
 		"post json with axios one", "post json with axios two",
 		"post json with axios three", "post json with axios four",
 	}
+	// Distinct symbols: identical coordinates would be folded to one result
+	// before the limit is ever reached, and the limit is what this tests.
+	symbols := []string{"axios.get", "axios.post", "axios.put", "axios.patch"}
 	for i, id := range ids {
-		m := mkManifest(goals[i], []string{"pkg:npm/axios@1.12.0"}, env, "axios.post")
+		m := mkManifest(goals[i], []string{"pkg:npm/axios@1.12.0"}, env, symbols[i])
 		if err := SeedSampleDoc(ctx, db, m, id, "LOCAL_PASS"); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}

@@ -1,15 +1,11 @@
-package httpapi
+package domain
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/r2cuerdame/codesamplex/internal/domain"
-)
-
-func res(id string, score float64, grade domain.MatchGrade, purl, sym string) domain.SearchResult {
-	return domain.SearchResult{
+func dedupeRes(id string, score float64, grade MatchGrade, purl, sym string) SearchResult {
+	return SearchResult{
 		SampleID: id, Score: score, Grade: grade,
-		Case: &domain.Case{Packages: []string{purl}, Symbols: []string{sym}},
+		Case: &Case{Packages: []string{purl}, Symbols: []string{sym}},
 	}
 }
 
@@ -19,10 +15,10 @@ func res(id string, score float64, grade domain.MatchGrade, purl, sym string) do
 // twice. The corpus carried 37% of these before the work queue was fixed, and
 // the ones already published do not disappear on their own.
 func TestSearchReturnsOneSamplePerCoordinate(t *testing.T) {
-	got := dedupeByCoordinate([]domain.SearchResult{
-		res("sha256:a", 0.91, domain.GradeExact, "pkg:npm/axios@1.6.0", "axios.post"),
-		res("sha256:b", 0.88, domain.GradeExact, "pkg:npm/axios@1.6.0", "axios.post"),
-		res("sha256:c", 0.70, domain.GradeCompatible, "pkg:npm/axios@1.6.0", "axios.get"),
+	got := DedupeResultsByCoordinate([]SearchResult{
+		dedupeRes("sha256:a", 0.91, GradeExact, "pkg:npm/axios@1.6.0", "axios.post"),
+		dedupeRes("sha256:b", 0.88, GradeExact, "pkg:npm/axios@1.6.0", "axios.post"),
+		dedupeRes("sha256:c", 0.70, GradeCompatible, "pkg:npm/axios@1.6.0", "axios.get"),
 	})
 	if len(got) != 2 {
 		t.Fatalf("results = %d, want one per coordinate: %+v", len(got), got)
@@ -38,7 +34,7 @@ func TestSearchReturnsOneSamplePerCoordinate(t *testing.T) {
 // A sample with no declared coordinate cannot be compared to anything, and
 // dropping it would silently lose an answer. It passes through.
 func TestUncoordinatedSamplesAreNeverFoldedTogether(t *testing.T) {
-	got := dedupeByCoordinate([]domain.SearchResult{
+	got := DedupeResultsByCoordinate([]SearchResult{
 		{SampleID: "sha256:x", Score: 0.9},
 		{SampleID: "sha256:y", Score: 0.8},
 	})

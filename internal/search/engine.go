@@ -235,9 +235,21 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 		resp.Miss = true
 		return resp
 	}
+	// One result per (packages, symbols) coordinate — the same fold the HTTP
+	// search applies. Two samples for one coordinate are the same answer
+	// twice: side by side they burn the caller's result budget and read as
+	// corroboration, and this engine serves search_known_solution, the
+	// surface where that budget is three.
+	seenCoordinate := map[string]bool{}
 	for _, s := range all {
 		if len(resp.Results) == limit || s.score < missThreshold {
 			break
+		}
+		if key, ok := domain.ResultCoordinate(s.res); ok {
+			if seenCoordinate[key] {
+				continue
+			}
+			seenCoordinate[key] = true
 		}
 		resp.Results = append(resp.Results, s.res)
 	}
