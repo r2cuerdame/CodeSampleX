@@ -113,6 +113,11 @@ type shardVerificationEntry struct {
 // with another variant: package versions, environment and PASS/FAIL belong
 // to the same receipt or they do not belong in one search grade.
 type verificationVariant struct {
+	// key identifies the variant for de-duplication. It is derived once, on
+	// first use, because deriving it normalises an environment, hashes it and
+	// renders canonical JSON — work that used to be repeated for every
+	// element of the list on every append.
+	key      string
 	packages []domain.PURL
 	env      domain.EnvironmentFingerprint
 	stages   map[string]string
@@ -1376,10 +1381,23 @@ func variantsFromShard(entries []shardVerificationEntry) []verificationVariant {
 	return out
 }
 
+// appendVerification adds a variant unless the list already holds the same
+// one, keeping the higher verification level when it does.
+//
+// The key is remembered on the variant instead of being recomputed. It was
+// derived for every element already in the list on every single append, and
+// deriving one means normalising an environment, hashing it, and rendering
+// canonical JSON — so a candidate with n variants paid that n^2/2 times, on
+// every query, for the 5,347 shard sample entries this walks.
 func appendVerification(list []verificationVariant, add verificationVariant) []verificationVariant {
-	key := verificationKey(add)
+	if add.key == "" {
+		add.key = verificationKey(add)
+	}
 	for i := range list {
-		if verificationKey(list[i]) == key {
+		if list[i].key == "" {
+			list[i].key = verificationKey(list[i])
+		}
+		if list[i].key == add.key {
 			if add.level > list[i].level {
 				list[i].level = add.level
 			}
