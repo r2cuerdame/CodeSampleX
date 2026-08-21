@@ -53,6 +53,17 @@ var ddl = []string{
 	  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
 	  payload TEXT NOT NULL, created_at TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
 	`CREATE TABLE IF NOT EXISTS receipts(receipt_id TEXT PRIMARY KEY, sample_id TEXT, json TEXT, created_at TEXT)`,
+	// Every candidate a search scores has its receipts read, and there were
+	// 2,788 candidates on the machine where this was measured. Without this
+	// index each of those reads scanned the whole receipts table: about 8.5
+	// million row visits for ONE search, 10.4 of its 11.3 seconds, and 89.6%
+	// of Engine.Search in a CPU profile.
+	//
+	// The ORDER BY is part of it. Covering created_at and receipt_id lets
+	// SQLite walk the index in order instead of building a temp b-tree per
+	// candidate, and putting json last means the row itself is never touched.
+	`CREATE INDEX IF NOT EXISTS receipts_by_sample
+	  ON receipts(sample_id, created_at, receipt_id, json)`,
 	`CREATE TABLE IF NOT EXISTS hits(
 	  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, query TEXT, grade TEXT,
 	  sample_id TEXT, adopted INTEGER DEFAULT 0, post_build_pass INTEGER)`,
