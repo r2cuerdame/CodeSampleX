@@ -121,6 +121,58 @@ func TestASingleReporterIsRelayedAndSaysSo(t *testing.T) {
 	}
 }
 
+// The fallback reads the package-level document when no symbol-scoped one
+// exists — and the payload then labelled that package-level data with the
+// symbol anyway, presenting package-wide counts as an answer about one API.
+// The label belongs to the document that was actually read.
+func TestPackageLevelFallbackIsNotLabelledWithTheSymbol(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	js, err := json.Marshal(relaySnapshot(184))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Package-level document only; nothing symbol-scoped exists.
+	if err := store.PutSnapshot(context.Background(), "pkg:npm/lonely@1.0.0", "", string(js)); err != nil {
+		t.Fatal(err)
+	}
+	var got domain.SearchResponse
+	resp := postJSON(t, srv.URL+"/v2/search", map[string]any{
+		"schemaVersion": 1, "goal": "use lonely",
+		"packages":    []string{"pkg:npm/lonely@1.0.0"},
+		"symbols":     []string{"lonely.leftPad"},
+		"environment": map[string]any{"schemaVersion": 1, "ecosystem": "npm", "os": "windows"},
+	}, nil)
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed == nil || len(got.Observed.Cells) == 0 {
+		t.Fatal("the package-level fallback stopped relaying anything")
+	}
+	if got.Observed.Symbol != "" {
+		t.Errorf("symbol = %q; package-wide counts wear a symbol label", got.Observed.Symbol)
+	}
+
+	// With a symbol-scoped document present the label is earned and stays.
+	if err := store.PutSnapshot(context.Background(), "pkg:npm/lonely@1.0.0", "lonely.leftPad", string(js)); err != nil {
+		t.Fatal(err)
+	}
+	resp = postJSON(t, srv.URL+"/v2/search", map[string]any{
+		"schemaVersion": 1, "goal": "use lonely",
+		"packages":    []string{"pkg:npm/lonely@1.0.0"},
+		"symbols":     []string{"lonely.leftPad"},
+		"environment": map[string]any{"schemaVersion": 1, "ecosystem": "npm", "os": "windows"},
+	}, nil)
+	defer resp.Body.Close()
+	got = domain.SearchResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed == nil || got.Observed.Symbol != "lonely.leftPad" {
+		t.Errorf("observed = %+v, want the symbol-scoped document labelled with its symbol", got.Observed)
+	}
+}
+
 // v1 is a frozen byte shape. Doing the store work and discarding it would
 // also cost a read on the network's most common outcome.
 func TestV1MissCarriesNoRelay(t *testing.T) {

@@ -57,7 +57,7 @@ func (a *api) relayObservations(ctx context.Context, purls []domain.PURL, symbol
 	// The first named package is what the question is about. Relaying every
 	// package in a dependency tree would bury it and multiply the read.
 	purl := purls[0]
-	snap, ok := a.relaySnapshot(ctx, purl.String(), symbols)
+	snap, symbol, ok := a.relaySnapshot(ctx, purl.String(), symbols)
 	if !ok {
 		return nil
 	}
@@ -66,9 +66,10 @@ func (a *api) relayObservations(ctx context.Context, purls []domain.PURL, symbol
 		PURL:  purl.String(),
 		Basis: domain.ObservedBasis,
 		Note:  domain.ObservedNote,
-	}
-	if len(symbols) == 1 {
-		out.Symbol = symbols[0]
+		// The label belongs to the document that was READ: when the fallback
+		// served the package-level snapshot, stamping the asked-for symbol on
+		// it would present package-wide counts as an answer about one API.
+		Symbol: symbol,
 	}
 	for _, row := range snap.Rows {
 		if row.UniquePeerBuckets < relayMinReporters {
@@ -133,24 +134,26 @@ func (a *api) relayObservations(ctx context.Context, purls []domain.PURL, symbol
 }
 
 // relaySnapshot reads the symbol-scoped document when the caller named one
-// symbol, and the package-level one otherwise.
+// symbol, and the package-level one otherwise. The returned symbol names the
+// document actually read: "" when the fallback served the package-level one.
 //
 // It never reads both. The recorder writes a package-level observation AND
 // one per detected symbol from the same build, carrying the same error
 // fingerprint, so combining them multiplies the visible volume of a single
 // build — in a payload whose entire value is an honest denominator.
-func (a *api) relaySnapshot(ctx context.Context, purl string, symbols []string) (compatibility.Snapshot, bool) {
+func (a *api) relaySnapshot(ctx context.Context, purl string, symbols []string) (compatibility.Snapshot, string, bool) {
 	symbol := ""
 	if len(symbols) == 1 {
 		symbol = strings.TrimSpace(symbols[0])
 	}
 	if snap, ok := a.readSnapshot(ctx, purl, symbol); ok {
-		return snap, true
+		return snap, symbol, true
 	}
 	if symbol == "" {
-		return compatibility.Snapshot{}, false
+		return compatibility.Snapshot{}, "", false
 	}
-	return a.readSnapshot(ctx, purl, "")
+	snap, ok := a.readSnapshot(ctx, purl, "")
+	return snap, "", ok
 }
 
 func (a *api) readSnapshot(ctx context.Context, purl, symbol string) (compatibility.Snapshot, bool) {
