@@ -4,8 +4,6 @@
 package compatibility
 
 import (
-	"time"
-
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -41,11 +39,12 @@ func ClassWeight(c domain.EvidenceClass) float64 {
 // from search candidate selection.
 
 // Sample is one aggregated evidence line entering a confidence computation.
+// It deliberately carries no age: evidence does not decay, and a field that
+// nothing reads is how a decay quietly comes back.
 type Sample struct {
 	Class  domain.EvidenceClass
 	Result domain.Result
 	Count  int64
-	Age    time.Duration
 }
 
 // Verdict is the computed confidence for one (package, symbol, env) cell.

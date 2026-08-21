@@ -141,7 +141,6 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 				Class:  domain.ClassUsageObservation,
 				Result: domain.Result(row.Result),
 				Count:  row.ObservationCount,
-				Age:    now.Sub(row.LastSeen),
 			})
 		}
 		if row.UniquePeerBuckets > g.maxPeers {
@@ -170,7 +169,6 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 			Class:  domain.ClassSampleVerification,
 			Result: domain.Result(rec.ContractResult),
 			Count:  1,
-			Age:    now.Sub(rec.CreatedAt),
 		})
 		if rec.CreatedAt.After(g.lastSeen) {
 			g.lastSeen = rec.CreatedAt

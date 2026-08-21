@@ -233,7 +233,7 @@ func BuildShard(key string, packages []ShardPackage, generatedAt time.Time) (sha
 
 // SymbolStatsFromEvidence condenses one symbol's evidence rows into the C6
 // stats block plus its failure list.
-func SymbolStatsFromEvidence(rows []serverstore.EvidenceRow, now time.Time) (ShardSymbolStats, []ShardFailure) {
+func SymbolStatsFromEvidence(rows []serverstore.EvidenceRow) (ShardSymbolStats, []ShardFailure) {
 	stats := ShardSymbolStats{ByStage: map[string]StageCount{}}
 	var samples []Sample
 	var lastSeen time.Time
@@ -254,7 +254,6 @@ func SymbolStatsFromEvidence(rows []serverstore.EvidenceRow, now time.Time) (Sha
 			Class:  domain.ClassUsageObservation,
 			Result: domain.Result(row.Result),
 			Count:  row.ObservationCount,
-			Age:    now.Sub(row.LastSeen),
 		})
 		if row.UniquePeerBuckets > maxPeers {
 			maxPeers = row.UniquePeerBuckets

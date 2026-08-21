@@ -583,16 +583,15 @@ func buildEvidence(syms []shardSymbolEntry, receipts []domain.VerificationReceip
 		if st.LastSeen > lastSeen {
 			lastSeen = st.LastSeen
 		}
-		age := ageFrom(st.LastSeen, now)
 		pass := int64(st.PassRate*float64(st.ObservationCount) + 0.5)
 		fail := st.ObservationCount - pass
 		if pass > 0 {
 			evSamples = append(evSamples, compatibility.Sample{
-				Class: domain.ClassUsageObservation, Result: domain.ResultPass, Count: pass, Age: age})
+				Class: domain.ClassUsageObservation, Result: domain.ResultPass, Count: pass})
 		}
 		if fail > 0 {
 			evSamples = append(evSamples, compatibility.Sample{
-				Class: domain.ClassUsageObservation, Result: domain.ResultFail, Count: fail, Age: age})
+				Class: domain.ClassUsageObservation, Result: domain.ResultFail, Count: fail})
 		}
 		for _, f := range sym.Failures {
 			if f.Count >= elevatedFailureMinCount {
@@ -608,8 +607,7 @@ func buildEvidence(syms []shardSymbolEntry, receipts []domain.VerificationReceip
 			continue
 		}
 		evSamples = append(evSamples, compatibility.Sample{
-			Class: domain.ClassSampleVerification, Result: res, Count: 1,
-			Age: ageFrom(r.CreatedAt, now)})
+			Class: domain.ClassSampleVerification, Result: res, Count: 1})
 		if res == domain.ResultPass {
 			s.ContractPasses++
 			if r.PeerID != "" {
@@ -1111,22 +1109,6 @@ func ecosystemOf(samP domain.PURL, reqEnv domain.EnvironmentFingerprint, c *cand
 // it was verified. The function is kept so callers read as they did; there is
 // nothing left to weigh.
 func recency(*candidate, time.Time) float64 { return 1 }
-
-// ageFrom parses an RFC3339 stamp into an age; unparseable means age 0.
-func ageFrom(stamp string, now time.Time) time.Duration {
-	if stamp == "" {
-		return 0
-	}
-	t, err := time.Parse(time.RFC3339, stamp)
-	if err != nil {
-		return 0
-	}
-	age := now.Sub(t)
-	if age < 0 {
-		return 0
-	}
-	return age
-}
 
 // parsePURLs parses the valid purls and drops malformed entries.
 func parsePURLs(ss []string) []domain.PURL {

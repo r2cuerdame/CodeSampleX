@@ -657,7 +657,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 				if symbol == "" {
 					continue // package-level evidence carries no symbol entry
 				}
-				stats, failures := SymbolStatsFromEvidence(rows, now)
+				stats, failures := SymbolStatsFromEvidence(rows)
 				entry.Symbols = append(entry.Symbols, ShardSymbol{
 					Family: symbol, Stats: stats, Failures: failures,
 				})

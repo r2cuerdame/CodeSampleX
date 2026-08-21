@@ -1,6 +1,8 @@
 package compatibility
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,16 +44,16 @@ func TestComputeElevatedFailure(t *testing.T) {
 // failed to compile on node 20 is exactly as true a year later. Halving by age
 // made confidence a function of when a coordinate was last touched, and with
 // verification capacity as small as it is, that was nearly every coordinate.
+//
+// The property is now STRUCTURAL: a Sample carries no age at all, so no
+// weighting can quietly reintroduce a decay. This pins the shape.
 func TestAgeDoesNotWeakenEvidence(t *testing.T) {
-	fresh := Compute([]Sample{
-		{Class: domain.ClassUsageObservation, Result: domain.ResultPass, Count: 10},
-	}, 3)
-	old := Compute([]Sample{
-		{Class: domain.ClassUsageObservation, Result: domain.ResultPass,
-			Count: 10, Age: 3 * 365 * 24 * time.Hour},
-	}, 3)
-	if fresh.Confidence != old.Confidence || fresh.PassRate != old.PassRate {
-		t.Fatalf("three-year-old evidence was weighed differently: %+v vs %+v", old, fresh)
+	typ := reflect.TypeOf(Sample{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if strings.Contains(strings.ToLower(f.Name), "age") || f.Type == reflect.TypeOf(time.Duration(0)) {
+			t.Errorf("Sample.%s reintroduces an age axis for a decay to hang on", f.Name)
+		}
 	}
 }
 
@@ -65,7 +67,7 @@ func TestVerificationOutweighsObservation(t *testing.T) {
 	// 10/13 — and that is the property under test.
 	v := Compute([]Sample{
 		{Class: domain.ClassSampleVerification, Result: domain.ResultPass, Count: 1},
-		{Class: domain.ClassUsageObservation, Result: domain.ResultFail, Count: 3, Age: 180 * 24 * time.Hour},
+		{Class: domain.ClassUsageObservation, Result: domain.ResultFail, Count: 3},
 	}, 2)
 	if v.PassRate < 0.75 {
 		t.Fatalf("pass rate %f too low: %+v", v.PassRate, v)
