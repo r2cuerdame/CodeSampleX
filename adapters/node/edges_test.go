@@ -74,6 +74,30 @@ func TestAnUnnestedChildResolvesToTheTopLevelCopy(t *testing.T) {
 	}
 }
 
+// An alias installs one package under another name, and the dependencies key
+// is the ALIAS. The parent side already renames to the installed package; an
+// edge's child must too, or it names a package that was never installed —
+// fabricated public evidence for a name the build never used, and rows that
+// never join with the same package's parent-side edges.
+func TestEdgeChildResolvesAnAliasToTheInstalledPackage(t *testing.T) {
+	const lock = `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {"dependencies": {"a": "^1.0.0"}},
+	    "node_modules/a": {"version": "1.2.0", "dependencies": {"b": "npm:other@^1"}},
+	    "node_modules/b": {"name": "other", "version": "1.9.0"}
+	  }
+	}`
+	got, err := parsePackageLockEdges([]byte(lock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []lockEdge{{Parent: "a", ParentVersion: "1.2.0", Child: "other", ChildVersion: "1.9.0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("edges = %+v, want the installed package, not the alias: %+v", got, want)
+	}
+}
+
 // An edge whose child is nowhere in the lockfile resolved to nothing, and
 // reporting a dependency nobody installed would be inventing one.
 func TestAnUnresolvableChildIsDropped(t *testing.T) {

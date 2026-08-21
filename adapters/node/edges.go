@@ -23,10 +23,22 @@ type lockEdge struct {
 
 // resolveChild applies npm's lookup: from the requiring package's own path,
 // walk up through each enclosing node_modules until one holds the child.
-func resolveChild(packages map[string]npmLockEntry, parentPath, child string) string {
+//
+// It returns the INSTALLED package's name beside the version. The
+// dependencies key is the alias when one is in play (b: "npm:other@^1"
+// installs other under node_modules/b), and an edge naming the alias names a
+// package that was never installed — the same renaming the parent side of
+// every edge already gets.
+func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (string, string) {
+	installed := func(e npmLockEntry) (string, string) {
+		if e.Name != "" && e.Name != child {
+			return e.Name, e.Version
+		}
+		return child, e.Version
+	}
 	for path := parentPath; ; {
 		if e, ok := packages[path+"/node_modules/"+child]; ok && e.Version != "" {
-			return e.Version
+			return installed(e)
 		}
 		idx := strings.LastIndex(path, "/node_modules/")
 		if idx < 0 {
@@ -35,9 +47,9 @@ func resolveChild(packages map[string]npmLockEntry, parentPath, child string) st
 		path = path[:idx]
 	}
 	if e, ok := packages["node_modules/"+child]; ok {
-		return e.Version
+		return installed(e)
 	}
-	return ""
+	return child, ""
 }
 
 // parsePackageLockEdges reads who pulled what out of package-lock.json.
@@ -76,13 +88,13 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 			// An edge whose child is nowhere in the lockfile resolved to
 			// nothing; reporting it would invent a dependency nobody
 			// installed.
-			version := resolveChild(lock.Packages, key, child)
+			name, version := resolveChild(lock.Packages, key, child)
 			if version == "" {
 				continue
 			}
 			out = append(out, lockEdge{
 				Parent: parent, ParentVersion: e.Version,
-				Child: child, ChildVersion: version,
+				Child: name, ChildVersion: version,
 			})
 		}
 	}
