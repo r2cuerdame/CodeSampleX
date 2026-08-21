@@ -1513,7 +1513,8 @@ td.pv .pvbasis { font-size: 0.7rem; }
   /* Rows, explicitly. It was a wrapping ROW whose two groups each asked for
      flex-basis 100% to get a line of their own, and that only works while
      nothing else touches their basis — a media query further down set
-     `.ctlgroup { flex: 1 1 100% }` and `label { flex: 1 1 8rem }`, three rules
+     a narrow-screen block set a full-width basis on the groups and an
+     8rem basis on the labels: three rules
      bidding on the same property from two directions.
 
      What shipped was a bar 87px tall holding two rows that need 120px: the
@@ -1529,11 +1530,19 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--panel-2);
 }
 .cubecontrols .ctlgroup {
-  /* min-width:0 is gone with the row parent that needed it. It let a
-     group shrink below its contents, and the labels inside cannot
-     shrink, so they overflowed and stacked. */
-  display: flex; flex-wrap: wrap; align-items: end; gap: 0.45rem 0.7rem;
+  display: flex; flex-wrap: wrap; align-items: end; align-content: flex-start;
+  gap: 0.45rem 0.7rem;
 }
+/* Nothing in this bar negotiates its width.
+   Every control was drawn on top of every other one — six Korean labels inside
+   thirty pixels, one dropdown visible — because the layout depended on a
+   flex-basis nobody owned: a group claimed a full line to get a row, a
+   narrow-screen block set a different basis on the same elements, and
+   min-width:0 let a group shrink under contents that cannot shrink.
+   Fixing the parent was not enough, so the children stop bidding too: no grow,
+   no shrink, size from content. A rule that wants a different width now has to
+   say so by name. */
+.cubecontrols .ctlgroup > * { flex: 0 0 auto; }
 /* Its own line, always. The group sat beside the axis pickers with
    min-width:0, so flex shrank the whole group to a few pixels rather than
    wrapping it — and the labels inside, which cannot shrink, overflowed and

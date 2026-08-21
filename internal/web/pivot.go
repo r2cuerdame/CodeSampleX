@@ -931,6 +931,17 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	}
 	if ver > 0 {
 		parts = append(parts, fmt.Sprintf("%d verified", ver))
+		if obs == 0 && a.used == 0 {
+			// Said in words, because the dash beside the mark was read as a
+			// zero and then as a contradiction: "we ran the code while
+			// writing it, so there should be at least 1".
+			//
+			// There is. It is the verified count on the left. What the dash
+			// means is the other half — this network runs its own sample in
+			// its own sandbox, and nobody ELSE has been seen building here.
+			// Two different facts, and only one of them had words.
+			parts = append(parts, "no builds observed from anyone else")
+		}
 	}
 	// Both rates, each named. A cell with usage AND our own runs showed 85%
 	// on its face and "pass 100%" in its tooltip, and nothing said the first
