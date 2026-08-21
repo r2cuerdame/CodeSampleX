@@ -1556,7 +1556,16 @@ td.pv .pvbasis { font-size: 0.7rem; }
    shape as the reader drills — but there is nothing to choose, so it reads as
    a stated value rather than an offer. A dashed border said "provisional",
    which is the opposite of what a decided coordinate is. */
-.cubecontrols label.fixed select {
+/* Namespaced, because the name was the bug.
+   A decided dimension carried class="fixed", and something in one reader's
+   browser defined .fixed { position: fixed } for every page it touched. All
+   seven filter labels left the flow, resolved to the same static position,
+   and drew on top of each other while the group's height collapsed under
+   them. Our stylesheet was correct and rendered correctly everywhere we could
+   look, which is why four fixes to it changed nothing.
+   Scoping our own selector could not have helped: their rule matched the
+   element, not our selector. The only defence is not to answer to the name. */
+.cubecontrols label.cube-decided select {
   color: var(--text); background: var(--panel-2);
   border-color: var(--line); cursor: default; opacity: 1;
   /* No arrow. The whole instrument turns on one rule -- a control you can

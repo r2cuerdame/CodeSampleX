@@ -65,7 +65,7 @@
            read than one that stays put. A decided dimension holds its one
            value selected and offers no "all", so it says where you are
            without pretending there is a choice. */}}
-      <label{{if .Fixed}} class="fixed"{{end}}>{{.Label}}
+      <label{{if .Fixed}} class="cube-decided"{{end}}>{{.Label}}
         <select name="f_{{.Dim}}"{{if .Fixed}} disabled aria-disabled="true"{{else}} data-autosubmit{{end}}>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
       </label>
       {{- end}}
