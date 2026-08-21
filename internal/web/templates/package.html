@@ -58,6 +58,10 @@
            without pretending there is a choice. */}}
       <label{{if .Fixed}} class="fixed"{{else if .Active}} class="on"{{end}}>{{.Label}}
         <select name="f_{{.Dim}}"{{if .Fixed}} disabled aria-disabled="true"{{else}} data-autosubmit{{end}}>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+        {{- /* A disabled control is never submitted, so a reader-placed pin
+             on a decided dimension travels as a hidden input; without it the
+             next dropdown change rebuilds the URL with the pin gone. */ -}}
+        {{- if and .Fixed .Active}}<input type="hidden" name="f_{{.Dim}}" value="{{.Pinned}}">{{end}}
       </label>
       {{- end}}
       {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}

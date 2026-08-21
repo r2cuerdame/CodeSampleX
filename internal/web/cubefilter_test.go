@@ -51,6 +51,24 @@ func TestAPinnedDimensionStillHasAWayOut(t *testing.T) {
 	}
 }
 
+// A pin the reader placed must survive the form's next submit. A pinned
+// dimension renders as a decided, DISABLED select — and a disabled control is
+// never submitted — so changing any live dropdown rebuilt the URL without
+// f_os/f_version: the grid reset, the chips vanished, and the decided-
+// coordinate sections disappeared. The pin travels as a hidden input, which
+// disabled controls cannot be.
+func TestAReaderPlacedPinSurvivesTheNextSubmit(t *testing.T) {
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
+	body := get(t, mux, "/npm/reactish?f_os=linux").Body.String()
+	// The scenario needs a live dropdown left to change — that change is
+	// what submits the form.
+	mustContain(t, body, `<select name="f_symbol" data-autosubmit>`)
+	mustContain(t, body, `<input type="hidden" name="f_os" value="linux">`)
+	// A dimension the evidence decided WITHOUT a pin must not grow one: the
+	// reader never placed it, and submitting must not invent it.
+	mustNotContain(t, body, `<input type="hidden" name="f_version"`)
+}
+
 // A dimension nothing recorded has no control at all: an empty dropdown is
 // not information, and every package would carry one for every dimension it
 // never touched.

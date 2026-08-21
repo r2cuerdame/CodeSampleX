@@ -49,6 +49,10 @@ type cubeFilterSelect struct {
 	Label   string
 	Options []cubeFilterOption
 	Active  bool
+	// Pinned is the reader's own URL pin, verbatim. A fixed control renders
+	// DISABLED, and a disabled control is never submitted — so the pin must
+	// travel as a hidden input or the form's next submit silently drops it.
+	Pinned string
 }
 
 // cubeLeafRow is one measured combination at the bottom of a drill-down.
@@ -184,6 +188,7 @@ func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang
 		Dim:    dim,
 		Label:  i18n.T(lang, "cube.dim_"+dim),
 		Active: filters[dim] != "",
+		Pinned: filters[dim],
 	}
 	// One value is decided, whether the reader pinned it or the evidence left
 	// it standing. A pin used to keep its "all" option as a way back out, but
