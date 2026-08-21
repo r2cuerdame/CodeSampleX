@@ -1281,16 +1281,8 @@ func (f *Fake) VersionCoresidence(_ context.Context, ecosystem, name string) ([]
 			Projects: len(seen), Failing: len(failing[pk]),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Failing != out[j].Failing {
-			return out[i].Failing > out[j].Failing
-		}
-		if out[i].Projects != out[j].Projects {
-			return out[i].Projects > out[j].Projects
-		}
-		return out[i].Lower < out[j].Lower
-	})
-	return out, nil
+	// Same read-side healing as PG, so the two stores keep one behaviour.
+	return canonicalCoresidencePairs(out), nil
 }
 
 // Dependants lists what pulled each version of one library.

@@ -1264,7 +1264,13 @@ func (p *PG) VersionCoresidence(ctx context.Context, ecosystem, name string) ([]
 		}
 		return rows.Err()
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	// Rows written before the precedence fix are stored lexicographically
+	// ("10.0.0" below "9.0.0"); heal and fold them here rather than
+	// migrating, since SQL cannot compare versions.
+	return canonicalCoresidencePairs(out), nil
 }
 
 // Dependants lists what pulled each version of one library.

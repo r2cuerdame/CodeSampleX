@@ -58,6 +58,43 @@ func TestCoresidenceRecordsThePairTheScannerSaw(t *testing.T) {
 	}
 }
 
+// "Lower" and "Higher" are version-precedence claims, and the ordering used
+// to be lexicographic: "10.0.0" sorted below "9.0.0", so the pair was stored
+// — and would render — with ten as the LOWER version. Canonical identity
+// must follow the same precedence the rest of the site compares versions by.
+func TestCoresidencePairOrdersByVersionPrecedence(t *testing.T) {
+	f := NewFake()
+	coObs(t, f, "pkg:npm/ws@9.0.0", "proj-1", "2026-08-20", "PASS", "", "10.0.0")
+
+	rows, err := f.VersionCoresidence(t.Context(), "npm", "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Lower != "9.0.0" || rows[0].Higher != "10.0.0" {
+		t.Fatalf("rows = %+v, want 9.0.0 below 10.0.0", rows)
+	}
+}
+
+// Rows stored under the old lexicographic rule are healed at read time:
+// re-ordered to precedence and merged with their correctly-ordered twin, so
+// one real pair never renders as two.
+func TestStoredInvertedPairsAreHealedOnRead(t *testing.T) {
+	rows := canonicalCoresidencePairs([]VersionCoresidence{
+		{Lower: "10.0.0", Higher: "9.0.0", Projects: 2, Failing: 1},
+		{Lower: "9.0.0", Higher: "10.0.0", Projects: 3, Failing: 0},
+	})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the two spellings merged into one pair", rows)
+	}
+	got := rows[0]
+	if got.Lower != "9.0.0" || got.Higher != "10.0.0" {
+		t.Errorf("pair = %s + %s, want precedence order", got.Lower, got.Higher)
+	}
+	if got.Projects != 5 || got.Failing != 1 {
+		t.Errorf("counts = %d/%d, want both spellings' counts folded", got.Projects, got.Failing)
+	}
+}
+
 // Two projects with the same pair are two projects; the same project on two
 // days is two sightings and still one project's worth of trouble per day.
 func TestCoresidenceCountsProjectsNotRebuilds(t *testing.T) {

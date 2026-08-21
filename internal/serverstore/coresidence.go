@@ -44,10 +44,7 @@ func coresidencePairs(b domain.ObservationBatch) []VersionCoresidence {
 		if other == "" || other == p.Version {
 			continue
 		}
-		lo, hi := p.Version, other
-		if hi < lo {
-			lo, hi = hi, lo
-		}
+		lo, hi := orderVersionPair(p.Version, other)
 		seen[VersionCoresidence{Lower: lo, Higher: hi}] = true
 	}
 	out := make([]VersionCoresidence, 0, len(seen))
@@ -67,4 +64,50 @@ func coresidencePairs(b domain.ObservationBatch) []VersionCoresidence {
 // anyone could name a cause for.
 func batchNamesAnAttributedFailure(b domain.ObservationBatch) bool {
 	return b.Result == domain.ResultFail && strings.TrimSpace(b.ErrorCode) != ""
+}
+
+// orderVersionPair puts the pair in VERSION precedence, which is what
+// "Lower" and "Higher" claim. Plain string order put "10.0.0" below
+// "9.0.0"; equal-precedence spellings fall back to string order so the
+// canonical identity stays deterministic.
+func orderVersionPair(a, b string) (lo, hi string) {
+	c := domain.CompareVersions(a, b)
+	if c > 0 || (c == 0 && a > b) {
+		return b, a
+	}
+	return a, b
+}
+
+// canonicalCoresidencePairs heals rows stored under the old lexicographic
+// rule at read time: each pair is re-ordered to precedence, and a pair that
+// exists in both spellings is folded into one so it never renders twice. The
+// display order (most failing, then most seen) is re-applied after the fold.
+func canonicalCoresidencePairs(rows []VersionCoresidence) []VersionCoresidence {
+	merged := map[[2]string]VersionCoresidence{}
+	for _, r := range rows {
+		lo, hi := orderVersionPair(r.Lower, r.Higher)
+		k := [2]string{lo, hi}
+		m := merged[k]
+		m.Lower, m.Higher = lo, hi
+		m.Projects += r.Projects
+		m.Failing += r.Failing
+		merged[k] = m
+	}
+	out := make([]VersionCoresidence, 0, len(merged))
+	for _, m := range merged {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Failing != out[j].Failing {
+			return out[i].Failing > out[j].Failing
+		}
+		if out[i].Projects != out[j].Projects {
+			return out[i].Projects > out[j].Projects
+		}
+		if out[i].Lower != out[j].Lower {
+			return out[i].Lower < out[j].Lower
+		}
+		return out[i].Higher < out[j].Higher
+	})
+	return out
 }
