@@ -94,17 +94,24 @@ func seedCLISample(t *testing.T, d *daemon.Daemon, id string) {
 
 // captureStdout runs f with os.Stdout redirected to a pipe and returns
 // what it printed along with its exit code.
+// captureStdout runs f with stdout AND stderr redirected, and returns both.
+//
+// It used to keep only stdout. Every csx command reports its reason on
+// stderr, so a test that failed on a non-zero exit printed the exit code and
+// nothing else — and a release build failed on CI with "config set mode exit
+// = 1", the one line that says nothing about why. The reason existed the
+// whole time and was thrown away three lines before it was needed.
 func captureStdout(t *testing.T, f func() int) (string, int) {
 	t.Helper()
-	old := os.Stdout
+	oldOut, oldErr := os.Stdout, os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	os.Stdout = w
+	os.Stdout, os.Stderr = w, w
 	code := f()
 	w.Close()
-	os.Stdout = old
+	os.Stdout, os.Stderr = oldOut, oldErr
 	out, _ := io.ReadAll(r)
 	r.Close()
 	return string(out), code

@@ -275,18 +275,18 @@ func probeRunning(ctx context.Context, home string) (*Client, StatusInfo, error)
 
 func stopAndWait(ctx context.Context, home string, c *Client) error {
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	err := c.Shutdown(sctx)
+	shutErr := c.Shutdown(sctx)
 	cancel()
-	if err != nil {
-		// A daemon can finish between the status probe and shutdown request.
-		if _, _, probeErr := probeRunning(ctx, home); probeErr != nil && !daemonLockHeld(home) {
-			return nil
-		}
-		return fmt.Errorf("graceful shutdown: %w", err)
-	}
 
+	// A shutdown request that did not come back is not a shutdown that did
+	// not happen. The handler closes the stop channel before it replies, so a
+	// daemon under load can be on its way down while the response is still
+	// owed — and a daemon can finish between the status probe and the
+	// request, which fails it for a different reason again. Whether it
+	// stopped is a question only the poll below can answer, so it is asked
+	// either way and the request's own error is kept for the report.
 	deadline := time.Now().Add(ensureTimeout)
-	for time.Now().Before(deadline) {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -294,16 +294,45 @@ func stopAndWait(ctx context.Context, home string, c *Client) error {
 		if probeErr != nil && !daemonLockHeld(home) {
 			return nil
 		}
+		if !time.Now().Before(deadline) {
+			break
+		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if shutErr != nil {
+		return fmt.Errorf("graceful shutdown: %w", shutErr)
 	}
 	return errors.New("daemon did not stop within 10s")
 }
 
+// daemonLockHeld reports whether the lock names a daemon that is still up.
+//
+// It is asked only after the status endpoint has already failed, so its job
+// is to separate "no daemon" from "a daemon that is alive but not
+// answering". That is a different question from the one acquireLock asks,
+// and it needs a different answer for one pid: our own.
+//
+// pidAlive says yes to os.Getpid() by construction, because a second daemon
+// inside one process must refuse to start. Reused here, that made a lock
+// naming this process unfalsifiable — and a daemon that ran inside this
+// process and has stopped answering has stopped. stopAndWait polls until the
+// daemon is unreachable AND its lock is gone, so with such a lock left
+// behind the second half could never become true: the poll ran its full ten
+// seconds and `csx config set mode local-only` exited 1. That failed a
+// release build, reported as one line with no reason in it.
+//
+// The same reading bites outside tests. A lock left by a crashed daemon
+// whose pid the operating system later reuses looks identical, and csx would
+// refuse to start or stop a daemon for as long as that unrelated process
+// lived.
 func daemonLockHeld(home string) bool {
 	raw, err := os.ReadFile(filepath.Join(home, "daemon.lock"))
 	if err != nil {
 		return false
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	return err == nil && pidAlive(pid)
+	if err != nil || pid == os.Getpid() {
+		return false
+	}
+	return pidAlive(pid)
 }
