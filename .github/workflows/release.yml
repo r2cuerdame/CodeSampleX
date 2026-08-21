@@ -253,9 +253,21 @@ jobs:
           # would sit against a queued run until this job times out — an hour of
           # nothing, then a red release. Say so in seconds instead. This is
           # still a failure: §8.4 wants an unreachable target to be visible.
+          #
+          # Listing self-hosted runners needs repo Administration:read, which
+          # this token deliberately does NOT carry — Actions:write being its
+          # only scope is the whole security argument above. So a probe that
+          # cannot answer is "unknown", never "zero": dispatch anyway and let
+          # the rollout watch below report a farm that never starts. Treating
+          # the 403 as zero failed every release the moment the token was
+          # scoped correctly.
           ONLINE=$(gh api "repos/${FARM_REPO}/actions/runners" \
-            --jq '[.runners[] | select(.status == "online" and ([.labels[].name] | index("csx-farm")))] | length')
-          if [ "${ONLINE:-0}" -eq 0 ]; then
+            --jq '[.runners[] | select(.status == "online" and ([.labels[].name] | index("csx-farm")))] | length' 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$ONLINE" ]; then
+            echo "::notice::cannot list ${FARM_REPO} runners with this token; dispatching and relying on the rollout watch."
+            ONLINE=unknown
+          fi
+          if [ "$ONLINE" = "0" ]; then
             {
               echo "### Farm: DEGRADED — no farm runner is online"
               echo ""
