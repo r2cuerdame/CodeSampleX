@@ -141,7 +141,11 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		SymbolProvenance:      domain.SearchProvenanceContext,
 		Environment:           proj.Env,
 		EnvironmentProvenance: domain.SearchProvenanceContext,
-		Limit:                 1,
+		// No Limit. Asking for one result is not the same question as asking
+		// for three and reading the first: from a project where `csx search`
+		// answered, the same query with Limit 1 missed. Brevity is a
+		// rendering decision and is made below, after the engine has had the
+		// whole candidate set to judge.
 	}
 	if req.Query == "" {
 		return quiet("the failed command printed nothing to ask about")
@@ -155,9 +159,18 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		return quiet("the search did not complete: " + err.Error())
 	}
 	if resp.Miss || len(resp.Results) == 0 {
-		return quiet("nothing here has been proven for this failure")
+		// The question, not just the verdict. "Nothing was found" and "we
+		// asked the wrong question" look identical from outside, and the two
+		// need opposite fixes.
+		asked, _ := json.Marshal(req)
+		return quiet("nothing here has been proven for this failure; asked: " + string(asked))
 	}
 
+	// One answer. This arrives unasked, in the middle of somebody's work, so
+	// it earns a few lines and not a list.
+	if len(resp.Results) > 1 {
+		resp.Results = resp.Results[:1]
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "CodeSampleX looked this failure up automatically (%s).\n\n", proj.Stage)
 	renderSearchText(&b, resp)
@@ -345,15 +358,23 @@ func defaultHookEnv() *hookEnv {
 			if err != nil {
 				return domain.SearchResponse{}, err
 			}
-			// Short. This sits on the critical path of somebody's session.
-			sctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			sctx, cancel := context.WithTimeout(ctx, hookSearchBudget)
 			defer cancel()
-			if resp, err := searchViaDaemon(sctx, home, req); err == nil {
+			resp, derr := searchViaDaemon(sctx, home, req)
+			if derr == nil {
 				return resp.SearchResponse, nil
 			}
-			// Daemon down: ask the local engine directly, and RECORD it.
-			// A search the instrumentation cannot see is the problem this
-			// hook exists to fix, so the hook must not create more of them.
+			// A running daemon that did not answer in time is NOT a reason to
+			// open a second engine on the same home. It cannot take the lock
+			// the daemon holds, and what it returns is worse than nothing:
+			// measured on this machine, the daemon answered a query the
+			// second engine called a miss. Silence is the honest result.
+			if daemonAlive(ctx, home) {
+				return domain.SearchResponse{}, derr
+			}
+			// No daemon: ask the local engine directly, and RECORD it. A
+			// search the instrumentation cannot see is the problem this hook
+			// exists to fix, so the hook must not make more of them.
 			d, err := daemon.New(home)
 			if err != nil {
 				return domain.SearchResponse{}, err
@@ -362,4 +383,35 @@ func defaultHookEnv() *hookEnv {
 			return d.SearchAndRecord(sctx, req).SearchResponse, nil
 		},
 	}
+}
+
+// firstLine keeps a debug line to one line.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// hookSearchBudget is how long the lookup may take before it gives up.
+//
+// It has to fit inside the timeout written into the agent's own hook entry,
+// and it is far longer than a lookup ought to need. Measured on the machine
+// this was built on, a daemon-backed search of one build error took 13 to 19
+// seconds; an 8-second budget turned every one of them into silence. The
+// number is set to the truth about how long searches currently take, not to
+// how long they should take, and the second is the thing worth fixing.
+const hookSearchBudget = 25 * time.Second
+
+// daemonAlive reports whether the local daemon is answering at all, which is
+// a different question from whether it answered THIS search in time.
+func daemonAlive(ctx context.Context, home string) bool {
+	c, err := daemon.NewClient(home)
+	if err != nil {
+		return false
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err = c.Status(pctx)
+	return err == nil
 }
