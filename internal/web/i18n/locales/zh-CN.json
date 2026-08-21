@@ -354,6 +354,8 @@
   "support.samples": "带 contract 的已验证样本",
   "support.symbols": "用了哪个 API",
   "support.verification_only_note": "支持已验证的公开样本。暂不支持自动扫描本地项目。",
+  "symbol.runs": "%s/%s 次通过",
+  "symbol.runs_title": "本网络在自己的沙箱中为该版本的该 API 执行的次数。它没有说明该 API 在别处是否可用。",
   "symbol.shared": "共享",
   "symbol.shared_note": "%s 个包共同声明 — 此证据无法判断该 API 属于谁",
   "symbol.callshape_note": "这些计数不区分符号的调用方式：重载、参数形态和选项被合并统计。某一具体调用方式的行为由样本的契约证明，而不是由这些数字证明。",

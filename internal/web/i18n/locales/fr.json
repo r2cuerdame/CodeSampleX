@@ -354,6 +354,8 @@
   "support.samples": "échantillons vérifiés par contrat",
   "support.symbols": "quelle API a été utilisée",
   "support.verification_only_note": "Les exemples publics vérifiés sont pris en charge. L’analyse automatique des projets locaux ne l’est pas encore.",
+  "symbol.runs": "%s exécutions sur %s réussies",
+  "symbol.runs_title": "Exécutions que ce réseau a faites pour cette API sur cette version, dans son propre bac à sable. Cela ne dit rien de là où l'API fonctionne ailleurs.",
   "symbol.shared": "partagé",
   "symbol.shared_note": "revendiqué par %s paquets — cette preuve ne peut pas dire à qui appartient l’API",
   "symbol.callshape_note": "Ces chiffres ne distinguent pas la façon dont le symbole a été appelé : surcharges, formes d'arguments et options sont regroupées. Ce que fait une forme d'appel précise est prouvé par le contrat d'un échantillon, pas par ces nombres.",

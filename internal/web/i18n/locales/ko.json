@@ -354,6 +354,8 @@
   "support.samples": "contract로 검증된 샘플",
   "support.symbols": "어떤 API를 썼는지",
   "support.verification_only_note": "검증된 공개 샘플은 지원합니다. 로컬 프로젝트 자동 스캔은 아직 지원하지 않습니다.",
+  "symbol.runs": "%s/%s회 통과",
+  "symbol.runs_title": "이 네트워크가 이 릴리스의 이 API를 자기 샌드박스에서 돌린 횟수입니다. 다른 곳에서 되는지는 말하지 않습니다.",
   "symbol.shared": "공유됨",
   "symbol.shared_note": "%s개 패키지가 함께 주장 — 이 증거로는 누구의 API인지 알 수 없습니다",
   "symbol.callshape_note": "이 수치는 심볼을 어떻게 호출했는지 구분하지 않습니다. 오버로드, 인자 형태, 옵션이 한데 묶여 집계됩니다. 특정 호출 형태가 어떻게 동작하는지는 이 숫자가 아니라 샘플의 계약이 증명합니다.",

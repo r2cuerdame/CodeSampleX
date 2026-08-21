@@ -1582,6 +1582,10 @@ td.pv .pvbasis { font-size: 0.7rem; }
   .apitable .apipath { white-space: normal; overflow-wrap: anywhere; }
 }
 
+/* What this network ran for one API on one release. A count, not a rate
+   dressed as a verdict: it says how thin or how thick the evidence is. */
+.symruns { color: var(--dim); cursor: help; }
+
 /* A symbol more than one package carries evidence for. Not an error state:
    the measurement happened, it just does not establish whose API it is. */
 .symshared {

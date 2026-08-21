@@ -864,6 +864,16 @@ type symbolLink struct {
 	// because one build's detected symbols were attributed to every package
 	// in its closure.
 	Shared int
+	// Runs and Passed are what this network itself ran for this API on this
+	// release. They replaced a symbol-by-OS grid: in production every
+	// symbol-grain fact is a contract receipt and every receipt is signed
+	// in a linux container, so that grid could only ever draw one column
+	// and read as "these APIs run on linux and nowhere else".
+	//
+	// A count on the row says the same evidence without the OS it was not
+	// about. Zero Runs means the row states nothing beyond the API's name.
+	Runs   int64
+	Passed int64
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
@@ -900,7 +910,8 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Costs no query: it reads the same cached target list the symbol list is
 	// built from.
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
-	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread)
+	runs := s.symbolRunCounts(r, eco, name, version)
+	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread, runs)
 	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
@@ -913,6 +924,29 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Clusters:     clusters,
 		ClusterTotal: clusterTotal,
 	})
+}
+
+// symbolRunCounts is what this network ran, per API, for one release.
+//
+// It reads the cube facts the version page already assembles, so it costs
+// no query. Verification only: an observation is recorded against the
+// package, not the API, and counting it here would put a package's builds
+// behind every symbol name it happens to mention.
+func (s *site) symbolRunCounts(r *http.Request, eco, name, version string) map[string][2]int64 {
+	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
+	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+	out := map[string][2]int64{}
+	for _, f := range facts {
+		sym := f.Dims["symbol"]
+		if sym == "" || sym == cubePackageLevel || f.PackageLevel {
+			continue
+		}
+		cur := out[sym]
+		cur[0] += f.Agg.verPass + f.Agg.verFail
+		cur[1] += f.Agg.verPass
+		out[sym] = cur
+	}
+	return out
 }
 
 // symbolLinks builds the version page's symbol list and returns the samples
@@ -930,7 +964,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 // usually one or two, and it is listed on the version page because there is
 // nowhere else for it to go — dropping it would publish a sample into a
 // page nobody can reach.
-func symbolLinks(b basePage, eco, name, version string, observed []string, samples []SampleListItem, spread map[string]int) ([]symbolLink, []SampleListItem) {
+func symbolLinks(b basePage, eco, name, version string, observed []string, samples []SampleListItem, spread map[string]int, runs map[string][2]int64) ([]symbolLink, []SampleListItem) {
 	counts := map[string]int{}
 	display := map[string]string{}
 	for _, sym := range observed {
@@ -976,6 +1010,8 @@ func symbolLinks(b basePage, eco, name, version string, observed []string, sampl
 			Href:    b.WithLang(symbolHref(eco, name, version, display[m])),
 			Samples: counts[m],
 			Shared:  spread[display[m]],
+			Runs:    runs[display[m]][0],
+			Passed:  runs[display[m]][1],
 		})
 	}
 	return links, residue

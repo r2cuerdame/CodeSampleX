@@ -354,6 +354,8 @@
   "support.samples": "muestras verificadas con contrato",
   "support.symbols": "qué API se usó",
   "support.verification_only_note": "Se admiten muestras públicas verificadas. El escaneo automático de proyectos locales aún no es compatible.",
+  "symbol.runs": "%s de %s ejecuciones pasaron",
+  "symbol.runs_title": "Ejecuciones que esta red hizo para esta API en esta versión, en su propio sandbox. No dice nada sobre dónde más funciona.",
   "symbol.shared": "compartido",
   "symbol.shared_note": "reclamado por %s paquetes — esta evidencia no puede decir de quién es la API",
   "symbol.callshape_note": "Estos recuentos no distinguen cómo se llamó al símbolo: las sobrecargas, las formas de los argumentos y las opciones se agrupan. Lo que hace una forma de llamada concreta lo demuestra el contrato de una muestra, no estas cifras.",

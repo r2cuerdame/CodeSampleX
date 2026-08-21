@@ -38,7 +38,8 @@
        false ones — and says what the evidence actually supports. */}}
   <li><a href="{{.Href}}">{{.Name}}</a>
     {{- if .Samples}} <span class="symcount dim small">{{.Samples}}</span>{{end}}
-    {{- if gt .Shared 1}} <span class="symshared small" title="{{$.T "symbol.shared_note" (printf "%d" .Shared)}}">{{$.T "symbol.shared"}} ×{{.Shared}}</span>{{end}}</li>
+    {{- if gt .Shared 1}} <span class="symshared small" title="{{$.T "symbol.shared_note" (printf "%d" .Shared)}}">{{$.T "symbol.shared"}} ×{{.Shared}}</span>{{end}}
+    {{- if .Runs}} <span class="symruns small" title="{{$.T "symbol.runs_title"}}">{{$.T "symbol.runs" (printf "%d" .Passed) (printf "%d" .Runs)}}</span>{{end}}</li>
 {{- end}}
 </ul>
 {{else}}

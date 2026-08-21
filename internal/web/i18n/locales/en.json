@@ -354,6 +354,8 @@
   "support.samples": "verified samples with contracts",
   "support.symbols": "which API was used",
   "support.verification_only_note": "Verified public samples are supported. Local project scanning is not yet supported.",
+  "symbol.runs": "%s of %s runs passed",
+  "symbol.runs_title": "Runs this network made for this API on this release, in its own sandbox. It says nothing about where else the API works.",
   "symbol.shared": "shared",
   "symbol.shared_note": "shared with %s packages — this evidence cannot say whose API it is",
   "symbol.callshape_note": "These counts do not distinguish how the symbol was called: overloads, argument shapes and options are pooled together. What a particular call shape does is proven by a sample's contract, not by these numbers.",
