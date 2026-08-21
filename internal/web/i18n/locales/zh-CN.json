@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — 一次搜索多个",
   "explore.results": "搜索结果",
   "explore.title": "探索包",
+  "features.api_body": "本站呈现的一切都由这些路由提供，且无需密钥即可应答。写入部分——证据批次、发布样本、领取验证任务——需要播种者身份或工作者令牌，属于 CLI。路由不作翻译，理由与发现不翻译相同：路径与字段名本身就是对象。",
+  "features.api_heading": "读取 API",
   "features.cli_body": "这八个工具是编码代理接入网络的方式。CLI 直接接入同一个网络，并列出它能做的一切。",
   "features.cli_heading": "先看 CLI",
   "features.cli_help": "每条命令一行",

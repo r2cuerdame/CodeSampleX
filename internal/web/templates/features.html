@@ -105,5 +105,27 @@
     </div>
   </section>
   {{end}}
+
+  {{/* The HTTP surface. Read-only: everything the site itself renders comes
+       from these, and they answer without a key. */}}
+  {{- if .API}}
+  <section class="apiref" aria-labelledby="feature-api-heading">
+    <h2 class="eyebrow mono" id="feature-api-heading">{{.T "features.api_heading"}}</h2>
+    <p class="dim small">{{.T "features.api_body"}}</p>
+    <div class="tablewrap">
+      <table class="apitable mono small">
+        <tbody>
+        {{- range .API}}
+        <tr>
+          <th class="apimethod">{{.Method}}</th>
+          <td class="apipath">{{.Path}}</td>
+          <td class="apiwhat">{{.What}}</td>
+        </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{- end}}
 </article>
 {{end}}

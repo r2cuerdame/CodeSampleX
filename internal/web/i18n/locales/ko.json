@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — 여러 개 한번에 검색",
   "explore.results": "검색 결과",
   "explore.title": "패키지 탐색",
+  "features.api_body": "이 사이트가 보여주는 모든 것이 이 경로들에서 나오고, 키 없이 답합니다. 쓰기 쪽 — 증거 배치, 샘플 게시, 검증 작업 수령 — 은 시더 신원이나 워커 토큰이 필요하고 CLI의 몫입니다. 경로는 번역하지 않습니다. 발견을 번역하지 않는 것과 같은 이유로, 경로와 필드 이름은 그 자체가 대상이기 때문입니다.",
+  "features.api_heading": "읽기 API",
   "features.cli_body": "이 여덟 개 도구는 코딩 에이전트가 네트워크에 닿는 방법입니다. CLI는 같은 네트워크에 직접 닿고, 할 수 있는 일을 전부 보여줍니다.",
   "features.cli_heading": "CLI부터 보기",
   "features.cli_help": "모든 명령을 한 줄씩",

@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — plusieurs à la fois",
   "explore.results": "Résultats",
   "explore.title": "Explorer les paquets",
+  "features.api_body": "Tout ce que ce site affiche provient de ces routes, et elles répondent sans clé. La moitié écriture — lots de preuves, publication d'un échantillon, réservation d'un travail de vérification — exige une identité de seeder ou un jeton de worker et relève de la CLI. Les routes ne sont pas traduites, pour la raison qui vaut pour les découvertes : les chemins et les noms de champs sont la chose même.",
+  "features.api_heading": "L'API de lecture",
   "features.cli_body": "Ces huit outils sont la façon dont un agent de code atteint le réseau. La CLI atteint le même réseau directement et liste tout ce qu'elle sait faire.",
   "features.cli_heading": "Commencez par la CLI",
   "features.cli_help": "chaque commande, une ligne",

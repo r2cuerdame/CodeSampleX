@@ -38,6 +38,11 @@ type featureGroup struct {
 type featuresPage struct {
 	basePage
 	Groups []featureGroup
+	// API is the read half of the HTTP surface. The page described the CLI
+	// and the MCP tools and never mentioned that the network answers HTTP
+	// directly, so a reader who wanted the evidence without either had no
+	// way to learn these exist.
+	API []apiEndpoint
 }
 
 func (s *site) features(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +52,7 @@ func (s *site) features(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "features", http.StatusOK, featuresPage{
 		basePage: b,
 		Groups:   localizedMCPFeatureGroups(lang),
+		API:      publicReadAPI(),
 	})
 }
 

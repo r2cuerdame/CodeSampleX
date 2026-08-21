@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — mehrere zugleich suchen",
   "explore.results": "Ergebnisse",
   "explore.title": "Pakete erkunden",
+  "features.api_body": "Alles, was diese Seite zeigt, kommt aus diesen Routen, und sie antworten ohne Schlüssel. Die Schreibhälfte — Belegstapel, das Veröffentlichen eines Samples, das Übernehmen von Prüfarbeit — braucht eine Seeder-Identität oder ein Worker-Token und gehört der CLI. Die Routen bleiben unübersetzt, aus demselben Grund wie die Funde: Pfade und Feldnamen sind die Sache selbst.",
+  "features.api_heading": "Die Lese-API",
   "features.cli_body": "Diese acht Werkzeuge sind der Weg eines Coding-Agenten ins Netzwerk. Die CLI erreicht dasselbe Netzwerk direkt und listet alles auf, was sie kann.",
   "features.cli_heading": "Mit der CLI anfangen",
   "features.cli_help": "jeder Befehl, eine Zeile",

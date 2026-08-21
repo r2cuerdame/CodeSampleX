@@ -1564,6 +1564,24 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--accent); color: var(--accent-ink); cursor: pointer;
 }
 
+/* The read API. Method, path, and what it answers -- one line each, because
+   a reader scanning for the route they need is not reading prose. */
+.apiref { margin-top: 2rem; }
+.apitable { width: 100%; border-collapse: collapse; }
+.apitable th, .apitable td {
+  text-align: left; vertical-align: baseline; padding: 0.4rem 0.6rem 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.apitable .apimethod { color: var(--accent-2); white-space: nowrap; font-weight: 700; }
+.apitable .apipath { color: var(--text); white-space: nowrap; }
+.apitable .apiwhat { color: var(--dim); width: 100%; }
+@media (max-width: 44rem) {
+  .apitable tr { display: grid; grid-template-columns: auto 1fr; gap: 0 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
+  .apitable th, .apitable td { border-bottom: 0; padding: 0; }
+  .apitable .apiwhat { grid-column: 1 / -1; }
+  .apitable .apipath { white-space: normal; overflow-wrap: anywhere; }
+}
+
 /* A symbol more than one package carries evidence for. Not an error state:
    the measurement happened, it just does not establish whose API it is. */
 .symshared {

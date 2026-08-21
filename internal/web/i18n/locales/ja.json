@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — 複数をまとめて検索",
   "explore.results": "検索結果",
   "explore.title": "パッケージ探索",
+  "features.api_body": "このサイトが表示するものはすべてこれらの経路から供給され、キーなしで応答します。書き込み側 — 証拠バッチ、サンプルの公開、検証作業の受領 — はシーダー識別子かワーカートークンを要し、CLI の領分です。経路は翻訳しません。発見を翻訳しないのと同じ理由で、経路とフィールド名はそれ自体が対象だからです。",
+  "features.api_heading": "読み取り API",
   "features.cli_body": "この 8 つのツールはコーディングエージェントがネットワークに触れる方法です。CLI は同じネットワークに直接触れ、できることをすべて表示します。",
   "features.cli_heading": "まず CLI から",
   "features.cli_help": "すべてのコマンドを 1 行ずつ",

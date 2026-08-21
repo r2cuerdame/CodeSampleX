@@ -88,6 +88,8 @@
   "explore.placeholder": "react axios lodash — search several at once",
   "explore.results": "Results",
   "explore.title": "Explore packages",
+  "features.api_body": "Everything this site renders is served from these routes, and they answer without a key. The write half — evidence batches, publishing a sample, claiming verification work — needs a seeder identity or a worker token and belongs to the CLI. The routes are listed untranslated, for the reason findings are: the paths and field names are the thing itself.",
+  "features.api_heading": "The read API",
   "features.cli_body": "These eight tools are how a coding agent reaches the network. The CLI reaches the same network directly, and lists everything it can do.",
   "features.cli_heading": "Start from the CLI",
   "features.cli_help": "every command, one line each",
