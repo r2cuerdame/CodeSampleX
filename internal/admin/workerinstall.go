@@ -17,7 +17,10 @@ import "strings"
 // observation-only by design rather than a backlog anyone can work off.
 func WorkerUnixCMD(base string) string {
 	installer := strings.TrimRight(base, "/") + "/install.sh"
-	return "CSX_WORKER_ONLY=1 curl -fsSL " + installer + " | sh && " +
+	// The variable rides on the sh that RUNS install.sh, not on curl: in
+	// POSIX sh a leading VAR=1 binds to the first command alone, so
+	// `CSX_WORKER_ONLY=1 curl … | sh` ran the full interactive init.
+	return "curl -fsSL " + installer + " | CSX_WORKER_ONLY=1 sh && " +
 		"csx worker start --mode verify --parallel 2 --budget idle"
 }
 
