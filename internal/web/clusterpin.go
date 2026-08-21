@@ -48,11 +48,11 @@ func clusterFitsPins(c failureCluster, pins map[string]string) bool {
 				return false
 			}
 		case "runtime":
-			if got := c.EnvSummary["runtime"]; got != "" && clusterRuntimeAxis(got) != pin {
+			if got := c.EnvSummary["runtime"]; got != "" && !runtimePinFits(got, pin) {
 				return false
 			}
 		case "context":
-			if got := c.EnvSummary["executionContext"]; got != "" && !strings.EqualFold(got, pin) {
+			if got := c.EnvSummary["executionContext"]; got != "" && !contextPinFits(got, pin) {
 				return false
 			}
 		case "arch":
@@ -82,19 +82,76 @@ func symbolPinFits(symbol, pin string) bool {
 // its release ("windows 11"); a cluster records only "linux" or "windows".
 // A distro pin over a linux cluster is the finer name for the same place,
 // so it fits; over a windows cluster it is a different place.
+//
+// Both sides pass through canonicalOSName first: the cluster records
+// runtime.GOOS ("darwin") while the axis says "macos", and comparing the
+// spellings raw dropped the macOS cluster under the very pin that names it.
 func osPinFits(clusterOS, pin string) bool {
-	c := strings.ToLower(strings.TrimSpace(clusterOS))
+	c := canonicalOSName(strings.ToLower(strings.TrimSpace(clusterOS)))
 	p := strings.ToLower(strings.TrimSpace(pin))
-	if c == p {
+	if canonicalOSName(p) == c {
 		return true
 	}
-	if base, _, found := strings.Cut(p, " "); found && base == c {
+	if base, _, found := strings.Cut(p, " "); found && canonicalOSName(base) == c {
 		return true // "windows 11" over a cluster that only knows "windows"
 	}
 	if c == "linux" {
 		return !isNamedOS(p) // a distro name; anything else is another OS
 	}
 	return false
+}
+
+// canonicalOSName folds the spellings one operating system goes by into the
+// one the axis vocabulary uses.
+func canonicalOSName(s string) string {
+	switch s {
+	case "darwin", "mac", "osx":
+		return "macos"
+	}
+	return s
+}
+
+// runtimePinFits compares in the axis vocabulary, dropping only on a
+// contradiction: two different families, or the same family at two different
+// lines. A side that never recorded its version is coarser than the other,
+// not somewhere else.
+func runtimePinFits(clusterRuntime, pin string) bool {
+	c := clusterRuntimeAxis(clusterRuntime)
+	if strings.EqualFold(c, pin) {
+		return true
+	}
+	cName, cVer, _ := strings.Cut(strings.TrimSuffix(c, unrecordedAxisSuffix), " ")
+	pName, pVer, _ := strings.Cut(strings.TrimSpace(pin), " ")
+	if !strings.EqualFold(cName, pName) {
+		return false
+	}
+	return cVer == "" || pVer == ""
+}
+
+// namedBrowsers are the contexts that name one specific browser. The other
+// browser contexts ("browser", "webview", …) say only that the work ran in a
+// browser, which any browser pin is a finer name for.
+var namedBrowsers = map[string]bool{
+	"chrome": true, "chromium": true, "edge": true, "firefox": true, "safari": true,
+}
+
+// contextPinFits drops only on a contradiction. The context axis writes
+// browser work as its family and major ("chrome 134") while a cluster's
+// summary may hold only the generic "browser" — coarser, not elsewhere. Two
+// different NAMED browsers do contradict.
+func contextPinFits(clusterContext, pin string) bool {
+	c := strings.ToLower(strings.TrimSpace(clusterContext))
+	p := strings.ToLower(strings.TrimSpace(pin))
+	if c == p {
+		return true
+	}
+	pBase, _, _ := strings.Cut(p, " ")
+	if browserContexts[c] && browserContexts[pBase] {
+		return !(namedBrowsers[c] && namedBrowsers[pBase] && c != pBase)
+	}
+	// "node" under "node 22": the cluster never recorded the version the
+	// axis carries.
+	return c == pBase
 }
 
 func isNamedOS(s string) bool {

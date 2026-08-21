@@ -64,6 +64,55 @@ func TestAPackageLevelClusterSurvivesASymbolPin(t *testing.T) {
 	}
 }
 
+// environment/collect records the OS as runtime.GOOS — "darwin" — while the
+// axis vocabulary a pin is made of says "macos". Compared raw, the macOS
+// cluster was dropped as a contradiction under the very pin that names it.
+func TestAMacClusterSurvivesTheMacOSPin(t *testing.T) {
+	c := hasownCluster("node@22.16", "2.0.4", "")
+	c.EnvSummary["os"] = "darwin"
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"os": "macos"})) != 1 {
+		t.Error("the macos pin hid the darwin cluster: one place, two spellings")
+	}
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"os": "macos 14"})) != 1 {
+		t.Error("a macos release pin over a darwin cluster is finer, not elsewhere")
+	}
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"os": "windows 11"})) != 0 {
+		t.Error("windows over a darwin cluster is another place")
+	}
+}
+
+// A cluster that recorded its runtime without a version is COARSER than a
+// versioned pin, not somewhere else — the file's own drop-only-on-
+// contradiction rule, which the literal axis comparison violated.
+func TestAVersionlessRuntimeClusterSurvivesAVersionedPin(t *testing.T) {
+	c := hasownCluster("node", "2.0.4", "")
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"runtime": "node 22"})) != 1 {
+		t.Error("\"node\" under a node 22 pin was dropped as a contradiction")
+	}
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"runtime": "bun 1.2"})) != 0 {
+		t.Error("bun over a node cluster is another runtime")
+	}
+}
+
+// A context recorded as the generic "browser" fits any specific browser pin;
+// only two different NAMED browsers contradict.
+func TestABrowserContextClusterSurvivesABrowserFamilyPin(t *testing.T) {
+	c := hasownCluster("node@22.16", "2.0.4", "")
+	c.EnvSummary["executionContext"] = "browser"
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"context": "chrome 134"})) != 1 {
+		t.Error("the browser cluster was hidden under a browser pin")
+	}
+	named := hasownCluster("node@22.16", "2.0.4", "")
+	named.EnvSummary["executionContext"] = "firefox"
+	got := filterClustersToPins([]failureCluster{named, c}, map[string]string{"context": "chrome 134"})
+	if len(got) != 1 || got[0].EnvSummary["executionContext"] != "browser" {
+		t.Errorf("kept %+v, want the generic browser cluster and not firefox", got)
+	}
+	if len(filterClustersToPins([]failureCluster{c}, map[string]string{"context": "node 22"})) != 0 {
+		t.Error("a browser cluster fit a node pin")
+	}
+}
+
 // Nothing pinned is the package overview, and it keeps everything.
 func TestWithNothingPinnedEveryClusterStays(t *testing.T) {
 	c := []failureCluster{
