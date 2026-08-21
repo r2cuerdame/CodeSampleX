@@ -29,13 +29,32 @@ type dimComparison struct {
 // moduleSystem+runtime for npm, runtime for pypi, toolchain (compiler) for
 // cargo/golang; moduleSystem and packageManager differences are enumerable
 // adaptations; a runtime or toolchain major difference is not.
-func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimComparison {
+func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string, ecosystemInferred bool) []dimComparison {
 	out := []dimComparison{}
 
 	if req.Ecosystem != "" && sam.Ecosystem != "" {
-		if strings.EqualFold(req.Ecosystem, sam.Ecosystem) {
+		switch {
+		case strings.EqualFold(req.Ecosystem, sam.Ecosystem):
 			out = append(out, dimComparison{equal: true, exactEntry: "ecosystem " + strings.ToLower(sam.Ecosystem)})
-		} else {
+		case ecosystemInferred:
+			// The caller never said which ecosystem they were asking about;
+			// we read it off the directory they happened to be sitting in.
+			// That is worth saying and is not worth refusing over: somebody
+			// in a Go checkout asking how to freeze the clock in a Python
+			// test is asking a Python question, and forcing REFERENCE_ONLY
+			// on the whole answer is what made three of four such queries
+			// return NO_SAFE_MATCH from inside a project.
+			//
+			// It is still not a fit. Using an npm sample to fix a Python
+			// import is an adaptation, and saying so caps the grade instead
+			// of endorsing it.
+			out = append(out, dimComparison{
+				samShow:    "ecosystem " + strings.ToLower(sam.Ecosystem),
+				reqShow:    "ecosystem " + strings.ToLower(req.Ecosystem),
+				adaptation: "translate from " + strings.ToLower(sam.Ecosystem) + " to " + strings.ToLower(req.Ecosystem),
+			})
+		default:
+			// The caller stated the ecosystem. This is not it.
 			out = append(out, dimComparison{
 				samShow: "ecosystem " + strings.ToLower(sam.Ecosystem),
 				reqShow: "ecosystem " + strings.ToLower(req.Ecosystem), refOnly: true,
@@ -66,6 +85,22 @@ func compareEnv(req, sam domain.EnvironmentFingerprint, ecosystem string) []dimC
 		case strings.EqualFold(req.Runtime, sam.Runtime) &&
 			(req.RuntimeVersion == "" || sam.RuntimeVersion == ""):
 			out = append(out, dimComparison{equal: true, exactEntry: samShow})
+		case strings.EqualFold(req.Runtime, sam.Runtime) &&
+			majorOf(req.RuntimeVersion) == majorOf(sam.RuntimeVersion):
+			// Same runtime, same major, different release line. C7 puts a
+			// MINOR version difference on the ADAPTATION_REQUIRED rung by
+			// name; this branch used to force REFERENCE_ONLY for it.
+			//
+			// The distinction matters because releaseLineOf buckets by major
+			// for node and by major.minor for python and go. Reading "a
+			// different release line" as "a different major" is true for
+			// node and false for the others, so the sample that answered a
+			// jinja2 error exactly came back REFERENCE_ONLY purely because
+			// the caller ran python 3.10 and it ran 3.12.
+			out = append(out, dimComparison{
+				samShow: samShow, reqShow: reqShow,
+				adaptation: "verify on " + strings.ToLower(reqShow),
+			})
 		case strings.EqualFold(req.Runtime, sam.Runtime):
 			// Same runtime, KNOWN different major: not an enumerable adaptation.
 			out = append(out, dimComparison{samShow: samShow, reqShow: reqShow, refOnly: true})

@@ -482,7 +482,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// Steps 6+9: environment gate, execution-context axis, known failures.
 	samEco := ecosystemOf(samP, reqEnv, c)
 	askedEnv := envAskedAbout(reqEnv, samEco, environmentContext)
-	dims := compareEnv(askedEnv, selection.env, samEco)
+	dims := compareEnv(askedEnv, selection.env, samEco, environmentContext)
 	cd := compareContext(askedEnv, selection.env)
 	matched := matchingFailures(reqEnv, syms)
 	elevated := elevatedInRequestEnv(req, matched)
@@ -1076,7 +1076,18 @@ func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string, infer
 	if !inferred {
 		return req
 	}
-	req.Ecosystem = ""
+	// The ecosystem itself stays. Everything below is a dimension describing
+	// how the CALLER's ecosystem runs, and comparing those against another
+	// ecosystem's sample answers a question nobody asked — that is what this
+	// function is for. But "which ecosystem" is not one of them: it is the
+	// fact that makes a cross-ecosystem answer recognisable as one.
+	//
+	// Blanking it removed the only line that said so. From a pypi project a
+	// Python import error returned an npm/jest sample graded COMPATIBLE, and
+	// its delta named the OS and nothing else — the answer read as a near
+	// fit. compareEnv now caps an inferred mismatch at ADAPTATION_REQUIRED
+	// rather than forcing REFERENCE_ONLY, so this does not undo the fix
+	// above it.
 	req.Runtime, req.RuntimeVersion = "", ""
 	req.Language, req.LanguageVersion = "", ""
 	req.Compiler, req.CompilerVersion = "", ""
@@ -1238,7 +1249,7 @@ func selectionEnvironmentRank(s gradeSelection, reqEnv domain.EnvironmentFingerp
 	environmentInferred bool, c *candidate) int {
 	ecosystem := ecosystemOf(s.samP, reqEnv, c)
 	asked := envAskedAbout(reqEnv, ecosystem, environmentInferred)
-	grade, _ := buildGrade(s.rel, compareEnv(asked, s.env, ecosystem), compareContext(asked, s.env), false)
+	grade, _ := buildGrade(s.rel, compareEnv(asked, s.env, ecosystem, environmentInferred), compareContext(asked, s.env), false)
 	switch grade {
 	case domain.GradeExact:
 		return 4

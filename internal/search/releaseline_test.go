@@ -50,7 +50,7 @@ func TestARuntimeGenerationGapIsNotAnExactMatch(t *testing.T) {
 	sam := req
 	sam.RuntimeVersion = "1.9.7"
 
-	dims := compareEnv(req, sam, "golang")
+	dims := compareEnv(req, sam, "golang", false)
 	for _, d := range dims {
 		if d.equal && d.exactEntry == "go 1.9" {
 			t.Error("go 1.9 was reported as matching go 1.26")

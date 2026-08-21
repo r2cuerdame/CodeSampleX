@@ -95,7 +95,7 @@ func TestExplicitEnvironmentSurvivesCrossEcosystemGrading(t *testing.T) {
 		asked.ModuleSystem != "esm" || asked.PackageManager != "npm" {
 		t.Fatalf("explicit dimensions were erased: %+v", asked)
 	}
-	dims := compareEnv(asked, sample, "pypi")
+	dims := compareEnv(asked, sample, "pypi", false)
 	grade, _ := buildGrade(relUnspecified, dims, compareContext(asked, sample), false)
 	_, different := buildDelta(relUnspecified, domain.PURL{}, domain.PURL{}, dims, compareContext(asked, sample))
 	if grade != domain.GradeReferenceOnly {
@@ -111,9 +111,25 @@ func TestExplicitEnvironmentSurvivesCrossEcosystemGrading(t *testing.T) {
 
 func TestInferredEnvironmentKeepsLegacyCrossEcosystemSoftening(t *testing.T) {
 	asked := envAskedAbout(explicitNode24Env(), "pypi", true)
-	if asked.Ecosystem != "" || asked.Runtime != "" || asked.Language != "" ||
+	// The dimensions describing how the CALLER's ecosystem runs are dropped:
+	// judging a Python sample against a Go project's runtime answers a
+	// question nobody asked, and doing it turned three of four working
+	// queries into NO_SAFE_MATCH when run from inside a project.
+	if asked.Runtime != "" || asked.Language != "" ||
 		asked.ModuleSystem != "" || asked.PackageManager != "" {
 		t.Fatalf("inferred project dimensions were not softened: %+v", asked)
+	}
+	// The ecosystem itself stays, and used not to.
+	//
+	// It is not one of those dimensions — it is the fact that makes a
+	// cross-ecosystem answer recognisable as one. With it blanked, a Python
+	// import error in a pypi project returned an npm/jest sample graded
+	// COMPATIBLE whose delta named the OS and nothing else, so the answer
+	// read as a near fit. compareEnv now caps an INFERRED mismatch at
+	// ADAPTATION_REQUIRED rather than forcing REFERENCE_ONLY, which is what
+	// keeps the softening above intact.
+	if asked.Ecosystem != "npm" {
+		t.Fatalf("the ecosystem was softened away, so nothing can report the mismatch: %+v", asked)
 	}
 	if asked.OS != "windows" || asked.Arch != "amd64" {
 		t.Fatalf("machine dimensions should remain: %+v", asked)

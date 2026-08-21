@@ -406,7 +406,7 @@ func TestArchAndLibcAreCompared(t *testing.T) {
 	caller.Arch, caller.Libc = "x64", "glibc"
 	caller.OSVersionBucket, caller.Virtualization, caller.ContainerRuntime = "debian", "", ""
 
-	dims := compareEnv(caller.Normalize(), sam.Normalize(), "npm")
+	dims := compareEnv(caller.Normalize(), sam.Normalize(), "npm", false)
 	grade, _ := buildGrade(relExactVersion, dims, contextDelta{}, false)
 	if grade == domain.GradeExact {
 		t.Error("EXACT for a glibc/x64 caller against a musl/arm64 sample")
@@ -520,7 +520,7 @@ func TestAnUnstatedVersionIsNotADifferentVersion(t *testing.T) {
 		Language: "javascript", ModuleSystem: "esm",
 	}.Normalize()
 
-	dims := compareEnv(req, sam, "npm")
+	dims := compareEnv(req, sam, "npm", false)
 	for _, d := range dims {
 		if d.refOnly {
 			t.Errorf("an unstated version forced REFERENCE_ONLY: sample %q vs request %q",
@@ -535,7 +535,7 @@ func TestAnUnstatedVersionIsNotADifferentVersion(t *testing.T) {
 	known := sam
 	known.RuntimeVersion = "18.20"
 	var sawRefOnly bool
-	for _, d := range compareEnv(req, known.Normalize(), "npm") {
+	for _, d := range compareEnv(req, known.Normalize(), "npm", false) {
 		if d.refOnly {
 			sawRefOnly = true
 		}
@@ -637,7 +637,7 @@ func TestNamingThePackageSettlesTheEcosystem(t *testing.T) {
 // perfect match was capped at COMPATIBLE for want of anything to compare.
 func TestAMatchingMachineIsStatedAndCounts(t *testing.T) {
 	sam := alpineEnv("npm", "node", "22.18.1", "javascript") // linux/musl/x64
-	dims := compareEnv(sam, sam, "npm")
+	dims := compareEnv(sam, sam, "npm", false)
 
 	var sawOS, sawArch, sawLibc bool
 	for _, d := range dims {
@@ -662,7 +662,7 @@ func TestAMatchingMachineIsStatedAndCounts(t *testing.T) {
 	machineOnly := domain.EnvironmentFingerprint{
 		SchemaVersion: 1, OS: "linux", Arch: "x64", Libc: "musl",
 	}.Normalize()
-	got := compareEnv(machineOnly, sam, "npm")
+	got := compareEnv(machineOnly, sam, "npm", false)
 	if len(got) == 0 {
 		t.Fatal("a machine-only request compared nothing")
 	}

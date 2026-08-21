@@ -26,7 +26,7 @@ func TestAnOlderGlibcIsNotAnExactMatch(t *testing.T) {
 	sam := linuxEnv("glibc", "2.39") // the sample, verified on a new one
 
 	var sawDifference bool
-	for _, d := range compareEnv(req, sam, "npm") {
+	for _, d := range compareEnv(req, sam, "npm", false) {
 		if !d.equal && d.samShow != "" {
 			sawDifference = true
 		}
@@ -45,7 +45,7 @@ func TestANewerGlibcRunsAnOlderSample(t *testing.T) {
 	req := linuxEnv("glibc", "2.39")
 	sam := linuxEnv("glibc", "2.17")
 
-	for _, d := range compareEnv(req, sam, "npm") {
+	for _, d := range compareEnv(req, sam, "npm", false) {
 		if !d.equal && d.samShow == "glibc 2.17" {
 			t.Error("a newer caller glibc was reported as incompatible with an older sample")
 		}
@@ -56,7 +56,7 @@ func TestANewerGlibcRunsAnOlderSample(t *testing.T) {
 func TestAnUnknownGlibcVersionIsNotADifference(t *testing.T) {
 	for _, pair := range [][2]string{{"", "2.39"}, {"2.17", ""}, {"", ""}} {
 		req, sam := linuxEnv("glibc", pair[0]), linuxEnv("glibc", pair[1])
-		for _, d := range compareEnv(req, sam, "npm") {
+		for _, d := range compareEnv(req, sam, "npm", false) {
 			if !d.equal && (d.samShow == sam.Libc || d.reqShow == req.Libc) {
 				t.Errorf("versions %q/%q were treated as a libc difference", pair[0], pair[1])
 			}
