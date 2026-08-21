@@ -381,10 +381,10 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 
 /* evidence highlights (landing) ------------------------------------------ */
 .homefindings { margin: 0 0 4.5rem; }
-.evidence-section {
-  padding: clamp(1.35rem, 3vw, 2rem); border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
+/* No rules. Two of these sit next to each other on the landing page, so a
+   top and a bottom border drew two hairlines with an empty band between them
+   — a seam where there is nothing to separate. The headings do that. */
+.evidence-section { padding: clamp(1.35rem, 3vw, 2rem); }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
 .section-heading p { margin: 0; max-width: 70ch; }
 .findinglist {
@@ -1618,6 +1618,36 @@ table.pivot thead th.corner {
 table.pivot th.rowlabel .osicon, table.pivot thead th .osicon { opacity: 0.65; }
 
 .crumbs { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
+
+/* The trail IS the title. Its own name is the heading; the way back is the
+   rest of the line, at the same size, so the page names itself once. */
+.crumbtitle {
+  display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: baseline;
+  font-size: 1.6rem; line-height: 1.25; margin: 0 0 0.6rem;
+  overflow-wrap: anywhere; font-weight: 700;
+}
+.crumbtitle a { color: var(--dim); font-weight: 500; }
+.crumbtitle a:hover { color: var(--accent); }
+.crumbtitle .sep { color: var(--line-strong); font-weight: 400; }
+.crumbtitle .here { color: var(--text); }
+
+/* What the reader has fixed by clicking, beside the trail that says where
+   they are. Each one steps back out on its own. */
+.pins { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1.1rem; }
+.pin {
+  display: inline-flex; align-items: baseline; gap: 0.4rem;
+  padding: 0.18rem 0.3rem 0.18rem 0.5rem;
+  border: 1px solid var(--line-strong); border-radius: 0.45rem;
+  background: var(--panel);
+}
+.pin .pindim { font-size: 0.72rem; }
+.pin .pinval { color: var(--text); font-weight: 600; }
+.pin .pinoff {
+  color: var(--dim); text-decoration: none; padding: 0 0.28rem;
+  border-left: 1px solid var(--line); line-height: 1.1;
+}
+.pin .pinoff:hover { color: var(--bad); }
+
 .crumbs .sep { color: var(--line-strong); }
 .crumbs [aria-current="page"] { color: var(--dim); }
 

@@ -1,6 +1,5 @@
 {{define "content"}}
-{{template "crumbs" .Crumbs}}
-<h1 class="mono">{{.Name}}@{{.Ver}}</h1>
+{{template "crumbtitle" .Crumbs}}
 
 {{/* Which symbol ran on which OS — a cube slice with this version pinned;
      each cell drills into the package explorer. */}}

@@ -1,6 +1,6 @@
 {{define "content"}}
-{{template "crumbs" .Crumbs}}
-<h1 class="mono">{{.Name}} <span class="dim">· {{.Ecosystem}}</span></h1>
+{{template "crumbtitle" .Crumbs}}
+{{- if .Cube}}{{template "pins" .Cube.Chips}}{{end}}
 
 {{if .Wanted}}
 <aside class="note wanted-stub">

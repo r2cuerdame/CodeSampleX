@@ -1,6 +1,5 @@
 {{define "content"}}
-{{template "crumbs" .Crumbs}}
-<h1 class="mono">{{.Symbol}} <span class="dim">/ {{.Name}}@{{.Ver}}</span></h1>
+{{template "crumbtitle" .Crumbs}}
 
 {{/* OS × runtime at a glance; the detail table below is the drill-down
      every summary cell anchors to. */}}

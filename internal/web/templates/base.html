@@ -322,6 +322,36 @@ document.addEventListener('keydown',event=>{
 </nav>
 {{- end}}{{end}}
 
+{{/* crumbtitle is the trail AS the page title.
+     The trail said "records / npm / yaml" and the heading under it said
+     "yaml · npm", so every page opened by naming itself twice — once small,
+     once large — and the reader read the same words in two sizes before
+     reaching anything measured. The last crumb IS the title; the ones before
+     it stay links, which is what a reader wants from a title bar anyway. */}}
+{{define "crumbtitle"}}
+{{- if .}}
+<h1 class="crumbtitle mono">
+{{- range $i, $c := .}}
+{{- if $i}}<span class="sep" aria-hidden="true">/</span>{{end}}
+{{- if $c.Href}}<a href="{{$c.Href}}">{{$c.Label}}</a>{{else}}<span class="here" aria-current="page">{{$c.Label}}</span>{{end}}
+{{- end}}
+</h1>
+{{- end}}{{end}}
+
+{{/* pins are the dimensions the reader has fixed by clicking. Each click
+     narrowed the slice and nothing on the page said so: the grid re-drew
+     around a coordinate the reader could neither see nor step back out of
+     one at a time. They belong beside the trail, because that is where a
+     reader looks to find out where they are. */}}
+{{define "pins"}}
+{{- if .}}
+<div class="pins mono small">
+{{- range .}}
+  <span class="pin"><span class="pindim dim">{{.DimLabel}}</span><span class="pinval">{{.Value}}</span><a class="pinoff" href="{{.RemoveHref}}" aria-label="{{.DimLabel}} {{.Value}}"><span aria-hidden="true">×</span></a></span>
+{{- end}}
+</div>
+{{- end}}{{end}}
+
 {{/* pivot renders a pivotGrid: one slice of the compatibility cube. Every
      value in it is data (OS names, runtime lines, PASS/FAIL states), so the
      template needs no translations. State is always word + glyph, never a
