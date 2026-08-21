@@ -1163,8 +1163,19 @@ func renderObserved(o *domain.ObservedReports) string {
 		if c.Reporters == 1 {
 			machines = "machine"
 		}
-		fmt.Fprintf(&b, "- %d reporting %s · %s · %s: %d of %d passed",
-			c.Reporters, machines, env, c.Stage, c.Pass, c.Pass+c.Fail)
+		// USED is presence: the package was installed, and nothing was run.
+		// Printing it as "N of N passed" rebuilt the USED inflation this
+		// project scrubbed from every other rate — on the one surface where
+		// an agent reads a green number as a verdict, and in the lead line,
+		// because USED cells carry the highest reporter counts and sort
+		// first.
+		if c.Stage == string(domain.StageUsed) {
+			fmt.Fprintf(&b, "- %d reporting %s · %s · USED: %d installs recorded (presence — nothing was run)",
+				c.Reporters, machines, env, c.Pass+c.Fail)
+		} else {
+			fmt.Fprintf(&b, "- %d reporting %s · %s · %s: %d of %d passed",
+				c.Reporters, machines, env, c.Stage, c.Pass, c.Pass+c.Fail)
+		}
 		if c.LastSeen != "" {
 			b.WriteString(" · last " + c.LastSeen)
 		}
