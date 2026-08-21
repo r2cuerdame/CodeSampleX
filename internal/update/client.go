@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -623,7 +624,7 @@ func acquireNamedLock(path string, wait time.Duration) (func(), error) {
 	}
 	token := hex.EncodeToString(tokenRaw)
 	deadline := time.Now().Add(wait)
-	for time.Now().Before(deadline) {
+	for {
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "%s %d\n", token, os.Getpid())
@@ -634,6 +635,22 @@ func acquireNamedLock(path string, wait time.Duration) (func(), error) {
 					_ = os.Remove(path)
 				}
 			}, nil
+		}
+		// A lock whose holder is gone is not a lock. Without this, a crash, a
+		// kill or a reboot mid-update left the file behind and every later
+		// update failed with "another update is still in progress" — for
+		// good. Found on a real install: update.lock naming a dead pid while
+		// the daemon ran a build fifteen releases old, because auto-update
+		// had been failing silently ever since.
+		//
+		// Removing it only loses a race, never correctness: whoever wins the
+		// next O_EXCL owns the lock, and the loser goes round again.
+		if lockIsStale(path) {
+			_ = os.Remove(path)
+			continue
+		}
+		if !time.Now().Before(deadline) {
+			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -769,3 +786,45 @@ func AcknowledgeActivation(home, currentVersion string) error {
 	st.PendingRestart = ""
 	return SaveState(home, st)
 }
+
+// namelessLockAbandonedAfter applies only to a lock that names nobody — a
+// truncated or garbled file. There is no owner to protect and no other way
+// for it to ever be released, so after long enough that no update could
+// still be running it is taken over. A day is far past any real download.
+const namelessLockAbandonedAfter = 24 * time.Hour
+
+// lockIsStale reports whether a lock file is one nobody is coming back for.
+//
+// A live owner is never overruled, however old its lock looks. That is a
+// deliberate decision and it is right: an update on a slow link can hold this
+// for a long time, and trampling it would corrupt the very thing the lock
+// exists to protect. Age alone proves nothing about whether somebody is still
+// working.
+//
+// What age cannot excuse, death can. A lock whose holder is gone is not a
+// lock, and without this every later update failed with "another update is
+// still in progress" — for good. Found on a real install: update.lock naming
+// a dead pid while the daemon ran a build fifteen releases old, because
+// auto-update had been failing silently ever since.
+func lockIsStale(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false // gone already; the next O_EXCL settles it
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) < 2 {
+		// Names nobody. It may still be a lock mid-write, so it is left alone
+		// until it is far too old to be one.
+		fi, statErr := os.Stat(path)
+		return statErr == nil && time.Since(fi.ModTime()) > namelessLockAbandonedAfter
+	}
+	pid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return false
+	}
+	return !lockPidAlive(pid)
+}
+
+// currentPid is a seam so the per-platform liveness checks can share one
+// answer for "is that us".
+func currentPid() int { return os.Getpid() }

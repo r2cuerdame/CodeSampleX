@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -257,7 +258,15 @@ func TestLockNeverDeletesAnExistingStaleLookingOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(updateDir(home), "update.lock")
-	if err := os.WriteFile(path, []byte("live-owner 1\n"), 0o600); err != nil {
+	// A pid that is genuinely alive. This used to say 1, which is init on
+	// Unix and does not exist at all on Windows — so once the lock learned to
+	// notice a dead owner, the fixture described a lock nobody held and the
+	// test asserted we must not reclaim it. What it means to assert is that
+	// age alone never overrules a LIVE owner: an update on a slow link holds
+	// this for a long time, and trampling it would corrupt the thing the lock
+	// exists to protect.
+	owner := fmt.Sprintf("live-owner %d\n", os.Getpid())
+	if err := os.WriteFile(path, []byte(owner), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-time.Hour)
@@ -271,7 +280,7 @@ func TestLockNeverDeletesAnExistingStaleLookingOwner(t *testing.T) {
 	if time.Since(start) < 4*time.Second {
 		t.Fatal("lock failed without waiting for its owner")
 	}
-	if got, _ := os.ReadFile(path); string(got) != "live-owner 1\n" {
+	if got, _ := os.ReadFile(path); string(got) != owner {
 		t.Fatalf("owner lock changed: %q", got)
 	}
 }
