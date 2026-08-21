@@ -50,6 +50,15 @@ type Store interface {
 	PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error)
 	// PackageSymbols lists symbol families with evidence for one version.
 	PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error)
+	// SymbolPackageSpread reports how many DISTINCT packages of one ecosystem
+	// carry evidence for each symbol.
+	//
+	// One build's detected symbols are attributed to every package in its
+	// closure, so commons-logging's page listed MockHttpServletRequest — a
+	// Spring Test class — as its own API. 563 of the corpus's 4,165 symbols
+	// are claimed by more than one package, worst case twenty-one. A count
+	// above one means this evidence cannot say whose the symbol is.
+	SymbolPackageSpread(ctx context.Context, ecosystem string, symbols []string) (map[string]int, error)
 	// SampleMeta returns published-sample metadata by content id.
 	SampleMeta(ctx context.Context, id string) (SampleMeta, bool)
 	// SampleManifest returns only the stored manifest. Collection pages use

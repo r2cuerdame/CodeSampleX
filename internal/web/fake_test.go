@@ -9,18 +9,19 @@ import (
 // tests. The integrator adapts the real serverstore to the same
 // interface; nothing here touches a database.
 type fakeStore struct {
-	coverage  []CoverageRow
-	wanted    []WantedRow
-	statsJSON string
-	statsOK   bool
-	snapshots map[string]string // purl+"\x00"+symbol → snapshot JSON
-	versions  map[string][]string
-	symbols   map[string][]string // eco+"|"+name+"|"+version → families
-	samples   map[string]SampleMeta
-	receipts  map[string][]string
-	seeders   map[string][]SampleListItem
-	packages  []PackageHit
-	clusters  map[string][]string // eco+"|"+name → cluster JSON
+	coverage     []CoverageRow
+	wanted       []WantedRow
+	statsJSON    string
+	statsOK      bool
+	snapshots    map[string]string // purl+"\x00"+symbol → snapshot JSON
+	versions     map[string][]string
+	symbolSpread map[string]int
+	symbols      map[string][]string // eco+"|"+name+"|"+version → families
+	samples      map[string]SampleMeta
+	receipts     map[string][]string
+	seeders      map[string][]SampleListItem
+	packages     []PackageHit
+	clusters     map[string][]string // eco+"|"+name → cluster JSON
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
 	dependencies   []DependencyEdge
@@ -42,6 +43,19 @@ func (f *fakeStore) SnapshotJSON(_ context.Context, purl, symbol string) (string
 
 func (f *fakeStore) PackageVersions(_ context.Context, ecosystem, name string) ([]string, error) {
 	return f.versions[ecosystem+"|"+name], nil
+}
+
+func (f *fakeStore) SymbolPackageSpread(_ context.Context, _ string, symbols []string) (map[string]int, error) {
+	if f.symbolSpread == nil {
+		return nil, nil
+	}
+	out := map[string]int{}
+	for _, sym := range symbols {
+		if n, ok := f.symbolSpread[sym]; ok {
+			out[sym] = n
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) PackageSymbols(_ context.Context, ecosystem, name, version string) ([]string, error) {

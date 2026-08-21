@@ -349,6 +349,8 @@
   "support.samples": "amostras verificadas por contrato",
   "support.symbols": "qual API foi usada",
   "support.verification_only_note": "Há suporte a amostras públicas verificadas. A varredura automática de projetos locais ainda não é compatível.",
+  "symbol.shared": "compartilhado",
+  "symbol.shared_note": "reivindicado por %s pacotes — esta evidência não diz de quem é a API",
   "symbol.callshape_note": "Estas contagens não distinguem como o símbolo foi chamado: sobrecargas, formatos de argumentos e opções são agrupados. O que uma forma de chamada específica faz é provado pelo contrato de uma amostra, não por estes números.",
   "symbol.confidence_col": "Confiança",
   "symbol.env_col": "Ambiente",

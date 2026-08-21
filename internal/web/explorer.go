@@ -858,6 +858,12 @@ type symbolLink struct {
 	// scanning the symbols actually needs, and the answers themselves are
 	// one click away under the API they answer for.
 	Samples int
+	// Shared is how many packages of this ecosystem carry evidence for the
+	// same symbol. Above one, this evidence cannot say whose API it is:
+	// commons-logging listed MockHttpServletRequest, a Spring Test class,
+	// because one build's detected symbols were attributed to every package
+	// in its closure.
+	Shared int
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
@@ -891,7 +897,10 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		{name, base + pkgHref(eco, name)},
 		{version, base + versionHref(eco, name, version)},
 	})}
-	links, residue := symbolLinks(b, eco, name, version, symbols, samples)
+	// Costs no query: it reads the same cached target list the symbol list is
+	// built from.
+	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
+	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread)
 	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
@@ -921,7 +930,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 // usually one or two, and it is listed on the version page because there is
 // nowhere else for it to go — dropping it would publish a sample into a
 // page nobody can reach.
-func symbolLinks(b basePage, eco, name, version string, observed []string, samples []SampleListItem) ([]symbolLink, []SampleListItem) {
+func symbolLinks(b basePage, eco, name, version string, observed []string, samples []SampleListItem, spread map[string]int) ([]symbolLink, []SampleListItem) {
 	counts := map[string]int{}
 	display := map[string]string{}
 	for _, sym := range observed {
@@ -966,6 +975,7 @@ func symbolLinks(b basePage, eco, name, version string, observed []string, sampl
 			Name:    display[m],
 			Href:    b.WithLang(symbolHref(eco, name, version, display[m])),
 			Samples: counts[m],
+			Shared:  spread[display[m]],
 		})
 	}
 	return links, residue
@@ -1124,7 +1134,11 @@ type symbolPage struct {
 	Symbol    string
 	PURL      string
 	Matrix    []matrixRow
-	Clusters  []clusterView
+	// Shared is how many packages of this ecosystem carry evidence for this
+	// symbol. Above one, the page is standing on evidence that does not
+	// establish whose API it is.
+	Shared   int
+	Clusters []clusterView
 	// ClusterTotal is how many this symbol's release has, so a bounded list
 	// cannot read as the whole of it.
 	ClusterTotal int
@@ -1172,6 +1186,13 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{
 		"version": version, "symbol": symbol,
 	})
+	// This page makes the strongest claim on the site — "this API of this
+	// package was measured here" — so it is the one that must say when the
+	// evidence does not establish the API is this package's at all.
+	shared := 0
+	if spread, err := s.d.Store.SymbolPackageSpread(r.Context(), eco, []string{symbol}); err == nil {
+		shared = spread[symbol]
+	}
 	if len(clusters) == 0 {
 		clusters = buildClusters(doc.Failures)
 		clusterTotal = len(clusters)
@@ -1214,7 +1235,8 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	})}
 	s.render(w, "symbol", http.StatusOK, symbolPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version, Symbol: symbol,
-		PURL: purl, Matrix: matrix, Clusters: clusters, ClusterTotal: clusterTotal,
+		PURL: purl, Matrix: matrix, Shared: shared,
+		Clusters: clusters, ClusterTotal: clusterTotal,
 		Generated: datePart(doc.GeneratedAt),
 		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,

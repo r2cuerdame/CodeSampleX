@@ -1564,6 +1564,13 @@ td.pv .pvbasis { font-size: 0.7rem; }
   background: var(--accent); color: var(--accent-ink); cursor: pointer;
 }
 
+/* A symbol more than one package carries evidence for. Not an error state:
+   the measurement happened, it just does not establish whose API it is. */
+.symshared {
+  color: var(--dim); border: 1px solid var(--line); border-radius: 0.35rem;
+  padding: 0.05rem 0.35rem; cursor: help;
+}
+
 /* The release a cluster happened to: stated, not dimmed into the
    environment string beside it. */
 .cluster .ver { color: var(--text); font-weight: 600; }

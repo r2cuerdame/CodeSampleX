@@ -1,6 +1,15 @@
 {{define "content"}}
 {{template "crumbtitle" .Crumbs}}
 
+{{/* The strongest claim on the site is "this API of this package was
+     measured here", and one build's detected symbols are attributed to every
+     package in its closure — which is how commons-logging came to have a
+     page for a Spring Test class. Where several packages carry the same
+     symbol, this page says so before it says anything else. */}}
+{{- if gt .Shared 1}}
+<p class="note dim small">{{.T "symbol.shared_note" (printf "%d" .Shared)}}</p>
+{{- end}}
+
 {{/* OS × runtime at a glance; the detail table below is the drill-down
      every summary cell anchors to. */}}
 {{if .Pivot.Rows}}

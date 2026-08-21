@@ -166,6 +166,42 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	return versions, nil
 }
 
+// SymbolPackageSpread counts the packages of one ecosystem carrying evidence
+// for each named symbol. It reads the same cached target list the symbol list
+// itself is built from, so it costs no query.
+func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, symbols []string) (map[string]int, error) {
+	if len(symbols) == 0 {
+		return nil, nil
+	}
+	targets, err := w.cachedSnapshotTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]bool, len(symbols))
+	for _, sym := range symbols {
+		want[sym] = true
+	}
+	pkgs := map[string]map[string]bool{}
+	for _, t := range targets {
+		if t.Symbol == "" || !want[t.Symbol] {
+			continue
+		}
+		p, err := domain.ParsePURL(t.PURL)
+		if err != nil || p.Ecosystem != ecosystem {
+			continue
+		}
+		if pkgs[t.Symbol] == nil {
+			pkgs[t.Symbol] = map[string]bool{}
+		}
+		pkgs[t.Symbol][p.Name] = true
+	}
+	out := make(map[string]int, len(pkgs))
+	for sym, names := range pkgs {
+		out[sym] = len(names)
+	}
+	return out, nil
+}
+
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
 	targets, err := w.cachedSnapshotTargets(ctx)
 	if err != nil {

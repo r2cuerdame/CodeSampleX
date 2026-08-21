@@ -31,7 +31,14 @@
 {{if .Symbols}}
 <ul class="symlist mono">
 {{- range .Symbols}}
-  <li><a href="{{.Href}}">{{.Name}}</a>{{if .Samples}} <span class="symcount dim small">{{.Samples}}</span>{{end}}</li>
+  {{/* A symbol several packages claim is not established as this one's:
+       one build's detected symbols were attributed to every package in its
+       closure, so a logging facade listed a Spring Test class as its API.
+       It stays — deleting would throw away the true attributions with the
+       false ones — and says what the evidence actually supports. */}}
+  <li><a href="{{.Href}}">{{.Name}}</a>
+    {{- if .Samples}} <span class="symcount dim small">{{.Samples}}</span>{{end}}
+    {{- if gt .Shared 1}} <span class="symshared small" title="{{$.T "symbol.shared_note" (printf "%d" .Shared)}}">{{$.T "symbol.shared"}} ×{{.Shared}}</span>{{end}}</li>
 {{- end}}
 </ul>
 {{else}}
