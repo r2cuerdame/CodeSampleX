@@ -360,14 +360,14 @@ func TestExplainCompatibilityRoundTrip(t *testing.T) {
 
 func TestRunObservedCommandRoundTrip(t *testing.T) {
 	deps := emptyDeps()
-	deps.RunObserved = func(_ context.Context, argv []string, cwd string) (int, string, string, []string, error) {
+	deps.RunObserved = func(_ context.Context, argv []string, cwd string) (int, string, string, []string, string, error) {
 		if len(argv) != 3 || argv[0] != "npm" {
 			t.Errorf("RunObserved argv = %v", argv)
 		}
 		if cwd != "." {
 			t.Errorf("RunObserved cwd = %q", cwd)
 		}
-		return 1, "PROJECT_COMPILE", "FAIL", []string{"errorCode: TS2345", "error TS2345: <path> is not assignable"}, nil
+		return 1, "PROJECT_COMPILE", "FAIL", []string{"errorCode: TS2345", "error TS2345: <path> is not assignable"}, "", nil
 	}
 	c := startServer(t, deps)
 	res := callTool(t, c, "run_observed_command", map[string]any{

@@ -41,7 +41,7 @@ type Deps struct {
 	LocalReadiness func(ctx context.Context) (mode string, shards int, err error)
 	// RunObserved wraps one command in the evidence loop (scan → run →
 	// record). sanitized carries only sanitizer output — never raw stderr.
-	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, err error)
+	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, output string, err error)
 	// ReportAdoption records what happened to a returned sample. The outcome
 	// can call a failure "avoided" only when the local correlation proves all
 	// four stages; the upload remains the existing anonymous adoption event.
@@ -878,7 +878,7 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	if len(a.Command) == 0 {
 		return errResult("run_observed_command: command is required")
 	}
-	exitCode, stage, result, sanitized, err := s.Deps.RunObserved(ctx, a.Command, a.Cwd)
+	exitCode, stage, result, sanitized, output, err := s.Deps.RunObserved(ctx, a.Command, a.Cwd)
 	if err != nil {
 		return errResult("run_observed_command: " + err.Error())
 	}
@@ -900,6 +900,24 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		"sanitizedErrors": sanitized,
 		"evidenceClass":   string(domain.ClassUsageObservation),
 	}
+	// What the agent must act on goes in the structured payload, because that
+	// is the half the client renders. Everything this tool had to say was
+	// written into the builder above, and a wrapped failure came back as five
+	// JSON keys with none of the prose -- so the network's answer was going
+	// somewhere nobody reads.
+	if exitCode != 0 && strings.TrimSpace(output) != "" {
+		// The sanitized template is what may LEAVE the machine. It is not
+		// what fixes a build: "stat <path> directory not found" names no file
+		// and no symbol. This response goes to an agent on this machine that
+		// already holds the source and the paths, so redacting it protects
+		// nothing and costs the one thing the agent came for -- and an agent
+		// that cannot see why the build broke runs it again outside this
+		// tool, which is the single behaviour the product exists to prevent.
+		//
+		// Only on failure. A command that passed has nothing to explain, and
+		// its log is the largest thing this tool could send.
+		structured["output"] = output
+	}
 	// The build just failed, which is the one moment this network exists for,
 	// and asking first was left to the agent's discretion.
 	//
@@ -917,6 +935,7 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 			b.WriteString("\n")
 			b.WriteString(found)
 			structured["autoLookup"] = true
+			structured["networkAnswer"] = found
 		}
 	}
 	return textResult(b.String(), structured)

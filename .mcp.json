@@ -4,7 +4,8 @@
       "args": [
         "mcp"
       ],
-      "command": "C:\\Users\\recuerdame\\AppData\\Local\\csx\\csx.exe"
+      "_comment": "csx resolves from PATH; the installer puts it there. An absolute user path here only ever worked on one machine.",
+      "command": "csx"
     }
   }
 }

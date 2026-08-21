@@ -118,7 +118,7 @@ func TestNewDepsReloadsCommunityRevocationBeforeRemoteWork(t *testing.T) {
 		`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.12.0"}}}`), 0o600); err != nil {
 		t.Fatalf("write lockfile: %v", err)
 	}
-	if code, _, _, _, err := deps.RunObserved(t.Context(), []string{"go", "version"}, project); err != nil || code != 0 {
+	if code, _, _, _, _, err := deps.RunObserved(t.Context(), []string{"go", "version"}, project); err != nil || code != 0 {
 		t.Fatalf("local-only observed command: code=%d err=%v", code, err)
 	}
 
