@@ -65,6 +65,7 @@
   "cube.heading": "Cubo de compatibilidade",
   "cube.leaf_heading": "Registros exatos",
   "cube.leaf_sub": "Esta fatia chegou às suas combinações medidas — os ambientes abaixo são exatamente o que rodou.",
+  "cube.pinned": "Fixado",
   "cube.no_match": "Nenhuma evidência registrada corresponde a estes filtros. Nada é inferido; limpe um filtro para ampliar a fatia.",
   "cube.remove_filter": "Remover filtro",
   "cube.sub": "Escolha duas dimensões quaisquer como eixos; todo o resto vira filtro. Clicar em uma célula fixa a fatia dela e desce um nível.",

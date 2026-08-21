@@ -65,6 +65,7 @@
   "cube.heading": "Cube de compatibilité",
   "cube.leaf_heading": "Enregistrements exacts",
   "cube.leaf_sub": "Cette tranche est descendue jusqu'à ses combinaisons mesurées — les environnements ci-dessous sont exactement ce qui a tourné.",
+  "cube.pinned": "Fixé",
   "cube.no_match": "Aucune preuve enregistrée ne correspond à ces filtres. Rien n'est déduit ; effacez un filtre pour élargir la tranche.",
   "cube.remove_filter": "Retirer le filtre",
   "cube.sub": "Choisissez deux dimensions comme axes ; tout le reste devient un filtre. Cliquer sur une cellule épingle sa tranche et descend d'un niveau.",

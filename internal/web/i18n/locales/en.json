@@ -65,6 +65,7 @@
   "cube.heading": "Compatibility cube",
   "cube.leaf_heading": "Exact records",
   "cube.leaf_sub": "This slice is down to its measured combinations — the environments below are exactly what ran.",
+  "cube.pinned": "Fixed",
   "cube.no_match": "No recorded evidence matches these filters. Nothing is inferred; clear a filter to widen the slice.",
   "cube.remove_filter": "Remove filter",
   "cube.sub": "Pick any two dimensions as axes; everything else becomes a filter. Clicking a cell pins its slice and drills one level deeper.",

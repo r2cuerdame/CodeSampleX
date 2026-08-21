@@ -32,7 +32,7 @@
   <form class="cubecontrols mono small" method="get" action="{{.Cube.Action}}">
     {{- if .Cube.Chips}}
     <div class="ctlgroup pinned">
-      <span class="ctllabel dim">{{.T "cube.filters"}}</span>
+      <span class="ctllabel dim">{{.T "cube.pinned"}}</span>
       {{template "pins" .Cube.Chips}}
     </div>
     {{- end}}

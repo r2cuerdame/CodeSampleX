@@ -65,6 +65,7 @@
   "cube.heading": "Kompatibilitätswürfel",
   "cube.leaf_heading": "Exakte Aufzeichnungen",
   "cube.leaf_sub": "Dieser Ausschnitt ist bis auf seine gemessenen Kombinationen aufgelöst — die Umgebungen unten sind exakt das, was lief.",
+  "cube.pinned": "Fixiert",
   "cube.no_match": "Keine aufgezeichnete Evidenz passt zu diesen Filtern. Nichts wird abgeleitet; entferne einen Filter, um den Ausschnitt zu erweitern.",
   "cube.remove_filter": "Filter entfernen",
   "cube.sub": "Wähle zwei beliebige Dimensionen als Achsen; alles andere wird zum Filter. Ein Klick auf eine Zelle fixiert ihren Ausschnitt und steigt eine Ebene tiefer.",

@@ -65,6 +65,7 @@
   "cube.heading": "Cubo de compatibilidad",
   "cube.leaf_heading": "Registros exactos",
   "cube.leaf_sub": "Este corte ha llegado a sus combinaciones medidas: los entornos de abajo son exactamente lo que se ejecutó.",
+  "cube.pinned": "Fijado",
   "cube.no_match": "Ninguna evidencia registrada coincide con estos filtros. Nada se infiere; borra un filtro para ampliar el corte.",
   "cube.remove_filter": "Quitar filtro",
   "cube.sub": "Elige dos dimensiones cualesquiera como ejes; todo lo demás se convierte en filtro. Al hacer clic en una celda, su corte queda fijado y se baja un nivel más.",
