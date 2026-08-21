@@ -9,10 +9,12 @@
       {{/* The map button only scrolled down to a grid already on the page,
            and the search beside the counters now answers the question a
            visitor actually arrives with. */}}
+      {{/* One door. There were two, and the second one said "Agent
+           integration (MCP adapter)" — which reads as a thing you have to go
+           and set up, right beside the thing you install. It is not: the
+           installer registers the agents it finds. A front page that offers a
+           setup step makes the product look like it needs one. */}}
       <a class="action primary" href="#install">{{.T "landing.cli_install"}}</a>
-      {{/* The other way in. An agent reaches the network through the MCP
-           adapter, and that setup was folded away four screens down. */}}
-      <a class="action secondary" href="#agents">{{.T "landing.agents_heading"}}</a>
     </div>
   </div>
   <div class="hero-evidence">
@@ -170,8 +172,18 @@
         <li class="agent on"><span class="y" aria-hidden="true">✓</span>OpenCode</li>
       </ul>
       <p class="dim small">{{.T "landing.agents_auto"}}</p>
-      <p class="small">{{.T "landing.agents_manual"}}</p>
-      <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+      {{/* Folded, not deleted. Anyone on a client the installer does not
+           detect still needs this, and taking it away would strand them. But
+           it was sitting in the open next to the install command, where a
+           config snippet is the first thing a reader sees and the product
+           starts to look like something you have to wire up by hand. */}}
+      <details class="home-detail advanced">
+        <summary><span class="eyebrow mono">{{.T "landing.agents_advanced"}}</span></summary>
+        <div class="advanced-body">
+          <p class="small">{{.T "landing.agents_manual"}}</p>
+          <div class="cmdline"><code class="mono">{{$mcpCfg}}</code><button class="copy mono" type="button" data-copy="{{$mcpCfg}}">copy</button></div>
+        </div>
+      </details>
       <p class="note">{{.T "landing.agents_models"}}</p>
       <p class="small"><button class="action secondary" type="button" data-dialog-open="install-llm-dialog" aria-haspopup="dialog" aria-controls="install-llm-dialog">{{.T "landing.llm_heading"}}</button></p>
     </div>

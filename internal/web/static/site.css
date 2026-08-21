@@ -440,6 +440,20 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .agent-detail .eyebrow { margin: 0; }
 .agent-detail-body { padding-top: 0.2rem; }
 .agent-detail-body > :last-child { margin-bottom: 0; }
+/* The manual path, folded inside the agent panel. It is still here for
+   anyone on a client the installer does not detect, but it no longer sits in
+   the open beside the install command, where a config snippet was the first
+   thing a reader saw. */
+.advanced > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center;
+  gap: 0.4rem; padding: 0.45rem 0;
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after { content: "+"; color: var(--accent); }
+.advanced[open] > summary::after { content: "−"; }
+.advanced .eyebrow { margin: 0; }
+.advanced-body { padding-top: 0.15rem; }
+.advanced-body > :last-child { margin-bottom: 0; }
 .agent-detail .cmdline { margin: 0.5rem 0 0; }
 .agent-detail .note { margin-top: 0.8rem; }
 .home-detail {
