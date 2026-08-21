@@ -41,7 +41,9 @@ func TestTheTitleTrailStillNamesThePackage(t *testing.T) {
 
 // Clicking a cell pins a dimension and nothing said so: the grid re-drew
 // around a coordinate the reader could neither see nor step back out of one
-// at a time. The pins sit beside the trail, each with its own way off.
+// at a time. The pins lead the control bar, each with its own way off —
+// picking a cell and picking a dropdown are the same act and belong in the
+// same frame.
 func TestThePinsAreVisibleAndRemovableOneAtATime(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/npm/axios?f_version=1.12.0&f_os=linux").Body.String()
@@ -49,6 +51,9 @@ func TestThePinsAreVisibleAndRemovableOneAtATime(t *testing.T) {
 	i := strings.Index(body, `class="pins`)
 	if i < 0 {
 		t.Fatal("nothing on the page says what is pinned")
+	}
+	if bar := strings.Index(body, `class="cubecontrols`); bar < 0 || bar > i {
+		t.Error("the pins sit outside the instrument they belong to")
 	}
 	pins := body[i : i+strings.Index(body[i:], "</div>")]
 	if strings.Count(pins, `class="pin"`) != 2 {

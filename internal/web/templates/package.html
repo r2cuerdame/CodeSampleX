@@ -1,6 +1,5 @@
 {{define "content"}}
 {{template "crumbtitle" .Crumbs}}
-{{- if .Cube}}{{template "pins" .Cube.Chips}}{{end}}
 
 {{if .Wanted}}
 <aside class="note wanted-stub">
@@ -23,10 +22,20 @@
     </div>
   </div>
 
-  {{/* One control bar: two axes to spread, every other dimension as a
-       filter. Each control applies on change; the Apply button exists
-       only for readers without JavaScript. */}}
+  {{/* One instrument: what is fixed, what can still be chosen, and the grid
+       it all describes — in that order, in one frame.
+       Picking a cell is not a different act from picking a filter. Both fix a
+       dimension and narrow the slice, and splitting them into a "filter"
+       section above a "matrix" section made a click on the grid look like
+       navigation while a click on a dropdown looked like filtering. They are
+       the same step, so they read as one. */}}
   <form class="cubecontrols mono small" method="get" action="{{.Cube.Action}}">
+    {{- if .Cube.Chips}}
+    <div class="ctlgroup pinned">
+      <span class="ctllabel dim">{{.T "cube.filters"}}</span>
+      {{template "pins" .Cube.Chips}}
+    </div>
+    {{- end}}
     {{- if .Cube.XOptions}}
     <div class="ctlgroup">
       <label>{{.T "cube.x_axis"}}

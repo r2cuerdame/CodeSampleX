@@ -1405,6 +1405,26 @@ td.pv .pvpasses { font-size: 0.66rem; }
   overflow: hidden;
   box-shadow: var(--shadow-soft);
 }
+/* The controls and the grid are one instrument. They were two boxes with a
+   gap, which made picking a cell look like navigation and picking a dropdown
+   look like filtering — the same act, read two ways. */
+.cubecontrols {
+  margin-bottom: 0;
+  border-bottom: 0;
+  border-radius: 0.7rem 0.7rem 0 0;
+}
+.cubecontrols + .gridpanel,
+.cubecontrols + .cubeleaf,
+.cubecontrols + p.dim,
+.cubecontrols + h3 {
+  margin-top: 0;
+}
+.cubecontrols + .gridpanel {
+  border-top-left-radius: 0; border-top-right-radius: 0;
+}
+/* The fixed dimensions lead the bar: they are where the reader is. */
+.cubecontrols .ctlgroup.pinned { flex: 1 1 100%; align-items: center; }
+.cubecontrols .ctlgroup.pinned .pins { margin: 0; }
 .gridbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
   padding: 0.55rem 0.75rem;
