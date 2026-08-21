@@ -410,7 +410,10 @@
     const withdrawn = document.querySelector("#farm-withdrawn");
     if (withdrawn) {
       withdrawn.replaceChildren();
-      const reasons = data.quarantinedByReason || [];
+      // Nested under health, where farm_http.go files it — read off the
+      // payload root, the || [] swallowed the undefined and this panel
+      // showed its empty state forever.
+      const reasons = h.quarantinedByReason || [];
       if (!reasons.length) {
         const none = document.createElement("p");
         none.className = "empty";
