@@ -116,6 +116,12 @@ func (d *DB) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	// After the tables exist: these are triggers on them.
+	for _, stmt := range corpusGenerationDDL {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
 	if err := migrateInterventionCorrelation(ctx, conn); err != nil {
 		return err
 	}

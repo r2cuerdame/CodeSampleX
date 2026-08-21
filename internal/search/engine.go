@@ -28,6 +28,10 @@ const ftsCandidateLimit = 50
 // Engine runs searches over one local store.
 type Engine struct {
 	DB *localdb.DB
+	// Corpus keeps the parsed corpus between queries in a long-lived
+	// process. Nil is a working engine that reloads each time, which is what
+	// a one-shot CLI command wants.
+	Corpus *CorpusCache
 }
 
 // Shard wire structs mirror schemas/v1/shard.json (contract C6).
@@ -158,7 +162,6 @@ type candidate struct {
 	symbols        []string
 	createdAt      time.Time
 	contractStages map[string]string // from a shard sample entry, if any
-	ftsScore       float64           // normalized 0..1 within this query
 }
 
 // pkgEvidence aggregates shard symbol stats + failure lists for one
@@ -213,7 +216,7 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 	reqEnv := req.Environment.Normalize()
 	reqPkgs := parsePURLs(req.Packages)
 
-	cands, evidence, err := e.collect(ctx, req)
+	cands, evidence, fts, err := e.collect(ctx, req)
 	if err != nil || len(cands) == 0 {
 		resp.Miss = true
 		return resp
@@ -227,7 +230,7 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 	}
 	all := make([]scored, 0, len(cands))
 	for _, c := range cands {
-		res, sc := e.scoreCandidate(ctx, req, reqEnv, reqPkgs, c, evidence, now)
+		res, sc := e.scoreCandidate(ctx, req, reqEnv, reqPkgs, c, evidence, fts[c.sampleID], now)
 		all = append(all, scored{res: res, score: sc, id: c.sampleID})
 	}
 	sort.Slice(all, func(i, j int) bool {
@@ -264,7 +267,56 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 // collect gathers candidates from the local samples table, cached shards,
 // and the FTS index, plus the per-package shard evidence used for error
 // matching and evidence summaries.
-func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[string]*candidate, map[string]*pkgEvidence, error) {
+// collect assembles the corpus and this query's FTS scores.
+//
+// The scores are returned rather than written onto the candidates. They are
+// normalised against the best hit of ONE query, so storing them on an object
+// the next query also reads would let one search's ranking leak into the
+// next — and once the corpus is shared between queries, two searches running
+// at once would be writing the same field.
+func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[string]*candidate, map[string]*pkgEvidence, map[string]float64, error) {
+	cands, evidence, err := e.corpus(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	fts, err := e.ftsScores(ctx, req, cands)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return cands, evidence, fts, nil
+}
+
+// ftsScores ranks this query's full-text hits, normalised against the best
+// hit of this query alone.
+func (e Engine) ftsScores(ctx context.Context, req domain.SearchRequest, cands map[string]*candidate) (map[string]float64, error) {
+	fts := map[string]float64{}
+	if strings.TrimSpace(req.Query) == "" {
+		return fts, nil
+	}
+	hits, err := e.DB.FTSQuery(ctx, req.Query, ftsCandidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	var max float64
+	for _, h := range hits {
+		if h.Score > max {
+			max = h.Score
+		}
+	}
+	if max > 0 {
+		for _, h := range hits {
+			id := sampleIDFromDocID(h.DocID)
+			if cands[id] != nil {
+				fts[id] = h.Score / max
+			}
+		}
+	}
+	return fts, nil
+}
+
+// loadCorpus reads and parses every sample and shard. Nothing it does depends
+// on the question, which is why CorpusCache can hold the result.
+func (e Engine) loadCorpus(ctx context.Context) (map[string]*candidate, map[string]*pkgEvidence, error) {
 	cands := map[string]*candidate{}
 
 	rows, err := e.DB.ListSamples(ctx)
@@ -391,30 +443,11 @@ func (e Engine) collect(ctx context.Context, req domain.SearchRequest) (map[stri
 		}
 	}
 
-	if strings.TrimSpace(req.Query) != "" {
-		hits, ferr := e.DB.FTSQuery(ctx, req.Query, ftsCandidateLimit)
-		if ferr != nil {
-			return nil, nil, ferr
-		}
-		var max float64
-		for _, h := range hits {
-			if h.Score > max {
-				max = h.Score
-			}
-		}
-		if max > 0 {
-			for _, h := range hits {
-				if c := cands[sampleIDFromDocID(h.DocID)]; c != nil {
-					c.ftsScore = h.Score / max
-				}
-			}
-		}
-	}
 	return cands, evidence, nil
 }
 
 // scoreCandidate produces one SearchResult plus its fused score.
-func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, now time.Time) (domain.SearchResult, float64) {
+func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, ftsScore float64, now time.Time) (domain.SearchResult, float64) {
 	receipts, _ := e.DB.ReceiptsForSample(ctx, c.sampleID)
 	askedPkgs := reqPkgs
 	fromTree := false
@@ -478,7 +511,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	}
 	// Relevance to the question actually asked, as opposed to overlap with
 	// whatever happens to be in the caller's dependency tree.
-	relevance := weightFTS*c.ftsScore + weightIntent*intentOverlap(req.Query, c)
+	relevance := weightFTS*ftsScore + weightIntent*intentOverlap(req.Query, c)
 	if named, _ := intentSignal(req.Query, c); named > 0 {
 		relevance += weightNamedSubject
 	}

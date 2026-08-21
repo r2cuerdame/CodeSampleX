@@ -487,7 +487,7 @@ func TestAnUnestablishedVersionCannotAssertADifferenceEither(t *testing.T) {
 		Packages: []string{"pkg:npm/axios@1.12.0"},
 	}, domain.EnvironmentFingerprint{SchemaVersion: 1},
 		[]domain.PURL{{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}},
-		c, map[string]*pkgEvidence{}, time.Now().UTC())
+		c, map[string]*pkgEvidence{}, 0, time.Now().UTC())
 
 	for _, d := range res.Different {
 		if strings.Contains(d, "7.0") {
@@ -703,7 +703,7 @@ func TestFetchingASampleDoesNotDowngradeIt(t *testing.T) {
 	}
 
 	e := Engine{DB: db}
-	cands, _, err := e.collect(ctx, domain.SearchRequest{SchemaVersion: 1, Query: m.Case.Goal})
+	cands, _, _, err := e.collect(ctx, domain.SearchRequest{SchemaVersion: 1, Query: m.Case.Goal})
 	if err != nil {
 		t.Fatal(err)
 	}

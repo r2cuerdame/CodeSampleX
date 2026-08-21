@@ -136,7 +136,10 @@ func New(home string) (*Daemon, error) {
 		ready:    make(chan struct{}),
 		shutdown: make(chan struct{}),
 	}
-	d.Engine = &search.Engine{DB: db}
+	// The daemon outlives every query it answers, so it keeps the parsed
+	// corpus. Reading it was the whole remaining cost of a search once the
+	// receipts index landed.
+	d.Engine = &search.Engine{DB: db, Corpus: search.NewCorpusCache()}
 	publicChecker := &registry.Checker{Cache: evidence.PublicnessCache{DB: db}}
 	d.WantedPublic = func(ctx context.Context, p domain.PURL) bool {
 		return publicChecker.Check(ctx, p) == scanner.PublicnessPublic
