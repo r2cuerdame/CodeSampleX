@@ -71,13 +71,21 @@ type hookEnv struct {
 // and that one string carries both halves:
 //
 //	"Exit code 1\nERR_MODULE_NOT_FOUND: cannot find module widget"
+//
+// It also has to cover Codex, whose event is a different shape again: no
+// failure-only event, no exit code, and the output in tool_response. See
+// hookcodex.go — the two are reconciled in hookFailureText.
 type hookPayload struct {
-	ToolName  string `json:"tool_name"`
-	CWD       string `json:"cwd"`
-	ToolInput struct {
+	HookEventName  string `json:"hook_event_name"`
+	ToolName       string `json:"tool_name"`
+	CWD            string `json:"cwd"`
+	ToolUseID      string `json:"tool_use_id"`
+	TranscriptPath string `json:"transcript_path"`
+	ToolInput      struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
-	Error string `json:"error"`
+	Error        string `json:"error"`
+	ToolResponse string `json:"tool_response"`
 }
 
 // hookErrorLines bounds how much of the failed command's output becomes the
@@ -116,6 +124,15 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		return quiet("turned off (csx hook on)")
 	}
 
+	// Did it fail, and what did it say? Asked FIRST, before the project is
+	// scanned, because Codex raises this event after every command it runs —
+	// successes included — and scanning a tree to decide whether to stay
+	// quiet is work done on every green build in the session.
+	errText, failed := hookFailureText(p)
+	if !failed {
+		return quiet("the command did not fail, or the failure could not be confirmed")
+	}
+
 	segments := hookSegments(p.ToolInput.Command)
 	if len(segments) == 0 {
 		return quiet("nothing to classify in " + strconv.Quote(p.ToolInput.Command))
@@ -132,7 +149,7 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 
 	req := domain.SearchRequest{
 		SchemaVersion:   2,
-		Query:           hookQuery(p.Error),
+		Query:           errText,
 		ProjectPackages: proj.Packages,
 		// Scanner-derived, so ranking-only. These symbols were not asked
 		// about by anyone and must never exclude a candidate.
@@ -176,7 +193,7 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	renderSearchText(&b, resp)
 	out, err := json.Marshal(map[string]any{
 		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "PostToolUseFailure",
+			"hookEventName":     p.HookEventName,
 			"additionalContext": b.String(),
 		},
 	})

@@ -241,6 +241,10 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 				}
 			}
 		}
+		if follow := agentFollowUp(results); follow != "" {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  "+follow)
+		}
 	}
 
 	if env.warm != nil {

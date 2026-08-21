@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -60,7 +61,38 @@ func codexMCPBlock() string {
 	if err != nil {
 		cmd = []byte(`"csx"`)
 	}
-	return "[mcp_servers.csx]\ncommand = " + string(cmd) + "\nargs = [\"mcp\"]"
+	block := "[mcp_servers.csx]\ncommand = " + string(cmd) + "\nargs = [\"mcp\"]"
+
+	// The build-failure lookup. Codex has no failure-only event — measured,
+	// its PostToolUse fires after successful commands too and carries no exit
+	// code — so the hook itself decides, reading the exit code out of the
+	// rollout file the event names. See hookcodex.go.
+	if hookCmd, ok := codexHookCommand(mcpCommand()); ok {
+		enc, err := json.Marshal(hookCmd)
+		if err == nil {
+			block += "\n\n[[hooks.PostToolUse]]\nmatcher = \"^Bash$\"\n" +
+				"\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = " + string(enc) +
+				"\ntimeout = " + strconv.Itoa(hookTimeoutSeconds)
+		}
+	}
+	return block
+}
+
+// codexHookCommand builds the one string Codex will run, or reports that it
+// cannot build one.
+//
+// Codex takes a command as a single shell-ish string with no argument array,
+// and it will not run a path that has a space in it — quoting does not help.
+// Measured against Codex 0.149.0: a quoted path containing a space never ran,
+// and the same file reached through its 8.3 short name ran and received its
+// argument. Where no space-free form exists we register nothing, because a
+// hook that cannot run is worse than an absent one: it looks installed.
+func codexHookCommand(exe string) (string, bool) {
+	p, ok := spaceFreePath(exe)
+	if !ok {
+		return "", false
+	}
+	return p + " hook agent", true
 }
 
 // agentHomeEnv names the explicit override for the home directory that
@@ -274,7 +306,7 @@ func installCodex(userHome string) ([]string, error) {
 	if err != nil {
 		return actions, err
 	}
-	actions = append(actions, verb(changed, "MCP server", tomlPath))
+	actions = append(actions, verb(changed, "MCP server and build-failure lookup", tomlPath))
 
 	rulePath := filepath.Join(userHome, ".codex", "AGENTS.md")
 	changed, err = upsertMarkerFile(rulePath, mdBegin, mdEnd, agentRule)
@@ -475,3 +507,25 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 func hadBOM(raw []byte) bool { return bytes.HasPrefix(raw, utf8BOM) }
 
 func stripBOM(raw []byte) []byte { return bytes.TrimPrefix(raw, utf8BOM) }
+
+// agentFollowUp is the one thing an install cannot do for the reader.
+//
+// Codex will not run a hook it has not been told to trust: trust is recorded
+// against the hook's exact definition, Codex prints a startup warning and
+// skips the hook until somebody reviews it, and no third party can grant it —
+// only managed/MDM sources are trusted by policy. Everything else about this
+// install happens by itself; this does not.
+//
+// An install that registers something which then silently never fires is
+// worse than one that registers nothing, because nobody goes looking for a
+// feature they were told they already had.
+func agentFollowUp(results []agentInstallResult) string {
+	for _, r := range results {
+		if r.Agent != "Codex" || r.Skipped || len(r.Actions) == 0 {
+			continue
+		}
+		return "Codex needs one thing from you: run /hooks in Codex and trust the\n" +
+			"  csx build-failure lookup. Until then Codex skips it."
+	}
+	return ""
+}
