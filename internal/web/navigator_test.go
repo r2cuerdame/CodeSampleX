@@ -64,3 +64,57 @@ func TestThePinsAreVisibleAndRemovableOneAtATime(t *testing.T) {
 		t.Errorf("a pin's remove link drops more than its own dimension: %s", pins)
 	}
 }
+
+// Every link inside the instrument narrows the slice. The exact record's own
+// heading linked OUT of it — to pages covering every environment of that
+// release, wider than the coordinate the reader had just worked down to —
+// wearing the same blue as the links that go deeper.
+func TestNoLinkInsideTheInstrumentLeavesIt(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/npm/axios?f_version=1.12.0").Body.String()
+
+	i := strings.Index(body, `id="cube"`)
+	if i < 0 {
+		t.Skip("no cube on this fixture")
+	}
+	inst := body[i:]
+	if j := strings.Index(inst, "</section>"); j >= 0 {
+		inst = inst[:j]
+	}
+	for _, m := range regexpAllHrefs(inst) {
+		if strings.HasPrefix(m, "/npm/axios/") {
+			t.Errorf("a link inside the instrument jumps out of it: %s", m)
+		}
+	}
+}
+
+// The trail carries them instead, because a jump belongs in the navigator.
+func TestTheTrailCarriesTheDecidedCoordinate(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/npm/axios?f_version=1.12.0").Body.String()
+	i := strings.Index(body, `class="crumbtitle`)
+	if i < 0 {
+		t.Fatal("no title trail")
+	}
+	trail := body[i : i+strings.Index(body[i:], "</h1>")]
+	if !strings.Contains(trail, "1.12.0") {
+		t.Errorf("the trail does not carry the decided release: %s", trail)
+	}
+}
+
+func regexpAllHrefs(s string) []string {
+	var out []string
+	for {
+		i := strings.Index(s, `href="`)
+		if i < 0 {
+			return out
+		}
+		s = s[i+6:]
+		j := strings.Index(s, `"`)
+		if j < 0 {
+			return out
+		}
+		out = append(out, s[:j])
+		s = s[j:]
+	}
+}

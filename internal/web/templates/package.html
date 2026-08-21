@@ -76,9 +76,13 @@
   <ul class="cubeleaf">
     {{- range .Cube.Leaf}}
     <li class="panel">
+      {{/* Stated, not linked. Every link inside this instrument narrows the
+           slice; these two led OUT of it, to pages covering every environment
+           of that release — wider than the coordinate the reader had just
+           worked down to, wearing the same blue as the links that go deeper.
+           The trail above carries them, which is where a jump belongs. */}}
       <div class="leafhead mono">
-        {{- if .SymbolHref}}<a href="{{$.WithLang .SymbolHref}}">{{.Symbol}}</a>{{else}}<span>{{.Symbol}}</span>{{end}}
-        {{- if .VersionHref}}<a class="dim" href="{{$.WithLang .VersionHref}}">@{{.Version}}</a>{{else}}<span class="dim">@{{.Version}}</span>{{end}}
+        <span>{{.Symbol}}</span><span class="dim">@{{.Version}}</span>
       </div>
       {{if .Env}}<div class="leafenv dim mono small">{{.Env}}</div>{{end}}
       <div class="leafcell pv {{.Cell.Class}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">{{template "pivotcell" .Cell}}</div>

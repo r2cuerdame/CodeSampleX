@@ -620,6 +620,27 @@ const renderedClusterLimit = 12
 // actually has, so the page can say what it did not show. pgx/v5 carries 133;
 // rendering all of them was a wall, and truncating silently would read as
 // "this is all of them".
+// cubeCrumbVersion and cubeCrumbSymbol are the coordinate's own pages, named
+// only once the cube has actually decided them. A trail that guessed would
+// send the reader to a release they had not chosen.
+func cubeCrumbVersion(cube *cubeView) string {
+	if cube == nil || !cube.Decided {
+		return ""
+	}
+	return cube.Coord["version"]
+}
+
+func cubeCrumbSymbol(cube *cubeView) string {
+	if cube == nil || !cube.Decided || cubeCrumbVersion(cube) == "" {
+		return ""
+	}
+	// The package-level aggregate is not a symbol and has no page.
+	if sym := cube.Coord["symbol"]; sym != cubePackageLevel {
+		return sym
+	}
+	return ""
+}
+
 // decidedVersion is the one release the page is standing on: the reader's
 // pin, or the only version there has ever been. Empty means the page covers
 // several releases and cannot speak for any single one of them.
@@ -795,7 +816,12 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
 		Clusters: clusters, ClusterTotal: clusterTotal, Wanted: wanted,
-		Crumbs: leaf(recordCrumbs(b, eco, name, "", "")),
+		// The trail grows with the drill. A decided version and symbol have
+		// pages of their own — every environment of that release, not just
+		// this coordinate — and those are jumps, so they belong in the
+		// navigator rather than inside an instrument whose every other link
+		// narrows the slice.
+		Crumbs: leaf(recordCrumbs(b, eco, name, cubeCrumbVersion(cube), cubeCrumbSymbol(cube))),
 		Cube:   cube,
 		Deps:   deps,
 	})
