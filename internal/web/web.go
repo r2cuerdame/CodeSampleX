@@ -281,6 +281,19 @@ type site struct {
 	// closed when that assembly finishes. Concurrent readers wait on it
 	// rather than each running the same fan-out.
 	cubeLoading map[string]chan struct{}
+
+	// hero* memoizes the landing's finished hero matrix per (language,
+	// selection). Assembly is cached above; the PIVOTING was not, and a warm
+	// landing still built up to thirty grids per view — six candidates by
+	// five axis pairs, pure CPU on the most-requested URL of the site — to
+	// arrive at the same matrix every time.
+	heroMu    sync.Mutex
+	heroCache map[string]heroCacheEntry
+}
+
+type heroCacheEntry struct {
+	data *heroMatrixData
+	at   time.Time
 }
 
 // Register mounts every website route on mux.

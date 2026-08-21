@@ -86,6 +86,34 @@ func TestHeroMatrixCostsNothingWhenWarm(t *testing.T) {
 	}
 }
 
+// Assembly is already cached; PIVOTING was not. A warm landing still built
+// up to thirty grids per view — six candidates by five axis pairs, pure CPU
+// on the most-requested URL of the site — to arrive at the same matrix every
+// time. The finished matrix is memoized per (language, selection).
+func TestHeroMatrixIsMemoizedPerView(t *testing.T) {
+	hits, store := heroHits(heroMatrixTries)
+	s := &site{d: Deps{Store: store}}
+	r := httptest.NewRequest("GET", "/", nil)
+
+	first := s.heroMatrix(r, "en", hits)
+	if first == nil {
+		t.Fatal("no hero matrix rendered")
+	}
+	if second := s.heroMatrix(r, "en", hits); second != first {
+		t.Error("a warm landing view rebuilt the hero matrix")
+	}
+	// The labels and hrefs are per-language, so languages never share one.
+	if other := s.heroMatrix(r, "ko", hits); other == first {
+		t.Error("two languages were served one matrix")
+	}
+	// A junk ?m= is the unselected view, not its own cache entry — the key
+	// space must stay bounded by the hot-package list.
+	junk := s.heroMatrix(httptest.NewRequest("GET", "/?m=npm/never-heard-of-it", nil), "en", hits)
+	if junk != first {
+		t.Error("an arbitrary ?m= minted a separate cache entry")
+	}
+}
+
 // A first candidate with no measured facts must not cost the page its
 // matrix: the fallback keeps going until one renders, and only then stops.
 func TestHeroMatrixSkipsCandidatesWithNoFacts(t *testing.T) {

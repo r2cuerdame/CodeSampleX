@@ -221,6 +221,11 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 	return score
 }
 
+// heroMatrixTTL bounds how long a finished matrix is served as-is. The cubes
+// beneath it hold for five minutes; a minute here keeps the page fresh while
+// a busy landing pays the pivot once, not per view.
+const heroMatrixTTL = time.Minute
+
 // heroMatrix picks the featured package and slice: the ?m= selection when
 // it is one of the hot packages (never an arbitrary store read), else the
 // probed package whose best axis pair yields the richest grid.
@@ -228,15 +233,12 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	if len(hits) == 0 {
 		return nil
 	}
-	homePath := "/"
-	if lang != i18n.Default {
-		homePath = "/" + lang + "/"
-	}
 	key := func(h PackageHit) string { return h.Ecosystem + "/" + h.Name }
 
 	ordered := make([]PackageHit, 0, len(hits))
 	selected := false
-	if sel := r.URL.Query().Get("m"); sel != "" {
+	sel := r.URL.Query().Get("m")
+	if sel != "" {
 		for _, h := range hits {
 			if key(h) == sel {
 				ordered = append(ordered, h)
@@ -247,7 +249,39 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	}
 	if !selected {
 		ordered = hits
+		// A ?m= that names no hot package is the unselected view; keying the
+		// memo on it would let arbitrary query strings grow the cache without
+		// bound, when the result is identical anyway.
+		sel = ""
 	}
+
+	memoKey := lang + "\x00" + sel
+	s.heroMu.Lock()
+	if e, ok := s.heroCache[memoKey]; ok && time.Since(e.at) < heroMatrixTTL {
+		s.heroMu.Unlock()
+		return e.data
+	}
+	s.heroMu.Unlock()
+
+	data := s.buildHeroMatrix(r, lang, hits, ordered)
+
+	s.heroMu.Lock()
+	if s.heroCache == nil {
+		s.heroCache = map[string]heroCacheEntry{}
+	}
+	s.heroCache[memoKey] = heroCacheEntry{data: data, at: time.Now()}
+	s.heroMu.Unlock()
+	return data
+}
+
+// buildHeroMatrix does the probing and pivoting behind heroMatrix; hits is
+// the full hot list (for the tabs), ordered the candidates to probe.
+func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []PackageHit) *heroMatrixData {
+	homePath := "/"
+	if lang != i18n.Default {
+		homePath = "/" + lang + "/"
+	}
+	key := func(h PackageHit) string { return h.Ecosystem + "/" + h.Name }
 
 	now := time.Now()
 	var best *heroMatrixData
