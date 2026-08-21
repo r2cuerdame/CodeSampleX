@@ -575,7 +575,13 @@ func mergeCubeFacts(facts []cubeFact) *pivotAgg {
 		}
 		return false
 	}
-	obsWeight := func(a pivotAgg) int64 { return a.obsPass + a.obsFail }
+	// used counts on the observed side: presence is an observation too, and
+	// the recorder writes it package-level AND per symbol from the same scan,
+	// so it needs the same one-fact-per-bucket fold. Gating on run outcomes
+	// alone merged a usage-only coordinate to a zero aggregate, and the cube
+	// rendered a package seen in hundreds of projects as "never measured" —
+	// the invariant buildPivot already keeps.
+	obsWeight := func(a pivotAgg) int64 { return a.obsPass + a.obsFail + a.used }
 	verWeight := func(a pivotAgg) int64 { return a.verPass + a.verFail }
 
 	observed := map[verKey]cubeFact{}

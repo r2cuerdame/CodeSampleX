@@ -55,6 +55,31 @@ func TestUsageAloneReportsNoRate(t *testing.T) {
 	}
 }
 
+// The same invariant on the CUBE path. buildPivot honoured it while
+// mergeCubeFacts — which every cube cell and leaf row routes through —
+// admitted a fact only when it carried run outcomes or verification weight,
+// so a coordinate whose only evidence is USED presence merged to a zero
+// aggregate and rendered as "—, never measured" throughout the cube.
+func TestUsageOnlyFactIsNotAnEmptyCubeCell(t *testing.T) {
+	facts := []cubeFact{{
+		Dims:    map[string]string{"version": "1.0.0", "os": "linux"},
+		Agg:     pivotAgg{used: 229},
+		EnvHash: "env1",
+	}}
+	g := buildCubeGrid(facts, "version", "os", pivotLinks{}, pivotNow, true)
+	cell := cellAt(t, g, "linux", "1.0.0")
+	if cell.Class == "empty" {
+		t.Error("a package seen in real projects is not an empty cell")
+	}
+	if !strings.Contains(cell.Tip, "229 usage records") {
+		t.Errorf("tip = %q, want the usage stated", cell.Tip)
+	}
+	// Presence still has no rate — the other half of the invariant.
+	if cell.Ratio != "—" {
+		t.Errorf("ratio = %q, want no rate: nothing was run", cell.Ratio)
+	}
+}
+
 // Colour is a claim. A cell whose only evidence is "the package was there"
 // was painted the same green as a cell where a hundred runs passed, because
 // zero failures out of zero runs satisfies "no failures" — an outcome colour
