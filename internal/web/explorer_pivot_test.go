@@ -101,10 +101,30 @@ func TestPackagePageCubeNoMatchIsHonest(t *testing.T) {
 	}
 }
 
+// newSymbolObservationStore is newCubeStore with what production actually
+// has at symbol grain: builds that ran and were observed, not only
+// contract receipts.
+//
+// "Which symbol ran where" is a question about places, so the grid is
+// drawn from observation. Verification is not: every receipt this network
+// holds is signed inside a linux container, so keying it by environment
+// would put every symbol in the linux column and leave the rest of the row
+// reading as "does not run there".
+func newSymbolObservationStore() *fakeStore {
+	f := newCubeStore()
+	f.snapshots[snapKey("pkg:npm/reactish@19.1.0", "createRoot")] =
+		cubeSnap("pkg:npm/reactish@19.1.0", "createRoot", "linux", "x64",
+			"node", "22.14", "npm", "PROJECT_COMPILE", 4, 0)
+	f.snapshots[snapKey("pkg:npm/reactish@19.1.0", "hydrateRoot")] =
+		cubeSnap("pkg:npm/reactish@19.1.0", "hydrateRoot", "windows", "x64",
+			"node", "22.14", "pnpm", "PROJECT_COMPILE", 0, 2)
+	return f
+}
+
 // The version page answers "which symbol ran on which OS" with a grid
 // whose cells drill into the cube.
 func TestVersionPageSymbolByOSGrid(t *testing.T) {
-	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newSymbolObservationStore() })
 	body := get(t, mux, "/npm/reactish/19.1.0").Body.String()
 
 	mustContain(t, body, "Which symbol ran where")
@@ -129,14 +149,15 @@ func TestVersionPageDoesNotRepeatPackageLevelReceipts(t *testing.T) {
 	f.symbols["npm|dup|1.0.0"] = []string{"a", "b"}
 	for _, sym := range []string{"", "a", "b"} {
 		f.snapshots[snapKey("pkg:npm/dup@1.0.0", sym)] =
-			cubeSnap("pkg:npm/dup@1.0.0", sym, "linux", "x64", "node", "22.1", "npm", "CONTRACT", 1, 0)
+			cubeSnap("pkg:npm/dup@1.0.0", sym, "linux", "x64", "node", "22.1", "npm",
+				"PROJECT_COMPILE", 1, 0)
 	}
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 	body := get(t, mux, "/npm/dup/1.0.0").Body.String()
 	if strings.Contains(body, "(package)") {
 		t.Error("the (package) row repeats receipts the symbol rows already carry")
 	}
-	mustContain(t, body, `class="glyph" aria-hidden="true">✓</span>`)
+	mustContain(t, body, `class="pv observed`)
 }
 
 // The symbol page opens with an OS × runtime summary anchored to the

@@ -128,6 +128,15 @@ func TestCubeLoadCapsReads(t *testing.T) {
 
 // Filters narrow the slice; the grid pivots the remainder on the chosen
 // axes and skips facts that never recorded an axis dimension.
+//
+// Every receipt this network holds is signed inside a linux container, so
+// keying verification by environment put the check in the linux cell and left
+// every other cell of the row reading as "not verified there" — a
+// per-platform verdict this network does not offer. A sample answers one
+// version of one API; which container it ran in is not part of the claim.
+//
+// So an environment grid carries observation, and the version and symbol axes
+// carry what this network ran.
 func TestCubeGridSlicesByFilter(t *testing.T) {
 	f := newCubeStore()
 	facts, _, err := loadCubeFacts(context.Background(), f, "npm", "reactish")
@@ -135,21 +144,31 @@ func TestCubeGridSlicesByFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	sliced := filterCubeFacts(facts, map[string]string{"os": "windows"})
-	g := buildCubeGrid(sliced, "version", "arch", pivotLinks{}, pivotNow, false)
-	if len(g.Cols) != 2 || g.Cols[0].Label != "19.1.0" || g.Cols[1].Label != "18.3.1" {
-		t.Fatalf("cols = %v, want versions newest first", g.Cols)
+
+	// Spread over an environment dimension: our own runs are not painted
+	// into the cells, so nothing here can read as a verdict about windows.
+	env := buildCubeGrid(sliced, "version", "arch", pivotLinks{}, pivotNow, false)
+	for _, row := range env.Rows {
+		for _, c := range row.Cells {
+			if c.Basis == "verified" {
+				t.Errorf("%s/%s claims a verified basis on an environment axis: %+v",
+					row.Label, c.Basis, c)
+			}
+		}
 	}
-	c := cellAt(t, g, "x64", "19.1.0")
-	// Verified with no observation: the mark stays, and the count says no
-	// usage was recorded rather than claiming zero machines got through.
-	// Our run failed here and nobody has been seen using it: the cross says
-	// the first part and the dash says the second, without relying on hue.
-	if c.Basis != "verified" || c.Ratio != "—" || c.Glyph != "✕" {
-		t.Errorf("windows/x64/19.1.0 = %q %q glyph=%q, want a failed run and no usage",
-			c.Basis, c.Ratio, c.Glyph)
+
+	// Spread over what the sample is about: the run is right there.
+	sym := buildCubeGrid(sliced, "version", "symbol", pivotLinks{}, pivotNow, false)
+	var verified bool
+	for _, row := range sym.Rows {
+		for _, c := range row.Cells {
+			if c.Basis == "verified" {
+				verified = true
+			}
+		}
 	}
-	if got := cellAt(t, g, "arm64", "18.3.1").Basis; got != "observed" {
-		t.Errorf("windows/arm64/18.3.1 = %q, want OBSERVED", got)
+	if !verified {
+		t.Error("the version axis lost the run this network actually made")
 	}
 }
 
@@ -188,16 +207,22 @@ func TestCubeVersionAxisSortsNewestFirst(t *testing.T) {
 	}
 }
 
-// The producer files the SAME verification receipt into the package-level
-// snapshot and every claimed symbol's snapshot. When a grid merges across
-// the symbol dimension, one contract run must count once — never once per
-// symbol it was filed under.
+// One receipt filed under the package AND under each symbol it names is one
+// run, not three. The dedup is asserted where verification lives: on the
+// axes that say what the sample is about.
+//
+// Every receipt this network holds is signed inside a linux container, so
+// keying verification by environment put the check in the linux cell and left
+// every other cell of the row reading as "not verified there" — a
+// per-platform verdict this network does not offer. A sample answers one
+// version of one API; which container it ran in is not part of the claim.
+//
+// So an environment grid carries observation, and the version and symbol axes
+// carry what this network ran.
 func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	f := newFakeStore()
 	f.versions["npm|dup"] = []string{"1.0.0"}
 	f.symbols["npm|dup|1.0.0"] = []string{"a", "b"}
-	// Identical environment bucket in all three snapshots; the "" snapshot
-	// carries the superset (the same single receipt).
 	for _, sym := range []string{"", "a", "b"} {
 		f.snapshots[snapKey("pkg:npm/dup@1.0.0", sym)] =
 			cubeSnap("pkg:npm/dup@1.0.0", sym, "linux", "x64", "node", "22.1", "npm", "CONTRACT", 1, 0)
@@ -206,19 +231,13 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := buildCubeGrid(facts, "runtime", "os", pivotLinks{}, pivotNow, false)
-	c := cellAt(t, g, "linux", "node 22")
-	if c.Ver != 1 {
-		t.Fatalf("cell ver = %d, want the one real contract run counted once", c.Ver)
-	}
+	g := buildCubeGrid(facts, "version", "symbol", pivotLinks{}, pivotNow, true)
+	c := cellAt(t, g, cubePackageLevel, "1.0.0")
 	// "1/1" is deliberate. Suppressing the rate on a single run rendered it
 	// identically to a hundred agreeing runs, which is the overstatement the
 	// rate exists to prevent -- how thin the evidence is IS the measurement.
-	// One clean contract run and no observations: the mark is the fact, and
-	// the count reports that nobody has been seen using it.
-	if c.Glyph != "✓" || c.Ratio != "—" {
-		t.Errorf("deduped run = glyph %q count %q, want the mark and no usage",
-			c.Glyph, c.Ratio)
+	if c.Ver != 1 {
+		t.Errorf("cell ver = %d, want 1 — one receipt filed three ways is one run", c.Ver)
 	}
 }
 
@@ -226,17 +245,33 @@ func TestCubeGridDedupesDuplicatedVerifications(t *testing.T) {
 func TestCubeGridKeepsDistinctVerifications(t *testing.T) {
 	f := newFakeStore()
 	f.versions["npm|dup"] = []string{"1.0.0"}
-	f.symbols["npm|dup|1.0.0"] = []string{"a"}
-	f.snapshots[snapKey("pkg:npm/dup@1.0.0", "")] =
-		cubeSnap("pkg:npm/dup@1.0.0", "", "linux", "x64", "node", "22.1", "npm", "CONTRACT", 1, 0)
-	f.snapshots[snapKey("pkg:npm/dup@1.0.0", "a")] =
-		cubeSnap("pkg:npm/dup@1.0.0", "a", "linux", "arm64", "node", "22.1", "npm", "CONTRACT", 1, 0)
+	// One snapshot, two environment buckets: the same contract run twice, in
+	// two places. They share a cell on the version axis and must not collapse
+	// into one — the environment is identity here, not a coordinate to spread
+	// along, because a sample answers a version and not an OS.
+	f.snapshots[snapKey("pkg:npm/dup@1.0.0", "")] = `{
+	  "schemaVersion": 1,
+	  "purl": "pkg:npm/dup@1.0.0",
+	  "symbol": "",
+	  "generatedAt": "2026-08-13T00:00:00Z",
+	  "rows": [
+	    {"envBucket": {"schemaVersion":1,"os":"linux","arch":"x64",
+	      "runtime":"node","runtimeVersion":"22.1","packageManager":"npm"},
+	     "confidence": "MEDIUM", "passRate": 1, "lastSeen": "2026-08-12T10:00:00Z",
+	     "byStage": {"CONTRACT": {"pass": 1, "fail": 0}}},
+	    {"envBucket": {"schemaVersion":1,"os":"linux","arch":"arm64",
+	      "runtime":"node","runtimeVersion":"22.1","packageManager":"npm"},
+	     "confidence": "MEDIUM", "passRate": 1, "lastSeen": "2026-08-12T10:00:00Z",
+	     "byStage": {"CONTRACT": {"pass": 1, "fail": 0}}}
+	  ],
+	  "failures": []
+	}`
 	facts, _, err := loadCubeFacts(context.Background(), f, "npm", "dup")
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := buildCubeGrid(facts, "runtime", "os", pivotLinks{}, pivotNow, false)
-	if got := cellAt(t, g, "linux", "node 22").Ver; got != 2 {
+	g := buildCubeGrid(facts, "version", "symbol", pivotLinks{}, pivotNow, true)
+	if got := cellAt(t, g, cubePackageLevel, "1.0.0").Ver; got != 2 {
 		t.Fatalf("cell ver = %d, want 2 — different env buckets are different runs", got)
 	}
 }

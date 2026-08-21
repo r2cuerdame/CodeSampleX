@@ -348,6 +348,44 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 // failure clusters were recorded, so the page opened on six green rows for a
 // package with 42 recorded failures. It is kept and marked as a total —
 // sorted below its parts, outside the tallies.
+// observationsOnlyOnEnvironmentAxes drops this network's own runs from a
+// grid spread over WHERE things ran.
+//
+// Every receipt this network holds is signed inside a linux container, so
+// keying verification by environment put the check in the linux cell and
+// left every other cell of the row reading as "not verified there". That is
+// a per-platform verdict, and this network does not offer one: it offers a
+// sample that builds. A sample answers one version of one API — which OS
+// the container happened to be is not part of the claim.
+//
+// So an environment grid answers the question it is actually about: where
+// did builds run, and how did they go. The verification is not lost — the
+// version and symbol axes still carry it, the exact records still state the
+// environment each run happened in, and the sample page counts the signing
+// keys that built it.
+func observationsOnlyOnEnvironmentAxes(facts []cubeFact, x, y string) []cubeFact {
+	if !isEnvironmentDim(x) && !isEnvironmentDim(y) {
+		return facts
+	}
+	out := make([]cubeFact, 0, len(facts))
+	for _, f := range facts {
+		f.Agg = f.Agg.observationPart()
+		if f.Agg.events() == 0 {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// isEnvironmentDim reports whether a cube dimension describes WHERE a run
+// happened rather than WHAT it was about. Version and symbol are what; the
+// rest are where. An empty axis is neither — the bottomed-out view has no
+// grid at all.
+func isEnvironmentDim(dim string) bool {
+	return dim != "" && dim != "version" && dim != "symbol"
+}
+
 // cubeFactsWithoutTotal removes the package-level aggregate from a symbol
 // axis. It is the right thing where the grid answers a question about the
 // symbols themselves — "which symbol ran where" on the version page, and the
@@ -433,6 +471,7 @@ func buildCubeGrid(facts []cubeFact, x, y string,
 	if !withTotal {
 		onAxes = cubeFactsWithoutTotal(onAxes, x, y)
 	}
+	onAxes = observationsOnlyOnEnvironmentAxes(onAxes, x, y)
 	cells := map[cellKey][]cubeFact{}
 	for _, f := range onAxes {
 		cells[cellKey{f.Dims[y], f.Dims[x]}] = append(cells[cellKey{f.Dims[y], f.Dims[x]}], f)

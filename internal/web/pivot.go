@@ -472,6 +472,21 @@ type cellKey struct{ row, col string }
 // absorbRow folds one snapshot row's stage counts and quality signals
 // into a. The row's LastSeen refreshes only the evidence classes the row
 // actually carries.
+// observationPart is the half of an aggregate that belongs to a coordinate.
+//
+// The two evidence classes answer different questions and sit at different
+// grains. An observation is about a place — this version, on this OS, on
+// this runtime — and a cell of an environment grid is exactly that place. A
+// verification is about a SAMPLE, and a sample answers one version of one
+// API; which container the run happened in is not part of what it claims.
+func (a pivotAgg) observationPart() pivotAgg {
+	return pivotAgg{
+		obsPass: a.obsPass, obsFail: a.obsFail, obsAttributed: a.obsAttributed,
+		obsPeers: a.obsPeers, used: a.used,
+		elevated: a.elevated, obsLastSeen: a.obsLastSeen,
+	}
+}
+
 func (a *pivotAgg) absorbRow(r snapshotRow) {
 	var hasObs, hasVer bool
 	for stage, c := range r.ByStage {
