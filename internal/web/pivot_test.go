@@ -168,7 +168,7 @@ func TestPivotDoesNotAgeAPinnedCoordinate(t *testing.T) {
 	if !strings.Contains(c.Tip, "last seen 2026-05-01") {
 		t.Errorf("tooltip %q must still date the evidence", c.Tip)
 	}
-	if c.Glyph != "✓" {
+	if c.Glyph != "≡" {
 		t.Errorf("glyph = %q; old evidence is still evidence we ran", c.Glyph)
 	}
 }

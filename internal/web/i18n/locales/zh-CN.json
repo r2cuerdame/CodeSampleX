@@ -229,7 +229,7 @@
   "lang.label": "语言",
   "legend.how_heading": "如何阅读单元格：",
   "legend.how_rate": "数字是该比率所依据的已记录运行次数，勾号表示我们自己的样本在这里跑通了。一次还是一百次，标记说的是同一件事——这一格有能用的代码。",
-  "legend.mark_check": "我们的样本在这里能跑",
+  "legend.mark_check": "我们的样本在这里运行过，且干净地结束",
   "legend.mark_cross": "我们的样本在这里失败了",
   "meta.adapters": "CodeSampleX 支持哪些生态以及支持到什么程度：每个适配器的包检测、构建观测、符号解析与 contract 验证。",
   "meta.explore": "搜索公开包并查看真实环境的兼容性证据：执行上下文、置信度、失败聚类，以及能构建的样本。",

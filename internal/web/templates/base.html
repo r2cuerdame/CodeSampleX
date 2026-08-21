@@ -360,7 +360,7 @@ document.addEventListener('keydown',event=>{
 {{define "pivot"}}
 {{- if .Measured}}
 <div class="gridstats mono small">
-  {{- if .CountPass}}<span class="gs pass"><span class="glyph" aria-hidden="true">✓</span> {{.CountPass}}</span>{{end}}
+  {{- if .CountPass}}<span class="gs pass"><span class="glyph" aria-hidden="true">≡</span> {{.CountPass}}</span>{{end}}
   {{- if .CountFail}}<span class="gs fail"><span class="glyph" aria-hidden="true">✕</span> {{.CountFail}}</span>{{end}}
   {{- if .CountMixed}}<span class="gs mixed"><span class="glyph" aria-hidden="true">◐</span> {{.CountMixed}}</span>{{end}}
   {{- if .CountObserved}}<span class="gs observed"><span class="glyph" aria-hidden="true">○</span> {{.CountObserved}}</span>{{end}}
@@ -398,7 +398,7 @@ document.addEventListener('keydown',event=>{
 <div class="pivotlegend">
   <p class="small"><strong>{{.T "legend.how_heading"}}</strong> {{.T "legend.how_rate"}}</p>
   <ul class="pivotlegend-marks mono small">
-    <li><span class="glyph" aria-hidden="true">✓</span> {{.T "legend.mark_check"}}</li>
+    <li><span class="glyph" aria-hidden="true">≡</span> {{.T "legend.mark_check"}}</li>
     <li><span class="glyph" aria-hidden="true">✕</span> {{.T "legend.mark_cross"}}</li>
     <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
   </ul>

@@ -229,7 +229,7 @@
   "lang.label": "Language",
   "legend.how_heading": "Reading a cell:",
   "legend.how_rate": "The number is how many recorded runs the rate divides, and the check means our own sample ran here. One run or a hundred, the mark says the same thing — there is code that works for this cell.",
-  "legend.mark_check": "our own sample runs here",
+  "legend.mark_check": "our own sample ran here and came back clean",
   "legend.mark_cross": "our sample failed here",
   "meta.adapters": "Which ecosystems CodeSampleX supports and exactly how far: package detection, build observation, symbol resolution and contract verification per adapter.",
   "meta.explore": "Search public packages and see real-environment compatibility evidence: execution contexts, confidence, failure clusters and samples that built.",

@@ -824,9 +824,15 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	if obs == 0 {
 		cell.PassCount, cell.FailCount = a.verPass, a.verFail
 	}
-	// The mark is our own run and how it went: a check when our sample passed
-	// here, a cross when it failed, nothing when we have no sample for this
-	// cell at all. One clean run is as much of that fact as a hundred.
+	// The mark is our own run and how it went: a record mark when our sample
+	// passed here, a cross when it failed, nothing when we have no sample
+	// for this cell at all. One clean run is as much of that fact as a
+	// hundred.
+	//
+	// It was a check. A check is an approval stamp — it reads as "this is
+	// fine", which is a grade, and this network does not grade. What it has
+	// is a record that the run happened and came back clean, so the mark
+	// looks like a line in a log rather than a tick on a form.
 	//
 	// The cross exists because the alternative was colour alone. A verified
 	// FAILURE with no observations rendered as a red "—", which reads as
@@ -837,7 +843,7 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// version of the same fact and stays in the tooltip.
 	switch {
 	case a.verPass > 0 && a.verFail == 0:
-		cell.Glyph = "✓"
+		cell.Glyph = "≡"
 	case a.verFail > 0:
 		cell.Glyph = "✕"
 	}

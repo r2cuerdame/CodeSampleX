@@ -229,7 +229,7 @@
   "lang.label": "Sprache",
   "legend.how_heading": "Eine Zelle lesen:",
   "legend.how_rate": "Die Zahl sind die aufgezeichneten Läufe, durch die die Rate teilt, und das Häkchen heißt, dass unser Sample hier lief. Einmal oder hundertmal — das Zeichen sagt dasselbe: für diese Zelle gibt es Code, der funktioniert.",
-  "legend.mark_check": "unser Beispiel läuft hier",
+  "legend.mark_check": "unser eigenes Sample lief hier und kam sauber zurück",
   "legend.mark_cross": "unser Beispiel ist hier fehlgeschlagen",
   "meta.adapters": "Welche Ökosysteme CodeSampleX unterstützt und wie weit: Paketerkennung, Build-Beobachtung, Symbolauflösung und Contract-Verifikation je Adapter.",
   "meta.explore": "Öffentliche Pakete durchsuchen und Kompatibilitätsbelege aus echten Umgebungen sehen: Ausführungskontexte, Konfidenz, Fehlercluster und Samples, die gebaut haben.",

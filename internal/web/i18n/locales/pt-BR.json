@@ -229,7 +229,7 @@
   "lang.label": "Idioma",
   "legend.how_heading": "Como ler uma célula:",
   "legend.how_rate": "O número são as execuções registradas que a taxa divide, e a marca significa que nossa amostra rodou aqui. Uma vez ou cem, diz o mesmo: há código que funciona para esta célula.",
-  "legend.mark_check": "nossa amostra funciona aqui",
+  "legend.mark_check": "nossa própria amostra rodou aqui e terminou limpa",
   "legend.mark_cross": "nossa amostra falhou aqui",
   "meta.adapters": "Quais ecossistemas o CodeSampleX suporta e até onde: detecção de pacotes, observação de builds, resolução de símbolos e verificação por contrato.",
   "meta.explore": "Pesquise pacotes públicos e veja evidências de compatibilidade em ambientes reais: contextos de execução, confiança, grupos de falhas e amostras que compilaram.",

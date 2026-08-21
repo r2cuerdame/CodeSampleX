@@ -229,7 +229,7 @@
   "lang.label": "언어",
   "legend.how_heading": "셀 읽는 법:",
   "legend.how_rate": "숫자는 비율이 딛고 선 기록된 실행 수이고, 체크는 우리 샘플이 여기서 돌았다는 뜻입니다. 한 번이든 백 번이든 표시는 같은 사실입니다 — 이 칸에 대해 동작하는 코드가 있다는 것.",
-  "legend.mark_check": "우리 샘플이 여기서 돎",
+  "legend.mark_check": "우리 샘플이 여기서 돌았고 깨끗하게 끝남",
   "legend.mark_cross": "우리 샘플이 여기서 실패함",
   "meta.adapters": "CodeSampleX가 지원하는 생태계와 지원 범위: 어댑터별 패키지 탐지, 빌드 관측, 심볼 해석, contract 검증.",
   "meta.explore": "공개 패키지를 검색하고 실제 환경의 호환성 증거를 봅니다: 실행 컨텍스트, 신뢰도, 실패 클러스터, 빌드된 샘플.",

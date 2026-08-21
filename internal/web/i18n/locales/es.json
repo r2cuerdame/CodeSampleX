@@ -229,7 +229,7 @@
   "lang.label": "Idioma",
   "legend.how_heading": "Cómo leer una celda:",
   "legend.how_rate": "El número son las ejecuciones registradas que la tasa divide, y la marca significa que nuestra muestra corrió aquí. Una vez o cien, dice lo mismo: hay código que funciona para esta celda.",
-  "legend.mark_check": "nuestra muestra funciona aquí",
+  "legend.mark_check": "nuestra propia muestra se ejecutó aquí y terminó limpia",
   "legend.mark_cross": "nuestra muestra falló aquí",
   "meta.adapters": "Qué ecosistemas admite CodeSampleX y hasta dónde: detección de paquetes, observación de builds, resolución de símbolos y verificación por contrato.",
   "meta.explore": "Busca paquetes públicos y consulta evidencia de compatibilidad en entornos reales: contextos de ejecución, confianza, grupos de fallos y muestras que compilaron.",

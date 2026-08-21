@@ -229,7 +229,7 @@
   "lang.label": "Langue",
   "legend.how_heading": "Lire une cellule :",
   "legend.how_rate": "Le nombre, ce sont les exécutions enregistrées que le taux divise, et la coche signifie que notre échantillon a tourné ici. Une fois ou cent, la marque dit la même chose : il existe du code qui marche pour cette case.",
-  "legend.mark_check": "notre exemple fonctionne ici",
+  "legend.mark_check": "notre propre échantillon s'est exécuté ici et s'est terminé proprement",
   "legend.mark_cross": "notre exemple a échoué ici",
   "meta.adapters": "Quels écosystèmes CodeSampleX prend en charge et jusqu'où : détection de paquets, observation des builds, résolution de symboles et vérification par contrat.",
   "meta.explore": "Cherchez des paquets publics et consultez des preuves de compatibilité en environnement réel : contextes d'exécution, confiance, clusters d'échecs et échantillons qui ont compilé.",
