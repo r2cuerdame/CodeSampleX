@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "csx": {
-      "command": "C:/Users/recue/AppData/Local/csx/csx.exe",
-      "args": ["mcp"]
+      "args": [
+        "mcp"
+      ],
+      "command": "C:\\Users\\recuerdame\\AppData\\Local\\csx\\csx.exe"
     }
   }
 }
