@@ -31,11 +31,16 @@ func TestPublishRequiresASeeder(t *testing.T) {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	// A refusal that only says "forbidden" teaches nothing. Every channel
-	// that IS open has to be named where the caller meets the wall.
-	for _, want := range []string{"evidence", "bug", "sample", "/contribute"} {
+	// that IS open has to be named where the caller meets the wall — and the
+	// page it points at has to exist: /contribute is retired and 404s, and
+	// this refusal is one of its highest-traffic former callers.
+	for _, want := range []string{"evidence", "bug", "sample", "/wanted"} {
 		if !strings.Contains(strings.ToLower(string(body)), want) {
 			t.Errorf("the refusal does not mention %q: %s", want, body)
 		}
+	}
+	if strings.Contains(strings.ToLower(string(body)), "/contribute") {
+		t.Errorf("the refusal still points at the retired /contribute page: %s", body)
 	}
 }
 

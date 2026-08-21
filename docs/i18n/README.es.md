@@ -153,7 +153,7 @@ csx worker start                         # idle-aware, 2 Docker lanes
 csx worker start --parallel 4 --budget 15m
 ```
 
-El worker acepta únicamente trabajos VERIFY asignados por el servidor (`cross` / `matrix`) — la cola nunca envía un comando de shell arbitrario. Los artefactos están direccionados por contenido y se comprueban por hash; resolve se ejecuta en contenedor; las etapas de compilación y contrato corren sin red en espacios de trabajo Docker desechables con límites fijos de `512m` de memoria / `256` PIDs; que falte el daemon de Docker es un rechazo rotundo, nunca un plan B en el host. Los resultados son recibos v2 firmados con ed25519; los logs crudos de cada etapa se quedan en local. Consulta [Contribuir](https://codesamplex.dev/contribute).
+El worker acepta únicamente trabajos VERIFY asignados por el servidor (`cross` / `matrix`) — la cola nunca envía un comando de shell arbitrario. Los artefactos están direccionados por contenido y se comprueban por hash; resolve se ejecuta en contenedor; las etapas de compilación y contrato corren sin red en espacios de trabajo Docker desechables con límites fijos de `512m` de memoria / `256` PIDs; que falte el daemon de Docker es un rechazo rotundo, nunca un plan B en el host. Los resultados son recibos v2 firmados con ed25519; los logs crudos de cada etapa se quedan en local.
 
 ## API
 

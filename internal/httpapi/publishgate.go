@@ -92,4 +92,4 @@ const publishClosedMessage = "sample upload is not open. " +
 	"contributing usage evidence and verification receipts (anonymous), " +
 	"reporting a bug or a patch worth a regression case, and asking for a " +
 	"sample — every search that ends in NO_SAFE_MATCH is already recorded as " +
-	"a request. See https://codesamplex.dev/contribute"
+	"a request, visible at https://codesamplex.dev/wanted"

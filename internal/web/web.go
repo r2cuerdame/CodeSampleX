@@ -338,6 +338,16 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /features/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
 	handle("GET /explore", s.explorePage)
+	// /contribute is retired, and its address survives in old READMEs, old
+	// MCP replies and external links. A URL people were sent to gets a
+	// redirect, not a 404; the nearest living answer to "how do I
+	// contribute" is the request board — installing csx already contributes
+	// evidence, and /wanted is where the asks land.
+	contributeGone := func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/wanted", http.StatusMovedPermanently)
+	}
+	handle("GET /contribute", contributeGone)
+	handle("GET /contribute/{$}", contributeGone)
 	handle("GET /stats", s.statsPage)
 	handle("GET /adapters", s.adaptersPage)
 	handle("GET /samples/{id}", s.samplePage)

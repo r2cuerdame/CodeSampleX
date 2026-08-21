@@ -1038,8 +1038,8 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 		"seeded-only — samples there are generated and verified by the project so their origin " +
 		"is established, and an unseeded `csx sample publish` is refused with a 403 that explains " +
 		"itself. To get this into the network, contribute the IDEA rather than the code: the " +
-		"package, the API, what you expected and what actually happened. " +
-		"See https://codesamplex.dev/contribute.")
+		"package, the API, what you expected and what actually happened — every NO_SAFE_MATCH " +
+		"search already files that ask, and the board is https://codesamplex.dev/wanted.")
 
 	structured := map[string]any{
 		"spec":                        spec,

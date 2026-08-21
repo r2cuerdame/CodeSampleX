@@ -153,7 +153,7 @@ csx worker start                         # idle-aware, 2 Docker lanes
 csx worker start --parallel 4 --budget 15m
 ```
 
-Le worker n'accepte que des jobs VERIFY assignés par le serveur (`cross` / `matrix`) — la file n'envoie jamais de commande shell arbitraire. Les artefacts sont adressés par contenu et contrôlés par hachage ; la résolution est conteneurisée ; les étapes de compilation et de contrat tournent réseau coupé dans des espaces de travail Docker jetables avec des limites fixes de `512m` de mémoire / `256` PID ; un daemon Docker absent est un refus net, jamais un repli sur l'hôte. Les résultats sont des reçus v2 signés en ed25519 ; les journaux bruts des étapes restent locaux. Voir [Contribute](https://codesamplex.dev/contribute).
+Le worker n'accepte que des jobs VERIFY assignés par le serveur (`cross` / `matrix`) — la file n'envoie jamais de commande shell arbitraire. Les artefacts sont adressés par contenu et contrôlés par hachage ; la résolution est conteneurisée ; les étapes de compilation et de contrat tournent réseau coupé dans des espaces de travail Docker jetables avec des limites fixes de `512m` de mémoire / `256` PID ; un daemon Docker absent est un refus net, jamais un repli sur l'hôte. Les résultats sont des reçus v2 signés en ed25519 ; les journaux bruts des étapes restent locaux.
 
 ## API
 

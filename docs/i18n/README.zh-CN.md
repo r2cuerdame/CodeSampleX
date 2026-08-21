@@ -153,7 +153,7 @@ csx worker start                         # idle-aware, 2 Docker lanes
 csx worker start --parallel 4 --budget 15m
 ```
 
-工作节点只接受由服务器指派的 VERIFY 任务（`cross` / `matrix`）——队列绝不会下发任意 shell 命令。构件经过内容寻址并做哈希校验；依赖解析（resolve）在容器中进行；编译与契约阶段在一次性 Docker 工作区中断网运行，并施加固定的 `512m` 内存 / `256` PID 上限；Docker 守护进程缺失时会被硬性拒绝，绝不回退到宿主机执行。结果是 ed25519 签名的 v2 回执；各阶段的原始日志留在本地。参见 [Contribute](https://codesamplex.dev/contribute)。
+工作节点只接受由服务器指派的 VERIFY 任务（`cross` / `matrix`）——队列绝不会下发任意 shell 命令。构件经过内容寻址并做哈希校验；依赖解析（resolve）在容器中进行；编译与契约阶段在一次性 Docker 工作区中断网运行，并施加固定的 `512m` 内存 / `256` PID 上限；Docker 守护进程缺失时会被硬性拒绝，绝不回退到宿主机执行。结果是 ed25519 签名的 v2 回执；各阶段的原始日志留在本地。
 
 ## API
 

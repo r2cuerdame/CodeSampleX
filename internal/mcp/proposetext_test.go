@@ -58,11 +58,15 @@ func TestProposeDoesNotPromiseAPublishItCannotDeliver(t *testing.T) {
 		"stays on this machine",
 		"seeded-only",
 		"contribute the IDEA",
-		"https://codesamplex.dev/contribute",
+		"https://codesamplex.dev/wanted",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the reply no longer says %q:\n%s", want, out)
 		}
+	}
+	// /contribute is retired and 404s; the reply must not send anyone there.
+	if strings.Contains(out, "codesamplex.dev/contribute") {
+		t.Error("the reply still points at the retired /contribute page")
 	}
 	// Reviewing every file before anything leaves is the step the whole
 	// design rests on, and it must survive this change.

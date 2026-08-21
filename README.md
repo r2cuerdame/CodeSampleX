@@ -165,7 +165,7 @@ csx worker start                         # idle-aware, 2 Docker lanes
 csx worker start --parallel 4 --budget 15m
 ```
 
-The worker accepts only server-assigned VERIFY jobs (`cross` / `matrix`) — the queue never sends an arbitrary shell command. Artifacts are content-addressed and hash-checked; resolve is containerized; compile and contract stages run network-off in disposable Docker workspaces with fixed `512m` memory / `256` PID limits; a missing Docker daemon is a hard refusal, never a host fallback. Results are ed25519-signed v2 receipts; raw stage logs stay local. See [Contribute](https://codesamplex.dev/contribute).
+The worker accepts only server-assigned VERIFY jobs (`cross` / `matrix`) — the queue never sends an arbitrary shell command. Artifacts are content-addressed and hash-checked; resolve is containerized; compile and contract stages run network-off in disposable Docker workspaces with fixed `512m` memory / `256` PID limits; a missing Docker daemon is a hard refusal, never a host fallback. Results are ed25519-signed v2 receipts; raw stage logs stay local.
 
 ## API
 
