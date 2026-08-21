@@ -44,6 +44,7 @@ var queueEndpoints = map[string]string{
 	"adoption":                        "/v1/adoptions",
 	"wanted":                          "/v1/wanted",
 	evidence.WantedCandidateQueueKind: "/v1/wanted",
+	evidence.SearchHitQueueKind:       "/v1/search-hits",
 }
 
 // drainQueue uploads whatever is sitting in the local upload queue.

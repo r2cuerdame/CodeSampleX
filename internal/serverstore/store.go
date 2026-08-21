@@ -348,6 +348,11 @@ type Store interface {
 	// what happened to the build afterwards. This is the far end of the
 	// loop the product describes, and it had no route to the server at all.
 	RecordAdoption(ctx context.Context, r AdoptionRow) error
+	// RecordSearchHit counts one search that found something. It is the
+	// denominator adoptions never had: the network could see the demand
+	// it could not satisfy — a miss uploads a Wanted ask — and nothing
+	// of the demand it could.
+	RecordSearchHit(ctx context.Context, r SearchHitRow) error
 	// AdoptionSummary counts adoption reports for the stats rollup.
 	AdoptionSummary(ctx context.Context) (AdoptionCounts, error)
 

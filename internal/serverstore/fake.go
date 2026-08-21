@@ -17,7 +17,8 @@ import (
 // its ingest semantics are the mergeState reference implementation that
 // pg.go is held to, so both stores behave identically.
 type Fake struct {
-	mu sync.Mutex
+	searchHits map[string]SearchHitRow
+	mu         sync.Mutex
 
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta
@@ -1608,6 +1609,22 @@ func (f *Fake) listWanted(query string, offset, limit int, ecosystem, name strin
 }
 
 // -------------------------------------------------------------- adoptions --
+
+// RecordSearchHit counts one search that found something, deduplicated the
+// way postgres does: once per reporter per offer per day.
+func (f *Fake) RecordSearchHit(_ context.Context, r SearchHitRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dedup := r.OfferID
+	if dedup == "" {
+		dedup = r.SampleID
+	}
+	if f.searchHits == nil {
+		f.searchHits = map[string]SearchHitRow{}
+	}
+	f.searchHits[r.Epoch+"|"+r.AnonID+"|"+dedup] = r
+	return nil
+}
 
 func (f *Fake) RecordAdoption(_ context.Context, r AdoptionRow) error {
 	f.mu.Lock()

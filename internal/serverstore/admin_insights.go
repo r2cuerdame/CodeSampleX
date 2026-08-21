@@ -75,10 +75,25 @@ type AdminPackageDepth struct {
 	VerifiedSamples int64
 }
 
-// AdminSearchOutcomeCounts is the bounded aggregate of successful public
-// search responses recorded in the dashboard window. Available distinguishes
-// no collected rows from a measured zero; in normal operation every row has
-// at least one outcome. Dates are UTC calendar dates.
+// AdminSearchOutcomeCounts counts calls to the HTTP search endpoint. It is
+// NOT a measure of how often the network is searched, and reading it as one
+// inverts the truth.
+//
+// Every shipped client answers search from its own synced shard cache and
+// never posts to /v1/search: the MCP tool, the daemon and the CLI all call
+// the local engine. The only HTTP search client in the repo had no callers
+// at all and has been deleted. So this counter can only move when something
+// outside the product calls the wire API directly, and it has recorded six
+// events in its lifetime.
+//
+// Real search volume is visible in the asymmetry instead. A MISS uploads a
+// Wanted ask, so misses reach the server — 648 asks in the first week. A HIT
+// writes a local hits row that is never uploaded, so hits reach nothing;
+// what proves they happened is that 130 distinct samples were adopted, and
+// a sample can only be adopted after a hit surfaced it.
+//
+// Available distinguishes no collected rows from a measured zero. Dates are
+// UTC calendar dates.
 type AdminSearchOutcomeCounts struct {
 	Available  bool
 	SampleHits int64

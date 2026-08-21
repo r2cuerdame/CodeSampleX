@@ -233,18 +233,28 @@ func TestNewDepsRealWiring(t *testing.T) {
 		if err != nil || len(items) == 0 {
 			t.Fatalf("QueuePending: %v, %v", items, err)
 		}
-		var payload adoptionPayload
-		if err := json.Unmarshal([]byte(items[0].Payload), &payload); err != nil {
-			t.Fatalf("payload not JSON: %v", err)
+		// By kind, not by position. The search that surfaced this sample now
+		// queues its own counts-only record, and it happens first — the hit
+		// is what the adoption is an outcome OF.
+		var adoption *localdb.QueueItem
+		for i := range items {
+			if items[i].Kind == "adoption" {
+				adoption = &items[i]
+				break
+			}
 		}
-		if items[0].Kind != "adoption" {
-			t.Errorf("queue kind = %q, want adoption", items[0].Kind)
+		if adoption == nil {
+			t.Fatalf("no adoption queued; got %d items", len(items))
+		}
+		var payload adoptionPayload
+		if err := json.Unmarshal([]byte(adoption.Payload), &payload); err != nil {
+			t.Fatalf("payload not JSON: %v", err)
 		}
 		if payload.EvidenceClass != "ADOPTION_EVIDENCE" || payload.SampleID != sampleID || payload.AnonID == "" {
 			t.Errorf("payload = %+v", payload)
 		}
 		var wire map[string]any
-		if err := json.Unmarshal([]byte(items[0].Payload), &wire); err != nil {
+		if err := json.Unmarshal([]byte(adoption.Payload), &wire); err != nil {
 			t.Fatal(err)
 		}
 		allowed := map[string]bool{
@@ -253,16 +263,16 @@ func TestNewDepsRealWiring(t *testing.T) {
 		}
 		for key := range wire {
 			if !allowed[key] {
-				t.Errorf("adoption upload payload changed with local journey field %q: %s", key, items[0].Payload)
+				t.Errorf("adoption upload payload changed with local journey field %q: %s", key, adoption.Payload)
 			}
 		}
 		for key := range allowed {
 			if _, ok := wire[key]; !ok {
-				t.Errorf("adoption upload payload lost existing field %q: %s", key, items[0].Payload)
+				t.Errorf("adoption upload payload lost existing field %q: %s", key, adoption.Payload)
 			}
 		}
-		if strings.Contains(items[0].Payload, home) {
-			t.Errorf("adoption payload leaks home path: %s", items[0].Payload)
+		if strings.Contains(adoption.Payload, home) {
+			t.Errorf("adoption payload leaks home path: %s", adoption.Payload)
 		}
 	})
 

@@ -2609,6 +2609,21 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 // ---------------------------------------------------------- adoptions --
 
 // AdoptionRow is one report that an agent applied a sample.
+// SearchHitRow is one recorded search that found something.
+//
+// Counts only, by construction: the query, the packages, the symbols and the
+// environment stay on the caller's machine. What crosses is that a search
+// happened, how many results it was handed, and an opaque id that lets the
+// adoption which may follow find the search it came from.
+type SearchHitRow struct {
+	Grade        string
+	ResultsShown int
+	SampleID     string
+	OfferID      string
+	Epoch        string
+	AnonID       string
+}
+
 type AdoptionRow struct {
 	SampleID  string
 	Applied   bool
@@ -2634,6 +2649,30 @@ type AdoptionCounts struct {
 // sample per epoch. A repeat within the same epoch updates the outcome —
 // an agent that reports "applied" and later reports the build result is
 // telling us more about the same event, not a second event.
+// RecordSearchHit counts one search that found something.
+//
+// One reporter counts once per offer per day, mirroring adoptions: an agent
+// that retries a search all afternoon is one hit, not an afternoon of demand.
+// A later report for the same key updates the counts rather than adding a row.
+func (p *PG) RecordSearchHit(ctx context.Context, r SearchHitRow) error {
+	dedup := r.OfferID
+	if dedup == "" {
+		dedup = r.SampleID
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO search_hits(grade, results_shown, sample_id, offer_id,
+				epoch, anon_id, dedup_key)
+			VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),$5,$6,$7)
+			ON CONFLICT (epoch, anon_id, dedup_key) DO UPDATE SET
+				grade = EXCLUDED.grade,
+				results_shown = EXCLUDED.results_shown,
+				sample_id = EXCLUDED.sample_id`,
+			r.Grade, r.ResultsShown, r.SampleID, r.OfferID, r.Epoch, r.AnonID, dedup)
+		return err
+	})
+}
+
 func (p *PG) RecordAdoption(ctx context.Context, r AdoptionRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `

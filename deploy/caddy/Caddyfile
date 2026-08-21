@@ -38,14 +38,17 @@
 	# the bounded retention window without improving this metric.
 	# Allowlist only route families owned by this server. If an unknown 404
 	# contains a user-controlled segment, it must never reach the safe log.
-	@skipAPIMetrics not path /v1/search /v1/evidence /v1/evidence/* /v1/registry /v1/registry/* /v1/shards /v1/shards/* /v1/samples /v1/samples/* /v1/wanted /v1/wanted/* /v1/adoptions /v1/adoptions/* /v1/verifications /v1/verifications/* /v1/verification /v1/verification/* /v1/peers /v1/peers/* /v1/stats /v1/adapters /v1/auth /v1/auth/* /v1/authoring/session/refresh /v1/authoring/drafts /v1/authoring/work/next
+	@skipAPIMetrics not path /v1/search /v2/search /v1/evidence /v1/evidence/* /v1/registry /v1/registry/* /v1/shards /v1/shards/* /v1/samples /v1/samples/* /v1/wanted /v1/wanted/* /v1/adoptions /v1/adoptions/* /v1/search-hits /v1/verifications /v1/verifications/* /v1/verification /v1/verification/* /v1/peers /v1/peers/* /v1/stats /v1/adapters /v1/auth /v1/auth/* /v1/authoring/session/refresh /v1/authoring/drafts /v1/authoring/work/next
 	log_skip @skipAPIMetrics
 	# Append the fixed label selected by Caddy's decoded path matcher, then
 	# delete the URI wholesale in the encoder below. Merely truncating the raw
 	# URI is insufficient: an encoded slash such as %2F can match a known route
 	# after decoding while still carrying user-controlled bytes in one raw
 	# segment.
-	@apiSearch path /v1/search
+	# /v2/search shipped without being added here, so every v2 post was
+	# log_skip'd: the database recorded six searches and the edge log held
+	# one line, and any attempt to reconcile the two silently mismatched.
+	@apiSearch path /v1/search /v2/search
 	log_append @apiSearch csx_route search
 	@apiEvidence path /v1/evidence /v1/evidence/*
 	log_append @apiEvidence csx_route evidence
@@ -59,6 +62,8 @@
 	log_append @apiWanted csx_route wanted
 	@apiAdoptions path /v1/adoptions /v1/adoptions/*
 	log_append @apiAdoptions csx_route adoption
+	@apiSearchHits path /v1/search-hits
+	log_append @apiSearchHits csx_route search_hit
 	@apiVerifications path /v1/verifications /v1/verifications/*
 	log_append @apiVerifications csx_route verifications
 	@apiVerificationJobs path /v1/verification /v1/verification/*

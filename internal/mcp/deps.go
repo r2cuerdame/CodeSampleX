@@ -878,6 +878,16 @@ func recordSearchOutcome(ctx context.Context, db *localdb.DB, ident *identity.Id
 	return recordSearchOutcomeReloaded(ctx, db, ident, func() *config.Config { return cfg }, req, resp)
 }
 
+// reloadedConfig re-reads the live config, because the mode can change
+// while a shard fetch is in flight and anything observed after a
+// revocation must not be uploaded.
+func reloadedConfig(reload func() *config.Config) *config.Config {
+	if reload == nil {
+		return nil
+	}
+	return reload()
+}
+
 func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	reloadConfig func() *config.Config, req domain.SearchRequest, resp domain.SearchResponse) string {
 	if db == nil {
@@ -887,15 +897,15 @@ func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *ide
 		// A miss is a demand signal. Agents arrive over MCP, so this is the
 		// path where questions actually get asked — and it was the one path
 		// that threw them away.
-		var cfg *config.Config
-		if reloadConfig != nil {
-			cfg = reloadConfig()
-		}
-		evidence.QueueWanted(ctx, db, ident, cfg, req)
+		evidence.QueueWanted(ctx, db, ident, reloadedConfig(reloadConfig), req)
 		return ""
 	}
 	top := resp.Results[0]
 	now := time.Now().UTC()
+	// Reloaded here as well as on the miss branch: the mode can change
+	// while a shard fetch is in flight, and a hit observed after
+	// revocation must not upload either.
+	cfg := reloadedConfig(reloadConfig)
 	offerID, _ := db.RecordSearchOffer(ctx, localdb.HitRow{
 		TS:       now,
 		Query:    req.Query,
@@ -906,6 +916,16 @@ func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *ide
 		SampleID:            top.SampleID,
 		ExactFailureMatched: top.ExactFailureMatched,
 		VerifiedOffer:       top.VerifiedOffer(),
+	})
+	// The other half of the signal. A miss has always left the machine as a
+	// Wanted ask; a hit stopped at the local hits table, so the network could
+	// see the demand it could not satisfy and nothing of the demand it could.
+	// Counts only, community mode only — QueueSearchHit enforces both.
+	evidence.QueueSearchHit(ctx, db, ident, cfg, evidence.SearchHit{
+		Grade:        top.Grade,
+		ResultsShown: len(resp.Results),
+		OfferID:      offerID,
+		SampleID:     top.SampleID,
 	})
 	return offerID
 }
