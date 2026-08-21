@@ -1150,6 +1150,13 @@ func (f *Fake) GetShard(_ context.Context, key string) (string, string, bool, er
 	return v[0], v[1], ok, nil
 }
 
+func (f *Fake) GetShardEtag(_ context.Context, key string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.shards[key]
+	return v[0], ok, nil
+}
+
 // ------------------------------------------------------------- identities --
 
 func (f *Fake) SaveIdentity(_ context.Context, login string, githubID int64, tokenHash, apiTokenHash string) error {

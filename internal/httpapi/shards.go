@@ -25,6 +25,28 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	}
 	key := ecosystem + "/" + pkgName + "/" + major
 
+	// A revalidation is answered from the ETag alone. The 304 refund in the
+	// rate limiter exists because a revalidation "did almost no work" — which
+	// is only true if the shard document is never loaded on that path. In
+	// production 2,606 of 4,074 shard requests were revalidations, so this is
+	// the common case, not an optimization of a rare one.
+	if inm := r.Header.Get("If-None-Match"); inm != "" {
+		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "shard lookup failed")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "no shard for "+key)
+			return
+		}
+		if etagMatches(inm, etag) {
+			w.Header().Set("ETag", `"`+etag+`"`)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
 	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "shard lookup failed")
@@ -47,12 +69,15 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 
 // etagMatches implements If-None-Match comparison, tolerating quoted,
 // unquoted, weak (W/) and multi-valued forms.
+//
+// "*" is deliberately NOT a match. RFC 7232 lets it match any current
+// representation, but a real cache revalidates with the ETag it holds; *
+// asserts nothing about held state, and honouring it paired with the
+// limiter's 304 refund handed out unlimited full-cost reads that never
+// depleted the budget. A client sending * gets the shard and is charged.
 func etagMatches(header, etag string) bool {
 	if header == "" {
 		return false
-	}
-	if header == "*" {
-		return true
 	}
 	for _, part := range strings.Split(header, ",") {
 		v := strings.TrimSpace(part)

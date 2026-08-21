@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -283,6 +284,72 @@ func TestShardETagAnd304(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// If-None-Match: * is not a revalidation. A real cache revalidates with the
+// ETag it holds; * asserts nothing about held state, and answering it 304
+// paired with the limiter's 304 refund handed out unlimited full-cost reads
+// that never depleted the budget.
+func TestWildcardIfNoneMatchIsNotARevalidation(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	if err := store.PutShard(context.Background(), "npm/axios/1",
+		"deadbeef", `{"schemaVersion":1,"key":"npm/axios/1","packages":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/shards/npm/axios/1", nil)
+	req.Header.Set("If-None-Match", "*")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: * holds no ETag to revalidate", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) == 0 {
+		t.Fatal("body is empty, want the shard")
+	}
+}
+
+// shardReadSpy counts full shard reads so a test can pin what a revalidation
+// costs.
+type shardReadSpy struct {
+	serverstore.Store
+	fullReads int
+}
+
+func (s *shardReadSpy) GetShard(ctx context.Context, key string) (string, string, bool, error) {
+	s.fullReads++
+	return s.Store.GetShard(ctx, key)
+}
+
+// The refund exists because a 304 "did almost no work" — so the 304 path must
+// actually not do the work. Comparing the ETag after loading the whole shard
+// document refunded the charge while the server still paid the full read.
+func TestRevalidationDoesNotLoadTheShardDocument(t *testing.T) {
+	spy := &shardReadSpy{}
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		spy.Store = d.Store
+		d.Store = spy
+	})
+	if err := store.PutShard(context.Background(), "npm/axios/1",
+		"deadbeef", `{"schemaVersion":1,"key":"npm/axios/1","packages":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/shards/npm/axios/1", nil)
+	req.Header.Set("If-None-Match", `"deadbeef"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+	if spy.fullReads != 0 {
+		t.Fatalf("revalidation loaded the shard document %d times, want 0", spy.fullReads)
 	}
 }
 

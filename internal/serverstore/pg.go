@@ -1808,6 +1808,26 @@ func (p *PG) GetShard(ctx context.Context, key string) (string, string, bool, er
 	return etag, js, found, err
 }
 
+// GetShardEtag reads the ETag alone: no json::text detoast, so the
+// revalidation path costs a primary-key row read rather than the document.
+func (p *PG) GetShardEtag(ctx context.Context, key string) (string, bool, error) {
+	var etag string
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		err := c.QueryRow(ctx,
+			`SELECT etag FROM shards WHERE key=$1`, key).Scan(&etag)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	return etag, found, err
+}
+
 // ------------------------------------------------------------- identities --
 
 func (p *PG) SaveIdentity(ctx context.Context, login string, githubID int64, tokenHash, apiTokenHash string) error {

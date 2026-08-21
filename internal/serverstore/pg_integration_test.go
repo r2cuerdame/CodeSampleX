@@ -825,6 +825,13 @@ func TestIntegrationCRUD(t *testing.T) {
 		if _, _, ok, _ := pg.GetShard(ctx, "npm/axios/2"); ok {
 			t.Fatal("GetShard found absent key")
 		}
+		etag, ok, err = pg.GetShardEtag(ctx, "npm/axios/1")
+		if err != nil || !ok || etag != "etag2" {
+			t.Fatalf("GetShardEtag: etag=%q ok=%v err=%v", etag, ok, err)
+		}
+		if _, ok, _ := pg.GetShardEtag(ctx, "npm/axios/2"); ok {
+			t.Fatal("GetShardEtag found absent key")
+		}
 	})
 
 	t.Run("identities", func(t *testing.T) {

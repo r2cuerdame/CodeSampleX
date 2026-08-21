@@ -348,6 +348,9 @@ type Store interface {
 	// simply stopped being rebuilt, and kept serving the withdrawn sample.
 	ShardKeys(ctx context.Context) ([]string, error)
 	GetShard(ctx context.Context, key string) (etag, shardJSON string, ok bool, err error)
+	// GetShardEtag reads the ETag without loading the document, so a
+	// revalidation costs what the limiter's 304 refund assumes it costs.
+	GetShardEtag(ctx context.Context, key string) (etag string, ok bool, err error)
 	// HotShardKeys lists the shard keys worth warming first, most active
 	// first. A fresh install has no local package history, so this is the
 	// only thing that fills its cache before the first search.
