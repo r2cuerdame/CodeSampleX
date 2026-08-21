@@ -108,6 +108,8 @@ type pivotAxis struct {
 	Href string
 	// Aggregate marks the total over the other columns, not one of them.
 	Aggregate bool
+	// Note qualifies the label; see pivotGridRow.Note.
+	Note string
 }
 
 type pivotGridRow struct {
@@ -118,6 +120,10 @@ type pivotGridRow struct {
 	// Aggregate marks a row that is the TOTAL over the others rather than one
 	// of them. It is drawn apart from them so it cannot be read as a peer.
 	Aggregate bool
+	// Note qualifies the label where the label alone would overstate. A
+	// symbol several packages carry evidence for is not established as this
+	// package's, and the axis said it flatly.
+	Note string
 }
 
 // pivotLinks are the three ways into a grid: one cell, one whole row, one

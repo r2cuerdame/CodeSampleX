@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -413,7 +414,52 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 		Row:  func(row string) string { return pin(map[string]string{y: row}) },
 		Col:  func(col string) string { return pin(map[string]string{x: col}) },
 	}, time.Now(), true)
+	// A symbol axis names APIs, and one build's detected symbols are
+	// attributed to every package in its closure — which is how a logging
+	// facade came to have MockHttpServletRequest on its axis. Where several
+	// packages carry the same symbol the axis says so rather than naming it
+	// flatly as this package's.
+	if x == "symbol" || y == "symbol" {
+		markSharedSymbolAxis(s, r, eco, &view.Grid, x, y, lang)
+	}
 	return view
+}
+
+// markSharedSymbolAxis qualifies the symbol labels of a grid with how many
+// packages carry evidence for each. It costs no query: the spread is read
+// from the same cached target list the symbol lists are built from.
+func markSharedSymbolAxis(s *site, r *http.Request, eco string, g *pivotGrid, x, y, lang string) {
+	var names []string
+	if y == "symbol" {
+		for _, row := range g.Rows {
+			names = append(names, row.Label)
+		}
+	}
+	if x == "symbol" {
+		for _, col := range g.Cols {
+			names = append(names, col.Label)
+		}
+	}
+	spread, err := s.d.Store.SymbolPackageSpread(r.Context(), eco, names)
+	if err != nil || len(spread) == 0 {
+		return
+	}
+	note := func(label string) string {
+		if n := spread[label]; n > 1 && label != cubePackageLevel {
+			return i18n.T(lang, "symbol.shared") + " ×" + strconv.Itoa(n)
+		}
+		return ""
+	}
+	if y == "symbol" {
+		for i := range g.Rows {
+			g.Rows[i].Note = note(g.Rows[i].Label)
+		}
+	}
+	if x == "symbol" {
+		for i := range g.Cols {
+			g.Cols[i].Note = note(g.Cols[i].Label)
+		}
+	}
 }
 
 // cubeLeafRows renders the exact measured combinations of a bottomed-out

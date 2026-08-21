@@ -369,13 +369,13 @@ document.addEventListener('keydown',event=>{
 {{- end}}
 <div class="tablewrap">
 <table class="pivot">
-<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono{{if .Aggregate}} aggregate{{end}}">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}</th>{{end}}</tr></thead>
+<thead><tr><th class="corner"></th>{{range .Cols}}<th class="mono{{if .Aggregate}} aggregate{{end}}">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}{{if .Note}} <span class="symshared small">{{.Note}}</span>{{end}}</th>{{end}}</tr></thead>
 <tbody>
 {{- range .Rows}}
 {{/* A total over the rows beside it, not one of them: drawn apart so it
      cannot be read as a peer, and already left out of the tallies. */}}
 <tr{{if .Aggregate}} class="aggregate"{{end}}>
-  <th class="rowlabel mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}</th>
+  <th class="rowlabel mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}{{if .Note}} <span class="symshared small">{{.Note}}</span>{{end}}</th>
   {{- range .Cells}}
   <td class="pv {{.Class}}{{if .Tone}} t-{{.Tone}}{{end}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
     {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}

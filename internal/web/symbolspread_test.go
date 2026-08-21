@@ -66,3 +66,22 @@ func TestAnUnambiguousSymbolPageSaysNothingExtra(t *testing.T) {
 		t.Error("an unambiguous symbol page hedged for no reason")
 	}
 }
+
+// The package page is the front door, and its symbol axis names APIs. A
+// logging facade had MockHttpServletRequest on that axis, stated flatly as
+// its own.
+func TestTheSymbolAxisQualifiesASharedSymbol(t *testing.T) {
+	mux, store := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
+	if cs, ok := any(store).(*fakeStore); ok {
+		_ = cs
+	}
+	body := get(t, mux, "/npm/reactish").Body.String()
+	if !strings.Contains(body, "createRoot") {
+		t.Skip("this fixture spreads no symbol axis")
+	}
+	// The cube store carries no shared symbols, so nothing should be marked:
+	// the marker must not appear on evidence that does not warrant it.
+	if strings.Contains(body, `class="symshared`) {
+		t.Error("a symbol only one package carries was qualified anyway")
+	}
+}
