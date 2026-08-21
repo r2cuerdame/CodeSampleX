@@ -209,7 +209,7 @@ func toolDefs() []toolDef {
 		},
 		{
 			Name:        "run_observed_command",
-			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. Returned errors are sanitized templates, never raw logs.",
+			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. Returned errors are sanitized templates, never raw logs. If the command FAILS, the network is asked about that failure automatically and any answer is appended — you do not need to call search_known_solution yourself afterwards.",
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
 				"cwd":     str("working directory (defaults to the current directory)"),
@@ -900,7 +900,83 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		"sanitizedErrors": sanitized,
 		"evidenceClass":   string(domain.ClassUsageObservation),
 	}
+	// The build just failed, which is the one moment this network exists for,
+	// and asking first was left to the agent's discretion.
+	//
+	// An agent that hits a compile error already has a fix it believes in.
+	// Telling it to stop, remember a tool exists and go look is asking it to
+	// doubt itself at the exact moment it does not, so it does not ask: six
+	// searches reached the server in a week while 648 misses and 143 adoptions
+	// did. The ones that happened were the ones somebody remembered to make.
+	//
+	// Everything the lookup needs is already here — the command was wrapped,
+	// the project was scanned, the error was sanitized. So it happens here,
+	// in the same turn, without anyone choosing to make it.
+	if exitCode != 0 {
+		if found := s.lookupAfterFailure(ctx, a.Cwd, sanitized); found != "" {
+			b.WriteString("\n")
+			b.WriteString(found)
+			structured["autoLookup"] = true
+		}
+	}
 	return textResult(b.String(), structured)
+}
+
+// lookupAfterFailure asks the network about the build that just broke.
+//
+// It is a passenger on the wrapped command and never its driver: the exit
+// code passes through untouched, a lookup that finds nothing writes nothing,
+// and a lookup that cannot run at all is silent. The network being down is
+// not the build's problem and must not read like one.
+func (s *Server) lookupAfterFailure(ctx context.Context, cwd string, sanitized []string) string {
+	if s.Deps == nil || s.Deps.Search == nil || len(sanitized) == 0 {
+		return ""
+	}
+	req := domain.SearchRequest{
+		SchemaVersion: 1,
+		// The sanitized error IS the question. It carries the error code and
+		// the public symbols the sanitizer kept, and nothing else — no raw
+		// log, no path, no source.
+		Query: strings.Join(sanitized, " "),
+		Limit: 1,
+	}
+	if s.Deps.MachineEnv != nil {
+		req.Environment = s.Deps.MachineEnv(ctx)
+	}
+	// No project packages: the scan that would name them belongs to the run
+	// that just happened, and reaching for it again here would make a failed
+	// build wait on a second scan. The error is the question.
+	_ = cwd
+	for _, line := range sanitized {
+		if code := leadingErrorCode(line); code != "" {
+			req.ErrorCode = code
+			break
+		}
+	}
+	resp, _ := s.Deps.Search(ctx, req)
+	if resp.Miss || len(resp.Results) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("The network was asked about this failure automatically:\n\n")
+	b.WriteString(renderSearchResponse(resp))
+	return b.String()
+}
+
+// leadingErrorCode picks the machine code out of a sanitized line, when the
+// line starts with one. Anything else is prose and is left to the query.
+func leadingErrorCode(line string) string {
+	head, _, _ := strings.Cut(line, ":")
+	head = strings.TrimSpace(head)
+	if head == "" || head != strings.ToUpper(head) {
+		return ""
+	}
+	for _, r := range head {
+		if !(r >= 'A' && r <= 'Z') && r != '_' && !(r >= '0' && r <= '9') {
+			return ""
+		}
+	}
+	return head
 }
 
 // --- report_sample_adoption ---
