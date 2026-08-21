@@ -31,7 +31,11 @@ func TestSearchHitLeadsWithTheFinding(t *testing.T) {
 	if iFinding < 0 {
 		t.Fatal("the finding is missing from the hit")
 	}
-	for _, later := range []string{"Evidence", "Different", "Goal:"} {
+	// Section HEADERS, not the bare words: the answer now opens by saying
+	// what this network verified, and that sentence points at the Different
+	// section by name. Matching the word found the pointer rather than the
+	// section and read the order backwards.
+	for _, later := range []string{"\nEvidence\n", "\nDifferent\n", "\nGoal: "} {
 		if i := strings.Index(text, later); i >= 0 && iFinding > i {
 			t.Errorf("the finding is below %q: finding=%d %s=%d", later, iFinding, later, i)
 		}

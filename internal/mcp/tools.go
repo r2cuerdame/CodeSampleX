@@ -544,6 +544,14 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 	var b strings.Builder
 	b.WriteString(renderDecision(resp.Results[0]))
 	b.WriteString("\n\n")
+	// What this network actually did, before any verdict about where the
+	// caller is standing. The answer opened with MATCH: REFERENCE_ONLY over
+	// a sample carrying two signed contract receipts, and put the fact that
+	// the network had verified it at all under "Evidence", below the deltas
+	// — which every windows caller reads, because every verifier is a linux
+	// container. The one thing the network owns outright was the one thing
+	// it buried.
+	b.WriteString(renderVerified(resp.Results[0]))
 	for i, r := range resp.Results {
 		if i > 0 {
 			b.WriteString("\n--- alternative " + strconv.Itoa(i+1) + " ---\n\n")
@@ -632,6 +640,35 @@ func writeFinding(b *strings.Builder, r domain.SearchResult) {
 	}
 	b.WriteString("FINDING — commonly assumed: " + believed + "\n")
 	b.WriteString("  The contract below measured otherwise.\n\n")
+}
+
+// renderVerified states what this network ran, and hands back the part it
+// did not.
+//
+// A sample it verified is a verified sample: it ran the contract in a sandbox
+// and holds the receipt. Whether the same code also runs on the caller's
+// platform is a different question and one the network never measured —
+// which is exactly why the delta is listed rather than folded into a score.
+func renderVerified(r domain.SearchResult) string {
+	if r.Evidence.ContractPasses <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "VERIFIED BY THIS NETWORK: contract passed %d time(s)",
+		r.Evidence.ContractPasses)
+	if r.Evidence.IndependentCrossPeers > 0 {
+		fmt.Fprintf(&b, " across %d verifying peer key(s)", r.Evidence.IndependentCrossPeers)
+	}
+	if r.SampleStatus != "" {
+		fmt.Fprintf(&b, " (status %s)", r.SampleStatus)
+	}
+	b.WriteString(".\n")
+	if len(r.Different) > 0 {
+		b.WriteString("It ran somewhere that differs from where you are — see Different below. " +
+			"Whether it holds there is not something this network measured.\n")
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // renderDecision is deliberately the first, compact line of an MCP search
