@@ -819,13 +819,13 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 		if reason != "" && j.Reason != reason {
 			continue
 		}
-		// A peer that already filed a receipt for this sample cannot
-		// cross-verify it; offering the job only takes it from someone who
-		// could.
+		// A peer that already JUDGED this sample cannot cross-verify it;
+		// offering the job only takes it from someone who could. A receipt
+		// whose contract never ran judged nothing — see ContractWasJudged.
 		if peerID != "" && j.Reason == "cross" {
 			var mine bool
 			for _, r := range f.receipts[j.SampleID] {
-				if r.PeerID == peerID {
+				if r.PeerID == peerID && ContractWasJudged(r.ContractResult) {
 					mine = true
 					break
 				}

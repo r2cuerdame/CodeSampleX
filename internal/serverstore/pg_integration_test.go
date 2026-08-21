@@ -1505,3 +1505,60 @@ func TestIntegrationFarmCoverageSurvivesAnEmptyManifest(t *testing.T) {
 		t.Fatalf("FarmHealthNow aborted on a scalar manifest: %v", err)
 	}
 }
+
+// The same rule the fake enforces, against real SQL. A divergence here is a
+// silent production bug: the queue that hid these jobs is PostgreSQL only,
+// and the fake is what every other test runs against.
+func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	caseID := "case:sha256:lockout"
+	if err := pg.SaveCase(ctx, domain.Case{SchemaVersion: 1, CaseID: caseID, Kind: "HOW",
+		Goal: "lockout", Packages: []string{"pkg:npm/example@1"}, Contract: []string{"passes"}}); err != nil {
+		t.Fatal(err)
+	}
+	sampleID := "sha256:" + fmt.Sprintf("%064d", 92)
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: sampleID, CaseID: caseID,
+		ManifestJSON: `{"schemaVersion":1}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateJob(ctx, JobRow{SampleID: sampleID, Reason: "cross"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const stalled = "ed25519:stalled-verifier"
+	const judged = "ed25519:judged-verifier"
+
+	// An empty workspace: nothing was ever judged.
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-skipped", SampleID: sampleID, PeerID: stalled,
+		ContractResult: "SKIPPED", CreatedAt: time.Now(),
+		ReceiptJSON: `{"stages":{"resolve":"FAIL","contract":"SKIPPED"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := pg.OpenJobsPage(ctx, "", stalled, "cross", "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("open cross jobs for the stalled peer = %d, want 1 — its receipt judged nothing", len(jobs))
+	}
+
+	// A verdict still locks its peer out; independence is the one thing a
+	// cross pass asserts that a publisher cannot manufacture alone.
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-pass", SampleID: sampleID, PeerID: judged,
+		ContractResult: "PASS", CreatedAt: time.Now(),
+		ReceiptJSON: `{"stages":{"contract":"PASS"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = pg.OpenJobsPage(ctx, "", judged, "cross", "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("the peer that judged this sample can still claim its cross job")
+	}
+}

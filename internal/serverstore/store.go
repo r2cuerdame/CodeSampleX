@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"strings"
 )
 
 // RejectedBatch reports one refused batch of an ingest call, mirroring the
@@ -110,6 +111,35 @@ type JobRow struct {
 	ClaimedBy   string
 	ClaimedAt   time.Time
 	CreatedAt   time.Time
+}
+
+// ContractWasJudged reports whether a receipt reached a verdict on the
+// sample, as opposed to never getting far enough to run the contract.
+//
+// A cross job is hidden from any peer that already filed a receipt for that
+// sample, and rightly so: a peer that judged a sample must not judge it
+// again and manufacture its own independence. But the queue treated every
+// receipt alike, and the two are not alike.
+//
+// One farm node mounted an empty workspace into its container — systemd
+// PrivateTmp — so every run died at the first stage with
+// {"resolve":"FAIL","contract":"SKIPPED"}. 167 receipts were written that
+// way. The samples were fine; pulled by hand into the same image under the
+// same constraints they exit 0. The infrastructure was fixed and that peer
+// still could not touch any of them: sixteen of seventeen open cross jobs
+// were invisible to it, the oldest unclaimed for over two hours. Deleting
+// the receipts by hand cleared it in minutes, which is first aid.
+//
+// A receipt that never ran the contract says nothing about the sample. It
+// says something about the verifier that night. It is kept — it is signed
+// evidence and the audit trail is the point — and it stops locking anyone
+// out.
+func ContractWasJudged(contractResult string) bool {
+	switch strings.ToUpper(strings.TrimSpace(contractResult)) {
+	case "PASS", "FAIL":
+		return true
+	}
+	return false
 }
 
 // PeerRow is one peers-table row (tracker state, TTL-expired).
