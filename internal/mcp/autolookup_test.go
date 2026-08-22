@@ -49,8 +49,8 @@ func resultText(out *toolResult) string {
 func TestAFailedBuildLooksItUpWithoutBeingAsked(t *testing.T) {
 	var asked *domain.SearchRequest
 	s := lookupServer(t, func(d *Deps) {
-		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, string, error) {
-			return 1, "PROJECT_COMPILE", "FAIL", []string{"ERR_MODULE_NOT_FOUND: cannot find <path>"}, "", nil
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 1, "PROJECT_COMPILE", "FAIL", []string{"ERR_MODULE_NOT_FOUND: cannot find <path>"}, commandOutput{}, nil
 		}
 		d.Search = func(_ context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
 			asked = &req
@@ -75,8 +75,8 @@ func TestAFailedBuildLooksItUpWithoutBeingAsked(t *testing.T) {
 func TestAPassingBuildLooksNothingUp(t *testing.T) {
 	looked := false
 	s := lookupServer(t, func(d *Deps) {
-		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, string, error) {
-			return 0, "PROJECT_COMPILE", "PASS", nil, "", nil
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 0, "PROJECT_COMPILE", "PASS", nil, commandOutput{}, nil
 		}
 		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
 			looked = true
@@ -94,19 +94,16 @@ func TestAPassingBuildLooksNothingUp(t *testing.T) {
 // passenger on it.
 func TestTheLookupNeverChangesTheBuildResult(t *testing.T) {
 	s := lookupServer(t, func(d *Deps) {
-		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, string, error) {
-			return 7, "PROJECT_TEST", "FAIL", []string{"ERR_ASSERTION"}, "", nil
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 7, "PROJECT_TEST", "FAIL", []string{"ERR_ASSERTION"}, commandOutput{}, nil
 		}
 		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
 			return domain.SearchResponse{Miss: true}, ""
 		}
 	})
 	out := s.toolRunObserved(context.Background(), runArgsJSON(t, "npm", "test"))
-	structured, ok := out.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("structured content = %T, want the build report", out.StructuredContent)
-	}
-	if structured["exitCode"] != 7 {
+	structured := structured(t, out)
+	if structured["exitCode"] != float64(7) {
 		t.Errorf("exit code = %v, want the build's own 7", structured["exitCode"])
 	}
 	if out.IsError {
@@ -118,8 +115,8 @@ func TestTheLookupNeverChangesTheBuildResult(t *testing.T) {
 // is not the build's problem and must not read like one.
 func TestALookupFailureIsSilent(t *testing.T) {
 	s := lookupServer(t, func(d *Deps) {
-		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, string, error) {
-			return 1, "PROJECT_COMPILE", "FAIL", []string{"ERR_X"}, "", nil
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 1, "PROJECT_COMPILE", "FAIL", []string{"ERR_X"}, commandOutput{}, nil
 		}
 		d.Search = nil
 	})

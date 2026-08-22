@@ -136,8 +136,8 @@ func emptyDeps() *Deps {
 		Explain: func(context.Context, string, string, domain.EnvironmentFingerprint) (string, json.RawMessage, error) {
 			return "", nil, fmt.Errorf("not wired")
 		},
-		RunObserved: func(context.Context, []string, string) (int, string, string, []string, string, error) {
-			return 0, "", "", nil, "", fmt.Errorf("not wired")
+		RunObserved: func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 0, "", "", nil, commandOutput{}, fmt.Errorf("not wired")
 		},
 		ReportAdoption: func(context.Context, string, string, bool, *bool) (localdb.InterventionOutcome, error) {
 			return localdb.InterventionOutcome{}, fmt.Errorf("not wired")

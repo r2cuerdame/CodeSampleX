@@ -1003,6 +1003,8 @@ Top 1만 강제하지 않고 필요 시 상위 2~3개의 다른 구현을 제공
 - 낮은 confidence 결과는 자동 적용하지 않는다.
 - Sample을 그대로 붙이지 않고 delta를 명시한다.
 - 잘못된 HIT는 MISS보다 나쁘다.
+- 실패 자동 조회에서 로컬 명령의 exit code와 stdout/stderr가 1차 증거다. 네트워크 답변은 별도 보조 섹션이며 원문을 가리거나 대체하지 않는다.
+- LOW confidence, `REFERENCE_ONLY`, 또는 현재 명령의 생태계와 무관한 결과는 `REFERENCE_CANDIDATE`로 표시하며 자동 수정 근거로 제시하지 않는다.
 
 ---
 

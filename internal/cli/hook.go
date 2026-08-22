@@ -188,8 +188,17 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	if len(resp.Results) > 1 {
 		resp.Results = resp.Results[:1]
 	}
+	classification, advisoryOnly, reason := resp.Results[0].RecommendationClassification()
 	var b strings.Builder
-	fmt.Fprintf(&b, "CodeSampleX looked this failure up automatically (%s).\n\n", proj.Stage)
+	b.WriteString("CODESAMPLEX SUPPORTING INFORMATION — SECONDARY\n")
+	fmt.Fprintf(&b, "CLASSIFICATION: %s\n", classification)
+	if advisoryOnly {
+		b.WriteString("ADVISORY ONLY: reference candidate; not an automatic fix basis.\n")
+	}
+	if reason != "" {
+		b.WriteString("Reason: " + reason + "\n")
+	}
+	fmt.Fprintf(&b, "Observed stage: %s\n\n", proj.Stage)
 	renderSearchText(&b, resp)
 	out, err := json.Marshal(map[string]any{
 		"hookSpecificOutput": map[string]any{

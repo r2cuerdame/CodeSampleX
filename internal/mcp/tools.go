@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
+	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
@@ -41,7 +44,7 @@ type Deps struct {
 	LocalReadiness func(ctx context.Context) (mode string, shards int, err error)
 	// RunObserved wraps one command in the evidence loop (scan → run →
 	// record). sanitized carries only sanitizer output — never raw stderr.
-	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, output string, err error)
+	RunObserved func(ctx context.Context, argv []string, cwd string) (exitCode int, stage, result string, sanitized []string, output evidence.CommandOutput, err error)
 	// ReportAdoption records what happened to a returned sample. The outcome
 	// can call a failure "avoided" only when the local correlation proves all
 	// four stages; the upload remains the existing anonymous adoption event.
@@ -59,6 +62,8 @@ type Deps struct {
 	// Tools consult it before telling a caller that anything will be sent.
 	Mode func() string
 }
+
+type commandOutput = evidence.CommandOutput
 
 // toolDef is one tools/list entry.
 type toolDef struct {
@@ -209,7 +214,7 @@ func toolDefs() []toolDef {
 		},
 		{
 			Name:        "run_observed_command",
-			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. Returned errors are sanitized templates, never raw logs. If the command FAILS, the network is asked about that failure automatically and any answer is appended — you do not need to call search_known_solution yourself afterwards.",
+			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation, and LOW/reference/unrelated results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence.",
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
 				"cwd":     str("working directory (defaults to the current directory)"),
@@ -884,7 +889,15 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Exit code: %d\n", exitCode)
+	if exitCode != 0 {
+		b.WriteString("LOCAL COMMAND FAILURE — PRIMARY EVIDENCE\n")
+		fmt.Fprintf(&b, "Exit code: %d\n", exitCode)
+		writeCapturedStream(&b, "stdout", output.Stdout, output.StdoutTruncated)
+		writeCapturedStream(&b, "stderr", output.Stderr, output.StderrTruncated)
+		b.WriteString("\nOBSERVATION METADATA\n")
+	} else {
+		fmt.Fprintf(&b, "Exit code: %d\n", exitCode)
+	}
 	fmt.Fprintf(&b, "Observed stage: %s — result: %s\n", stage, result)
 	b.WriteString("Evidence class: USAGE_OBSERVATION (project-level observation; never execution proof for individual symbols)\n")
 	if len(sanitized) > 0 {
@@ -893,30 +906,21 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 			b.WriteString("- " + line + "\n")
 		}
 	}
-	structured := map[string]any{
-		"exitCode":        exitCode,
-		"stage":           stage,
-		"result":          result,
-		"sanitizedErrors": sanitized,
-		"evidenceClass":   string(domain.ClassUsageObservation),
+	structured := observedCommandStructured{
+		ExitCode: exitCode, Stage: stage, Result: result,
+		SanitizedErrors: sanitized, EvidenceClass: string(domain.ClassUsageObservation),
 	}
-	// What the agent must act on goes in the structured payload, because that
-	// is the half the client renders. Everything this tool had to say was
-	// written into the builder above, and a wrapped failure came back as five
-	// JSON keys with none of the prose -- so the network's answer was going
-	// somewhere nobody reads.
-	if exitCode != 0 && strings.TrimSpace(output) != "" {
-		// The sanitized template is what may LEAVE the machine. It is not
-		// what fixes a build: "stat <path> directory not found" names no file
-		// and no symbol. This response goes to an agent on this machine that
-		// already holds the source and the paths, so redacting it protects
-		// nothing and costs the one thing the agent came for -- and an agent
-		// that cannot see why the build broke runs it again outside this
-		// tool, which is the single behaviour the product exists to prevent.
-		//
-		// Only on failure. A command that passed has nothing to explain, and
-		// its log is the largest thing this tool could send.
-		structured["output"] = output
+	if exitCode != 0 {
+		structured.Stdout = output.Stdout
+		structured.Stderr = output.Stderr
+		structured.StdoutTruncated = output.StdoutTruncated
+		structured.StderrTruncated = output.StderrTruncated
+		// Backward-compatible alias for clients released before stdout/stderr
+		// were separated. stderr remains the failure-diagnostic default.
+		structured.Output = output.Stderr
+		if structured.Output == "" {
+			structured.Output = output.Stdout
+		}
 	}
 	// The build just failed, which is the one moment this network exists for,
 	// and asking first was left to the agent's discretion.
@@ -931,36 +935,109 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	// the project was scanned, the error was sanitized. So it happens here,
 	// in the same turn, without anyone choosing to make it.
 	if exitCode != 0 {
-		if found := s.lookupAfterFailure(ctx, a.Cwd, sanitized); found != "" {
-			b.WriteString("\n")
-			b.WriteString(found)
-			structured["autoLookup"] = true
-			structured["networkAnswer"] = found
+		recommendation := s.lookupAfterFailure(ctx, a.Command, a.Cwd, sanitized)
+		structured.Recommendation = &recommendation
+		b.WriteString("\nCODESAMPLEX SUPPORTING INFORMATION — SECONDARY\n")
+		b.WriteString(recommendation.render())
+		if recommendation.Text != "" {
+			structured.AutoLookup = true
+			structured.NetworkAnswer = recommendation.Text
 		}
 	}
 	return textResult(b.String(), structured)
 }
 
+type observedCommandStructured struct {
+	ExitCode        int                    `json:"exitCode"`
+	Stdout          string                 `json:"stdout"`
+	Stderr          string                 `json:"stderr"`
+	StdoutTruncated bool                   `json:"stdoutTruncated"`
+	StderrTruncated bool                   `json:"stderrTruncated"`
+	Stage           string                 `json:"stage"`
+	Result          string                 `json:"result"`
+	SanitizedErrors []string               `json:"sanitizedErrors"`
+	EvidenceClass   string                 `json:"evidenceClass"`
+	Output          string                 `json:"output,omitempty"`
+	Recommendation  *failureRecommendation `json:"recommendation,omitempty"`
+	AutoLookup      bool                   `json:"autoLookup,omitempty"`
+	NetworkAnswer   string                 `json:"networkAnswer,omitempty"`
+}
+
+func writeCapturedStream(b *strings.Builder, name, value string, truncated bool) {
+	fmt.Fprintf(b, "%s", name)
+	if truncated {
+		b.WriteString(" (truncated; final bounded tail shown)")
+	}
+	b.WriteString(":\n")
+	if strings.TrimSpace(value) == "" {
+		b.WriteString("(empty)\n")
+		return
+	}
+	b.WriteString(value)
+	if !strings.HasSuffix(value, "\n") {
+		b.WriteString("\n")
+	}
+}
+
+type failureRecommendation struct {
+	Status         string `json:"status"`
+	Classification string `json:"classification,omitempty"`
+	AdvisoryOnly   bool   `json:"advisoryOnly"`
+	Reason         string `json:"reason,omitempty"`
+	Match          string `json:"match,omitempty"`
+	Confidence     string `json:"confidence,omitempty"`
+	Text           string `json:"text,omitempty"`
+}
+
+func (r failureRecommendation) render() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "STATUS: %s\n", r.Status)
+	if r.Classification != "" {
+		fmt.Fprintf(&b, "CLASSIFICATION: %s\n", r.Classification)
+	}
+	if r.AdvisoryOnly {
+		b.WriteString("ADVISORY ONLY: reference candidate; not an automatic fix basis.\n")
+	}
+	if r.Reason != "" {
+		b.WriteString("Reason: " + r.Reason + "\n")
+	}
+	if r.Text != "" {
+		b.WriteString("\n" + r.Text)
+	}
+	return b.String()
+}
+
 // lookupAfterFailure asks the network about the build that just broke.
 //
 // It is a passenger on the wrapped command and never its driver: the exit
-// code passes through untouched, a lookup that finds nothing writes nothing,
-// and a lookup that cannot run at all is silent. The network being down is
-// not the build's problem and must not read like one.
-func (s *Server) lookupAfterFailure(ctx context.Context, cwd string, sanitized []string) string {
-	if s.Deps == nil || s.Deps.Search == nil || len(sanitized) == 0 {
-		return ""
+// code and local streams pass through untouched. Misses and lookup failures
+// are explicit recommendation statuses after the primary failure, never tool
+// errors and never replacements for the command result.
+func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd string, sanitized []string) failureRecommendation {
+	if s.Deps == nil || s.Deps.Search == nil {
+		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the search path is unavailable"}
+	}
+	if len(sanitized) == 0 {
+		return failureRecommendation{Status: "SKIPPED", AdvisoryOnly: true, Reason: "the command produced no searchable sanitized error"}
 	}
 	req := domain.SearchRequest{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		// The sanitized error IS the question. It carries the error code and
 		// the public symbols the sanitizer kept, and nothing else — no raw
 		// log, no path, no source.
 		Query: strings.Join(sanitized, " "),
-		Limit: 1,
 	}
 	if s.Deps.MachineEnv != nil {
 		req.Environment = s.Deps.MachineEnv(ctx)
+	}
+	if ecosystem := commandEcosystem(argv); ecosystem != "" {
+		req.Environment.Ecosystem = ecosystem
+		req.EnvironmentProvenance = domain.SearchProvenanceContext
+	} else if commandIsPowerShell(argv) {
+		req.Environment.Ecosystem = "generic"
+		req.Environment.Runtime = "powershell"
+		req.Environment.ExecutionContext = "powershell"
+		req.EnvironmentProvenance = domain.SearchProvenanceContext
 	}
 	// No project packages: the scan that would name them belongs to the run
 	// that just happened, and reaching for it again here would make a failed
@@ -972,14 +1049,89 @@ func (s *Server) lookupAfterFailure(ctx context.Context, cwd string, sanitized [
 			break
 		}
 	}
-	resp, _ := s.Deps.Search(ctx, req)
+	lookupCtx, cancel := context.WithTimeout(ctx, failureLookupBudget)
+	defer cancel()
+	resp, _ := s.Deps.Search(lookupCtx, req)
+	if lookupCtx.Err() != nil {
+		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the lookup timed out or was canceled"}
+	}
 	if resp.Miss || len(resp.Results) == 0 {
-		return ""
+		return failureRecommendation{Status: "NO_SAFE_MATCH", AdvisoryOnly: true, Reason: "no safe verified match was found; solve from the local failure"}
+	}
+	if len(resp.Results) > 1 {
+		resp.Results = resp.Results[:1]
 	}
 	var b strings.Builder
-	b.WriteString("The network was asked about this failure automatically:\n\n")
 	b.WriteString(renderSearchResponse(resp))
-	return b.String()
+	top := resp.Results[0]
+	classification, advisory, reason := top.RecommendationClassification()
+	if commandResultUnrelated(argv, top) {
+		classification, advisory = domain.RecommendationReferenceCandidate, true
+		reason = "the command/tool ecosystem does not overlap the sample's packages"
+	}
+	return failureRecommendation{
+		Status: "FOUND", Classification: classification, AdvisoryOnly: advisory,
+		Reason: reason, Match: string(top.Grade), Confidence: top.Confidence, Text: b.String(),
+	}
+}
+
+const failureLookupBudget = 25 * time.Second
+
+func commandResultUnrelated(argv []string, result domain.SearchResult) bool {
+	if result.Case == nil || len(result.Case.Packages) == 0 {
+		return false
+	}
+	want := commandEcosystem(argv)
+	for _, raw := range result.Case.Packages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil || p.Ecosystem == "generic" {
+			continue
+		}
+		if want != "" && p.Ecosystem == want {
+			return false
+		}
+		if want == "" {
+			return true
+		}
+	}
+	return want != ""
+}
+
+func commandEcosystem(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	tool := strings.ToLower(strings.TrimSuffix(filepath.Base(argv[0]), ".exe"))
+	switch tool {
+	case "npm", "pnpm", "yarn", "node", "tsc", "npx":
+		return "npm"
+	case "python", "python3", "pytest", "pip", "pip3", "uv":
+		return "pypi"
+	case "go":
+		return "golang"
+	case "cargo", "rustc":
+		return "cargo"
+	case "mvn", "mvnw", "gradle", "gradlew", "java", "javac":
+		return "maven"
+	case "composer", "php":
+		return "composer"
+	case "bundle", "ruby":
+		return "gem"
+	case "dart", "flutter":
+		return "pub"
+	case "mix", "elixir":
+		return "hex"
+	default:
+		return ""
+	}
+}
+
+func commandIsPowerShell(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	tool := strings.ToLower(strings.TrimSuffix(filepath.Base(argv[0]), ".exe"))
+	return tool == "pwsh" || tool == "powershell"
 }
 
 // leadingErrorCode picks the machine code out of a sanitized line, when the

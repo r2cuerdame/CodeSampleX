@@ -76,7 +76,7 @@ func runMain(ctx context.Context, args []string) int {
 		profile = res.Classify(args)
 	}
 
-	exitCode, tail, runErr := evidence.Run(ctx, args, dir)
+	exitCode, output, runErr := evidence.Run(ctx, args, dir)
 	if runErr != nil {
 		// The command never ran (not found, ...): report and record nothing.
 		fmt.Fprintf(os.Stderr, "csx: %v\n", runErr)
@@ -85,7 +85,7 @@ func runMain(ctx context.Context, args []string) int {
 
 	if db != nil && ident != nil && res != nil {
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-		if err := rec.RecordRun(ctx, dir, res, profile, exitCode, tail); err != nil {
+		if err := rec.RecordRun(ctx, dir, res, profile, exitCode, output.Stderr); err != nil {
 			fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", err)
 		}
 		// Opportunistic best-effort upload; failures leave rows queued for
