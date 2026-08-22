@@ -315,6 +315,14 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Finding-miner work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	} else if result.Work.Kind == "EXPANSION" {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned coverage-expansion work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else if result.Work.Kind == "DEPENDENCY" {
+		// Named apart from expansion on purpose. The score means something
+		// different here -- it counts the projects whose lockfile resolved
+		// onto this exact release, not observations of anybody using it -- and
+		// nobody has reported using this coordinate directly at all, so a
+		// writer should expect less prior art than usual and not read that as
+		// a sign the coordinate is wrong.
+		fmt.Fprintf(sampleWorkerStdout, "Assigned dependency-closure work (%d projects resolved it, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	} else {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	}

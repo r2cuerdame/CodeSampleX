@@ -79,9 +79,50 @@ type FarmAxisCoverage struct {
 	ObservedProven int
 }
 
+// FarmBacklog is the coverage gap the queue is working through, and how fast
+// it is moving through it.
+//
+// The farm panel could say how much had been proven and nothing at all about
+// how much was left, so "the fleet is busy" and "the fleet is nearly done"
+// looked identical -- and a queue that generates its own work can be busy
+// forever. These are the two stocks and the two flows.
+//
+// A `-` cell and an unopened dependency are counted apart on purpose. They are
+// different absences: one is a package the network watches people use and has
+// never proven, the other is a release nobody has reported at all and that
+// only a resolved lockfile even names. Pooling them would hide which of the
+// two the fleet is actually failing to drain.
+type FarmBacklog struct {
+	// CoverageHoles is how many PUBLIC coordinates carry evidence and no
+	// passing sample: the `-` cells, counted.
+	CoverageHoles int
+	// Dependencies is how many coordinates are reachable only through a
+	// resolved dependency edge and still carry no evidence and no proof.
+	//
+	// It is the WHOLE backlog, not the bounded slice one scheduling pass
+	// offers. A backlog reported at its own cap reads as finished work.
+	Dependencies int
+	// ClaimedByKind is work handed out inside the window, by queue source.
+	// This is the generation rate: what the scheduler actually produced,
+	// rather than what it could have.
+	ClaimedByKind map[string]int
+	// FirstProven is how many coordinates earned their first passing receipt
+	// inside the window -- the resolution rate.
+	//
+	// First, not any: re-proving a coordinate on another platform is real
+	// work and real evidence, but it does not take anything off the backlog
+	// above, and a rate that counted it would never square with a stock that
+	// does not.
+	FirstProven int
+}
+
 // FarmStatsStore reports the farm's state for the operations dashboard.
 type FarmStatsStore interface {
 	FarmCoverage(ctx context.Context) ([]FarmAxisCoverage, error)
 	FarmWorkers(ctx context.Context, since, now time.Time) ([]FarmWorker, error)
 	FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, error)
+	// FarmBacklogNow reports the coverage gap now and the flow through it
+	// since. The window is the caller's so the panel can keep one window for
+	// every rate it shows.
+	FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error)
 }

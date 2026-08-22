@@ -86,14 +86,50 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "커버리지를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
 	}
+	// The same window as the worker rates above, so every number on the panel
+	// is over one period. Two windows on one screen is how a reader ends up
+	// comparing an hour against a day without noticing.
+	backlog, err := h.farmStats.FarmBacklogNow(r.Context(), now.Add(-farmWindow), now)
+	if err != nil {
+		http.Error(w, "백로그를 불러오지 못했습니다", http.StatusServiceUnavailable)
+		return
+	}
 
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"workers":         views,
 		"health":          farmHealthView(health),
+		"backlog":         farmBacklogView(backlog),
 		"coverage":        farmCoverageView(coverage),
 		"instances":       instances,
 		"monthlyTotalUsd": total,
 	})
+}
+
+// farmBacklogView reports what is left and how fast it is moving.
+//
+// The two stocks are reported apart because they are different absences: a
+// coverage hole is a release the network watches people use and has never
+// proven, and a dependency is a release nobody has reported at all, which only
+// a resolved lockfile even names. Pooling them would hide which one the fleet
+// is failing to drain.
+//
+// The flows carry their window explicitly. A rate without its period is the
+// kind of number that gets read as a total.
+func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
+	claimed := make(map[string]int, len(backlog.ClaimedByKind))
+	handedOut := 0
+	for kind, n := range backlog.ClaimedByKind {
+		claimed[clampAdminLabel(kind)] = n
+		handedOut += n
+	}
+	return map[string]any{
+		"coverageHoles":       backlog.CoverageHoles,
+		"dependencies":        backlog.Dependencies,
+		"windowSeconds":       int(farmWindow / time.Second),
+		"handedOutInWindow":   handedOut,
+		"handedOutByKind":     claimed,
+		"firstProvenInWindow": backlog.FirstProven,
+	}
 }
 
 func farmHealthView(health serverstore.FarmHealth) map[string]any {

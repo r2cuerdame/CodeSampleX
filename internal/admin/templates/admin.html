@@ -187,6 +187,9 @@
       <div class="section-head"><div><h2 id="farm-title">팜</h2><p class="note">돌고 있는 워커와, 네트워크가 지금 어떤 상태인지. 세션이 발급됐지만 한 번도 갱신되지 않은 워커는 뜨지 못한 것입니다 — 라벨만 보는 목록에서는 정상과 구별되지 않습니다.</p></div><span class="stamp">최근 1시간</span></div>
       <div id="farm-workers" class="sample-worker-sessions" aria-live="polite"><p class="empty">팜 상태를 불러오는 중…</p></div>
       <div id="farm-health" class="stats" style="margin-top:14px"></div>
+      <h3 style="margin-top:18px">남은 좌표와 처리 속도</h3>
+      <p class="note">큐가 스스로 일감을 만들기 때문에 <strong>바쁘다</strong>와 <strong>거의 끝났다</strong>는 다른 말입니다. 남은 양이 없으면 그 둘이 구별되지 않습니다. <strong>미검증 좌표</strong>는 사람들이 쓰는 걸 보고 있지만 아직 증명하지 못한 릴리스이고, <strong>미관측 의존성</strong>은 아무도 보고한 적 없는 — 해결된 lockfile만이 이름을 아는 — 릴리스입니다. 둘은 다른 종류의 없음이라 합치지 않습니다. 배포·해결 건수는 위 워커 수치와 같은 1시간 창입니다.</p>
+      <div id="farm-backlog" class="stats" style="margin-top:14px"><p class="empty">불러오는 중…</p></div>
       <h3 style="margin-top:18px">OS 축 진행률</h3>
       <p class="note">관측된 패키지 중 <strong>그 플랫폼에서</strong> 실제로 증명된 비율입니다. 다른 플랫폼의 통과는 여기 들어가지 않습니다 — 그게 이 표가 존재하는 이유입니다. 컨테이너가 없는 칸은 진행률이 아니라 <strong>검증 불가</strong>로 표시합니다: npm×Windows는 공식 이미지가 없어 영원히 0이고, 밀린 작업이 아닙니다.</p>
       <div id="farm-coverage" class="stats" style="margin-top:14px"><p class="empty">불러오는 중…</p></div>
