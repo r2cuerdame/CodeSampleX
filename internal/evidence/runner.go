@@ -109,13 +109,17 @@ func openRunLog() *os.File {
 //  1. MultiWriter writes in order and returns at the first error, so with the
 //     terminal ahead of the capture, a terminal that stops accepting output
 //     stops the capture too — quietly, mid-stream.
+//
 //  2. os/exec's copier ends the copy at the first write error. A copy that
 //     ends early leaves a capture that is short but no longer LOOKS short:
 //     the ring can only account for what it was handed, so it goes on
-//     reporting a clipped tail as the complete stream. The same error also
-//     surfaces from cmd.Wait() as a plain error, which makes Run report a
-//     command that really ran — and may really have failed — as one that
-//     never started.
+//     reporting a clipped tail as the complete stream.
+//
+//     Cmd.Wait then reports that write error, but only when the child exited
+//     0 — a non-zero exit takes precedence, so it wins the race exactly when
+//     nothing is wrong with the command. Run reads any non-ExitError as "the
+//     command never ran", so a build that passed gets reported as one that
+//     never started, and nothing is recorded for it.
 //
 // So the capture is written first and unconditionally, and Write never
 // reports an error. A broken passthrough degrades what the user sees; it must
