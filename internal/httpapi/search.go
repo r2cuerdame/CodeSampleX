@@ -309,8 +309,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	}
 
 	sampleEnv := manifest.Environment.Normalize()
-	askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentContext)
-	delta := envDelta(askedEnv, sampleEnv, matched, reqVersion)
+	namedEco := callerNamedEcosystem(reqPURLs, matched.Ecosystem)
+	askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentContext, namedEco)
+	delta := envDelta(askedEnv, sampleEnv, matched, reqVersion,
+		environmentContext && !namedEco)
 	selected, hasSelected := selectServerReceiptVariant(receipts, reqPURLs, reqEnv, environmentContext)
 	strengthReceipts := receipts
 	allowAggregateStatus := true
@@ -460,10 +462,12 @@ func selectServerReceiptVariant(receipts []compatibility.ReceiptInfo, requested 
 		if !ok {
 			continue
 		}
-		askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentInferred)
+		namedEco := callerNamedEcosystem(requested, matched.Ecosystem)
+		askedEnv := serverEnvAskedAbout(reqEnv, matched.Ecosystem, environmentInferred, namedEco)
 		selection := serverReceiptSelection{
 			receipt: receipt, matched: matched, reqVersion: reqVersion,
-			delta: envDelta(askedEnv, receipt.Env.Normalize(), matched, reqVersion),
+			delta: envDelta(askedEnv, receipt.Env.Normalize(), matched, reqVersion,
+				environmentInferred && !namedEco),
 		}
 		if !haveBest || betterServerReceiptSelection(selection, distance, best, bestDistance) {
 			best, bestDistance, haveBest = selection, distance, true
@@ -888,7 +892,8 @@ type deltaResult struct {
 // execution-context rules: executionContext (and browserFamily/engine when
 // browser-like) is ALWAYS sensitive; a context mismatch caps the grade at
 // ADAPTATION_REQUIRED with an explicit "verify in <ctx>" adaptation entry.
-func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, reqVersion string) deltaResult {
+func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, reqVersion string,
+	ecosystemInferred bool) deltaResult {
 	d := deltaResult{fit: 1.0, grade: domain.GradeExact,
 		exact: []string{}, different: []string{}, adaptation: []string{}}
 
@@ -899,6 +904,19 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	if req.Ecosystem != "" && sampleEcosystem != "" {
 		if strings.EqualFold(req.Ecosystem, sampleEcosystem) {
 			d.exact = append(d.exact, "ecosystem "+strings.ToLower(sampleEcosystem))
+		} else if ecosystemInferred {
+			// Read off the caller's working directory, not stated by them.
+			// Using a sample from another ecosystem is an adaptation and is
+			// worth saying; refusing outright on a guess is what starved the
+			// client's queue before, and the fit stays milder than the
+			// declared case so this does not become a Miss divergence
+			// instead of a grade one.
+			d.grade = worseGrade(d.grade, domain.GradeAdaptationRequired)
+			d.different = append(d.different, "ecosystem "+strings.ToLower(req.Ecosystem)+
+				" (sample: "+strings.ToLower(sampleEcosystem)+")")
+			d.adaptation = append(d.adaptation, "translate from "+strings.ToLower(sampleEcosystem)+
+				" to "+strings.ToLower(req.Ecosystem))
+			d.fit *= 0.7
 		} else {
 			d.grade = worseGrade(d.grade, domain.GradeReferenceOnly)
 			d.different = append(d.different, "ecosystem "+strings.ToLower(req.Ecosystem)+
@@ -995,6 +1013,17 @@ func envDelta(req, sample domain.EnvironmentFingerprint, matched domain.PURL, re
 	if req.Runtime != "" && sample.Runtime != "" && req.Runtime == sample.Runtime {
 		rv, sv := runtimeLine(req.Runtime, req.RuntimeVersion), runtimeLine(sample.Runtime, sample.RuntimeVersion)
 		switch {
+		// A different MAJOR is not something you verify your way out of.
+		// runtimeLine buckets node by major and python and go by
+		// major.minor, so reading "different line" as "different major" is
+		// true for node and false for the others — and this told a caller on
+		// python 3.13 to "verify on python 3.13" a sample that ran on 2.7.
+		// The client refuses these, and the two must agree.
+		case rv != "" && sv != "" && majorSeg(req.RuntimeVersion) != majorSeg(sample.RuntimeVersion):
+			d.grade = worseGrade(d.grade, domain.GradeReferenceOnly)
+			d.different = append(d.different, "runtime "+req.Runtime+" "+req.RuntimeVersion+
+				" (sample: "+sample.RuntimeVersion+")")
+			d.fit *= 0.5
 		case rv != "" && sv != "" && rv != sv:
 			d.grade = worseGrade(d.grade, domain.GradeAdaptationRequired)
 			d.different = append(d.different, "runtime "+req.Runtime+" "+req.RuntimeVersion+" (sample: "+sample.RuntimeVersion+")")
@@ -1222,13 +1251,40 @@ func purlsSupportEcosystem(packages []domain.PURL, ecosystem string) bool {
 	return false
 }
 
+// callerNamedEcosystem reports whether the caller named a package in this
+// ecosystem. It reads what they asked about BY NAME, never a dependency tree
+// filled in for them, and it exists so the server answers this the same way
+// internal/search does.
+func callerNamedEcosystem(requested []domain.PURL, ecosystem string) bool {
+	if ecosystem == "" {
+		return false
+	}
+	for _, p := range requested {
+		if strings.EqualFold(p.Ecosystem, ecosystem) {
+			return true
+		}
+	}
+	return false
+}
+
 func serverEnvAskedAbout(req domain.EnvironmentFingerprint, sampleEcosystem string,
-	inferred bool) domain.EnvironmentFingerprint {
+	inferred, namedByCaller bool) domain.EnvironmentFingerprint {
 	if !inferred || sampleEcosystem == "" || req.Ecosystem == "" ||
 		strings.EqualFold(req.Ecosystem, sampleEcosystem) {
 		return req
 	}
-	req.Ecosystem = ""
+	// The ecosystem itself stays, exactly as it does on the client. Blanking
+	// it removed the one line that made a cross-ecosystem answer recognisable
+	// as one, and with nothing left to compare this graded a pypi sample
+	// EXACT for an npm caller with an empty Different list — the strongest
+	// grade in the system, on a public unauthenticated endpoint, while the
+	// client said ADAPTATION_REQUIRED for the same input.
+	//
+	// A package the caller NAMED is the exception: naming one answers the
+	// question the inference was guessing at.
+	if namedByCaller {
+		req.Ecosystem = ""
+	}
 	req.Runtime, req.RuntimeVersion = "", ""
 	req.Language, req.LanguageVersion = "", ""
 	req.Compiler, req.CompilerVersion = "", ""

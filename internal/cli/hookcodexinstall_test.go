@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,15 +69,33 @@ func TestInstallingCodexTwiceRegistersOneHook(t *testing.T) {
 // cannot produce one that does not, we must not pretend we registered a
 // working hook.
 func TestCodexHookCommandNeverContainsASpace(t *testing.T) {
-	for _, exe := range []string{
-		`C:\Users\John Smith\AppData\Local\csx\csx.exe`,
-		`C:\Users\recue\AppData\Local\csx\csx.exe`,
-		`/home/dev/.local/bin/csx`,
-	} {
+	// The path has to EXIST. GetShortPathName asks the filesystem for the 8.3
+	// name, so a made-up path fails the sizing call, spaceFreePath reports
+	// "no space-free form", and the loop below skips the one case this test
+	// exists for — on Windows and, through the plain guard, everywhere else.
+	// The conversion had zero coverage on any platform.
+	spaced := filepath.Join(t.TempDir(), "John Smith", "csx")
+	if err := os.MkdirAll(filepath.Dir(spaced), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spaced, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(t.TempDir(), "csx")
+	if err := os.WriteFile(plain, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sawSpaced := false
+	for _, exe := range []string{spaced, plain} {
 		got, ok := codexHookCommand(exe)
 		if !ok {
-			// Refusing is allowed. Registering a command that cannot run is not.
+			// Refusing is allowed — a volume with 8.3 names disabled has no
+			// space-free form. Registering a command that cannot run is not.
 			continue
+		}
+		if strings.Contains(exe, " ") {
+			sawSpaced = true
 		}
 		if strings.ContainsAny(strings.TrimSuffix(got, " hook agent"), " ") {
 			t.Errorf("codexHookCommand(%q) = %q, which Codex will not run", exe, got)
@@ -83,5 +103,8 @@ func TestCodexHookCommandNeverContainsASpace(t *testing.T) {
 		if !strings.HasSuffix(got, "hook agent") {
 			t.Errorf("codexHookCommand(%q) = %q, want it to call the hook", exe, got)
 		}
+	}
+	if runtime.GOOS == "windows" && !sawSpaced {
+		t.Skip("this volume has 8.3 short names disabled, so there is no space-free form to check")
 	}
 }

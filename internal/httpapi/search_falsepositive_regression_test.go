@@ -93,7 +93,7 @@ func TestServerExplicitNPMVsPyPIReportsTheDifference(t *testing.T) {
 		SchemaVersion: 1, Ecosystem: "pypi", OS: "windows", Arch: "amd64",
 		Runtime: "python", RuntimeVersion: "3.13", Language: "python", PackageManager: "pip",
 	}.Normalize()
-	delta := envDelta(req, sample, domain.PURL{Ecosystem: "pypi", Name: "pydantic", Version: "2.12.5"}, "")
+	delta := envDelta(req, sample, domain.PURL{Ecosystem: "pypi", Name: "pydantic", Version: "2.12.5"}, "", false)
 	if delta.grade != domain.GradeReferenceOnly {
 		t.Fatalf("grade=%s, want REFERENCE_ONLY", delta.grade)
 	}

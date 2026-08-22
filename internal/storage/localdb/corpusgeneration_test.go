@@ -102,3 +102,66 @@ func TestCorpusGenerationIgnoresReads(t *testing.T) {
 }
 
 var _ = domain.PURL{}
+
+// Stamping "this sample was used" must not throw away the search corpus.
+//
+// last_used lives on the samples table, the triggers are blanket, and
+// TouchSample runs on every get_sample and every adoption report — both
+// middle steps of the search -> get_sample -> report_adoption -> search loop.
+// So the cache was discarded and the whole corpus re-parsed on the next
+// search, every time, for a column the search never reads.
+//
+// The fix is to write less often rather than to narrow the triggers. An
+// UPDATE OF list would have to name every column the corpus reads, and the
+// day somebody adds one and forgets is the day a stale answer ships — which
+// is the failure this design exists to make impossible. Eviction ordering
+// needs to know recently-used from not; it does not need seconds.
+func TestTouchingASampleDoesNotThrowAwayTheCorpus(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	const id = "sha256:" + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	if err := db.SaveSample(ctx, SampleRow{SampleID: id, ManifestJSON: `{}`, Status: "LOCAL"}); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := db.CorpusGeneration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := db.TouchSample(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := db.CorpusGeneration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first stamp on a never-used sample is a real change and may move it
+	// once; the repeats must not.
+	if after-before > 1 {
+		t.Errorf("five touches moved the generation %d times, want at most 1", after-before)
+	}
+}
+
+// It still records use — an eviction policy that cannot tell hot from cold
+// is worse than a cache that reloads.
+func TestTouchingASampleStillRecordsThatItWasUsed(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	const id = "sha256:" + "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	if err := db.SaveSample(ctx, SampleRow{SampleID: id, ManifestJSON: `{}`, Status: "LOCAL"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TouchSample(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	var lastUsed string
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COALESCE(last_used,'') FROM samples WHERE sample_id = ?`, id).Scan(&lastUsed); err != nil {
+		t.Fatal(err)
+	}
+	if lastUsed == "" {
+		t.Error("a sample that was used has no record of it")
+	}
+}

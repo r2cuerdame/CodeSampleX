@@ -153,9 +153,28 @@ func (d *DB) SetSampleStatus(ctx context.Context, sampleID, status string) error
 }
 
 // TouchSample stamps last_used, feeding cache eviction ordering.
+// touchResolution is how stale a last_used stamp may get before it is
+// rewritten. Eviction ordering needs to tell recently-used from cold; it has
+// never needed seconds.
+const touchResolution = 15 * time.Minute
+
 func (d *DB) TouchSample(ctx context.Context, sampleID string) error {
+	// Only when the stamp has actually aged. samples carries the corpus the
+	// search engine caches, and the triggers that invalidate that cache are
+	// blanket by design — any write to the table counts. TouchSample runs on
+	// every get_sample and every adoption report, so an unconditional stamp
+	// threw the whole parsed corpus away and re-read 12 MB of shard JSON on
+	// the next search, for a column the search never reads.
+	//
+	// Writing less often, rather than narrowing the triggers to an UPDATE OF
+	// list: that list would have to name every column the corpus reads, and
+	// the day somebody adds one and forgets is the day a stale answer ships.
+	// A trigger nobody has to remember is the point.
+	cutoff := time.Now().UTC().Add(-touchResolution).Format(time.RFC3339Nano)
 	_, err := d.sql.ExecContext(ctx,
-		`UPDATE samples SET last_used = ? WHERE sample_id = ?`, nowText(), sampleID)
+		`UPDATE samples SET last_used = ?
+		  WHERE sample_id = ? AND (last_used IS NULL OR last_used < ?)`,
+		nowText(), sampleID, cutoff)
 	return err
 }
 
