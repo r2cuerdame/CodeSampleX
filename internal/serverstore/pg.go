@@ -2503,6 +2503,125 @@ func (p *PG) WantedForPackage(ctx context.Context, ecosystem, name string) ([]Wa
 	return rows, err
 }
 
+// listWantedSQL answers "which requested coordinates does no live sample
+// close?" for the board — one page plus the total, in a single statement.
+//
+// The closure rules are unchanged and deliberately strict: a row closes only
+// when one live sample carries the exact canonical PURL, proves the exact
+// release when one was requested, ran on the requested platform when one was
+// named, and carries the exact symbol. What changed is the shape of the
+// search for that sample.
+//
+// The correlated form asked that question once per wanted row and expanded
+// every live sample's manifest package array inside the subquery, so the
+// expansion ran wanted × samples times. In production that was 692 rows ×
+// 2,362 samples = 823,594 jsonb function scans, the live corpus was
+// materialized and re-read once per wanted row (~1.4GB of temp reads), and
+// one request for a 31-row page took 8.3s. Both factors grow with the
+// corpus, so the page got slower as the network got better at its job, and
+// eight concurrent readers emptied the connection pool.
+//
+// The inverted form expands the corpus once into the coordinates it can
+// answer and hash-anti-joins the requests against it: 2,665 expansions
+// instead of 823,594, and the same 31 rows in 85ms.
+//
+// coord is every prefix of a manifest PURL that ends at a literal '@'. That
+// is exactly what the correlated form tested with strpos(...) = 1: a wanted
+// row's key always ends in '@', so "pkg starts with the key" and "the key is
+// one of pkg's '@'-terminated prefixes" are the same statement. Taking every
+// such prefix rather than the first keeps the scoped npm spelling honest —
+// "pkg:npm/@scope/pkg@2.0.0" carries two literal '@' and must still match a
+// request for '@scope/pkg'.
+const listWantedSQL = `
+	WITH answer AS MATERIALIZED (
+		-- The live corpus, expanded once, as the coordinates it can close.
+		SELECT s.sample_id, s.manifest, left(pkg.value, at.pos) AS coord
+		  FROM samples s
+		  CROSS JOIN LATERAL jsonb_array_elements_text(s.manifest->'packages') AS pkg(value)
+		  CROSS JOIN LATERAL (
+		      SELECT g FROM generate_series(1, length(pkg.value)) AS g
+		       WHERE substr(pkg.value, g, 1) = '@') AS at(pos)
+		 WHERE NOT s.quarantined
+	), wanted_key AS MATERIALIZED (
+		-- Both accepted spellings of a request's own coordinate. Upload
+		-- validation takes the readable scoped form, the v2 resolver records
+		-- the percent-encoded one, and both name the same package.
+		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
+		  FROM wanted w
+		  CROSS JOIN LATERAL (VALUES
+		      ('pkg:' || w.ecosystem || '/' || w.name || '@'),
+		      ('pkg:' || w.ecosystem || '/' ||
+		          CASE WHEN left(w.name, 1) = '@'
+		               THEN '%40' || substring(w.name from 2)
+		               ELSE w.name END || '@')) AS k(coord)
+		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
+	), answered AS (
+		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
+		  FROM wanted_key wk
+		  JOIN answer a ON a.coord = wk.coord
+		 WHERE (wk.symbol = '' OR COALESCE(a.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+		   AND EXISTS (
+		       SELECT 1 FROM receipts answer_receipt
+		        WHERE answer_receipt.sample_id = a.sample_id
+		          AND answer_receipt.contract_result = 'PASS'
+		          -- A row that names a platform is answered only by a proof
+		          -- from that platform. Any-pass closure would delete the ask
+		          -- before the platform it was about had been measured at all.
+		          AND (wk.target_os = ''
+		               OR LOWER(COALESCE(answer_receipt.receipt->'environment'->>'os','')) = wk.target_os)
+		          AND (
+		              -- Pre-version Wanted rows cannot recover the release
+		              -- that was originally requested. Keep the legacy policy
+		              -- honest and broad: any contract pass for the same
+		              -- package answers that unversioned historical row.
+		              wk.version = ''
+		              OR (
+		                  -- A versioned request is answered only by the signed
+		                  -- v2 resolver claim for the release that actually
+		                  -- ran. The manifest version is author input and may
+		                  -- differ in a matrix verification.
+		                  answer_receipt.receipt->>'schemaVersion' = '2'
+		                  AND answer_receipt.receipt->'stages'->>'resolve' = 'PASS'
+		                  AND COALESCE(answer_receipt.receipt->'resolvedPackages', '[]'::jsonb) ?
+		                      ('pkg:' || wk.ecosystem || '/' ||
+		                       CASE WHEN left(wk.name, 1) = '@'
+		                            THEN '%40' || substring(wk.name from 2)
+		                            ELSE wk.name END || '@' || wk.version)
+		              )))
+	), unanswered AS (
+		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
+		       w.asks, w.first_seen, w.last_seen,
+		       TRUE AS has_page
+		  FROM wanted w
+		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
+		   AND NOT EXISTS (
+		       SELECT 1 FROM answered an
+		        WHERE an.ecosystem = w.ecosystem AND an.name = w.name
+		          AND an.version = w.version AND an.symbol = w.symbol
+		          AND an.target_os = w.target_os)
+		   AND NOT EXISTS (
+		       SELECT 1 FROM unnest($5::text[]) AS wanted_words(word)
+		        WHERE strpos(lower(concat_ws(' ', w.ecosystem, w.name, w.version, w.symbol)), word) = 0
+		   )
+	), counted AS (
+		SELECT count(*) AS total FROM unanswered
+	), page_rows AS (
+		SELECT * FROM unanswered
+		 ORDER BY asks DESC, last_seen DESC, ecosystem, name, version, symbol
+		 LIMIT $1 OFFSET $2
+	)
+	SELECT COALESCE(p.ecosystem, ''), COALESCE(p.name, ''),
+	       COALESCE(p.version, ''), COALESCE(p.symbol, ''),
+	       COALESCE(p.target_os, ''), COALESCE(p.asks, 0),
+	       COALESCE(p.first_seen, 'epoch'::timestamptz),
+	       COALESCE(p.last_seen, 'epoch'::timestamptz),
+	       COALESCE(p.has_page, FALSE), counted.total,
+	       p.ecosystem IS NOT NULL AS present
+	  FROM counted
+	  LEFT JOIN page_rows p ON TRUE
+	 ORDER BY p.asks DESC NULLS LAST, p.last_seen DESC NULLS LAST,
+	          p.ecosystem, p.name, p.version, p.symbol`
+
 func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ecosystem, name string) ([]WantedRow, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -2514,78 +2633,22 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 	var out []WantedRow
 	var total int64
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			WITH unanswered AS (
-				SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
-				       w.asks, w.first_seen, w.last_seen,
-				       TRUE AS has_page
-				  FROM wanted w
-				 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
-				   AND NOT EXISTS (
-			       SELECT 1 FROM samples s
-			        WHERE NOT s.quarantined
-			          AND EXISTS (
-			              SELECT 1 FROM jsonb_array_elements_text(s.manifest->'packages') AS pkg
-			               WHERE strpos(pkg, 'pkg:' || w.ecosystem || '/' || w.name || '@') = 1
-			                  OR strpos(pkg, 'pkg:' || w.ecosystem || '/' ||
-			                     CASE WHEN left(w.name, 1) = '@'
-			                          THEN '%40' || substring(w.name from 2)
-			                          ELSE w.name END || '@') = 1)
-			          AND EXISTS (
-			              SELECT 1 FROM receipts answer_receipt
-			               WHERE answer_receipt.sample_id = s.sample_id
-			                 AND answer_receipt.contract_result = 'PASS'
-			                 -- A row that names a platform is answered only by
-			                 -- a proof from that platform. Any-pass closure
-			                 -- would delete the ask before the platform it was
-			                 -- about had been measured at all.
-			                 AND (w.target_os = ''
-			                      OR LOWER(COALESCE(answer_receipt.receipt->'environment'->>'os','')) = w.target_os)
-			                 AND (
-			                     -- Pre-version Wanted rows cannot recover the
-			                     -- release that was originally requested. Keep
-			                     -- the legacy policy honest and broad: any
-			                     -- contract pass for the same package answers
-			                     -- that unversioned historical row.
-			                     w.version = ''
-			                     OR (
-			                         -- A versioned request is answered only by
-			                         -- the signed v2 resolver claim for the
-			                         -- release that actually ran. The manifest
-			                         -- version is author input and may differ in
-			                         -- a matrix verification.
-			                         answer_receipt.receipt->>'schemaVersion' = '2'
-			                         AND answer_receipt.receipt->'stages'->>'resolve' = 'PASS'
-			                         AND COALESCE(answer_receipt.receipt->'resolvedPackages', '[]'::jsonb) ?
-			                             ('pkg:' || w.ecosystem || '/' ||
-			                              CASE WHEN left(w.name, 1) = '@'
-			                                   THEN '%40' || substring(w.name from 2)
-			                                   ELSE w.name END || '@' || w.version)
-			                     )))
-			          AND (w.symbol = '' OR COALESCE(s.manifest->'symbols', '[]'::jsonb) ? w.symbol))
-			   AND NOT EXISTS (
-			       SELECT 1 FROM unnest($5::text[]) AS wanted_words(word)
-			        WHERE strpos(lower(concat_ws(' ', w.ecosystem, w.name, w.version, w.symbol)), word) = 0
-			   )
-			), counted AS (
-				SELECT count(*) AS total FROM unanswered
-			), page_rows AS (
-				SELECT * FROM unanswered
-				 ORDER BY asks DESC, last_seen DESC, ecosystem, name, version, symbol
-				 LIMIT $1 OFFSET $2
-			)
-			SELECT COALESCE(p.ecosystem, ''), COALESCE(p.name, ''),
-			       COALESCE(p.version, ''), COALESCE(p.symbol, ''),
-			       COALESCE(p.target_os, ''), COALESCE(p.asks, 0),
-			       COALESCE(p.first_seen, 'epoch'::timestamptz),
-			       COALESCE(p.last_seen, 'epoch'::timestamptz),
-			       COALESCE(p.has_page, FALSE), counted.total,
-			       p.ecosystem IS NOT NULL AS present
-			  FROM counted
-			  LEFT JOIN page_rows p ON TRUE
-			 ORDER BY p.asks DESC NULLS LAST, p.last_seen DESC NULLS LAST,
-			          p.ecosystem, p.name, p.version, p.symbol`,
-			limit, offset, ecosystem, name, words)
+		// A set-returning function carries no statistics, so the planner
+		// assumes 100 rows per call and prices this plan at ~4M rows where
+		// 2.7k appear. That estimate is 40x jit_above_cost, and PostgreSQL
+		// then spends ~900ms compiling a query that executes in 85ms. The
+		// estimate cannot be corrected from here; the compilation can. SET
+		// LOCAL scopes the override to this statement and unwinds with the
+		// transaction, so the pooled connection is handed back unchanged.
+		tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // read-only rollback is the normal exit
+		if _, err := tx.Exec(ctx, "SET LOCAL jit = off"); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, listWantedSQL, limit, offset, ecosystem, name, words)
 		if err != nil {
 			return err
 		}

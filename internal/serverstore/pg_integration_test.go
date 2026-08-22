@@ -10,6 +10,7 @@ package serverstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1561,4 +1562,148 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	if len(jobs) != 0 {
 		t.Errorf("the peer that judged this sample can still claim its cross job")
 	}
+}
+
+// TestIntegrationListWantedExpandsTheCorpusOncePerRequest pins the
+// complexity class of the board's anti-join, which is what took
+// /wanted down rather than any error in its answer.
+//
+// The correlated form asked "does any live sample close this?" once per
+// wanted row and expanded every sample's manifest package array inside that
+// subquery, so the expansion ran wanted × samples times. In production that
+// was 692 × 2,362 = 823,594 executions for a page of 31 rows: 8.3s for one
+// request, and with an 8-connection pool the ninth concurrent reader got a
+// 502. Both factors grow with the corpus, so the page decayed as the network
+// filled up.
+//
+// A wall-clock budget would only restate how fast the machine running the
+// test is. The invariant is structural, so this asserts on the plan the
+// shipped statement actually produced: the corpus is expanded a number of
+// times bounded by the corpus, never by the number of requests standing
+// against it. With the correlated form this count is wantedRows × samples.
+func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	const (
+		wantedRows = 300
+		samples    = 40
+	)
+
+	requests := make([]WantedRow, 0, wantedRows)
+	for i := range wantedRows {
+		// Half the board is package-level, as production's is. A request
+		// that names a symbol lets the planner decide "no such symbol here"
+		// without ever expanding the package array, so a suite of only
+		// symbol-bearing rows would measure a path the outage never took.
+		symbol := ""
+		if i%2 == 1 {
+			symbol = fmt.Sprintf("sym%04d", i)
+		}
+		requests = append(requests, WantedRow{
+			Ecosystem: "npm",
+			Name:      fmt.Sprintf("unanswered-pkg-%04d", i),
+			Version:   "1.0.0",
+			Symbol:    symbol,
+		})
+	}
+	if err := pg.RecordWanted(ctx, "2026-08-22", "anon-scale", requests); err != nil {
+		t.Fatal(err)
+	}
+	// None of these samples answers anything, which is the worst case: every
+	// request has to be checked against the whole corpus before it can be
+	// called unanswered. The scoped spelling keeps a package string with two
+	// literal '@' in the corpus while the plan is measured.
+	for i := range samples {
+		id := fmt.Sprintf("sha256:%064d", i)
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: id, ManifestJSON: fmt.Sprintf(
+			`{"packages":["pkg:npm/answered-%04d@2.3.4","pkg:npm/@scope/side-%04d@1.0.0"],`+
+				`"symbols":["a%04d","b%04d"]}`, i, i, i, i)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := pg.SaveReceipt(ctx, ReceiptRow{
+			ReceiptID: fmt.Sprintf("receipt-scale-%04d", i), SampleID: id, ContractResult: "PASS",
+			ReceiptJSON: fmt.Sprintf(`{"schemaVersion":2,"stages":{"resolve":"PASS","contract":"PASS"},`+
+				`"resolvedPackages":["pkg:npm/answered-%04d@2.3.4"]}`, i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, total, err := pg.ListWanted(ctx, "", 0, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != wantedRows || len(page) != wantedRows {
+		t.Fatalf("ListWanted returned %d rows of %d total; none of these requests is answered",
+			len(page), total)
+	}
+
+	// Two per sample: one manifest array expanded, one nested scan of the
+	// prefix positions inside it. Four leaves room for a differently shaped
+	// but still corpus-bounded plan; wantedRows × samples is 12,000.
+	const budget = 4 * samples
+	loops := listWantedExpansionLoops(t, pg)
+	if loops > budget {
+		t.Fatalf("the manifest corpus was expanded %.0f times for %d requests over %d samples, "+
+			"want at most %d: the corpus is being rescanned once per request again",
+			loops, wantedRows, samples, budget)
+	}
+	t.Logf("manifest expansions: %.0f for %d requests over %d samples", loops, wantedRows, samples)
+}
+
+// listWantedExpansionLoops runs the shipped Wanted statement under EXPLAIN
+// ANALYZE and reports how many times it expanded a manifest package array.
+// It reads listWantedSQL itself so the guard cannot drift away from the
+// statement the server sends.
+func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
+	t.Helper()
+	ctx := context.Background()
+	var raw []byte
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+listWantedSQL,
+			2000, 0, "", "", []string{}).Scan(&raw)
+	}); err != nil {
+		t.Fatalf("explain wanted statement: %v", err)
+	}
+	var plans []struct {
+		Plan json.RawMessage `json:"Plan"`
+	}
+	if err := json.Unmarshal(raw, &plans); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	total := 0.0
+	var walk func(json.RawMessage)
+	walk = func(n json.RawMessage) {
+		var node map[string]json.RawMessage
+		if err := json.Unmarshal(n, &node); err != nil {
+			return
+		}
+		var fn string
+		if v, ok := node["Function Name"]; ok {
+			_ = json.Unmarshal(v, &fn)
+		}
+		if fn == "jsonb_array_elements_text" {
+			var loops float64
+			if v, ok := node["Actual Loops"]; ok {
+				_ = json.Unmarshal(v, &loops)
+			}
+			total += loops
+		}
+		if v, ok := node["Plans"]; ok {
+			var kids []json.RawMessage
+			if err := json.Unmarshal(v, &kids); err == nil {
+				for _, k := range kids {
+					walk(k)
+				}
+			}
+		}
+	}
+	for _, p := range plans {
+		walk(p.Plan)
+	}
+	if total == 0 {
+		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
+	}
+	return total
 }
