@@ -149,28 +149,29 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" {
 		return false
 	}
-	// A package whose NAME is a platform installs on that platform and nowhere
-	// else. npm publishes native code that way — @tailwindcss/oxide-darwin-arm64
-	// is macOS — and the ecosystem check waves it through because npm runs on
-	// Linux. The worker then cannot install what it was told to write a sample
-	// for, so the assignment is spent on work that can never finish.
-	//
-	// Only the OS is checked. The request says which platforms this verifier
-	// serves and not which architecture, so a linux/x64 worker is still
-	// offered linux/arm64 builds; that needs a field the client does not send
-	// yet, and the platforms above are where the waste actually was.
+	// A package whose NAME carries a platform and an architecture is one of
+	// the per-target builds npm publishes for a native addon. It began as an
+	// installability rule — @tailwindcss/oxide-darwin-arm64 cannot install on
+	// Linux, and the ecosystem check waved it through because npm runs there
+	// — and the measurement below made it a rule about authorability, which
+	// covers the installable ones too.
 	if candidate.Ecosystem == "npm" {
-		if platform, locked := npmPackagePlatform(candidate.Name); locked {
-			matched := false
-			for _, os := range request.VerifierOS {
-				if strings.EqualFold(os, platform) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return false
-			}
+		if _, locked := npmPackagePlatform(candidate.Name); locked {
+			// Not "wrong platform" — no platform. npm publishes one of these
+			// per target for a native addon, and its main is the .node
+			// binary: measured on the registry,
+			// @tailwindcss/oxide-linux-x64-gnu is
+			// tailwindcss-oxide.linux-x64-gnu.node and @napi-rs/lzma-linux-
+			// x64-gnu is lzma.linux-x64-gnu.node, while their parents
+			// @tailwindcss/oxide and @napi-rs/lzma are index.js.
+			//
+			// The OS check that used to be here refused a worker on the
+			// wrong platform and handed a linux worker the linux one, which
+			// installs perfectly and still cannot be written against: the
+			// thing a sample would import is a binary the parent selects
+			// internally. The parent is the package worth a sample, and it
+			// does not match this pattern.
+			return false
 		}
 	}
 	// A Gradle plugin marker has no code in it, so no contract can call
@@ -335,6 +336,11 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
+	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
+	// classes and therefore no symbol a contract could call. Asked here, once
+	// per coordinate for the life of the process, because the answer is a
+	// fact about the artifact and not about this worker.
+	eligible = dropUnauthorableMaven(r.Context(), a.mavenJar, eligible)
 	work, found, err := store.ClaimAuthoringWork(r.Context(), session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "claiming authoring work failed")

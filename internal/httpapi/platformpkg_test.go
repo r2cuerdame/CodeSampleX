@@ -58,10 +58,17 @@ func TestALinuxWorkerIsNotGivenAMacBinary(t *testing.T) {
 	if authoringCandidateEligible(mac, request) {
 		t.Error("a darwin binary was offered to a linux worker")
 	}
-	// Its own platform is still fair game.
+	// Nor is its own platform, which this used to say was fair game.
+	//
+	// A linux worker installs @rollup/rollup-linux-x64-gnu perfectly and
+	// still cannot write a sample for it: measured on the registry, its main
+	// is ./rollup.linux-x64-gnu.node — the binary itself. So are
+	// @tailwindcss/oxide-linux-x64-gnu and @napi-rs/lzma-linux-x64-gnu. There
+	// is no JS API to call, on any platform, and the package worth a sample
+	// is the parent that selects between these.
 	linux := serverstoreRow("npm", "@rollup/rollup-linux-x64-gnu", "4.0.0")
-	if !authoringCandidateEligible(linux, request) {
-		t.Error("a linux binary was refused to a linux worker")
+	if authoringCandidateEligible(linux, request) {
+		t.Error("a native binary package was offered as authoring work")
 	}
 	// And an ordinary package is untouched.
 	plain := serverstoreRow("npm", "axios", "1.12.0")

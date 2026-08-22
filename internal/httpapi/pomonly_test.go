@@ -73,3 +73,46 @@ func TestOnlyMavenCoordinatesAreReadAsMarkers(t *testing.T) {
 		t.Error("applied a maven naming convention to an npm package")
 	}
 }
+
+// A platform-specific native package has no JS API to write a contract
+// against, on any worker.
+//
+// npm publishes one per platform for a native addon — @tailwindcss/oxide
+// ships @tailwindcss/oxide-linux-x64-gnu, @napi-rs/lzma ships
+// @napi-rs/lzma-linux-x64-gnu — and their main is the .node binary itself.
+// Measured on the registry:
+//
+//	@tailwindcss/oxide-linux-x64-gnu  main=tailwindcss-oxide.linux-x64-gnu.node
+//	@napi-rs/lzma-linux-x64-gnu       main=lzma.linux-x64-gnu.node
+//	@tailwindcss/oxide                main=index.js
+//
+// The eligibility rule already recognised these by name and used it only to
+// refuse a worker on the wrong OS. A linux worker was still handed the linux
+// one — installable, and impossible to write a sample for, because the thing
+// a sample would import is a binary the parent package selects internally.
+func TestANativePlatformPackageIsNeverOfferedAsAuthoringWork(t *testing.T) {
+	for _, name := range []string{
+		"@tailwindcss/oxide-linux-x64-gnu",
+		"@napi-rs/lzma-linux-x64-gnu",
+		"@tailwindcss/oxide-darwin-arm64",
+	} {
+		candidate := serverstore.WantedRow{
+			Ecosystem: "npm", Name: name, Version: "4.3.3", Asks: 1, Kind: "WANTED",
+		}
+		if authoringCandidateEligible(candidate, containerWorker()) {
+			t.Errorf("offered %s, which has no JS API on any platform", name)
+		}
+	}
+}
+
+// The parent package is the one worth a sample and must stay offerable.
+func TestTheParentOfANativePackageIsStillOffered(t *testing.T) {
+	for _, name := range []string{"@tailwindcss/oxide", "@napi-rs/lzma", "node-linux-utils"} {
+		candidate := serverstore.WantedRow{
+			Ecosystem: "npm", Name: name, Version: "4.3.3", Asks: 1, Kind: "WANTED",
+		}
+		if !authoringCandidateEligible(candidate, containerWorker()) {
+			t.Errorf("excluded %s, which is an ordinary package", name)
+		}
+	}
+}

@@ -66,6 +66,11 @@ type Deps struct {
 
 type api struct {
 	d Deps
+	// mavenJar answers whether a maven coordinate publishes a jar, with each
+	// verdict remembered for the life of the process. It is built from the
+	// publicness checker when that checker can answer the question, and is
+	// nil otherwise — which means "carry on", never "no jar".
+	mavenJar MavenJarProber
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.
@@ -83,6 +88,12 @@ func NewMux(d Deps) *http.ServeMux {
 		d.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	a := &api{d: d}
+	// The publicness checker already talks to Maven Central; asking it one
+	// more question needs no new wiring, and a checker that cannot answer
+	// simply leaves the prober nil.
+	if prober, ok := d.Checker.(MavenJarProber); ok {
+		a.mavenJar = newCachedMavenJarProber(prober)
+	}
 	if a.d.Limits == nil {
 		a.d.Limits = newLimiters()
 	}
