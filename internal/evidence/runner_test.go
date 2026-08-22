@@ -113,7 +113,12 @@ func TestRunCapturesStdoutAndStderrSeparately(t *testing.T) {
 		t.Skip("node not installed")
 	}
 	t.Setenv("CSX_HOME", t.TempDir())
-	argv := []string{"node", "-e", `console.log("ordinary-output"); console.error("actual-error"); process.exit(4)`}
+	// exitCode rather than exit(4), for the reason spelled out in
+	// TestRunBoundsVeryLargeStreamsAndMarksTruncation: process.exit() drops
+	// queued asynchronous pipe writes. Two short lines almost always win that
+	// race, which makes it a flake that waits for a loaded machine rather than
+	// a bug anyone would find.
+	argv := []string{"node", "-e", `console.log("ordinary-output"); console.error("actual-error"); process.exitCode=4`}
 	code, output, err := Run(context.Background(), argv, t.TempDir())
 	if err != nil || code != 4 {
 		t.Fatalf("Run: code=%d err=%v", code, err)
@@ -131,7 +136,15 @@ func TestRunBoundsVeryLargeStreamsAndMarksTruncation(t *testing.T) {
 		t.Skip("node not installed")
 	}
 	t.Setenv("CSX_HOME", t.TempDir())
-	argv := []string{"node", "-e", `for(let i=0;i<500;i++){console.log("out-"+i+"-"+"x".repeat(2000));console.error("err-"+i+"-"+"y".repeat(2000))};process.exit(5)`}
+	// process.exitCode, NOT process.exit(5). On POSIX a child's stdout and
+	// stderr are PIPES here (exec builds them because the writers are not
+	// *os.File), and node's writes to a pipe are asynchronous: process.exit()
+	// discards whatever is still queued. A megabyte does not survive that, and
+	// how much does is a race with whoever drains the pipe — this test read a
+	// tail ending at line 139 on one machine and line 40 on a CI runner, both
+	// green on Windows, where pipe writes are synchronous and all 500 lines
+	// always arrive. Setting exitCode lets the loop drain and still exits 5.
+	argv := []string{"node", "-e", `for(let i=0;i<500;i++){console.log("out-"+i+"-"+"x".repeat(2000));console.error("err-"+i+"-"+"y".repeat(2000))};process.exitCode=5`}
 	code, output, err := Run(context.Background(), argv, t.TempDir())
 	if err != nil || code != 5 {
 		t.Fatalf("Run: code=%d err=%v", code, err)
