@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -630,10 +631,7 @@ func acquireNamedLock(path string, wait time.Duration) (func(), error) {
 			_, _ = fmt.Fprintf(f, "%s %d\n", token, os.Getpid())
 			_ = f.Close()
 			return func() {
-				raw, readErr := os.ReadFile(path)
-				if readErr == nil && strings.HasPrefix(string(raw), token+" ") {
-					_ = os.Remove(path)
-				}
+				releaseNamedLock(path, token, os.Remove)
 			}, nil
 		}
 		// A lock whose holder is gone is not a lock. Without this, a crash, a
@@ -655,6 +653,29 @@ func acquireNamedLock(path string, wait time.Duration) (func(), error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return nil, errors.New("update: another update is still in progress")
+}
+
+// releaseNamedLock removes only the file carrying this owner's token. Windows
+// scanners and indexers can briefly retain a handle after the writer closes;
+// ignoring that sharing violation leaves a lock naming this still-live PID,
+// which no stale-lock recovery may safely take over. Retry only the removal,
+// for a bounded interval, and re-check ownership before every attempt.
+func releaseNamedLock(path, token string, remove func(string) error) {
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) || err != nil || !strings.HasPrefix(string(raw), token+" ") {
+			return
+		}
+		err = remove(path)
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // WithLock serializes a consent/config write with update checks. When it

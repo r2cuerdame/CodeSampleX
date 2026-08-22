@@ -1,7 +1,9 @@
 package update
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,6 +52,27 @@ func TestAnUpdateLockFromADeadProcessIsTakenOver(t *testing.T) {
 	release()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("release did not remove the lock it took over")
+	}
+}
+
+func TestLockReleaseRetriesATransientWindowsRemoveFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "update.lock")
+	token := "owned-token"
+	writeUpdateLock(t, path, token, os.Getpid(), 0)
+
+	attempts := 0
+	releaseNamedLock(path, token, func(name string) error {
+		attempts++
+		if attempts < 4 {
+			return errors.New("transient sharing violation")
+		}
+		return os.Remove(name)
+	})
+	if attempts != 4 {
+		t.Fatalf("remove attempts = %d, want 4", attempts)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("released lock still exists: %v", err)
 	}
 }
 
