@@ -148,3 +148,78 @@ func write(t *testing.T, dir, name, body string) {
 		t.Fatal(err)
 	}
 }
+
+// An extra nobody selected is not a dependency the resolution made.
+//
+// uv writes optional dependencies in their own sub-table, and the scan read
+// every inline { name = "..." } in the whole [[package]] block — so an
+// unselected extra was published as a resolved edge. Verified against a real
+// uv 0.12.1 lockfile: requests came back depending on pysocks because a
+// "socks" extra existed, not because anything asked for it.
+func TestScanEdgesIgnoresExtrasNobodySelected(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "uv.lock", `
+version = 1
+
+[[package]]
+name = "requests"
+version = "2.34.2"
+dependencies = [
+    { name = "idna" },
+]
+
+[package.optional-dependencies]
+socks = [
+    { name = "pysocks" },
+]
+
+[[package]]
+name = "idna"
+version = "3.19"
+
+[[package]]
+name = "pysocks"
+version = "1.7.1"
+`)
+
+	got := scanEdgeKeys(t, dir)
+	if !got["requests@2.34.2 -> idna@3.19"] {
+		t.Errorf("lost the real dependency; got %v", got)
+	}
+	if got["requests@2.34.2 -> pysocks@1.7.1"] {
+		t.Errorf("published an unselected extra as a resolved edge; got %v", got)
+	}
+}
+
+// Development dependencies are not what the resolution installed either.
+func TestScanEdgesIgnoresDevDependencies(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "uv.lock", `
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+    { name = "idna" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[[package]]
+name = "idna"
+version = "3.19"
+
+[[package]]
+name = "pytest"
+version = "8.4.2"
+`)
+	got := scanEdgeKeys(t, dir)
+	if got["app@0.1.0 -> pytest@8.4.2"] {
+		t.Errorf("published a dev dependency as a resolved edge; got %v", got)
+	}
+	if !got["app@0.1.0 -> idna@3.19"] {
+		t.Errorf("lost the real dependency; got %v", got)
+	}
+}

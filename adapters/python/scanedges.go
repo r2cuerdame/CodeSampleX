@@ -38,6 +38,14 @@ func (Adapter) ScanEdges(_ context.Context, dir string) ([]scanner.Edge, error) 
 var (
 	// uv.lock: dependencies = [ { name = "x" }, ... ] — inline tables that
 	// name the package and leave its version to the package's own block.
+	//
+	// The key is anchored at column 0 on purpose. Reading every inline table
+	// in the block instead swept up [package.optional-dependencies] and
+	// [package.dev-dependencies], so an extra nobody selected was published
+	// as an edge the resolution never made: against a real uv 0.12.1
+	// lockfile, requests came back depending on pysocks because a "socks"
+	// extra existed.
+	uvDepsKeyRe = regexp.MustCompile(`(?m)^dependencies\s*=\s*\[`)
 	uvDepNameRe = regexp.MustCompile(`\{\s*name\s*=\s*"([^"]+)"`)
 	// poetry.lock: a [package.dependencies] sub-table whose keys are names
 	// and whose values are CONSTRAINTS, never resolved versions.
@@ -72,8 +80,10 @@ func pythonLockEdges(content string) []scanner.Edge {
 		if p.version != "" {
 			versions[name] = p.version
 		}
-		for _, m := range uvDepNameRe.FindAllStringSubmatch(b, -1) {
-			p.deps = append(p.deps, m[1])
+		if loc := uvDepsKeyRe.FindStringIndex(b); loc != nil {
+			for _, m := range uvDepNameRe.FindAllStringSubmatch(bracketBody(b[loc[1]-1:]), -1) {
+				p.deps = append(p.deps, m[1])
+			}
 		}
 		p.deps = append(p.deps, poetryDependencyNames(b)...)
 		pkgs = append(pkgs, p)
@@ -120,4 +130,34 @@ func poetryDependencyNames(block string) []string {
 		out = append(out, m[1])
 	}
 	return out
+}
+
+// bracketBody returns the text of the array starting at s[0] == '[', up to
+// its matching close.
+//
+// The array spans lines and holds inline tables with their own braces, so it
+// cannot be found by looking for the next "]" — and it must not run past its
+// own close, because the next sub-table in the block is exactly what this
+// exists to exclude. Brackets inside quoted strings are text, not structure.
+func bracketBody(s string) string {
+	depth := 0
+	var quote rune
+	for i, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '[':
+			depth++
+		case r == ']':
+			depth--
+			if depth == 0 {
+				return s[:i+1]
+			}
+		}
+	}
+	return s
 }

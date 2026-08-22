@@ -459,7 +459,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		askedPkgs = parsePURLs(req.ProjectPackages)
 	}
 	environmentContext := req.EnvironmentIsContext()
-	selection := selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, environmentContext)
+	selection := selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, environmentContext, reqPkgs)
 	rel, reqP, samP := selection.rel, selection.reqP, selection.samP
 	if len(reqPkgs) == 0 {
 		if len(askedPkgs) > 0 && rel > relNone {
@@ -519,7 +519,8 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 
 	// Steps 6+9: environment gate, execution-context axis, known failures.
 	samEco := ecosystemOf(samP, reqEnv, c)
-	askedEnv := envAskedAbout(reqEnv, samEco, environmentContext)
+	askedEnv := envAskedAboutNamed(reqEnv, samEco, environmentContext,
+		callerNamedEcosystem(reqPkgs, samEco))
 	dims := compareEnv(askedEnv, selection.env, samEco, environmentContext)
 	cd := compareContext(askedEnv, selection.env)
 	matched := matchingFailures(reqEnv, syms)
@@ -1108,11 +1109,29 @@ func candidateSupportsEcosystem(c *candidate, ecosystem string) bool {
 // the machine whatever the question is about, and they are exactly the
 // dimensions a cross-ecosystem answer still needs to be honest about.
 func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string, inferred bool) domain.EnvironmentFingerprint {
+	return envAskedAboutNamed(req, samEcosystem, inferred, false)
+}
+
+// envAskedAboutNamed is envAskedAbout plus one thing the inference cannot
+// know: whether the caller NAMED a package in this candidate's ecosystem.
+//
+// Naming one answers the question the inference was guessing at. csx search
+// marks every request as context-inferred, --package included, so a caller
+// running `--package pkg:pypi/polars@1.9.0` from an npm checkout had the
+// polars sample judged against npm — demoted, and handed an adaptation
+// reading "translate from pypi to npm". That is an instruction to port a
+// Python sample to JavaScript, for a package they had just asked about.
+func envAskedAboutNamed(req domain.EnvironmentFingerprint, samEcosystem string, inferred, namedByCaller bool) domain.EnvironmentFingerprint {
 	if samEcosystem == "" || req.Ecosystem == "" || strings.EqualFold(req.Ecosystem, samEcosystem) {
 		return req
 	}
 	if !inferred {
 		return req
+	}
+	if namedByCaller {
+		// They asked about this ecosystem. The one we read off their working
+		// directory is not a second opinion about it.
+		req.Ecosystem = ""
 	}
 	// The ecosystem itself stays. Everything below is a dimension describing
 	// how the CALLER's ecosystem runs, and comparing those against another
@@ -1135,6 +1154,21 @@ func envAskedAbout(req domain.EnvironmentFingerprint, samEcosystem string, infer
 	req.Engine, req.EngineVersion = "", ""
 	req.BrowserFamily, req.BrowserMajor = "", ""
 	return req
+}
+
+// callerNamedEcosystem reports whether the caller named a package in this
+// ecosystem. reqPkgs is what they asked about by name, never the dependency
+// tree we filled in for them.
+func callerNamedEcosystem(reqPkgs []domain.PURL, ecosystem string) bool {
+	if ecosystem == "" {
+		return false
+	}
+	for _, p := range reqPkgs {
+		if strings.EqualFold(p.Ecosystem, ecosystem) {
+			return true
+		}
+	}
+	return false
 }
 
 func ecosystemOf(samP domain.PURL, reqEnv domain.EnvironmentFingerprint, c *candidate) string {
@@ -1197,11 +1231,14 @@ type gradeSelection struct {
 // does not make a declared zod dependency disappear from search.
 func selectGradeVariant(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL,
 	reqEnv domain.EnvironmentFingerprint) gradeSelection {
-	return selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, false)
+	return selectGradeVariantWithProvenance(c, receipts, askedPkgs, reqEnv, false, askedPkgs)
 }
 
+// namedPkgs is what the caller asked about BY NAME, which askedPkgs is not:
+// askedPkgs falls back to the dependency tree, and a package that merely sits
+// in the tree was never a question about its ecosystem.
 func selectGradeVariantWithProvenance(c *candidate, receipts []domain.VerificationReceipt, askedPkgs []domain.PURL,
-	reqEnv domain.EnvironmentFingerprint, environmentInferred bool) gradeSelection {
+	reqEnv domain.EnvironmentFingerprint, environmentInferred bool, namedPkgs []domain.PURL) gradeSelection {
 	variants := append([]verificationVariant(nil), c.verifications...)
 	for i := range receipts {
 		packages := verifiedPURLsFromReceipt(receipts[i])
@@ -1244,7 +1281,7 @@ func selectGradeVariantWithProvenance(c *candidate, receipts []domain.Verificati
 			receipts: matching, resolved: append([]domain.PURL(nil), variant.packages...),
 			level: level, created: variant.created,
 		}
-		if !haveBest || betterGradeSelection(selection, best, reqEnv, environmentInferred, c) {
+		if !haveBest || betterGradeSelection(selection, best, reqEnv, environmentInferred, c, namedPkgs) {
 			best, haveBest = selection, true
 		}
 	}
@@ -1252,15 +1289,15 @@ func selectGradeVariantWithProvenance(c *candidate, receipts []domain.Verificati
 }
 
 func betterGradeSelection(a, b gradeSelection, reqEnv domain.EnvironmentFingerprint,
-	environmentInferred bool, c *candidate) bool {
+	environmentInferred bool, c *candidate, reqPkgs []domain.PURL) bool {
 	if a.rel != b.rel {
 		return a.rel > b.rel
 	}
 	if ar, br := stageVerdictRank(a.stages), stageVerdictRank(b.stages); ar != br {
 		return ar > br
 	}
-	if ar, br := selectionEnvironmentRank(a, reqEnv, environmentInferred, c),
-		selectionEnvironmentRank(b, reqEnv, environmentInferred, c); ar != br {
+	if ar, br := selectionEnvironmentRank(a, reqEnv, environmentInferred, c, reqPkgs),
+		selectionEnvironmentRank(b, reqEnv, environmentInferred, c, reqPkgs); ar != br {
 		return ar > br
 	}
 	if a.level != b.level {
@@ -1284,9 +1321,10 @@ func stageVerdictRank(stages map[string]string) int {
 }
 
 func selectionEnvironmentRank(s gradeSelection, reqEnv domain.EnvironmentFingerprint,
-	environmentInferred bool, c *candidate) int {
+	environmentInferred bool, c *candidate, reqPkgs []domain.PURL) int {
 	ecosystem := ecosystemOf(s.samP, reqEnv, c)
-	asked := envAskedAbout(reqEnv, ecosystem, environmentInferred)
+	asked := envAskedAboutNamed(reqEnv, ecosystem, environmentInferred,
+		callerNamedEcosystem(reqPkgs, ecosystem))
 	grade, _ := buildGrade(s.rel, compareEnv(asked, s.env, ecosystem, environmentInferred), compareContext(asked, s.env), false)
 	switch grade {
 	case domain.GradeExact:

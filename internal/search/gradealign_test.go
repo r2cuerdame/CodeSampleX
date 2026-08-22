@@ -112,3 +112,52 @@ func TestAStatedEcosystemMismatchIsStillReferenceOnly(t *testing.T) {
 		t.Errorf("grade = %s, want REFERENCE_ONLY when the caller stated the ecosystem", g)
 	}
 }
+
+// A package the caller NAMED is a package they asked about, whatever
+// directory they are standing in.
+//
+// envAskedAbout softens the caller's ecosystem when the environment was only
+// inferred from the working directory — and internal/cli/search.go marks
+// every search that way, including one carrying --package. So
+// `csx search "..." --package pkg:pypi/polars@1.9.0` run from an npm checkout
+// had the polars sample demoted and, worse, handed the agent an adaptation
+// reading "translate from pypi to npm": an instruction to port a Python
+// sample to JavaScript, for a package the caller had just named.
+//
+// The mismatch cap is for a candidate the caller never mentioned. Naming one
+// answers the question the inference was guessing at.
+func TestAnExplicitlyNamedPackageIsNotTreatedAsTheWrongEcosystem(t *testing.T) {
+	req := domain.EnvironmentFingerprint{Ecosystem: "npm", OS: "linux", Arch: "x64"}
+
+	// Inferred npm environment, but the caller named a pypi package and this
+	// candidate is that ecosystem.
+	asked := envAskedAboutNamed(req, "pypi", true, true)
+	if asked.Ecosystem != "" {
+		t.Errorf("kept the caller's inferred ecosystem %q against a package they named", asked.Ecosystem)
+	}
+
+	sam := domain.EnvironmentFingerprint{Ecosystem: "pypi", OS: "linux", Arch: "x64"}
+	g, dims := gradeOf(t, asked, sam, "pypi", relExactVersion, true)
+	if g == domain.GradeReferenceOnly || g == domain.GradeAdaptationRequired {
+		t.Errorf("grade = %s, want a named package not to be demoted for the caller's directory", g)
+	}
+	for _, d := range dims {
+		if strings.Contains(d.adaptation, "translate from") {
+			t.Errorf("told the agent to port the sample to another ecosystem: %q", d.adaptation)
+		}
+	}
+}
+
+// A candidate the caller did NOT name still gets the cap — that is the fix
+// this must not undo.
+func TestAnUnnamedForeignCandidateStillCaps(t *testing.T) {
+	req := domain.EnvironmentFingerprint{Ecosystem: "pypi", OS: "windows", Arch: "x64"}
+	asked := envAskedAboutNamed(req, "npm", true, false)
+	if asked.Ecosystem == "" {
+		t.Fatal("blanked the ecosystem for a candidate the caller never named")
+	}
+	sam := domain.EnvironmentFingerprint{Ecosystem: "npm", OS: "linux", Arch: "x64"}
+	if g, _ := gradeOf(t, asked, sam, "npm", relUnspecified, true); g == domain.GradeCompatible || g == domain.GradeExact {
+		t.Errorf("grade = %s, want a cross-ecosystem answer not to claim it fits", g)
+	}
+}
