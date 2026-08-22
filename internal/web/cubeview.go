@@ -353,12 +353,17 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	// A dimension narrowed to a single value carries no spread; re-pick
 	// the axes over what still varies. A whole-platform OS pin does still
 	// vary, so it keeps its axis.
-	if x != "" && (len(cubeDimValues(sliced, x)) < 2 && len(cubeDimValues(sliced, y)) < 2) {
+	if x != "" && (len(cubeAxisValues(sliced, x)) < 2 && len(cubeAxisValues(sliced, y)) < 2) {
 		x, y = "", ""
 	}
 	// Explicitly chosen axes the slice never recorded would render an
 	// empty shell; fall back to what actually varies.
-	if x != "" && (len(cubeDimValues(sliced, x)) == 0 || len(cubeDimValues(sliced, y)) == 0) {
+	//
+	// cubeAxisValues, not cubeDimValues: a grid spread over WHERE things ran
+	// shows only observations, so a link or a hand-typed ?x= naming an
+	// environment dimension on a coordinate this network alone has executed
+	// produced the same empty shell the defaults used to.
+	if x != "" && (len(cubeAxisValues(sliced, x)) == 0 || len(cubeAxisValues(sliced, y)) == 0) {
 		x, y = "", ""
 	}
 	if x == "" {
@@ -392,7 +397,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 
 	// Axis selectors offer every dimension the slice still spreads over.
 	for _, dim := range cubeDimKeys {
-		if len(cubeDimValues(sliced, dim)) < 2 && dim != x && dim != y {
+		if len(cubeAxisValues(sliced, dim)) < 2 && dim != x && dim != y {
 			continue
 		}
 		label := i18n.T(lang, "cube.dim_"+dim)

@@ -288,10 +288,12 @@ func TestCubeDefaultsToVersionBySymbol(t *testing.T) {
 	for _, version := range []string{"1.0.0", "1.1.0"} {
 		for _, symbol := range []string{"a.Call", "b.Call"} {
 			for _, os := range []string{"linux", "windows"} {
+				// Observation counts, because an environment dimension is
+				// only an axis where the evidence it renders spreads.
 				facts = append(facts, cubeFact{Dims: map[string]string{
 					"version": version, "symbol": symbol, "os": os,
 					"runtime": "node 22", "arch": "x64",
-				}})
+				}, Agg: pivotAgg{obsPass: 1, obsPeers: 1}})
 			}
 		}
 	}
@@ -312,7 +314,7 @@ func TestCubeFallsBackWhenVersionDoesNotVary(t *testing.T) {
 		for _, runtime := range []string{"node 20", "node 22"} {
 			facts = append(facts, cubeFact{Dims: map[string]string{
 				"version": "1.0.0", "symbol": symbol, "runtime": runtime, "os": "linux",
-			}})
+			}, Agg: pivotAgg{obsPass: 1, obsPeers: 1}})
 		}
 	}
 	x, y, ok := defaultCubeAxes(facts, nil)
@@ -352,7 +354,13 @@ func TestSymbolIsNotAnAxisWithoutRealSymbols(t *testing.T) {
 		facts = append(facts, cubeFact{Dims: map[string]string{
 			"version": version, "symbol": cubePackageLevel,
 			"os": "windows", "runtime": "node 22",
-		}})
+		},
+			// A fact with no counts at all never reaches a grid --
+			// cubeFactFromRow drops it -- and an environment dimension is
+			// now only an axis where the evidence it renders actually
+			// spreads, so a fixture carrying none makes every one of them
+			// unavailable rather than testing the symbol rule.
+			Agg: pivotAgg{obsPass: 1, obsPeers: 1}})
 	}
 	x, y, ok := defaultCubeAxes(facts, nil)
 	if !ok {

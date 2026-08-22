@@ -259,6 +259,32 @@ func cubeDimValues(facts []cubeFact, dim string) []string {
 	return sortCubeDimValues(dim, out)
 }
 
+// cubeAxisValues is cubeDimValues restricted to the evidence an axis on that
+// dimension would actually render.
+//
+// A grid spread over WHERE things ran drops this network's own runs (see
+// observationsOnlyOnEnvironmentAxes), so a coordinate only the farm has ever
+// executed carries a value on every environment dimension and evidence on
+// none of them. Deciding the axes from the raw facts therefore picked one
+// and rendered an empty shell: gem/rack-test, with 21 samples and 19 signed
+// PASS receipts, opened on a blank grid, and 726 of the 2,362 public samples
+// sit on a coordinate shaped exactly like it.
+//
+// An axis has to spread the evidence it will show. That is the rule the
+// symbol axis already gets; this applies it to the environment dimensions.
+func cubeAxisValues(facts []cubeFact, dim string) []string {
+	if !isEnvironmentDim(dim) {
+		return cubeDimValues(facts, dim)
+	}
+	kept := make([]cubeFact, 0, len(facts))
+	for _, f := range facts {
+		if f.Agg.observationPart().events() > 0 {
+			kept = append(kept, f)
+		}
+	}
+	return cubeDimValues(kept, dim)
+}
+
 // defaultCubeAxes picks the slice's axes: the highest-priority unpinned
 // dimensions that still vary. ok is false when at most one measured
 // combination remains — the caller renders the leaf record instead.
@@ -292,7 +318,7 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 		// by the filter list: pinning the OS to a whole platform still
 		// leaves alpine musl and debian glibc to spread along it, and a
 		// dimension pinned to one exact value has one value here anyway.
-		if len(cubeDimValues(facts, dim)) >= 2 {
+		if len(cubeAxisValues(facts, dim)) >= 2 {
 			varies[dim] = true
 		}
 	}
@@ -324,7 +350,7 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 			if dim == "symbol" && !cubeHasRealSymbol(facts) {
 				continue
 			}
-			if len(cubeDimValues(facts, dim)) >= 1 {
+			if len(cubeAxisValues(facts, dim)) >= 1 {
 				y = dim
 				break
 			}
