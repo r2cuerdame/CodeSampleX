@@ -173,6 +173,25 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 			}
 		}
 	}
+	// A Gradle plugin marker has no code in it, so no contract can call
+	// anything and the assignment can never finish. Gradle publishes one for
+	// every plugin id: a pom whose only job is to point at the artifact that
+	// does the work. There is no jar, no classes, no symbols.
+	//
+	// It was offered anyway, and one coordinate —
+	// org.jetbrains.kotlin.plugin.serialization.gradle.plugin — took an
+	// authoring slot on a 24-hour lease and held it. The agent tried 22
+	// times, got as far as disassembling the csx binary looking for something
+	// to call, and every restart was handed the same coordinate again. Sample
+	// production across the network fell from 33 an hour to nothing while
+	// that ran.
+	//
+	// The name is the proof rather than a guess. Gradle's marker convention
+	// is structural: the artifactId is the plugin id with ".gradle.plugin"
+	// appended, and such an artifact is always pom-only.
+	if candidate.Ecosystem == "maven" && mavenPomOnlyByName(candidate.Name) {
+		return false
+	}
 	// A WANTED row that names an OS is an ask about that platform, and a proof
 	// from another one does not answer it. A row without an OS is a question
 	// about the package itself, so anyone who can run it may answer -- but it
