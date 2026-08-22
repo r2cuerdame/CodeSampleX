@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,13 +24,40 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
+// errIntegrationDSNUnset marks the one absence that is allowed to skip: a
+// developer machine with no PostgreSQL. Everything else is a failure.
+var errIntegrationDSNUnset = errors.New("CSX_TEST_DSN not set; skipping PostgreSQL integration test")
+
+// integrationDSN decides whether a PostgreSQL integration test may run, from
+// the two environment values that control it. CI sets CSX_REQUIRE_TEST_DSN so
+// that a lost DSN fails the run instead of quietly skipping every test in this
+// package — a skipped guard reports the same green as a passing one, and that
+// is precisely how the /wanted regression test could not have caught anything.
+//
+// Anything that is not plainly false requires: a guard that reads a typo as
+// "off" disarms itself in the situation it exists for.
+func integrationDSN(dsn, require string) (string, error) {
+	if dsn != "" {
+		return dsn, nil
+	}
+	if off, err := strconv.ParseBool(require); require == "" || (err == nil && !off) {
+		return "", errIntegrationDSNUnset
+	}
+	return "", fmt.Errorf("CSX_TEST_DSN is empty while CSX_REQUIRE_TEST_DSN=%s demands the "+
+		"PostgreSQL integration suite; point CSX_TEST_DSN at a disposable database", require)
+}
+
 // openTestPG connects to CSX_TEST_DSN inside a fresh schema, migrates it,
-// and registers cleanup. Skips when no DSN is configured.
+// and registers cleanup. Skips when no DSN is configured, unless
+// CSX_REQUIRE_TEST_DSN forbids that skip.
 func openTestPG(t *testing.T) *PG {
 	t.Helper()
-	dsn := os.Getenv("CSX_TEST_DSN")
-	if dsn == "" {
-		t.Skip("CSX_TEST_DSN not set; skipping PostgreSQL integration test")
+	dsn, err := integrationDSN(os.Getenv("CSX_TEST_DSN"), os.Getenv("CSX_REQUIRE_TEST_DSN"))
+	if errors.Is(err, errIntegrationDSNUnset) {
+		t.Skip(err.Error())
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
 	schema := fmt.Sprintf("csx_test_%d", time.Now().UnixNano())
