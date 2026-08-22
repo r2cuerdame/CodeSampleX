@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // codexTranscript writes the rollout file Codex hands the hook, holding one
@@ -64,6 +67,38 @@ func TestCodexFailureIsFoundThroughTheTranscript(t *testing.T) {
 	}
 	if !strings.Contains(text, "ERR_REQUIRE_ESM") {
 		t.Errorf("error text = %q, want the command's output", text)
+	}
+}
+
+func TestCodexHookUsesTheSameSecondaryRecommendationContract(t *testing.T) {
+	id := "exec-secondary-contract"
+	output := "ParserError: Unexpected token\n"
+	payload, err := json.Marshal(map[string]any{
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "Bash",
+		"cwd":             t.TempDir(),
+		"tool_input":      map[string]any{"command": "pwsh -File Test-Dispatcher.ps1"},
+		"tool_use_id":     id,
+		"transcript_path": codexTranscript(t, id, output, 1),
+		"tool_response":   output,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, out := hookHarness(t, string(payload), func(e *hookEnv) {
+		e.search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, error) {
+			return domain.SearchResponse{Results: []domain.SearchResult{{
+				Grade: domain.GradeReferenceOnly, Confidence: "LOW", SampleID: "sha256:dart",
+				Evidence: domain.EvidenceSummary{ContractPasses: 1},
+			}}}, nil
+		}
+	})
+	hookAgentMain(context.Background(), env)
+	ctx := hookContext(t, out)
+	for _, want := range []string{"CODESAMPLEX SUPPORTING INFORMATION", "REFERENCE_CANDIDATE", "not an automatic fix"} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("Codex hook context missing %q: %q", want, ctx)
+		}
 	}
 }
 

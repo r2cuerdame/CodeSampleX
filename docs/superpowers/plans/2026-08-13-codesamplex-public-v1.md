@@ -363,7 +363,7 @@ Transport: stdio, newline-delimited JSON-RPC 2.0. Methods: `initialize` (protoco
 search_known_solution {query, packages?, symbols?, environment?, errorText?} → SearchResponse rendered per §11.5 + JSON
 get_sample {sampleId} → manifest + file list + file contents (≤64KB/file)
 explain_compatibility {package, symbol?, environment?} → snapshot explanation text + JSON
-run_observed_command {command:[...], cwd?} → runs via evidence loop, returns {exitCode, stage, result, sanitizedErrors}
+run_observed_command {command:[...], cwd?} → runs via evidence loop, returns local failure first as {exitCode, stdout, stderr, stdoutTruncated, stderrTruncated, stage, result, sanitizedErrors}, then an optional separate recommendation
 report_sample_adoption {sampleId, applied:bool, buildPass?:bool} → records ADOPTION_EVIDENCE + hits row
 propose_public_sample {goal, packages, symbols?} → SanitizedSpec + clean-room instructions + workspace dir (NO publish capability)
 list_local_hits {} → recent hits rows
@@ -432,8 +432,8 @@ Verifier pipeline (§16.1): static checks → sandbox resolve (network ON, `npm 
 ## C14. Evidence loop (`csx run -- cmd`)
 
 1. Detect adapters in cwd → scan packages (lockfile resolved) + symbols; upsert local DB; private excluded at scan time from any uploadable table.
-2. Classify command → stage; spawn child with inherited stdio + captured stderr tee (capture only, raw stays local).
-3. Exit code → PASS/FAIL; on FAIL sanitize stderr tail (last 200 lines) → fingerprints.
+2. Classify command → stage; spawn child with inherited stdio + separate bounded stdout/stderr tees (capture only, raw stays local; truncation is explicit).
+3. Exit code → PASS/FAIL; on FAIL sanitize stderr tail (last 200 lines) → fingerprints. Local exit/stdout/stderr remains the primary result; automatic search is a separate secondary recommendation and LOW/reference/unrelated results are reference candidates only.
 4. Record observation rows: one per (public pkg × [symbol if used] × stage × result × error_fp), count += 1, epoch = today.
 5. Environment fingerprint cached per dir (1h TTL).
 6. Batch upload: `csx sync` or daemon ticker (15min) posts pending rows as ObservationBatch[] (Community mode only); server unreachable ⇒ stays queued (§25.F). Local-only mode: never uploads, rows kept for local stats.

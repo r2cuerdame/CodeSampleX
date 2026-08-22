@@ -196,6 +196,25 @@ func (r SearchResult) VerifiedOffer() bool {
 	return r.Grade == GradeExact || r.Grade == GradeCompatible
 }
 
+const (
+	RecommendationVerifiedMatch      = "VERIFIED_MATCH"
+	RecommendationReferenceCandidate = "REFERENCE_CANDIDATE"
+)
+
+// RecommendationClassification is shared by MCP and agent hooks. LOW
+// confidence, reference-only grades, and anything requiring adaptation are
+// supporting candidates, never an automatic fix basis.
+func (r SearchResult) RecommendationClassification() (classification string, advisoryOnly bool, reason string) {
+	switch {
+	case r.Confidence == "LOW":
+		return RecommendationReferenceCandidate, true, "confidence is LOW"
+	case !r.VerifiedOffer():
+		return RecommendationReferenceCandidate, true, "the match is reference-only or requires adaptation"
+	default:
+		return RecommendationVerifiedMatch, false, "the sample contract passed without a disclosed environment delta"
+	}
+}
+
 // ConfidenceReason explains, in one clause, what this result's confidence
 // level is actually about.
 //

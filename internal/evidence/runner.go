@@ -13,31 +13,46 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/config"
 )
 
-// tailLines bounds the stderr ring buffer (contract C14 step 3: only the
-// last 200 lines are ever considered for sanitization).
-const tailLines = 200
+// The captured copy is bounded independently for stdout and stderr. The child
+// still inherits both streams, so this limit affects only the structured
+// result and sanitizer input, never what the user sees while it runs.
+const (
+	tailLines       = 200
+	streamTailBytes = 256 << 10
+)
+
+// CommandOutput is the local copy of the command's two output streams. They
+// stay separate so a recommendation can never replace or masquerade as the
+// command's own diagnostics.
+type CommandOutput struct {
+	Stdout          string
+	Stderr          string
+	StdoutTruncated bool
+	StderrTruncated bool
+}
 
 // Run spawns argv[0] with the remaining args in dir, inheriting stdio so
-// the wrapped command behaves exactly as if run directly. stderr is
-// additionally teed into a bounded in-memory ring (returned as
-// stderrTail, capture only — the caller sanitizes before anything is
-// stored in an uploadable row) and appended raw to
-// $CSX_HOME/logs/last-run.log, which never leaves the machine.
+// the wrapped command behaves exactly as if run directly. stdout and stderr
+// are additionally teed into separate bounded in-memory tails (capture only;
+// the caller sanitizes stderr before anything is stored in an uploadable row).
+// stderr is also appended raw to $CSX_HOME/logs/last-run.log, which never
+// leaves the machine.
 //
 // The child's exit code passes through: a non-zero child exit is NOT an
 // error here (exitCode carries it, err stays nil). err is reserved for
 // failures to run at all (command not found, ...).
-func Run(ctx context.Context, argv []string, dir string) (exitCode int, stderrTail string, err error) {
+func Run(ctx context.Context, argv []string, dir string) (exitCode int, output CommandOutput, err error) {
 	if len(argv) == 0 {
-		return -1, "", errors.New("evidence: empty command")
+		return -1, CommandOutput{}, errors.New("evidence: empty command")
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	stdoutRing := newLineRing(tailLines)
+	stderrRing := newLineRing(tailLines)
+	cmd.Stdout = io.MultiWriter(os.Stdout, nofail{stdoutRing})
 
-	ring := newLineRing(tailLines)
-	writers := []io.Writer{os.Stderr, nofail{ring}}
+	writers := []io.Writer{os.Stderr, nofail{stderrRing}}
 	if f := openRunLog(); f != nil {
 		defer f.Close()
 		writers = append(writers, nofail{f})
@@ -45,16 +60,21 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, stderrTa
 	cmd.Stderr = io.MultiWriter(writers...)
 
 	runErr := cmd.Run()
-	tail := ring.Tail()
+	output = CommandOutput{
+		Stdout:          stdoutRing.Tail(),
+		Stderr:          stderrRing.Tail(),
+		StdoutTruncated: stdoutRing.Truncated(),
+		StderrTruncated: stderrRing.Truncated(),
+	}
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			// Child ran and failed (or was killed): pass its code through.
-			return ee.ExitCode(), tail, nil
+			return ee.ExitCode(), output, nil
 		}
-		return -1, tail, runErr
+		return -1, output, runErr
 	}
-	return 0, tail, nil
+	return 0, output, nil
 }
 
 // openRunLog opens $CSX_HOME/logs/last-run.log truncated for this run.
@@ -84,45 +104,46 @@ func (n nofail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// lineRing keeps the last max complete lines plus any unterminated
-// partial line. Single-writer use (exec's stderr copier goroutine).
+// lineRing keeps a byte-bounded tail and trims it to the last max lines when
+// rendered. Each instance has one writer (one exec stream copier goroutine).
 type lineRing struct {
-	max     int
-	lines   []string
-	partial []byte
+	max       int
+	maxBytes  int
+	buf       []byte
+	truncated bool
 }
 
-func newLineRing(max int) *lineRing { return &lineRing{max: max} }
+func newLineRing(max int) *lineRing { return &lineRing{max: max, maxBytes: streamTailBytes} }
 
 func (r *lineRing) Write(p []byte) (int, error) {
-	for _, b := range p {
-		if b == '\n' {
-			r.push(strings.TrimRight(string(r.partial), "\r"))
-			r.partial = r.partial[:0]
-		} else {
-			r.partial = append(r.partial, b)
-		}
+	n := len(p)
+	if len(p) >= r.maxBytes {
+		r.buf = append(r.buf[:0], p[len(p)-r.maxBytes:]...)
+		r.truncated = true
+		return n, nil
 	}
-	return len(p), nil
-}
-
-func (r *lineRing) push(line string) {
-	if len(r.lines) == r.max {
-		copy(r.lines, r.lines[1:])
-		r.lines[len(r.lines)-1] = line
-		return
+	r.buf = append(r.buf, p...)
+	if len(r.buf) > r.maxBytes {
+		drop := len(r.buf) - r.maxBytes
+		copy(r.buf, r.buf[drop:])
+		r.buf = r.buf[:r.maxBytes]
+		r.truncated = true
 	}
-	r.lines = append(r.lines, line)
+	return n, nil
 }
 
 // Tail renders the buffered lines, including a trailing partial line.
 func (r *lineRing) Tail() string {
-	lines := r.lines
-	if len(r.partial) > 0 {
-		if len(lines) == r.max {
-			lines = lines[1:]
-		}
-		lines = append(append([]string(nil), lines...), strings.TrimRight(string(r.partial), "\r"))
+	text := strings.TrimSuffix(string(r.buf), "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) > r.max {
+		lines = lines[len(lines)-r.max:]
+		r.truncated = true
+	}
+	for i := range lines {
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
 	}
 	return strings.Join(lines, "\n")
 }
+
+func (r *lineRing) Truncated() bool { return r.truncated }

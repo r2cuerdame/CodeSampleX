@@ -84,7 +84,7 @@ func hookContext(t *testing.T, out *bytes.Buffer) string {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("hook printed something the agent cannot parse: %q (%v)", out.String(), err)
 	}
-	if got.HookSpecificOutput.HookEventName != "PostToolUseFailure" {
+	if got.HookSpecificOutput.HookEventName != eventClaudeFailure && got.HookSpecificOutput.HookEventName != eventPostToolUse {
 		t.Errorf("hookEventName = %q", got.HookSpecificOutput.HookEventName)
 	}
 	return got.HookSpecificOutput.AdditionalContext
@@ -100,6 +100,28 @@ func TestHookAnswersAFailedBuildStep(t *testing.T) {
 	}
 	if ctx := hookContext(t, out); !strings.Contains(ctx, "sha256:aaa") {
 		t.Errorf("additionalContext = %q, want the sample the network found", ctx)
+	}
+}
+
+// Hooks run after the agent has already rendered the command failure. Their
+// contribution must identify itself as secondary so Claude and Codex cannot
+// mistake a weak lookup for the command's own result.
+func TestHookLabelsLowConfidenceAnswersAsReferenceCandidates(t *testing.T) {
+	env, out := hookHarness(t, hookInput(t, "Bash", "pwsh -File Test-Dispatcher.ps1", "ParserError"), func(e *hookEnv) {
+		e.search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, error) {
+			return domain.SearchResponse{Results: []domain.SearchResult{{
+				Grade: domain.GradeReferenceOnly, Confidence: "LOW", SampleID: "sha256:dart",
+				Case:     &domain.Case{Packages: []string{"pkg:pub/shelf@1.4.2"}},
+				Evidence: domain.EvidenceSummary{ContractPasses: 1},
+			}}}, nil
+		}
+	})
+	hookAgentMain(context.Background(), env)
+	ctx := hookContext(t, out)
+	for _, want := range []string{"CODESAMPLEX SUPPORTING INFORMATION", "REFERENCE_CANDIDATE", "not an automatic fix"} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("hook context missing %q: %q", want, ctx)
+		}
 	}
 }
 

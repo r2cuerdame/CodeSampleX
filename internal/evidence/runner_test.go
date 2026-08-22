@@ -89,15 +89,15 @@ func TestRunCapturesStderrTail(t *testing.T) {
 	t.Setenv("CSX_HOME", home)
 
 	argv := []string{"node", "-e", `console.error("boom-line-1"); console.error("boom-line-2"); process.exit(2)`}
-	code, tail, err := Run(context.Background(), argv, t.TempDir())
+	code, output, err := Run(context.Background(), argv, t.TempDir())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(tail, "boom-line-1") || !strings.Contains(tail, "boom-line-2") {
-		t.Fatalf("stderr tail missing lines: %q", tail)
+	if !strings.Contains(output.Stderr, "boom-line-1") || !strings.Contains(output.Stderr, "boom-line-2") {
+		t.Fatalf("stderr tail missing lines: %q", output.Stderr)
 	}
 	raw, err := os.ReadFile(filepath.Join(home, "logs", "last-run.log"))
 	if err != nil {
@@ -105,6 +105,45 @@ func TestRunCapturesStderrTail(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "boom-line-1") {
 		t.Fatalf("raw log missing stderr: %q", raw)
+	}
+}
+
+func TestRunCapturesStdoutAndStderrSeparately(t *testing.T) {
+	if !hasNode() {
+		t.Skip("node not installed")
+	}
+	t.Setenv("CSX_HOME", t.TempDir())
+	argv := []string{"node", "-e", `console.log("ordinary-output"); console.error("actual-error"); process.exit(4)`}
+	code, output, err := Run(context.Background(), argv, t.TempDir())
+	if err != nil || code != 4 {
+		t.Fatalf("Run: code=%d err=%v", code, err)
+	}
+	if !strings.Contains(output.Stdout, "ordinary-output") || strings.Contains(output.Stdout, "actual-error") {
+		t.Errorf("stdout = %q", output.Stdout)
+	}
+	if !strings.Contains(output.Stderr, "actual-error") || strings.Contains(output.Stderr, "ordinary-output") {
+		t.Errorf("stderr = %q", output.Stderr)
+	}
+}
+
+func TestRunBoundsVeryLargeStreamsAndMarksTruncation(t *testing.T) {
+	if !hasNode() {
+		t.Skip("node not installed")
+	}
+	t.Setenv("CSX_HOME", t.TempDir())
+	argv := []string{"node", "-e", `for(let i=0;i<500;i++){console.log("out-"+i+"-"+"x".repeat(2000));console.error("err-"+i+"-"+"y".repeat(2000))};process.exit(5)`}
+	code, output, err := Run(context.Background(), argv, t.TempDir())
+	if err != nil || code != 5 {
+		t.Fatalf("Run: code=%d err=%v", code, err)
+	}
+	if !output.StdoutTruncated || !output.StderrTruncated {
+		t.Fatalf("truncated flags = stdout:%v stderr:%v", output.StdoutTruncated, output.StderrTruncated)
+	}
+	if len(output.Stdout) > streamTailBytes || len(output.Stderr) > streamTailBytes {
+		t.Fatalf("bounded tails grew too large: stdout=%d stderr=%d", len(output.Stdout), len(output.Stderr))
+	}
+	if !strings.Contains(output.Stdout, "out-499-") || !strings.Contains(output.Stderr, "err-499-") {
+		t.Fatal("the final diagnostics were not retained")
 	}
 }
 
@@ -127,6 +166,9 @@ func TestLineRingBounds(t *testing.T) {
 	}
 	if lines[0] != "line-51" || lines[199] != "line-250" {
 		t.Fatalf("ring window wrong: first=%q last=%q", lines[0], lines[199])
+	}
+	if !r.Truncated() {
+		t.Error("dropping old lines did not mark the tail truncated")
 	}
 
 	// Partial final line is included.

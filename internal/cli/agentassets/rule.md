@@ -26,8 +26,10 @@ symbols and what you are trying to do.
 
 **Run builds through it, not around it.** `run_observed_command` instead of
 running the command yourself. When the command fails it asks the network about
-that failure by itself and appends whatever it finds, so the moment you most
-need this you do not have to remember it exists. Commands: `npm test`, `npm run build`, `pnpm build`,
+that failure by itself and appends whatever it finds in a separate supporting
+section after the local failure, so the moment you most need this you do not
+have to remember it exists. LOW/reference/unrelated results are reference
+candidates, never automatic-fix evidence. Commands: `npm test`, `npm run build`, `pnpm build`,
 `go build`, `go test`, `cargo build`, `cargo test`, `pytest`, `tsc`, `mix
 test`, `bundle exec rspec`, `composer test`, `dart test`. The exit code and
 output come back exactly the same. What it adds is a record that this

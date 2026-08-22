@@ -188,7 +188,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		Mode: func() string {
 			return currentConfig(home).Mode
 		},
-		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, string, error) {
+		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
 			return runObserved(ctx, db, ident, currentConfig(home), registryHTTP,
 				func() *config.Config { return currentConfig(home) }, argv, cwd)
 		},
@@ -668,7 +668,7 @@ func envSummaryText(summary map[string]string) string {
 // command's exit code passes through; returned error text is sanitizer
 // output only, never raw stderr.
 func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config,
-	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string) (int, string, string, []string, string, error) {
+	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
@@ -692,9 +692,9 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		profile = res.Classify(argv)
 	}
 
-	exitCode, tail, runErr := evidence.Run(ctx, argv, cwd)
+	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
 	if runErr != nil {
-		return -1, "", "", nil, "", runErr // command never ran; nothing recorded
+		return -1, "", "", nil, evidence.CommandOutput{}, runErr // command never ran; nothing recorded
 	}
 
 	stage := domain.StageUsed
@@ -713,7 +713,7 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 				}
 			}
 		}
-		san := sanitizer.Sanitize(tail, stage, publicNames)
+		san := sanitizer.Sanitize(output.Stderr, stage, publicNames)
 		if san.Code != "" {
 			sanitized = append(sanitized, "errorCode: "+san.Code)
 		}
@@ -745,12 +745,12 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 			recordRes = &closed
 		}
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
-		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, tail) // best-effort
+		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, output.Stderr) // best-effort
 	}
 	// The tail goes back to the caller unredacted. Sanitizing is what the
 	// UPLOAD needs; this return value never leaves the machine it was
 	// produced on, and the agent reading it already has the source.
-	return exitCode, string(stage), string(result), sanitized, tail, nil
+	return exitCode, string(stage), string(result), sanitized, output, nil
 }
 
 // adoptionPayload is the queued ADOPTION_EVIDENCE wire unit. It carries the
