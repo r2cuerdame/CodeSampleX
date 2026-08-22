@@ -477,12 +477,29 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			  AND (s.revoked_at IS NOT NULL OR s.idle_expires_at <= $1)`, now); err != nil {
 			return err
 		}
+		// One query for every attempt ledger in the candidate window. Asking
+		// per candidate would be up to four hundred round trips inside this
+		// transaction on an endpoint the whole fleet polls constantly.
+		ledgers, err := loadAuthoringLedgers(ctx, tx, candidates)
+		if err != nil {
+			return err
+		}
 		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
 		if err == nil {
 			key := authoringWorkKey(claimed.Ecosystem, claimed.Name, claimed.Version, claimed.Symbol)
-			if _, stillEligible := eligible[key]; stillEligible {
+			_, stillEligible := eligible[key]
+			// A live worker refreshing a hopeless claim used to hold the slot
+			// until its 24-hour lease ran out: reclaim released only claims
+			// whose SESSION had died, and this one had not.
+			ledger := ledgers[key]
+			if stillEligible && (ledger == nil || !ledger.barred(sessionID, now)) {
+				if ledger == nil || !now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
+					if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+						return err
+					}
+				}
 				found = true
 				return tx.Commit(ctx)
 			}
@@ -498,6 +515,10 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			return err
 		}
 		for _, candidate := range candidates {
+			ledger := ledgers[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)]
+			if ledger != nil && ledger.barred(sessionID, now) {
+				continue
+			}
 			kind := candidate.Kind
 			if kind == "" {
 				kind = "WANTED"
@@ -510,6 +531,9 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 				candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
 				kind, candidate.Score, sessionID, now, leaseExpiresAt))
 			if err == nil {
+				if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+					return err
+				}
 				found = true
 				return tx.Commit(ctx)
 			}
@@ -543,24 +567,45 @@ func (p *PG) AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID
 func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error) {
 	attached := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
 		if work.Kind == "EXPANSION" && work.Symbol == "" {
-			tag, err := c.Exec(ctx, `DELETE FROM authoring_assignments
+			tag, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
 				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=''
 				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5`,
 				work.Ecosystem, work.Name, work.Version, sessionID, now)
-			if err == nil {
-				attached = tag.RowsAffected() == 1
+			if err != nil {
+				return err
 			}
-			return err
-		}
-		tag, err := c.Exec(ctx, `UPDATE authoring_assignments SET sample_id=$7,completed_at=$8
-			WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
-			  AND session_id=$5 AND sample_id IS NULL AND lease_expires_at>$6`,
-			work.Ecosystem, work.Name, work.Version, work.Symbol, sessionID, now, sampleID, now)
-		if err == nil {
+			attached = tag.RowsAffected() == 1
+		} else {
+			tag, err := tx.Exec(ctx, `UPDATE authoring_assignments SET sample_id=$7,completed_at=$8
+				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
+				  AND session_id=$5 AND sample_id IS NULL AND lease_expires_at>$6`,
+				work.Ecosystem, work.Name, work.Version, work.Symbol, sessionID, now, sampleID, now)
+			if err != nil {
+				return err
+			}
 			attached = tag.RowsAffected() == 1
 		}
-		return err
+		// The coordinate answered the question. Its history stays for the
+		// audit trail; the counters that withhold work do not.
+		if attached {
+			ledger, err := loadAuthoringLedger(ctx, tx, work.Ecosystem, work.Name, work.Version, work.Symbol)
+			if err != nil {
+				return err
+			}
+			if ledger != nil {
+				ledger.authored(sessionID, now)
+				if err := saveAuthoringLedger(ctx, tx, ledger, now); err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Commit(ctx)
 	})
 	return attached, err
 }

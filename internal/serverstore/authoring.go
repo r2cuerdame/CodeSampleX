@@ -93,4 +93,18 @@ type AuthoringSessionStore interface {
 	ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
 	AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error)
 	AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error)
+	// ReportAuthoringOutcome records how the work this session holds turned
+	// out and hands the claim back. It returns the released work and false
+	// when the session holds nothing: a report can only speak for work the
+	// writer actually has.
+	ReportAuthoringOutcome(ctx context.Context, sessionID string, outcome AuthoringOutcome, detail string, now time.Time) (AuthoringWorkRow, bool, error)
+	// ListAuthoringQuarantine returns the coordinates currently withheld from
+	// authoring, newest withholding first, with the reason and the evidence.
+	ListAuthoringQuarantine(ctx context.Context, now time.Time, limit int) ([]AuthoringAttemptState, error)
+	// AuthoringAttemptState reads one coordinate's ledger, withheld or not.
+	AuthoringAttemptState(ctx context.Context, ecosystem, name, version, symbol string) (AuthoringAttemptState, bool, error)
+	// ReopenAuthoringQuarantine puts a withheld coordinate back on the board
+	// and resets the counters that took it off. It returns false when nothing
+	// was withheld, which is not an error.
+	ReopenAuthoringQuarantine(ctx context.Context, ecosystem, name, version, symbol string, now time.Time) (bool, error)
 }

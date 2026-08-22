@@ -317,3 +317,22 @@ func TestAuthoringLabelStillHonouredWhenGiven(t *testing.T) {
 		t.Errorf("label = %q, want java-builder", grants[0].Label)
 	}
 }
+
+// A writer that cannot author its coordinate had exactly one way out: stop
+// asking. The claim then sat on a 24-hour lease while the session stayed
+// alive, and the coordinate was off the board for everybody — which is how one
+// Gradle plugin marker took an authoring slot for four hours over 22 attempts.
+// The way out only exists if the prompt tells the writer it does.
+func TestAuthoringPromptTellsAWriterHowToHandBackHopelessWork(t *testing.T) {
+	prompt := authoringPrompt("https://codesamplex.dev/", authoringGrant{
+		Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"})
+	for _, want := range []string{
+		`csx sample-worker report --outcome`,
+		`--server "https://codesamplex.dev" --token "sentinel"`,
+		"no-callable-symbol", "transient", "infrastructure",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}

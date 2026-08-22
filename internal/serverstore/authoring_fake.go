@@ -597,6 +597,17 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 		}
 		if work.SessionID == sessionID && work.SampleID == "" && now.Before(work.LeaseExpiresAt) {
 			if _, stillEligible := eligible[key]; stillEligible {
+				// A live worker refreshing a hopeless claim used to hold the
+				// slot until its 24-hour lease ran out. Reclaim released only
+				// claims whose SESSION had died, and this one had not.
+				if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(sessionID, now) {
+					delete(f.authoringWork, key)
+					break
+				}
+				if ledger := f.authoringAttempts[key]; ledger == nil ||
+					!now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
+					f.noteAuthoringHandout(key, work.Kind, sessionID, now)
+				}
 				return work, true, nil
 			}
 			// Candidate selection changed (for example an environment was
@@ -610,6 +621,9 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 		if _, exists := f.authoringWork[key]; exists {
 			continue
 		}
+		if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(sessionID, now) {
+			continue
+		}
 		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
 			Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
 			SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
@@ -617,9 +631,80 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 			work.Kind = "WANTED"
 		}
 		f.authoringWork[key] = work
+		f.noteAuthoringHandout(key, work.Kind, sessionID, now)
 		return work, true, nil
 	}
 	return AuthoringWorkRow{}, false, nil
+}
+
+// noteAuthoringHandout opens an attempt against a coordinate. Caller holds f.mu.
+func (f *Fake) noteAuthoringHandout(key [4]string, kind, sessionID string, now time.Time) {
+	ledger := f.authoringAttempts[key]
+	if ledger == nil {
+		ledger = newAuthoringLedger(key[0], key[1], key[2], key[3])
+		f.authoringAttempts[key] = ledger
+	}
+	ledger.handout(kind, sessionID, now)
+}
+
+func (f *Fake) ReportAuthoringOutcome(_ context.Context, sessionID string, outcome AuthoringOutcome, detail string, now time.Time) (AuthoringWorkRow, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, work := range f.authoringWork {
+		if work.SessionID != sessionID || work.SampleID != "" || !now.Before(work.LeaseExpiresAt) {
+			continue
+		}
+		ledger := f.authoringAttempts[key]
+		if ledger == nil {
+			ledger = newAuthoringLedger(key[0], key[1], key[2], key[3])
+			f.authoringAttempts[key] = ledger
+		}
+		ledger.report(sessionID, outcome, detail, now)
+		// The claim goes back immediately. A writer that has said what it
+		// found should not also have to sit on the lease.
+		delete(f.authoringWork, key)
+		return work, true, nil
+	}
+	return AuthoringWorkRow{}, false, nil
+}
+
+func (f *Fake) ListAuthoringQuarantine(_ context.Context, now time.Time, limit int) ([]AuthoringAttemptState, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]AuthoringAttemptState, 0, len(f.authoringAttempts))
+	for _, ledger := range f.authoringAttempts {
+		if ledger.Withheld(now) {
+			out = append(out, ledger.state())
+		}
+	}
+	sortAuthoringQuarantine(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *Fake) AuthoringAttemptState(_ context.Context, ecosystem, name, version, symbol string) (AuthoringAttemptState, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ledger := f.authoringAttempts[authoringWorkKey(ecosystem, name, version, symbol)]
+	if ledger == nil {
+		return AuthoringAttemptState{}, false, nil
+	}
+	return ledger.state(), true, nil
+}
+
+func (f *Fake) ReopenAuthoringQuarantine(_ context.Context, ecosystem, name, version, symbol string, now time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ledger := f.authoringAttempts[authoringWorkKey(ecosystem, name, version, symbol)]
+	if ledger == nil {
+		return false, nil
+	}
+	return ledger.reopen(now), nil
 }
 
 func (f *Fake) AuthoringWorkForSubmission(_ context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error) {
@@ -644,6 +729,9 @@ func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, wo
 	current, ok := f.authoringWork[key]
 	if !ok || current.SessionID != sessionID || current.SampleID != "" || !now.Before(current.LeaseExpiresAt) {
 		return false, nil
+	}
+	if ledger := f.authoringAttempts[key]; ledger != nil {
+		ledger.authored(sessionID, now)
 	}
 	if current.Kind == "EXPANSION" && current.Symbol == "" {
 		delete(f.authoringWork, key)

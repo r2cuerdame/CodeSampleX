@@ -360,3 +360,87 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+// authoringOutcomeRequest is a writer classifying the work it holds.
+//
+// The classification has to come from the worker because nothing else knows
+// it. The server can observe that it gave a coordinate out and got nothing
+// back; it cannot tell a Docker daemon that died from a registry that was down
+// from an artifact that contains no code — and treating those three as one is
+// how a bad afternoon at a registry becomes a permanent exclusion.
+type authoringOutcomeRequest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Outcome       string `json:"outcome"`
+	Detail        string `json:"detail"`
+}
+
+// handleAuthoringWorkOutcome takes a writer's classification and hands its
+// claim back.
+//
+// Deliberately not behind the minAuthoringClient gate that /work/next uses.
+// That gate exists because an old worker cannot say which container platform
+// it ran on and would stamp a receipt with a platform it never used. An
+// outcome report makes no claim about a platform — it says the work produced
+// nothing and why — so gating it would only silence honest reports from older
+// workers, which is the exact silence this endpoint exists to end.
+func (a *api) handleAuthoringWorkOutcome(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.d.Store.(serverstore.AuthoringSessionStore)
+	if !ok {
+		writeErr(w, http.StatusServiceUnavailable, "authoring work storage unavailable")
+		return
+	}
+	tokenHash, ok := authoringDraftTokenHash(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var request authoringOutcomeRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&request); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid authoring outcome")
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, "invalid authoring outcome")
+		return
+	}
+	outcome := serverstore.AuthoringOutcome(strings.TrimSpace(request.Outcome))
+	// AUTHORED and HANDED_OUT are the server's own bookkeeping. A client that
+	// could report them could mark a coordinate solved without writing
+	// anything, which would clear every counter that withholds hopeless work.
+	if request.SchemaVersion != 1 || !serverstore.ValidAuthoringOutcome(outcome) {
+		writeErr(w, http.StatusBadRequest, "unsupported authoring outcome")
+		return
+	}
+	now := a.now().UTC()
+	ip := ""
+	if addr, ok := activity.ExternalRequestAddress(r); ok {
+		ip = addr.String()
+	}
+	session, err := store.RefreshAuthoringSession(r.Context(), tokenHash, ip, "", now, now.Add(time.Hour))
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
+		return
+	}
+	work, released, err := store.ReportAuthoringOutcome(r.Context(), session.SessionID, outcome, request.Detail, now)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "recording authoring outcome failed")
+		return
+	}
+	if !released {
+		// A report can only speak for work the writer actually holds, and a
+		// writer whose lease already lapsed has done nothing wrong.
+		writeJSON(w, http.StatusOK, map[string]string{"status": "NO_CLAIM"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "RELEASED",
+		"work": map[string]any{
+			"package": domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String(),
+			"symbol":  work.Symbol,
+		},
+	})
+}

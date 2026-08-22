@@ -103,6 +103,12 @@ func farmHealthView(health serverstore.FarmHealth) map[string]any {
 		"staleClaims":          health.StaleClaims,
 		"receiptsByOs":         health.ReceiptsByOS,
 		"quarantinedByReason":  quarantineReasonView(health.QuarantinedByReason),
+		// How much of the authoring board the queue is refusing to hand out.
+		// A withdrawn SAMPLE and a withheld COORDINATE are different acts —
+		// one takes back an answer, the other stops asking the question — so
+		// they are counted apart rather than pooled into one alarming number.
+		"withheldCoordinates": health.WithheldCoordinates,
+		"withheldByReason":    quarantineReasonView(health.WithheldByReason),
 	}
 	// The rate is what an operator reads; the count is what they act on.
 	if health.PublicSamples > 0 {

@@ -39,6 +39,14 @@ type FarmHealth struct {
 	// worth surfacing.
 	QuarantinedByReason map[string]int
 	ReceiptsByOS        map[string]int // PASS receipts per operating system
+	// WithheldCoordinates is how many public coordinates the authoring queue
+	// is currently refusing to offer, and WithheldByReason is why.
+	//
+	// They are read from exactly the state the picker consults, because an
+	// operator reading "0 withheld" while the fleet is being refused work is
+	// the failure the attempt ledger exists to make visible.
+	WithheldCoordinates int
+	WithheldByReason    map[string]int
 }
 
 // FarmAxisCoverage is one (os, ecosystem) cell of the compatibility map:
