@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
@@ -138,8 +139,12 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
 	handler, activityTracker := buildMuxWithTracker(context.Background(), cfg, pg)
+	listenAddr, narrowed := resolveListenAddr(cfg.Listen, runtime.GOOS)
+	if narrowed {
+		fmt.Fprintln(stdout, narrowedListenNotice(cfg.Listen, listenAddr))
+	}
 	srv := &http.Server{
-		Addr:              cfg.Listen,
+		Addr:              listenAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -165,7 +170,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		shutdownDone <- errors.Join(shutdownErr, trackerErr)
 	}()
 
-	fmt.Fprintf(stdout, "csx-server: listening on %s\n", cfg.Listen)
+	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
 	err := srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
