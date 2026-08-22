@@ -236,18 +236,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 	var out []WantedRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			WITH verified_samples AS MATERIALIZED (
-				SELECT DISTINCT s.sample_id,s.manifest
-				FROM samples s
-				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
-				WHERE NOT s.quarantined
-			), verified_packages AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl
-				FROM verified_samples s
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
-			), verified_symbols AS MATERIALIZED (
+			WITH `+authoringCoverageCTE+`, verified_symbols AS MATERIALIZED (
 				SELECT DISTINCT package.value AS purl,symbol.value AS symbol
 				FROM verified_samples s
 				CROSS JOIN LATERAL jsonb_array_elements_text(
@@ -256,16 +245,28 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
 				) AS symbol(value)
-			), verified_package_targets AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl,
-				       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS target_os
-				FROM samples s
-				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
-				WHERE NOT s.quarantined
-				  AND LOWER(COALESCE(r.receipt->'environment'->>'os',''))<>''
+			), dependency_closure AS MATERIALIZED (
+				-- The ranked, bounded view of dependency_open: at most
+				-- $2 releases of one library and at most $3 rows overall,
+				-- demand first throughout. The bounds and the ordering are
+				-- explained in dependencyclosure.go, and
+				-- (*Fake).dependencyClosure is the other half of them --
+				-- TestIntegrationDependencyClosureParity holds the two
+				-- together.
+				SELECT ecosystem,child_name AS name,child_version AS version,projects
+				FROM (
+					SELECT o.ecosystem,o.child_name,o.child_version,
+					       COUNT(DISTINCT o.bucket||o.epoch) AS projects,
+					       ROW_NUMBER() OVER (
+					         PARTITION BY o.ecosystem,o.child_name
+					         ORDER BY COUNT(DISTINCT o.bucket||o.epoch) DESC,
+					                  o.child_version DESC) AS version_rank
+					FROM dependency_open o
+					GROUP BY o.ecosystem,o.child_name,o.child_version
+				) ranked_dependency
+				WHERE version_rank <= $2
+				ORDER BY projects DESC,version DESC,ecosystem,name
+				LIMIT $3
 			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
 				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
@@ -321,7 +322,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				-- reach. target_os comes from where the package was already proven, so
 				-- the row is claimable by a verifier that can actually execute it.
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
-				       0::bigint AS score,'EXPANSION'::text AS kind,3 AS source_rank,p.last_seen,
+				       0::bigint AS score,'EXPANSION'::text AS kind,4 AS source_rank,p.last_seen,
 				       sibling.target_os
 				-- Newest few per package only. Every sibling is a first job and so
 				-- lands at version_depth 1; uncapped, one long release history fills
@@ -346,6 +347,27 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				  JOIN packages pk ON pk.purl=t.purl
 				) sibling ON sibling.ecosystem=p.ecosystem AND sibling.name=p.name
 				WHERE p.sibling_rank <= $2
+				UNION ALL
+				-- The dependency closure, ranked between the exact holes
+				-- evidence points at and the version breadth nobody has asked
+				-- for. target_os is empty on purpose: a resolved edge records
+				-- what a lockfile contained, not a platform anybody ran it on,
+				-- so it pins nothing and any verifier that can build the
+				-- ecosystem may answer it.
+				--
+				-- last_seen is the zero timestamp rather than the edge's,
+				-- because Go's zero time is what the Fake carries here and an
+				-- ordering term the two stores disagree about is how the two
+				-- implementations of this query drifted apart before.
+				SELECT 'pkg:'||d.ecosystem||'/'||
+				         CASE WHEN left(d.name,1)='@'
+				              THEN '%40'||substring(d.name from 2)
+				              ELSE d.name END||'@'||d.version AS purl,
+				       d.ecosystem,d.name,d.version,''::text AS symbol,
+				       d.projects AS score,'DEPENDENCY'::text AS kind,3 AS source_rank,
+				       '0001-01-01 00:00:00+00'::timestamptz AS last_seen,
+				       ''::text AS target_os
+				FROM dependency_closure d
 			), ranked AS (
 				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
 				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
@@ -397,7 +419,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				WHERE (CASE
 				    WHEN c.symbol<>'' THEN NOT EXISTS (
 				      SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol)
-				    WHEN c.kind='EXPANSION' THEN NOT EXISTS (
+				    WHEN c.kind IN ('EXPANSION','DEPENDENCY') THEN NOT EXISTS (
 				      SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
 				    ELSE true END)
 				  AND NOT EXISTS (
@@ -431,7 +453,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			-- pushed the entire measured demand behind work nobody asked for.
 			ORDER BY version_depth,
 			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
-			LIMIT $1`, limit, authoringSiblingVersionsPerPackage)
+			LIMIT $1`, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap)
 		if err != nil {
 			return err
 		}
@@ -572,7 +594,12 @@ func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, wo
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		if work.Kind == "EXPANSION" && work.Symbol == "" {
+		// A package-level claim is keyed (ecosystem,name,version,'') whichever
+		// symbol the writer ended up choosing, so leaving the row behind with a
+		// sample id would take that coordinate off the board permanently. A
+		// DEPENDENCY claim has the same shape and the same reason: it asks about
+		// the release, not about one symbol in it.
+		if (work.Kind == "EXPANSION" || work.Kind == "DEPENDENCY") && work.Symbol == "" {
 			tag, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
 				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=''
 				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5`,

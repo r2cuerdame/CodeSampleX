@@ -210,7 +210,7 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 		}
 		return false
 	}
-	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" {
+	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" && candidate.Kind != "DEPENDENCY" {
 		return false
 	}
 	// TargetOS on a FINDING or an EXPANSION says where the coordinate was
@@ -336,6 +336,12 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
+	// A dependency coordinate is the one kind of work whose release no
+	// publicness gate has necessarily seen: it exists because a lockfile
+	// resolved onto it, not because anybody reported using it. Confirm it
+	// against the registry before a worker is sent, and register it while we
+	// are there.
+	eligible = a.confirmDependencyWork(r.Context(), eligible)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a

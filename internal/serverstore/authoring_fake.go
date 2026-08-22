@@ -142,11 +142,18 @@ func (f *Fake) ListAuthoringSessions(_ context.Context, now time.Time, limit int
 var _ AuthoringSessionStore = (*Fake)(nil)
 
 // Source ranks mirror the branch order of the PostgreSQL expansion query.
+//
+// The order is the one R2C-89 fixes: real demand, then the exact holes
+// evidence already points at, then the dependency closure, then version
+// breadth. Dependency work sits above siblings because a coordinate a
+// lockfile actually resolved is something projects run, and a sibling release
+// nobody has been seen using is not.
 const (
 	authoringRankFinding      = 0
 	authoringRankPackageLevel = 1
 	authoringRankSymbol       = 2
-	authoringRankSibling      = 3
+	authoringRankDependency   = 3
+	authoringRankSibling      = 4
 )
 
 func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([]WantedRow, error) {
@@ -213,7 +220,8 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 				}
 				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol, targetOS}
 				candidate := WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount, TargetOS: targetOS}
+					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount, TargetOS: targetOS,
+					LastSeen: pkg.LastSeen}
 				if old, ok := candidates[key]; !ok || candidate.Score > old.Score {
 					candidates[key] = candidate
 					ranks[key] = authoringRankFinding
@@ -225,11 +233,21 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	packageScores := make(map[string]int64)
 	// (purl, os) pairs evidence has actually seen, with their weight.
 	observedTargets := make(map[string]map[string]int64)
+	// observedPURLs is every coordinate evidence names at all, and chosenPURLs
+	// the subset somebody listed in their own manifest. The dependency closure
+	// needs both: it walks out of the chosen ones and stops at anything already
+	// observed, because every other branch here can already reach those.
+	observedPURLs := make(map[string]bool)
+	chosenPURLs := make(map[string]bool)
 	for observed, score := range f.merge.observations {
 		targetOS := ""
+		observedPURLs[observed.PURL] = true
 		if meta := f.aggMeta[observed]; meta != nil {
 			targetOS = authoringEvidenceOS(meta.envJSON)
 			score *= authoringChoiceWeight(meta.direct)
+			if meta.direct {
+				chosenPURLs[observed.PURL] = true
+			}
 		}
 		observedScores[[3]string{observed.PURL, observed.Symbol, targetOS}] += score
 		packageScores[observed.PURL] += score
@@ -240,41 +258,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			observedTargets[observed.PURL][targetOS] += score
 		}
 	}
-	packageTargets := make(map[string]map[string]bool)
-	verifiedPURLs := make(map[string]bool)
-	for sampleID, sample := range f.samples {
-		if sample.Quarantined {
-			continue
-		}
-		var manifest struct {
-			Packages []string `json:"packages"`
-		}
-		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
-			continue
-		}
-		for _, receipt := range f.receipts[sampleID] {
-			if receipt.ContractResult != "PASS" {
-				continue
-			}
-			for _, purl := range manifest.Packages {
-				verifiedPURLs[purl] = true
-			}
-			var parsed struct {
-				Environment struct {
-					OS string `json:"os"`
-				} `json:"environment"`
-			}
-			if json.Unmarshal([]byte(receipt.ReceiptJSON), &parsed) != nil || parsed.Environment.OS == "" {
-				continue
-			}
-			for _, purl := range manifest.Packages {
-				if packageTargets[purl] == nil {
-					packageTargets[purl] = make(map[string]bool)
-				}
-				packageTargets[purl][strings.ToLower(parsed.Environment.OS)] = true
-			}
-		}
-	}
+	verifiedPURLs, packageTargets := f.provenCoordinates()
 	// Package-level work is for an environment that has evidence but no proof
 	// yet. Offering the pairs already proven — which is what this did — meant a
 	// package proven on linux was offered for linux again, forever, and the
@@ -294,7 +278,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Kind: "EXPANSION", Score: score, TargetOS: targetOS}
+					Kind: "EXPANSION", Score: score, TargetOS: targetOS, LastSeen: pkg.LastSeen}
 				ranks[key] = authoringRankPackageLevel
 			}
 		}
@@ -305,20 +289,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	// release nobody has measured can never become work -- and its column in
 	// the matrix stays blank however long the workers run. Score 0 puts these
 	// last on merit; version_depth is what actually lifts them into reach.
-	nameTargets := make(map[[2]string]map[string]bool)
-	for purl, oses := range packageTargets {
-		proven, ok := f.packages[purl]
-		if !ok {
-			continue
-		}
-		key := [2]string{proven.Ecosystem, proven.Name}
-		if nameTargets[key] == nil {
-			nameTargets[key] = make(map[string]bool)
-		}
-		for targetOS := range oses {
-			nameTargets[key][targetOS] = true
-		}
-	}
+	nameTargets := f.provenNameTargets(packageTargets)
 	// Only the newest few siblings per package. Uncapped, one long release
 	// history fills the whole window with score-0 rows -- see
 	// authoringSiblingVersionsPerPackage. The ordering (last_seen, then version
@@ -351,10 +322,18 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
 				if _, exists := candidates[key]; !exists {
 					candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
-						Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS}
+						Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS,
+						LastSeen: pkg.LastSeen}
 					ranks[key] = authoringRankSibling
 				}
 			}
+		}
+	}
+	for _, row := range f.dependencyClosure(observedPURLs, chosenPURLs, verifiedPURLs, nameTargets) {
+		key := candidateKey{row.Ecosystem, row.Name, row.Version, "", ""}
+		if _, exists := candidates[key]; !exists {
+			candidates[key] = row
+			ranks[key] = authoringRankDependency
 		}
 	}
 	for _, pkg := range f.packages {
@@ -378,7 +357,8 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1], observed[2]}
 			if existing, ok := candidates[key]; !ok || (existing.Kind != "FINDING" && score > existing.Score) {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Symbol: observed[1], Kind: "EXPANSION", Score: score, TargetOS: observed[2]}
+					Symbol: observed[1], Kind: "EXPANSION", Score: score, TargetOS: observed[2],
+					LastSeen: pkg.LastSeen}
 				ranks[key] = authoringRankSymbol
 			}
 		}
@@ -733,7 +713,12 @@ func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, wo
 	if ledger := f.authoringAttempts[key]; ledger != nil {
 		ledger.authored(sessionID, now)
 	}
-	if current.Kind == "EXPANSION" && current.Symbol == "" {
+	// A package-level claim is keyed (ecosystem,name,version,'') whichever
+	// symbol the writer ended up choosing, so leaving the row behind with a
+	// sample id would take that coordinate off the board permanently. A
+	// DEPENDENCY claim has the same shape and the same reason: it asks about
+	// the release, not about one symbol in it.
+	if (current.Kind == "EXPANSION" || current.Kind == "DEPENDENCY") && current.Symbol == "" {
 		delete(f.authoringWork, key)
 		return true, nil
 	}

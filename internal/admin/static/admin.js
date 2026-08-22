@@ -321,6 +321,7 @@
   const health = document.querySelector("#farm-health");
   const cost = document.querySelector("#farm-cost");
   const coverage = document.querySelector("#farm-coverage");
+  const backlog = document.querySelector("#farm-backlog");
   if (!list || !health || !cost) return;
 
   const num = (n) => n.toLocaleString("ko-KR");
@@ -359,6 +360,7 @@
       list.replaceChildren();
       health.replaceChildren();
       if (coverage) coverage.replaceChildren();
+      if (backlog) backlog.replaceChildren();
       const w = document.querySelector("#farm-withdrawn");
       if (w) w.replaceChildren();
       const p = document.createElement("p");
@@ -410,6 +412,32 @@
       stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
         .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
     );
+
+    if (backlog) {
+      backlog.replaceChildren();
+      const b = data.backlog;
+      if (!b) {
+        // Absent, not zero. A panel that renders 0 for a figure it never
+        // received says "nothing left" about a backlog it did not read.
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "남은 좌표를 읽지 못했습니다.";
+        backlog.appendChild(p);
+      } else {
+        const hours = (b.windowSeconds || 3600) / 3600;
+        const perHour = (n) => `${(n / hours).toFixed(1)}건/시간`;
+        const byKind = Object.entries(b.handedOutByKind || {})
+          .sort((x, y) => y[1] - x[1])
+          .map(([kind, n]) => `${kind} ${num(n)}`).join(" · ") || "—";
+        backlog.append(
+          stat("미검증 좌표", num(b.coverageHoles || 0)),
+          stat("미관측 의존성", num(b.dependencies || 0)),
+          stat("배포", `${num(b.handedOutInWindow || 0)} · ${perHour(b.handedOutInWindow || 0)}`),
+          stat("첫 증명", `${num(b.firstProvenInWindow || 0)} · ${perHour(b.firstProvenInWindow || 0)}`),
+          stat("배포 출처", byKind),
+        );
+      }
+    }
 
     const withdrawn = document.querySelector("#farm-withdrawn");
     if (withdrawn) {
