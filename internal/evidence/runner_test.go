@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -410,5 +411,45 @@ func TestRunLocalLogKeepsFullStreamWhileCaptureIsBounded(t *testing.T) {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("last-run.log is missing %q", want)
 		}
+	}
+}
+
+// A command that passed must stay one that passed when the terminal breaks.
+//
+// os/exec surfaces a copy error from Cmd.Wait only when the child exited 0 (a
+// non-zero exit takes precedence), so the arrangement this replaced failed
+// precisely when nothing was wrong with the command — and Run reads any
+// non-ExitError as "the command never ran", dropping the record with it.
+// The first half of this test pins that stdlib behaviour, since it is the
+// whole reason the tee may not report errors; the second pins ours.
+func TestStreamTeeBrokenPassthroughKeepsAZeroExitZero(t *testing.T) {
+	if !hasNode() {
+		t.Skip("node not installed")
+	}
+	const script = `for(let i=0;i<500;i++){console.log("out-"+i+"-"+"x".repeat(2000))};process.exitCode=0`
+
+	old := exec.Command("node", "-e", script)
+	old.Dir = t.TempDir()
+	old.Stdout = io.MultiWriter(&brokenWriter{accept: 1}, newLineRing(tailLines))
+	err := old.Run()
+	if err == nil {
+		t.Fatal("io.MultiWriter no longer propagates the passthrough error; " +
+			"re-check whether streamTee still needs to swallow it")
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		t.Fatalf("expected a non-ExitError from the copier, got exit code %d", ee.ExitCode())
+	}
+
+	ring := newLineRing(tailLines)
+	fixed := exec.Command("node", "-e", script)
+	fixed.Dir = t.TempDir()
+	fixed.Stdout = newStreamTee(ring, &brokenWriter{accept: 1})
+	if err := fixed.Run(); err != nil {
+		t.Fatalf("cmd.Run() = %v, want nil: the command exited 0", err)
+	}
+	if !ring.Truncated() || !strings.Contains(ring.Tail(), "out-499-") {
+		t.Errorf("capture truncated=%v, has final line=%v",
+			ring.Truncated(), strings.Contains(ring.Tail(), "out-499-"))
 	}
 }
