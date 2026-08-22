@@ -101,7 +101,7 @@ csx sync                           # warm the shard cache — once, right after 
 
 ## 検証済みサンプル
 
-サンプルはスニペットではありません。**契約（contract）**を持つ、コンテンツアドレス化された最小プロジェクト（正規アーティファクトの `sha256:<hex>`）です。契約とは、固定コンテナ内でオフライン実行され、合格したアサーションのことです。クリーンルームでの作成ループは CLI 専用です:
+サンプルはスニペットではありません。**契約（contract）**を持つ、コンテンツアドレス化された最小プロジェクト（正規アーティファクトの `sha256:<hex>`）です。契約とは、固定コンテナ内でオフライン実行され、合格したアサーションのことです。固定するのはタグではなくイメージ digest です — タグは読み手のための別名で、実際に走るのは digest です — そして署名済みレシートが実行されたイメージ参照そのものを記録するため、言葉を信じる代わりに誰でも同じバイト列を再実行できます（[docs/adapters.md](../adapters.md#verifier-images)）。クリーンルームでの作成ループは CLI 専用です:
 
 ```bash
 csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace

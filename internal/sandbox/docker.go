@@ -83,16 +83,16 @@ func windowsImageFor(ecosystem, runtime, runtimeVersion string) (string, error) 
 		if runtime != "" && runtime != "go" {
 			return "", fmt.Errorf("sandbox: no Windows verifier image for golang runtime %q", runtime)
 		}
-		return "golang:1.26-windowsservercore-ltsc2022", nil
+		return pinned("golang:1.26-windowsservercore-ltsc2022"), nil
 	case "pypi":
 		if runtime != "" && runtime != "python" {
 			return "", fmt.Errorf("sandbox: no Windows verifier image for pypi runtime %q", runtime)
 		}
 		switch runtimeVersion {
 		case "", "3.12":
-			return "python:3.12-windowsservercore-ltsc2022", nil
+			return pinned("python:3.12-windowsservercore-ltsc2022"), nil
 		case "3.14":
-			return "python:3.14-windowsservercore-ltsc2022", nil
+			return pinned("python:3.14-windowsservercore-ltsc2022"), nil
 		default:
 			return "", fmt.Errorf("sandbox: no Windows verifier image for python runtime version %q", runtimeVersion)
 		}
@@ -100,36 +100,37 @@ func windowsImageFor(ecosystem, runtime, runtimeVersion string) (string, error) 
 	return "", fmt.Errorf("sandbox: no Windows verifier image for ecosystem %q", ecosystem)
 }
 
-// chrome134Image is the measured browser verifier for Puppeteer 24.4.0.
-// It contains Node 22.14.0 and Chrome for Testing 134.0.6998.35. The image
-// was run under the same 512 MiB / 256 PID / network-off contract as stages
-// before being admitted here; a plain node image cannot produce browser
-// execution evidence merely because the package controlling it is Puppeteer.
-const (
-	chrome134Image = "ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5769b74c89135c663cbb2a76e07d3e261bb3e2da83be98409a68a"
-	// The digest-pinned image owns this path. Exporting it lets Puppeteer
-	// releases whose preferred browser revision differs from 134 exercise
-	// their API against the browser environment the manifest requested,
-	// instead of failing before launch while looking for their old cache key.
-	chrome134Executable = "/home/pptruser/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
-	mavenJavaImage      = "maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927df2c662cdd47ddb116443d6bec4696cfae3de1a0ddac8fcc7b87ce61ae"
-	// Docker Official Image multi-platform index measured 2026-08-18. The
-	// image contains Gradle 8.14.3 and Eclipse Temurin JDK 21 on Alpine.
-	gradleJavaImage = "gradle:8.14.3-jdk21-alpine@sha256:d20561a56ff27350ea778b8151f6af913c76e9d35b6a135f927ee16e3ce8193c"
-	// Docker Official Image index measured 2026-08-18. It resolves to
-	// Python 3.14.7 on Alpine 3.24 for linux/amd64 while retaining the
-	// matching arm and other published architectures behind the same
-	// immutable multi-platform digest.
-	python314Image = "python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc"
+// chrome134Executable is the browser the pinned image owns. Exporting the
+// path lets Puppeteer releases whose preferred browser revision differs from
+// 134 exercise their API against the browser environment the manifest
+// requested, instead of failing before launch while looking for their old
+// cache key.
+const chrome134Executable = "/home/pptruser/.cache/puppeteer/chrome/linux-134.0.6998.35/chrome-linux64/chrome"
+
+// The images these names stand for live in the registry (images.go), which
+// is the only place a digest is written down. Resolving them here rather
+// than repeating a literal is what keeps the base/libc facts and the
+// selectors describing the same bytes.
+//
+// chrome134Image is the measured browser verifier for Puppeteer 24.4.0: Node
+// 22.14.0 and Chrome for Testing 134.0.6998.35. It was run under the same
+// 512 MiB / 256 PID / network-off contract as stages before being admitted;
+// a plain node image cannot produce browser execution evidence merely
+// because the package controlling it is Puppeteer.
+var (
+	chrome134Image  = pinned("ghcr.io/puppeteer/puppeteer:24.4.0")
+	mavenJavaImage  = pinned("maven:3.9.11-eclipse-temurin-21-alpine")
+	gradleJavaImage = pinned("gradle:8.14.3-jdk21-alpine")
+	python314Image  = pinned("python:3.14-alpine")
 )
 
+// javaVerifierImage is one line of the Java matrix. The base, distro and
+// libc are NOT repeated here: they belong to the image, and the registry in
+// images.go states them once beside the digest they describe.
 type javaVerifierImage struct {
 	image                 string
 	runtimeVersion        string
 	packageManagerVersion string
-	bucket                string
-	distro                string
-	libc                  string
 }
 
 // An omitted Maven runtimeVersion is the compatibility lane that existed
@@ -138,23 +139,23 @@ type javaVerifierImage struct {
 // Maven release, JDK vendor, distribution and libc so Java is the only moving
 // toolchain dimension.
 var mavenJavaImages = map[string]javaVerifierImage{
-	"":   {mavenJavaImage, "21", "3.9", "alpine", "", "musl"},
-	"8":  {"maven:3.9.11-amazoncorretto-8-al2023@sha256:80f411ee8dc37def5bb6808f3b2698d5fac5a16b6797ffc8fc1fbce2df71b49e", "8", "3.9.11", "2023", "amzn", "glibc"},
-	"11": {"maven:3.9.11-amazoncorretto-11-al2023@sha256:07b7514c1fce56f9dece12a9daea49312fff36f4b3449e8c314667587f997be0", "11", "3.9.11", "2023", "amzn", "glibc"},
-	"17": {"maven:3.9.11-amazoncorretto-17-al2023@sha256:6374befde1891b069f5297714525d2a6c03cd0f410070fb53b2842b4d8118c63", "17", "3.9.11", "2023", "amzn", "glibc"},
-	"21": {"maven:3.9.11-amazoncorretto-21-al2023@sha256:b0e00d2581674e0c12392bb88075a2835e73af86af48bbdb8eeec3d2e993ea40", "21", "3.9.11", "2023", "amzn", "glibc"},
-	"25": {"maven:3.9.11-amazoncorretto-25-al2023@sha256:3d55eb28eae103300391509a5ac8cfc918d4a35dbfd087ef5472023949682791", "25", "3.9.11", "2023", "amzn", "glibc"},
+	"":   {mavenJavaImage, "21", "3.9"},
+	"8":  {pinned("maven:3.9.11-amazoncorretto-8-al2023"), "8", "3.9.11"},
+	"11": {pinned("maven:3.9.11-amazoncorretto-11-al2023"), "11", "3.9.11"},
+	"17": {pinned("maven:3.9.11-amazoncorretto-17-al2023"), "17", "3.9.11"},
+	"21": {pinned("maven:3.9.11-amazoncorretto-21-al2023"), "21", "3.9.11"},
+	"25": {pinned("maven:3.9.11-amazoncorretto-25-al2023"), "25", "3.9.11"},
 }
 
 // Gradle 8.14.3 can run on Java 8 through 24. Java 25 requires Gradle 9.1+
 // and therefore necessarily changes two recorded axes; the receipt records
 // 9.7.0 rather than pretending that result is a pure-JDK comparison.
 var gradleJavaImages = map[string]javaVerifierImage{
-	"8":  {"gradle:8.14.3-jdk8-corretto-al2023@sha256:ec6379bf6453a09b608f7feb4e52a53f28edc2a1acc8a07aff6328b906bf20d6", "8", "8.14.3", "2023", "amzn", "glibc"},
-	"11": {"gradle:8.14.3-jdk11-corretto-al2023@sha256:93d9f84a044faf9b345b7c126772ba719195318b0e848e322c6f1a977232e012", "11", "8.14.3", "2023", "amzn", "glibc"},
-	"17": {"gradle:8.14.3-jdk17-corretto-al2023@sha256:9a40f91169b9685e9d25c73722b7f8dea9e1e7aa43dc4fc8a1acda1614a05eca", "17", "8.14.3", "2023", "amzn", "glibc"},
-	"21": {"gradle:8.14.3-jdk21-corretto-al2023@sha256:05cb2f8b4a77587b3de1cd7ae003204eb8c1dc9db48a52c9cebd29d0041c949b", "21", "8.14.3", "2023", "amzn", "glibc"},
-	"25": {"gradle:9.7.0-jdk25-corretto-al2023@sha256:bb35f016497202d8342ff68fe5d45b74a94a3d9043a3d2cced0061818abebeef", "25", "9.7.0", "2023", "amzn", "glibc"},
+	"8":  {pinned("gradle:8.14.3-jdk8-corretto-al2023"), "8", "8.14.3"},
+	"11": {pinned("gradle:8.14.3-jdk11-corretto-al2023"), "11", "8.14.3"},
+	"17": {pinned("gradle:8.14.3-jdk17-corretto-al2023"), "17", "8.14.3"},
+	"21": {pinned("gradle:8.14.3-jdk21-corretto-al2023"), "21", "8.14.3"},
+	"25": {pinned("gradle:9.7.0-jdk25-corretto-al2023"), "25", "9.7.0"},
 }
 
 func javaImageForManifest(m domain.SampleManifest) (javaVerifierImage, bool, error) {
@@ -237,11 +238,11 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 	case "npm":
 		switch runtime {
 		case "", "node":
-			return "node:22-alpine", nil
+			return pinned("node:22-alpine"), nil
 		case "bun":
-			return "oven/bun:1-alpine", nil
+			return pinned("oven/bun:1-alpine"), nil
 		case "deno":
-			return "denoland/deno:alpine", nil
+			return pinned("denoland/deno:alpine"), nil
 		}
 		return "", fmt.Errorf("sandbox: no verifier image for npm runtime %q", runtime)
 	case "pypi":
@@ -250,23 +251,23 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 		}
 		switch runtimeVersion {
 		case "", "3.12":
-			return "python:3.12-alpine", nil
+			return pinned("python:3.12-alpine"), nil
 		case "3.14":
 			return python314Image, nil
 		default:
 			return "", fmt.Errorf("sandbox: no verifier image for python runtime version %q", runtimeVersion)
 		}
 	case "golang":
-		return "golang:1.26-alpine", nil
+		return pinned("golang:1.26-alpine"), nil
 	case "cargo":
-		return "rust:1-alpine", nil
+		return pinned("rust:1-alpine"), nil
 	case "composer":
 		// One image for both stages on purpose. Composer writes
 		// vendor/composer/platform_check.php from the PHP version it
 		// resolved under, and the contract aborts when the runtime differs —
 		// so resolving on composer:2 and testing on php:8-alpine couples two
 		// tags that drift independently.
-		return "composer:2", nil
+		return pinned("composer:2"), nil
 	case "gem":
 		// Debian, not alpine, and the difference is the whole ecosystem.
 		//
@@ -287,11 +288,11 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 		// says glibc for ruby rather than musl. glibc is what most ruby
 		// runs on, and musl belongs as a second axis of the matrix rather
 		// than as the only one anything is ever verified against.
-		return "ruby:3", nil
+		return pinned("ruby:3"), nil
 	case "pub":
-		return "dart:3.13.0", nil
+		return pinned("dart:3.13.0"), nil
 	case "hex":
-		return "elixir:1.20.1-alpine", nil
+		return pinned("elixir:1.20.1-alpine"), nil
 	case "maven":
 		m := domain.SampleManifest{Environment: domain.EnvironmentFingerprint{
 			SchemaVersion: 1, Ecosystem: "maven", Runtime: runtime, RuntimeVersion: runtimeVersion,
@@ -532,9 +533,11 @@ func (r DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m dom
 		CI:               host.CI,
 	}
 	if spec, java, err := javaImageForManifest(m); java && err == nil {
-		env.OSVersionBucket = spec.bucket
-		env.Distro = spec.distro
-		env.Libc = spec.libc
+		if entry, ok := registryEntryFor(spec.image); ok {
+			env.OSVersionBucket = entry.bucket
+			env.Distro = entry.distro
+			env.Libc = entry.libc
+		}
 	}
 	if img == chrome134Image {
 		env.ExecutionContext = "browser"
@@ -555,6 +558,20 @@ func (r DockerRunner) StageEnvironment(host domain.EnvironmentFingerprint, m dom
 		}
 	}
 	return env.Normalize()
+}
+
+// VerifierImage reports which image bytes this runner will execute for a
+// manifest, so the receipt can name them and the signature can cover them.
+//
+// It is the SAME selection the stages use, not a second description of it:
+// a field derived from a parallel table would eventually describe an image
+// the stages had stopped running.
+func (r DockerRunner) VerifierImage(m domain.SampleManifest) *domain.VerifierImage {
+	img, err := imageForManifestOn(r.containerOS(), m)
+	if err != nil {
+		return nil
+	}
+	return verifierImageOf(img)
 }
 
 // dockerArgs builds the docker run invocation. Resource limits per plan
@@ -747,59 +764,4 @@ func runtimeOf(m domain.SampleManifest, host domain.EnvironmentFingerprint) stri
 	// Empty means "the ecosystem's default", which is what imageFor and
 	// imageRuntime already do with it.
 	return ""
-}
-
-// imageBases is what each verifier image ACTUALLY is, verified by running
-// it. A receipt says which libc the contract ran against, and musl versus
-// glibc is the dimension the grader treats as decisive for whether a
-// package with a native module loads at all — so this cannot be a guess.
-//
-// It was inferred from the image NAME: anything containing "alpine" was
-// musl, everything else glibc. composer:2 is an Alpine image that does not
-// say so in its tag, so every PHP receipt this project has ever produced
-// claimed glibc for a run on musl — and a caller on Debian was told a
-// musl-verified sample matched their libc exactly.
-//
-// A name is not evidence. TestImageBaseMatchesTheRealImage runs each of
-// these and fails if the table drifts, which is the only thing that keeps
-// it true as the image set grows.
-var imageBases = map[string]struct{ bucket, libc string }{
-	"node:22-alpine":       {"alpine", "musl"},
-	chrome134Image:         {"debian", "glibc"},
-	"python:3.12-alpine":   {"alpine", "musl"},
-	python314Image:         {"alpine", "musl"},
-	gradleJavaImage:        {"alpine", "musl"},
-	"golang:1.26-alpine":   {"alpine", "musl"},
-	"rust:1-alpine":        {"alpine", "musl"},
-	"ruby:3-alpine":        {"alpine", "musl"},
-	"ruby:3":               {"debian", "glibc"},
-	"elixir:1.20.1-alpine": {"alpine", "musl"},
-	"denoland/deno:alpine": {"alpine", "musl"},
-	"oven/bun:1-alpine":    {"alpine", "musl"},
-	"composer:2":           {"alpine", "musl"}, // Alpine, despite the tag
-	"dart:3.13.0":          {"debian", "glibc"},
-	mavenJavaImage:         {"alpine", "musl"},
-}
-
-func init() {
-	for _, images := range []map[string]javaVerifierImage{mavenJavaImages, gradleJavaImages} {
-		for _, spec := range images {
-			imageBases[spec.image] = struct{ bucket, libc string }{spec.bucket, spec.libc}
-		}
-	}
-}
-
-// imageBase reports the distribution bucket and libc of a verifier image.
-//
-// An image absent from the table falls back to the name, and to glibc when
-// the name says nothing — over-claiming musl is the error that misleads,
-// because it is the narrower claim.
-func imageBase(image string) (bucket, libc string) {
-	if b, ok := imageBases[image]; ok {
-		return b.bucket, b.libc
-	}
-	if strings.Contains(image, "alpine") {
-		return "alpine", "musl"
-	}
-	return "debian", "glibc"
 }

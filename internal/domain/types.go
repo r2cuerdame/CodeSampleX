@@ -313,7 +313,24 @@ type VerificationReceipt struct {
 	//
 	// Empty means NOT ESTABLISHED, never "matches the manifest". A
 	// lockfile that cannot be read yields nothing rather than a guess.
-	ResolvedPackages  []string          `json:"resolvedPackages,omitempty"`
+	ResolvedPackages []string `json:"resolvedPackages,omitempty"`
+	// VerifierImage identifies the container image bytes the stages ran in.
+	//
+	// The receipt already named the environment — os, libc, runtime line —
+	// but not WHICH image produced it, and a floating tag can put different
+	// software behind the same label on two workers or on one worker at two
+	// times. Without this field "the contract ran in a pinned container"
+	// could not be checked from the receipt at all; with it, a caller can
+	// take the reference and re-run the same bytes.
+	//
+	// Signed like everything else here: it is part of the canonical JSON the
+	// peer signature covers, so it cannot be attached after the fact.
+	//
+	// A nil pointer means NOT ESTABLISHED, never "the default image". The
+	// native fallback runner has no image, and receipts signed before this
+	// field existed carry none — those must not be read as a claim about
+	// which bytes ran.
+	VerifierImage     *VerifierImage    `json:"verifierImage,omitempty"`
 	VerifierAdapter   string            `json:"verifierAdapter"`
 	SandboxCapability SandboxCapability `json:"sandboxCapability"`
 	LogsDigest        string            `json:"logsDigest"`
@@ -321,6 +338,27 @@ type VerificationReceipt struct {
 	PeerID            string            `json:"peerId"`
 	PeerPubkey        string            `json:"peerPubkey"`    // base64 ed25519 public key
 	PeerSignature     string            `json:"peerSignature"` // base64 over SigningBytes
+}
+
+// VerifierImage is the immutable identity of the container image a
+// verification ran in.
+//
+// Reference is what a re-run executes verbatim; Digest is the same content
+// digest on its own so a store or an API can index and compare it without
+// parsing a reference. They are required to agree, and the server rejects a
+// receipt where they do not — two fields that can disagree are worth having
+// only if something checks them.
+type VerifierImage struct {
+	// Reference is the canonical immutable reference, "<alias>@sha256:<hex>".
+	// The alias is readable and the digest is the authority.
+	Reference string `json:"reference"`
+	// Digest is the registry content digest of the image index.
+	//
+	// Deliberately NOT the daemon's local image ID: that is a property of
+	// the image store implementation, so two workers running byte-identical
+	// images can report different IDs, and cross-worker agreement is the
+	// whole point of recording this.
+	Digest string `json:"digest"`
 }
 
 // SigningBytes returns the canonical JSON the peer signature covers

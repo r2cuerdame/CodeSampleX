@@ -38,29 +38,111 @@ not the same as pretending it has already been verified.
 
 ## Verifier images
 
-Every stage runs in a pinned image, and the receipt records the image's
-environment rather than the host's — a contract that ran in a Linux container
-proves nothing about the Windows machine that started it. Images use Alpine
-where that verifier provides it; the exact Java matrix uses Amazon Linux 2023
-and records `amzn`/`glibc` instead.
+Every stage runs in a **digest-pinned** image, and the receipt records both
+the image's environment and the image itself. The environment is recorded
+rather than the host's — a contract that ran in a Linux container proves
+nothing about the Windows machine that started it. Images use Alpine where
+that verifier provides it; the exact Java matrix uses Amazon Linux 2023 and
+records `amzn`/`glibc` instead.
 
-| Ecosystem | Runtime | Image |
-|-----------|---------|-------|
-| npm | node | `node:22-alpine` |
-| npm | bun | `oven/bun:1-alpine` |
-| npm | deno | `denoland/deno:alpine` |
-| pypi | python 3.12 (default) | `python:3.12-alpine` |
-| pypi | python 3.14 | `python:3.14-alpine@sha256:05b2b8b7…` |
-| golang | go | `golang:1.26-alpine` |
-| cargo | rust | `rust:1-alpine` |
-| composer | php | `composer:2` |
-| gem | ruby | `ruby:3-alpine` |
-| pub | dart | `dart:3.13.0` |
-| hex | elixir | `elixir:1.20.1-alpine` |
-| maven | Java (runtime omitted; legacy default) | Maven `3.9`, Java 21, `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927…` (`alpine`/`musl`) |
-| maven | Java 8 / 11 / 17 / 21 / 25 (exact opt-in) | Maven `3.9.11`, `maven:3.9.11-amazoncorretto-<jdk>-al2023@sha256:…` (`amzn` 2023/`glibc`) |
-| maven | Java 8 / 11 / 17 / 21 (Gradle, exact) | Gradle `8.14.3`, `gradle:8.14.3-jdk<jdk>-corretto-al2023@sha256:…` (`amzn` 2023/`glibc`) |
-| maven | Java 25 (Gradle, exact) | Gradle `9.7.0`, `gradle:9.7.0-jdk25-corretto-al2023@sha256:…` (`amzn` 2023/`glibc`) |
+The tag is an alias for humans; the digest is what runs. `docker run
+node:22-alpine` is whatever the registry points at today, and on a worker
+that has run before it is whatever already sits in the local cache under that
+name — docker does not re-check a tag it already has. Two honest workers
+could therefore sign receipts naming the same environment for runs of
+different software. Every selector instead returns `<alias>@sha256:<digest>`,
+which docker resolves by content, so a stale local tag is unreachable and the
+same lane runs the same bytes on every worker.
+
+`internal/sandbox/images.go` is the single registry. Nothing else in the tree
+holds a digest, and the base/libc a receipt reports lives beside the digest it
+describes rather than in a parallel table that can drift from it.
+
+| Ecosystem | Runtime | Image (alias @ pinned digest) | Base |
+|-----------|---------|-------------------------------|------|
+| npm | node | `node:22-alpine@sha256:c610fcdfb1d5…` | alpine/musl |
+| npm | bun | `oven/bun:1-alpine@sha256:07235578f79e…` | alpine/musl |
+| npm | deno | `denoland/deno:alpine@sha256:b49ac52f05c3…` | alpine/musl |
+| npm | node + Chrome 134 (browser) | `ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5…` | debian/glibc |
+| pypi | python 3.12 (default) | `python:3.12-alpine@sha256:d09d15e60962…` | alpine/musl |
+| pypi | python 3.14 | `python:3.14-alpine@sha256:05b2b8b732ec…` | alpine/musl |
+| golang | go | `golang:1.26-alpine@sha256:28d89ee9cc0f…` | alpine/musl |
+| cargo | rust | `rust:1-alpine@sha256:a10e64dd139b…` | alpine/musl |
+| composer | php | `composer:2@sha256:4d71c3c2109c…` | alpine/musl (despite the tag) |
+| gem | ruby | `ruby:3@sha256:364bd08657bc…` | debian/glibc |
+| pub | dart | `dart:3.13.0@sha256:8b6175f6c6b8…` | debian/glibc |
+| hex | elixir | `elixir:1.20.1-alpine@sha256:f50894ff69b0…` | alpine/musl |
+| maven | Java (runtime omitted; legacy default) | Maven `3.9`, Java 21, `maven:3.9.11-eclipse-temurin-21-alpine@sha256:922927df2c66…` | alpine/musl |
+| maven | Java 8 / 11 / 17 / 21 / 25 (exact opt-in) | Maven `3.9.11`, `maven:3.9.11-amazoncorretto-<jdk>-al2023@sha256:…` | `amzn` 2023/glibc |
+| maven | Java 8 / 11 / 17 / 21 (Gradle, exact) | Gradle `8.14.3`, `gradle:8.14.3-jdk<jdk>-corretto-al2023@sha256:…` | `amzn` 2023/glibc |
+| maven | Java 25 (Gradle, exact) | Gradle `9.7.0`, `gradle:9.7.0-jdk25-corretto-al2023@sha256:bb35f0164972…` | `amzn` 2023/glibc |
+
+On a Windows container daemon, Go and Python are verified against
+`golang:1.26-windowsservercore-ltsc2022@sha256:2a3365ef5cb3…`,
+`python:3.12-windowsservercore-ltsc2022@sha256:035418c04b5e…` and
+`python:3.14-windowsservercore-ltsc2022@sha256:f7af89224fd7…`. Node publishes
+no official Windows image, and Java and browser work have none either, so a
+Windows worker skips that work and keeps scanning rather than verifying it
+against an image this project would have to build itself.
+
+The digest is the multi-platform **index** digest, not one platform's
+manifest. Nothing passes `--platform`, so an arm64 worker runs the same
+pinned entry on its own architecture; which architecture it actually was is
+recorded separately in the receipt's environment.
+
+### Which image ran: the receipt says so
+
+A `schemaVersion` 2 receipt carries `verifierImage`:
+
+```json
+"verifierImage": {
+  "reference": "node:22-alpine@sha256:c610fcdfb1d5…",
+  "digest": "sha256:c610fcdfb1d5…"
+}
+```
+
+It is inside the canonical JSON the peer signature covers, so it cannot be
+attached, changed or stripped by anyone relaying the document, and the sample
+page shows it beside the run it belongs to.
+
+The field is **optional and omitted when not established**. The native
+fallback runner never enters a container, and receipts signed before this
+field existed carry none. An absent `verifierImage` means *this receipt does
+not say which bytes ran* — never *the default image*. Old receipts keep their
+exact content hash, and the server still accepts them; what it refuses is a
+present claim that contradicts itself (a mutable tag, a malformed digest, or a
+`digest` that is not the one in `reference`), and any `verifierImage` on a
+`schemaVersion` 1 document.
+
+`digest` is the registry content digest, deliberately **not** the daemon's
+local image ID. The local ID is a property of the image store — a
+containerd-backed daemon reports the index digest there while a classic graph
+driver reports the config digest — so signing it would make two workers
+running byte-identical images disagree, which is the exact property the field
+exists to establish.
+
+### Refreshing a verifier image
+
+Moving a pin is a deliberate, reviewed change. A tag moving upstream cannot
+reach the registry on its own, which is the point.
+
+1. Resolve the candidate: `docker buildx imagetools inspect <alias>` and take
+   the top-level `Digest:` — the index digest, not one of the per-platform
+   manifests listed underneath.
+2. Edit the single entry in `internal/sandbox/images.go`. The alias stays
+   readable; the digest is the only line that decides what runs.
+3. Re-measure the base. `go test ./internal/sandbox/ -run
+   TestImageBaseMatchesTheRealImage` runs the pinned reference and fails if
+   the recorded bucket/libc no longer describes it. A name is not evidence:
+   `composer:2` is an Alpine image whose tag does not say so, and for as long
+   as the base was inferred from the name every PHP receipt this project
+   produced claimed glibc for a run on musl.
+4. Land it as a reviewed change with the measurement in the commit.
+
+A digest change is a new measurement environment, not a correction of the old
+one. Receipts signed against the previous digest keep saying exactly what they
+said: that contract passed in *those* bytes. Nothing rewrites them, and
+nothing about the new pin makes the old statement less true.
 
 npm keys on the **runtime**, not just the ecosystem, because "does this
 package work on Bun" is exactly the question this project exists to answer.

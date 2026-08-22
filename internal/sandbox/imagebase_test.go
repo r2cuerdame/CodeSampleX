@@ -23,9 +23,9 @@ func TestReceiptLibcComesFromWhatTheImageIs(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		want, known := imageBases[img]
+		want, known := registryEntryFor(img)
 		if !known {
-			t.Errorf("%s uses %s, which is not in the verified table", eco, img)
+			t.Errorf("%s uses %s, which is not in the verifier image registry", eco, img)
 			continue
 		}
 		env := DockerRunner{}.StageEnvironment(host, domain.SampleManifest{
@@ -38,9 +38,11 @@ func TestReceiptLibcComesFromWhatTheImageIs(t *testing.T) {
 	}
 }
 
-// The table is only worth anything if it is checked against the images it
+// The registry is only worth anything if it is checked against the images it
 // describes. This is what stops it drifting as the image set grows — a name
-// is not evidence, and neither is a table nobody verifies.
+// is not evidence, and neither is a table nobody verifies. It runs the
+// PINNED reference, so what is measured is the same bytes a verification
+// would run, not whatever the tag points at today.
 func TestImageBaseMatchesTheRealImage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs containers")
@@ -48,8 +50,14 @@ func TestImageBaseMatchesTheRealImage(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
-	for image, want := range imageBases {
-		t.Run(image, func(t *testing.T) {
+	for alias, want := range verifierImages {
+		if want.bucket == "windowsservercore" {
+			// A Linux daemon cannot start these, and a Windows daemon has no
+			// libc to report. The entry is checked by TestWindowsImagesAreRealServerCoreImages.
+			continue
+		}
+		image := want.ref()
+		t.Run(alias, func(t *testing.T) {
 			out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image,
 				"-c", `if ls /lib/ld-musl-* >/dev/null 2>&1; then echo musl; else echo glibc; fi`).Output()
 			if err != nil {

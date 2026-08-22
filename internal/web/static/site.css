@@ -1776,6 +1776,10 @@ table.runs thead th {
 }
 table.runs .runenv { display: block; font-weight: 650; }
 table.runs .runpeer { display: block; overflow-wrap: anywhere; }
+/* The image reference is one unbroken token with a 64-hex digest in it, so
+   it has to be allowed to wrap; left inline it pushed the runs table into a
+   horizontal scroll on a phone. */
+table.runs .runimage { display: block; overflow-wrap: anywhere; }
 table.runs tbody tr:hover td { background: var(--panel-2); }
 
 @media (max-width: 40rem) {

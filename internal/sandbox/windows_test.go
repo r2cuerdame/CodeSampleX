@@ -18,10 +18,10 @@ func windowsManifest(ecosystem, runtime, version string) domain.SampleManifest {
 // evidence for a run that never happened on Windows.
 func TestWindowsDaemonSelectsWindowsImages(t *testing.T) {
 	for _, c := range []struct{ eco, runtime, version, want string }{
-		{"golang", "", "", "golang:1.26-windowsservercore-ltsc2022"},
-		{"golang", "go", "", "golang:1.26-windowsservercore-ltsc2022"},
-		{"pypi", "python", "", "python:3.12-windowsservercore-ltsc2022"},
-		{"pypi", "python", "3.14", "python:3.14-windowsservercore-ltsc2022"},
+		{"golang", "", "", pinned("golang:1.26-windowsservercore-ltsc2022")},
+		{"golang", "go", "", pinned("golang:1.26-windowsservercore-ltsc2022")},
+		{"pypi", "python", "", pinned("python:3.12-windowsservercore-ltsc2022")},
+		{"pypi", "python", "3.14", pinned("python:3.14-windowsservercore-ltsc2022")},
 	} {
 		got, err := imageForManifestOn(ContainerOSWindows, windowsManifest(c.eco, c.runtime, c.version))
 		if err != nil || got != c.want {
@@ -116,7 +116,7 @@ func TestWindowsStageEnvironmentReportsWindows(t *testing.T) {
 // Windows isolation layer implements none, and passing it makes docker
 // refuse the run outright.
 func TestWindowsDockerArgs(t *testing.T) {
-	args := dockerArgsOn(ContainerOSWindows, "golang:1.26-windowsservercore-ltsc2022",
+	args := dockerArgsOn(ContainerOSWindows, pinned("golang:1.26-windowsservercore-ltsc2022"),
 		`C:\tmp\ws`, true, nil, []string{"go", "build"}, "job")
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, `C:\tmp\ws:C:\work`) || !strings.Contains(joined, `-w C:\work`) {
@@ -128,7 +128,7 @@ func TestWindowsDockerArgs(t *testing.T) {
 	if !strings.Contains(joined, "--memory=512m") || !strings.Contains(joined, "--network=none") {
 		t.Errorf("windows args dropped a resource or network limit: %v", args)
 	}
-	linux := strings.Join(dockerArgsOn(ContainerOSLinux, "golang:1.26-alpine",
+	linux := strings.Join(dockerArgsOn(ContainerOSLinux, pinned("golang:1.26-alpine"),
 		"/tmp/ws", true, nil, []string{"go", "build"}, "job"), " ")
 	if !strings.Contains(linux, "--pids-limit=256") || !strings.Contains(linux, "/tmp/ws:/work") {
 		t.Errorf("linux args changed: %s", linux)

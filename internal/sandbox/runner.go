@@ -38,6 +38,14 @@ type Runner interface {
 	// host: a contract run inside a linux container proves nothing about
 	// the Windows machine that started it.
 	StageEnvironment(host domain.EnvironmentFingerprint, m domain.SampleManifest) domain.EnvironmentFingerprint
+	// VerifierImage reports the immutable identity of the container image
+	// the stages ran in, for the receipt to record and sign.
+	//
+	// nil means NOT ESTABLISHED — there was no container, or no pinned image
+	// for this manifest. It must never be read as "the default image": a
+	// receipt that names bytes the run never used is worse than one that
+	// says nothing about them.
+	VerifierImage(m domain.SampleManifest) *domain.VerifierImage
 }
 
 // stageTimeout bounds every stage (plan C13: 5m/stage).

@@ -113,7 +113,7 @@ csx sync                           # warm the shard cache — once, right after 
 
 ## Verified samples
 
-A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<hex>` of its canonical artifact) with a **contract**: assertions that were executed offline in a pinned container and passed. The clean-room authoring loop is CLI-only:
+A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<hex>` of its canonical artifact) with a **contract**: assertions that were executed offline in a pinned container and passed. Pinned by image digest, not by tag — the tag is an alias for readers, the digest is what runs — and the signed receipt names the exact image reference, so anyone can re-run the same bytes rather than take the word for it ([docs/adapters.md](docs/adapters.md#verifier-images)). The clean-room authoring loop is CLI-only:
 
 ```bash
 csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace

@@ -79,6 +79,13 @@ func RunLogged(
 	// that is the container (linux + the image runtime), not this host —
 	// otherwise a Windows machine would be credited with a linux result.
 	env = r.StageEnvironment(env, m)
+	// And WHICH image produced that environment. The fingerprint says musl
+	// and node 22; it cannot say which node:22-alpine, and a floating tag
+	// can put different bytes behind that name on two workers or on one
+	// worker at two times. The receipt records the immutable reference the
+	// stages run, so "the contract ran in a pinned container" is a claim a
+	// reader can check rather than one they have to take on trust.
+	image := r.VerifierImage(m)
 
 	resolve := r.Resolve(ctx, sampleDir, m)
 	var resolved []string
@@ -141,6 +148,7 @@ func RunLogged(
 			"contract": contract.Result,
 			"load":     load,
 		},
+		VerifierImage:     image,
 		VerifierAdapter:   m.VerifierAdapter,
 		SandboxCapability: cap,
 		LogsDigest:        domain.SHA256Hex([]byte(logs)),

@@ -67,7 +67,7 @@
               <span class="runpeer dim mono small">{{.PeerID}}</span>
             </td>
             <td><span class="sample-detail__result mono" data-evidence-result="{{.Contract}}">{{.Contract}}</span></td>
-            <td class="mono small dim">{{.Stages}}<br>{{.Capability}} · {{.Verifier}}</td>
+            <td class="mono small dim">{{.Stages}}<br>{{.Capability}} · {{.Verifier}}{{if .Image}}<span class="runimage" title="{{.Image}}">{{.ImageShort}}</span>{{end}}</td>
             <td class="mono small">{{.CreatedAt}}</td>
           </tr>
         {{- end}}

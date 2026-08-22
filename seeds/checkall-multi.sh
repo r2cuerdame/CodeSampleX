@@ -13,17 +13,21 @@ set -eu
 SEEDS=$(cd "$(dirname "$0")" && pwd)
 FAILED=""
 
+# The same digest-pinned references the verifier runs, copied from the one
+# registry in internal/sandbox/images.go. Checking a seed against the floating
+# tag would check it against different bytes than the network will, which is
+# the whole failure this script is meant to catch early.
 image_for() {
   case "$1" in
-    bun) echo "oven/bun:1-alpine" ;;
-    deno) echo "denoland/deno:alpine" ;;
-    pypi) echo "python:3.12-alpine" ;;
-    golang) echo "golang:1.26-alpine" ;;
-    cargo) echo "rust:1-alpine" ;;
-    composer) echo "composer:2" ;;
-    gem) echo "ruby:3" ;;
-    pub) echo "dart:3.13.0" ;;
-    hex) echo "elixir:1.20.1-alpine" ;;
+    bun) echo "oven/bun:1-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb" ;;
+    deno) echo "denoland/deno:alpine@sha256:b49ac52f05c3d8d0da890b6628168e9bfb5721f7bccc00305bb3ad29ed0e40af" ;;
+    pypi) echo "python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31" ;;
+    golang) echo "golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468" ;;
+    cargo) echo "rust:1-alpine@sha256:a10e64dd139b7387337c7fbe8aca31b959b57b2fd4c8ae20a02cf1d6ea424dce" ;;
+    composer) echo "composer:2@sha256:4d71c3c2109c61d5415544264b59ad4087e4c5b7244481723664138fd36d5040" ;;
+    gem) echo "ruby:3@sha256:364bd08657bc1106373e8c2fc1b39b68f384f339decc5867374caf6e2e112927" ;;
+    pub) echo "dart:3.13.0@sha256:8b6175f6c6b89aaf31ffdace4a22d17715c07f1cf3a772dadb10c658f779e23d" ;;
+    hex) echo "elixir:1.20.1-alpine@sha256:f50894ff69b0d07b310fe9c97b48b3475568ecccb7f0ccd7c350a789feb395a3" ;;
     *) echo "" ;;
   esac
 }

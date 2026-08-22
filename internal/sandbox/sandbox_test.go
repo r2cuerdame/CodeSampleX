@@ -161,10 +161,10 @@ func TestDockerRunnerArgs(t *testing.T) {
 
 func TestDockerRunnerImages(t *testing.T) {
 	cases := map[string]string{
-		"npm":    "node:22-alpine",
-		"pypi":   "python:3.12-alpine",
-		"golang": "golang:1.26-alpine",
-		"cargo":  "rust:1-alpine",
+		"npm":    pinned("node:22-alpine"),
+		"pypi":   pinned("python:3.12-alpine"),
+		"golang": pinned("golang:1.26-alpine"),
+		"cargo":  pinned("rust:1-alpine"),
 		"maven":  mavenJavaImage,
 	}
 	for eco, want := range cases {
@@ -273,10 +273,10 @@ func TestStageEnvKeepsCachesInTheWorkspace(t *testing.T) {
 // other value could be produced.
 func TestRuntimePicksTheImage(t *testing.T) {
 	for _, tc := range []struct{ runtime, wantImage, wantRuntime, wantVersion string }{
-		{"", "node:22-alpine", "node", "22"},
-		{"node", "node:22-alpine", "node", "22"},
-		{"bun", "oven/bun:1-alpine", "bun", "1"},
-		{"deno", "denoland/deno:alpine", "deno", "2"},
+		{"", pinned("node:22-alpine"), "node", "22"},
+		{"node", pinned("node:22-alpine"), "node", "22"},
+		{"bun", pinned("oven/bun:1-alpine"), "bun", "1"},
+		{"deno", pinned("denoland/deno:alpine"), "deno", "2"},
 	} {
 		img, err := imageFor("npm", tc.runtime)
 		if err != nil || img != tc.wantImage {
@@ -327,8 +327,8 @@ func TestPythonRuntimeVersionPicksPinnedImageAndReceipt(t *testing.T) {
 	for _, tc := range []struct {
 		version, wantImage, wantReceipt string
 	}{
-		{"", "python:3.12-alpine", "3.12"},
-		{"3.12", "python:3.12-alpine", "3.12"},
+		{"", pinned("python:3.12-alpine"), "3.12"},
+		{"3.12", pinned("python:3.12-alpine"), "3.12"},
 		{"3.14", python314Image, "3.14"},
 	} {
 		m := manifest(tc.version)
