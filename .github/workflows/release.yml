@@ -5,6 +5,20 @@
 # mistake a pipeline does not repeat.
 #
 # The version comes from the tag, so nothing has to be edited in two places.
+#
+# A normal release is unattended. No step here waits for a human: pushing a
+# `v*` tag is the decision, and everything after it either completes or fails
+# closed. What used to be a required reviewer on the signing environment is
+# now machine checks a person could not have performed anyway — the monotonic
+# release guard, the three-way trust-root agreement, the artifact-to-build
+# binding, and the exact published asset set.
+#
+# The signing seed is why this file has four ubuntu jobs instead of one.
+# `build` runs the repository's own test code and a bundler over the built
+# binaries; `publish` runs a binary downloaded from another project and holds
+# a write-scoped token. Neither has any business sharing a runner with the
+# updater signing key, so `sign` sits alone in the protected environment with
+# nothing but the seed, the artifact and `contents: read`.
 name: Release
 
 on:
@@ -40,13 +54,20 @@ jobs:
       - name: Native Windows launcher and updater tests
         run: go test ./...
 
-  release:
+  # Everything that needs no credential. This job executes the repository's
+  # own test code and bundles the built binaries; it is deliberately the one
+  # job with no environment and no write scope, so none of that runs beside
+  # the signing seed.
+  build:
     needs: windows-test
     permissions:
-      contents: write # create the release and upload assets
-      id-token: write # OIDC for the MCP Registry — no stored secret
+      contents: read
     runs-on: ubuntu-latest
-    environment: codesamplex-release-signing
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      public_key: ${{ steps.trust_root.outputs.public_key }}
+      mcpb_sha256: ${{ steps.mcpb.outputs.sha256 }}
+      checksums_sha256: ${{ steps.checksums.outputs.sha256 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -75,15 +96,17 @@ jobs:
             go run ./scripts/update_manifest.go guard "$TAG" "$TAG"
           fi
 
-      - name: Derive updater trust root
-        id: update_key
-        env:
-          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
-          EXPECTED_UPDATE_PUBLIC_KEY_B64: ${{ vars.CSX_UPDATE_PUBLIC_KEY_B64 }}
+      # The updater trust root is stamped into the binaries at compile time,
+      # and this job must never see the seed it belongs to. So the public half
+      # is committed: a trust root that exists only as a settings value cannot
+      # be reviewed in a diff, and editing this file cannot change what ships
+      # — the signing job refuses to sign unless the seed it holds derives
+      # exactly this key.
+      - name: Read the pinned updater trust root
+        id: trust_root
         run: |
-          PUB=$(go run ./scripts/update_manifest.go public)
-          test -n "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
-          test "$PUB" = "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
+          PUB=$(tr -d '[:space:]' < .github/updater-public-key.b64)
+          test "$(printf '%s' "$PUB" | base64 -d | wc -c | tr -dc '0-9')" = 32
           echo "public_key=$PUB" >> "$GITHUB_OUTPUT"
 
       - name: Cross-compile
@@ -91,7 +114,7 @@ jobs:
           CGO_ENABLED: "0"
           # This exact path is why v0.1.0 first shipped reporting "dev (git)":
           # -X takes the fully qualified variable, not a bare name.
-          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} -X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.update_key.outputs.public_key }}
+          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} -X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.trust_root.outputs.public_key }}
         run: |
           mkdir -p dist
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
@@ -107,14 +130,6 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
             -o dist/csx-server-linux-amd64 ./cmd/csx-server
           (cd dist && sha256sum csx-* > SHA256SUMS.txt)
-
-      - name: Sign stable updater manifest
-        env:
-          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
-        run: go run ./scripts/update_manifest.go sign "${GITHUB_REF#refs/tags/}" "${GITHUB_RUN_ID}" dist dist/csx-update-stable.json
-
-      - name: Verify signed updater manifest
-        run: go run ./scripts/update_manifest.go verify '${{ steps.update_key.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
 
       - name: Build MCPB bundle
         id: mcpb
@@ -135,6 +150,127 @@ jobs:
           ' server.json > server.tmp && mv server.tmp server.json
           # Fail loudly rather than publish a listing that clients reject.
           test "$(jq -r '.description | length' server.json)" -le 100
+
+      # Splitting the pipeline means the signing job no longer signs what it
+      # just built — it signs what it downloaded. This digest travels as a job
+      # output rather than inside the artifact, so substituting the artifact
+      # cannot also substitute the value it is checked against.
+      - name: Bind the artifact to this build
+        id: checksums
+        run: echo "sha256=$(sha256sum dist/SHA256SUMS.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: |
+            dist/
+            server.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that can reach the updater signing seed. It holds no write
+  # scope, publishes nothing, and runs no code from outside this repository —
+  # it exists to turn a set of digests into one signature and then stop.
+  sign:
+    needs: build
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    environment: codesamplex-release-signing
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-dist
+          path: .
+
+      - name: Confirm the artifact is the one this run built
+        env:
+          EXPECTED_CHECKSUMS_SHA256: ${{ needs.build.outputs.checksums_sha256 }}
+        run: |
+          test -n "$EXPECTED_CHECKSUMS_SHA256"
+          echo "${EXPECTED_CHECKSUMS_SHA256}  dist/SHA256SUMS.txt" | sha256sum -c -
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      # Three values must agree before anything is signed: the key derived
+      # from the seed in this environment, the key pinned as the environment
+      # variable, and the key the build job actually stamped into the six
+      # client binaries. Any disagreement is an unplanned trust-root rotation
+      # that would strand every installed client, so it stops the release here
+      # — before a GitHub release exists and before the registry is told.
+      - name: Derive updater trust root
+        env:
+          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
+          EXPECTED_UPDATE_PUBLIC_KEY_B64: ${{ vars.CSX_UPDATE_PUBLIC_KEY_B64 }}
+          STAMPED_UPDATE_PUBLIC_KEY_B64: ${{ needs.build.outputs.public_key }}
+        run: |
+          PUB=$(go run ./scripts/update_manifest.go public)
+          test -n "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
+          test "$PUB" = "$EXPECTED_UPDATE_PUBLIC_KEY_B64"
+          test -n "$STAMPED_UPDATE_PUBLIC_KEY_B64"
+          test "$PUB" = "$STAMPED_UPDATE_PUBLIC_KEY_B64"
+
+      - name: Sign stable updater manifest
+        env:
+          CSX_UPDATE_SIGNING_KEY_B64: ${{ secrets.CSX_UPDATE_SIGNING_KEY_B64 }}
+        run: go run ./scripts/update_manifest.go sign "${GITHUB_REF#refs/tags/}" "${GITHUB_RUN_ID}" dist dist/csx-update-stable.json
+
+      - name: Verify signed updater manifest
+        run: go run ./scripts/update_manifest.go verify '${{ needs.build.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-manifest
+          path: dist/csx-update-stable.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # Write scope and the registry's OIDC identity live here, and the signing
+  # seed does not. This job can replace a release asset; it cannot mint a
+  # signature, so the worst it can publish is something the updater refuses —
+  # which the verification steps below catch before the registry hears of it.
+  publish:
+    needs: [build, sign]
+    permissions:
+      contents: write # create the release and upload assets
+      id-token: write # OIDC for the MCP Registry — no stored secret
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-dist
+          path: .
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-manifest
+          path: dist
+
+      - name: Confirm the artifact is the one this run built
+        env:
+          EXPECTED_CHECKSUMS_SHA256: ${{ needs.build.outputs.checksums_sha256 }}
+        run: |
+          test -n "$EXPECTED_CHECKSUMS_SHA256"
+          echo "${EXPECTED_CHECKSUMS_SHA256}  dist/SHA256SUMS.txt" | sha256sum -c -
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      # This job never sees the seed, so this is the same check an updating
+      # client performs, run against the exact bytes about to be uploaded.
+      - name: Verify the signed updater manifest
+        run: go run ./scripts/update_manifest.go verify '${{ needs.build.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
 
       - name: Create GitHub release
         env:
@@ -177,13 +313,13 @@ jobs:
       - name: Verify the published asset
         run: |
           curl -fsSL -o /tmp/bundle.mcpb \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.v.outputs.version }}/codesamplex-mcp.mcpb"
-          echo '${{ steps.mcpb.outputs.sha256 }}  /tmp/bundle.mcpb' | sha256sum -c -
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ needs.build.outputs.version }}/codesamplex-mcp.mcpb"
+          echo '${{ needs.build.outputs.mcpb_sha256 }}  /tmp/bundle.mcpb' | sha256sum -c -
           curl -fsSL -o /tmp/csx-update-stable.json \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.v.outputs.version }}/csx-update-stable.json"
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ needs.build.outputs.version }}/csx-update-stable.json"
           go run ./scripts/update_manifest.go verify \
-            '${{ steps.update_key.outputs.public_key }}' /tmp/csx-update-stable.json \
-            "v${{ steps.v.outputs.version }}"
+            '${{ needs.build.outputs.public_key }}' /tmp/csx-update-stable.json \
+            "v${{ needs.build.outputs.version }}"
 
       - name: Install mcp-publisher
         run: |
@@ -207,7 +343,7 @@ jobs:
   # farm target visible as a failed release rather than a green run beside a
   # red one nobody opened.
   #
-  # Deliberately a separate job. The updater signing seed lives in the release
+  # Deliberately a separate job. The updater signing seed lives in the sign
   # job's protected environment; a token that can start a workflow in another
   # repository has no business sharing a process with it.
   #
@@ -222,7 +358,7 @@ jobs:
   # only Actions:write, which cannot introduce code.
   farm:
     name: Roll the farm
-    needs: release
+    needs: publish
     runs-on: ubuntu-latest
     # Nothing in this repository. The dispatch authenticates as the farm token;
     # GITHUB_TOKEN is not used here and is given nothing.
