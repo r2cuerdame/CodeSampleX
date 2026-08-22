@@ -1442,6 +1442,27 @@ type receiptView struct {
 	Verifier  string
 	CreatedAt string
 	PeerID    string
+	// Image is the container image the stages ran in, as the receipt signed
+	// it, and ImageShort is the same thing shortened for the cell. Both are
+	// empty for a receipt that establishes no image — which is every receipt
+	// signed before the field existed, and is not the same as "the default
+	// image".
+	//
+	// The page says the contract ran in a pinned container; this is where a
+	// reader can see WHICH one and re-run the same bytes.
+	Image      string
+	ImageShort string
+}
+
+// shortImageRef keeps the readable alias whole and abbreviates the digest.
+// The full reference stays on the element's title, because a truncated
+// digest is a label and only the whole one can be re-run.
+func shortImageRef(ref string) string {
+	alias, digest, ok := strings.Cut(ref, "@sha256:")
+	if !ok || len(digest) <= 12 {
+		return ref
+	}
+	return alias + "@sha256:" + digest[:12] + "…"
 }
 
 // descPackageLimit caps how many packages the meta description names.
@@ -1590,6 +1611,8 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 				Verifier:    rec.VerifierAdapter,
 				CreatedAt:   datePart(rec.CreatedAt),
 				PeerID:      rec.PeerID,
+				Image:       imageRefOf(rec),
+				ImageShort:  shortImageRef(imageRefOf(rec)),
 			})
 		}
 	}
@@ -1781,6 +1804,16 @@ var confidenceKey = map[string]string{
 	"EXACT":    "adapters.conf_exact",
 	"PROBABLE": "adapters.conf_probable",
 	"UNKNOWN":  "adapters.conf_unknown",
+}
+
+// imageRefOf is the receipt's image reference, or "" when it establishes
+// none. A nil VerifierImage means NOT ESTABLISHED and must never be
+// rendered as a default.
+func imageRefOf(rec domain.VerificationReceipt) string {
+	if rec.VerifierImage == nil {
+		return ""
+	}
+	return rec.VerifierImage.Reference
 }
 
 // anyContractPass reports whether any receipt on this sample records a

@@ -23,7 +23,7 @@ func TestReceiptArchFollowsTheHost(t *testing.T) {
 		}
 	}
 	// Nothing is pinned, so nothing may claim it is.
-	args := strings.Join(dockerArgs("node:22-alpine", "/tmp/x", true, nil, []string{"true"}, ""), " ")
+	args := strings.Join(dockerArgs(pinned("node:22-alpine"), "/tmp/x", true, nil, []string{"true"}, ""), " ")
 	if strings.Contains(args, "--platform") {
 		t.Skip("the runner now pins a platform; this test should assert that instead")
 	}

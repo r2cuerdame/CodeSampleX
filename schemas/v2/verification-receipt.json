@@ -22,6 +22,24 @@
       "items": {"type": "string", "pattern": "^pkg:[^/]+/.+@[^@]+$"},
       "uniqueItems": true
     },
+    "verifierImage": {
+      "type": "object",
+      "description": "Immutable identity of the container image the stages ran in. Omitted when not established: the native fallback runner has no image, and receipts signed before this field existed carry none. Never read an omitted value as the default image.",
+      "required": ["reference", "digest"],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "description": "Canonical immutable reference, <alias>@sha256:<hex>. The alias is readable; the digest is the execution authority.",
+          "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+        },
+        "digest": {
+          "type": "string",
+          "description": "Registry content digest of the image index. Must equal the digest in reference. Deliberately not the daemon's local image ID, which differs between image store implementations for byte-identical images.",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
     "verifierAdapter": {"type": "string"},
     "sandboxCapability": {"enum": ["COMPILE_ONLY", "CONTAINER_RUN", "STRONG_ISOLATION_RUN", "LIVE_INTEGRATION"]},
     "logsDigest": {"type": "string"},

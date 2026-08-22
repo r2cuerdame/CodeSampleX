@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,33 @@ func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
 	// the attached environment files the result under someone else's.
 	if receipt.EnvironmentHash != "" && receipt.EnvironmentHash != env.Hash() {
 		return errors.New("receipt environmentHash does not match its environment")
+	}
+	return nil
+}
+
+// pinnedImageReference is the only shape a recorded verifier image may
+// take: a readable alias, then the immutable digest that decides the bytes.
+var pinnedImageReference = regexp.MustCompile(`^[^@\s]+@(sha256:[0-9a-f]{64})$`)
+
+// receiptVerifierImageIsPinned checks the image identity a receipt records.
+//
+// Absent is valid and means NOT ESTABLISHED: receipts signed before this
+// field existed carry none, and the native fallback runner has no image at
+// all. What is refused is a PRESENT claim that cannot be what it says it is
+// — a mutable tag, a malformed digest, or a reference and digest that
+// disagree. A field nothing checks is decoration, and this one exists so a
+// reader can re-run the same bytes.
+func receiptVerifierImageIsPinned(receipt domain.VerificationReceipt) error {
+	img := receipt.VerifierImage
+	if img == nil {
+		return nil
+	}
+	m := pinnedImageReference.FindStringSubmatch(img.Reference)
+	if m == nil {
+		return errors.New("verifierImage reference must be an immutable <image>@sha256:<digest>")
+	}
+	if img.Digest != m[1] {
+		return errors.New("verifierImage digest does not match its reference")
 	}
 	return nil
 }
@@ -296,6 +324,13 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "receipt schemaVersion 1 must not contain resolvedPackages")
 			return
 		}
+		// verifierImage did not exist in the public v1 schema either. The
+		// version boundary stays strict for the same reason: a document must
+		// not claim v1 while relying on a later version's semantics.
+		if receipt.VerifierImage != nil {
+			writeErr(w, http.StatusBadRequest, "receipt schemaVersion 1 must not contain verifierImage")
+			return
+		}
 	case 2:
 		// v2 adds resolvedPackages. Its claims are checked against the sample
 		// after the signature and sample identity have been established.
@@ -329,6 +364,10 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := receiptDescribesWhereItRan(receipt); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := receiptVerifierImageIsPinned(receipt); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

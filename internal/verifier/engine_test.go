@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ type fakeRunner struct {
 	resolveHook  func(string)
 	buildHook    func(string)
 	contractHook func(string)
+	noImage      bool
 }
 
 func (f *fakeRunner) Resolve(ctx context.Context, dir string, m domain.SampleManifest) sandbox.StageResult {
@@ -53,6 +55,18 @@ func (f *fakeRunner) StageEnvironment(host domain.EnvironmentFingerprint, m doma
 	env.OS = "linux"
 	env.ExecutionContext = "node"
 	return env.Normalize()
+}
+
+// VerifierImage mirrors the container runner: the receipt names the image
+// bytes the stages ran in, and the signature covers them.
+func (f *fakeRunner) VerifierImage(domain.SampleManifest) *domain.VerifierImage {
+	if f.noImage {
+		return nil
+	}
+	return &domain.VerifierImage{
+		Reference: "node:22-alpine@sha256:" + strings.Repeat("a", 64),
+		Digest:    "sha256:" + strings.Repeat("a", 64),
+	}
 }
 
 func allPassRunner() *fakeRunner {

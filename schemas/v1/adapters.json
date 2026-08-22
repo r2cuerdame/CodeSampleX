@@ -19,7 +19,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract. Verification runs on the runtime the sample declares, not on Node by assumption: node:22-alpine, oven/bun:1-alpine or denoland/deno:alpine, so the execution-context axis (docs/execution-context.md) carries real bun and deno results rather than node for everything."
+      "notes": "Reference ecosystem. Lockfile-resolved versions (package-lock v2/v3, pnpm-lock v9, yarn classic). Static import/member analysis without a type checker yields PROBABLE symbols; EXACT reserved for future TS type-info integration. Verifier adapter node-typescript@1 supports clean resolve/compile/contract. Verification runs on the runtime the sample declares, not on Node by assumption: node:22-alpine, oven/bun:1-alpine or denoland/deno:alpine, each pinned to an immutable image digest rather than run from the floating tag, so the execution-context axis (docs/execution-context.md) carries real bun and deno results rather than node for everything."
     },
     {
       "ecosystem": "pypi",
@@ -52,7 +52,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "go.mod/go.sum resolved versions; go/parser import + selector analysis. EXACT requires go/types integration, not claimed in v1. Sample verification now runs in the pinned golang:1.26-alpine image with GOMODCACHE inside the workspace, so `go run` compiles offline in the contract stage (A4, proven by published samples)."
+      "notes": "go.mod/go.sum resolved versions; go/parser import + selector analysis. EXACT requires go/types integration, not claimed in v1. Sample verification now runs in the digest-pinned golang:1.26-alpine image with GOMODCACHE inside the workspace, so `go run` compiles offline in the contract stage (A4, proven by published samples)."
     },
     {
       "ecosystem": "cargo",
@@ -68,7 +68,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Cargo.lock resolved versions; use-statement analysis. Macro-expanded and dynamic usage degrades to UNKNOWN (goal.md §13.5 conservative start). Sample verification now runs in the pinned rust:1-alpine image with CARGO_HOME inside the workspace, so `cargo run --offline` builds in the contract stage (A4, proven by published samples)."
+      "notes": "Cargo.lock resolved versions; use-statement analysis. Macro-expanded and dynamic usage degrades to UNKNOWN (goal.md §13.5 conservative start). Sample verification now runs in the digest-pinned rust:1-alpine image with CARGO_HOME inside the workspace, so `cargo run --offline` builds in the contract stage (A4, proven by published samples)."
     },
     {
       "ecosystem": "composer",
@@ -81,7 +81,7 @@
         "A4"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Verification-only adapter. Both stages run in the pinned composer:2 image on purpose: composer writes vendor/composer/platform_check.php from the PHP version it resolved under, so resolving in one image and testing in another couples two tags that drift independently. Resolve uses --no-scripts --no-plugins, the composer equivalent of npm's --ignore-scripts: composer.json is data, but the scripts and plugins inside it are code and would otherwise run with the network on. No local project scanner yet, so composer projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: composer:2."
+      "notes": "Verification-only adapter. Both stages run in the digest-pinned composer:2 image on purpose: composer writes vendor/composer/platform_check.php from the PHP version it resolved under, so resolving in one image and testing in another couples two tags that drift independently. Resolve uses --no-scripts --no-plugins, the composer equivalent of npm's --ignore-scripts: composer.json is data, but the scripts and plugins inside it are code and would otherwise run with the network on. No local project scanner yet, so composer projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: composer:2, pinned by digest."
     },
     {
       "ecosystem": "gem",
@@ -94,7 +94,7 @@
         "A4"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Verification-only adapter. Resolve installs bundler and runs bundle install with GEM_HOME, GEM_PATH, BUNDLE_PATH and BUNDLE_APP_CONFIG all inside the workspace, which is the only reason the gems survive into the network-off contract stage. No local project scanner yet, so Ruby projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: ruby:3-alpine."
+      "notes": "Verification-only adapter. Resolve installs bundler and runs bundle install with GEM_HOME, GEM_PATH, BUNDLE_PATH and BUNDLE_APP_CONFIG all inside the workspace, which is the only reason the gems survive into the network-off contract stage. No local project scanner yet, so Ruby projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: ruby:3, pinned by digest. Debian and not Alpine on purpose: a gem with a C extension compiles at install time, every time, and Alpine ships no compiler, so the receipt records glibc for Ruby."
     },
     {
       "ecosystem": "pub",
@@ -107,7 +107,7 @@
         "A4"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Verification-only adapter. Resolve runs dart pub get with PUB_CACHE inside the workspace so dart test runs offline. No local project scanner yet, so Dart and Flutter projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: dart:3.13.0."
+      "notes": "Verification-only adapter. Resolve runs dart pub get with PUB_CACHE inside the workspace so dart test runs offline. No local project scanner yet, so Dart and Flutter projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: dart:3.13.0, pinned by digest."
     },
     {
       "ecosystem": "hex",
@@ -120,7 +120,7 @@
         "A4"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Verification-only adapter, and the one with a real constraint. mix.exs is executable Elixir and every mix task evaluates it, so `mix deps.get` would run the sample's own code while the network is up. Resolve therefore never lets mix see the project: it works from a scratch directory, reads the pinned package set out of mix.lock as TEXT, and fetches each one with mix hex.package fetch, which verifies the package checksum. A sample without a committed mix.lock cannot be verified. Because that skips mix's own .hex marker file, samples build and test with --no-deps-check. No local project scanner yet, so Elixir projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: elixir:1.20.1-alpine."
+      "notes": "Verification-only adapter, and the one with a real constraint. mix.exs is executable Elixir and every mix task evaluates it, so `mix deps.get` would run the sample's own code while the network is up. Resolve therefore never lets mix see the project: it works from a scratch directory, reads the pinned package set out of mix.lock as TEXT, and fetches each one with mix hex.package fetch, which verifies the package checksum. A sample without a committed mix.lock cannot be verified. Because that skips mix's own .hex marker file, samples build and test with --no-deps-check. No local project scanner yet, so Elixir projects get no A0/A1/A2 detection and this adapter claims none. Verifier image: elixir:1.20.1-alpine, pinned by digest."
     },
     {
       "ecosystem": "maven",

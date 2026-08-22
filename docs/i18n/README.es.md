@@ -101,7 +101,7 @@ csx sync                           # warm the shard cache — once, right after 
 
 ## Samples verificados
 
-Un sample no es un fragmento de código. Es un proyecto mínimo direccionado por contenido (`sha256:<hex>` de su artefacto canónico) con un **contrato**: aserciones que se ejecutaron sin conexión en un contenedor fijado y pasaron. El ciclo de autoría clean-room es exclusivamente por CLI:
+Un sample no es un fragmento de código. Es un proyecto mínimo direccionado por contenido (`sha256:<hex>` de su artefacto canónico) con un **contrato**: aserciones que se ejecutaron sin conexión en un contenedor fijado y pasaron. Fijado por digest de la imagen, no por etiqueta — la etiqueta es un alias para quien lee, el digest es lo que se ejecuta — y el recibo firmado nombra la referencia exacta de la imagen, de modo que cualquiera puede volver a ejecutar los mismos bytes en lugar de creerlo sin más ([docs/adapters.md](../adapters.md#verifier-images)). El ciclo de autoría clean-room es exclusivamente por CLI:
 
 ```bash
 csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace

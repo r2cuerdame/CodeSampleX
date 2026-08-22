@@ -65,3 +65,8 @@ func (NativeRunner) Contract(context.Context, string, domain.SampleManifest) Sta
 func (NativeRunner) StageEnvironment(host domain.EnvironmentFingerprint, _ domain.SampleManifest) domain.EnvironmentFingerprint {
 	return host.Normalize()
 }
+
+// VerifierImage is nil: the native fallback runs on the host, so there is
+// no image and nothing to record. Reporting a pinned image here would put a
+// container's identity on a receipt for a run that never entered one.
+func (NativeRunner) VerifierImage(domain.SampleManifest) *domain.VerifierImage { return nil }

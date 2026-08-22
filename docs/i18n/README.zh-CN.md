@@ -101,7 +101,7 @@ csx sync                           # warm the shard cache — once, right after 
 
 ## 经过验证的样例
 
-样例（sample）不是代码片段。它是一个最小化、内容寻址的项目（以其规范化构件的 `sha256:<hex>` 标识），并带有一份**契约**：一组在固定容器中离线执行并通过的断言。洁净室创作流程只能通过 CLI 完成：
+样例（sample）不是代码片段。它是一个最小化、内容寻址的项目（以其规范化构件的 `sha256:<hex>` 标识），并带有一份**契约**：一组在固定容器中离线执行并通过的断言。固定的是镜像 digest，而不是标签——标签只是给人读的别名，真正运行的是 digest——而且签名回执会记录运行时的确切镜像引用，因此任何人都可以重新运行同样的字节，而不必只凭一句话相信（[docs/adapters.md](../adapters.md#verifier-images)）。洁净室创作流程只能通过 CLI 完成：
 
 ```bash
 csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
