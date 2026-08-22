@@ -240,6 +240,23 @@ go build ./cmd/csx && go build ./cmd/csx-server
 go test ./...
 ```
 
+That needs no database: the `internal/serverstore` PostgreSQL tests skip
+themselves when `CSX_TEST_DSN` is unset. They are not optional in CI —
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs every pull request
+against a disposable `postgres:17-alpine` and fails the run if any of them
+skipped. To run them the same way locally:
+
+```bash
+docker run -d --rm --name csx-pg -e POSTGRES_USER=csx -e POSTGRES_PASSWORD=csx \
+  -e POSTGRES_DB=csx -p 5432:5432 postgres:17-alpine
+CSX_TEST_DSN="postgres://csx:csx@localhost:5432/csx?sslmode=disable" \
+  CSX_REQUIRE_TEST_DSN=1 go test ./...
+```
+
+Each test migrates its own throwaway schema and drops it afterwards, so the
+suite is repeatable and two runs can share one database. `CSX_REQUIRE_TEST_DSN`
+turns a missing DSN into a failure instead of a skip, which is what CI sets.
+
 ## License
 
 Code: Apache-2.0. Published samples default to **MIT-0**.
