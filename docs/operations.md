@@ -245,4 +245,26 @@ POSTGRES_PASSWORD generated at first deploy
 CSX_PUBLIC_CHECK strict            (trust only for dev/e2e)
 CSX_GITHUB_CLIENT_ID/SECRET        optional; GitHub identity is 501 until set
 CSX_ADMIN_TOKEN_SHA256             optional; enables private operator /admin
+CSX_LISTEN       ":8080"           host-less on purpose: Caddy reaches the
+                                   service over the compose network
 ```
+
+### Running csx-server on Windows
+
+Production csx-server is a Linux container binary; the Windows builds are the
+ones developers and agents make to test against a local PostgreSQL. There, a
+host-less `CSX_LISTEN` such as `:8080` or `:8097` is **narrowed to
+`127.0.0.1`**, and the server says so on startup.
+
+Two reasons. Windows Defender Firewall raises its consent dialog for a bind to
+every interface and identifies the program by *executable path*, so a locally
+built server — which lands in a new scratch directory every build — prompts
+again on every rebuild under whatever filename that build used, and the allow
+decision can never be remembered. R2C-84 was reported as an unknown app called
+`csx-server-new` for exactly this reason. The second reason is that the bind
+otherwise puts an admin-capable API and its database on the local network for
+the length of the session.
+
+Naming a host is still honoured verbatim, `0.0.0.0` included — write
+`CSX_LISTEN=0.0.0.0:8080` to serve the local network deliberately. Linux and
+macOS are untouched, so the container contract above is unchanged.
