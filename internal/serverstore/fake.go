@@ -51,6 +51,10 @@ type Fake struct {
 	adminTokens     map[string]AdminTokenRow // token hash -> row
 	authoringDrafts map[string]AuthoringDraftRow
 	authoringWork   map[[4]string]AuthoringWorkRow
+	// authoringAttempts is the bounded per-coordinate attempt ledger that
+	// decides when a coordinate stops being offered. See
+	// authoring_quarantine.go.
+	authoringAttempts map[[4]string]*authoringLedger
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -112,6 +116,8 @@ func NewFake() *Fake {
 		authoring:       map[string]AuthoringSessionRow{},
 		authoringDrafts: map[string]AuthoringDraftRow{},
 		authoringWork:   map[[4]string]AuthoringWorkRow{},
+
+		authoringAttempts: map[[4]string]*authoringLedger{},
 	}
 }
 

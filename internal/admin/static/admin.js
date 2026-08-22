@@ -403,6 +403,10 @@
       stat("공개 샘플", num(h.publicSamples)),
       stat("중복 좌표", `${num(h.duplicateCoordinates)} · ${dupRate}`, h.duplicateCoordinates > 0),
       stat("잠긴 좌표", num(h.staleClaims), h.staleClaims > 0),
+      // Withheld is not an alarm on its own — it is the queue refusing work it
+      // has evidence against. It is here so the number the picker acts on and
+      // the number an operator reads are the same one.
+      stat("보류 좌표", num(h.withheldCoordinates || 0)),
       stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
         .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
     );
@@ -458,6 +462,95 @@
     cost.textContent = data.instances.length
       ? `${data.instances.map((i) => `${i.name} $${i.monthlyUsd}`).join(" · ")} — 합계 $${data.monthlyTotalUsd}/월`
       : "인스턴스 비용이 설정되지 않았습니다 (CSX_INSTANCES).";
+  };
+
+  load();
+  window.setInterval(load, 60000);
+})();
+
+(() => {
+  // Withheld coordinates: what the authoring queue has stopped offering, why,
+  // and the way back. A withholding nobody can see is a deletion with better
+  // manners, which is the whole reason this list is not just a counter.
+  const list = document.querySelector("#farm-withheld");
+  if (!list) return;
+
+  const request = async (url, options = {}) => {
+    const headers = new Headers(options.headers || {});
+    headers.set("Accept", "application/json");
+    if (options.method && options.method !== "GET") {
+      headers.set("Content-Type", "application/json");
+      headers.set("X-CSX-CSRF", "1");
+    }
+    const response = await fetch(url, {...options, headers, credentials: "same-origin", cache: "no-store"});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  };
+
+  const age = (hours) => (hours < 1 ? "방금" : hours < 48 ? `${Math.round(hours)}시간째` : `${Math.round(hours / 24)}일째`);
+
+  const load = async () => {
+    let data;
+    try {
+      data = await request("/admin/api/withheld-work");
+    } catch (_) {
+      // Not measured and nothing withheld must not look the same.
+      list.replaceChildren();
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "보류 목록을 불러오지 못했습니다.";
+      list.appendChild(p);
+      return;
+    }
+    list.replaceChildren();
+    const rows = data.withheld || [];
+    if (!rows.length) {
+      const none = document.createElement("p");
+      none.className = "empty";
+      none.textContent = "보류된 좌표 없음";
+      list.appendChild(none);
+      return;
+    }
+    for (const row of rows) {
+      const item = document.createElement("div");
+      item.className = "sample-worker-row";
+      const info = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = row.symbol ? `${row.package} · ${row.symbol}` : row.package;
+      if (row.needsOperator) name.classList.add("bad");
+      const meta = document.createElement("span");
+      meta.className = "note";
+      const lapse = row.needsOperator ? "자동 해제 없음" : `${new Date(row.reopensAt).toLocaleDateString("ko-KR")} 자동 해제`;
+      meta.textContent = `${row.reason} · ${age(row.ageHours)} · 시도 ${row.attempts}회(무산출 ${row.noOutput}, 면제 ${row.excused}) · ${lapse}`;
+      const evidence = document.createElement("span");
+      evidence.className = "note";
+      // The last few attempts are the evidence. A reason with nothing behind
+      // it cannot be judged, and judging it is the operator's whole job here.
+      evidence.textContent = (row.history || []).slice(-4)
+        .map((h) => (h.detail ? `${h.outcome}: ${h.detail}` : h.outcome)).join(" · ");
+      info.append(name, meta, evidence);
+      const back = document.createElement("button");
+      back.type = "button";
+      back.textContent = "다시 배포";
+      back.addEventListener("click", async () => {
+        back.disabled = true;
+        try {
+          await request("/admin/api/withheld-work/reopen", {
+            method: "POST",
+            body: JSON.stringify({
+              ecosystem: row.ecosystem, name: row.name,
+              version: row.version, symbol: row.symbol || "",
+            }),
+          });
+          await load();
+        } catch (_) {
+          back.disabled = false;
+          back.textContent = "해제 실패";
+        }
+      });
+      item.append(info, back);
+      list.appendChild(item);
+    }
   };
 
   load();

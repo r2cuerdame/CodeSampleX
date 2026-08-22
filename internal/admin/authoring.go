@@ -442,6 +442,9 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
 2. 아래 명령으로 가장 우선순위가 높은 일감 하나를 받는다. 서버는 미해결 Wanted를 먼저 주고, 없으면 실패 관측과 사용량으로 새 Finding·커버리지 일감을 만든다. NO_WORK면 임의 샘플을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
 %s
+2-1. 배정된 좌표에 호출할 수 있는 심벌·프로젝트가 실제로 없다고 판단했거나(예: jar 없는 pom, Gradle plugin marker, 부모가 내부에서 고르는 플랫폼별 .node 바이너리), 레지스트리·툴체인이 응답하지 않았거나, 이 기계 자체가 실패했다면 아래 명령으로 사유를 붙여 즉시 반납한다. 같은 좌표를 계속 다시 받아 시간을 태우지 말라 — 반납은 그 좌표에 대한 네트워크의 유일한 기록이고, 이 분류가 "일시적 장애"와 "작성 불가능"을 가르는 근거가 된다.
+%s
+   --outcome 값: no-callable-symbol(호출 가능한 심벌이 없다고 측정) | transient(레지스트리·툴체인 무응답) | infrastructure(내 기계·Docker 실패) | no-output(이유를 특정할 수 없음). --detail에는 운영자가 읽을 한 줄을 남긴다.
 3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
 4. 빌드·테스트는 CSX run_observed_command로 실행한다.
 5. MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
@@ -451,7 +454,8 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 %s
 9. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
-이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand, authoringSubmitCommand(baseURL, grant.Token))
+이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand,
+		authoringReportCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token))
 }
 
 func authoringCommand(baseURL, token string) string {
@@ -460,6 +464,14 @@ func authoringCommand(baseURL, token string) string {
 
 func authoringSubmitCommand(baseURL, token string) string {
 	return fmt.Sprintf("csx sample-worker submit <sampleId> --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+}
+
+// authoringReportCommand is how a writer hands back work it cannot author,
+// with the reason. Without it the only thing the server ever learns about a
+// hopeless coordinate is silence, and silence is what a busy worker looks like.
+func authoringReportCommand(baseURL, token string) string {
+	return fmt.Sprintf("csx sample-worker report --outcome no-callable-symbol --detail %q --server %q --token %q",
+		"왜 작성할 수 없는지 한 줄", strings.TrimRight(baseURL, "/"), token)
 }
 
 func authoringNextCommand(baseURL, token string) string {

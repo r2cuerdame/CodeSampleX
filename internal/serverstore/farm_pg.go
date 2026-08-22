@@ -48,7 +48,8 @@ func (p *PG) FarmWorkers(ctx context.Context, since, now time.Time) ([]FarmWorke
 }
 
 func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, error) {
-	health := FarmHealth{ReceiptsByOS: map[string]int{}, QuarantinedByReason: map[string]int{}}
+	health := FarmHealth{ReceiptsByOS: map[string]int{}, QuarantinedByReason: map[string]int{},
+		WithheldByReason: map[string]int{}}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		// One pass over the public manifests. The corpus is thousands of rows,
 		// not millions, and this number is the reason the panel exists: it sat
@@ -105,6 +106,42 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 			return err
 		}
 		reasons.Close()
+
+		// What the authoring queue is refusing to offer, read from the same
+		// predicate the picker uses. An operator reading "0 withheld" while
+		// the fleet is being refused work is the failure the attempt ledger
+		// exists to make visible.
+		//
+		// The total is counted on its own rather than summed from the reason
+		// rows below: those are capped, and a capped sum reported as a total
+		// is the quiet kind of wrong this panel keeps being fixed for.
+		if err := c.QueryRow(ctx, `SELECT count(*) FROM authoring_attempts
+			 WHERE quarantined_at IS NOT NULL AND (reopens_at IS NULL OR reopens_at > $1)`, now).
+			Scan(&health.WithheldCoordinates); err != nil {
+			return err
+		}
+		withheld, err := c.Query(ctx, `
+			SELECT COALESCE(ledger->>'quarantineReason',''), count(*)
+			  FROM authoring_attempts
+			 WHERE quarantined_at IS NOT NULL AND (reopens_at IS NULL OR reopens_at > $1)
+			 GROUP BY 1 ORDER BY 2 DESC LIMIT 32`, now)
+		if err != nil {
+			return err
+		}
+		for withheld.Next() {
+			var reason string
+			var n int
+			if err := withheld.Scan(&reason, &n); err != nil {
+				withheld.Close()
+				return err
+			}
+			health.WithheldByReason[reason] = n
+		}
+		if err := withheld.Err(); err != nil {
+			withheld.Close()
+			return err
+		}
+		withheld.Close()
 
 		rows, err := c.Query(ctx, `
 			SELECT LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os, count(*)

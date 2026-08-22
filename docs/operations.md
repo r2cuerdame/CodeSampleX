@@ -153,6 +153,28 @@ also required):
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and
 `docker compose ps` shows caddy/server/db healthy.
 
+### Authoring work the queue is refusing to hand out
+
+The farm panel's **보류된 좌표** list is every public coordinate the authoring
+queue has stopped offering, with the reason, the last few attempts and the
+writers' own notes. Two reasons exist and they need different actions:
+
+* `no callable symbol` — two independent writers measured that nothing a
+  contract could call exists there (a pom with no jar, a plugin marker, a
+  per-platform `.node` binary). It never lapses; **다시 배포** is the only way
+  back, and it is safe: the counters reset, the history stays, and a coordinate
+  that genuinely cannot be authored earns its withholding again.
+* `repeated no output` — it kept being handed out and produced nothing. This is
+  an inference, not a measurement, so it lapses by itself after 30 days.
+
+`health.withheldCoordinates` on `GET /admin/api/farm` is read from the same
+predicate the picker uses, so the number an operator reads and the number the
+fleet is acted on by are the same one. A withdrawn **sample** and a withheld
+**coordinate** are different acts and are counted apart.
+
+Thresholds, the classification a worker reports and the reasoning behind every
+number are in [docs/authoring-quarantine.md](authoring-quarantine.md).
+
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
 `(ecosystem,name,version,symbol)`. Roll forward to a fixed server if the new

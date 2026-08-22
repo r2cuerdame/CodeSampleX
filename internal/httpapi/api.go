@@ -112,6 +112,10 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/samples", a.limitPublish(lim, a.requireSeeder(a.handleSampleUpload)))
 	a.route(mux, "POST /v1/authoring/drafts", a.limit(lim.write, a.handleAuthoringDraft))
 	a.route(mux, "POST /v1/authoring/work/next", a.limit(lim.write, a.handleAuthoringWorkNext))
+	// How the work turned out. Without it the only thing this server ever
+	// learns about a hopeless coordinate is silence, and silence is exactly
+	// what a busy worker looks like.
+	a.route(mux, "POST /v1/authoring/work/outcome", a.limit(lim.write, a.handleAuthoringWorkOutcome))
 	a.route(mux, "GET /v1/samples/{sampleId}", a.limit(lim.read, a.handleSampleMeta))
 	a.route(mux, "GET /v1/samples/{sampleId}/artifact", a.limit(lim.read, a.handleSampleArtifact))
 	a.route(mux, "GET /v1/wanted", a.limit(lim.read, a.handleWantedList))

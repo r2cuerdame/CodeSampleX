@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ var (
 func init() {
 	Register(Command{
 		Name:    "sample-worker",
-		Summary: "refresh a sample-authoring session or submit a private draft",
+		Summary: "refresh a sample-authoring session, take or hand back work, or submit a private draft",
 		Run:     sampleWorkerMain,
 	})
 }
@@ -50,6 +51,9 @@ func sampleWorkerMain(ctx context.Context, args []string) int {
 	}
 	if args[0] == "next" {
 		return sampleWorkerNext(ctx, args[1:])
+	}
+	if args[0] == "report" {
+		return sampleWorkerReport(ctx, args[1:])
 	}
 	if args[0] != "refresh" {
 		sampleWorkerUsage()
@@ -115,6 +119,113 @@ func sampleWorkerUsage() {
 	fmt.Fprintln(sampleWorkerStderr, "usage: csx sample-worker refresh --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker next --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL --token TOKEN")
+	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker report --outcome KIND [--detail TEXT] --server URL --token TOKEN")
+	fmt.Fprintln(sampleWorkerStderr, "         KIND: no-callable-symbol | transient | infrastructure | no-output")
+}
+
+// sampleWorkerOutcomes maps what a writer types to what the protocol carries.
+//
+// The classification cannot come from the server: it can observe that it gave
+// a coordinate out and got nothing back, and nothing else. Telling a Docker
+// daemon that died from a registry that was down from an artifact that
+// contains no code is the writer's job, and it is the whole difference between
+// a bad afternoon and a permanent exclusion.
+var sampleWorkerOutcomes = map[string]string{
+	// The strong one: you looked, and no symbol or project a contract could
+	// call exists here — a pom with no jar, a plugin marker, a lone .node
+	// binary the parent package selects internally.
+	"no-callable-symbol": "NO_CALLABLE_SYMBOL",
+	// A registry or a toolchain that would not answer. It has not said no.
+	"transient": "TRANSIENT",
+	// Your own machine: no Docker daemon, no disk, no route. This measures
+	// nothing about the coordinate and is not counted against it.
+	"infrastructure": "INFRASTRUCTURE",
+	// You gave up and cannot say which of the above it was.
+	"no-output": "NO_OUTPUT",
+}
+
+func sampleWorkerOutcomeNames() string {
+	names := make([]string, 0, len(sampleWorkerOutcomes))
+	for name := range sampleWorkerOutcomes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " | ")
+}
+
+// sampleWorkerReport hands the claim back with a classification.
+//
+// It exists because a writer holding a coordinate it cannot author had exactly
+// one way out: stop asking. The claim then sat on a 24-hour lease while the
+// session stayed alive, and the coordinate was off the board for everybody —
+// which is how one Gradle plugin marker took an authoring slot for four hours.
+func sampleWorkerReport(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("sample-worker report", flag.ContinueOnError)
+	fs.SetOutput(sampleWorkerStderr)
+	server := fs.String("server", "https://codesamplex.dev", "CodeSampleX server URL")
+	token := fs.String("token", "", "sample-worker session token")
+	outcome := fs.String("outcome", "", "why the work produced nothing: "+sampleWorkerOutcomeNames())
+	detail := fs.String("detail", "", "one line an operator will read, e.g. \"pom-only artifact: no jar\"")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *token == "" {
+		sampleWorkerUsage()
+		return 2
+	}
+	wire, known := sampleWorkerOutcomes[strings.ToLower(strings.TrimSpace(*outcome))]
+	if !known {
+		// Refused here rather than sent. An unrecognised classification is
+		// worse than none: it would be recorded as evidence about the
+		// coordinate without anybody having measured anything.
+		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker report: --outcome must be one of %s\n", sampleWorkerOutcomeNames())
+		return 2
+	}
+	base, err := sampleWorkerServerURL(*server)
+	if err != nil {
+		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker: %v\n", err)
+		return 2
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"schemaVersion": 1, "outcome": wire, "detail": strings.TrimSpace(*detail),
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/outcome", bytes.NewReader(payload))
+	if err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid request")
+		return 1
+	}
+	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := sampleWorkerClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: request failed")
+		return 1
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
+	if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker report: server rejected the report (HTTP %d)\n", resp.StatusCode)
+		return 1
+	}
+	var result struct {
+		Status string `json:"status"`
+		Work   struct {
+			Package string `json:"package"`
+			Symbol  string `json:"symbol"`
+		} `json:"work"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid server response")
+		return 1
+	}
+	if result.Status == "NO_CLAIM" {
+		fmt.Fprintln(sampleWorkerStdout, "NO_CLAIM: this session was not holding any work; nothing was recorded.")
+		return 0
+	}
+	target := result.Work.Package
+	if result.Work.Symbol != "" {
+		target += " · " + result.Work.Symbol
+	}
+	fmt.Fprintf(sampleWorkerStdout, "Released %s as %s. Ask for work again with `csx sample-worker next`.\n", target, wire)
+	return 0
 }
 
 // sampleWorkerContainerOS asks the Docker daemon which kind of container it
@@ -213,6 +324,12 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStdout, " --symbol %q", result.Work.Symbol)
 	}
 	fmt.Fprintln(sampleWorkerStdout)
+	// The way out, printed beside the way in. A writer that cannot author this
+	// coordinate had exactly one option before this line existed — stop asking
+	// — and the claim then held the slot for the rest of its 24-hour lease.
+	fmt.Fprintln(sampleWorkerStdout,
+		"If nothing here can be written against, hand it back with a reason instead of asking again:\n"+
+			"  csx sample-worker report --outcome no-callable-symbol|transient|infrastructure --detail \"one line\"")
 	return 0
 }
 
