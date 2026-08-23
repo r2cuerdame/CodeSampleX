@@ -2455,6 +2455,18 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 		}
 		defer tx.Rollback(ctx)
 		for _, report := range reports {
+			// One row per report, before the coordinates are expanded: the
+			// rate needs the question, the ranking below needs the rows, and
+			// counting the rows as questions would make a miss that named
+			// three packages outweigh three separate misses.
+			if key := searchMissKey(report.Rows); key != "" {
+				if _, err := tx.Exec(ctx, `
+				INSERT INTO search_misses(epoch, anon_id, dedup_key)
+				VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+					report.Epoch, report.AnonID, key); err != nil {
+					return err
+				}
+			}
 			for _, r := range report.Rows {
 				tag, err := tx.Exec(ctx, `
 				INSERT INTO wanted_dedup(ecosystem, name, version, symbol, target_os, epoch, anon_id)

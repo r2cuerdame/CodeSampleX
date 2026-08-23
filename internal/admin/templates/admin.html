@@ -33,6 +33,23 @@
     .stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px }.metric { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:14px; background:rgba(3,14,34,.38) }
     .priority-panel { border-color:rgba(98,217,255,.58); background:linear-gradient(135deg,rgba(20,61,119,.98),rgba(8,25,54,.98)) }.priority-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px }.priority-metric { min-width:0; padding:16px; border:1px solid rgba(98,217,255,.3); border-radius:14px; background:rgba(3,14,34,.48) }.priority-metric .value { font-size:clamp(28px,4vw,42px) }.priority-metric.needs-attention { border-color:rgba(251,191,36,.65); background:rgba(102,65,8,.22) }.priority-metric.needs-attention .value { color:var(--warn) }
     .section-kicker { color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:.1em; margin-bottom:3px; text-transform:uppercase }
+    /* Flow first: three cards that say whether the line is running, above the
+   stock cards that say how much it has made. auto-fit rather than a fixed
+   column count because the summary panel is seven of twelve columns here and
+   a full row on a phone, and each card carries four lines -- a fixed count
+   wraps them into fragments at one of those widths or the other. */
+    /* min(248px,100%) rather than a bare 248px: below about a 320px screen the
+   panel's content box is narrower than the track floor, and a bare minmax
+   would force the track and push the page into a horizontal scroll. */
+    .flow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(248px,100%),1fr)); gap:10px; margin-bottom:12px }
+    .flow-metric { min-width:0; padding:16px; border:1px solid rgba(98,217,255,.42); border-radius:14px; background:rgba(3,14,34,.55) }
+    .flow-metric .value { font-size:clamp(26px,3.4vw,36px) }
+    .flow-metric .basis { display:block; margin-top:3px; font:12px ui-monospace,SFMono-Regular,Consolas,monospace; color:var(--cyan); overflow-wrap:anywhere }
+    .flow-metric .basis.thin { color:var(--warn) }
+    .flow-metric .support { display:block; margin-top:7px; color:var(--muted); font-size:11px; line-height:1.5 }
+    .flow-metric.unsampled .value { color:var(--muted) }
+    .flow-metric.needs-attention { border-color:rgba(251,191,36,.7); background:rgba(102,65,8,.24) }
+    .flow-metric.needs-attention .value { color:var(--warn) }
     .quality-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px }.quality-grid .metric.primary { border-color:rgba(98,217,255,.48); background:rgba(16,55,104,.62) }.quality-grid .metric.primary .value { font-size:clamp(27px,4vw,38px) }
     .health-strip { display:grid; grid-template-columns:1.2fr .8fr .8fr; gap:10px; align-items:stretch }.health-strip .metric { display:flex; flex-direction:column; justify-content:center }
     .growth-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px }.growth-card { min-width:0; border:1px solid rgba(88,138,207,.35); border-radius:13px; padding:14px; background:rgba(3,14,34,.38) }.growth-card.unavailable { border-style:dashed }.growth-card .value { font-size:19px }.growth-card .reason { color:var(--muted); font-size:11px; margin:7px 0 0 }.growth-card.positive .value { color:var(--ok) }.growth-card.negative .value { color:var(--bad) }
@@ -40,6 +57,7 @@
     .mix-list { display:grid; gap:11px }.mix-head { align-items:center; font-size:12px }.mix-track { height:8px; margin-top:4px; border-radius:999px; overflow:hidden; background:rgba(158,179,212,.14) }.mix-fill { display:block; height:8px; fill:var(--blue) }.mix-fill.pass { fill:var(--ok) }.mix-fill.fail { fill:var(--bad) }.mix-fill.skip { fill:var(--warn) }.mix-fill.unknown { fill:var(--muted) }.mix-fill.ecosystem { fill:var(--purple) }.mix-fill.consume,.stack.consume { fill:var(--cyan) }.mix-fill.contribute,.stack.contribute { fill:var(--purple) }.mix-fill.coordinate,.stack.coordinate { fill:var(--warn) }.stack.unknown { fill:var(--muted) }
     .result-totals { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:14px }.result-totals div,.raw div { background:rgba(3,14,34,.35); border-radius:10px; padding:11px }.result-totals strong,.raw strong { display:block; font-size:20px }.result-totals span,.raw span { color:var(--muted); font-size:11px }
     .table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch }
+    .mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace }
     /* Two screens, one page. The farm and its credentials are what an
        operator acts ON; the dashboard is what they read. Mixing them meant
        scrolling past six panels to reach a token. */
@@ -118,11 +136,22 @@
     </nav>
     <div id="tab-ops" class="tabpanel" role="tabpanel" aria-labelledby="tabbtn-ops">
     <section class="panel priority-panel" aria-labelledby="summary-title">
-      <div class="section-head"><div><div class="eyebrow">지금 개입할 것</div><h2 id="summary-title">운영 요약</h2><p class="note">일감·정체·미응답을 먼저 보고, 바로 아래에서 생산 속도와 검색 효용을 확인합니다.</p></div></div>
+      <div class="section-head"><div><div class="eyebrow">지금 개입할 것</div><h2 id="summary-title">운영 요약</h2><p class="note">지금 생산 라인이 살아 있는지를 먼저 보고, 아래에서 쌓인 재고와 밀린 일감을 확인합니다. 흐름 값은 모두 창을 명시하며, 잴 것이 없었던 창은 0%가 아니라 —로 나옵니다.</p></div></div>
+      {{if .Flow.Available}}<div class="flow-grid">
+        <div class="flow-metric{{if not .Flow.NoMatch.Sampled}} unsampled{{end}}{{if .Flow.NoMatch.Attention}} needs-attention{{end}}"><span class="label">{{.Flow.NoMatch.Label}} · {{.Flow.NoMatch.Window}}</span><span class="value">{{.Flow.NoMatch.Value}}</span><span class="basis{{if .Flow.NoMatch.ThinSample}} thin{{end}}">{{.Flow.NoMatch.Basis}}</span><span class="support">{{.Flow.NoMatch.Support}}</span></div>
+        <div class="flow-metric{{if .Flow.Verification.Attention}} needs-attention{{end}}"><span class="label">{{.Flow.Verification.Label}} · {{.Flow.Verification.Window}}</span><span class="value">{{.Flow.Verification.Value}}</span><span class="basis">{{.Flow.Verification.Basis}}</span><span class="support">{{.Flow.Verification.Support}}</span></div>
+        <div class="flow-metric{{if .Flow.Sample.Attention}} needs-attention{{end}}"><span class="label">{{.Flow.Sample.Label}} · {{.Flow.Sample.Window}}</span><span class="value">{{.Flow.Sample.Value}}</span><span class="basis">{{.Flow.Sample.Basis}}</span><span class="support">{{.Flow.Sample.Support}}</span></div>
+      </div>
+      <p class="note">마지막 검증 완료 {{.Flow.LastVerification}} · 마지막 샘플 수용 {{.Flow.LastSample}} · 마지막 검색 결과 {{.Flow.LastSearchOutcome}}. 이 세 값이 0인 창을 정상적인 한산함과 멈춘 lane 중 무엇으로 읽을지 결정합니다.</p>
+      <details class="panel" style="margin:12px 0 14px"><summary>시간 창별 흐름 · 1시간 / 24시간 / 7일</summary>
+        <p class="note">No match의 분모는 서버가 결과를 본 검색입니다. HIT는 익명 offer 단위로, MISS는 질문 단위로 각각 UTC 일별·보고자별 중복 제거되므로, 같은 검색을 오후 내내 재시도해도 한 번만 셉니다. 로컬 캐시에서 끝난 검색과 community 모드가 아닌 설치는 어느 쪽에도 들어오지 않습니다.</p>
+        <div class="table-wrap" style="margin-top:12px"><table><caption class="sr-only">시간 창별 No match 비율, 검증 처리량, 샘플 수용량</caption><thead><tr><th scope="col">시간 창</th><th scope="col">No match</th><th scope="col">분자 / 분모</th><th scope="col">검증 완료</th><th scope="col">검증/h</th><th scope="col">결과 구성</th><th scope="col">수용 샘플</th><th scope="col">샘플/h</th><th scope="col">보류</th></tr></thead><tbody>{{range .Flow.Windows}}<tr><td>{{.Window}}</td><td>{{.NoMatch}}</td><td class="mono">{{.NoMatchBasis}}</td><td>{{.Verifications}}</td><td>{{.VerificationRate}}</td><td>{{.VerificationMix}}</td><td>{{.Samples}}</td><td>{{.SampleRate}}</td><td>{{.Held}}</td></tr>{{end}}</tbody></table></div>
+        <p class="note">검증 처리량은 claim이나 시작이 아니라 <strong>완료된 영수증</strong> 전체입니다 — FAIL은 검증기가 제 일을 한 것이고, PASS만 세면 멈춘 팜과 실패하는 팜이 같은 0으로 보입니다. 수용 샘플은 그 창에 접수되어 <strong>지금 서비스되는</strong> 샘플이고, 보류는 같은 창에 접수됐지만 아직 격리 상태인 샘플입니다.</p>
+      </details>{{else if .InsightsAvailable}}<p class="empty">아직 흐름 집계가 없습니다 — 검색 결과·검증 영수증·샘플 수용이 한 건도 기록되지 않았습니다. 0이 아니라 잰 적이 없다는 뜻입니다.</p>{{end}}
+      {{if .SearchQuality.Available}}<p class="note">공개 검색 API 직접 호출 누적: No match 비율 {{.SearchQuality.NoMatchRate}} · Sample hit rate {{.SearchQuality.HitRate}} · {{.SearchQuality.RangeLabel}}. 위 흐름 값과 다른 원천이며 섞이지 않습니다 — 모든 클라이언트가 로컬 캐시로 검색하므로 이 카운터는 외부에서 wire API를 직접 부를 때만 움직입니다.</p>{{end}}
       <div class="priority-grid">
         {{if .InsightsAvailable}}<div class="priority-metric"><span class="label">가져갈 수 있는 검증 일감</span><span class="value">{{number .Insights.Jobs.Claimable}}</span></div><div class="priority-metric {{if .Insights.Jobs.Stale}}needs-attention{{end}}"><span class="label">만료된 lease</span><span class="value">{{number .Insights.Jobs.Stale}}</span></div><div class="priority-metric"><span class="label">진행 중 검증</span><span class="value">{{number .Insights.Jobs.Live}}</span></div>{{end}}
         {{if .WantedAvailable}}<div class="priority-metric {{if .WantedTotal}}needs-attention{{end}}"><span class="label">샘플 없는 요청 좌표</span><span class="value">{{.WantedTotal}}</span></div>{{end}}
-        {{if .SearchQuality.Available}}<div class="priority-metric"><span class="label">No match 비율</span><span class="value">{{.SearchQuality.NoMatchRate}}</span></div>{{end}}
         {{if .CountsAvailable}}<div class="priority-metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span></div>{{end}}
       </div>
     </section>
