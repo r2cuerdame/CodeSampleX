@@ -49,7 +49,7 @@ func TestAContractRunIsRecordedAsAnObservation(t *testing.T) {
 	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0", "pkg:npm/follow-redirects@1.15.6"},
 		map[string]string{"resolve": "PASS", "compile": "SKIPPED", "load": "PASS", "contract": "PASS"})
 
-	batches := observationsFromReceipt(r)
+	batches := ObservationsFromReceipt(r)
 	if len(batches) == 0 {
 		t.Fatal("a contract run produced no observation at all")
 	}
@@ -99,7 +99,7 @@ func TestAFailedContractIsRecordedAsAFailedRun(t *testing.T) {
 	r.ContractResult = "FAIL"
 
 	var sawFail bool
-	for _, b := range observationsFromReceipt(r) {
+	for _, b := range ObservationsFromReceipt(r) {
 		if b.Stage == domain.StageProjectTest {
 			if b.Result != domain.ResultFail {
 				t.Errorf("contract FAIL recorded as %s", b.Result)
@@ -116,7 +116,7 @@ func TestAFailedContractIsRecordedAsAFailedRun(t *testing.T) {
 // any coordinate, and inventing one would be worse than the dash.
 func TestAReceiptWithoutResolvedPackagesObservesNothing(t *testing.T) {
 	r := passReceipt(t, nil, map[string]string{"resolve": "PASS", "contract": "PASS"})
-	if got := observationsFromReceipt(r); len(got) != 0 {
+	if got := ObservationsFromReceipt(r); len(got) != 0 {
 		t.Errorf("invented %d observations from a receipt that named no package", len(got))
 	}
 }
@@ -127,7 +127,7 @@ func TestReceiptObservationsAreAcceptedByIngest(t *testing.T) {
 	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0"},
 		map[string]string{"resolve": "PASS", "contract": "PASS"})
 	store := serverstore.NewFake()
-	n, rejected, err := store.IngestBatches(t.Context(), observationsFromReceipt(r))
+	n, rejected, err := store.IngestBatches(t.Context(), ObservationsFromReceipt(r))
 	if err != nil {
 		t.Fatal(err)
 	}

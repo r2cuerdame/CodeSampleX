@@ -43,14 +43,18 @@ type receiptBody struct {
 	Environment      domain.EnvironmentFingerprint `json:"environment"`
 }
 
-// observationsFromReceipt turns one verification receipt into the usage
+// ObservationsFromReceipt turns one verification receipt into the usage
 // observations it already proves.
+//
+// Exported because the receipts already stored need the same conversion, and
+// backfilling them through a second implementation would be a second set of
+// rules about what a receipt proves.
 //
 // A receipt that does not name the packages it resolved is attributed to no
 // coordinate at all: inventing one would be worse than the dash it leaves.
 // Symbols are left empty for the same reason — a receipt says which packages
 // ran, not which symbols did.
-func observationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch {
+func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch {
 	var body receiptBody
 	if json.Unmarshal([]byte(r.ReceiptJSON), &body) != nil {
 		return nil

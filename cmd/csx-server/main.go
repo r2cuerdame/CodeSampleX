@@ -26,7 +26,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status>
+const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status|backfill-observations>
 
   migrate      apply schema migrations to $CSX_DSN and exit
   serve        apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
@@ -40,6 +40,12 @@ const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompu
                re-derive every sample status from its receipts under the
                current rules; corrects statuses granted under an older rule
                csx-server recompute-status [--apply]
+
+  backfill-observations
+               record the runs already stored as receipts; a contract run is
+               an execution in an environment we recorded, and receipts kept
+               before the conversion went live were never counted as one
+               csx-server backfill-observations [--apply]
 `
 
 func main() {
@@ -73,6 +79,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSeederCreate(cfg, args[1:], stdout, stderr)
 	case "recompute-status":
 		return runRecomputeStatus(cfg, args[1:], stdout, stderr)
+	case "backfill-observations":
+		return runBackfillObservations(cfg, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "csx-server: unknown subcommand %q\n%s", args[0], usage)
 		return 2
