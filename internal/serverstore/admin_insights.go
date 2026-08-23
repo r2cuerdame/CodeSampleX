@@ -149,6 +149,10 @@ type AdminInsights struct {
 	PackageDepth []AdminPackageDepth
 	Search       AdminSearchOutcomeCounts
 	Jobs         AdminJobQueue
+	// Flow is production measured over recent bounded windows rather than
+	// accumulated. Every other field here is stock, and stock cannot say
+	// whether the line is running right now.
+	Flow AdminFlow
 }
 
 var _ AdminInsightsReader = (*PG)(nil)
@@ -382,7 +386,9 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 			out.Jobs.OldestClaimable = oldest.UTC()
 			out.Jobs.HasOldest = true
 		}
-		return nil
+
+		out.Flow, err = adminFlow(ctx, conn, now)
+		return err
 	})
 	return out, err
 }

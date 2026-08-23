@@ -398,6 +398,10 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 				LiveClaimants: 2, HasOldest: true,
 				OldestClaimable: time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC),
 			},
+			// Stock above, flow here. The page's structural guards below count
+			// tables and headers, so the flow panel has to be present in this
+			// fixture or the guard stops covering the widest table on the page.
+			Flow: sampleFlow(),
 		},
 	}
 	access := &fakeAccessReader{metrics: AccessLogMetrics{
@@ -426,6 +430,10 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 		"최근 패키지 깊이", "원시 API 요청 횟수가 아닙니다",
 		"API·개인정보 진단", "69,467", "429", "5xx", "최근 30일 패키지별 검증 샘플 수", "미응답 요청 패키지 좌표", "격리된 샘플은 제외합니다",
 		"No match 비율", "25.0%",
+		// Flow: the rate with its basis and window, throughput as completed
+		// work, and production as what actually became usable.
+		"No match · 최근 24시간", "8 / 32", "검증 완료 · 최근 1시간", "샘플 수용 · 최근 1시간",
+		"시간 창별 흐름", "최근 7일", "40 / 200", "PASS 300", "마지막 검증 완료",
 		"검증 작업 큐", "Claim 가능", "만료 lease", "유효 claim 워커 ID 2개", "온라인·idle 워커 수나 heartbeat가 아닙니다",
 		"측정 경계", "활성 MCP 세션·설치·다운로드",
 		"내부 샘플 워커", "LLM 모델", "추론 강도", "워커 수", "프롬프트 + CLI 발급·복사",
@@ -467,14 +475,14 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 			t.Errorf("body unexpectedly contains %q", forbidden)
 		}
 	}
-	if got := strings.Count(body, `class="table-wrap"`); got != 3 {
-		t.Errorf("mobile table wrappers = %d, want 3", got)
+	if got := strings.Count(body, `class="table-wrap"`); got != 4 {
+		t.Errorf("mobile table wrappers = %d, want 4", got)
 	}
-	if got := strings.Count(body, `<caption class="sr-only">`); got != 3 {
-		t.Errorf("accessible table captions = %d, want 3", got)
+	if got := strings.Count(body, `<caption class="sr-only">`); got != 4 {
+		t.Errorf("accessible table captions = %d, want 4", got)
 	}
-	if got := strings.Count(body, `scope="col"`); got != 11 {
-		t.Errorf("scoped table headers = %d, want 11", got)
+	if got := strings.Count(body, `scope="col"`); got != 20 {
+		t.Errorf("scoped table headers = %d, want 20", got)
 	}
 	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
 		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",

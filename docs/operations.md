@@ -198,6 +198,44 @@ also required):
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and
 `docker compose ps` shows caddy/server/db healthy.
 
+### Reading the flow KPIs
+
+The top of **운영 요약** carries three windowed rates. Everything else on that
+page is stock — how much has accumulated — and stock cannot say whether the
+line is running: a corpus that stopped growing an hour ago looks exactly like
+one that is still growing.
+
+* **No match · 최근 24시간** — the share of searches the server saw that
+  returned nothing, with its numerator and denominator beside it. The
+  denominator is HITs (`search_hits`, one row per anonymous offer) plus MISSes
+  (`search_misses`, one row per question). Both sides deduplicate per reporter
+  per UTC day, so retrying the same search all afternoon counts once, and a
+  miss that named ten packages is one question rather than ten. Searches
+  answered from a client's local cache and installs outside community mode
+  reach neither side and are not in the rate.
+* **검증 완료 · 최근 1시간** — every completed receipt, not only PASS. A FAIL is
+  a verifier doing its job; counting passes alone makes a stalled farm and a
+  failing farm the same zero. The card turns amber when work is claimable and
+  nothing finished in the hour — that pair is the stall, and neither number
+  shows it alone.
+* **샘플 수용 · 최근 1시간** — samples uploaded in the window that the server
+  currently serves. **보류** is the same window's still-quarantined uploads: a
+  draft waiting on its cross verification, or one that was withdrawn.
+
+A zero is only readable next to the three ages under the cards (마지막 검증
+완료 / 샘플 수용 / 검색 결과). Zero with a six-minute-old receipt is a lull;
+the same zero with a day-old one is a stopped lane. A window with nothing to
+measure shows `—` and `표본 없음`, never `0%`.
+
+Every window opens and never closes at the reading clock, because rows are
+stamped by PostgreSQL and the window is cut by the server process. Where those
+two clocks differ, closing the window would silently drop the newest rows —
+which are the only ones this panel is about.
+
+Migration `0023_search_misses.sql` adds the miss counter and is additive; it
+records nothing the `wanted` tables did not already hold, and it starts empty,
+so the rate reads `표본 없음` until the first reports arrive after deploy.
+
 ### Authoring work the queue is refusing to hand out
 
 The farm panel's **보류된 좌표** list is every public coordinate the authoring
