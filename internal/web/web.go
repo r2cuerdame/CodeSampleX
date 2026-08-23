@@ -281,6 +281,12 @@ type site struct {
 	// closed when that assembly finishes. Concurrent readers wait on it
 	// rather than each running the same fan-out.
 	cubeLoading map[string]chan struct{}
+	// pinnedCube caches the repair read for coordinates the browse window
+	// skipped, keyed by package and pin. It is small — one release, or one
+	// symbol across the window's releases — and it is on the request path of
+	// exactly the URLs people share, which are the ones that get linked from
+	// somewhere and then hit repeatedly.
+	pinnedCube map[string]pinnedCubeEntry
 
 	// hero* memoizes the landing's finished hero matrix per (language,
 	// selection). Assembly is cached above; the PIVOTING was not, and a warm

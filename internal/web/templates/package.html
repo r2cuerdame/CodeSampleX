@@ -16,66 +16,57 @@
      in the exact measured combinations. */}}
 {{- if .Cube}}
 <section id="cube" class="cube">
+  {{- if .Cube.Answer}}
+  {{/* The answer, before the instrument that found it — and INSIDE #cube,
+       because that anchor is what every shared link and every filter reload
+       lands on. Above the anchor it would have been the one thing a deep
+       link scrolled past. */}}
+  {{- with .Cube.Answer}}
+  <div class="answer{{if .Basis}} {{.Basis}}{{end}}{{if .Tone}} t-{{.Tone}}{{end}}">
+    <h2 class="eyebrow mono">{{$.T "answer.heading"}}</h2>
+    {{/* The coordinate, once. It used to be read three times on one screen —
+         here, again in the record's own header, and a third time in the
+         control bar — so everything below states only what it adds. */}}
+    <p class="answer-coord mono">
+      {{- if .Symbol}}<span class="answer-symbol">{{.Symbol}}</span>{{end}}
+      {{/* The "@" binds a version to the API in front of it. With no symbol
+           decided there is nothing for it to bind to, and it read as a stray
+           mark opening the line. */}}
+      {{- if .Version}}<span class="answer-version dim">{{if .Symbol}}@{{end}}{{.Version}}</span>{{end}}
+      {{- if .Env}}<span class="answer-sep dim" aria-hidden="true">·</span><span class="answer-env dim">{{.Env}}</span>{{end}}
+    </p>
+    <p class="answer-line">{{if .Glyph}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{end}}<span class="answer-headline">{{.Headline}}</span></p>
+    <p class="answer-basis dim small">{{.BasisNote}}</p>
+    <dl class="answer-facts mono small">
+      {{- range .Facts}}
+      <div{{if .Absent}} class="absent"{{end}}><dt class="dim">{{.Label}}</dt><dd>{{.Value}}</dd></div>
+      {{- end}}
+    </dl>
+    {{- if .RecordsHref}}
+    <p class="answer-records"><a href="{{$.WithLang .RecordsHref}}">{{.RecordsLabel}}</a></p>
+    {{- end}}
+  </div>
+  {{- end}}
+  {{/* Folded, because the coordinate is already decided: the reader came for
+       the answer, not for the picker. Opening it is how they ask a different
+       question. */}}
+  <details id="cubechange" class="home-detail cubechange">
+    <summary><span class="eyebrow mono">{{.T "cube.change_heading"}}</span></summary>
+    <div class="home-detail-body">{{template "cubecontrols" .}}</div>
+  </details>
+  {{- else}}
   <div class="section-heading">
     <div>
       <h2 class="eyebrow mono">{{.T "cube.heading"}}</h2>
     </div>
   </div>
-
-  {{/* One instrument: what is fixed, what can still be chosen, and the grid
-       it all describes — in that order, in one frame.
-       Picking a cell is not a different act from picking a filter. Both fix a
-       dimension and narrow the slice, and splitting them into a "filter"
-       section above a "matrix" section made a click on the grid look like
-       navigation while a click on a dropdown looked like filtering. They are
-       the same step, so they read as one. */}}
-  <form class="cubecontrols mono small" method="get" action="{{.Cube.Action}}">
-    {{- if .Cube.Chips}}
-    <div class="ctlgroup pinned">
-      <span class="ctllabel dim">{{.T "cube.pinned"}}</span>
-      {{template "pins" .Cube.Chips}}
-    </div>
-    {{- end}}
-    {{- if .Cube.XOptions}}
-    <div class="ctlgroup">
-      <label>{{.T "cube.x_axis"}}
-        <select name="x" data-autosubmit>{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-      </label>
-      {{if .Cube.SwapHref}}<a class="swapaxes" href="{{.Cube.SwapHref}}" data-keepscroll title="{{.T "cube.swap"}}" aria-label="{{.T "cube.swap"}}"><span aria-hidden="true">⇄</span></a>{{end}}
-      <label>{{.T "cube.y_axis"}}
-        <select name="y" data-autosubmit>{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-      </label>
-    </div>
-    {{- end}}
-    {{- if .Cube.Filters}}
-    <div class="ctlgroup filters">
-      <span class="ctllabel dim">{{.T "cube.filters"}}</span>
-      {{- range .Cube.Filters}}
-      {{- if .Active}}
-      {{/* The reader pinned this one. It is already above, as a chip they can
-           take off, and drawing it here again as a dropdown they cannot use
-           said the same thing twice — a fully drilled coordinate showed five
-           chips and then the same five values greyed out beside three more.
-           It stays IN the form, because a field is the only thing that
-           carries the pin through the next submit; it just is not drawn. */}}
-      <input type="hidden" name="f_{{.Dim}}" value="{{.Pinned}}">
-      {{- else}}
-      {{/* Everything the reader did not pin keeps its dropdown, decided or
-           not: a bar whose controls change shape as they drill is harder to
-           read than one that stays put. A decided dimension holds its one
-           value selected and offers no "all", so it says where you are
-           without pretending there is a choice. */}}
-      <label{{if .Fixed}} class="cube-decided"{{end}}>{{.Label}}
-        <select name="f_{{.Dim}}"{{if .Fixed}} disabled aria-disabled="true"{{else}} data-autosubmit{{end}}>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-      </label>
-      {{- end}}
-      {{- end}}
-      {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
-    </div>
-    {{- end}}
-    {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
-    <noscript><button type="submit">{{.T "cube.apply"}}</button></noscript>
-  </form>
+  {{/* The one sentence that says what the controls below are for. The locale
+       has carried it for as long as the cube has existed and the page never
+       rendered it, so a first reader saw "X axis", "Y axis", "Filter" and had
+       to infer the instrument from its parts. */}}
+  <p class="cubesub dim small">{{.T "cube.sub"}}</p>
+  {{template "cubecontrols" .}}
+  {{- end}}
 
   {{- if .Cube.NoMatch}}
   <p class="dim">{{.T "cube.no_match"}}</p>
@@ -90,17 +81,33 @@
            slice; these two led OUT of it, to pages covering every environment
            of that release — wider than the coordinate the reader had just
            worked down to, wearing the same blue as the links that go deeper.
-           The trail above carries them, which is where a jump belongs. */}}
+           The trail above carries them, which is where a jump belongs.
+
+           Blank where the answer card already said it: what is left is what
+           tells this record apart from the ones beside it. */}}
+      {{- if or .Symbol .Version}}
       <div class="leafhead mono">
-        <span>{{.Symbol}}</span><span class="dim">@{{.Version}}</span>
+        {{- if .Symbol}}<span>{{.Symbol}}</span>{{end}}{{if .Version}}<span class="dim">@{{.Version}}</span>{{end}}
       </div>
+      {{- end}}
       {{if .Env}}<div class="leafenv dim mono small">{{.Env}}</div>{{end}}
-      <div class="leafcell pv {{.Cell.Class}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">{{template "pivotcell" .Cell}}</div>
-      {{if .Cell.Tip}}<div class="dim mono small">{{.Cell.Tip}}</div>{{end}}
+      {{/* In words, not in the grid's shorthand. A glyph, a percentage and a
+           denominator are the right notation for scanning forty cells and the
+           wrong one for reading a single result — and the English evidence
+           line that used to sit under them was the only sentence a Korean
+           reader got on their own page. */}}
+      <p class="leafresult{{if .Basis}} {{.Basis}}{{end}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">
+        {{- if .Cell.Glyph}}<span class="glyph" aria-hidden="true">{{.Cell.Glyph}}</span>{{end}}<span>{{.Result}}</span>
+      </p>
+      {{if .BasisNote}}<p class="dim small">{{.BasisNote}}</p>{{end}}
     </li>
     {{- end}}
   </ul>
-  {{- else}}
+  {{/* Not a bare else. A single exact record is now stated by the answer card
+       and printed nowhere else, which left this arm reaching for a grid that
+       was never built — an empty table with an empty "×" above it, under the
+       answer it was supposed to have replaced. */}}
+  {{- else if not .Cube.Grid.Empty}}
   <div class="gridpanel">
     <div class="gridbar">
       <span class="axes mono small dim">{{.Cube.YLabel}} × {{.Cube.XLabel}}</span>
@@ -117,7 +124,10 @@
        should not have to scroll past the lesson every time. */}}
   <details class="home-detail gridhelp">
     <summary><span class="eyebrow mono">{{.T "landing.legend_heading"}}</span></summary>
-    <div class="home-detail-body">{{template "pivotlegend" .}}</div>
+    <div class="home-detail-body">
+      {{template "pivotlegend" .}}
+      <p class="small dim">{{.T "cube.drill_note"}}</p>
+    </div>
   </details>
   {{- end}}
 </section>
@@ -176,4 +186,73 @@
 </details>
 {{- end}}
 
+{{end}}
+
+{{/* cubecontrols is the whole instrument in one frame: what is fixed, what
+     can still be chosen, and — where there is one — the grid it describes.
+     It receives the page, because it needs both .Cube and .T.
+
+     Picking a cell is not a different act from picking a filter. Both fix a
+     dimension and narrow the slice, and splitting them into a "filter"
+     section above a "matrix" section made a click on the grid look like
+     navigation while a click on a dropdown looked like filtering. They are
+     the same step, so they read as one.
+
+     It is defined once and rendered in two places — beside the grid, and
+     folded away behind "change the conditions" once a coordinate is decided
+     — because a second copy of a form is a second copy of its bugs. */}}
+{{define "cubecontrols"}}
+  <form class="cubecontrols mono small" method="get" action="{{.Cube.Action}}">
+    {{- if .Cube.Chips}}
+    <div class="ctlgroup pinned">
+      <span class="ctllabel dim">{{.T "cube.pinned"}}</span>
+      {{template "pins" .Cube.Chips}}
+    </div>
+    {{- end}}
+    {{- if .Cube.XOptions}}
+    <div class="ctlgroup">
+      <label>{{.T "cube.x_axis"}}
+        <select name="x" data-autosubmit>{{range .Cube.XOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+      {{if .Cube.SwapHref}}<a class="swapaxes" href="{{.Cube.SwapHref}}" data-keepscroll title="{{.T "cube.swap"}}" aria-label="{{.T "cube.swap"}}"><span aria-hidden="true">⇄</span></a>{{end}}
+      <label>{{.T "cube.y_axis"}}
+        <select name="y" data-autosubmit>{{range .Cube.YOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+    </div>
+    {{- end}}
+    {{- if .Cube.Filters}}
+    <div class="ctlgroup filters">
+      <span class="ctllabel dim">{{.T "cube.filters"}}</span>
+      {{- range .Cube.Filters}}
+      {{- if .Active}}
+      {{/* The reader pinned this one. It is already above, as a chip they can
+           take off, and drawing it here again as a dropdown they cannot use
+           said the same thing twice — a fully drilled coordinate showed five
+           chips and then the same five values greyed out beside three more.
+           It stays IN the form, because a field is the only thing that
+           carries the pin through the next submit; it just is not drawn. */}}
+      <input type="hidden" name="f_{{.Dim}}" value="{{.Pinned}}">
+      {{- else if .Fixed}}
+      {{/* Decided by the evidence, not by the reader: one value exists, so
+           there is nothing to pick. It used to render as a DISABLED select,
+           which says the right thing in the wrong shape — a select is this
+           site's mark for "there is a choice here", and greying one out asks
+           the reader to work out that this particular select is furniture.
+           Plain metadata says "already settled" without ever looking like an
+           offer. Nothing is lost from the form either: a disabled control was
+           never submitted. */}}
+      <span class="ctlfixed"><span class="ctllabel dim">{{.Label}}</span><span class="ctlvalue">{{.Value}}</span></span>
+      {{- else}}
+      {{/* A real choice keeps its dropdown. */}}
+      <label>{{.Label}}
+        <select name="f_{{.Dim}}" data-autosubmit>{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      </label>
+      {{- end}}
+      {{- end}}
+      {{if .Cube.HasFilters}}<a class="clearfilters" href="{{.Cube.ClearHref}}">{{.T "cube.clear"}}</a>{{end}}
+    </div>
+    {{- end}}
+    {{- if .Cube.Lang}}<input type="hidden" name="lang" value="{{.Cube.Lang}}">{{end}}
+    <noscript><button type="submit">{{.T "cube.apply"}}</button></noscript>
+  </form>
 {{end}}

@@ -120,6 +120,18 @@ for(const s of document.querySelectorAll('[data-autosubmit]'))s.addEventListener
   s.form.submit()
 });
 for(const a of document.querySelectorAll('[data-keepscroll]'))a.addEventListener('click',keepScroll);
+/* Once a coordinate is decided the controls are folded away — the reader came
+   for the answer, not for the picker. But a filter change reloads the page,
+   and refolding them under a reader who is mid-change would close the drawer
+   they are standing in. Whether it is open travels with the scroll position,
+   for the same reason. */
+const cubeChange=document.getElementById('cubechange');
+if(cubeChange){
+  try{if(sessionStorage.getItem('csx-cube-open')==='1')cubeChange.open=true}catch(e){}
+  cubeChange.addEventListener('toggle',()=>{
+    try{sessionStorage.setItem('csx-cube-open',cubeChange.open?'1':'0')}catch(e){}
+  });
+}
 if(document.getElementById('cube')||document.getElementById('matrix')){
   let y=null;try{y=sessionStorage.getItem('csx-cube-scroll');sessionStorage.removeItem('csx-cube-scroll')}catch(e){}
   if(y!==null){

@@ -22,7 +22,7 @@ func leafFacts() []cubeFact {
 // further down. The version page below it is the one that lists contract
 // records.
 func TestCubeLeafOffersAWayDownToTheVersion(t *testing.T) {
-	rows := cubeLeafRows(leafFacts(), "npm", "axios")
+	rows := cubeLeafRows(leafFacts(), "npm", "axios", "en")
 	if len(rows) == 0 {
 		t.Fatal("no leaf rows built")
 	}
@@ -40,7 +40,7 @@ func TestCubeLeafOffersAWayDownToTheVersion(t *testing.T) {
 // A package-level leaf row carries no symbol, so before this it emitted no
 // link whatsoever. It must still descend.
 func TestCubeLeafPackageLevelRowStillDescends(t *testing.T) {
-	rows := cubeLeafRows(leafFacts(), "npm", "axios")
+	rows := cubeLeafRows(leafFacts(), "npm", "axios", "en")
 	found := false
 	for _, row := range rows {
 		// The aggregate is called by the package's own name on screen — a

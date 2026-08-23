@@ -69,6 +69,12 @@ func TestThePinsAreVisibleAndRemovableOneAtATime(t *testing.T) {
 // heading linked OUT of it — to pages covering every environment of that
 // release, wider than the coordinate the reader had just worked down to —
 // wearing the same blue as the links that go deeper.
+//
+// The answer card's records link is the one exception, and it is an exception
+// on the same reasoning rather than in spite of it: what made the old links
+// wrong was that a coordinate wearing the drill-down's blue said nothing
+// about where it went. This one carries a label that says exactly that, and a
+// reader who has an answer needs a way to the samples and receipts behind it.
 func TestNoLinkInsideTheInstrumentLeavesIt(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/npm/axios?f_version=1.12.0").Body.String()
@@ -81,11 +87,43 @@ func TestNoLinkInsideTheInstrumentLeavesIt(t *testing.T) {
 	if j := strings.Index(inst, "</section>"); j >= 0 {
 		inst = inst[:j]
 	}
-	for _, m := range regexpAllHrefs(inst) {
+	for _, m := range regexpAllHrefs(stripAnswerRecords(inst)) {
 		if strings.HasPrefix(m, "/npm/axios/") {
 			t.Errorf("a link inside the instrument jumps out of it: %s", m)
 		}
 	}
+}
+
+// The one labelled way out is labelled, and goes where the label says.
+func TestTheAnswerCardsWayOutIsLabelled(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/npm/axios?f_version=1.12.0&f_symbol=axios.post").Body.String()
+
+	i := strings.Index(body, `class="answer-records"`)
+	if i < 0 {
+		t.Fatal("the answer states a coordinate and offers no way to the records behind it")
+	}
+	link := body[i : i+strings.Index(body[i:], "</p>")]
+	if !strings.Contains(link, "Samples and receipts") {
+		t.Errorf("the way out of the instrument wears no label: %s", link)
+	}
+	if !strings.Contains(link, "/npm/axios/1.12.0") {
+		t.Errorf("the records link does not go to this coordinate: %s", link)
+	}
+}
+
+// stripAnswerRecords removes the answer card's single labelled link so the
+// blanket rule can keep applying to everything else.
+func stripAnswerRecords(s string) string {
+	i := strings.Index(s, `class="answer-records"`)
+	if i < 0 {
+		return s
+	}
+	j := strings.Index(s[i:], "</p>")
+	if j < 0 {
+		return s[:i]
+	}
+	return s[:i] + s[i+j:]
 }
 
 // The trail carries them instead, because a jump belongs in the navigator.
