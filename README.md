@@ -251,7 +251,9 @@ That needs no database: the `internal/serverstore` PostgreSQL tests skip
 themselves when `CSX_TEST_DSN` is unset. They are not optional in CI —
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs every pull request
 against a disposable `postgres:17-alpine` and fails the run if any of them
-skipped. To run them the same way locally:
+skipped. That run is a required check on `main`, so a red one stops the merge —
+the ruleset behind that, and what to do when the job is renamed, is in
+[docs/operations.md](docs/operations.md). To run them the same way locally:
 
 ```bash
 docker run -d --rm --name csx-pg -e POSTGRES_USER=csx -e POSTGRES_PASSWORD=csx \
