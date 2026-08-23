@@ -1530,7 +1530,12 @@ td.pv .pvpasses { font-size: 0.66rem; }
 }
 /* The fixed dimensions lead the bar: they are where the reader is. */
 .cubecontrols .ctlgroup.pinned { align-items: center; }
-.cubecontrols .ctlgroup.pinned .pins { margin: 0; }
+/* The one child in this bar that has to negotiate, said by name the way the
+   rule above asks. Every other control is content-sized because it cannot
+   wrap; the pin list can, and sized from content it held as many chips as the
+   reader had pinned and pushed the whole cube past the viewport — two pins were
+   enough on the URL this was reported from. */
+.cubecontrols .ctlgroup.pinned .pins { margin: 0; flex: 1 1 auto; min-width: 0; }
 .gridbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
   padding: 0.55rem 0.75rem;

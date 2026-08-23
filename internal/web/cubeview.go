@@ -174,7 +174,14 @@ func cubeCoordDecided(sliced []cubeFact) bool {
 func cubeFilterBar(facts []cubeFact, x, y string, filters map[string]string, lang string) []cubeFilterSelect {
 	var out []cubeFilterSelect
 	for _, dim := range cubeDimKeys {
-		if dim != "" && (dim == x || dim == y) {
+		// Unless the reader pinned it. A pin travels through the next submit
+		// as a hidden input and nothing else carries it, so a dimension that
+		// went onto an axis while pinned dropped out of the form: changing
+		// any dropdown rebuilt the URL without it, and the version the reader
+		// had arrived on was gone. A pinned entry renders no control anyway
+		// -- the chip above the bar is where it is shown and removed -- so
+		// keeping it here costs nothing visible.
+		if dim != "" && (dim == x || dim == y) && filters[dim] == "" {
 			continue
 		}
 		if sel, ok := cubeFilterFor(facts, dim, filters, lang); ok {
@@ -394,6 +401,14 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	// environment dimension on a coordinate this network alone has executed
 	// produced the same empty shell the defaults used to.
 	if x != "" && (len(cubeAxisValues(sliced, x)) == 0 || len(cubeAxisValues(sliced, y)) == 0) {
+		x, y = "", ""
+	}
+	// And the same rule the pair gets. Whether an axis spreads depends on the
+	// dimension beside it: a grid with an environment dimension on one axis
+	// drops this network's own runs, so ?x=symbol&y=os on a coordinate whose
+	// symbols are contract receipts renders one cell holding the package
+	// total, with every symbol it was asked for off the page.
+	if x != "" && cubeAxisSpread(sliced, x, y) < 2 && cubeAxisSpread(sliced, y, x) < 2 {
 		x, y = "", ""
 	}
 	if x == "" {

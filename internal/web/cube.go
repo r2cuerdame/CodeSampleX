@@ -517,35 +517,111 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 			break
 		}
 	}
-	for _, dim := range cubeYAxisPriority {
-		if varies[dim] && dim != x {
-			y = dim
-			break
-		}
-	}
-	// One varying dimension: pair it with the best single-valued one so
-	// the slice still renders as a (1×N) grid.
+	// The partner is chosen against x, not on its own. Whether an axis
+	// spreads depends on what sits beside it, so asking each dimension in
+	// isolation picked partners that erase the axis they were paired with.
+	y, ownSpread := cubePartnerAxis(facts, x, varies, pinned, true)
 	if y == "" {
-		for _, dim := range cubeYAxisPriority {
-			if dim == x {
-				continue
-			}
-			if _, isPinned := pinned[dim]; isPinned {
-				continue
-			}
-			if dim == "symbol" && !cubeHasRealSymbol(facts) {
-				continue
-			}
-			if len(cubeAxisValues(facts, dim)) >= 1 {
-				y = dim
-				break
-			}
-		}
+		// No partner leaves x standing. Take one that does not rather than
+		// reporting a bottomed-out drill-down: ok == false tells the caller
+		// the coordinate is DECIDED, and a slice that still spreads would
+		// then be stated as one answer it has not earned.
+		y, ownSpread = cubePartnerAxis(facts, x, varies, pinned, false)
+	}
+	// A partner with no spread of its own is there to give the grid a second
+	// axis, not because it was the question. Which of the two goes across is
+	// then the priority lists' call -- version across, symbol down -- and
+	// deciding it by which dimension happened to vary turned the page's
+	// symbol rows into symbol columns the moment a version was pinned.
+	if !ownSpread && y != "" && cubeAxesReadBetterTransposed(x, y) {
+		x, y = y, x
 	}
 	if x == "" || y == "" {
 		return "", "", false
 	}
 	return x, y, true
+}
+
+// cubeAxisSpread counts the values a dimension would actually render on a
+// grid spread over dim × other.
+//
+// It is cubeAxisValues asked about a PAIR, and the pair is the honest unit:
+// a grid with an environment dimension on either axis drops this network's
+// own runs (observationsOnlyOnEnvironmentAxes), so how much of one axis
+// survives is decided by the dimension beside it, not by that axis alone.
+func cubeAxisSpread(facts []cubeFact, dim, other string) int {
+	rendered := observationsOnlyOnEnvironmentAxes(cubeFactsOnAxes(facts, dim, other), dim, other)
+	if dim == "symbol" {
+		return len(cubeRealSymbols(rendered))
+	}
+	return len(cubeDimValues(rendered, dim))
+}
+
+// cubePartnerAxis picks the second axis for a slice whose first is settled.
+// ownSpread reports whether the partner holds a spread of its own or is
+// there only so the slice renders as a (1×N) grid.
+//
+// Preference order: a dimension that spreads, then one that does not, and
+// last one the reader pinned — whose header can only restate the pin, and is
+// still better than a grid holding none of the evidence it was opened for.
+//
+// strict rejects a partner that would erase x. cargo/tokio at 1.53.1 is the
+// case that named this: with the version pinned the only dimension still
+// spreading is the symbol, its evidence is contract receipts, and an OS
+// partner drops every one of them. The grid came out one cell wide holding
+// the package-level total, that cell lost its link because nothing outside
+// the two axes still varied, and the five measured APIs underneath were
+// unreachable by clicking anything on the page.
+func cubePartnerAxis(facts []cubeFact, x string, varies map[string]bool,
+	pinned map[string]string, strict bool) (dim string, ownSpread bool) {
+
+	// Two values is the bar the axis itself had to clear to be chosen, so it
+	// is the bar a partner must leave it above. Not "every value it had": an
+	// OS grid answers where builds ran and is entitled to hold fewer symbols
+	// than the version axis does. What it may not do is hold none of them.
+	survives := func(d string) bool {
+		return !strict || cubeAxisSpread(facts, x, d) >= 2
+	}
+	for _, d := range cubeYAxisPriority {
+		if d != x && varies[d] && survives(d) {
+			return d, true
+		}
+	}
+	for _, allowPinned := range []bool{false, true} {
+		for _, d := range cubeYAxisPriority {
+			if d == x || varies[d] {
+				continue
+			}
+			if _, isPinned := pinned[d]; isPinned != allowPinned {
+				continue
+			}
+			if d == "symbol" && !cubeHasRealSymbol(facts) {
+				continue
+			}
+			if len(cubeAxisValues(facts, d)) == 0 || !survives(d) {
+				continue
+			}
+			return d, false
+		}
+	}
+	return "", false
+}
+
+// cubeAxesReadBetterTransposed reports whether a pair belongs the other way
+// round, by the only statement this file makes about where a dimension
+// belongs: the two priority lists.
+func cubeAxesReadBetterTransposed(x, y string) bool {
+	rank := func(list []string, dim string) int {
+		for i, d := range list {
+			if d == dim {
+				return i
+			}
+		}
+		return len(list)
+	}
+	as := rank(cubeXAxisPriority, x) + rank(cubeYAxisPriority, y)
+	swapped := rank(cubeXAxisPriority, y) + rank(cubeYAxisPriority, x)
+	return swapped < as
 }
 
 // buildCubeGrid pivots a fact slice on two dimensions. Facts that never
