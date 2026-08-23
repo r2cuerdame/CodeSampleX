@@ -1,0 +1,106 @@
+{
+  "_generated": "Generated from toolDefs() in internal/mcp/tools.go. Do not edit by hand: run `CSX_UPDATE_GOLDEN=1 go test ./internal/mcp -run TestTheMCPBToolCatalogMatchesToolDefs`. scripts/make-mcpb.py reads `summary` into the MCPB manifest's tools[].description; clients read `description` and `annotations` from tools/list.",
+  "tools": [
+    {
+      "name": "search_known_solution",
+      "title": "Search verified compatibility samples",
+      "summary": "Search the network for a community-verified solution before solving from scratch. Records a local search hit. In community mode a miss may fetch shards and file a public Wanted tuple, and a hit queues an anonymous count — never the query, the packages or the environment.",
+      "description": "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers.",
+      "annotations": {
+        "title": "Search verified compatibility samples",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "get_sample",
+      "title": "Fetch a verified sample",
+      "summary": "Fetch a verified sample's manifest and files by content-addressed id. Downloads the artifact into the local cache when it is not cached yet.",
+      "description": "Fetch a cached public sample by id: manifest plus file contents (each file capped at 64KB, binaries skipped). Samples are MIT-0 community artifacts; adapt them to the project instead of pasting blindly.",
+      "annotations": {
+        "title": "Fetch a verified sample",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "explain_compatibility",
+      "title": "Explain package compatibility",
+      "summary": "Per-symbol compatibility breakdown for a package, read from shards already cached on this machine, with observation and verification evidence kept separate.",
+      "description": "Explain what the network knows about a package (optionally one symbol) in a given environment, from locally cached compatibility shards. Observation evidence (USAGE_OBSERVATION) and verification evidence (SAMPLE_VERIFICATION) are reported separately and never summed.",
+      "annotations": {
+        "title": "Explain package compatibility",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "run_observed_command",
+      "title": "Run a build command through the evidence loop",
+      "summary": "Run a build, typecheck or test command in the user's project and record anonymous evidence from it. Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
+      "description": "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation, and LOW/reference/unrelated results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence.",
+      "annotations": {
+        "title": "Run a build command through the evidence loop",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "report_sample_adoption",
+      "title": "Report a sample's build outcome",
+      "summary": "Record whether an adopted sample led to a passing build, closing the verification loop. Writes a local record and, in community mode, queues one anonymous adoption event for upload.",
+      "description": "Report whether a sample from search_known_solution was actually applied, and whether the build passed afterwards. Records ADOPTION_EVIDENCE — the network optimizes post-hit success rate, so honest reports matter.",
+      "annotations": {
+        "title": "Report a sample's build outcome",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "propose_public_sample",
+      "title": "Start a clean-room sample proposal",
+      "summary": "Build a sanitized clean-room sample spec and create an empty local workspace for it. Sends nothing; publishing always requires explicit CLI approval by the user.",
+      "description": "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), returns generation instructions and an empty workspace directory. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
+      "annotations": {
+        "title": "Start a clean-room sample proposal",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_local_hits",
+      "title": "List local search hits",
+      "summary": "List recent local search hits and their adoption outcomes. These rows stay on this machine; in community mode only an anonymous per-hit count (grade, results shown, sample id) is uploaded.",
+      "description": "List recent local search hits with their grades and adoption outcomes. These rows are local dashboard data: the query, the packages and the environment they hold never leave the machine. In community mode a hit separately queues an anonymous count — grade, how many results were shown, and the public sample id — under a daily-rotating id.",
+      "annotations": {
+        "title": "List local search hits",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_local_stats",
+      "title": "Show this install's local stats",
+      "summary": "Local dashboard counters for this install: mode, cached samples, hits, pending uploads. Reads local data only.",
+      "description": "Local CodeSampleX stats: mode, cached samples, hits, pending uploads. Estimated values are labeled estimated.",
+      "annotations": {
+        "title": "Show this install's local stats",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

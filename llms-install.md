@@ -14,6 +14,27 @@ first search return `NO_SAFE_MATCH` no matter what the network knows.
 
 ---
 
+## First, which of the two install paths you are on
+
+They are separate, and mixing them is where the confusion starts. Steps 1–5
+below are the **CLI path**. Take the MCPB path instead only if your client
+installs `.mcpb` bundles.
+
+| | **CLI install** (steps 1–5) | **MCPB bundle** |
+|---|---|---|
+| What you install | one binary, at `~/.local/bin/csx` or `%LOCALAPPDATA%\csx\csx.exe` | `codesamplex-mcp.mcpb` from a GitHub release, through the client's own installer |
+| Who writes the client config | you do, from `csx mcp-config` — **absolute path** | the client does, from the bundle's `mcp_config`, which uses `${__dirname}/server/<binary>` and needs no PATH |
+| Serves | every stdio MCP client, plus the CLI itself (`csx run`, `csx search`, `csx sample`) | that one MCP client. The bundle carries no CLI on your PATH. |
+| `csx init` | run it (step 2) — it sets the mode and registers detected agents | not run for you. The server reports mode `uninitialized`, uploads nothing, and answers from an empty cache until a mode is set. |
+| Updates | signed, automatic, `csx update rollback` available | owned by the client that installed it; use that client's package-update flow. The binary inside a bundle never self-modifies. |
+| Privacy policy | [PRIVACY.md](PRIVACY.md) | same document; the manifest's `privacy_policies` array points at it |
+
+There is no third path. A repository-local `.mcp.json` is **not** an install
+recipe: this repository deliberately carries none, because a checked-in
+`{"command": "csx"}` is exactly the entry the next section measures as broken.
+
+---
+
 ## Read this before you write any config
 
 An MCP client is not started from a login shell. It inherits whatever

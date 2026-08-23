@@ -66,10 +66,64 @@ type Deps struct {
 type commandOutput = evidence.CommandOutput
 
 // toolDef is one tools/list entry.
+//
+// Summary never reaches the wire. It is the one-line text the MCPB bundle's
+// manifest carries for the same tool, and it lives here so the bundle and
+// tools/list cannot describe two different tool sets: scripts/make-mcpb.py
+// reads scripts/mcp-tools.json, which is generated from this list and pinned
+// by TestTheMCPBToolCatalogMatchesToolDefs.
 type toolDef struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Title       string           `json:"title"`
+	Description string           `json:"description"`
+	InputSchema map[string]any   `json:"inputSchema"`
+	Annotations *toolAnnotations `json:"annotations,omitempty"`
+
+	Summary string `json:"-"`
+}
+
+// toolAnnotations is the MCP ToolAnnotations object (spec 2025-06-18).
+//
+// Every field here is a claim about what calling the tool DOES, so each one
+// is set from the implementation rather than from how the tool reads:
+//
+//   - ReadOnlyHint is true only when the call cannot change anything on this
+//     machine. Recording a local search hit is a change — list_local_hits
+//     exists to list exactly those rows — so search_known_solution is not
+//     read-only, however much it looks like a query.
+//   - DestructiveHint is only meaningful when ReadOnlyHint is false, so it is
+//     a pointer and stays absent on read-only tools rather than asserting a
+//     default. "Destructive" here means the call can overwrite or delete
+//     something that was not ours; appending evidence rows is additive.
+//   - OpenWorldHint is true when the call may talk to the network in the
+//     product's default (community) mode. It stays true for those tools even
+//     though local-only mode makes them silent, because the annotation is
+//     static and the honest static answer is the wider one.
+type toolAnnotations struct {
+	Title           string `json:"title"`
+	ReadOnlyHint    bool   `json:"readOnlyHint"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  bool   `json:"idempotentHint"`
+	OpenWorldHint   bool   `json:"openWorldHint"`
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// readOnly annotates a tool that only reads state already on this machine.
+func readOnly(title string, openWorld bool) *toolAnnotations {
+	return &toolAnnotations{Title: title, ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: openWorld}
+}
+
+// writes annotates a tool that changes something: local rows, local files, an
+// upload queue, or — for run_observed_command — the user's own project.
+func writes(title string, destructive, idempotent, openWorld bool) *toolAnnotations {
+	return &toolAnnotations{
+		Title:           title,
+		ReadOnlyHint:    false,
+		DestructiveHint: boolPtr(destructive),
+		IdempotentHint:  idempotent,
+		OpenWorldHint:   openWorld,
+	}
 }
 
 // environmentSchema describes the sparse EnvironmentFingerprint accepted by
@@ -186,7 +240,17 @@ func toolDefs() []toolDef {
 	}
 	return []toolDef{
 		{
-			Name:        "search_known_solution",
+			Name:  "search_known_solution",
+			Title: "Search verified compatibility samples",
+			// Not read-only: every call records a local hit row and an offer
+			// token, which is what list_local_hits lists and what
+			// report_sample_adoption later spends. In community mode a miss
+			// may also fetch the named packages' shards and file a Wanted
+			// tuple, so it reaches the network too.
+			Annotations: writes("Search verified compatibility samples", false, false, true),
+			Summary: "Search the network for a community-verified solution before solving from scratch. " +
+				"Records a local search hit. In community mode a miss may fetch shards and file a public Wanted tuple, " +
+				"and a hit queues an anonymous count — never the query, the packages or the environment.",
 			Description: "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers.",
 			InputSchema: obj(map[string]any{
 				"query":       str("what you are trying to do or fix, in plain words"),
@@ -197,14 +261,28 @@ func toolDefs() []toolDef {
 			}, "query"),
 		},
 		{
-			Name:        "get_sample",
+			Name:  "get_sample",
+			Title: "Fetch a verified sample",
+			// Content-addressed, so a second call for the same id changes
+			// nothing — but the first one can download the artifact from a
+			// peer or the seeder and write it into the local CAS, which is a
+			// change to this machine and a request to the network.
+			Annotations: writes("Fetch a verified sample", false, true, true),
+			Summary: "Fetch a verified sample's manifest and files by content-addressed id. " +
+				"Downloads the artifact into the local cache when it is not cached yet.",
 			Description: "Fetch a cached public sample by id: manifest plus file contents (each file capped at 64KB, binaries skipped). Samples are MIT-0 community artifacts; adapt them to the project instead of pasting blindly.",
 			InputSchema: obj(map[string]any{
 				"sampleId": str("content-addressed sample id, e.g. sha256:..."),
 			}, "sampleId"),
 		},
 		{
-			Name:        "explain_compatibility",
+			Name:  "explain_compatibility",
+			Title: "Explain package compatibility",
+			// explainFromShards reads the local shard tables and nothing
+			// else: no HTTP client is wired into it, and it writes no row.
+			Annotations: readOnly("Explain package compatibility", false),
+			Summary: "Per-symbol compatibility breakdown for a package, read from shards already cached on this machine, " +
+				"with observation and verification evidence kept separate.",
 			Description: "Explain what the network knows about a package (optionally one symbol) in a given environment, from locally cached compatibility shards. Observation evidence (USAGE_OBSERVATION) and verification evidence (SAMPLE_VERIFICATION) are reported separately and never summed.",
 			InputSchema: obj(map[string]any{
 				"package":     str("package purl, e.g. pkg:npm/axios@1.12.0"),
@@ -213,7 +291,16 @@ func toolDefs() []toolDef {
 			}, "package"),
 		},
 		{
-			Name:        "run_observed_command",
+			Name:  "run_observed_command",
+			Title: "Run a build command through the evidence loop",
+			// The one tool that cannot honestly be softened. It executes the
+			// argv it is given in the user's own project: `npm test` writes
+			// files, `cargo build` writes target/, and nothing here inspects
+			// the command first. destructiveHint is the accurate annotation,
+			// and a second run is a second execution, so it is not idempotent.
+			Annotations: writes("Run a build command through the evidence loop", true, false, true),
+			Summary: "Run a build, typecheck or test command in the user's project and record anonymous evidence from it. " +
+				"Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
 			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation, and LOW/reference/unrelated results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence.",
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
@@ -221,7 +308,14 @@ func toolDefs() []toolDef {
 			}, "command"),
 		},
 		{
-			Name:        "report_sample_adoption",
+			Name:  "report_sample_adoption",
+			Title: "Report a sample's build outcome",
+			// Writes the local intervention correlation and, in community
+			// mode, queues one anonymous adoption event for upload. The offer
+			// token is one-use, so replaying the same call adds nothing.
+			Annotations: writes("Report a sample's build outcome", false, true, true),
+			Summary: "Record whether an adopted sample led to a passing build, closing the verification loop. " +
+				"Writes a local record and, in community mode, queues one anonymous adoption event for upload.",
 			Description: "Report whether a sample from search_known_solution was actually applied, and whether the build passed afterwards. Records ADOPTION_EVIDENCE — the network optimizes post-hit success rate, so honest reports matter.",
 			InputSchema: obj(map[string]any{
 				"offerId":   str("opaque local offer id returned by search_known_solution"),
@@ -231,7 +325,16 @@ func toolDefs() []toolDef {
 			}, "offerId", "sampleId", "applied"),
 		},
 		{
-			Name:        "propose_public_sample",
+			Name:  "propose_public_sample",
+			Title: "Start a clean-room sample proposal",
+			// Creates a new empty workspace directory under CSX_HOME and
+			// saves a proposal row, so each call leaves one more directory
+			// behind — additive, never idempotent. It sends nothing: the
+			// spec is built locally and publishing is a CLI-only step the
+			// user has to approve, so openWorldHint is false.
+			Annotations: writes("Start a clean-room sample proposal", false, false, false),
+			Summary: "Build a sanitized clean-room sample spec and create an empty local workspace for it. " +
+				"Sends nothing; publishing always requires explicit CLI approval by the user.",
 			Description: "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), returns generation instructions and an empty workspace directory. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
 			InputSchema: obj(map[string]any{
 				"goal":     str("what the sample should prove, e.g. \"axios file upload with progress\""),
@@ -241,11 +344,25 @@ func toolDefs() []toolDef {
 		},
 		{
 			Name:        "list_local_hits",
-			Description: "List recent local search hits with their grades and adoption outcomes (local dashboard data; never uploaded).",
+			Title:       "List local search hits",
+			Annotations: readOnly("List local search hits", false),
+			// "never uploaded" used to be the whole sentence here, and it
+			// stopped being true when the search path started queuing a hit
+			// COUNT (evidence.QueueSearchHit): grade, how many results were
+			// shown, and the public sample id, under the rotating anonId.
+			// The rows this tool lists — the query, the packages, the
+			// environment — still never leave, and that distinction is the
+			// part a reader has to be given rather than left to assume.
+			Summary: "List recent local search hits and their adoption outcomes. These rows stay on this machine; " +
+				"in community mode only an anonymous per-hit count (grade, results shown, sample id) is uploaded.",
+			Description: "List recent local search hits with their grades and adoption outcomes. These rows are local dashboard data: the query, the packages and the environment they hold never leave the machine. In community mode a hit separately queues an anonymous count — grade, how many results were shown, and the public sample id — under a daily-rotating id.",
 			InputSchema: obj(map[string]any{}),
 		},
 		{
 			Name:        "get_local_stats",
+			Title:       "Show this install's local stats",
+			Annotations: readOnly("Show this install's local stats", false),
+			Summary:     "Local dashboard counters for this install: mode, cached samples, hits, pending uploads. Reads local data only.",
 			Description: "Local CodeSampleX stats: mode, cached samples, hits, pending uploads. Estimated values are labeled estimated.",
 			InputSchema: obj(map[string]any{}),
 		},
