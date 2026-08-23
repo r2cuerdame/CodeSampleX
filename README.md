@@ -224,6 +224,10 @@ Never shared automatically
 
 This is not hidden telemetry — it is the protocol. Community peers are consumers **and** producers. Local-only mode never sends anything. Errors are sanitized locally into fingerprints before any use; private and unknown packages never leave the machine; the privacy preview in `csx ui` shows the exact payloads before they leave. A `NO_SAFE_MATCH` contributes a privacy-safe Wanted tuple — the public package, its exact version and, when the request named one unambiguous package, the requested public symbols — never the user's prompt. The public deployment is **seeded-only for sample source**; search, evidence, receipts and the wanted board are open without an account.
 
+## Privacy Policy
+
+The contract above is what the code does. [PRIVACY.md](PRIVACY.md) states the same thing as a policy, field by field, naming the file that enforces each boundary: the exact documents community mode uploads, the requests that are downloads rather than uploads, what the server stores and for how long, and what `local-only` means when it says it sends nothing. It is versioned in this repository rather than served from a page that can be edited without a trace, and it is the URL the MCPB bundle's `privacy_policies` array points at.
+
 ## Ecosystems (Public v1)
 
 **Scanned and verified** — projects detected, packages lockfile-resolved, samples verified end to end: Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Node samples run on the runtime they declare, so Bun and Deno results are real rather than assumed.

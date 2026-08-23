@@ -211,6 +211,10 @@ Never shared automatically
 
 Das ist keine versteckte Telemetrie — es ist das Protokoll. Community-Peers sind Konsumenten **und** Produzenten. Der Local-only-Modus sendet niemals etwas. Fehler werden vor jeder Verwendung lokal zu Fingerprints bereinigt; private und unbekannte Pakete verlassen den Rechner nie; die Privacy-Vorschau in `csx ui` zeigt die exakten Payloads, bevor sie ihn verlassen. Ein `NO_SAFE_MATCH` steuert ein datenschutzsicheres Wanted-Tupel bei — das öffentliche Paket, seine exakte Version und, wenn die Anfrage ein eindeutiges Paket benannt hat, die angefragten öffentlichen Symbole — nie den Prompt des Nutzers. Im öffentlichen Deployment ist Sample-Quellcode **seeded-only**; Suche, Evidenz, Receipts und das Wanted-Board sind ohne Account offen.
 
+## Datenschutzerklärung
+
+Der Vertrag oben ist das, was der Code tut. [PRIVACY.md](../../PRIVACY.md) sagt dasselbe als Richtlinie, Feld für Feld, und nennt jeweils die Datei, die die Grenze durchsetzt: die genauen Dokumente, die der Community-Modus hochlädt, die Anfragen, die Downloads und keine Uploads sind, was der Server speichert und wie lange, und was `local-only` meint, wenn es sagt, es sende nichts. Sie ist in diesem Repository versioniert statt von einer Seite ausgeliefert, die sich spurlos ändern lässt — und sie ist die URL, auf die das `privacy_policies`-Array des MCPB-Bundles zeigt.
+
 ## Ökosysteme (Public v1)
 
 **Gescannt und verifiziert** — Projekte werden erkannt, Pakete lockfile-aufgelöst, Samples Ende-zu-Ende verifiziert: Node/TypeScript (npm, pnpm, yarn — Referenz), Python (pip, uv), Go, Rust/Cargo. Node-Samples laufen auf der Runtime, die sie deklarieren, deshalb sind Bun- und Deno-Ergebnisse echt statt angenommen.

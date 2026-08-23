@@ -97,6 +97,21 @@ func TestThePublishedLocalOnlyContractIsTheOneTheCodeKeeps(t *testing.T) {
 	if !strings.Contains(readme, "Local-only mode never sends anything") {
 		t.Error("README.md no longer states that local-only mode never sends anything")
 	}
+
+	// PRIVACY.md is now the strongest form of this claim anywhere in the
+	// repository, and the one an external reviewer reads: it is the URL the
+	// MCPB manifest's privacy_policies array points at. It says local-only
+	// makes "No request of any kind", which is the zero measured a few lines
+	// above — so it belongs in the same test as the measurement rather than
+	// standing on its own.
+	policy := readDocFile(t, filepath.Join(root, "PRIVACY.md"))
+	if !strings.Contains(policy, "No request of any kind") {
+		t.Error("PRIVACY.md no longer states that local-only makes no request of any kind, " +
+			"which is what SyncNow was just measured doing")
+	}
+	if !strings.Contains(policy, "warmed shard keys: 0") {
+		t.Error("PRIVACY.md no longer names the observable local-only result (`warmed shard keys: 0`)")
+	}
 }
 
 func readDocFile(t *testing.T, path string) string {

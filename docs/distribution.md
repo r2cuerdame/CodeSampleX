@@ -6,10 +6,15 @@ submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
 **This document is a dated snapshot, not a live status page.** Every
-destination state, version number, asset list and blocker below was checked on
-**2026-08-14** and has been drifting ever since. Read every present-tense
-sentence in it as "as of 2026-08-14"; where a later date is written next to a
-line, that line was re-checked then and the rest was not.
+destination state, version number, asset list and blocker below was first
+checked on **2026-08-14** and has been drifting ever since. Read every
+present-tense sentence in it as "as of 2026-08-14" unless a later date is
+written next to it; where one is, that line was re-checked then and the rest
+was not.
+
+Re-checked on **2026-08-23** (R2C-62): §1's table, §2's B1/B2/B3 and the new
+B8, §4's shared values, §7 (Glama), §15 (Anthropic desktop-extension form) and
+§17's order. Everything else in this file still carries its 2026-08-14 date.
 
 Three ground rules for anything pasted from here:
 
@@ -29,13 +34,14 @@ Three ground rules for anything pasted from here:
 
 ## 1. Current state, verified
 
-| Destination | State on 2026-08-14 | Evidence |
+| Destination | State on **2026-08-23** (re-measured) | Evidence |
 |---|---|---|
-| Official MCP Registry | **Published.** `io.github.r2cuerdame/codesamplex`, versions 0.1.0, 0.1.1, 0.1.2; 0.1.2 is `isLatest`, status `active` | `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex` |
-| Glama | **Auto-indexed, UNCLAIMED.** Score 17%. "If you are the server author, claim this server…", "Unclaimed servers have limited discoverability", "This server cannot be installed" | `https://glama.ai/mcp/servers/@r2cuerdame/CodeSampleX` and `/score` |
-| Smithery | **Not listed.** Search for "codesamplex" returns nothing | `https://smithery.ai/search?q=codesamplex` |
-| GitHub repo | 0 stars, 0 forks, 0 watchers. Releases v0.1.0, v0.1.1, v0.1.2 | `https://github.com/r2cuerdame/CodeSampleX` |
-| Release assets (v0.1.2) | `codesamplex-mcp.mcpb`, `codesamplex-mcp.mcpb.sha256`, six `csx-*` binaries, `csx-server-linux-amd64`, `SHA256SUMS.txt` | release assets listing |
+| Official MCP Registry | **Published and current.** `io.github.r2cuerdame/codesamplex`, 30 versions from 0.1.0 to **0.1.43**; 0.1.43 is `isLatest`, status `active`, published 2026-08-22T16:38Z. Publishing is automated by the release workflow and needs no attention. | `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100` |
+| Glama | **Auto-indexed, still UNCLAIMED, and stale.** "This server cannot be installed"; Schema tab shows `No tools`, "Server capabilities have not been inspected yet", "This server publishes no instructions"; Maintainers empty despite `glama.json` being checked in; quality "Not graded — not tested". Its README snapshot predates the R2C-61 merge (it still draws the retired ✓ PASS grid and the 90-day half-life). The directory API returns `"tools": []` and a **product description we did not write** — "helps coding LLMs avoid re-solving common problems by serving verified minimal code samples" — which is the old reasoning-cache framing. | `https://glama.ai/mcp/servers/@r2cuerdame/CodeSampleX`, `/schema`, and `GET https://glama.ai/api/mcp/v1/servers/r2cuerdame/CodeSampleX` |
+| Smithery | Not re-checked on 2026-08-23. Was **not listed** on 2026-08-14. | `https://smithery.ai/search?q=codesamplex` |
+| GitHub repo | **2 stars**, 0 forks, 0 watchers. Latest release **v0.1.43** (2026-08-22). | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX` |
+| Release assets (v0.1.43) | `codesamplex-mcp.mcpb` (19.7 MB) + `.sha256`, eight `csx-*` binaries, two `csx-launcher-windows-*`, `csx-server-linux-amd64`, `csx-update-stable.json`, `SHA256SUMS.txt` | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX/releases/latest` |
+| Shipped MCPB (v0.1.43) | Downloaded, `sha256sum -c` **OK**, unpacked with `mcpb unpack`. `manifest_version 0.3`, **no `privacy_policies`**, tool entries carry only `name` and `description`. Its bundled `csx-windows-amd64.exe` answers `initialize` → `tools/list` (8 tools, **no `title`, no `annotations`**) → `tools/call get_local_stats`. That is the exact state B2 and B3 describe, measured on the artifact rather than on the source. | `npx @anthropic-ai/mcpb@2.1.2 unpack`, then a piped stdio handshake |
 
 Two facts that follow from this and that several blocks below depend on:
 
@@ -81,7 +87,7 @@ which is the mascot, and which is the UI mark — and then making OG image,
 favicon and directory assets agree — is tracked separately and is not
 something to resolve while filling in a submission form.
 
-### B2 — No privacy policy in the MCPB manifest or the README. Blocks Anthropic's desktop-extension form.
+### ~~B2 — No privacy policy in the MCPB manifest or the README.~~ CLOSED 2026-08-23.
 
 Anthropic's submission docs, on local connectors:
 
@@ -92,48 +98,123 @@ Anthropic's submission docs, on local connectors:
 >
 > **Missing or incomplete privacy policies result in immediate rejection.**
 
-Checked: `dist/codesamplex-mcp.mcpb` → `manifest.json` has
-`manifest_version: "0.3"` and **no `privacy_policies` key**
-(`scripts/make-mcpb.py`, `manifest()`, lines 60–94). `README.md` has a section
-called "The contract" that describes exactly what is and is not transmitted, but
-no section titled "Privacy Policy" and no policy URL.
+Was: `manifest_version: "0.3"` and no `privacy_policies` key; a README section
+called "The contract" that describes exactly what is and is not transmitted,
+but no section titled "Privacy Policy" and no policy URL.
 
-This one is close to done in substance and only missing in form — the contract
-table is already a better privacy disclosure than most listings carry. What is
-missing is (a) a `Privacy Policy` heading in the README, (b) an HTTPS URL
-serving the policy, and (c) `"privacy_policies": ["<https url>"]` added to the
-manifest dict in `scripts/make-mcpb.py`, followed by a rebuilt bundle and a new
-release.
+All three now exist:
 
-`scripts/make-mcpb.py` is not in this track's area. Flagged, not edited.
+1. [`PRIVACY.md`](../PRIVACY.md) — the policy, written from the code rather
+   than from the marketing copy. Every upload document is listed field by
+   field against its checked-in wire schema, and the file that enforces each
+   boundary is named.
+2. `## Privacy Policy` in `README.md` **and in all eight translations** —
+   `internal/web/publiccopy_test.go` treats the nine READMEs as one document,
+   so a section that lands in one of them and not the others is a test
+   failure.
+3. `"privacy_policies": ["https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md"]`
+   in `scripts/make-mcpb.py`, pinned by
+   `internal/mcp/mcpbcatalog_test.go`.
 
-### B3 — MCP tools carry no annotations. Blocks the Anthropic directory; recommended everywhere.
+**Why the GitHub URL and not `codesamplex.dev/privacy`.** The site has no
+`/privacy` route (checked: `https://codesamplex.dev/privacy` → 404 on
+2026-08-23), and adding one means a manual Lightsail deploy — there is no
+deploy workflow, `deploy/lightsail/deploy.ps1` is run by hand with the SSH
+key. A manifest is reviewed against the URL it contains, so it must contain a
+URL that is live. The repository URL is live the moment a change to the policy
+merges, and it is versioned: every edit to it is a diff with a date and an
+author, which a served page is not. A `codesamplex.dev/privacy` page that
+renders the same source is a reasonable later addition; it is not a
+prerequisite, and it must not be listed here before it is deployed.
+
+**One thing the audit changed in the policy's favour, and it was a real
+finding.** `list_local_hits` said its rows were "never uploaded". That stopped
+being true when the search path started queuing a hit COUNT
+(`internal/evidence/searchhit.go`): grade, results shown, offer id and the
+public sample id, under the rotating `anonId`. The rows themselves — query,
+packages, environment — still never leave. The tool description and §4.3 of
+the policy now draw that line explicitly instead of leaving a reader to
+assume the wider claim.
+
+### ~~B3 — MCP tools carry no annotations.~~ CLOSED 2026-08-23.
 
 Anthropic's submission requirement 2:
 
 > **Tool annotations**: All tools must include a `title` and the applicable
 > `readOnlyHint` or `destructiveHint`
 
-Checked: grep for `readOnlyHint|destructiveHint|Annotations|Title` across
-`internal/mcp/` returns **no matches**. The eight tools in
-`internal/mcp/tools.go` declare `Name`, `Description` and a schema only.
+Was: grep for `readOnlyHint|destructiveHint|Annotations|Title` across
+`internal/mcp/` returned no matches.
 
-Deciding the hints is a judgement call for whoever writes them, and one worth
-making carefully rather than in bulk:
+All eight tools now carry a `title` and a full `annotations` object, set from
+what the implementation does rather than from what the tool sounds like:
 
-- `run_observed_command` runs an arbitrary user command. It is the one tool that
-  cannot honestly be marked read-only or non-destructive — a `destructiveHint`
-  is the accurate annotation.
-- `propose_public_sample` creates a workspace directory. Not read-only.
-- `report_sample_adoption` records ADOPTION_EVIDENCE. Not read-only.
-- `get_sample`, `explain_compatibility`, `list_local_hits` and `get_local_stats`
-  are queries. `search_known_solution` is a query too, but it records a local hit
-  (that is what `list_local_hits` lists), so whether it earns `readOnlyHint` is a
-  call about whether local bookkeeping counts as modifying the environment.
+| Tool | readOnly | destructive | idempotent | openWorld | Why |
+|---|---|---|---|---|---|
+| `search_known_solution` | no | no | no | yes | records a local hit row and an offer token; community mode may fetch shards, file a Wanted tuple and queue a hit count |
+| `get_sample` | no | no | yes | yes | content-addressed, but the first call downloads the artifact into the local CAS |
+| `explain_compatibility` | **yes** | — | yes | **no** | `explainFromShards` reads local shard tables; no HTTP client is wired into it |
+| `run_observed_command` | no | **yes** | no | yes | executes the argv it is handed, in the user's project |
+| `report_sample_adoption` | no | no | yes | yes | writes the local correlation and queues one anonymous adoption event; the offer token is one-use |
+| `propose_public_sample` | no | no | no | **no** | creates a fresh clean-room directory per call; sends nothing |
+| `list_local_hits` | **yes** | — | yes | **no** | local dashboard read |
+| `get_local_stats` | **yes** | — | yes | **no** | local dashboard read |
 
-`internal/mcp/` is not in this track's area. Flagged, not edited.
+`destructiveHint` is only meaningful when `readOnlyHint` is false, so it is a
+pointer in Go and is absent on the read-only three rather than asserting a
+default. `TestToolAnnotationsDescribeWhatTheToolsActuallyDo` pins each of
+those judgements to the function that justifies it.
+
+**Annotations cannot travel in the MCPB manifest, and that is a schema fact,
+not an omission.** `mcpb-manifest-v0.3.schema.json` (and v0.4) declares each
+`tools[]` entry as `additionalProperties: false` with only `name` and
+`description` permitted, so a `title` or an `annotations` object placed there
+fails `mcpb validate`. Clients read annotations from `tools/list`; the bundle
+carries names and one-line descriptions.
+
+**The bundle and the server no longer keep two lists.** `make-mcpb.py` had its
+own `TOOLS` array, so a renamed tool would have shipped a manifest naming a
+tool the binary inside that same manifest does not answer — and the manifest
+is what a directory renders when it cannot run the server, which is every
+directory that has ever rendered this one. `scripts/mcp-tools.json` is now
+generated from `toolDefs()` and read by the packer; the golden test regenerates
+it with:
+
+```
+CSX_UPDATE_GOLDEN=1 go test ./internal/mcp -run TestTheMCPBToolCatalogMatchesToolDefs
+```
+
+### ~~B8 — the repository published a broken install recipe as machine-readable fact.~~ CLOSED 2026-08-23.
+
+Not in the original list, and it belongs here because indexers read it.
+
+`.mcp.json` at the repository root registered the server as
+`{"command": "csx", "args": ["mcp"]}` — resolved from PATH. That is precisely
+the entry `llms-install.md` opens by measuring as broken
+(`env -i /bin/sh -c "csx mcp"` → `csx: not found`), because an MCP client
+inherits its editor's environment rather than a login shell's and the POSIX
+installer only prints how to extend PATH. A `_comment` field was added in
+R2C-61 telling humans not to copy it, which does nothing for a scraper.
+
+It was also redundant: `csx init` writes the correct entry, with the absolute
+path, into `~/.claude.json` (verified on the development machine —
+`"command": "C:\Users\...\csx.exe"`), and `csx mcp-config` prints it for
+every other client. The file is deleted.
+`TestNoCheckedInMCPConfigRegistersThisServerFromPATH` keeps a well-meaning
+re-add from reintroducing it: a checked-in MCP config may exist, but the
+command it names must be an absolute path or a client-expanded placeholder
+(`${__dirname}`, `${CLAUDE_PLUGIN_ROOT}`).
+
+Note for §8 and §9: the plugin manifests those blocks sketch both contain an
+`mcp.json` with a bare `csx`. That test now fails on it, which is the point —
+whichever of `${CLAUDE_PLUGIN_ROOT}` or a `SETUP.md` skill that design lands
+on has to be decided before the file is written, not after.
+
+The MCPB bundle's own `mcp_config` was never affected: it uses
+`${__dirname}/server/<binary>`, which the client expands.
 
 ### B4 — Cline's attestation is the operator's to make, and nobody here has run Cline.
+
 
 Verbatim from `cline/mcp-marketplace/.github/ISSUE_TEMPLATE/mcp-server-submission.yml`:
 
@@ -161,7 +242,8 @@ clean machine. If that run fails, the fix is the README, not the checkbox.
 ### B5 — `server.json` in the repo reads 0.1.0. Not a bug; know why before "fixing" it.
 
 `server.json` at repo root declares `"version": "0.1.0"` and points at the v0.1.0
-bundle URL and its sha256, while the registry's latest published record is 0.1.2.
+bundle URL and its sha256, while the registry's latest published record was
+0.1.2 when this was written and is 0.1.43 as of 2026-08-23.
 
 This is by design, and it was checked rather than assumed.
 `.github/workflows/release.yml` rewrites the file inside the runner before
@@ -180,7 +262,8 @@ then publishes with `./mcp-publisher login github-oidc` and
 `./mcp-publisher publish`. The checked-in copy is a template; the registry is
 authoritative. The only real consequence is that a human reading `server.json`
 gets the wrong version — do not copy version or bundle values out of it. Use §4,
-which reads 0.1.2 from the registry and the release. `server.json` is not in this
+which reads the current version from the registry and the release.
+`server.json` is not in this
 track's area and was not edited.
 
 Worth noting for the copy in §3: that workflow already enforces
@@ -277,8 +360,10 @@ Reuse these anywhere. All verified against the repo or the live site.
 | Support / issues | `https://github.com/r2cuerdame/CodeSampleX/issues` |
 | License | `Apache-2.0` (published samples default to MIT-0) |
 | Author | `r2cuerdame` |
-| Latest version | `0.1.2` |
-| MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.1.2/codesamplex-mcp.mcpb` |
+| Latest version | `0.1.43` (2026-08-22). It moves several times a week — read it off the release API before pasting. |
+| MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb` (the `/latest/` form does not go stale; a pinned tag URL does) |
+| Privacy policy | `https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md` |
+| Logo (400×400 PNG) | `https://raw.githubusercontent.com/r2cuerdame/CodeSampleX/main/assets/logo-400.png` |
 | Transport | stdio |
 | Category | Developer Tools (or "Development" where that is the option) |
 | Tags | `compatibility`, `dependencies`, `verification`, `evidence`, `npm`, `pypi`, `golang`, `cargo`, `maven`, `developer-tools` |
@@ -287,8 +372,9 @@ Reuse these anywhere. All verified against the repo or the live site.
 | Install (macOS/Linux) | `curl -fsSL https://codesamplex.dev/install.sh \| sh` |
 
 Use the **release asset URL** for the bundle, never `dist/codesamplex-mcp.mcpb`
-in the working tree: the local file's embedded `manifest.json` says
-`"version": "0.1.0"`, so it is two releases stale.
+in the working tree: `dist/` is gitignored and whatever is sitting there is
+whatever someone last built locally, at whatever version they passed to
+`make-mcpb.py`.
 
 ---
 
@@ -310,7 +396,7 @@ Fields:
 
 | Field | Value |
 |---|---|
-| Bundle | `codesamplex-mcp.mcpb` from the v0.1.2 release (download it; do not use `dist/`) |
+| Bundle | `codesamplex-mcp.mcpb` from the latest release (download it; do not use `dist/`) |
 | Qualified name | `r2cuerdame/codesamplex` |
 | Display name | `CodeSampleX` |
 | Short description | the 100-character line from §3 |
@@ -402,19 +488,48 @@ Already indexed; the work is claiming it, not submitting it.
 }
 ```
 
-Repo root is outside this track's area, so the file was **not created**. It is a
-two-line addition.
+`glama.json` **exists at the repository root** with exactly that content. It
+has not changed the listing: Glama's own API still returns an empty
+`maintainers` and the page still shows "Maintainers –". The file is documented
+as the mechanism for organization-owned repos, and this repo is personally
+owned, so the claim flow is what actually associates the account — the file
+alone does nothing.
 
 After adding or changing `glama.json`, re-run the Claim ownership flow so the
 service re-reads the repo.
 
-**Current score, and what it says:** 17%. The listing page reports, verbatim in
-substance: no Glama release, so "Users cannot deploy this server"; server
-coherence and Tool Definition Quality Score both require a release before they
-can be computed; "No tool usage detected in the last 30 days"; missing
-`glama.json`; author unverified. Positives it already records: Apache-2.0
-license, README present, maintenance graded A with 59 recent commits and no
-security vulnerabilities.
+**Re-measured 2026-08-23, and this is the part R2C-62 was opened for.** The
+listing is not merely unclaimed, it is *wrong* in three separate ways, and
+only one of them is fixable from this repository:
+
+1. **`No tools`.** The Schema tab lists no tools, no prompts, no resources, and
+   says "Server capabilities have not been inspected yet". The directory API
+   agrees: `"tools": []`. This is **not** a manifest problem — the shipped
+   MCPB manifest has named all eight tools since v0.1.0. Glama populates that
+   tab by **running** the server in its own sandbox, and the same page says
+   "This server cannot be installed", so it has never had a process to ask.
+   Nothing in `internal/mcp/` or `scripts/make-mcpb.py` changes that; a Glama
+   **release** (listing page → Deploy → Make Release) is the only mechanism
+   that gives it something to inspect, and that needs a signed-in owner.
+2. **A product description nobody here wrote.** The API returns "MCP server
+   that helps coding LLMs avoid re-solving common problems by serving verified
+   minimal code samples and compatibility evidence, with tools to search,
+   retrieve, and explain known solutions across languages and environments."
+   That is the reasoning-cache framing the project moved away from. It is
+   Glama-generated, not read from any file here, so it changes when the
+   listing is claimed and edited — not when the README changes.
+3. **A stale README snapshot.** The rendered overview still shows the ✓ PASS
+   grid, "we tested it; this is what happened", and the 90-day evidence
+   half-life — all removed by R2C-61 earlier the same day. It also lists the
+   repository's files without `SECURITY.md`, which dates the crawl. This one
+   heals by itself on the next crawl; the other two do not.
+
+**What it already records correctly:** Apache-2.0, README present, maintenance
+graded A, 33 releases in twelve months, no known vulnerabilities.
+
+**Operator action, in order:** claim ownership (GitHub OAuth, as the repo
+owner) → correct the description on the listing → then try Deploy/Make
+Release, which is what could turn `No tools` into eight.
 
 Creating a Glama release (listing page → **Deploy**, then **Make Release** with a
 version once the build test succeeds) is what unlocks the two quality scores.
@@ -467,7 +582,7 @@ files are needed at the repo root:
 {
   "name": "codesamplex",
   "displayName": "CodeSampleX",
-  "version": "0.1.2",
+  "version": "0.1.43",
   "description": "Compatibility answers for coding agents, each verified by running its test in an offline container.",
   "author": { "name": "r2cuerdame", "url": "https://codesamplex.dev" },
   "homepage": "https://codesamplex.dev",
@@ -477,7 +592,9 @@ files are needed at the repo root:
 }
 ```
 
-`.mcp.json`:
+`.claude-plugin/.mcp.json` — **this draft does not pass, and that is
+deliberate.** `TestNoCheckedInMCPConfigRegistersThisServerFromPATH` (added in
+R2C-62, see B8) fails on a checked-in MCP config whose command is a bare name:
 
 ```json
 {
@@ -489,6 +606,11 @@ files are needed at the repo root:
   }
 }
 ```
+
+Resolve the design question below **before** writing that file, and write
+whatever it resolves to — `${CLAUDE_PLUGIN_ROOT}/...`, or a `SETUP.md` skill
+that installs csx and then writes the absolute path `csx mcp-config --path`
+prints.
 
 **Unresolved design question, and it is the same one the README already names.**
 `command` must be an executable on `PATH`, and the README is explicit that a bare
@@ -776,25 +898,37 @@ desktop extensions or plugins instead."
   (Anthropic's own spelling of the URL; reproduced exactly.)
 - **Mechanism:** submission form. No Team/Enterprise organization required — this
   is the difference from the connectors portal in §16.
-- **Artifact:** `codesamplex-mcp.mcpb` from the v0.1.2 release.
+- **Artifact:** `codesamplex-mcp.mcpb` from the latest release. As of
+  2026-08-23 that is v0.1.43, which does **not** yet carry the privacy policy
+  or the tool annotations — see below.
 
-**Blockers, both real:**
+**Blockers: both closed in code on 2026-08-23, and one release away.**
 
-- **B2, hard.** No `privacy_policies` array in the MCPB manifest and no "Privacy
-  Policy" section in the README. Anthropic: "Missing or incomplete privacy
-  policies result in immediate rejection." Submitting before fixing this wastes
-  the submission.
-- **B3.** Tools carry no `title`/`readOnlyHint`/`destructiveHint` annotations.
-  Listed under "Submission requirements" for connectors submitted to the
-  directory; whether it is enforced on the MCPB path was **not verified** — the
-  desktop-extension form itself was not opened. Fix it regardless: it is correct
-  MCP practice and `run_observed_command` genuinely warrants a hint.
+- **B2 — closed.** `privacy_policies` is in the manifest and `## Privacy
+  Policy` is in all nine READMEs. Verified on a locally built bundle:
+  `mcpb validate` passes and the manifest carries
+  `["https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md"]`.
+- **B3 — closed.** All eight tools carry `title` and full annotations in
+  `tools/list`, verified by piping a handshake into the binary inside the
+  built bundle. They are deliberately **not** in the manifest: the MCPB schema
+  forbids it (see B3).
+
+**What is still required before submitting:** the shipped artifact is still
+v0.1.43, which has neither. Cut a release first, then verify against the
+published asset — not against a local build:
+
+```sh
+curl -fsSL https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb -o b.mcpb
+npx @anthropic-ai/mcpb@2.1.2 unpack b.mcpb out && npx @anthropic-ai/mcpb@2.1.2 validate out/manifest.json
+jq -r '.privacy_policies[]' out/manifest.json
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | out/server/csx-linux-amd64 mcp | jq '.result.tools[].annotations'
+```
 
 **Could not verify:** the form at `clau.de/desktop-extention-submission` was not
 opened, so its field list is unknown. The requirements above come from
 `https://claude.com/docs/connectors/building/submission`, which did render in
-full. Expect the form to ask for the bundle, a description, an icon (B1) and a
-privacy policy URL (B2).
+full. Expect the form to ask for the bundle, a description, an icon and a
+privacy policy URL — all four now have values in §4.
 
 ---
 
@@ -820,13 +954,17 @@ are all in §3 and §4.
 
 Sequenced by effort against likelihood, not by prestige.
 
-1. **Glama claim** (§7) — the listing already exists and is losing
-   discoverability while unclaimed. GitHub sign-in; add `glama.json` while there.
+0. ~~**Fix B1 (logo), B2 (privacy policy) and B3 (tool annotations)**~~ — all
+   three are closed in the working tree. **Cut a release**: B2 and B3 only
+   reach a directory through a published `.mcpb`, and the newest published one
+   (v0.1.43) predates both.
+1. **Glama claim** (§7) — the listing already exists, is unclaimed, shows
+   `No tools`, and carries a description nobody here wrote. GitHub sign-in as
+   the repo owner. `glama.json` is already checked in and did not help.
 2. **Smithery** (§5) — the bundle is already built and the path is designed for it.
 3. **mcpservers.org** (§10) and **mcp.so** (§6) — two forms, no prerequisites, free.
-4. **Fix B1 (logo), B2 (privacy policy) and B3 (tool annotations)** — three small
-   changes that between them unblock §15 and improve every listing above.
-5. **Anthropic desktop-extension form** (§15) — once B2 is genuinely fixed.
+4. **Anthropic desktop-extension form** (§15) — once the release carrying B2
+   and B3 is published and verified against the published asset.
 6. **MCP Market** (§11) — after reading the form in a browser.
 7. **Claude plugin directory** (§8) and **Cursor** (§9) — real work: a manifest,
    a `SETUP.md`, and a decision about the binary path.
@@ -853,3 +991,13 @@ Stated plainly so nothing here is mistaken for a checked fact.
   Glama's sandbox was not tested.
 - **The Cline attestation** — nobody here has run Cline. See B4. This is the one
   item in this document that cannot be resolved by more research.
+- **Claude Desktop's own MCPB inspection** — R2C-62's brief asked for
+  validation through Claude Desktop's current bundle-inspection flow. That is a
+  GUI action on an installed desktop app, not something reachable from this
+  repository's tooling. What was done instead, and is reproducible: the
+  official `@anthropic-ai/mcpb@2.1.2` CLI (`validate`, `unpack`, `info`) plus a
+  real stdio handshake against the binary inside the bundle. `mcpb info`
+  reports `WARNING: Not signed` — bundle signing (`mcpb sign`) has never been
+  part of this release train and is a separate decision.
+- **Smithery, mcp.so, mcpservers.org, MCP Market, Cursor** — not re-checked on
+  2026-08-23. Only the Official Registry, Glama and GitHub were.

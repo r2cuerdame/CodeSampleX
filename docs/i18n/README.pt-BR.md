@@ -211,6 +211,10 @@ Never shared automatically
 
 Isto não é telemetria escondida — é o protocolo. Os peers da comunidade são consumidores **e** produtores. O modo local-only nunca envia nada. Os erros são sanitizados localmente em fingerprints antes de qualquer uso; pacotes privados e desconhecidos nunca saem da máquina; a prévia de privacidade no `csx ui` mostra os payloads exatos antes de eles saírem. Um `NO_SAFE_MATCH` contribui com uma tupla Wanted segura para a privacidade — o pacote público, a sua versão exata e, quando a requisição nomeou um único pacote inequívoco, os símbolos públicos solicitados — nunca o prompt do usuário. A implantação pública é **seeded-only para o código-fonte de samples**; a busca, a evidência, os recibos e o quadro de wanted são abertos, sem conta.
 
+## Política de Privacidade
+
+O contrato acima é o que o código faz. O [PRIVACY.md](../../PRIVACY.md) diz a mesma coisa como política, campo a campo, nomeando o arquivo que impõe cada limite: os documentos exatos que o modo comunidade envia, as requisições que são downloads e não uploads, o que o servidor guarda e por quanto tempo, e o que `local-only` significa quando diz que não envia nada. Ele é versionado neste repositório em vez de servido por uma página editável sem deixar rastro, e é a URL para a qual o array `privacy_policies` do pacote MCPB aponta.
+
 ## Ecossistemas (Public v1)
 
 **Escaneados e verificados** — projetos detectados, pacotes resolvidos via lockfile, samples verificados de ponta a ponta: Node/TypeScript (npm, pnpm, yarn — referência), Python (pip, uv), Go, Rust/Cargo. Os samples de Node rodam no runtime que declaram, então os resultados de Bun e Deno são reais, e não presumidos.

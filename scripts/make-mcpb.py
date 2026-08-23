@@ -26,24 +26,40 @@ TARGETS = {
     "win32": "csx-windows-amd64.exe",
 }
 
-TOOLS = [
-    ("search_known_solution",
-     "Search the network for a community-verified solution before solving from scratch; "
-     "results are graded for the caller's environment and NO_SAFE_MATCH means solve it fresh."),
-    ("get_sample", "Fetch a verified sample's manifest and files by content-addressed id."),
-    ("explain_compatibility",
-     "Per-symbol compatibility breakdown for a package, with observation and verification "
-     "evidence kept separate."),
-    ("run_observed_command",
-     "Run a build, typecheck or test through the evidence loop; only public package usage "
-     "is recorded."),
-    ("report_sample_adoption",
-     "Record whether an adopted sample led to a passing build, closing the verification loop."),
-    ("propose_public_sample",
-     "Build a sanitized clean-room sample spec; publishing always requires explicit CLI approval."),
-    ("list_local_hits", "List recent local search hits."),
-    ("get_local_stats", "Local dashboard counters for this install."),
-]
+# The tool list is NOT written here. It is generated from toolDefs() in
+# internal/mcp/tools.go into scripts/mcp-tools.json, and
+# internal/mcp/mcpbcatalog_test.go fails if that file falls behind. A manifest
+# is what a directory renders when it cannot run the server, so a second
+# hand-maintained list here would eventually publish a tool the binary inside
+# the same bundle does not answer.
+#
+# Only `summary` is used: the MCPB manifest schema allows exactly `name` and
+# `description` per tool entry (additionalProperties: false), so titles and
+# annotations cannot travel in the bundle and reach clients through
+# tools/list instead.
+CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp-tools.json")
+
+# Anthropic's local-connector submission requires a "Privacy Policy" section
+# in the README, a privacy_policies array here, and an HTTPS URL serving the
+# policy. This URL is the repository's own PRIVACY.md, which is live the
+# moment a change to it merges and needs no separate deployment to stay in
+# step with the behaviour it describes.
+PRIVACY_POLICY_URL = "https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md"
+
+
+def tools():
+    with io.open(CATALOG, encoding="utf-8") as fh:
+        catalog = json.load(fh)
+    entries = []
+    for t in catalog["tools"]:
+        summary = t.get("summary", "").strip()
+        if not summary:
+            sys.exit("mcp-tools.json: tool %r has no summary" % t.get("name"))
+        entries.append({"name": t["name"], "description": summary})
+    if not entries:
+        sys.exit("mcp-tools.json lists no tools")
+    return entries
+
 
 LONG_DESCRIPTION = (
     "CodeSampleX answers the question documentation cannot: does this API actually work on "
@@ -53,7 +69,8 @@ LONG_DESCRIPTION = (
     "nothing matches safely it returns NO_SAFE_MATCH instead of a plausible guess.\n\n"
     "Local-first and anonymous: build and test results are reduced to evidence on the machine, "
     "and source, paths, project names and raw logs are never transmitted. Run `csx init` to "
-    "choose community or local-only mode; local-only sends nothing at all."
+    "choose community or local-only mode; local-only sends nothing at all.\n\n"
+    "Privacy policy: " + PRIVACY_POLICY_URL
 )
 
 
@@ -89,7 +106,8 @@ def manifest(version):
                 },
             },
         },
-        "tools": [{"name": n, "description": d} for n, d in TOOLS],
+        "privacy_policies": [PRIVACY_POLICY_URL],
+        "tools": tools(),
         "compatibility": {"platforms": ["darwin", "linux", "win32"]},
     }
 
