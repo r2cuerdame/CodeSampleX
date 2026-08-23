@@ -226,6 +226,58 @@ server binaries: it replaces the Wanted conflict key with
 image fails. Rolling back to a pre-0006 binary requires restoring the verified
 pre-deploy database backup; otherwise its old Wanted upsert returns 500.
 
+## The merge gate on `main`
+
+`.github/workflows/ci.yml` runs on every pull request, and the `Test` job is
+what proves the PostgreSQL suite actually executed rather than skipped. Running
+it is not the same as obeying it: a workflow cannot stop anyone from merging
+past its own red X. That part is a repository setting.
+
+Branch ruleset **`Protect main`** (id `21240909`) supplies it, targeting
+`~DEFAULT_BRANCH` with exactly two rules — a pull request is required, and the
+`Test` status check must pass. Review approval is deliberately not required
+(`required_approving_review_count: 0`), including for unattributed commits, so a
+single maintainer keeps merging at full speed; the gate is about evidence, not
+about attendance. Repository admins keep `bypass_mode: always`, which is the
+escape hatch for an incident — using it is a decision, and it is recorded.
+
+Like the signing Environment above, this lives in GitHub settings and no diff
+can show it still matches. Read it back instead:
+
+```
+gh api repos/r2cuerdame/CodeSampleX/rules/branches/main \
+  --jq '[.[] | .type]'
+# ["pull_request","required_status_checks"] — an empty list means main is open
+
+gh api repos/r2cuerdame/CodeSampleX/rules/branches/main \
+  --jq '[.[] | select(.type=="required_status_checks")
+         | .parameters.required_status_checks[].context]'
+# ["Test"] — anything else means the PostgreSQL gate is not the required check
+```
+
+**The required check is bound to the job's `name:`, not to its key.** GitHub
+identifies a status check by the name the job publishes, so
+renaming the `Test` job in `ci.yml` does not fail loudly — it silently produces
+a check nobody requires, while the required `Test` context never arrives and
+every pull request waits forever on a check that will never report. Renaming
+that job therefore means updating the ruleset in the same change:
+
+```
+gh api -X PUT repos/r2cuerdame/CodeSampleX/rulesets/21240909 --input <edited ruleset>
+```
+
+`scripts/ci_workflow_test.go` fails the build if the job name and this document
+stop agreeing, so the rename cannot pass CI without the operator reading this
+paragraph. It cannot reach into GitHub settings and check the ruleset itself —
+the `gh api` readback above is the only thing that confirms the other half.
+
+Both directions were observed on a throwaway pull request when the ruleset was
+installed: with `Test` failing GitHub reported `mergeStateStatus: BLOCKED`, and
+with `Test` green on the same branch the same pull request reported `CLEAN`.
+That is the reading to trust, and calling the merge API is not a substitute for
+it: an admin holds `bypass_mode: always`, so the API would have merged the red
+commit and proved the bypass rather than the gate.
+
 ## DNS — codesamplex.dev (Gabia)
 
 The Lightsail DNS zone `codesamplex.dev` (account 160122452281, us-east-1 API
