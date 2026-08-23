@@ -15,8 +15,21 @@ func TestDevServe(t *testing.T) {
 	if addr == "" {
 		t.Skip("CSX_WEB_DEVSERVE not set")
 	}
+	// CSX_WEB_DEVSERVE_STORE picks the fixture. The default covers the grid;
+	// "answer" is a package measured down to a single coordinate, which is
+	// the state an exact shared link lands in and the one that cannot be
+	// reached by clicking around the default fixture.
+	store := matrixStore()
+	switch os.Getenv("CSX_WEB_DEVSERVE_STORE") {
+	case "answer":
+		store = answerStore()
+	case "cube":
+		store = newCubeStore()
+	case "deeplink":
+		store = deepLinkStore()
+	}
 	mux, _ := newTestMux(t, func(d *Deps) {
-		d.Store = matrixStore()
+		d.Store = store
 		// Derive the origin from the request so every canonical and
 		// install link stays on the local host.
 		d.PublicURL = ""

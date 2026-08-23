@@ -64,18 +64,27 @@ func TestPackagePageCubeDrillDown(t *testing.T) {
 }
 
 // A slice narrowed to one measured combination renders the exact record,
-// not a grid.
+// not a grid — and states it, rather than compressing it into the notation a
+// grid of forty cells needs.
 func TestPackagePageCubeLeaf(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = newCubeStore() })
 	body := get(t, mux, "/npm/reactish?f_os=windows&f_runtime=node+22").Body.String()
 
-	mustContain(t, body, "Exact records")
+	// The coordinate, once, at the top of the instrument.
 	mustContain(t, body, "hydrateRoot")
 	mustContain(t, body, "@19.1.0")
-	// The exact record carries its environment; the cell's tone carries how
-	// the runs went, and only a clean pass earns the check.
 	mustContain(t, body, "windows · x64 · node 22 · pnpm")
-	mustContain(t, body, `class="leafcell pv verified`)
+	// Basis and tone survive the move out of the grid cell: this one is our
+	// own run, and it failed.
+	mustContain(t, body, `class="answer verified t-fail"`)
+	// The result in words. The grid's glyph-plus-ratio said the same thing in
+	// a notation the reader had to learn a legend for first.
+	mustContain(t, body, "0 of 2 passed")
+	mustContain(t, body, "Contract verifications")
+	// One record is not a list: the card above states it in full, and
+	// printing it again underneath is how one coordinate came to be read
+	// three times on one screen.
+	mustNotContain(t, body, `class="cubeleaf"`)
 }
 
 // Explicit axes the slice never recorded fall back to real axes instead
