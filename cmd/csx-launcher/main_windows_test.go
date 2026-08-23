@@ -11,8 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
 )
@@ -27,11 +32,82 @@ func TestLauncherPayloadHelper(t *testing.T) {
 	os.Exit(75)
 }
 
-func TestLauncherForwardsStreamsArgumentsEnvironmentAndExit75(t *testing.T) {
+// TestLauncherConsoleProbeHelper runs as the payload and reports the console
+// window Windows gave it, which is the whole question behind R2C-103: a
+// console-subsystem child gets a brand new console — and a visible Terminal
+// window with it — when the process that created it owns none.
+func TestLauncherConsoleProbeHelper(t *testing.T) {
+	if os.Getenv("LAUNCHER_CONSOLE_PROBE") != "1" {
+		return
+	}
+	hwnd := consoleWindow()
+	visible := uintptr(0)
+	if hwnd != 0 {
+		visible, _, _ = isWindowVisible.Call(hwnd)
+	}
+	fmt.Printf("consoleWindow=%d visible=%d", hwnd, visible)
+	os.Exit(0)
+}
+
+// TestLauncherLingerHelper runs as the payload, publishes its pid and then
+// outlives the launcher unless something kills it.
+func TestLauncherLingerHelper(t *testing.T) {
+	marker := os.Getenv("LAUNCHER_TEST_LINGER")
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		os.Exit(3)
+	}
+	time.Sleep(time.Minute)
+	os.Exit(0)
+}
+
+// TestLauncherInheritProbeHelper runs with a console of its own -- the shape a
+// terminal gives `csx ...` -- and records both that console and the one the
+// payload ends up in, so the caller can prove they are the same.
+func TestLauncherInheritProbeHelper(t *testing.T) {
+	spec := os.Getenv("LAUNCHER_INHERIT_PROBE")
+	if spec == "" {
+		return
+	}
+	stable, report, ok := strings.Cut(spec, "|")
+	if !ok {
+		os.Exit(3)
+	}
+	cmd := exec.Command(stable, "-test.run=^TestLauncherConsoleProbeHelper$")
+	cmd.Env = append(os.Environ(), "LAUNCHER_CONSOLE_PROBE=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	payload, detail := int64(-1), ""
+	if err := cmd.Run(); err != nil {
+		detail = fmt.Sprintf("run launcher: %v stderr=%q", err, stderr.String())
+	} else if _, err := fmt.Sscanf(stdout.String(), "consoleWindow=%d", &payload); err != nil {
+		detail = fmt.Sprintf("payload said %q", stdout.String())
+	}
+	body := fmt.Sprintf("own=%d payload=%d\n%s", consoleWindow(), payload, detail)
+	if err := os.WriteFile(report, []byte(body), 0o600); err != nil {
+		os.Exit(4)
+	}
+	os.Exit(0)
+}
+
+var (
+	user32Test         = syscall.NewLazyDLL("user32.dll")
+	isWindowVisible    = user32Test.NewProc("IsWindowVisible")
+	getConsoleWindowFn = syscall.NewLazyDLL("kernel32.dll").NewProc("GetConsoleWindow")
+)
+
+func consoleWindow() uintptr { h, _, _ := getConsoleWindowFn.Call(); return h }
+
+// installLauncher builds the launcher into a fresh install root and pins this
+// test binary as its active payload, so every launcher run re-enters one of the
+// helpers above.
+func installLauncher(t *testing.T) string {
+	t.Helper()
 	root := t.TempDir()
 	stable := filepath.Join(root, "csx.exe")
-	build := exec.Command("go", "build", "-o", stable, ".")
-	if out, err := build.CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", stable, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build launcher: %v: %s", err, out)
 	}
 	testExe, err := os.Executable()
@@ -63,12 +139,17 @@ func TestLauncherForwardsStreamsArgumentsEnvironmentAndExit75(t *testing.T) {
 	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
 		t.Fatal(err)
 	}
+	return stable
+}
+
+func TestLauncherForwardsStreamsArgumentsEnvironmentAndExit75(t *testing.T) {
+	stable := installLauncher(t)
 	cmd := exec.Command(stable, "-test.run=^TestLauncherPayloadHelper$", "--", "marker")
 	cmd.Env = append(os.Environ(), "LAUNCHER_TEST_HELPER=1")
 	cmd.Stdin = strings.NewReader("hello")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 75 {
 		t.Fatalf("exit=%v stderr=%s", err, stderr.String())
@@ -79,4 +160,124 @@ func TestLauncherForwardsStreamsArgumentsEnvironmentAndExit75(t *testing.T) {
 	if stderr.String() != "helper-stderr" {
 		t.Fatalf("stderr=%q", stderr.String())
 	}
+}
+
+// probe runs the console probe payload through the launcher and returns the
+// window handle the payload reported.
+func probe(t *testing.T, stable string, flags uint32) uintptr {
+	t.Helper()
+	cmd := exec.Command(stable, "-test.run=^TestLauncherConsoleProbeHelper$")
+	cmd.Env = append(os.Environ(), "LAUNCHER_CONSOLE_PROBE=1")
+	cmd.Stdin = strings.NewReader("")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if flags != 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags}
+	}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run launcher: %v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	var hwnd uintptr
+	var visible int
+	if _, err := fmt.Sscanf(stdout.String(), "consoleWindow=%d visible=%d", &hwnd, &visible); err != nil {
+		t.Fatalf("probe output %q: %v", stdout.String(), err)
+	}
+	return hwnd
+}
+
+// An MCP host spawns csx over pipes with no console of its own, and so does the
+// detached `csx daemon run`. The payload must not answer that by opening a
+// Terminal window on the user's desktop.
+func TestLauncherPayloadOpensNoConsoleWindowWhenLauncherHasNone(t *testing.T) {
+	stable := installLauncher(t)
+	if hwnd := probe(t, stable, windows.DETACHED_PROCESS); hwnd != 0 {
+		t.Fatalf("payload allocated console window %#x; a consoleless launcher must not put one on screen", hwnd)
+	}
+}
+
+// The counterpart contract: a person typing `csx ...` into a terminal must
+// still get the payload inside that same console, not a private one. The test
+// process itself usually has no console -- CI and MCP-hosted runs never do --
+// so it stages the terminal by re-running itself with one.
+func TestLauncherPayloadInheritsAnExistingConsole(t *testing.T) {
+	stable := installLauncher(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "inherit.txt")
+	cmd := exec.Command(self, "-test.run=^TestLauncherInheritProbeHelper$")
+	cmd.Env = append(os.Environ(), "LAUNCHER_INHERIT_PROBE="+stable+"|"+report)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_CONSOLE}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run console-owning probe: %v", err)
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatalf("probe wrote no report: %v", err)
+	}
+	var own, payload int64
+	if _, err := fmt.Sscanf(string(raw), "own=%d payload=%d", &own, &payload); err != nil {
+		t.Fatalf("report %q: %v", raw, err)
+	}
+	if own == 0 {
+		t.Fatalf("probe never got a console of its own: %s", raw)
+	}
+	if payload != own {
+		t.Fatalf("payload console window = %#x, want the launcher's %#x: %s", payload, own, raw)
+	}
+}
+
+// The kill-on-close job is what keeps an MCP host's exit from leaving payloads
+// behind; the console change must not cost the child that membership.
+func TestLauncherJobKillsPayloadWhenLauncherDies(t *testing.T) {
+	stable := installLauncher(t)
+	marker := filepath.Join(t.TempDir(), "payload.pid")
+	cmd := exec.Command(stable, "-test.run=^TestLauncherLingerHelper$")
+	cmd.Env = append(os.Environ(), "LAUNCHER_TEST_LINGER="+marker)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start launcher: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	var pid int
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		if raw, err := os.ReadFile(marker); err == nil {
+			if pid, err = strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && pid > 0 {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if pid == 0 {
+		t.Fatal("payload never published its pid")
+	}
+	if !processAlive(pid) {
+		t.Fatalf("payload %d already gone before the launcher was killed", pid)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill launcher: %v", err)
+	}
+	_ = cmd.Wait()
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		if !processAlive(pid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("payload %d outlived the launcher", pid)
+}
+
+func processAlive(pid int) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	if err := windows.GetExitCodeProcess(h, &code); err != nil {
+		return false
+	}
+	return code == 259 // STILL_ACTIVE
 }
