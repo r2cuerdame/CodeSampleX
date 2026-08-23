@@ -36,12 +36,13 @@ Three ground rules for anything pasted from here:
 
 | Destination | State on **2026-08-23** (re-measured) | Evidence |
 |---|---|---|
-| Official MCP Registry | **Published and current.** `io.github.r2cuerdame/codesamplex`, 30 versions from 0.1.0 to **0.1.43**; 0.1.43 is `isLatest`, status `active`, published 2026-08-22T16:38Z. Publishing is automated by the release workflow and needs no attention. | `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100` |
+| Official MCP Registry | **Published and current.** `io.github.r2cuerdame/codesamplex`, 31 versions from 0.1.0 to **0.1.44**; 0.1.44 is `isLatest`, status `active`, published 2026-08-23T04:44Z. Publishing is automated by the release workflow and needs no attention. | `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100` |
 | Glama | **Auto-indexed, still UNCLAIMED, and stale.** "This server cannot be installed"; Schema tab shows `No tools`, "Server capabilities have not been inspected yet", "This server publishes no instructions"; Maintainers empty despite `glama.json` being checked in; quality "Not graded — not tested". Its README snapshot predates the R2C-61 merge (it still draws the retired ✓ PASS grid and the 90-day half-life). The directory API returns `"tools": []` and a **product description we did not write** — "helps coding LLMs avoid re-solving common problems by serving verified minimal code samples" — which is the old reasoning-cache framing. | `https://glama.ai/mcp/servers/@r2cuerdame/CodeSampleX`, `/schema`, and `GET https://glama.ai/api/mcp/v1/servers/r2cuerdame/CodeSampleX` |
 | Smithery | Not re-checked on 2026-08-23. Was **not listed** on 2026-08-14. | `https://smithery.ai/search?q=codesamplex` |
-| GitHub repo | **2 stars**, 0 forks, 0 watchers. Latest release **v0.1.43** (2026-08-22). | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX` |
-| Release assets (v0.1.43) | `codesamplex-mcp.mcpb` (19.7 MB) + `.sha256`, eight `csx-*` binaries, two `csx-launcher-windows-*`, `csx-server-linux-amd64`, `csx-update-stable.json`, `SHA256SUMS.txt` | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX/releases/latest` |
-| Shipped MCPB (v0.1.43) | Downloaded, `sha256sum -c` **OK**, unpacked with `mcpb unpack`. `manifest_version 0.3`, **no `privacy_policies`**, tool entries carry only `name` and `description`. Its bundled `csx-windows-amd64.exe` answers `initialize` → `tools/list` (8 tools, **no `title`, no `annotations`**) → `tools/call get_local_stats`. That is the exact state B2 and B3 describe, measured on the artifact rather than on the source. | `npx @anthropic-ai/mcpb@2.1.2 unpack`, then a piped stdio handshake |
+| GitHub repo | **2 stars**, 0 forks, 0 watchers. Latest release **v0.1.44** (2026-08-23). | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX` |
+| Release assets (v0.1.44) | 13 assets: `codesamplex-mcp.mcpb` (19.7 MB) + `.sha256`, eight `csx-*` binaries, two `csx-launcher-windows-*`, `csx-server-linux-amd64`, `csx-update-stable.json`, `SHA256SUMS.txt` | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX/releases/latest` |
+| Shipped MCPB (**v0.1.44**) | Downloaded from the release, `sha256sum -c` **OK** (`df3627a0…`, the same digest the registry publishes as `fileSha256`, which is what a client verifies before installing). `mcpb validate` **passes**. `privacy_policies` = the PRIVACY.md URL. Its bundled `csx-windows-amd64.exe` answers `initialize` → `tools/list` (8 tools, **every one with `title` and full `annotations`**) → `tools/call get_local_stats`. B2 and B3 are closed **in the published artifact**, not only in the tree. | `npx @anthropic-ai/mcpb@2.1.2 unpack` + `validate`, then a piped stdio handshake |
+| Shipped MCPB (v0.1.43, superseded) | Same procedure on 2026-08-23 before the release: **no `privacy_policies`**, tool entries `name`/`description` only, `tools/list` with **no `title` and no `annotations`**. Recorded because it is the state B2 and B3 were written against. | as above |
 
 Two facts that follow from this and that several blocks below depend on:
 
@@ -243,7 +244,7 @@ clean machine. If that run fails, the fix is the README, not the checkbox.
 
 `server.json` at repo root declares `"version": "0.1.0"` and points at the v0.1.0
 bundle URL and its sha256, while the registry's latest published record was
-0.1.2 when this was written and is 0.1.43 as of 2026-08-23.
+0.1.2 when this was written and is 0.1.44 as of 2026-08-23.
 
 This is by design, and it was checked rather than assumed.
 `.github/workflows/release.yml` rewrites the file inside the runner before
@@ -360,7 +361,7 @@ Reuse these anywhere. All verified against the repo or the live site.
 | Support / issues | `https://github.com/r2cuerdame/CodeSampleX/issues` |
 | License | `Apache-2.0` (published samples default to MIT-0) |
 | Author | `r2cuerdame` |
-| Latest version | `0.1.43` (2026-08-22). It moves several times a week — read it off the release API before pasting. |
+| Latest version | `0.1.44` (2026-08-23). It moves several times a week — read it off the release API before pasting. |
 | MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb` (the `/latest/` form does not go stale; a pinned tag URL does) |
 | Privacy policy | `https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md` |
 | Logo (400×400 PNG) | `https://raw.githubusercontent.com/r2cuerdame/CodeSampleX/main/assets/logo-400.png` |
@@ -582,7 +583,7 @@ files are needed at the repo root:
 {
   "name": "codesamplex",
   "displayName": "CodeSampleX",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "description": "Compatibility answers for coding agents, each verified by running its test in an offline container.",
   "author": { "name": "r2cuerdame", "url": "https://codesamplex.dev" },
   "homepage": "https://codesamplex.dev",
@@ -898,9 +899,9 @@ desktop extensions or plugins instead."
   (Anthropic's own spelling of the URL; reproduced exactly.)
 - **Mechanism:** submission form. No Team/Enterprise organization required — this
   is the difference from the connectors portal in §16.
-- **Artifact:** `codesamplex-mcp.mcpb` from the latest release. As of
-  2026-08-23 that is v0.1.43, which does **not** yet carry the privacy policy
-  or the tool annotations — see below.
+- **Artifact:** `codesamplex-mcp.mcpb` from the latest release — **v0.1.44**
+  as of 2026-08-23, which carries both the privacy policy and the tool
+  annotations. This is the first release that does.
 
 **Blockers: both closed in code on 2026-08-23, and one release away.**
 
@@ -913,9 +914,14 @@ desktop extensions or plugins instead."
   built bundle. They are deliberately **not** in the manifest: the MCPB schema
   forbids it (see B3).
 
-**What is still required before submitting:** the shipped artifact is still
-v0.1.43, which has neither. Cut a release first, then verify against the
-published asset — not against a local build:
+**Verified on the published artifact, 2026-08-23.** v0.1.44 was released and
+checked as the asset a reviewer would download, not as a local build:
+`sha256sum -c` OK, `mcpb validate` passes, `privacy_policies` present, and the
+bundled binary's `tools/list` returns eight tools each with `title` and
+annotations. **This destination is now unblocked; nothing in this repository
+is holding it up.**
+
+Re-run the same check after any later release, against the published asset:
 
 ```sh
 curl -fsSL https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb -o b.mcpb
@@ -954,17 +960,18 @@ are all in §3 and §4.
 
 Sequenced by effort against likelihood, not by prestige.
 
-0. ~~**Fix B1 (logo), B2 (privacy policy) and B3 (tool annotations)**~~ — all
-   three are closed in the working tree. **Cut a release**: B2 and B3 only
-   reach a directory through a published `.mcpb`, and the newest published one
-   (v0.1.43) predates both.
+0. ~~**Fix B1 (logo), B2 (privacy policy) and B3 (tool annotations)**, then
+   cut a release~~ — done. **v0.1.44** is published, and B2/B3 were verified on
+   the downloaded asset rather than on a local build. Everything below can
+   proceed.
 1. **Glama claim** (§7) — the listing already exists, is unclaimed, shows
    `No tools`, and carries a description nobody here wrote. GitHub sign-in as
    the repo owner. `glama.json` is already checked in and did not help.
 2. **Smithery** (§5) — the bundle is already built and the path is designed for it.
 3. **mcpservers.org** (§10) and **mcp.so** (§6) — two forms, no prerequisites, free.
-4. **Anthropic desktop-extension form** (§15) — once the release carrying B2
-   and B3 is published and verified against the published asset.
+4. **Anthropic desktop-extension form** (§15) — unblocked as of v0.1.44. The
+   bundle, the description, the icon and the privacy policy URL all have
+   values in §4.
 6. **MCP Market** (§11) — after reading the form in a browser.
 7. **Claude plugin directory** (§8) and **Cursor** (§9) — real work: a manifest,
    a `SETUP.md`, and a decision about the binary path.
