@@ -30,12 +30,17 @@ import (
 func init() {
 	Register(Command{
 		Name:    "hook",
-		Summary: "the build-failure lookup installed into coding agents: on | off | status",
+		Summary: "the build-failure lookup installed into coding agents: on | off | status | check",
 		Run: func(ctx context.Context, args []string) int {
 			if len(args) > 0 && args[0] == "agent" {
 				return hookAgentMain(ctx, defaultHookEnv())
 			}
-			return hookSwitchMain(args, os.Stdout, os.Stderr)
+			env, err := newHookReadyEnv()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "csx: "+err.Error())
+				return 1
+			}
+			return hookSwitchMain(ctx, args, os.Stdout, os.Stderr, env)
 		},
 	})
 }
@@ -100,28 +105,32 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// Silence is this hook's normal answer, which makes "it said nothing"
 	// impossible to tell apart from "it is broken". Setting CSX_HOOK_DEBUG
 	// makes it say why, on stderr, where the model never looks.
-	quiet := func(why string) int {
+	// The code in front of the sentence is what `csx hook check` reads back:
+	// a hook that stayed quiet and a hook that was never reached look
+	// identical from outside, and the trace is the only thing that tells
+	// them apart.
+	quiet := func(code, why string) int {
 		if env.debug != nil {
-			fmt.Fprintln(env.debug, "csx hook: silent — "+why)
+			fmt.Fprintf(env.debug, "csx hook: [%s] %s\n", code, why)
 		}
 		return 0
 	}
 
 	var p hookPayload
 	if err := json.NewDecoder(env.stdin).Decode(&p); err != nil {
-		return quiet("input is not the JSON this hook expects: " + err.Error())
+		return quiet(hookTraceBadInput, "input is not the JSON this hook expects: "+err.Error())
 	}
 	// Only shell commands. The agent's own tools do not fail this way, and
 	// the classifier has nothing to say about them.
 	if p.ToolName != "Bash" || strings.TrimSpace(p.ToolInput.Command) == "" {
-		return quiet("not a shell command (tool " + p.ToolName + ")")
+		return quiet(hookTraceNotBash, "not a shell command (tool "+p.ToolName+")")
 	}
 	cfg, err := env.cfg()
 	if err != nil {
-		return quiet("cannot read config: " + err.Error())
+		return quiet(hookTraceNoConfig, "cannot read config: "+err.Error())
 	}
 	if cfg == nil || strings.EqualFold(strings.TrimSpace(cfg.FailureHook), "off") {
-		return quiet("turned off (csx hook on)")
+		return quiet(hookTraceOff, "turned off (csx hook on)")
 	}
 
 	// Did it fail, and what did it say? Asked FIRST, before the project is
@@ -130,12 +139,12 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// quiet is work done on every green build in the session.
 	errText, failed := hookFailureText(p)
 	if !failed {
-		return quiet("the command did not fail, or the failure could not be confirmed")
+		return quiet(hookTraceNotFailed, "the command did not fail, or the failure could not be confirmed")
 	}
 
 	segments := hookSegments(p.ToolInput.Command)
 	if len(segments) == 0 {
-		return quiet("nothing to classify in " + strconv.Quote(p.ToolInput.Command))
+		return quiet(hookTraceNoSegments, "nothing to classify in "+strconv.Quote(p.ToolInput.Command))
 	}
 	proj := env.inspect(ctx, p.CWD, segments)
 	// Scope. A failed `git status` is not something this network knows about,
@@ -143,8 +152,8 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// evidence stage a wrapped command records — one definition of "a build
 	// step", not two that drift apart.
 	if !proj.Known {
-		return quiet("not a build step: " + strconv.Quote(p.ToolInput.Command) +
-			" in " + strconv.Quote(p.CWD))
+		return quiet(hookTraceNotBuildStep, "not a build step: "+strconv.Quote(p.ToolInput.Command)+
+			" in "+strconv.Quote(p.CWD))
 	}
 
 	req := domain.SearchRequest{
@@ -165,7 +174,7 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		// whole candidate set to judge.
 	}
 	if req.Query == "" {
-		return quiet("the failed command printed nothing to ask about")
+		return quiet(hookTraceEmptyQuery, "the failed command printed nothing to ask about")
 	}
 	resp, err := env.search(ctx, req)
 	// Silence on a miss, and silence when the daemon is down. An agent
@@ -173,14 +182,14 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// interruption, and the network being unreachable is not the build's
 	// problem.
 	if err != nil {
-		return quiet("the search did not complete: " + err.Error())
+		return quiet(hookTraceSearchFailed, "the search did not complete: "+err.Error())
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		// The question, not just the verdict. "Nothing was found" and "we
 		// asked the wrong question" look identical from outside, and the two
 		// need opposite fixes.
 		asked, _ := json.Marshal(req)
-		return quiet("nothing here has been proven for this failure; asked: " + string(asked))
+		return quiet(hookTraceNoMatch, "nothing here has been proven for this failure; asked: "+string(asked))
 	}
 
 	// One answer. This arrives unasked, in the middle of somebody's work, so
@@ -207,9 +216,12 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		},
 	})
 	if err != nil {
-		return quiet("could not encode the answer: " + err.Error())
+		return quiet(hookTraceEncodeFailed, "could not encode the answer: "+err.Error())
 	}
 	_, _ = env.stdout.Write(out)
+	if env.debug != nil {
+		fmt.Fprintf(env.debug, "csx hook: [%s] %s\n", hookTraceAnswered, resp.Results[0].SampleID)
+	}
 	return 0
 }
 
@@ -298,14 +310,15 @@ func hookSegments(command string) [][]string {
 	return out
 }
 
-// hookSwitchMain is the one switch a reader ever touches.
-func hookSwitchMain(args []string, stdout, stderr io.Writer) int {
-	home, err := config.Home()
-	if err != nil {
-		fmt.Fprintln(stderr, "csx: "+err.Error())
-		return 1
-	}
-	cfg, err := config.Load(home)
+// hookSwitchMain is the switch, and the answer to whether the thing it
+// switches is actually wired up.
+//
+// The switch alone was never enough. "on" is a statement about a config flag:
+// it is true of a machine where the hook was never registered, of one where an
+// update rewrote the definition Codex was told to trust, and of one where the
+// registration could not be created at all. See hookready.go.
+func hookSwitchMain(ctx context.Context, args []string, stdout, stderr io.Writer, env *hookReadyEnv) int {
+	cfg, err := config.Load(env.home)
 	if err != nil {
 		fmt.Fprintln(stderr, "csx: "+err.Error())
 		return 1
@@ -318,19 +331,74 @@ func hookSwitchMain(args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "on", "off":
 		cfg.FailureHook = sub
-		if err := cfg.Save(home); err != nil {
+		if err := cfg.Save(env.home); err != nil {
 			fmt.Fprintln(stderr, "csx: "+err.Error())
 			return 1
 		}
 		fmt.Fprintln(stdout, "build-failure lookup: "+sub)
 		return 0
 	case "status":
-		fmt.Fprintln(stdout, "build-failure lookup: "+hookState(cfg))
-		return 0
+		return hookStatusMain(env, cfg, stdout, stderr)
+	case "check":
+		return hookCheckMain(ctx, env, cfg, stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "usage: csx hook [on|off|status]")
+		fmt.Fprintln(stderr, "usage: csx hook [on|off|status|check]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "  status  what each agent's config says, and what has been proved about it")
+		fmt.Fprintln(stderr, "  check   run a failing build through every registered hook, in a")
+		fmt.Fprintln(stderr, "          throwaway project, and record what it proved")
 		return 2
 	}
+}
+
+// hookTrace* are the stable codes the hook prints when CSX_HOOK_DEBUG is set.
+//
+// They exist because this hook's normal answer is silence, which makes "it
+// found nothing" indistinguishable from "it never ran" — and telling those two
+// apart is the entire job of `csx hook check`. The sentences beside them are
+// for a human and may be reworded; these are read by code and may not.
+const (
+	hookTraceAnswered     = "answered"
+	hookTraceBadInput     = "bad-input"
+	hookTraceNotBash      = "not-bash"
+	hookTraceNoConfig     = "no-config"
+	hookTraceOff          = "off"
+	hookTraceNotFailed    = "not-failed"
+	hookTraceNoSegments   = "no-segments"
+	hookTraceNotBuildStep = "not-build-step"
+	hookTraceEmptyQuery   = "empty-query"
+	hookTraceSearchFailed = "search-failed"
+	hookTraceNoMatch      = "no-match"
+	hookTraceEncodeFailed = "encode-failed"
+)
+
+// hookTraceCodes is every code the hook can emit, so a test can hold the
+// vocabulary the check reads and the one the hook writes to the same list.
+var hookTraceCodes = []string{
+	hookTraceAnswered, hookTraceBadInput, hookTraceNotBash, hookTraceNoConfig,
+	hookTraceOff, hookTraceNotFailed, hookTraceNoSegments, hookTraceNotBuildStep,
+	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceEncodeFailed,
+}
+
+// hookTracePrefix is what every trace line starts with.
+const hookTracePrefix = "csx hook: ["
+
+// hookTraceCode reads the last code out of a hook's debug output. The last
+// one, because a single run prints at most one — but a caller that captured
+// more than one run must be told how the last one ended.
+func hookTraceCode(stderr string) string {
+	code := ""
+	for _, line := range strings.Split(stderr, "\n") {
+		i := strings.Index(line, hookTracePrefix)
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len(hookTracePrefix):]
+		if j := strings.IndexByte(rest, ']'); j >= 0 {
+			code = rest[:j]
+		}
+	}
+	return code
 }
 
 func hookState(cfg *config.Config) string {
