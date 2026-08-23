@@ -78,6 +78,23 @@ that protection: a per-release approval button was a human rubber stamp on a
 diff already reviewed at merge, and it made every patch release wait. What
 protects the seed now is scope, not attendance — one job, no write authority,
 tag-only refs, and the machine checks above.
+
+That Environment lives in GitHub settings, not in this repository, so no diff
+can show it still matches the contract above. Read it back instead:
+
+```
+gh api repos/r2cuerdame/CodeSampleX/environments/codesamplex-release-signing \
+  --jq '[.protection_rules[].type]'
+# ["branch_policy"] — a "required_reviewers" entry means releases wait again
+
+gh api repos/r2cuerdame/CodeSampleX/environments/codesamplex-release-signing/deployment-branch-policies \
+  --jq '[.branch_policies[] | .type + ":" + .name]'
+# ["tag:v*"] — anything else means a ref other than a release tag can reach the seed
+```
+
+Both are worth reading after any change to repository settings, and after
+anyone with admin access touches Environments.
+
 There is no trust-root delegation in updater v1. A planned rotation therefore
 requires publishing a final old-key-signed transition release before changing
 the key; if that is impossible, existing clients must rerun the official
