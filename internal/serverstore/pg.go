@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,27 +19,33 @@ import (
 
 // PG implements Store on PostgreSQL via pgx/v5.
 //
-// It manages its own small *pgx.Conn pool (connPool below) instead of
-// pgxpool: the repo pins its dependency set and pgxpool's puddle dependency
-// is not part of it. The pool is deliberately tiny — the production target
-// is a 2GB VM with max_connections 40.
+// It manages its own small *pgx.Conn pool (pool.go) instead of pgxpool: the
+// repo pins its dependency set and pgxpool's puddle dependency is not part
+// of it. The pool is deliberately tiny — the production target is a 2GB VM
+// with max_connections 40 — which is exactly why what a caller is allowed to
+// do with a connection is bounded per class; see PoolPolicy.
 type PG struct {
 	pool *connPool
 }
 
 var _ Store = (*PG)(nil)
 
-// defaultMaxConns caps concurrent PostgreSQL connections per process.
-const defaultMaxConns = 8
-
-// Open connects to PostgreSQL and returns a ready Store. It validates the
-// DSN and dials one connection eagerly so misconfiguration fails fast.
+// Open connects to PostgreSQL and returns a ready Store under the shipped
+// pool policy. It validates the DSN and dials one connection eagerly so
+// misconfiguration fails fast.
 func Open(ctx context.Context, dsn string) (*PG, error) {
+	return OpenWithPolicy(ctx, dsn, DefaultPoolPolicy())
+}
+
+// OpenWithPolicy is Open with the timeout and admission policy named
+// explicitly. csx-server passes what the environment configured; everything
+// else wants Open.
+func OpenWithPolicy(ctx context.Context, dsn string, pol PoolPolicy) (*PG, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("serverstore: parse dsn: %w", err)
 	}
-	p := newPG(cfg)
+	p := newPGWithPolicy(cfg, pol)
 	c, err := p.pool.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -50,15 +55,28 @@ func Open(ctx context.Context, dsn string) (*PG, error) {
 }
 
 func newPG(cfg *pgx.ConnConfig) *PG {
-	return &PG{pool: newConnPool(cfg, defaultMaxConns)}
+	return newPGWithPolicy(cfg, DefaultPoolPolicy())
+}
+
+func newPGWithPolicy(cfg *pgx.ConnConfig, pol PoolPolicy) *PG {
+	return &PG{pool: newConnPool(cfg, pol)}
 }
 
 // Close releases every pooled connection.
 func (p *PG) Close() { p.pool.close() }
 
+// PoolStats reports the connection pool as an operator needs to see it:
+// what is in use, who is using it, how long they waited, and what the
+// per-class ceilings have refused or cancelled.
+func (p *PG) PoolStats() PoolStats { return p.pool.stat() }
+
 // Migrate applies the embedded migrations (see migrate.go).
+//
+// Migrations are background work by definition: some of them rewrite whole
+// tables, and a read ceiling applied to them would fail a deployment rather
+// than protect one.
 func (p *PG) Migrate(ctx context.Context) error {
-	return p.withConn(ctx, func(c *pgx.Conn) error {
+	return p.withConn(WithQueryClass(ctx, ClassBackground), func(c *pgx.Conn) error {
 		return Migrate(ctx, c)
 	})
 }
@@ -69,7 +87,9 @@ func (p *PG) withConn(ctx context.Context, fn func(*pgx.Conn) error) error {
 		return err
 	}
 	defer p.pool.release(c)
-	return fn(c)
+	err = fn(c.conn)
+	p.pool.observeQueryError(ctx, err)
+	return err
 }
 
 // ---------------------------------------------------------------- ingest --
@@ -2315,91 +2335,6 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 			&c.VerifiedSamples, &c.ServingPeers)
 	})
 	return c, err
-}
-
-// ------------------------------------------------------------------- pool --
-
-// connPool is a minimal *pgx.Conn pool: a semaphore bounds total open
-// connections and a buffered channel holds idle ones.
-type connPool struct {
-	cfg    *pgx.ConnConfig
-	idle   chan *pgx.Conn
-	sem    chan struct{} // one token per open connection
-	closed atomic.Bool
-}
-
-func newConnPool(cfg *pgx.ConnConfig, max int) *connPool {
-	return &connPool{
-		cfg:  cfg,
-		idle: make(chan *pgx.Conn, max),
-		sem:  make(chan struct{}, max),
-	}
-}
-
-func (p *connPool) acquire(ctx context.Context) (*pgx.Conn, error) {
-	if p.closed.Load() {
-		return nil, errors.New("serverstore: store is closed")
-	}
-	// Fast path: an idle connection.
-	select {
-	case c := <-p.idle:
-		return p.ensureAlive(ctx, c)
-	default:
-	}
-	// Open a new connection if under the cap, else wait for an idle one.
-	select {
-	case c := <-p.idle:
-		return p.ensureAlive(ctx, c)
-	case p.sem <- struct{}{}:
-		c, err := pgx.ConnectConfig(ctx, p.cfg)
-		if err != nil {
-			<-p.sem
-			return nil, fmt.Errorf("serverstore: connect: %w", err)
-		}
-		return c, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-// ensureAlive replaces a dead idle connection, keeping its sem token.
-func (p *connPool) ensureAlive(ctx context.Context, c *pgx.Conn) (*pgx.Conn, error) {
-	if !c.IsClosed() {
-		return c, nil
-	}
-	fresh, err := pgx.ConnectConfig(ctx, p.cfg)
-	if err != nil {
-		<-p.sem
-		return nil, fmt.Errorf("serverstore: reconnect: %w", err)
-	}
-	return fresh, nil
-}
-
-func (p *connPool) release(c *pgx.Conn) {
-	if c == nil {
-		return
-	}
-	if p.closed.Load() || c.IsClosed() {
-		_ = c.Close(context.Background())
-		<-p.sem
-		return
-	}
-	p.idle <- c // never blocks: cap(idle) == cap(sem)
-}
-
-func (p *connPool) close() {
-	if p.closed.Swap(true) {
-		return
-	}
-	for {
-		select {
-		case c := <-p.idle:
-			_ = c.Close(context.Background())
-			<-p.sem
-		default:
-			return
-		}
-	}
 }
 
 // ------------------------------------------------------------- wanted --

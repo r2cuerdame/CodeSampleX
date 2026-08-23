@@ -82,7 +82,7 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 		}
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample listing failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample listing failed")
 		return
 	}
 

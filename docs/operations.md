@@ -264,6 +264,102 @@ PostgreSQL is tuned for the 2GB host (shared_buffers 256MB, max_connections 40);
 csx-server is capped at 768MB. To move up a bundle: Lightsail snapshot →
 create larger instance from snapshot → move the static IP. Nothing else changes.
 
+## Database timeouts and the connection pool
+
+The site has eight PostgreSQL connections, and until R2C-58 anything holding
+one could hold it forever. That is what took the site down in R2C-55: the
+`/wanted` query grew to 8.3s, ten concurrent visitors took all eight
+connections, the ninth and tenth waited until the 60s `WriteTimeout` and
+became 502s, and `/healthz` — which the container healthcheck believes —
+could not reach the database at all. The query was fixed; the shape that
+turned one slow query into a whole-site outage was not, and any future slow
+query would have done the same thing.
+
+Two ceilings now stand between a slow query and an outage.
+
+**`statement_timeout`, per class of work.** A query a visitor or an agent is
+waiting on gets 8 seconds. PostgreSQL cancels the statement itself
+(SQLSTATE 57014) and the connection goes straight back to the pool, which is
+why a timeout costs nothing beyond the failed request. Ingest, migrations and
+the aggregation pass get **no** ceiling: some of them legitimately take
+minutes, and a blanket timeout would have started failing deployments to
+protect page views.
+
+**A bounded share of the pool, per class.** The shares overlap so spare
+capacity stays usable, but the arithmetic guarantees a floor nobody can take:
+
+| class | what it is | cap | guaranteed |
+|---|---|---|---|
+| interactive | website pages, public API reads, search | 6 | 2 |
+| background | evidence ingest, sample upload, authoring, the aggregation pass, `/admin` | 5 | 1 |
+| probe | `/healthz` only | — | 1 reserved |
+
+A read that cannot get a connection within 3 seconds is refused with
+`ErrPoolBusy` and answered as **503 with `Retry-After`** rather than left to
+queue into a 502. `/healthz` never queues behind either of the other classes.
+
+Which class a request belongs to is decided in `cmd/csx-server/dbclass.go` by
+path, not by HTTP verb — `POST /v1/search` is a read an agent is blocked on,
+and classifying by verb would have left the busiest reads unbounded. Anything
+unlisted is interactive: an unclassified read is merely capped, while an
+unclassified long job would start dying at eight seconds.
+
+### Watching it
+
+The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
+per-class in-use against the cap, how many acquisitions had to wait, the
+longest wait, how many were refused, and how many statements were cancelled.
+It reads counters the pool keeps in memory and issues no query, so it renders
+during the incident it describes. The panel opens itself when any class is
+under pressure.
+
+Requests that ran into the pool also write one line, at most one per second
+per class:
+
+```text
+csx-server: db pressure path=/wanted class=interactive cause=query_timeout pool_busy=0 query_timeout=1 waited=90ms
+csx-server: db pressure path=/records class=interactive cause=pool_busy pool_busy=3 query_timeout=0 waited=3s
+```
+
+`cause=query_timeout` is one query that outlived its ceiling; `cause=pool_busy`
+is the pool saturated and refusing to queue. The path never carries a query
+string.
+
+### Settings and rollback
+
+All optional; each one named changes only itself.
+
+```text
+CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
+CSX_DB_MAX_CONNS     total connections                       (default 8)
+CSX_DB_PROBE_RESERVE connections only /healthz may take       (default 1)
+CSX_DB_READ_CONNS    cap on user-facing reads                 (default 6)
+CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 5)
+CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none    (default 8s)
+CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (default 3s)
+CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz           (default 2s)
+```
+
+An unparsable value leaves the default in place rather than failing the boot:
+a typo in a timeout must not take the server down, and the value it falls back
+to is the one the deployment was already tested with.
+
+**Rollback is one variable.** Add `CSX_DB_POOL_GUARD=off` to the compose `.env`
+and `docker compose up -d`; the pool goes back to one shared cap of eight with
+no ceiling, no wait budget and no class share — the exact behaviour R2C-55 ran
+on. Nothing is migrated and nothing is persisted, so it is reversible in the
+other direction by deleting the line. To loosen rather than disable, raise
+`CSX_DB_READ_TIMEOUT` first: it is the setting that decides whether a slow page
+fails or merely is slow.
+
+Two settings must be moved together with the HTTP timeouts in
+`cmd/csx-server/main.go`: `CSX_DB_READ_WAIT + CSX_DB_READ_TIMEOUT` has to stay
+well under `WriteTimeout` (60s), or a read reaches the proxy as a 502 before
+its own ceiling fires, and `CSX_DB_PROBE_TIMEOUT` plus the probe's wait has to
+stay within the 3s deadline `handleHealthz` sets on itself, or the Go side
+cancels first and burns a connection on every slow probe.
+`internal/serverstore/pool_test.go` fails the build if either stops holding.
+
 ## Environment variables (compose `.env`)
 
 ```text
@@ -275,6 +371,10 @@ CSX_GITHUB_CLIENT_ID/SECRET        optional; GitHub identity is 501 until set
 CSX_ADMIN_TOKEN_SHA256             optional; enables private operator /admin
 CSX_LISTEN       ":8080"           host-less on purpose: Caddy reaches the
                                    service over the compose network
+CSX_DB_*                           database pool ceilings; unset is the
+                                   shipped policy. See "Database timeouts and
+                                   the connection pool" above for the list and
+                                   for the one-variable rollback.
 ```
 
 ### Running csx-server on Windows
