@@ -114,21 +114,37 @@ func runBackfillObservations(cfg serverstore.ServerConfig, args []string, stdout
 	}
 	defer pg.Close()
 
-	stats, err := backfillObservations(ctx, pg, *apply, stdout)
+	if code := runBackfillReport(ctx, pg, *apply, stdout); code != 0 {
+		return code
+	}
+	return 0
+}
+
+// runBackfillReport is the pass and everything it tells the operator.
+//
+// It is separate from the command so a test can read what an operator would
+// read. The first version of the refusal reporting gathered the reasons
+// correctly and printed none of them, and the test passed anyway because it
+// asserted on the struct instead of on the output.
+func runBackfillReport(ctx context.Context, store backfillSource, apply bool, stdout io.Writer) int {
+	stats, err := backfillObservations(ctx, store, apply, stdout)
 	if err != nil {
-		fmt.Fprintf(stderr, "csx-server backfill-observations: %v\n", err)
+		fmt.Fprintf(stdout, "csx-server backfill-observations: %v\n", err)
 		return 1
 	}
-	if *apply {
-		fmt.Fprintf(stdout, "%d samples, %d receipts, %d observations recorded, %d refused\n",
-			stats.Samples, stats.Receipts, stats.Accepted, stats.Rejected)
-		if stats.Rejected > 0 {
-			return 1
-		}
+	if !apply {
+		fmt.Fprintf(stdout, "%d samples, %d receipts, %d observations would be recorded (re-run with -apply)\n",
+			stats.Samples, stats.Receipts, stats.Would)
 		return 0
 	}
-	fmt.Fprintf(stdout, "%d samples, %d receipts, %d observations would be recorded (re-run with -apply)\n",
-		stats.Samples, stats.Receipts, stats.Would)
+	fmt.Fprintf(stdout, "%d samples, %d receipts, %d observations recorded, %d refused\n",
+		stats.Samples, stats.Receipts, stats.Accepted, stats.Rejected)
+	for _, reason := range sortedReasons(stats.Reasons) {
+		fmt.Fprintf(stdout, "  refused %d: %s\n", stats.Reasons[reason], reason)
+	}
+	if stats.Rejected > 0 {
+		return 1
+	}
 	return 0
 }
 

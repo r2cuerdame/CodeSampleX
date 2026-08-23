@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +135,23 @@ func TestBackfillReportsWhyItWasRefused(t *testing.T) {
 	}
 	if _, ok := stats.Reasons["projectBucket longer than 64 bytes"]; !ok {
 		t.Errorf("reasons = %v, want the store's own words", stats.Reasons)
+	}
+}
+
+// Counting the reasons is not reporting them. The first attempt at this
+// gathered them correctly and printed nothing, and the test passed because it
+// asserted on the struct rather than on what the operator reads.
+func TestTheRefusalReasonReachesTheOperator(t *testing.T) {
+	store := serverstore.NewFake()
+	seedReceipt(t, store, "sha256:one", "receipt:1", "PASS")
+
+	var out bytes.Buffer
+	code := runBackfillReport(context.Background(), refusing{store}, true, &out)
+	if code == 0 {
+		t.Error("a pass that recorded nothing reported success")
+	}
+	if !strings.Contains(out.String(), "projectBucket longer than 64 bytes") {
+		t.Errorf("the operator was told a count and no reason:\n%s", out.String())
 	}
 }
 
