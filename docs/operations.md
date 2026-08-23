@@ -220,6 +220,46 @@ fleet is acted on by are the same one. A withdrawn **sample** and a withheld
 Thresholds, the classification a worker reports and the reasoning behind every
 number are in [docs/authoring-quarantine.md](authoring-quarantine.md).
 
+### Verification work no verifier lane can run
+
+A cross job names the environment a reproduction needs, and it is built from
+the sample manifest — which records the machine that WROTE the sample, not a
+lane the fleet has. When one contributor's Windows machine moved to Go 1.27.0,
+three Go drafts produced jobs asking for a Go 1.27 lane. The only Go image this
+build pins is `golang:1.26-alpine`, so every worker skipped the rows in
+`canPrepare` before claiming them. The queue reported open work, every worker
+reported none, and both were telling the truth. It ran that way for three days.
+
+Two things keep it visible now:
+
+* `health.unsupportedJobs` on `GET /admin/api/farm`, rendered on the farm panel
+  as **실행 불가 작업**, counts jobs recorded `unsupported` — work no verifier
+  image in this build can run. It is deliberately not part of the queue depth:
+  waiting does not consume it. Non-zero means a lane is missing or something
+  asked for one that never existed.
+* `csx worker start` prints, when it claimed nothing, the coordinates the queue
+  offered that this build has no image for:
+
+  ```
+  no runnable work: the queue offered 2 coordinate(s) this build has no
+  verifier image for: golang go 1.27, golang go 1.27 host
+  ```
+
+  An empty queue prints nothing extra, so "no work" and "no lane for the work"
+  are different sentences.
+
+A cross job may only ask for what the fleet can serve. The runtime version and
+the execution context are relaxed when no image serves them — they describe the
+author's machine, exactly as the OS does (see `crossJobOS`) — and the same
+requirements are what the run executes against, so the receipt records the
+runtime the container really had. What no relaxation can serve is created
+`unsupported` instead of `open`.
+
+`ReconcileCrossJobLanes` runs at boot and applies that rule to jobs already in
+the table, both ways: it repairs a job asking for a lane nobody has, and it
+reopens an unsupported job the moment a lane serves it. `unsupported` is a
+statement about the images this build pins, never a verdict on the sample.
+
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
 `(ecosystem,name,version,symbol)`. Roll forward to a fixed server if the new

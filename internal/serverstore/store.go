@@ -101,13 +101,21 @@ type ReceiptRow struct {
 	CreatedAt      time.Time
 }
 
+// JobStatusUnsupported is work no verifier lane in this build can run.
+//
+// It is not "open", because nothing can claim it, and it is not "done",
+// because nothing measured the sample. Production spent three days with an
+// open cross queue every worker skipped in silence; a job that no image can
+// serve now says so in the one field an operator already reads.
+const JobStatusUnsupported = "unsupported"
+
 // JobRow is one verification_jobs-table row.
 type JobRow struct {
 	ID          int64
 	SampleID    string
 	Reason      string // "cross" | "matrix"
 	WantEnvJSON string // "" ⇒ NULL (any environment)
-	Status      string // open | claimed | done
+	Status      string // open | claimed | done | unsupported
 	ClaimedBy   string
 	ClaimedAt   time.Time
 	CreatedAt   time.Time
@@ -313,6 +321,17 @@ type Store interface {
 	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
 	// Job reads one job for receipt-to-claim binding.
 	Job(ctx context.Context, id int64) (JobRow, bool, error)
+	// CrossJobsForLaneReview lists cross jobs whose requirements can still be
+	// re-checked against the verifier images this build actually pins: the
+	// open ones, the unsupported ones, and claims that outlived their lease.
+	// A live claim is left alone — its receipt is bound to the requirements
+	// the worker was handed.
+	CrossJobsForLaneReview(ctx context.Context, limit int) ([]JobRow, error)
+	// SetJobRequirements rewrites one job's requirements and status, and
+	// releases any claim on it. Jobs created before the fleet's lanes were
+	// known are otherwise unreachable: nothing in the request path ever looks
+	// at a job again once it is open.
+	SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, status string) error
 	CreateJob(ctx context.Context, j JobRow) (int64, error)
 	// ClaimJob atomically moves an open job to claimed; false means someone
 	// else got there first (or the job is gone).

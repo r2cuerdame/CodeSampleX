@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -299,6 +300,63 @@ func ReconcileStrandedDrafts(ctx context.Context, store serverstore.Store, limit
 	return woken, nil
 }
 
+// ReconcileCrossJobLanes re-derives what every reachable cross job may ask
+// for and reports how many it repaired and how many no lane can run.
+//
+// crossRequirementsAFleetCanRun guards the jobs created from now on. It
+// cannot reach the ones already in the table, and nothing else will: once a
+// job is open, no request path ever reads it again — the same absence
+// ReconcileStrandedDrafts exists for. Three such jobs held the production
+// cross queue open and unclaimable for three days.
+//
+// It runs both ways on purpose. A job asking for a line no image serves is
+// relaxed to one the fleet can run; a job whose coordinates gained a lane
+// comes back to the open queue by itself, so "unsupported" stays a statement
+// about the images this build pins rather than a verdict on the sample.
+// Live claims are left alone: the receipt a worker is about to sign is bound
+// to the requirements it was handed.
+func ReconcileCrossJobLanes(ctx context.Context, store serverstore.Store, limit int) (repaired, unsupported int, err error) {
+	jobs, err := store.CrossJobsForLaneReview(ctx, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, job := range jobs {
+		// A legacy job with no requirements is claimable by anyone and says
+		// nothing this could check.
+		if strings.TrimSpace(job.WantEnvJSON) == "" || strings.TrimSpace(job.WantEnvJSON) == "null" {
+			continue
+		}
+		want, decodeErr := decodeWorkerRequirements(job.WantEnvJSON)
+		if decodeErr != nil {
+			continue
+		}
+		runnable, ok := crossRequirementsAFleetCanRun(want)
+		status := serverstore.JobStatusUnsupported
+		if ok {
+			status = "open"
+		}
+		// Compare the requirements, not the bytes. PostgreSQL stores want_env
+		// as jsonb and hands it back with its own key order and spacing, so a
+		// byte comparison against canonical JSON is never equal and every boot
+		// would rewrite every job and report it as repaired.
+		encoded := string(domain.MustCanonicalJSON(runnable))
+		if encoded == string(domain.MustCanonicalJSON(want)) && status == job.Status {
+			continue
+		}
+		if setErr := store.SetJobRequirements(ctx, job.ID, encoded, status); setErr != nil {
+			// One unrepairable row must not stop the rest; the next boot
+			// tries again and the others are waiting now.
+			continue
+		}
+		if ok {
+			repaired++
+		} else {
+			unsupported++
+		}
+	}
+	return repaired, unsupported, nil
+}
+
 func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, sampleID string) error {
 	var manifest domain.SampleManifest
 	if row, ok, err := store.GetSample(ctx, sampleID); err == nil && ok {
@@ -315,8 +373,18 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 		return err
 	}
 	for _, j := range jobs {
-		if j.Reason == "cross" && (j.Status == "open" || j.Status == "claimed") {
+		if j.Reason != "cross" {
+			continue
+		}
+		if j.Status == "open" || j.Status == "claimed" {
 			return nil // work is already queued or in flight
+		}
+		// Already recorded as work no lane can run. Stacking another copy
+		// each time a draft is reconsidered would turn one unrunnable
+		// coordinate into a growing pile of them; ReconcileCrossJobLanes
+		// reopens the existing row the moment a lane serves it.
+		if j.Status == serverstore.JobStatusUnsupported {
+			return nil
 		}
 	}
 	// A cross job asks a DIFFERENT machine to reproduce the result, so its
@@ -356,11 +424,51 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 			requirements.Frameworks = append(requirements.Frameworks, framework)
 		}
 	}
+	requirements, runnable := crossRequirementsAFleetCanRun(requirements)
+	status := "open"
+	if !runnable {
+		status = serverstore.JobStatusUnsupported
+	}
 	_, err = store.CreateJob(ctx, serverstore.JobRow{
-		SampleID: sampleID, Reason: "cross", Status: "open",
+		SampleID: sampleID, Reason: "cross", Status: status,
 		WantEnvJSON: string(domain.MustCanonicalJSON(requirements)),
 	})
 	return err
+}
+
+// crossRequirementsAFleetCanRun reduces a cross job to something a verifier
+// can actually claim, and reports whether anything can.
+//
+// The queue had no rule connecting what a job may ASK for to what the image
+// registry can PROVIDE, and the two drifted the moment a contributor's
+// toolchain moved. A Windows machine on Go 1.27.0 proposed three samples; the
+// only Go lane this binary pins is golang:1.26-alpine, so every worker read
+// runtimeVersionMatches("1.26","1.27") as false and skipped the rows in
+// canPrepare before claiming. The jobs stayed open for three days, the queue
+// reported work, and `csx worker start --once` reported completed=0 failed=0.
+// Nothing was broken enough to log.
+//
+// Only the AUTHOR'S precision is relaxed, and only when no lane serves it.
+// The runtime version and the execution context describe the machine that
+// happened to write the sample; a reproduction runs wherever the fleet has an
+// image, and its receipt records the runtime it really used — which is the
+// whole reason to ask a different machine. The dimensions that say WHICH
+// sample this is — ecosystem, runtime, adapter, OS, browser, engine,
+// frameworks — are never touched, so browser work is never quietly demoted
+// onto a plain Node lane: it has no served relaxation and stays unsupported.
+func crossRequirementsAFleetCanRun(want domain.WorkerRequirements) (domain.WorkerRequirements, bool) {
+	withoutVersion := want
+	withoutVersion.RuntimeVersion = ""
+	withoutContext := want
+	withoutContext.ExecutionContext = ""
+	bare := withoutVersion
+	bare.ExecutionContext = ""
+	for _, candidate := range []domain.WorkerRequirements{want, withoutVersion, withoutContext, bare} {
+		if sandbox.ContainerSupportsRequirements(candidate) {
+			return candidate, true
+		}
+	}
+	return want, false
 }
 
 // crossJobOS pins the platform a reproduction must run on — and only when the
