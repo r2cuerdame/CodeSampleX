@@ -232,8 +232,14 @@ defined`; add `"env": {"CSX_HOME": "/absolute/path/.csx"}` to the entry.
 
 Expected: `warmed shard keys: <n>` with n well above zero (111 and 116 on two
 clean installs the same day — the number tracks what the network currently
-publishes), `uploaded batches: 0`. Works in local-only mode: warming
-downloads shards, it uploads nothing.
+publishes), `uploaded batches: 0`.
+
+**Community mode only.** In `local-only` mode — and before `csx init` has run
+at all — `csx sync` is a complete no-op: it downloads no shards, makes no
+server request of any kind, and reports `warmed shard keys: 0`. That is the
+local-only contract, not a failure, and it is held there by
+`internal/daemon/localonly_test.go`. A local-only install therefore answers
+from an empty cache until it is given one another way.
 
 This is not optional. Measured on a fresh install, before `sync`, every
 search misses and says so:

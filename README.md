@@ -14,36 +14,36 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
-CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and on whose machine.
+CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and in which environment.
 
 Two things are the asset, and a third is a bonus:
 
-- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container can: macOS has no container runtime at all, npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
+- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container lane can: no container reproduces a macOS host — Docker on a Mac runs a Linux VM, which is a different machine wearing the same laptop — npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
 - **Findings** — the contradictions we detected in that evidence: what a competent developer or model expects, measured against what happened. These are ours to stand behind, and they are what a model most often gets wrong, because they are exactly what the documentation does not say.
 - **Samples** — runnable code we write and verify ourselves. A bonus, deliberately: a container farm can never cover the space, so a verified sample is a confidence tier above the evidence, never the condition for having an answer at all.
 
-Which is why a miss is not empty. When nothing has been proven for your case the grade stays `NO_SAFE_MATCH` — and the recorded runs come back with it, as recorded.
+Which is why a miss is not empty. When nothing has been proven for your case the grade stays `NO_SAFE_MATCH` — and the recorded observations come back with it, as recorded.
 
 - Compatibility map: **https://codesamplex.dev**
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
-- The answer it gives: *here is what happened, and here is who ran it.*
+- The answer it gives: *here is what happened, and here is where it ran.* Never who: reporters are anonymous peer buckets, and no identity is collected to show.
 
 ## Does it run there?
 
-Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — version × symbol, OS × runtime, version × architecture. A real slice, from the live network (measured August 2026):
+Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — version × symbol, OS × runtime, version × architecture. A real slice, copied from the live network on 2026-08-23:
 
 ```text
-github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
-whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
-Batch                                    ✓ 91% 240   —         —
-Identifier                                 60% 15    —         ✓ —
+                                         v5.10.0     v5.9.2    v5.7.3
+github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
+Batch                                    ≡ 80% 689   —         —
+ParseConfig                              ≡ 82% 1188  —         —
 ```
 
-That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
+That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), so the numbers above have moved on since they were copied.
 
-**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are what real machines did: 85% of 1,156 recorded runs got through. The check means our own sample runs there — one clean run or a hundred, the fact is binary, and a run of ours that failed carries no check at all. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
+**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `≡` mark is our own sample: it ran here and came back clean. It is deliberately not a check, because a check is an approval stamp and this network does not grade; `≡` is a line in a log. One clean run or a hundred, the mark says the same thing, and a run of ours that failed carries `✕` instead. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
 
-The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported runs are a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `✓ —` says exactly that: we have working code for it, and nobody has been seen using it yet.
+The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `≡ —` says exactly that: we have working code for it, and nobody has been seen using it yet.
 
 Colour carries how the runs came out, so a mostly-failing cell reddens without another glyph to learn. `—` stays unknown — never "works", never "broken". Nothing is inferred from the package's ecosystem or its docs.
 
@@ -60,7 +60,7 @@ The rules that keep the map honest:
 
 - A project compiling is **never** presented as a symbol working. Observations and verifications are counted separately and never summed.
 - Unknown causes stay `UNKNOWN`. A wrong HIT is worse than a MISS — `NO_SAFE_MATCH` is a real answer.
-- Evidence decays: a result's weight halves every 90 days, and stale cells say so.
+- Evidence does not decay, and no cell is marked stale. An observation is one pinned release in one pinned environment bucket at one stage, and none of those move: that a build failed there is exactly as true a year later. What can change is the environment, and a different environment is a different cell.
 - Failure causes are reported as probability distributions, never invented certainties.
 
 ## Install the CLI
@@ -139,9 +139,11 @@ Why trust a cell? Every result carries its evidence class, weak → strong:
 | `USAGE_OBSERVATION` | a real project built/typechecked/tested with the package — observed, weak |
 | `ADOPTION_EVIDENCE` | someone applied a sample and reported whether the build then passed |
 | `SAMPLE_VERIFICATION` | the sample's contract executed in a pinned container and passed |
-| `CROSS_PASS` | an independent peer re-ran it and it passed again |
-| `MATRIX_PASS` | passing runs span ≥2 OS/runtime/browser boundaries |
-| `STABLE` | ≥3 independent peers pass it, no failure recorded for 30 days |
+| `CROSS_PASS` | a peer key other than the one that published it re-ran it and it passed again |
+| `MATRIX_PASS` | passing receipts span ≥2 OS/runtime-major/browser-family boundaries |
+| `STABLE` | ≥3 distinct peer keys pass it, no failure recorded for 30 days |
+
+A peer is a key, not a person and not a machine. A peer id is the hash of a self-generated ed25519 key with no registration behind it, so one operator can hold as many as they run workers. "Distinct peer keys" means the same coordinate was reported from more than one place; it is never a head count, and nothing here identifies who ran anything.
 
 Sample pages also badge the verification ladder `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, and matrix cells carry confidence (`HIGH`/`MEDIUM`/`LOW`), elevated-failure flags, and last-seen dates. Only signed **v2 receipts** may claim `resolvedPackages` — the versions the verifier actually installed, not the versions an author typed; snapshots file each receipt under the version that really ran.
 
@@ -185,6 +187,7 @@ The same data the website renders, as JSON, without an account:
 | `GET /v1/registry/symbols/{eco}/{package}/{family}` | per-version snapshots for one symbol |
 | `GET /v1/shards/{eco}/{package}/{major}` | the pre-materialized compatibility shard (ETag-cached) |
 | `GET /v1/samples/{id}`, `…/artifact` | sample metadata, receipts, and the tar.gz source |
+| `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
 | `GET /v1/wanted` | the demand queue: what was asked for and not answered |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
 

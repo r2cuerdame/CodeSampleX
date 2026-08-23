@@ -22,18 +22,18 @@ CodeSampleX es una **red abierta de pruebas de compatibilidad** para librerías,
 
 ## ¿Funciona ahí?
 
-Cada resultado es una ejecución registrada con su entorno adjunto, de modo que los datos pivotan en matrices de compatibilidad — OS × runtime, versión × arquitectura, símbolo × OS. Un corte real, de la red en vivo (`axios.post`, medido en agosto de 2026):
+Cada resultado es una ejecución registrada con su entorno adjunto, de modo que los datos pivotan en matrices de compatibilidad — OS × runtime, versión × arquitectura, símbolo × OS. Un corte copiado tal cual de la red en vivo el 2026-08-23:
 
 ```text
-github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
-whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
-Batch                                    ✓ 91% 240   —         —
-Identifier                                 60% 15    —         ✓ —
+                                         v5.10.0     v5.9.2    v5.7.3
+github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
+Batch                                    ≡ 80% 689   —         —
+ParseConfig                              ≡ 82% 1188  —         —
 ```
 
-Esta cuadrícula no es una ilustración: es [la página en vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
+Esta cuadrícula no es una ilustración: es [la página en vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), así que los números de arriba ya se han movido desde que se copiaron.
 
-**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son lo que hicieron máquinas reales; la marca significa que nuestra muestra funciona allí. Nuestras ejecuciones son un contenedor fijado repetido; mil ejecuciones informadas son mil situaciones distintas, así que no se suman. `✓ —` significa: hay código que funciona y nadie ha sido visto usándolo todavía. `—` permanece desconocido.
+**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son observaciones: el 82% de 1.209 observaciones registradas pasó. Una observación es una etapa que alcanzó un build —compilar, comprobar tipos, probar—, así que un solo build deja varias, y el número no cuenta builds, ni máquinas, ni personas. La marca `≡` es nuestra propia muestra: corrió aquí y terminó limpia. Deliberadamente no es una marca de verificación, porque eso es un sello de aprobación y esta red no califica; una ejecución nuestra que falló lleva `✕` en su lugar. `≡ —` significa: hay código que funciona y nadie ha sido visto usándolo todavía. `—` permanece desconocido.
 
 ## Por qué importan las pruebas
 
@@ -48,7 +48,7 @@ Las reglas que mantienen honesto el mapa:
 
 - Que un proyecto compile **nunca** se presenta como que un símbolo funciona. Las observaciones y las verificaciones se cuentan por separado y jamás se suman.
 - Las causas desconocidas se quedan en `UNKNOWN`. Un HIT incorrecto es peor que un MISS — `NO_SAFE_MATCH` es una respuesta real.
-- La evidencia decae: el peso de un resultado se reduce a la mitad cada 90 días, y las celdas obsoletas lo dicen.
+- La evidencia no decae y ninguna celda se marca como obsoleta. Una observación es una release fijada, en un bucket de entorno fijado, en una etapa, y ninguno de los tres se mueve: que un build fallara allí es igual de cierto un año después. Lo que puede cambiar es el entorno, y un entorno distinto es una celda distinta.
 - Las causas de fallo se informan como distribuciones de probabilidad, nunca como certezas inventadas.
 
 ## Instalación de la CLI
@@ -127,9 +127,11 @@ Los hallazgos derivados por máquina crecen a partir de samples publicados cuyos
 | `USAGE_OBSERVATION` | un proyecto real compiló/pasó el typecheck/sus tests con el paquete — observado, débil |
 | `ADOPTION_EVIDENCE` | alguien aplicó un sample e informó de si el build pasó después |
 | `SAMPLE_VERIFICATION` | el contrato del sample se ejecutó en un contenedor fijado y pasó |
-| `CROSS_PASS` | un par independiente lo volvió a ejecutar y volvió a pasar |
-| `MATRIX_PASS` | las ejecuciones que pasan abarcan ≥2 fronteras de OS/runtime/navegador |
-| `STABLE` | ≥3 pares independientes lo pasan, sin fallos registrados durante 30 días |
+| `CROSS_PASS` | una clave de par distinta de la que lo publicó lo volvió a ejecutar y volvió a pasar |
+| `MATRIX_PASS` | los recibos que pasan abarcan ≥2 fronteras de OS/major de runtime/familia de navegador |
+| `STABLE` | ≥3 claves de par distintas lo pasan, sin fallos registrados durante 30 días |
+
+Un par es una clave, no una persona ni una máquina. Un id de par es el hash de una clave ed25519 autogenerada sin registro detrás, así que un mismo operador puede tener tantas como workers ejecute. «Claves de par distintas» significa que la misma coordenada se reportó desde más de un sitio; nunca es un recuento de personas, y nada de esto identifica quién ejecutó qué.
 
 Las páginas de sample también muestran la escalera de verificación `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, y las celdas de la matriz llevan confianza (`HIGH`/`MEDIUM`/`LOW`), indicadores de fallo elevado y fechas de última observación. Solo los **recibos v2** firmados pueden declarar `resolvedPackages` — las versiones que el verificador instaló realmente, no las que escribió un autor; los snapshots archivan cada recibo bajo la versión que de verdad se ejecutó.
 

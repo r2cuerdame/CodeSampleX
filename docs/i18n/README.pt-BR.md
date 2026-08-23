@@ -22,18 +22,18 @@ O CodeSampleX é uma **rede aberta de testes de compatibilidade** para bibliotec
 
 ## Isso roda lá?
 
-Cada resultado é uma execução registrada com o seu ambiente anexado, então os dados se articulam em matrizes de compatibilidade — OS × runtime, versão × arquitetura, símbolo × OS. Um recorte real, vindo da rede ao vivo (`axios.post`, medido em agosto de 2026):
+Cada resultado é uma execução registrada com o seu ambiente anexado, então os dados se articulam em matrizes de compatibilidade — OS × runtime, versão × arquitetura, símbolo × OS. Um recorte copiado tal como estava na rede ao vivo em 2026-08-23:
 
 ```text
-github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
-whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
-Batch                                    ✓ 91% 240   —         —
-Identifier                                 60% 15    —         ✓ —
+                                         v5.10.0     v5.9.2    v5.7.3
+github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
+Batch                                    ≡ 80% 689   —         —
+ParseConfig                              ≡ 82% 1188  —         —
 ```
 
-Esta grade não é uma ilustração: é [a página ao vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
+Esta grade não é uma ilustração: é [a página ao vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) — então os números acima já se moveram desde que foram copiados.
 
-**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são o que máquinas reais fizeram; a marca significa que a nossa amostra funciona ali. Nossas execuções são um contêiner fixado repetido; mil execuções relatadas são mil situações diferentes, então não se somam. `✓ —` significa: existe código funcionando e ninguém foi visto usando ainda. `—` permanece desconhecido.
+**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são observações: 82% de 1.209 observações registradas passaram. Uma observação é uma etapa que um build alcançou — compilar, checar tipos, testar — então um único build deixa várias, e o número não conta builds, nem máquinas, nem pessoas. A marca `≡` é a nossa própria amostra: ela rodou aqui e terminou limpa. Deliberadamente não é um sinal de visto, porque um visto é um carimbo de aprovação e esta rede não dá notas; uma execução nossa que falhou carrega `✕` no lugar. `≡ —` significa: existe código funcionando e ninguém foi visto usando ainda. `—` permanece desconhecido.
 
 ## Por que testar importa
 
@@ -48,7 +48,7 @@ As regras que mantêm o mapa honesto:
 
 - Um projeto que compila **nunca** é apresentado como um símbolo que funciona. Observações e verificações são contadas separadamente e nunca somadas.
 - Causas desconhecidas permanecem `UNKNOWN`. Um HIT errado é pior do que um MISS — `NO_SAFE_MATCH` é uma resposta de verdade.
-- A evidência decai: o peso de um resultado cai pela metade a cada 90 dias, e as células desatualizadas dizem isso.
+- A evidência não decai, e nenhuma célula é marcada como desatualizada. Uma observação é uma release fixada, em um bucket de ambiente fixado, em uma etapa, e nenhum dos três se move: que um build tenha falhado ali continua igualmente verdadeiro um ano depois. O que pode mudar é o ambiente, e um ambiente diferente é uma célula diferente.
 - Causas de falha são reportadas como distribuições de probabilidade, nunca como certezas inventadas.
 
 ## Instale a CLI
@@ -127,9 +127,11 @@ Por que confiar em uma célula? Cada resultado carrega a sua classe de evidênci
 | `USAGE_OBSERVATION` | um projeto real compilou/passou no typecheck/testou com o pacote — observado, fraco |
 | `ADOPTION_EVIDENCE` | alguém aplicou um sample e reportou se o build passou em seguida |
 | `SAMPLE_VERIFICATION` | o contrato do sample executou em um contêiner fixado e passou |
-| `CROSS_PASS` | um peer independente o reexecutou e ele passou de novo |
-| `MATRIX_PASS` | execuções aprovadas atravessam ≥2 fronteiras de OS/runtime/navegador |
-| `STABLE` | ≥3 peers independentes o aprovam, sem falha registrada por 30 dias |
+| `CROSS_PASS` | uma chave de peer diferente da que o publicou o reexecutou e ele passou de novo |
+| `MATRIX_PASS` | recibos aprovados atravessam ≥2 fronteiras de OS/major de runtime/família de navegador |
+| `STABLE` | ≥3 chaves de peer distintas o aprovam, sem falha registrada por 30 dias |
+
+Um peer é uma chave, não uma pessoa e não uma máquina. Um id de peer é o hash de uma chave ed25519 gerada pelo próprio cliente, sem registro por trás, então um mesmo operador pode ter tantas quantos workers rodar. “Chaves de peer distintas” significa que a mesma coordenada foi reportada de mais de um lugar; nunca é uma contagem de pessoas, e nada aqui identifica quem rodou o quê.
 
 As páginas de sample também exibem o selo da escada de verificação `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, e as células da matriz carregam confiança (`HIGH`/`MEDIUM`/`LOW`), sinalizadores de falha elevada e datas de última observação. Apenas **recibos v2** assinados podem alegar `resolvedPackages` — as versões que o verificador de fato instalou, não as versões que um autor digitou; os snapshots arquivam cada recibo sob a versão que realmente rodou.
 

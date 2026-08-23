@@ -135,10 +135,16 @@ type ObservedCell struct {
 	Stage       string              `json:"stage"`
 	Pass        int64               `json:"pass"`
 	Fail        int64               `json:"fail"`
-	// Reporters is the peak number of distinct reporting machines in a single
-	// epoch, never a sum across days: one machine building all afternoon is
-	// one data point, and summing would let a single caller manufacture
+	// Reporters is the peak number of distinct reporting PEER BUCKETS in a
+	// single epoch, never a sum across days: one peer building all afternoon
+	// is one data point, and summing would let a single caller manufacture
 	// volume.
+	//
+	// It is filled from UniquePeerBuckets (internal/httpapi/relay.go), and a
+	// peer id is the hash of a self-generated key with no registration
+	// behind it. It is not a count of machines and not a count of people —
+	// one operator holds as many keys as they run workers. What it does mean
+	// is real: the same coordinate was reported from more than one place.
 	Reporters int    `json:"reporters"`
 	LastSeen  string `json:"lastSeen,omitempty"`
 }
@@ -151,9 +157,10 @@ type ObservedError struct {
 	Fingerprint string            `json:"fingerprint,omitempty"`
 	Count       int64             `json:"count"`
 	Environment map[string]string `json:"environment,omitempty"`
-	// Reporters and Projects say how widespread the failure is. Count alone
-	// is misleading: one machine building all afternoon reports thousands of
-	// occurrences and proves nothing about anyone else.
+	// Reporters and Projects say how widespread the failure is, in peer
+	// buckets and project buckets rather than in machines or people. Count
+	// alone is misleading: one peer building all afternoon reports thousands
+	// of occurrences and proves nothing about anyone else.
 	Reporters int `json:"reporters,omitempty"`
 	Projects  int `json:"projects,omitempty"`
 }
@@ -181,8 +188,12 @@ const (
 	// ObservedBasis is the only basis an ObservedReports may claim.
 	ObservedBasis = "observed"
 	// ObservedNote travels with every relay.
-	ObservedNote = "Reported by machines that ran this, not verified by this project. " +
-		"No sample was proven for your case; these are the recorded runs, as recorded."
+	//
+	// It said "reported by machines". The relay counts peer buckets, not
+	// machines — see ObservedCell.Reporters — and an observation is one
+	// stage a build reached, not one run of anything.
+	ObservedNote = "Reported by peers that ran this, not verified by this project. " +
+		"No sample was proven for your case; these are the recorded observations, as recorded."
 )
 
 // VerifiedOffer reports whether this result is safe to offer as already
@@ -219,8 +230,13 @@ func (r SearchResult) RecommendationClassification() (classification string, adv
 // level is actually about.
 //
 // Confidence is a statement about INDEPENDENCE: MEDIUM needs two separate
-// machines to have run the thing, HIGH needs three plus volume. On a young
-// network almost nothing has that, so almost every answer reads
+// peer buckets to have run the thing, HIGH needs three plus volume. It is
+// counted in peer buckets and it is described in peer buckets — the value
+// this function reads is literally UniquePeerBuckets, and a peer id is the
+// hash of a self-generated key with no registration behind it. Calling that
+// a machine, which this text did, promised a head count the network never
+// measured and cannot. On a young network almost nothing has that, so
+// almost every answer reads
 // "CONFIDENCE: LOW" -- next to a sample whose contract passed in a pinned
 // container with the network off. A reader takes that as "this answer is
 // probably wrong", which is not what it says and not what the evidence
@@ -238,12 +254,12 @@ func (r SearchResult) ConfidenceReason() string {
 	case independence >= 2:
 		return "" // the label is already carrying its own weight
 	case e.ContractPasses > 0 && independence <= 1:
-		return "its contract passed here, but only one machine has run it; " +
-			"independent runs are what raises this"
+		return "its contract passed here, but only one peer key has run it; " +
+			"runs from a second one are what raises this"
 	case e.ProjectCompileObservations == 0 && e.ContractPasses == 0:
 		return "nothing has been observed or verified for this yet"
 	default:
-		return "only one machine has reported on this so far"
+		return "only one peer key has reported on this so far"
 	}
 }
 
