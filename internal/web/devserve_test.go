@@ -27,6 +27,8 @@ func TestDevServe(t *testing.T) {
 		store = newCubeStore()
 	case "deeplink":
 		store = deepLinkStore()
+	case "drilldown":
+		store = drillDownStore()
 	}
 	mux, _ := newTestMux(t, func(d *Deps) {
 		d.Store = store
