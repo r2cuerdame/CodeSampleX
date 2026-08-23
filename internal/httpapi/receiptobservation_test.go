@@ -1,0 +1,140 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+)
+
+func passReceipt(t *testing.T, resolved []string, stages map[string]string) serverstore.ReceiptRow {
+	t.Helper()
+	body := map[string]any{
+		"schemaVersion":    2,
+		"stages":           stages,
+		"resolvedPackages": resolved,
+		"environment": map[string]any{
+			"schemaVersion": 1, "ecosystem": "npm", "os": "linux", "arch": "x64",
+			"libc": "musl", "runtime": "node", "runtimeVersion": "22",
+			"virtualization": "container", "containerRuntime": "docker",
+		},
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return serverstore.ReceiptRow{
+		ReceiptID:      "receipt:1",
+		SampleID:       "sha256:" + "aa",
+		PeerID:         "peer-farm-1",
+		ReceiptJSON:    string(raw),
+		ContractResult: "PASS",
+		CreatedAt:      time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC),
+	}
+}
+
+// Writing the sample and running it IS an execution, in an environment this
+// network recorded rather than assumed. It was kept only as a verification,
+// so a coordinate the farm had built itself showed a dash where its own runs
+// belonged — 329 packages and 7,173 snapshot rows reading "never measured"
+// about work we did.
+//
+// This does not merge the two classes. The batch carries the farm's own peer
+// id and one project bucket per sample, so a reader sees one reporting peer
+// and can tell exactly whose machine it was. What changes is that the run is
+// recorded at all.
+func TestAContractRunIsRecordedAsAnObservation(t *testing.T) {
+	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0", "pkg:npm/follow-redirects@1.15.6"},
+		map[string]string{"resolve": "PASS", "compile": "SKIPPED", "load": "PASS", "contract": "PASS"})
+
+	batches := observationsFromReceipt(r)
+	if len(batches) == 0 {
+		t.Fatal("a contract run produced no observation at all")
+	}
+
+	byPkg := map[string][]domain.ObservationBatch{}
+	for _, b := range batches {
+		byPkg[b.Package] = append(byPkg[b.Package], b)
+		if b.AnonID != "peer-farm-1" {
+			t.Errorf("anonId = %q, want the peer that actually ran it", b.AnonID)
+		}
+		if b.ProjectBucket == "" {
+			t.Error("no project bucket: the run cannot be counted as one place")
+		}
+		if b.Environment.OS != "linux" || b.Environment.ContainerRuntime != "docker" {
+			t.Errorf("environment lost: %+v", b.Environment)
+		}
+		if b.Epoch != "2026-08-23" {
+			t.Errorf("epoch = %q, want the day the run happened", b.Epoch)
+		}
+		if b.Symbol != "" {
+			t.Errorf("symbol = %q: a receipt says which packages ran, not which symbols", b.Symbol)
+		}
+	}
+	for _, want := range []string{"pkg:npm/axios@1.12.0", "pkg:npm/follow-redirects@1.15.6"} {
+		if len(byPkg[want]) == 0 {
+			t.Errorf("no observation for %s, which the run resolved", want)
+		}
+	}
+
+	// The stages have to land where the cube counts them, or the dash stays.
+	stages := map[domain.Stage]bool{}
+	for _, b := range byPkg["pkg:npm/axios@1.12.0"] {
+		stages[b.Stage] = true
+	}
+	if !stages[domain.StageProjectTest] {
+		t.Errorf("a contract PASS was not recorded as a run: stages %v", stages)
+	}
+	if stages[domain.StageProjectCompile] {
+		t.Error("a SKIPPED compile was recorded as though it had run")
+	}
+}
+
+// A failing contract is a run too, and its result is FAIL.
+func TestAFailedContractIsRecordedAsAFailedRun(t *testing.T) {
+	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0"},
+		map[string]string{"resolve": "PASS", "contract": "FAIL"})
+	r.ContractResult = "FAIL"
+
+	var sawFail bool
+	for _, b := range observationsFromReceipt(r) {
+		if b.Stage == domain.StageProjectTest {
+			if b.Result != domain.ResultFail {
+				t.Errorf("contract FAIL recorded as %s", b.Result)
+			}
+			sawFail = true
+		}
+	}
+	if !sawFail {
+		t.Error("a failed contract produced no run observation")
+	}
+}
+
+// A receipt that does not say which packages resolved cannot be attributed to
+// any coordinate, and inventing one would be worse than the dash.
+func TestAReceiptWithoutResolvedPackagesObservesNothing(t *testing.T) {
+	r := passReceipt(t, nil, map[string]string{"resolve": "PASS", "contract": "PASS"})
+	if got := observationsFromReceipt(r); len(got) != 0 {
+		t.Errorf("invented %d observations from a receipt that named no package", len(got))
+	}
+}
+
+// Every batch must be one the ingest path accepts, or this records nothing at
+// all and does it silently.
+func TestReceiptObservationsAreAcceptedByIngest(t *testing.T) {
+	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0"},
+		map[string]string{"resolve": "PASS", "contract": "PASS"})
+	store := serverstore.NewFake()
+	n, rejected, err := store.IngestBatches(t.Context(), observationsFromReceipt(r))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected) != 0 {
+		t.Fatalf("ingest rejected %d of them: %+v", len(rejected), rejected)
+	}
+	if n == 0 {
+		t.Fatal("ingest accepted none")
+	}
+}

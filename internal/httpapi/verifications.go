@@ -533,6 +533,18 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		_ = a.d.Store.CompleteJobsForSample(ctx, receipt.SampleID, receipt.PeerID)
 	}
 
+	// The run itself is now recorded, not only its verdict. Writing the
+	// sample and executing its contract happened on a real machine in an
+	// environment this network wrote down, and keeping only the receipt left
+	// the coordinate reading "never measured" about work we did.
+	//
+	// Best-effort and after the receipt is safely stored: the receipt is the
+	// artifact, and losing an observation must never lose one. Ingest is
+	// idempotent by (peer, coordinate, day), so a retry adds nothing.
+	if batches := observationsFromReceipt(receiptRow); len(batches) > 0 {
+		_, _, _ = a.d.Store.IngestBatches(ctx, batches)
+	}
+
 	receipts, err := a.d.Store.ReceiptsForSample(ctx, receipt.SampleID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "receipt lookup failed")
