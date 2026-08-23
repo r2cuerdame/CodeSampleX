@@ -203,7 +203,13 @@ type staleClaim struct {
 // precisely because a check reads as a verdict.
 var localeCopyClaims = []staleClaim{
 	{"en", "legend.how_rate", "recorded runs", "recorded observations"},
-	{"en", "legend.how_rate", "the check", "the record mark"},
+	{"en", "legend.how_rate", "the check", "the verification mark"},
+	// And the mark itself. Three bars read as a hamburger — menu, more, go
+	// deeper — and the same sentence went on to gloss it as "there is code
+	// that works for this cell", which is a different fact with a different
+	// key. Neither the shape nor the gloss may come back (R2C-127).
+	{"en", "legend.how_rate", "≡", "◆"},
+	{"en", "legend.how_rate", "there is code that works for this cell", "code availability is its own mark"},
 	{"en", "landing.ladder_rule", "recorded runs", "recorded observations"},
 	{"en", "landing.matrix_sub", "a recorded run", "a recorded observation"},
 	{"en", "landing.what_a", "Recorded runs", "Recorded observations"},
@@ -214,7 +220,7 @@ var localeCopyClaims = []staleClaim{
 	{"en", "stats.observations_sub", "builds that really ran", "recorded observations, one per build stage"},
 
 	{"ko", "legend.how_rate", "실행 수", "관측 수"},
-	{"ko", "legend.how_rate", "체크", "≡ 표시"},
+	{"ko", "legend.how_rate", "체크", "◆ 표시"},
 	{"ko", "landing.ladder_rule", "기록된 실행", "기록된 관측"},
 	{"ko", "landing.matrix_sub", "기록된 실행", "기록된 관측"},
 	{"ko", "landing.what_a", "실제 머신", "실제 환경"},
@@ -224,7 +230,7 @@ var localeCopyClaims = []staleClaim{
 	{"ko", "stats.observations_sub", "실제로 돌아간 빌드", "기록된 관측, 빌드 단계마다 하나"},
 
 	{"ja", "legend.how_rate", "実行の数", "観測の数"},
-	{"ja", "legend.how_rate", "チェック", "≡ の印"},
+	{"ja", "legend.how_rate", "チェック", "◆ の印"},
 	{"ja", "landing.ladder_rule", "記録された実行", "記録済み観測"},
 	{"ja", "landing.matrix_sub", "記録された実行", "記録された観測"},
 	{"ja", "landing.what_a", "実マシン", "実環境"},
@@ -234,7 +240,7 @@ var localeCopyClaims = []staleClaim{
 	{"ja", "stats.observations_sub", "実際に走ったビルド", "記録された観測、ビルド段階ごとに 1 件"},
 
 	{"zh-CN", "legend.how_rate", "运行次数", "观测次数"},
-	{"zh-CN", "legend.how_rate", "勾号", "≡ 标记"},
+	{"zh-CN", "legend.how_rate", "勾号", "◆ 标记"},
 	{"zh-CN", "landing.ladder_rule", "记录的运行", "已记录观测"},
 	{"zh-CN", "landing.matrix_sub", "一次已记录的运行", "一条已记录的观测"},
 	{"zh-CN", "landing.what_a", "真实机器", "真实环境"},
@@ -253,7 +259,7 @@ var localeCopyClaims = []staleClaim{
 	{"es", "stats.observations_sub", "compilaciones que se ejecutaron de verdad", "observaciones registradas, una por etapa"},
 
 	{"fr", "legend.how_rate", "exécutions enregistrées", "observations enregistrées"},
-	{"fr", "legend.how_rate", "la coche", "la marque ≡"},
+	{"fr", "legend.how_rate", "la coche", "la marque ◆"},
 	{"fr", "landing.ladder_rule", "exécutions enregistrées", "observations enregistrées"},
 	{"fr", "landing.matrix_sub", "une exécution enregistrée", "une observation enregistrée"},
 	{"fr", "landing.what_a", "vraies machines", "vrais environnements"},
@@ -263,7 +269,7 @@ var localeCopyClaims = []staleClaim{
 	{"fr", "stats.observations_sub", "des builds réellement exécutés", "des observations enregistrées, une par étape"},
 
 	{"de", "legend.how_rate", "aufgezeichneten Läufe", "aufgezeichneten Beobachtungen"},
-	{"de", "legend.how_rate", "Häkchen", "Zeichen ≡"},
+	{"de", "legend.how_rate", "Häkchen", "Zeichen ◆"},
 	{"de", "landing.ladder_rule", "erfassten Läufe", "aufgezeichneten Beobachtungen"},
 	{"de", "landing.matrix_sub", "ein aufgezeichneter Lauf", "eine aufgezeichnete Beobachtung"},
 	{"de", "landing.what_a", "echten Rechnern", "echten Umgebungen"},
@@ -282,7 +288,7 @@ var localeCopyClaims = []staleClaim{
 	{"pt-BR", "stats.observations_sub", "builds que realmente rodaram", "observações registradas, uma por etapa"},
 
 	{"ru", "legend.how_rate", "записанные запуски", "записанные наблюдения"},
-	{"ru", "legend.how_rate", "галоч", "знак ≡"},
+	{"ru", "legend.how_rate", "галоч", "знак ◆"},
 	{"ru", "landing.ladder_rule", "под ней запускам", "записанных наблюдений"},
 	{"ru", "landing.matrix_sub", "записанный запуск", "записанное наблюдение"},
 	{"ru", "landing.what_a", "реальных машин", "реальных окружений"},

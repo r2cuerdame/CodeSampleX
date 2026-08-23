@@ -16,6 +16,27 @@
      in the exact measured combinations. */}}
 {{- if .Cube}}
 <section id="cube" class="cube">
+  {{/* The ladder, before anything else inside the instrument. Filter chips
+       say what is FIXED; they never said where that is, so four pins looked
+       the same whether a whole symbol axis was still underneath or nothing
+       was. One line, and the reader knows which. */}}
+  {{- if .Cube.Nav.Steps}}
+  <nav class="cubenav mono small" aria-label="{{.T "nav.heading"}}">
+    <ol>
+      {{- range .Cube.Nav.Steps}}
+      <li class="navstep{{if .Current}} current{{end}}{{if .Done}} done{{end}}"{{if .Current}} aria-current="step"{{end}}>
+        {{- if .Href}}<a href="{{.Href}}"><span class="navlabel dim">{{.Label}}</span>{{if .Value}}<span class="navvalue">{{.Value}}</span>{{end}}</a>
+        {{- else}}<span class="navlabel dim">{{.Label}}</span>{{if .Value}}<span class="navvalue">{{.Value}}</span>{{end}}{{end}}
+      </li>
+      {{- end}}
+    </ol>
+    {{- if .Cube.Nav.Terminal}}
+    <p class="navterminal small">{{.T "nav.terminal"}}</p>
+    {{- else if .Cube.Nav.NextLabel}}
+    <p class="navnext small dim">{{.T "nav.next_here"}}: {{.Cube.Nav.NextLabel}}</p>
+    {{- end}}
+  </nav>
+  {{- end}}
   {{- if .Cube.Answer}}
   {{/* The answer, before the instrument that found it — and INSIDE #cube,
        because that anchor is what every shared link and every filter reload
@@ -35,15 +56,39 @@
       {{- if .Version}}<span class="answer-version dim">{{if .Symbol}}@{{end}}{{.Version}}</span>{{end}}
       {{- if .Env}}<span class="answer-sep dim" aria-hidden="true">·</span><span class="answer-env dim">{{.Env}}</span>{{end}}
     </p>
+    {{/* "whole package" is a package-level TOTAL, disjoint from the APIs
+         beside it. Printing the package's own name in the symbol slot read
+         as an API the package exports, which is the one thing it is not. */}}
+    {{- if .SymbolNote}}<p class="answer-aggregate dim small">{{.SymbolNote}}</p>{{end}}
     <p class="answer-line">{{if .Glyph}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{end}}<span class="answer-headline">{{.Headline}}</span></p>
     <p class="answer-basis dim small">{{.BasisNote}}</p>
+    {{/* The two facts the single mark used to run together. Code belongs to
+         the release and the API; verification belongs to this environment.
+         Both are stated, always, including the negative — "no code yet" is
+         an answer and a missing affordance is not. */}}
+    <p class="answer-states small">
+      {{- if .CodeLabel}}<span class="state code yes"><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.CodeLabel}} <span class="dim">({{$.N .Code}})</span></span>{{end}}
+      {{- if .NoCodeLabel}}<span class="state code no">{{.NoCodeLabel}}</span>{{end}}
+      {{- if and .EnvLabel .Env}}<span class="state env {{.Basis}}">{{.EnvLabel}}</span>{{end}}
+    </p>
     <dl class="answer-facts mono small">
       {{- range .Facts}}
       <div{{if .Absent}} class="absent"{{end}}><dt class="dim">{{.Label}}</dt><dd>{{.Value}}</dd></div>
       {{- end}}
     </dl>
-    {{- if .RecordsHref}}
-    <p class="answer-records"><a href="{{$.WithLang .RecordsHref}}">{{.RecordsLabel}}</a></p>
+    {{/* The ways out of the instrument. Each one is here only because what
+         it opens exists — an action that lands on an empty page is the dead
+         end this card was rebuilt to remove — and they are drawn as their
+         own grammar, neither filter nor navigator. */}}
+    {{- if .Actions}}
+    <div class="answer-actions">
+      <span class="eyebrow mono dim">{{$.T "answer.evidence_heading"}}</span>
+      <ul>
+        {{- range .Actions}}
+        <li><a class="evaction ev-{{.Kind}}" href="{{$.WithLang .Href}}">{{.Label}}</a></li>
+        {{- end}}
+      </ul>
+    </div>
     {{- end}}
   </div>
   {{- end}}
@@ -99,6 +144,12 @@
       <p class="leafresult{{if .Basis}} {{.Basis}}{{end}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">
         {{- if .Cell.Glyph}}<span class="glyph" aria-hidden="true">{{.Cell.Glyph}}</span>{{end}}<span>{{.Result}}</span>
       </p>
+      {{- if .Cell.Code}}<p class="leafcode small"><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.Cell.CodeLabel}} <span class="dim">({{$.N .Cell.Code}})</span></p>{{end}}
+      {{/* The way down. Where several records still share the coordinate,
+           this is what tells the reader the descent is not over — and it
+           wears the chevron, which on this page means navigation and only
+           navigation. */}}
+      {{- if .PinHref}}<p class="leafpin small"><a href="{{.PinHref}}" data-keepscroll>{{.PinLabel}} <span class="drill" aria-hidden="true">›</span></a></p>{{end}}
       {{if .BasisNote}}<p class="dim small">{{.BasisNote}}</p>{{end}}
     </li>
     {{- end}}
@@ -140,7 +191,7 @@
 {{/* Only with a version pinned. Across releases the same library appears at
      several versions and the page has to pick one to show, which is a choice
      nobody asked it to make; pinned, there is exactly one answer. */}}
-<h2 class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
 <div class="tablewrap">
 <table class="shipswith">
 <thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th></tr></thead>
@@ -160,7 +211,7 @@
      release in one environment, and listing every one the package has beside
      an undecided grid made the reader diff them against the cube by eye. */}}
 {{- if .Clusters}}
-<h2 class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
+<h2 id="failures" class="eyebrow mono">{{.T "pkg.clusters"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
 {{- end}}

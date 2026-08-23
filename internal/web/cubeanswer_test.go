@@ -83,7 +83,13 @@ func TestTheCoordinateIsNotRepeated(t *testing.T) {
 	// The pinned dimensions appear as removable pins and nowhere else in the
 	// control bar; the version appears in the card and in the trail, which is
 	// where a reader looks to find out where they are.
-	if n := strings.Count(body, "semver.clean</span>"); n > 3 {
+	//
+	// Four, since R2C-127: the page trail, the drill ladder, the answer card
+	// and the pin inside the folded control bar. The ladder is the fourth and
+	// it earns its place — it is the only one that names the RUNGS and says
+	// this coordinate is the bottom, which is what a reader could not tell
+	// from a row of chips. A fifth is still a repetition nobody asked for.
+	if n := strings.Count(body, "semver.clean</span>"); n > 4 {
 		t.Errorf("the pinned symbol is rendered %d times", n)
 	}
 }
@@ -186,7 +192,7 @@ func TestTheAnswerNamesEveryCountItRestsOn(t *testing.T) {
 		},
 	}}
 	coord := map[string]string{"version": "1.0.0", "symbol": "pkg.Do", "os": "ubuntu"}
-	ans := buildCubeAnswer(facts, coord, "golang", "example.com/x", "en", pivotNow)
+	ans := buildCubeAnswer(facts, coord, "golang", "example.com/x", "en", pivotNow, nil)
 	if ans == nil {
 		t.Fatal("no answer built from a fully measured coordinate")
 	}
@@ -229,7 +235,7 @@ func TestAUsageOnlyCoordinateReportsNoRate(t *testing.T) {
 		EnvHash: "e1",
 		Agg:     pivotAgg{used: 40, obsPeers: 2},
 	}}
-	ans := buildCubeAnswer(facts, map[string]string{"version": "1.0.0"}, "npm", "x", "en", pivotNow)
+	ans := buildCubeAnswer(facts, map[string]string{"version": "1.0.0"}, "npm", "x", "en", pivotNow, nil)
 	if ans == nil {
 		t.Fatal("no answer for a usage-only coordinate")
 	}

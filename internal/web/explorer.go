@@ -784,7 +784,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// an undecided slice there is no release whose dependencies these are and
 	// no environment whose failures these are, and the page showed both
 	// anyway. That pile is what a reader had to read past to find the grid.
-	cube := buildCubeView(s, r, lang, eco, name)
+	cube := buildCubeView(s, r, lang, eco, name, samples)
 	var clusters []clusterView
 	var clusterTotal int
 	var deps []PackageDep
@@ -797,6 +797,18 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
 		clusters, clusterTotal = s.loadClusters(r, eco, name, cube.Coord)
+	}
+	// The last two evidence actions, added here because only the page knows
+	// whether the sections behind them have anything in them. An action is
+	// offered because its destination exists, never because the coordinate
+	// is the kind of place that usually has one.
+	if cube != nil && cube.Answer != nil {
+		if len(clusters) > 0 {
+			cube.Answer.addAction("failures", i18n.T(lang, "answer.action_failures"), "#failures")
+		}
+		if len(deps) > 0 {
+			cube.Answer.addAction("deps", i18n.T(lang, "answer.action_deps"), "#deps")
+		}
 	}
 	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && !s.hasAnyClusters(r, eco, name) {
 		s.notFound(w, r, lang)

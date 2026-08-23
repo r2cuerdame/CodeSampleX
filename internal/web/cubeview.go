@@ -77,7 +77,13 @@ type cubeLeafRow struct {
 	// the one that lists contract records.
 	VersionHref string
 	Env         string // remaining recorded dimensions, " · " joined
-	Cell        pivotCell
+	// PinHref narrows the slice to THIS record, and PinLabel says so. Set
+	// only where the coordinate is still open: at a decided one there is
+	// nothing left to pin, and an affordance there would be the dead end
+	// R2C-127 was reported for.
+	PinHref  string
+	PinLabel string
+	Cell     pivotCell
 	// Result is the record in words, in the page language. The cell's own
 	// notation is a grid notation — a glyph, a percentage and a denominator,
 	// compressed so forty of them can be scanned — and at the bottom of a
@@ -125,6 +131,11 @@ type cubeView struct {
 	// the page covers several coordinates and has no single answer to give,
 	// and inventing one would be the page speaking past its evidence.
 	Answer *cubeAnswer
+	// Nav is the ladder: which rung the reader is on, which are behind them,
+	// and whether this is the bottom. Filter chips say what is fixed and say
+	// nothing about depth, which is how a terminal coordinate came to look
+	// identical to one with a whole axis still under it.
+	Nav cubeNav
 }
 
 // cubeCoord reads the coordinate out of a slice.
@@ -311,8 +322,14 @@ func validCubeAxis(key string) bool {
 
 // buildCubeView assembles the explorer for one request. nil means the
 // package has no cube-worthy evidence at all and the section is omitted.
-func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
+// samples are the package's published answers, already loaded by the page.
+// They decide CODE AVAILABILITY, which is keyed by release and API and by
+// nothing else — see cubecode.go for why that key excludes the environment.
+func buildCubeView(s *site, r *http.Request, lang, eco, name string,
+	samples []SampleListItem) *cubeView {
+
 	facts, windowed := s.cubeFacts(r.Context(), eco, name)
+	code := newCodeIndex(samples)
 	pagePath := pkgHref(eco, name)
 	q := r.URL.Query()
 	filters := parseCubeFilters(q)
@@ -419,8 +436,32 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 			// is where a reader arrives having pinned four things, and without
 			// them there is no way back out of the coordinate they reached.
 			view.Filters = cubeFilterBar(facts, "", "", filters, lang)
-			view.Answer = buildCubeAnswer(sliced, view.Coord, eco, name, lang, time.Now())
-			view.Leaf = dropSharedCoordinate(cubeLeafRows(sliced, eco, name, lang), view.Answer)
+			view.Answer = buildCubeAnswer(sliced, view.Coord, eco, name, lang, time.Now(), code)
+			// Terminal is DECIDED, not "the grid gave up". The two came apart
+			// on a slice whose only spread was a symbol the axes could not
+			// pair: no grid was built, so the page took the leaf arm, and the
+			// navigator would have announced the bottom of the drill above a
+			// list of records the reader had not chosen between yet.
+			view.Nav = buildCubeNav(facts, view.Coord, filters, pagePath, name, lang, view.Decided)
+			// Which is why those records became doors. Where the coordinate is
+			// still open, each exact record pins what tells it apart — the one
+			// affordance that gives the reader the next state the grid could
+			// not draw for them.
+			pinLeaf := func(dim, value string) string {
+				if value == "" || filters[dim] != "" {
+					return ""
+				}
+				next := map[string]string{dim: value}
+				for d, v := range filters {
+					next[d] = v
+				}
+				return cubeHref(pagePath, cubeQuery(next, "", "", lang))
+			}
+			if view.Decided {
+				pinLeaf = func(string, string) string { return "" }
+			}
+			view.Leaf = dropSharedCoordinate(
+				cubeLeafRows(sliced, eco, name, lang, code, pinLeaf), view.Answer)
 			// One record, fully stated by the card above it, is not a list.
 			// Printing it anyway is how the same coordinate came to be read
 			// three times on one screen.
@@ -485,7 +526,66 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	if x == "symbol" || y == "symbol" {
 		markSharedSymbolAxis(s, r, eco, &view.Grid, x, y, lang)
 	}
+	markCodeAvailability(&view.Grid, x, y, view.Coord, name, code, lang)
+	view.Nav = buildCubeNav(facts, view.Coord, filters, pagePath, name, lang, false)
 	return view
+}
+
+// markCodeAvailability puts the code mark on every cell whose release and API
+// this grid decides, and the drill-down mark on every cell that is a door.
+//
+// It runs over the ASSEMBLED grid rather than inside buildPivotCell for one
+// reason: a cell with no evidence in this environment still has a release and
+// an API, and it is exactly that cell — code exists, nothing ran here — the
+// separation is for. buildPivotCell returns an empty cell there and knows
+// nothing about samples.
+func markCodeAvailability(g *pivotGrid, x, y string, coord map[string]string,
+	name string, code *codeIndex, lang string) {
+
+	codeLabel := i18n.T(lang, "cube.code_yes")
+	drillLabel := i18n.T(lang, "cube.drill_in")
+	// The mark belongs on a cell only where the cell DECIDES part of its key.
+	// With both release and API pinned, every cell in the grid carries the
+	// identical count — forty copies of one fact, which is noise where the
+	// answer card states it once.
+	onAxis := x == "version" || y == "version" || x == "symbol" || y == "symbol"
+	for ri := range g.Rows {
+		row := &g.Rows[ri]
+		for ci := range row.Cells {
+			cell := &row.Cells[ci]
+			col := g.Cols[ci]
+			// A display label is not a filter value. nameThePackageLevelRows
+			// has already renamed the aggregate to the package's own name, so
+			// the axis value has to be read back through it or the aggregate
+			// row looks like an API nobody ever published for.
+			pick := func(dim string) string {
+				switch dim {
+				case y:
+					if dim == "symbol" && row.Aggregate {
+						return cubePackageLevel
+					}
+					return row.Label
+				case x:
+					if dim == "symbol" && col.Aggregate {
+						return cubePackageLevel
+					}
+					return col.Label
+				}
+				return coord[dim]
+			}
+			if onAxis {
+				if n := code.at(pick("version"), pick("symbol")); n > 0 {
+					cell.Code, cell.CodeLabel = n, codeLabel
+				}
+			}
+			// Said on the affordance itself, so "there is code here" and
+			// "there is a level below here" can never be read off the same
+			// mark again.
+			if cell.Href != "" {
+				cell.DrillLabel = drillLabel
+			}
+		}
+	}
 }
 
 // nameThePackageLevelRows calls the package-level aggregate by the package's
@@ -559,7 +659,9 @@ func markSharedSymbolAxis(s *site, r *http.Request, eco string, g *pivotGrid, x,
 // slice, newest version first. Facts whose visible coordinates coincide
 // (they differed only in a bucketed detail such as a runtime patch level)
 // merge into one row instead of repeating it.
-func cubeLeafRows(facts []cubeFact, eco, name, lang string) []cubeLeafRow {
+func cubeLeafRows(facts []cubeFact, eco, name, lang string, code *codeIndex,
+	pin func(dim, value string) string) []cubeLeafRow {
+
 	now := time.Now()
 	type leafKey struct{ version, symbol, env string }
 	merged := map[leafKey][]cubeFact{}
@@ -587,6 +689,12 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string) []cubeLeafRow {
 			Cell:    buildPivotCell(agg, now),
 		}
 		row.Result, row.BasisNote, row.Basis = cubeResultLine(agg, lang)
+		// Code availability is a fact about the release and the API, so the
+		// record carries it beside the environment result rather than folded
+		// into it.
+		if n := code.at(key.version, key.symbol); n > 0 {
+			row.Cell.Code, row.Cell.CodeLabel = n, i18n.T(lang, "cube.code_yes")
+		}
 		// The link is decided from the STORED symbol, before the display name
 		// is applied. Renaming first gave the package-level row a link to a
 		// symbol page named after the package, which does not exist.
@@ -599,6 +707,15 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string) []cubeLeafRow {
 		}
 		if row.Version != "" {
 			row.VersionHref = versionHref(eco, name, row.Version)
+		}
+		// The way DOWN, not out: it pins the dimension this record does not
+		// share with the ones beside it and stays inside the instrument.
+		if pin != nil {
+			if href := pin("symbol", key.symbol); href != "" {
+				row.PinHref, row.PinLabel = href, i18n.T(lang, "cube.drill_in")
+			} else if href := pin("version", key.version); href != "" {
+				row.PinHref, row.PinLabel = href, i18n.T(lang, "cube.drill_in")
+			}
 		}
 		rows = append(rows, row)
 	}

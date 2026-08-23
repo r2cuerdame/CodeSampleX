@@ -40,7 +40,7 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	}
 
 	proven := buildPivotCell(agg(0, 0, 3, 0), now)
-	if proven.Basis != "verified" || proven.Glyph != "≡" {
+	if proven.Basis != "verified" || proven.Glyph != "◆" {
 		t.Errorf("basis = %q glyph = %q, want verified with the mark", proven.Basis, proven.Glyph)
 	}
 	// Our own runs are the mark, not the count: nobody has been seen using
@@ -79,7 +79,7 @@ func TestALargeObservationRatioNeverBorrowsTheVerifiedBasis(t *testing.T) {
 	if big.Glyph != "" {
 		t.Errorf("a 50,000-report cell carries a verification mark %q", big.Glyph)
 	}
-	if small.Glyph != "≡" {
+	if small.Glyph != "◆" {
 		t.Error("a single verified run lost its mark to a larger observed one")
 	}
 }
@@ -106,7 +106,7 @@ func TestCrossReproductionAddsNoSecondMark(t *testing.T) {
 	both := agg(0, 0, 4, 0)
 	both.cross = true
 	crossed := buildPivotCell(both, now)
-	if crossed.Glyph != "≡" {
+	if crossed.Glyph != "◆" {
 		t.Errorf("cross-verified glyph = %q, want the single mark", crossed.Glyph)
 	}
 	if !crossed.Cross {
@@ -123,7 +123,7 @@ func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 		t.Errorf("a failed run = %q, want the check's counterpart", failed.Glyph)
 	}
 	passed := buildPivotCell(agg(0, 0, 3, 0), now)
-	if passed.Glyph != "≡" {
+	if passed.Glyph != "◆" {
 		t.Errorf("a clean run lost its mark: %q", passed.Glyph)
 	}
 	if failed.Tone != "fail" || passed.Tone != "pass" {
