@@ -21,12 +21,24 @@ type PURL struct {
 // AllowedEcosystems is the Public v1 package/receipt allowlist. Scanner
 // coverage is a separate claim: verification-only ecosystems such as Maven
 // may publish signed sample evidence without scanning arbitrary local projects.
+//
+// gem, hex and pub have exactly that standing and were missing from it. The
+// client scanner ships adapters for npm, pypi, golang and cargo only, so
+// maven, gem, hex and pub are all here on the verification-only footing the
+// paragraph above describes -- but the three added last refused every run
+// this network performed in them. Measured after the receipt backfill: 8,467
+// runs recorded, 1,467 refused, and every refusal was one of these three. The
+// 938 snapshot rows still reading "never measured" were those three
+// ecosystems and nothing else.
 var AllowedEcosystems = map[string]bool{
 	"npm":    true,
 	"pypi":   true,
 	"cargo":  true,
 	"golang": true,
 	"maven":  true,
+	"gem":    true,
+	"hex":    true,
+	"pub":    true,
 }
 
 // ParsePURL parses a package URL string. It accepts both canonical
