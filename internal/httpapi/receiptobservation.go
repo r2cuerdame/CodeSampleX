@@ -88,7 +88,11 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 				// One contract run is one place. The sample id keeps the
 				// project-bucket count honest: many receipts for one sample
 				// are one project, not many.
-				ProjectBucket:    r.SampleID,
+				// The digest without its "sha256:" prefix, because a bucket may
+				// be 64 bytes and the full id is 71. Carrying the prefix cost the
+				// first backfill every one of its 9,883 observations: the store
+				// refused them all and the run reported it as a bare count.
+				ProjectBucket:    receiptProjectBucket(r.SampleID),
 				Package:          purl.String(),
 				Symbol:           "",
 				SymbolConfidence: domain.SymbolUnknown,
@@ -117,4 +121,13 @@ func receiptStageResult(verdict string) (domain.Result, bool) {
 	default:
 		return "", false
 	}
+}
+
+// receiptProjectBucket is the sample id as a bucket the store will accept.
+//
+// A bucket may be 64 bytes; "sha256:" plus 64 hex is 71. The digest alone is
+// exactly 64 and identifies the sample just as well, so nothing about "many
+// receipts for one sample are one project" changes.
+func receiptProjectBucket(sampleID string) string {
+	return strings.TrimPrefix(sampleID, "sha256:")
 }

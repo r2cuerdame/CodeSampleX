@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -24,6 +25,12 @@ type backfillStats struct {
 	Would    int
 	Accepted int
 	Rejected int
+	// Reasons counts the store's own words for every refusal. The first
+	// production run reported "9,883 refused" and nothing else, so the cause
+	// -- a project bucket seven bytes over the limit -- had to be found by
+	// reading the validator instead of by reading the output. A pass that
+	// refuses everything has to say why in the place the operator is looking.
+	Reasons map[string]int
 }
 
 // backfillSource is the store surface this pass needs. It is written as an
@@ -75,6 +82,12 @@ func backfillObservations(ctx context.Context, store backfillSource, apply bool,
 				}
 				stats.Accepted += accepted
 				stats.Rejected += len(rejected)
+				for _, r := range rejected {
+					if stats.Reasons == nil {
+						stats.Reasons = map[string]int{}
+					}
+					stats.Reasons[r.Reason]++
+				}
 			}
 		}
 		if len(page) < backfillBatch {
@@ -117,4 +130,20 @@ func runBackfillObservations(cfg serverstore.ServerConfig, args []string, stdout
 	fmt.Fprintf(stdout, "%d samples, %d receipts, %d observations would be recorded (re-run with -apply)\n",
 		stats.Samples, stats.Receipts, stats.Would)
 	return 0
+}
+
+// sortedReasons orders refusals by how many batches each one cost, so the
+// operator reads the one that matters first.
+func sortedReasons(reasons map[string]int) []string {
+	out := make([]string, 0, len(reasons))
+	for reason := range reasons {
+		out = append(out, reason)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if reasons[out[i]] != reasons[out[j]] {
+			return reasons[out[i]] > reasons[out[j]]
+		}
+		return out[i] < out[j]
+	})
+	return out
 }

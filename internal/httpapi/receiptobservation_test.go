@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,8 +27,12 @@ func passReceipt(t *testing.T, resolved []string, stages map[string]string) serv
 		t.Fatal(err)
 	}
 	return serverstore.ReceiptRow{
-		ReceiptID:      "receipt:1",
-		SampleID:       "sha256:" + "aa",
+		ReceiptID: "receipt:1",
+		// A REAL sample id. The short stand-in that used to be here is what
+		// let the whole backfill be written against a batch production would
+		// refuse: every one of 9,883 was rejected on the first apply because
+		// "sha256:" plus 64 hex is 71 bytes and a bucket may be 64.
+		SampleID:       "sha256:" + strings.Repeat("a", 64),
 		PeerID:         "peer-farm-1",
 		ReceiptJSON:    string(raw),
 		ContractResult: "PASS",
@@ -136,5 +141,25 @@ func TestReceiptObservationsAreAcceptedByIngest(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("ingest accepted none")
+	}
+}
+
+// Every batch has to survive the SAME validation the server applies, not just
+// look well-formed. Measured against production, the project bucket was the
+// sample id — "sha256:" plus 64 hex, 71 bytes — and a bucket may be 64, so
+// the store refused all 9,883 observations the backfill offered it and
+// reported the refusal as a count with no reason attached.
+func TestReceiptObservationsPassTheStoresOwnValidation(t *testing.T) {
+	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0"},
+		map[string]string{"resolve": "PASS", "contract": "PASS"})
+
+	batches := ObservationsFromReceipt(r)
+	if len(batches) == 0 {
+		t.Fatal("no observations to validate")
+	}
+	for _, b := range batches {
+		if err := serverstore.ValidateBatch(b); err != nil {
+			t.Errorf("the store would refuse this batch: %v", err)
+		}
 	}
 }
