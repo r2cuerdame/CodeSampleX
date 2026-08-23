@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // provenCoordinates is what the network has actually proven: the purls a
@@ -155,4 +157,50 @@ func (f *Fake) FarmBacklogNow(_ context.Context, since, now time.Time) (FarmBack
 		}
 	}
 	return backlog, nil
+}
+
+// FarmCompletenessNow counts every PUBLIC release by which of Sample,
+// Evidence and Dependency it holds. The PG half is the same six predicates in
+// one query; TestIntegrationFarmCompletenessMatchesPostgres holds them
+// together.
+func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := newFarmCompleteness()
+	observed, _ := f.sightedCoordinates()
+	verified, _ := f.provenCoordinates()
+	resolved := f.resolvedParents()
+	for purl, pkg := range f.packages {
+		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
+			continue
+		}
+		dependency := dependencyUnknown
+		if resolved[purl] {
+			dependency = dependencyGraph
+		}
+		out.States[completenessKey(verified[purl], observed[purl], dependency)]++
+		switch dependency {
+		case dependencyGraph:
+			out.DependencyGraph++
+		case dependencyProvenNone:
+			out.DependencyProvenNone++
+		default:
+			out.DependencyUnknown++
+		}
+	}
+	return out, nil
+}
+
+// resolvedParents is every release a resolution named the children of. Caller
+// holds f.mu.
+//
+// The PARENT end, deliberately. Being pulled BY somebody says nothing about
+// what this release pulls, and the dependency axis is the second question.
+func (f *Fake) resolvedParents() map[string]bool {
+	out := make(map[string]bool)
+	for edge := range f.edges {
+		out[domain.PURL{Ecosystem: edge.ecosystem, Name: edge.parentName,
+			Version: edge.parentVersion}.String()] = true
+	}
+	return out
 }
