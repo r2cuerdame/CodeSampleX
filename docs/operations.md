@@ -345,12 +345,30 @@ a typo in a timeout must not take the server down, and the value it falls back
 to is the one the deployment was already tested with.
 
 **Rollback is one variable.** Add `CSX_DB_POOL_GUARD=off` to the compose `.env`
-and `docker compose up -d`; the pool goes back to one shared cap of eight with
-no ceiling, no wait budget and no class share — the exact behaviour R2C-55 ran
-on. Nothing is migrated and nothing is persisted, so it is reversible in the
-other direction by deleting the line. To loosen rather than disable, raise
-`CSX_DB_READ_TIMEOUT` first: it is the setting that decides whether a slow page
-fails or merely is slow.
+and `docker compose up -d server`; the pool goes back to one shared cap of eight
+with no ceiling, no wait budget and no class share — the exact behaviour R2C-55
+ran on. Nothing is migrated and nothing is persisted, so it is reversible in the
+other direction by deleting the line and running the same command. To loosen
+rather than disable, raise `CSX_DB_READ_TIMEOUT` first: it is the setting that
+decides whether a slow page fails or merely is slow.
+
+Name the service. `docker compose up -d` with no argument prints
+`Container codesamplex-server-1 Running` for a container it decided not to
+touch, which during an incident reads exactly like a container it restarted;
+`up -d server` recreates the one service whose environment changed. Confirm the
+rollback landed rather than assuming it: the `/admin` pool panel states
+`CSX_DB_POOL_GUARD=off` in its own line when the ceilings are off, and
+`docker inspect codesamplex-server-1 --format '{{.Config.Env}}'` shows the
+variable the process actually received.
+
+Every `CSX_DB_*` setting is listed in the compose `server` service so that
+writing it into `.env` reaches the process. Compose expands `.env` only into
+`${...}` references, so a knob no service names is silently unreachable — which
+is what R2C-110 measured on production before this was wired:
+`CSX_DB_POOL_GUARD=off` in `.env` left the guard fully on and the panel
+correctly said so. `deploy/lightsail/poolguard_rollback_test.go` fails the build
+if a pool setting the server reads stops being forwarded, or if this runbook
+and the compose file stop describing the same act.
 
 Two settings must be moved together with the HTTP timeouts in
 `cmd/csx-server/main.go`: `CSX_DB_READ_WAIT + CSX_DB_READ_TIMEOUT` has to stay
