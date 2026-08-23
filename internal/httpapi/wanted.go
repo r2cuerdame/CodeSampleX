@@ -88,7 +88,7 @@ func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
 	// deliberately shorter presentation limit.
 	rows, err := a.d.Store.TopWanted(r.Context(), 200)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "listing wanted requests failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "listing wanted requests failed")
 		return
 	}
 	items := make([]wantedListItem, 0, len(rows))

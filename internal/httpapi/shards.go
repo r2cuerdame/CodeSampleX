@@ -33,7 +33,7 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	if inm := r.Header.Get("If-None-Match"); inm != "" {
 		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "shard lookup failed")
+			writeStoreErr(w, err, http.StatusInternalServerError, "shard lookup failed")
 			return
 		}
 		if !ok {
@@ -49,7 +49,7 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 
 	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "shard lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "shard lookup failed")
 		return
 	}
 	if !ok {

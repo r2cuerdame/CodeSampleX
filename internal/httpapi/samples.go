@@ -590,7 +590,7 @@ func (a *api) handleSampleMeta(w http.ResponseWriter, r *http.Request) {
 	sampleID := r.PathValue("sampleId")
 	row, ok, err := a.d.Store.GetSample(r.Context(), sampleID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample lookup failed")
 		return
 	}
 	// GetSample deliberately does not filter, because the operator commands
@@ -604,7 +604,7 @@ func (a *api) handleSampleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	receipts, err := a.d.Store.ReceiptsForSample(r.Context(), sampleID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "receipt lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "receipt lookup failed")
 		return
 	}
 	type receiptSummary struct {

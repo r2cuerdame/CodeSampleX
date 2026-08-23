@@ -75,6 +75,13 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	if candidate, ok := store.(serverstore.FarmStatsStore); ok {
 		farmStats = candidate
 	}
+	// Only the PostgreSQL store has a pool to report; the fake has none,
+	// and a panel of zeros would read as a healthy pool rather than as no
+	// pool at all.
+	var poolStats admin.PoolStatsReader
+	if candidate, ok := store.(admin.PoolStatsReader); ok {
+		poolStats = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
@@ -86,6 +93,7 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		Authoring:     authoringStore,
 		AdminTokens:   adminTokenStore,
 		Farm:          farmStats,
+		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})
 	web.Register(inner, web.Deps{
@@ -95,7 +103,11 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		DistDir:   os.Getenv("CSX_DIST_DIR"),
 	})
 	outer := http.NewServeMux()
-	outer.Handle("/", activityTracker.Wrap(inner))
+	// The database budget is the outermost wrapper: it has to be in place
+	// before any handler reaches the store, and it has to still be there
+	// when the handler returns so the request can report what the pool cost
+	// it. See dbclass.go.
+	outer.Handle("/", withDBBudget(activityTracker.Wrap(inner)))
 	return outer, activityTracker
 }
 

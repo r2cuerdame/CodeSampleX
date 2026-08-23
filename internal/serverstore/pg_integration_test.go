@@ -52,6 +52,14 @@ func integrationDSN(dsn, require string) (string, error) {
 // CSX_REQUIRE_TEST_DSN forbids that skip.
 func openTestPG(t *testing.T) *PG {
 	t.Helper()
+	return openTestPGWithPolicy(t, DefaultPoolPolicy())
+}
+
+// openTestPGWithPolicy is openTestPG with the pool policy named, so a
+// test about timeouts and admission can use budgets small enough to run
+// in seconds instead of waiting out the shipped ones.
+func openTestPGWithPolicy(t *testing.T, pol PoolPolicy) *PG {
+	t.Helper()
 	dsn, err := integrationDSN(os.Getenv("CSX_TEST_DSN"), os.Getenv("CSX_REQUIRE_TEST_DSN"))
 	if errors.Is(err, errIntegrationDSNUnset) {
 		t.Skip(err.Error())
@@ -84,7 +92,7 @@ func openTestPG(t *testing.T) *PG {
 	}
 	cfg.RuntimeParams["search_path"] = schema
 
-	pg := newPG(cfg)
+	pg := newPGWithPolicy(cfg, pol)
 	t.Cleanup(pg.Close)
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)

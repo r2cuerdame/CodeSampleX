@@ -80,7 +80,7 @@ func openMigrated(ctx context.Context, cfg serverstore.ServerConfig, stderr io.W
 		fmt.Fprintln(stderr, "csx-server: CSX_DSN is not set")
 		return nil, false
 	}
-	pg, err := serverstore.Open(ctx, cfg.DSN)
+	pg, err := serverstore.OpenWithPolicy(ctx, cfg.DSN, cfg.DBPool)
 	if err != nil {
 		fmt.Fprintf(stderr, "csx-server: %v\n", err)
 		return nil, false

@@ -195,6 +195,22 @@ func (a *api) now() time.Time {
 // (CSX_PUBLIC_CHECK=trust, dev/e2e only).
 func (a *api) trustMode() bool { return a.d.Cfg.PublicCheck == "trust" }
 
+// writeStoreErr answers a failed store read. Backpressure -- the pool
+// refusing to queue any longer, or PostgreSQL cancelling a statement that
+// outlived its ceiling -- is not a bug in this server and must not be
+// reported as one: it is a 503 with a Retry-After, which is the difference
+// between a client that backs off and a client that retries into the
+// saturation that caused it. Anything else keeps the status the caller
+// chose.
+func writeStoreErr(w http.ResponseWriter, err error, status int, msg string) {
+	if serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err) {
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusServiceUnavailable, "database busy")
+		return
+	}
+	writeErr(w, status, msg)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

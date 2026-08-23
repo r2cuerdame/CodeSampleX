@@ -3,6 +3,7 @@ package serverstore
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,11 @@ type ServerConfig struct {
 	// on how much disk an unauthenticated caller can take — and the volume
 	// is shared with PostgreSQL, which stops working when it fills.
 	BlobBudgetBytes int64
+	// DBPool is the connection-pool timeout and admission policy
+	// (CSX_DB_*). It is configuration and not a constant because the only
+	// honest rollback for a defense like this is one an operator can apply
+	// without a build — see docs/operations.md.
+	DBPool PoolPolicy
 }
 
 // ConfigFromEnv reads the CSX_* server environment with safe defaults.
@@ -70,7 +76,71 @@ func ConfigFromEnv() ServerConfig {
 			cfg.BlobBudgetBytes = mb << 20
 		}
 	}
+	cfg.DBPool = PoolPolicyFromEnv(os.Getenv)
 	return cfg
+}
+
+// PoolPolicyFromEnv reads the database pool settings, starting from the
+// shipped policy and changing only what is named:
+//
+//	CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
+//	CSX_DB_MAX_CONNS     total connections (default 8)
+//	CSX_DB_PROBE_RESERVE connections only /healthz may take (default 1)
+//	CSX_DB_READ_CONNS    ceiling on user-facing reads (default 6)
+//	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 5)
+//	CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none (default 8s)
+//	CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (3s)
+//	CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz (default 3s)
+//
+// An unparsable value leaves the shipped default in place. This is the one
+// place in this file where that is the right failure: a typo in a timeout
+// must not take the server down at boot, and the default it falls back to
+// is the value the deployment was already tested with.
+func PoolPolicyFromEnv(get func(string) string) PoolPolicy {
+	pol := DefaultPoolPolicy()
+	if strings.EqualFold(strings.TrimSpace(get("CSX_DB_POOL_GUARD")), "off") {
+		pol.Enabled = false
+	}
+	ints := []struct {
+		key string
+		dst *int
+	}{
+		{"CSX_DB_MAX_CONNS", &pol.MaxConns},
+		{"CSX_DB_PROBE_RESERVE", &pol.ProbeReserve},
+		{"CSX_DB_READ_CONNS", &pol.InteractiveConns},
+		{"CSX_DB_WRITE_CONNS", &pol.BackgroundConns},
+	}
+	for _, f := range ints {
+		if v := get(f.key); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				*f.dst = n
+			}
+		}
+	}
+	durations := []struct {
+		key string
+		dst *time.Duration
+	}{
+		{"CSX_DB_READ_TIMEOUT", &pol.ReadTimeout},
+		{"CSX_DB_READ_WAIT", &pol.ReadWait},
+		{"CSX_DB_PROBE_TIMEOUT", &pol.ProbeTimeout},
+	}
+	for _, f := range durations {
+		v := get(f.key)
+		if v == "" {
+			continue
+		}
+		// "0" means "no ceiling" and has to be reachable without writing
+		// "0s", because that is what an operator types at 3am.
+		if v == "0" {
+			*f.dst = 0
+			continue
+		}
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			*f.dst = d
+		}
+	}
+	return pol.normalize()
 }
 
 func envOr(key, def string) string {
