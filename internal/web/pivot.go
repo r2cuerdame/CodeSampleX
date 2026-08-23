@@ -23,14 +23,17 @@ const (
 	// each pivot carry the full row set.
 	pivotMaxCols = 8
 	pivotMaxRows = 6
-
-	// pivotStaleAfter is retained only by callers outside the cell; cells
-	// no longer age, and neither does evidence anywhere else now. It once
-	// mirrored a 90-day half-life
-	// (internal/compatibility/confidence.go): evidence that old still
-	// renders, but carries the "?" marker and says "stale".
-	pivotStaleAfter = 90 * 24 * time.Hour
 )
+
+// There is deliberately no staleness threshold here.
+//
+// A 90-day constant used to live in this block, mirroring the half-life in
+// internal/compatibility/confidence.go: evidence that old still rendered, but
+// carried a "?" marker and said "stale". Both are gone — the half-life
+// because a coordinate is one pinned release in one pinned environment
+// bucket and neither moves, the marker because it announced an age as though
+// it were a doubt. Nothing read the constant afterwards, and a threshold
+// nothing reads is how a decay quietly comes back.
 
 // pivotCell is one (row, column) measurement of a pivoted compatibility grid.
 //
@@ -61,16 +64,21 @@ type pivotCell struct {
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
 	Tone string
-	// Glyph marks the rare thing: a cell WE RAN carries it, doubled when two
-	// independent peers reproduced it. An unproven cell carries nothing here
-	// and needs none -- badging the exception is the
-	// point, since a mark on 95% of cells says nothing.
+	// Glyph marks the rare thing: a cell WE RAN carries it. An unproven cell
+	// carries nothing here and needs none -- badging the exception is the
+	// point, since a mark on 95% of cells says nothing. Cross reproduction
+	// gets no second symbol; it stays in the tooltip.
 	//
 	// It is deliberately not a check mark. A check means "passed" everywhere
 	// it appears, and this marks the BASIS, so a cell we ran and that failed
 	// rendered as a red tick beside 0/1 -- putting the verdict back into the
 	// glyph after taking it out of the word.
-	Glyph string // "◆" | "◆◆" | "" | "—"
+	//
+	// buildPivotCell is the source of truth for these four values, and the
+	// site legend (templates/base.html) and the public READMEs are held to
+	// them by publiccopy_test.go. A pair of doubled diamonds was documented
+	// here for two releases after the code stopped producing them.
+	Glyph string // "≡" | "✕" | "" | "—"
 	// Bang is retained as a field for the tooltip only; no marker renders.
 	// A cell carries at most one symbol now -- the check -- and colour says
 	// how the runs went. Every extra glyph was one more thing to learn

@@ -734,6 +734,73 @@ $safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
 Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
 Write-Output "privacy-safe API access log: query-free, bounded, server-readable"
 
+# The pages and files a stranger actually lands on.
+#
+# /healthz above proves the process is up, which is a different question from
+# whether the site works: a template that fails to parse, a route that stops
+# being registered, a static file that stops being served, or a Caddy rule
+# that swallows a path all leave healthz green and the public surface broken.
+# Nothing checked them, so "the code is right but the deployment is broken"
+# was a class of failure that could only be found by a user.
+#
+# Each check goes through Caddy on the real hostname (--resolve pins it to the
+# loopback so this is THIS box, not whatever DNS currently points at) and
+# asserts three things: 200, the right content type, and one marker that only
+# that page's own template can produce. The canonical link is that marker
+# because it is per-path and never translated — a soft-404 that renders the
+# landing page instead has the landing page's canonical, and fails here.
+$publicSurfaceSmoke = @'
+set -u
+DOMAIN=__CSX_DOMAIN__
+fail=0
+check() {
+    path="$1"; want_type="$2"; marker="$3"
+    hdr=$(mktemp); body=$(mktemp)
+    # No `|| echo 000` here. curl already writes 000 to %{http_code} when it
+    # never got a response, so the fallback appended a SECOND 000 and the
+    # failure line read "HTTP 000000" — a status that does not exist, on the
+    # one line someone reads when a deploy has just broken the site.
+    code=$(curl --noproxy '*' --connect-timeout 5 --max-time 25 \
+        --resolve "$DOMAIN:443:127.0.0.1" \
+        -sS -D "$hdr" -o "$body" -w '%{http_code}' "https://$DOMAIN$path")
+    [ -n "$code" ] || code=000
+    if [ "$code" != "200" ]; then
+        echo "FAIL $path: HTTP $code"; fail=1
+    elif ! grep -qi "^content-type: *$want_type" "$hdr"; then
+        echo "FAIL $path: content-type $(grep -i '^content-type:' "$hdr" | tr -d '\r')," \
+             "want $want_type"; fail=1
+    elif ! grep -qF "$marker" "$body"; then
+        echo "FAIL $path: body is missing its own marker ($marker)"; fail=1
+    else
+        echo "ok   $path ($(wc -c < "$body") bytes)"
+    fi
+    rm -f "$hdr" "$body"
+}
+
+canonical() { printf '<link rel="canonical" href="https://%s%s">' "$DOMAIN" "$1"; }
+
+check /          'text/html'        "$(canonical /)"
+check /wanted    'text/html'        "$(canonical /wanted)"
+check /records   'text/html'        "$(canonical /records)"
+check /findings  'text/html'        "$(canonical /findings)"
+check /features  'text/html'        "$(canonical /features)"
+check /v1/stats  'application/json' '"packages":'
+check /v1/wanted 'application/json' '"schemaVersion"'
+# The install one-liners the README and every directory listing publish. A
+# 404 here is the worst possible first impression and is invisible from the
+# inside: `curl ... | sh` exits 0 on a missing file.
+check /install.sh  'text/plain' 'SHA256SUMS.txt'
+check /install.ps1 'text/plain' 'Get-FileHash'
+
+if [ "$fail" -ne 0 ]; then
+    echo "public surface smoke FAILED"
+    exit 1
+fi
+echo "public surface smoke: all ok"
+'@
+$publicSurfaceSmoke = $publicSurfaceSmoke.Replace('__CSX_DOMAIN__', $Domain)
+Invoke-RemoteScript $publicSurfaceSmoke | ForEach-Object { Write-Output $_ }
+
     # Match the route state to the verifier in the live environment on every
     # rollout. Configured admin must be 401 without credentials; deliberately
     # unconfigured admin must remain 404.

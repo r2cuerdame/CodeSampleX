@@ -22,18 +22,18 @@ CodeSampleX ist ein **offenes Kompatibilitäts-Testnetzwerk** für Entwickler-Li
 
 ## Läuft es dort?
 
-Jedes Ergebnis ist eine aufgezeichnete Ausführung mit angehängter Umgebung, deshalb lassen sich die Daten in Kompatibilitätsmatrizen pivotieren — OS × Runtime, Version × Architektur, Symbol × OS. Ein echter Ausschnitt aus dem Live-Netzwerk (`axios.post`, gemessen im August 2026):
+Jedes Ergebnis ist eine aufgezeichnete Ausführung mit angehängter Umgebung, deshalb lassen sich die Daten in Kompatibilitätsmatrizen pivotieren — OS × Runtime, Version × Architektur, Symbol × OS. Ein Ausschnitt, am 2026-08-23 unverändert aus dem Live-Netzwerk übernommen:
 
 ```text
-github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
-whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
-Batch                                    ✓ 91% 240   —         —
-Identifier                                 60% 15    —         ✓ —
+                                         v5.10.0     v5.9.2    v5.7.3
+github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
+Batch                                    ≡ 80% 689   —         —
+ParseConfig                              ≡ 82% 1188  —         —
 ```
 
-Dieses Raster ist keine Illustration, sondern [die Live-Seite](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
+Dieses Raster ist keine Illustration, sondern [die Live-Seite](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) — die Zahlen oben haben sich seit dem Übernehmen also bereits bewegt.
 
-**Eine Zelle trägt eine Quote und eine Markierung, nie ein Urteil.** Der Prozentsatz und die Zahl daneben sind, was echte Maschinen getan haben; das Häkchen heißt, dass unser Beispiel dort läuft. Unsere Läufe sind ein wiederholter, festgepinnter Container, tausend gemeldete sind tausend verschiedene Situationen — sie werden nicht addiert. `✓ —` heißt: funktionierender Code ist da, benutzt gesehen hat ihn noch niemand. `—` bleibt unbekannt.
+**Eine Zelle trägt eine Quote und eine Markierung, nie ein Urteil.** Der Prozentsatz und die Zahl daneben sind Beobachtungen: 82 % von 1.209 aufgezeichneten Beobachtungen kamen durch. Eine Beobachtung ist eine Stufe, die ein Build erreicht hat — kompilieren, typprüfen, testen —, ein einzelner Build hinterlässt also mehrere, und die Zahl zählt weder Builds noch Maschinen noch Personen. Das Zeichen `≡` ist unser eigenes Beispiel: Es lief hier und kam sauber zurück. Es ist bewusst kein Häkchen, denn ein Häkchen ist ein Genehmigungsstempel, und dieses Netzwerk benotet nicht; ein Lauf von uns, der fehlschlug, trägt stattdessen `✕`. `≡ —` heißt: funktionierender Code ist da, benutzt gesehen hat ihn noch niemand. `—` bleibt unbekannt.
 
 ## Warum Testen zählt
 
@@ -48,7 +48,7 @@ Die Regeln, die die Karte ehrlich halten:
 
 - Dass ein Projekt kompiliert, wird **nie** als funktionierendes Symbol dargestellt. Beobachtungen und Verifikationen werden getrennt gezählt und nie zusammengerechnet.
 - Unbekannte Ursachen bleiben `UNKNOWN`. Ein falscher HIT ist schlimmer als ein MISS — `NO_SAFE_MATCH` ist eine echte Antwort.
-- Evidenz verfällt: Das Gewicht eines Ergebnisses halbiert sich alle 90 Tage, und veraltete Zellen sagen das auch.
+- Evidenz verfällt nicht, und keine Zelle wird als veraltet markiert. Eine Beobachtung ist ein festgepinntes Release, in einem festgepinnten Umgebungs-Bucket, auf einer Stufe, und keines davon bewegt sich: Dass ein Build dort fehlschlug, ist ein Jahr später genauso wahr. Ändern kann sich die Umgebung — und eine andere Umgebung ist eine andere Zelle.
 - Fehlerursachen werden als Wahrscheinlichkeitsverteilungen berichtet, nie als erfundene Gewissheiten.
 
 ## Die CLI installieren
@@ -127,9 +127,11 @@ Warum einer Zelle trauen? Jedes Ergebnis trägt seine Evidenzklasse, schwach →
 | `USAGE_OBSERVATION` | ein echtes Projekt wurde mit dem Paket gebaut/typgeprüft/getestet — beobachtet, schwach |
 | `ADOPTION_EVIDENCE` | jemand hat ein Sample angewendet und berichtet, ob der Build danach bestanden hat |
 | `SAMPLE_VERIFICATION` | der Contract des Samples wurde in einem gepinnten Container ausgeführt und hat bestanden |
-| `CROSS_PASS` | ein unabhängiger Peer hat es erneut ausgeführt, und es hat wieder bestanden |
-| `MATRIX_PASS` | bestandene Läufe überspannen ≥2 OS-/Runtime-/Browser-Grenzen |
-| `STABLE` | ≥3 unabhängige Peers bestehen es, kein Fehlschlag in 30 Tagen aufgezeichnet |
+| `CROSS_PASS` | ein anderer Peer-Schlüssel als der veröffentlichende hat es erneut ausgeführt, und es hat wieder bestanden |
+| `MATRIX_PASS` | bestandene Receipts überspannen ≥2 OS-/Runtime-Major-/Browser-Familien-Grenzen |
+| `STABLE` | ≥3 verschiedene Peer-Schlüssel bestehen es, kein Fehlschlag in 30 Tagen aufgezeichnet |
+
+Ein Peer ist ein Schlüssel, keine Person und keine Maschine. Eine Peer-ID ist der Hash eines selbst erzeugten ed25519-Schlüssels ohne Registrierung dahinter, ein Betreiber kann also so viele halten, wie er Worker betreibt. „Verschiedene Peer-Schlüssel“ heißt, dieselbe Koordinate wurde von mehr als einer Stelle gemeldet; es ist nie eine Kopfzahl, und nichts hier identifiziert, wer etwas ausgeführt hat.
 
 Sample-Seiten tragen außerdem ein Badge der Verifikationsleiter `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, und Matrixzellen führen Konfidenz (`HIGH`/`MEDIUM`/`LOW`), Flags für erhöhte Fehlerraten und Zuletzt-gesehen-Daten. Nur signierte **v2-Receipts** dürfen `resolvedPackages` beanspruchen — die Versionen, die der Verifier tatsächlich installiert hat, nicht die Versionen, die ein Autor getippt hat; Snapshots verbuchen jedes Receipt unter der Version, die wirklich gelaufen ist.
 

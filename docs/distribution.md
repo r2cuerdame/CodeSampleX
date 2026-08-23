@@ -5,18 +5,25 @@ Each destination below is a paste-ready block: where it goes, how it is
 submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
-**Nothing here has been submitted.** This document is preparation only. Every
-site was re-checked on **2026-08-14**; directories change their forms often, so
-re-read the destination page before pasting.
+**This document is a dated snapshot, not a live status page.** Every
+destination state, version number, asset list and blocker below was checked on
+**2026-08-14** and has been drifting ever since. Read every present-tense
+sentence in it as "as of 2026-08-14"; where a later date is written next to a
+line, that line was re-checked then and the rest was not.
 
-Two ground rules for anything pasted from here:
+Three ground rules for anything pasted from here:
 
-- The project has **zero external users**. The adoption detector shows one peer
-  bucket, which is this machine. No text in this document implies otherwise, and
-  none should be edited to.
-- Every claim here was checked against the repository or the live site. If a
-  field wants something we cannot honestly assert, the block says so instead of
-  supplying a value.
+- **Re-verify before you paste.** Directories change their forms often, the
+  release train moves the versions, and a blocker listed here may already be
+  closed. Check the destination page and the live values first — the copy
+  blocks are drafts to edit, not values to trust.
+- **Do not inflate adoption.** As of 2026-08-14 the project had zero external
+  users and the adoption detector showed one peer bucket, which was this
+  machine. (`GET /v1/stats` still reported `"peers":1` on 2026-08-23.) No text
+  in this document implies otherwise, and none should be edited to.
+- **Every claim was checked against the repository or the live site** at the
+  time it was written. If a field wants something we cannot honestly assert,
+  the block says so instead of supplying a value.
 
 ---
 
@@ -48,20 +55,31 @@ Two facts that follow from this and that several blocks below depend on:
 
 Fix these once and several blocks unblock together. Each was checked, not assumed.
 
-### B1 — There is no logo. Blocks Cline; degrades four others.
+### ~~B1 — There is no logo.~~ CLOSED 2026-08-23.
 
-`find` over the working tree returns no `.png`, `.svg` or `.ico` outside
-`.git/`. There is no `assets/` directory. `internal/web/static/` contains
-`site.css` and nothing else.
+Was: `find` over the working tree returned no `.png`, `.svg` or `.ico` outside
+`.git/`, and there was no `assets/` directory. Cline's submission form makes a
+**400×400 PNG required**; Glama, mcp.so, MCP Market and Anthropic's
+desktop-extension form all take an icon and look unfinished without one.
 
-Cline's submission form makes a **400×400 PNG required**. Glama, mcp.so, MCP
-Market and Anthropic's desktop-extension form all take an icon and look
-unfinished without one.
+The directory landed. `assets/logo-400.png` (400×400) and `assets/favicon-32.png`
+are checked in, generated from primitives by `assets/make-logo.py`, and
+documented in [`assets/README.md`](../assets/README.md). The value to paste:
 
-Needed: a 400×400 PNG at a stable public URL. The install track is adding an
-`assets/` directory; if a logo lands there, the raw GitHub URL
-(`https://raw.githubusercontent.com/r2cuerdame/CodeSampleX/main/assets/<name>.png`)
-is the value to use. **Not verified to exist as of this writing.**
+```text
+https://raw.githubusercontent.com/r2cuerdame/CodeSampleX/main/assets/logo-400.png
+```
+
+Both are RGBA with transparent rounded corners; a destination that demands a
+fully opaque image needs it composited over `#0f1317` first.
+
+Still open, and a different problem: **the brand surface is not one thing.**
+`assets/README.md` describes the mark as a check inside an X, the site header
+and favicon render a shield-and-check SVG, and the README hero is an inspector
+illustration. Three surfaces, three marks. Deciding which is the primary logo,
+which is the mascot, and which is the UI mark — and then making OG image,
+favicon and directory assets agree — is tracked separately and is not
+something to resolve while filling in a submission form.
 
 ### B2 — No privacy policy in the MCPB manifest or the README. Blocks Anthropic's desktop-extension form.
 

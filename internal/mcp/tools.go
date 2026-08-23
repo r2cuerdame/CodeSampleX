@@ -1389,12 +1389,13 @@ func renderObserved(o *domain.ObservedReports) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("RECORDED RUNS for " + o.PURL)
+	b.WriteString("RECORDED OBSERVATIONS for " + o.PURL)
 	if o.Symbol != "" {
 		b.WriteString(" · " + o.Symbol)
 	}
-	b.WriteString("\n[OBSERVED — reported by machines that ran this, NOT verified by this " +
-		"project. This is not a match and does not become one.]\n")
+	b.WriteString("\n[OBSERVED — reported by peers that ran this, NOT verified by this " +
+		"project. This is not a match and does not become one. An observation is one " +
+		"stage a build reached, so it counts neither builds nor machines nor people.]\n")
 	for _, c := range o.Cells {
 		env := strings.Join(nonEmptyParts(
 			c.Environment.OS, c.Environment.Arch,
@@ -1403,12 +1404,17 @@ func renderObserved(o *domain.ObservedReports) string {
 		if env == "" {
 			env = "environment not recorded"
 		}
-		// The reporter count leads. "297 of 312 passed" from one machine and
+		// The reporter count leads. "297 of 312 passed" from one peer and
 		// from two hundred are different facts, and the count is the only
 		// thing that separates them.
-		machines := "machines"
+		//
+		// "machines" is what this said, and Reporters is UniquePeerBuckets —
+		// self-generated keys with no registration behind them. An agent
+		// reading "200 reporting machines" takes it as a head count, which
+		// is the one thing it is not.
+		peers := "peers"
 		if c.Reporters == 1 {
-			machines = "machine"
+			peers = "peer"
 		}
 		// USED is presence: the package was installed, and nothing was run.
 		// Printing it as "N of N passed" rebuilt the USED inflation this
@@ -1418,10 +1424,10 @@ func renderObserved(o *domain.ObservedReports) string {
 		// first.
 		if c.Stage == string(domain.StageUsed) {
 			fmt.Fprintf(&b, "- %d reporting %s · %s · USED: %d installs recorded (presence — nothing was run)",
-				c.Reporters, machines, env, c.Pass+c.Fail)
+				c.Reporters, peers, env, c.Pass+c.Fail)
 		} else {
 			fmt.Fprintf(&b, "- %d reporting %s · %s · %s: %d of %d passed",
-				c.Reporters, machines, env, c.Stage, c.Pass, c.Pass+c.Fail)
+				c.Reporters, peers, env, c.Stage, c.Pass, c.Pass+c.Fail)
 		}
 		if c.LastSeen != "" {
 			b.WriteString(" · last " + c.LastSeen)
@@ -1438,7 +1444,7 @@ func renderObserved(o *domain.ObservedReports) string {
 			fmt.Fprintf(&b, "- %s at %s · %d occurrences\n", code, e.Stage, e.Count)
 		}
 	}
-	b.WriteString("Use these as facts about other people's machines, not as a verdict about " +
+	b.WriteString("Use these as facts about other environments, not as a verdict about " +
 		"yours. Nothing here was proven for your case.\n\n")
 	return b.String()
 }

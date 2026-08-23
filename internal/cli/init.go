@@ -298,12 +298,14 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 	fmt.Fprintln(out, strings.TrimRight(contractText, "\n"))
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  1) JOIN COMMUNITY   share anonymous public-package evidence, get the network")
-	// "nothing ever leaves this machine" was not literally true and could
-	// not be: warming the cache is a request to the server. What is true,
-	// and is what the reader is actually deciding about, is that nothing
-	// ABOUT THEIR PROJECTS leaves — no packages, no versions, no symbols,
-	// no results. The cache warms from the server's own popularity list,
-	// which is identical for everyone.
+	// This line once read as a weaker promise than the code keeps, because
+	// warming the cache used to be a request to the server even in local-only
+	// mode. It is not any more: SyncNow is a complete no-op outside community
+	// mode, popularity-list GET included, and
+	// internal/daemon/localonly_test.go holds the automatic paths to zero
+	// server requests. What the reader is deciding about is still the
+	// project half, so that is what the line names — but nothing about it
+	// now depends on a request that no longer happens.
 	fmt.Fprintln(out, "  2) LOCAL ONLY       nothing about your projects ever leaves this machine")
 	for {
 		fmt.Fprint(out, "Choose [1/2] (default 1): ")
@@ -345,9 +347,13 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 // miss on its first question, which is the worst possible first impression
 // and the user had no way to know why. It was documented nowhere.
 //
-// It is safe in both modes. SyncNow is a complete no-op outside community
-// mode; even its popularity-list GET is forbidden because local-only promises
-// that this process transmits nothing at all.
+// It is safe in both modes, and in exactly one of them it does anything.
+// SyncNow is a complete no-op outside community mode — even its
+// popularity-list GET is forbidden, because local-only promises that this
+// process transmits nothing at all — so a local-only install finishes init
+// with a cold cache by design, and is told so. That is the contract
+// internal/daemon/localonly_test.go pins at zero server requests, and the
+// one the README and llms-install.md have to describe.
 //
 // Failure is never fatal. A machine installing without a network, or behind
 // a proxy that blocks it, still finishes init — it is told the cache is cold

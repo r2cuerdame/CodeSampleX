@@ -22,18 +22,18 @@ CodeSampleX est un **réseau ouvert de tests de compatibilité** pour les biblio
 
 ## Est-ce que ça tourne là-bas ?
 
-Chaque résultat est une exécution enregistrée accompagnée de son environnement, si bien que les données pivotent en matrices de compatibilité — OS × runtime, version × architecture, symbole × OS. Une tranche réelle, issue du réseau en direct (`axios.post`, mesurée en août 2026) :
+Chaque résultat est une exécution enregistrée accompagnée de son environnement, si bien que les données pivotent en matrices de compatibilité — OS × runtime, version × architecture, symbole × OS. Une tranche copiée telle quelle depuis le réseau en direct le 2026-08-23 :
 
 ```text
-github.com/jackc/pgx/v5                  v5.10.0     v5.9.2    v5.7.3
-whole package                            ✓ 85% 1156  ✓ 100% 2  ✓ —
-Batch                                    ✓ 91% 240   —         —
-Identifier                                 60% 15    —         ✓ —
+                                         v5.10.0     v5.9.2    v5.7.3
+github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
+Batch                                    ≡ 80% 689   —         —
+ParseConfig                              ≡ 82% 1188  —         —
 ```
 
-Cette grille n’est pas une illustration : c’est [la page en direct](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5).
+Cette grille n’est pas une illustration : c’est [la page en direct](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), si bien que les chiffres ci-dessus ont déjà bougé depuis qu’ils ont été copiés.
 
-**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont ce qu’ont fait de vraies machines ; la coche signifie que notre exemple y fonctionne. Nos exécutions sont un conteneur épinglé répété, mille exécutions signalées sont mille situations différentes : elles ne s’additionnent pas. `✓ —` veut dire : du code qui fonctionne existe, et personne n’a encore été vu s’en servir. `—` reste inconnu.
+**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont des observations : 82 % des 1 209 observations enregistrées sont passées. Une observation, c’est une étape atteinte par un build — compilation, typage, tests — donc un seul build en dépose plusieurs, et le nombre ne compte ni des builds, ni des machines, ni des personnes. La marque `≡`, c’est notre propre échantillon : il a tourné ici et s’est terminé proprement. Ce n’est délibérément pas une coche, car une coche est un tampon d’approbation et ce réseau ne note pas ; une exécution à nous qui a échoué porte `✕` à la place. `≡ —` veut dire : du code qui fonctionne existe, et personne n’a encore été vu s’en servir. `—` reste inconnu.
 
 ## Pourquoi les tests comptent
 
@@ -48,7 +48,7 @@ Les règles qui gardent la carte honnête :
 
 - Un projet qui compile n'est **jamais** présenté comme un symbole qui fonctionne. Observations et vérifications sont comptées séparément et jamais additionnées.
 - Les causes inconnues restent `UNKNOWN`. Un HIT erroné est pire qu'un MISS — `NO_SAFE_MATCH` est une vraie réponse.
-- La preuve se périme : le poids d'un résultat est divisé par deux tous les 90 jours, et les cellules obsolètes le disent.
+- La preuve ne se périme pas, et aucune cellule n'est marquée obsolète. Une observation, c'est une release épinglée, dans un bucket d'environnement épinglé, à une étape, et aucun des trois ne bouge : qu'un build ait échoué là reste tout aussi vrai un an plus tard. Ce qui peut changer, c'est l'environnement, et un environnement différent est une cellule différente.
 - Les causes d'échec sont rapportées comme des distributions de probabilité, jamais comme des certitudes inventées.
 
 ## Installer la CLI
@@ -127,9 +127,11 @@ Pourquoi faire confiance à une cellule ? Chaque résultat porte sa classe de pr
 | `USAGE_OBSERVATION` | un vrai projet a compilé/typé/testé avec le paquet — observé, faible |
 | `ADOPTION_EVIDENCE` | quelqu'un a appliqué un échantillon et a rapporté si le build passait ensuite |
 | `SAMPLE_VERIFICATION` | le contrat de l'échantillon s'est exécuté dans un conteneur épinglé et a réussi |
-| `CROSS_PASS` | un pair indépendant l'a réexécuté et il a de nouveau réussi |
-| `MATRIX_PASS` | des exécutions réussies couvrent ≥ 2 frontières OS/runtime/navigateur |
-| `STABLE` | ≥ 3 pairs indépendants le réussissent, aucun échec enregistré depuis 30 jours |
+| `CROSS_PASS` | une clé de pair autre que celle qui l'a publié l'a réexécuté et il a de nouveau réussi |
+| `MATRIX_PASS` | des reçus réussis couvrent ≥ 2 frontières OS/majeure de runtime/famille de navigateur |
+| `STABLE` | ≥ 3 clés de pair distinctes le réussissent, aucun échec enregistré depuis 30 jours |
+
+Un pair est une clé, pas une personne ni une machine. Un id de pair est le hachage d'une clé ed25519 auto-générée sans aucun enregistrement derrière, si bien qu'un même opérateur peut en détenir autant qu'il fait tourner de workers. « Clés de pair distinctes » signifie que la même coordonnée a été signalée depuis plus d'un endroit ; ce n'est jamais un décompte de personnes, et rien ici n'identifie qui a exécuté quoi.
 
 Les pages d'échantillon affichent aussi le badge de l'échelle de vérification `L0_SOURCE_ONLY` → `L5_MATRIX_PASS`, et les cellules de la matrice portent un niveau de confiance (`HIGH`/`MEDIUM`/`LOW`), des indicateurs de taux d'échec élevé et des dates de dernière observation. Seuls les **reçus v2** signés peuvent revendiquer `resolvedPackages` — les versions que le vérificateur a réellement installées, pas celles qu'un auteur a tapées ; les instantanés classent chaque reçu sous la version qui a réellement tourné.
 
