@@ -950,6 +950,51 @@ func (f *Fake) Job(_ context.Context, id int64) (JobRow, bool, error) {
 	return JobRow{}, false, nil
 }
 
+func (f *Fake) CrossJobsForLaneReview(_ context.Context, limit int) ([]JobRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []JobRow
+	for _, j := range f.jobs {
+		if j.Reason != "cross" {
+			continue
+		}
+		expired := j.Status == "claimed" &&
+			(j.ClaimedAt.IsZero() || f.now().Sub(j.ClaimedAt) > JobLease)
+		if j.Status != "open" && j.Status != JobStatusUnsupported && !expired {
+			continue
+		}
+		out = append(out, *j)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *Fake) SetJobRequirements(_ context.Context, id int64, wantEnvJSON, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.ID != id {
+			continue
+		}
+		expired := j.Status == "claimed" &&
+			(j.ClaimedAt.IsZero() || f.now().Sub(j.ClaimedAt) > JobLease)
+		if j.Status != "open" && j.Status != JobStatusUnsupported && !expired {
+			return nil
+		}
+		j.WantEnvJSON = wantEnvJSON
+		j.Status = status
+		j.ClaimedBy = ""
+		j.ClaimedAt = time.Time{}
+		return nil
+	}
+	return nil
+}
+
 func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

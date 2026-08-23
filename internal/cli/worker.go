@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,13 @@ func init() {
 type contributionVerifier interface {
 	RunOne(context.Context) (worked bool, err error)
 	IsIdle() bool
+}
+
+// unsupportedWorkReporter is implemented by a verifier that remembers which
+// offered jobs it had no verifier image for. Optional, like the announcer
+// below, so the scheduling boundary stays small.
+type unsupportedWorkReporter interface {
+	UnsupportedWork() []string
 }
 
 // stageLogAnnouncer is implemented by a verifier that keeps the stage output
@@ -466,6 +474,21 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 	}
 	wg.Wait()
 
+	// An idle run has two very different causes and used to print one line.
+	// The queue can be empty, or it can be full of work no image in this
+	// build can run -- and only the second one is waiting for a human to
+	// either add a lane or fix what asked for it.
+	if completed.Load() == 0 && failed.Load() == 0 {
+		if reporter, ok := cv.(unsupportedWorkReporter); ok {
+			if coordinates := dedupeCoordinates(reporter.UnsupportedWork()); len(coordinates) > 0 {
+				printMu.Lock()
+				fmt.Fprintf(out, "no runnable work: the queue offered %d coordinate(s) this build has no verifier image for: %s\n",
+					len(coordinates), strings.Join(coordinates, ", "))
+				printMu.Unlock()
+			}
+		}
+	}
+
 	stats := workerStats{Completed: completed.Load(), Failed: failed.Load()}
 	if opts.drain.isRequested() {
 		return stats, errWorkerUpdateReady
@@ -487,4 +510,20 @@ func waitWorkerPoll(ctx context.Context, interval time.Duration) bool {
 	case <-t.C:
 		return true
 	}
+}
+
+// dedupeCoordinates keeps the first occurrence of each coordinate so several
+// parallel lanes scanning the same queue report one list, not one per lane.
+func dedupeCoordinates(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
 }

@@ -47,6 +47,13 @@ type FarmHealth struct {
 	// the failure the attempt ledger exists to make visible.
 	WithheldCoordinates int
 	WithheldByReason    map[string]int
+	// UnsupportedJobs is verification work no verifier image in this build
+	// can run, and it exists because the absence of this number cost three
+	// days. The open cross queue held rows every worker skipped before
+	// claiming; the panel showed work, the workers reported none, and both
+	// were telling the truth. An operator reading a queue depth needs to
+	// know which part of it no machine can take.
+	UnsupportedJobs int
 }
 
 // FarmAxisCoverage is one (os, ecosystem) cell of the compatibility map:

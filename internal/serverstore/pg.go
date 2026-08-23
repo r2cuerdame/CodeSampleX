@@ -1155,10 +1155,17 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 	var id int64
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		if j.Reason != "matrix" {
+			// The status is written, not defaulted. Work no verifier lane can
+			// run is created unsupported so it never enters the open queue,
+			// and the column default would have made it open anyway.
+			status := j.Status
+			if status == "" {
+				status = "open"
+			}
 			return c.QueryRow(ctx, `
-			INSERT INTO verification_jobs(sample_id, reason, want_env)
-			VALUES($1,$2,$3) RETURNING id`,
-				j.SampleID, j.Reason, wantEnv).Scan(&id)
+			INSERT INTO verification_jobs(sample_id, reason, want_env, status)
+			VALUES($1,$2,$3,$4) RETURNING id`,
+				j.SampleID, j.Reason, wantEnv, status).Scan(&id)
 		}
 		tx, err := c.Begin(ctx)
 		if err != nil {
@@ -1190,6 +1197,59 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 		return tx.Commit(ctx)
 	})
 	return id, err
+}
+
+func (p *PG) CrossJobsForLaneReview(ctx context.Context, limit int) ([]JobRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []JobRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs
+			WHERE reason='cross'
+			  AND (status='open' OR status=$1
+			       -- A claim with no timestamp can never expire, so the queue
+			       -- will not offer it again either. If anything is going to
+			       -- look at that row, it is this.
+			       OR (status='claimed'
+			           AND (claimed_at IS NULL OR claimed_at < now() - $2::interval)))
+			ORDER BY id
+			LIMIT $3`, JobStatusUnsupported, JobLease.String(), limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, j)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func (p *PG) SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, status string) error {
+	var wantEnv []byte
+	if wantEnvJSON != "" {
+		wantEnv = []byte(wantEnvJSON)
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			UPDATE verification_jobs
+			   SET want_env=$2::jsonb, status=$3, claimed_by=NULL, claimed_at=NULL
+			 WHERE id=$1
+			   AND (status='open' OR status=$4
+			        OR (status='claimed'
+			            AND (claimed_at IS NULL OR claimed_at < now() - $5::interval)))`,
+			id, wantEnv, status, JobStatusUnsupported, JobLease.String())
+		return err
+	})
 }
 
 // OpenJobs lists claimable jobs. A job that pins want_env.sandboxCapability

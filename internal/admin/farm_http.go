@@ -145,6 +145,10 @@ func farmHealthView(health serverstore.FarmHealth) map[string]any {
 		// they are counted apart rather than pooled into one alarming number.
 		"withheldCoordinates": health.WithheldCoordinates,
 		"withheldByReason":    quarantineReasonView(health.WithheldByReason),
+		// Verification work no verifier image in this build can run. It is
+		// reported apart from the queue depth because it is not a backlog
+		// anyone is behind on: waiting does not consume it.
+		"unsupportedJobs": health.UnsupportedJobs,
 	}
 	// The rate is what an operator reads; the count is what they act on.
 	if health.PublicSamples > 0 {
