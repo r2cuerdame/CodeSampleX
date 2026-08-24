@@ -244,12 +244,16 @@ Write-Output "previous production image: $($productionStateParts[1])"
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
-docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
+failure_cluster_observations=$(docker compose exec -T db psql -U csx -d csx -Atqc "
+  SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
+  WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+     OR COALESCE(error_fp,'') = ''")
+docker compose exec -T db psql -U csx -d csx -v failure_cluster_observations="$failure_cluster_observations" -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
   (SELECT count(*) FROM samples WHERE status='PUBLISHED'),
-  (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters),
+  :'failure_cluster_observations'::bigint,
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
 FROM evidence_agg"

@@ -2051,6 +2051,14 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 // --------------------------------------------------------------- clusters --
 
+// currentFailureClusterSQL keeps pre-0024 derived rows recoverable without
+// letting them appear beside the rebuilt evidence-gap row. Before structured
+// failure evidence, every legacy fingerprint had its own row. The current
+// builder deliberately collapses missing/legacy evidence to error_fp=”, so
+// the non-empty legacy rows are historical material rather than live
+// clusters. They stay in PostgreSQL until a separately authorized cleanup.
+const currentFailureClusterSQL = `(COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete') OR COALESCE(error_fp,'') = '')`
+
 func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
 	envVariants := []byte("[]")
@@ -2123,7 +2131,7 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(diagnostic_candidate,false),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1
+			WHERE package_name=$1 AND `+currentFailureClusterSQL+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err

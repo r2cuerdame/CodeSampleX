@@ -218,6 +218,21 @@ func TestPrivacySmokeContainerProgramsCrossTheShellBoundaryOnStdin(t *testing.T)
 	}
 }
 
+func TestProductionEvidenceIgnoresPreservedLegacyClusterRows(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	collector := readDeployFixture(t, "collect-production-evidence.sh")
+	predicate := `COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')`
+	currentGap := `COALESCE(error_fp,'') = ''`
+	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
+		if !strings.Contains(script, predicate) || !strings.Contains(script, currentGap) {
+			t.Errorf("%s counts preserved pre-0024 legacy fingerprints as current failure clusters", name)
+		}
+		if strings.Contains(script, `(SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters)`) {
+			t.Errorf("%s still sums every historical and current failure-cluster row", name)
+		}
+	}
+}
+
 func TestActivityKeyInstallIsAtomicAcrossFreshUpgradeAndRerun(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
