@@ -170,6 +170,12 @@ func TestTheDashboardSaysWhenTheAnomalyChannelIsUnavailable(t *testing.T) {
 
 func configuredMuxWithAnomalies(t *testing.T, store Store, anomalies serverstore.AnomalyStore) (*http.ServeMux, string) {
 	t.Helper()
+	return configuredMuxWithChannels(t, store, anomalies, nil)
+}
+
+func configuredMuxWithChannels(t *testing.T, store Store, anomalies serverstore.AnomalyStore,
+	issues serverstore.CSXIssueStore) (*http.ServeMux, string) {
+	t.Helper()
 	secret := "a-long-random-admin-secret"
 	mux := http.NewServeMux()
 	sum := sha256.Sum256([]byte(secret))
@@ -181,6 +187,7 @@ func configuredMuxWithAnomalies(t *testing.T, store Store, anomalies serverstore
 		StartedAt:   anomalyNow.Add(-time.Hour),
 		Now:         func() time.Time { return anomalyNow },
 		Anomalies:   anomalies,
+		CSXIssues:   issues,
 	}) {
 		t.Fatal("valid token hash did not register /admin")
 	}
@@ -216,5 +223,84 @@ func TestTheAttentionMarkingOnAPlainMetricIsActuallyStyled(t *testing.T) {
 	}
 	if !strings.Contains(body, ".metric.needs-attention {") {
 		t.Fatal("the page marks a metric for attention with a class the stylesheet does not define")
+	}
+}
+
+type fakeCSXIssueStore struct {
+	insights serverstore.CSXIssueInsights
+	rows     []serverstore.CSXIssueReportRow
+}
+
+func (f *fakeCSXIssueStore) RecordCSXIssueReport(context.Context, serverstore.CSXIssueReportRow, time.Time) (serverstore.CSXIssueReportRow, bool, error) {
+	return serverstore.CSXIssueReportRow{}, false, nil
+}
+func (f *fakeCSXIssueStore) CSXIssueReportByID(context.Context, int64) (serverstore.CSXIssueReportRow, bool, error) {
+	return serverstore.CSXIssueReportRow{}, false, nil
+}
+func (f *fakeCSXIssueStore) SetCSXIssueTriage(context.Context, int64, string, string) error {
+	return nil
+}
+func (f *fakeCSXIssueStore) SetCSXIssueVerdict(context.Context, int64, string, time.Time) (bool, error) {
+	return false, nil
+}
+func (f *fakeCSXIssueStore) LinkCSXIssueCanonical(context.Context, int64, string) (bool, error) {
+	return false, nil
+}
+func (f *fakeCSXIssueStore) ListCSXIssueReports(context.Context, int) ([]serverstore.CSXIssueReportRow, error) {
+	return f.rows, nil
+}
+func (f *fakeCSXIssueStore) CSXIssueInsights(context.Context, time.Time, int) (serverstore.CSXIssueInsights, error) {
+	return f.insights, nil
+}
+
+// Report volume is explicitly not a success measure for this channel, so the
+// panel must not put one at the top where it becomes a target.
+func TestTheProductDefectPanelDoesNotHeadlineReportVolume(t *testing.T) {
+	issues := &fakeCSXIssueStore{
+		insights: serverstore.CSXIssueInsights{
+			WindowStart: anomalyNow.AddDate(0, 0, -30), WindowEnd: anomalyNow,
+			Occurrences: 9, Unique: 3, Duplicates: 6,
+			Triage: 1, NoReplayLane: 1, Resolved: 1, Confirmed: 1, Linked: 1,
+		},
+		rows: []serverstore.CSXIssueReportRow{{
+			Surface: domain.CSXSurfaceServer, IssueKind: domain.CSXIssueAnswerMasksFailure,
+			Component: "/v2/search", Status: domain.CSXIssueStatusResolved,
+			Verdict: domain.CSXIssueVerdictDefect, CanonicalRef: "R2C-51",
+			Occurrences: 7, FirstSeen: anomalyNow.Add(-2 * time.Hour),
+			ReplayReason: "no replay lane: triaged by a person",
+		}},
+	}
+	mux, secret := configuredMuxWithChannels(t, &fakeStore{}, nil, issues)
+	body := anomalyPanelBody(t, mux, secret)
+
+	for _, want := range []string{
+		"제품 결함 신고 채널", "report_csx_issue", "R2C-51", "/v2/search",
+		"성공 지표가 아닙니다", "자동 재실행 불가",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the panel does not show %q", want)
+		}
+	}
+	// The count is present as context, never as the headline metric.
+	if strings.Contains(body, "신고/일") || strings.Contains(body, "일별 제출량 헤드라인을 두지 않습니다") == false {
+		t.Error("the panel does not state that volume is not the measure")
+	}
+}
+
+func TestTheProductDefectViewSeparatesOccurrencesFromDefects(t *testing.T) {
+	view := buildCSXIssueView(serverstore.CSXIssueInsights{
+		WindowStart: anomalyNow.AddDate(0, 0, -30), WindowEnd: anomalyNow,
+		Occurrences: 10, Unique: 2, Duplicates: 8,
+		Resolved: 2, Confirmed: 1, Linked: 1,
+	}, nil, anomalyNow)
+	if view.DuplicateRate != "80.0%" {
+		t.Fatalf("duplicate rate = %q, want 80.0%%", view.DuplicateRate)
+	}
+	if view.ConfirmedRate != "50.0%" {
+		t.Fatalf("confirmed rate = %q; the denominator is decided reports", view.ConfirmedRate)
+	}
+	empty := buildCSXIssueView(serverstore.CSXIssueInsights{}, nil, anomalyNow)
+	if empty.ConfirmedRate != "—" {
+		t.Fatalf("a rate with nothing decided reads %q, want —", empty.ConfirmedRate)
 	}
 }

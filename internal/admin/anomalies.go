@@ -158,3 +158,82 @@ func anomalyAge(at, now time.Time) string {
 	}
 	return formatDuration(d)
 }
+
+// --- product-defect channel ---
+
+// csxIssueRow is one row of the operator table.
+type csxIssueRow struct {
+	Surface      string
+	Kind         string
+	Component    string
+	Status       string
+	Verdict      string
+	Confirmed    bool
+	CanonicalRef string
+	Occurrences  int64
+	Age          string
+	ReplayReason string
+}
+
+// csxIssueView answers the only two questions an operator has here: is
+// anything real in this pile, and is any of it already tracked.
+//
+// Deliberately no "reports per day" headline. Report volume is explicitly not
+// a success measure for this channel — a quiet week is a good week — and a
+// number on a dashboard becomes a target whether or not anyone meant it to.
+type csxIssueView struct {
+	Available  bool
+	RangeLabel string
+
+	Occurrences   int64
+	Unique        int64
+	Duplicates    int64
+	DuplicateRate string
+
+	Stages []anomalyStageView
+
+	Confirmed     int64
+	ConfirmedRate string
+	Linked        int64
+
+	Rows []csxIssueRow
+}
+
+func buildCSXIssueView(insights serverstore.CSXIssueInsights, recent []serverstore.CSXIssueReportRow, now time.Time) csxIssueView {
+	view := csxIssueView{
+		Available: true,
+		RangeLabel: fmt.Sprintf("UTC %s~%s",
+			insights.WindowStart.Format("2006-01-02"), insights.WindowEnd.Format("2006-01-02")),
+		Occurrences:   insights.Occurrences,
+		Unique:        insights.Unique,
+		Duplicates:    insights.Duplicates,
+		DuplicateRate: anomalyRate(insights.Duplicates, insights.Occurrences),
+		Stages: []anomalyStageView{
+			{Label: "분류 대기", Count: insights.Triage},
+			{Label: "재실행 예정", Count: insights.ReplayQueued},
+			{Label: "자동 재실행 불가", Count: insights.NoReplayLane},
+			{Label: "판정 완료", Count: insights.Resolved},
+		},
+		Confirmed:     insights.Confirmed,
+		ConfirmedRate: anomalyRate(insights.Confirmed, insights.Resolved),
+		Linked:        insights.Linked,
+	}
+	for i, row := range recent {
+		if i >= anomalyRecentLimit {
+			break
+		}
+		view.Rows = append(view.Rows, csxIssueRow{
+			Surface:      row.Surface,
+			Kind:         row.IssueKind,
+			Component:    row.Component,
+			Status:       row.Status,
+			Verdict:      row.Verdict,
+			Confirmed:    domain.CSXIssueVerdictConfirmed(row.Verdict),
+			CanonicalRef: row.CanonicalRef,
+			Occurrences:  row.Occurrences,
+			Age:          anomalyAge(row.FirstSeen, now),
+			ReplayReason: strings.TrimSpace(row.ReplayReason),
+		})
+	}
+	return view
+}

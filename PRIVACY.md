@@ -185,16 +185,40 @@ report about a package this network cannot confirm is public is refused, not
 kept.
 
 Nothing about a report is public. It is a question until a signed verification
-receipt (§4.6) answers it, and only that receipt reaches any page.
+receipt (§4.7) answers it, and only that receipt reaches any page.
 
-### 4.6 Verification receipts — contributor worker only
+### 4.6 Product-defect reports — `POST /v1/csx-issues`
+
+Filed when you call `report_csx_issue` about CodeSampleX itself rather than
+about a package. What is sent (`domain.CSXIssueReport`,
+`internal/domain/csxissue.go`): schema version, epoch, `anonId`, the affected
+surface and issue kind from closed vocabularies, the tool or endpoint name, a
+stable non-identifying request fingerprint, one sanitized sentence each for
+what happened and what should have happened, whether you could reproduce it,
+a confidence bucket, and optionally `publicInput` — the **already public**
+parts of the request.
+
+**`publicInput` has no field for your question.** Not as a policy layered on
+top: the struct has nowhere to put a prompt, a query or any prose input. That
+is also why a search defect cannot be re-run automatically and is triaged by a
+person — the input that would have to be replayed *is* the user's question,
+and this network never receives it.
+
+The three prose fields pass through `sanitizer.Redact` on the client and again
+on arrival, exactly as in §4.5.
+
+Nothing about a report is public and no ticket is created by it. A defect many
+people meet is one row with a rising occurrence count, and the only link it
+can carry to a tracked bug is one an operator set.
+
+### 4.7 Verification receipts — contributor worker only
 
 If you run `csx worker`, results of server-assigned verification jobs are
 uploaded as ed25519-signed receipts. Raw stage logs stay local. The queue
 never sends an arbitrary shell command; jobs run network-off in disposable
 Docker workspaces.
 
-### 4.7 Peer announcements — peer serving only
+### 4.8 Peer announcements — peer serving only
 
 If you enable peer serving (`peerListen`, off by default), your peer key,
 port and the ids of **published** samples you hold are announced to the
@@ -202,7 +226,7 @@ tracker so others can fetch those public artifacts from you. Drafts are never
 announced. This also exposes your IP address to peers that fetch from you,
 which is inherent to serving files.
 
-### 4.8 Published sample source — human-approved, CLI only
+### 4.9 Published sample source — human-approved, CLI only
 
 `csx sample publish` uploads the sample project you wrote, under MIT-0. This
 is the one path where source you authored leaves the machine, and it happens

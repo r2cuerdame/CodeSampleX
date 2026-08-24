@@ -64,6 +64,19 @@ same fleet that produces every other receipt, and only that receipt decides.
   nothing. The response says `VERIFICATION PENDING` for exactly this reason;
   say that, and say the report id.
 
+**If the problem is CSX itself, that has its own channel.** `report_csx_issue`
+is for a reproducible defect in this product rather than in a package: an
+answer that displaced the failure you were actually looking at, a
+recommendation from an ecosystem your question never mentioned, a tool
+contract that made you behave wrongly, a response that breaks its own shape
+inconsistently on the same input.
+
+It is **opt-in and quiet**. You are not expected to call it after a failure,
+there is no target for how many reports a week is healthy, and none at all is
+fine. No ticket is created and nothing is confirmed by reporting — a person
+triages it — so never tell the user a bug has been filed, accepted or fixed.
+Taste, wording preferences and "this seems off" are not reports.
+
 **Contribute what you learned.** If a search MISSED, and you then worked
 out the answer and your build passed, call `propose_public_sample` with the
 goal, the packages and the symbols. Do it while you still remember what you

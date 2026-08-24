@@ -165,3 +165,104 @@ func SubmitAnomalyReport(ctx context.Context, client *http.Client, serverURL, ep
 	}
 	return out, nil
 }
+
+// --- report_csx_issue client half ---
+
+// CSXIssueSubmission is the server's answer to a product-defect report.
+//
+// TicketFiled does not exist as a field because no ticket is ever filed.
+// What travels instead is CanonicalRef — set only when an operator has
+// already linked this defect to a bug — and a Note that tells the agent, in
+// the words the client renders, not to claim otherwise.
+type CSXIssueSubmission struct {
+	ReportID          int64  `json:"reportId"`
+	Status            string `json:"status"`
+	ReportStatus      string `json:"reportStatus,omitempty"`
+	Verdict           string `json:"verdict,omitempty"`
+	CanonicalRef      string `json:"canonicalRef,omitempty"`
+	Occurrences       int64  `json:"occurrences,omitempty"`
+	MatchedReportID   int64  `json:"matchedReportId,omitempty"`
+	RetryAfterSeconds int64  `json:"retryAfterSeconds,omitempty"`
+	Redacted          bool   `json:"redacted,omitempty"`
+	ReplayReason      string `json:"replayReason,omitempty"`
+	Note              string `json:"note"`
+}
+
+type csxIssueEnvelope struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	Epoch         string                `json:"epoch"`
+	AnonID        string                `json:"anonId"`
+	Report        domain.CSXIssueReport `json:"report"`
+}
+
+// ErrCSXIssueLocalOnly mirrors ErrAnomalyLocalOnly: the mode exists to send
+// nothing, and a report is a thing that is sent.
+var ErrCSXIssueLocalOnly = errors.New(
+	"this install is local-only, so nothing is uploaded and no report can be submitted. " +
+		"The problem you found is still real; `csx init --community` is what would let it be reported")
+
+// PrepareCSXIssueReport redacts the prose and applies the admission test
+// before anything reaches the wire.
+func PrepareCSXIssueReport(report domain.CSXIssueReport) (domain.CSXIssueReport, bool, error) {
+	report.SchemaVersion = domain.CSXIssueReportSchemaVersion
+	redacted := false
+	scrub := func(s string) string {
+		clean, changed := sanitizer.Redact(strings.TrimSpace(s))
+		redacted = redacted || changed
+		return clean
+	}
+	report.ActualBehavior = scrub(report.ActualBehavior)
+	report.ExpectedBehavior = scrub(report.ExpectedBehavior)
+	report.LLMHypothesis = scrub(report.LLMHypothesis)
+
+	report = report.Normalize()
+	if err := report.Validate(); err != nil {
+		return report, redacted, err
+	}
+	return report, redacted, nil
+}
+
+// SubmitCSXIssueReport posts one prepared report. Like the anomaly path it
+// never retries: the fingerprint makes asking again safe.
+func SubmitCSXIssueReport(ctx context.Context, client *http.Client, serverURL, epoch, anonID string,
+	report domain.CSXIssueReport) (CSXIssueSubmission, error) {
+	var out CSXIssueSubmission
+	body, err := json.Marshal(csxIssueEnvelope{
+		SchemaVersion: domain.CSXIssueReportSchemaVersion,
+		Epoch:         epoch,
+		AnonID:        anonID,
+		Report:        report,
+	})
+	if err != nil {
+		return out, err
+	}
+	url := strings.TrimRight(serverURL, "/") + "/v1/csx-issues"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("submitting the report failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var raw json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return out, fmt.Errorf("the server's reply could not be read (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &e)
+		if e.Error == "" {
+			e.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		return out, errors.New(e.Error)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, fmt.Errorf("the server's reply could not be read: %w", err)
+	}
+	return out, nil
+}

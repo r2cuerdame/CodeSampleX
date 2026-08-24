@@ -62,6 +62,12 @@ type Fake struct {
 	anomalyOrder  []string
 	nextAnomalyID int64
 
+	// csxIssues is the product-defect half. Separate map, separate life:
+	// an anomaly can become compatibility evidence and a product defect
+	// never can.
+	csxIssues      map[string]*CSXIssueReportRow
+	nextCSXIssueID int64
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -125,6 +131,7 @@ func NewFake() *Fake {
 
 		authoringAttempts: map[[4]string]*authoringLedger{},
 		anomalies:         map[string]*AnomalyReportRow{},
+		csxIssues:         map[string]*CSXIssueReportRow{},
 	}
 }
 

@@ -359,6 +359,47 @@ only the sanitizer's code, template and fingerprint travel — and a package thi
 server cannot confirm is public is refused rather than stored. PRIVACY.md §4.5
 states the same thing field by field.
 
+### Product-defect reports (`report_csx_issue`)
+
+The second half of the same channel, and deliberately a different thing.
+`report_anomaly` says "your data is wrong about the world" and is settled by
+running the world again. This says "this product behaved wrongly" — an answer
+that hid the caller's own failure, a recommendation from an ecosystem the
+question never mentioned, a tool contract that made a model act wrongly — and
+nothing in a container can settle that.
+
+They share ingest, redaction and dedupe. They share nothing after it:
+separate table (`csx_issue_reports`), separate verdicts, separate queue. A
+defect in this product must never be able to reach the compatibility graph,
+and one table for both is how that boundary would eventually leak.
+
+The policy is conservative by instruction: **no automatic ticket**, no agent
+guidance to call it after a failure, and no target for report volume. Zero is
+a fine number, and report count is explicitly not a success KPI.
+
+- A defect many agents meet is **one row** whose `occurrences` count rises.
+  Once an operator sets its `canonical_ref`, every later report answers with
+  that reference instead of creating anything.
+- `canonical_ref` can only be set on a report already carrying the
+  `confirmed-csx-defect` verdict. That check lives in the UPDATE statement
+  rather than in a handler, so no second caller can forget it — linking an
+  unconfirmed candidate to a bug is how a candidate quietly becomes a claim.
+- **Replay is narrow, and the reason is the useful part.** Only a
+  server-surface report whose entire input is public coordinates on a public
+  READ route can be re-run. Everything else is triaged by a person and says
+  so. In particular, for the defect class this channel most wants to catch — a
+  search that answered the wrong question — the input that would have to be
+  replayed *is* the user's prompt, which this network deliberately never
+  receives. A stable fingerprint can travel; a fingerprint cannot be re-run.
+  `domain.CSXIssuePublicInput` has no field for a query, which is what makes
+  that a property of the type rather than a rule someone has to remember.
+
+The regression fixture is the GPTBrowser incident behind R2C-51: a
+`npm run typecheck` failure displaced by an unrelated Dart recommendation,
+accepted as a candidate, deduped across two differently-worded reports into
+one row with two occurrences, and linked to canonical `R2C-51`
+(`TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug`).
+
 ## The merge gate on `main`
 
 `.github/workflows/ci.yml` runs on every pull request, and the `Test` job is

@@ -130,6 +130,11 @@ func NewMux(d Deps) *http.ServeMux {
 	// — compact, privacy-safe, and it must not crowd verification receipts
 	// out of the durable write budget.
 	a.route(mux, "POST /v1/anomalies", a.limit(lim.feedback, a.handleAnomalyReport))
+	// The other kind of feedback: not "your data is wrong about the world"
+	// but "this product behaved wrongly". Same ingest budget, entirely
+	// separate table, verdicts and queue — a product defect must never be
+	// able to reach the compatibility graph.
+	a.route(mux, "POST /v1/csx-issues", a.limit(lim.feedback, a.handleCSXIssueReport))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
 	// The fleet asking its own server what to do next, not a public read: it
 	// polls constantly and cheaply, and sharing the read budget let shard

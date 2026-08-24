@@ -220,6 +220,18 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			epoch := time.Now().UTC().Format("2006-01-02")
 			return SubmitAnomalyReport(ctx, reportHTTP, live.ServerURL, epoch, ident.AnonID(epoch), prepared)
 		},
+		ReportCSXIssue: func(ctx context.Context, report domain.CSXIssueReport) (CSXIssueSubmission, error) {
+			prepared, _, err := PrepareCSXIssueReport(report)
+			if err != nil {
+				return CSXIssueSubmission{}, err
+			}
+			live := currentConfig(home)
+			if live.Mode != config.ModeCommunity {
+				return CSXIssueSubmission{}, ErrCSXIssueLocalOnly
+			}
+			epoch := time.Now().UTC().Format("2006-01-02")
+			return SubmitCSXIssueReport(ctx, reportHTTP, live.ServerURL, epoch, ident.AnonID(epoch), prepared)
+		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)
 			if err == nil {

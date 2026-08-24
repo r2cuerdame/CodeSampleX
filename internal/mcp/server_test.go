@@ -243,8 +243,8 @@ func TestToolsListSchemas(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result has no tools array: %v", res)
 	}
-	if len(tools) != 9 {
-		t.Fatalf("tools/list returned %d tools, want 9", len(tools))
+	if len(tools) != 10 {
+		t.Fatalf("tools/list returned %d tools, want 10", len(tools))
 	}
 
 	wantRequired := map[string][]string{
@@ -254,6 +254,7 @@ func TestToolsListSchemas(t *testing.T) {
 		"run_observed_command":   {"command"},
 		"report_sample_adoption": {"offerId", "sampleId", "applied"},
 		"report_anomaly":         {"anomalyType", "package", "csxObserved", "localObserved"},
+		"report_csx_issue":       {"affectedSurface", "issueKind", "component", "actualBehavior", "expectedBehavior"},
 		"propose_public_sample":  {"goal", "packages"},
 		"list_local_hits":        {},
 		"get_local_stats":        {},

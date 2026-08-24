@@ -47,7 +47,26 @@ func TestDumpAdminWithAnomalyChannel(t *testing.T) {
 				FirstSeen:         anomalyNow.Add(-26 * time.Hour)},
 		},
 	}
-	mux, secret := configuredMuxWithAnomalies(t, &fakeStore{}, anomalies)
+	issues := &fakeCSXIssueStore{
+		insights: serverstore.CSXIssueInsights{
+			WindowStart: anomalyNow.AddDate(0, 0, -30), WindowEnd: anomalyNow,
+			Occurrences: 14, Unique: 5, Duplicates: 9,
+			Triage: 2, ReplayQueued: 0, NoReplayLane: 2, Resolved: 1,
+			Confirmed: 1, Linked: 1,
+		},
+		rows: []serverstore.CSXIssueReportRow{
+			{Surface: domain.CSXSurfaceServer, IssueKind: domain.CSXIssueAnswerMasksFailure,
+				Component: "/v2/search", Status: domain.CSXIssueStatusResolved,
+				Verdict: domain.CSXIssueVerdictDefect, CanonicalRef: "R2C-51", Occurrences: 8,
+				FirstSeen:    anomalyNow.Add(-31 * time.Hour),
+				ReplayReason: "no replay lane: the caller's question never reaches this network"},
+			{Surface: domain.CSXSurfaceMCP, IssueKind: domain.CSXIssueToolContractMisleads,
+				Component: "search_known_solution", Status: domain.CSXIssueStatusNoReplayLane,
+				Occurrences: 3, FirstSeen: anomalyNow.Add(-5 * time.Hour),
+				ReplayReason: "no replay lane: only server-surface requests can be re-run here"},
+		},
+	}
+	mux, secret := configuredMuxWithChannels(t, &fakeStore{}, anomalies, issues)
 	body := anomalyPanelBody(t, mux, secret)
 	if err := os.WriteFile(out, []byte(body), 0o644); err != nil {
 		t.Fatal(err)

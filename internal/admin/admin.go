@@ -85,6 +85,10 @@ type Deps struct {
 	// that cannot answer has nothing honest to show, and a panel of zeros
 	// reads as "nobody reported anything" rather than "not measured here".
 	Anomalies serverstore.AnomalyStore
+	// CSXIssues backs the product-defect panel. Nil hides it, for the same
+	// reason: a panel of zeros reads as "nobody reported anything" rather
+	// than "not measured here".
+	CSXIssues serverstore.CSXIssueStore
 	// PoolStats backs the database pool panel. Nil hides it: a store
 	// without a pool has nothing honest to report there.
 	PoolStats PoolStatsReader
@@ -106,6 +110,7 @@ type handler struct {
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
 	anomalies     serverstore.AnomalyStore
+	csxIssues     serverstore.CSXIssueStore
 	poolStats     PoolStatsReader
 	instances     []Instance
 }
@@ -141,6 +146,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		adminTokens:   d.AdminTokens,
 		farmStats:     d.Farm,
 		anomalies:     d.Anomalies,
+		csxIssues:     d.CSXIssues,
 		poolStats:     d.PoolStats,
 		instances:     d.Instances,
 	}
@@ -355,6 +361,19 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.AnomalyAvailable = true
 	}
 
+	if h.csxIssues == nil {
+		data.CSXIssueError = "이 저장소는 제품 결함 신고 채널을 제공하지 않습니다"
+	} else if insights, err := h.csxIssues.CSXIssueInsights(ctx, now, serverstore.AdminInsightDays); err != nil {
+		data.CSXIssueError = "제품 결함 신고 집계를 불러올 수 없습니다"
+	} else {
+		recent, listErr := h.csxIssues.ListCSXIssueReports(ctx, anomalyRecentLimit)
+		if listErr != nil {
+			recent = nil
+		}
+		data.CSXIssue = buildCSXIssueView(insights, recent, now)
+		data.CSXIssueAvailable = true
+	}
+
 	if h.accessMetrics == nil {
 		data.AccessError = "API 안전 로그 집계가 구성되지 않았습니다"
 	} else if metrics, err := h.accessMetrics.Metrics(ctx, now); err != nil {
@@ -419,6 +438,12 @@ type dashboardData struct {
 	Anomaly          anomalyView
 	AnomalyAvailable bool
 	AnomalyError     string
+
+	// CSXIssue is the same channel aimed at this product rather than at a
+	// package. Separate view, because they are separate things.
+	CSXIssue          csxIssueView
+	CSXIssueAvailable bool
+	CSXIssueError     string
 
 	// Flow is the production-rate half of the summary. Everything above it is
 	// stock, and stock cannot answer whether the line is running right now.
