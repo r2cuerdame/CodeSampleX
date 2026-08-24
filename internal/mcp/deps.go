@@ -138,6 +138,24 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		return node.Fetch(ctx, sampleID)
 	})
 
+	searchRaw := func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		resp := engine.Search(ctx, req)
+		if resp.Miss {
+			live := currentConfig(home)
+			if live.Mode == config.ModeCommunity {
+				syncer := &search.Syncer{DB: db, ServerURL: live.ServerURL, HTTP: syncHTTP}
+				if search.FetchMissing(ctx, engine, syncer, live.Mode, req) {
+					resp = engine.Search(ctx, req)
+				}
+			}
+		}
+		return resp
+	}
+	recordSearch := func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcomeReloaded(ctx, db, ident,
+			func() *config.Config { return currentConfig(home) }, req, resp)
+	}
+
 	d := &Deps{
 		// Wrapped rather than passed straight through, so recording cannot
 		// be forgotten by whatever calls Search next.
@@ -147,27 +165,11 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		// forever — for the surface the product is actually used through.
 		// A counter presented to the user as fact has to be one.
 		Search: func(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
-			resp := engine.Search(ctx, req)
-			// One retry, and only when the miss might be about a shard we
-			// never had: fetch the named packages' shards, then ask again.
-			// Community mode only — in local-only, naming the package to
-			// the server is the thing that mode exists to prevent.
-			if resp.Miss {
-				live := currentConfig(home)
-				if live.Mode == config.ModeCommunity {
-					syncer := &search.Syncer{DB: db, ServerURL: live.ServerURL, HTTP: syncHTTP}
-					if search.FetchMissing(ctx, engine, syncer, live.Mode, req) {
-						resp = engine.Search(ctx, req)
-					}
-				}
-			}
-			// Reload again: mode may have changed while a community shard fetch
-			// was in flight. A miss observed after revocation must not become a
-			// Wanted upload candidate.
-			offerID := recordSearchOutcomeReloaded(ctx, db, ident,
-				func() *config.Config { return currentConfig(home) }, req, resp)
-			return resp, offerID
+			resp := searchRaw(ctx, req)
+			return resp, recordSearch(ctx, req, resp)
 		},
+		SearchRaw:           searchRaw,
+		RecordSearchOutcome: recordSearch,
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
 			return getSample(ctx, db, store, fetcher, id)
 		},

@@ -198,28 +198,23 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		return quiet(hookTraceNoMatch, "nothing here has been proven for this failure; asked: "+string(asked))
 	}
 
-	// One answer. This arrives unasked, in the middle of somebody's work, so
-	// it earns a few lines and not a list.
+	// Filter the full retrieval set before selecting the one hook answer.
+	// Similarity ranking and fact relevance are different questions: an
+	// unrelated #1 must not hide a relevant #2.
+	retrieved := append([]domain.SearchResult(nil), resp.Results...)
+	resp, _ = domain.GateNormalOutput(req, resp, proj.Argv)
+	if resp.Miss || len(resp.Results) == 0 {
+		if len(retrieved) > 0 {
+			if reason := retrieved[0].SuppressionReason(req, proj.Argv); reason != "" {
+				return quiet(reason, hookSuppressionDetail(retrieved[0], reason))
+			}
+		}
+		asked, _ := json.Marshal(req)
+		return quiet(hookTraceNoMatch, "nothing here has been proven for this failure; asked: "+string(asked))
+	}
+
 	if len(resp.Results) > 1 {
 		resp.Results = resp.Results[:1]
-	}
-	// The same relevance gate the MCP lookup applies, and the same one on
-	// purpose: two definitions of "this is the wrong language" drift, and
-	// this path and that one answer the same agent about the same build.
-	//
-	// Here the demotion is silence rather than a shortened note. This hook
-	// interrupts; a note nobody asked for, about a language the failing
-	// command does not build for, costs the reader more than saying nothing
-	// and teaches them to stop reading the ones that matter.
-	//
-	// The gate is wider than the ecosystem question it started as. A sample
-	// in the RIGHT language can be just as unrelated — a Go deploy question
-	// answered with a Go number-formatting sample, sharing Go 1.26 and
-	// linux/amd64 and nothing else — and this hook is the surface where that
-	// costs the most, because it arrives in the middle of somebody's work
-	// having been asked for by nobody.
-	if reason := resp.Results[0].SuppressionReason(req, proj.Argv); reason != "" {
-		return quiet(reason, hookSuppressionDetail(resp.Results[0], reason))
 	}
 	classification, advisoryOnly, reason := resp.Results[0].RecommendationClassification()
 	var b strings.Builder

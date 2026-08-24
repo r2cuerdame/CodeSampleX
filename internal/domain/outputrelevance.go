@@ -110,6 +110,28 @@ const (
 // gate exists to close, re-entered through the error channel.
 var diagnosticToken = regexp.MustCompile(`^[A-Z][A-Z0-9]*(?:[0-9_][A-Z0-9_]*)+$`)
 
+var standardErrnoToken = map[string]struct{}{
+	"EACCES": {}, "EAGAIN": {}, "EBADF": {}, "EBUSY": {}, "ECANCELED": {},
+	"ECHILD": {}, "ECONNABORTED": {}, "ECONNREFUSED": {}, "ECONNRESET": {},
+	"EEXIST": {}, "EFAULT": {}, "EINPROGRESS": {}, "EINTR": {}, "EINVAL": {},
+	"EIO": {}, "EISDIR": {}, "ELOOP": {}, "EMFILE": {}, "ENAMETOOLONG": {},
+	"ENETDOWN": {}, "ENETRESET": {}, "ENETUNREACH": {}, "ENFILE": {},
+	"ENOBUFS": {}, "ENODEV": {}, "ENOENT": {}, "ENOEXEC": {}, "ENOMEM": {},
+	"ENOSPC": {}, "ENOSYS": {}, "ENOTCONN": {}, "ENOTDIR": {}, "ENOTEMPTY": {},
+	"ENOTSOCK": {}, "ENOTSUP": {}, "ENOTTY": {}, "ENXIO": {}, "EOPNOTSUPP": {},
+	"EOVERFLOW": {}, "EPERM": {}, "EPIPE": {}, "EPROTO": {},
+	"EPROTONOSUPPORT": {}, "EPROTOTYPE": {}, "ERANGE": {}, "EROFS": {},
+	"ESRCH": {}, "ETIMEDOUT": {}, "EWOULDBLOCK": {}, "EXDEV": {},
+}
+
+func isDiagnosticToken(token string) bool {
+	if diagnosticToken.MatchString(token) {
+		return true
+	}
+	_, ok := standardErrnoToken[token]
+	return ok
+}
+
 // RelevanceSignals names every concrete link between this request and this
 // candidate, in a stable order. An empty result means the only thing the two
 // have in common is where they run.
@@ -353,7 +375,7 @@ func requestDiagnostics(req SearchRequest) []string {
 	for _, field := range strings.FieldsFunc(req.Query, func(r rune) bool {
 		return !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_')
 	}) {
-		if diagnosticToken.MatchString(field) {
+		if isDiagnosticToken(field) {
 			out = append(out, field)
 		}
 	}

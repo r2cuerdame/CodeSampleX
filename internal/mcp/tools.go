@@ -27,6 +27,13 @@ type Deps struct {
 	// local-only capability for the recorded top result; it is empty on a
 	// miss or when local recording failed.
 	Search func(ctx context.Context, req domain.SearchRequest) (resp domain.SearchResponse, offerID string)
+	// SearchRaw performs retrieval without recording a hit/offer. toolSearch
+	// uses this two-phase path so the relevance gate can run before the
+	// user-visible outcome is recorded.
+	SearchRaw func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse
+	// RecordSearchOutcome records only the response that normal output
+	// actually exposed after relevance filtering.
+	RecordSearchOutcome func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string
 	// GetSample returns a cached sample's manifest and its files
 	// (path → content, ≤64KB per file, binaries skipped).
 	GetSample func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error)
@@ -528,7 +535,16 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 		}
 	}
 
-	resp, offerID := s.Deps.Search(ctx, req)
+	var (
+		resp    domain.SearchResponse
+		offerID string
+	)
+	twoPhase := s.Deps.SearchRaw != nil && s.Deps.RecordSearchOutcome != nil
+	if twoPhase {
+		resp = s.Deps.SearchRaw(ctx, req)
+	} else {
+		resp, offerID = s.Deps.Search(ctx, req)
+	}
 
 	// The normal-output relevance gate. The engine ranks by similarity, and
 	// similarity in a corpus this size is never zero: asked how a GitHub
@@ -538,6 +554,11 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	// where a sample can run, never what it is about. A candidate with no
 	// nameable link to the question does not reach the answer.
 	resp, suppressed := domain.GateNormalOutput(req, resp, nil)
+	if twoPhase {
+		offerID = s.Deps.RecordSearchOutcome(ctx, req, resp)
+	} else if len(suppressed) > 0 {
+		offerID = ""
+	}
 
 	// A miss is the common case on a young network, and "nothing here" is a
 	// wasted round trip: the cache usually holds observation evidence for
@@ -557,10 +578,11 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 			}, suppressed))
 		}
 	}
-	text := renderSearchResponse(resp)
-	if len(resp.Results) > 0 {
-		text = withRelevance(text, resp.Results[0].RelevanceLine(req, nil))
+	relevance := make([]string, len(resp.Results))
+	for i := range resp.Results {
+		relevance[i] = resp.Results[i].RelevanceLine(req, nil)
 	}
+	text := renderSearchResponseWithRelevance(resp, relevance)
 	return textResult(text, localSearchStructured{
 		SearchResponse: resp,
 		OfferID:        offerID,
@@ -715,6 +737,10 @@ func containsFold(ss []string, want string) bool {
 // evidence class — compile observations are never presented as execution
 // proof (goal.md §3.5).
 func renderSearchResponse(resp domain.SearchResponse) string {
+	return renderSearchResponseWithRelevance(resp, nil)
+}
+
+func renderSearchResponseWithRelevance(resp domain.SearchResponse, relevance []string) string {
 	if resp.Miss || len(resp.Results) == 0 {
 		return "DECISION: UNKNOWN — no safe verified match.\n\n" +
 			"MATCH: NO_SAFE_MATCH\n\n" +
@@ -742,7 +768,11 @@ func renderSearchResponse(resp domain.SearchResponse) string {
 		if why := r.ConfidenceReason(); why != "" {
 			b.WriteString(" — " + why)
 		}
-		b.WriteString("\n\n")
+		b.WriteString("\n")
+		if i < len(relevance) && relevance[i] != "" {
+			b.WriteString(relevance[i] + "\n")
+		}
+		b.WriteString("\n")
 		// The finding leads the hit. Everything under it describes how well
 		// this sample matches and how much ran; the finding is the sentence
 		// that says the answer the caller was about to write is wrong, and
@@ -1274,9 +1304,9 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	return failureRecommendation{
 		Status: "FOUND", Classification: classification, AdvisoryOnly: advisory,
 		Reason: reason, Match: string(top.Grade), Confidence: top.Confidence,
-		Text: withRelevance(
-			advisoryDecision(renderSearchResponse(resp), advisory, reason),
-			top.RelevanceLine(req, argv)),
+		Text: advisoryDecision(
+			renderSearchResponseWithRelevance(resp, []string{top.RelevanceLine(req, argv)}),
+			advisory, reason),
 	}
 }
 
