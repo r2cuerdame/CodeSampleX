@@ -115,6 +115,14 @@ func TestHookAnswersAFailedBuildStep(t *testing.T) {
 // is the label on an answer that IS shown.
 func TestHookLabelsLowConfidenceAnswersAsReferenceCandidates(t *testing.T) {
 	env, out := hookHarness(t, hookInput(t, "Bash", "pwsh -File Test-Dispatcher.ps1", "ParserError"), func(e *hookEnv) {
+		// Argv, because the real classifier always sets it alongside Known
+		// and the relevance gate reads it: a sample about powershell is
+		// about the tool this command ran, which is what earns it the
+		// interruption in the first place.
+		e.inspect = func(context.Context, string, [][]string) hookProject {
+			return hookProject{Known: true, Stage: domain.StageProjectTest,
+				Argv: []string{"pwsh", "-File", "Test-Dispatcher.ps1"}}
+		}
 		e.search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, error) {
 			return domain.SearchResponse{Results: []domain.SearchResult{{
 				Grade: domain.GradeReferenceOnly, Confidence: "LOW", SampleID: "sha256:shell",

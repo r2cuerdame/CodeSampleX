@@ -27,6 +27,33 @@ func dartCryptoHit() domain.SearchResponse {
 	}}}
 }
 
+// typescriptHit is the sample the same broken typecheck SHOULD come back
+// with: a TypeScript sample whose contract names the very diagnostic the
+// build printed.
+//
+// The fixtures below used to reach for dartCryptoHit with its packages
+// rewritten to typescript, which made them same-ecosystem without making
+// them about anything. That was enough while the gate only asked "is this
+// the wrong language"; it is not enough now that the gate asks whether a
+// concrete link to the failure can be NAMED, and a sample about Dart asserts
+// has no link to TS2352 whatever purl is stapled to it. The relationship
+// these fixtures were always testing -- a LOW-confidence candidate in the
+// command's own ecosystem is still offered -- is unchanged and now actually
+// held by the fixture.
+func typescriptHit() domain.SearchResponse {
+	return domain.SearchResponse{Results: []domain.SearchResult{{
+		Grade:      domain.GradeCompatible,
+		Confidence: "LOW",
+		SampleID:   "sha256:09b939ee857b27e5",
+		Case: &domain.Case{
+			Goal:     "Convert between unrelated types without tripping the compiler",
+			Packages: []string{"pkg:npm/typescript@5.9.2"},
+			Contract: []string{"A direct cast between unrelated types raises TS2352 unless it goes through unknown"},
+		},
+		Evidence: domain.EvidenceSummary{ContractPasses: 1, IndependentCrossPeers: 1},
+	}}}
+}
+
 // The demotion was real and reached nobody.
 //
 // A failed `npm run typecheck` was answered with a Dart sample about
@@ -155,9 +182,7 @@ func TestAnAdvisoryAnswerDoesNotOpenByCallingItselfReusable(t *testing.T) {
 				commandOutput{Stdout: "src/index.ts(12,5): error TS2352"}, nil
 		}
 		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
-			resp := dartCryptoHit()
-			resp.Results[0].Case.Packages = []string{"pkg:npm/typescript@5.9.2"}
-			return resp, "offer-1"
+			return typescriptHit(), "offer-1"
 		}
 	})
 
@@ -192,9 +217,7 @@ func TestASameEcosystemCandidateIsStillOffered(t *testing.T) {
 				commandOutput{Stdout: "src/index.ts(12,5): error TS2352"}, nil
 		}
 		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
-			resp := dartCryptoHit()
-			resp.Results[0].Case.Packages = []string{"pkg:npm/typescript@5.9.2"}
-			return resp, "offer-1"
+			return typescriptHit(), "offer-1"
 		}
 	})
 
