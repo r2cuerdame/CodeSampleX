@@ -137,6 +137,84 @@ written to look like it. A backlog counted from a different predicate than the
 queue would sit still while the fleet drains work, or reach zero while jobs are
 still going out — and the two halves of this panel have drifted apart before.
 
+## The grid, counted at the grain a reader sees it
+
+*Measured against production on 2026-08-24.*
+
+Every stock above counts a RELEASE: a purl either has a passing sample or it
+does not. A package page is not drawn at that grain. It spreads SYMBOL against
+VERSION, so one release with forty symbols is forty cells, and thirty-nine of
+them can be empty while the release counts as proven. At release grain
+production reads 99% covered. At cell grain it reads this:
+
+| | |
+| --- | --- |
+| PUBLIC symbol x version cells | 9,409 |
+| Observation >= 1 | **1,295 (13.8%)** |
+| our sample passed, nobody seen using it | **3,013 (32.0%)** |
+| nothing recorded at all | **5,101 (54.2%)** |
+| package pages showing both dash forms at once | 158 |
+
+Both numbers are true and neither substitutes for the other, so
+`GET /admin/api/farm` -> `backlog.matrixCells` prints the second beside the
+first.
+
+### The two dashes
+
+A reader sees one glyph and two causes, and the difference decides what work
+would answer it.
+
+* **`≡ —`, and the cell is a LINK.** We wrote a sample, it passed here, and no
+  project build has been attributed to the coordinate. The mark is our run;
+  the dash sits where the usage rate would go. `verifiedNoObservation`.
+* **A plain, unlinked `—`.** No evidence row, no sample. The cell exists only
+  because the symbol was recorded at some OTHER release of the package, so the
+  grid draws the pair. `unmeasured`.
+
+A census that pooled them would report the same figure for a coordinate this
+network has already executed and one nothing has ever touched.
+
+`packagesShowingBothDashes` counts pages carrying both at once, because that
+is the state R2C-89 reproduces from two live URLs
+(`golang/github.com/jackc/pgx/v5` and `npm/semver`) and the one no single
+sentence explains to a reader. Both pages are carried as a fixture in
+`matrixcells_test.go`, copied cell for cell off the live site.
+
+### What it does not do
+
+It hands out no work. The scheduler's five sources are unchanged.
+
+Two of the three states cannot be closed by scheduling alone, and pretending
+otherwise in code would be the expensive mistake:
+
+* `verifiedNoObservation` cannot be closed by this network at all. An
+  observation is a real project build reported by a `csx` install; a farm run
+  is a verification. Producing another sample for a coordinate that already
+  has one is duplicate work the queue is built to refuse, so no amount of
+  authoring moves this number. Only somebody out there building that
+  coordinate does.
+* `unmeasured` contains cells that cannot exist: the grid draws every symbol
+  against every release, and a symbol introduced in 7.x has a cell at 5.7.2
+  where the API is simply absent. The network stores nothing that says which,
+  so a source that handed the cross product out would spend the fleet on jobs
+  that must fail and teach the quarantine ledger that the coordinates were at
+  fault.
+
+Which of the three is the target, and what an unauthorable cell is called, is
+a product question rather than a scheduling one. It is recorded on R2C-89. The
+census is the instrument that will judge the answer, and it is worth having
+before the answer as well: it is the only number on the panel that moves the
+way a reader's page does.
+
+### Cost
+
+One statement, one row, on an admin endpoint nobody polls. Against production
+(9,455 stored documents): 930 ms, of which 162 ms is the work -- the rest is
+PostgreSQL JIT-compiling a plan for a query that runs once. Written as a UNION
+of scalar aggregates it was 1.37 s and 83 compiled functions. If it ever moves
+somewhere hot it belongs in the aggregation pipeline that already materialises
+on `CSX_SNAPSHOT_INTERVAL`, not in a request handler.
+
 ## Two stores, one behaviour
 
 `(*Fake).dependencyOpen` and the `dependency_open` CTE are the two halves of

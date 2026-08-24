@@ -121,6 +121,15 @@ type FarmBacklog struct {
 	// above, and a rate that counted it would never square with a stock that
 	// does not.
 	FirstProven int
+	// Matrix is the same absence counted at the grain a reader sees it.
+	//
+	// CoverageHoles above is per RELEASE: a purl either has a passing sample
+	// or it does not. A package page is not drawn at that grain -- it spreads
+	// symbol against version -- so a release counted as proven can render a
+	// page that is almost entirely dashes, and in production it does. The two
+	// numbers are both true and they are not the same number, so they are
+	// reported side by side rather than one standing in for the other.
+	Matrix MatrixCells
 }
 
 // FarmStatsStore reports the farm's state for the operations dashboard.

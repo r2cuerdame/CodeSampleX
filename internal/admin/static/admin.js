@@ -440,6 +440,28 @@
           stat("첫 증명", `${num(b.firstProvenInWindow || 0)} · ${perHour(b.firstProvenInWindow || 0)}`),
           stat("배포 출처", byKind),
         );
+        // The same absence at the grain a reader sees it. "미검증 좌표" above
+        // counts releases; a package page spreads symbol against version, so
+        // a release counted as proven can draw a page that is almost all
+        // dashes. The three states are printed apart because they are
+        // answered by different work — one we have already run and nobody
+        // has been seen using, one nothing has ever touched.
+        const m = b.matrixCells;
+        if (m) {
+          const share = m.cells ? ` (${Math.round((m.observed / m.cells) * 100)}%)` : "";
+          backlog.append(
+            stat("관측된 셀", `${num(m.observed || 0)} / ${num(m.cells || 0)}${share}`),
+            stat("샘플만 있고 미관측", num(m.verifiedNoObservation || 0)),
+            stat("아무 기록 없는 셀", num(m.unmeasured || 0)),
+            stat("두 표기 공존 패키지", num(m.packagesShowingBothDashes || 0),
+              (m.packagesShowingBothDashes || 0) > 0),
+          );
+        } else {
+          // Absent, not zero — the same rule the whole-backlog case above
+          // follows. Rendering 0 for a census this payload never carried
+          // would say "no dashes left" about a grid nobody counted.
+          backlog.append(stat("셀 커버리지", "읽지 못함", true));
+        }
       }
     }
 

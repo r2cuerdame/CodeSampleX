@@ -258,6 +258,41 @@ fleet is acted on by are the same one. A withdrawn **sample** and a withheld
 Thresholds, the classification a worker reports and the reasoning behind every
 number are in [docs/authoring-quarantine.md](authoring-quarantine.md).
 
+### Reading the farm backlog: two grains, both true
+
+`backlog` on `GET /admin/api/farm` reports the coverage gap twice, and the two
+figures disagree on purpose.
+
+* `coverageHoles` counts **releases**: a purl the network watches people use
+  and has never proven. This is what the queue works off.
+* `matrixCells` counts **cells**: the symbol × version grid a package page
+  actually draws, from the same stored snapshots the page renders.
+
+At release grain production reads nearly covered; at cell grain, on
+2026-08-24, 1,295 of 9,409 cells carried an observation. Neither number is
+wrong — a release with forty symbols is forty cells, and one proven sample
+covers one of them. An operator reading only the first would conclude the
+fleet was nearly done.
+
+`matrixCells` splits what is left into the two dashes a reader sees, because
+they are answered by different work and pooling them hides which:
+
+* `observed` — a real project build reached this coordinate.
+* `verifiedNoObservation` — our sample passed here and nobody has been seen
+  using it. On the page: `≡ —`, and the cell is a link. **The fleet cannot
+  drain this.** Authoring another sample for a coordinate that already has one
+  is duplicate work the queue refuses; only a `csx` install out in the world
+  building that coordinate moves it.
+* `unmeasured` — nothing recorded at all. On the page: a plain, unlinked `—`.
+* `packagesShowingBothDashes` — pages rendering a linked and a plain dash at
+  once. Rendered on the panel as **두 표기 공존 패키지** and marked when it is
+  above zero.
+
+A rising `verifiedNoObservation` beside a flat `observed` is the fleet working
+and the field not following, which is a demand problem and not a queue one.
+Details and the measured cost are in
+[docs/coverage-scheduler.md](coverage-scheduler.md).
+
 ### Verification work no verifier lane can run
 
 A cross job names the environment a reproduction needs, and it is built from

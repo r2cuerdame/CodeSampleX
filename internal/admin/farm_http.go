@@ -125,10 +125,37 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	return map[string]any{
 		"coverageHoles":       backlog.CoverageHoles,
 		"dependencies":        backlog.Dependencies,
+		"matrixCells":         farmMatrixCellsView(backlog.Matrix),
 		"windowSeconds":       int(farmWindow / time.Second),
 		"handedOutInWindow":   handedOut,
 		"handedOutByKind":     claimed,
 		"firstProvenInWindow": backlog.FirstProven,
+	}
+}
+
+// farmMatrixCellsView reports the grid a reader actually sees.
+//
+// coverageHoles beside it counts RELEASES, and at that grain production reads
+// nearly covered while the pages are mostly dashes -- a package page spreads
+// symbol against version, so one proven release can draw forty cells and fill
+// one. Both numbers are true; neither substitutes for the other, so both are
+// printed.
+//
+// The three states are printed apart and never pooled into one "empty"
+// figure. They come from opposite causes and they are answered by different
+// work: `observed` is the only one R2C-89's criterion counts as covered,
+// `verifiedNoObservation` is a coordinate this network has already run and
+// nobody has been seen using, and `unmeasured` is one nothing has ever
+// touched. `packagesShowingBothDashes` is how many pages currently show a
+// linked and a plain dash at once, which is the state the issue reproduces
+// from two live URLs and the one a single sentence cannot explain.
+func farmMatrixCellsView(cells serverstore.MatrixCells) map[string]any {
+	return map[string]any{
+		"cells":                     cells.Cells,
+		"observed":                  cells.Observed,
+		"verifiedNoObservation":     cells.VerifiedNoObservation,
+		"unmeasured":                cells.Unmeasured,
+		"packagesShowingBothDashes": cells.PackagesShowingBothDashes,
 	}
 }
 
