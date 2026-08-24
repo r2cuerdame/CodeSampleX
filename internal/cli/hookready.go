@@ -626,6 +626,14 @@ func hookSmokeVerdict(code string) (bool, string) {
 	case hookTraceNoMatch:
 		return true, "a failing build reached the lookup; this network has nothing proved for " +
 			"that error, which is the honest answer and not a wiring fault"
+	case hookTraceUnrelated, hookTraceLowRelevance:
+		// A deliberate decision, not a wiring fault. The failure reached the
+		// lookup, the lookup answered, and the relevance gate declined to
+		// interrupt with what came back — which is the gate working. Left in
+		// the default branch these read as "the hook stopped early", and a
+		// working install would be reported as broken.
+		return true, "a failing build reached the lookup; what came back was not about that " +
+			"failure (" + code + "), so the hook stayed quiet — which is the answer, not a fault"
 	case hookTraceSearchFailed:
 		return false, "the failure reached the hook, but the lookup could not complete — " +
 			"try `csx daemon start`"

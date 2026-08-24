@@ -262,6 +262,14 @@ var buildToolEcosystems = map[string]string{
 // an ecosystem gate that only knew about .exe classified every npm build as
 // belonging to no ecosystem at all.
 func CommandEcosystem(argv []string) string {
+	return buildToolEcosystems[CommandTool(argv)]
+}
+
+// CommandTool is the bare name of the tool a command starts with, normalized
+// the way CommandEcosystem needs it. It is exported because the relevance
+// gate asks a second question of the same word: not only which ecosystem the
+// tool builds for, but whether a sample is about the tool itself.
+func CommandTool(argv []string) string {
 	if len(argv) == 0 {
 		return ""
 	}
@@ -276,7 +284,7 @@ func CommandEcosystem(argv []string) string {
 			break
 		}
 	}
-	return buildToolEcosystems[tool]
+	return tool
 }
 
 // UnrelatedToCommand reports whether this result is about an ecosystem the

@@ -211,10 +211,15 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// interrupts; a note nobody asked for, about a language the failing
 	// command does not build for, costs the reader more than saying nothing
 	// and teaches them to stop reading the ones that matter.
-	if resp.Results[0].UnrelatedToCommand(proj.Argv) {
-		return quiet(hookTraceUnrelated, "the only match is a "+
-			strings.Join(resp.Results[0].SampleEcosystems(), "/")+
-			" sample and the failed command does not build for it: "+resp.Results[0].SampleID)
+	//
+	// The gate is wider than the ecosystem question it started as. A sample
+	// in the RIGHT language can be just as unrelated — a Go deploy question
+	// answered with a Go number-formatting sample, sharing Go 1.26 and
+	// linux/amd64 and nothing else — and this hook is the surface where that
+	// costs the most, because it arrives in the middle of somebody's work
+	// having been asked for by nobody.
+	if reason := resp.Results[0].SuppressionReason(req, proj.Argv); reason != "" {
+		return quiet(reason, hookSuppressionDetail(resp.Results[0], reason))
 	}
 	classification, advisoryOnly, reason := resp.Results[0].RecommendationClassification()
 	var b strings.Builder
@@ -225,6 +230,12 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	}
 	if reason != "" {
 		b.WriteString("Reason: " + reason + "\n")
+	}
+	// Why this sample, and not merely how well it matches the machine. The
+	// gate above named the concrete link that earned the interruption; a
+	// reader who cannot see it has no way to judge what follows.
+	if line := resp.Results[0].RelevanceLine(req, proj.Argv); line != "" {
+		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "Observed stage: %s\n\n", proj.Stage)
 	renderSearchText(&b, resp)
@@ -388,9 +399,30 @@ const (
 	hookTraceEmptyQuery   = "empty-query"
 	hookTraceSearchFailed = "search-failed"
 	hookTraceNoMatch      = "no-match"
-	hookTraceUnrelated    = "unrelated-ecosystem"
+	hookTraceUnrelated    = domain.SuppressedUnrelatedEcosystem
+	hookTraceLowRelevance = domain.SuppressedInsufficientGoalOverlap
 	hookTraceEncodeFailed = "encode-failed"
 )
+
+// hookSuppressionDetail is the trace line beside a suppression code: which
+// sample was held back, and what the gate read to decide it. The hook's
+// normal answer is silence, so this is the only place the decision is
+// visible at all until the diagnostic mode lands.
+func hookSuppressionDetail(r domain.SearchResult, reason string) string {
+	switch reason {
+	case domain.SuppressedUnrelatedEcosystem:
+		return "the only match is a " + strings.Join(r.SampleEcosystems(), "/") +
+			" sample and the failed command does not build for it: " + r.SampleID
+	default:
+		var packages []string
+		if r.Case != nil {
+			packages = r.Case.Packages
+		}
+		return "the only match shares no package, symbol, error or subject with this failure" +
+			" — only the environment it runs in: " + r.SampleID +
+			" (" + strings.Join(packages, ", ") + ")"
+	}
+}
 
 // hookTraceCodes is every code the hook can emit, so a test can hold the
 // vocabulary the check reads and the one the hook writes to the same list.
@@ -398,7 +430,7 @@ var hookTraceCodes = []string{
 	hookTraceAnswered, hookTraceBadInput, hookTraceNotBash, hookTraceNoConfig,
 	hookTraceOff, hookTraceNotFailed, hookTraceNoSegments, hookTraceNotBuildStep,
 	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceUnrelated,
-	hookTraceEncodeFailed,
+	hookTraceLowRelevance, hookTraceEncodeFailed,
 }
 
 // hookTracePrefix is what every trace line starts with.

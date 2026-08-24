@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -251,7 +252,7 @@ func toolDefs() []toolDef {
 			Summary: "Search the network for a community-verified solution before solving from scratch. " +
 				"Records a local search hit. In community mode a miss may fetch shards and file a public Wanted tuple, " +
 				"and a hit queues an anonymous count — never the query, the packages or the environment.",
-			Description: "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers.",
+			Description: "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers. A result reaches this answer only when a concrete link to your case can be named — a package or symbol you gave, the tool you ran, the same structured error, a question that names it, or a goal that describes what you asked for — and the Relevance: line says which one it was. Sharing a language, a runtime version or an architecture is not one of those links: those say where a sample can run, never what it is about. When nothing qualifies the answer is NO_SAFE_MATCH, not the nearest neighbour.",
 			InputSchema: obj(map[string]any{
 				"query":       str("what you are trying to do or fix, in plain words"),
 				"packages":    strArr("package purls involved, e.g. pkg:npm/axios@1.12.0"),
@@ -301,7 +302,7 @@ func toolDefs() []toolDef {
 			Annotations: writes("Run a build command through the evidence loop", true, false, true),
 			Summary: "Run a build, typecheck or test command in the user's project and record anonymous evidence from it. " +
 				"Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
-			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence, and the sanitized error is built from whichever stream carried the diagnosis; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation: LOW/reference results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence, and a result from an ecosystem the failed command does not build for is reported as NO_RELEVANT_MATCH with the sample named but not rendered as an answer.",
+			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence, and the sanitized error is built from whichever stream carried the diagnosis; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation: LOW/reference results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence, and a candidate with no nameable link to the failure — no shared package, symbol, tool, structured error or subject, only the environment both happen to run in — is reported as NO_RELEVANT_MATCH with the sample named but not rendered as an answer.",
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
 				"cwd":     str("working directory (defaults to the current directory)"),
@@ -529,6 +530,15 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 
 	resp, offerID := s.Deps.Search(ctx, req)
 
+	// The normal-output relevance gate. The engine ranks by similarity, and
+	// similarity in a corpus this size is never zero: asked how a GitHub
+	// Actions workflow_dispatch deploys an immutable main SHA, it returned
+	// FormatInteger/FormatFloat from go-humanize at MATCH: COMPATIBLE,
+	// because both things are Go on linux/amd64. Environment coordinates say
+	// where a sample can run, never what it is about. A candidate with no
+	// nameable link to the question does not reach the answer.
+	resp, suppressed := domain.GateNormalOutput(req, resp, nil)
+
 	// A miss is the common case on a young network, and "nothing here" is a
 	// wasted round trip: the cache usually holds observation evidence for
 	// the very packages being asked about. Hand that over instead — it is
@@ -540,17 +550,62 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		hint, ready := s.readinessHint(ctx)
-		if len(overview) > 0 || hint != "" || resp.Observed != nil {
-			return textResult(renderMiss(overview, hint, resp.Observed), map[string]any{
+		if len(overview) > 0 || hint != "" || resp.Observed != nil || len(suppressed) > 0 {
+			return textResult(renderMiss(overview, hint, resp.Observed), withSuppressed(map[string]any{
 				"response": resp, "packageOverview": overview, "localReady": ready,
 				"observed": resp.Observed,
-			})
+			}, suppressed))
 		}
 	}
-	return textResult(renderSearchResponse(resp), localSearchStructured{
+	text := renderSearchResponse(resp)
+	if len(resp.Results) > 0 {
+		text = withRelevance(text, resp.Results[0].RelevanceLine(req, nil))
+	}
+	return textResult(text, localSearchStructured{
 		SearchResponse: resp,
 		OfferID:        offerID,
+		Suppressed:     debugCandidates(suppressed),
 	})
+}
+
+// withRelevance puts the mechanically generated justification directly under
+// the decision line.
+//
+// A reader who cannot see WHY a sample is in front of them has no way to
+// judge it, and a score is not a reason — it is the absence of one. This is
+// the sentence that says which concrete link earned the promotion: a package
+// they named, a symbol they asked about, their own failure fingerprint.
+func withRelevance(text, line string) string {
+	if line == "" || !strings.HasPrefix(text, "DECISION: ") {
+		return text
+	}
+	head, rest, found := strings.Cut(text, "\n")
+	if !found {
+		return text + "\n" + line
+	}
+	return head + "\n" + line + "\n" + rest
+}
+
+// debugCandidates is the suppressed list as it may appear in normal
+// structured output, which is to say: not at all unless asked for.
+//
+// The whole point of the gate is that a weak candidate does not reach the
+// model. Shipping the same candidate back in a neighbouring field would undo
+// it — an agent reads the payload, not the field name. CSX_DEBUG is the seam
+// the diagnostic mode will widen; until then the decision is observable to
+// whoever asks for it and invisible to everybody who did not.
+func debugCandidates(suppressed []domain.SuppressedCandidate) []domain.SuppressedCandidate {
+	if os.Getenv("CSX_DEBUG") == "" {
+		return nil
+	}
+	return suppressed
+}
+
+func withSuppressed(m map[string]any, suppressed []domain.SuppressedCandidate) map[string]any {
+	if c := debugCandidates(suppressed); len(c) > 0 {
+		m["suppressed"] = c
+	}
+	return m
 }
 
 // localSearchStructured deliberately lives in the MCP package rather than
@@ -559,6 +614,10 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 type localSearchStructured struct {
 	domain.SearchResponse
 	OfferID string `json:"offerId,omitempty"`
+	// Suppressed is the retrieval candidates the relevance gate declined to
+	// render, present only under CSX_DEBUG. It is a diagnostic, not an
+	// answer: coordinates and a reason code, never a sample body.
+	Suppressed []domain.SuppressedCandidate `json:"suppressed,omitempty"`
 }
 
 // PackageOverview is the compact "what does the network know about this
@@ -1104,6 +1163,10 @@ type failureRecommendation struct {
 	Match          string `json:"match,omitempty"`
 	Confidence     string `json:"confidence,omitempty"`
 	Text           string `json:"text,omitempty"`
+	// SuppressedReason is the stable code behind Reason's sentence, for a
+	// reader that is a machine. Reason is prose and may be reworded; this
+	// may not.
+	SuppressedReason string `json:"suppressedReason,omitempty"`
 }
 
 func (r failureRecommendation) render() string {
@@ -1190,21 +1253,44 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	// said use it, so a failing npm typecheck was answered with a Dart
 	// sample about package:crypto and the TypeScript error underneath it was
 	// never read.
-	if top.UnrelatedToCommand(argv) {
+	//
+	// The ecosystem question is the narrow half of it. The wide half is that
+	// a sample in the RIGHT language can be just as unrelated: a Go build
+	// failing on a deploy script drew a Go number-formatting sample, and
+	// everything the two had in common was Go 1.26 on linux/amd64. Both
+	// verdicts are the same gate and carry their own stable reason code.
+	if reason := top.SuppressionReason(req, argv); reason != "" {
 		return failureRecommendation{
-			Status:         domain.RecommendationNoRelevantMatch,
-			Classification: domain.RecommendationReferenceCandidate,
-			AdvisoryOnly:   true,
-			Reason:         "the command's toolchain does not overlap the sample's packages, and nothing links this sample to this failure",
-			Match:          string(top.Grade), Confidence: top.Confidence,
-			Text: renderUnrelatedCandidate(argv, top),
+			Status:           domain.RecommendationNoRelevantMatch,
+			Classification:   domain.RecommendationReferenceCandidate,
+			AdvisoryOnly:     true,
+			Reason:           suppressionSentence(reason),
+			SuppressedReason: reason,
+			Match:            string(top.Grade), Confidence: top.Confidence,
+			Text: renderDemotedCandidate(argv, top, reason),
 		}
 	}
 	classification, advisory, reason := top.RecommendationClassification()
 	return failureRecommendation{
 		Status: "FOUND", Classification: classification, AdvisoryOnly: advisory,
 		Reason: reason, Match: string(top.Grade), Confidence: top.Confidence,
-		Text: advisoryDecision(renderSearchResponse(resp), advisory, reason),
+		Text: withRelevance(
+			advisoryDecision(renderSearchResponse(resp), advisory, reason),
+			top.RelevanceLine(req, argv)),
+	}
+}
+
+// suppressionSentence is the human half of a stable reason code.
+func suppressionSentence(reason string) string {
+	switch reason {
+	case domain.SuppressedUnrelatedEcosystem:
+		return "the command's toolchain does not overlap the sample's packages, " +
+			"and nothing links this sample to this failure"
+	case domain.SuppressedInsufficientGoalOverlap:
+		return "this sample shares no package, symbol, error or subject with the failure — " +
+			"only the environment it happens to run in"
+	default:
+		return reason
 	}
 }
 
@@ -1281,8 +1367,8 @@ func failureQuestion(sanitized []string) (query, errorCode string) {
 	return strings.TrimSpace(strings.Join(lines, " ")), errorCode
 }
 
-// renderUnrelatedCandidate is everything a cross-ecosystem hit is allowed to
-// say after a failed command.
+// renderDemotedCandidate is everything a gated hit is allowed to say after a
+// failed command.
 //
 // It names the sample so an agent that wants to look still can, and it says
 // in one line why it is not an answer. What it does not do is reproduce the
@@ -1291,7 +1377,7 @@ func failureQuestion(sanitized []string) (query, errorCode string) {
 // exactly the reading — "COMPATIBLE, so this applies to my error" — that the
 // gate exists to prevent. It is also short on purpose. The local failure is
 // the primary evidence and a secondary note must not be able to bury it.
-func renderUnrelatedCandidate(argv []string, r domain.SearchResult) string {
+func renderDemotedCandidate(argv []string, r domain.SearchResult, reason string) string {
 	var b strings.Builder
 	b.WriteString("MATCH: " + domain.RecommendationNoRelevantMatch +
 		" — the network answered, but not about this failure.\n")
@@ -1299,9 +1385,13 @@ func renderUnrelatedCandidate(argv []string, r domain.SearchResult) string {
 	if len(argv) > 0 {
 		tool = strconv.Quote(argv[0])
 	}
-	if ecosystems := r.SampleEcosystems(); len(ecosystems) > 0 {
+	switch ecosystems := r.SampleEcosystems(); {
+	case reason == domain.SuppressedUnrelatedEcosystem && len(ecosystems) > 0:
 		fmt.Fprintf(&b, "The nearest sample is a %s sample; %s does not build for %s.\n",
 			strings.Join(ecosystems, "/"), tool, strings.Join(ecosystems, "/"))
+	default:
+		fmt.Fprintf(&b, "The nearest sample shares no package, symbol, error or subject with "+
+			"what %s was doing — only the environment both happen to run in.\n", tool)
 	}
 	if r.Case != nil && len(r.Case.Packages) > 0 {
 		b.WriteString("Its packages: " + strings.Join(r.Case.Packages, ", ") + "\n")
