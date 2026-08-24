@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -139,12 +140,15 @@ type hypothesisView struct {
 }
 
 type clusterView struct {
-	Symbol              string
-	Stage               string
-	ErrorCode           string
-	Fingerprint         string
-	Termination         string
-	ErrorSummary        string
+	Symbol       string
+	Stage        string
+	ErrorCode    string
+	Fingerprint  string
+	Termination  string
+	ErrorSummary string
+	// ErrorSummaryFull is the whole stored text when ErrorSummary had to be
+	// cut to stay a line, and empty when nothing was withheld.
+	ErrorSummaryFull    string
 	EvidenceQuality     string
 	EvidenceGap         bool
 	EnvironmentVariants int
@@ -367,11 +371,13 @@ func buildClusters(clusters []failureCluster) []clusterView {
 				Pct:    i18n.FormatPercent("en", h.Confidence),
 			})
 		}
+		summary, withheld := clusterErrorSummary(c.ErrorSummary)
 		at[key] = len(out)
 		out = append(out, clusterView{
 			Symbol: c.Symbol, Stage: c.Stage, ErrorCode: c.ErrorCode,
 			Fingerprint: shortHash(fingerprint), Count: count,
-			Termination: terminationLabel(c), ErrorSummary: c.ErrorSummary,
+			Termination:  terminationLabel(c),
+			ErrorSummary: summary, ErrorSummaryFull: withheld,
 			EvidenceQuality:     c.EvidenceQuality,
 			EvidenceGap:         evidenceGap,
 			EnvironmentVariants: len(c.EnvVariants), DiagnosticCandidate: c.DiagnosticCandidate,
@@ -382,6 +388,35 @@ func buildClusters(clusters []failureCluster) []clusterView {
 		})
 	}
 	return out
+}
+
+// clusterErrorSummaryDisplayBytes is what a cluster row can spend on the
+// normalized error and still read as one line. The producer cap is 512 bytes,
+// which is a paragraph: the first modern cluster production recorded was a Go
+// test failure block joined with " · " and the page printed the whole thing,
+// cut mid-word where the byte cap landed.
+const clusterErrorSummaryDisplayBytes = 160
+
+// clusterErrorSummary returns what the row shows and, when that is less than
+// the whole, the full stored text for the title. Nothing is dropped: the same
+// treatment the verifier image digest gets, where the label is shortened and
+// the value stays reachable.
+func clusterErrorSummary(summary string) (display, full string) {
+	if len(summary) <= clusterErrorSummaryDisplayBytes {
+		return summary, ""
+	}
+	cut := summary[:clusterErrorSummaryDisplayBytes]
+	// Prefer the segment boundary the normalizer itself wrote.
+	if i := strings.LastIndex(cut, " · "); i > 0 {
+		return summary[:i] + " …", summary
+	}
+	if i := strings.LastIndex(cut, " "); i > 0 {
+		cut = summary[:i]
+	}
+	for !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return strings.TrimSpace(cut) + " …", summary
 }
 
 func terminationLabel(c failureCluster) string {

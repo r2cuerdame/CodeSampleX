@@ -1,12 +1,42 @@
 package httpapi
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
+
+func TestPreservedFailureFingerprintDoesNotBecomeEnvironmentWarning(t *testing.T) {
+	store := serverstore.NewFake()
+	fingerprint := "sha256:" + strings.Repeat("ab", 32)
+	if err := store.UpsertFailureCluster(t.Context(), serverstore.ClusterRow{
+		Ecosystem: "npm", PackageName: "axios", Symbol: "axios.post",
+		Stage: "PROJECT_COMPILE", ErrorFingerprint: fingerprint,
+		EvidenceQuality: "legacy-evidence-incomplete", ObservationCount: 7,
+		EnvSummaryJSON: `{"os":"windows","runtime":"node@22.18"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/search", nil)
+	known, exactPackages := (&api{d: Deps{Store: store}}).matchingClusters(
+		req,
+		[]domain.PURL{{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}},
+		nodeEnv("esm"),
+		domain.SearchRequest{ErrorFingerprint: fingerprint},
+		[]string{"axios.post"},
+	)
+	if len(exactPackages) != 1 {
+		t.Fatalf("exact fingerprint packages = %v, want axios", exactPackages)
+	}
+	if len(known) != 0 {
+		t.Fatalf("preserved row leaked into environment warnings: %+v", known)
+	}
+}
 
 func TestServerSearchExposesOnlyExactRecordedFailureFingerprint(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
