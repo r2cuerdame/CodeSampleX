@@ -17,17 +17,14 @@ health=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz)
 # current builder collapses missing/legacy fingerprints to error_fp='', so
 # only that row is live; non-empty legacy rows remain recoverable historical
 # material and must not double the current cluster observation invariant.
-failure_cluster_observations=$(docker compose exec -T db psql -U csx -d csx -Atqc "
-  SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
-  WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
-     OR COALESCE(error_fp,'') = ''")
-
-invariants=$(docker compose exec -T db psql -U csx -d csx -v failure_cluster_observations="$failure_cluster_observations" -Atqc "
+invariants=$(docker compose exec -T db psql -U csx -d csx -Atqc "
 SELECT json_build_object(
   'pass', COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   'fail', COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
   'publishedSamples', (SELECT count(*) FROM samples WHERE status='PUBLISHED'),
-  'failureClusterObservations', :'failure_cluster_observations'::bigint,
+  'failureClusterObservations', (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
+    WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+       OR COALESCE(error_fp,'') = ''),
   'pgxParseConfigPass', COALESCE(SUM(observation_count) FILTER (
     WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
   'pgxParseConfigFail', COALESCE(SUM(observation_count) FILTER (

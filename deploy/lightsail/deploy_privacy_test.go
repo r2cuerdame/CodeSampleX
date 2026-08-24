@@ -230,6 +230,9 @@ func TestProductionEvidenceIgnoresPreservedLegacyClusterRows(t *testing.T) {
 		if strings.Contains(script, `(SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters)`) {
 			t.Errorf("%s still sums every historical and current failure-cluster row", name)
 		}
+		if strings.Contains(script, `:'failure_cluster_observations'`) || strings.Contains(script, `-v failure_cluster_observations=`) {
+			t.Errorf("%s relies on psql variable interpolation inside -c, which psql leaves as invalid SQL", name)
+		}
 	}
 }
 
