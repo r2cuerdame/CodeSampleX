@@ -10,11 +10,7 @@ def replace_once(path, old, new):
         raise SystemExit(f"expected one occurrence in {path}, got {s.count(old)}")
     p.write_text(s.replace(old, new, 1), encoding="utf-8")
 
-# Public v2 FailureEvidence must be independently canonicalizable by the
-# receiver. The producer's full public-package allowlist is not part of an
-# ObservationBatch or receipt, so retaining node_modules/<public-name> makes
-# canonicality depend on client-only context. Keep Sanitize() behavior for its
-# other callers, but public v2 evidence always strips node_modules paths.
+# Public v2 FailureEvidence must be independently canonicalizable by the receiver.
 replace_once(
     "internal/sanitizer/sanitizer.go",
     "func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTermination, publicPkgs []string) domain.FailureEvidence {\n\tsan := Sanitize(raw, stage, publicPkgs)",
@@ -26,17 +22,12 @@ replace_once(
     "\t\tf.Fingerprint = domain.FailureFingerprint(stage, term, san.Code, summary)"
 )
 
-# One canonical v2 fingerprint constructor shared by all producers and both
-# server validation paths.
 replace_once(
     "internal/domain/failure.go",
     "// FailureEnvironmentVariant is one exact recorded environment bucket inside\n",
     "// FailureFingerprint returns the canonical v2 cluster identity for modern\n// failure evidence. Package/version and exact environment are intentionally\n// outside this hash and remain structured dimensions beside the cluster.\nfunc FailureFingerprint(stage Stage, term FailureTermination, errorCode, errorSummary string) string {\n\treturn SHA256Hex([]byte(\"v2|\" + string(stage) + \"|\" + term.FingerprintCoordinate() + \"|\" + errorCode + \"|\" + errorSummary))\n}\n\n// FailureEnvironmentVariant is one exact recorded environment bucket inside\n"
 )
 
-# Remove the earlier root-package allowlist workaround. It was incomplete for
-# dependency package names and impossible to mirror for receipts. After the
-# producer contract above, canonical validation deliberately needs no allowlist.
 replace_once(
     "internal/serverstore/validate.go",
     "\tif err := validFailureEvidence(b, p.Name); err != nil {",
@@ -58,21 +49,15 @@ replace_once(
     "\t\texpected := domain.FailureFingerprint(b.Stage, term, b.ErrorCode, b.ErrorSummary)"
 )
 
-# Receipt validation uses the exact same fingerprint constructor.
 replace_once(
     "internal/httpapi/verifications.go",
     "\t\t\twant := domain.SHA256Hex([]byte(\"v2|\" + strings.ToUpper(stage) + \"|\" + term.FingerprintCoordinate() + \"|\" + failure.ErrorCode + \"|\" + failure.ErrorSummary))",
     "\t\t\twant := domain.FailureFingerprint(domain.Stage(strings.ToUpper(stage)), term, failure.ErrorCode, failure.ErrorSummary)"
 )
 
-# Replace the wrong regression contract that expected node_modules/react to
-# survive in public FailureEvidence.
 p = Path("internal/serverstore/failure_evidence_review_test.go")
 s = p.read_text(encoding="utf-8")
-s = s.replace(
-    "func TestValidateBatchPreservesProducerAllowedPublicNodeModuleName(t *testing.T) {",
-    "func TestValidateBatchAcceptsCanonicalFailureWithoutNodeModuleLeak(t *testing.T) {",
-)
+s = s.replace("func TestValidateBatchPreservesProducerAllowedPublicNodeModuleName(t *testing.T) {", "func TestValidateBatchAcceptsCanonicalFailureWithoutNodeModuleLeak(t *testing.T) {")
 s = s.replace(
     "\tif !strings.Contains(f.ErrorSummary, \"node_modules/react\") {\n\t\tt.Fatalf(\"fixture did not preserve public package token: %q\", f.ErrorSummary)\n\t}",
     "\tif strings.Contains(f.ErrorSummary, \"node_modules/react\") {\n\t\tt.Fatalf(\"public failure evidence retained a client-only package path token: %q\", f.ErrorSummary)\n\t}\n\tif !strings.Contains(f.ErrorSummary, \"<path>\") {\n\t\tt.Fatalf(\"node_modules path was not normalized: %q\", f.ErrorSummary)\n\t}",
@@ -80,8 +65,6 @@ s = s.replace(
 s = s.replace("producer-canonical summary was rejected", "canonical v2 summary was rejected")
 p.write_text(s, encoding="utf-8")
 
-# Receipt regression proves verifier callers may pass public names but the wire
-# evidence remains independently revalidatable by the server.
 p = Path("internal/httpapi/failure_evidence_test.go")
 s = p.read_text(encoding="utf-8")
 s = s.replace(
@@ -89,3 +72,20 @@ s = s.replace(
     'failure := sanitizer.SanitizeFailure("at render (/tmp/app/node_modules/react/index.js:42:7): connection refused 127.0.0.1:5432", domain.StageContract,\n\t\tdomain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}, []string{"react"})\n\tif strings.Contains(failure.ErrorSummary, "node_modules/react") {\n\t\tt.Fatalf("receipt failure retained client-only package path token: %q", failure.ErrorSummary)\n\t}',
 )
 p.write_text(s, encoding="utf-8")
+
+# Existing compatibility fixtures predate the modern contract and used arbitrary
+# SHA values while also declaring complete structured evidence. Keep the tests'
+# semantics, but derive the fingerprint from the exact fixture evidence.
+replace_once(
+    "internal/compatibility/builder_test.go",
+    "\t\tif result == domain.ResultFail {\n\t\t\texitCode := 1\n\t\t\tb.TerminationKind = domain.TerminationExit\n\t\t\tb.ExitCode = &exitCode\n\t\t\tb.ErrorSummary = \"ERR_REQUIRE_ESM normalized failure\"\n\t\t\tb.EvidenceQuality = domain.EvidenceComplete\n\t\t}\n\t\treturn b",
+    "\t\tif result == domain.ResultFail {\n\t\t\texitCode := 1\n\t\t\tb.TerminationKind = domain.TerminationExit\n\t\t\tb.ExitCode = &exitCode\n\t\t\tb.ErrorSummary = \"ERR_REQUIRE_ESM normalized failure\"\n\t\t\tb.EvidenceQuality = domain.EvidenceComplete\n\t\t\tb.ErrorFingerprint = domain.FailureFingerprint(stage, domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}, b.ErrorCode, b.ErrorSummary)\n\t\t}\n\t\treturn b"
+)
+
+# The cluster-scope test needs the expected key and ingested key to be the same
+# canonical fingerprint, not a historical placeholder SHA.
+replace_once(
+    "internal/compatibility/clusterscope_test.go",
+    "\tfp := \"sha256:\" + strings.Repeat(\"f1\", 32)",
+    "\texitCode := 1\n\tfp := domain.FailureFingerprint(domain.StageProjectTest, domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}, \"E_BOOM\", \"E_BOOM normalized failure\")"
+)
