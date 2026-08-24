@@ -1,4 +1,5 @@
 name: Production deploy
+run-name: Production deploy ${{ inputs.commit_sha }}
 
 on:
   workflow_dispatch:
@@ -20,7 +21,7 @@ on:
         description: ProjectOps decision gate
         required: true
         type: choice
-        options: [no, yes]
+        options: ['no', 'yes']
       side_effect_class:
         description: ProjectOps deploy taxonomy
         required: true
