@@ -1,0 +1,52 @@
+name: R2C-152 precise review repair
+
+on:
+  push:
+    branches:
+      - r2cuerdame/R2C-152-normalized-failure-fingerprint-exit-stderr
+    paths:
+      - .github/workflows/r2c152-correct-review-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Apply precise review repair
+        run: python3 .github/r2c152_correct_fix.py
+
+      - name: Format
+        run: gofmt -w internal/domain/failure.go internal/sanitizer/sanitizer.go internal/serverstore/validate.go internal/serverstore/failure_evidence_review_test.go internal/httpapi/verifications.go internal/httpapi/failure_evidence_test.go
+
+      - name: Targeted regression tests
+        run: go test ./internal/domain ./internal/sanitizer ./internal/serverstore ./internal/httpapi -count=1 -timeout 12m
+
+      - name: Full unit and contract tests
+        run: go test ./... -count=1 -timeout 12m
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Persist repair and remove temporary harness
+        shell: bash
+        run: |
+          rm -f .github/r2c152_correct_fix.py .github/workflows/r2c152-correct-review-fix.yml
+          git config user.name "r2c152-review-repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to persist"
+            exit 1
+          fi
+          git commit -m "fix: address R2C-152 failure evidence review"
+          git push origin HEAD:r2cuerdame/R2C-152-normalized-failure-fingerprint-exit-stderr
