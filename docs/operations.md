@@ -21,7 +21,7 @@ r2cuerdame) → `%USERPROFILE%\.ssh\lightsail-csx-r3`.
 ## Deploy / upgrade
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts
 ```
 
 Builds the linux/amd64 image locally (the 2GB host never builds), ships it +
@@ -32,6 +32,62 @@ permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
 user.
 Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
 The exact release set also includes `csx-update-stable.json`.
+
+The SSH host key is pinned. `deploy.ps1` uses `StrictHostKeyChecking=yes` and
+never learns a first-seen key during a deployment. Populate `known_hosts` from
+the Lightsail host-key fingerprint verified through the AWS console/account
+surface; do not make `ssh-keyscan` over the same untrusted network the source
+of trust.
+
+### Automatic production rollout after `main`
+
+`.github/workflows/production-deploy.yml` is separate from `release.yml`.
+ProjectOps dispatches it only after the immutable target SHA is in canonical
+`main`, the required `Test` check succeeded, Auditor `MergeVerdict=pass`,
+`requires_human_decision=no`, and the side effect class is `safe` or
+`additive-migration`. The dispatch also names the currently served known-good
+SHA. The workflow rejects drift between that SHA and the host before changing
+anything, and `codesamplex-production` concurrency serializes all rollouts.
+
+The `codesamplex-production` GitHub Environment owns only:
+
+- secret `CSX_PRODUCTION_SSH_KEY` — the dedicated deploy identity;
+- secret `CSX_PRODUCTION_KNOWN_HOSTS` — the verified host-key line;
+- variable `CSX_PRODUCTION_HOST` — the production address;
+- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`.
+
+It must not contain the updater signing seed, registry identity, release-write
+token, DNS/ruleset credentials, or a general AWS administrator credential.
+Conversely, the release signing Environment must not contain the production
+SSH identity. Only the workflow's `deploy` job enters the production
+Environment; eligibility has no secret access.
+
+`cmd/csx-deploy-gate` is the shared fail-closed eligibility check used by the
+workflow and available to ProjectOps before dispatch. Existing migrations may
+not be edited or removed. New migrations declared `additive-migration` may add
+columns and run the bounded evidence-quality backfill used by the R2C-152
+`0024_failure_evidence.sql` fixture. The automatic path uses an allowlist, so
+every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
+UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
+
+The deploy transaction verifies the running `CSX_VERSION` and OCI revision
+label against the dispatched SHA, the latest `schema_migrations` row against
+the checked-out migration set, `/healthz`, the public page/API/install smokes,
+and monotonic PASS/FAIL/published-sample/failure-cluster totals. The pgx
+v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
+before commit enters the existing exact image/config/environment rollback.
+The automatic wrapper also refuses to start if the retired query-bearing
+access logs still exist. Removing those logs is an irreversible privacy
+cleanup and therefore remains a named manual operation; a `safe` or
+`additive-migration` dispatch never deletes them as a side effect.
+
+Every run uploads `production-deploy-evidence.json`, including run URL/id,
+target and previous SHA, image digest, migration version, health/smoke result,
+before/after invariants, and rollback outcome. ProjectOps and the independent
+Auditor must read that artifact and the GitHub run conclusion; an Agent comment
+alone is not production evidence. A failed SHA is not redispatched in a loop:
+ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
+cooldown, while an explicit new dispatch remains an auditable recovery action.
 
 **A normal release is unattended.** Pushing a `v*` tag is the decision; nothing
 after it waits for a person. The release either completes or fails closed, and
@@ -130,7 +186,7 @@ The admin route is fail-closed: it stays indistinguishable from an unknown path
 deployment with:
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -ConfigureAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -ConfigureAdmin
 ```
 
 `-ConfigureAdmin` creates a 256-bit random password with the Windows CSPRNG and
@@ -144,7 +200,7 @@ When the running image already contains the dashboard and only its deployment
 wiring is being activated, the same operation may reuse the installed image:
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -SkipImage -ConfigureAdmin
 ```
 
 The deploy verifies `/healthz` and then requires an unauthenticated `/admin`
@@ -192,7 +248,7 @@ Rotate the password with a full deploy (omit `-SkipImage` when a new image is
 also required):
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin -RotateAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -SkipImage -ConfigureAdmin -RotateAdmin
 ```
 
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and

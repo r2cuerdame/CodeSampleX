@@ -46,7 +46,7 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	for _, required := range []string{
 		`function Invoke-RemoteScript([string]$Script)`,
 		`$process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)`,
-		`$psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "sh -s"'`,
+		`$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "sh -s"'`,
 		`Invoke-RemoteScript $caddyConfigPreflight`,
 		`Invoke-RemoteScript $promoteCaddy`,
 		`Invoke-RemoteScript $safeAccessLogSmoke`,
@@ -287,6 +287,8 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 		`throw "healthz never returned ok"`,
 		`Invoke-RemoteScript $adminProbe`,
 		`Invoke-RemoteScript $activitySmoke`,
+		`throw "served SHA does not match the immutable deployment revision"`,
+		`throw "complete + partial + missing + legacy-evidence-incomplete does not equal FAIL"`,
 		`landing sample:`,
 		`Invoke-RemoteScript $legacyAccessPurge`,
 		`Invoke-RemoteScript $commitDeployment`,
@@ -352,6 +354,23 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 	}
 	if strings.Contains(script, `Copy-Remote (Join-Path $repo "deploy\docker-compose.yml") "/opt/codesamplex/deploy/docker-compose.yml"`) {
 		t.Fatal("new compose config overwrites the live config before the rollback snapshot and activation transaction")
+	}
+}
+
+func TestAutomaticDeployNeverPerformsTheIrreversibleLegacyLogPurge(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	wrapper := readDeployFixture(t, "deploy-production.ps1")
+	for _, required := range []string{
+		`[switch]$RequireNoLegacyAccessLogs`,
+		`legacy query-bearing access log requires a manual privacy cleanup`,
+		`automatic deploy performed no irreversible legacy-log cleanup`,
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("automatic deployment privacy gate is missing %q", required)
+		}
+	}
+	if !strings.Contains(wrapper, `-RequireNoLegacyAccessLogs`) {
+		t.Fatal("the production Actions wrapper can still execute the irreversible legacy-log purge")
 	}
 }
 
