@@ -33,7 +33,7 @@ func reviewBatch(f domain.FailureEvidence) domain.ObservationBatch {
 	}
 }
 
-func TestValidateBatchPreservesProducerAllowedPublicNodeModuleName(t *testing.T) {
+func TestValidateBatchAcceptsCanonicalFailureWithoutNodeModuleLeak(t *testing.T) {
 	exitCode := 1
 	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
 	f := sanitizer.SanitizeFailure(
@@ -42,11 +42,14 @@ func TestValidateBatchPreservesProducerAllowedPublicNodeModuleName(t *testing.T)
 		term,
 		[]string{"react"},
 	)
-	if !strings.Contains(f.ErrorSummary, "node_modules/react") {
-		t.Fatalf("fixture did not preserve public package token: %q", f.ErrorSummary)
+	if strings.Contains(f.ErrorSummary, "node_modules/react") {
+		t.Fatalf("public failure evidence retained a client-only package path token: %q", f.ErrorSummary)
+	}
+	if !strings.Contains(f.ErrorSummary, "<path>") {
+		t.Fatalf("node_modules path was not normalized: %q", f.ErrorSummary)
 	}
 	if err := ValidateBatch(reviewBatch(f)); err != nil {
-		t.Fatalf("producer-canonical summary was rejected: %v", err)
+		t.Fatalf("canonical v2 summary was rejected: %v", err)
 	}
 }
 

@@ -56,6 +56,13 @@ func (f FailureEvidence) Termination() FailureTermination {
 	return FailureTermination{Kind: f.TerminationKind, ExitCode: f.ExitCode, Signal: f.Signal, TimeoutMillis: f.TimeoutMillis}
 }
 
+// FailureFingerprint returns the canonical v2 cluster identity for modern
+// failure evidence. Package/version and exact environment are intentionally
+// outside this hash and remain structured dimensions beside the cluster.
+func FailureFingerprint(stage Stage, term FailureTermination, errorCode, errorSummary string) string {
+	return SHA256Hex([]byte("v2|" + string(stage) + "|" + term.FingerprintCoordinate() + "|" + errorCode + "|" + errorSummary))
+}
+
 // FailureEnvironmentVariant is one exact recorded environment bucket inside
 // a cluster fingerprint. Keeping variants outside the cluster identity avoids
 // cardinality explosions while preserving where the failure reproduced.

@@ -331,6 +331,7 @@ func seedBuilderFixture(t *testing.T, store *serverstore.Fake) (samplePURL, samp
 			b.ExitCode = &exitCode
 			b.ErrorSummary = "ERR_REQUIRE_ESM normalized failure"
 			b.EvidenceQuality = domain.EvidenceComplete
+			b.ErrorFingerprint = domain.FailureFingerprint(stage, domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}, b.ErrorCode, b.ErrorSummary)
 		}
 		return b
 	}

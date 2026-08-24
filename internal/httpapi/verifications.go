@@ -132,7 +132,7 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 			return fmt.Errorf("stageFailures.%s has invalid evidence quality", stage)
 		}
 		if failure.EvidenceQuality != domain.EvidenceMissing {
-			want := domain.SHA256Hex([]byte("v2|" + strings.ToUpper(stage) + "|" + term.FingerprintCoordinate() + "|" + failure.ErrorCode + "|" + failure.ErrorSummary))
+			want := domain.FailureFingerprint(domain.Stage(strings.ToUpper(stage)), term, failure.ErrorCode, failure.ErrorSummary)
 			if failure.Fingerprint != want {
 				return fmt.Errorf("stageFailures.%s fingerprint does not match its evidence", stage)
 			}

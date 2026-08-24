@@ -167,8 +167,11 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 // intentionally the cluster identity only: package/version scope and exact
 // environment variants are stored beside it by aggregation, so an otherwise
 // identical failure does not split merely because it ran on another machine.
-func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTermination, publicPkgs []string) domain.FailureEvidence {
-	san := Sanitize(raw, stage, publicPkgs)
+func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTermination, _ []string) domain.FailureEvidence {
+	// Public FailureEvidence must be canonical without trusting producer-only
+	// allowlists. Package identity already travels separately as structured
+	// PURLs/receipt data, so node_modules paths are normalized here.
+	san := Sanitize(raw, stage, nil)
 	summary := PublicErrorSummary(san.Template)
 	quality := domain.EvidenceMissing
 	structured := term.Structured()
@@ -188,7 +191,7 @@ func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTerminat
 		EvidenceQuality: quality,
 	}
 	if quality != domain.EvidenceMissing {
-		f.Fingerprint = domain.SHA256Hex([]byte("v2|" + string(stage) + "|" + term.FingerprintCoordinate() + "|" + san.Code + "|" + summary))
+		f.Fingerprint = domain.FailureFingerprint(stage, term, san.Code, summary)
 	}
 	return f
 }

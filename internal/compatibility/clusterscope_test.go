@@ -27,7 +27,8 @@ func TestAnIncrementalPassDoesNotShrinkAFailureCluster(t *testing.T) {
 
 	old := "pkg:npm/axios@0.27.2"
 	recent := "pkg:npm/axios@1.12.0"
-	fp := "sha256:" + strings.Repeat("f1", 32)
+	exitCode := 1
+	fp := domain.FailureFingerprint(domain.StageProjectTest, domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}, "E_BOOM", "E_BOOM normalized failure")
 
 	// 100 failures on the old version from windows, 50 on the new from linux.
 	ingest(t, store, old, "get", fp, "windows", 100)
