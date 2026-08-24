@@ -71,6 +71,24 @@ type Recorder struct {
 //   - Symbol sightings are stored with the rotating project bucket
 //     derived from the absolute project path (HMAC, irreversible).
 func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanResult, profile scanner.CommandProfile, exitCode int, failureTail string) error {
+	if exitCode == 0 {
+		return r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, failureTail)
+	}
+	code := exitCode
+	return r.recordRun(ctx, dir, res, profile, true,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}, failureTail)
+}
+
+// RecordTerminatedRun records a caller-observed structured termination,
+// including exit, timeout, signal, and process-start failure. Callers pass the
+// structured state; this method never guesses one from missing fields.
+func (r *Recorder) RecordTerminatedRun(ctx context.Context, dir string, res *scanner.ScanResult,
+	profile scanner.CommandProfile, term domain.FailureTermination, failureTail string) error {
+	return r.recordRun(ctx, dir, res, profile, true, term, failureTail)
+}
+
+func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanResult,
+	profile scanner.CommandProfile, failed bool, term domain.FailureTermination, failureTail string) error {
 	if res == nil {
 		return nil
 	}
@@ -166,25 +184,30 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 	}
 
 	result := domain.ResultPass
-	errFP, errCode := "", ""
-	if exitCode != 0 {
+	failure := domain.FailureEvidence{}
+	if failed {
 		result = domain.ResultFail
-		san := sanitizer.Sanitize(failureTail, profile.Stage, publicNames)
-		errFP, errCode = san.Fingerprint, san.Code
+		failure = sanitizer.SanitizeFailure(failureTail, profile.Stage, term, publicNames)
 	}
 
 	for _, key := range publicKeys {
 		err := r.DB.RecordObservation(ctx, localdb.ObsKey{
-			Epoch:      epoch,
-			PURL:       key,
-			EnvHash:    envHash,
-			Stage:      profile.Stage,
-			Result:     result,
-			ErrorFP:    errFP,
-			ErrorCode:  errCode,
-			Direct:     direct[key],
-			Coresident: coresident[key],
-			DependsOn:  edges[key],
+			Epoch:           epoch,
+			PURL:            key,
+			EnvHash:         envHash,
+			Stage:           profile.Stage,
+			Result:          result,
+			ErrorFP:         failure.Fingerprint,
+			ErrorCode:       failure.ErrorCode,
+			TerminationKind: failure.TerminationKind,
+			ExitCode:        failure.ExitCode,
+			Signal:          failure.Signal,
+			TimeoutMillis:   failure.TimeoutMillis,
+			ErrorSummary:    failure.ErrorSummary,
+			EvidenceQuality: failure.EvidenceQuality,
+			Direct:          direct[key],
+			Coresident:      coresident[key],
+			DependsOn:       edges[key],
 		}, 1)
 		if err != nil {
 			return err
@@ -207,8 +230,14 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 			EnvHash:          envHash,
 			Stage:            profile.Stage,
 			Result:           result,
-			ErrorFP:          errFP,
-			ErrorCode:        errCode,
+			ErrorFP:          failure.Fingerprint,
+			ErrorCode:        failure.ErrorCode,
+			TerminationKind:  failure.TerminationKind,
+			ExitCode:         failure.ExitCode,
+			Signal:           failure.Signal,
+			TimeoutMillis:    failure.TimeoutMillis,
+			ErrorSummary:     failure.ErrorSummary,
+			EvidenceQuality:  failure.EvidenceQuality,
 			Direct:           direct[key],
 		}, 1)
 		if err != nil {

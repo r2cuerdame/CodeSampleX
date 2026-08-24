@@ -542,6 +542,28 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    for the one-variable rollback.
 ```
 
+## Structured failure evidence rollout
+
+Migration `0024_failure_evidence.sql` is additive. It adds termination,
+normalized summary, quality, environment-variant, and diagnostic-candidate
+columns. Existing FAIL rows default to `legacy-evidence-incomplete`; existing
+PASS rows are reset to an empty quality. The migration does not fabricate an
+exit code or error summary and does not rewrite historical counts.
+
+After deployment, rebuild compatibility snapshots and compare these invariants
+on a known fixture such as `github.com/jackc/pgx/v5@v5.10.0 / ParseConfig`:
+
+1. PASS and FAIL totals are unchanged.
+2. `complete + partial + missing + legacy-evidence-incomplete = FAIL`.
+3. legacy rows render as Evidence gaps, not “error code not recorded”.
+4. a new failing command renders its structured termination, normalized
+   summary, and recorded environment variant.
+5. repeated missing/legacy clusters are marked diagnostic candidates.
+
+Rollback the application before rolling back the schema. The new columns are
+additive and safe to leave in place; dropping them would destroy newly captured
+evidence and is intentionally not part of an automatic rollback.
+
 ### Running csx-server on Windows
 
 Production csx-server is a Linux container binary; the Windows builds are the

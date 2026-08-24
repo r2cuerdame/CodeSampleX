@@ -183,6 +183,15 @@ type ObservationBatch struct {
 	ObservationCount int                    `json:"observationCount"`
 	ErrorFingerprint string                 `json:"errorFingerprint,omitempty"`
 	ErrorCode        string                 `json:"errorCode,omitempty"`
+	// Structured failure evidence. These optional fields preserve wire
+	// compatibility with pre-v2 clients; an omitted quality on a FAIL is
+	// stored as legacy-evidence-incomplete, never upgraded by inference.
+	TerminationKind TerminationKind `json:"terminationKind,omitempty"`
+	ExitCode        *int            `json:"exitCode,omitempty"`
+	Signal          string          `json:"signal,omitempty"`
+	TimeoutMillis   int64           `json:"timeoutMillis,omitempty"`
+	ErrorSummary    string          `json:"errorSummary,omitempty"`
+	EvidenceQuality EvidenceQuality `json:"evidenceQuality,omitempty"`
 	// Direct says the reporter listed this package in their own manifest
 	// rather than receiving it through somebody else's.
 	//
@@ -301,6 +310,10 @@ type VerificationReceipt struct {
 	EnvironmentHash string                 `json:"environmentHash"`
 	Environment     EnvironmentFingerprint `json:"environment"`
 	Stages          map[string]string      `json:"stages"` // stage → PASS|FAIL|SKIPPED
+	// StageFailures carries secret-safe structured evidence only for failed
+	// stages. Full logs remain local and LogsDigest continues to attest to
+	// them without publishing their contents.
+	StageFailures map[string]FailureEvidence `json:"stageFailures,omitempty"`
 	// ResolvedPackages is what the resolve stage ACTUALLY installed, read
 	// out of the lockfile it generated, as purls.
 	//

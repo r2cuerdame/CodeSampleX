@@ -61,12 +61,15 @@ func TestAnIncrementalPassDoesNotShrinkAFailureCluster(t *testing.T) {
 
 func ingest(t *testing.T, store *serverstore.Fake, purl, symbol, fp, os string, count int) {
 	t.Helper()
+	exitCode := 1
 	_, rejected, err := store.IngestBatches(context.Background(), []domain.ObservationBatch{{
 		SchemaVersion: 1, Epoch: "2026-08-15", AnonID: "anon" + os, ProjectBucket: "proj" + os,
 		Package: purl, Symbol: symbol, SymbolConfidence: domain.SymbolProbable,
 		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: os, Arch: "x64"},
 		Stage:       domain.StageProjectTest, Result: domain.ResultFail,
 		ErrorFingerprint: fp, ErrorCode: "E_BOOM", ObservationCount: count,
+		TerminationKind: domain.TerminationExit, ExitCode: &exitCode,
+		ErrorSummary: "E_BOOM normalized failure", EvidenceQuality: domain.EvidenceComplete,
 	}})
 	if err != nil || len(rejected) > 0 {
 		t.Fatalf("ingest: %v %v", err, rejected)

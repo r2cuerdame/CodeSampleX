@@ -30,7 +30,7 @@ func envBrowser(family, major string) domain.EnvironmentFingerprint {
 func evRow(purl, symbol string, env domain.EnvironmentFingerprint, stage string,
 	result string, count int64, fp, code string, peers int) serverstore.EvidenceRow {
 	env = env.Normalize()
-	return serverstore.EvidenceRow{
+	row := serverstore.EvidenceRow{
 		PURL: purl, Symbol: symbol,
 		SymbolConfidence: "PROBABLE",
 		EnvHash:          env.Hash(),
@@ -40,6 +40,14 @@ func evRow(purl, symbol string, env domain.EnvironmentFingerprint, stage string,
 		ObservationCount: count, UniquePeerBuckets: peers,
 		FirstSeen: testNow.Add(-24 * time.Hour), LastSeen: testNow,
 	}
+	if result == string(domain.ResultFail) && fp != "" {
+		exitCode := 1
+		row.TerminationKind = string(domain.TerminationExit)
+		row.ExitCode = &exitCode
+		row.ErrorSummary = "normalized failure"
+		row.EvidenceQuality = string(domain.EvidenceComplete)
+	}
+	return row
 }
 
 // --- snapshot ---------------------------------------------------------------
@@ -311,12 +319,20 @@ func seedBuilderFixture(t *testing.T, store *serverstore.Fake) (samplePURL, samp
 
 	batch := func(anon, project, pkg, symbol string, env domain.EnvironmentFingerprint,
 		stage domain.Stage, result domain.Result, count int, fp, code string) domain.ObservationBatch {
-		return domain.ObservationBatch{
+		b := domain.ObservationBatch{
 			SchemaVersion: 1, Epoch: "2026-08-13", AnonID: anon, ProjectBucket: project,
 			Package: pkg, Symbol: symbol, SymbolConfidence: domain.SymbolProbable,
 			Environment: env, Stage: stage, Result: result, ObservationCount: count,
 			ErrorFingerprint: fp, ErrorCode: code,
 		}
+		if result == domain.ResultFail {
+			exitCode := 1
+			b.TerminationKind = domain.TerminationExit
+			b.ExitCode = &exitCode
+			b.ErrorSummary = "ERR_REQUIRE_ESM normalized failure"
+			b.EvidenceQuality = domain.EvidenceComplete
+		}
+		return b
 	}
 	fp := "sha256:" + strings.Repeat("ab", 32)
 	batches := []domain.ObservationBatch{

@@ -75,6 +75,12 @@ type fakeAggMeta struct {
 	symbolConfidence string
 	envJSON          string
 	errorCode        string
+	terminationKind  string
+	exitCode         *int
+	signal           string
+	timeoutMillis    int64
+	errorSummary     string
+	evidenceQuality  string
 	// direct: the reporter listed this package in their own manifest. Chosen
 	// wins and never unsays itself.
 	direct    bool
@@ -210,6 +216,18 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	}
 	if meta.errorCode == "" {
 		meta.errorCode = b.ErrorCode
+	}
+	if meta.terminationKind == "" {
+		meta.terminationKind = string(b.TerminationKind)
+		meta.exitCode = b.ExitCode
+		meta.signal = b.Signal
+		meta.timeoutMillis = b.TimeoutMillis
+	}
+	if meta.errorSummary == "" {
+		meta.errorSummary = b.ErrorSummary
+	}
+	if meta.evidenceQuality == "" {
+		meta.evidenceQuality = normalizedEvidenceQuality(b)
 	}
 	meta.lastSeen = now
 	f.merge.apply(b)
@@ -498,6 +516,9 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			EnvHash:          k.EnvHash, EnvJSON: meta.envJSON,
 			Stage: k.Stage, Result: k.Result,
 			ErrorFingerprint: k.ErrorFP, ErrorCode: meta.errorCode, Direct: meta.direct,
+			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
+			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
+			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),
@@ -1331,14 +1352,18 @@ func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 	now := f.now()
 	if prev, ok := f.clusters[k]; ok {
 		c.ID = prev.ID
-		c.FirstSeen = prev.FirstSeen
+		if c.FirstSeen.IsZero() || (!prev.FirstSeen.IsZero() && prev.FirstSeen.Before(c.FirstSeen)) {
+			c.FirstSeen = prev.FirstSeen
+		}
 	} else {
 		c.ID = int64(len(f.clusters) + 1)
 		if c.FirstSeen.IsZero() {
 			c.FirstSeen = now
 		}
 	}
-	c.LastSeen = now
+	if c.LastSeen.IsZero() {
+		c.LastSeen = now
+	}
 	f.clusters[k] = c
 	return nil
 }
