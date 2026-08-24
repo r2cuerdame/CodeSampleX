@@ -190,6 +190,14 @@ func (s SanitizedError) Fingerprints() []string {
 	return out
 }
 
+// ErrorCode returns the dominant error code in raw, or "" when it carries
+// none.
+//
+// It is the cheap half of Sanitize, exported because choosing WHICH of a
+// failed command's two streams to sanitize has to happen before sanitizing
+// one, and that choice needs the code and nothing else.
+func ErrorCode(raw string) string { return extractCode(raw) }
+
 func extractCode(raw string) string {
 	for _, re := range codeClasses {
 		if m := re.FindString(raw); m != "" {

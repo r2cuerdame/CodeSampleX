@@ -106,12 +106,19 @@ func TestHookAnswersAFailedBuildStep(t *testing.T) {
 // Hooks run after the agent has already rendered the command failure. Their
 // contribution must identify itself as secondary so Claude and Codex cannot
 // mistake a weak lookup for the command's own result.
+//
+// The sample here is generic — a shell/tooling sample, which a PowerShell
+// script genuinely could be about. It used to be a Dart pkg:pub/shelf sample,
+// and labelling turned out not to be enough for that case: an answer in a
+// language the failed command does not build for is now not shown at all. See
+// TestHookStaysQuietWhenTheOnlyAnswerIsAnotherEcosystem. What is tested here
+// is the label on an answer that IS shown.
 func TestHookLabelsLowConfidenceAnswersAsReferenceCandidates(t *testing.T) {
 	env, out := hookHarness(t, hookInput(t, "Bash", "pwsh -File Test-Dispatcher.ps1", "ParserError"), func(e *hookEnv) {
 		e.search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, error) {
 			return domain.SearchResponse{Results: []domain.SearchResult{{
-				Grade: domain.GradeReferenceOnly, Confidence: "LOW", SampleID: "sha256:dart",
-				Case:     &domain.Case{Packages: []string{"pkg:pub/shelf@1.4.2"}},
+				Grade: domain.GradeReferenceOnly, Confidence: "LOW", SampleID: "sha256:shell",
+				Case:     &domain.Case{Packages: []string{"pkg:generic/powershell@7.4"}},
 				Evidence: domain.EvidenceSummary{ContractPasses: 1},
 			}}}, nil
 		}

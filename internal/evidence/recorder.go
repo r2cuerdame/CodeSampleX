@@ -61,14 +61,16 @@ type Recorder struct {
 //   - Known commands record, per PUBLIC package, one package-level
 //     observation (symbol "") and one observation per public symbol usage,
 //     at the classified stage with PASS/FAIL from exitCode. On FAIL the
-//     stderr tail is sanitized (stage-aware) and only the resulting
-//     fingerprint + error code are attached — never the raw text.
+//     failure tail — the stream that carried the diagnosis, see
+//     CommandOutput.FailureDiagnostics — is sanitized (stage-aware) and
+//     only the resulting fingerprint + error code are attached, never the
+//     raw text.
 //   - Unknown commands (profile.Known == false) prove nothing beyond
 //     "these public packages are in use": they record only USED/PASS
 //     package rows.
 //   - Symbol sightings are stored with the rotating project bucket
 //     derived from the absolute project path (HMAC, irreversible).
-func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanResult, profile scanner.CommandProfile, exitCode int, stderrTail string) error {
+func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanResult, profile scanner.CommandProfile, exitCode int, failureTail string) error {
 	if res == nil {
 		return nil
 	}
@@ -167,7 +169,7 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 	errFP, errCode := "", ""
 	if exitCode != 0 {
 		result = domain.ResultFail
-		san := sanitizer.Sanitize(stderrTail, profile.Stage, publicNames)
+		san := sanitizer.Sanitize(failureTail, profile.Stage, publicNames)
 		errFP, errCode = san.Fingerprint, san.Code
 	}
 

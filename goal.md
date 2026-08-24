@@ -1018,7 +1018,12 @@ Top 1만 강제하지 않고 필요 시 상위 2~3개의 다른 구현을 제공
 - Sample을 그대로 붙이지 않고 delta를 명시한다.
 - 잘못된 HIT는 MISS보다 나쁘다.
 - 실패 자동 조회에서 로컬 명령의 exit code와 stdout/stderr가 1차 증거다. 네트워크 답변은 별도 보조 섹션이며 원문을 가리거나 대체하지 않는다.
+- 실패 진단은 **진단을 실제로 담은 스트림**에서 만든다. stderr만 sanitize하면 stdout으로 보고하는 도구(`tsc`, `go test`, `pytest`, 대부분의 npm script)의 실패가 빈 문자열의 fingerprint로 기록·조회된다. 그 해시는 어떤 실패와도 일치하지 않고, 남은 free-text 질의는 hash 뿐이라 엔진은 가장 가까운 무관한 sample을 답으로 돌려준다.
+- 아무것도 출력하지 않은 실패는 sanitized error가 **없다**. 빈 문자열의 fingerprint는 모든 침묵한 실패가 공유하는 값이므로 실패의 신원이 될 수 없고, 그것만 반환하면 답이 없는 질문을 네트워크에 던지게 된다.
 - LOW confidence, `REFERENCE_ONLY`, 또는 현재 명령의 생태계와 무관한 결과는 `REFERENCE_CANDIDATE`로 표시하며 자동 수정 근거로 제시하지 않는다.
+- 생태계가 다른 결과는 **표시만 낮추는 것으로 부족하다.** 라벨은 봉투이고 agent가 읽는 것은 본문이므로, `DECISION: REUSE_VERIFIED`·`MATCH: COMPATIBLE`·contract block을 그대로 렌더링하면 라벨은 참고라고 말하고 본문은 쓰라고 말하게 된다. 상태를 `NO_RELEVANT_MATCH`로 내리고 sample id와 사유 한 줄만 남긴다. 유일한 예외는 이 실패의 sanitized fingerprint가 그 sample에 정확히 일치한 경우(`ExactFailureMatched`)이며, 이는 등급이 아니라 실패와 sample 사이의 명시적 evidence 연결이다.
+- 봉투와 본문이 서로 다른 말을 하면 이기는 쪽은 본문이다. `advisoryOnly` 추천의 첫 줄이 `DECISION: REUSE_VERIFIED`이면 라벨은 참고라고, 본문은 쓰라고 말하는 것이므로 실패 자동 조회에서는 판정 줄을 `DECISION: REFERENCE_CANDIDATE`로 바꾼다. 그 아래의 receipt·delta·evidence·contract는 네트워크가 실제로 측정한 것이라 라벨 때문에 잃을 수 없다. 이 재작성은 묻지 않은 조회에만 적용하고, 호출자가 스스로 물은 `search_known_solution`의 판정 줄은 그대로 둔다.
+- 이 relevance gate는 `run_observed_command`와 Claude/Codex hook이 **같은 정의**(`domain.SearchResult.UnrelatedToCommand`)를 공유한다. 묻지 않았는데 끼어드는 hook에서는 낮춘 표시 대신 침묵이 같은 계약의 표현이다.
 
 ---
 

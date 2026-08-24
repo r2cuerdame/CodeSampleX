@@ -713,15 +713,28 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 				}
 			}
 		}
-		san := sanitizer.Sanitize(output.Stderr, stage, publicNames)
-		if san.Code != "" {
-			sanitized = append(sanitized, "errorCode: "+san.Code)
-		}
-		if san.Fingerprint != "" {
-			sanitized = append(sanitized, "fingerprint: "+san.Fingerprint)
-		}
-		if t := strings.TrimSpace(san.Template); t != "" {
-			sanitized = append(sanitized, strings.Split(t, "\n")...)
+		// Whichever stream carried the diagnosis — see
+		// CommandOutput.FailureDiagnostics. It used to be stderr alone, and
+		// every toolchain that reports on stdout was fingerprinted as the
+		// hash of a blank string.
+		san := sanitizer.Sanitize(output.FailureDiagnostics(), stage, publicNames)
+		template := strings.TrimSpace(san.Template)
+		// A fingerprint over nothing is not a weak identity for this
+		// failure. It is the identity every silent failure shares, on any
+		// machine in any language, so it matches nothing that ever
+		// happened. Emitted alone it left the caller one line that reads
+		// like an error and answers nothing, and it turned the lookup below
+		// into a query with no question in it.
+		if san.Code != "" || template != "" {
+			if san.Code != "" {
+				sanitized = append(sanitized, "errorCode: "+san.Code)
+			}
+			if san.Fingerprint != "" {
+				sanitized = append(sanitized, "fingerprint: "+san.Fingerprint)
+			}
+			if template != "" {
+				sanitized = append(sanitized, strings.Split(template, "\n")...)
+			}
 		}
 	}
 
@@ -745,7 +758,7 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 			recordRes = &closed
 		}
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
-		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, output.Stderr) // best-effort
+		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, output.FailureDiagnostics()) // best-effort
 	}
 	// The tail goes back to the caller unredacted. Sanitizing is what the
 	// UPLOAD needs; this return value never leaves the machine it was
