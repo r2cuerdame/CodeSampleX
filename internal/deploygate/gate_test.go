@@ -1,6 +1,11 @@
 package deploygate
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 func TestEligibilityRequiresProjectOpsPassAndNoHumanGate(t *testing.T) {
 	for _, tc := range []struct {
@@ -57,6 +62,21 @@ ALTER TABLE failure_clusters ADD COLUMN diagnostic_candidate BOOLEAN NOT NULL DE
 				t.Fatalf("destructive/sensitive migration accepted: %s", sql)
 			}
 		})
+	}
+}
+
+func TestR2C152MigrationFilePassesAutomaticGate(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0024_failure_evidence.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read production migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("production migration is not eligible for unattended additive rollout: %v", err)
 	}
 }
 

@@ -63,10 +63,14 @@ SSH identity. Only the workflow's `deploy` job enters the production
 Environment; eligibility has no secret access.
 
 `cmd/csx-deploy-gate` is the shared fail-closed eligibility check used by the
-workflow and available to ProjectOps before dispatch. Existing migrations may
-not be edited or removed. New migrations declared `additive-migration` may add
-columns and run the bounded evidence-quality backfill used by the R2C-152
-`0024_failure_evidence.sql` fixture. The automatic path uses an allowlist, so
+workflow and available to ProjectOps before dispatch. A migration recorded in
+production `schema_migrations` may not be edited or removed. A pending
+migration may be corrected before its first rollout, and its actual file must
+pass the deploy-gate regression test. Migrations declared `additive-migration`
+may add columns and run the bounded evidence-quality backfill used by the
+R2C-152 `0024_failure_evidence.sql` fixture. Destructive derived-data cleanup
+is a separate manual lifecycle and is not embedded in that migration. The
+automatic path uses an allowlist, so
 every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
 UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 
