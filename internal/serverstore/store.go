@@ -89,6 +89,36 @@ type SampleRow struct {
 	QuarantineReason string
 }
 
+// SampleCursor is a position in a newest-first sample listing, used to page
+// through one without offsets. Offsets shift under concurrent publishing and
+// hand the next page a row the previous one already returned; a keyset on
+// (created_at, sample_id) cannot, because sample_id is the primary key and
+// the pair is therefore unique and totally ordered.
+//
+// The zero value means "from the newest".
+type SampleCursor struct {
+	CreatedAt time.Time
+	SampleID  string
+}
+
+// IsZero reports whether the cursor is the start of a listing.
+func (c SampleCursor) IsZero() bool { return c.SampleID == "" }
+
+// sampleEpoch is what a missing created_at sorts as, mirroring the SQL's
+// COALESCE(created_at, 'epoch'). created_at is nullable, and a NULL in the
+// keyset comparison would evaluate to NULL and silently end the paging.
+var sampleEpoch = time.Unix(0, 0).UTC()
+
+// CursorFor returns the keyset position of a row, so a caller can ask for
+// the page after it.
+func CursorFor(r SampleRow) SampleCursor {
+	at := r.CreatedAt
+	if at.IsZero() {
+		at = sampleEpoch
+	}
+	return SampleCursor{CreatedAt: at, SampleID: r.SampleID}
+}
+
 // ReceiptRow is one receipts-table row. ReceiptJSON is the full signed
 // VerificationReceipt document.
 type ReceiptRow struct {
@@ -286,7 +316,24 @@ type Store interface {
 	// ListVerifiedSamples returns newest non-quarantined samples with an
 	// actual contract-PASS receipt. Public measured findings must never be
 	// derived from author prose on a source-only upload.
+	//
+	// This is a NEWEST-N window. Never answer a question about the whole
+	// corpus with it: a serving read that filters inside a fixed window
+	// shrinks as the corpus grows, which is how the findings page fell from
+	// 543 entries to 250 while nothing was taken down. For findings, use
+	// ListVerifiedBeliefSamples, which pages the eligible set instead.
 	ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error)
+	// ListVerifiedBeliefSamples pages the samples that could be findings:
+	// non-quarantined, holding an actual contract-PASS receipt, and stating
+	// in their own manifest what was believed.
+	//
+	// The belief is what narrows the read, and it is applied in the store so
+	// the caller never has to choose between reading everything and reading
+	// a recent slice of everything. Rows come back newest first, starting
+	// strictly after `after`; the zero cursor starts at the newest. `limit`
+	// bounds ONE read, not the answer — a caller wanting every finding pages
+	// until a short page comes back.
+	ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error)
 	// SamplesBySeeder lists one seeder's published samples, so their page
 	// does not depend on a global newest-N window.
 	SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error)

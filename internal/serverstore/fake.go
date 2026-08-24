@@ -652,6 +652,76 @@ func (f *Fake) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow,
 	return out, nil
 }
 
+// ListVerifiedBeliefSamples mirrors the PG query, keyset and all, so a test
+// written against the Fake proves something about the server.
+//
+// The ordering is the SQL's: newest first, with sample_id DESC as the
+// tiebreak, because that pair is what the cursor compares. A missing
+// created_at sorts as the epoch here for the same reason it does there.
+func (f *Fake) ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []SampleRow
+	for _, s := range f.samples {
+		if s.Quarantined {
+			continue
+		}
+		if !f.hasContractPass(s.SampleID, "") {
+			continue
+		}
+		if manifestBelief(s.ManifestJSON) == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := CursorFor(out[i]), CursorFor(out[j])
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.SampleID > b.SampleID
+	})
+	if !after.IsZero() {
+		kept := out[:0]
+		for _, s := range out {
+			if cursorBefore(CursorFor(s), after) {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// cursorBefore is the Go form of the SQL's
+// (created_at, sample_id) < (cursor.created_at, cursor.sample_id).
+func cursorBefore(c, than SampleCursor) bool {
+	if !c.CreatedAt.Equal(than.CreatedAt) {
+		return c.CreatedAt.Before(than.CreatedAt)
+	}
+	return c.SampleID < than.SampleID
+}
+
+// manifestBelief reads the declared belief out of a manifest, matching the
+// SQL's manifest->'case'->>'believed'. Unparseable JSON states nothing.
+func manifestBelief(manifestJSON string) string {
+	var m struct {
+		Case struct {
+			Believed string `json:"believed"`
+		} `json:"case"`
+	}
+	if json.Unmarshal([]byte(manifestJSON), &m) != nil {
+		return ""
+	}
+	return m.Case.Believed
+}
+
 // matchesAnyPattern implements the "prefix%" form the SQL uses.
 func matchesAnyPattern(purls, patterns []string) bool {
 	for _, p := range purls {

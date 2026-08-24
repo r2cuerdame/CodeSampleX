@@ -923,6 +923,67 @@ func (p *PG) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, e
 	return out, err
 }
 
+// ListVerifiedBeliefSamples pages the finding candidates.
+//
+// The predicate is the same verified-sample predicate as above plus the one
+// thing that makes a sample a finding: its case says what was believed. That
+// belief lives inside the manifest JSON — no column mirrors it, and adding
+// one would put a second answer beside the artifact's own copy — so the
+// filter reads the JSONB directly.
+//
+// Doing it here rather than in Go is the whole point. The caller used to
+// read the newest 2,000 verified samples and look for beliefs inside them,
+// which quietly turned "every finding" into "every finding published
+// recently": production crossed 2,000 verified samples and 308 findings fell
+// out of the window with nothing taken down. Only a minority of samples
+// state a belief (567 of 2,787 in production), so filtering first makes the
+// eligible set small enough to page through completely.
+//
+// The store's belief test is presence, not prose: a non-empty string in
+// the manifest. Whether it reads as a sentence, and whether a contract
+// line answers it, is judged in Go over a set this has already made
+// small — so no trimming rule has to be spelled twice, in two
+// languages, and stay identical forever.
+func (p *PG) ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	where := `
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM receipts verified_receipt
+				WHERE verified_receipt.sample_id = samples.sample_id
+				  AND verified_receipt.contract_result = 'PASS'
+			  )
+			  AND COALESCE(manifest->'case'->>'believed', '') <> ''`
+	args := []any{limit}
+	if !after.IsZero() {
+		where += `
+			  AND (COALESCE(created_at, 'epoch'::timestamptz), sample_id) < ($2, $3)`
+		args = append(args, after.CreatedAt, after.SampleID)
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples`+where+`
+			ORDER BY COALESCE(created_at, 'epoch'::timestamptz) DESC, sample_id DESC
+			LIMIT $1`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // SamplesBySeeder lists a seeder's own published samples, newest first.
 //
 // The seeder page used to read the newest 500 samples network-wide and
