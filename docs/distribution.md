@@ -147,7 +147,7 @@ Anthropic's submission requirement 2:
 Was: grep for `readOnlyHint|destructiveHint|Annotations|Title` across
 `internal/mcp/` returned no matches.
 
-All eight tools now carry a `title` and a full `annotations` object, set from
+Every tool now carries a `title` and a full `annotations` object, set from
 what the implementation does rather than from what the tool sounds like:
 
 | Tool | readOnly | destructive | idempotent | openWorld | Why |
@@ -157,6 +157,7 @@ what the implementation does rather than from what the tool sounds like:
 | `explain_compatibility` | **yes** | — | yes | **no** | `explainFromShards` reads local shard tables; no HTTP client is wired into it |
 | `run_observed_command` | no | **yes** | no | yes | executes the argv it is handed, in the user's project |
 | `report_sample_adoption` | no | no | yes | yes | writes the local correlation and queues one anonymous adoption event; the offer token is one-use |
+| `report_anomaly` | no | no | yes | yes | posts a verification request to the network; idempotent by fingerprint, so a repeat is counted against one report and queues no second re-run |
 | `propose_public_sample` | no | no | no | **no** | creates a fresh clean-room directory per call; sends nothing |
 | `list_local_hits` | **yes** | — | yes | **no** | local dashboard read |
 | `get_local_stats` | **yes** | — | yes | **no** | local dashboard read |
@@ -506,7 +507,7 @@ only one of them is fixable from this repository:
 1. **`No tools`.** The Schema tab lists no tools, no prompts, no resources, and
    says "Server capabilities have not been inspected yet". The directory API
    agrees: `"tools": []`. This is **not** a manifest problem — the shipped
-   MCPB manifest has named all eight tools since v0.1.0. Glama populates that
+   MCPB manifest has named every tool since v0.1.0. Glama populates that
    tab by **running** the server in its own sandbox, and the same page says
    "This server cannot be installed", so it has never had a process to ask.
    Nothing in `internal/mcp/` or `scripts/make-mcpb.py` changes that; a Glama

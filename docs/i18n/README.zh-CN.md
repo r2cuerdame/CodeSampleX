@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` 会自动配置 Claude Code、Codex、Gemini CLI 和 OpenCode。其他任何 stdio MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）只需使用 `csx mcp-config` 打印的配置即可接入（Codex 用 `--toml`）——它输出的是二进制文件的绝对路径，而这正是由编辑器启动的客户端所需要的。服务器本身就是 `csx mcp`。共八个工具：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`——并且有意不提供发布工具。
+`csx init` 会自动配置 Claude Code、Codex、Gemini CLI 和 OpenCode。其他任何 stdio MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）只需使用 `csx mcp-config` 打印的配置即可接入（Codex 用 `--toml`）——它输出的是二进制文件的绝对路径，而这正是由编辑器启动的客户端所需要的。服务器本身就是 `csx mcp`。共九个工具：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`report_anomaly`、`propose_public_sample`、`list_local_hits`、`get_local_stats`——并且有意不提供发布工具。
+
+`report_anomaly` 指向相反的方向。当 CSX 给出的答案与代理自己机器上的观测**具体**冲突时——网络说通过的坐标在这里失败了，返回的符号签名并不是公开包实际导出的那个——代理可以把它作为一次验证请求提交。这不是缺陷报告：一次报告会把一次独立复跑排进产生其他所有回执的同一支验证队列，而只有那份回执才能确认它。没有实测本地结果的提交会被拒绝，同一处不一致报告两次仍是一份报告、一次复跑，并且在验证者同意之前，报告的内容不会出现在任何公开页面上。报告者对原因的猜测走在单独的字段里，永远不决定判定。
 
 面向智能体的安装步骤（包括 MCPB 捆绑包，以及附带 `SHA256SUMS.txt` 的二进制直接下载）：[llms-install.md](../../llms-install.md)。独立的社区安装通过 Ed25519 签名的清单自动更新，并可用 `csx update rollback` 回滚；`local-only` 安装不会发出任何更新请求。
 

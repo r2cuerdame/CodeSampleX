@@ -321,16 +321,22 @@ else
 fi
 ```
 
-Optional stronger check — `tools/list` must return these eight tool names:
+Optional stronger check — `tools/list` must return these nine tool names:
 
 ```sh
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | "$HOME/.local/bin/csx" mcp
 ```
 
 `search_known_solution`, `get_sample`, `explain_compatibility`,
-`run_observed_command`, `report_sample_adoption`, `propose_public_sample`,
-`list_local_hits`, `get_local_stats`. There is deliberately no publish tool:
-publishing a sample requires explicit CLI approval by the human.
+`run_observed_command`, `report_sample_adoption`, `report_anomaly`,
+`propose_public_sample`, `list_local_hits`, `get_local_stats`. There is
+deliberately no publish tool: publishing a sample requires explicit CLI
+approval by the human.
+
+`report_anomaly` is for one situation only: a CSX answer and a **measured**
+local run concretely disagree. It files a verification request, not a bug
+report — an independent re-run decides, and nothing is confirmed by reporting
+it. A submission with no local PASS/FAIL behind it is refused.
 
 Then restart the MCP client so it picks up the new server entry.
 

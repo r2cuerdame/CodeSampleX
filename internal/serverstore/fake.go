@@ -56,6 +56,12 @@ type Fake struct {
 	// authoring_quarantine.go.
 	authoringAttempts map[[4]string]*authoringLedger
 
+	// anomalies is the consumption-side feedback channel, keyed by
+	// fingerprint because that key IS the dedupe rule.
+	anomalies     map[string]*AnomalyReportRow
+	anomalyOrder  []string
+	nextAnomalyID int64
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -118,6 +124,7 @@ func NewFake() *Fake {
 		authoringWork:   map[[4]string]AuthoringWorkRow{},
 
 		authoringAttempts: map[[4]string]*authoringLedger{},
+		anomalies:         map[string]*AnomalyReportRow{},
 	}
 }
 

@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` は Claude Code、Codex、Gemini CLI、OpenCode を自動設定します。その他の stdio MCP クライアント（Cursor、Windsurf、Cline、Zed、VS Code）は、`csx mcp-config` が出力する設定（Codex 用は `--toml`）で動きます — この出力にはバイナリの絶対パスが含まれており、エディタから起動されるクライアントにはそれが必要です。サーバー本体は `csx mcp` です。ツールは 8 つ: `search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats` — そして公開（publish）ツールは意図的にありません。
+`csx init` は Claude Code、Codex、Gemini CLI、OpenCode を自動設定します。その他の stdio MCP クライアント（Cursor、Windsurf、Cline、Zed、VS Code）は、`csx mcp-config` が出力する設定（Codex 用は `--toml`）で動きます — この出力にはバイナリの絶対パスが含まれており、エディタから起動されるクライアントにはそれが必要です。サーバー本体は `csx mcp` です。ツールは 9 つ: `search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`report_anomaly`、`propose_public_sample`、`list_local_hits`、`get_local_stats` — そして公開（publish）ツールは意図的にありません。
+
+`report_anomaly` は逆方向を向いたツールです。CSX の答えとエージェント自身のマシンが**具体的に**食い違ったとき — ネットワークが PASS と伝えた座標がここでは失敗した、返ってきたシンボル署名が公開パッケージの実際の署名と違う — エージェントはそれを検証依頼として提出できます。バグ報告ではありません。報告は、他のあらゆるレシートを生み出しているのと同じ検証群に独立した再実行をキューイングし、確定できるのはそのレシートだけです。測定された事実の伴わない提出は拒否され、同じ食い違いを二度報告しても報告は 1 件・再実行も 1 回、そして検証器が同意するまで報告の内容が公開ページに出ることはありません。報告者の原因推測は専用フィールドを通り、判定を決めることは決してありません。
 
 エージェント向けのインストール手順（MCPB バンドルや、`SHA256SUMS.txt` 付きのバイナリ直接ダウンロードを含む）: [llms-install.md](../../llms-install.md)。スタンドアロンのコミュニティインストールは、Ed25519 署名付きマニフェスト経由で自動更新され、`csx update rollback` も利用できます。`local-only` インストールは更新リクエストを一切行いません。
 

@@ -2,7 +2,7 @@ package web
 
 // The read API.
 //
-// The features page described the CLI and the eight MCP tools and never
+// The features page described the CLI and the MCP tools and never
 // mentioned that the network answers HTTP directly. Everything the site
 // renders is served from these endpoints, so a reader who wants the evidence
 // without either the CLI or an agent had no way to learn they exist.

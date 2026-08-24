@@ -387,6 +387,20 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 			return nil
 		}
 	}
+	_, err = store.CreateJob(ctx, crossJobFor(sampleID, manifest))
+	return err
+}
+
+// crossJobFor builds the queue row that asks another machine to reproduce
+// one sample, requirements and claimability included.
+//
+// Split out because the anomaly feedback channel queues the same work for a
+// different reason: an agent reported that a served answer and its own
+// machine disagree, and what settles that is exactly this — an independent
+// clean re-run of the sample the answer came from. Building a second, nearly
+// identical requirements block for it would be how the two drift apart, and
+// the drift would show up as receipts refused on arrival.
+func crossJobFor(sampleID string, manifest domain.SampleManifest) serverstore.JobRow {
 	// A cross job asks a DIFFERENT machine to reproduce the result, so its
 	// requirements must describe the runtime LINE, not the author's exact
 	// patch level. Copying manifest.Environment.RuntimeVersion verbatim
@@ -429,11 +443,10 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 	if !runnable {
 		status = serverstore.JobStatusUnsupported
 	}
-	_, err = store.CreateJob(ctx, serverstore.JobRow{
+	return serverstore.JobRow{
 		SampleID: sampleID, Reason: "cross", Status: status,
 		WantEnvJSON: string(domain.MustCanonicalJSON(requirements)),
-	})
-	return err
+	}
 }
 
 // crossRequirementsAFleetCanRun reduces a cross job to something a verifier

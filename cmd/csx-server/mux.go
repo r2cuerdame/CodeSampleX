@@ -75,6 +75,10 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	if candidate, ok := store.(serverstore.FarmStatsStore); ok {
 		farmStats = candidate
 	}
+	var anomalyStore serverstore.AnomalyStore
+	if candidate, ok := store.(serverstore.AnomalyStore); ok {
+		anomalyStore = candidate
+	}
 	// Only the PostgreSQL store has a pool to report; the fake has none,
 	// and a panel of zeros would read as a healthy pool rather than as no
 	// pool at all.
@@ -93,6 +97,7 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		Authoring:     authoringStore,
 		AdminTokens:   adminTokenStore,
 		Farm:          farmStats,
+		Anomalies:     anomalyStore,
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})

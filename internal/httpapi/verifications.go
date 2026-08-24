@@ -485,6 +485,10 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	if claimedJobID != 0 && statusRank(newStatus) < statusRank("CROSS_PASS") {
 		a.requeueCrossVerification(ctx, receipt.SampleID, contractResult)
 	}
+	// Anomaly reports contesting this sample were waiting for exactly this:
+	// an independent run of the artifact the contested answer came from.
+	// After the receipt is stored and its signature checked, never before.
+	a.resolveAnomalyReports(ctx, receipt)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":       "accepted",
@@ -714,6 +718,10 @@ func (a *api) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "job already claimed or not open")
 		return
 	}
+	// A claimed report is a different fact from an unclaimed one: it is the
+	// difference between a slow fleet and a stuck queue, and the operator
+	// page cannot show it unless the claim says so.
+	a.markAnomalyReportsVerifying(r.Context(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "claimed", "id": id})
 }
 

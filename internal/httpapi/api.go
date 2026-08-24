@@ -125,6 +125,11 @@ func NewMux(d Deps) *http.ServeMux {
 	// The denominator for the line above: a hit is what an adoption is an
 	// outcome OF, and only misses had a way to reach this server.
 	a.route(mux, "POST /v1/search-hits", a.limit(lim.feedback, a.handleSearchHit))
+	// The other direction of feedback: an agent that used an answer and then
+	// watched its own machine contradict it. Feedback-class, like adoptions
+	// — compact, privacy-safe, and it must not crowd verification receipts
+	// out of the durable write budget.
+	a.route(mux, "POST /v1/anomalies", a.limit(lim.feedback, a.handleAnomalyReport))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
 	// The fleet asking its own server what to do next, not a public read: it
 	// polls constantly and cheaply, and sharing the read budget let shard

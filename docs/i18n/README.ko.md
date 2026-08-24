@@ -202,7 +202,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init`은 Claude Code, Codex, Gemini CLI, OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 서버 자체는 `csx mcp`입니다. 도구는 여덟 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다.
+`csx init`은 Claude Code, Codex, Gemini CLI, OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 서버 자체는 `csx mcp`입니다. 도구는 아홉 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다.
+
+`report_anomaly`는 반대 방향을 가리키는 도구입니다. CSX가 준 답과 에이전트 자신의 로컬 실행이 **구체적으로** 충돌할 때 — 네트워크는 통과했다고 말한 좌표가 여기서는 실패했다, 반환된 심볼 시그니처가 공개 패키지가 실제로 내보내는 것과 다르다 — 에이전트는 그것을 검증 요청으로 제출할 수 있습니다. 버그 리포트가 아닙니다. 제출은 다른 모든 receipt를 만들어내는 바로 그 검증 fleet에 독립적인 재실행을 넣고, 확정할 수 있는 것은 그 receipt뿐입니다. 측정된 로컬 결과가 없는 제출은 거부되고, 같은 불일치를 두 번 신고해도 리포트 하나와 재실행 한 번이며, 검증자가 동의하기 전에는 리포트의 내용이 공개 페이지에 반영되지 않습니다. 신고자의 원인 추측은 별도 필드로 이동하며 판정을 결정하지 않습니다.
 
 에이전트 대상 설치 절차(MCPB 번들과 `SHA256SUMS.txt`가 딸린 바이너리 직접 다운로드 포함): [llms-install.md](../../llms-install.md). 독립 실행형 커뮤니티 설치는 Ed25519로 서명된 manifest를 통해 자동 업데이트되며 `csx update rollback`을 쓸 수 있습니다. `local-only` 설치는 업데이트 요청을 보내지 않습니다.
 

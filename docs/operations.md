@@ -304,6 +304,61 @@ server binaries: it replaces the Wanted conflict key with
 image fails. Rolling back to a pre-0006 binary requires restoring the verified
 pre-deploy database backup; otherwise its old Wanted upsert returns 500.
 
+### The anomaly feedback channel (`report_anomaly`)
+
+An agent that used a CSX answer and then watched its own machine contradict it
+can file that through the `report_anomaly` MCP tool, which reaches
+`POST /v1/anomalies`. A report is a **verification request**. It is not
+evidence, it is not a finding, and nothing about it reaches a public page: the
+only thing a reader ever sees is the signed receipt a verifier writes
+afterwards, which travels the ordinary receipt path.
+
+The pipeline is `report → normalize → dedupe → cross job → claim → receipt →
+verdict`, and it deliberately owns none of its own infrastructure. An accepted
+report that names a sample this server holds queues an ordinary **cross job**
+on the same queue `csx worker` already polls, so workers already deployed in
+the field pick it up with no new version. A new job `reason` would have been
+invisible to every one of them, and the report would have sat "queued" forever
+against a queue nothing would ever offer it — which is the failure documented
+one section above, in a different disguise.
+
+What to look at, on the admin dashboard's **이상 신고 채널** panel:
+
+* **Duplicate rate.** The fingerprint is the exact public coordinate plus the
+  shape of the mismatch, and it is UNIQUE in the table. Many agents meeting one
+  wrong answer therefore produce one report and one re-run. A high duplicate
+  rate with confirmations is the channel working; a high duplicate rate with a
+  single anonymous bucket behind most of it — the panel flags this — is a
+  client in a retry loop, and the response is the client, not the queue.
+* **Confirmed ratio**, over reports that reached a verdict, and the
+  `confirmed-csx-defect` count inside it. That count is the one that means work
+  for us: an independent clean container did not support a conclusion this
+  network served.
+* **검증 lane 없음.** Reports nothing in the fleet can reproduce — usually
+  because they name no published sample. They are told so in the response and
+  shown here with the reason. They are NOT pending, and must not be read as
+  backlog.
+* **신고 → 판정 소요.** Report to verdict. It is `—`, never `0`, when nothing
+  has been decided yet.
+
+Verdicts are computed from the receipt alone (`domain.AnomalyVerdictFromReceipt`):
+the reporter's `llmHypothesis`, its confidence and how certain it sounded are
+stored, shown to a human, and read by nothing that decides. A receipt whose
+contract never ran decides nothing at all — that measured the verifier, not the
+sample — and the existing cross-verification retry sends it out again.
+
+Only `confirmed-csx-defect`, `confirmed-compatibility-boundary` and
+`confirmed-new-evidence` may promote anything, and the promotion is already
+done by the time the verdict is written: the confirming receipt entered the
+graph through the normal receipt path. The report row records the link so an
+operator can find it.
+
+Privacy: free-text fields are redacted on the client and again on arrival
+(`sanitizer.Redact`), raw error output never leaves the reporting machine —
+only the sanitizer's code, template and fingerprint travel — and a package this
+server cannot confirm is public is refused rather than stored. PRIVACY.md §4.5
+states the same thing field by field.
+
 ## The merge gate on `main`
 
 `.github/workflows/ci.yml` runs on every pull request, and the `Test` job is

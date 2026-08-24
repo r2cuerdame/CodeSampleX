@@ -286,3 +286,38 @@ func currentUsername() string {
 	}
 	return os.Getenv("USER")
 }
+
+// Redact strips identifying material from a short free-text field and says
+// whether it had to.
+//
+// Sanitize is for tool OUTPUT: it needs a stage, it preserves error codes and
+// public package names, and it produces a fingerprint. An anomaly report's
+// prose fields are neither output nor evidence — they are a sentence a human
+// will read in a queue — and they arrive from a language model that was asked
+// not to include a path and may have included one anyway.
+//
+// So this applies only the destructive half, in the same order and with the
+// same expressions, and reports the fact of redaction. Both ends run it: the
+// client so nothing identifying is ever sent, the server because the client
+// is a program somebody else can replace.
+func Redact(raw string) (clean string, redacted bool) {
+	s := raw
+	s = reNodeModules.ReplaceAllString(s, "<path>")
+	s = reWinPath.ReplaceAllString(s, "${1}<path>")
+	s = reUnixPath.ReplaceAllString(s, "${1}<path>")
+	s = reRelPath.ReplaceAllString(s, "<path>")
+	s = reURL.ReplaceAllString(s, "<url>")
+	s = reEmail.ReplaceAllString(s, "<email>")
+	s = reDQuote.ReplaceAllString(s, "<str>")
+	s = reSQuote.ReplaceAllString(s, "<str>")
+	s = reTokenCand.ReplaceAllStringFunc(s, func(m string) string {
+		if tokenish(m) {
+			return "<token>"
+		}
+		return m
+	})
+	for _, re := range userScrubPatterns() {
+		s = re.ReplaceAllString(s, "<user>")
+	}
+	return s, s != raw
+}

@@ -49,6 +49,12 @@ type Deps struct {
 	// can call a failure "avoided" only when the local correlation proves all
 	// four stages; the upload remains the existing anonymous adoption event.
 	ReportAdoption func(ctx context.Context, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error)
+	// ReportAnomaly submits a verification REQUEST after an agent watched a
+	// CSX answer and its own machine disagree. It redacts locally, refuses
+	// anything with no measured local outcome behind it, and returns the
+	// server's answer verbatim — including the part that says nothing has
+	// been verified yet.
+	ReportAnomaly func(ctx context.Context, report domain.AnomalyReport, rawErrorText string) (AnomalySubmission, error)
 	// Propose builds a sanitized clean-room spec + prompt and creates an
 	// empty workspace. It NEVER publishes (goal.md §12.4).
 	Propose func(ctx context.Context, goal string, pkgs, symbols []string) (spec samples.SanitizedSpec, prompt string, workdir string, err error)
@@ -325,6 +331,41 @@ func toolDefs() []toolDef {
 			}, "offerId", "sampleId", "applied"),
 		},
 		{
+			Name:  "report_anomaly",
+			Title: "Report a CSX answer that your machine contradicts",
+			// It sends a report to the network and creates a durable row
+			// there, so it is neither read-only nor local. Idempotent by
+			// fingerprint: submitting the same mismatch twice is counted
+			// against one report and queues no second verification.
+			Annotations: writes("Report a CSX answer that your machine contradicts", false, true, true),
+			Summary: "Submit a verification request when a CSX answer and your own local run concretely disagree. " +
+				"Requires a measured local PASS/FAIL; free text is redacted locally and raw output is never sent. " +
+				"Nothing is confirmed by reporting: a verifier must reproduce it first.",
+			Description: "Report a CONCRETE, reproducible disagreement between what CodeSampleX returned and what you " +
+				"actually observed locally — for example the network served a passing conclusion for a package/version/" +
+				"symbol and the same coordinate failed on your machine, or a returned symbol signature is not what the " +
+				"public package exports. This is a VERIFICATION REQUEST, not a bug report and not a finding: it is queued " +
+				"for an independent re-run and only a signed receipt can confirm it. Use it ONLY when you have a measured " +
+				"local outcome; \"this looks wrong to me\" is refused, and so is a NO_SAFE_MATCH with no reproducible " +
+				"public failure attached. Put your explanation in llmHypothesis — it is stored separately and never " +
+				"decides the verdict. Never describe a submitted report as a confirmed or fixed bug.",
+			InputSchema: obj(map[string]any{
+				"anomalyType":   str("one of: " + strings.Join(domain.AnomalyTypes(), " | ")),
+				"package":       str("the exact public coordinate the mismatch is about, e.g. pkg:npm/axios@1.12.0"),
+				"symbol":        str("symbol family involved, e.g. axios.post"),
+				"environment":   environmentSchema(),
+				"sampleId":      str("the CSX sample id the contested answer came from, if any — this is what makes it reproducible"),
+				"evidenceId":    str("a CSX evidence id the contested answer came from, if any"),
+				"csxObserved":   anomalyObservationSchema("what CSX actually concluded"),
+				"localObserved": anomalyObservationSchema("what YOU measured locally; result must be PASS or FAIL"),
+				"reproducible":  str("yes | no | unknown — as you measured it, not as you hope"),
+				"confidence":    str("low | medium | high — used for ranking only, never as truth"),
+				"errorText":     str("raw local error output, if any. It is sanitized on THIS machine (paths/tokens/usernames stripped) and NEVER forwarded raw; only the derived code, template and fingerprint are sent."),
+				"relatedIds":    strArr("related sample/evidence/dependency ids"),
+				"llmHypothesis": str("your guess at the cause. Stored separately, shown to a human, and deliberately excluded from the verdict."),
+			}, "anomalyType", "package", "csxObserved", "localObserved"),
+		},
+		{
 			Name:  "propose_public_sample",
 			Title: "Start a clean-room sample proposal",
 			// Creates a new empty workspace directory under CSX_HOME and
@@ -427,6 +468,8 @@ func (s *Server) toolsCall(ctx context.Context, params json.RawMessage) (any, *r
 		handler = s.toolRunObserved
 	case "report_sample_adoption":
 		handler = s.toolReportAdoption
+	case "report_anomaly":
+		handler = s.toolReportAnomaly
 	case "propose_public_sample":
 		handler = s.toolPropose
 	case "list_local_hits":
@@ -1574,4 +1617,128 @@ func nonEmptyParts(values ...string) []string {
 		}
 	}
 	return out
+}
+
+// --- report_anomaly ---
+
+// anomalyObservationSchema describes one measured outcome. Result is the
+// only part a verdict is computed from, so the schema says so where the
+// caller will read it.
+func anomalyObservationSchema(desc string) map[string]any {
+	return map[string]any{
+		"type":        "object",
+		"description": desc,
+		"properties": map[string]any{
+			"result": map[string]any{"type": "string",
+				"description": "PASS | FAIL | UNKNOWN. UNKNOWN is only meaningful for csxObserved."},
+			"stage": map[string]any{"type": "string",
+				"description": "where it happened: resolve | compile | typecheck | test | run"},
+			"detail": map[string]any{"type": "string",
+				"description": "one short sanitized sentence. Never paste logs here."},
+		},
+		"required": []string{"result"},
+	}
+}
+
+type anomalyArgs struct {
+	AnomalyType   string                        `json:"anomalyType"`
+	Package       string                        `json:"package"`
+	Symbol        string                        `json:"symbol"`
+	Environment   domain.EnvironmentFingerprint `json:"environment"`
+	SampleID      string                        `json:"sampleId"`
+	EvidenceID    string                        `json:"evidenceId"`
+	CSXObserved   domain.AnomalyObservation     `json:"csxObserved"`
+	LocalObserved domain.AnomalyObservation     `json:"localObserved"`
+	Reproducible  string                        `json:"reproducible"`
+	Confidence    string                        `json:"confidence"`
+	ErrorText     string                        `json:"errorText"`
+	RelatedIDs    []string                      `json:"relatedIds"`
+	LLMHypothesis string                        `json:"llmHypothesis"`
+}
+
+func (s *Server) toolReportAnomaly(ctx context.Context, raw json.RawMessage) *toolResult {
+	var a anomalyArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return errResult("report_anomaly: bad arguments: " + err.Error())
+	}
+	if s.Deps.ReportAnomaly == nil {
+		return errResult("report_anomaly: this install cannot submit reports")
+	}
+	report := domain.AnomalyReport{
+		SchemaVersion: domain.AnomalyReportSchemaVersion,
+		AnomalyType:   a.AnomalyType,
+		Package:       a.Package,
+		Symbol:        a.Symbol,
+		Environment:   a.Environment,
+		SampleID:      a.SampleID,
+		EvidenceID:    a.EvidenceID,
+		CSXObserved:   a.CSXObserved,
+		LocalObserved: a.LocalObserved,
+		Reproducible:  a.Reproducible,
+		Confidence:    a.Confidence,
+		RelatedIDs:    a.RelatedIDs,
+		LLMHypothesis: a.LLMHypothesis,
+	}
+	out, err := s.Deps.ReportAnomaly(ctx, report, a.ErrorText)
+	if err != nil {
+		return errResult("report_anomaly: " + err.Error())
+	}
+
+	// The structured payload carries the whole answer, because that is what
+	// the client renders; the text block is what a client that renders text
+	// instead would show, and it must say the same thing.
+	structured := map[string]any{
+		"reportId":          out.ReportID,
+		"status":            out.Status,
+		"verificationState": out.VerificationState,
+		"confirmed":         domain.AnomalyVerdictConfirmed(out.Verdict),
+		"note":              out.Note,
+	}
+	if out.ReportStatus != "" {
+		structured["reportStatus"] = out.ReportStatus
+	}
+	if out.Verdict != "" {
+		structured["verdict"] = out.Verdict
+	}
+	if out.VerificationJobID != 0 {
+		structured["verificationJobId"] = out.VerificationJobID
+	}
+	if out.MatchedReportID != 0 {
+		structured["matchedReportId"] = out.MatchedReportID
+	}
+	if out.Submissions != 0 {
+		structured["submissions"] = out.Submissions
+	}
+	if out.RetryAfterSeconds != 0 {
+		structured["retryAfterSeconds"] = out.RetryAfterSeconds
+	}
+	if out.Redacted {
+		structured["redacted"] = true
+	}
+	if out.Reason != "" {
+		structured["reason"] = out.Reason
+	}
+
+	var b strings.Builder
+	switch out.Status {
+	case "duplicate":
+		fmt.Fprintf(&b, "ALREADY REPORTED (report #%d, %d submissions). %s\n",
+			out.ReportID, out.Submissions, out.VerificationState)
+		if out.RetryAfterSeconds > 0 {
+			fmt.Fprintf(&b, "Reporting it again adds nothing for another %d seconds.\n", out.RetryAfterSeconds)
+		}
+	default:
+		fmt.Fprintf(&b, "REPORT ACCEPTED (report #%d). %s\n", out.ReportID, out.VerificationState)
+	}
+	if out.Verdict != "" {
+		b.WriteString("Verdict so far: " + out.Verdict + "\n")
+	}
+	if out.Reason != "" {
+		b.WriteString("Why: " + out.Reason + "\n")
+	}
+	if out.Redacted {
+		b.WriteString("Some text was redacted on this machine before sending; the measured facts were kept.\n")
+	}
+	b.WriteString("\n" + out.Note + "\n")
+	return textResult(b.String(), structured)
 }
