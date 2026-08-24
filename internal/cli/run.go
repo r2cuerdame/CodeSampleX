@@ -85,7 +85,7 @@ func runMain(ctx context.Context, args []string) int {
 
 	if db != nil && ident != nil && res != nil {
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-		if err := rec.RecordRun(ctx, dir, res, profile, exitCode, output.Stderr); err != nil {
+		if err := rec.RecordRun(ctx, dir, res, profile, exitCode, output.FailureDiagnostics()); err != nil {
 			fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", err)
 		}
 		// Opportunistic best-effort upload; failures leave rows queued for

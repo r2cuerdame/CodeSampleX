@@ -301,7 +301,7 @@ func toolDefs() []toolDef {
 			Annotations: writes("Run a build command through the evidence loop", true, false, true),
 			Summary: "Run a build, typecheck or test command in the user's project and record anonymous evidence from it. " +
 				"Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
-			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation, and LOW/reference/unrelated results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence.",
+			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence, and the sanitized error is built from whichever stream carried the diagnosis; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation: LOW/reference results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence, and a result from an ecosystem the failed command does not build for is reported as NO_RELEVANT_MATCH with the sample named but not rendered as an answer.",
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
 				"cwd":     str("working directory (defaults to the current directory)"),
@@ -1137,17 +1137,23 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	if len(sanitized) == 0 {
 		return failureRecommendation{Status: "SKIPPED", AdvisoryOnly: true, Reason: "the command produced no searchable sanitized error"}
 	}
+	query, errorCode := failureQuestion(sanitized)
+	if query == "" && errorCode == "" {
+		return failureRecommendation{Status: "SKIPPED", AdvisoryOnly: true,
+			Reason: "the command produced no searchable sanitized error"}
+	}
 	req := domain.SearchRequest{
 		SchemaVersion: 2,
 		// The sanitized error IS the question. It carries the error code and
 		// the public symbols the sanitizer kept, and nothing else — no raw
 		// log, no path, no source.
-		Query: strings.Join(sanitized, " "),
+		Query:     query,
+		ErrorCode: errorCode,
 	}
 	if s.Deps.MachineEnv != nil {
 		req.Environment = s.Deps.MachineEnv(ctx)
 	}
-	if ecosystem := commandEcosystem(argv); ecosystem != "" {
+	if ecosystem := domain.CommandEcosystem(argv); ecosystem != "" {
 		req.Environment.Ecosystem = ecosystem
 		req.EnvironmentProvenance = domain.SearchProvenanceContext
 	} else if commandIsPowerShell(argv) {
@@ -1160,12 +1166,6 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	// that just happened, and reaching for it again here would make a failed
 	// build wait on a second scan. The error is the question.
 	_ = cwd
-	for _, line := range sanitized {
-		if code := leadingErrorCode(line); code != "" {
-			req.ErrorCode = code
-			break
-		}
-	}
 	lookupCtx, cancel := context.WithTimeout(ctx, failureLookupBudget)
 	defer cancel()
 	resp, _ := s.Deps.Search(lookupCtx, req)
@@ -1178,70 +1178,143 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	if len(resp.Results) > 1 {
 		resp.Results = resp.Results[:1]
 	}
-	var b strings.Builder
-	b.WriteString(renderSearchResponse(resp))
 	top := resp.Results[0]
-	classification, advisory, reason := top.RecommendationClassification()
-	if commandResultUnrelated(argv, top) {
-		classification, advisory = domain.RecommendationReferenceCandidate, true
-		reason = "the command/tool ecosystem does not overlap the sample's packages"
+	// The gate decides what may be RENDERED, not only what the envelope
+	// around it is called.
+	//
+	// It already returned REFERENCE_CANDIDATE / advisoryOnly for a
+	// cross-ecosystem hit, and then rendered the sample anyway — two
+	// kilobytes opening "DECISION: REUSE_VERIFIED — a contract PASS is
+	// reusable in this environment" and "MATCH: COMPATIBLE". An agent reads
+	// the answer, not the envelope; the label said reference and the body
+	// said use it, so a failing npm typecheck was answered with a Dart
+	// sample about package:crypto and the TypeScript error underneath it was
+	// never read.
+	if top.UnrelatedToCommand(argv) {
+		return failureRecommendation{
+			Status:         domain.RecommendationNoRelevantMatch,
+			Classification: domain.RecommendationReferenceCandidate,
+			AdvisoryOnly:   true,
+			Reason:         "the command's toolchain does not overlap the sample's packages, and nothing links this sample to this failure",
+			Match:          string(top.Grade), Confidence: top.Confidence,
+			Text: renderUnrelatedCandidate(argv, top),
+		}
 	}
+	classification, advisory, reason := top.RecommendationClassification()
 	return failureRecommendation{
 		Status: "FOUND", Classification: classification, AdvisoryOnly: advisory,
-		Reason: reason, Match: string(top.Grade), Confidence: top.Confidence, Text: b.String(),
+		Reason: reason, Match: string(top.Grade), Confidence: top.Confidence,
+		Text: advisoryDecision(renderSearchResponse(resp), advisory, reason),
 	}
+}
+
+// advisoryDecision stops an advisory answer from opening by calling itself
+// reusable.
+//
+// renderSearchResponse leads with a DECISION line derived from grade and
+// deltas, and for a LOW-confidence sample with no disclosed delta that line
+// is "DECISION: REUSE_VERIFIED — a contract PASS is reusable in this
+// environment". Arriving inside a recommendation already labeled
+// REFERENCE_CANDIDATE / advisoryOnly, the payload then argues with itself —
+// and the half that wins is the body, because that is the half an agent
+// reads. goal.md §11.6 has said all along that a LOW-confidence result is
+// not offered as an automatic fix basis; this is where that stopped being
+// true.
+//
+// Only the verdict line is rewritten. Everything underneath it — the built
+// receipt, the deltas, the evidence counts, the contract — is what the
+// network actually measured and is not the caller's to lose over a label.
+//
+// It is scoped to the unasked lookup after a failed command. search_known_
+// solution answers a question its caller chose to ask, about packages the
+// caller named, and grades what it found for them; that DECISION line is the
+// answer to that question and stays as it is.
+func advisoryDecision(text string, advisory bool, reason string) string {
+	if !advisory || !strings.HasPrefix(text, "DECISION: ") {
+		return text
+	}
+	_, rest, found := strings.Cut(text, "\n")
+	if !found {
+		rest = ""
+	}
+	line := "DECISION: " + domain.RecommendationReferenceCandidate +
+		" — supporting information, not an automatic fix basis"
+	if reason != "" {
+		line += " (" + reason + ")"
+	}
+	return line + ".\n" + rest
+}
+
+// failureQuestion turns the sanitized failure lines back into a question.
+//
+// runObserved renders them for a human: an "errorCode: X" line, a
+// "fingerprint: <64 hex>" line, then the template. Joining all three into the
+// free-text query pasted the hash into the question — and when the command
+// printed nothing at all, the hash WAS the question: "fingerprint:" plus 64
+// hex digits, asked of an engine that answers every query with its nearest
+// neighbour. That is the whole reason a Dart sample came back for a
+// TypeScript build.
+//
+// The code travels in ErrorCode, where the ranker can use it. The fingerprint
+// travels nowhere: it is a key for an index this path does not consult, and
+// as prose it is 64 characters of noise competing with the words that
+// describe the failure.
+func failureQuestion(sanitized []string) (query, errorCode string) {
+	var lines []string
+	for _, line := range sanitized {
+		switch {
+		case strings.HasPrefix(line, "fingerprint: "):
+			continue
+		case strings.HasPrefix(line, "errorCode: "):
+			if errorCode == "" {
+				errorCode = strings.TrimSpace(strings.TrimPrefix(line, "errorCode: "))
+			}
+			continue
+		}
+		if errorCode == "" {
+			if code := leadingErrorCode(line); code != "" {
+				errorCode = code
+			}
+		}
+		lines = append(lines, line)
+	}
+	return strings.TrimSpace(strings.Join(lines, " ")), errorCode
+}
+
+// renderUnrelatedCandidate is everything a cross-ecosystem hit is allowed to
+// say after a failed command.
+//
+// It names the sample so an agent that wants to look still can, and it says
+// in one line why it is not an answer. What it does not do is reproduce the
+// decision line, the grade header, or the contract block: those describe how
+// well a sample matches an ENVIRONMENT, and repeating them here invites
+// exactly the reading — "COMPATIBLE, so this applies to my error" — that the
+// gate exists to prevent. It is also short on purpose. The local failure is
+// the primary evidence and a secondary note must not be able to bury it.
+func renderUnrelatedCandidate(argv []string, r domain.SearchResult) string {
+	var b strings.Builder
+	b.WriteString("MATCH: " + domain.RecommendationNoRelevantMatch +
+		" — the network answered, but not about this failure.\n")
+	tool := "this command"
+	if len(argv) > 0 {
+		tool = strconv.Quote(argv[0])
+	}
+	if ecosystems := r.SampleEcosystems(); len(ecosystems) > 0 {
+		fmt.Fprintf(&b, "The nearest sample is a %s sample; %s does not build for %s.\n",
+			strings.Join(ecosystems, "/"), tool, strings.Join(ecosystems, "/"))
+	}
+	if r.Case != nil && len(r.Case.Packages) > 0 {
+		b.WriteString("Its packages: " + strings.Join(r.Case.Packages, ", ") + "\n")
+	}
+	b.WriteString("Its grade describes where it can RUN, not what it explains. " +
+		"Solve this from the local failure above.\n")
+	if r.SampleID != "" {
+		b.WriteString("Sample: " + r.SampleID + " — get_sample fetches it if you want to look anyway.\n")
+	}
+	return b.String()
 }
 
 const failureLookupBudget = 25 * time.Second
-
-func commandResultUnrelated(argv []string, result domain.SearchResult) bool {
-	if result.Case == nil || len(result.Case.Packages) == 0 {
-		return false
-	}
-	want := commandEcosystem(argv)
-	for _, raw := range result.Case.Packages {
-		p, err := domain.ParsePURL(raw)
-		if err != nil || p.Ecosystem == "generic" {
-			continue
-		}
-		if want != "" && p.Ecosystem == want {
-			return false
-		}
-		if want == "" {
-			return true
-		}
-	}
-	return want != ""
-}
-
-func commandEcosystem(argv []string) string {
-	if len(argv) == 0 {
-		return ""
-	}
-	tool := strings.ToLower(strings.TrimSuffix(filepath.Base(argv[0]), ".exe"))
-	switch tool {
-	case "npm", "pnpm", "yarn", "node", "tsc", "npx":
-		return "npm"
-	case "python", "python3", "pytest", "pip", "pip3", "uv":
-		return "pypi"
-	case "go":
-		return "golang"
-	case "cargo", "rustc":
-		return "cargo"
-	case "mvn", "mvnw", "gradle", "gradlew", "java", "javac":
-		return "maven"
-	case "composer", "php":
-		return "composer"
-	case "bundle", "ruby":
-		return "gem"
-	case "dart", "flutter":
-		return "pub"
-	case "mix", "elixir":
-		return "hex"
-	default:
-		return ""
-	}
-}
 
 func commandIsPowerShell(argv []string) bool {
 	if len(argv) == 0 {

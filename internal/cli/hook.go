@@ -48,8 +48,14 @@ func init() {
 // hookProject is what the project says about the command that failed: whether
 // it was a build step at all, and the context a search needs.
 type hookProject struct {
-	Known    bool
-	Stage    domain.Stage
+	Known bool
+	Stage domain.Stage
+	// Argv is the segment the classifier recognised as the build step, out
+	// of everything the agent's shell line ran. The relevance gate needs the
+	// tool that failed, not the whole line: "cd api && npm test" is an npm
+	// failure, and reading "cd" off the front makes it belong to no
+	// ecosystem at all.
+	Argv     []string
 	Env      domain.EnvironmentFingerprint
 	Packages []string
 	Symbols  []string
@@ -196,6 +202,19 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	// it earns a few lines and not a list.
 	if len(resp.Results) > 1 {
 		resp.Results = resp.Results[:1]
+	}
+	// The same relevance gate the MCP lookup applies, and the same one on
+	// purpose: two definitions of "this is the wrong language" drift, and
+	// this path and that one answer the same agent about the same build.
+	//
+	// Here the demotion is silence rather than a shortened note. This hook
+	// interrupts; a note nobody asked for, about a language the failing
+	// command does not build for, costs the reader more than saying nothing
+	// and teaches them to stop reading the ones that matter.
+	if resp.Results[0].UnrelatedToCommand(proj.Argv) {
+		return quiet(hookTraceUnrelated, "the only match is a "+
+			strings.Join(resp.Results[0].SampleEcosystems(), "/")+
+			" sample and the failed command does not build for it: "+resp.Results[0].SampleID)
 	}
 	classification, advisoryOnly, reason := resp.Results[0].RecommendationClassification()
 	var b strings.Builder
@@ -369,6 +388,7 @@ const (
 	hookTraceEmptyQuery   = "empty-query"
 	hookTraceSearchFailed = "search-failed"
 	hookTraceNoMatch      = "no-match"
+	hookTraceUnrelated    = "unrelated-ecosystem"
 	hookTraceEncodeFailed = "encode-failed"
 )
 
@@ -377,7 +397,8 @@ const (
 var hookTraceCodes = []string{
 	hookTraceAnswered, hookTraceBadInput, hookTraceNotBash, hookTraceNoConfig,
 	hookTraceOff, hookTraceNotFailed, hookTraceNoSegments, hookTraceNotBuildStep,
-	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceEncodeFailed,
+	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceUnrelated,
+	hookTraceEncodeFailed,
 }
 
 // hookTracePrefix is what every trace line starts with.
@@ -441,7 +462,7 @@ func defaultHookEnv() *hookEnv {
 			}
 			for _, argv := range segments {
 				if prof := res.Classify(argv); prof.Known {
-					p.Known, p.Stage = true, prof.Stage
+					p.Known, p.Stage, p.Argv = true, prof.Stage, argv
 					break
 				}
 			}

@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // SearchProvenance records whether search input was declared by the caller or
 // inferred from ambient project/error context. The empty value is deliberate:
 // it is the third state needed to distinguish legacy JSON from an explicit
@@ -224,6 +226,117 @@ func (r SearchResult) RecommendationClassification() (classification string, adv
 	default:
 		return RecommendationVerifiedMatch, false, "the sample contract passed without a disclosed environment delta"
 	}
+}
+
+// RecommendationNoRelevantMatch is the status an automatic, unasked
+// recommendation carries when the network answered but the answer is not
+// about the failure in hand.
+//
+// It is distinct from NO_SAFE_MATCH, which means the network had nothing.
+// Here it had something and it is the wrong language, so the honest report is
+// neither "here is a fix" nor "nothing exists" but "this is not about you".
+const RecommendationNoRelevantMatch = "NO_RELEVANT_MATCH"
+
+// buildToolEcosystems maps the tool a command starts with to the package
+// ecosystem it builds for. A tool that is absent belongs to no single
+// ecosystem, which is a different answer from belonging to the wrong one.
+var buildToolEcosystems = map[string]string{
+	"npm": "npm", "pnpm": "npm", "yarn": "npm", "node": "npm", "tsc": "npm", "npx": "npm",
+	"python": "pypi", "python3": "pypi", "pytest": "pypi", "pip": "pypi", "pip3": "pypi", "uv": "pypi",
+	"go":    "golang",
+	"cargo": "cargo", "rustc": "cargo",
+	"mvn": "maven", "mvnw": "maven", "gradle": "maven", "gradlew": "maven", "java": "maven", "javac": "maven",
+	"composer": "composer", "php": "composer",
+	"bundle": "gem", "ruby": "gem",
+	"dart": "pub", "flutter": "pub",
+	"mix": "hex", "elixir": "hex",
+}
+
+// CommandEcosystem is the package ecosystem the tool a command starts with
+// builds for, or "" when it builds for none.
+//
+// The base name is taken here rather than with filepath.Base because argv[0]
+// crosses machines: a Windows caller sends C:\Program Files\nodejs\npm.cmd
+// and a linux verifier reading it with filepath.Base would return the whole
+// string. The launcher suffixes go with it — on Windows npm IS npm.cmd, and
+// an ecosystem gate that only knew about .exe classified every npm build as
+// belonging to no ecosystem at all.
+func CommandEcosystem(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	tool := argv[0]
+	if i := strings.LastIndexAny(tool, `/\`); i >= 0 {
+		tool = tool[i+1:]
+	}
+	tool = strings.ToLower(tool)
+	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
+		if strings.HasSuffix(tool, ext) {
+			tool = strings.TrimSuffix(tool, ext)
+			break
+		}
+	}
+	return buildToolEcosystems[tool]
+}
+
+// UnrelatedToCommand reports whether this result is about an ecosystem the
+// command that just failed does not build for.
+//
+// It is the relevance gate every unasked recommendation shares — the MCP
+// lookup after a wrapped command and the agent hooks alike — so that one
+// definition of "this is the wrong language" cannot drift into two.
+//
+// The exemption is an exact failure-fingerprint match. That is the sanitized
+// identity of THIS failure having been seen against THAT sample, which is an
+// explicit evidence link between the two and outranks any argument from
+// ecosystem: a Node build breaking on a native module is genuinely answered
+// by whatever recorded the same fingerprint, whatever language it was written
+// in. Nothing else earns the exemption; a grade does not, because a grade is
+// a statement about where a sample can run and never about the error in hand.
+func (r SearchResult) UnrelatedToCommand(argv []string) bool {
+	if r.ExactFailureMatched {
+		return false
+	}
+	if r.Case == nil || len(r.Case.Packages) == 0 {
+		return false
+	}
+	want := CommandEcosystem(argv)
+	for _, raw := range r.Case.Packages {
+		p, err := ParsePURL(raw)
+		if err != nil || p.Ecosystem == "generic" {
+			continue
+		}
+		if want != "" && p.Ecosystem == want {
+			return false
+		}
+		if want == "" {
+			// The command builds for no ecosystem this network knows —
+			// PowerShell, make, a shell script. A sample pinned to a
+			// specific one has nothing to say about it.
+			return true
+		}
+	}
+	return want != ""
+}
+
+// SampleEcosystems lists the non-generic ecosystems this result's packages
+// belong to, in the order they appear. It exists so a demoted candidate can
+// state WHY it was demoted with the same words the gate used.
+func (r SearchResult) SampleEcosystems() []string {
+	if r.Case == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range r.Case.Packages {
+		p, err := ParsePURL(raw)
+		if err != nil || p.Ecosystem == "generic" || seen[p.Ecosystem] {
+			continue
+		}
+		seen[p.Ecosystem] = true
+		out = append(out, p.Ecosystem)
+	}
+	return out
 }
 
 // ConfidenceReason explains, in one clause, what this result's confidence
