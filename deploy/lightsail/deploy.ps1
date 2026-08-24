@@ -1,11 +1,15 @@
 # Deploy the CodeSampleX stack to the Lightsail host.
 # The 2GB host never builds: the linux/amd64 image is built here and shipped.
-# Usage: .\deploy.ps1 -Ip <staticIp> -KeyPath <pem> [-Domain codesamplex.dev]
+# Usage: .\deploy.ps1 -Ip <staticIp> -KeyPath <pem> -KnownHostsPath <known_hosts> [-Domain codesamplex.dev]
 param(
     [Parameter(Mandatory)][string]$Ip,
     [Parameter(Mandatory)][string]$KeyPath,
+    [Parameter(Mandatory)][string]$KnownHostsPath,
     [string]$Domain = "codesamplex.dev",
     [string]$User = "ubuntu",
+    [string]$ExpectedRevision = "",
+    [string]$ExpectedPreviousRevision = "",
+    [switch]$RequireNoLegacyAccessLogs,
     [switch]$SkipImage,
     [switch]$ConfigureAdmin,
     [switch]$RotateAdmin
@@ -13,8 +17,19 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $remote = "${User}@${Ip}"
-$sshArgs = @("-i", $KeyPath, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
+$resolvedKeyPath = (Resolve-Path -LiteralPath $KeyPath).Path
+$resolvedKnownHostsPath = (Resolve-Path -LiteralPath $KnownHostsPath).Path
+$sshExecutable = (Get-Command ssh -ErrorAction Stop).Source
+$scpExecutable = (Get-Command scp -ErrorAction Stop).Source
+$sshArgs = @("-i", $resolvedKeyPath, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$resolvedKnownHostsPath", "-o", "ConnectTimeout=20")
 . (Join-Path $PSScriptRoot "admin-credential.ps1")
+
+if ($ExpectedRevision -ne "" -and $ExpectedRevision -notmatch '^[0-9a-f]{40}$') {
+    throw "-ExpectedRevision must be a lowercase immutable commit SHA"
+}
+if ($ExpectedPreviousRevision -ne "" -and $ExpectedPreviousRevision -notmatch '^[0-9a-f]{40}$') {
+    throw "-ExpectedPreviousRevision must be a lowercase immutable commit SHA"
+}
 
 if ($RotateAdmin -and -not $ConfigureAdmin) {
     throw "-RotateAdmin requires -ConfigureAdmin"
@@ -42,14 +57,14 @@ function Invoke-Remote([string]$Script) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & ssh @sshArgs $remote $Script 2>&1 | ForEach-Object { "$_" }
+        $out = & $sshExecutable @sshArgs $remote $Script 2>&1 | ForEach-Object { "$_" }
     } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "remote command failed ($LASTEXITCODE): $Script`n$($out -join "`n")" }
     return $out
 }
 function Invoke-RemoteScript([string]$Script) {
     if ([string]::IsNullOrWhiteSpace($Script)) { throw "refusing an empty remote script" }
-    if ($KeyPath.Contains('"')) { throw "SSH key path contains an unsupported quote" }
+    if ($resolvedKeyPath.Contains('"') -or $resolvedKnownHostsPath.Contains('"')) { throw "SSH configuration path contains an unsupported quote" }
     if ($remote -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$') { throw "unsafe SSH destination" }
 
     # Windows OpenSSH does not preserve nested shell quotes when an entire
@@ -58,8 +73,8 @@ function Invoke-RemoteScript([string]$Script) {
     # byte-for-byte. Secrets use Invoke-RemoteInput instead.
     $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Script)
     $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = (Get-Command ssh.exe -ErrorAction Stop).Source
-    $psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "sh -s"'
+    $psi.FileName = $sshExecutable
+    $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "sh -s"'
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
@@ -99,7 +114,7 @@ function Invoke-RemoteInput([string]$Script, [string]$StdinText) {
     if ($StdinText -notmatch '^[0-9a-f]{64}$') {
         throw "refusing malformed remote verifier input"
     }
-    if ($KeyPath.Contains('"')) { throw "SSH key path contains an unsupported quote" }
+    if ($resolvedKeyPath.Contains('"') -or $resolvedKnownHostsPath.Contains('"')) { throw "SSH configuration path contains an unsupported quote" }
     if ($remote -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$') { throw "unsafe SSH destination" }
 
     # Windows PowerShell 5 may prepend a UTF-8 BOM while newer hosts may not.
@@ -109,8 +124,8 @@ function Invoke-RemoteInput([string]$Script, [string]$StdinText) {
     $payload = "CSX-STDIN-V1`nhash='$StdinText'`n$Script`n"
     $payloadBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($payload)
     $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = (Get-Command ssh.exe -ErrorAction Stop).Source
-    $psi.Arguments = '-i "' + $KeyPath + '" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 ' + $remote + ' "{ printf ''#''; cat; } | sh"'
+    $psi.FileName = $sshExecutable
+    $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "{ printf ''#''; cat; } | sh"'
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
@@ -150,7 +165,7 @@ function Copy-Remote([string]$Local, [string]$RemotePath) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & scp -i $KeyPath -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 $Local "${remote}:${RemotePath}" 2>&1 | Out-Null
+        & $scpExecutable -i $resolvedKeyPath -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$resolvedKnownHostsPath" -o ConnectTimeout=20 $Local "${remote}:${RemotePath}" 2>&1 | Out-Null
     } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "scp failed: $Local -> $RemotePath" }
 }
@@ -192,7 +207,69 @@ $imageTar = $null
 $remoteImageTar = $null
 $localImageTag = $null
 $localImageCleanupNeeded = $false
+$tagTmp = $null
+$envTmp = $null
 try {
+$revision = (& git -C $repo rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw "could not determine the server revision" }
+if ($ExpectedRevision -ne "" -and $revision -ne $ExpectedRevision) {
+    throw "checked-out revision does not match -ExpectedRevision"
+}
+$expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File | Sort-Object Name | Select-Object -Last 1).Name
+if ($expectedMigration -notmatch '^[0-9]{4}_[a-z0-9_]+\.sql$') { throw "could not determine the expected migration version" }
+
+$productionStateBefore = Invoke-RemoteScript @'
+set -eu
+cd /opt/codesamplex/deploy
+if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then
+  revision=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CSX_VERSION=//p' | head -n 1)
+  image=$(docker inspect codesamplex-server-1 --format '{{.Image}}')
+  printf '%s|%s\n' "$revision" "$image"
+else
+  printf 'none|none\n'
+fi
+'@ | Select-Object -First 1
+$productionStateParts = (([string]$productionStateBefore).Trim() -split '\|')
+if ($productionStateParts.Count -ne 2 -or
+    (($productionStateParts[0] -ne "none" -or $productionStateParts[1] -ne "none") -and
+     ($productionStateParts[0] -notmatch '^[0-9a-f]{40}$' -or $productionStateParts[1] -notmatch '^sha256:[0-9a-f]{64}$'))) {
+    throw "could not identify the current production revision and rollback image"
+}
+if ($ExpectedPreviousRevision -ne "" -and $productionStateParts[0] -ne $ExpectedPreviousRevision) {
+    throw "production revision does not match -ExpectedPreviousRevision"
+}
+Write-Output "previous production SHA: $($productionStateParts[0])"
+Write-Output "previous production image: $($productionStateParts[1])"
+
+$collectInvariantScript = @'
+set -eu
+cd /opt/codesamplex/deploy
+docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
+SELECT
+  COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
+  COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
+  (SELECT count(*) FROM samples WHERE status='PUBLISHED'),
+  (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters),
+  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
+  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
+FROM evidence_agg"
+'@
+$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
+if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed pre-deploy invariants" }
+Write-Output "deployment invariants before: $invariantsBefore"
+
+$assertNoLegacyAccessLogs = @'
+set -eu
+old_dir=/opt/codesamplex/caddy-logs.pre-safe
+for old in "$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz; do
+  [ ! -e "$old" ] || { printf 'legacy query-bearing access log requires a manual privacy cleanup\n' >&2; exit 69; }
+done
+'@
+if ($RequireNoLegacyAccessLogs) {
+    Invoke-RemoteScript $assertNoLegacyAccessLogs | Out-Null
+    Write-Output "automatic deploy irreversible-cleanup preflight: clear"
+}
+
 $adminTokenHash = ""
 $adminCredentialPending = $false
 $adminCredentialPaths = $null
@@ -340,13 +417,11 @@ function Assert-ReleaseDirectory([string]$Directory) {
 }
 
 $localImageTag = "codesamplex/csx-server:deploy-$deployLockOwner"
-$imageTar = Join-Path $env:TEMP "csx-server-image-$deployLockOwner.tar"
+$imageTar = Join-Path ([IO.Path]::GetTempPath()) "csx-server-image-$deployLockOwner.tar"
 if (-not $SkipImage) {
 	$localImageCleanupNeeded = $true
     Write-Output "== building linux/amd64 server image =="
-    $dockerfile = Join-Path $repo "deploy\Dockerfile.server"
-    $revision = (& git -C $repo rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw "could not determine the server revision" }
+    $dockerfile = Join-Path (Join-Path $repo "deploy") "Dockerfile.server"
     Invoke-Native "docker build" {
         & docker build --platform linux/amd64 --build-arg "CSX_VERSION=$revision" -f $dockerfile -t $localImageTag $repo
     }
@@ -508,7 +583,7 @@ if ($releaseReady) {
     $stage = "/opt/codesamplex/dist.stage"
     Invoke-Remote "rm -rf /opt/codesamplex/dist.stage && mkdir -p /opt/codesamplex/dist.stage" | Out-Null
     Get-ChildItem $dist -File | ForEach-Object { Copy-Remote $_.FullName "$stage/$($_.Name)" }
-    $tagTmp = Join-Path $env:TEMP "csx-release-tag.txt"
+    $tagTmp = Join-Path ([IO.Path]::GetTempPath()) "csx-release-tag-$deployLockOwner.txt"
     Set-Content -Path $tagTmp -Value $tag -Encoding ascii -NoNewline
     Copy-Remote $tagTmp "$stage/.release-tag"
     $stageFiles = ($requiredReleaseAssets | ForEach-Object { "test -f $stage/$_" }) -join " && "
@@ -529,7 +604,7 @@ CSX_PUBLIC_URL=https://$Domain
 CSX_DIST_HOST_DIR=/opt/codesamplex/dist
 POSTGRES_PASSWORD=$pw
 "@
-$envTmp = Join-Path $env:TEMP "csx.env"
+$envTmp = Join-Path ([IO.Path]::GetTempPath()) "csx-$deployLockOwner.env"
 $normalizedEnvText = ($envText -replace "`r`n", "`n").TrimEnd("`r", "`n") + "`n"
 [IO.File]::WriteAllText($envTmp, $normalizedEnvText, [Text.Encoding]::ASCII)
 Copy-Remote $envTmp "/opt/codesamplex/deploy/.env.new"
@@ -675,7 +750,7 @@ for ($i = 0; $i -lt 24; $i++) {
     # Ask the app container directly: through Caddy a production deployment
     # answers 308 (HTTP→HTTPS) and following that from the host re-enters
     # TLS with the public hostname, which proves nothing about this build.
-    $health = & ssh @sshArgs $remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null || true" 2>&1 | ForEach-Object { "$_" }
+    $health = & $sshExecutable @sshArgs $remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null || true" 2>&1 | ForEach-Object { "$_" }
     if ($health -match "ok") { $ok = $true; break }
 }
 $ErrorActionPreference = $prevEAP
@@ -864,6 +939,65 @@ $activitySmoke = $activitySmoke.Replace('__CSX_ACTIVITY_OWNER_CHECK__', $activit
 Invoke-RemoteScript $activitySmoke | Out-Null
 Write-Output "activity estimate smoke: key and migration ready$(if ($ConfigureAdmin) { '; fresh owner exclusion recorded' } else { '' })"
 
+# The process being healthy is not proof that it serves the commit ProjectOps
+# dispatched. Check the running container, immutable image label and migration
+# ledger before the transaction is committed, so any mismatch enters the exact
+# rollback path below rather than becoming a successful deployment record.
+$liveIdentityScript = @'
+set -eu
+cd /opt/codesamplex/deploy
+revision=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CSX_VERSION=//p' | head -n 1)
+image=$(docker inspect codesamplex-server-1 --format '{{.Image}}')
+label=$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+migration=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
+printf '%s|%s|%s|%s\n' "$revision" "$image" "$label" "$migration"
+'@
+$liveIdentity = (Invoke-RemoteScript $liveIdentityScript | Select-Object -First 1).Trim()
+$liveIdentityParts = $liveIdentity -split '\|'
+if ($liveIdentityParts.Count -ne 4 -or $liveIdentityParts[0] -ne $revision -or $liveIdentityParts[2] -ne $revision) {
+    throw "served SHA does not match the immutable deployment revision"
+}
+if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
+if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
+
+$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
+if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
+$beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
+$afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+for ($i = 0; $i -lt $beforeValues.Count; $i++) {
+    if ($afterValues[$i] -lt $beforeValues[$i]) {
+        throw "a production PASS/FAIL/sample/failure-cluster invariant decreased"
+    }
+}
+Write-Output "deployed SHA: $($liveIdentityParts[0])"
+Write-Output "image digest: $($liveIdentityParts[1])"
+Write-Output "migration version: $($liveIdentityParts[3])"
+Write-Output "deployment invariants after: $invariantsAfter"
+
+$failureEvidenceBalance = (Invoke-RemoteScript @'
+set -eu
+cd /opt/codesamplex/deploy
+has_quality=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='evidence_agg' AND column_name='evidence_quality')")
+if [ "$has_quality" != t ]; then
+  printf 'unavailable\n'
+  exit 0
+fi
+docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
+SELECT
+  COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
+  COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL' AND evidence_quality IN ('complete','partial','missing','legacy-evidence-incomplete')),0),
+  COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL' AND evidence_quality NOT IN ('complete','partial','missing','legacy-evidence-incomplete')),0)
+FROM evidence_agg"
+'@ | Select-Object -First 1).Trim()
+if ($failureEvidenceBalance -ne "unavailable") {
+    if ($failureEvidenceBalance -notmatch '^\d+\|\d+\|\d+$') { throw "malformed failure evidence quality invariant" }
+    $qualityValues = @($failureEvidenceBalance -split '\|' | ForEach-Object { [int64]$_ })
+    if ($qualityValues[0] -ne $qualityValues[1] -or $qualityValues[2] -ne 0) {
+        throw "complete + partial + missing + legacy-evidence-incomplete does not equal FAIL"
+    }
+}
+Write-Output "failure evidence quality balance: $failureEvidenceBalance"
+
 $landing = Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T server wget -qO- http://127.0.0.1:8080/ | head -c 300"
 Write-Output "landing sample: $($landing -join ' ' )"
 
@@ -894,7 +1028,12 @@ removed=$(docker compose exec -T caddy sh -c '
 ')
 printf 'legacy query-bearing access files irrecoverably removed: %s\n' "$removed"
 '@
-Invoke-RemoteScript $legacyAccessPurge | ForEach-Object { Write-Output $_ }
+if ($RequireNoLegacyAccessLogs) {
+    Invoke-RemoteScript $assertNoLegacyAccessLogs | Out-Null
+    Write-Output "automatic deploy performed no irreversible legacy-log cleanup"
+} else {
+    Invoke-RemoteScript $legacyAccessPurge | ForEach-Object { Write-Output $_ }
+}
 
 # Final remote commit proves the exact live state and removes only disposable
 # candidates. Predeploy snapshots intentionally remain until the next locked
@@ -1114,7 +1253,7 @@ Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagat
     # Clean only per-invocation artifacts whose names contain this lock
     # owner's validated random token. Cleanup errors are warnings; lock
     # release below remains mandatory and gets its own error handling.
-    $expectedImageTar = Join-Path $env:TEMP "csx-server-image-$deployLockOwner.tar"
+    $expectedImageTar = Join-Path ([IO.Path]::GetTempPath()) "csx-server-image-$deployLockOwner.tar"
     if ($null -ne $imageTar -and $imageTar -eq $expectedImageTar -and (Test-Path -LiteralPath $imageTar -PathType Leaf)) {
         try { Remove-Item -LiteralPath $imageTar -Force }
         catch { Write-Warning "could not remove the per-deploy local image tar" }
@@ -1124,6 +1263,12 @@ Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagat
         $ErrorActionPreference = "Continue"
         try { & docker image rm $localImageTag 2>&1 | Out-Null }
         finally { $ErrorActionPreference = $cleanupEAP }
+    }
+    foreach ($temporaryFile in @($tagTmp, $envTmp)) {
+        if ($null -ne $temporaryFile -and (Test-Path -LiteralPath $temporaryFile -PathType Leaf)) {
+            try { Remove-Item -LiteralPath $temporaryFile -Force }
+            catch { Write-Warning "could not remove a per-deploy local temporary file" }
+        }
     }
     if ($null -ne $remoteImageTar -and $remoteImageTar -eq "/opt/codesamplex/csx-server-image-$deployLockOwner.tar") {
         try { Invoke-Remote "rm -f $remoteImageTar; docker image rm $localImageTag >/dev/null 2>&1 || true" | Out-Null }

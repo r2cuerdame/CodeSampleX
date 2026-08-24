@@ -49,4 +49,4 @@ aws lightsail put-instance-public-ports --region $Region --instance-name $Name -
 
 $ip = aws lightsail get-static-ip --region $Region --static-ip-name "$Name-ip" --query "staticIp.ipAddress" --output text
 Write-Output "Instance $Name running at $ip"
-Write-Output "Download the default key from the Lightsail console or use your own key pair, then run: .\deploy.ps1 -Ip $ip -KeyPath <pem>"
+Write-Output "Download the default key from the Lightsail console or use your own key pair, pin the host key in known_hosts, then run: .\deploy.ps1 -Ip $ip -KeyPath <pem> -KnownHostsPath <known_hosts>"
