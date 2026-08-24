@@ -44,13 +44,16 @@ func TestAStdoutOnlyFailureIsSanitizedIntoADiagnosableError(t *testing.T) {
 	cfg.Mode = config.ModeLocalOnly // no registry probes, no upload queue
 	argv := []string{os.Args[0], "-test.run=^TestHelperFailureOnStdout$"}
 
-	exitCode, _, result, sanitized, output, err := runObserved(
+	exitCode, stage, result, sanitized, output, err := runObserved(
 		context.Background(), nil, nil, cfg, nil, nil, argv, project)
 	if err != nil {
 		t.Fatalf("runObserved: %v", err)
 	}
 	if exitCode != 1 || result != "FAIL" {
 		t.Fatalf("exitCode = %d, result = %q; want 1/FAIL", exitCode, result)
+	}
+	if stage != "PROJECT_COMPILE" {
+		t.Fatalf("actual stage = %q, want PROJECT_COMPILE", stage)
 	}
 	if !strings.Contains(output.Stdout, "TS2352") {
 		t.Fatalf("the helper did not produce the fixture output: %q / %q", output.Stdout, output.Stderr)
@@ -67,6 +70,75 @@ func TestAStdoutOnlyFailureIsSanitizedIntoADiagnosableError(t *testing.T) {
 	// returned.
 	if !strings.Contains(joined, "fingerprint: sha256:") {
 		t.Errorf("the fingerprint key was dropped:\n%s", joined)
+	}
+}
+
+func TestGoTestCompileFailureReportsActualCompileStage(t *testing.T) {
+	project := t.TempDir()
+	files := map[string]string{
+		"go.mod":         "module example.com/stagefixture\n\ngo 1.26.5\n",
+		"broken_test.go": "package stagefixture\n\nimport \"testing\"\n\nfunc TestBroken(t *testing.T) { _ = doesNotExist }\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeLocalOnly
+	exitCode, stage, result, sanitized, output, err := runObserved(
+		context.Background(), nil, nil, cfg, nil, nil, []string{"go", "test", "./..."}, project)
+	if err != nil {
+		t.Fatalf("runObserved: %v", err)
+	}
+	if exitCode != 1 || result != "FAIL" || stage != "PROJECT_COMPILE" {
+		t.Fatalf("exit/stage/result = %d/%s/%s; output=%q / %q", exitCode, stage, result, output.Stdout, output.Stderr)
+	}
+	joined := strings.Join(sanitized, "\n")
+	for _, want := range []string{"stage=PROJECT_COMPILE", "toolchain=go/compiler", "outer=go test", "undefined: doesNotExist"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("classified evidence missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "stage=PROJECT_TEST") {
+		t.Errorf("outer command intent leaked into actual stage:\n%s", joined)
+	}
+}
+
+func TestGoTestAssertionFailureReportsTestExecutionStage(t *testing.T) {
+	project := t.TempDir()
+	files := map[string]string{
+		"go.mod":        "module example.com/testfixture\n\ngo 1.26.5\n",
+		"thing_test.go": "package testfixture\n\nimport \"testing\"\n\nfunc TestAssertion(t *testing.T) { t.Errorf(\"got 1, want 2\") }\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeLocalOnly
+	_, stage, result, sanitized, _, err := runObserved(
+		context.Background(), nil, nil, cfg, nil, nil, []string{"go", "test", "./..."}, project)
+	if err != nil {
+		t.Fatalf("runObserved: %v", err)
+	}
+	joined := strings.Join(sanitized, "\n")
+	if result != "FAIL" || stage != "PROJECT_TEST" || !strings.Contains(joined, "toolchain=go/test") {
+		t.Fatalf("stage/result/evidence = %s/%s/%s", stage, result, joined)
+	}
+}
+
+func TestProcessStartFailureDoesNotInheritTestStage(t *testing.T) {
+	cfg := config.Default()
+	cfg.Mode = config.ModeLocalOnly
+	_, stage, result, _, output, err := runObserved(
+		context.Background(), nil, nil, cfg, nil, nil, []string{"csx-command-that-does-not-exist", "test"}, t.TempDir())
+	if err == nil {
+		t.Fatal("missing process unexpectedly started")
+	}
+	if result != "FAIL" || stage != "PROCESS_START" || output.Termination.Kind != "process-start-failed" {
+		t.Fatalf("stage/result/termination = %s/%s/%s", stage, result, output.Termination.Kind)
 	}
 }
 

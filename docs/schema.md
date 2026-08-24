@@ -16,10 +16,22 @@ Every new executable failure should carry one structured termination:
 
 `errorSummary` is a redacted, normalized, 512-byte maximum summary. Source,
 paths, project names, private packages, secrets, and raw logs are prohibited.
-The v2 fingerprint hashes stage, structured termination, error code, and this
-summary. Package/version scope and exact environment are stored beside the
-fingerprint so the same failure can have multiple environment variants without
-creating unbounded cluster identities.
+The legacy v2 fingerprint hashes stage, structured termination, error code,
+and this summary. Actual-stage evidence uses v3, which additionally hashes the
+actual failing toolchain. `outerCommand` and `outerStage` are lineage evidence
+but are intentionally excluded from the fingerprint, so the same `tsc`
+diagnostic reached through `go test` and `npm test` remains one family.
+Package/version scope and exact environment are stored beside the fingerprint
+so the same failure can have multiple environment variants without creating
+unbounded cluster identities.
+
+Classified failure rows also carry `actualToolchain`, `stageEvidence`, and an
+optional `evidenceGap`. `stageEvidence` is one of structured termination,
+resolve diagnostic, compiler diagnostic, test-runner diagnostic, build
+aggregate, or unclassified diagnostic. A build aggregate without a compiler
+diagnostic records `PROJECT_COMPILE` plus `diagnostic-missing`; it does not use
+the aggregate text as a normalized cause. Unclassified output records
+`UNKNOWN` plus `stage-unknown` instead of inheriting the outer command stage.
 
 `evidenceQuality` has four values:
 
@@ -38,7 +50,7 @@ must sum to its total FAIL count.
 - `ObservationBatch` is the public upload contract.
 - PostgreSQL `evidence_agg` stores delta-merged environment rows.
 - `failure_clusters` stores cross-version cluster identity, environment
-  variants, quality breakdown, and diagnostic-candidate state.
+  variants, quality breakdown, diagnostic-candidate state, and failure lineage.
 - Verification receipt v2 stores secret-safe `stageFailures`; `logsDigest`
   covers the local-only full logs.
 

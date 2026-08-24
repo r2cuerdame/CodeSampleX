@@ -19,11 +19,14 @@ const maxObservationCount = 1_000_000
 // via signed receipts, never via observation batches.
 var observationStages = map[domain.Stage]bool{
 	domain.StageUsed:             true,
+	domain.StageProjectResolve:   true,
 	domain.StageProjectTypecheck: true,
 	domain.StageProjectCompile:   true,
 	domain.StageProjectTest:      true,
 	domain.StageProjectLoad:      true,
 	domain.StageProjectProcess:   true,
+	domain.StageProcessStart:     true,
+	domain.StageUnknown:          true,
 }
 
 // ValidateBatch checks one ObservationBatch against the wire contract before
@@ -112,7 +115,8 @@ func normalizedEvidenceQuality(b domain.ObservationBatch) string {
 func validFailureEvidence(b domain.ObservationBatch) error {
 	if b.Result == domain.ResultPass {
 		if b.TerminationKind != "" || b.ExitCode != nil || b.Signal != "" || b.TimeoutMillis != 0 ||
-			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" {
+			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" ||
+			b.OuterCommand != "" || b.OuterStage != "" || b.ActualToolchain != "" || b.StageEvidence != "" || b.FailureEvidenceGap != "" {
 			return fmt.Errorf("PASS must not carry failure evidence")
 		}
 		return nil
@@ -141,6 +145,9 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 	if len(b.ErrorSummary) > 512 {
 		return fmt.Errorf("errorSummary longer than 512 bytes")
 	}
+	if err := validFailureLineage(b); err != nil {
+		return err
+	}
 	if b.ErrorSummary != "" {
 		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(b.ErrorSummary, b.Stage, nil).Template)
 		if canonical != b.ErrorSummary {
@@ -165,11 +172,74 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		// evidence so a buggy or hostile client cannot split identical failures
 		// or merge unrelated ones with an arbitrary syntactically-valid SHA.
 		expected := domain.FailureFingerprint(b.Stage, term, b.ErrorCode, b.ErrorSummary)
+		if b.ActualToolchain != "" {
+			expected = domain.ClassifiedFailureFingerprint(b.Stage, b.ActualToolchain, term, b.ErrorCode, b.ErrorSummary)
+		}
 		if b.ErrorFingerprint != expected {
 			return fmt.Errorf("errorFingerprint does not match structured failure evidence")
 		}
 	}
 	return nil
+}
+
+func validFailureLineage(b domain.ObservationBatch) error {
+	if len(b.OuterCommand) > 32 {
+		return fmt.Errorf("outerCommand longer than 32 bytes")
+	}
+	if !validOuterCommand(b.OuterCommand) {
+		return fmt.Errorf("outerCommand is not a known public tool/subcommand")
+	}
+	if b.OuterStage != "" && !observationStages[b.OuterStage] {
+		return fmt.Errorf("outerStage %q is not an observation stage", b.OuterStage)
+	}
+	if len(b.ActualToolchain) > 64 || !safeCoordinate(b.ActualToolchain) {
+		return fmt.Errorf("actualToolchain is not a safe public coordinate")
+	}
+	switch b.StageEvidence {
+	case "", domain.FailureStageStructuredTermination, domain.FailureStageResolveDiagnostic,
+		domain.FailureStageCompilerDiagnostic, domain.FailureStageTestRunnerDiagnostic,
+		domain.FailureStageBuildAggregate, domain.FailureStageUnclassifiedDiagnostic:
+	default:
+		return fmt.Errorf("stageEvidence %q is invalid", b.StageEvidence)
+	}
+	switch b.FailureEvidenceGap {
+	case "", domain.FailureDiagnosticMissing, domain.FailureStageUnknown:
+	default:
+		return fmt.Errorf("evidenceGap %q is invalid", b.FailureEvidenceGap)
+	}
+	return nil
+}
+
+func validOuterCommand(command string) bool {
+	if command == "" {
+		return true
+	}
+	parts := strings.Fields(command)
+	if len(parts) < 1 || len(parts) > 2 {
+		return false
+	}
+	tools := map[string]bool{"go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "dotnet": true, "gradle": true, "gradlew": true, "pytest": true, "python": true, "python3": true, "node": true, "tsc": true}
+	if !tools[parts[0]] {
+		return false
+	}
+	if len(parts) == 1 {
+		return true
+	}
+	subcommands := map[string]bool{"test": true, "build": true, "check": true, "run": true, "restore": true, "list": true, "mod": true, "get": true, "install": true}
+	return subcommands[parts[1]]
+}
+
+func safeCoordinate(s string) bool {
+	if s == "" {
+		return true
+	}
+	for i, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (i > 0 && strings.ContainsRune("+._/-", r)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // A batch's edge facts turn into one INSERT each, and their strings land in

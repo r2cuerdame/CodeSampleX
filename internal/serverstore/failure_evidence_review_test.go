@@ -14,23 +14,45 @@ import (
 // Keep this file in the normal PR CI path so final review repairs are rechecked.
 func reviewBatch(f domain.FailureEvidence) domain.ObservationBatch {
 	return domain.ObservationBatch{
-		SchemaVersion:    1,
-		Epoch:            "2026-08-24",
-		AnonID:           "anon-review",
-		ProjectBucket:    "project-review",
-		Package:          "pkg:npm/react@19.1.1",
-		Environment:      domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64"},
-		Stage:            domain.StageProjectTest,
-		Result:           domain.ResultFail,
-		ObservationCount: 1,
-		ErrorFingerprint: f.Fingerprint,
-		ErrorCode:        f.ErrorCode,
-		TerminationKind:  f.TerminationKind,
-		ExitCode:         f.ExitCode,
-		Signal:           f.Signal,
-		TimeoutMillis:    f.TimeoutMillis,
-		ErrorSummary:     f.ErrorSummary,
-		EvidenceQuality:  f.EvidenceQuality,
+		SchemaVersion:      1,
+		Epoch:              "2026-08-24",
+		AnonID:             "anon-review",
+		ProjectBucket:      "project-review",
+		Package:            "pkg:npm/react@19.1.1",
+		Environment:        domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64"},
+		Stage:              domain.StageProjectTest,
+		Result:             domain.ResultFail,
+		ObservationCount:   1,
+		ErrorFingerprint:   f.Fingerprint,
+		ErrorCode:          f.ErrorCode,
+		TerminationKind:    f.TerminationKind,
+		ExitCode:           f.ExitCode,
+		Signal:             f.Signal,
+		TimeoutMillis:      f.TimeoutMillis,
+		ErrorSummary:       f.ErrorSummary,
+		EvidenceQuality:    f.EvidenceQuality,
+		OuterCommand:       f.OuterCommand,
+		OuterStage:         f.OuterStage,
+		ActualToolchain:    f.ActualToolchain,
+		StageEvidence:      f.StageEvidence,
+		FailureEvidenceGap: f.EvidenceGap,
+	}
+}
+
+func TestValidateBatchAcceptsClassifiedV3LineageAndRejectsPrivateOuterCommand(t *testing.T) {
+	exitCode := 1
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	f := sanitizer.SanitizeClassifiedFailure("src/index.ts(12,5): error TS2352: bad conversion",
+		domain.StageProjectCompile, term, nil, "go test", domain.StageProjectTest,
+		"typescript/tsc", domain.FailureStageCompilerDiagnostic, "")
+	b := reviewBatch(f)
+	b.Stage = domain.StageProjectCompile
+	if err := ValidateBatch(b); err != nil {
+		t.Fatalf("canonical v3 lineage rejected: %v", err)
+	}
+	b.OuterCommand = "secret-project test"
+	if err := ValidateBatch(b); err == nil || !strings.Contains(err.Error(), "known public tool") {
+		t.Fatalf("private outer command accepted: %v", err)
 	}
 }
 

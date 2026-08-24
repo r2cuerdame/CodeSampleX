@@ -263,6 +263,7 @@ document.addEventListener('keydown',event=>{
     <span class="dim mono small">{{.Fingerprint}}</span>
   </div>
   {{- if .ErrorSummary}}<div class="row mono small">{{.ErrorSummary}}</div>{{end}}
+  {{- if or .ActualToolchain .StageEvidence .EvidenceGapKind .OuterCommands}}<div class="row mono small">{{if .ActualToolchain}}{{.ActualToolchain}}{{end}}{{if .StageEvidence}} · {{.StageEvidence}}{{end}}{{if .OuterCommands}} · outer {{.OuterCommands}}{{end}}{{if .EvidenceGapKind}} · gap {{.EvidenceGapKind}}{{end}}</div>{{end}}
   <div class="row dim mono small">
     {{$.T "symbol.evidence_quality"}}: {{.EvidenceQuality}}
     {{if .EnvironmentVariants}} · {{$.T "symbol.environment_variants"}}: {{.EnvironmentVariants}}{{end}}

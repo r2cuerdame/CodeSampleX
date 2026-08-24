@@ -620,6 +620,16 @@ Rollback the application before rolling back the schema. The new columns are
 additive and safe to leave in place; dropping them would destroy newly captured
 evidence and is intentionally not part of an automatic rollback.
 
+Migration `0025_failure_stage_lineage.sql` is additive. It adds the
+outer-command → actual-toolchain → actual-stage decision lineage to
+`evidence_agg` and materialized failure clusters. After deployment, run one
+known `go test` compile failure and one assertion failure and confirm that the
+first appears under `PROJECT_COMPILE`/`go/compiler`, the second under
+`PROJECT_TEST`/`go/test`, and neither changes historical PASS/FAIL totals.
+Rows carrying only `[build failed]` must show `diagnostic-missing`; they must
+not publish that aggregate marker as a root diagnostic. Application rollback
+may leave these additive columns in place.
+
 ### Running csx-server on Windows
 
 Production csx-server is a Linux container binary; the Windows builds are the

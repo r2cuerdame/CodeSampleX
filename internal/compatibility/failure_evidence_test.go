@@ -63,6 +63,29 @@ func TestPGXFixtureFailureBreakdownAddsUpWithoutInventingCauses(t *testing.T) {
 	}
 }
 
+func TestFailureClusterPreservesActualStageLineageAndDiagnosticGap(t *testing.T) {
+	now := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	exitCode := 1
+	env := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "golang", OS: "windows", Arch: "amd64", Runtime: "go", RuntimeVersion: "1.26"}.Normalize()
+	rows := map[string][]serverstore.EvidenceRow{"v1.0.0": {{
+		PURL: "pkg:golang/example.com/stagefixture@v1.0.0", EnvHash: env.Hash(), EnvJSON: string(domain.MustCanonicalJSON(env)),
+		Stage: "PROJECT_COMPILE", Result: "FAIL", ErrorFingerprint: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		TerminationKind: string(domain.TerminationExit), ExitCode: &exitCode, EvidenceQuality: string(domain.EvidencePartial),
+		OuterCommand: "go test", OuterStage: "PROJECT_TEST", ActualToolchain: "go/compiler",
+		StageEvidence: string(domain.FailureStageBuildAggregate), FailureEvidenceGap: string(domain.FailureDiagnosticMissing),
+		ObservationCount: 1, FirstSeen: now, LastSeen: now,
+	}}}
+	clusters := BuildClusters("golang", "example.com/stagefixture", rows, nil, now)
+	if len(clusters) != 1 {
+		t.Fatalf("clusters = %+v", clusters)
+	}
+	got := clusters[0]
+	if got.Stage != "PROJECT_COMPILE" || got.ActualToolchain != "go/compiler" || got.StageEvidence != string(domain.FailureStageBuildAggregate) ||
+		got.FailureEvidenceGap != string(domain.FailureDiagnosticMissing) || !got.DiagnosticCandidate || len(got.OuterCommands) != 1 || got.OuterCommands[0] != "go test" {
+		t.Fatalf("lineage cluster = %+v", got)
+	}
+}
+
 func failureEvidenceRow(osName, fp string, term domain.TerminationKind, quality domain.EvidenceQuality, count int64, now time.Time) serverstore.EvidenceRow {
 	env := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "golang", OS: osName, Arch: "amd64", Runtime: "go", RuntimeVersion: "1.26"}.Normalize()
 	return serverstore.EvidenceRow{

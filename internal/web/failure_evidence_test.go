@@ -47,3 +47,18 @@ func TestEvidenceGapNeverRendersRawNoErrorCodeCopy(t *testing.T) {
 		}
 	}
 }
+
+func TestFailureClusterViewExposesActualToolchainAndOuterLineage(t *testing.T) {
+	views := buildClusters([]failureCluster{{
+		Stage: "PROJECT_COMPILE", Fingerprint: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		TerminationKind: "exit", EvidenceQuality: "partial", EvidenceGapKind: "diagnostic-missing",
+		ActualToolchain: "go/compiler", StageEvidence: "build-aggregate", OuterCommands: []string{"go test"}, Count: 1,
+	}})
+	if len(views) != 1 {
+		t.Fatalf("views = %+v", views)
+	}
+	got := views[0]
+	if !got.EvidenceGap || got.EvidenceGapKind != "diagnostic-missing" || got.ActualToolchain != "go/compiler" || got.OuterCommands != "go test" {
+		t.Fatalf("lineage view = %+v", got)
+	}
+}

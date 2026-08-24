@@ -81,6 +81,11 @@ type fakeAggMeta struct {
 	timeoutMillis    int64
 	errorSummary     string
 	evidenceQuality  string
+	outerCommand     string
+	outerStage       string
+	actualToolchain  string
+	stageEvidence    string
+	evidenceGap      string
 	// direct: the reporter listed this package in their own manifest. Chosen
 	// wins and never unsays itself.
 	direct    bool
@@ -228,6 +233,13 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	}
 	if meta.evidenceQuality == "" {
 		meta.evidenceQuality = normalizedEvidenceQuality(b)
+	}
+	if meta.outerCommand == "" {
+		meta.outerCommand = b.OuterCommand
+		meta.outerStage = string(b.OuterStage)
+		meta.actualToolchain = b.ActualToolchain
+		meta.stageEvidence = string(b.StageEvidence)
+		meta.evidenceGap = string(b.FailureEvidenceGap)
 	}
 	meta.lastSeen = now
 	f.merge.apply(b)
@@ -519,6 +531,9 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
 			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
 			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
+			OuterCommand: meta.outerCommand, OuterStage: meta.outerStage,
+			ActualToolchain: meta.actualToolchain, StageEvidence: meta.stageEvidence,
+			FailureEvidenceGap:   meta.evidenceGap,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),

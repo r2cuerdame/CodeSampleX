@@ -1,6 +1,9 @@
 package deploygate
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestEligibilityRequiresProjectOpsPassAndNoHumanGate(t *testing.T) {
 	for _, tc := range []struct {
@@ -57,6 +60,16 @@ ALTER TABLE failure_clusters ADD COLUMN diagnostic_candidate BOOLEAN NOT NULL DE
 				t.Fatalf("destructive/sensitive migration accepted: %s", sql)
 			}
 		})
+	}
+}
+
+func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
+	sql, err := os.ReadFile("../serverstore/migrations/0025_failure_stage_lineage.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateMigrationSQL("0025_failure_stage_lineage.sql", string(sql)); err != nil {
+		t.Fatalf("failure-stage lineage migration rejected: %v", err)
 	}
 }
 

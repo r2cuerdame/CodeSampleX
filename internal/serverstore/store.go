@@ -68,6 +68,11 @@ type EvidenceRow struct {
 	TimeoutMillis        int64
 	ErrorSummary         string
 	EvidenceQuality      string
+	OuterCommand         string
+	OuterStage           string
+	ActualToolchain      string
+	StageEvidence        string
+	FailureEvidenceGap   string
 	ObservationCount     int64
 	UniquePeerBuckets    int
 	UniqueProjectBuckets int
@@ -264,6 +269,10 @@ type ClusterRow struct {
 	TimeoutMillis         int64
 	ErrorSummary          string
 	EvidenceQuality       string
+	OuterCommands         []string
+	ActualToolchain       string
+	StageEvidence         string
+	FailureEvidenceGap    string
 	ObservationCount      int64
 	EnvSummaryJSON        string
 	EnvVariantsJSON       string
