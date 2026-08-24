@@ -132,9 +132,9 @@ func TestIsCurrentFailureClusterSeparatesLiveRowsFromPreservedOnes(t *testing.T)
 		{"modern partial", ClusterRow{EvidenceQuality: "partial", ErrorFingerprint: "sha256:" + strings.Repeat("c", 64)}, true},
 		{"preserved legacy fingerprint", ClusterRow{EvidenceQuality: "legacy-evidence-incomplete", ErrorFingerprint: "sha256:" + strings.Repeat("d", 64)}, false},
 		{"preserved missing-quality fingerprint", ClusterRow{EvidenceQuality: "missing", ErrorFingerprint: "sha256:" + strings.Repeat("e", 64)}, false},
-		// A row written before the column existed reads back as the
-		// PostgreSQL default, so an empty quality must behave like it.
-		{"pre-0024 row with no quality", ClusterRow{ErrorFingerprint: "sha256:" + strings.Repeat("f", 64)}, false},
+		// PostgreSQL stores an explicitly empty quality as ''. The SQL
+		// predicate treats that value as current, so the Go twin must too.
+		{"empty quality with fingerprint", ClusterRow{ErrorFingerprint: "sha256:" + strings.Repeat("f", 64)}, true},
 	} {
 		if got := IsCurrentFailureCluster(tc.row); got != tc.current {
 			t.Errorf("%s: IsCurrentFailureCluster = %v, want %v", tc.name, got, tc.current)

@@ -26,14 +26,11 @@ import "github.com/r2cuerdame/codesamplex/internal/domain"
 const CurrentFailureClusterPredicateSQL = `(COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete') OR COALESCE(error_fp,'') = '')`
 
 // IsCurrentFailureCluster reports whether a stored cluster row is one the
-// current builder still writes. An empty EvidenceQuality is a row written
-// before the column existed and reads back as the PostgreSQL default.
+// current builder still writes. It deliberately matches the SQL predicate:
+// an empty (but non-NULL) EvidenceQuality is not a legacy value and remains
+// current even when it carries a fingerprint.
 func IsCurrentFailureCluster(c ClusterRow) bool {
-	quality := c.EvidenceQuality
-	if quality == "" {
-		quality = string(domain.EvidenceLegacyIncomplete)
-	}
-	switch domain.EvidenceQuality(quality) {
+	switch domain.EvidenceQuality(c.EvidenceQuality) {
 	case domain.EvidenceMissing, domain.EvidenceLegacyIncomplete:
 		return c.ErrorFingerprint == ""
 	default:
