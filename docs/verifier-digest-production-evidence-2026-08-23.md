@@ -1,5 +1,11 @@
 # v0.1.43 verifier digest — production 실행 증거 재검증 (2026-08-23)
 
+> **이 문서는 2026-08-23 시점의 기록이다.** 그때 production은 v0.1.43 verifier가
+> 기동한 뒤 아직 아무 검증도 실행하지 않은 상태였다. 그 뒤 실제로 실행이 시작됐고,
+> §4·5의 "verifierImage 0건"과 §6의 "가로 넘침은 모든 폭에서 0"은
+> [2026-08-24 문서](verifier-digest-production-evidence-2026-08-24.md)가 대체한다.
+> 나머지 절은 그 시점의 측정으로 유효하다.
+
 R2C-81. [R2C-64](https://linear.app/r2cuerdame/issue/R2C-64)에서 verifier 이미지를 전부
 immutable digest로 고정하고 receipt에 실행 이미지 식별자를 기록하도록 바꿨고,
 [R2C-80](https://linear.app/r2cuerdame/issue/R2C-80)의 release gate가 **v0.1.43**
