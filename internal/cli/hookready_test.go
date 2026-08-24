@@ -508,6 +508,12 @@ func TestSmokeCheckReadsTheHookItActuallyRan(t *testing.T) {
 		// answer about the network, not a fault in the wiring — which is the
 		// only thing this check is measuring.
 		{hookTraceNoMatch, true, hookTraceNoMatch},
+		// The lookup ran, answered, and the relevance gate declined to
+		// interrupt with what came back. That is the gate working, and it
+		// proves the same path as an answer does — reading it as "stopped
+		// early" would report a working install as broken.
+		{hookTraceUnrelated, true, hookTraceUnrelated},
+		{hookTraceLowRelevance, true, hookTraceLowRelevance},
 		// Reached the hook, but never reached the lookup. Not proved.
 		{hookTraceSearchFailed, false, hookTraceSearchFailed},
 		{hookTraceNotBuildStep, false, hookTraceNotBuildStep},
