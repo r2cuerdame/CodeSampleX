@@ -74,4 +74,11 @@ func TestNonExitTerminationKindsStayStructuredAndDistinct(t *testing.T) {
 	}
 }
 
+func TestCanonicalPublicErrorSummaryDoesNotApplyValidatorUsername(t *testing.T) {
+	summary := "FAIL example.com/csx-production-modern-failure-canary: connection refused"
+	if got := CanonicalPublicErrorSummary(summary, domain.StageProjectTest); got != summary {
+		t.Fatalf("portable canonical summary = %q, want %q", got, summary)
+	}
+}
+
 func intPointer(v int) *int { return &v }

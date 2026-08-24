@@ -142,7 +142,7 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		return fmt.Errorf("errorSummary longer than 512 bytes")
 	}
 	if b.ErrorSummary != "" {
-		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(b.ErrorSummary, b.Stage, nil).Template)
+		canonical := sanitizer.CanonicalPublicErrorSummary(b.ErrorSummary, b.Stage)
 		if canonical != b.ErrorSummary {
 			return fmt.Errorf("errorSummary is not canonical secret-safe normalized text")
 		}
