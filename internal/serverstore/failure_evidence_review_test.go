@@ -8,9 +8,9 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
-// These regressions pin the review boundary: public v2 failure evidence must
-// be independently canonical at ingest, and its fingerprint must be derived
-// from the structured evidence rather than trusted as a client-supplied key.
+// These regressions pin the review boundary end-to-end: public v2 failure
+// evidence must be independently canonical at ingest, and its fingerprint
+// must be derived from structured evidence rather than trusted from a client.
 func reviewBatch(f domain.FailureEvidence) domain.ObservationBatch {
 	return domain.ObservationBatch{
 		SchemaVersion:    1,
