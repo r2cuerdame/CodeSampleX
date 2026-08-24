@@ -11,6 +11,7 @@ import (
 // These regressions pin the review boundary end-to-end: public v2 failure
 // evidence must be independently canonical at ingest, and its fingerprint
 // must be derived from structured evidence rather than trusted from a client.
+// Keep this file in the normal PR CI path so final review repairs are rechecked.
 func reviewBatch(f domain.FailureEvidence) domain.ObservationBatch {
 	return domain.ObservationBatch{
 		SchemaVersion:    1,
