@@ -84,7 +84,7 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err := validErrorCode(b.ErrorCode); err != nil {
 		return err
 	}
-	if err := validFailureEvidence(b); err != nil {
+	if err := validFailureEvidence(b, p.Name); err != nil {
 		return err
 	}
 	if err := validEnv(b.Environment); err != nil {
@@ -109,7 +109,7 @@ func normalizedEvidenceQuality(b domain.ObservationBatch) string {
 	return string(b.EvidenceQuality)
 }
 
-func validFailureEvidence(b domain.ObservationBatch) error {
+func validFailureEvidence(b domain.ObservationBatch, publicPackage string) error {
 	if b.Result == domain.ResultPass {
 		if b.TerminationKind != "" || b.ExitCode != nil || b.Signal != "" || b.TimeoutMillis != 0 ||
 			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" {
@@ -142,7 +142,14 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		return fmt.Errorf("errorSummary longer than 512 bytes")
 	}
 	if b.ErrorSummary != "" {
-		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(b.ErrorSummary, b.Stage, nil).Template)
+		// Producers intentionally preserve a public package token from
+		// node_modules/<name>. Revalidation must use the same allowlist or a
+		// producer-canonical summary becomes <path> here and is rejected.
+		publicNames := []string(nil)
+		if publicPackage != "" {
+			publicNames = []string{publicPackage}
+		}
+		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(b.ErrorSummary, b.Stage, publicNames).Template)
 		if canonical != b.ErrorSummary {
 			return fmt.Errorf("errorSummary is not canonical secret-safe normalized text")
 		}
@@ -157,6 +164,16 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		hasTermination, hasSummary := term.Structured(), b.ErrorSummary != ""
 		if hasTermination == hasSummary || b.ErrorFingerprint == "" {
 			return fmt.Errorf("evidenceQuality partial requires exactly one of termination or normalized error, plus fingerprint")
+		}
+	}
+	if b.EvidenceQuality == domain.EvidenceComplete || b.EvidenceQuality == domain.EvidencePartial {
+		// Modern clients do not get to choose the cluster identity. The
+		// server recomputes the documented v2 coordinate from the structured
+		// evidence so a buggy or hostile client cannot split identical failures
+		// or merge unrelated ones with an arbitrary syntactically-valid SHA.
+		expected := domain.SHA256Hex([]byte("v2|" + string(b.Stage) + "|" + term.FingerprintCoordinate() + "|" + b.ErrorCode + "|" + b.ErrorSummary))
+		if b.ErrorFingerprint != expected {
+			return fmt.Errorf("errorFingerprint does not match structured failure evidence")
 		}
 	}
 	return nil
