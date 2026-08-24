@@ -69,3 +69,17 @@ func TestValidateBatchRejectsFingerprintThatDoesNotMatchEvidence(t *testing.T) {
 		t.Fatalf("mismatched modern fingerprint accepted: %v", err)
 	}
 }
+
+func TestValidateBatchDoesNotTreatValidatorUsernameAsProducerPII(t *testing.T) {
+	exitCode := 1
+	summary := "FAIL example.com/csx-production-modern-failure-canary: connection refused"
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	f := domain.FailureEvidence{
+		TerminationKind: domain.TerminationExit, ExitCode: &exitCode,
+		ErrorSummary: summary, EvidenceQuality: domain.EvidenceComplete,
+	}
+	f.Fingerprint = domain.FailureFingerprint(domain.StageProjectTest, term, "", summary)
+	if err := ValidateBatch(reviewBatch(f)); err != nil {
+		t.Fatalf("producer-canonical summary containing the production account name was rejected: %v", err)
+	}
+}
