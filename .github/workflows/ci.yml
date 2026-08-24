@@ -18,7 +18,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 # A superseded push has nothing to say about the branch's current head, but
 # main's runs are the record of what was merged and are never cancelled.
@@ -32,6 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # Disposable, job-scoped, and reachable only from this job's network: the
+    # credentials below are the whole database, created and destroyed with the
+    # runner. Production's DSN is not a secret this workflow needs, and giving
+    # it one would make a test capable of touching the live corpus.
+    #
+    # 17-alpine is what deploy/docker-compose.yml runs. A plan-shape assertion
+    # is only evidence about production if the planner is production's.
     services:
       postgres:
         image: postgres:17-alpine
@@ -41,6 +48,8 @@ jobs:
           POSTGRES_DB: csx
         ports:
           - 5432:5432
+        # No step runs until this answers, so a database that never comes up
+        # fails during "Initialize containers" instead of inside a test.
         options: >-
           --health-cmd "pg_isready -U csx -d csx"
           --health-interval 5s
@@ -49,26 +58,22 @@ jobs:
 
     env:
       CSX_TEST_DSN: postgres://csx:csx-ci-throwaway@127.0.0.1:5432/csx?sslmode=disable
+      # Turns a lost DSN into a failure that names the variable, instead of 30
+      # silent skips. See integrationDSN in internal/serverstore.
       CSX_REQUIRE_TEST_DSN: "1"
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Apply R2C-164 review fixes
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 49
-        run: |
-          python3 .github/r2c164_patch.py
-          gofmt -w internal/mcp/tools.go internal/mcp/deps.go internal/domain/outputrelevance.go internal/domain/outputrelevance_review_test.go internal/mcp/reviewfix_test.go internal/cli/hook.go internal/cli/hook_reviewfix_test.go
-
       - name: Vet
         run: go vet ./...
 
+      # Everything that needs no database, first: a compile error or a broken
+      # unit test should not wait on the PostgreSQL suite to be reported.
       - name: Unit and contract tests
         run: |
           set -euo pipefail
@@ -76,25 +81,38 @@ jobs:
           test -n "$pkgs"
           go test $pkgs -count=1
 
+      # A database that is up but wrong — bad credentials, a migration that no
+      # longer applies, a schema the search_path cannot see — fails here, under
+      # a step whose name says the database was not ready. The next step is
+      # then only ever about the code.
       - name: Database preflight
         run: go test ./internal/serverstore/ -run '^TestIntegrationDatabaseIsReadyForTheSuite$' -count=1 -v
 
       - name: PostgreSQL integration tests
         run: |
           set -euo pipefail
+          # The renderer below is the only readable form of a -json run, so the
+          # failing case must reach it rather than abort the step at `go test`.
           status=0
           go test ./internal/serverstore/ -count=1 -json > "$RUNNER_TEMP/pg-tests.json" || status=$?
+          # -json implies verbose, so this is the whole run in order: which
+          # test, which assertion, which migration or query it died on.
           jq -j 'select(.Action == "output") | .Output' "$RUNNER_TEMP/pg-tests.json"
           if [ "$status" -ne 0 ]; then
             jq -r 'select(.Action == "fail" and (.Test // "") != "") | "::error::failed: " + .Test' "$RUNNER_TEMP/pg-tests.json"
             exit "$status"
           fi
 
+      # The completion condition of R2C-57, asserted rather than assumed. A
+      # green exit code above is also what a run of nothing but skips produces.
       - name: Prove the PostgreSQL tests actually ran
         run: |
           set -euo pipefail
           ran="$(jq -r 'select(.Action == "pass" and ((.Test // "") | startswith("TestIntegration"))) | .Test' "$RUNNER_TEMP/pg-tests.json" | sort -u)"
           skipped="$(jq -r 'select(.Action == "skip" and (.Test // "") != "") | .Test' "$RUNNER_TEMP/pg-tests.json" | sort -u)"
+
+          # An empty reading means the measurement broke, not that the suite is
+          # clean — the one failure mode this check must never report as a pass.
           if [ -z "$ran" ]; then
             echo "::error::no TestIntegration result was recorded; the proof itself is broken, not the suite"
             exit 1
@@ -104,10 +122,12 @@ jobs:
             printf '%s\n' "$skipped" | sed 's/^/  skipped: /'
             exit 1
           fi
+          # Named because it is why this gate exists: the /wanted outage guard.
           if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationListWantedExpandsTheCorpusOncePerRequest'; then
             echo "::error::the /wanted complexity guard (R2C-55) did not run"
             exit 1
           fi
+
           {
             echo "### PostgreSQL integration: $(printf '%s\n' "$ran" | wc -l) tests ran, 0 skipped"
             echo ""
@@ -115,6 +135,15 @@ jobs:
             echo "The /wanted complexity guard from R2C-55 ran and passed."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # internal/serverstore is no longer the only package that needs a real
+      # database. R2C-58's pool guard is asserted end-to-end over HTTP in
+      # cmd/csx-server: a lock is taken on the wanted table, more visitors than
+      # the read class may hold are sent at the stuck page, and /healthz has to
+      # keep answering. Those tests skip themselves without a DSN exactly like
+      # the serverstore ones — and they run in the "Unit and contract tests"
+      # step above, which is not -json and therefore cannot tell a skip from a
+      # pass. Without this step the guard could stop running and CI would stay
+      # green, which is the R2C-57 hole reopened one package to the left.
       - name: PostgreSQL end-to-end pool pressure tests
         run: |
           set -euo pipefail
@@ -125,6 +154,7 @@ jobs:
             jq -r 'select(.Action == "fail" and (.Test // "") != "") | "::error::failed: " + .Test' "$RUNNER_TEMP/srv-tests.json"
             exit "$status"
           fi
+
           ran="$(jq -r 'select(.Action == "pass" and ((.Test // "") | startswith("TestIntegration"))) | .Test' "$RUNNER_TEMP/srv-tests.json" | sort -u)"
           skipped="$(jq -r 'select(.Action == "skip" and (.Test // "") != "") | .Test' "$RUNNER_TEMP/srv-tests.json" | sort -u)"
           if [ -z "$ran" ]; then
@@ -136,23 +166,16 @@ jobs:
             printf '%s\n' "$skipped" | sed 's/^/  skipped: /'
             exit 1
           fi
+          # Named because it is why this gate exists: with the guard disabled
+          # this exact test fails the way production did — /healthz 503 while
+          # one page is stuck.
           if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationOneStuckPageDoesNotTakeTheSiteDown'; then
             echo "::error::the pool starvation guard (R2C-58) did not run"
             exit 1
           fi
+
           {
             echo "### Pool pressure end-to-end: $(printf '%s\n' "$ran" | wc -l) tests ran, 0 skipped"
             echo ""
             echo "One page held on a table lock; /healthz and an unrelated page stayed up."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Persist R2C-164 review fixes
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 49 && success()
-        run: |
-          git checkout origin/main -- .github/workflows/ci.yml
-          rm -f .github/r2c164_patch.py .github/workflows/r2c164-review-fix.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: address R2C-164 review findings"
-          git push origin HEAD:${{ github.head_ref }}
