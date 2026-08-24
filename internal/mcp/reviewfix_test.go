@@ -8,6 +8,9 @@ import (
 	"testing"
 )
 
+// These regressions pin the four Codex review findings on PR #49: record only
+// the filtered visible outcome, preserve NO_SAFE_MATCH semantics, and explain
+// each surviving fact candidate independently.
 func TestToolSearchRecordsFilteredVisibleTop(t *testing.T) {
 	var recorded domain.SearchResponse
 	s := &Server{Deps: &Deps{
