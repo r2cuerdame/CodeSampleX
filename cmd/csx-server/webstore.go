@@ -961,11 +961,22 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			"stage":               c.Stage,
 			"errorCode":           c.ErrorCode,
 			"fingerprint":         c.ErrorFingerprint,
+			"terminationKind":     c.TerminationKind,
+			"exitCode":            c.ExitCode,
+			"signal":              c.Signal,
+			"timeoutMillis":       c.TimeoutMillis,
+			"errorSummary":        c.ErrorSummary,
+			"evidenceQuality":     c.EvidenceQuality,
 			"count":               c.ObservationCount,
 			"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
+			"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
+			"evidenceBreakdown":   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
 			"hypotheses":          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
 			"regressionCandidate": c.RegressionCandidate,
+			"diagnosticCandidate": c.DiagnosticCandidate,
 			"versions":            json.RawMessage(orEmptyArr(c.VersionsJSON)),
+			"firstSeen":           c.FirstSeen.UTC().Format(time.RFC3339),
+			"lastSeen":            c.LastSeen.UTC().Format(time.RFC3339),
 		}
 		b, err := json.Marshal(doc)
 		if err != nil {

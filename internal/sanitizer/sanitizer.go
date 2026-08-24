@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -36,6 +37,10 @@ var (
 	codeClasses = []*regexp.Regexp{reTSCode, reNodeCode, reRustCode, reErrnoCode}
 
 	reExitCode = regexp.MustCompile(`(?i)\b(exit code\s+)\d+\b`)
+	reUUID     = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b`)
+	reTime     = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[T ][0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?\b`)
+	rePID      = regexp.MustCompile(`(?i)\b(pid\s*[=:]?\s*)\d+\b`)
+	reIPv4Port = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b`)
 
 	// node_modules paths: consume the whole path token, capture the trailing
 	// package name (scoped alternative first so "@scope/name" wins).
@@ -128,6 +133,10 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 	s = reSQuote.ReplaceAllString(s, "<str>")
 
 	// (7) Hex/base64 runs.
+	s = reUUID.ReplaceAllString(s, "<uuid>")
+	s = reTime.ReplaceAllString(s, "<timestamp>")
+	s = rePID.ReplaceAllString(s, "${1}<pid>")
+	s = reIPv4Port.ReplaceAllString(s, "<ip>:<port>")
 	s = reTokenCand.ReplaceAllStringFunc(s, func(m string) string {
 		if tokenish(m) {
 			return "<token>"
@@ -152,6 +161,67 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 		Fingerprint:   domain.SHA256Hex([]byte("v1|" + string(stage) + "|" + code + "|" + s)),
 		PublicSymbols: mentioned(raw, publicPkgs),
 	}
+}
+
+// SanitizeFailure builds the public v2 failure contract. The fingerprint is
+// intentionally the cluster identity only: package/version scope and exact
+// environment variants are stored beside it by aggregation, so an otherwise
+// identical failure does not split merely because it ran on another machine.
+func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTermination, _ []string) domain.FailureEvidence {
+	// Public FailureEvidence must be canonical without trusting producer-only
+	// allowlists. Package identity already travels separately as structured
+	// PURLs/receipt data, so node_modules paths are normalized here.
+	san := Sanitize(raw, stage, nil)
+	summary := PublicErrorSummary(san.Template)
+	quality := domain.EvidenceMissing
+	structured := term.Structured()
+	switch {
+	case structured && summary != "":
+		quality = domain.EvidenceComplete
+	case structured || summary != "":
+		quality = domain.EvidencePartial
+	}
+	f := domain.FailureEvidence{
+		TerminationKind: term.Kind,
+		ExitCode:        term.ExitCode,
+		Signal:          strings.ToUpper(strings.TrimSpace(term.Signal)),
+		TimeoutMillis:   term.TimeoutMillis,
+		ErrorSummary:    summary,
+		ErrorCode:       san.Code,
+		EvidenceQuality: quality,
+	}
+	if quality != domain.EvidenceMissing {
+		f.Fingerprint = domain.FailureFingerprint(stage, term, san.Code, summary)
+	}
+	return f
+}
+
+// PublicErrorSummary keeps the first useful normalized lines within a strict
+// public-wire cap. It is idempotent, which lets the server reject any client
+// value that was not produced by the same canonical normalization.
+func PublicErrorSummary(normalized string) string {
+	const maxBytes = 512
+	lines := strings.Split(strings.ReplaceAll(normalized, "\r\n", "\n"), "\n")
+	out := make([]string, 0, 4)
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+		if len(out) == 4 {
+			break
+		}
+	}
+	s := strings.Join(out, " · ")
+	if len(s) > maxBytes {
+		s = s[:maxBytes]
+		for !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
+		s = strings.TrimSpace(s)
+	}
+	return s
 }
 
 // observationStages are the stages an error can actually be RECORDED

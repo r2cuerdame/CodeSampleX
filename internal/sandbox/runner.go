@@ -7,6 +7,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -17,8 +18,9 @@ import (
 
 // StageResult is one verification stage's outcome plus its local-only log.
 type StageResult struct {
-	Result string // PASS | FAIL | SKIPPED
-	Log    string
+	Result      string // PASS | FAIL | SKIPPED
+	Log         string
+	Termination domain.FailureTermination
 }
 
 // StageResult.Result values.
@@ -67,7 +69,18 @@ func runStage(ctx context.Context, dir string, argv []string) StageResult {
 	out, err := execCombined(ctx, dir, argv)
 	log := "$ " + strings.Join(argv, " ") + "\n" + strings.TrimSpace(string(out))
 	if err != nil {
-		return StageResult{Result: ResultFail, Log: log + "\nerror: " + err.Error()}
+		term := domain.FailureTermination{Kind: domain.TerminationProcessStartFailed}
+		var exitErr *exec.ExitError
+		switch {
+		case ctx.Err() == context.DeadlineExceeded:
+			term = domain.FailureTermination{Kind: domain.TerminationTimeout, TimeoutMillis: stageTimeout.Milliseconds()}
+		case stageSignal(err) != "":
+			term = domain.FailureTermination{Kind: domain.TerminationSignal, Signal: stageSignal(err)}
+		case errors.As(err, &exitErr):
+			code := exitErr.ExitCode()
+			term = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+		}
+		return StageResult{Result: ResultFail, Log: log + "\nerror: " + err.Error(), Termination: term}
 	}
 	return StageResult{Result: ResultPass, Log: log}
 }

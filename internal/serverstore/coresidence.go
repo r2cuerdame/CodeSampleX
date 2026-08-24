@@ -63,7 +63,8 @@ func coresidencePairs(b domain.ObservationBatch) []VersionCoresidence {
 // batchNamesAnAttributedFailure reports whether this batch is a failure
 // anyone could name a cause for.
 func batchNamesAnAttributedFailure(b domain.ObservationBatch) bool {
-	return b.Result == domain.ResultFail && strings.TrimSpace(b.ErrorCode) != ""
+	return b.Result == domain.ResultFail && (b.EvidenceQuality == domain.EvidenceComplete ||
+		b.EvidenceQuality == domain.EvidencePartial || strings.TrimSpace(b.ErrorCode) != "")
 }
 
 // orderVersionPair puts the pair in VERSION precedence, which is what

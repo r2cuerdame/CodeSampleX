@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
 // maxObservationCount caps a single batch row's claimed count. Local clients
@@ -83,6 +84,9 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err := validErrorCode(b.ErrorCode); err != nil {
 		return err
 	}
+	if err := validFailureEvidence(b); err != nil {
+		return err
+	}
 	if err := validEnv(b.Environment); err != nil {
 		return err
 	}
@@ -91,6 +95,79 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	}
 	if err := validDependsOn(p, b.DependsOn); err != nil {
 		return err
+	}
+	return nil
+}
+
+func normalizedEvidenceQuality(b domain.ObservationBatch) string {
+	if b.Result != domain.ResultFail {
+		return ""
+	}
+	if b.EvidenceQuality == "" {
+		return string(domain.EvidenceLegacyIncomplete)
+	}
+	return string(b.EvidenceQuality)
+}
+
+func validFailureEvidence(b domain.ObservationBatch) error {
+	if b.Result == domain.ResultPass {
+		if b.TerminationKind != "" || b.ExitCode != nil || b.Signal != "" || b.TimeoutMillis != 0 ||
+			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" {
+			return fmt.Errorf("PASS must not carry failure evidence")
+		}
+		return nil
+	}
+	switch b.EvidenceQuality {
+	case "", domain.EvidenceComplete, domain.EvidencePartial, domain.EvidenceMissing, domain.EvidenceLegacyIncomplete:
+	default:
+		return fmt.Errorf("evidenceQuality %q is invalid", b.EvidenceQuality)
+	}
+	term := domain.FailureTermination{Kind: b.TerminationKind, ExitCode: b.ExitCode, Signal: b.Signal, TimeoutMillis: b.TimeoutMillis}
+	if b.TerminationKind != "" && !term.Structured() {
+		return fmt.Errorf("terminationKind %q lacks its required structured value", b.TerminationKind)
+	}
+	if b.ExitCode != nil && b.TerminationKind != domain.TerminationExit {
+		return fmt.Errorf("exitCode requires terminationKind exit")
+	}
+	if b.Signal != "" && b.TerminationKind != domain.TerminationSignal {
+		return fmt.Errorf("signal requires terminationKind signal")
+	}
+	if len(b.Signal) > 32 {
+		return fmt.Errorf("signal longer than 32 bytes")
+	}
+	if b.TimeoutMillis < 0 || (b.TimeoutMillis > 0 && b.TerminationKind != domain.TerminationTimeout) {
+		return fmt.Errorf("timeoutMillis requires terminationKind timeout and cannot be negative")
+	}
+	if len(b.ErrorSummary) > 512 {
+		return fmt.Errorf("errorSummary longer than 512 bytes")
+	}
+	if b.ErrorSummary != "" {
+		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(b.ErrorSummary, b.Stage, nil).Template)
+		if canonical != b.ErrorSummary {
+			return fmt.Errorf("errorSummary is not canonical secret-safe normalized text")
+		}
+	}
+	if b.EvidenceQuality == domain.EvidenceMissing && (term.Structured() || b.ErrorSummary != "" || b.ErrorFingerprint != "" || b.ErrorCode != "") {
+		return fmt.Errorf("evidenceQuality missing cannot carry inferred failure evidence")
+	}
+	if b.EvidenceQuality == domain.EvidenceComplete && (!term.Structured() || b.ErrorSummary == "" || b.ErrorFingerprint == "") {
+		return fmt.Errorf("evidenceQuality complete requires termination, normalized error and fingerprint")
+	}
+	if b.EvidenceQuality == domain.EvidencePartial {
+		hasTermination, hasSummary := term.Structured(), b.ErrorSummary != ""
+		if hasTermination == hasSummary || b.ErrorFingerprint == "" {
+			return fmt.Errorf("evidenceQuality partial requires exactly one of termination or normalized error, plus fingerprint")
+		}
+	}
+	if b.EvidenceQuality == domain.EvidenceComplete || b.EvidenceQuality == domain.EvidencePartial {
+		// Modern clients do not get to choose the cluster identity. The
+		// server recomputes the documented v2 coordinate from the structured
+		// evidence so a buggy or hostile client cannot split identical failures
+		// or merge unrelated ones with an arbitrary syntactically-valid SHA.
+		expected := domain.FailureFingerprint(b.Stage, term, b.ErrorCode, b.ErrorSummary)
+		if b.ErrorFingerprint != expected {
+			return fmt.Errorf("errorFingerprint does not match structured failure evidence")
+		}
 	}
 	return nil
 }

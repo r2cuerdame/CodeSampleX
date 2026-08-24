@@ -696,7 +696,14 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 
 	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
 	if runErr != nil {
-		return -1, "", "", nil, evidence.CommandOutput{}, runErr // command never ran; nothing recorded
+		// A process-start failure is still evidence about the requested
+		// package operation. Record it with an explicit termination kind;
+		// treating it as "nothing ran" made this whole class invisible.
+		if res != nil && ident != nil {
+			rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
+			_ = rec.RecordTerminatedRun(ctx, cwd, res, profile, output.Termination, runErr.Error()) // best-effort
+		}
+		return -1, string(domain.StageUsed), string(domain.ResultFail), nil, output, runErr
 	}
 
 	stage := domain.StageUsed
@@ -719,21 +726,26 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		// CommandOutput.FailureDiagnostics. It used to be stderr alone, and
 		// every toolchain that reports on stdout was fingerprinted as the
 		// hash of a blank string.
-		san := sanitizer.Sanitize(output.FailureDiagnostics(), stage, publicNames)
-		template := strings.TrimSpace(san.Template)
+		failure := sanitizer.SanitizeFailure(output.FailureDiagnostics(), stage, output.Termination, publicNames)
+		template := strings.TrimSpace(failure.ErrorSummary)
 		// A fingerprint over nothing is not a weak identity for this
 		// failure. It is the identity every silent failure shares, on any
 		// machine in any language, so it matches nothing that ever
 		// happened. Emitted alone it left the caller one line that reads
 		// like an error and answers nothing, and it turned the lookup below
 		// into a query with no question in it.
-		if san.Code != "" || template != "" {
-			if san.Code != "" {
-				sanitized = append(sanitized, "errorCode: "+san.Code)
+		termination := failure.Termination()
+		if failure.Fingerprint != "" || termination.Structured() || template != "" {
+			if failure.ErrorCode != "" {
+				sanitized = append(sanitized, "errorCode: "+failure.ErrorCode)
 			}
-			if san.Fingerprint != "" {
-				sanitized = append(sanitized, "fingerprint: "+san.Fingerprint)
+			if failure.Fingerprint != "" {
+				sanitized = append(sanitized, "fingerprint: "+failure.Fingerprint)
 			}
+			if termination.Structured() {
+				sanitized = append(sanitized, "termination: "+termination.FingerprintCoordinate())
+			}
+			sanitized = append(sanitized, "evidenceQuality: "+string(failure.EvidenceQuality))
 			if template != "" {
 				sanitized = append(sanitized, strings.Split(template, "\n")...)
 			}
@@ -760,7 +772,11 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 			recordRes = &closed
 		}
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
-		_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, output.FailureDiagnostics()) // best-effort
+		if exitCode != 0 && output.Termination.Structured() {
+			_ = rec.RecordTerminatedRun(ctx, cwd, recordRes, profile, output.Termination, output.FailureDiagnostics()) // best-effort
+		} else {
+			_ = rec.RecordRun(ctx, cwd, recordRes, profile, exitCode, output.FailureDiagnostics()) // best-effort
+		}
 	}
 	// The tail goes back to the caller unredacted. Sanitizing is what the
 	// UPLOAD needs; this return value never leaves the machine it was

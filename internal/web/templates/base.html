@@ -250,7 +250,9 @@ document.addEventListener('keydown',event=>{
 <li class="cluster">
   <div class="row"><span class="k mono">{{$.T "symbol.observed"}}</span>
     <span class="mono">{{.Stage}}</span>
-    {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{else}}<span class="dim mono small">{{$.T "symbol.no_error_code"}}</span>{{end}}
+    {{if .Termination}}<span class="code mono">{{.Termination}}</span>{{end}}
+    {{if .ErrorCode}}<span class="code mono">{{.ErrorCode}}</span>{{end}}
+    {{if .EvidenceGap}}<span class="chip unknown mono">{{$.T "symbol.evidence_gap"}}</span>{{end}}
     <span class="dim mono">×{{.Count}}</span>
     {{/* The release it happened to. It used to appear only on a cluster
          flagged as a regression candidate, so an ordinary cluster — most of
@@ -260,6 +262,13 @@ document.addEventListener('keydown',event=>{
     {{if .Symbol}}<span class="dim mono">{{.Symbol}}</span>{{end}}
     <span class="dim mono small">{{.Fingerprint}}</span>
   </div>
+  {{- if .ErrorSummary}}<div class="row mono small">{{.ErrorSummary}}</div>{{end}}
+  <div class="row dim mono small">
+    {{$.T "symbol.evidence_quality"}}: {{.EvidenceQuality}}
+    {{if .EnvironmentVariants}} · {{$.T "symbol.environment_variants"}}: {{.EnvironmentVariants}}{{end}}
+    {{if .FirstSeen}} · {{$.T "symbol.first_seen"}}: {{.FirstSeen}}{{end}}
+    {{if .LastSeen}} · {{$.T "symbol.last_seen_col"}}: {{.LastSeen}}{{end}}
+  </div>
   {{- if .Hypotheses}}
   <div class="row hyprow"><span class="k mono dim">{{$.T "symbol.hypotheses"}}</span>
     {{range .Hypotheses}}<span class="chip hyp mono">{{.Domain}} {{.Pct}}</span> {{end}}
@@ -268,6 +277,9 @@ document.addEventListener('keydown',event=>{
   {{- end}}
   {{- if .RegressionCandidate}}
   <div class="row"><span class="chip elevated mono"><span class="glyph" aria-hidden="true">▲</span>{{$.T "symbol.regression_flag"}}</span></div>
+  {{- end}}
+  {{- if .DiagnosticCandidate}}
+  <div class="row"><span class="chip unknown mono">{{$.T "symbol.diagnostic_candidate"}}</span></div>
   {{- end}}
 </li>
 {{- end}}
