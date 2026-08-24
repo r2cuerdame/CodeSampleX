@@ -205,6 +205,13 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		return true
 	}
 	for _, cluster := range f.clusters {
+		// PostgreSQL restricts this branch to current clusters. A preserved
+		// pre-0024 row is historical material, so ranking authoring work by
+		// its observation count would spend the farm on a failure identity
+		// the builder no longer writes.
+		if !IsCurrentFailureCluster(cluster) {
+			continue
+		}
 		var versions []string
 		if json.Unmarshal([]byte(cluster.VersionsJSON), &versions) != nil {
 			continue

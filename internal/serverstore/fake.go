@@ -1369,11 +1369,25 @@ func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 }
 
 func (f *Fake) ListFailureClusters(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, true)
+}
+
+// ListFailureClustersIncludingPreserved mirrors the PostgreSQL read of the
+// same name: exact failure matching still needs the pre-0024 fingerprints.
+func (f *Fake) ListFailureClustersIncludingPreserved(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, false)
+}
+
+func (f *Fake) listFailureClusters(packageName string, currentOnly bool) ([]ClusterRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ClusterRow
 	for _, c := range f.clusters {
-		if c.PackageName == packageName {
+		// Same rule as PostgreSQL: preserved pre-0024 rows stay stored and
+		// stay out of the reads that describe live clusters. A Fake that
+		// served them everywhere let a doubled cluster ledger pass a green
+		// suite.
+		if c.PackageName == packageName && (!currentOnly || IsCurrentFailureCluster(c)) {
 			out = append(out, c)
 		}
 	}

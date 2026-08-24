@@ -476,7 +476,13 @@ type Store interface {
 	IdentityByAPIToken(ctx context.Context, apiTokenHash string) (IdentityRow, bool, error)
 
 	UpsertFailureCluster(ctx context.Context, c ClusterRow) error
+	// ListFailureClusters returns the clusters the current builder writes.
+	// Rows preserved by migration 0024 are stored but not served here.
 	ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error)
+	// ListFailureClustersIncludingPreserved adds those preserved rows back,
+	// for the one question they still answer: has this exact fingerprint
+	// been recorded?
+	ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error)
 
 	SetStatsDaily(ctx context.Context, day string, statsJSON string) error
 	GetLatestStats(ctx context.Context) (statsJSON string, ok bool, err error)

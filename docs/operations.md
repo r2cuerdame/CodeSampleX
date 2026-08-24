@@ -85,6 +85,26 @@ access logs still exist. Removing those logs is an irreversible privacy
 cleanup and therefore remains a named manual operation; a `safe` or
 `additive-migration` dispatch never deletes them as a side effect.
 
+The failure-cluster total in that check counts **current** clusters, not every
+row in the table. `failure_clusters` is derived data and migration 0024
+preserved its pre-contract rows instead of deleting them, so the rebuilt
+evidence-gap rows now sit beside the old fingerprinted ones and a raw
+`SUM(observation_count)` counts the same failures twice — which is what took
+the reported ledger from 17,737 to 35,488 on the 0024 rollout while the FAIL
+total stayed at 16,755. Both `deploy.ps1` and
+`collect-production-evidence.sh` compute it with
+`serverstore.CurrentFailureClusterPredicateSQL`, and
+`deploy/lightsail/failure_cluster_ledger_test.go` fails the build if either
+script drifts from the predicate the server itself reads with. See
+[schema.md](schema.md) for why the preserved rows stay.
+
+`modern_failure_clusters` in the same evidence file counts clusters carrying
+structured termination and a normalized error. It is zero until a client
+release that emits structured failure evidence records a failure; no
+deployment of the server can raise it, because legacy evidence is never
+promoted to a modern fingerprint. Read a zero there as "no modern producer has
+failed yet", and raise it by shipping a producer, not by rebuilding.
+
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
 target and previous SHA, image digest, migration version, health/smoke result,
 before/after invariants, and rollback outcome. ProjectOps and the independent

@@ -750,7 +750,7 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 	var fingerprintPackages []domain.PURL
 	matchedPackage := map[string]bool{}
 	for _, p := range uniquePackageIdentities(packages) {
-		clusters, err := a.d.Store.ListFailureClusters(r.Context(), p.Name)
+		clusters, err := a.d.Store.ListFailureClustersIncludingPreserved(r.Context(), p.Name)
 		if err != nil {
 			continue
 		}

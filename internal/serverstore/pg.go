@@ -2051,14 +2051,6 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 // --------------------------------------------------------------- clusters --
 
-// currentFailureClusterSQL keeps pre-0024 derived rows recoverable without
-// letting them appear beside the rebuilt evidence-gap row. Before structured
-// failure evidence, every legacy fingerprint had its own row. The current
-// builder deliberately collapses missing/legacy evidence to error_fp=”, so
-// the non-empty legacy rows are historical material rather than live
-// clusters. They stay in PostgreSQL until a separately authorized cleanup.
-const currentFailureClusterSQL = `(COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete') OR COALESCE(error_fp,'') = '')`
-
 func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
 	envVariants := []byte("[]")
@@ -2116,6 +2108,24 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+}
+
+// ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
+//
+// Exact failure matching is the one question those rows still answer. Every
+// released client fingerprints a failure as `v1|stage|code|template`, and
+// every one of the fingerprints this network has on file was written by such
+// a client. Serving only current clusters would hand exact-match search a
+// surface where nothing can ever match: the rebuilt evidence-gap rows carry
+// no fingerprint at all, and v2 fingerprints only start arriving once a
+// client that computes them is released. A fingerprint that was recorded is
+// a fingerprint a caller can still hit.
+func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, "")
+}
+
+func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
@@ -2131,7 +2141,7 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(diagnostic_candidate,false),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1 AND `+currentFailureClusterSQL+`
+			WHERE package_name=$1`+extraWhere+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err

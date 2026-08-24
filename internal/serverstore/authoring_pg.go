@@ -282,7 +282,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				JOIN packages p ON p.ecosystem=fc.ecosystem AND p.name=fc.package_name
 				  AND p.version=version.value
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				  AND `+currentFailureClusterSQL+`
+				  AND `+CurrentFailureClusterPredicateSQL+`
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
 				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
