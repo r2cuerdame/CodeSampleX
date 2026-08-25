@@ -269,8 +269,8 @@ func TestSampleProposeWritesWorkspace(t *testing.T) {
 
 func TestProposalManifestDistinguishesMavenAndGradleAdapters(t *testing.T) {
 	spec := samples.SanitizedSpec{SchemaVersion: 1, Goal: "prove Java API", Kind: "HOW", Packages: []string{"pkg:maven/org.example/lib@1.0.0"}}
-	maven := proposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "maven"})
-	gradle := proposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "gradle"})
+	maven := samples.ProposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "maven"})
+	gradle := samples.ProposalManifest(spec, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "maven", PackageManager: "gradle"})
 	if maven.VerifierAdapter != "maven-java@1" || gradle.VerifierAdapter != "gradle-java@1" {
 		t.Fatalf("adapters: maven=%q gradle=%q", maven.VerifierAdapter, gradle.VerifierAdapter)
 	}

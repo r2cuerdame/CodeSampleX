@@ -130,30 +130,3 @@ func TestWorkflowRejectsBadManifests(t *testing.T) {
 		t.Fatal("expected error for manifest without a goal")
 	}
 }
-
-func TestWorkflowNewCleanRoom(t *testing.T) {
-	home := t.TempDir()
-	work, err := NewCleanRoom(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantBase := filepath.Join(home, "samples", "work")
-	if !strings.HasPrefix(work, wantBase) {
-		t.Fatalf("clean room %s not under %s", work, wantBase)
-	}
-	entries, err := os.ReadDir(work)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("clean room not empty: %v", entries)
-	}
-	// Two clean rooms never collide.
-	work2, err := NewCleanRoom(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if work2 == work {
-		t.Fatal("clean rooms collide")
-	}
-}

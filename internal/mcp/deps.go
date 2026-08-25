@@ -838,23 +838,37 @@ func reportAdoptionReloaded(ctx context.Context, db *localdb.DB, ident *identity
 	return db.CorrelateInterventionAdoption(ctx, offerID, sampleID, applied, pass, outboxPayload)
 }
 
+// errProposePackages marks a caller-side mistake: the purls it passed are
+// not purls. It is separate from a scaffold failure because the two need
+// opposite reactions — one is fixed by calling again with better arguments,
+// the other cannot be fixed by the caller at all.
+var errProposePackages = errors.New("packages must be purls like pkg:npm/axios@1.12.0")
+
 // propose builds the sanitized clean-room spec and workspace (goal.md §9.2,
 // §9.3). Only public facts enter the spec by construction; publication is a
 // separate, user-approved CLI step.
+//
+// The workspace comes back scaffolded or not at all. The generation
+// instructions this returns tell the agent that a csx.json manifest already
+// exists and must not be recreated from memory, so returning a path before
+// that file is on disk is not a smaller success — it is an instruction the
+// agent cannot follow, and the field report behind R2C-180 is exactly that:
+// agents correctly refusing to invent a manifest, and the proposal lost.
 func propose(ctx context.Context, home, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 	for _, ps := range pkgs {
 		if _, err := domain.ParsePURL(ps); err != nil {
-			return samples.SanitizedSpec{}, "", "", fmt.Errorf("packages must be purls like pkg:npm/axios@1.12.0: %w", err)
+			return samples.SanitizedSpec{}, "", "", fmt.Errorf("%w: %w", errProposePackages, err)
 		}
 	}
+	fp := environment.Collect(ctx, nil)
 	spec := samples.BuildSpec(samples.ScanInputs{
 		Goal:        goal,
 		Kind:        "HOW",
 		Packages:    pkgs,
 		Symbols:     symbols,
-		Environment: environment.Collect(ctx, nil),
+		Environment: fp,
 	})
-	workdir, err := samples.NewCleanRoom(home)
+	workdir, err := samples.NewProposalWorkspace(home, spec, fp)
 	if err != nil {
 		return samples.SanitizedSpec{}, "", "", err
 	}
