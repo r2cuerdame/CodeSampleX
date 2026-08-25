@@ -22,6 +22,53 @@ const (
 
 var canonicalVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
+// Reason codes name why an install could not be used, in words that stay the
+// same across operating systems and filesystems. The Go error text behind one
+// does not: "GetFileAttributesEx ...: The system cannot find the file
+// specified" and "no such file or directory" are the same fact. A caller that
+// has to decide "is this install broken, or did my command fail?" -- an MCP
+// host reading stderr, an operator reading a recovery diagnostic -- matches on
+// these.
+const (
+	ReasonPointerUnreadable  = "pointer-unreadable"
+	ReasonDescriptorInvalid  = "descriptor-invalid"
+	ReasonPayloadMissing     = "payload-missing"
+	ReasonPayloadNotRegular  = "payload-not-regular"
+	ReasonPayloadUnreadable  = "payload-unreadable"
+	ReasonPayloadCorrupt     = "payload-corrupt"
+	ReasonPayloadStartFailed = "payload-start-failed"
+)
+
+var (
+	errDescriptorInvalid = errors.New("invalid descriptor")
+	errPayloadMissing    = errors.New("payload file is missing")
+	errPayloadNotRegular = errors.New("payload is not a regular file")
+	errPayloadUnreadable = errors.New("payload could not be read")
+	errPayloadCorrupt    = errors.New("payload SHA-256 mismatch")
+)
+
+// Reason classifies an error from this package into a stable reason code.
+// Anything it does not recognize is reported as an unusable pointer, which is
+// the truthful default: the launcher could not establish what to run.
+func Reason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errPayloadMissing):
+		return ReasonPayloadMissing
+	case errors.Is(err, errPayloadNotRegular):
+		return ReasonPayloadNotRegular
+	case errors.Is(err, errPayloadCorrupt):
+		return ReasonPayloadCorrupt
+	case errors.Is(err, errPayloadUnreadable):
+		return ReasonPayloadUnreadable
+	case errors.Is(err, errDescriptorInvalid):
+		return ReasonDescriptorInvalid
+	default:
+		return ReasonPointerUnreadable
+	}
+}
+
 type Descriptor struct {
 	Version  string `json:"version"`
 	SHA256   string `json:"sha256"`
@@ -39,7 +86,7 @@ func Path(root string) string { return filepath.Join(root, "active.json") }
 
 func PayloadPath(root, version string) (string, error) {
 	if !canonicalVersion.MatchString(version) {
-		return "", fmt.Errorf("launcher: noncanonical payload version %q", version)
+		return "", fmt.Errorf("launcher: %w: noncanonical payload version %q", errDescriptorInvalid, version)
 	}
 	return filepath.Join(root, "payloads", version, "csx-payload.exe"), nil
 }
@@ -53,6 +100,108 @@ func Load(root string) (Active, error) {
 		return Active{}, err
 	}
 	return a, nil
+}
+
+// Resolution is the payload the launcher will execute and, when the recorded
+// current turned out to be unusable, how it got back to a verified one.
+type Resolution struct {
+	Descriptor  Descriptor
+	PayloadPath string
+
+	// Recovered is set when current failed verification and a descriptor this
+	// same pointer already recorded -- previous, then rollbackHold -- passed it
+	// instead. FailedVersion and FailedReason describe the rejected current.
+	Recovered     bool
+	FailedVersion string
+	FailedReason  string
+
+	// Healed reports whether the recovered pointer was written back to disk. A
+	// read-only or contended install still runs the fallback payload for this
+	// invocation; HealError then says why the pointer itself stayed broken.
+	Healed    bool
+	HealError error
+}
+
+// Resolve picks the payload to execute, falling back to the last known good one
+// when current cannot be verified.
+//
+// A verified payload does not stay verified. On Windows the install lost its
+// current payload twice to Defender quarantining the executable minutes after a
+// correctly staged, hashed and self-tested update had committed it -- the
+// pointer was right, the file was simply gone. Failing hard there takes csx and
+// its MCP server down over a payload the same pointer still records a working
+// alternative for, and leaves no way back: Rollback and every ownership check
+// in internal/update load the pointer, which verifies current first.
+//
+// So an unusable current is recoverable, not fatal. Only descriptors this
+// pointer recorded with their own SHA-256 are candidates: a payload directory
+// left on disk by an older release was never verified by this install and is
+// not adopted. Nothing is ever executed unverified, and when no candidate
+// verifies, Resolve fails with a reason instead of returning something to run.
+func Resolve(root string) (Resolution, error) {
+	a, err := Read(root)
+	if err != nil {
+		return Resolution{}, err
+	}
+	currentErr := validateDescriptor(root, a.Current)
+	if currentErr == nil {
+		path, err := PayloadPath(root, a.Current.Version)
+		if err != nil {
+			return Resolution{}, err
+		}
+		return Resolution{Descriptor: a.Current, PayloadPath: path}, nil
+	}
+	failed := fmt.Errorf("launcher: current payload %s: %w", a.Current.Version, currentErr)
+	for _, candidate := range []*Descriptor{a.Previous, a.RollbackHold} {
+		if candidate == nil || candidate.Version == a.Current.Version {
+			continue
+		}
+		if validateDescriptor(root, *candidate) != nil {
+			continue
+		}
+		path, err := PayloadPath(root, candidate.Version)
+		if err != nil {
+			continue
+		}
+		res := Resolution{
+			Descriptor:    *candidate,
+			PayloadPath:   path,
+			Recovered:     true,
+			FailedVersion: a.Current.Version,
+			FailedReason:  Reason(currentErr),
+		}
+		res.Healed, res.HealError = heal(root, a, *candidate)
+		return res, nil
+	}
+	return Resolution{}, fmt.Errorf("%w; no verified fallback payload remains", failed)
+}
+
+// heal writes the recovery back so the rest of csx sees a consistent install:
+// internal/update loads this pointer for every ownership and update decision,
+// so an unhealed pointer keeps the machine from ever fetching a working payload
+// again. Failure to write is reported, not returned as an error -- this
+// invocation can still run the verified fallback.
+//
+// The rejected version is kept as rollbackHold rather than dropped. That holds
+// the automatic updater back from reinstalling the exact payload that just
+// failed to run, while still letting a genuinely newer release through, and it
+// preserves the sequence floor mergeLauncherFloor reads off this pointer.
+func heal(root string, seen Active, candidate Descriptor) (bool, error) {
+	// An updater committing a good payload between the Read above and this
+	// write would be overwritten by a pointer built from stale bytes. Re-read
+	// and stand down if anything moved; the fallback we return is verified
+	// either way.
+	if fresh, err := Read(root); err != nil {
+		return false, err
+	} else if fresh.Current != seen.Current {
+		return false, errors.New("launcher: active pointer changed during recovery")
+	}
+	hold := seen.Current
+	next := Active{Schema: Schema, Current: candidate, RollbackHold: &hold}
+	if err := Write(root, next); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Read parses and structurally validates the pointer without hashing payloads.
@@ -187,17 +336,17 @@ func validateDescriptor(root string, d Descriptor) error {
 		return err
 	}
 	if sum != d.SHA256 {
-		return errors.New("payload SHA-256 mismatch")
+		return errPayloadCorrupt
 	}
 	return nil
 }
 
 func validateDescriptorShape(d Descriptor) error {
 	if !canonicalVersion.MatchString(d.Version) || d.Sequence == 0 || len(d.SHA256) != 64 || strings.ToLower(d.SHA256) != d.SHA256 {
-		return errors.New("invalid descriptor")
+		return errDescriptorInvalid
 	}
 	if _, err := hex.DecodeString(d.SHA256); err != nil {
-		return errors.New("invalid SHA-256")
+		return fmt.Errorf("%w: invalid SHA-256", errDescriptorInvalid)
 	}
 	return nil
 }
@@ -213,43 +362,57 @@ func validateContainedRegular(root, path string) error {
 	}
 	rel, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return errors.New("payload escapes install root")
+		return fmt.Errorf("%w: payload escapes install root", errPayloadNotRegular)
 	}
 	for current := pathAbs; ; current = filepath.Dir(current) {
 		fi, err := os.Lstat(current)
 		if err != nil {
-			return err
+			return classifyStat(err)
 		}
 		if fi.Mode()&os.ModeSymlink != 0 || hasReparsePoint(current) {
-			return errors.New("reparse/symlink path refused")
+			return fmt.Errorf("%w: reparse/symlink path refused", errPayloadNotRegular)
 		}
 		if strings.EqualFold(filepath.Clean(current), filepath.Clean(rootAbs)) {
 			break
 		}
 		if parent := filepath.Dir(current); parent == current {
-			return errors.New("install root was not reached")
+			return fmt.Errorf("%w: install root was not reached", errPayloadNotRegular)
 		}
 	}
 	fi, err := os.Lstat(pathAbs)
-	if err != nil || !fi.Mode().IsRegular() {
-		return errors.New("payload is not a regular file")
+	if err != nil {
+		return classifyStat(err)
+	}
+	if !fi.Mode().IsRegular() {
+		return errPayloadNotRegular
 	}
 	return nil
+}
+
+// classifyStat separates "the payload is gone" -- the shape a quarantined or
+// half-finished update leaves behind, and the one worth recovering from -- from
+// a filesystem that refused to answer, which recovery cannot assume anything
+// about.
+func classifyStat(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %v", errPayloadMissing, err)
+	}
+	return fmt.Errorf("%w: %v", errPayloadUnreadable, err)
 }
 
 func fileHash(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", classifyStat(err)
 	}
 	defer f.Close()
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(f, maxPayloadBytes+1))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", errPayloadUnreadable, err)
 	}
 	if n > maxPayloadBytes {
-		return "", errors.New("payload exceeds size limit")
+		return "", fmt.Errorf("%w: payload exceeds size limit", errPayloadCorrupt)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -321,9 +484,32 @@ func CommitPayload(root, staged string, d Descriptor) (Active, error) {
 	if err := os.MkdirAll(filepath.Dir(filepath.Dir(final)), 0o700); err != nil {
 		return Active{}, err
 	}
-	if err := os.Mkdir(filepath.Dir(final), 0o700); err != nil && !os.IsExist(err) {
-		return Active{}, err
+	created := true
+	if err := os.Mkdir(filepath.Dir(final), 0o700); err != nil {
+		if !os.IsExist(err) {
+			return Active{}, err
+		}
+		created = false
 	}
+	// A commit that fails partway must leave nothing addressable behind: an
+	// empty payloads/<version>/ is the exact shape an invalid current takes on
+	// disk, and a promoted file that then failed verification would squat on an
+	// immutable version path the real payload can never reclaim. Only what this
+	// call created is ever undone -- a payload already at that path is left
+	// alone, and os.Remove refuses a non-empty directory -- so the current and
+	// last-known-good payloads cannot be reached from here.
+	committed, promoted := false, false
+	defer func() {
+		if committed {
+			return
+		}
+		if promoted {
+			_ = os.Remove(final)
+		}
+		if created {
+			_ = os.Remove(filepath.Dir(final))
+		}
+	}()
 	if _, err := os.Stat(final); err == nil {
 		if err := validateDescriptor(root, d); err != nil {
 			return Active{}, errors.New("launcher: immutable version path contains different payload")
@@ -332,10 +518,13 @@ func CommitPayload(root, staged string, d Descriptor) (Active, error) {
 		return Active{}, err
 	} else if err := promotePayload(staged, final); err != nil {
 		return Active{}, err
+	} else {
+		promoted = true
 	}
 	if err := validateDescriptor(root, d); err != nil {
 		return Active{}, err
 	}
+	committed = true
 	next := Active{Schema: Schema, Current: d}
 	if loadErr == nil {
 		prev := old.Current
@@ -419,8 +608,13 @@ func ImportPrevious(root, source string, d Descriptor) (Active, error) {
 	return a, nil
 }
 
+// Rollback returns the install to its previous payload.
+//
+// It reads the pointer instead of loading it: a current that will not verify is
+// the state people reach for rollback in, and verifying it first made the
+// documented recovery unusable in exactly that case.
 func Rollback(root string) (Active, error) {
-	a, err := Load(root)
+	a, err := Read(root)
 	if err != nil {
 		return Active{}, err
 	}
@@ -434,7 +628,15 @@ func Rollback(root string) (Active, error) {
 		return Active{}, errors.New("launcher: rollback was already applied or previous payload is not older")
 	}
 	hold := a.Current
-	next := Active{Schema: Schema, Current: *a.Previous, Previous: &a.Current, RollbackHold: &hold}
+	next := Active{Schema: Schema, Current: *a.Previous, RollbackHold: &hold}
+	// The rejected version stays recorded as previous only while its payload is
+	// still runnable. Keeping an unrunnable one there would fail Write's
+	// validation and take the whole rollback down with it -- and it could never
+	// serve as the fallback previous is there to be.
+	if validateDescriptor(root, a.Current) == nil {
+		current := a.Current
+		next.Previous = &current
+	}
 	if err := Write(root, next); err != nil {
 		return Active{}, err
 	}

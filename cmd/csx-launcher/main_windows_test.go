@@ -281,3 +281,168 @@ func processAlive(pid int) bool {
 	}
 	return code == 259 // STILL_ACTIVE
 }
+
+// copyPayload installs this test binary as the payload for one version and
+// returns the descriptor that addresses it.
+func copyPayload(t *testing.T, root, version string, sequence uint64) launcher.Descriptor {
+	t.Helper()
+	testExe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(testExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := launcher.PayloadPath(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(payload), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, raw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return launcher.Descriptor{Version: version, SHA256: hex.EncodeToString(sum[:]), Sequence: sequence}
+}
+
+// installRoot builds the launcher into a fresh root without pinning a payload,
+// so each test can stage the pointer state it needs.
+func installRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(root, "csx.exe"), ".").CombinedOutput(); err != nil {
+		t.Fatalf("build launcher: %v: %s", err, out)
+	}
+	return root
+}
+
+func runLauncher(t *testing.T, root string, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(root, "csx.exe"), args...)
+	cmd.Env = append(os.Environ(), "LAUNCHER_TEST_HELPER=1")
+	cmd.Stdin = strings.NewReader("hello")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if err == nil {
+		return 0, stdout.String(), stderr.String()
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("run launcher: %v stderr=%q", err, stderr.String())
+	}
+	return exit.ExitCode(), stdout.String(), stderr.String()
+}
+
+// The failure this issue was filed for: an install whose current payload is
+// gone. Whatever else happens, the caller must not be able to read that as the
+// command it asked for having succeeded.
+func TestLauncherExitsNonZeroWithAStableReasonWhenNoPayloadCanRun(t *testing.T) {
+	root := installRoot(t)
+	d := copyPayload(t, root, "v1.0.0", 1)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := launcher.PayloadPath(root, d.Version)
+	if err := os.Remove(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLauncher(t, root, "-test.run=^TestLauncherPayloadHelper$")
+	if code == 0 {
+		t.Fatalf("launcher reported success for an install it could not run: stdout=%q stderr=%q", stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("launcher wrote %q to stdout; an MCP host reads that as protocol framing", stdout)
+	}
+	if !strings.Contains(stderr, launcher.ReasonPayloadMissing) {
+		t.Fatalf("stderr carries no stable reason: %q", stderr)
+	}
+}
+
+// MCP stdio is where a silent failure does the most damage: an empty stdout and
+// a clean exit is reported by the host as a server that closed, not one that
+// could not start, and the session loses the tools without anyone being told.
+func TestLauncherMcpStdioStartupFailureIsNotSilentSuccess(t *testing.T) {
+	root := installRoot(t)
+	d := copyPayload(t, root, "v1.0.0", 1)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(mustPayloadPath(t, root, d.Version))); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(filepath.Join(root, "csx.exe"), "mcp")
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() == 0 {
+		t.Fatalf("mcp startup failure exited %v with stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("mcp startup failure wrote %q to the JSON-RPC stream", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), launcher.ReasonPayloadMissing) {
+		t.Fatalf("mcp startup failure carried no reason: %q", stderr.String())
+	}
+}
+
+// The recovery, end to end: a current payload that vanished after it was
+// verified must not stop csx while the pointer still records a payload that
+// does verify. The run succeeds, the diagnostic says what happened, and the
+// pointer is repaired so the next process -- and csx update -- sees it too.
+func TestLauncherRunsLastKnownGoodWhenCurrentPayloadIsQuarantined(t *testing.T) {
+	root := installRoot(t)
+	previous := copyPayload(t, root, "v1.0.0", 1)
+	current := copyPayload(t, root, "v1.1.0", 2)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: current, Previous: &previous}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mustPayloadPath(t, root, current.Version)); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLauncher(t, root, "-test.run=^TestLauncherPayloadHelper$", "--", "marker")
+	if code != 75 {
+		t.Fatalf("recovered run exited %d: stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "marker") || !strings.Contains(stdout, "stdin=hello") {
+		t.Fatalf("recovered payload did not get the caller's arguments and stdin: %q", stdout)
+	}
+	if !strings.Contains(stderr, "recovered: "+launcher.ReasonPayloadMissing) || !strings.Contains(stderr, "v1.0.0") {
+		t.Fatalf("recovery was not reported on stderr: %q", stderr)
+	}
+
+	a, err := launcher.Load(root)
+	if err != nil {
+		t.Fatalf("pointer left unloadable after recovery: %v", err)
+	}
+	if a.Current.Version != "v1.0.0" || a.RollbackHold == nil || a.RollbackHold.Version != "v1.1.0" {
+		t.Fatalf("pointer not repaired: %+v", a)
+	}
+
+	// A second run is an ordinary one: nothing left to recover from, and no
+	// diagnostic to repeat.
+	code, _, stderr = runLauncher(t, root, "-test.run=^TestLauncherPayloadHelper$")
+	if code != 75 {
+		t.Fatalf("run after repair exited %d: %q", code, stderr)
+	}
+	if strings.Contains(stderr, "recovered") {
+		t.Fatalf("repaired install still reports a recovery: %q", stderr)
+	}
+}
+
+func mustPayloadPath(t *testing.T, root, version string) string {
+	t.Helper()
+	path, err := launcher.PayloadPath(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
