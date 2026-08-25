@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // twoVersionRoot stages a verified previous payload under a verified current
@@ -66,6 +68,75 @@ func TestResolveFallsBackToVerifiedPreviousWhenCurrentPayloadIsQuarantined(t *te
 	// sequence floor that mergeLauncherFloor reads off the pointer.
 	if healed.RollbackHold == nil || healed.RollbackHold.Version != current.Version || healed.RollbackHold.Sequence != current.Sequence {
 		t.Fatalf("healed pointer lost the failed version: %+v", healed.RollbackHold)
+	}
+}
+
+func TestResolveRecoveryCannotOverwriteAConcurrentUpdaterCommit(t *testing.T) {
+	root, previous, current := twoVersionRoot(t)
+	quarantined, _ := PayloadPath(root, current.Version)
+	if err := os.Remove(quarantined); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the exact install-scoped lock the updater owns while publishing a
+	// newer verified pointer. The hook only signals that recovery reached lock
+	// acquisition; the production acquisition and lock file are unchanged.
+	lockPath := filepath.Join(root, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte("updater-test "+fmt.Sprint(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalAcquire := acquireRecoveryInstallLock
+	entered := make(chan struct{})
+	acquireRecoveryInstallLock = func(root string, wait time.Duration) (func(), error) {
+		close(entered)
+		return originalAcquire(root, wait)
+	}
+	defer func() { acquireRecoveryInstallLock = originalAcquire }()
+
+	type outcome struct {
+		resolution Resolution
+		err        error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := Resolve(root)
+		done <- outcome{resolution: res, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recovery never reached the shared install lock")
+	}
+
+	newCurrent := payloadFixture(t, root, "v1.2.0", "newest", 8)
+	if err := Write(root, Active{Schema: Schema, Current: newCurrent, Previous: &previous}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recovery did not resume after the updater released its lock")
+	}
+	if got.err != nil {
+		t.Fatalf("fallback execution was lost: %v", got.err)
+	}
+	if !got.resolution.Recovered || got.resolution.Descriptor != previous {
+		t.Fatalf("resolution=%+v", got.resolution)
+	}
+	if got.resolution.Healed || got.resolution.HealError == nil {
+		t.Fatalf("stale recovery unexpectedly rewrote the pointer: %+v", got.resolution)
+	}
+	fresh, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Current != newCurrent {
+		t.Fatalf("recovery overwrote updater current: got %+v want %+v", fresh.Current, newCurrent)
 	}
 }
 

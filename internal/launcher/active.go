@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -187,10 +189,20 @@ func Resolve(root string) (Resolution, error) {
 // failed to run, while still letting a genuinely newer release through, and it
 // preserves the sequence floor mergeLauncherFloor reads off this pointer.
 func heal(root string, seen Active, candidate Descriptor) (bool, error) {
+	// CommitPayload and rollback already hold this install-scoped lock while
+	// changing active.json. Join that same protocol before the compare/write:
+	// comparing first and locking later would still let an updater commit a new
+	// current in the gap and then have this stale recovery overwrite it.
+	unlock, err := acquireRecoveryInstallLock(root, 5*time.Second)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+
 	// An updater committing a good payload between the Read above and this
-	// write would be overwritten by a pointer built from stale bytes. Re-read
-	// and stand down if anything moved; the fallback we return is verified
-	// either way.
+	// lock acquisition is now complete. Re-read inside the critical section and
+	// stand down if anything moved; the fallback we return is verified either
+	// way.
 	if fresh, err := Read(root); err != nil {
 		return false, err
 	} else if fresh.Current != seen.Current {
@@ -202,6 +214,63 @@ func heal(root string, seen Active, candidate Descriptor) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// acquireRecoveryInstallLock speaks the updater's existing .update.lock
+// protocol: exclusive creation plus a random owner token and pid. Recovery is
+// deliberately conservative about an existing lock. It never removes one;
+// updater stale-lock recovery owns that policy, while an unhealed launcher can
+// still run its already-verified fallback without risking a concurrent write.
+var acquireRecoveryInstallLock = func(root string, wait time.Duration) (func(), error) {
+	path := filepath.Join(root, ".update.lock")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, err
+	}
+	tokenRaw := make([]byte, 16)
+	if _, err := rand.Read(tokenRaw); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(tokenRaw)
+	deadline := time.Now().Add(wait)
+	for {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			if _, err := fmt.Fprintf(f, "%s %d\n", token, os.Getpid()); err != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
+			if err := f.Close(); err != nil {
+				_ = os.Remove(path)
+				return nil, err
+			}
+			return func() { releaseRecoveryInstallLock(path, token) }, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("launcher: acquire install update lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return nil, errors.New("launcher: install update lock is busy")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func releaseRecoveryInstallLock(path, token string) {
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err != nil || !strings.HasPrefix(string(raw), token+" ") {
+			return
+		}
+		if err := os.Remove(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // Read parses and structurally validates the pointer without hashing payloads.
