@@ -77,6 +77,11 @@ var fullRevision = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // too prints the same fact twice.
 var describeCommitSuffix = regexp.MustCompile(`-g[0-9a-f]{7,40}$`)
 
+// bareRevision is what `git describe --tags --always` returns when no tag is
+// reachable. When the full revision is stamped alongside it, presenting the
+// abbreviation as a version repeats the same identity twice.
+var bareRevision = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
 // environmentName is the shape an environment stamp must have to be shown:
 // one lowercase token, not a sentence.
 var environmentName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
@@ -107,12 +112,12 @@ func Resolve(getenv func(string) string, stamp func() vcs) Info {
 
 	switch {
 	case strings.TrimSpace(getenv(VersionEnv)) != "":
-		info.Version = normalizeVersion(strings.TrimSpace(getenv(VersionEnv)))
+		info.Version = normalizeVersion(strings.TrimSpace(getenv(VersionEnv)), info.Revision)
 	case !fullRevision.MatchString(strings.TrimSpace(getenv(CSXVersionEnv))) && strings.TrimSpace(getenv(CSXVersionEnv)) != "":
 		// A CSX_VERSION that is not a revision is somebody naming a version.
-		info.Version = normalizeVersion(strings.TrimSpace(getenv(CSXVersionEnv)))
+		info.Version = normalizeVersion(strings.TrimSpace(getenv(CSXVersionEnv)), info.Revision)
 	case build.MainVersion != "" && build.MainVersion != "(devel)":
-		info.Version = normalizeVersion(build.MainVersion)
+		info.Version = normalizeVersion(build.MainVersion, info.Revision)
 	}
 
 	info.Environment = normalizeEnvironment(getenv(EnvironmentEnv))
@@ -127,10 +132,17 @@ func Resolve(getenv func(string) string, stamp func() vcs) Info {
 
 // normalizeVersion turns `git describe --tags --always` output into the form
 // shown beside a commit.
-func normalizeVersion(v string) string {
-	trimmed := describeCommitSuffix.ReplaceAllString(v, "")
+func normalizeVersion(v, revision string) string {
+	trimmed := strings.TrimSpace(v)
+	if trimmed == "dev" || trimmed == "(devel)" {
+		return ""
+	}
+	trimmed = describeCommitSuffix.ReplaceAllString(trimmed, "")
 	if trimmed == "" {
-		return v
+		return strings.TrimSpace(v)
+	}
+	if revision != "" && bareRevision.MatchString(trimmed) && strings.HasPrefix(revision, trimmed) {
+		return ""
 	}
 	return trimmed
 }

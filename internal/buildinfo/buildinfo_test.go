@@ -109,6 +109,18 @@ func TestUnstampedBuildIsUnknownAndNotProduction(t *testing.T) {
 	}
 }
 
+// The Dockerfile uses "dev" as its deliberately unstamped default. It must
+// not turn a local image into a build that claims a real version.
+func TestDockerDevSentinelIsUnstamped(t *testing.T) {
+	got := Resolve(env(map[string]string{CSXVersionEnv: "dev"}), noVCS)
+	if got.Known() {
+		t.Errorf("dev sentinel claims an identity: %+v", got)
+	}
+	if got.Version != "" {
+		t.Errorf("Version = %q, want empty", got.Version)
+	}
+}
+
 // "(devel)" is what the toolchain reports for a build with no module
 // version. Rendering it is worse than rendering nothing.
 func TestDevelMainVersionIsNotAVersion(t *testing.T) {
@@ -125,12 +137,27 @@ func TestNormalizeVersionKeepsAnExactTag(t *testing.T) {
 	}
 }
 
-// git describe on a repository with no tags is just the abbreviated commit;
-// stripping it would leave nothing at all.
-func TestNormalizeVersionKeepsABareAbbreviation(t *testing.T) {
+// Without a separately stamped revision, a bare abbreviation is still the
+// only identity available and remains useful.
+func TestNormalizeVersionKeepsABareAbbreviationWithoutRevision(t *testing.T) {
 	got := Resolve(env(map[string]string{VersionEnv: "2a6af6a"}), noVCS)
 	if got.Version != "2a6af6a" {
 		t.Errorf("Version = %q", got.Version)
+	}
+}
+
+// A deployment stamps the full revision separately. In that case a bare
+// `git describe --always` abbreviation is the same fact, not a version.
+func TestNormalizeVersionDropsAbbreviationThatRepeatsRevision(t *testing.T) {
+	got := Resolve(env(map[string]string{
+		CSXVersionEnv: "2a6af6a8d73f51e4c941908f76527bd9899437ce",
+		VersionEnv:    "2a6af6a",
+	}), noVCS)
+	if got.Version != "" {
+		t.Errorf("Version = %q, want empty", got.Version)
+	}
+	if got.ShortRevision() != "2a6af6a" {
+		t.Errorf("ShortRevision = %q", got.ShortRevision())
 	}
 }
 
