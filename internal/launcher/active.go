@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,11 +43,12 @@ const (
 )
 
 var (
-	errDescriptorInvalid = errors.New("invalid descriptor")
-	errPayloadMissing    = errors.New("payload file is missing")
-	errPayloadNotRegular = errors.New("payload is not a regular file")
-	errPayloadUnreadable = errors.New("payload could not be read")
-	errPayloadCorrupt    = errors.New("payload SHA-256 mismatch")
+	errDescriptorInvalid  = errors.New("invalid descriptor")
+	errPayloadMissing     = errors.New("payload file is missing")
+	errPayloadNotRegular  = errors.New("payload is not a regular file")
+	errPayloadUnreadable  = errors.New("payload could not be read")
+	errPayloadCorrupt     = errors.New("payload SHA-256 mismatch")
+	errPayloadStartFailed = errors.New("payload process could not start")
 )
 
 // Reason classifies an error from this package into a stable reason code.
@@ -66,6 +68,8 @@ func Reason(err error) string {
 		return ReasonPayloadUnreadable
 	case errors.Is(err, errDescriptorInvalid):
 		return ReasonDescriptorInvalid
+	case errors.Is(err, errPayloadStartFailed):
+		return ReasonPayloadStartFailed
 	default:
 		return ReasonPointerUnreadable
 	}
@@ -111,8 +115,9 @@ type Resolution struct {
 	PayloadPath string
 
 	// Recovered is set when current failed verification and a descriptor this
-	// same pointer already recorded -- previous, then rollbackHold -- passed it
-	// instead. FailedVersion and FailedReason describe the rejected current.
+	// same pointer already recorded as previous passed it instead.
+	// RollbackHold is rejection metadata, never an execution candidate.
+	// FailedVersion and FailedReason describe the rejected current.
 	Recovered     bool
 	FailedVersion string
 	FailedReason  string
@@ -153,29 +158,59 @@ func Resolve(root string) (Resolution, error) {
 		}
 		return Resolution{Descriptor: a.Current, PayloadPath: path}, nil
 	}
-	failed := fmt.Errorf("launcher: current payload %s: %w", a.Current.Version, currentErr)
-	for _, candidate := range []*Descriptor{a.Previous, a.RollbackHold} {
-		if candidate == nil || candidate.Version == a.Current.Version {
-			continue
-		}
-		if validateDescriptor(root, *candidate) != nil {
-			continue
-		}
-		path, err := PayloadPath(root, candidate.Version)
+	return resolveFallback(root, a, currentErr)
+}
+
+// RecoverAfterStartFailure closes the verification-to-CreateProcess window.
+// A payload can hash correctly and then be quarantined, have its permission
+// changed, or otherwise become unstartable before the operating system opens
+// it. That is the same unusable-current condition as a failed hash check, so a
+// descriptor this pointer already recorded as last-known-good gets one bounded
+// retry. The launcher never retries an unrecorded directory or loops twice.
+func RecoverAfterStartFailure(root string, failed Descriptor, startErr error) (Resolution, error) {
+	a, err := Read(root)
+	if err != nil {
+		return Resolution{}, fmt.Errorf("launcher: recover after payload start failure: %w: %v", errPayloadStartFailed, err)
+	}
+	if !samePayload(a.Current, failed) {
+		// An updater won the race after the failed process start. Resolve its
+		// freshly published pointer rather than healing from stale bytes.
+		res, err := Resolve(root)
 		if err != nil {
-			continue
+			return Resolution{}, fmt.Errorf("launcher: recover after payload start failure: %w: %v", errPayloadStartFailed, err)
 		}
-		res := Resolution{
-			Descriptor:    *candidate,
-			PayloadPath:   path,
-			Recovered:     true,
-			FailedVersion: a.Current.Version,
-			FailedReason:  Reason(currentErr),
-		}
-		res.Healed, res.HealError = heal(root, a, *candidate)
 		return res, nil
 	}
-	return Resolution{}, fmt.Errorf("%w; no verified fallback payload remains", failed)
+	return resolveFallback(root, a, fmt.Errorf("%w: %v", errPayloadStartFailed, startErr))
+}
+
+func resolveFallback(root string, a Active, currentErr error) (Resolution, error) {
+	failed := fmt.Errorf("launcher: current payload %s: %w", a.Current.Version, currentErr)
+	candidate := a.Previous
+	// RollbackHold records an explicitly rejected release. Rollback currently
+	// keeps that descriptor in Previous as ownership/history metadata too, so
+	// execution eligibility must be stricter than mere pointer membership.
+	// Never automatically reactivate the rejected artifact, even if only its
+	// sequence was promoted later. Hold remains useful to the updater as a
+	// sequence floor and automatic-reinstall suppression marker.
+	if candidate == nil || candidate.Version == a.Current.Version ||
+		(a.RollbackHold != nil && samePayload(*candidate, *a.RollbackHold)) ||
+		validateDescriptor(root, *candidate) != nil {
+		return Resolution{}, fmt.Errorf("%w; no verified fallback payload remains", failed)
+	}
+	path, err := PayloadPath(root, candidate.Version)
+	if err != nil {
+		return Resolution{}, fmt.Errorf("%w; no verified fallback payload remains", failed)
+	}
+	res := Resolution{
+		Descriptor:    *candidate,
+		PayloadPath:   path,
+		Recovered:     true,
+		FailedVersion: a.Current.Version,
+		FailedReason:  Reason(currentErr),
+	}
+	res.Healed, res.HealError = heal(root, a, *candidate)
+	return res, nil
 }
 
 // heal writes the recovery back so the rest of csx sees a consistent install:
@@ -217,13 +252,22 @@ func heal(root string, seen Active, candidate Descriptor) (bool, error) {
 }
 
 // acquireRecoveryInstallLock speaks the updater's existing .update.lock
-// protocol: exclusive creation plus a random owner token and pid. Recovery is
-// deliberately conservative about an existing lock. It never removes one;
-// updater stale-lock recovery owns that policy, while an unhealed launcher can
-// still run its already-verified fallback without risking a concurrent write.
+// protocol: exclusive creation plus a random owner token and pid. Recovery
+// uses the updater's same conservative stale-owner rule: it only reclaims a
+// lock whose named process is proven dead, or malformed content older than a
+// full day. This matters because an invalid current plus a lock left by a
+// crashed updater otherwise prevents both pointer healing and the fallback
+// payload's own update command from ever reaching updater-side cleanup.
 var acquireRecoveryInstallLock = func(root string, wait time.Duration) (func(), error) {
-	path := filepath.Join(root, ".update.lock")
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	return AcquireUpdateLock(filepath.Join(root, ".update.lock"), wait)
+}
+
+// AcquireUpdateLock acquires the token/pid lock shared by launcher recovery
+// and updater writes. It is exported only within this repository's internal
+// packages so every Windows participant uses the same identity-safe stale-file
+// takeover instead of reintroducing a read-path/remove-path race.
+func AcquireUpdateLock(path string, wait time.Duration) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	tokenRaw := make([]byte, 16)
@@ -247,13 +291,51 @@ var acquireRecoveryInstallLock = func(root string, wait time.Duration) (func(), 
 			return func() { releaseRecoveryInstallLock(path, token) }, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
+			if recoveryLockCreateErrorIsTransient(err) {
+				if !time.Now().Before(deadline) {
+					return nil, errors.New("launcher: install update lock is busy")
+				}
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
 			return nil, fmt.Errorf("launcher: acquire install update lock: %w", err)
+		}
+		unlock, acquired, retry, takeoverErr := tryTakeOverRecoveryInstallLock(path, token)
+		if takeoverErr != nil {
+			return nil, takeoverErr
+		}
+		if acquired {
+			return unlock, nil
+		}
+		if retry {
+			continue
 		}
 		if !time.Now().Before(deadline) {
 			return nil, errors.New("launcher: install update lock is busy")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// A malformed lock may be observed between O_EXCL creation and the owner's
+// first write, so age alone may reclaim it only after far longer than any real
+// update. A parsed live owner is never overruled, however old the file is.
+const namelessRecoveryLockAbandonedAfter = 24 * time.Hour
+
+// recoveryLockBeforeDisposition is a test seam for the exact Windows window
+// between inspecting a pinned lock handle and marking that same file deleted.
+var recoveryLockBeforeDisposition = func() {}
+
+func recoveryInstallLockRecordIsStale(raw []byte, modTime time.Time) bool {
+	fields := strings.Fields(string(raw))
+	if len(fields) < 2 {
+		return time.Since(modTime) > namelessRecoveryLockAbandonedAfter
+	}
+	pid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return time.Since(modTime) > namelessRecoveryLockAbandonedAfter
+	}
+	return !recoveryLockPidAlive(pid)
 }
 
 func releaseRecoveryInstallLock(path, token string) {
@@ -374,7 +456,11 @@ func Validate(root string, a Active) error {
 	if err := validateCurrent(root, a); err != nil {
 		return err
 	}
-	if a.Previous != nil {
+	// Rollback keeps the explicitly rejected artifact in both Previous and
+	// RollbackHold as ownership/floor metadata. It is not an executable LKG;
+	// requiring it to remain on disk would let Defender quarantine of a version
+	// the operator already rejected block every future verified update.
+	if a.Previous != nil && (a.RollbackHold == nil || !samePayload(*a.Previous, *a.RollbackHold)) {
 		if err := validateDescriptor(root, *a.Previous); err != nil {
 			return fmt.Errorf("launcher: previous payload: %w", err)
 		}
@@ -532,7 +618,14 @@ func Write(root string, a Active) error {
 }
 
 func CommitPayload(root, staged string, d Descriptor) (Active, error) {
-	old, loadErr := Load(root)
+	// Keep the structurally valid pointer even if Defender removed current
+	// after the updater's preflight. Load would discard Previous together with
+	// the now-invalid Current, leaving the newly committed payload with no LKG.
+	old, readErr := Read(root)
+	loadErr := readErr
+	if readErr == nil {
+		loadErr = validateCurrent(root, old)
+	}
 	if loadErr == nil && old.Current.Version == d.Version && old.Current.SHA256 == d.SHA256 {
 		if d.Sequence < old.Current.Sequence {
 			return Active{}, errors.New("launcher: refused descriptor sequence rollback")
@@ -595,14 +688,34 @@ func CommitPayload(root, staged string, d Descriptor) (Active, error) {
 	}
 	committed = true
 	next := Active{Schema: Schema, Current: d}
-	if loadErr == nil {
-		prev := old.Current
-		next.Previous = &prev
+	if readErr == nil {
+		next.Previous = verifiedPreviousForCommit(root, old, d)
 	}
 	if err := Write(root, next); err != nil {
 		return Active{}, err
 	}
 	return next, nil
+}
+
+func verifiedPreviousForCommit(root string, old Active, next Descriptor) *Descriptor {
+	for _, candidate := range []*Descriptor{&old.Current, old.Previous} {
+		if candidate == nil || (candidate.Version == next.Version && candidate.SHA256 == next.SHA256) {
+			continue
+		}
+		if old.RollbackHold != nil && samePayload(*candidate, *old.RollbackHold) {
+			continue
+		}
+		if validateDescriptor(root, *candidate) != nil {
+			continue
+		}
+		verified := *candidate
+		return &verified
+	}
+	return nil
+}
+
+func samePayload(a, b Descriptor) bool {
+	return a.Version == b.Version && a.SHA256 == b.SHA256
 }
 
 func ImportPrevious(root, source string, d Descriptor) (Active, error) {
@@ -689,6 +802,9 @@ func Rollback(root string) (Active, error) {
 	}
 	if a.Previous == nil {
 		return Active{}, errors.New("launcher: no previous payload")
+	}
+	if a.RollbackHold != nil && samePayload(*a.Previous, *a.RollbackHold) {
+		return Active{}, errors.New("launcher: previous payload is explicitly rollback-held")
 	}
 	if err := validateDescriptor(root, *a.Previous); err != nil {
 		return Active{}, fmt.Errorf("launcher: previous payload: %w", err)

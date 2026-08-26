@@ -438,6 +438,82 @@ func TestLauncherRunsLastKnownGoodWhenCurrentPayloadIsQuarantined(t *testing.T) 
 	}
 }
 
+// Hash verification and CreateProcess are separate kernel operations. Defender
+// or an ACL change can make the current executable unstartable in that window;
+// the launcher must make one bounded attempt with the recorded LKG rather than
+// treating a verified-but-unstartable current as the end of recovery.
+func TestLauncherRunsLastKnownGoodWhenVerifiedCurrentCannotStart(t *testing.T) {
+	root := installRoot(t)
+	previous := copyPayload(t, root, "v1.0.0", 1)
+	badBytes := []byte("this hashes correctly but is not a Windows executable")
+	currentPath := mustPayloadPath(t, root, "v1.1.0")
+	if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentPath, badBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(badBytes)
+	current := launcher.Descriptor{Version: "v1.1.0", SHA256: hex.EncodeToString(sum[:]), Sequence: 2}
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: current, Previous: &previous}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLauncher(t, root, "-test.run=^TestLauncherPayloadHelper$", "--", "start-fallback")
+	if code != 75 {
+		t.Fatalf("start-failure recovery exited %d: stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "start-fallback") || !strings.Contains(stdout, "stdin=hello") {
+		t.Fatalf("fallback did not receive the original invocation: %q", stdout)
+	}
+	if !strings.Contains(stderr, "recovered: "+launcher.ReasonPayloadStartFailed) || !strings.Contains(stderr, previous.Version) {
+		t.Fatalf("start-failure recovery was not diagnosed: %q", stderr)
+	}
+	a, err := launcher.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Current != previous || a.RollbackHold == nil || *a.RollbackHold != current {
+		t.Fatalf("start-failure recovery did not heal the pointer: %+v", a)
+	}
+}
+
+func TestLauncherRetriesOnlyOnceWhenCurrentAndLastKnownGoodCannotStart(t *testing.T) {
+	root := installRoot(t)
+	writeInvalid := func(version, body string, sequence uint64) launcher.Descriptor {
+		t.Helper()
+		path := mustPayloadPath(t, root, version)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		raw := []byte(body)
+		if err := os.WriteFile(path, raw, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(raw)
+		return launcher.Descriptor{Version: version, SHA256: hex.EncodeToString(sum[:]), Sequence: sequence}
+	}
+	previous := writeInvalid("v1.0.0", "not executable previous", 1)
+	current := writeInvalid("v1.1.0", "not executable current", 2)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: current, Previous: &previous}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLauncher(t, root, "version")
+	if code != 126 {
+		t.Fatalf("two start failures exited %d: stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("failed retries wrote to MCP/CLI stdout: %q", stdout)
+	}
+	if got := strings.Count(stderr, "csx launcher: recovered:"); got != 1 {
+		t.Fatalf("recovery attempts diagnosed %d times, want exactly one: %q", got, stderr)
+	}
+	if !strings.Contains(stderr, launcher.ReasonPayloadStartFailed) {
+		t.Fatalf("final failure lost its stable reason: %q", stderr)
+	}
+}
+
 func mustPayloadPath(t *testing.T, root, version string) string {
 	t.Helper()
 	path, err := launcher.PayloadPath(root, version)

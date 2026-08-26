@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,23 +26,50 @@ func main() {
 	if err != nil {
 		fail(launcher.Reason(err), err)
 	}
-	if res.Recovered {
-		// Diagnostics go to stderr and nowhere else. An MCP host reads this
-		// process's stdout as JSON-RPC framing, so a recovery note written
-		// there would corrupt the very session the recovery exists to save.
-		fmt.Fprintf(os.Stderr, "csx launcher: recovered: %s: current payload %s is unusable; running last-known-good %s\n",
-			res.FailedReason, res.FailedVersion, res.Descriptor.Version)
-		if !res.Healed {
-			fmt.Fprintf(os.Stderr, "csx launcher: active pointer was not repaired: %v\n", res.HealError)
+	reportRecovery(res)
+	code, err := runResolution(res, self, root)
+	if err != nil {
+		var startFailure *childStartError
+		if errors.As(err, &startFailure) {
+			// Resolve hashes before CreateProcess. Defender or an ACL change can
+			// still remove/block the file in that gap, so retry one recorded LKG
+			// exactly once. A normal non-zero payload exit never reaches here.
+			res, err = launcher.RecoverAfterStartFailure(root, res.Descriptor, startFailure)
+			if err != nil {
+				fail(launcher.Reason(err), err)
+			}
+			reportRecovery(res)
+			code, err = runResolution(res, self, root)
 		}
 	}
-	cmd := exec.Command(res.PayloadPath, os.Args[1:]...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = launcherEnv(os.Environ(), self, root, res.Descriptor, launcher.ProtocolVersion)
-	code, err := runChild(cmd)
 	if err != nil {
 		fail(launcher.ReasonPayloadStartFailed, err)
 	}
+	finish(code)
+}
+
+func runResolution(res launcher.Resolution, self, root string) (int, error) {
+	cmd := exec.Command(res.PayloadPath, os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = launcherEnv(os.Environ(), self, root, res.Descriptor, launcher.ProtocolVersion)
+	return runChild(cmd)
+}
+
+func reportRecovery(res launcher.Resolution) {
+	if !res.Recovered {
+		return
+	}
+	// Diagnostics go to stderr and nowhere else. An MCP host reads this
+	// process's stdout as JSON-RPC framing, so a recovery note written there
+	// would corrupt the very session the recovery exists to save.
+	fmt.Fprintf(os.Stderr, "csx launcher: recovered: %s: current payload %s is unusable; running last-known-good %s\n",
+		res.FailedReason, res.FailedVersion, res.Descriptor.Version)
+	if !res.Healed {
+		fmt.Fprintf(os.Stderr, "csx launcher: active pointer was not repaired: %v\n", res.HealError)
+	}
+}
+
+func finish(code int) {
 	// ExitCode reports -1 for a process that was signalled or never exited.
 	// Passing that to os.Exit launders a failure into a platform-dependent
 	// code, so it becomes the launcher's own stable one.
@@ -52,6 +80,15 @@ func main() {
 		os.Exit(code)
 	}
 }
+
+// childStartError separates an actual exec/CreateProcess failure from launcher
+// setup failures. Only the former can truthfully mark this payload unusable and
+// trigger an LKG retry; a job-object failure, for example, must not rewrite the
+// active pointer.
+type childStartError struct{ err error }
+
+func (e *childStartError) Error() string { return e.err.Error() }
+func (e *childStartError) Unwrap() error { return e.err }
 
 func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor, protocol string) []string {
 	out := make([]string, 0, len(env)+6)

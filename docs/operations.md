@@ -677,11 +677,13 @@ pointer was right; the file was simply gone, leaving `payloads/<current>/`
 present and empty.
 
 The launcher treats that as recoverable rather than fatal. When `current` fails
-verification it falls back to a descriptor the same pointer already records —
-`previous`, then `rollbackHold` — verifies that one, runs it, and repairs
-`active.json` so `csx update` and every ownership check in `internal/update`
-see a consistent install too. Payload directories left on disk by older
-releases are **not** candidates: this pointer never recorded a hash for them.
+verification — or becomes unstartable after verification but before the OS
+opens it — the launcher verifies the `previous` descriptor, retries it at most
+once, and repairs `active.json` so `csx update` and every ownership check in
+`internal/update` see a consistent install too. `rollbackHold` is rejection
+metadata for updater suppression and sequence floors, never an execution
+candidate. Payload directories left on disk by older releases are **not**
+candidates: this pointer never recorded a hash for them.
 
 What operators see:
 
@@ -702,9 +704,11 @@ code as the first field — `payload-missing`, `payload-corrupt`,
 never exits 0 without having executed a payload; a caller that cannot start csx
 must not be able to read that as the command having succeeded.
 
-Recovering by hand is still `csx update rollback`, which now works against an
-unrunnable `current` too. Editing `active.json` directly is a last resort: write
-it as UTF-8 **without a BOM** (the launcher rejects one as
+An invalid current is recovered by the stable launcher before it starts any
+payload command. `csx update rollback` remains the explicit rollback command
+for a healthy pointer; it is not the entry point for an install whose current
+payload cannot start. Editing `active.json` directly is a last resort: write it
+as UTF-8 **without a BOM** (the launcher rejects one as
 `invalid character 'ï'`), and drop `previous` entirely rather than zeroing it,
 since a descriptor with `sequence: 0` or a non-hex digest fails validation and
 takes the whole file down with it.

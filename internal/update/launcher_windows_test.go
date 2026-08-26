@@ -12,11 +12,74 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
 )
+
+func TestUpdaterAndLauncherSerializeAfterStaleInstallLockTakeover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".update.lock")
+	if err := os.WriteFile(path, []byte("deadbeef 999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	type owner struct {
+		name   string
+		unlock func()
+		err    error
+	}
+	acquired := make(chan owner, 2)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for name, acquire := range map[string]func() (func(), error){
+		"updater":  func() (func(), error) { return acquireNamedLock(path, 2*time.Second) },
+		"launcher": func() (func(), error) { return launcher.AcquireUpdateLock(path, 2*time.Second) },
+	} {
+		name, acquire := name, acquire
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			unlock, err := acquire()
+			acquired <- owner{name: name, unlock: unlock, err: err}
+		}()
+	}
+	close(start)
+
+	var first owner
+	select {
+	case first = <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("neither participant acquired the stale lock")
+	}
+	if first.err != nil {
+		t.Fatalf("first participant %s failed: %v", first.name, first.err)
+	}
+	select {
+	case second := <-acquired:
+		if second.unlock != nil {
+			second.unlock()
+		}
+		first.unlock()
+		t.Fatalf("%s and %s owned the shared lock concurrently", first.name, second.name)
+	case <-time.After(200 * time.Millisecond):
+	}
+	first.unlock()
+
+	var second owner
+	select {
+	case second = <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second participant did not acquire after release")
+	}
+	if second.err != nil {
+		t.Fatalf("second participant %s failed: %v", second.name, second.err)
+	}
+	second.unlock()
+	workers.Wait()
+}
 
 func launcherClientFixture(t *testing.T) (*Client, string, string, string) {
 	t.Helper()
@@ -132,6 +195,49 @@ func TestWindowsLauncherRollbackStateFailureDoesNotRetoggle(t *testing.T) {
 	a, _ = launcher.Load(root)
 	if a.Current.Version != "v1.0.0" {
 		t.Fatalf("retry changed pointer=%+v", a)
+	}
+}
+
+func TestWindowsLauncherAutomaticUpdateNeverReinstallsRollbackHeldPayload(t *testing.T) {
+	c, home, root, oldPath := launcherClientFixture(t)
+	c.Automatic = true
+	if res, err := c.Check(context.Background(), true); err != nil || !res.Applied {
+		t.Fatalf("apply=%+v err=%v", res, err)
+	}
+	if _, err := Rollback(home, oldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := launcher.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.RollbackHold == nil || active.RollbackHold.Sequence == 0 {
+		t.Fatalf("rollback pointer=%+v", active)
+	}
+	// Simulate the server reissuing the exact rejected bytes under a sequence
+	// newer than the locally recorded hold. Identity, not only sequence, must
+	// keep an automatic update from reactivating a rolled-back payload.
+	active.RollbackHold.Sequence--
+	if err := launcher.Write(root, active); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := launcher.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.Check(context.Background(), true)
+	if err != nil || !res.RollbackHeld || res.Applied {
+		t.Fatalf("held retry=%+v err=%v", res, err)
+	}
+	after, err := launcher.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Current != before.Current || after.RollbackHold == nil || before.RollbackHold == nil ||
+		*after.RollbackHold != *before.RollbackHold {
+		t.Fatalf("held retry changed pointer: before=%+v after=%+v", before, after)
 	}
 }
 

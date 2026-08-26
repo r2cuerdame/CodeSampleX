@@ -1,13 +1,16 @@
 package launcher
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,9 +115,10 @@ func TestResolveRecoveryCannotOverwriteAConcurrentUpdaterCommit(t *testing.T) {
 	if err := Write(root, Active{Schema: Schema, Current: newCurrent, Previous: &previous}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(lockPath); err != nil {
-		t.Fatal(err)
-	}
+	// Use the production token-checked bounded release. Windows can retain a
+	// read handle for a few milliseconds while recovery inspects liveness; a
+	// single raw Remove would test scanner timing rather than lock ownership.
+	releaseRecoveryInstallLock(lockPath, "updater-test")
 
 	var got outcome
 	select {
@@ -137,6 +141,204 @@ func TestResolveRecoveryCannotOverwriteAConcurrentUpdaterCommit(t *testing.T) {
 	}
 	if fresh.Current != newCurrent {
 		t.Fatalf("recovery overwrote updater current: got %+v want %+v", fresh.Current, newCurrent)
+	}
+}
+
+// The launcher has to participate in the updater's stale-owner protocol. If a
+// crashed updater leaves this lock behind while current is quarantined,
+// refusing to reclaim it leaves the pointer invalid; then the fallback
+// payload's update command fails ownership checks before updater-side stale
+// lock cleanup can run.
+func TestResolveReclaimsADeadUpdaterLockBeforeHealing(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("safe stale-lock takeover uses Windows handle identity pinning")
+	}
+	root, previous, current := twoVersionRoot(t)
+	currentPath, _ := PayloadPath(root, current.Version)
+	if err := os.Remove(currentPath); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte("deadbeef 999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	res, err := Resolve(root)
+	if err != nil {
+		t.Fatalf("dead updater lock prevented recovery: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("dead updater lock took %s to reclaim", elapsed)
+	}
+	if !res.Healed || res.Descriptor != previous {
+		t.Fatalf("resolution=%+v", res)
+	}
+	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reclaimed lock remained after recovery: %v", err)
+	}
+}
+
+func TestRecoveryPinsStaleLockIdentityUntilDisposition(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows pathname replacement regression")
+	}
+	root := t.TempDir()
+	lockPath := filepath.Join(root, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte("deadbeef 999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHook := recoveryLockBeforeDisposition
+	inspected := make(chan struct{})
+	resume := make(chan struct{})
+	recoveryLockBeforeDisposition = func() {
+		close(inspected)
+		<-resume
+	}
+	defer func() { recoveryLockBeforeDisposition = originalHook }()
+
+	type outcome struct {
+		unlock func()
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		unlock, err := acquireRecoveryInstallLock(root, 2*time.Second)
+		done <- outcome{unlock: unlock, err: err}
+	}()
+	select {
+	case <-inspected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("takeover never inspected the stale lock")
+	}
+
+	// This is the old P1 interleaving: a successor tries to remove the stale
+	// path after recovery inspected it. The pinned handle must make replacement
+	// impossible until disposition targets that exact old file.
+	if err := os.Remove(lockPath); err == nil {
+		close(resume)
+		t.Fatal("stale lock pathname was replaceable during conditional deletion")
+	}
+	close(resume)
+
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("takeover did not complete")
+	}
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	defer got.unlock()
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(string(raw), "deadbeef ") {
+		t.Fatalf("takeover left the stale identity in place: %q", raw)
+	}
+}
+
+func TestMalformedRecoveryLockBecomesStaleOnlyAfterAFullDay(t *testing.T) {
+	for _, raw := range [][]byte{[]byte("garbage"), []byte("token not-a-pid\n")} {
+		if recoveryInstallLockRecordIsStale(raw, time.Now()) {
+			t.Fatalf("fresh malformed lock was reclaimed: %q", raw)
+		}
+		if !recoveryInstallLockRecordIsStale(raw, time.Now().Add(-48*time.Hour)) {
+			t.Fatalf("old malformed lock remained permanent: %q", raw)
+		}
+	}
+}
+
+func TestRecoveryNeverDeletesAReparseTargetAsAStaleLock(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows reparse-point deletion regression")
+	}
+	root := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	want := []byte("deadbeef 999999\n")
+	if err := os.WriteFile(victim, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(victim, when, when); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, ".update.lock")
+	if err := os.Symlink(victim, lockPath); err != nil {
+		t.Skipf("creating a Windows file symlink requires Developer Mode or privilege: %v", err)
+	}
+
+	if unlock, err := acquireRecoveryInstallLock(root, 150*time.Millisecond); err == nil {
+		unlock()
+		t.Fatal("recovery treated a reparse point as a stale lock")
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("recovery deleted the reparse target: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("recovery changed the reparse target: got %q want %q", got, want)
+	}
+	if fi, err := os.Lstat(lockPath); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("recovery changed the lock reparse point: mode=%v err=%v", fi, err)
+	}
+}
+
+func TestRecoveryNeverTakesAUpdaterLockFromALiveOwner(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("live-owner %d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(lockPath, when, when); err != nil {
+		t.Fatal(err)
+	}
+
+	if unlock, err := acquireRecoveryInstallLock(root, 150*time.Millisecond); err == nil {
+		unlock()
+		t.Fatal("recovery took an old lock from a live updater")
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("recovery removed a live updater's lock: %v", err)
+	}
+}
+
+func TestLiveOwnerReleaseIsNotStarvedByRecoveryProbes(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows delete-share regression")
+	}
+	root := t.TempDir()
+	lockPath := filepath.Join(root, ".update.lock")
+	const token = "live-release"
+	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("%s %d\n", token, os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var probes sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		probes.Add(1)
+		go func() {
+			defer probes.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _, _, _ = tryTakeOverRecoveryInstallLock(lockPath, "probe")
+				}
+			}
+		}()
+	}
+	releaseRecoveryInstallLock(lockPath, token)
+	close(stop)
+	probes.Wait()
+	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("live owner release was starved by recovery probes: %v", err)
 	}
 }
 
@@ -301,6 +503,109 @@ func TestRollbackRecoversFromAnUnrunnableCurrent(t *testing.T) {
 	}
 }
 
+// RollbackHold is a rejection marker, not a second LKG slot. Rollback keeps
+// the rejected descriptor in Previous for ownership/history today, but a
+// later failure of the rolled-back current must not silently reactivate the
+// release the operator explicitly rejected.
+func TestResolveNeverReactivatesARollbackHeldPayload(t *testing.T) {
+	root, previous, rejected := twoVersionRoot(t)
+	next, err := Rollback(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Current != previous || next.Previous == nil || next.RollbackHold == nil ||
+		!samePayload(*next.Previous, rejected) || !samePayload(*next.RollbackHold, rejected) {
+		t.Fatalf("rollback did not preserve the expected history: %+v", next)
+	}
+	rolledBackPath, _ := PayloadPath(root, previous.Version)
+	if err := os.Remove(rolledBackPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if res, err := Resolve(root); err == nil {
+		t.Fatalf("resolve reactivated the held release: %+v", res)
+	} else if Reason(err) != ReasonPayloadMissing {
+		t.Fatalf("reason=%q err=%v", Reason(err), err)
+	}
+	unchanged, err := Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Current != previous || unchanged.RollbackHold == nil || !samePayload(*unchanged.RollbackHold, rejected) {
+		t.Fatalf("failed-closed resolve rewrote the pointer: %+v", unchanged)
+	}
+}
+
+// A rejected release is retained as Hold metadata, not as a required LKG.
+// Defender removing that already-rejected payload must not make the healthy
+// rolled-back current fail updater preflight or prevent a newer verified
+// payload from preserving the real current as Previous.
+func TestMissingRollbackHeldPayloadDoesNotBlockTheNextUpdate(t *testing.T) {
+	root, previous, rejected := twoVersionRoot(t)
+	_, err := Rollback(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectedPath, _ := PayloadPath(root, rejected.Version)
+	if err := os.Remove(rejectedPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(root)
+	if err != nil {
+		t.Fatalf("healthy rolled-back current no longer loads: %v", err)
+	}
+	if err := Validate(root, loaded); err != nil {
+		t.Fatalf("rejected missing Hold blocked updater preflight: %v", err)
+	}
+	staged := filepath.Join(root, "staged-after-hold.exe")
+	if err := os.WriteFile(staged, []byte("new after rejection"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	next, err := CommitPayload(root, staged, descriptorFor(t, "v1.2.0", "new after rejection", rejected.Sequence+1))
+	if err != nil {
+		t.Fatalf("new verified update remained blocked: %v", err)
+	}
+	if next.Previous == nil || *next.Previous != previous {
+		t.Fatalf("new update did not preserve the healthy current as LKG: %+v", next)
+	}
+}
+
+func TestSequencePromotionCannotMakeRollbackHeldPayloadEligibleAgain(t *testing.T) {
+	root, _, rejected := twoVersionRoot(t)
+	rolledBack, err := Rollback(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPath, _ := PayloadPath(root, rolledBack.Current.Version)
+	staged := filepath.Join(root, "same-current.exe")
+	raw, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, raw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	promoted := rolledBack.Current
+	promoted.Sequence = rejected.Sequence + 20
+	afterPromotion, err := CommitPayload(root, staged, promoted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterPromotion.Previous == nil || afterPromotion.RollbackHold == nil ||
+		!samePayload(*afterPromotion.Previous, rejected) || !samePayload(*afterPromotion.RollbackHold, rejected) {
+		t.Fatalf("sequence promotion lost rejection metadata: %+v", afterPromotion)
+	}
+	if next, err := Rollback(root); err == nil {
+		t.Fatalf("sequence promotion re-enabled rejected payload: %+v", next)
+	} else if !strings.Contains(err.Error(), "rollback-held") {
+		t.Fatalf("rollback failed for the wrong reason: %v", err)
+	}
+	unchanged, err := Load(root)
+	if err != nil || unchanged.Current != promoted {
+		t.Fatalf("rejected rollback changed current: %+v err=%v", unchanged, err)
+	}
+}
+
 // A commit that fails partway must leave nothing addressable behind. An empty
 // payloads/<version>/ is exactly the shape an invalid current takes on disk, so
 // the directory this call created goes away with it.
@@ -373,6 +678,76 @@ func TestCommitPayloadPublishesOnlyAfterVerificationAndKeepsLastKnownGood(t *tes
 	if err != nil || res.Recovered || res.Descriptor.Version != "v1.1.0" {
 		t.Fatalf("resolve=%+v err=%v", res, err)
 	}
+}
+
+// Defender can remove current after updater preflight but before commit. The
+// structurally valid pointer still identifies an older verified Previous; the
+// new commit must carry that LKG forward instead of dropping all recovery.
+func TestCommitPayloadKeepsVerifiedPreviousWhenCurrentDisappearsMidUpdate(t *testing.T) {
+	root, previous, current := twoVersionRoot(t)
+	currentPath, _ := PayloadPath(root, current.Version)
+	if err := os.Remove(currentPath); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(root, "staged.exe")
+	if err := os.WriteFile(staged, []byte("newest"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := CommitPayload(root, staged, descriptorFor(t, "v1.2.0", "newest", 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Previous == nil || *next.Previous != previous {
+		t.Fatalf("commit lost the verified LKG: %+v", next)
+	}
+	newPath, _ := PayloadPath(root, next.Current.Version)
+	if err := os.Remove(newPath); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Resolve(root)
+	if err != nil || res.Descriptor != previous || !res.Recovered {
+		t.Fatalf("second quarantine could not recover: res=%+v err=%v", res, err)
+	}
+}
+
+// A runnable RollbackHold is still a rejected payload. If current disappears
+// during a later update and Previous aliases Hold, commit must not publish that
+// rejected artifact as the new release's LKG.
+func TestCommitPayloadNeverPromotesRollbackHoldToPrevious(t *testing.T) {
+	root, _, rejected := twoVersionRoot(t)
+	rolledBack, err := Rollback(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPath, _ := PayloadPath(root, rolledBack.Current.Version)
+	if err := os.Remove(currentPath); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(root, "staged.exe")
+	if err := os.WriteFile(staged, []byte("replacement"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := CommitPayload(root, staged, descriptorFor(t, "v1.2.0", "replacement", rejected.Sequence+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Previous != nil {
+		t.Fatalf("commit promoted rejected payload as LKG: %+v", next.Previous)
+	}
+	if _, err := os.Stat(mustPayloadPathForTest(t, root, rejected.Version)); err != nil {
+		t.Fatalf("test no longer has a runnable held payload: %v", err)
+	}
+}
+
+func mustPayloadPathForTest(t *testing.T, root, version string) string {
+	t.Helper()
+	path, err := PayloadPath(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // descriptorFor is payloadFixture without the file: the caller stages the bytes
