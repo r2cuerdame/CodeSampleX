@@ -34,16 +34,16 @@ Every result is a recorded execution with its environment attached, so the data 
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), so the numbers above have moved on since they were copied.
 
-**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `≡` mark is our own sample: it ran here and came back clean. It is deliberately not a check, because a check is an approval stamp and this network does not grade; `≡` is a line in a log. One clean run or a hundred, the mark says the same thing, and a run of ours that failed carries `✕` instead. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
+**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `◆` mark says one thing and only one: this network ran its own contract in THIS environment and it came back clean. It is deliberately not a check, because a check is an approval stamp and this network does not grade. One clean run or a hundred, the mark says the same thing, and a run of ours that failed carries `✕` instead. Whether code EXISTS for the release and the API is a separate mark — a document — because a sample does not stop existing when you switch the OS filter, and carrying both facts on one mark is what sent readers down the grid to coordinates with nothing to open. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
 
-The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `≡ —` says exactly that: we have working code for it, and nobody has been seen using it yet.
+The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `◆ —` says exactly that: our own contract ran here and came back clean, and no build has been reported at this coordinate.
 
 Colour carries how the runs came out, so a mostly-failing cell reddens without another glyph to learn. `—` stays unknown — never "works", never "broken". Nothing is inferred from the package's ecosystem or its docs.
 

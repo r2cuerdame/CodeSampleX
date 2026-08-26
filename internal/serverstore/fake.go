@@ -694,6 +694,55 @@ func (f *Fake) VerifiedSamplesForPackages(ctx context.Context, patterns []string
 	return out, nil
 }
 
+func (f *Fake) VerifiedSampleCodeCounts(_ context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error) {
+	if packagePrefix == "" {
+		return nil, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	counts := map[[2]string]int64{}
+	for _, sample := range f.samples {
+		if sample.Quarantined || !f.hasContractPass(sample.SampleID, "") {
+			continue
+		}
+		var manifest domain.SampleManifest
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		// Count a coordinate at most once per sample even if malformed author
+		// input repeats a package or symbol. PostgreSQL uses the same DISTINCT
+		// sample boundary.
+		seen := map[[2]string]bool{}
+		for _, purl := range manifest.Packages {
+			if !strings.HasPrefix(purl, packagePrefix) {
+				continue
+			}
+			seen[[2]string{purl, ""}] = true
+			for _, symbol := range manifest.Symbols {
+				if symbol != "" {
+					seen[[2]string{purl, symbol}] = true
+				}
+			}
+		}
+		for key := range seen {
+			counts[key]++
+		}
+	}
+
+	out := make([]VerifiedSampleCodeCount, 0, len(counts))
+	for key, count := range counts {
+		out = append(out, VerifiedSampleCodeCount{PURL: key[0], Symbol: key[1], Samples: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out, nil
+}
+
 func (f *Fake) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 	all, err := f.ListSamples(ctx, 1<<30)
 	if err != nil {

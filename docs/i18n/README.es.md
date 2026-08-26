@@ -26,14 +26,14 @@ Cada resultado es una ejecución registrada con su entorno adjunto, de modo que 
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Esta cuadrícula no es una ilustración: es [la página en vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), así que los números de arriba ya se han movido desde que se copiaron.
 
-**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son observaciones: el 82% de 1.209 observaciones registradas pasó. Una observación es una etapa que alcanzó un build —compilar, comprobar tipos, probar—, así que un solo build deja varias, y el número no cuenta builds, ni máquinas, ni personas. La marca `≡` es nuestra propia muestra: corrió aquí y terminó limpia. Deliberadamente no es una marca de verificación, porque eso es un sello de aprobación y esta red no califica; una ejecución nuestra que falló lleva `✕` en su lugar. `≡ —` significa: hay código que funciona y nadie ha sido visto usándolo todavía. `—` permanece desconocido.
+**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son observaciones: el 82% de 1.209 observaciones registradas pasó. Una observación es una etapa que alcanzó un build —compilar, comprobar tipos, probar—, así que un solo build deja varias, y el número no cuenta builds, ni máquinas, ni personas. La marca `◆` dice una sola cosa: esta red ejecutó su propio contrato EN ESTE entorno y terminó limpio. Que exista código para la versión y la API es otra marca — un documento —, porque una muestra no deja de existir al cambiar el filtro de sistema operativo. Deliberadamente no es una marca de verificación, porque eso es un sello de aprobación y esta red no califica; una ejecución nuestra que falló lleva `✕` en su lugar. `◆ —` significa: nuestro contrato corrió aquí y terminó limpio, y no se ha reportado ningún build en esta coordenada. `—` permanece desconocido.
 
 ## Por qué importan las pruebas
 
