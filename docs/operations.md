@@ -663,3 +663,57 @@ the length of the session.
 Naming a host is still honoured verbatim, `0.0.0.0` included — write
 `CSX_LISTEN=0.0.0.0:8080` to serve the local network deliberately. Linux and
 macOS are untouched, so the container contract above is unchanged.
+
+### When the Windows launcher loses its current payload
+
+`%LOCALAPPDATA%\csx\active.json` names the payload the stable `csx.exe`
+executes, and every descriptor in it carries the SHA-256 the launcher verifies
+before running anything. A verified payload does not stay verified: on this
+project's own Windows workstation, Microsoft Defender classified
+`csx-payload.exe` as `Trojan:Win32/Bearfoos.*!ml` and quarantined it minutes
+after a correctly staged, hashed and self-tested update had committed it
+(2026-08-24 for v0.1.44, 2026-08-25 for v0.1.43 and again for v0.1.41). The
+pointer was right; the file was simply gone, leaving `payloads/<current>/`
+present and empty.
+
+The launcher treats that as recoverable rather than fatal. When `current` fails
+verification — or becomes unstartable after verification but before the OS
+opens it — the launcher verifies the `previous` descriptor, retries it at most
+once, and repairs `active.json` so `csx update` and every ownership check in
+`internal/update` see a consistent install too. `rollbackHold` is rejection
+metadata for updater suppression and sequence floors, never an execution
+candidate. Payload directories left on disk by older releases are **not**
+candidates: this pointer never recorded a hash for them.
+
+What operators see:
+
+```
+csx launcher: recovered: payload-missing: current payload v0.1.43 is unusable; running last-known-good v0.1.41
+```
+
+That line always goes to stderr, never stdout — an MCP host reads stdout as
+JSON-RPC framing. The repaired pointer keeps the failed version as
+`rollbackHold`, which holds the automatic updater back from reinstalling the
+payload that just failed to run while still letting a genuinely newer release
+through, and preserves the sequence floor `mergeLauncherFloor` reads.
+
+With no verified fallback left, the launcher exits **126** with a stable reason
+code as the first field — `payload-missing`, `payload-corrupt`,
+`payload-not-regular`, `payload-unreadable`, `descriptor-invalid`,
+`pointer-unreadable`, `payload-start-failed` — and writes nothing to stdout. It
+never exits 0 without having executed a payload; a caller that cannot start csx
+must not be able to read that as the command having succeeded.
+
+An invalid current is recovered by the stable launcher before it starts any
+payload command. `csx update rollback` remains the explicit rollback command
+for a healthy pointer; it is not the entry point for an install whose current
+payload cannot start. Editing `active.json` directly is a last resort: write it
+as UTF-8 **without a BOM** (the launcher rejects one as
+`invalid character 'ï'`), and drop `previous` entirely rather than zeroing it,
+since a descriptor with `sequence: 0` or a non-hex digest fails validation and
+takes the whole file down with it.
+
+Defender's verdict is a false positive on an unsigned Go binary and is the
+trigger behind every occurrence so far; an install-root exclusion or Authenticode
+signing of the payload is the fix for the cause, and is tracked separately from
+the launcher's own resilience.
