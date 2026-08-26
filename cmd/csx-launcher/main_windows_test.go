@@ -427,6 +427,17 @@ func TestLauncherRunsLastKnownGoodWhenCurrentPayloadIsQuarantined(t *testing.T) 
 		t.Fatalf("pointer not repaired: %+v", a)
 	}
 
+	rec, ok, err := launcher.ReadRecoveryRecord(root)
+	if err != nil || !ok {
+		t.Fatalf("no durable recovery evidence: %+v ok=%t err=%v", rec, ok, err)
+	}
+	if rec.FailedVersion != "v1.1.0" || rec.FailedReason != launcher.ReasonPayloadMissing || rec.RanVersion != "v1.0.0" {
+		t.Fatalf("recovery record = %+v", rec)
+	}
+	if !rec.PointerRepaired {
+		t.Fatalf("recovery record claims the pointer was not repaired: %+v", rec)
+	}
+
 	// A second run is an ordinary one: nothing left to recover from, and no
 	// diagnostic to repeat.
 	code, _, stderr = runLauncher(t, root, "-test.run=^TestLauncherPayloadHelper$")
@@ -435,6 +446,18 @@ func TestLauncherRunsLastKnownGoodWhenCurrentPayloadIsQuarantined(t *testing.T) 
 	}
 	if strings.Contains(stderr, "recovered") {
 		t.Fatalf("repaired install still reports a recovery: %q", stderr)
+	}
+
+	// And this is the whole point of the record. The install now looks and
+	// behaves healthy; the one stderr line that said a released payload was
+	// destroyed here has scrolled away and will never be printed again. What
+	// an operator can still find has to survive that.
+	after, ok, err := launcher.ReadRecoveryRecord(root)
+	if err != nil || !ok {
+		t.Fatalf("the repaired install lost its recovery evidence: %+v ok=%t err=%v", after, ok, err)
+	}
+	if after.Observations != rec.Observations {
+		t.Fatalf("a healthy run counted itself as a recovery: %d then %d", rec.Observations, after.Observations)
 	}
 }
 
