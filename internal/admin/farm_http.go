@@ -132,10 +132,26 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	return map[string]any{
 		"coverageHoles":       backlog.CoverageHoles,
 		"dependencies":        backlog.Dependencies,
+		"matrixCells":         farmMatrixCellsView(backlog.Matrix),
 		"windowSeconds":       int(farmWindow / time.Second),
 		"handedOutInWindow":   handedOut,
 		"handedOutByKind":     claimed,
 		"firstProvenInWindow": backlog.FirstProven,
+	}
+}
+
+// farmMatrixCellsView reports the unbounded PUBLIC symbol x version corpus.
+// It intentionally does not apply the package UI's browse-window caps: this
+// value is the canonical completeness denominator, not the current viewport.
+// The three evidence states remain separate because they require different
+// work, and failed or mixed contracts are in none of the passing-only buckets.
+func farmMatrixCellsView(cells serverstore.MatrixCells) map[string]any {
+	return map[string]any{
+		"cells":                     cells.Cells,
+		"observed":                  cells.Observed,
+		"verifiedNoObservation":     cells.VerifiedNoObservation,
+		"unmeasured":                cells.Unmeasured,
+		"packagesShowingBothDashes": cells.PackagesShowingBothDashes,
 	}
 }
 

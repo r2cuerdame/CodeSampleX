@@ -113,6 +113,7 @@ func (f *Fake) FarmBacklogNow(_ context.Context, since, now time.Time) (FarmBack
 	}
 	backlog.Dependencies = len(f.dependencyOpen(observed, chosen, verified,
 		f.provenNameTargets(packageTargets)))
+	backlog.Matrix = f.matrixCells()
 
 	for _, work := range f.authoringWork {
 		if work.ClaimedAt.Before(since) || work.ClaimedAt.After(now) {
