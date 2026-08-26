@@ -1029,7 +1029,13 @@ if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
 $builderFresh = 0
-for ($attempt = 1; $attempt -le 90; $attempt++) {
+# The production corpus's first full pass currently completes in about
+# fourteen minutes under public traffic. Give that real work a thirty-minute
+# ceiling; the old nominal three-minute ceiling was only hidden by repeatedly
+# running a ten-second whole-corpus invariant query inside this loop.
+$builderFreshPollAttempts = 900
+$builderFreshPollSeconds = 2
+for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {
     # The materialized invariant query is a whole-corpus scan. Poll only the
     # cheap completion marker while the new builder owns that same database,
     # then take one coherent full snapshot after the pass has finished.
@@ -1037,7 +1043,7 @@ for ($attempt = 1; $attempt -le 90; $attempt++) {
     if ($builderFreshText -notmatch '^[01]$') { throw "malformed post-deploy builder freshness" }
     $builderFresh = [int]$builderFreshText
     if ($builderFresh -eq 1) { break }
-    if ($attempt -lt 90) { Start-Sleep -Seconds 2 }
+    if ($attempt -lt $builderFreshPollAttempts) { Start-Sleep -Seconds $builderFreshPollSeconds }
 }
 if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }
 $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()

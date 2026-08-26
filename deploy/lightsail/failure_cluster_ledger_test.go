@@ -117,7 +117,16 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 // full invariant tuple belongs after that marker and is read exactly once.
 func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
-	loopStart := strings.Index(deploy, `for ($attempt = 1; $attempt -le 90; $attempt++)`)
+	for _, required := range []string{
+		`$builderFreshPollAttempts = 900`,
+		`$builderFreshPollSeconds = 2`,
+		`Start-Sleep -Seconds $builderFreshPollSeconds`,
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("fresh-builder wait does not preserve the measured production budget: missing %q", required)
+		}
+	}
+	loopStart := strings.Index(deploy, `for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++)`)
 	loopEndMarker := `if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }`
 	loopEnd := strings.Index(deploy, loopEndMarker)
 	if loopStart < 0 || loopEnd <= loopStart {
