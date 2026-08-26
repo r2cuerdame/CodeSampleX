@@ -265,6 +265,10 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			observedTargets[observed.PURL][targetOS] += score
 		}
 	}
+	// R2C-90: the resolved graph's own demand. How many distinct project-days
+	// had this exact release resolved into them, which is the signal a carried
+	// sighting count cannot carry -- see authoringResolveWeight.
+	resolveDemand := f.resolveDemand()
 	verifiedPURLs, packageTargets := f.provenCoordinates()
 	// Package-level work is for an environment that has evidence but no proof
 	// yet. Offering the pairs already proven — which is what this did — meant a
@@ -285,7 +289,8 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
-					Kind: "EXPANSION", Score: score, TargetOS: targetOS, LastSeen: pkg.LastSeen}
+					Kind: "EXPANSION", Score: score + resolveDemand[pkg.PURL]*authoringResolveWeight,
+					TargetOS: targetOS, LastSeen: pkg.LastSeen}
 				ranks[key] = authoringRankPackageLevel
 			}
 		}
@@ -406,6 +411,26 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	for key, candidate := range candidates {
 		purl := domain.PURL{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version}.String()
 		if inFlight[[2]string{purl, candidate.Symbol}] {
+			delete(candidates, key)
+			delete(ranks, key)
+		}
+	}
+	// Coordinates an assignment already answered. ClaimAuthoringWork inserts
+	// against a key nothing deletes once a sample is attached, so these can
+	// never be handed out again -- and they sort by the observation count
+	// that made them worth answering first, so they arrive at the TOP of a
+	// finite window and push everything real out of it.
+	//
+	// Package-level EXPANSION and DEPENDENCY hand their row back on
+	// submission and a symbol-bearing row is filtered by the verified-symbol
+	// check above, so what actually accumulates here is the symbol-less
+	// FINDING: 407 of them in production on 2026-08-23, which with 141 of
+	// them inside a 200-row window left three claimable rows and took
+	// authoring from 45 handouts an hour to zero for five hours.
+	for key, candidate := range candidates {
+		work, held := f.authoringWork[authoringWorkKey(candidate.Ecosystem,
+			candidate.Name, candidate.Version, candidate.Symbol)]
+		if held && work.SampleID != "" {
 			delete(candidates, key)
 			delete(ranks, key)
 		}
@@ -746,4 +771,27 @@ func authoringChoiceWeight(direct bool) int64 {
 		return authoringDirectWeight
 	}
 	return 1
+}
+
+// resolveDemand is the distinct project-days that resolved each release, read
+// from the resolved graph rather than from anybody's manifest. The PG half is
+// the resolve_demand CTE; the two are compared row for row by
+// TestIntegrationAuthoringExpansionFakeMatchesPostgres. Caller holds f.mu.
+func (f *Fake) resolveDemand() map[string]int64 {
+	days := make(map[string]map[string]bool)
+	for edge, projectDays := range f.edges {
+		child := domain.PURL{Ecosystem: edge.ecosystem, Name: edge.childName,
+			Version: edge.childVersion}.String()
+		if days[child] == nil {
+			days[child] = make(map[string]bool)
+		}
+		for day := range projectDays {
+			days[child][day] = true
+		}
+	}
+	out := make(map[string]int64, len(days))
+	for child, seen := range days {
+		out[child] = int64(len(seen))
+	}
+	return out
 }
