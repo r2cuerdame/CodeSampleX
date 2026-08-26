@@ -229,13 +229,30 @@ receipt 이미지 계약을 직접 실행하는 7개 테스트도 개별로 통�
   production 실행 결과를 이번 run에 다시 측정한 것이다.
 * production에 쓰기를 했다는 것. 이번 run의 production 접근은 전부 SELECT와 GET이다.
 
-## 부수적으로 발견한 것 (R2C-81 범위 밖)
+## 부수적으로 발견한 것 (R2C-81 범위 밖, 후속 상태 갱신)
 
-**좁은 화면에서 sample 페이지가 가로로 넘친다 — 원인은 배지 툴팁이다.**
-`span.badge-tip`은 `position:absolute; visibility:hidden; opacity:0`인 숨은 툴팁인데
-`width: 352px`로 고정돼 있다. 숨어 있어도 레이아웃 박스는 남으므로 뷰포트가 352px보다
-좁으면 문서 `scrollWidth`를 밀어낸다 — 360px에서 오른쪽 끝이 425px, 즉 80px 초과다.
-이번 측정에서 조상 중 `overflow-x: auto`가 없는 유일한 초과 요소였다.
+**좁은 화면에서 sample 페이지가 가로로 넘쳤다 — 원인은 배지 툴팁의 폭 자체가
+아니라 기준점과 폭의 조합이었다.** 이 측정 당시 `span.badge-tip`은
+`position: absolute; visibility: hidden; opacity: 0`이고 폭은 고정 `352px`가 아니라
+`min(22rem, calc(100vw - 3rem))`이었다. 따라서 320/360px 뷰포트에서 계산된 폭은
+각각 272/312px로 이미 뷰포트에 제한돼 있었다. 문제는 그 폭의 박스가 행의 시작점이
+아니라 줄 중간의 inline `.badge-help`를 기준으로 배치됐다는 것이다. badge의 inline
+offset부터 272/312px를 더한 오른쪽 끝이 content box를 벗어났고, `visibility: hidden`은
+보이지 않을 뿐 그 absolute box를 scrollable overflow에서 제거하지 않았다. 앞서 적은
+"viewport-bound max-width를 추가한다"는 진단은 이미 존재한 규칙을 반복하므로 정확하지
+않았다.
 
-digest 표시와 무관하고 컴포넌트도 다르므로 이 문서는 관측만 남긴다.
-`max-width`를 뷰포트에 묶거나 툴팁을 `display:none`으로 감추는 쪽 판단이 필요하다.
+후속 [R2C-148 / PR #46](https://github.com/r2cuerdame/CodeSampleX/pull/46)은 이 원인에
+맞춰 containing block을 `.badges` / `.samples li` 행으로 옮기고 폭을
+`min(22rem, 100%)`로 행에 제한했다. real Chrome 회귀 검사는 sample detail과 symbol
+sample list에서 tooltip이 닫힌 때와 열린 때 모두 320/360/480px의 body-level overflow가
+0인지 측정한다. PR은 2026-08-26T01:28:45Z에 merge commit
+`0311b3d1d67d3109893ef7424fe47d915d2ee17c`로 병합됐고, hosted CI run
+[`32918818368`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/32918818368)은
+통과했다.
+
+다만 2026-08-26T01:57:22Z 재조회 시 production은 health 200이지만 footer/static asset
+revision이 `71d467a913c4365952d2b22cd4be051a96cc105a`이고 live CSS도 여전히
+`calc(100vw - 3rem)` 규칙이었다. 즉 수정은 canonical `main`에는 들어갔지만 이 시점의
+production에는 아직 배포되지 않았다. 따라서 위 320/360px overflow 수치는 역사적
+실측으로 보존하며, live 해소를 이 문서가 주장하지 않는다.
