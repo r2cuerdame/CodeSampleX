@@ -7,12 +7,82 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
+
+type overlappingFarmStore struct {
+	*serverstore.Fake
+	calls   atomic.Int64
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *overlappingFarmStore) FarmWorkers(ctx context.Context, since, now time.Time) ([]serverstore.FarmWorker, error) {
+	if s.calls.Add(1) == 1 {
+		close(s.started)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.Fake.FarmWorkers(ctx, since, now)
+}
+
+// The browser refreshes the farm panel every minute. A corpus query that took
+// longer than that used to let every tick start another copy, until those
+// xid-less SELECTs consumed the database even though the public routes never
+// ran that SQL themselves. One process admits one aggregate at a time; a
+// second tab gets an explicit retry instead of multiplying the same work.
+func TestFarmPanelRefusesAnOverlappingAggregate(t *testing.T) {
+	store := &overlappingFarmStore{
+		Fake: serverstore.NewFake(), started: make(chan struct{}), release: make(chan struct{}),
+	}
+	mux, secret := farmMux(t, store, nil)
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/farm", nil)
+		req.SetBasicAuth("recuerdame", secret)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstDone <- request() }()
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("first farm aggregate did not start")
+	}
+
+	second := request()
+	if second.Code != http.StatusServiceUnavailable {
+		close(store.release)
+		<-firstDone
+		t.Fatalf("overlapping status = %d, want 503", second.Code)
+	}
+	if got := second.Header().Get("Retry-After"); got == "" {
+		close(store.release)
+		<-firstDone
+		t.Fatal("overlapping response omitted Retry-After")
+	}
+	if got := store.calls.Load(); got != 1 {
+		close(store.release)
+		<-firstDone
+		t.Fatalf("overlapping aggregate entered the store %d times, want 1", got)
+	}
+
+	close(store.release)
+	if first := <-firstDone; first.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s", first.Code, first.Body.String())
+	}
+}
 
 // The panel could say how much had been proven and nothing at all about how
 // much was left. With a queue that generates its own work that is the

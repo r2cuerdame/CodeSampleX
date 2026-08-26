@@ -4,7 +4,85 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
+
+func TestFarmAggregateContextAddsAHardDeadline(t *testing.T) {
+	started := time.Now()
+	ctx, cancel := farmAggregateContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("farm aggregate has no deadline")
+	}
+	remaining := deadline.Sub(started)
+	if remaining <= 0 || remaining > farmAggregateTimeout+100*time.Millisecond {
+		t.Fatalf("farm aggregate deadline = %v, ceiling = %v", remaining, farmAggregateTimeout)
+	}
+}
+
+func TestFarmAggregateContextPreservesAnEarlierCallerDeadline(t *testing.T) {
+	want := time.Now().Add(100 * time.Millisecond)
+	parent, stop := context.WithDeadline(context.Background(), want)
+	defer stop()
+	ctx, cancel := farmAggregateContext(parent)
+	defer cancel()
+	got, ok := ctx.Deadline()
+	if !ok || !got.Equal(want) {
+		t.Fatalf("farm aggregate deadline = %v, want caller deadline %v", got, want)
+	}
+}
+
+func TestIntegrationFarmBacklogTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
+	pg := openTestPG(t)
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockResult := make(chan error, 1)
+	go func() {
+		lockResult <- pg.withConn(context.Background(), func(c *pgx.Conn) error {
+			tx, err := c.Begin(context.Background())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			if _, err := tx.Exec(context.Background(), `LOCK TABLE packages IN ACCESS EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("could not establish the blocking farm fixture")
+	}
+
+	started := time.Now()
+	_, err := pg.farmBacklogNow(context.Background(), time.Now().Add(-time.Hour), time.Now(), 75*time.Millisecond)
+	elapsed := time.Since(started)
+	close(release)
+	if lockErr := <-lockResult; lockErr != nil {
+		t.Fatalf("release farm fixture: %v", lockErr)
+	}
+	if !IsQueryTimeout(err) {
+		t.Fatalf("blocked farm query error = %v, want PostgreSQL statement timeout", err)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("75ms statement timeout returned after %v", elapsed)
+	}
+
+	// The timeout aborts a read-only transaction; explicit rollback must make
+	// the same pool immediately usable by the next complete snapshot.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := pg.FarmBacklogNow(ctx, time.Now().Add(-time.Hour), time.Now()); err != nil {
+		t.Fatalf("farm query after timeout: %v", err)
+	}
+}
 
 // backlogStore is the slice of a store the backlog parity check needs.
 type backlogStore interface {

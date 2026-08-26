@@ -7,6 +7,35 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Farm aggregates are operator snapshots, not unbounded builder work. The
+// admin page polls them every minute, so one query that outlives a poll would
+// otherwise let later polls accumulate identical xid-less SELECTs. Cap every
+// store call independently as a final defense even when it is invoked outside
+// the HTTP handler. An earlier caller deadline still wins.
+const farmAggregateTimeout = 8 * time.Second
+
+func farmAggregateContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, farmAggregateTimeout)
+}
+
+func beginFarmAggregate(ctx context.Context, c *pgx.Conn, ceiling time.Duration) (pgx.Tx, error) {
+	tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	// PostgreSQL gets the first say, just before the Go deadline. That
+	// cancels the statement without sacrificing this scarce pooled
+	// connection; the explicit rollback below clears the aborted transaction.
+	// The matrix query also measured 162ms of execution behind roughly 770ms
+	// of JIT compilation, so this request-scoped transaction turns JIT off.
+	statementTimeout := authoringStatementTimeout(ctx, ceiling)
+	if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, err
+	}
+	return tx, nil
+}
+
 // FarmBacklogNow reads the two stocks and the two flows the coverage
 // scheduler is judged by.
 //
@@ -16,9 +45,20 @@ import (
 // backlog counted from a different predicate than the queue would report a
 // figure that never moves however hard the fleet runs.
 func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error) {
+	ctx, cancel := farmAggregateContext(ctx)
+	defer cancel()
+	return p.farmBacklogNow(ctx, since, now, farmAggregateTimeout)
+}
+
+func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statementTimeout time.Duration) (FarmBacklog, error) {
 	backlog := FarmBacklog{ClaimedByKind: map[string]int{}}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		if err := c.QueryRow(ctx, `
+		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if err := tx.QueryRow(ctx, `
 			WITH `+authoringCoverageCTE+`
 			SELECT
 			  -- The `+"`-`"+` cells: a PUBLIC release the network watches people
@@ -40,7 +80,7 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 		// cells rather than releases. Counted from the stored snapshots the
 		// package pages render, so the panel and the page cannot disagree
 		// about how many dashes there are.
-		census, err := matrixCells(ctx, c)
+		census, err := matrixCells(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -48,7 +88,7 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 		// Generation: what the scheduler actually handed out in the window,
 		// by queue source. Read from claimed_at rather than from a counter,
 		// so a restart does not reset it.
-		claimed, err := c.Query(ctx, `
+		claimed, err := tx.Query(ctx, `
 			SELECT kind,count(*) FROM authoring_assignments
 			 WHERE claimed_at >= $1 AND claimed_at <= $2
 			 GROUP BY 1`, since, now)
@@ -75,7 +115,7 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 		// platform, which is real work that takes nothing off the stock above
 		// -- and a flow that does not drain the stock printed beside it is a
 		// number an operator cannot act on.
-		return c.QueryRow(ctx, `
+		return tx.QueryRow(ctx, `
 			SELECT count(*) FROM (
 			  SELECT package.value AS purl, MIN(r.created_at) AS first_pass
 			    FROM samples s
@@ -99,9 +139,20 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 // panel counting a different set from the queue it describes reports a figure
 // that never moves however hard the fleet runs.
 func (p *PG) FarmCompletenessNow(ctx context.Context) (FarmCompleteness, error) {
+	ctx, cancel := farmAggregateContext(ctx)
+	defer cancel()
+	return p.farmCompletenessNow(ctx, farmAggregateTimeout)
+}
+
+func (p *PG) farmCompletenessNow(ctx context.Context, statementTimeout time.Duration) (FarmCompleteness, error) {
 	out := newFarmCompleteness()
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
+		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		rows, err := tx.Query(ctx, `
 			WITH `+authoringCoverageCTE+`, resolved_parents AS MATERIALIZED (
 				-- The PARENT end, deliberately. Being pulled BY somebody says
 				-- nothing about what this release pulls, and the dependency

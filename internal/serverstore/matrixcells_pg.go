@@ -31,10 +31,11 @@ import (
 // aggregates it planned to 83 JIT-compiled functions and 1.37 s against
 // production; folded into one row it is 37 functions and 930 ms, of which the
 // work is 162 ms -- `SET jit=off` on the same 9,455 documents -- and the rest
-// is PostgreSQL compiling a plan for a query that runs once. It is on an
-// admin endpoint nobody polls, so the cost is recorded rather than tuned; if
-// this ever moves somewhere hot it belongs in the snapshot pipeline that
-// already materialises on CSX_SNAPSHOT_INTERVAL, not in a request.
+// is PostgreSQL compiling a plan for a query that runs once. The admin farm
+// panel polls this aggregate, so its request-scoped transaction disables JIT,
+// applies a hard statement timeout and rejects overlapping snapshots. If it
+// grows beyond that bounded request budget it belongs in the snapshot pipeline
+// that already materialises on CSX_SNAPSHOT_INTERVAL, not in a request.
 const matrixCellsQuery = `
 	WITH cell AS (
 		SELECT p.ecosystem, p.name, cs.purl, cs.symbol,
@@ -67,9 +68,14 @@ const matrixCellsQuery = `
 	       count(*) FILTER (WHERE verified_only>0 AND cells>measured)
 	FROM grid`
 
-// matrixCells counts the compatibility corpus. The connection is the caller's
-// so the farm panel reads every one of its numbers on one connection.
-func matrixCells(ctx context.Context, c *pgx.Conn) (MatrixCells, error) {
+type matrixCellsQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// matrixCells counts the compatibility corpus. The query source is the
+// caller's connection or read-only transaction, so the farm panel reads every
+// one of its numbers under the same bounded transaction.
+func matrixCells(ctx context.Context, c matrixCellsQuerier) (MatrixCells, error) {
 	var census MatrixCells
 	err := c.QueryRow(ctx, matrixCellsQuery).Scan(&census.Cells, &census.Observed,
 		&census.VerifiedNoObservation, &census.Unmeasured, &census.PackagesShowingBothDashes)
