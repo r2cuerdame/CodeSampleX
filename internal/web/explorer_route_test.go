@@ -8,7 +8,7 @@ import "testing"
 // because the version does not exist, without it because the module really
 // is named with it. Modules that have no suffix, like shopspring/decimal,
 // worked, which is why it went unnoticed.
-func TestSplitPackagePathKeepsGoMajorSuffixInTheName(t *testing.T) {
+func TestSplitPackageRestKeepsGoMajorSuffixInTheName(t *testing.T) {
 	cases := []struct {
 		eco, rest             string
 		name, version, symbol string
@@ -30,14 +30,18 @@ func TestSplitPackagePathKeepsGoMajorSuffixInTheName(t *testing.T) {
 		{"maven", "org.example/2.0/1.4.0", "org.example/2.0", "1.4.0", ""},
 	}
 	for _, c := range cases {
-		name, version, symbol, ok := splitPackagePath(c.eco, c.rest)
+		name, version, tail, ok := splitPackageRest(c.eco, c.rest)
 		if !ok {
 			t.Errorf("%s/%s: not routable", c.eco, c.rest)
 			continue
 		}
-		if name != c.name || version != c.version || symbol != c.symbol {
-			t.Errorf("%s/%s -> (%q, %q, %q), want (%q, %q, %q)",
-				c.eco, c.rest, name, version, symbol, c.name, c.version, c.symbol)
+		symbol := ""
+		if len(tail) == 1 {
+			symbol = tail[0]
+		}
+		if name != c.name || version != c.version || symbol != c.symbol || len(tail) > 1 {
+			t.Errorf("%s/%s -> (%q, %q, %v), want (%q, %q, %q)",
+				c.eco, c.rest, name, version, tail, c.name, c.version, c.symbol)
 		}
 	}
 }

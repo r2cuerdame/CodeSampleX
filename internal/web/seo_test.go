@@ -126,18 +126,25 @@ func TestSitemapSkipsMalformedSampleIDs(t *testing.T) {
 	}
 }
 
-// TestSamplePageIsSearchable checks the head of a sample page: the title
-// used to be "Sample sha256:d1e2f3… — CodeSampleX", a string nobody types
-// into a search engine. The words a reader searches for are in the goal.
+// TestSamplePageIsSearchable checks the head of a sample page.
+//
+// The title used to be "Sample sha256:d1e2f3… — CodeSampleX", a string nobody
+// types into a search engine, so it was rebuilt from the goal. That was not
+// enough: most goals in the corpus are the line the authoring worker prints
+// for an agent to start from, so the live title became an internal purl
+// printed twice. What answers the search is the release and the API, and
+// whether a contract actually ran.
 func TestSamplePageIsSearchable(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/samples/sha256:d1e2f3").Body.String()
 
 	mustContain(t, body,
-		"<title>POST JSON with axios and retries · axios 1.12.0 — CodeSampleX</title>")
-	// Description: the goal plus the facts that decide whether this answer
-	// applies — the packages and the environment it ran in.
-	mustContain(t, body, `content="POST JSON with axios and retries — npm/axios@1.12.0 · node 22.18"`)
+		"<title>axios 1.12.0: POST JSON with axios and retries — Verified sample | CodeSampleX</title>")
+	// Description: what it is, for which release, and — because a receipt
+	// records it — where the contract ran and the first thing it established.
+	mustContain(t, body,
+		`content="Verified sample for npm axios 1.12.0: POST JSON with axios and retries.`)
+	mustContain(t, body, `The contract ran on node 22.18 · linux/amd64 and passed:`)
 	mustContain(t, body, `rel="canonical" href="https://codesamplex.dev/samples/sha256:d1e2f3"`)
 
 	// Structured data: the article shape plus a trail back to the package.
@@ -152,7 +159,7 @@ func TestSamplePageIsSearchable(t *testing.T) {
 	// explorer so the page is not a dead end in either direction. The
 	// target is the package page: a version page only exists when that
 	// exact version string has a snapshot.
-	mustContain(t, body, "<h1>POST JSON with axios and retries</h1>")
+	mustContain(t, body, "<h1>axios 1.12.0: POST JSON with axios and retries</h1>")
 	mustContain(t, body, `href="/npm/axios"`)
 }
 

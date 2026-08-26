@@ -543,6 +543,13 @@ func findingBasisOptions(lang, selected string) []filterOption {
 // SampleHref is the public page for the sample that proves this finding.
 // The id is a content address, so the link is stable for as long as the
 // sample is published.
+//
+// This is deliberately the content address rather than the sample's
+// human-readable canonical URL. A finding carries the package and the
+// belief, not the goal and the symbol list the slug is derived from, so
+// naming the readable URL here would mean guessing at it — and a link to a
+// guessed address is a 404 where a link to the content address is the page,
+// which then names the canonical itself.
 func (f finding) SampleHref() string { return "/samples/" + f.SampleID }
 
 // ShortID is the sample id without its hash-algorithm prefix, for a link
