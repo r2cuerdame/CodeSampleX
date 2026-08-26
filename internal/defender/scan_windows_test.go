@@ -69,3 +69,26 @@ func TestPinnedScannerThatIsNotThereIsUnavailableNotIgnored(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 }
+
+func TestNewestPlatformScannerUsesConfiguredProgramData(t *testing.T) {
+	programData := t.TempDir()
+	oldScanner := filepath.Join(programData, "Microsoft", "Windows Defender", "Platform", "1.0.0", scannerName)
+	newScanner := filepath.Join(programData, "Microsoft", "Windows Defender", "Platform", "2.0.0", scannerName)
+	for _, path := range []string{oldScanner, newScanner} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("ProgramData", programData)
+
+	got, ok := newestPlatformScanner()
+	if !ok {
+		t.Fatal("newestPlatformScanner did not find the scanner under ProgramData")
+	}
+	if got != newScanner {
+		t.Fatalf("newestPlatformScanner = %q, want %q", got, newScanner)
+	}
+}

@@ -21,7 +21,6 @@ import (
 // to the Program Files copy keeps this working on an install that has never
 // taken a platform update.
 const (
-	platformRoot   = `C:\ProgramData\Microsoft\Windows Defender\Platform`
 	fallbackVendor = `Windows Defender`
 	scannerName    = "MpCmdRun.exe"
 	definitionsKey = `SOFTWARE\Microsoft\Windows Defender\Signature Updates`
@@ -157,6 +156,11 @@ func locateScanner() (string, error) {
 }
 
 func newestPlatformScanner() (string, bool) {
+	programData := strings.TrimSpace(os.Getenv("ProgramData"))
+	if programData == "" {
+		return "", false
+	}
+	platformRoot := filepath.Join(programData, "Microsoft", "Windows Defender", "Platform")
 	entries, err := os.ReadDir(platformRoot)
 	if err != nil {
 		return "", false
