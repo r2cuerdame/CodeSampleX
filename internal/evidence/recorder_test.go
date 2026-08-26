@@ -178,6 +178,53 @@ func TestRecordRunFailAttachesSanitizedFingerprint(t *testing.T) {
 	}
 }
 
+func TestRecordCommandOutputSplitsActualFailureEventsAndPersistsLineage(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	rec := &Recorder{DB: db, Ident: ident, Cfg: config.Default()}
+	exitCode := 1
+	profile := scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "go"}
+	output := CommandOutput{
+		Stdout:      "src/index.ts(12,5): error TS2352: bad conversion\n--- FAIL: TestMCP (0.01s)\n    mcp_test.go:20: got false, want true\nFAIL\n",
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode},
+	}
+	if err := rec.RecordCommandOutput(context.Background(), t.TempDir(), fakeScanResult(), profile,
+		[]string{"go", "test", "./internal/mcp"}, exitCode, output); err != nil {
+		t.Fatalf("RecordCommandOutput: %v", err)
+	}
+
+	rows := pendingRows(t, db)
+	if len(rows) != 4 {
+		t.Fatalf("want package+symbol for two failure events, got %d: %+v", len(rows), rows)
+	}
+	stages, toolchains, fingerprints := map[domain.Stage]bool{}, map[string]bool{}, map[string]bool{}
+	for _, row := range rows {
+		stages[row.Stage] = true
+		toolchains[row.ActualToolchain] = true
+		fingerprints[row.ErrorFP] = true
+		if row.OuterCommand != "go test" || row.OuterStage != domain.StageProjectTest {
+			t.Errorf("outer lineage = %q / %q", row.OuterCommand, row.OuterStage)
+		}
+		if row.StageEvidence == "" || row.ErrorFP == "" {
+			t.Errorf("untraceable classified failure: %+v", row)
+		}
+	}
+	if !stages[domain.StageProjectCompile] || !stages[domain.StageProjectTest] ||
+		!toolchains["typescript/tsc"] || !toolchains["go/test"] || len(fingerprints) != 2 {
+		t.Fatalf("stages=%v toolchains=%v fingerprints=%v", stages, toolchains, fingerprints)
+	}
+
+	batches, _, err := (&Batcher{DB: db, Ident: ident, Cfg: config.Default()}).build(context.Background())
+	if err != nil {
+		t.Fatalf("build batches: %v", err)
+	}
+	for _, batch := range batches {
+		if batch.OuterCommand != "go test" || batch.ActualToolchain == "" || batch.StageEvidence == "" {
+			t.Errorf("batch lost failure lineage: %+v", batch)
+		}
+	}
+}
+
 func TestRecordRunUnknownCommandRecordsUsedPassOnly(t *testing.T) {
 	db := testDB(t)
 	rec := &Recorder{DB: db, Ident: testIdentity(t), Cfg: config.Default()}

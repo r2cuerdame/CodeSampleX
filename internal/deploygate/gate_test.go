@@ -65,6 +65,21 @@ ALTER TABLE failure_clusters ADD COLUMN diagnostic_candidate BOOLEAN NOT NULL DE
 	}
 }
 
+func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0025_failure_stage_lineage.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read failure-stage lineage migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("failure-stage lineage migration rejected: %v", err)
+	}
+}
+
 func TestR2C152MigrationFilePassesAutomaticGate(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {

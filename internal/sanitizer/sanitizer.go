@@ -208,6 +208,23 @@ func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTerminat
 	return f
 }
 
+// SanitizeClassifiedFailure builds public evidence for one actual failure
+// event while preserving the privacy-bounded outer-to-toolchain lineage.
+func SanitizeClassifiedFailure(raw string, stage domain.Stage, term domain.FailureTermination, _ []string,
+	outerCommand string, outerStage domain.Stage, actualToolchain string,
+	stageEvidence domain.FailureStageEvidence, evidenceGap domain.FailureEvidenceGap) domain.FailureEvidence {
+	f := SanitizeFailure(raw, stage, term, nil)
+	f.OuterCommand = outerCommand
+	f.OuterStage = outerStage
+	f.ActualToolchain = strings.ToLower(strings.TrimSpace(actualToolchain))
+	f.StageEvidence = stageEvidence
+	f.EvidenceGap = evidenceGap
+	if f.Fingerprint != "" && f.ActualToolchain != "" {
+		f.Fingerprint = domain.ClassifiedFailureFingerprint(stage, f.ActualToolchain, term, f.ErrorCode, f.ErrorSummary)
+	}
+	return f
+}
+
 // PublicErrorSummary keeps the first useful normalized lines within a strict
 // public-wire cap. It is idempotent, which lets the server reject any client
 // value that was not produced by the same canonical normalization.
@@ -247,11 +264,14 @@ func CanonicalPublicErrorSummary(summary string, stage domain.Stage) string {
 // under, and therefore the only stages a stored fingerprint can carry.
 var observationStages = []domain.Stage{
 	domain.StageUsed,
+	domain.StageProjectResolve,
 	domain.StageProjectTypecheck,
 	domain.StageProjectCompile,
 	domain.StageProjectTest,
 	domain.StageProjectProcess,
 	domain.StageProjectLoad,
+	domain.StageProcessStart,
+	domain.StageUnknown,
 }
 
 // Fingerprints returns the fingerprint this error would carry at each stage
@@ -268,7 +288,7 @@ var observationStages = []domain.Stage{
 // exempts "the failure the caller is explicitly looking for a fix to" from
 // being demoted to REFERENCE_ONLY.
 //
-// Asking about all six is the honest form of the question: the caller has
+// Asking about every observation stage is the honest form of the question: the caller has
 // this error, and does not claim to know when it happened.
 func (s SanitizedError) Fingerprints() []string {
 	out := make([]string, 0, len(observationStages))

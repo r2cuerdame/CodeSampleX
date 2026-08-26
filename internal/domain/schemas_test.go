@@ -175,6 +175,66 @@ func TestVerificationReceiptSchemaEvolution(t *testing.T) {
 	}
 }
 
+func TestObservationBatchSchemaRollingCompatibility(t *testing.T) {
+	v1Dir := schemaDir(t)
+	read := func(path string) ([]byte, map[string]any) {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s: not valid JSON: %v", path, err)
+		}
+		return raw, schema
+	}
+
+	v1Raw, v1 := read(filepath.Join(v1Dir, "observation-batch.json"))
+	if got, want := fmt.Sprintf("%x", sha256.Sum256(v1Raw)), "da469d6ed5e3b78a0bf6d183589a2e35e86203b75cbb08f253c68a8ea4ef87c9"; got != want {
+		t.Fatalf("v1 observation-batch schema hash = %s, want frozen %s", got, want)
+	}
+	_, v2 := read(filepath.Join(filepath.Dir(v1Dir), "v2", "observation-batch.json"))
+	v1Properties := v1["properties"].(map[string]any)
+	v2Properties := v2["properties"].(map[string]any)
+	for _, key := range []string{"outerCommand", "outerStage", "actualToolchain", "stageEvidence", "evidenceGap"} {
+		if _, present := v1Properties[key]; present {
+			t.Errorf("strict v1 observation batch unexpectedly contains %q", key)
+		}
+		if _, present := v2Properties[key]; !present {
+			t.Errorf("v2 observation batch is missing %q", key)
+		}
+	}
+	for version, schema := range map[int]map[string]any{1: v1, 2: v2} {
+		versionProperty := schema["properties"].(map[string]any)["schemaVersion"].(map[string]any)
+		if got := versionProperty["const"]; got != float64(version) {
+			t.Errorf("v%d schemaVersion const = %v, want %d", version, got, version)
+		}
+	}
+
+	fixture := ObservationBatch{
+		SchemaVersion: 2, Epoch: "2026-08-26", AnonID: "0123456789abcdef", ProjectBucket: "0123456789ab",
+		Package:     "pkg:golang/example.com/tool@v1.0.0",
+		Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "golang", OS: "windows", Arch: "amd64"},
+		Stage:       StageProjectCompile, Result: ResultFail, ObservationCount: 1,
+		OuterCommand: "go test", OuterStage: StageProjectTest, ActualToolchain: "go/compiler",
+		StageEvidence: FailureStageCompilerDiagnostic,
+	}
+	documentBytes, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(documentBytes, &document); err != nil {
+		t.Fatal(err)
+	}
+	for key := range document {
+		if _, present := v2Properties[key]; !present {
+			t.Errorf("v2 observation-batch.json rejects Go field %q", key)
+		}
+	}
+}
+
 func TestSearchSchemaRollingCompatibility(t *testing.T) {
 	v1Dir := schemaDir(t)
 	v2Dir := filepath.Join(filepath.Dir(v1Dir), "v2")

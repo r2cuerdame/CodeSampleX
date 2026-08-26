@@ -72,11 +72,11 @@ type Recorder struct {
 //     derived from the absolute project path (HMAC, irreversible).
 func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanResult, profile scanner.CommandProfile, exitCode int, failureTail string) error {
 	if exitCode == 0 {
-		return r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, failureTail)
+		return r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, failureTail, nil)
 	}
 	code := exitCode
 	return r.recordRun(ctx, dir, res, profile, true,
-		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}, failureTail)
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}, failureTail, nil)
 }
 
 // RecordTerminatedRun records a caller-observed structured termination,
@@ -84,11 +84,33 @@ func (r *Recorder) RecordRun(ctx context.Context, dir string, res *scanner.ScanR
 // structured state; this method never guesses one from missing fields.
 func (r *Recorder) RecordTerminatedRun(ctx context.Context, dir string, res *scanner.ScanResult,
 	profile scanner.CommandProfile, term domain.FailureTermination, failureTail string) error {
-	return r.recordRun(ctx, dir, res, profile, true, term, failureTail)
+	return r.recordRun(ctx, dir, res, profile, true, term, failureTail, nil)
+}
+
+type classifiedFailure struct {
+	stage    domain.Stage
+	evidence domain.FailureEvidence
+}
+
+// RecordCommandOutput analyzes the actual failure markers before recording.
+// One outer execution may therefore append multiple independent failure rows.
+func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *scanner.ScanResult,
+	profile scanner.CommandProfile, argv []string, exitCode int, output CommandOutput) error {
+	if exitCode == 0 && output.Termination.Kind == "" {
+		return r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, "", nil)
+	}
+	analysis := AnalyzeFailure(profile, argv, output)
+	failures := make([]classifiedFailure, 0, len(analysis.Events))
+	for _, event := range analysis.Events {
+		failure := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage, output.Termination, nil,
+			analysis.OuterCommand, analysis.OuterStage, event.Toolchain, event.StageEvidence, event.EvidenceGap)
+		failures = append(failures, classifiedFailure{stage: event.Stage, evidence: failure})
+	}
+	return r.recordRun(ctx, dir, res, profile, true, output.Termination, "", failures)
 }
 
 func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanResult,
-	profile scanner.CommandProfile, failed bool, term domain.FailureTermination, failureTail string) error {
+	profile scanner.CommandProfile, failed bool, term domain.FailureTermination, failureTail string, classified []classifiedFailure) error {
 	if res == nil {
 		return nil
 	}
@@ -158,7 +180,7 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 		}
 	}
 
-	if !profile.Known {
+	if !profile.Known && len(classified) == 0 {
 		// Unclassified command: usage evidence only (C14).
 		//
 		// Nothing was built, but a lockfile WAS resolved, and USED is exactly
@@ -183,34 +205,52 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 		return nil
 	}
 
-	result := domain.ResultPass
-	failure := domain.FailureEvidence{}
+	type outcome struct {
+		stage   domain.Stage
+		result  domain.Result
+		failure domain.FailureEvidence
+	}
+	outcomes := []outcome{{stage: profile.Stage, result: domain.ResultPass}}
 	if failed {
-		result = domain.ResultFail
-		failure = sanitizer.SanitizeFailure(failureTail, profile.Stage, term, publicNames)
+		outcomes = outcomes[:0]
+		if len(classified) > 0 {
+			for _, event := range classified {
+				outcomes = append(outcomes, outcome{stage: event.stage, result: domain.ResultFail, failure: event.evidence})
+			}
+		} else {
+			outcomes = append(outcomes, outcome{stage: profile.Stage, result: domain.ResultFail,
+				failure: sanitizer.SanitizeFailure(failureTail, profile.Stage, term, publicNames)})
+		}
 	}
 
 	for _, key := range publicKeys {
-		err := r.DB.RecordObservation(ctx, localdb.ObsKey{
-			Epoch:           epoch,
-			PURL:            key,
-			EnvHash:         envHash,
-			Stage:           profile.Stage,
-			Result:          result,
-			ErrorFP:         failure.Fingerprint,
-			ErrorCode:       failure.ErrorCode,
-			TerminationKind: failure.TerminationKind,
-			ExitCode:        failure.ExitCode,
-			Signal:          failure.Signal,
-			TimeoutMillis:   failure.TimeoutMillis,
-			ErrorSummary:    failure.ErrorSummary,
-			EvidenceQuality: failure.EvidenceQuality,
-			Direct:          direct[key],
-			Coresident:      coresident[key],
-			DependsOn:       edges[key],
-		}, 1)
-		if err != nil {
-			return err
+		for _, observed := range outcomes {
+			err := r.DB.RecordObservation(ctx, localdb.ObsKey{
+				Epoch:              epoch,
+				PURL:               key,
+				EnvHash:            envHash,
+				Stage:              observed.stage,
+				Result:             observed.result,
+				ErrorFP:            observed.failure.Fingerprint,
+				ErrorCode:          observed.failure.ErrorCode,
+				TerminationKind:    observed.failure.TerminationKind,
+				ExitCode:           observed.failure.ExitCode,
+				Signal:             observed.failure.Signal,
+				TimeoutMillis:      observed.failure.TimeoutMillis,
+				ErrorSummary:       observed.failure.ErrorSummary,
+				EvidenceQuality:    observed.failure.EvidenceQuality,
+				OuterCommand:       observed.failure.OuterCommand,
+				OuterStage:         observed.failure.OuterStage,
+				ActualToolchain:    observed.failure.ActualToolchain,
+				StageEvidence:      observed.failure.StageEvidence,
+				FailureEvidenceGap: observed.failure.EvidenceGap,
+				Direct:             direct[key],
+				Coresident:         coresident[key],
+				DependsOn:          edges[key],
+			}, 1)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -222,26 +262,33 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 		if err := r.DB.RecordSymbolUsage(ctx, u.Package, u.Family, u.Confidence, bucket); err != nil {
 			return err
 		}
-		err := r.DB.RecordObservation(ctx, localdb.ObsKey{
-			Epoch:            epoch,
-			PURL:             key,
-			Symbol:           u.Family,
-			SymbolConfidence: u.Confidence,
-			EnvHash:          envHash,
-			Stage:            profile.Stage,
-			Result:           result,
-			ErrorFP:          failure.Fingerprint,
-			ErrorCode:        failure.ErrorCode,
-			TerminationKind:  failure.TerminationKind,
-			ExitCode:         failure.ExitCode,
-			Signal:           failure.Signal,
-			TimeoutMillis:    failure.TimeoutMillis,
-			ErrorSummary:     failure.ErrorSummary,
-			EvidenceQuality:  failure.EvidenceQuality,
-			Direct:           direct[key],
-		}, 1)
-		if err != nil {
-			return err
+		for _, observed := range outcomes {
+			err := r.DB.RecordObservation(ctx, localdb.ObsKey{
+				Epoch:              epoch,
+				PURL:               key,
+				Symbol:             u.Family,
+				SymbolConfidence:   u.Confidence,
+				EnvHash:            envHash,
+				Stage:              observed.stage,
+				Result:             observed.result,
+				ErrorFP:            observed.failure.Fingerprint,
+				ErrorCode:          observed.failure.ErrorCode,
+				TerminationKind:    observed.failure.TerminationKind,
+				ExitCode:           observed.failure.ExitCode,
+				Signal:             observed.failure.Signal,
+				TimeoutMillis:      observed.failure.TimeoutMillis,
+				ErrorSummary:       observed.failure.ErrorSummary,
+				EvidenceQuality:    observed.failure.EvidenceQuality,
+				OuterCommand:       observed.failure.OuterCommand,
+				OuterStage:         observed.failure.OuterStage,
+				ActualToolchain:    observed.failure.ActualToolchain,
+				StageEvidence:      observed.failure.StageEvidence,
+				FailureEvidenceGap: observed.failure.EvidenceGap,
+				Direct:             direct[key],
+			}, 1)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
