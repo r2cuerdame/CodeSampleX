@@ -407,6 +407,8 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 func TestAutomaticDeployNeverPerformsTheIrreversibleLegacyLogPurge(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
 	wrapper := readDeployFixture(t, "deploy-production.ps1")
+	preflight := legacyLogPreflight(t, deploy)
+
 	for _, required := range []string{
 		`[switch]$RequireNoLegacyAccessLogs`,
 		`legacy query-bearing access log requires a manual privacy cleanup`,
@@ -419,6 +421,79 @@ func TestAutomaticDeployNeverPerformsTheIrreversibleLegacyLogPurge(t *testing.T)
 	if !strings.Contains(wrapper, `-RequireNoLegacyAccessLogs`) {
 		t.Fatal("the production Actions wrapper can still execute the irreversible legacy-log purge")
 	}
+	for _, required := range []string{
+		`cd /opt/codesamplex/deploy`,
+		`docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'`,
+		`old_dir=/var/log/caddy`,
+		`test "$(readlink -f "$old_dir")" = /var/log/caddy`,
+		`"$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz`,
+	} {
+		if !strings.Contains(preflight, required) {
+			t.Errorf("automatic privacy preflight does not inspect the mounted Caddy log volume: missing %q", required)
+		}
+	}
+	if strings.Contains(preflight, `/opt/codesamplex/caddy-logs.pre-safe`) {
+		t.Fatal("automatic privacy preflight still checks an unrelated host directory instead of the named Caddy volume")
+	}
+}
+
+func TestAutomaticLegacyLogPreflightFailsClosedOnMountedVolumeContents(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
+	}
+	program := legacyLogPreflight(t, readDeployFixture(t, "deploy.ps1"))
+	program = strings.Replace(program, "cd /opt/codesamplex/deploy", `cd "$CSX_TEST_DEPLOY_DIR"`, 1)
+	program = strings.Replace(program,
+		"docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'",
+		"sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'", 1)
+	program = strings.Replace(program, "old_dir=/var/log/caddy", `old_dir="$CSX_TEST_CADDY_LOG_DIR"`, 1)
+	program = strings.Replace(program,
+		`test "$(readlink -f "$old_dir")" = /var/log/caddy`,
+		`test "$(readlink -f "$old_dir")" = "$(readlink -f "$CSX_TEST_CADDY_LOG_DIR")"`, 1)
+
+	deployDir := t.TempDir()
+	logDir := t.TempDir()
+	run := func() ([]byte, error) {
+		cmd := exec.Command(sh, "-c", program)
+		cmd.Env = append(os.Environ(),
+			"CSX_TEST_DEPLOY_DIR="+filepath.ToSlash(deployDir),
+			"CSX_TEST_CADDY_LOG_DIR="+filepath.ToSlash(logDir))
+		return cmd.CombinedOutput()
+	}
+	if out, err := run(); err != nil {
+		t.Fatalf("empty mounted log volume failed preflight: %v: %s", err, out)
+	}
+	legacy := filepath.Join(logDir, "access-2026-08-25.log.gz")
+	if err := os.WriteFile(legacy, []byte("legacy query data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run()
+	if err == nil {
+		t.Fatal("mounted legacy access log passed the automatic privacy preflight")
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 69 {
+		t.Fatalf("mounted legacy access log exit = %v, want 69; output=%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("legacy query-bearing access log requires a manual privacy cleanup")) {
+		t.Fatalf("mounted legacy access log failure omitted the manual-cleanup instruction: %s", out)
+	}
+}
+
+func legacyLogPreflight(t *testing.T, deploy string) string {
+	t.Helper()
+	const marker = `$assertNoLegacyAccessLogs = @'`
+	start := strings.Index(deploy, marker)
+	if start < 0 {
+		t.Fatal("automatic deployment privacy preflight is missing")
+	}
+	tail := deploy[start+len(marker):]
+	end := strings.Index(tail, "\n'@")
+	if end < 0 {
+		t.Fatal("automatic deployment privacy preflight here-string is unterminated")
+	}
+	return tail[:end]
 }
 
 func TestAdminCredentialCommitFollowsEverySmokeAndRemoteCommit(t *testing.T) {

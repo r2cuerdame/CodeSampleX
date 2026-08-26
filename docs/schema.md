@@ -90,6 +90,26 @@ released, `evidence_quality` on every FAIL row stays
 `legacy-evidence-incomplete` and the modern cluster count is legitimately
 zero — that is the contract reporting the truth, not a defect.
 
+### One symbol, two spellings, one count
+
+The same symbol reaches the server twice over: anonymous evidence carries the
+scanner's qualified name (`github.com/google/uuid.Parse`), a signed receipt
+carries the author's bare one (`Parse`). Both become live snapshot targets,
+and `symbolSpellings` makes `EvidenceForTarget` answer either target with the
+same rows on purpose, so a page asking about one spelling sees the evidence
+filed under the other.
+
+A snapshot is built per target, and reading a row twice under two targets
+costs nothing there. A failure cluster is built per **package**, from every
+target's rows summed into one bucket — and there the shared rows arrive once
+per spelling. `Builder.evidenceForPackages` therefore admits a row by its
+`evidence_agg` identity (`purl, symbol, env_hash, stage, result, error_fp`)
+and ignores the second arrival. Without that, production carried a cluster of
+520 observations for 260 observed failures, and because an incremental pass
+only reads the targets it is rebuilding, the doubling appeared and vanished
+with the pass shape — which is how a full rebuild after a deploy's restart
+moved the cluster ledger while no evidence had been gained or lost.
+
 ### Two reads, two questions
 
 `IsCurrentFailureCluster` and `CurrentFailureClusterPredicateSQL` in

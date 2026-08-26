@@ -1184,6 +1184,17 @@ func regressionsForPackage(k pkgKey, byVersion map[string][]serverstore.Evidence
 	return out
 }
 
+// evidenceKey identifies one evidence_agg row. It is that table's unique key,
+// which is what makes it safe to use as an identity: two reads returning the
+// same key returned the same row, not two rows that happen to look alike.
+type evidenceKey struct {
+	purl, symbol, envHash, stage, result, errorFP string
+}
+
+func keyOf(row serverstore.EvidenceRow) evidenceKey {
+	return evidenceKey{row.PURL, row.Symbol, row.EnvHash, row.Stage, row.Result, row.ErrorFingerprint}
+}
+
 func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 	allTargets []serverstore.SnapshotTarget, byPkg map[pkgKey]symVer,
 ) (map[pkgKey]map[string][]serverstore.EvidenceRow, error) {
@@ -1192,11 +1203,33 @@ func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 		want[k] = true
 	}
 	out := make(map[pkgKey]map[string][]serverstore.EvidenceRow, len(keys))
+	// One symbol reaches the server under two spellings — the scanner's
+	// qualified name on anonymous evidence, the author's bare one on a signed
+	// receipt — and both become live snapshot targets. EvidenceForTarget
+	// answers either with the same rows on purpose (symbolSpellings), which is
+	// right per target and wrong here, where every target's rows are summed
+	// into one per-package bucket: the shared rows would be counted once per
+	// spelling. Production carried a failure cluster of 520 for 260 observed
+	// failures because of it, and because a pass only reads the targets it is
+	// rebuilding, the doubling came and went with the pass shape — so the
+	// ledger the deploy transaction compares before and after moved with no
+	// evidence gained or lost. Identity, not arrival, decides what is counted.
+	seen := make(map[pkgKey]map[evidenceKey]bool, len(keys))
+	add := func(k pkgKey, version string, rows []serverstore.EvidenceRow) {
+		for _, row := range rows {
+			if seen[k][keyOf(row)] {
+				continue
+			}
+			seen[k][keyOf(row)] = true
+			out[k][version] = append(out[k][version], row)
+		}
+	}
 	for _, k := range keys {
 		out[k] = map[string][]serverstore.EvidenceRow{}
+		seen[k] = map[evidenceKey]bool{}
 		for _, versions := range byPkg[k] {
 			for version, rows := range versions {
-				out[k][version] = append(out[k][version], rows...)
+				add(k, version, rows)
 			}
 		}
 	}
@@ -1216,7 +1249,7 @@ func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", t.PURL, t.Symbol, err)
 		}
-		out[k][p.Version] = append(out[k][p.Version], rows...)
+		add(k, p.Version, rows)
 	}
 	return out, nil
 }

@@ -83,8 +83,9 @@ UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
 label and the revision the server reports at `GET /version` against the
 dispatched SHA, the latest `schema_migrations` row against the checked-out
-migration set, `/healthz`, the public page/API/install smokes, and monotonic
-PASS/FAIL/published-sample/failure-cluster totals. The first two say what was
+migration set, `/healthz`, the public page/API/install smokes, monotonic
+PASS/FAIL/published-sample source ledgers, and a fresh, internally consistent
+failure-cluster materialization. The first two say what was
 configured and what was built; only `/version` says what the process now
 answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
@@ -106,6 +107,16 @@ total stayed at 16,755. Both `deploy.ps1` and
 `deploy/lightsail/failure_cluster_ledger_test.go` fails the build if either
 script drifts from the predicate the server itself reads with. See
 [schema.md](schema.md) for why the preserved rows stay.
+
+**That total is derived, not monotonic.** `RunLoop` makes the builder's first
+pass after any restart a full one, so a deploy may legitimately repair a stale
+materialized count while no source evidence moved. The transaction waits for
+the new server's full-pass completion marker before it samples the table, then
+requires every current cluster to have a positive observation count and a
+non-negative, known-quality breakdown whose values sum to that count. A
+missing materialization while FAIL evidence remains still enters rollback.
+`deploy/lightsail/failure_cluster_ledger_test.go` pins the source/derived split
+and the completion-marker ordering.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client
