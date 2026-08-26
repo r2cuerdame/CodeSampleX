@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -335,15 +336,17 @@ func toolDefs() []toolDef {
 		{
 			Name:  "propose_public_sample",
 			Title: "Start a clean-room sample proposal",
-			// Creates a new empty workspace directory under CSX_HOME and
-			// saves a proposal row, so each call leaves one more directory
-			// behind — additive, never idempotent. It sends nothing: the
-			// spec is built locally and publishing is a CLI-only step the
-			// user has to approve, so openWorldHint is false.
-			Annotations: writes("Start a clean-room sample proposal", false, false, false),
-			Summary: "Build a sanitized clean-room sample spec and create an empty local workspace for it. " +
+			// Creates a scaffolded workspace directory under CSX_HOME and
+			// saves a proposal row. Repeating the identical proposal reuses
+			// the workspace while it is still untouched, so a retry does not
+			// leave another directory behind; a proposal that differs makes
+			// a new one. It sends nothing: the spec is built locally and
+			// publishing is a CLI-only step the user has to approve, so
+			// openWorldHint is false.
+			Annotations: writes("Start a clean-room sample proposal", false, true, false),
+			Summary: "Build a sanitized clean-room sample spec and create a local workspace scaffolded with spec.json, PROMPT.md and a csx.json manifest. " +
 				"Sends nothing; publishing always requires explicit CLI approval by the user.",
-			Description: "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), returns generation instructions and an empty workspace directory. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
+			Description: "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), and returns generation instructions plus a workspace directory already containing spec.json, PROMPT.md and a csx.json manifest scaffold whose contract you fill in. If the workspace cannot be created the call fails with isError and structuredContent.error — never write sample files or invent a csx.json in that case. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
 			InputSchema: obj(map[string]any{
 				"goal":     str("what the sample should prove, e.g. \"axios file upload with progress\""),
 				"packages": strArr("public package purls the sample must use"),
@@ -1543,6 +1546,40 @@ type proposeArgs struct {
 	Symbols  []string `json:"symbols"`
 }
 
+// proposeErrorCode names which of the two failures happened. They read alike
+// as prose and are opposite in what to do next: bad purls are the caller's to
+// fix and worth retrying with better arguments, a scaffold that would not
+// build is not fixable by calling again and the agent should say so instead
+// of writing a sample nothing can ingest.
+func proposeErrorCode(err error) string {
+	switch {
+	case errors.Is(err, errProposePackages):
+		return "invalid_packages"
+	case errors.Is(err, samples.ErrScaffold):
+		return "scaffold_failed"
+	default:
+		return "propose_failed"
+	}
+}
+
+// proposeErr fails closed. The message never suggests a workspace, a path or
+// a manifest, because an agent handed half a success writes the sample
+// somewhere nothing will look for it — and the structured payload carries
+// the code, since that is the channel the client actually renders.
+func proposeErr(code, msg string) *toolResult {
+	return &toolResult{
+		Content: []contentItem{{Type: "text", Text: "propose_public_sample: " + code + ": " + msg +
+			"\n\nNo clean-room workspace was created. Do not write sample files anywhere, " +
+			"and do not create a csx.json from memory — report this to the user instead."}},
+		StructuredContent: map[string]any{
+			"error":            code,
+			"message":          msg,
+			"workspaceCreated": false,
+		},
+		IsError: true,
+	}
+}
+
 func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResult {
 	var a proposeArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -1552,16 +1589,27 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 		return errResult("propose_public_sample: goal is required")
 	}
 	if len(a.Packages) == 0 {
-		return errResult("propose_public_sample: packages is required")
+		return proposeErr("invalid_packages", "packages is required")
 	}
 	spec, prompt, workdir, err := s.Deps.Propose(ctx, a.Goal, a.Packages, a.Symbols)
 	if err != nil {
-		return errResult("propose_public_sample: " + err.Error())
+		return proposeErr(proposeErrorCode(err), err.Error())
+	}
+	// The reply below tells the agent a csx.json scaffold is already in that
+	// directory and must not be recreated from memory. That sentence is only
+	// true if the file is there, and for a long time it was not: the tool
+	// reported success over an empty directory and every agent that obeyed
+	// the instruction correctly refused to invent a manifest and stopped
+	// (R2C-180). The claim is checked here, at the surface that makes it.
+	if err := samples.VerifyProposalWorkspace(workdir); err != nil {
+		return proposeErr("scaffold_failed", err.Error())
 	}
 
 	var b strings.Builder
-	b.WriteString("Clean-room workspace created: " + workdir + "\n\n")
-	b.WriteString("Generate the sample in that EMPTY directory following these instructions:\n\n")
+	b.WriteString("Clean-room workspace ready: " + workdir + "\n\n")
+	b.WriteString("It already contains spec.json, PROMPT.md and a csx.json manifest scaffold — " +
+		"all three verified on disk before this reply. Generate the sample beside them, " +
+		"following these instructions:\n\n")
 	b.WriteString(prompt)
 	// The workspace is on the machine running the DAEMON. An agent reaching
 	// this server over MCP from a container, a remote host or another OS

@@ -40,7 +40,10 @@ body {
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.55;
-  min-width: 20rem;
+  /* A floor of 20rem, but never wider than the viewport actually offers.
+     A 320px window with a classic scrollbar leaves 305px of it, and a flat
+     20rem floor spends the missing 15px on horizontal overflow. */
+  min-width: min(20rem, 100%);
   overflow-x: hidden;
 }
 .mono { font-family: var(--mono); }
@@ -582,20 +585,31 @@ td.env { min-width: 16rem; }
   color: currentColor; border: 1px solid currentColor;
   font: 700 0.62rem/1 var(--sans);
 }
+/* The tip is hidden with visibility, which keeps its box in the layout, and
+   an absolutely positioned box still counts toward the document's scrollable
+   width. So its geometry has to be right even when nobody can see it.
+   Two rules make it so, and both matter:
+   - it hangs off the row (.badges / .samples li), not off the inline badge,
+     so its left edge is the row's left edge instead of wherever that badge
+     happened to land mid-line;
+   - it is sized against that row, not against 100vw. 100vw counts the
+     scrollbar, which is width the content does not get to use.
+   Together they keep the tip inside .wrap's content box at every width. */
 .badge-tip {
   position: absolute; z-index: 40; inset-block-start: calc(100% + 0.5rem); inset-inline-start: 0;
-  width: min(22rem, calc(100vw - 3rem)); padding: 0.68rem 0.78rem;
+  width: min(22rem, 100%); padding: 0.68rem 0.78rem;
   color: #f4f8ff; background: var(--accent-2); border: 1px solid #31528a;
   border-radius: 0.7rem; box-shadow: 0 12px 28px rgba(7,26,68,0.25);
   font: 0.78rem/1.45 var(--sans); text-align: start; white-space: normal;
+  overflow-wrap: anywhere;
   opacity: 0; visibility: hidden; pointer-events: none;
   transform: translateY(-0.2rem); transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
 }
 .badge-help.open .badge-tip {
   opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0);
 }
-.samples li { position: relative; }
-.samples .badge-help { position: static; }
+.badges, .samples li { position: relative; }
+.badges .badge-help, .samples .badge-help { position: static; }
 @media (hover: none), (pointer: coarse) {
   .badge-tip {
     position: fixed; inset: auto 1rem 1rem; width: auto;
@@ -719,6 +733,13 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   background: rgba(237,243,255,0.7);
 }
 .foot .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+/* The running build identity. It is for whoever is asking what is
+   deployed, so it sits below the rest of the footer rather than beside
+   it: monospace makes a commit readable, and this keeps monospace from
+   also making it loud. */
+.foot .build { font-size: 0.76rem; opacity: 0.7; }
+/* The release commit is 40 unbroken hex characters — wider than a phone. */
+.foot .mono { overflow-wrap: anywhere; }
 .langs { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.82rem; }
 .langs a { color: var(--dim); }
 .langs a.on { color: var(--accent); font-weight: 750; }

@@ -32,7 +32,7 @@
 {{/* The server HTML and static assets ship in the same image. Keep the
      stylesheet URL tied to that image version so a browser cannot combine
      new markup with a cached pre-feature stylesheet. */}}
-<link rel="stylesheet" href="/static/site.css{{if .Version}}?v={{.Version}}{{end}}">
+<link rel="stylesheet" href="/static/site.css{{if .AssetVersion}}?v={{.AssetVersion}}{{end}}">
 {{- range .JSONLD}}
 <script type="application/ld+json">{{.}}</script>
 {{- end}}
@@ -61,7 +61,7 @@
 </main>
 <footer class="foot">
   <div class="wrap">
-    <p class="dim small">{{.T "footer.note"}}{{if .Version}} <span class="mono">· csx {{.Version}}</span>{{end}}
+    <p class="dim small">{{.T "footer.note"}}{{with .Build}} <span class="mono build" title="{{.Detail}}">· server {{.Version}}{{if .ShortRevision}} · {{.ShortRevision}}{{end}} · {{.Environment}}</span>{{end}}
      
       · <a href="{{.RepoURL}}" rel="noopener">{{.T "footer.github"}}</a>
       · <a href="{{.SponsorURL}}" rel="noopener">{{.T "footer.sponsor"}}</a></p>

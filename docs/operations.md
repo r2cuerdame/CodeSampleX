@@ -43,11 +43,17 @@ of trust.
 
 `.github/workflows/production-deploy.yml` is separate from `release.yml`.
 ProjectOps dispatches it only after the immutable target SHA is in canonical
-`main`, the required `Test` check succeeded, Auditor `MergeVerdict=pass`,
-`requires_human_decision=no`, and the side effect class is `safe` or
-`additive-migration`. The dispatch also names the currently served known-good
-SHA. The workflow rejects drift between that SHA and the host before changing
-anything, and `codesamplex-production` concurrency serializes all rollouts.
+`main`, the required `Test` check succeeded, and there is a successful
+`Release` run for that exact target SHA. A green `Release` run includes the
+observed farm rollout; a missing farm dispatch token, a rollout that never
+starts, or a target that does not return healthy makes the release red. The
+production eligibility job reads that same-target evidence before it can reach
+the production Environment. Auditor `MergeVerdict=pass`,
+`requires_human_decision=no`, and a `safe` or `additive-migration` side effect
+class are still required. The dispatch also names the currently served
+known-good SHA. The workflow rejects drift between that SHA and the host before
+changing anything, and `codesamplex-production` concurrency serializes all
+rollouts.
 
 The `codesamplex-production` GitHub Environment owns only:
 
@@ -74,10 +80,13 @@ automatic path uses an allowlist, so
 every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
 UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 
-The deploy transaction verifies the running `CSX_VERSION` and OCI revision
-label against the dispatched SHA, the latest `schema_migrations` row against
-the checked-out migration set, `/healthz`, the public page/API/install smokes,
-and monotonic PASS/FAIL/published-sample/failure-cluster totals. The pgx
+The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
+label and the revision the server reports at `GET /version` against the
+dispatched SHA, the latest `schema_migrations` row against the checked-out
+migration set, `/healthz`, the public page/API/install smokes, and monotonic
+PASS/FAIL/published-sample/failure-cluster totals. The first two say what was
+configured and what was built; only `/version` says what the process now
+answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
 before commit enters the existing exact image/config/environment rollback.
 The automatic wrapper also refuses to start if the retired query-bearing
@@ -107,7 +116,10 @@ failed yet", and raise it by shipping a producer, not by rebuilding.
 
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
 target and previous SHA, image digest, migration version, health/smoke result,
-before/after invariants, and rollback outcome. ProjectOps and the independent
+the served `/version` revision, before/after invariants, and rollback outcome.
+`servedRevision` reads `unavailable` for a build older than `/version`, which
+is what the pre-deploy read of the outgoing server reports; the post-deploy
+read must name the dispatched commit or the run fails into rollback. ProjectOps and the independent
 Auditor must read that artifact and the GitHub run conclusion; an Agent comment
 alone is not production evidence. A failed SHA is not redispatched in a loop:
 ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
@@ -378,6 +390,57 @@ the table, both ways: it repairs a job asking for a lane nobody has, and it
 reopens an unsupported job the moment a lane serves it. `unsupported` is a
 statement about the images this build pins, never a verdict on the sample.
 
+#### This rule has a server half and a client half — ship both
+
+The paragraph above is two guarantees, and they live in different binaries.
+The queue only asking for what the fleet can serve is the **server**. The run
+executing against the job's requirements rather than the author's manifest is
+`crossExecutionManifest` in the **client** (`csx worker`), and so is the
+`no runnable work: …` sentence. Deploying the server alone is not half the fix
+— it is a different, worse failure:
+
+* Before, an unrunnable job sat `open` and no worker would claim it. Visible,
+  reversible, and it cost the sample nothing.
+* With only the server upgraded, the relaxed job becomes claimable, an older
+  client claims it and still selects its image from the manifest, so it dies
+  at `resolve` with `sandbox: verifier runtime version "1.26" cannot satisfy
+  "1.27.0"` before entering the container. The receipt is `contract SKIPPED`
+  with no `env` and no `verifierImage` — nothing was measured — and it spends
+  one of the sample's four `maxCrossAttempts`.
+
+Four such receipts and the sample is stranded for good: `requeueCrossVerification`
+and `StrandedDrafts` both stop at `maxCrossAttempts`, so no fifth job is ever
+queued and the draft waits on nothing. That is how deploying commit
+`000a5aa` to the server while the fleet still ran `v0.1.44` consumed the last
+two attempts of the x/sys and go-isatty drafts on 2026-08-23 without measuring
+either one.
+
+So the ordering matters: **complete the client rollout to every verifier and
+verify the exact client version and capability marker there before restarting
+or deploying the server that relaxes jobs.** Publishing the client and starting
+the server rollout concurrently does not establish that order and is forbidden.
+A receipt whose `stages` are `resolve=FAIL` with an empty `env` is the signature
+of this mismatch — it says the verifier never started, not that the sample
+failed. `health.unsupportedJobs` will not show it, because from the server's
+point of view the job was runnable.
+
+Read what the fleet is actually running before trusting the relaxation:
+
+```
+ssh -i ~/.ssh/csx-farm.pem ubuntu@43.200.78.1 \
+  'sudo -u csxver /home/csxver/.local/bin/csx version'
+# and confirm the client half is present in that binary:
+ssh -i ~/.ssh/csx-farm.pem ubuntu@43.200.78.1 \
+  'sudo grep -ac "no runnable work: the queue offered" /home/csxver/.local/bin/csx'
+# 0 means the client half is missing however new the tag looks
+```
+
+Run both checks on every verifier host. Only after both checks pass on every
+verifier host may the production server restart. The workflow form of the same
+rule is fail-closed: `release.yml` cannot finish green without the farm rollout,
+and `production-deploy.yml` accepts only a successful `Release` run whose head
+SHA is the exact production target.
+
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
 `(ecosystem,name,version,symbol)`. Roll forward to a fixed server if the new
@@ -435,6 +498,61 @@ with `Test` green on the same branch the same pull request reported `CLEAN`.
 That is the reading to trust, and calling the merge API is not a substitute for
 it: an admin holds `bypass_mode: always`, so the API would have merged the red
 commit and proved the bypass rather than the gate.
+
+## Build identity
+
+The site footer ends with the identity of the process that rendered the page:
+
+```text
+· server v0.1.44-66 · 2a6af6a · production
+```
+
+The version is `git describe --tags --always` with the redundant `-g<abbrev>`
+tail removed, the middle field is the short commit, and the last is the
+deployment. Hovering shows the full 40-character revision and the build time.
+`GET /version` serves the same values as JSON, plus the full revision:
+
+```json
+{"service":"csx-server","version":"v0.1.44-66",
+ "revision":"2a6af6a…","shortRevision":"2a6af6a",
+ "environment":"production","builtAt":"2026-08-26T00:11:02Z"}
+```
+
+Nothing here is written by hand. `deploy.ps1` derives the values at build time
+and passes them as image build arguments, so a redeploy moves them, a rollback
+moves them back to the previous image's values, and no page or template has a
+version string in it:
+
+```text
+CSX_VERSION        the immutable 40-character deploy revision. Its meaning is
+                   fixed: the deploy transaction, the OCI
+                   org.opencontainers.image.revision label and the evidence
+                   collector all compare against it.
+CSX_BUILD_VERSION  git describe --tags --always at build time
+CSX_BUILT_AT       RFC3339 UTC build time
+CSX_ENV            the deployment name; production is passed only by
+                   deploy.ps1
+```
+
+They are baked into the image, not set in the compose `.env`, so the artifact
+carries its own identity. `CSX_ENV` defaults to `development` in
+`Dockerfile.server`: an image built by a laptop or by CI cannot render a
+production footer, and `development` on the live site means a real problem
+rather than a missing default. An unstamped build renders no identity line at
+all rather than inventing one.
+
+`/version` reads only these stamps — no database, no blob store. That is why a
+deploy can use it to decide whether the right commit is serving: an answer
+that could fail for an unrelated reason could not decide that. `/healthz` is
+still the endpoint that proves the database is reachable.
+
+The stylesheet cache-busting token is the short revision, so a rollout also
+invalidates `site.css` for every visitor.
+
+The csx client a visitor downloads has its own release version on its own
+cadence. It is never this value, and the landing page's `SoftwareApplication`
+structured data deliberately publishes no `softwareVersion` rather than
+advertising a server commit as the CLI's release.
 
 ## DNS — codesamplex.dev (Gabia)
 
@@ -622,6 +740,10 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    for the one-variable rollback.
 ```
 
+The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
+`CSX_BUILT_AT`, `CSX_ENV`) are not here: they are baked into the image at
+build time so the artifact carries its own identity. See "Build identity".
+
 ## Structured failure evidence rollout
 
 Migration `0024_failure_evidence.sql` is additive. It adds termination,
@@ -663,3 +785,57 @@ the length of the session.
 Naming a host is still honoured verbatim, `0.0.0.0` included — write
 `CSX_LISTEN=0.0.0.0:8080` to serve the local network deliberately. Linux and
 macOS are untouched, so the container contract above is unchanged.
+
+### When the Windows launcher loses its current payload
+
+`%LOCALAPPDATA%\csx\active.json` names the payload the stable `csx.exe`
+executes, and every descriptor in it carries the SHA-256 the launcher verifies
+before running anything. A verified payload does not stay verified: on this
+project's own Windows workstation, Microsoft Defender classified
+`csx-payload.exe` as `Trojan:Win32/Bearfoos.*!ml` and quarantined it minutes
+after a correctly staged, hashed and self-tested update had committed it
+(2026-08-24 for v0.1.44, 2026-08-25 for v0.1.43 and again for v0.1.41). The
+pointer was right; the file was simply gone, leaving `payloads/<current>/`
+present and empty.
+
+The launcher treats that as recoverable rather than fatal. When `current` fails
+verification — or becomes unstartable after verification but before the OS
+opens it — the launcher verifies the `previous` descriptor, retries it at most
+once, and repairs `active.json` so `csx update` and every ownership check in
+`internal/update` see a consistent install too. `rollbackHold` is rejection
+metadata for updater suppression and sequence floors, never an execution
+candidate. Payload directories left on disk by older releases are **not**
+candidates: this pointer never recorded a hash for them.
+
+What operators see:
+
+```
+csx launcher: recovered: payload-missing: current payload v0.1.43 is unusable; running last-known-good v0.1.41
+```
+
+That line always goes to stderr, never stdout — an MCP host reads stdout as
+JSON-RPC framing. The repaired pointer keeps the failed version as
+`rollbackHold`, which holds the automatic updater back from reinstalling the
+payload that just failed to run while still letting a genuinely newer release
+through, and preserves the sequence floor `mergeLauncherFloor` reads.
+
+With no verified fallback left, the launcher exits **126** with a stable reason
+code as the first field — `payload-missing`, `payload-corrupt`,
+`payload-not-regular`, `payload-unreadable`, `descriptor-invalid`,
+`pointer-unreadable`, `payload-start-failed` — and writes nothing to stdout. It
+never exits 0 without having executed a payload; a caller that cannot start csx
+must not be able to read that as the command having succeeded.
+
+An invalid current is recovered by the stable launcher before it starts any
+payload command. `csx update rollback` remains the explicit rollback command
+for a healthy pointer; it is not the entry point for an install whose current
+payload cannot start. Editing `active.json` directly is a last resort: write it
+as UTF-8 **without a BOM** (the launcher rejects one as
+`invalid character 'ï'`), and drop `previous` entirely rather than zeroing it,
+since a descriptor with `sequence: 0` or a non-hex digest fails validation and
+takes the whole file down with it.
+
+Defender's verdict is a false positive on an unsigned Go binary and is the
+trigger behind every occurrence so far; an install-root exclusion or Authenticode
+signing of the payload is the fix for the cause, and is tracked separately from
+the launcher's own resilience.

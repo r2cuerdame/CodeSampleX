@@ -116,7 +116,7 @@ csx sync                           # warm the shard cache — once, right after 
 A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<hex>` of its canonical artifact) with a **contract**: assertions that were executed offline in a pinned container and passed. Pinned by image digest, not by tag — the tag is an alias for readers, the digest is what runs — and the signed receipt names the exact image reference, so anyone can re-run the same bytes rather than take the word for it ([docs/adapters.md](docs/adapters.md#verifier-images)). The clean-room authoring loop is CLI-only:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
@@ -190,6 +190,7 @@ The same data the website renders, as JSON, without an account:
 | `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
 | `GET /v1/wanted` | the demand queue: what was asked for and not answered |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
+| `GET /version` | which build of the server answered, and in which environment |
 
 ## Agent adapter (MCP)
 

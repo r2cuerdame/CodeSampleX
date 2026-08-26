@@ -13,6 +13,15 @@ migration_count=$(docker compose exec -T db psql -U csx -d csx -Atqc \
   "SELECT count(*) FROM schema_migrations")
 health=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz)
 
+# What the process answering requests says it was built from. The container
+# environment above records what was configured; only this records what
+# started. Tolerant on purpose: this collector also runs against the server
+# that is about to be replaced, and a build older than /version must report
+# unavailable rather than fail the probe that is measuring it.
+served_revision=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version 2>/dev/null |
+  sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1 || true)
+if [ -z "$served_revision" ]; then served_revision=unavailable; fi
+
 # Migration 0024 preserves old derived rows instead of deleting them. The
 # current builder collapses missing/legacy fingerprints to error_fp='', so
 # only that row is live; non-empty legacy rows remain recoverable historical
@@ -67,6 +76,7 @@ printf 'image_revision=%s\n' "$image_revision"
 printf 'migration_version=%s\n' "$migration_version"
 printf 'migration_count=%s\n' "$migration_count"
 printf 'health=%s\n' "$health"
+printf 'served_revision=%s\n' "$served_revision"
 printf 'invariants=%s\n' "$invariants"
 printf 'modern_failure_clusters=%s\n' "$modern_failure_clusters"
 printf 'failure_evidence_quality=%s\n' "$failure_evidence_quality"

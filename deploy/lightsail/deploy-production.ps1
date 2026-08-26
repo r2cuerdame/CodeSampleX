@@ -61,7 +61,7 @@ function Read-ProductionState {
             if ($pair.Count -ne 2) { throw "malformed production evidence" }
             $state[$pair[0]] = $pair[1]
         }
-        foreach ($required in @('revision','image_digest','image_revision','migration_version','migration_count','health','invariants','modern_failure_clusters','failure_evidence_quality')) {
+        foreach ($required in @('revision','image_digest','image_revision','migration_version','migration_count','health','served_revision','invariants','modern_failure_clusters','failure_evidence_quality')) {
             if (-not $state.ContainsKey($required)) { throw "production evidence is missing $required" }
         }
         $state['invariants'] = $state['invariants'] | ConvertFrom-Json
@@ -97,6 +97,7 @@ $evidence = @{
     migrationVersion = ""
     migrationCount = 0
     health = "unknown"
+    servedRevision = "unavailable"
     smoke = "failed"
     rollback = "unknown"
     invariants = @{ before = $null; after = $null }
@@ -124,10 +125,16 @@ try {
     $evidence.migrationVersion = $after.migration_version
     $evidence.migrationCount = [int]$after.migration_count
     $evidence.health = $after.health
+    $evidence.servedRevision = $after.served_revision
     $evidence.invariants.after = $after.invariants
     $evidence.modernFailureClusters = [int]$after.modern_failure_clusters
     $evidence.failureEvidenceQuality = $after.failure_evidence_quality
-    if ($after.revision -ne $ExpectedRevision -or $after.image_revision -ne $ExpectedRevision) {
+    # The container environment and the image label say what was configured
+    # and what was built; /version says what the running process was built
+    # from. All three have to name the dispatched commit before this run is
+    # recorded as a success.
+    if ($after.revision -ne $ExpectedRevision -or $after.image_revision -ne $ExpectedRevision -or
+        $after.served_revision -ne $ExpectedRevision) {
         throw "served SHA does not match the requested immutable commit"
     }
     if ($after.health -ne "ok") { throw "post-deploy health is not ok" }
@@ -142,6 +149,7 @@ try {
         $evidence.imageDigest = $current.image_digest
         $evidence.migrationVersion = $current.migration_version
         $evidence.migrationCount = [int]$current.migration_count
+        $evidence.servedRevision = $current.served_revision
         $evidence.health = $current.health
         $evidence.invariants.after = $current.invariants
         $evidence.modernFailureClusters = [int]$current.modern_failure_clusters

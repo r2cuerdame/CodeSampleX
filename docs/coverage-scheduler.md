@@ -1,7 +1,7 @@
 # The coverage scheduler, and the dependency closure
 
-*R2C-89. Every number here is measured against production on 2026-08-23
-unless it says otherwise.*
+*R2C-89, R2C-90, R2C-126. Every number here is measured against production on
+2026-08-23 unless it says otherwise.*
 
 ## What the queue is made of
 
@@ -27,6 +27,106 @@ The ordering term that leads all of them is `version_depth`: how many jobs this
 exact release has already been offered. Every version earns its first job
 before any version earns its second, which is what stops one package with a
 long release history filling the window.
+
+## What has to be true before NO_WORK
+
+A coordinate is finished when it holds all three assets, not one:
+
+| | |
+| --- | --- |
+| **Sample** | a reusable, independently verified piece of running code |
+| **Evidence** | an observation or a receipt that somebody actually ran it |
+| **Dependency** | a resolved graph, or a measured absence of one |
+
+`GET /admin/api/farm` → `completeness` counts every PUBLIC release by which of
+the three it has. Measured against production:
+
+| cell | count | what it means |
+| --- | --- | --- |
+| `SED` | 166 | complete |
+| `SE-` | 881 | written and observed, dependencies unknown |
+| `-ED` | 47 | observed and resolved, nobody has written it |
+| `-E-` | 1,763 | observed only |
+| `S--` | 6 | a sample and nothing else |
+| `---` | 17 | nothing |
+| `S-D` `--D` | 0 | see below |
+
+`S-D` and `--D` are on the wire and empty for a structural reason rather than
+because the work is done: the only thing that records a resolved graph today is
+an observation batch, and a batch carries the package it is about, so a graph
+implies evidence. The cells stay so that the day a resolution arrives from a
+verification instead of a scan, the number moves rather than the shape.
+
+### `dependency unknown` is not `no dependencies`
+
+The panel splits the dependency axis three ways — `dependencyGraph`,
+`dependencyProvenNone`, `dependencyUnknown` — and the split is the point. "This
+release pulls nothing" is something a resolution measured. "Nobody has resolved
+this release" is silence. Folding them prints the second as the first, which is
+the network asserting something it never ran.
+
+**Nothing populates `dependencyProvenNone` yet.** It is reported at zero rather
+than omitted, because a field that appears only once it has a value is a field
+nobody notices arriving. Today the whole D axis comes from `dependency_edge`,
+which is written from client scans: 213 of 2,880 releases have a resolved graph
+and the other 2,667 are unknown. `VerificationReceipt.ResolvedPackages` looks
+like a second source and is not — it is filtered to the packages the sample
+*declares*, so a single-package sample resolving to exactly itself says nothing
+about that package's dependencies. Every consumer of this axis, R2C-108
+included, has to render unknown as unknown.
+
+## What keeps the window claimable
+
+The candidate query produces at most 200 rows and the queue is thousands long,
+so a row that can never be handed out still costs a slot. Two things make a row
+unclaimable, and only one of them is filtered here:
+
+* **Already answered.** `ClaimAuthoringWork` inserts `ON CONFLICT DO NOTHING`
+  against a key nothing deletes once a sample is attached. The `claimable` CTE
+  excludes those rows. They are not low-priority — they carry the observation
+  count that made them worth answering first, so they arrive at the *top*.
+* **Structurally unauthorable.** npm publishes a package per target for a
+  native addon and Gradle publishes a pom-only marker per plugin id;
+  `authoringCandidateEligible` drops both in Go, where the rule can be written
+  once. They still occupy window slots. 91 of 200 after the fix, which the
+  window absorbs — the rule is deliberately not duplicated into SQL, because
+  the two halves of this query drifting is how it broke twice before.
+
+What that cost, measured on 2026-08-23: of 200 rows, 141 were answered
+coordinates and 56 were platform builds. **Three were claimable.** Handouts ran
+45/h at 15:00 UTC, 3 at 16:00, and zero for the five hours after, with 1,810
+coverage holes on the board the whole time. With the answered rows excluded the
+same window holds 109 claimable rows.
+
+## What a coordinate is worth
+
+The package-level branch scores a coordinate from two signals:
+
+```
+score = Σ(observations × 1000 if the reporter CHOSE it, else 1)
+      + resolved project-days × 100
+```
+
+`authoringDirectWeight` (1000) is the distance between "somebody wanted this"
+and "somebody received this"; raw volume ranked the shadow of popular libraries
+and the queue wrote samples for the shadow.
+
+`authoringResolveWeight` (100) is R2C-90. A carried sighting weighs 1, so a
+coordinate nobody listed in their own manifest sat at the bottom however many
+machines installed it — 2,655 such purls in production, 1,810 of them the
+coverage holes the panel prints. A distinct project-day that resolved this
+exact release is a machine having installed it: stronger than a mention,
+weaker than a choice, and the ratio says how much weaker. Ten resolved
+project-days for one chosen sighting, deterministic in both directions — a
+carried-only coordinate needs ten real projects to overtake one person's
+choice, and can never overtake a coordinate more than a tenth as many people
+chose. The term is added rather than substituted, so nothing loses ground.
+
+Production's busiest carried-only coordinate was resolved by 22 project-days
+and the median by 2, so this lifts the top of that distribution into the window
+without moving the tail past anybody's real demand. After the change the window
+leads with `@babel/helper-module-imports@8.0.0` at 202 — two carried sightings
+and two resolved project-days — where before it led with answered findings.
 
 ## The dependency closure
 
@@ -110,10 +210,10 @@ dropped as UNKNOWN past a request's registry-lookup cap — and stays empty when
 nothing is missing.
 
 The 73 observed-but-unproven children are a different backlog. They are already
-reachable through the package-level branch; they rank near the bottom of it
-because a carried sighting is weighted 1 against a chosen one's 1000. Lifting
-them is a ranking change to *that* branch, not a coordinate this one should
-duplicate, and it is deliberately not done here.
+reachable through the package-level branch, and R2C-90 is what lifted them:
+their rank there is now the resolved demand described under *What a coordinate
+is worth*, not a carried sighting weighed against a chosen one. It stayed a
+ranking change to *that* branch rather than a coordinate this one duplicates.
 
 ## The panel
 
@@ -144,6 +244,12 @@ one rule, and the repo's history records what happens when halves of this query
 drift: a test proves an assignment the server would never make.
 `TestIntegrationDependencyClosureParity` replays scripted scenarios through both
 stores and compares the candidate order row for row.
+`TestIntegrationAnsweredFindingLeavesTheWindowInBothStores`,
+`TestIntegrationResolveDemandScoresMatchInBothStores` and
+`TestIntegrationFarmCompletenessMatchesPostgres` do the same for the three
+rules added since. Each was confirmed by mutating the PostgreSQL side on
+purpose: a parity test that passes on its first run usually never reached the
+new code.
 
 Two things that parity check cannot cover, and why:
 
