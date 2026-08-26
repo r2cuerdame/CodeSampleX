@@ -43,11 +43,17 @@ of trust.
 
 `.github/workflows/production-deploy.yml` is separate from `release.yml`.
 ProjectOps dispatches it only after the immutable target SHA is in canonical
-`main`, the required `Test` check succeeded, Auditor `MergeVerdict=pass`,
-`requires_human_decision=no`, and the side effect class is `safe` or
-`additive-migration`. The dispatch also names the currently served known-good
-SHA. The workflow rejects drift between that SHA and the host before changing
-anything, and `codesamplex-production` concurrency serializes all rollouts.
+`main`, the required `Test` check succeeded, and there is a successful
+`Release` run for that exact target SHA. A green `Release` run includes the
+observed farm rollout; a missing farm dispatch token, a rollout that never
+starts, or a target that does not return healthy makes the release red. The
+production eligibility job reads that same-target evidence before it can reach
+the production Environment. Auditor `MergeVerdict=pass`,
+`requires_human_decision=no`, and a `safe` or `additive-migration` side effect
+class are still required. The dispatch also names the currently served
+known-good SHA. The workflow rejects drift between that SHA and the host before
+changing anything, and `codesamplex-production` concurrency serializes all
+rollouts.
 
 The `codesamplex-production` GitHub Environment owns only:
 
@@ -383,6 +389,57 @@ runtime the container really had. What no relaxation can serve is created
 the table, both ways: it repairs a job asking for a lane nobody has, and it
 reopens an unsupported job the moment a lane serves it. `unsupported` is a
 statement about the images this build pins, never a verdict on the sample.
+
+#### This rule has a server half and a client half — ship both
+
+The paragraph above is two guarantees, and they live in different binaries.
+The queue only asking for what the fleet can serve is the **server**. The run
+executing against the job's requirements rather than the author's manifest is
+`crossExecutionManifest` in the **client** (`csx worker`), and so is the
+`no runnable work: …` sentence. Deploying the server alone is not half the fix
+— it is a different, worse failure:
+
+* Before, an unrunnable job sat `open` and no worker would claim it. Visible,
+  reversible, and it cost the sample nothing.
+* With only the server upgraded, the relaxed job becomes claimable, an older
+  client claims it and still selects its image from the manifest, so it dies
+  at `resolve` with `sandbox: verifier runtime version "1.26" cannot satisfy
+  "1.27.0"` before entering the container. The receipt is `contract SKIPPED`
+  with no `env` and no `verifierImage` — nothing was measured — and it spends
+  one of the sample's four `maxCrossAttempts`.
+
+Four such receipts and the sample is stranded for good: `requeueCrossVerification`
+and `StrandedDrafts` both stop at `maxCrossAttempts`, so no fifth job is ever
+queued and the draft waits on nothing. That is how deploying commit
+`000a5aa` to the server while the fleet still ran `v0.1.44` consumed the last
+two attempts of the x/sys and go-isatty drafts on 2026-08-23 without measuring
+either one.
+
+So the ordering matters: **complete the client rollout to every verifier and
+verify the exact client version and capability marker there before restarting
+or deploying the server that relaxes jobs.** Publishing the client and starting
+the server rollout concurrently does not establish that order and is forbidden.
+A receipt whose `stages` are `resolve=FAIL` with an empty `env` is the signature
+of this mismatch — it says the verifier never started, not that the sample
+failed. `health.unsupportedJobs` will not show it, because from the server's
+point of view the job was runnable.
+
+Read what the fleet is actually running before trusting the relaxation:
+
+```
+ssh -i ~/.ssh/csx-farm.pem ubuntu@43.200.78.1 \
+  'sudo -u csxver /home/csxver/.local/bin/csx version'
+# and confirm the client half is present in that binary:
+ssh -i ~/.ssh/csx-farm.pem ubuntu@43.200.78.1 \
+  'sudo grep -ac "no runnable work: the queue offered" /home/csxver/.local/bin/csx'
+# 0 means the client half is missing however new the tag looks
+```
+
+Run both checks on every verifier host. Only after both checks pass on every
+verifier host may the production server restart. The workflow form of the same
+rule is fail-closed: `release.yml` cannot finish green without the farm rollout,
+and `production-deploy.yml` accepts only a successful `Release` run whose head
+SHA is the exact production target.
 
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
