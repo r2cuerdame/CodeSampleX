@@ -10,8 +10,11 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 )
+
+type debugContextKey struct{}
 
 // Command is one csx subcommand.
 type Command struct {
@@ -54,6 +57,7 @@ func Commands() []Command {
 // Main dispatches argv to the matching command and returns the process
 // exit code. No arguments or an explicit help request prints usage.
 func Main(argv []string) int {
+	debug, argv := parseGlobalDebug(argv)
 	if len(argv) == 0 || argv[0] == "help" || argv[0] == "--help" || argv[0] == "-h" {
 		usage(os.Stdout)
 		return 0
@@ -66,7 +70,30 @@ func Main(argv []string) int {
 		usage(os.Stderr)
 		return 2
 	}
-	return cmd.Run(context.Background(), argv[1:])
+	ctx := context.Background()
+	if debug {
+		ctx = context.WithValue(ctx, debugContextKey{}, true)
+	}
+	return cmd.Run(ctx, argv[1:])
+}
+
+func parseGlobalDebug(argv []string) (bool, []string) {
+	if len(argv) > 0 && argv[0] == "--debug" {
+		return true, argv[1:]
+	}
+	return false, argv
+}
+
+func debugEnabled(ctx context.Context) bool {
+	if enabled, _ := ctx.Value(debugContextKey{}).(bool); enabled {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CSX_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func usage(w io.Writer) {
@@ -74,6 +101,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  csx <command> [arguments]")
+	fmt.Fprintln(w, "  csx --debug <command> [arguments]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	for _, c := range Commands() {

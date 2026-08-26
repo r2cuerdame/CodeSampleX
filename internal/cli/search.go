@@ -103,6 +103,7 @@ func searchMain(ctx context.Context, args []string) int {
 		SymbolProvenance:      domain.SearchProvenanceContext,
 		Environment:           env,
 		EnvironmentProvenance: domain.SearchProvenanceContext,
+		Debug:                 debugEnabled(ctx),
 	}
 
 	home, err := config.Home()
@@ -110,8 +111,16 @@ func searchMain(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "csx: %v\n", err)
 		return 1
 	}
-	resp, err := searchViaDaemon(ctx, home, req)
-	if err != nil {
+	var resp *daemon.LocalSearchResponse
+	// A debug trace describes the code that made the decision. An older
+	// already-running daemon cannot understand the new debug field and would
+	// silently return an undiagnosed answer, so debug searches deliberately
+	// use this binary's embedded local engine. Normal searches keep the daemon
+	// fast path and its backwards-compatible protocol.
+	if !req.Debug {
+		resp, err = searchViaDaemon(ctx, home, req)
+	}
+	if req.Debug || err != nil {
 		// Daemon down: query the local engine directly.
 		d, derr := daemon.New(home)
 		if derr != nil {
@@ -125,8 +134,19 @@ func searchMain(ctx context.Context, args []string) int {
 		r := d.SearchAndRecord(ctx, req)
 		resp = &r
 	}
+	// Re-apply the gate at the client boundary for a response from a legacy
+	// daemon. It is idempotent for current daemons and prevents a stale local
+	// process from rendering an unrelated candidate or exposing its offer ID.
+	beforeGate := len(resp.Results)
+	var suppressed []domain.SuppressedCandidate
+	resp.SearchResponse, suppressed = domain.GateNormalOutput(req, resp.SearchResponse, nil)
+	domain.RecordOutputGateDiagnostic(&resp.SearchResponse, req, beforeGate, suppressed)
+	if len(suppressed) > 0 {
+		resp.OfferID = ""
+	}
 
 	if jsonOut {
+		prepareCLIDiagnostic(resp)
 		out, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "csx: %v\n", err)
@@ -135,8 +155,22 @@ func searchMain(ctx context.Context, args []string) int {
 		fmt.Println(string(out))
 		return 0
 	}
+	prepareCLIDiagnostic(resp)
 	renderSearchText(os.Stdout, resp.SearchResponse)
 	return 0
+}
+
+func prepareCLIDiagnostic(resp *daemon.LocalSearchResponse) {
+	if resp == nil || resp.Diagnostic == nil {
+		return
+	}
+	resp.Diagnostic.Versions.Client = Version
+	if resp.Diagnostic.Versions.Server == "" {
+		resp.Diagnostic.Versions.Server = Version
+	}
+	if resp.Diagnostic.Versions.Protocol == "" {
+		resp.Diagnostic.Versions.Protocol = "local-search-v2"
+	}
 }
 
 // maxAutoPackages bounds how many project dependencies a search carries;
@@ -216,6 +250,7 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "No sample or evidence fits this environment safely.")
 		fmt.Fprintln(w, "A wrong HIT is worse than a MISS (goal §3.8).")
+		domain.RenderDiagnosticText(w, resp.Diagnostic)
 		return
 	}
 	for i, r := range resp.Results {
@@ -272,6 +307,7 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 			fmt.Fprintf(w, "- Known failure: %s (%d observations)\n", label, kf.Count)
 		}
 	}
+	domain.RenderDiagnosticText(w, resp.Diagnostic)
 }
 
 func printList(w io.Writer, title string, items []string) {
