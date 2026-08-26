@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -99,6 +100,85 @@ func (brokenBacklogStore) FarmBacklogNow(_ context.Context, _, _ time.Time) (ser
 }
 
 var errBacklogUnavailable = errors.New("backlog unavailable")
+
+// The panel carries the unbounded PUBLIC symbol x version corpus separately
+// from the release-grain backlog. It is the completeness denominator, not a
+// count of the package page's bounded browse window.
+func TestFarmPanelReportsUnboundedCorpusAtCellGrain(t *testing.T) {
+	store := serverstore.NewFake()
+	ctx := t.Context()
+
+	// One release measured at symbol grain and one measured only at package
+	// grain: the second creates inferred corpus coordinates with no record.
+	cells := []struct {
+		version, symbol string
+		observations    int
+		verifications   int
+	}{
+		{"7.7.1", "", 4, 1},
+		{"7.7.1", "semver.clean", 0, 1}, // linked dash: our sample, no usage
+		{"7.7.1", "semver.diff", 6, 1},  // observed
+		{"6.3.1", "", 122, 0},           // release with no symbol row: plain dashes
+	}
+	for _, cell := range cells {
+		purl := "pkg:npm/semver@" + cell.version
+		if err := store.UpsertPackage(ctx, serverstore.PackageRow{
+			PURL: purl, Ecosystem: "npm", Name: "semver",
+			Version: cell.version, Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		doc := `{"schemaVersion":1,"purl":"` + purl + `","symbol":"` + cell.symbol + `","rows":[{"observationClassCounts":{`
+		if cell.observations > 0 {
+			doc += `"USAGE_OBSERVATION":` + strconv.Itoa(cell.observations)
+		}
+		doc += `},"byStage":{`
+		if cell.verifications > 0 {
+			doc += `"CONTRACT":{"pass":` + strconv.Itoa(cell.verifications) + `,"fail":0}`
+		}
+		doc += `},"verificationCounts":{`
+		if cell.verifications > 0 {
+			doc += `"SAMPLE_VERIFICATION":` + strconv.Itoa(cell.verifications) + `,"distinctVerifyingPeers":1`
+		}
+		doc += `}}]}`
+		if err := store.PutSnapshot(ctx, purl, cell.symbol, doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mux, secret := farmMux(t, store, nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/farm", nil)
+	req.SetBasicAuth("recuerdame", secret)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Backlog struct {
+			MatrixCells struct {
+				Cells                     int `json:"cells"`
+				Observed                  int `json:"observed"`
+				VerifiedNoObservation     int `json:"verifiedNoObservation"`
+				Unmeasured                int `json:"unmeasured"`
+				PackagesShowingBothDashes int `json:"packagesShowingBothDashes"`
+			} `json:"matrixCells"`
+		} `json:"backlog"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.Backlog.MatrixCells
+	// Two releases × two symbols = four cells. One observed, one linked dash,
+	// two plain dashes in the 6.3.1 column.
+	if got.Cells != 4 || got.Observed != 1 || got.VerifiedNoObservation != 1 || got.Unmeasured != 2 {
+		t.Errorf("matrixCells = %+v, want 4 cells / 1 observed / 1 verified-only / 2 unmeasured", got)
+	}
+	// The full package corpus contains both evidence states.
+	if got.PackagesShowingBothDashes != 1 {
+		t.Errorf("packagesShowingBothDashes = %d, want 1", got.PackagesShowingBothDashes)
+	}
+}
 
 // R2C-126. "Unproven" was the only stock the panel carried, so a release with
 // a sample and no resolved dependency graph read as finished work -- and two
