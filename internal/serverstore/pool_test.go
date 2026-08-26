@@ -209,6 +209,56 @@ func TestQueryTimeoutIsToldApartFromACancelledClient(t *testing.T) {
 	}
 }
 
+func TestStatementTimeoutSetupNeverOutlivesItsCaller(t *testing.T) {
+	caller, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	setup, stop := statementTimeoutSetupContext(caller)
+	defer stop()
+
+	callerDeadline, callerHasDeadline := caller.Deadline()
+	setupDeadline, setupHasDeadline := setup.Deadline()
+	if !callerHasDeadline || !setupHasDeadline {
+		t.Fatal("caller and statement-timeout setup must both carry a deadline")
+	}
+	if setupDeadline.After(callerDeadline) {
+		t.Fatalf("setup deadline %v outlives caller deadline %v", setupDeadline, callerDeadline)
+	}
+	<-setup.Done()
+	if !errors.Is(setup.Err(), context.DeadlineExceeded) {
+		t.Fatalf("setup ended with %v, want caller deadline exceeded", setup.Err())
+	}
+}
+
+func TestStatementTimeoutSetupHasAFiveSecondUpperBoundWithoutACallerDeadline(t *testing.T) {
+	setup, stop := statementTimeoutSetupContext(context.Background())
+	defer stop()
+	deadline, ok := setup.Deadline()
+	if !ok {
+		t.Fatal("statement-timeout setup has no independent upper bound")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > 5*time.Second {
+		t.Fatalf("statement-timeout setup budget = %v, want (0, 5s]", remaining)
+	}
+}
+
+func TestPoolCountsOnlyStatementTimeoutsAsTimeoutPressure(t *testing.T) {
+	p := newConnPool(nil, DefaultPoolPolicy())
+	budget := NewQueryBudget(ClassInteractive)
+	ctx := WithQueryBudget(context.Background(), budget)
+	clientCancel := &pgconn.PgError{Code: "57014", Message: "canceling statement due to user request"}
+	statementTimeout := &pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}
+
+	p.observeQueryError(ctx, clientCancel)
+	if _, timeouts, _ := budget.Pressure(); timeouts != 0 {
+		t.Fatalf("client cancellation counted as %d query timeout(s)", timeouts)
+	}
+	p.observeQueryError(ctx, statementTimeout)
+	if _, timeouts, _ := budget.Pressure(); timeouts != 1 {
+		t.Fatalf("statement timeout count = %d, want 1", timeouts)
+	}
+}
+
 func TestPoolPolicyFromEnvChangesOnlyWhatIsNamed(t *testing.T) {
 	def := DefaultPoolPolicy().normalize()
 	if got := PoolPolicyFromEnv(func(string) string { return "" }); got != def {

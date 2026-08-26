@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -28,6 +29,126 @@ func saveTestSample(t *testing.T, store *serverstore.Fake, status string) string
 		t.Fatal(err)
 	}
 	return sampleID
+}
+
+type failingSearchCandidateReadStore struct {
+	serverstore.Store
+	fail                 string
+	genericSnapshotReads int
+}
+
+func (s *failingSearchCandidateReadStore) ReceiptsForSample(ctx context.Context, sampleID string) ([]serverstore.ReceiptRow, error) {
+	if s.fail == "receipts" {
+		return nil, serverstore.ErrPoolBusy
+	}
+	return s.Store.ReceiptsForSample(ctx, sampleID)
+}
+
+func (s *failingSearchCandidateReadStore) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {
+	if s.fail == "snapshot" {
+		return "", false, serverstore.ErrPoolBusy
+	}
+	if s.fail == "symbol-snapshot" {
+		if symbol != "" {
+			return "", false, serverstore.ErrPoolBusy
+		}
+		s.genericSnapshotReads++
+	}
+	return s.Store.GetSnapshot(ctx, purl, symbol)
+}
+
+func (s *failingSearchCandidateReadStore) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]serverstore.ClusterRow, error) {
+	if s.fail == "failure-clusters" {
+		return nil, serverstore.ErrPoolBusy
+	}
+	return s.Store.ListFailureClustersIncludingPreserved(ctx, packageName)
+}
+
+func (s *failingSearchCandidateReadStore) SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]serverstore.SampleRow, error) {
+	if s.fail == "project-widening" {
+		return nil, serverstore.ErrPoolBusy
+	}
+	return s.Store.SamplesForPackages(ctx, patterns, limit)
+}
+
+func TestSearchDoesNotHideASymbolSnapshotErrorWithAGenericFallback(t *testing.T) {
+	var failing *failingSearchCandidateReadStore
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		failing = &failingSearchCandidateReadStore{Store: d.Store, fail: "symbol-snapshot"}
+		d.Store = failing
+	})
+	saveTestSample(t, store, "PUBLISHED")
+
+	var out map[string]any
+	resp := postJSON(t, srv.URL+"/v2/search", domain.SearchRequest{
+		SchemaVersion: 2,
+		Query:         "post JSON with axios",
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Symbols:       []string{"axios.post"},
+		Environment:   nodeEnv("esm"),
+	}, &out)
+	if resp.StatusCode != http.StatusServiceUnavailable || out["error"] != "database busy" {
+		t.Fatalf("status = %d body=%v, want database-pressure 503", resp.StatusCode, out)
+	}
+	if failing.genericSnapshotReads != 0 {
+		t.Fatalf("generic fallback reads = %d, want 0 after the symbol read failed", failing.genericSnapshotReads)
+	}
+}
+
+func TestSearchProjectPackageWideningPressureIsNotASuccessfulMiss(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			srv, _, _ := newTestServer(t, func(d *Deps) {
+				d.Store = &failingSearchCandidateReadStore{Store: d.Store, fail: "project-widening"}
+			})
+			var out map[string]any
+			resp := postJSON(t, fmt.Sprintf("%s/v%d/search", srv.URL, version), domain.SearchRequest{
+				SchemaVersion:   version,
+				Query:           "post JSON with axios",
+				ProjectPackages: []string{"pkg:npm/axios@1.12.0"},
+				Environment:     nodeEnv("esm"),
+			}, &out)
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d body=%v, want 503 instead of a partial-window miss", resp.StatusCode, out)
+			}
+			if got := resp.Header.Get("Retry-After"); got != "2" {
+				t.Fatalf("Retry-After = %q, want 2", got)
+			}
+			if out["error"] != "database busy" {
+				t.Fatalf("error = %v, want database busy", out["error"])
+			}
+		})
+	}
+}
+
+func TestSearchCandidateReadPressureIsNotReturnedAsASuccessfulMiss(t *testing.T) {
+	for _, read := range []string{"receipts", "snapshot", "failure-clusters"} {
+		t.Run(read, func(t *testing.T) {
+			var failing *failingSearchCandidateReadStore
+			srv, store, _ := newTestServer(t, func(d *Deps) {
+				failing = &failingSearchCandidateReadStore{Store: d.Store, fail: read}
+				d.Store = failing
+			})
+			saveTestSample(t, store, "PUBLISHED")
+
+			var out map[string]any
+			resp := postJSON(t, srv.URL+"/v2/search", domain.SearchRequest{
+				SchemaVersion: 2,
+				Query:         "post JSON with axios",
+				Packages:      []string{"pkg:npm/axios@1.12.0"},
+				Environment:   nodeEnv("esm"),
+			}, &out)
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d body=%v, want 503 instead of a successful miss/downgrade", resp.StatusCode, out)
+			}
+			if got := resp.Header.Get("Retry-After"); got != "2" {
+				t.Fatalf("Retry-After = %q, want 2", got)
+			}
+			if out["error"] != "database busy" {
+				t.Fatalf("error = %v, want database busy", out["error"])
+			}
+		})
+	}
 }
 
 func TestSearchModuleSystemMismatchIsAdaptationRequired(t *testing.T) {

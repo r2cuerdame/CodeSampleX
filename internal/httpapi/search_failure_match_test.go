@@ -23,13 +23,16 @@ func TestPreservedFailureFingerprintDoesNotBecomeEnvironmentWarning(t *testing.T
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v2/search", nil)
-	known, exactPackages := (&api{d: Deps{Store: store}}).matchingClusters(
+	known, exactPackages, err := (&api{d: Deps{Store: store}}).matchingClusters(
 		req,
 		[]domain.PURL{{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}},
 		nodeEnv("esm"),
 		domain.SearchRequest{ErrorFingerprint: fingerprint},
 		[]string{"axios.post"},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(exactPackages) != 1 {
 		t.Fatalf("exact fingerprint packages = %v, want axios", exactPackages)
 	}
