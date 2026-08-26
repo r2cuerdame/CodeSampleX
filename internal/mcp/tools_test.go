@@ -464,6 +464,9 @@ func TestReportSampleAdoptionRoundTrip(t *testing.T) {
 }
 
 func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
+	// A real workspace, not a made-up path: the tool now refuses to describe
+	// a workspace it cannot see, so a fake path is no longer a success case.
+	workdir := scaffoldedWorkdir(t)
 	deps := emptyDeps()
 	deps.Propose = func(_ context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 		if goal != "axios upload with progress" {
@@ -473,7 +476,7 @@ func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
 			t.Errorf("Propose pkgs = %v", pkgs)
 		}
 		spec := samples.BuildSpec(samples.ScanInputs{Goal: goal, Kind: "HOW", Packages: pkgs, Symbols: symbols})
-		return spec, spec.PromptText(), `C:\fake\work\sample-1`, nil
+		return spec, spec.PromptText(), workdir, nil
 	}
 	c := startServer(t, deps)
 	res := callTool(t, c, "propose_public_sample", map[string]any{
@@ -491,7 +494,7 @@ func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
 	if !strings.Contains(text, "TELL THE USER") {
 		t.Errorf("propose must instruct the agent to surface the pending sample:\n%s", text)
 	}
-	if !strings.Contains(text, `csx sample create C:\fake\work\sample-1`) {
+	if !strings.Contains(text, "csx sample create "+workdir) {
 		t.Errorf("propose must give the exact create command for this workdir:\n%s", text)
 	}
 	if !strings.Contains(text, "csx sample pending") {
@@ -502,7 +505,7 @@ func TestProposePublicSampleRequiresApprovalWording(t *testing.T) {
 	if v, _ := sc["publishRequiresUserApproval"].(bool); !v {
 		t.Errorf("structuredContent.publishRequiresUserApproval = %v, want true", sc["publishRequiresUserApproval"])
 	}
-	if sc["workdir"] != `C:\fake\work\sample-1` {
+	if sc["workdir"] != workdir {
 		t.Errorf("structuredContent.workdir = %v", sc["workdir"])
 	}
 }

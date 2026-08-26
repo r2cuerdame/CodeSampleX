@@ -159,6 +159,7 @@
   "findings.source": "出典",
   "findings.title": "ネットワークが見つけたもの",
   "findings.untranslated": "ページは翻訳しますが、発見そのものは翻訳しません。各項目はエラー文字列、属性名、数値の結果をそのまま引用しており、言い換えた測定はもう測定ではないからです。",
+  "footer.build": "稼働中のサーバービルド",
   "footer.github": "GitHub",
   "footer.note": "実環境から得た公開互換性ナレッジ。",
   "footer.sponsor": "スポンサー",
