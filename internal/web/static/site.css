@@ -392,14 +392,21 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .section-heading p { margin: 0; max-width: 70ch; }
 .findinglist {
   list-style: none; margin: 1rem 0 0; padding: 0;
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.8rem;
+  /* A flat 17rem floor is 272px, and the content column of a 320px phone is
+     narrower than that — so the track stayed 272px and the card hung out of
+     the viewport (R2C-196). min() lets the floor give way to the width the
+     page actually has, and changes nothing wherever 17rem fits. */
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr)); gap: 0.8rem;
 }
 .finding-card {
   min-width: 0; padding: 1rem 1.05rem;
   border: 1px solid var(--line); border-radius: 1rem;
   background: var(--panel); box-shadow: var(--shadow-soft);
 }
-.finding-card p { margin: 0.7rem 0 0; font-size: 0.86rem; }
+/* Believed/measured prose quotes identifiers, and an identifier holds no
+   break opportunity. Without this the longest one sets the card's min-content
+   width and the card pushes the grid open. */
+.finding-card p { margin: 0.7rem 0 0; font-size: 0.86rem; overflow-wrap: anywhere; }
 .finding-card .measured { color: var(--accent-2); }
 .fsubject { color: var(--accent-2); font-weight: 780; overflow-wrap: anywhere; }
 .fsubject .eco {
@@ -543,6 +550,11 @@ abbr.lvl, abbr.conf { text-decoration: underline dotted; cursor: help; }
 
 /* tables --------------------------------------------------------------- */
 .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 1rem; background: var(--panel); box-shadow: var(--shadow-soft); }
+/* The coverage disclosure asks for .table-wrap, which nothing styled, so its
+   five-column table had no scroll container and dragged the landing page
+   open on a phone. It is already inside a panel, so it takes the scrolling
+   and none of .tablewrap's chrome. */
+.table-wrap { overflow-x: auto; }
 table.matrix { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
 table.matrix th, table.matrix td {
   text-align: left; padding: 0.55rem 0.8rem;
@@ -801,7 +813,17 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .hero-evidence .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stat { padding: 0.9rem; }
   .home-detail > summary { align-items: flex-start; flex-wrap: wrap; }
+  /* flex: none keeps the label whole beside the summary line on a desktop.
+     On a phone the summary line already wrapped below it, and the label was
+     left unable to shrink OR wrap — so a sentence-length heading ("What this
+     instrument has and has not looked at") held the panel open past the
+     viewport. Here it may do both; wider than 40rem it still may not. */
+  .home-detail .eyebrow { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .detail-summary { flex-basis: calc(100% - 2rem); white-space: normal; }
+  /* A Go pseudo-version is 36 characters with nothing to break on, and the
+     pill it sits in refused to wrap. Below 40rem the row is narrower than
+     the version is long, so the pill wraps instead of the page scrolling. */
+  .record-version { white-space: normal; overflow-wrap: anywhere; }
   dl.kv { grid-template-columns: 1fr; gap: 0.1rem; }
   dl.kv dt { margin-top: 0.5rem; }
   td.env { min-width: 12rem; }

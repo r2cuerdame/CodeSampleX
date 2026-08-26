@@ -83,8 +83,9 @@ UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
 label and the revision the server reports at `GET /version` against the
 dispatched SHA, the latest `schema_migrations` row against the checked-out
-migration set, `/healthz`, the public page/API/install smokes, and monotonic
-PASS/FAIL/published-sample totals. The first two say what was
+migration set, `/healthz`, the public page/API/install smokes, monotonic
+PASS/FAIL/published-sample source ledgers, and a fresh, internally consistent
+failure-cluster materialization. The first two say what was
 configured and what was built; only `/version` says what the process now
 answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
@@ -107,20 +108,15 @@ total stayed at 16,755. Both `deploy.ps1` and
 script drifts from the predicate the server itself reads with. See
 [schema.md](schema.md) for why the preserved rows stay.
 
-**That total is checked for coverage, not for monotonicity.** The five other
-positions are ledgers the network appends to, and a deploy that lowers one of
-them took evidence away. `failureClusterObservations` is materialized from
-those ledgers, and `RunLoop` makes the builder's first pass after any restart
-a full one — so every deploy rebuilds the whole table by construction, and a
-rebuild that corrects a stale count lowers the number while no evidence moved.
-That is what rolled back the `08b32c28` deploy on 2026-08-26: 20,098 to 20,096
-with the PASS and FAIL totals identical to the observation. The transaction now
-requires the rebuilt clusters to still account for the FAIL total in the same
-reading, waits for that condition while the restart's full pass is in flight,
-and records a tolerated correction in the run log rather than passing over it
-in silence. A collapse — a truncated or unbuilt table — breaks coverage at once
-and still enters the rollback. `deploy/lightsail/invariant_gate_test.go` pins
-the separation.
+**That total is derived, not monotonic.** `RunLoop` makes the builder's first
+pass after any restart a full one, so a deploy may legitimately repair a stale
+materialized count while no source evidence moved. The transaction waits for
+the new server's full-pass completion marker before it samples the table, then
+requires every current cluster to have a positive observation count and a
+non-negative, known-quality breakdown whose values sum to that count. A
+missing materialization while FAIL evidence remains still enters rollback.
+`deploy/lightsail/failure_cluster_ledger_test.go` pins the source/derived split
+and the completion-marker ordering.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client

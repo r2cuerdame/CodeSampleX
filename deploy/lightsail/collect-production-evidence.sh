@@ -12,6 +12,16 @@ migration_version=$(docker compose exec -T db psql -U csx -d csx -Atqc \
 migration_count=$(docker compose exec -T db psql -U csx -d csx -Atqc \
   "SELECT count(*) FROM schema_migrations")
 health=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz)
+server_started_at=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated_at=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_started_epoch=$(date -u -d "$server_started_at" +%s 2>/dev/null || true)
+builder_generated_epoch=$(date -u -d "$builder_generated_at" +%s 2>/dev/null || true)
+builder_fresh=false
+if [ -n "$server_started_epoch" ] && [ -n "$builder_generated_epoch" ] && \
+   [ "$builder_generated_epoch" -ge "$server_started_epoch" ]; then
+  builder_fresh=true
+fi
 
 # What the process answering requests says it was built from. The container
 # environment above records what was configured; only this records what
@@ -34,6 +44,20 @@ SELECT json_build_object(
   'failureClusterObservations', (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
     WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
        OR COALESCE(error_fp,'') = ''),
+  'unbalancedFailureClusterRows', (SELECT count(*) FROM failure_clusters fc
+    WHERE (COALESCE(fc.evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+           OR COALESCE(fc.error_fp,'') = '')
+      AND (fc.observation_count <= 0
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')
+                OR jsonb_typeof(item.value) <> 'number'
+                OR CASE WHEN jsonb_typeof(item.value) = 'number'
+                        THEN (item.value::text)::numeric < 0 ELSE false END)
+           OR fc.observation_count::numeric <> COALESCE((
+             SELECT SUM((item.value::text)::numeric)
+             FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE jsonb_typeof(item.value) = 'number'), 0))),
   'pgxParseConfigPass', COALESCE(SUM(observation_count) FILTER (
     WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
   'pgxParseConfigFail', COALESCE(SUM(observation_count) FILTER (
@@ -76,6 +100,9 @@ printf 'image_revision=%s\n' "$image_revision"
 printf 'migration_version=%s\n' "$migration_version"
 printf 'migration_count=%s\n' "$migration_count"
 printf 'health=%s\n' "$health"
+printf 'server_started_at=%s\n' "$server_started_at"
+printf 'builder_generated_at=%s\n' "$builder_generated_at"
+printf 'builder_fresh=%s\n' "$builder_fresh"
 printf 'served_revision=%s\n' "$served_revision"
 printf 'invariants=%s\n' "$invariants"
 printf 'modern_failure_clusters=%s\n' "$modern_failure_clusters"

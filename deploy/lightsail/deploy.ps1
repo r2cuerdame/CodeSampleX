@@ -252,7 +252,19 @@ Write-Output "previous production image: $($productionStateParts[1])"
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
-docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
+server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
+builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
+builder_fresh=0
+if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
+  builder_fresh=1
+fi
+# Read the materialization only after the completion marker. If the first
+# full pass finishes between these probes, this iteration still reports
+# builder_fresh=0 and the caller retries; it can never bless a mid-pass tuple.
+values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
@@ -261,32 +273,27 @@ SELECT
     WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
        OR COALESCE(error_fp,'') = ''),
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
-  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
-FROM evidence_agg"
+  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0),
+  (SELECT count(*) FROM failure_clusters fc
+    WHERE (COALESCE(fc.evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+           OR COALESCE(fc.error_fp,'') = '')
+      AND (fc.observation_count <= 0
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')
+                OR jsonb_typeof(item.value) <> 'number'
+                OR CASE WHEN jsonb_typeof(item.value) = 'number'
+                        THEN (item.value::text)::numeric < 0 ELSE false END)
+           OR fc.observation_count::numeric <> COALESCE((
+             SELECT SUM((item.value::text)::numeric)
+             FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE jsonb_typeof(item.value) = 'number'), 0)))
+FROM evidence_agg")
+printf '%s|%s\n' "$values" "$builder_fresh"
 '@
-# The six positions, in order, and what each one is.
-#
-# The first three and the last two are LEDGERS: rows the network appends and
-# nothing in a deploy may take away. They are checked for strict monotonicity.
-#
-# failureClusterObservations is DERIVED. failure_clusters is a materialization
-# the builder rewrites, and RunLoop makes its first pass after every restart a
-# full one — so every deploy re-materializes the whole table by construction.
-# A rebuild that corrects an over-count lowers it while no evidence moved at
-# all, which is exactly what rolled back the 08b32c28 deploy: 20098 -> 20096
-# with PASS and FAIL unchanged to the observation. Monotonicity is the wrong
-# question to ask a materialization; whether it still accounts for the
-# evidence it is derived from is the right one, and that is checked below
-# against the FAIL total in the same reading.
-$invariantNames = @(
-    "pass", "fail", "publishedSamples",
-    "failureClusterObservations", "pgxParseConfigPass", "pgxParseConfigFail")
-$ledgerInvariants = @(0, 1, 2, 4, 5)
-$failureClusterInvariant = 3
-$failInvariant = 1
-
-$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
-if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed pre-deploy invariants" }
+$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
+if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed pre-deploy invariants" }
+$beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
 Write-Output "deployment invariants before: $invariantsBefore"
 
 $assertNoLegacyAccessLogs = @'
@@ -1001,51 +1008,33 @@ if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
-$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
-$beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
-$afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-foreach ($i in $ledgerInvariants) {
-    if ($afterValues[$i] -lt $beforeValues[$i]) {
-        # Name it. The 08b32c28 rollback reported only that "an invariant
-        # decreased", and the run that had to be diagnosed from the artifact
-        # afterwards could not say which one or by how much.
-        throw "production ledger $($invariantNames[$i]) decreased: $($beforeValues[$i]) -> $($afterValues[$i])"
-    }
-}
-
-# The materialized clusters must still account for the failures they are built
-# from. A rebuild may move this number in either direction; losing the evidence
-# is what it may not do, and that shows up here immediately and unambiguously.
-#
-# The rebuild is asynchronous — the restart above started it — so this waits
-# for the safe condition instead of reading once and calling a pass in flight a
-# regression. It fails closed into the same rollback if the wait runs out.
-$clusterCoverageAttempts = 6
-for ($attempt = 1; $true; $attempt++) {
-    if ($afterValues[$failureClusterInvariant] -ge $afterValues[$failInvariant]) { break }
-    if ($attempt -ge $clusterCoverageAttempts) {
-        throw ("$($invariantNames[$failureClusterInvariant]) no longer covers $($invariantNames[$failInvariant]): " +
-            "$($afterValues[$failureClusterInvariant]) < $($afterValues[$failInvariant]) " +
-            "(before: $invariantsBefore, after: $invariantsAfter)")
-    }
-    Start-Sleep -Seconds 15
+$invariantsAfter = ""
+$afterValues = @()
+for ($attempt = 1; $attempt -le 90; $attempt++) {
     $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
+    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
     $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+    if ($afterValues[7] -eq 1) { break }
+    if ($attempt -lt 90) { Start-Sleep -Seconds 2 }
 }
-if ($afterValues[$failureClusterInvariant] -lt $beforeValues[$failureClusterInvariant]) {
-    # Not a failure, and not silent either: the artifact carries both readings,
-    # so a rebuild correction stays auditable rather than invisible.
-    Write-Output ("rebuilt $($invariantNames[$failureClusterInvariant]): " +
-        "$($beforeValues[$failureClusterInvariant]) -> $($afterValues[$failureClusterInvariant]), " +
-        "still covering $($invariantNames[$failInvariant]) $($afterValues[$failInvariant])")
+if ($afterValues[7] -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+$sourceInvariantIndexes = @(0, 1, 2, 4, 5)
+foreach ($i in $sourceInvariantIndexes) {
+    if ($afterValues[$i] -lt $beforeValues[$i]) {
+        throw "a production PASS/FAIL/sample source invariant decreased"
+    }
 }
+if ($afterValues[1] -gt 0 -and $afterValues[3] -le 0) {
+    throw "failure-cluster materialization disappeared while FAIL evidence remains"
+}
+if ($afterValues[6] -ne 0) { throw "post-deploy failure-cluster ledger is internally inconsistent" }
+$failureClusterObservationDelta = $afterValues[3] - $beforeValues[3]
 Write-Output "deployed SHA: $($liveIdentityParts[0])"
 Write-Output "served /version SHA: $($liveIdentityParts[4])"
 Write-Output "image digest: $($liveIdentityParts[1])"
 Write-Output "migration version: $($liveIdentityParts[3])"
 Write-Output "deployment invariants after: $invariantsAfter"
+Write-Output "failure-cluster observation delta: $failureClusterObservationDelta"
 
 $failureEvidenceBalance = (Invoke-RemoteScript @'
 set -eu

@@ -61,7 +61,7 @@ function Read-ProductionState {
             if ($pair.Count -ne 2) { throw "malformed production evidence" }
             $state[$pair[0]] = $pair[1]
         }
-        foreach ($required in @('revision','image_digest','image_revision','migration_version','migration_count','health','served_revision','invariants','modern_failure_clusters','failure_evidence_quality')) {
+        foreach ($required in @('revision','image_digest','image_revision','migration_version','migration_count','health','served_revision','invariants','server_started_at','builder_generated_at','builder_fresh','modern_failure_clusters','failure_evidence_quality')) {
             if (-not $state.ContainsKey($required)) { throw "production evidence is missing $required" }
         }
         $state['invariants'] = $state['invariants'] | ConvertFrom-Json
@@ -103,6 +103,10 @@ $evidence = @{
     invariants = @{ before = $null; after = $null }
     modernFailureClusters = 0
     failureEvidenceQuality = $null
+    serverStartedAt = ""
+    builderGeneratedAt = ""
+    builderFresh = $false
+    failureClusterObservationDelta = $null
 }
 
 $failure = $null
@@ -125,10 +129,14 @@ try {
     $evidence.migrationVersion = $after.migration_version
     $evidence.migrationCount = [int]$after.migration_count
     $evidence.health = $after.health
+    $evidence.serverStartedAt = $after.server_started_at
+    $evidence.builderGeneratedAt = $after.builder_generated_at
+    $evidence.builderFresh = $after.builder_fresh -eq "true"
     $evidence.servedRevision = $after.served_revision
     $evidence.invariants.after = $after.invariants
     $evidence.modernFailureClusters = [int]$after.modern_failure_clusters
     $evidence.failureEvidenceQuality = $after.failure_evidence_quality
+    $evidence.failureClusterObservationDelta = [int64]$after.invariants.failureClusterObservations - [int64]$before.invariants.failureClusterObservations
     # The container environment and the image label say what was configured
     # and what was built; /version says what the running process was built
     # from. All three have to name the dispatched commit before this run is
@@ -138,6 +146,7 @@ try {
         throw "served SHA does not match the requested immutable commit"
     }
     if ($after.health -ne "ok") { throw "post-deploy health is not ok" }
+    if ($after.builder_fresh -ne "true") { throw "post-deploy full builder completion is not fresh" }
     $evidence.conclusion = "success"
     $evidence.smoke = "pass"
     $evidence.rollback = "not-needed"
@@ -151,9 +160,15 @@ try {
         $evidence.migrationCount = [int]$current.migration_count
         $evidence.servedRevision = $current.served_revision
         $evidence.health = $current.health
+        $evidence.serverStartedAt = $current.server_started_at
+        $evidence.builderGeneratedAt = $current.builder_generated_at
+        $evidence.builderFresh = $current.builder_fresh -eq "true"
         $evidence.invariants.after = $current.invariants
         $evidence.modernFailureClusters = [int]$current.modern_failure_clusters
         $evidence.failureEvidenceQuality = $current.failure_evidence_quality
+        if ($null -ne $evidence.invariants.before) {
+            $evidence.failureClusterObservationDelta = [int64]$current.invariants.failureClusterObservations - [int64]$evidence.invariants.before.failureClusterObservations
+        }
         $evidence.rollback = if ($current.revision -eq $ExpectedPreviousRevision -and $current.health -eq "ok") { "succeeded" } else { "failed" }
     } catch {
         $evidence.rollback = "unverified"
