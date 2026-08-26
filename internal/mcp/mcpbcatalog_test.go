@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// The MCPB bundle and this server describe the same eight tools to two
+// The MCPB bundle and this server describe the same tool set to two
 // different readers, and until now they described them from two different
 // lists: `TOOLS` in scripts/make-mcpb.py, and toolDefs() here. Nothing
 // connected them, so a renamed tool would have shipped a manifest naming a

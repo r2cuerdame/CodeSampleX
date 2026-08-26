@@ -115,6 +115,10 @@ func NewDeps(home string) (*Deps, func() error, error) {
 	syncHTTP := &http.Client{Transport: remoteTransport}
 	fetchHTTP := &http.Client{Transport: remoteTransport, Timeout: 30 * time.Second}
 	registryHTTP := &http.Client{Transport: remoteTransport}
+	// A report is one small POST whose answer the agent is waiting on, so it
+	// gets a short timeout of its own rather than blocking a tool call on a
+	// slow server.
+	reportHTTP := &http.Client{Transport: remoteTransport, Timeout: 15 * time.Second}
 
 	// A miss for a package this machine has never synced is not an answer
 	// about the network, it is an answer about the local cache. The agent
@@ -197,6 +201,38 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		ReportAdoption: func(ctx context.Context, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error) {
 			return reportAdoptionReloaded(ctx, db, ident, currentConfig(home),
 				func() *config.Config { return currentConfig(home) }, offerID, sampleID, applied, buildPass)
+		},
+		// Synchronous, unlike adoption, because the answer IS the point.
+		// A queued upload would leave the agent with "recorded" and nothing
+		// else — no report id, no duplicate, no reason it cannot be
+		// verified — and an agent with nothing else to say says the thing
+		// this whole channel exists to prevent: that the bug is confirmed.
+		ReportAnomaly: func(ctx context.Context, report domain.AnomalyReport, rawErrorText string) (AnomalySubmission, error) {
+			prepared, _, err := PrepareAnomalyReport(report, rawErrorText, environment.Collect(ctx, nil))
+			if err != nil {
+				return AnomalySubmission{}, err
+			}
+			// Reload rather than trust the mode this process started with:
+			// the user may have revoked community mode since, and a report
+			// is an upload.
+			live := currentConfig(home)
+			if live.Mode != config.ModeCommunity {
+				return AnomalySubmission{}, ErrAnomalyLocalOnly
+			}
+			epoch := time.Now().UTC().Format("2006-01-02")
+			return SubmitAnomalyReport(ctx, reportHTTP, live.ServerURL, epoch, ident.AnonID(epoch), prepared)
+		},
+		ReportCSXIssue: func(ctx context.Context, report domain.CSXIssueReport) (CSXIssueSubmission, error) {
+			prepared, _, err := PrepareCSXIssueReport(report)
+			if err != nil {
+				return CSXIssueSubmission{}, err
+			}
+			live := currentConfig(home)
+			if live.Mode != config.ModeCommunity {
+				return CSXIssueSubmission{}, ErrCSXIssueLocalOnly
+			}
+			epoch := time.Now().UTC().Format("2006-01-02")
+			return SubmitCSXIssueReport(ctx, reportHTTP, live.ServerURL, epoch, ident.AnonID(epoch), prepared)
 		},
 		Propose: func(ctx context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 			spec, prompt, workdir, err := propose(ctx, home, goal, pkgs, symbols)

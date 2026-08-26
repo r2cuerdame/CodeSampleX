@@ -56,6 +56,18 @@ type Fake struct {
 	// authoring_quarantine.go.
 	authoringAttempts map[[4]string]*authoringLedger
 
+	// anomalies is the consumption-side feedback channel, keyed by
+	// fingerprint because that key IS the dedupe rule.
+	anomalies     map[string]*AnomalyReportRow
+	anomalyOrder  []string
+	nextAnomalyID int64
+
+	// csxIssues is the product-defect half. Separate map, separate life:
+	// an anomaly can become compatibility evidence and a product defect
+	// never can.
+	csxIssues      map[string]*CSXIssueReportRow
+	nextCSXIssueID int64
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -129,6 +141,8 @@ func NewFake() *Fake {
 		authoringWork:   map[[4]string]AuthoringWorkRow{},
 
 		authoringAttempts: map[[4]string]*authoringLedger{},
+		anomalies:         map[string]*AnomalyReportRow{},
+		csxIssues:         map[string]*CSXIssueReportRow{},
 	}
 }
 
@@ -959,6 +973,32 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 			if existing.SampleID == j.SampleID && existing.Reason == j.Reason && existing.WantEnvJSON == j.WantEnvJSON {
 				return existing.ID, nil
 			}
+		}
+	}
+	f.nextJobID++
+	j.ID = f.nextJobID
+	if j.Status == "" {
+		j.Status = "open"
+	}
+	if j.CreatedAt.IsZero() {
+		j.CreatedAt = f.now()
+	}
+	f.jobs = append(f.jobs, &j)
+	return j.ID, nil
+}
+
+func (f *Fake) EnsureCrossJob(_ context.Context, j JobRow) (int64, error) {
+	if j.Reason != "cross" || j.SampleID == "" {
+		return 0, fmt.Errorf("EnsureCrossJob requires a cross job with a sample id")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	reuseUnsupported := j.Status == JobStatusUnsupported
+	for _, existing := range f.jobs {
+		if existing.SampleID == j.SampleID && existing.Reason == "cross" &&
+			(existing.Status == "open" || existing.Status == "claimed" ||
+				reuseUnsupported && existing.Status == JobStatusUnsupported) {
+			return existing.ID, nil
 		}
 	}
 	f.nextJobID++

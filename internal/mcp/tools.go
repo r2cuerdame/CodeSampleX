@@ -58,6 +58,18 @@ type Deps struct {
 	// can call a failure "avoided" only when the local correlation proves all
 	// four stages; the upload remains the existing anonymous adoption event.
 	ReportAdoption func(ctx context.Context, offerID, sampleID string, applied bool, buildPass *bool) (localdb.InterventionOutcome, error)
+	// ReportAnomaly submits a verification REQUEST after an agent watched a
+	// CSX answer and its own machine disagree. It redacts locally, refuses
+	// anything with no measured local outcome behind it, and returns the
+	// server's answer verbatim — including the part that says nothing has
+	// been verified yet.
+	ReportAnomaly func(ctx context.Context, report domain.AnomalyReport, rawErrorText string) (AnomalySubmission, error)
+	// ReportCSXIssue submits a candidate defect in THIS PRODUCT — an answer
+	// that hid the caller's own failure, a tool contract that misled a
+	// model. Deliberately conservative: no ticket is created, nothing
+	// instructs an agent to call it on every failure, and zero reports is a
+	// normal week.
+	ReportCSXIssue func(ctx context.Context, report domain.CSXIssueReport) (CSXIssueSubmission, error)
 	// Propose builds a sanitized clean-room spec + prompt and creates an
 	// empty workspace. It NEVER publishes (goal.md §12.4).
 	Propose func(ctx context.Context, goal string, pkgs, symbols []string) (spec samples.SanitizedSpec, prompt string, workdir string, err error)
@@ -334,6 +346,72 @@ func toolDefs() []toolDef {
 			}, "offerId", "sampleId", "applied"),
 		},
 		{
+			Name:  "report_anomaly",
+			Title: "Report a CSX answer that your machine contradicts",
+			// It sends a report to the network and creates a durable row
+			// there, so it is neither read-only nor local. Idempotent by
+			// fingerprint: submitting the same mismatch twice is counted
+			// against one report and queues no second verification.
+			Annotations: writes("Report a CSX answer that your machine contradicts", false, true, true),
+			Summary: "Submit a verification request when a CSX answer and your own local run concretely disagree. " +
+				"Requires a measured local PASS/FAIL; free text is redacted locally and raw output is never sent. " +
+				"Nothing is confirmed by reporting: a verifier must reproduce it first.",
+			Description: "Report a CONCRETE, reproducible disagreement between what CodeSampleX returned and what you " +
+				"actually observed locally — for example the network served a passing conclusion for a package/version/" +
+				"symbol and the same coordinate failed on your machine, or a returned symbol signature is not what the " +
+				"public package exports. This is a VERIFICATION REQUEST, not a bug report and not a finding: it is queued " +
+				"for an independent re-run and only a signed receipt can confirm it. Use it ONLY when you have a measured " +
+				"local outcome; \"this looks wrong to me\" is refused, and so is a NO_SAFE_MATCH with no reproducible " +
+				"public failure attached. Put your explanation in llmHypothesis — it is stored separately and never " +
+				"decides the verdict. Never describe a submitted report as a confirmed or fixed bug.",
+			InputSchema: obj(map[string]any{
+				"anomalyType":   str("one of: " + strings.Join(domain.AnomalyTypes(), " | ")),
+				"package":       str("the exact public coordinate the mismatch is about, e.g. pkg:npm/axios@1.12.0"),
+				"symbol":        str("symbol family involved, e.g. axios.post"),
+				"environment":   environmentSchema(),
+				"sampleId":      str("the CSX sample id the contested answer came from, if any — this is what makes it reproducible"),
+				"evidenceId":    str("a CSX evidence id the contested answer came from, if any"),
+				"csxObserved":   anomalyObservationSchema("what CSX actually concluded"),
+				"localObserved": anomalyObservationSchema("what YOU measured locally; result must be PASS or FAIL"),
+				"reproducible":  str("yes | no | unknown — as you measured it, not as you hope"),
+				"confidence":    str("low | medium | high — used for ranking only, never as truth"),
+				"errorText":     str("raw local error output, if any. It is sanitized on THIS machine (paths/tokens/usernames stripped) and NEVER forwarded raw; only the derived code, template and fingerprint are sent."),
+				"relatedIds":    strArr("related sample/evidence/dependency ids"),
+				"llmHypothesis": str("your guess at the cause. Stored separately, shown to a human, and deliberately excluded from the verdict."),
+			}, "anomalyType", "package", "csxObserved", "localObserved"),
+		},
+		{
+			Name:  "report_csx_issue",
+			Title: "Report a defect in CodeSampleX itself",
+			// Creates a durable row on the server. Idempotent by
+			// fingerprint: the same defect reported twice is one row with a
+			// higher occurrence count, never a second ticket.
+			Annotations: writes("Report a defect in CodeSampleX itself", false, true, true),
+			Summary: "Report a reproducible defect in CodeSampleX itself — the MCP tools, server, site, verifier or farm. " +
+				"Opt-in and conservative: no ticket is created, a person triages it, and reporting confirms nothing.",
+			Description: "Report a REPRODUCIBLE defect in CodeSampleX the product, as distinct from its data: an answer " +
+				"that displaced or hid the failure you were actually looking at, a recommendation from an ecosystem the " +
+				"question never mentioned, a tool contract that made you behave wrongly, a response contract that breaks " +
+				"inconsistently on the same input, a broken internal reference, or runtime behaviour like a retry loop. " +
+				"Use `report_anomaly` instead when the disagreement is about a PACKAGE rather than about this product. " +
+				"This is opt-in: there is no expectation that you call it after a failure, and a week with no reports is " +
+				"normal. It creates no ticket and confirms nothing — a person triages it. Never tell the user a bug has " +
+				"been filed, accepted or fixed. Taste, wording preferences and \"this seems off\" are not reports.",
+			InputSchema: obj(map[string]any{
+				"affectedSurface":    str("one of: " + strings.Join(domain.CSXSurfaces(), " | ")),
+				"issueKind":          str("one of: " + strings.Join(domain.CSXIssueKinds(), " | ")),
+				"component":          str("the tool or endpoint this is about, e.g. search_known_solution or /v2/search"),
+				"requestFingerprint": str("a stable non-identifying id for the request, if you have one. It is what makes two occurrences of one defect one report."),
+				"publicInput":        csxIssuePublicInputSchema(),
+				"actualBehavior":     str("what actually happened, in one short sanitized sentence"),
+				"expectedBehavior":   str("what should have happened. It must differ from actualBehavior."),
+				"reproducible":       str("yes | no | unknown — as you measured it"),
+				"confidence":         str("low | medium | high — priority hint only, never truth"),
+				"relatedIds":         strArr("related stable ids: sample, evidence, dependency, finding"),
+				"llmHypothesis":      str("your guess at the cause. Stored separately and excluded from the verdict."),
+			}, "affectedSurface", "issueKind", "component", "actualBehavior", "expectedBehavior"),
+		},
+		{
 			Name:  "propose_public_sample",
 			Title: "Start a clean-room sample proposal",
 			// Creates a scaffolded workspace directory under CSX_HOME and
@@ -438,6 +516,10 @@ func (s *Server) toolsCall(ctx context.Context, params json.RawMessage) (any, *r
 		handler = s.toolRunObserved
 	case "report_sample_adoption":
 		handler = s.toolReportAdoption
+	case "report_anomaly":
+		handler = s.toolReportAnomaly
+	case "report_csx_issue":
+		handler = s.toolReportCSXIssue
 	case "propose_public_sample":
 		handler = s.toolPropose
 	case "list_local_hits":
@@ -1815,4 +1897,243 @@ func nonEmptyParts(values ...string) []string {
 		}
 	}
 	return out
+}
+
+// --- report_anomaly ---
+
+// anomalyObservationSchema describes one measured outcome. Result is the
+// only part a verdict is computed from, so the schema says so where the
+// caller will read it.
+func anomalyObservationSchema(desc string) map[string]any {
+	return map[string]any{
+		"type":        "object",
+		"description": desc,
+		"properties": map[string]any{
+			"result": map[string]any{"type": "string",
+				"description": "PASS | FAIL | UNKNOWN. UNKNOWN is only meaningful for csxObserved."},
+			"stage": map[string]any{"type": "string",
+				"description": "where it happened: resolve | compile | typecheck | test | run"},
+			"detail": map[string]any{"type": "string",
+				"description": "one short sanitized sentence. Never paste logs here."},
+		},
+		"required": []string{"result"},
+	}
+}
+
+type anomalyArgs struct {
+	AnomalyType   string                        `json:"anomalyType"`
+	Package       string                        `json:"package"`
+	Symbol        string                        `json:"symbol"`
+	Environment   domain.EnvironmentFingerprint `json:"environment"`
+	SampleID      string                        `json:"sampleId"`
+	EvidenceID    string                        `json:"evidenceId"`
+	CSXObserved   domain.AnomalyObservation     `json:"csxObserved"`
+	LocalObserved domain.AnomalyObservation     `json:"localObserved"`
+	Reproducible  string                        `json:"reproducible"`
+	Confidence    string                        `json:"confidence"`
+	ErrorText     string                        `json:"errorText"`
+	RelatedIDs    []string                      `json:"relatedIds"`
+	LLMHypothesis string                        `json:"llmHypothesis"`
+}
+
+func (s *Server) toolReportAnomaly(ctx context.Context, raw json.RawMessage) *toolResult {
+	var a anomalyArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return errResult("report_anomaly: bad arguments: " + err.Error())
+	}
+	if s.Deps.ReportAnomaly == nil {
+		return errResult("report_anomaly: this install cannot submit reports")
+	}
+	report := domain.AnomalyReport{
+		SchemaVersion: domain.AnomalyReportSchemaVersion,
+		AnomalyType:   a.AnomalyType,
+		Package:       a.Package,
+		Symbol:        a.Symbol,
+		Environment:   a.Environment,
+		SampleID:      a.SampleID,
+		EvidenceID:    a.EvidenceID,
+		CSXObserved:   a.CSXObserved,
+		LocalObserved: a.LocalObserved,
+		Reproducible:  a.Reproducible,
+		Confidence:    a.Confidence,
+		RelatedIDs:    a.RelatedIDs,
+		LLMHypothesis: a.LLMHypothesis,
+	}
+	out, err := s.Deps.ReportAnomaly(ctx, report, a.ErrorText)
+	if err != nil {
+		return errResult("report_anomaly: " + err.Error())
+	}
+
+	// The structured payload carries the whole answer, because that is what
+	// the client renders; the text block is what a client that renders text
+	// instead would show, and it must say the same thing.
+	structured := map[string]any{
+		"reportId":          out.ReportID,
+		"status":            out.Status,
+		"verificationState": out.VerificationState,
+		"confirmed":         domain.AnomalyVerdictConfirmed(out.Verdict),
+		"note":              out.Note,
+	}
+	if out.ReportStatus != "" {
+		structured["reportStatus"] = out.ReportStatus
+	}
+	if out.Verdict != "" {
+		structured["verdict"] = out.Verdict
+	}
+	if out.VerificationJobID != 0 {
+		structured["verificationJobId"] = out.VerificationJobID
+	}
+	if out.MatchedReportID != 0 {
+		structured["matchedReportId"] = out.MatchedReportID
+	}
+	if out.Submissions != 0 {
+		structured["submissions"] = out.Submissions
+	}
+	if out.RetryAfterSeconds != 0 {
+		structured["retryAfterSeconds"] = out.RetryAfterSeconds
+	}
+	if out.Redacted {
+		structured["redacted"] = true
+	}
+	if out.Reason != "" {
+		structured["reason"] = out.Reason
+	}
+
+	var b strings.Builder
+	switch out.Status {
+	case "duplicate":
+		fmt.Fprintf(&b, "ALREADY REPORTED (report #%d, %d submissions). %s\n",
+			out.ReportID, out.Submissions, out.VerificationState)
+		if out.RetryAfterSeconds > 0 {
+			fmt.Fprintf(&b, "Reporting it again adds nothing for another %d seconds.\n", out.RetryAfterSeconds)
+		}
+	default:
+		fmt.Fprintf(&b, "REPORT ACCEPTED (report #%d). %s\n", out.ReportID, out.VerificationState)
+	}
+	if out.Verdict != "" {
+		b.WriteString("Verdict so far: " + out.Verdict + "\n")
+	}
+	if out.Reason != "" {
+		b.WriteString("Why: " + out.Reason + "\n")
+	}
+	if out.Redacted {
+		b.WriteString("Some text was redacted on this machine before sending; the measured facts were kept.\n")
+	}
+	b.WriteString("\n" + out.Note + "\n")
+	return textResult(b.String(), structured)
+}
+
+// --- report_csx_issue ---
+
+// csxIssuePublicInputSchema describes the part of a request that was already
+// public and can therefore be restated.
+//
+// It has no field for the caller's question, and the omission is the design:
+// a prompt must never travel, which is also why a search defect cannot be
+// replayed server-side and is triaged by a person instead.
+func csxIssuePublicInputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"description": "The already-public parts of the request, when the request can honestly be restated " +
+			"from public coordinates alone. Never put the user's question or any prose input here — it is not " +
+			"accepted, and a prompt must not leave the machine.",
+		"properties": map[string]any{
+			"endpoint":    map[string]any{"type": "string", "description": "the public read route, e.g. /v1/registry/packages"},
+			"packages":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "public purls the request named"},
+			"symbols":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"environment": environmentSchema(),
+		},
+		"required": []string{"endpoint"},
+	}
+}
+
+type csxIssueArgs struct {
+	AffectedSurface    string                      `json:"affectedSurface"`
+	IssueKind          string                      `json:"issueKind"`
+	Component          string                      `json:"component"`
+	RequestFingerprint string                      `json:"requestFingerprint"`
+	PublicInput        *domain.CSXIssuePublicInput `json:"publicInput"`
+	ActualBehavior     string                      `json:"actualBehavior"`
+	ExpectedBehavior   string                      `json:"expectedBehavior"`
+	Reproducible       string                      `json:"reproducible"`
+	Confidence         string                      `json:"confidence"`
+	RelatedIDs         []string                    `json:"relatedIds"`
+	LLMHypothesis      string                      `json:"llmHypothesis"`
+}
+
+func (s *Server) toolReportCSXIssue(ctx context.Context, raw json.RawMessage) *toolResult {
+	var a csxIssueArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return errResult("report_csx_issue: bad arguments: " + err.Error())
+	}
+	if s.Deps.ReportCSXIssue == nil {
+		return errResult("report_csx_issue: this install cannot submit reports")
+	}
+	out, err := s.Deps.ReportCSXIssue(ctx, domain.CSXIssueReport{
+		SchemaVersion:      domain.CSXIssueReportSchemaVersion,
+		AffectedSurface:    a.AffectedSurface,
+		IssueKind:          a.IssueKind,
+		Component:          a.Component,
+		RequestFingerprint: a.RequestFingerprint,
+		PublicInput:        a.PublicInput,
+		ActualBehavior:     a.ActualBehavior,
+		ExpectedBehavior:   a.ExpectedBehavior,
+		Reproducible:       a.Reproducible,
+		Confidence:         a.Confidence,
+		RelatedIDs:         a.RelatedIDs,
+		LLMHypothesis:      a.LLMHypothesis,
+	})
+	if err != nil {
+		return errResult("report_csx_issue: " + err.Error())
+	}
+
+	structured := map[string]any{
+		"reportId":    out.ReportID,
+		"status":      out.Status,
+		"ticketFiled": false,
+		"confirmed":   domain.CSXIssueVerdictConfirmed(out.Verdict),
+		"note":        out.Note,
+	}
+	if out.ReportStatus != "" {
+		structured["reportStatus"] = out.ReportStatus
+	}
+	if out.Verdict != "" {
+		structured["verdict"] = out.Verdict
+	}
+	if out.CanonicalRef != "" {
+		structured["canonicalRef"] = out.CanonicalRef
+	}
+	if out.Occurrences != 0 {
+		structured["occurrences"] = out.Occurrences
+	}
+	if out.MatchedReportID != 0 {
+		structured["matchedReportId"] = out.MatchedReportID
+	}
+	if out.RetryAfterSeconds != 0 {
+		structured["retryAfterSeconds"] = out.RetryAfterSeconds
+	}
+	if out.Redacted {
+		structured["redacted"] = true
+	}
+	if out.ReplayReason != "" {
+		structured["replayReason"] = out.ReplayReason
+	}
+
+	var b strings.Builder
+	if out.Status == "duplicate" {
+		fmt.Fprintf(&b, "ALREADY KNOWN (report #%d, %d occurrences).\n", out.ReportID, out.Occurrences)
+		if out.CanonicalRef != "" {
+			b.WriteString("Tracked as " + out.CanonicalRef + ".\n")
+		}
+	} else {
+		fmt.Fprintf(&b, "RECORDED AS A CANDIDATE (report #%d).\n", out.ReportID)
+	}
+	if out.ReplayReason != "" {
+		b.WriteString(out.ReplayReason + "\n")
+	}
+	if out.Redacted {
+		b.WriteString("Some text was redacted on this machine before sending.\n")
+	}
+	b.WriteString("\n" + out.Note + "\n")
+	return textResult(b.String(), structured)
 }
