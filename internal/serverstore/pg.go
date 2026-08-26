@@ -2848,9 +2848,9 @@ type AdoptionCounts struct {
 // telling us more about the same event, not a second event.
 // RecordSearchHit counts one search that found something.
 //
-// One reporter counts once per offer per day, mirroring adoptions: an agent
-// that retries a search all afternoon is one hit, not an afternoon of demand.
-// A later report for the same key updates the counts rather than adding a row.
+// One reporter counts once per offer per day. Re-delivery of the same queued
+// hit carries the same offer and updates the row; a new search gets a new
+// offer and counts separately, even when its query and result are identical.
 func (p *PG) RecordSearchHit(ctx context.Context, r SearchHitRow) error {
 	dedup := r.OfferID
 	if dedup == "" {
