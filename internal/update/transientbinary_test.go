@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The updater downloads the next release to a temporary name next to the
@@ -26,12 +28,21 @@ import (
 // the updater is allowed to ask a staged binary to do is say its version.
 const stagedSelfTestGuard = "CSX_UPDATE_STAGED_SELFTEST_VERSION"
 const stagedSelfTestArgv = "CSX_UPDATE_STAGED_SELFTEST_ARGV"
+const stagedSelfTestDelay = "CSX_UPDATE_STAGED_SELFTEST_DELAY"
 
 // TestMain lets this test binary stand in for a freshly staged csx that the
 // updater has just executed. The guard has to run before any test does, so
 // the child's only output is the version line selfTestBinary parses.
 func TestMain(m *testing.M) {
 	if version := os.Getenv(stagedSelfTestGuard); version != "" {
+		if raw := os.Getenv(stagedSelfTestDelay); raw != "" {
+			delay, err := time.ParseDuration(raw)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			time.Sleep(delay)
+		}
 		if path := os.Getenv(stagedSelfTestArgv); path != "" {
 			_ = os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\x00")), 0o600)
 		}
@@ -93,6 +104,42 @@ func TestStagedBinarySelfTestRejectsAMismatchedVersion(t *testing.T) {
 
 	if err := selfTestBinary(context.Background(), staged, "v2.0.0"); err == nil {
 		t.Fatal("selfTestBinary accepted a staged binary reporting a different version")
+	}
+}
+
+// On Windows CommandContext terminates a timed-out process with exit code 1,
+// and os/exec prefers that ExitError over the context watcher error. The
+// updater must restore the actual cause or a saturated runner looks like a
+// corrupt staged payload instead of a bounded self-test timeout.
+func TestStagedBinarySelfTestPreservesTimeoutCause(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, ".csx-update-timeout")
+	if runtime.GOOS == "windows" {
+		staged += ".exe"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyExecutable(t, self, staged)
+
+	t.Setenv(stagedSelfTestGuard, "v9.9.9")
+	t.Setenv(stagedSelfTestArgv, "")
+	t.Setenv(stagedSelfTestDelay, "250ms")
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	err = selfTestBinary(ctx, staged, "v9.9.9")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timed-out staged binary error = %v; want context deadline cause", err)
+	}
+}
+
+// This is the measured first-execution allowance, not permission for the
+// version command itself to be slow. A release runner with real-time Windows
+// inspection exhausted the old ten-second bound before the child printed.
+func TestStagedBinarySelfTestAllowsWindowsInspectionBeforeVersion(t *testing.T) {
+	if stagedBinarySelfTestTimeout < time.Minute {
+		t.Fatalf("staged binary self-test timeout = %v, want at least one minute", stagedBinarySelfTestTimeout)
 	}
 }
 
