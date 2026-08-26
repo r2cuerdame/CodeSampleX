@@ -74,8 +74,8 @@ func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 func TestProductionRequiresSuccessfulCanonicalMainCIRun(t *testing.T) {
 	step := productionWorkflowStep(t, productionWorkflow(t), "Require successful canonical main CI run")
 	for _, required := range []string{
-		"actions/workflows/ci.yml/runs?head_sha=${TARGET_SHA}&branch=main&event=push&status=success&per_page=1",
-		"--jq '.workflow_runs[0].id // 0'",
+		"actions/workflows/ci.yml/runs?head_sha=${TARGET_SHA}&branch=main&status=success&per_page=20",
+		`select(.event == "push" or .event == "workflow_dispatch")`,
 		`if ! [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]; then`,
 		"Canonical CI evidence:",
 	} {
@@ -86,6 +86,8 @@ func TestProductionRequiresSuccessfulCanonicalMainCIRun(t *testing.T) {
 	for _, forbidden := range []string{
 		"commits/$TARGET_SHA/check-runs",
 		`select(.name == "Test" and .conclusion == "success")`,
+		"pull_request",
+		"repository_dispatch",
 	} {
 		if strings.Contains(step, forbidden) {
 			t.Errorf("canonical CI provenance can still be satisfied by an arbitrary check run: %q", forbidden)
