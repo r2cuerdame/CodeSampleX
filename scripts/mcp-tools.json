@@ -68,13 +68,13 @@
     {
       "name": "propose_public_sample",
       "title": "Start a clean-room sample proposal",
-      "summary": "Build a sanitized clean-room sample spec and create an empty local workspace for it. Sends nothing; publishing always requires explicit CLI approval by the user.",
-      "description": "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), returns generation instructions and an empty workspace directory. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
+      "summary": "Build a sanitized clean-room sample spec and create a local workspace scaffolded with spec.json, PROMPT.md and a csx.json manifest. Sends nothing; publishing always requires explicit CLI approval by the user.",
+      "description": "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), and returns generation instructions plus a workspace directory already containing spec.json, PROMPT.md and a csx.json manifest scaffold whose contract you fill in. If the workspace cannot be created the call fails with isError and structuredContent.error — never write sample files or invent a csx.json in that case. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
       "annotations": {
         "title": "Start a clean-room sample proposal",
         "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": false,
+        "idempotentHint": true,
         "openWorldHint": false
       }
     },

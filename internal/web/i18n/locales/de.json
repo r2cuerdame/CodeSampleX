@@ -159,6 +159,7 @@
   "findings.source": "Quelle",
   "findings.title": "Was das Netzwerk gefunden hat",
   "findings.untranslated": "Die Seite ist übersetzt, die Befunde nicht. Jeder zitiert eine Fehlermeldung, einen Attributnamen oder ein Zahlenergebnis — und eine umformulierte Messung ist keine Messung mehr.",
+  "footer.build": "Laufender Server-Build",
   "footer.github": "GitHub",
   "footer.note": "Öffentliches Kompatibilitätswissen aus realen Umgebungen.",
   "footer.sponsor": "Sponsern",

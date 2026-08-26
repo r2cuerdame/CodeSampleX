@@ -104,7 +104,7 @@ csx sync                           # warm the shard cache — once, right after 
 Ein Sample ist kein Snippet. Es ist ein minimales, content-addressiertes Projekt (`sha256:<hex>` seines kanonischen Artefakts) mit einem **Contract**: Assertions, die offline in einem gepinnten Container ausgeführt wurden und bestanden haben. Gepinnt per Image-Digest, nicht per Tag — das Tag ist ein Alias für Leser, der Digest ist das, was läuft — und die signierte Quittung nennt die exakte Image-Referenz, sodass jede und jeder dieselben Bytes erneut ausführen kann, statt es glauben zu müssen ([docs/adapters.md](../adapters.md#verifier-images)). Der Clean-Room-Autorenzyklus läuft ausschließlich über die CLI:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse

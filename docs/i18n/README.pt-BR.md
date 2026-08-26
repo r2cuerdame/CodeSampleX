@@ -104,7 +104,7 @@ O `csx search` classifica cada resultado em relação ao seu ambiente registrado
 Um sample não é um snippet. É um projeto mínimo, endereçado por conteúdo (`sha256:<hex>` do seu artefato canônico), com um **contrato**: asserções que foram executadas offline em um contêiner fixado e passaram. Fixado pelo digest da imagem, não pela tag — a tag é um apelido para quem lê, o digest é o que executa — e o recibo assinado registra a referência exata da imagem, de modo que qualquer pessoa pode reexecutar os mesmos bytes em vez de acreditar na palavra ([docs/adapters.md](../adapters.md#verifier-images)). O ciclo de autoria clean-room é exclusivo da CLI:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse

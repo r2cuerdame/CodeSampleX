@@ -159,6 +159,7 @@
   "findings.source": "Source",
   "findings.title": "What the network found",
   "findings.untranslated": "The page is translated; the findings are not. Each one quotes an error string, an attribute name or a numeric result, and a translated paraphrase of a measurement is no longer the measurement.",
+  "footer.build": "Running server build",
   "footer.github": "GitHub",
   "footer.note": "Public compatibility knowledge from real environments.",
   "footer.sponsor": "Sponsor",

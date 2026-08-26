@@ -29,10 +29,11 @@ import (
 //
 // What it deliberately does NOT do is offer the children that ARE observed but
 // unproven (73 of them anchored to a chosen package in the same measurement).
-// Those are already reachable: the package-level branch emits them. They sit
-// near the bottom of the queue because a carried sighting is weighted 1 against
-// a chosen one's 1000, which is a ranking question about that branch rather
-// than a coordinate this one should duplicate.
+// Those are already reachable: the package-level branch emits them. They used
+// to sit near the bottom of it because a carried sighting is weighted 1
+// against a chosen one's 1000; R2C-90 answered that where it belonged, by
+// adding the resolved demand to that branch's score (authoringResolveWeight),
+// rather than by duplicating the coordinate into this one.
 //
 // Three properties are load-bearing, and each is a bound:
 //

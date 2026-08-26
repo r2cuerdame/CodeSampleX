@@ -159,6 +159,7 @@
   "findings.source": "Source",
   "findings.title": "Ce que le réseau a trouvé",
   "findings.untranslated": "La page est traduite, pas les constats. Chacun cite une chaîne d'erreur, un nom d'attribut ou un résultat chiffré, et une mesure paraphrasée n'est plus la mesure.",
+  "footer.build": "Build du serveur en cours d'exécution",
   "footer.github": "GitHub",
   "footer.note": "Connaissances publiques de compatibilité issues d'environnements réels.",
   "footer.sponsor": "Sponsoriser",

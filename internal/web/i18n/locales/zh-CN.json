@@ -159,6 +159,7 @@
   "findings.source": "来源",
   "findings.title": "网络测出了什么",
   "findings.untranslated": "页面会翻译，发现本身不翻译。每一条都原样引用了错误字符串、属性名或数值结果，而被转述的测量已经不是测量。",
+  "footer.build": "正在运行的服务器构建",
   "footer.github": "GitHub",
   "footer.note": "来自真实环境的公共兼容性知识。",
   "footer.sponsor": "赞助",

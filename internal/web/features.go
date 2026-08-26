@@ -144,9 +144,9 @@ var koreanFeatureTranslations = map[string]string{
 	"MCP content text plus structuredContent with recorded, uploadQueued, sampleId, applied, reportedFailureAvoided, evidenceClass, and buildPass when supplied.": "MCP 텍스트와 recorded, uploadQueued, sampleId, applied, reportedFailureAvoided, evidenceClass 및 제공된 경우 buildPass가 든 structuredContent를 반환합니다.",
 	"The correlation and hit stay local. Community mode may queue the anonymous adoption outcome; local-only mode records it locally and uploads nothing.":        "상관관계와 적중 기록은 로컬에 남습니다. 커뮤니티 모드는 익명 적용 결과를 대기열에 넣을 수 있고, 로컬 전용 모드는 로컬에만 기록하며 아무것도 업로드하지 않습니다.",
 
-	"Create a sanitized clean-room brief and an empty local workspace.": "정제된 클린룸 작업 지시서와 빈 로컬 작업공간을 만듭니다.",
-	"Builds a proposal from a goal, public package purls, and public symbols, then returns generation instructions and the exact empty workspace path. This tool cannot publish.": "목표, 공개 패키지 purl, 공개 심벌로 제안을 만들고 생성 지침과 정확한 빈 작업공간 경로를 반환합니다. 이 도구는 게시할 수 없습니다.",
-	"Use after NO_SAFE_MATCH when you solved the boundary and the observed build or contract passed.":                                                                             "NO_SAFE_MATCH 뒤에 문제 경계를 해결했고 관측 빌드나 계약이 통과했을 때 사용합니다.",
+	"Create a sanitized clean-room brief and a scaffolded local workspace.": "정제된 클린룸 작업 지시서와 scaffold가 갖춰진 로컬 작업공간을 만듭니다.",
+	"Builds a proposal from a goal, public package purls, and public symbols, then returns generation instructions and a workspace path that already holds spec.json, PROMPT.md and a csx.json manifest scaffold. If it cannot create that workspace it fails instead of returning a path. This tool cannot publish.": "목표, 공개 패키지 purl, 공개 심벌로 제안을 만들고, 생성 지침과 함께 spec.json·PROMPT.md·csx.json manifest scaffold가 이미 들어 있는 작업공간 경로를 반환합니다. 작업공간을 만들지 못하면 경로를 반환하지 않고 실패합니다. 이 도구는 게시할 수 없습니다.",
+	"Use after NO_SAFE_MATCH when you solved the boundary and the observed build or contract passed.":      "NO_SAFE_MATCH 뒤에 문제 경계를 해결했고 관측 빌드나 계약이 통과했을 때 사용합니다.",
 	"The behavior the sample should prove.":                                                                "샘플이 증명해야 할 동작입니다.",
 	"Public package purls the sample must use.":                                                            "샘플이 반드시 사용할 공개 패키지 purl입니다.",
 	"Public symbol families the sample should demonstrate.":                                                "샘플이 보여줘야 할 공개 심벌 계열입니다.",
@@ -305,8 +305,8 @@ func publicMCPFeatureGroups() []featureGroup {
 				},
 				{
 					Name:    "propose_public_sample",
-					Summary: "Create a sanitized clean-room brief and an empty local workspace.",
-					What:    "Builds a proposal from a goal, public package purls, and public symbols, then returns generation instructions and the exact empty workspace path. This tool cannot publish.",
+					Summary: "Create a sanitized clean-room brief and a scaffolded local workspace.",
+					What:    "Builds a proposal from a goal, public package purls, and public symbols, then returns generation instructions and a workspace path that already holds spec.json, PROMPT.md and a csx.json manifest scaffold. If it cannot create that workspace it fails instead of returning a path. This tool cannot publish.",
 					When:    "Use after NO_SAFE_MATCH when you solved the boundary and the observed build or contract passed.",
 					Required: []featureField{
 						{"goal", "string", "The behavior the sample should prove."},

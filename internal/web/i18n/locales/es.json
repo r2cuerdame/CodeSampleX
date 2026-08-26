@@ -159,6 +159,7 @@
   "findings.source": "Fuente",
   "findings.title": "Lo que la red encontró",
   "findings.untranslated": "La página está traducida; los hallazgos no. Cada uno cita una cadena de error, un nombre de atributo o un resultado numérico, y una medición parafraseada ya no es la medición.",
+  "footer.build": "Compilación del servidor en ejecución",
   "footer.github": "GitHub",
   "footer.note": "Conocimiento público de compatibilidad de entornos reales.",
   "footer.sponsor": "Patrocinar",

@@ -7,9 +7,26 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/csx-server ./cmd/csx-server
 
 FROM alpine:3.22
+# What is running here, stamped onto the artifact rather than typed into a
+# page. CSX_VERSION is the immutable deployment revision and its meaning is
+# fixed: the deploy transaction, the OCI label and the evidence collector all
+# compare against it. The rest are the human-readable half.
+#
+# CSX_ENV defaults to development on purpose. Only the production deploy
+# passes production, so an image built by a laptop or by CI can never render
+# a production footer, and an operator who sees "development" on the live
+# site is looking at a real problem rather than a missing default.
 ARG CSX_VERSION=dev
+ARG CSX_BUILD_VERSION=
+ARG CSX_BUILT_AT=
+ARG CSX_ENV=development
 ENV CSX_VERSION=$CSX_VERSION
+ENV CSX_BUILD_VERSION=$CSX_BUILD_VERSION
+ENV CSX_BUILT_AT=$CSX_BUILT_AT
+ENV CSX_ENV=$CSX_ENV
 LABEL org.opencontainers.image.revision=$CSX_VERSION
+LABEL org.opencontainers.image.version=$CSX_BUILD_VERSION
+LABEL org.opencontainers.image.created=$CSX_BUILT_AT
 RUN apk add --no-cache ca-certificates tzdata wget && adduser -D -H csx
 # Named volumes inherit ownership from the image, so the blob dir must exist
 # and belong to the runtime user before the volume is created.
