@@ -733,6 +733,11 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   background: rgba(237,243,255,0.7);
 }
 .foot .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+/* The running build identity. It is for whoever is asking what is
+   deployed, so it sits below the rest of the footer rather than beside
+   it: monospace makes a commit readable, and this keeps monospace from
+   also making it loud. */
+.foot .build { font-size: 0.76rem; opacity: 0.7; }
 /* The release commit is 40 unbroken hex characters — wider than a phone. */
 .foot .mono { overflow-wrap: anywhere; }
 .langs { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.82rem; }

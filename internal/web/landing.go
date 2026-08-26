@@ -477,7 +477,7 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	} else {
 		b.Canonical = base + "/" + lang + "/"
 	}
-	b.JSONLD = landingJSONLD(base, s.d.Version, lang)
+	b.JSONLD = landingJSONLD(base, lang)
 
 	st := s.loadStats(r)
 	hits, err := s.d.Store.HotPackages(r.Context(), 12)

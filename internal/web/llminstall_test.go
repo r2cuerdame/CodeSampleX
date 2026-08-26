@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -77,10 +78,22 @@ func TestAgentInstallPromptIsVisibleAndCopiedFromOneSource(t *testing.T) {
 	}
 }
 
-func TestStylesheetURLTracksTheRunningVersion(t *testing.T) {
+// The cache-busting token has to move with the deployed build, or a visitor
+// keeps the previous release's stylesheet after a rollout. It is the short
+// revision now, because that is the one part of the identity that is unique
+// to a deployment: two builds of the same release line share a version.
+func TestStylesheetURLTracksTheRunningBuild(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
-	mustContain(t, body, `href="/static/site.css?v=1.0.0-test"`)
+	mustContain(t, body, `href="/static/site.css?v=`+testBuild().ShortRevision()+`"`)
+}
+
+// An unstamped build has no token at all: a constant one is worse than none,
+// because it pins every visitor to whatever they cached first.
+func TestStylesheetHasNoTokenWithoutABuild(t *testing.T) {
+	mux, _ := newTestMux(t, func(d *Deps) { d.Build = buildinfo.Info{} })
+	body := get(t, mux, "/").Body.String()
+	mustContain(t, body, `href="/static/site.css"`)
 }
 
 // promptURL finds every URL the prompt hands to an agent.

@@ -190,6 +190,7 @@ The same data the website renders, as JSON, without an account:
 | `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
 | `GET /v1/wanted` | the demand queue: what was asked for and not answered |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
+| `GET /version` | which build of the server answered, and in which environment |
 
 ## Agent adapter (MCP)
 

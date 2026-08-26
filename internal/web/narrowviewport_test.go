@@ -80,7 +80,7 @@ func measurePage(t *testing.T, chrome, path string) {
 	// characters. The old fixture version ("1.0.0-test") is short enough to
 	// fit anywhere, so it hid a line that overflows in production.
 	mux, _ := newTestMux(t, func(d *Deps) {
-		d.Version = "3ca13b91c900cb721572f35bdae81dcc3c61e433"
+		d.Build.Revision = "3ca13b91c900cb721572f35bdae81dcc3c61e433"
 	})
 	srv := httptest.NewServer(measureHarness(mux, path))
 	defer srv.Close()
