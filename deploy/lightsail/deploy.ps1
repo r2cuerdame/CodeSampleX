@@ -215,6 +215,14 @@ if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw "could
 if ($ExpectedRevision -ne "" -and $revision -ne $ExpectedRevision) {
     throw "checked-out revision does not match -ExpectedRevision"
 }
+# The human-readable half of the build identity. `git describe` names the
+# release line this commit sits on and how far past it; the footer renders it
+# beside the short revision, and /version serves both. Derived here rather
+# than inside the image because the build context deliberately excludes .git.
+$buildVersion = (& git -C $repo describe --tags --always).Trim()
+if ($LASTEXITCODE -ne 0 -or $buildVersion -eq "") { throw "could not determine the server build version" }
+$builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+
 $expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File | Sort-Object Name | Select-Object -Last 1).Name
 if ($expectedMigration -notmatch '^[0-9]{4}_[a-z0-9_]+\.sql$') { throw "could not determine the expected migration version" }
 
@@ -425,7 +433,12 @@ if (-not $SkipImage) {
     Write-Output "== building linux/amd64 server image =="
     $dockerfile = Join-Path (Join-Path $repo "deploy") "Dockerfile.server"
     Invoke-Native "docker build" {
-        & docker build --platform linux/amd64 --build-arg "CSX_VERSION=$revision" -f $dockerfile -t $localImageTag $repo
+        & docker build --platform linux/amd64 `
+            --build-arg "CSX_VERSION=$revision" `
+            --build-arg "CSX_BUILD_VERSION=$buildVersion" `
+            --build-arg "CSX_BUILT_AT=$builtAt" `
+            --build-arg "CSX_ENV=production" `
+            -f $dockerfile -t $localImageTag $repo
     }
     # No gzip on Windows PowerShell; ship the plain tar (ssh compresses).
     Invoke-Native "docker save" { & docker save $localImageTag -o $imageTar }
@@ -952,11 +965,16 @@ revision=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{
 image=$(docker inspect codesamplex-server-1 --format '{{.Image}}')
 label=$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 migration=$(docker compose exec -T db psql -U csx -d csx -Atqc "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
-printf '%s|%s|%s|%s\n' "$revision" "$image" "$label" "$migration"
+served=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version |
+  sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
+printf '%s|%s|%s|%s|%s\n' "$revision" "$image" "$label" "$migration" "$served"
 '@
 $liveIdentity = (Invoke-RemoteScript $liveIdentityScript | Select-Object -First 1).Trim()
 $liveIdentityParts = $liveIdentity -split '\|'
-if ($liveIdentityParts.Count -ne 4 -or $liveIdentityParts[0] -ne $revision -or $liveIdentityParts[2] -ne $revision) {
+# The container environment and the image label say what was configured
+# and what was built. Only /version says what the process now answering
+# requests was built from, which is what this deploy is claiming.
+if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $liveIdentityParts[2] -ne $revision -or $liveIdentityParts[4] -ne $revision) {
     throw "served SHA does not match the immutable deployment revision"
 }
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
@@ -972,6 +990,7 @@ for ($i = 0; $i -lt $beforeValues.Count; $i++) {
     }
 }
 Write-Output "deployed SHA: $($liveIdentityParts[0])"
+Write-Output "served /version SHA: $($liveIdentityParts[4])"
 Write-Output "image digest: $($liveIdentityParts[1])"
 Write-Output "migration version: $($liveIdentityParts[3])"
 Write-Output "deployment invariants after: $invariantsAfter"

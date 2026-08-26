@@ -74,10 +74,13 @@ automatic path uses an allowlist, so
 every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
 UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 
-The deploy transaction verifies the running `CSX_VERSION` and OCI revision
-label against the dispatched SHA, the latest `schema_migrations` row against
-the checked-out migration set, `/healthz`, the public page/API/install smokes,
-and monotonic PASS/FAIL/published-sample/failure-cluster totals. The pgx
+The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
+label and the revision the server reports at `GET /version` against the
+dispatched SHA, the latest `schema_migrations` row against the checked-out
+migration set, `/healthz`, the public page/API/install smokes, and monotonic
+PASS/FAIL/published-sample/failure-cluster totals. The first two say what was
+configured and what was built; only `/version` says what the process now
+answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
 before commit enters the existing exact image/config/environment rollback.
 The automatic wrapper also refuses to start if the retired query-bearing
@@ -107,7 +110,10 @@ failed yet", and raise it by shipping a producer, not by rebuilding.
 
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
 target and previous SHA, image digest, migration version, health/smoke result,
-before/after invariants, and rollback outcome. ProjectOps and the independent
+the served `/version` revision, before/after invariants, and rollback outcome.
+`servedRevision` reads `unavailable` for a build older than `/version`, which
+is what the pre-deploy read of the outgoing server reports; the post-deploy
+read must name the dispatched commit or the run fails into rollback. ProjectOps and the independent
 Auditor must read that artifact and the GitHub run conclusion; an Agent comment
 alone is not production evidence. A failed SHA is not redispatched in a loop:
 ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
@@ -436,6 +442,61 @@ That is the reading to trust, and calling the merge API is not a substitute for
 it: an admin holds `bypass_mode: always`, so the API would have merged the red
 commit and proved the bypass rather than the gate.
 
+## Build identity
+
+The site footer ends with the identity of the process that rendered the page:
+
+```text
+· server v0.1.44-66 · 2a6af6a · production
+```
+
+The version is `git describe --tags --always` with the redundant `-g<abbrev>`
+tail removed, the middle field is the short commit, and the last is the
+deployment. Hovering shows the full 40-character revision and the build time.
+`GET /version` serves the same values as JSON, plus the full revision:
+
+```json
+{"service":"csx-server","version":"v0.1.44-66",
+ "revision":"2a6af6a…","shortRevision":"2a6af6a",
+ "environment":"production","builtAt":"2026-08-26T00:11:02Z"}
+```
+
+Nothing here is written by hand. `deploy.ps1` derives the values at build time
+and passes them as image build arguments, so a redeploy moves them, a rollback
+moves them back to the previous image's values, and no page or template has a
+version string in it:
+
+```text
+CSX_VERSION        the immutable 40-character deploy revision. Its meaning is
+                   fixed: the deploy transaction, the OCI
+                   org.opencontainers.image.revision label and the evidence
+                   collector all compare against it.
+CSX_BUILD_VERSION  git describe --tags --always at build time
+CSX_BUILT_AT       RFC3339 UTC build time
+CSX_ENV            the deployment name; production is passed only by
+                   deploy.ps1
+```
+
+They are baked into the image, not set in the compose `.env`, so the artifact
+carries its own identity. `CSX_ENV` defaults to `development` in
+`Dockerfile.server`: an image built by a laptop or by CI cannot render a
+production footer, and `development` on the live site means a real problem
+rather than a missing default. An unstamped build renders no identity line at
+all rather than inventing one.
+
+`/version` reads only these stamps — no database, no blob store. That is why a
+deploy can use it to decide whether the right commit is serving: an answer
+that could fail for an unrelated reason could not decide that. `/healthz` is
+still the endpoint that proves the database is reachable.
+
+The stylesheet cache-busting token is the short revision, so a rollout also
+invalidates `site.css` for every visitor.
+
+The csx client a visitor downloads has its own release version on its own
+cadence. It is never this value, and the landing page's `SoftwareApplication`
+structured data deliberately publishes no `softwareVersion` rather than
+advertising a server commit as the CLI's release.
+
 ## DNS — codesamplex.dev (Gabia)
 
 The Lightsail DNS zone `codesamplex.dev` (account 160122452281, us-east-1 API
@@ -621,6 +682,10 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    the connection pool" above for the list and
                                    for the one-variable rollback.
 ```
+
+The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
+`CSX_BUILT_AT`, `CSX_ENV`) are not here: they are baked into the image at
+build time so the artifact carries its own identity. See "Build identity".
 
 ## Structured failure evidence rollout
 

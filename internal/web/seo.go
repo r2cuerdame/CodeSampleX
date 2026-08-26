@@ -29,7 +29,14 @@ func jsonLD(v any) template.JS {
 const agentNames = "Claude Code, Codex, Gemini CLI, OpenCode"
 
 // landingJSONLD emits WebSite + SoftwareApplication (plan P6.3).
-func landingJSONLD(base, version, lang string) []template.JS {
+//
+// The SoftwareApplication here is csx, the client a visitor installs. It
+// deliberately carries no softwareVersion: the only version this process
+// knows is its own server build, and publishing that as the client's release
+// tells every reader — and every crawler — that the CLI they are about to
+// download is a commit of the website. The footer names the server build as
+// the server build; see buildLineFor.
+func landingJSONLD(base, lang string) []template.JS {
 	website := map[string]any{
 		"@context":    "https://schema.org",
 		"@type":       "WebSite",
@@ -47,9 +54,6 @@ func landingJSONLD(base, version, lang string) []template.JS {
 		"offers": map[string]any{
 			"@type": "Offer", "price": "0", "priceCurrency": "USD",
 		},
-	}
-	if version != "" {
-		app["softwareVersion"] = version
 	}
 	// The landing page answers "what is this" in prose; FAQPage lets search
 	// engines surface that answer directly instead of the install command.

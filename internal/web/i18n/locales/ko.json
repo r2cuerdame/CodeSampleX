@@ -159,6 +159,7 @@
   "findings.source": "출처",
   "findings.title": "네트워크가 찾아낸 것",
   "findings.untranslated": "페이지는 번역하지만 발견 내용은 번역하지 않습니다. 각 항목은 에러 문자열, 속성 이름, 숫자 결과를 그대로 인용하며, 번역해 옮긴 측정은 더 이상 측정이 아니기 때문입니다.",
+  "footer.build": "실행 중인 서버 빌드",
   "footer.github": "GitHub",
   "footer.note": "실제 환경에서 얻은 공개 호환성 지식.",
   "footer.sponsor": "후원",

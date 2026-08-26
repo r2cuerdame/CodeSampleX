@@ -22,7 +22,7 @@ func newTestMux(t *testing.T, mutate func(*Deps)) (*http.ServeMux, *fakeStore) {
 	d := Deps{
 		Store:     f,
 		PublicURL: "https://codesamplex.dev",
-		Version:   "1.0.0-test",
+		Build:     testBuild(),
 	}
 	if mutate != nil {
 		mutate(&d)
