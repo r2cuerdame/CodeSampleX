@@ -80,6 +80,52 @@ func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
 	}
 }
 
+func TestIsolatedTableMigrationsAreAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	for _, name := range []string{"0026_anomaly_reports.sql", "0027_csx_issue_reports.sql"} {
+		t.Run(name, func(t *testing.T) {
+			migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", name)
+			sql, err := os.ReadFile(migrationPath)
+			if err != nil {
+				t.Fatalf("read isolated-table migration: %v", err)
+			}
+			if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+				t.Fatalf("isolated additive table migration rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestIsolatedTableAllowlistDoesNotTouchExistingObjects(t *testing.T) {
+	if err := ValidateMigrationSQL("0098_new.sql", `
+CREATE TABLE new_reports(
+  id BIGSERIAL PRIMARY KEY,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX new_reports_status_idx ON new_reports(status, created_at);`); err != nil {
+		t.Fatalf("strict isolated table and index rejected: %v", err)
+	}
+
+	for name, sql := range map[string]string{
+		"copy existing data":          "CREATE TABLE copied AS SELECT * FROM evidence_agg;",
+		"index existing table":        "CREATE INDEX evidence_stage_idx ON evidence_agg(stage);",
+		"cross-table reference":       "CREATE TABLE new_reports(id BIGINT REFERENCES evidence_agg(id));",
+		"unapproved default":          "CREATE TABLE new_reports(created_at TIMESTAMPTZ DEFAULT clock_timestamp());",
+		"destructive second stmt":     "CREATE TABLE new_reports(id BIGINT); DROP TABLE evidence_agg;",
+		"existing index after create": "CREATE TABLE new_reports(id BIGINT); CREATE INDEX evidence_stage_idx ON evidence_agg(stage);",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateMigrationSQL("0099_bad.sql", sql); err == nil {
+				t.Fatalf("non-isolated create migration accepted: %s", sql)
+			}
+		})
+	}
+}
+
 func TestR2C152MigrationFilePassesAutomaticGate(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
