@@ -264,6 +264,27 @@ SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
 FROM evidence_agg"
 '@
+# The six positions, in order, and what each one is.
+#
+# The first three and the last two are LEDGERS: rows the network appends and
+# nothing in a deploy may take away. They are checked for strict monotonicity.
+#
+# failureClusterObservations is DERIVED. failure_clusters is a materialization
+# the builder rewrites, and RunLoop makes its first pass after every restart a
+# full one — so every deploy re-materializes the whole table by construction.
+# A rebuild that corrects an over-count lowers it while no evidence moved at
+# all, which is exactly what rolled back the 08b32c28 deploy: 20098 -> 20096
+# with PASS and FAIL unchanged to the observation. Monotonicity is the wrong
+# question to ask a materialization; whether it still accounts for the
+# evidence it is derived from is the right one, and that is checked below
+# against the FAIL total in the same reading.
+$invariantNames = @(
+    "pass", "fail", "publishedSamples",
+    "failureClusterObservations", "pgxParseConfigPass", "pgxParseConfigFail")
+$ledgerInvariants = @(0, 1, 2, 4, 5)
+$failureClusterInvariant = 3
+$failInvariant = 1
+
 $invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
 if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed pre-deploy invariants" }
 Write-Output "deployment invariants before: $invariantsBefore"
@@ -984,10 +1005,41 @@ $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object 
 if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
 $beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
 $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-for ($i = 0; $i -lt $beforeValues.Count; $i++) {
+foreach ($i in $ledgerInvariants) {
     if ($afterValues[$i] -lt $beforeValues[$i]) {
-        throw "a production PASS/FAIL/sample/failure-cluster invariant decreased"
+        # Name it. The 08b32c28 rollback reported only that "an invariant
+        # decreased", and the run that had to be diagnosed from the artifact
+        # afterwards could not say which one or by how much.
+        throw "production ledger $($invariantNames[$i]) decreased: $($beforeValues[$i]) -> $($afterValues[$i])"
     }
+}
+
+# The materialized clusters must still account for the failures they are built
+# from. A rebuild may move this number in either direction; losing the evidence
+# is what it may not do, and that shows up here immediately and unambiguously.
+#
+# The rebuild is asynchronous — the restart above started it — so this waits
+# for the safe condition instead of reading once and calling a pass in flight a
+# regression. It fails closed into the same rollback if the wait runs out.
+$clusterCoverageAttempts = 6
+for ($attempt = 1; $true; $attempt++) {
+    if ($afterValues[$failureClusterInvariant] -ge $afterValues[$failInvariant]) { break }
+    if ($attempt -ge $clusterCoverageAttempts) {
+        throw ("$($invariantNames[$failureClusterInvariant]) no longer covers $($invariantNames[$failInvariant]): " +
+            "$($afterValues[$failureClusterInvariant]) < $($afterValues[$failInvariant]) " +
+            "(before: $invariantsBefore, after: $invariantsAfter)")
+    }
+    Start-Sleep -Seconds 15
+    $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
+    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
+    $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+}
+if ($afterValues[$failureClusterInvariant] -lt $beforeValues[$failureClusterInvariant]) {
+    # Not a failure, and not silent either: the artifact carries both readings,
+    # so a rebuild correction stays auditable rather than invisible.
+    Write-Output ("rebuilt $($invariantNames[$failureClusterInvariant]): " +
+        "$($beforeValues[$failureClusterInvariant]) -> $($afterValues[$failureClusterInvariant]), " +
+        "still covering $($invariantNames[$failInvariant]) $($afterValues[$failInvariant])")
 }
 Write-Output "deployed SHA: $($liveIdentityParts[0])"
 Write-Output "served /version SHA: $($liveIdentityParts[4])"
