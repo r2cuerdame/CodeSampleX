@@ -264,7 +264,9 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 		if cmpFloor, cmpErr := CompareVersions(m.Version, st.HighestVersion); cmpErr != nil || cmpFloor < 0 {
 			return res, fmt.Errorf("update: refused release rollback below installed launcher floor %s", st.HighestVersion)
 		}
-		if c.Automatic && active.RollbackHold != nil && m.Sequence <= active.RollbackHold.Sequence {
+		if c.Automatic && active.RollbackHold != nil &&
+			(m.Sequence <= active.RollbackHold.Sequence ||
+				(m.Version == active.RollbackHold.Version && asset.SHA256 == active.RollbackHold.SHA256)) {
 			res.RollbackHeld = true
 			return res, nil
 		}
@@ -615,7 +617,7 @@ func acquireLockWithWait(home string, _ time.Time, wait time.Duration) (func(), 
 	return acquireNamedLock(filepath.Join(updateDir(home), "update.lock"), wait)
 }
 
-func acquireNamedLock(path string, wait time.Duration) (func(), error) {
+func acquireNamedLockLegacy(path string, wait time.Duration) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
