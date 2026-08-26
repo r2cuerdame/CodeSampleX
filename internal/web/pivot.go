@@ -201,7 +201,8 @@ func (g pivotGrid) Empty() bool { return len(g.Rows) == 0 || len(g.Cols) == 0 }
 // because the cell's verdict comes from the verification side.
 type pivotAgg struct {
 	obsPass, obsFail int64
-	// obsAttributed is the subset of obsFail whose sanitizer named a cause.
+	// obsAttributed is the historical wire name for the subset of obsFail
+	// carrying a modern normalized fingerprint.
 	// Observation evidence is co-occurrence, so an unattributed failure says
 	// a build CONTAINING this package broke — one tsc failure wrote a FAIL
 	// for all 412 packages in a lockfile, and 82% of production's failures

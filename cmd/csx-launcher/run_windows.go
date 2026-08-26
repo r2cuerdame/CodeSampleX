@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -35,6 +36,11 @@ var setInformationJobObject = kernel32.NewProc("SetInformationJobObject")
 var assignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
 var getCurrentProcess = kernel32.NewProc("GetCurrentProcess")
 var getConsoleCP = kernel32.NewProc("GetConsoleCP")
+var closeHandle = kernel32.NewProc("CloseHandle")
+
+var launcherJobOnce sync.Once
+var launcherJobErr error
+var launcherJob uintptr
 
 // hasConsole reports whether this launcher owns a console the payload can be
 // handed. GetConsoleCP has no console-independent meaning, so it fails --
@@ -47,18 +53,8 @@ func hasConsole() bool {
 }
 
 func runChild(cmd *exec.Cmd) (int, error) {
-	job, _, callErr := createJobObjectW.Call(0, 0)
-	if job == 0 {
-		return 0, fmt.Errorf("create launcher job: %w", callErr)
-	}
-	info := extendedLimitInformation{}
-	info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose | jobObjectLimitBreakawayOK
-	if ok, _, err := setInformationJobObject.Call(job, jobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); ok == 0 {
-		return 0, fmt.Errorf("configure launcher job: %w", err)
-	}
-	current, _, _ := getCurrentProcess.Call()
-	if ok, _, err := assignProcessToJobObject.Call(job, current); ok == 0 {
-		return 0, fmt.Errorf("assign launcher to kill-on-close job: %w", err)
+	if err := ensureLauncherJob(); err != nil {
+		return 0, err
 	}
 	// Windows gives a console-subsystem child a brand new console -- and a
 	// Terminal window on the user's desktop with it -- whenever the process
@@ -85,5 +81,39 @@ func runChild(cmd *exec.Cmd) (int, error) {
 	if exit, ok := err.(*exec.ExitError); ok {
 		return exit.ExitCode(), nil
 	}
+	if err != nil && cmd.Process == nil {
+		return 0, &childStartError{err: err}
+	}
 	return 0, err
+}
+
+// A launcher may make one bounded LKG retry after CreateProcess rejects the
+// just-verified current payload. The launcher itself must join its kill-on-
+// close job only once; trying to create and assign a second job on that retry
+// is not portable across Windows job nesting policies.
+func ensureLauncherJob() error {
+	launcherJobOnce.Do(func() {
+		job, _, callErr := createJobObjectW.Call(0, 0)
+		if job == 0 {
+			launcherJobErr = fmt.Errorf("create launcher job: %w", callErr)
+			return
+		}
+		info := extendedLimitInformation{}
+		info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose | jobObjectLimitBreakawayOK
+		if ok, _, err := setInformationJobObject.Call(job, jobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); ok == 0 {
+			_, _, _ = closeHandle.Call(job)
+			launcherJobErr = fmt.Errorf("configure launcher job: %w", err)
+			return
+		}
+		current, _, _ := getCurrentProcess.Call()
+		if ok, _, err := assignProcessToJobObject.Call(job, current); ok == 0 {
+			_, _, _ = closeHandle.Call(job)
+			launcherJobErr = fmt.Errorf("assign launcher to kill-on-close job: %w", err)
+			return
+		}
+		// Keep the raw handle alive for the process lifetime. Closing it is the
+		// signal that terminates every payload inheriting this job.
+		launcherJob = job
+	})
+	return launcherJobErr
 }
