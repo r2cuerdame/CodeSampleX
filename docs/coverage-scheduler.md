@@ -142,14 +142,18 @@ still going out — and the two halves of this panel have drifted apart before.
 *Measured against production on 2026-08-24.*
 
 Every stock above counts a RELEASE: a purl either has a passing sample or it
-does not. A package page is not drawn at that grain. It spreads SYMBOL against
-VERSION, so one release with forty symbols is forty cells, and thirty-nine of
-them can be empty while the release counts as proven. At release grain
-production reads 99% covered. At cell grain it reads this:
+does not. The completeness census instead spreads every known SYMBOL across
+every VERSION with a PUBLIC snapshot, so one release with forty symbols is
+forty cells, and thirty-nine of them can be empty while the release counts as
+proven. This is the **unbounded corpus cross-product**, not the package page's
+bounded browse window (six versions, ten symbols loaded per version, then
+bounded rendered axes). Display limits must not remove canonical coordinates
+from the completion denominator. At release grain production reads 99%
+covered. At corpus-cell grain it reads this:
 
 | | |
 | --- | --- |
-| PUBLIC symbol x version cells | 9,409 |
+| PUBLIC corpus symbol x version cells | 9,409 |
 | Observation >= 1 | **1,295 (13.8%)** |
 | our sample passed, nobody seen using it | **3,013 (32.0%)** |
 | nothing recorded at all | **5,101 (54.2%)** |
@@ -159,10 +163,11 @@ Both numbers are true and neither substitutes for the other, so
 `GET /admin/api/farm` -> `backlog.matrixCells` prints the second beside the
 first.
 
-### The two dashes
+### The two absence states
 
-A reader sees one glyph and two causes, and the difference decides what work
-would answer it.
+When a coordinate is inside the current browse window, these two corpus states
+map to visually different dashes. The difference decides what work would
+answer it.
 
 * **`≡ —`, and the cell is a LINK.** We wrote a sample, it passed here, and no
   project build has been attributed to the coordinate. The mark is our run;
@@ -174,11 +179,12 @@ would answer it.
 A census that pooled them would report the same figure for a coordinate this
 network has already executed and one nothing has ever touched.
 
-`packagesShowingBothDashes` counts pages carrying both at once, because that
-is the state R2C-89 reproduces from two live URLs
-(`golang/github.com/jackc/pgx/v5` and `npm/semver`) and the one no single
-sentence explains to a reader. Both pages are carried as a fixture in
-`matrixcells_test.go`, copied cell for cell off the live site.
+`packagesShowingBothDashes` is a legacy JSON field name. It counts packages
+whose full corpus contains both states; it does not claim both coordinates
+survive the UI's bounded browse window simultaneously. R2C-89's two live
+reproductions (`golang/github.com/jackc/pgx/v5` and `npm/semver`) are carried as
+a fixture in `matrixcells_test.go`, along with a regression proving the census
+intentionally retains versions and symbols beyond the display caps.
 
 ### What it does not do
 

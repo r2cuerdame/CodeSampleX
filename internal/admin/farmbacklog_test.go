@@ -138,6 +138,10 @@ func TestFarmPanelReportsTheGridAtCellGrain(t *testing.T) {
 		if cell.observations > 0 {
 			doc += `"USAGE_OBSERVATION":` + strconv.Itoa(cell.observations)
 		}
+		doc += `},"byStage":{`
+		if cell.verifications > 0 {
+			doc += `"CONTRACT":{"pass":` + strconv.Itoa(cell.verifications) + `,"fail":0}`
+		}
 		doc += `},"verificationCounts":{`
 		if cell.verifications > 0 {
 			doc += `"SAMPLE_VERIFICATION":` + strconv.Itoa(cell.verifications) + `,"distinctVerifyingPeers":1`

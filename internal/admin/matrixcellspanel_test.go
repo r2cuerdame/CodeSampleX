@@ -36,4 +36,9 @@ func TestMatrixCellsPanelReadsTheBacklogObject(t *testing.T) {
 	if !strings.Contains(src, "읽지 못함") {
 		t.Error("admin.js renders no absent-state for the cell census")
 	}
+	// The census intentionally exceeds the package UI's browse window. Its
+	// label must not advertise the value as only the cells currently rendered.
+	if !strings.Contains(src, "전체 코퍼스") {
+		t.Error("admin.js does not identify matrixCells as the unbounded corpus census")
+	}
 }

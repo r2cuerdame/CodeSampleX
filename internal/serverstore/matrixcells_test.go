@@ -20,6 +20,7 @@ type matrixCellStore interface {
 type gridCell struct {
 	ecosystem, name, version, symbol string
 	observations, verifications      int
+	failedVerifications              int
 	// publicness defaults to PUBLIC; a case that needs the exclusion says so.
 	publicness string
 }
@@ -28,18 +29,22 @@ func (c gridCell) purl() string {
 	return "pkg:" + c.ecosystem + "/" + c.name + "@" + c.version
 }
 
-// snapshotJSON writes the document shape the aggregation pipeline stores:
-// counts live in two maps that are never summed, and "distinctVerifyingPeers"
-// shares the verification map with the class the census actually reads.
+// snapshotJSON writes the document shape the aggregation pipeline stores.
+// CONTRACT pass/fail decides the rendered verification state; the aggregate
+// verification count intentionally includes both and must not classify it.
 func (c gridCell) snapshotJSON() string {
 	doc := `{"schemaVersion":1,"purl":"` + c.purl() + `","symbol":"` + c.symbol + `","rows":[{` +
 		`"contextLabel":"node 22","observationClassCounts":{`
 	if c.observations > 0 {
 		doc += `"USAGE_OBSERVATION":` + itoa(c.observations)
 	}
+	doc += `},"byStage":{`
+	if c.verifications > 0 || c.failedVerifications > 0 {
+		doc += `"CONTRACT":{"pass":` + itoa(c.verifications) + `,"fail":` + itoa(c.failedVerifications) + `}`
+	}
 	doc += `},"verificationCounts":{`
-	if c.verifications > 0 {
-		doc += `"SAMPLE_VERIFICATION":` + itoa(c.verifications) + `,"distinctVerifyingPeers":1`
+	if total := c.verifications + c.failedVerifications; total > 0 {
+		doc += `"SAMPLE_VERIFICATION":` + itoa(total) + `,"distinctVerifyingPeers":1`
 	}
 	doc += `}}]}`
 	return doc
@@ -193,10 +198,8 @@ func TestMatrixCensusExcludesThePackageLevelTotal(t *testing.T) {
 }
 
 // Verifications are counted apart from observations and never added to them.
-// "distinctVerifyingPeers" rides in the same map and counts peers, so a
-// census that summed the map would read one sample verified by one peer as
-// two runs -- and, worse, would let a verification satisfy a criterion
-// written about observations.
+// In particular, a verification must not satisfy a criterion written about
+// observations.
 func TestMatrixCensusNeverSumsVerificationsIntoObservations(t *testing.T) {
 	fake := NewFake()
 	seedGrid(t, fake, []gridCell{
@@ -209,6 +212,56 @@ func TestMatrixCensusNeverSumsVerificationsIntoObservations(t *testing.T) {
 	}
 	if census.VerifiedNoObservation != 1 {
 		t.Errorf("verifiedNoObservation = %d, want 1", census.VerifiedNoObservation)
+	}
+}
+
+// verificationCounts includes both PASS and FAIL receipts. A failed contract
+// is rendered as a cross, not the linked dash that says our sample passed, so
+// it must not enter VerifiedNoObservation or make a package look like it has
+// both dash states.
+func TestMatrixCensusClassifiesOnlyPassingContractsAsVerifiedOnly(t *testing.T) {
+	fake := NewFake()
+	seedGrid(t, fake, []gridCell{
+		{ecosystem: "npm", name: "broken", version: "2.0.0", symbol: "run", failedVerifications: 2},
+		{ecosystem: "npm", name: "broken", version: "1.0.0", symbol: ""},
+		{ecosystem: "npm", name: "mixed", version: "2.0.0", symbol: "run", verifications: 1, failedVerifications: 1},
+		{ecosystem: "npm", name: "mixed", version: "1.0.0", symbol: ""},
+	})
+	census := fake.matrixCells()
+	if census.Cells != 4 || census.Unmeasured != 2 {
+		t.Errorf("census = %+v, want four corpus cells with two unmeasured", census)
+	}
+	if census.VerifiedNoObservation != 0 {
+		t.Errorf("verifiedNoObservation = %d, want 0 for failed contracts", census.VerifiedNoObservation)
+	}
+	if census.PackagesShowingBothDashes != 0 {
+		t.Errorf("packagesShowingBothDashes = %d, want 0 without a passing contract", census.PackagesShowingBothDashes)
+	}
+}
+
+// MatrixCells is the completeness denominator, not the package page's
+// bounded browse window. Keep older versions and late symbols in the corpus
+// even when they exceed the UI's current six-version, ten-symbol and six-row
+// display caps.
+func TestMatrixCensusIsUnboundedCorpusCrossProduct(t *testing.T) {
+	var cells []gridCell
+	for version := 1; version <= 7; version++ {
+		v := itoa(version) + ".0.0"
+		cells = append(cells, gridCell{ecosystem: "npm", name: "wide", version: v, symbol: ""})
+		if version == 1 {
+			for symbol := 1; symbol <= 11; symbol++ {
+				cells = append(cells, gridCell{
+					ecosystem: "npm", name: "wide", version: v,
+					symbol: "symbol" + itoa(symbol), observations: 1,
+				})
+			}
+		}
+	}
+	fake := NewFake()
+	seedGrid(t, fake, cells)
+	census := fake.matrixCells()
+	if census.Cells != 77 || census.Observed != 11 || census.Unmeasured != 66 {
+		t.Errorf("census = %+v, want all 7 versions x 11 symbols in the corpus", census)
 	}
 }
 
@@ -244,6 +297,12 @@ func TestIntegrationMatrixCensusFakeMatchesPostgres(t *testing.T) {
 		gridCell{ecosystem: "npm", name: "inner", version: "1.0.0", symbol: "", publicness: "PRIVATE"},
 		gridCell{ecosystem: "npm", name: "inner", version: "1.0.0", symbol: "hidden", publicness: "PRIVATE", verifications: 1},
 		gridCell{ecosystem: "npm", name: "quiet", version: "2.0.0", symbol: "", observations: 3},
+		// Aggregate verificationCounts is positive, but CONTRACT has only
+		// failures. Both stores must leave this out of verified-only.
+		gridCell{ecosystem: "npm", name: "broken", version: "2.0.0", symbol: "run", failedVerifications: 2},
+		gridCell{ecosystem: "npm", name: "broken", version: "1.0.0", symbol: ""},
+		gridCell{ecosystem: "npm", name: "mixed", version: "2.0.0", symbol: "run", verifications: 1, failedVerifications: 1},
+		gridCell{ecosystem: "npm", name: "mixed", version: "1.0.0", symbol: ""},
 	)
 
 	ctx := context.Background()
@@ -269,10 +328,10 @@ func TestIntegrationMatrixCensusFakeMatchesPostgres(t *testing.T) {
 	// Both halves must also be RIGHT, not merely equal: two implementations
 	// of the same mistake agree perfectly.
 	want := MatrixCells{
-		Cells:                     12,
+		Cells:                     16,
 		Observed:                  3,
 		VerifiedNoObservation:     3,
-		Unmeasured:                6,
+		Unmeasured:                8,
 		PackagesShowingBothDashes: 2,
 	}
 	if fakeBacklog.Matrix != want {

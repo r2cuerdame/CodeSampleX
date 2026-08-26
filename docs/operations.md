@@ -357,8 +357,11 @@ figures disagree on purpose.
 
 * `coverageHoles` counts **releases**: a purl the network watches people use
   and has never proven. This is what the queue works off.
-* `matrixCells` counts **cells**: the symbol × version grid a package page
-  actually draws, from the same stored snapshots the page renders.
+* `matrixCells` counts **cells**: the unbounded PUBLIC symbol x version corpus
+  cross-product from the same stored snapshots the page reads. It deliberately
+  does not apply the package page's six-version/ten-symbol load window or the
+  later rendered-axis caps; display limits cannot shrink the completeness
+  denominator.
 
 At release grain production reads nearly covered; at cell grain, on
 2026-08-24, 1,295 of 9,409 cells carried an observation. Neither number is
@@ -370,15 +373,19 @@ fleet was nearly done.
 they are answered by different work and pooling them hides which:
 
 * `observed` — a real project build reached this coordinate.
-* `verifiedNoObservation` — our sample passed here and nobody has been seen
-  using it. On the page: `≡ —`, and the cell is a link. **The fleet cannot
+* `verifiedNoObservation` — the snapshot has `CONTRACT.pass > 0`, no
+  `CONTRACT.fail`, and nobody has been seen using the coordinate. Failed or
+  mixed receipts are not included. When visible on the page this is `≡ —`,
+  and the cell is a link. **The fleet cannot
   drain this.** Authoring another sample for a coordinate that already has one
   is duplicate work the queue refuses; only a `csx` install out in the world
   building that coordinate moves it.
-* `unmeasured` — nothing recorded at all. On the page: a plain, unlinked `—`.
-* `packagesShowingBothDashes` — pages rendering a linked and a plain dash at
-  once. Rendered on the panel as **두 표기 공존 패키지** and marked when it is
-  above zero.
+* `unmeasured` — nothing recorded at all for the inferred corpus coordinate.
+  When visible on the page this is a plain, unlinked `—`.
+* `packagesShowingBothDashes` — legacy JSON name for packages whose full
+  corpus contains both states; it does not promise both survive the bounded
+  UI window. Rendered on the panel as **두 상태 공존 패키지** and marked when
+  it is above zero.
 
 A rising `verifiedNoObservation` beside a flat `observed` is the fleet working
 and the field not following, which is a demand problem and not a queue one.

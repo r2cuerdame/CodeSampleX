@@ -2,22 +2,24 @@ package serverstore
 
 import "encoding/json"
 
-// MatrixCells is the compatibility grid the site draws, counted.
+// MatrixCells is the PUBLIC compatibility corpus counted at symbol x version
+// grain.
 //
-// R2C-89 asks a question the farm panel could not answer: how many of the
-// cells a reader actually sees carry an observation. Every stock the panel
+// R2C-89 asks a question the farm panel could not answer: how many canonical
+// symbol x version coordinates carry an observation. Every stock the panel
 // held before this was counted per RELEASE -- a purl either had a passing
-// sample or it did not -- and at that grain production reads 99% covered while
-// the page a reader opens is mostly dashes. The grain is the whole
-// disagreement: a package page spreads SYMBOL against VERSION, so one release
-// with forty symbols is forty cells, and thirty-nine of them can be empty
-// while the release counts as proven.
+// sample or it did not. The grain is the whole disagreement: one release with
+// forty known symbols is forty corpus cells, and thirty-nine of them can be
+// empty while the release counts as proven.
 //
-// So this counts what the grid draws. The cell set is the cross product the
-// page renders -- every symbol the network knows for a package against every
-// release of it that has a snapshot -- and each cell falls in exactly one of
-// three states, which is what the two visually different dashes on the page
-// mean:
+// This deliberately counts the unbounded corpus cross product -- every symbol
+// the network knows for a package against every release of it that has a
+// snapshot. It is not the bounded browse window: the package UI currently
+// reads at most six releases and ten symbols per release, then caps its axes
+// again. Those display limits must not make older canonical coordinates
+// disappear from the completeness denominator.
+//
+// Each corpus cell falls in one of three states:
 //
 //   - Observed. A real project build reached this coordinate. This is the
 //     only state R2C-89 counts as covered.
@@ -38,7 +40,7 @@ import "encoding/json"
 // which of the three is growing is worth having before that is answered, and
 // the same census is what will judge the answer afterwards.
 type MatrixCells struct {
-	// Cells is the denominator: symbol × version cells across every PUBLIC
+	// Cells is the denominator: symbol x version cells across every PUBLIC
 	// package with a symbol grid. Non-public coordinates are left out for the
 	// same reason CoverageHoles leaves them out -- the queue may not offer
 	// them, so they are not a backlog anybody can work off.
@@ -46,20 +48,20 @@ type MatrixCells struct {
 	// Observed is cells with at least one observation. This is the number
 	// R2C-89's completion criterion is written against.
 	Observed int
-	// VerifiedNoObservation is the linked dash: a sample of ours passed here
+	// VerifiedNoObservation is a coordinate where a sample of ours passed
 	// and no project build has been attributed to it. It is reported apart
 	// from Observed and never added to it -- an observation and a
 	// verification are different classes of evidence and this repository does
 	// not sum them (goal.md §3.5, and the snapshot builder says so in as many
 	// words).
 	VerifiedNoObservation int
-	// Unmeasured is the plain dash: a cell the grid draws because the symbol
-	// exists at some other release, with nothing recorded at this one.
+	// Unmeasured is an inferred corpus cell: the symbol exists at some other
+	// release, with nothing recorded at this one.
 	Unmeasured int
-	// PackagesShowingBothDashes is how many package pages render a linked and
-	// a plain dash at the same time -- the state the issue reproduces from
-	// two live URLs. A page in that state cannot be explained to a reader by
-	// one sentence about either cause.
+	// PackagesShowingBothDashes is the legacy JSON name for how many packages
+	// contain both a passed-verification-only coordinate and an unmeasured
+	// coordinate in the corpus. It does not claim both coordinates survive
+	// the UI's bounded browse window at the same time.
 	PackagesShowingBothDashes int
 }
 
@@ -71,7 +73,10 @@ type MatrixCells struct {
 type matrixCellCounts struct {
 	Rows []struct {
 		ObservationClassCounts map[string]int64 `json:"observationClassCounts"`
-		VerificationCounts     map[string]int64 `json:"verificationCounts"`
+		ByStage                map[string]struct {
+			Pass int64 `json:"pass"`
+			Fail int64 `json:"fail"`
+		} `json:"byStage"`
 	} `json:"rows"`
 }
 
@@ -79,29 +84,32 @@ type matrixCellCounts struct {
 // census turns on.
 //
 // Observations sum every class: the classes split HOW a build was seen, not
-// whether it was. Verifications count SAMPLE_VERIFICATION alone --
-// "distinctVerifyingPeers" shares the map and is a count of peers, so adding
-// it would let one sample verified by three machines read as three runs.
-func snapshotCellEvidence(snapshotJSON string) (observations, verifications int64) {
+// whether it was. Passing-only verifications come from CONTRACT.pass with no
+// CONTRACT.fail.
+// verificationCounts records both passing and failing receipts, so using its
+// SAMPLE_VERIFICATION total would turn a failed contract (rendered as a
+// cross) into the linked-dash state that means our sample passed. A mixed
+// pass/fail coordinate is also a cross and stays out.
+func snapshotCellEvidence(snapshotJSON string) (observations, passingVerifications, failedVerifications int64) {
 	var doc matrixCellCounts
 	if json.Unmarshal([]byte(snapshotJSON), &doc) != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	for _, row := range doc.Rows {
 		for _, n := range row.ObservationClassCounts {
 			observations += n
 		}
-		verifications += row.VerificationCounts[sampleVerificationClass]
+		contract := row.ByStage[contractStage]
+		passingVerifications += contract.Pass
+		failedVerifications += contract.Fail
 	}
-	return observations, verifications
+	return observations, passingVerifications, failedVerifications
 }
 
-// sampleVerificationClass is domain.ClassSampleVerification spelled out. The
-// constant lives in internal/domain, which this package already depends on --
-// but the string is what is written into the stored document, and the PG half
-// of this census matches the same literal in SQL. Written once, so the two
-// halves cannot drift.
-const sampleVerificationClass = "SAMPLE_VERIFICATION"
+// contractStage is domain.StageContract spelled out. The string is what is
+// written into stored snapshot documents, and the PostgreSQL census matches
+// the same literal in SQL.
+const contractStage = "CONTRACT"
 
 // matrixGrid accumulates one package's grid while the census walks cells.
 type matrixGrid struct {
@@ -112,10 +120,9 @@ type matrixGrid struct {
 	verifiedNoObservation int
 }
 
-// total is the cross product the page draws: every symbol against every
-// release, including the pairs that have no snapshot at all. Those pairs are
-// the plain dashes, and they exist only as the difference between this and
-// the rows actually stored.
+// total is the unbounded corpus cross product: every symbol against every
+// release, including pairs with no snapshot. Those pairs exist only as the
+// difference between this and the rows actually stored.
 func (g *matrixGrid) total() int { return len(g.versions) * len(g.symbols) }
 
 // foldMatrixGrids reduces per-package grids to the census the panel prints.
