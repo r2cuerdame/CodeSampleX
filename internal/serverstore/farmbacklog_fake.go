@@ -178,7 +178,11 @@ func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) 
 		if resolved[purl] {
 			dependency = dependencyGraph
 		}
-		out.States[completenessKey(verified[purl], observed[purl], dependency)]++
+		// A passing receipt is evidence in its own right. It also proves that a
+		// sample exists, so a verified coordinate must never be reported as
+		// Sample-without-Evidence merely because no observation batch arrived.
+		evidence := observed[purl] || verified[purl]
+		out.States[completenessKey(verified[purl], evidence, dependency)]++
 		switch dependency {
 		case dependencyGraph:
 			out.DependencyGraph++

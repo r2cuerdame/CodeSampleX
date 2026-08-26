@@ -25,12 +25,13 @@ func TestFarmCompletenessCountsTheEightStates(t *testing.T) {
 
 	// One coordinate per state, named for the state it is in.
 	//
-	// S-D and --D are seeded and stay empty, which is a fact about the data
+	// S-D, S-- and --D are seeded and stay empty, which is a fact about the data
 	// rather than a gap in the fixture: the only thing that records a
 	// resolved graph today is an observation batch, and a batch carries the
 	// package it is about -- so a coordinate with a graph necessarily has
-	// evidence. Production measured both cells at zero on 2026-08-23. The
-	// panel keeps all eight cells so the day a resolution arrives from
+	// evidence. Likewise, a passing receipt is itself evidence, so a sample
+	// cannot occupy a no-evidence cell. The panel keeps all eight cells so the
+	// day a resolution arrives from
 	// somewhere else, the number moves instead of the shape changing.
 	seedCompletenessCoordinate(t, f, "sed", true, true, true, now)
 	seedCompletenessCoordinate(t, f, "se", true, true, false, now)
@@ -46,7 +47,7 @@ func TestFarmCompletenessCountsTheEightStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int{
-		"SED": 1, "SE-": 1, "S-D": 0, "S--": 1,
+		"SED": 1, "SE-": 2, "S-D": 0, "S--": 0,
 		"-ED": 1, "-E-": 1, "--D": 0, "---": 1,
 	}
 	// The two coordinates seeded with a graph and no evidence land in SED and
@@ -67,6 +68,34 @@ func TestFarmCompletenessCountsTheEightStates(t *testing.T) {
 	}
 	if total != 8 {
 		t.Errorf("the eight cells sum to %d, want 8 -- every coordinate is in exactly one", total)
+	}
+}
+
+// A contract receipt is executed evidence, even when the network has not yet
+// ingested an observation batch for the same release. Both stores must keep
+// that coordinate out of the misleading Sample-without-Evidence cell.
+func TestFarmCompletenessCountsPassingReceiptAsEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		store completenessStore
+	}{
+		{name: "fake", store: NewFake()},
+		{name: "postgres", store: openTestPG(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seedCompletenessCoordinate(t, tc.store, "receipt-only-"+tc.name, true, false, false, now)
+			got, err := tc.store.(FarmCompletenessStore).FarmCompletenessNow(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.States["SE-"] != 1 {
+				t.Fatalf("SE- = %d, want 1 for a passing receipt without an observation: %v", got.States["SE-"], got.States)
+			}
+			if got.States["S--"] != 0 {
+				t.Fatalf("S-- = %d, want 0: a passing receipt is evidence", got.States["S--"])
+			}
+		})
 	}
 }
 

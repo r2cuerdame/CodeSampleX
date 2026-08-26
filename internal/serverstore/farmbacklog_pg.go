@@ -106,6 +106,7 @@ func (p *PG) FarmCompletenessNow(ctx context.Context) (FarmCompleteness, error) 
 			SELECT (CASE WHEN EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
 			             THEN 'S' ELSE '-' END)
 			    || (CASE WHEN EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=pk.purl)
+			                   OR EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
 			             THEN 'E' ELSE '-' END)
 			    || (CASE WHEN EXISTS (SELECT 1 FROM resolved_parents d WHERE d.purl=pk.purl)
 			             THEN 'D' ELSE '-' END) AS state,
