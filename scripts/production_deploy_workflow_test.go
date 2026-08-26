@@ -59,6 +59,39 @@ func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 	}
 }
 
+func TestProductionRequiresSuccessfulSameTargetReleaseAndFarm(t *testing.T) {
+	workflow := productionWorkflow(t)
+	head := workflow
+	if i := strings.Index(workflow, "\njobs:"); i >= 0 {
+		head = workflow[:i]
+	}
+	if !strings.Contains(head, "actions: read") {
+		t.Fatal("production eligibility cannot read the same-target Release run")
+	}
+	jobs := releaseJobs(t, workflow)
+	eligibility, ok := jobs["eligibility"]
+	if !ok {
+		t.Fatalf("production workflow has no eligibility job; jobs=%v", jobKeys(jobs))
+	}
+	for _, required := range []string{
+		"Require successful same-target release and farm rollout",
+		"actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&event=push&status=success&per_page=1",
+		".workflow_runs[0].id // 0",
+		`if ! [[ "$release_run" =~ ^[1-9][0-9]*$ ]]; then`,
+	} {
+		if !strings.Contains(eligibility, required) {
+			t.Errorf("same-target release/farm gate is missing %q", required)
+		}
+	}
+	if strings.Contains(eligibility, "secrets.") {
+		t.Fatal("release/farm eligibility introduced a secret before the production deploy job")
+	}
+	deploy := jobs["deploy"]
+	if !strings.Contains(deploy, "needs: eligibility") {
+		t.Fatal("production deploy no longer waits for release/farm eligibility")
+	}
+}
+
 func TestOnlyTheDeployJobCanReachProductionCredentials(t *testing.T) {
 	jobs := releaseJobs(t, productionWorkflow(t))
 	deploy, ok := jobs["deploy"]

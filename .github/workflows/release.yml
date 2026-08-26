@@ -336,12 +336,12 @@ jobs:
           ./mcp-publisher publish
 
   # The farm is part of this release, not something that finds out about it
-  # later. Its nodes do self-converge within ten minutes, and that stays the
-  # safety net — but a rollout nobody watched cannot drain a worker before it
+  # later. Its nodes still self-converge, but that is recovery rather than
+  # release evidence: a rollout nobody watched cannot drain a worker before it
   # swaps, cannot canary one before the rest, and cannot tell this workflow
-  # that a target never came back. Dispatching it here is what makes a failed
-  # farm target visible as a failed release rather than a green run beside a
-  # red one nobody opened.
+  # that a target never came back. A green Release run therefore means this
+  # job observed the farm reach the exact release; production relies on that
+  # meaning before it starts the server half of a dual-binary change.
   #
   # Deliberately a separate job. The updater signing seed lives in the sign
   # job's protected environment; a token that can start a workflow in another
@@ -377,13 +377,12 @@ jobs:
         run: |
           set +e
           TAG="${GITHUB_REF#refs/tags/}"
-          # An absent secret is a supported state, not a failure: the farm still
-          # picks the release up on its own schedule. Failing a release over a
-          # missing convenience would be worse than the latency.
+          # Self-convergence is not ordered evidence. Without the dispatch token
+          # this workflow cannot prove the verifier fleet reached the client
+          # before a production server deploy, so the release must fail closed.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::notice::CSX_FARM_DISPATCH_TOKEN is not set; the farm will converge on $TAG within ten minutes on its own."
-            echo "dispatched=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::CSX_FARM_DISPATCH_TOKEN is required; refusing a green release without verified farm rollout evidence for $TAG."
+            exit 1
           fi
           # A farm with no runner online cannot roll out, and the wait below
           # would sit against a queued run until this job times out — an hour of
@@ -429,31 +428,33 @@ jobs:
             echo "::error::could not dispatch the farm rollout"
             exit 1
           fi
-          echo "dispatched=true" >> "$GITHUB_OUTPUT"
 
       - name: Wait for the farm to report
-        if: steps.dispatch.outputs.dispatched == 'true'
         env:
           GH_TOKEN: ${{ secrets.CSX_FARM_DISPATCH_TOKEN }}
           FARM_REPO: r2cuerdame/CodeSampleX-Farm
           BEFORE: ${{ steps.dispatch.outputs.before }}
         run: |
           set +e
-          # A dispatch does not hand back a run id, so wait for a run newer than
-          # the one recorded above rather than assuming the first listed is ours.
+          TAG="${GITHUB_REF#refs/tags/}"
+          # A dispatch does not hand back a run id. Match both a newer database
+          # id and the Farm workflow's immutable `farm -> <tag>` display title;
+          # an unrelated manual rollout must not satisfy this release.
           RUN=0
           for _ in $(seq 1 30); do
             sleep 10
             RUN=$(gh run list --repo "$FARM_REPO" --workflow deploy.yml \
-              --limit 1 --json databaseId --jq '.[0].databaseId // 0')
-            if [ -n "$RUN" ] && [ "$RUN" != "$BEFORE" ]; then break; fi
+              --limit 20 --json databaseId,displayTitle | \
+              jq -r --arg title "farm -> $TAG" --argjson before "${BEFORE:-0}" \
+                '[.[] | select(.databaseId > $before and .displayTitle == $title)][0].databaseId // 0')
+            if [ "$RUN" != "0" ]; then break; fi
             RUN=0
           done
           if [ "$RUN" = 0 ]; then
             echo "::error::the farm never started a rollout for this release"
             exit 1
           fi
-          echo "Watching ${FARM_REPO} run ${RUN}"
+          echo "Watching ${FARM_REPO} run ${RUN} for ${TAG}"
           # Poll for the conclusion rather than `gh run watch`. The farm repo is
           # private and this repository's logs are world-readable; streaming its
           # job names, step names and failure annotations in here would publish

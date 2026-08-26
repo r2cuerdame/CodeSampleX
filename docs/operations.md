@@ -43,11 +43,17 @@ of trust.
 
 `.github/workflows/production-deploy.yml` is separate from `release.yml`.
 ProjectOps dispatches it only after the immutable target SHA is in canonical
-`main`, the required `Test` check succeeded, Auditor `MergeVerdict=pass`,
-`requires_human_decision=no`, and the side effect class is `safe` or
-`additive-migration`. The dispatch also names the currently served known-good
-SHA. The workflow rejects drift between that SHA and the host before changing
-anything, and `codesamplex-production` concurrency serializes all rollouts.
+`main`, the required `Test` check succeeded, and there is a successful
+`Release` run for that exact target SHA. A green `Release` run includes the
+observed farm rollout; a missing farm dispatch token, a rollout that never
+starts, or a target that does not return healthy makes the release red. The
+production eligibility job reads that same-target evidence before it can reach
+the production Environment. Auditor `MergeVerdict=pass`,
+`requires_human_decision=no`, and a `safe` or `additive-migration` side effect
+class are still required. The dispatch also names the currently served
+known-good SHA. The workflow rejects drift between that SHA and the host before
+changing anything, and `codesamplex-production` concurrency serializes all
+rollouts.
 
 The `codesamplex-production` GitHub Environment owns only:
 
@@ -403,8 +409,10 @@ queued and the draft waits on nothing. That is how deploying commit
 two attempts of the x/sys and go-isatty drafts on 2026-08-23 without measuring
 either one.
 
-So the ordering matters: **release the client to the verifier fleet first, or
-at least in the same change, and only then rely on the server relaxing jobs.**
+So the ordering matters: **complete the client rollout to every verifier and
+verify the exact client version and capability marker there before restarting
+or deploying the server that relaxes jobs.** Publishing the client and starting
+the server rollout concurrently does not establish that order and is forbidden.
 A receipt whose `stages` are `resolve=FAIL` with an empty `env` is the signature
 of this mismatch — it says the verifier never started, not that the sample
 failed. `health.unsupportedJobs` will not show it, because from the server's
@@ -420,6 +428,12 @@ ssh -i ~/.ssh/csx-farm.pem ubuntu@43.200.78.1 \
   'sudo grep -ac "no runnable work: the queue offered" /home/csxver/.local/bin/csx'
 # 0 means the client half is missing however new the tag looks
 ```
+
+Run both checks on every verifier host. Only after both checks pass on every
+verifier host may the production server restart. The workflow form of the same
+rule is fail-closed: `release.yml` cannot finish green without the farm rollout,
+and `production-deploy.yml` accepts only a successful `Release` run whose head
+SHA is the exact production target.
 
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
