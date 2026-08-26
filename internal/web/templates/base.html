@@ -388,7 +388,7 @@ document.addEventListener('keydown',event=>{
 {{define "pivot"}}
 {{- if .Measured}}
 <div class="gridstats mono small">
-  {{- if .CountPass}}<span class="gs pass"><span class="glyph" aria-hidden="true">≡</span> {{.CountPass}}</span>{{end}}
+  {{- if .CountPass}}<span class="gs pass"><span class="glyph" aria-hidden="true">◆</span> {{.CountPass}}</span>{{end}}
   {{- if .CountFail}}<span class="gs fail"><span class="glyph" aria-hidden="true">✕</span> {{.CountFail}}</span>{{end}}
   {{- if .CountMixed}}<span class="gs mixed"><span class="glyph" aria-hidden="true">◐</span> {{.CountMixed}}</span>{{end}}
   {{- if .CountObserved}}<span class="gs observed"><span class="glyph" aria-hidden="true">○</span> {{.CountObserved}}</span>{{end}}
@@ -406,7 +406,7 @@ document.addEventListener('keydown',event=>{
   <th class="rowlabel mono">{{if .Href}}<a href="{{.Href}}">{{template "osicon" .Icon}}{{.Label}}</a>{{else}}{{template "osicon" .Icon}}{{.Label}}{{end}}{{if .Note}} <span class="symshared small">{{.Note}}</span>{{end}}</th>
   {{- range .Cells}}
   <td class="pv {{.Class}}{{if .Tone}} t-{{.Tone}}{{end}}"{{if .Tip}} title="{{.Tip}}"{{end}}>
-    {{- if .Href}}<a href="{{.Href}}"{{if .Tip}} aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</a>{{else}}<span class="pvbody"{{if .Tip}} role="img" aria-label="{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}} — {{.Tip}}"{{end}}>{{template "pivotcell" .}}</span>{{end -}}
+    {{- if .Href}}<a href="{{.Href}}" aria-label="{{if .CodeLabel}}{{.CodeLabel}} · {{end}}{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}}{{if .Tip}} — {{.Tip}}{{end}}{{if .DrillLabel}} · {{.DrillLabel}}{{end}}">{{template "pivotcell" .}}</a>{{else}}<span class="pvbody" role="img" aria-label="{{if .CodeLabel}}{{.CodeLabel}} · {{end}}{{.Basis}}{{if .Ratio}} {{.Ratio}}{{end}}{{if .Tip}} — {{.Tip}}{{end}}">{{template "pivotcell" .}}</span>{{end -}}
   </td>
   {{- end}}
 </tr>
@@ -416,7 +416,24 @@ document.addEventListener('keydown',event=>{
 </div>
 {{end}}
 
-{{define "pivotcell"}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono">{{.Ratio}}</span>{{end}}{{if .Passes}}<span class="pvpasses mono dim">{{.Passes}}</span>{{end}}{{end}}
+{{/* One mark per fact, and never one mark for two.
+
+     codemark  — there is sample code for this release and API. It is drawn
+                 as a document because that is what it opens, and it is
+                 environment-blind by construction (cubecode.go): switching
+                 the OS filter cannot take it away.
+     glyph     — this network ran its own contract in THIS environment.
+     drill     — there is a level below this cell. Navigation, and nothing
+                 else, wears the chevron.
+
+     They used to be one triple-bar that readers took for a hamburger and
+     followed down to coordinates that had no code to show. */}}
+{{define "pivotcell"}}{{if .Code}}<span class="codemark" role="img" aria-label="{{.CodeLabel}}">{{template "codeicon"}}</span>{{end}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{if .Ratio}}<span class="pvratio mono">{{.Ratio}}</span>{{end}}{{if .Passes}}<span class="pvpasses mono dim">{{.Passes}}</span>{{end}}{{if .DrillLabel}}<span class="drill" aria-hidden="true">›</span>{{end}}{{end}}
+
+{{/* The code-availability icon: a document with angle brackets in it. Never
+     a hamburger, a kebab or anything else a reader has learned to read as
+     "menu" — that misreading is the whole reason this mark exists. */}}
+{{define "codeicon"}}<svg class="ico-code" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M9.3 1.6H4.3a1.4 1.4 0 0 0-1.4 1.4v10a1.4 1.4 0 0 0 1.4 1.4h7.4a1.4 1.4 0 0 0 1.4-1.4V5.3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9.3 1.6v3.7h3.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M6.7 8.4 5.3 10l1.4 1.6M9.3 8.4 10.7 10l-1.4 1.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{end}}
 
 {{/* pivotlegend teaches the cell before it lists the marks. A symbol list
      answers "what is this glyph"; a reader's actual question is "what does
@@ -426,9 +443,14 @@ document.addEventListener('keydown',event=>{
 <div class="pivotlegend">
   <p class="small"><strong>{{.T "legend.how_heading"}}</strong> {{.T "legend.how_rate"}}</p>
   <ul class="pivotlegend-marks mono small">
-    <li><span class="glyph" aria-hidden="true">≡</span> {{.T "legend.mark_check"}}</li>
+    <li><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span> {{.T "legend.mark_code"}}</li>
+    <li><span class="glyph" aria-hidden="true">◆</span> {{.T "legend.mark_check"}}</li>
     <li><span class="glyph" aria-hidden="true">✕</span> {{.T "legend.mark_cross"}}</li>
     <li><span class="glyph" aria-hidden="true">—</span> {{.T "landing.legend_empty"}}</li>
+    <li><span class="drill" aria-hidden="true">›</span> {{.T "legend.mark_drill"}}</li>
   </ul>
+  {{/* Said in words under the marks, because the separation is the part a
+       reader cannot infer from two icons sitting beside each other. */}}
+  <p class="small dim">{{.T "cube.code_scope"}}</p>
 </div>
 {{end}}

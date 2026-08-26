@@ -29,6 +29,11 @@ func TestDevServe(t *testing.T) {
 		store = deepLinkStore()
 	case "drilldown":
 		store = drillDownStore()
+	case "navleaf":
+		// The coordinate R2C-127 was reported from: a release with published
+		// samples, one environment this network verified and one it only
+		// observed, and a package-level total under it all.
+		store = uuidNavStore()
 	}
 	mux, _ := newTestMux(t, func(d *Deps) {
 		d.Store = store

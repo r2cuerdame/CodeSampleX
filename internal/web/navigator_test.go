@@ -70,11 +70,12 @@ func TestThePinsAreVisibleAndRemovableOneAtATime(t *testing.T) {
 // release, wider than the coordinate the reader had just worked down to —
 // wearing the same blue as the links that go deeper.
 //
-// The answer card's records link is the one exception, and it is an exception
-// on the same reasoning rather than in spite of it: what made the old links
-// wrong was that a coordinate wearing the drill-down's blue said nothing
-// about where it went. This one carries a label that says exactly that, and a
-// reader who has an answer needs a way to the samples and receipts behind it.
+// The answer card's evidence actions are the one exception, and they are an
+// exception on the same reasoning rather than in spite of it: what made the
+// old links wrong was that a coordinate wearing the drill-down's blue said
+// nothing about where it went. These carry labels that say exactly that, are
+// drawn as their own grammar rather than as more of the instrument, and a
+// reader who has an answer needs a way to the code and receipts behind it.
 func TestNoLinkInsideTheInstrumentLeavesIt(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/npm/axios?f_version=1.12.0").Body.String()
@@ -94,32 +95,38 @@ func TestNoLinkInsideTheInstrumentLeavesIt(t *testing.T) {
 	}
 }
 
-// The one labelled way out is labelled, and goes where the label says.
+// The labelled ways out are labelled, and go where the label says. They also
+// exist only where their destination does, which is why this fixture pins a
+// symbol that has a published sample behind it (R2C-127).
 func TestTheAnswerCardsWayOutIsLabelled(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/npm/axios?f_version=1.12.0&f_symbol=axios.post").Body.String()
 
-	i := strings.Index(body, `class="answer-records"`)
+	i := strings.Index(body, `class="answer-actions"`)
 	if i < 0 {
-		t.Fatal("the answer states a coordinate and offers no way to the records behind it")
+		t.Fatal("the answer states a coordinate and offers no way to the evidence behind it")
 	}
-	link := body[i : i+strings.Index(body[i:], "</p>")]
-	if !strings.Contains(link, "Samples and receipts") {
-		t.Errorf("the way out of the instrument wears no label: %s", link)
+	block := body[i : i+strings.Index(body[i:], "</div>")]
+	if !strings.Contains(block, "Measured records for this coordinate") {
+		t.Errorf("the way out of the instrument wears no label: %s", block)
 	}
-	if !strings.Contains(link, "/npm/axios/1.12.0") {
-		t.Errorf("the records link does not go to this coordinate: %s", link)
+	if !strings.Contains(block, "/npm/axios/1.12.0") {
+		t.Errorf("the records action does not go to this coordinate: %s", block)
+	}
+	// And the code action, because this coordinate has a published sample.
+	if !strings.Contains(block, "Sample code") {
+		t.Errorf("a coordinate with published code offers no way to it: %s", block)
 	}
 }
 
-// stripAnswerRecords removes the answer card's single labelled link so the
-// blanket rule can keep applying to everything else.
+// stripAnswerRecords removes the answer card's labelled evidence actions so
+// the blanket rule can keep applying to everything else.
 func stripAnswerRecords(s string) string {
-	i := strings.Index(s, `class="answer-records"`)
+	i := strings.Index(s, `class="answer-actions"`)
 	if i < 0 {
 		return s
 	}
-	j := strings.Index(s[i:], "</p>")
+	j := strings.Index(s[i:], "</div>")
 	if j < 0 {
 		return s[:i]
 	}
