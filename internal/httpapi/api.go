@@ -67,6 +67,10 @@ type Deps struct {
 
 	// Now is a test seam; nil means time.Now.
 	Now func() time.Time
+
+	// authoringWorkTimeout is a test seam for the server-owned ceiling on one
+	// authoring poll. Production always uses authoringWorkPollTimeout.
+	authoringWorkTimeout time.Duration
 }
 
 type api struct {
@@ -76,6 +80,11 @@ type api struct {
 	// publicness checker when that checker can answer the question, and is
 	// nil otherwise — which means "carry on", never "no jar".
 	mavenJar MavenJarProber
+
+	// Candidate discovery is a whole-corpus read. One in-flight call is shared
+	// by every authoring worker polling at the same time; the claim that follows
+	// remains per worker and authoritative in the store.
+	authoringCandidates authoringCandidateGate
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.
@@ -91,6 +100,9 @@ func NewMux(d Deps) *http.ServeMux {
 	}
 	if d.HTTPClient == nil {
 		d.HTTPClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	if d.authoringWorkTimeout <= 0 {
+		d.authoringWorkTimeout = authoringWorkPollTimeout
 	}
 	a := &api{d: d}
 	// The publicness checker already talks to Maven Central; asking it one

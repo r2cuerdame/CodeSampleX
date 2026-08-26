@@ -266,6 +266,57 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	}
 }
 
+func TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
+	pg := openTestPG(t)
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockResult := make(chan error, 1)
+	go func() {
+		lockResult <- pg.withConn(context.Background(), func(c *pgx.Conn) error {
+			tx, err := c.Begin(context.Background())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			if _, err := tx.Exec(context.Background(), `LOCK TABLE packages IN ACCESS EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("could not establish the blocking authoring fixture")
+	}
+
+	started := time.Now()
+	_, err := pg.listAuthoringExpansionCandidates(context.Background(), 10, 75*time.Millisecond)
+	elapsed := time.Since(started)
+	close(release)
+	if lockErr := <-lockResult; lockErr != nil {
+		t.Fatalf("release authoring fixture: %v", lockErr)
+	}
+	if !IsQueryTimeout(err) {
+		t.Fatalf("blocked authoring query error = %v, want PostgreSQL statement timeout", err)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("75ms statement timeout returned after %v", elapsed)
+	}
+
+	// PostgreSQL canceled the statement inside a read-only transaction. The
+	// pool must be able to serve the next candidate read without reconnecting
+	// or carrying the failed transaction forward.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := pg.listAuthoringExpansionCandidates(ctx, 1, time.Second); err != nil {
+		t.Fatalf("candidate query after timeout: %v", err)
+	}
+}
+
 // A symbol-scoped draft holds the whole package coordinate. PG's in_flight
 // used to yield the package-level (purl,”) pair only when the draft named no
 // symbols — while the fake has always marked it for every draft — so a purl
@@ -1728,6 +1779,15 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 			loops, wantedRows, samples, budget)
 	}
 	t.Logf("manifest expansions: %.0f for %d requests over %d samples", loops, wantedRows, samples)
+
+	// Package pages ask only for their own wanted rows. A crawler can visit
+	// thousands of real package pages that have no open request; those pages
+	// must not expand the entire sample corpus merely to prove the filtered
+	// wanted set is empty.
+	absentLoops := listWantedExpansionLoopsFor(t, pg, "npm", "package-with-no-wanted-row")
+	if absentLoops != 0 {
+		t.Fatalf("wanted-free package page expanded manifests %.0f times, want 0", absentLoops)
+	}
 }
 
 // listWantedExpansionLoops runs the shipped Wanted statement under EXPLAIN
@@ -1736,11 +1796,20 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 // statement the server sends.
 func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 	t.Helper()
+	loops := listWantedExpansionLoopsFor(t, pg, "", "")
+	if loops == 0 {
+		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
+	}
+	return loops
+}
+
+func listWantedExpansionLoopsFor(t *testing.T, pg *PG, ecosystem, name string) float64 {
+	t.Helper()
 	ctx := context.Background()
 	var raw []byte
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
 		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+listWantedSQL,
-			2000, 0, "", "", []string{}).Scan(&raw)
+			2000, 0, ecosystem, name, []string{}).Scan(&raw)
 	}); err != nil {
 		t.Fatalf("explain wanted statement: %v", err)
 	}
@@ -1779,9 +1848,6 @@ func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 	}
 	for _, p := range plans {
 		walk(p.Plan)
-	}
-	if total == 0 {
-		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
 	}
 	return total
 }

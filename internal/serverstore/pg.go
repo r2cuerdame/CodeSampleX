@@ -2809,19 +2809,11 @@ func (p *PG) WantedForPackage(ctx context.Context, ecosystem, name string) ([]Wa
 // "pkg:npm/@scope/pkg@2.0.0" carries two literal '@' and must still match a
 // request for '@scope/pkg'.
 const listWantedSQL = `
-	WITH answer AS MATERIALIZED (
-		-- The live corpus, expanded once, as the coordinates it can close.
-		SELECT s.sample_id, s.manifest, left(pkg.value, at.pos) AS coord
-		  FROM samples s
-		  CROSS JOIN LATERAL jsonb_array_elements_text(s.manifest->'packages') AS pkg(value)
-		  CROSS JOIN LATERAL (
-		      SELECT g FROM generate_series(1, length(pkg.value)) AS g
-		       WHERE substr(pkg.value, g, 1) = '@') AS at(pos)
-		 WHERE NOT s.quarantined
-	), wanted_key AS MATERIALIZED (
-		-- Both accepted spellings of a request's own coordinate. Upload
-		-- validation takes the readable scoped form, the v2 resolver records
-		-- the percent-encoded one, and both name the same package.
+	WITH wanted_key AS MATERIALIZED (
+		-- Both accepted spellings of a request's own coordinate. The filtered
+		-- set comes first because most package pages have no wanted row at all;
+		-- answer can then skip the corpus rather than expanding every manifest
+		-- just to discover that there was no question to answer.
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
 		  FROM wanted w
 		  CROSS JOIN LATERAL (VALUES
@@ -2831,6 +2823,16 @@ const listWantedSQL = `
 		               THEN '%40' || substring(w.name from 2)
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
+	), answer AS MATERIALIZED (
+		-- The live corpus, expanded once, as the coordinates it can close.
+		SELECT s.sample_id, s.manifest, left(pkg.value, at.pos) AS coord
+		  FROM samples s
+		  CROSS JOIN LATERAL jsonb_array_elements_text(s.manifest->'packages') AS pkg(value)
+		  CROSS JOIN LATERAL (
+		      SELECT g FROM generate_series(1, length(pkg.value)) AS g
+		       WHERE substr(pkg.value, g, 1) = '@') AS at(pos)
+		 WHERE NOT s.quarantined
+		   AND EXISTS (SELECT 1 FROM wanted_key)
 	), answered AS (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
@@ -2923,6 +2925,15 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 		defer tx.Rollback(ctx) //nolint:errcheck // read-only rollback is the normal exit
 		if _, err := tx.Exec(ctx, "SET LOCAL jit = off"); err != nil {
 			return err
+		}
+		// Authoring calls TopWanted as background work. Unlike an ingest or a
+		// builder pass, this is still a fleet poll with a 15-second client
+		// ceiling, so it must not retain a connection after that caller left.
+		// Interactive callers already have the stricter shipped 8-second limit.
+		if statementTimeout := authoringPollStatementTimeout(ctx); statementTimeout > 0 {
+			if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true)`, statementTimeout.String()); err != nil {
+				return err
+			}
 		}
 		rows, err := tx.Query(ctx, listWantedSQL, limit, offset, ecosystem, name, words)
 		if err != nil {
