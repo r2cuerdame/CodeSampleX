@@ -1030,9 +1030,10 @@ if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migrat
 
 $builderFresh = 0
 # The production corpus's first full pass currently completes in about
-# fourteen minutes under public traffic. Give that real work a thirty-minute
-# ceiling; the old nominal three-minute ceiling was only hidden by repeatedly
-# running a ten-second whole-corpus invariant query inside this loop.
+# fourteen minutes under public traffic. Thirty minutes is more than twice
+# that measured pass plus control-plane jitter; the old nominal three-minute
+# ceiling was only hidden by repeatedly running a ten-second whole-corpus
+# invariant query inside this loop.
 $builderFreshPollAttempts = 900
 $builderFreshPollSeconds = 2
 for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {

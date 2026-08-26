@@ -115,6 +115,8 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 // 90 reads took nineteen minutes and competed with the very full builder pass
 // the gate was waiting for. Freshness is one cheap timestamp comparison; the
 // full invariant tuple belongs after that marker and is read exactly once.
+// The cheap wait keeps a thirty-minute ceiling: more than twice the observed
+// fourteen-minute first full pass, with room for control-plane jitter.
 func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
 	for _, required := range []string{
