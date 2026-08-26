@@ -43,8 +43,18 @@ type cubeFilterOption struct {
 // which two dimensions are currently spread across the axes.
 type cubeFilterSelect struct {
 	// Fixed marks a dimension with exactly one value and no pin: it is
-	// already decided, so the control shows that value and nothing else.
+	// already decided by the evidence, so there is no control to render.
+	//
+	// It used to render as a DISABLED select, which said the right thing in
+	// the wrong shape: a select is the site's mark for "there is a choice
+	// here", and greying one out asks the reader to work out that this
+	// particular select is furniture. Value carries the decided value so the
+	// bar can state it as plain metadata instead. The three cases now look
+	// like three different things — a select where there is a choice, a
+	// removable chip where the reader made one, plain text where the
+	// evidence left one value standing.
 	Fixed   bool
+	Value   string
 	Dim     string
 	Label   string
 	Options []cubeFilterOption
@@ -68,6 +78,13 @@ type cubeLeafRow struct {
 	VersionHref string
 	Env         string // remaining recorded dimensions, " · " joined
 	Cell        pivotCell
+	// Result is the record in words, in the page language. The cell's own
+	// notation is a grid notation — a glyph, a percentage and a denominator,
+	// compressed so forty of them can be scanned — and at the bottom of a
+	// drill-down there is exactly one of them to read.
+	Result    string
+	BasisNote string
+	Basis     string
 }
 
 type cubeView struct {
@@ -103,6 +120,11 @@ type cubeView struct {
 	// this exact place rather than about the package in general.
 	Coord   map[string]string
 	Decided bool
+	// Answer is the coordinate stated in words, before the instrument that
+	// found it. Set only where the drill-down has bottomed out — above that
+	// the page covers several coordinates and has no single answer to give,
+	// and inventing one would be the page speaking past its evidence.
+	Answer *cubeAnswer
 }
 
 // cubeCoord reads the coordinate out of a slice.
@@ -152,7 +174,14 @@ func cubeCoordDecided(sliced []cubeFact) bool {
 func cubeFilterBar(facts []cubeFact, x, y string, filters map[string]string, lang string) []cubeFilterSelect {
 	var out []cubeFilterSelect
 	for _, dim := range cubeDimKeys {
-		if dim != "" && (dim == x || dim == y) {
+		// Unless the reader pinned it. A pin travels through the next submit
+		// as a hidden input and nothing else carries it, so a dimension that
+		// went onto an axis while pinned dropped out of the form: changing
+		// any dropdown rebuilt the URL without it, and the version the reader
+		// had arrived on was gone. A pinned entry renders no control anyway
+		// -- the chip above the bar is where it is shown and removed -- so
+		// keeping it here costs nothing visible.
+		if dim != "" && (dim == x || dim == y) && filters[dim] == "" {
 			continue
 		}
 		if sel, ok := cubeFilterFor(facts, dim, filters, lang); ok {
@@ -223,6 +252,9 @@ func cubeFilterFor(facts []cubeFact, dim string, filters map[string]string, lang
 		c.Selected = sel.Fixed || filters[dim] == c.Value
 		sel.Options = append(sel.Options, c)
 	}
+	if sel.Fixed && len(values) == 1 {
+		sel.Value = values[0]
+	}
 	return sel, true
 }
 
@@ -281,18 +313,23 @@ func validCubeAxis(key string) bool {
 // package has no cube-worthy evidence at all and the section is omitted.
 func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	facts, windowed := s.cubeFacts(r.Context(), eco, name)
-	if len(facts) == 0 {
-		return nil
-	}
 	pagePath := pkgHref(eco, name)
 	q := r.URL.Query()
 	filters := parseCubeFilters(q)
+	// Before the emptiness check, not after: a package whose measured
+	// releases have all aged out of the browse window still has a page for
+	// the release someone linked to, and testing len(facts) first deleted
+	// the whole section for exactly that reader.
+	facts = append(facts, s.pinnedCubeFactsCached(r.Context(), eco, name, facts, filters)...)
+	if len(facts) == 0 {
+		return nil
+	}
 	sliced := filterCubeFacts(facts, filters)
 
 	view := &cubeView{
 		Action:     pagePath + cubeAnchor,
 		HasFilters: len(filters) > 0,
-		WindowNote: windowed,
+		WindowNote: cubeWindowNote(windowed, filters),
 	}
 	if lang != i18n.Default {
 		view.Lang = lang
@@ -366,6 +403,14 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 	if x != "" && (len(cubeAxisValues(sliced, x)) == 0 || len(cubeAxisValues(sliced, y)) == 0) {
 		x, y = "", ""
 	}
+	// And the same rule the pair gets. Whether an axis spreads depends on the
+	// dimension beside it: a grid with an environment dimension on one axis
+	// drops this network's own runs, so ?x=symbol&y=os on a coordinate whose
+	// symbols are contract receipts renders one cell holding the package
+	// total, with every symbol it was asked for off the page.
+	if x != "" && cubeAxisSpread(sliced, x, y) < 2 && cubeAxisSpread(sliced, y, x) < 2 {
+		x, y = "", ""
+	}
 	if x == "" {
 		var ok bool
 		x, y, ok = defaultCubeAxes(sliced, filters)
@@ -374,7 +419,14 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string) *cubeView {
 			// is where a reader arrives having pinned four things, and without
 			// them there is no way back out of the coordinate they reached.
 			view.Filters = cubeFilterBar(facts, "", "", filters, lang)
-			view.Leaf = cubeLeafRows(sliced, eco, name)
+			view.Answer = buildCubeAnswer(sliced, view.Coord, eco, name, lang, time.Now())
+			view.Leaf = dropSharedCoordinate(cubeLeafRows(sliced, eco, name, lang), view.Answer)
+			// One record, fully stated by the card above it, is not a list.
+			// Printing it anyway is how the same coordinate came to be read
+			// three times on one screen.
+			if len(view.Leaf) == 1 && view.Answer != nil {
+				view.Leaf = nil
+			}
 			return view
 		}
 	}
@@ -507,7 +559,7 @@ func markSharedSymbolAxis(s *site, r *http.Request, eco string, g *pivotGrid, x,
 // slice, newest version first. Facts whose visible coordinates coincide
 // (they differed only in a bucketed detail such as a runtime patch level)
 // merge into one row instead of repeating it.
-func cubeLeafRows(facts []cubeFact, eco, name string) []cubeLeafRow {
+func cubeLeafRows(facts []cubeFact, eco, name, lang string) []cubeLeafRow {
 	now := time.Now()
 	type leafKey struct{ version, symbol, env string }
 	merged := map[leafKey][]cubeFact{}
@@ -527,12 +579,14 @@ func cubeLeafRows(facts []cubeFact, eco, name string) []cubeLeafRow {
 	}
 	rows := make([]cubeLeafRow, 0, len(order))
 	for _, key := range order {
+		agg := mergeCubeFacts(merged[key])
 		row := cubeLeafRow{
 			Version: key.version,
 			Symbol:  key.symbol,
 			Env:     key.env,
-			Cell:    buildPivotCell(mergeCubeFacts(merged[key]), now),
+			Cell:    buildPivotCell(agg, now),
 		}
+		row.Result, row.BasisNote, row.Basis = cubeResultLine(agg, lang)
 		// The link is decided from the STORED symbol, before the display name
 		// is applied. Renaming first gave the package-level row a link to a
 		// symbol page named after the package, which does not exist.

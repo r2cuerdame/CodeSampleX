@@ -61,6 +61,11 @@ jobs:
       # Turns a lost DSN into a failure that names the variable, instead of 30
       # silent skips. See integrationDSN in internal/serverstore.
       CSX_REQUIRE_TEST_DSN: "1"
+      # Same bargain for the narrow-viewport render: ubuntu-latest ships
+      # Google Chrome, and a runner image that stops doing so must say so
+      # rather than skip the only test that measures the mobile layout.
+      # See findChrome in internal/web.
+      CSX_REQUIRE_CHROME: "1"
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -133,4 +138,49 @@ jobs:
             echo ""
             echo "Against \`postgres:17-alpine\`, each test in its own throwaway schema."
             echo "The /wanted complexity guard from R2C-55 ran and passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # internal/serverstore is no longer the only package that needs a real
+      # database. R2C-58's pool guard is asserted end-to-end over HTTP in
+      # cmd/csx-server: a lock is taken on the wanted table, more visitors than
+      # the read class may hold are sent at the stuck page, and /healthz has to
+      # keep answering. Those tests skip themselves without a DSN exactly like
+      # the serverstore ones — and they run in the "Unit and contract tests"
+      # step above, which is not -json and therefore cannot tell a skip from a
+      # pass. Without this step the guard could stop running and CI would stay
+      # green, which is the R2C-57 hole reopened one package to the left.
+      - name: PostgreSQL end-to-end pool pressure tests
+        run: |
+          set -euo pipefail
+          status=0
+          go test ./cmd/csx-server/ -run '^TestIntegration' -count=1 -json > "$RUNNER_TEMP/srv-tests.json" || status=$?
+          jq -j 'select(.Action == "output") | .Output' "$RUNNER_TEMP/srv-tests.json"
+          if [ "$status" -ne 0 ]; then
+            jq -r 'select(.Action == "fail" and (.Test // "") != "") | "::error::failed: " + .Test' "$RUNNER_TEMP/srv-tests.json"
+            exit "$status"
+          fi
+
+          ran="$(jq -r 'select(.Action == "pass" and ((.Test // "") | startswith("TestIntegration"))) | .Test' "$RUNNER_TEMP/srv-tests.json" | sort -u)"
+          skipped="$(jq -r 'select(.Action == "skip" and (.Test // "") != "") | .Test' "$RUNNER_TEMP/srv-tests.json" | sort -u)"
+          if [ -z "$ran" ]; then
+            echo "::error::no end-to-end pool test result was recorded; the proof itself is broken, not the suite"
+            exit 1
+          fi
+          if [ -n "$skipped" ]; then
+            echo "::error::an end-to-end pool test skipped, so this run proved nothing about it"
+            printf '%s\n' "$skipped" | sed 's/^/  skipped: /'
+            exit 1
+          fi
+          # Named because it is why this gate exists: with the guard disabled
+          # this exact test fails the way production did — /healthz 503 while
+          # one page is stuck.
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationOneStuckPageDoesNotTakeTheSiteDown'; then
+            echo "::error::the pool starvation guard (R2C-58) did not run"
+            exit 1
+          fi
+
+          {
+            echo "### Pool pressure end-to-end: $(printf '%s\n' "$ran" | wc -l) tests ran, 0 skipped"
+            echo ""
+            echo "One page held on a table lock; /healthz and an unrelated page stayed up."
           } >> "$GITHUB_STEP_SUMMARY"

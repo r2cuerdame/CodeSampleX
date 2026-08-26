@@ -7,10 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"context"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
 // The captured copy is bounded independently for stdout and stderr. The child
@@ -34,6 +37,49 @@ type CommandOutput struct {
 	Stderr          string
 	StdoutTruncated bool
 	StderrTruncated bool
+	Termination     domain.FailureTermination
+}
+
+// FailureDiagnostics is the stream a failed command should be diagnosed and
+// fingerprinted from.
+//
+// It was stderr, unconditionally, and half the toolchains an agent runs do
+// not report there. tsc writes its diagnostics to stdout and exits non-zero
+// with an empty stderr; so do go test, pytest, and most npm scripts.
+// Sanitizing that empty stream still produced a fingerprint — the hash of a
+// blank template — so a broken typecheck was RECORDED under, and SEARCHED
+// for by, the hash of nothing at all. Nothing has ever failed that way, so
+// the fingerprint matched nothing, and the free-text query left over was the
+// word "fingerprint" and 64 hex digits. The engine answered it with whatever
+// was nearest, which is how a failing TypeScript build came back with a Dart
+// sample about package:crypto, graded COMPATIBLE, over a stdout the tool was
+// holding the whole time.
+//
+// The rule, in order:
+//
+//  1. The stream naming an error code wins, stderr first. A code is what a
+//     stored failure is keyed by, and a runner's own boilerplate ("npm error
+//     Lifecycle script failed") names none while the compiler underneath it
+//     names TS2352.
+//  2. With no code anywhere, stderr if it said anything — so every command
+//     that already reported there keeps the exact text, and the exact
+//     fingerprint, it had before.
+//  3. Otherwise stdout.
+//
+// A command that printed nothing at all diagnoses nothing, and says so by
+// returning "". That is not a gap to paper over with a hash: an empty answer
+// is what stops a question nobody can answer from being asked.
+func (o CommandOutput) FailureDiagnostics() string {
+	if sanitizer.ErrorCode(o.Stderr) != "" {
+		return o.Stderr
+	}
+	if sanitizer.ErrorCode(o.Stdout) != "" {
+		return o.Stdout
+	}
+	if strings.TrimSpace(o.Stderr) != "" {
+		return o.Stderr
+	}
+	return o.Stdout
 }
 
 // Run spawns argv[0] with the remaining args in dir, inheriting stdio so
@@ -51,6 +97,12 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 		return -1, CommandOutput{}, errors.New("evidence: empty command")
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var timeoutMillis int64
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeoutMillis = remaining.Milliseconds()
+		}
+	}
 	cmd.Dir = dir
 	cmd.Stdin = os.Stdin
 	stdoutRing := newLineRing(tailLines)
@@ -74,9 +126,19 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
-			// Child ran and failed (or was killed): pass its code through.
-			return ee.ExitCode(), output, nil
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				output.Termination = domain.FailureTermination{Kind: domain.TerminationTimeout, TimeoutMillis: timeoutMillis}
+				return ee.ExitCode(), output, nil
+			}
+			if signal := processSignal(ee.ProcessState); signal != "" {
+				output.Termination = domain.FailureTermination{Kind: domain.TerminationSignal, Signal: signal}
+				return ee.ExitCode(), output, nil
+			}
+			code := ee.ExitCode()
+			output.Termination = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+			return code, output, nil
 		}
+		output.Termination = domain.FailureTermination{Kind: domain.TerminationProcessStartFailed}
 		return -1, output, runErr
 	}
 	return 0, output, nil

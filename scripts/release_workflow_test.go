@@ -294,6 +294,38 @@ func TestReleaseStagesStayInOrder(t *testing.T) {
 	}
 }
 
+// Publishing the client and observing the fleet run it are one release
+// contract. Self-convergence may repair a failed rollout later, but it cannot
+// make the Release run green: production uses that conclusion as its proof
+// that the client half completed before the server half starts.
+func TestPublishedReleaseCannotSucceedWithoutFarmEvidence(t *testing.T) {
+	farm := releaseJobs(t, releaseWorkflow(t))["farm"]
+	for _, required := range []string{
+		`if [ -z "${GH_TOKEN:-}" ]; then`,
+		"::error::CSX_FARM_DISPATCH_TOKEN is required",
+		"Wait for the farm to report",
+		`--json databaseId,displayTitle`,
+		`--arg title "farm -> $TAG"`,
+		`.databaseId > $before and .displayTitle == $title`,
+		`if [ "$CONCLUSION" = "success" ]; then`,
+		"::error::farm rollout",
+	} {
+		if !strings.Contains(farm, required) {
+			t.Errorf("the farm release gate is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"dispatched=false",
+		"steps.dispatch.outputs.dispatched",
+		"will converge on $TAG within ten minutes on its own",
+		"continue-on-error:",
+	} {
+		if strings.Contains(farm, forbidden) {
+			t.Errorf("the farm release gate still permits an unverified success through %q", forbidden)
+		}
+	}
+}
+
 // A normal release is unattended, and the document that operators read has to
 // say so — the contract this pipeline now depends on is that no one is
 // waiting to press a button.
@@ -308,6 +340,26 @@ func TestOperationsDocumentsTheUnattendedReleaseContract(t *testing.T) {
 	}
 	if strings.Contains(doc, "required reviewers and protected `v*` tag rules are mandatory") {
 		t.Fatal("docs/operations.md still requires an environment reviewer")
+	}
+}
+
+func TestOperationsRequiresVerifiedFleetBeforeServerRestart(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "docs", "operations.md"))
+	if err != nil {
+		t.Fatalf("read operations doc: %v", err)
+	}
+	doc := strings.Join(strings.Fields(string(raw)), " ")
+	for _, required := range []string{
+		"successful `Release` run for that exact target SHA",
+		"complete the client rollout to every verifier",
+		"Only after both checks pass on every verifier host",
+	} {
+		if !strings.Contains(doc, required) {
+			t.Errorf("operations doc is missing the fleet-first contract %q", required)
+		}
+	}
+	if strings.Contains(doc, "or at least in the same change") {
+		t.Fatal("operations doc still permits a concurrent client/server rollout")
 	}
 }
 

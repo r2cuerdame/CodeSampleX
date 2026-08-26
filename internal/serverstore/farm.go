@@ -47,6 +47,13 @@ type FarmHealth struct {
 	// the failure the attempt ledger exists to make visible.
 	WithheldCoordinates int
 	WithheldByReason    map[string]int
+	// UnsupportedJobs is verification work no verifier image in this build
+	// can run, and it exists because the absence of this number cost three
+	// days. The open cross queue held rows every worker skipped before
+	// claiming; the panel showed work, the workers reported none, and both
+	// were telling the truth. An operator reading a queue depth needs to
+	// know which part of it no machine can take.
+	UnsupportedJobs int
 }
 
 // FarmAxisCoverage is one (os, ecosystem) cell of the compatibility map:
@@ -114,6 +121,15 @@ type FarmBacklog struct {
 	// above, and a rate that counted it would never square with a stock that
 	// does not.
 	FirstProven int
+	// Matrix is the same absence counted at the grain a reader sees it.
+	//
+	// CoverageHoles above is per RELEASE: a purl either has a passing sample
+	// or it does not. A package page is not drawn at that grain -- it spreads
+	// symbol against version -- so a release counted as proven can render a
+	// page that is almost entirely dashes, and in production it does. The two
+	// numbers are both true and they are not the same number, so they are
+	// reported side by side rather than one standing in for the other.
+	Matrix MatrixCells
 }
 
 // FarmStatsStore reports the farm's state for the operations dashboard.
@@ -125,4 +141,8 @@ type FarmStatsStore interface {
 	// since. The window is the caller's so the panel can keep one window for
 	// every rate it shows.
 	FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error)
+	// FarmCompletenessNow reports the three-axis stock: every verifiable
+	// coordinate by which of Sample, Evidence and Dependency it holds. No
+	// window -- it is a stock, and the flows beside it carry their own.
+	FarmCompletenessStore
 }

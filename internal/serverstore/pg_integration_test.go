@@ -52,6 +52,14 @@ func integrationDSN(dsn, require string) (string, error) {
 // CSX_REQUIRE_TEST_DSN forbids that skip.
 func openTestPG(t *testing.T) *PG {
 	t.Helper()
+	return openTestPGWithPolicy(t, DefaultPoolPolicy())
+}
+
+// openTestPGWithPolicy is openTestPG with the pool policy named, so a
+// test about timeouts and admission can use budgets small enough to run
+// in seconds instead of waiting out the shipped ones.
+func openTestPGWithPolicy(t *testing.T, pol PoolPolicy) *PG {
+	t.Helper()
 	dsn, err := integrationDSN(os.Getenv("CSX_TEST_DSN"), os.Getenv("CSX_REQUIRE_TEST_DSN"))
 	if errors.Is(err, errIntegrationDSNUnset) {
 		t.Skip(err.Error())
@@ -84,7 +92,7 @@ func openTestPG(t *testing.T) *PG {
 	}
 	cfg.RuntimeParams["search_path"] = schema
 
-	pg := newPG(cfg)
+	pg := newPGWithPolicy(cfg, pol)
 	t.Cleanup(pg.Close)
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -973,6 +981,47 @@ func TestIntegrationCRUD(t *testing.T) {
 		got, err := pg.ListFailureClusters(ctx, "axios")
 		if err != nil || len(got) != 1 || got[0].ObservationCount != 9 {
 			t.Fatalf("ListFailureClusters: %v err=%v", got, err)
+		}
+	})
+
+	t.Run("preserved legacy failure clusters stay out of current reads", func(t *testing.T) {
+		legacy := ClusterRow{
+			Ecosystem: "npm", PackageName: "legacy-current-boundary", Symbol: "parse", Stage: "PROJECT_TEST",
+			ErrorFingerprint: "sha256:" + strings.Repeat("a", 64), EvidenceQuality: "legacy-evidence-incomplete", ObservationCount: 9,
+		}
+		current := legacy
+		current.ErrorFingerprint = ""
+		current.ObservationCount = 11
+		if err := pg.UpsertFailureCluster(ctx, legacy); err != nil {
+			t.Fatalf("insert preserved legacy cluster: %v", err)
+		}
+		if err := pg.UpsertFailureCluster(ctx, current); err != nil {
+			t.Fatalf("insert current evidence-gap cluster: %v", err)
+		}
+		got, err := pg.ListFailureClusters(ctx, legacy.PackageName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].ErrorFingerprint != "" || got[0].ObservationCount != current.ObservationCount {
+			t.Fatalf("current clusters = %+v, want only the rebuilt evidence-gap row", got)
+		}
+		// The ledger the deploy transaction checks counts exactly what this
+		// read serves: the rebuilt row once, never beside the preserved one.
+		var ledger int64
+		for _, c := range got {
+			ledger += c.ObservationCount
+		}
+		if ledger != current.ObservationCount {
+			t.Fatalf("cluster-observation ledger = %d, want %d", ledger, current.ObservationCount)
+		}
+		// Exact failure matching still needs the preserved fingerprint: no
+		// released client computes anything else.
+		recorded, err := pg.ListFailureClustersIncludingPreserved(ctx, legacy.PackageName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(recorded) != 2 {
+			t.Fatalf("recorded clusters = %+v, want the preserved row served beside the rebuilt one", recorded)
 		}
 	})
 

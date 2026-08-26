@@ -32,6 +32,30 @@ const authoringSiblingVersionsPerPackage = 6
 // than a carried one. Mirrored in the PG query.
 const authoringDirectWeight = 1000
 
+// authoringResolveWeight is what one distinct project-day that RESOLVED this
+// exact release is worth in the package-level score. Mirrored in the PG query.
+//
+// R2C-90. The two weights beside it are the ends of one scale: a carried
+// sighting (1) is a machine mentioning a package, a chosen one
+// (authoringDirectWeight) is a person deciding to use it. A resolved
+// project-day sits between them and closer to the second -- it is a machine
+// that actually installed this release, which is a fact about the world
+// rather than about a manifest, but it is still nobody having asked for it.
+//
+// Ten resolved project-days for one chosen sighting is the ratio, and it is
+// deterministic in both directions: a carried-only coordinate needs ten
+// projects resolving it to overtake a coordinate one person listed once, and
+// it can never overtake one that more than a tenth as many people chose.
+// Measured against production on 2026-08-23, the busiest carried-only
+// coordinate was resolved by 22 project-days and the median by 2, so this
+// lifts the top of that distribution into the window without moving the tail
+// past anybody's real demand.
+//
+// It is added to the sighting score rather than replacing it. A coordinate
+// that is both chosen and widely resolved should rank above one that is only
+// chosen, and no coordinate loses ground because this term exists.
+const authoringResolveWeight = 100
+
 type AuthoringSessionRow struct {
 	TokenHash     string
 	SessionID     string

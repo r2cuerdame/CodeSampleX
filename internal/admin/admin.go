@@ -81,6 +81,9 @@ type Deps struct {
 	AdminTokens serverstore.AdminTokenStore
 	// Farm backs the operations panel. Nil hides it rather than showing zeros.
 	Farm serverstore.FarmStatsStore
+	// PoolStats backs the database pool panel. Nil hides it: a store
+	// without a pool has nothing honest to report there.
+	PoolStats PoolStatsReader
 	// Instances are the machines being paid for, with their monthly price.
 	Instances []Instance
 }
@@ -98,6 +101,7 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
+	poolStats     PoolStatsReader
 	instances     []Instance
 }
 
@@ -131,6 +135,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		authoringRate: newAuthoringRateLimiter(),
 		adminTokens:   d.AdminTokens,
 		farmStats:     d.Farm,
+		poolStats:     d.PoolStats,
 		instances:     d.Instances,
 	}
 	// A methodless /admin pattern would conflict with the public website's
@@ -231,6 +236,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			data.ActivityAvailable = true
 		}
 	}
+	if h.poolStats != nil {
+		// Counters, not a query: the panel that explains a saturated pool
+		// must not need the pool to render.
+		data.DBPool = buildPoolView(h.poolStats.PoolStats())
+	}
 	if h.store == nil {
 		data.DBError = "저장소가 구성되지 않았습니다"
 	} else {
@@ -319,6 +329,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 	} else {
 		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
 		data.SearchQuality = buildSearchQualityView(insights.Search)
+		data.Flow = buildFlowView(insights.Flow, insights.Jobs, now)
 		data.InsightsAvailable = true
 	}
 
@@ -349,6 +360,7 @@ type dashboardData struct {
 	DBHealthy bool
 	DBProbe   string
 	DBError   string
+	DBPool    poolView
 
 	Counts          serverstore.NetworkCounts
 	CountsAvailable bool
@@ -378,7 +390,12 @@ type dashboardData struct {
 	ActivityError     string
 
 	SearchQuality searchQualityView
-	SourceIssues  []string
+
+	// Flow is the production-rate half of the summary. Everything above it is
+	// stock, and stock cannot answer whether the line is running right now.
+	Flow flowView
+
+	SourceIssues []string
 }
 
 func dashboardSourceIssues(data dashboardData) []string {

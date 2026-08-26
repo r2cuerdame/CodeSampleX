@@ -51,6 +51,10 @@ func main() {
 // queue in one pass would bury the fresh work the network is waiting on.
 const strandedReconcileLimit = 200
 
+// laneReconcileLimit bounds one boot's cross-job lane review. The whole open
+// queue is a few dozen rows; this is a runaway guard, not a rate.
+const laneReconcileLimit = 500
+
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
 		fmt.Fprint(stderr, usage)
@@ -80,7 +84,7 @@ func openMigrated(ctx context.Context, cfg serverstore.ServerConfig, stderr io.W
 		fmt.Fprintln(stderr, "csx-server: CSX_DSN is not set")
 		return nil, false
 	}
-	pg, err := serverstore.Open(ctx, cfg.DSN)
+	pg, err := serverstore.OpenWithPolicy(ctx, cfg.DSN, cfg.DBPool)
 	if err != nil {
 		fmt.Fprintf(stderr, "csx-server: %v\n", err)
 		return nil, false
@@ -130,6 +134,17 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "csx-server: stranded draft reconcile failed: %v\n", err)
 	} else if woken > 0 {
 		fmt.Fprintf(stdout, "csx-server: requeued %d stranded authoring drafts\n", woken)
+	}
+
+	// Bring the open cross queue back in line with the images this build
+	// pins. A job may only ask for a lane the fleet has; three that asked
+	// for Go 1.27 -- a contributor's toolchain, never a verifier image --
+	// sat open and unclaimable while every worker reported no work.
+	if repaired, unsupported, err := httpapi.ReconcileCrossJobLanes(ctx, pg, laneReconcileLimit); err != nil {
+		fmt.Fprintf(stderr, "csx-server: cross job lane reconcile failed: %v\n", err)
+	} else if repaired > 0 || unsupported > 0 {
+		fmt.Fprintf(stdout, "csx-server: repaired %d cross jobs, recorded %d as unsupported\n",
+			repaired, unsupported)
 	}
 
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a

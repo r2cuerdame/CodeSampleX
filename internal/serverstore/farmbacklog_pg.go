@@ -36,6 +36,15 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 			   ) d)`).Scan(&backlog.CoverageHoles, &backlog.Dependencies); err != nil {
 			return err
 		}
+		// The same absence at the grain a reader sees it: symbol × version
+		// cells rather than releases. Counted from the stored snapshots the
+		// package pages render, so the panel and the page cannot disagree
+		// about how many dashes there are.
+		census, err := matrixCells(ctx, c)
+		if err != nil {
+			return err
+		}
+		backlog.Matrix = census
 		// Generation: what the scheduler actually handed out in the window,
 		// by queue source. Read from claimed_at rather than from a counter,
 		// so a restart does not reset it.
@@ -80,4 +89,58 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 			WHERE f.first_pass >= $1 AND f.first_pass <= $2`, since, now).Scan(&backlog.FirstProven)
 	})
 	return backlog, err
+}
+
+// FarmCompletenessNow counts every PUBLIC release by which of Sample,
+// Evidence and Dependency it holds.
+//
+// "Proven" is read through authoringCoverageCTE rather than through a second
+// definition written to look like it, for the reason that constant exists: a
+// panel counting a different set from the queue it describes reports a figure
+// that never moves however hard the fleet runs.
+func (p *PG) FarmCompletenessNow(ctx context.Context) (FarmCompleteness, error) {
+	out := newFarmCompleteness()
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH `+authoringCoverageCTE+`, resolved_parents AS MATERIALIZED (
+				-- The PARENT end, deliberately. Being pulled BY somebody says
+				-- nothing about what this release pulls, and the dependency
+				-- axis is the second question.
+				SELECT DISTINCT 'pkg:'||ecosystem||'/'||
+				         CASE WHEN left(parent_name,1)='@'
+				              THEN '%40'||substring(parent_name from 2)
+				              ELSE parent_name END||'@'||parent_version AS purl
+				FROM dependency_edge
+			)
+			SELECT (CASE WHEN EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
+			             THEN 'S' ELSE '-' END)
+			    || (CASE WHEN EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=pk.purl)
+			                   OR EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
+			             THEN 'E' ELSE '-' END)
+			    || (CASE WHEN EXISTS (SELECT 1 FROM resolved_parents d WHERE d.purl=pk.purl)
+			             THEN 'D' ELSE '-' END) AS state,
+			       count(*)
+			FROM packages pk
+			WHERE pk.version<>'' AND pk.publicness='PUBLIC'
+			GROUP BY 1`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var state string
+			var n int
+			if err := rows.Scan(&state, &n); err != nil {
+				return err
+			}
+			out.States[state] += n
+			if state[2] == 'D' {
+				out.DependencyGraph += n
+			} else {
+				out.DependencyUnknown += n
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
 }

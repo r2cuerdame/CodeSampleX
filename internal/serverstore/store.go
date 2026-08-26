@@ -7,10 +7,10 @@ package serverstore
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
-	"strings"
 )
 
 // RejectedBatch reports one refused batch of an ingest call, mirroring the
@@ -62,6 +62,12 @@ type EvidenceRow struct {
 	Result               string
 	ErrorFingerprint     string
 	ErrorCode            string
+	TerminationKind      string
+	ExitCode             *int
+	Signal               string
+	TimeoutMillis        int64
+	ErrorSummary         string
+	EvidenceQuality      string
 	ObservationCount     int64
 	UniquePeerBuckets    int
 	UniqueProjectBuckets int
@@ -89,6 +95,36 @@ type SampleRow struct {
 	QuarantineReason string
 }
 
+// SampleCursor is a position in a newest-first sample listing, used to page
+// through one without offsets. Offsets shift under concurrent publishing and
+// hand the next page a row the previous one already returned; a keyset on
+// (created_at, sample_id) cannot, because sample_id is the primary key and
+// the pair is therefore unique and totally ordered.
+//
+// The zero value means "from the newest".
+type SampleCursor struct {
+	CreatedAt time.Time
+	SampleID  string
+}
+
+// IsZero reports whether the cursor is the start of a listing.
+func (c SampleCursor) IsZero() bool { return c.SampleID == "" }
+
+// sampleEpoch is what a missing created_at sorts as, mirroring the SQL's
+// COALESCE(created_at, 'epoch'). created_at is nullable, and a NULL in the
+// keyset comparison would evaluate to NULL and silently end the paging.
+var sampleEpoch = time.Unix(0, 0).UTC()
+
+// CursorFor returns the keyset position of a row, so a caller can ask for
+// the page after it.
+func CursorFor(r SampleRow) SampleCursor {
+	at := r.CreatedAt
+	if at.IsZero() {
+		at = sampleEpoch
+	}
+	return SampleCursor{CreatedAt: at, SampleID: r.SampleID}
+}
+
 // ReceiptRow is one receipts-table row. ReceiptJSON is the full signed
 // VerificationReceipt document.
 type ReceiptRow struct {
@@ -101,13 +137,21 @@ type ReceiptRow struct {
 	CreatedAt      time.Time
 }
 
+// JobStatusUnsupported is work no verifier lane in this build can run.
+//
+// It is not "open", because nothing can claim it, and it is not "done",
+// because nothing measured the sample. Production spent three days with an
+// open cross queue every worker skipped in silence; a job that no image can
+// serve now says so in the one field an operator already reads.
+const JobStatusUnsupported = "unsupported"
+
 // JobRow is one verification_jobs-table row.
 type JobRow struct {
 	ID          int64
 	SampleID    string
 	Reason      string // "cross" | "matrix"
 	WantEnvJSON string // "" ⇒ NULL (any environment)
-	Status      string // open | claimed | done
+	Status      string // open | claimed | done | unsupported
 	ClaimedBy   string
 	ClaimedAt   time.Time
 	CreatedAt   time.Time
@@ -207,20 +251,29 @@ type IdentityRow struct {
 
 // ClusterRow is one failure_clusters-table row.
 type ClusterRow struct {
-	ID                  int64
-	Ecosystem           string
-	PackageName         string
-	Symbol              string
-	Stage               string
-	ErrorFingerprint    string
-	ErrorCode           string
-	ObservationCount    int64
-	EnvSummaryJSON      string
-	HypothesesJSON      string // [{domain,confidence}] — never a definitive cause
-	RegressionCandidate bool
-	VersionsJSON        string
-	FirstSeen           time.Time
-	LastSeen            time.Time
+	ID                    int64
+	Ecosystem             string
+	PackageName           string
+	Symbol                string
+	Stage                 string
+	ErrorFingerprint      string
+	ErrorCode             string
+	TerminationKind       string
+	ExitCode              *int
+	Signal                string
+	TimeoutMillis         int64
+	ErrorSummary          string
+	EvidenceQuality       string
+	ObservationCount      int64
+	EnvSummaryJSON        string
+	EnvVariantsJSON       string
+	EvidenceBreakdownJSON string
+	HypothesesJSON        string // [{domain,confidence}] — never a definitive cause
+	RegressionCandidate   bool
+	DiagnosticCandidate   bool
+	VersionsJSON          string
+	FirstSeen             time.Time
+	LastSeen              time.Time
 }
 
 // Store is everything csx-server needs from PostgreSQL. Handlers depend on
@@ -278,7 +331,24 @@ type Store interface {
 	// ListVerifiedSamples returns newest non-quarantined samples with an
 	// actual contract-PASS receipt. Public measured findings must never be
 	// derived from author prose on a source-only upload.
+	//
+	// This is a NEWEST-N window. Never answer a question about the whole
+	// corpus with it: a serving read that filters inside a fixed window
+	// shrinks as the corpus grows, which is how the findings page fell from
+	// 543 entries to 250 while nothing was taken down. For findings, use
+	// ListVerifiedBeliefSamples, which pages the eligible set instead.
 	ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error)
+	// ListVerifiedBeliefSamples pages the samples that could be findings:
+	// non-quarantined, holding an actual contract-PASS receipt, and stating
+	// in their own manifest what was believed.
+	//
+	// The belief is what narrows the read, and it is applied in the store so
+	// the caller never has to choose between reading everything and reading
+	// a recent slice of everything. Rows come back newest first, starting
+	// strictly after `after`; the zero cursor starts at the newest. `limit`
+	// bounds ONE read, not the answer — a caller wanting every finding pages
+	// until a short page comes back.
+	ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error)
 	// SamplesBySeeder lists one seeder's published samples, so their page
 	// does not depend on a global newest-N window.
 	SamplesBySeeder(ctx context.Context, login string, limit int) ([]SampleRow, error)
@@ -313,6 +383,17 @@ type Store interface {
 	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
 	// Job reads one job for receipt-to-claim binding.
 	Job(ctx context.Context, id int64) (JobRow, bool, error)
+	// CrossJobsForLaneReview lists cross jobs whose requirements can still be
+	// re-checked against the verifier images this build actually pins: the
+	// open ones, the unsupported ones, and claims that outlived their lease.
+	// A live claim is left alone — its receipt is bound to the requirements
+	// the worker was handed.
+	CrossJobsForLaneReview(ctx context.Context, limit int) ([]JobRow, error)
+	// SetJobRequirements rewrites one job's requirements and status, and
+	// releases any claim on it. Jobs created before the fleet's lanes were
+	// known are otherwise unreachable: nothing in the request path ever looks
+	// at a job again once it is open.
+	SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, status string) error
 	CreateJob(ctx context.Context, j JobRow) (int64, error)
 	// ClaimJob atomically moves an open job to claimed; false means someone
 	// else got there first (or the job is gone).
@@ -395,7 +476,13 @@ type Store interface {
 	IdentityByAPIToken(ctx context.Context, apiTokenHash string) (IdentityRow, bool, error)
 
 	UpsertFailureCluster(ctx context.Context, c ClusterRow) error
+	// ListFailureClusters returns the clusters the current builder writes.
+	// Rows preserved by migration 0024 are stored but not served here.
 	ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error)
+	// ListFailureClustersIncludingPreserved adds those preserved rows back,
+	// for the one question they still answer: has this exact fingerprint
+	// been recorded?
+	ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error)
 
 	SetStatsDaily(ctx context.Context, day string, statsJSON string) error
 	GetLatestStats(ctx context.Context) (statsJSON string, ok bool, err error)

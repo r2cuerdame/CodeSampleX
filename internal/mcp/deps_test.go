@@ -291,9 +291,12 @@ func TestNewDepsRealWiring(t *testing.T) {
 		if err != nil || !info.IsDir() {
 			t.Errorf("workdir %q not created: %v", workdir, err)
 		}
-		entries, _ := os.ReadDir(workdir)
-		if len(entries) != 0 {
-			t.Errorf("clean room not empty: %v", entries)
+		// Not empty: the generation instructions this same call returns tell
+		// the agent a csx.json manifest scaffold is already there and must
+		// not be recreated from memory, so the files have to exist before
+		// the caller is handed the path (R2C-180).
+		if err := samples.VerifyProposalWorkspace(workdir); err != nil {
+			t.Errorf("workdir reported ready but is not scaffolded: %v", err)
 		}
 		if !strings.HasPrefix(workdir, filepath.Join(home, "samples", "work")) {
 			t.Errorf("workdir %q outside home clean-room base", workdir)

@@ -245,6 +245,13 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "  "+follow)
 		}
+		// And where to ask again later. The line above is true once; a user
+		// who leaves this screen, updates csx, or simply forgets has no way
+		// back to the answer unless they are told one now. See hookready.go.
+		if follow := hookReadinessFollowUp(results); follow != "" {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  "+follow)
+		}
 	}
 
 	if env.warm != nil {

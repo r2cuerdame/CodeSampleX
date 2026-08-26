@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -235,8 +236,12 @@ type PackageHit struct {
 type Deps struct {
 	Store     Store
 	PublicURL string // canonical origin, e.g. https://codesamplex.dev; "" ⇒ derive from request
-	Version   string // csx release version shown in the footer / JSON-LD
-	DistDir   string // directory with release binaries served under /dl/; "" ⇒ /dl 404s
+	// Build is the identity of the server process rendering the page. It is
+	// resolved from the stamps the deployment put on this artifact, never
+	// from a string written into a template: a hand-maintained version is
+	// exactly the thing that keeps saying the old number after a rollback.
+	Build   buildinfo.Info
+	DistDir string // directory with release binaries served under /dl/; "" ⇒ /dl 404s
 }
 
 const langCookie = "csx_lang"
@@ -281,6 +286,12 @@ type site struct {
 	// closed when that assembly finishes. Concurrent readers wait on it
 	// rather than each running the same fan-out.
 	cubeLoading map[string]chan struct{}
+	// pinnedCube caches the repair read for coordinates the browse window
+	// skipped, keyed by package and pin. It is small — one release, or one
+	// symbol across the window's releases — and it is on the request path of
+	// exactly the URLs people share, which are the ones that get linked from
+	// somewhere and then hit repeatedly.
+	pinnedCube map[string]pinnedCubeEntry
 
 	// hero* memoizes the landing's finished hero matrix per (language,
 	// selection). Assembly is cached above; the PIVOTING was not, and a warm
@@ -448,14 +459,71 @@ type basePage struct {
 	Canonical   string
 	Alternates  []alternate
 	JSONLD      []template.JS
-	Version     string
-	IsLanding   bool
-	OGImage     string
+	// Build is nil when this process carries no build identity, and the
+	// footer then says nothing rather than inventing one.
+	Build     *buildLine
+	IsLanding bool
+	OGImage   string
 	// OGType is the og:type of the page. Empty renders "website"; pages
 	// that are a dated document rather than a site section set "article".
 	OGType string
 	path   string
 	query  url.Values // current query without lang
+}
+
+// buildLine is the server-identity line in the footer: which build of this
+// server answered this request, and which deployment it belongs to.
+//
+// The visible part is deliberately the short form. The full revision is what
+// a deploy log and an image label carry, so it belongs in the hover detail
+// where an operator can copy it, not in forty characters of page chrome.
+type buildLine struct {
+	Version       string
+	ShortRevision string
+	Environment   string
+	// Detail is the title attribute: the full revision and, when the build
+	// was stamped with one, the time the artifact was built.
+	Detail string
+}
+
+// buildLineFor renders info for lang, or nil when there is nothing to say.
+func buildLineFor(info buildinfo.Info, lang string) *buildLine {
+	if !info.Known() {
+		return nil
+	}
+	line := &buildLine{
+		Version:       info.Version,
+		ShortRevision: info.ShortRevision(),
+		Environment:   info.Environment,
+	}
+	if line.Version == "" {
+		// A revision with no version still answers the operational question.
+		line.Version = line.ShortRevision
+		line.ShortRevision = ""
+	}
+	parts := []string{i18n.T(lang, "footer.build"), info.Environment}
+	if info.Revision != "" {
+		parts = append(parts, info.Revision)
+	}
+	if !info.BuiltAt.IsZero() {
+		parts = append(parts, info.BuiltAt.UTC().Format(time.RFC3339))
+	}
+	line.Detail = strings.Join(parts, " · ")
+	return line
+}
+
+// AssetVersion is the cache-busting token on the stylesheet. It has to
+// change exactly when the deployed build does, and never otherwise: the
+// short revision is unique per deployment, and an unstamped build has no
+// token rather than a constant one.
+func (b basePage) AssetVersion() string {
+	if b.Build == nil {
+		return ""
+	}
+	if b.Build.ShortRevision != "" {
+		return b.Build.ShortRevision
+	}
+	return b.Build.Version
 }
 
 // T translates a UI string into the page language.
@@ -552,7 +620,7 @@ func (s *site) page(r *http.Request, lang, title, desc string) basePage {
 		Title:       title,
 		Description: desc,
 		Canonical:   canonical,
-		Version:     s.d.Version,
+		Build:       buildLineFor(s.d.Build, lang),
 		path:        path,
 		query:       q,
 	}

@@ -51,6 +51,20 @@ services:
       # historical query-bearing access.log is outside this container.
       CSX_ADMIN_ACCESS_LOG: /var/log/caddy-safe/access-safe.log
       CSX_DIST_DIR: /data/dist
+      # The R2C-58 pool ceilings and their way back. Compose reads .env only
+      # to expand ${...}, so a variable no service names never reaches the
+      # process: without these lines the documented CSX_DB_POOL_GUARD=off
+      # rollback is silently a no-op, which is the worst thing a rollback can
+      # be. Empty is not a value here — PoolPolicyFromEnv ignores it — so an
+      # untouched .env still runs the shipped policy.
+      CSX_DB_POOL_GUARD: ${CSX_DB_POOL_GUARD:-}
+      CSX_DB_MAX_CONNS: ${CSX_DB_MAX_CONNS:-}
+      CSX_DB_PROBE_RESERVE: ${CSX_DB_PROBE_RESERVE:-}
+      CSX_DB_READ_CONNS: ${CSX_DB_READ_CONNS:-}
+      CSX_DB_WRITE_CONNS: ${CSX_DB_WRITE_CONNS:-}
+      CSX_DB_READ_TIMEOUT: ${CSX_DB_READ_TIMEOUT:-}
+      CSX_DB_READ_WAIT: ${CSX_DB_READ_WAIT:-}
+      CSX_DB_PROBE_TIMEOUT: ${CSX_DB_PROBE_TIMEOUT:-}
     volumes:
       - blobs:/data/blobs
       - ${CSX_DIST_HOST_DIR:-../dist}:/data/dist:ro

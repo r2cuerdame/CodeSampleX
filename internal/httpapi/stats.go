@@ -15,7 +15,7 @@ import (
 func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 	js, ok, err := a.d.Store.GetLatestStats(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "stats lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "stats lookup failed")
 		return
 	}
 	if !ok {

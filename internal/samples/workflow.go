@@ -120,17 +120,3 @@ func CreateFromDir(ctx context.Context, dir string, manifest domain.SampleManife
 		Manifest: manifest,
 	}, nil
 }
-
-// NewCleanRoom creates an empty, collision-free clean-room workspace under
-// home/samples/work/ for LLM generation (goal.md §9.3).
-func NewCleanRoom(home string) (workdir string, err error) {
-	base := filepath.Join(home, "samples", "work")
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return "", fmt.Errorf("samples: clean room: %w", err)
-	}
-	workdir, err = os.MkdirTemp(base, "sample-*")
-	if err != nil {
-		return "", fmt.Errorf("samples: clean room: %w", err)
-	}
-	return workdir, nil
-}

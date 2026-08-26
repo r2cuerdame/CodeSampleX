@@ -90,6 +90,17 @@ type CrossVerifier struct {
 	// same open job before one of them claims it. Verification remains fully
 	// parallel; only the tiny list+claim transaction is serialized locally.
 	fetchMu sync.Mutex
+
+	// unsupported is what the last scan was offered and had no lane for.
+	//
+	// Skipping such a row is correct -- claiming work this build cannot run
+	// would burn the sample's bounded attempts on a machine that was never
+	// going to measure it. What was missing is that the skip left no trace:
+	// an empty queue and a queue of impossible work both ended as
+	// "completed=0 failed=0", and production stayed in the second state for
+	// three days with nobody able to tell the difference.
+	unsupportedMu sync.Mutex
+	unsupported   []string
 }
 
 // ArtifactSource is the peer node's fetch chain, kept as an interface so
@@ -162,12 +173,17 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("verifier: list jobs: %w", err)
 	}
+	var noLane []string
+	defer func() { cv.recordUnsupported(noLane) }()
 	for i := range body.Jobs {
 		job := body.Jobs[i]
 		if job.Reason != CrossJobReason && job.Reason != MatrixJobReason {
 			continue
 		}
 		if !cv.canPrepareJob(job) {
+			if coordinate, ok := unrunnableCoordinate(job); ok {
+				noLane = append(noLane, coordinate)
+			}
 			continue
 		}
 
@@ -189,6 +205,53 @@ func (cv *CrossVerifier) FetchJob(ctx context.Context) (*Job, error) {
 		return &job, nil
 	}
 	return nil, nil
+}
+
+// UnsupportedWork reports the coordinates the last queue scan offered that no
+// verifier image in this build can run, most useful when nothing was claimed.
+// An empty result means the queue itself had nothing for this peer, which is
+// a different fact and deserves a different sentence.
+func (cv *CrossVerifier) UnsupportedWork() []string {
+	cv.unsupportedMu.Lock()
+	defer cv.unsupportedMu.Unlock()
+	return append([]string(nil), cv.unsupported...)
+}
+
+func (cv *CrossVerifier) recordUnsupported(coordinates []string) {
+	cv.unsupportedMu.Lock()
+	defer cv.unsupportedMu.Unlock()
+	cv.unsupported = coordinates
+}
+
+// unrunnableCoordinate names the requirement a skipped job asked for, in the
+// vocabulary an operator can act on: an ecosystem, a runtime and a line. It
+// reports false for a job skipped for any other reason -- a malformed
+// requirement or a matrix shape this worker does not take -- so the message
+// never claims a missing image that is not the reason.
+func unrunnableCoordinate(job Job) (string, bool) {
+	want, err := parseWorkerRequirements(job.WantEnv)
+	if err != nil {
+		return "", false
+	}
+	if want.SandboxCapability != "" && want.SandboxCapability != domain.CapContainerRun {
+		return "", false
+	}
+	parts := make([]string, 0, 4)
+	for _, field := range []string{want.Ecosystem, want.Runtime, want.RuntimeVersion} {
+		if field != "" {
+			parts = append(parts, field)
+		}
+	}
+	if want.ExecutionContext != "" && want.ExecutionContext != want.Runtime {
+		parts = append(parts, want.ExecutionContext)
+	}
+	if want.BrowserFamily != "" {
+		parts = append(parts, want.BrowserFamily+" "+want.BrowserMajor)
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, " "), true
 }
 
 func parseWorkerRequirements(raw json.RawMessage) (domain.WorkerRequirements, error) {
@@ -292,6 +355,79 @@ func matrixExecutionManifest(m domain.SampleManifest, raw json.RawMessage) (doma
 	m.Environment.RuntimeVersion = want.RuntimeVersion
 	m.Environment.ExecutionContext = want.ExecutionContext
 	return m, nil
+}
+
+// crossExecutionManifest is the manifest a cross job actually runs against.
+//
+// The manifest records the machine that WROTE the sample. That machine is a
+// contributor's laptop as often as a container, and its toolchain moves on
+// its own: when one moved to Go 1.27.0 the runner asked for an image nobody
+// has, and three claimed jobs died before a container ever started --
+// "verifier runtime version \"1.26\" cannot satisfy \"1.27.0\"" -- filing
+// receipts that measured nothing. The queue had already been taught not to
+// ASK for that line; this is the same statement at the other end, where the
+// image is chosen.
+//
+// The job's requirements are the authority, exactly as they already are for a
+// matrix job. Only the two coordinates the queue itself may relax move here;
+// everything else the author recorded is left alone, the unpacked artifact and
+// its csx.json stay byte-for-byte immutable so the rebuilt sample id is still
+// the job's, and the receipt reports the environment the container really had.
+// A legacy job with no requirements says nothing, and changes nothing.
+func crossExecutionManifest(m domain.SampleManifest, raw json.RawMessage) (domain.SampleManifest, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return m, nil
+	}
+	want, err := parseWorkerRequirements(raw)
+	if err != nil {
+		return m, err
+	}
+	if want.RuntimeVersion != "" {
+		m.Environment.RuntimeVersion = want.RuntimeVersion
+	}
+	if want.ExecutionContext != "" {
+		m.Environment.ExecutionContext = want.ExecutionContext
+	}
+	// Where the job names nothing, what the author recorded stands -- unless
+	// no image serves it, which is the case the queue already relaxed to make
+	// the job claimable. Dropping unconditionally would quietly downgrade an
+	// older job the fleet CAN serve exactly: a browser sample onto a plain
+	// Node lane, or a Python 3.14 sample onto 3.12.
+	for _, candidate := range laneCandidates(m) {
+		if manifestHasALane(candidate) {
+			return candidate, nil
+		}
+	}
+	return m, nil
+}
+
+// laneCandidates is the manifest itself first, then the same manifest with
+// each author-recorded precision the queue is allowed to relax removed.
+func laneCandidates(m domain.SampleManifest) []domain.SampleManifest {
+	withoutVersion := m
+	withoutVersion.Environment.RuntimeVersion = ""
+	withoutContext := m
+	withoutContext.Environment.ExecutionContext = ""
+	bare := withoutVersion
+	bare.Environment.ExecutionContext = ""
+	return []domain.SampleManifest{m, withoutVersion, withoutContext, bare}
+}
+
+// manifestHasALane asks the image registry the same question the runner will.
+// The OS is deliberately not part of it: a manifest's OS is the author's host,
+// and the job carries the platform when the sample really names one.
+func manifestHasALane(m domain.SampleManifest) bool {
+	env := m.Environment
+	return sandbox.ContainerSupportsRequirements(domain.WorkerRequirements{
+		SandboxCapability: domain.CapContainerRun,
+		VerifierAdapter:   m.VerifierAdapter,
+		Ecosystem:         env.Ecosystem, Runtime: env.Runtime,
+		RuntimeVersion:   env.RuntimeVersion,
+		ExecutionContext: env.ExecutionContext,
+		BrowserFamily:    env.BrowserFamily, BrowserMajor: env.BrowserMajor,
+		Engine: env.Engine, EngineVersion: env.EngineVersion,
+	})
 }
 
 // RunOne claims and processes at most one cross-verification job. worked is
@@ -405,9 +541,11 @@ func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.
 	}
 	if job.Reason == MatrixJobReason {
 		m, err = matrixExecutionManifest(m, job.WantEnv)
-		if err != nil {
-			return zero, err
-		}
+	} else {
+		m, err = crossExecutionManifest(m, job.WantEnv)
+	}
+	if err != nil {
+		return zero, err
 	}
 
 	// RunLogged, not Run: Run drops the stage output on the floor, and this

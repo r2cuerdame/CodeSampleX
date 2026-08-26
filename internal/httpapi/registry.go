@@ -30,7 +30,7 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 
 	pkg, ok, err := a.d.Store.GetPackage(r.Context(), canonical)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "package lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "package lookup failed")
 		return
 	}
 	if !ok {
@@ -40,7 +40,7 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 
 	versions, err := a.d.Store.ListPackageVersions(r.Context(), p.Ecosystem, p.Name)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "version listing failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "version listing failed")
 		return
 	}
 	majorSet := map[string]bool{}
@@ -57,7 +57,7 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 
 	symbols, err := a.symbolsForPURL(r, canonical)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "symbol listing failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "symbol listing failed")
 		return
 	}
 
@@ -115,7 +115,7 @@ func (a *api) handleRegistrySymbol(w http.ResponseWriter, r *http.Request) {
 
 	versions, err := a.d.Store.ListPackageVersions(r.Context(), ecosystem, pkgName)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "version listing failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "version listing failed")
 		return
 	}
 
