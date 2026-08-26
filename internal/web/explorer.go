@@ -1192,6 +1192,7 @@ func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version strin
 	if len(g.Rows) <= 1 && len(g.Cols) <= 1 {
 		return pivotGrid{}
 	}
+	labelSampleMarks(&g, lang)
 	return g
 }
 
@@ -1383,6 +1384,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	if len(pivot.Rows) == 1 && len(pivot.Cols) == 1 {
 		pivot = pivotGrid{}
 	}
+	labelSampleMarks(&pivot, lang)
 
 	// Descriptive title leads with the strongest context row:
 	// "axios.post axios 1.12.0 node 22 compatibility — CodeSampleX".

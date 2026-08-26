@@ -53,8 +53,10 @@ type cubeAnswer struct {
 	// because it is assembled from English data phrases.
 	Basis     string
 	BasisNote string
-	Glyph     string
-	Tone      string
+	// Tone is the observation rate's colour on the card's edge. It carries no
+	// glyph: the mark on this card is the sample document, and a second
+	// coloured symbol beside it is what this issue removed.
+	Tone string
 	// Headline is the one line the whole page exists to deliver.
 	Headline string
 	Facts    []cubeAnswerFact
@@ -64,20 +66,19 @@ type cubeAnswer struct {
 	// read as an API the package exports.
 	SymbolNote string
 	// Code is how many published samples answer this release and API,
-	// whatever environment the coordinate names. CodeLabel says so in words;
-	// NoCodeLabel is set instead when there are none, because "no code yet"
-	// is an answer and an absent affordance is not.
-	Code        int64
-	CodeLabel   string
-	NoCodeLabel string
-	// CodeUnknownLabel is distinct from NoCodeLabel: a failed aggregate read
-	// cannot support a public absence claim.
-	CodeUnknownLabel string
-	// EnvLabel says whether THIS environment was verified, which is the other
-	// half of the pair the old single mark conflated. The template renders it
-	// only where the coordinate actually NAMES an environment: with none
-	// decided, "verified in this environment" points at nothing.
-	EnvLabel string
+	// whatever environment the coordinate names.
+	Code int64
+	// Sample and SampleLabel are the ONE state chip: is there a sample here,
+	// and how did it run here. They replace a pair of chips — "code
+	// available" beside "not verified in this environment" — that stated the
+	// two internal models side by side and left the reader to join them.
+	// sampleNone has a sentence of its own, because "no sample yet" is an
+	// answer and an absent chip is not.
+	Sample      sampleState
+	SampleLabel string
+	// SampleUnknownLabel is distinct from the sampleNone sentence: a failed
+	// aggregate read cannot support a public absence claim.
+	SampleUnknownLabel string
 	// Terminal marks the bottom of the drill. The card is built at the bottom
 	// and nowhere else, so this is always true where it is set; the WORDING
 	// lives on the navigator, which is the instrument that talks about depth,
@@ -168,7 +169,6 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 		Env:       cubeAnswerEnv(coord),
 		Basis:     basis,
 		BasisNote: basisNote,
-		Glyph:     cell.Glyph,
 		Tone:      cell.Tone,
 		Headline:  headline,
 		// The card is built at the bottom of the drill and nowhere else, so
@@ -239,27 +239,21 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 		add(i18n.T(lang, "answer.last_seen"), d, false)
 	}
 
-	// The two states the old single mark ran together, now stated apart.
+	// One state, from the two facts that used to be two chips.
 	//
-	// Code availability is keyed by release and API and is true or false
-	// wherever the reader is standing; verification is keyed by this exact
-	// environment. A sample the fleet ran only on Linux is still the code
-	// that exists for a Windows reader, and the Windows column is still
-	// unverified — both sentences are true at once and the page says both.
+	// Sample existence is keyed by release and API and is true or false
+	// wherever the reader is standing; the outcome is keyed by this exact
+	// environment. A sample the fleet ran only on Linux is still the sample
+	// that exists for a Windows reader, and it is still unrun there — so the
+	// document stays and its colour goes grey. Both sentences survive; the
+	// reader is no longer asked to hold two marks to get them.
 	version, symbol := coord["version"], coord["symbol"]
 	ans.Code = code.at(version, symbol)
-	switch {
-	case code == nil || !code.known:
-		ans.CodeUnknownLabel = i18n.T(lang, "cube.code_unknown")
-	case ans.Code > 0:
-		ans.CodeLabel = i18n.T(lang, "cube.code_yes")
-	default:
-		ans.NoCodeLabel = i18n.T(lang, "cube.code_none")
-	}
-	if ver > 0 {
-		ans.EnvLabel = i18n.T(lang, "cube.env_verified")
+	if code == nil || !code.known {
+		ans.SampleUnknownLabel = i18n.T(lang, "cube.code_unknown")
 	} else {
-		ans.EnvLabel = i18n.T(lang, "cube.env_unverified")
+		ans.Sample = deriveSampleState(ans.Code, agg.verPass, agg.verFail)
+		ans.SampleLabel = sampleStateLabel(lang, ans.Sample)
 	}
 
 	// The ways out of the instrument, each one offered only because what it
