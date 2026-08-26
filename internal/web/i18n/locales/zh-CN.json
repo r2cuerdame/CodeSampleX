@@ -423,6 +423,7 @@
   "cube.drill_in": "打开下一层",
   "cube.code_yes": "有代码",
   "cube.code_none": "尚无代码或样例",
+  "cube.code_unknown": "暂时无法获取代码可用性",
   "cube.code_scope": "有没有代码，是关于这个版本和这个 API 的事实。它不随操作系统、运行时或包管理器改变；是否在此环境验证过，由旁边另一个标记说明。",
   "cube.env_verified": "此环境已验证",
   "cube.env_unverified": "此环境未验证",

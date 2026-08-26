@@ -17,10 +17,11 @@ package web
 //	code availability   package + version + symbol/API      (environment-free)
 //	compatibility       … + OS + libc + arch + runtime …    (per environment)
 //
-// codeIndex is the first of those. It is built from the published samples the
-// package page already loads, and it never reads an environment dimension —
-// not as a filter, not as a tiebreak — because the moment it does, a Windows
-// reader is told there is no code for something that has ninety-six samples.
+// codeIndex is the first of those. It is built from the store's exhaustive
+// verified-sample aggregate, not the bounded newest-N list rendered below the
+// page, and it never reads an environment dimension — not as a filter, not as
+// a tiebreak — because the moment it does, a Windows reader is told there is
+// no code for something that has ninety-six samples.
 
 // codeKey addresses one release's answers for one API. The member, not the
 // full spelling: a sample filed against "uuid.New" and a symbol axis labelled
@@ -39,12 +40,17 @@ type codeIndex struct {
 	byVersion map[string]int64
 	bySymbol  map[codeKey]int64
 	total     int64
+	// known distinguishes an authoritative empty aggregate from a failed
+	// store read. Without it a transient database error becomes the public
+	// claim "No code or sample yet".
+	known bool
 }
 
 func newCodeIndex(items []SampleListItem) *codeIndex {
 	c := &codeIndex{
 		byVersion: map[string]int64{},
 		bySymbol:  map[codeKey]int64{},
+		known:     true,
 	}
 	for _, it := range items {
 		c.total++
@@ -60,6 +66,33 @@ func newCodeIndex(items []SampleListItem) *codeIndex {
 		}
 	}
 	return c
+}
+
+func newCodeIndexFromCounts(rows []PackageCodeCount) *codeIndex {
+	c := &codeIndex{
+		byVersion: map[string]int64{},
+		bySymbol:  map[codeKey]int64{},
+		known:     true,
+	}
+	for _, row := range rows {
+		if row.Version == "" || row.Samples <= 0 {
+			continue
+		}
+		if row.Symbol == "" {
+			c.byVersion[row.Version] += row.Samples
+			c.total += row.Samples
+			continue
+		}
+		member := symbolMember(row.Symbol)
+		if member != "" {
+			c.bySymbol[codeKey{row.Version, member}] += row.Samples
+		}
+	}
+	return c
+}
+
+func unknownCodeIndex() *codeIndex {
+	return &codeIndex{byVersion: map[string]int64{}, bySymbol: map[codeKey]int64{}}
 }
 
 // at reports how many published samples answer this release and this API.

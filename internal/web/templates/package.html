@@ -37,6 +37,12 @@
     {{- end}}
   </nav>
   {{- end}}
+  {{- with .Cube.CodeState}}
+  <p class="cube-code-state small{{if .Unknown}} unknown{{end}}">
+    {{- if .HasCode}}<span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.Label}} <span class="dim">({{$.N .Count}})</span>
+    {{- else}}{{.Label}}{{end}}
+  </p>
+  {{- end}}
   {{- if .Cube.Answer}}
   {{/* The answer, before the instrument that found it — and INSIDE #cube,
        because that anchor is what every shared link and every filter reload
@@ -69,6 +75,7 @@
     <p class="answer-states small">
       {{- if .CodeLabel}}<span class="state code yes"><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.CodeLabel}} <span class="dim">({{$.N .Code}})</span></span>{{end}}
       {{- if .NoCodeLabel}}<span class="state code no">{{.NoCodeLabel}}</span>{{end}}
+      {{- if .CodeUnknownLabel}}<span class="state code unknown">{{.CodeUnknownLabel}}</span>{{end}}
       {{- if and .EnvLabel .Env}}<span class="state env {{.Basis}}">{{.EnvLabel}}</span>{{end}}
     </p>
     <dl class="answer-facts mono small">

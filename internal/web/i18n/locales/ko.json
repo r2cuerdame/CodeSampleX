@@ -423,6 +423,7 @@
   "cube.drill_in": "다음 단계 열기",
   "cube.code_yes": "코드 있음",
   "cube.code_none": "아직 코드/샘플 없음",
+  "cube.code_unknown": "코드 존재 여부를 일시적으로 확인할 수 없음",
   "cube.code_scope": "코드 존재 여부는 이 버전과 이 API에 대한 사실입니다. OS·런타임·패키지 매니저가 바뀌어도 달라지지 않으며, 이 환경에서 검증됐는지는 옆의 별도 표시가 말해 줍니다.",
   "cube.env_verified": "이 환경 검증됨",
   "cube.env_unverified": "이 환경 미검증",

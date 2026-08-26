@@ -864,6 +864,11 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	if err != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
+	codeCounts, codeErr := s.d.Store.PackageCodeCounts(r.Context(), eco, name)
+	code := unknownCodeIndex()
+	if codeErr == nil {
+		code = newCodeIndexFromCounts(codeCounts)
+	}
 	// A package requested through NO_SAFE_MATCH has a useful, honest page
 	// even before its first sample exists. It says exactly that the request
 	// is queued; it does not manufacture a version, matrix or evidence row.
@@ -876,7 +881,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// an undecided slice there is no release whose dependencies these are and
 	// no environment whose failures these are, and the page showed both
 	// anyway. That pile is what a reader had to read past to find the grid.
-	cube := buildCubeView(s, r, lang, eco, name, samples)
+	cube := buildCubeView(s, r, lang, eco, name, code)
 	var clusters []clusterView
 	var clusterTotal int
 	var deps []PackageDep
@@ -902,7 +907,11 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 			cube.Answer.addAction("deps", i18n.T(lang, "answer.action_deps"), "#deps")
 		}
 	}
-	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && !s.hasAnyClusters(r, eco, name) {
+	// Only an authoritative empty aggregate can help prove absence. A failed
+	// aggregate read is unknown and must not turn a transient store error into
+	// a permanent 404 for a package whose older code fell outside the display
+	// window.
+	if len(versions) == 0 && len(samples) == 0 && code.known && code.total == 0 && len(wanted) == 0 && !s.hasAnyClusters(r, eco, name) {
 		s.notFound(w, r, lang)
 		return
 	}

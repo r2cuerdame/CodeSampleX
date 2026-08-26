@@ -70,6 +70,9 @@ type cubeAnswer struct {
 	Code        int64
 	CodeLabel   string
 	NoCodeLabel string
+	// CodeUnknownLabel is distinct from NoCodeLabel: a failed aggregate read
+	// cannot support a public absence claim.
+	CodeUnknownLabel string
 	// EnvLabel says whether THIS environment was verified, which is the other
 	// half of the pair the old single mark conflated. The template renders it
 	// only where the coordinate actually NAMES an environment: with none
@@ -246,6 +249,8 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 	version, symbol := coord["version"], coord["symbol"]
 	ans.Code = code.at(version, symbol)
 	switch {
+	case code == nil || !code.known:
+		ans.CodeUnknownLabel = i18n.T(lang, "cube.code_unknown")
 	case ans.Code > 0:
 		ans.CodeLabel = i18n.T(lang, "cube.code_yes")
 	default:

@@ -131,11 +131,22 @@ type cubeView struct {
 	// the page covers several coordinates and has no single answer to give,
 	// and inventing one would be the page speaking past its evidence.
 	Answer *cubeAnswer
+	// CodeState states a pinned release+API once above an environment-only
+	// grid. Repeating the same code mark in every OS/runtime cell is noise,
+	// but omitting it loses the availability fact entirely.
+	CodeState *cubeCodeState
 	// Nav is the ladder: which rung the reader is on, which are behind them,
 	// and whether this is the bottom. Filter chips say what is fixed and say
 	// nothing about depth, which is how a terminal coordinate came to look
 	// identical to one with a whole axis still under it.
 	Nav cubeNav
+}
+
+type cubeCodeState struct {
+	Count   int64
+	Label   string
+	HasCode bool
+	Unknown bool
 }
 
 // cubeCoord reads the coordinate out of a slice.
@@ -322,14 +333,13 @@ func validCubeAxis(key string) bool {
 
 // buildCubeView assembles the explorer for one request. nil means the
 // package has no cube-worthy evidence at all and the section is omitted.
-// samples are the package's published answers, already loaded by the page.
-// They decide CODE AVAILABILITY, which is keyed by release and API and by
-// nothing else — see cubecode.go for why that key excludes the environment.
+// code is the exhaustive verified-sample aggregate. It decides CODE
+// AVAILABILITY, which is keyed by release and API and by nothing else — see
+// cubecode.go for why that key excludes the environment.
 func buildCubeView(s *site, r *http.Request, lang, eco, name string,
-	samples []SampleListItem) *cubeView {
+	code *codeIndex) *cubeView {
 
 	facts, windowed := s.cubeFacts(r.Context(), eco, name)
-	code := newCodeIndex(samples)
 	pagePath := pkgHref(eco, name)
 	q := r.URL.Query()
 	filters := parseCubeFilters(q)
@@ -527,6 +537,20 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 		markSharedSymbolAxis(s, r, eco, &view.Grid, x, y, lang)
 	}
 	markCodeAvailability(&view.Grid, x, y, view.Coord, name, code, lang)
+	if x != "version" && y != "version" && x != "symbol" && y != "symbol" &&
+		view.Coord["version"] != "" && view.Coord["symbol"] != "" {
+		state := &cubeCodeState{}
+		if code == nil || !code.known {
+			state.Unknown = true
+			state.Label = i18n.T(lang, "cube.code_unknown")
+		} else if state.Count = code.at(view.Coord["version"], view.Coord["symbol"]); state.Count > 0 {
+			state.HasCode = true
+			state.Label = i18n.T(lang, "cube.code_yes")
+		} else {
+			state.Label = i18n.T(lang, "cube.code_none")
+		}
+		view.CodeState = state
+	}
 	view.Nav = buildCubeNav(facts, view.Coord, filters, pagePath, name, lang, false)
 	return view
 }

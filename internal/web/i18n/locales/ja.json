@@ -423,6 +423,7 @@
   "cube.drill_in": "次の段階を開く",
   "cube.code_yes": "コードあり",
   "cube.code_none": "まだコード・サンプルなし",
+  "cube.code_unknown": "コードの有無を一時的に確認できません",
   "cube.code_scope": "コードの有無は、このリリースとこの API についての事実です。OS・ランタイム・パッケージマネージャが変わっても変わりません。この環境で検証されたかどうかは、隣の別の印が示します。",
   "cube.env_verified": "この環境で検証済み",
   "cube.env_unverified": "この環境では未検証",

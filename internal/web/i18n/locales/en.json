@@ -423,6 +423,7 @@
   "cube.drill_in": "Open the next level",
   "cube.code_yes": "Code available",
   "cube.code_none": "No code or sample yet",
+  "cube.code_unknown": "Code availability temporarily unavailable",
   "cube.code_scope": "Code availability is a fact about this release and this API. It does not change with OS, runtime or package manager — whether it was verified HERE is the separate mark beside it.",
   "cube.env_verified": "Verified in this environment",
   "cube.env_unverified": "Not verified in this environment",

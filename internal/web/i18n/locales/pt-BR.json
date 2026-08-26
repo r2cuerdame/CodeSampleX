@@ -423,6 +423,7 @@
   "cube.drill_in": "Abrir o próximo nível",
   "cube.code_yes": "Há código",
   "cube.code_none": "Ainda sem código ou amostra",
+  "cube.code_unknown": "Disponibilidade do código temporariamente indisponível",
   "cube.code_scope": "A existência de código é um fato sobre esta versão e esta API. Não muda com o sistema operacional, o runtime ou o gerenciador de pacotes; se foi verificado AQUI é a marca separada ao lado.",
   "cube.env_verified": "Verificado neste ambiente",
   "cube.env_unverified": "Não verificado neste ambiente",

@@ -95,6 +95,16 @@ type SampleRow struct {
 	QuarantineReason string
 }
 
+// VerifiedSampleCodeCount is one exhaustive serving count for a package
+// release. Symbol "" is the release-wide count; non-empty symbols count the
+// verified samples that name that API. Keeping this aggregate in the store
+// avoids treating a newest-N display page as the complete code inventory.
+type VerifiedSampleCodeCount struct {
+	PURL    string
+	Symbol  string
+	Samples int64
+}
+
 // SampleCursor is a position in a newest-first sample listing, used to page
 // through one without offsets. Offsets shift under concurrent publishing and
 // hand the next page a row the previous one already returned; a keyset on
@@ -328,6 +338,11 @@ type Store interface {
 	// Search keeps using SamplesForPackages so source-only candidates can be
 	// graded honestly rather than disappearing from the local resolver.
 	VerifiedSamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// VerifiedSampleCodeCounts returns exhaustive counts for the exact package
+	// prefix (for example "pkg:npm/axios@"). Unlike
+	// VerifiedSamplesForPackages, this is an aggregate rather than a newest-N
+	// listing and is therefore safe for authoritative availability claims.
+	VerifiedSampleCodeCounts(ctx context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error)
 	// ListVerifiedSamples returns newest non-quarantined samples with an
 	// actual contract-PASS receipt. Public measured findings must never be
 	// derived from author prose on a source-only upload.

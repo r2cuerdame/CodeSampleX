@@ -1,6 +1,8 @@
 package web
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -390,6 +392,84 @@ func TestTheNavigatorContractHoldsInEveryEcosystem(t *testing.T) {
 	}
 }
 
+// The visible sample list is intentionally bounded. Code availability is an
+// inventory claim, so it must come from the exhaustive aggregate instead of
+// silently declaring an older answer absent when 200 newer rows precede it.
+func TestCodeAvailabilityDoesNotUseTheBoundedSampleListAsAnInventory(t *testing.T) {
+	f := uuidNavStore()
+	target := f.sampleList[0]
+	f.sampleList = nil
+	for i := 0; i < packageSampleLimit; i++ {
+		id := fmt.Sprintf("newer-%03d", i)
+		f.sampleList = append(f.sampleList, SampleListItem{
+			SampleID: id, Version: "v1.5.0", Symbols: []string{"uuid.Parse"},
+		})
+		f.samplePackages[id] = []string{"pkg:golang/github.com/google/uuid@v1.5.0"}
+	}
+	f.sampleList = append(f.sampleList, target)
+
+	listed, err := f.PackageSamples(t.Context(), "golang", "github.com/google/uuid", packageSampleLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != packageSampleLimit {
+		t.Fatalf("bounded list length = %d, want %d", len(listed), packageSampleLimit)
+	}
+	for _, item := range listed {
+		if item.SampleID == target.SampleID {
+			t.Fatal("test setup did not place the target outside the display window")
+		}
+	}
+
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
+	body := get(t, mux, uuidPkg+"?f_version=v1.6.0&f_symbol="+url.QueryEscape("uuid.New")).Body.String()
+	if !strings.Contains(answerCard(t, body), "Code available") {
+		t.Errorf("older verified code vanished behind the newest-%d display bound:\n%s",
+			packageSampleLimit, answerCard(t, body))
+	}
+}
+
+// A failed inventory read is unknown, not empty. Turning a transient database
+// failure into "No code" is a fail-open public claim about the corpus.
+func TestCodeAggregateFailureIsRenderedAsUnknown(t *testing.T) {
+	f := uuidNavStore()
+	f.packageCodeErr = errors.New("aggregate unavailable")
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
+	body := get(t, mux, uuidLeaf).Body.String()
+	card := answerCard(t, body)
+	if !strings.Contains(card, "Code availability temporarily unavailable") {
+		t.Errorf("aggregate failure is not rendered as unknown:\n%s", card)
+	}
+	if strings.Contains(card, "No code or sample yet") {
+		t.Errorf("aggregate failure was rendered as an authoritative absence:\n%s", card)
+	}
+}
+
+// Once release and API are pinned, every remaining cell is environmental.
+// Code availability has one release+API key and therefore appears once above
+// that grid, never copied into every OS/tool cell.
+func TestPinnedReleaseAndAPIRenderCodeStateOnceAboveEnvironmentGrid(t *testing.T) {
+	f := uuidNavStore()
+	const purl = "pkg:golang/github.com/google/uuid@v1.6.0"
+	f.snapshots[snapKey(purl, "uuid.New")] = environmentGridSnap(purl, "uuid.New")
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
+	path := uuidPkg + "?f_version=v1.6.0&f_symbol=" + url.QueryEscape("uuid.New") + "&x=os&y=tool"
+	body := get(t, mux, path).Body.String()
+	section := cubeSection(t, body)
+	if !strings.Contains(section, `<table class="pivot">`) {
+		t.Fatalf("test setup did not render the environment grid:\n%s", truncate(section))
+	}
+	if !strings.Contains(section, `class="cube-code-state`) {
+		t.Fatalf("pinned code state is missing above the environment grid:\n%s", truncate(section))
+	}
+	if n := strings.Count(section, "Code available"); n != 1 {
+		t.Errorf("code state rendered %d times, want once:\n%s", n, truncate(section))
+	}
+	if i, table := strings.Index(section, `class="cube-code-state`), strings.Index(section, `<table class="pivot">`); i < 0 || table < 0 || i > table {
+		t.Error("the one code state is not above the environment grid")
+	}
+}
+
 // ---------------------------------------------------------------------------
 
 // answerCard returns the answer card's markup, failing when there is none.
@@ -460,6 +540,29 @@ func twoEnvSnap(purl, symbol string) string {
 	    "passRate": 1,
 	    "lastSeen": "2026-08-12T10:00:00Z",
 	    "byStage": {"PROJECT_COMPILE": {"pass": 3, "fail": 0}}
+	  }],
+	  "failures": []
+	}`
+}
+
+func environmentGridSnap(purl, symbol string) string {
+	return `{
+	  "schemaVersion": 1,
+	  "purl": "` + purl + `",
+	  "symbol": "` + symbol + `",
+	  "generatedAt": "2026-08-13T00:00:00Z",
+	  "rows": [{
+	    "envBucket": {"schemaVersion":1,"os":"linux","arch":"x64","runtime":"go","runtimeVersion":"1.26","packageManager":"go"},
+	    "confidence":"MEDIUM","passRate":1,"lastSeen":"2026-08-12T10:00:00Z","byStage":{"CONTRACT":{"pass":2,"fail":0}}
+	  },{
+	    "envBucket": {"schemaVersion":1,"os":"linux","arch":"x64","runtime":"go","runtimeVersion":"1.26","packageManager":"make"},
+	    "confidence":"MEDIUM","passRate":1,"lastSeen":"2026-08-12T10:00:00Z","byStage":{"CONTRACT":{"pass":2,"fail":0}}
+	  },{
+	    "envBucket": {"schemaVersion":1,"os":"windows","arch":"x64","runtime":"go","runtimeVersion":"1.26","packageManager":"go"},
+	    "confidence":"MEDIUM","passRate":1,"lastSeen":"2026-08-12T10:00:00Z","byStage":{"PROJECT_COMPILE":{"pass":2,"fail":0}}
+	  },{
+	    "envBucket": {"schemaVersion":1,"os":"windows","arch":"x64","runtime":"go","runtimeVersion":"1.26","packageManager":"make"},
+	    "confidence":"MEDIUM","passRate":1,"lastSeen":"2026-08-12T10:00:00Z","byStage":{"PROJECT_COMPILE":{"pass":2,"fail":0}}
 	  }],
 	  "failures": []
 	}`
