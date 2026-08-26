@@ -27,6 +27,7 @@ type fakeStore struct {
 	dependencies   []DependencyEdge
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
+	packageCodeErr error
 	derived        []DerivedFinding
 }
 
@@ -119,6 +120,35 @@ func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, li
 			out = append(out, it)
 			break
 		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]PackageCodeCount, error) {
+	if f.packageCodeErr != nil {
+		return nil, f.packageCodeErr
+	}
+	items, err := f.PackageSamples(ctx, ecosystem, name, 0)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[[2]string]int64{}
+	for _, item := range items {
+		if item.Version == "" {
+			continue
+		}
+		counts[[2]string{item.Version, ""}]++
+		seen := map[string]bool{}
+		for _, symbol := range item.Symbols {
+			if symbol != "" && !seen[symbol] {
+				counts[[2]string{item.Version, symbol}]++
+				seen[symbol] = true
+			}
+		}
+	}
+	out := make([]PackageCodeCount, 0, len(counts))
+	for key, count := range counts {
+		out = append(out, PackageCodeCount{Version: key[0], Symbol: key[1], Samples: count})
 	}
 	return out, nil
 }

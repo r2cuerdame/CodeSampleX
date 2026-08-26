@@ -935,6 +935,58 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 	return out, err
 }
 
+func (p *PG) VerifiedSampleCodeCounts(ctx context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error) {
+	if packagePrefix == "" {
+		return nil, nil
+	}
+	var out []VerifiedSampleCodeCount
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH eligible AS MATERIALIZED (
+				SELECT samples.sample_id, package.value AS purl, samples.manifest
+				FROM samples
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+					CASE WHEN jsonb_typeof(samples.manifest->'packages')='array'
+					     THEN samples.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+				WHERE NOT samples.quarantined
+				  AND left(package.value, char_length($1)) = $1
+				  AND EXISTS (
+					SELECT 1 FROM receipts verified_receipt
+					WHERE verified_receipt.sample_id = samples.sample_id
+					  AND verified_receipt.contract_result = 'PASS'
+				  )
+			), coordinates AS (
+				SELECT sample_id, purl, ''::text AS symbol FROM eligible
+				UNION ALL
+				SELECT eligible.sample_id, eligible.purl, symbol.value
+				FROM eligible
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+					CASE WHEN jsonb_typeof(eligible.manifest->'symbols')='array'
+					     THEN eligible.manifest->'symbols' ELSE '[]'::jsonb END
+				) AS symbol(value)
+				WHERE symbol.value <> ''
+			)
+			SELECT purl, symbol, count(DISTINCT sample_id)
+			FROM coordinates
+			GROUP BY purl, symbol
+			ORDER BY purl, symbol`, packagePrefix)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row VerifiedSampleCodeCount
+			if err := rows.Scan(&row.PURL, &row.Symbol, &row.Samples); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 	if limit <= 0 {
 		limit = 50

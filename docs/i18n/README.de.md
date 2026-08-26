@@ -26,14 +26,14 @@ Jedes Ergebnis ist eine aufgezeichnete Ausführung mit angehängter Umgebung, de
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Dieses Raster ist keine Illustration, sondern [die Live-Seite](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) — die Zahlen oben haben sich seit dem Übernehmen also bereits bewegt.
 
-**Eine Zelle trägt eine Quote und eine Markierung, nie ein Urteil.** Der Prozentsatz und die Zahl daneben sind Beobachtungen: 82 % von 1.209 aufgezeichneten Beobachtungen kamen durch. Eine Beobachtung ist eine Stufe, die ein Build erreicht hat — kompilieren, typprüfen, testen —, ein einzelner Build hinterlässt also mehrere, und die Zahl zählt weder Builds noch Maschinen noch Personen. Das Zeichen `≡` ist unser eigenes Beispiel: Es lief hier und kam sauber zurück. Es ist bewusst kein Häkchen, denn ein Häkchen ist ein Genehmigungsstempel, und dieses Netzwerk benotet nicht; ein Lauf von uns, der fehlschlug, trägt stattdessen `✕`. `≡ —` heißt: funktionierender Code ist da, benutzt gesehen hat ihn noch niemand. `—` bleibt unbekannt.
+**Eine Zelle trägt eine Quote und eine Markierung, nie ein Urteil.** Der Prozentsatz und die Zahl daneben sind Beobachtungen: 82 % von 1.209 aufgezeichneten Beobachtungen kamen durch. Eine Beobachtung ist eine Stufe, die ein Build erreicht hat — kompilieren, typprüfen, testen —, ein einzelner Build hinterlässt also mehrere, und die Zahl zählt weder Builds noch Maschinen noch Personen. Das Zeichen `◆` sagt genau eines: Dieses Netzwerk hat seinen eigenen Kontrakt IN DIESER Umgebung ausgeführt, und er kam sauber zurück. Ob es für die Version und die API Code GIBT, ist ein eigenes Zeichen — ein Dokument —, denn ein Beispiel verschwindet nicht, wenn man den OS-Filter umstellt. Es ist bewusst kein Häkchen, denn ein Häkchen ist ein Genehmigungsstempel, und dieses Netzwerk benotet nicht; ein Lauf von uns, der fehlschlug, trägt stattdessen `✕`. `◆ —` heißt: unser Kontrakt lief hier und kam sauber zurück, und an dieser Koordinate wurde noch kein Build gemeldet. `—` bleibt unbekannt.
 
 ## Warum Testen zählt
 

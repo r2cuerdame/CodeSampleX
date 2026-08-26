@@ -26,14 +26,14 @@ Cada resultado é uma execução registrada com o seu ambiente anexado, então o
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Esta grade não é uma ilustração: é [a página ao vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) — então os números acima já se moveram desde que foram copiados.
 
-**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são observações: 82% de 1.209 observações registradas passaram. Uma observação é uma etapa que um build alcançou — compilar, checar tipos, testar — então um único build deixa várias, e o número não conta builds, nem máquinas, nem pessoas. A marca `≡` é a nossa própria amostra: ela rodou aqui e terminou limpa. Deliberadamente não é um sinal de visto, porque um visto é um carimbo de aprovação e esta rede não dá notas; uma execução nossa que falhou carrega `✕` no lugar. `≡ —` significa: existe código funcionando e ninguém foi visto usando ainda. `—` permanece desconhecido.
+**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são observações: 82% de 1.209 observações registradas passaram. Uma observação é uma etapa que um build alcançou — compilar, checar tipos, testar — então um único build deixa várias, e o número não conta builds, nem máquinas, nem pessoas. A marca `◆` diz uma coisa só: esta rede rodou o próprio contrato NESTE ambiente e ele terminou limpo. Se existe código para a versão e a API é outra marca — um documento —, porque uma amostra não deixa de existir quando você troca o filtro de sistema operacional. Deliberadamente não é um sinal de visto, porque um visto é um carimbo de aprovação e esta rede não dá notas; uma execução nossa que falhou carrega `✕` no lugar. `◆ —` significa: o nosso contrato rodou aqui e terminou limpo, e nenhum build foi reportado nesta coordenada. `—` permanece desconhecido.
 
 ## Por que testar importa
 

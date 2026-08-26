@@ -226,6 +226,22 @@ func TestEnglishReachableFromAnotherLanguage(t *testing.T) {
 	}
 }
 
+func TestWithLangPreservesFragmentAnchors(t *testing.T) {
+	b := basePage{Lang: "ko"}
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "#failures", want: "#failures"},
+		{path: "/npm/axios#failures", want: "/npm/axios?lang=ko#failures"},
+		{path: "/npm/axios?f_version=1.0.0#deps", want: "/npm/axios?f_version=1.0.0&lang=ko#deps"},
+	} {
+		if got := b.WithLang(tc.path); got != tc.want {
+			t.Errorf("WithLang(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
 // TestStatsPageRendersProducerJSON feeds the page the exact document the
 // aggregator writes. The homepage displays only the three decision-useful
 // counters in compact form, while preserving each exact count for assistive
