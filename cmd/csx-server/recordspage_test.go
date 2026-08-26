@@ -15,7 +15,7 @@ type recordTargetStore struct {
 	targets []serverstore.SnapshotTarget
 }
 
-func (s recordTargetStore) ListSnapshotTargets(context.Context) ([]serverstore.SnapshotTarget, error) {
+func (s recordTargetStore) SnapshotKeys(context.Context) ([]serverstore.SnapshotTarget, error) {
 	return s.targets, nil
 }
 

@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -224,7 +226,11 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 // heroMatrixTTL bounds how long a finished matrix is served as-is. The cubes
 // beneath it hold for five minutes; a minute here keeps the page fresh while
 // a busy landing pays the pivot once, not per view.
-const heroMatrixTTL = time.Minute
+const (
+	heroMatrixTTL      = time.Minute
+	heroWarmTimeout    = time.Minute
+	heroWarmRetryDelay = 30 * time.Second
+)
 
 // heroMatrix picks the featured package and slice: the ?m= selection when
 // it is one of the hot packages (never an arbitrary store read), else the
@@ -263,20 +269,85 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	}
 	s.heroMu.Unlock()
 
-	data := s.buildHeroMatrix(r, lang, hits, ordered)
+	// A finished cube can still be pivoted on this request. A cold cube is a
+	// database fan-out, though, and the landing has an honest empty state for
+	// exactly this moment. Schedule one bounded assembly and write the page
+	// now instead of making the first visitor after a restart wait for it.
+	data, complete := s.buildHeroMatrix(r, lang, hits, ordered, false)
+	if !complete {
+		s.warmHeroMatrix(r, lang, memoKey, hits, ordered)
+		return nil
+	}
+	s.cacheHeroMatrix(memoKey, data)
+	return data
+}
 
+func (s *site) cacheHeroMatrix(key string, data *heroMatrixData) {
 	s.heroMu.Lock()
+	defer s.heroMu.Unlock()
 	if s.heroCache == nil {
 		s.heroCache = map[string]heroCacheEntry{}
 	}
-	s.heroCache[memoKey] = heroCacheEntry{data: data, at: time.Now()}
+	s.heroCache[key] = heroCacheEntry{data: data, at: time.Now()}
+}
+
+func (s *site) warmHeroMatrix(r *http.Request, lang, key string, hits, ordered []PackageHit) {
+	s.heroMu.Lock()
+	now := time.Now()
+	if s.heroLoading[key] || now.Before(s.heroRetryAt[key]) {
+		s.heroMu.Unlock()
+		return
+	}
+	if s.heroLoading == nil {
+		s.heroLoading = map[string]bool{}
+	}
+	if s.heroRetryAt == nil {
+		s.heroRetryAt = map[string]time.Time{}
+	}
+	s.heroLoading[key] = true
 	s.heroMu.Unlock()
-	return data
+
+	// The handler owns its request and slices. Clone them before it returns so
+	// the background worker never observes caller-owned state changing.
+	warmRequest := r.Clone(context.Background())
+	warmHits := append([]PackageHit(nil), hits...)
+	warmOrdered := append([]PackageHit(nil), ordered...)
+	go func() {
+		ctx, cancel := context.WithTimeout(warmRequest.Context(), heroWarmTimeout)
+		defer cancel()
+		request := warmRequest.Clone(ctx)
+		var (
+			data     *heroMatrixData
+			complete bool
+		)
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("web: panic warming landing hero: %v", recovered)
+					complete = false
+				}
+			}()
+			data, complete = s.buildHeroMatrix(request, lang, warmHits, warmOrdered, true)
+		}()
+
+		s.heroMu.Lock()
+		defer s.heroMu.Unlock()
+		delete(s.heroLoading, key)
+		if !complete {
+			s.heroRetryAt[key] = time.Now().Add(heroWarmRetryDelay)
+			return
+		}
+		delete(s.heroRetryAt, key)
+		if s.heroCache == nil {
+			s.heroCache = map[string]heroCacheEntry{}
+		}
+		s.heroCache[key] = heroCacheEntry{data: data, at: time.Now()}
+	}()
 }
 
 // buildHeroMatrix does the probing and pivoting behind heroMatrix; hits is
 // the full hot list (for the tabs), ordered the candidates to probe.
-func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []PackageHit) *heroMatrixData {
+func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []PackageHit, loadCold bool) (*heroMatrixData, bool) {
 	homePath := "/"
 	if lang != i18n.Default {
 		homePath = "/" + lang + "/"
@@ -326,20 +397,14 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 		}
 	}
 
-	// Candidates in rank order, and the FIRST that renders wins. Warmth is a
-	// cost decision, never a selection input: which cubes are warm is a
-	// function of what other visitors happened to browse in the last five
-	// minutes, and ranking the warm subset made the front page's featured
-	// package depend on other people's traffic — visibly, since the landing
-	// carries no Cache-Control and heroMatrix re-runs on every reload.
-	//
-	// The cost stays bounded: a cached cube is free, and a cold one is
-	// assembled only until something renders. Probing all six to pick the
-	// richest grid was what made this the most expensive URL on the site.
-	// Candidates in RANK order, and warmth is never a selection input: which
-	// cubes are warm is a function of what other visitors happened to browse
-	// in the last five minutes, and letting that decide made the featured
+	// Candidates stay in rank order, and warmth is never a selection input.
+	// Which cubes are warm is a function of what other visitors happened to
+	// browse in the last five minutes, and letting that decide made the featured
 	// package a function of other people's traffic.
+	//
+	// The cost stays bounded: a cached cube is free, and a cold one is warmed
+	// only until something renders. Probing all six to pick the richest grid
+	// was what made this the most expensive URL on the site.
 	//
 	// What changed is when to stop. Stopping at the first candidate that
 	// rendered anything meant the featured slice was simply the first hot
@@ -355,7 +420,30 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 		}
 		facts, ok := s.cubeFactsCached(h.Ecosystem, h.Name)
 		if !ok {
-			facts, _ = s.cubeFacts(r.Context(), h.Ecosystem, h.Name)
+			if !loadCold {
+				return nil, false
+			}
+			if r.Context().Err() != nil {
+				return nil, false
+			}
+			facts, _ = s.heroCubeFacts(r.Context(), h.Ecosystem, h.Name)
+			// heroCubeFacts deliberately leaves no cache entry on an assembly
+			// error. Re-read it to distinguish that failure from a successful
+			// empty cube, which is a complete and cacheable result.
+			if cached, loaded := s.cubeFactsCached(h.Ecosystem, h.Name); loaded {
+				facts = cached
+			} else {
+				return nil, false
+			}
+			if r.Context().Err() != nil {
+				return nil, false
+			}
+			// heroCubeFacts reapplies this deadline on a detached shared-load
+			// context. Its timer can fire just before the parent context's Done
+			// channel is closed, so Err alone has a narrow false-negative race.
+			if deadline, ok := r.Context().Deadline(); ok && !time.Now().Before(deadline) {
+				return nil, false
+			}
 		}
 		consider(h, facts)
 		if best != nil && fallback == nil {
@@ -369,10 +457,9 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 		// embarrassing. Three quarters is the bar; a grid that clears it is
 		// dense enough that continuing buys little.
 		//
-		// Worst case is one assembly per candidate on a cold cache, which is
-		// what this loop was once optimised away from. Cubes hold for five
-		// minutes, so only the first request after an expiry pays, and the
-		// alternative is a permanently near-empty front page.
+		// Worst case is one assembly per candidate on a cold cache. One
+		// coalesced background warm pays that cost; landing requests keep
+		// rendering the honest empty state until a finished matrix is ready.
 		if best != nil && gridUsageCells(best.Grid)*4 >= gridCells(best.Grid)*3 {
 			break
 		}
@@ -381,7 +468,7 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 		best = fallback
 	}
 	if best == nil {
-		return nil
+		return nil, true
 	}
 	for j, tab := range hits {
 		if j >= heroMatrixTabs {
@@ -395,7 +482,7 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 			Selected: tab.Ecosystem == best.Eco && tab.Name == best.Package,
 		})
 	}
-	return best
+	return best, true
 }
 
 type landingPage struct {

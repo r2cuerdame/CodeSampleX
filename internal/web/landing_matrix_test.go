@@ -1,9 +1,26 @@
 package web
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+func landingMatrixBody(t *testing.T, mux *http.ServeMux, target string) string {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		body := get(t, mux, target).Body.String()
+		if strings.Contains(body, `<table class="pivot">`) {
+			return body
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background landing hero did not become visible")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 // matrixStore seeds a hot package whose snapshots carry full environment
 // buckets, so the landing can build a real runtime × OS hero grid.
@@ -26,7 +43,7 @@ func matrixStore() *fakeStore {
 // verification runs on Linux, so an OS axis guarantees no cell holds both.
 func TestLandingRendersHotPackageMatrix(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = matrixStore() })
-	body := get(t, mux, "/").Body.String()
+	body := landingMatrixBody(t, mux, "/")
 
 	mustContain(t, body, `id="matrix"`)
 	mustContain(t, body, `<table class="pivot">`)
@@ -45,7 +62,7 @@ func TestLandingRendersHotPackageMatrix(t *testing.T) {
 // back to the default featured package.
 func TestLandingMatrixSelectionIsBoundedToHotPackages(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = matrixStore() })
-	body := get(t, mux, "/?m=npm/otherpkg").Body.String()
+	body := landingMatrixBody(t, mux, "/?m=npm/otherpkg")
 	mustContain(t, body, `<table class="pivot">`)
 	mustContain(t, body, `/npm/reactish?f_`) // the default reactish grid rendered
 }
@@ -90,7 +107,7 @@ func TestLandingPrefersTheWidestGrid(t *testing.T) {
 		}
 	}
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
-	body := get(t, mux, "/").Body.String()
+	body := landingMatrixBody(t, mux, "/")
 
 	// Version columns and symbol rows, not a single linux × rust cell.
 	for _, s := range []string{"2.0.0", "1.0.0", "alpha", "beta"} {

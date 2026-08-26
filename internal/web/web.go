@@ -293,12 +293,17 @@ type site struct {
 	// cube* caches assembled compatibility cubes per package (cube.go):
 	// one assembly reads dozens of snapshots, which is fine on a timer and
 	// not fine per request.
-	cubeMu    sync.Mutex
-	cubeCache map[string]cubeCacheEntry
+	cubeMu       sync.Mutex
+	cubeCache    map[string]cubeCacheEntry
+	cubeRevision uint64
 	// cubeLoading holds one channel per package currently being assembled,
-	// closed when that assembly finishes. Concurrent readers wait on it
-	// rather than each running the same fan-out.
+	// closed after that foreground assembly publishes. Concurrent foreground
+	// readers wait on it rather than each running the same fan-out.
 	cubeLoading map[string]chan struct{}
+	// heroCubeLoading is a separate singleflight lane for landing background
+	// fills. Foreground readers never wait on it, so a slow post-restart hero
+	// cannot move the public timeout from / to the next package page.
+	heroCubeLoading map[string]chan struct{}
 	// pinnedCube caches the repair read for coordinates the browse window
 	// skipped, keyed by package and pin. It is small — one release, or one
 	// symbol across the window's releases — and it is on the request path of
@@ -313,6 +318,11 @@ type site struct {
 	// arrive at the same matrix every time.
 	heroMu    sync.Mutex
 	heroCache map[string]heroCacheEntry
+	// heroLoading is one background assembly per bounded landing view key.
+	// heroCubeLoading is authoritative per package, so different locales
+	// cannot multiply the database fan-out for the same cold cube.
+	heroLoading map[string]bool
+	heroRetryAt map[string]time.Time
 }
 
 type heroCacheEntry struct {
