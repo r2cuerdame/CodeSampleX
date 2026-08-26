@@ -3,9 +3,95 @@ package serverstore
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
+
+func TestIntegrationFarmCoverageTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
+	pg := openTestPG(t)
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockResult := make(chan error, 1)
+	go func() {
+		lockResult <- pg.withConn(context.Background(), func(c *pgx.Conn) error {
+			tx, err := c.Begin(context.Background())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			if _, err := tx.Exec(context.Background(), `LOCK TABLE packages IN ACCESS EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("could not establish the blocking coverage fixture")
+	}
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), time.Second)
+	seed, err := pg.pool.acquire(seedCtx)
+	seedCancel()
+	if err != nil {
+		close(release)
+		<-lockResult
+		t.Fatalf("acquire coverage connection: %v", err)
+	}
+	coveragePID := seed.conn.PgConn().PID()
+	pg.pool.release(seed)
+
+	started := time.Now()
+	_, err = pg.farmCoverage(context.Background(), 75*time.Millisecond)
+	elapsed := time.Since(started)
+	if !IsQueryTimeout(err) {
+		close(release)
+		<-lockResult
+		t.Fatalf("blocked coverage query error = %v, want PostgreSQL statement timeout", err)
+	}
+	if elapsed >= time.Second {
+		close(release)
+		<-lockResult
+		t.Fatalf("75ms statement timeout returned after %v", elapsed)
+	}
+
+	// The lock holder still occupies one pool connection, so this probe must
+	// reuse the exact connection whose read-only transaction just timed out.
+	// Explicit rollback must clear the aborted transaction without reconnecting.
+	reuseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	reused, err := pg.pool.acquire(reuseCtx)
+	if err != nil {
+		close(release)
+		<-lockResult
+		t.Fatalf("reacquire coverage connection: %v", err)
+	}
+	var one int
+	reuseErr := reused.conn.QueryRow(reuseCtx, `SELECT 1`).Scan(&one)
+	reusedPID := reused.conn.PgConn().PID()
+	pg.pool.release(reused)
+	if reuseErr != nil || one != 1 || reusedPID != coveragePID {
+		close(release)
+		<-lockResult
+		t.Fatalf("coverage connection after timeout: one=%d pid=%d want=%d err=%v",
+			one, reusedPID, coveragePID, reuseErr)
+	}
+
+	close(release)
+	if lockErr := <-lockResult; lockErr != nil {
+		t.Fatalf("release coverage fixture: %v", lockErr)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	if _, err := pg.FarmCoverage(ctx); err != nil {
+		t.Fatalf("coverage snapshot after timeout: %v", err)
+	}
+}
 
 // Observations come from developer machines and verifications come from
 // containers, so the two can disagree completely about which platform a

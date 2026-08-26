@@ -180,9 +180,20 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 // was windows while every receipt was linux. Counting them together hid that
 // for months behind a single healthy-looking coverage number.
 func (p *PG) FarmCoverage(ctx context.Context) ([]FarmAxisCoverage, error) {
+	ctx, cancel := farmAggregateContext(ctx)
+	defer cancel()
+	return p.farmCoverage(ctx, farmAggregateTimeout)
+}
+
+func (p *PG) farmCoverage(ctx context.Context, statementTimeout time.Duration) ([]FarmAxisCoverage, error) {
 	var out []FarmAxisCoverage
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
+		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		rows, err := tx.Query(ctx, `
 			WITH observed AS (
 			  SELECT DISTINCT LOWER(BTRIM(e.env_json->>'os')) AS os, p.ecosystem, p.purl
 			    FROM evidence_agg e
