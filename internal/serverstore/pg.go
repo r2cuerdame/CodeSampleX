@@ -138,6 +138,11 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	canonical := purl.String()
 	env := b.Environment.Normalize()
 	envJSON := domain.MustCanonicalJSON(env)
+	outerCommands := []string{}
+	if b.OuterCommand != "" {
+		outerCommands = append(outerCommands, b.OuterCommand)
+	}
+	outerCommandsJSON := domain.MustCanonicalJSON(outerCommands)
 	confidence := string(b.SymbolConfidence)
 	if confidence == "" {
 		confidence = string(domain.SymbolUnknown)
@@ -158,7 +163,7 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		INSERT INTO evidence_agg
 			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result,
 			 error_fp, error_code, direct, termination_kind, exit_code, signal,
-			 timeout_millis, error_summary, evidence_quality, outer_command, outer_stage,
+			 timeout_millis, error_summary, evidence_quality, outer_commands, outer_stage,
 			 actual_toolchain, stage_evidence, failure_evidence_gap)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
@@ -175,7 +180,13 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 				THEN EXCLUDED.error_summary ELSE evidence_agg.error_summary END,
 			evidence_quality = CASE WHEN evidence_agg.evidence_quality IN ('', 'legacy-evidence-incomplete')
 				THEN EXCLUDED.evidence_quality ELSE evidence_agg.evidence_quality END,
-			outer_command = CASE WHEN evidence_agg.outer_command = '' THEN EXCLUDED.outer_command ELSE evidence_agg.outer_command END,
+			outer_commands = (
+				SELECT COALESCE(jsonb_agg(command ORDER BY command), '[]'::jsonb)
+				FROM (
+					SELECT DISTINCT value AS command
+					FROM jsonb_array_elements_text(evidence_agg.outer_commands || EXCLUDED.outer_commands)
+				) commands
+			),
 			outer_stage = CASE WHEN evidence_agg.outer_stage = '' THEN EXCLUDED.outer_stage ELSE evidence_agg.outer_stage END,
 			actual_toolchain = CASE WHEN evidence_agg.actual_toolchain = '' THEN EXCLUDED.actual_toolchain ELSE evidence_agg.actual_toolchain END,
 			stage_evidence = CASE WHEN evidence_agg.stage_evidence = '' THEN EXCLUDED.stage_evidence ELSE evidence_agg.stage_evidence END,
@@ -187,7 +198,7 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
 		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
 		string(b.TerminationKind), b.ExitCode, b.Signal, b.TimeoutMillis,
-		b.ErrorSummary, string(normalizedEvidenceQuality(b)), b.OuterCommand, string(b.OuterStage),
+		b.ErrorSummary, string(normalizedEvidenceQuality(b)), []byte(outerCommandsJSON), string(b.OuterStage),
 		b.ActualToolchain, string(b.StageEvidence), string(b.FailureEvidenceGap),
 	).Scan(&aggID); err != nil {
 		return err
@@ -708,7 +719,7 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		rows, err := c.Query(ctx, `
 			SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
 			       stage, result, error_fp, error_code, termination_kind, exit_code,
-			       signal, timeout_millis, error_summary, evidence_quality, outer_command,
+			       signal, timeout_millis, error_summary, evidence_quality, outer_commands::text,
 			       outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
@@ -720,15 +731,22 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		defer rows.Close()
 		for rows.Next() {
 			var e EvidenceRow
+			var outerCommandsJSON string
 			var first, last *time.Time
 			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
 				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
 				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
-				&e.ErrorSummary, &e.EvidenceQuality, &e.OuterCommand, &e.OuterStage,
+				&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
 				&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
 				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
 				&first, &last); err != nil {
 				return err
+			}
+			if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
+				return fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
+			}
+			if len(e.OuterCommands) > 0 {
+				e.OuterCommand = e.OuterCommands[0]
 			}
 			if first != nil {
 				e.FirstSeen = *first
@@ -2127,6 +2145,24 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+}
+
+// ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
+//
+// Exact failure matching is the one question those rows still answer. Every
+// released client fingerprints a failure as `v1|stage|code|template`, and
+// every one of the fingerprints this network has on file was written by such
+// a client. Serving only current clusters would hand exact-match search a
+// surface where nothing can ever match: the rebuilt evidence-gap rows carry
+// no fingerprint at all, and v2 fingerprints only start arriving once a
+// client that computes them is released. A fingerprint that was recorded is
+// a fingerprint a caller can still hit.
+func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, "")
+}
+
+func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
@@ -2144,7 +2180,7 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(stage_evidence,''), COALESCE(failure_evidence_gap,''),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1
+			WHERE package_name=$1`+extraWhere+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err

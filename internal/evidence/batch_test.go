@@ -53,7 +53,7 @@ func TestDrainBuildsBatchesAndMarksUploadedAtomically(t *testing.T) {
 	wantBucket := ident.ProjectBucket(abs, month)
 	wantEnvHash := testEnvFP().Hash()
 	for _, batch := range batches {
-		if batch.SchemaVersion != 1 {
+		if batch.SchemaVersion != 2 {
 			t.Errorf("schemaVersion = %d", batch.SchemaVersion)
 		}
 		if batch.AnonID != ident.AnonID(epoch) {
@@ -100,6 +100,49 @@ func TestDrainBuildsBatchesAndMarksUploadedAtomically(t *testing.T) {
 		if batch.ObservationCount != 2 {
 			t.Errorf("re-send observationCount = %d, want full epoch count 2", batch.ObservationCount)
 		}
+	}
+}
+
+func TestUploadToV1ServerLeavesV2RowsPending(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	var versions []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode upload: %v", err)
+		}
+		rejected := make([]map[string]any, len(body.Batches))
+		for i, batch := range body.Batches {
+			versions = append(versions, batch.SchemaVersion)
+			rejected[i] = map[string]any{"index": i, "reason": "schemaVersion must be 1"}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": 0, "rejected": rejected})
+	}))
+	defer srv.Close()
+
+	cfg := communityCfg(srv.URL)
+	recorder := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	batcher := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	if err := recorder.RecordRun(t.Context(), t.TempDir(), fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	if _, err := batcher.Upload(t.Context(), srv.Client(), srv.URL); err == nil || !strings.Contains(err.Error(), "schemaVersion must be 1") {
+		t.Fatalf("v1 refusal = %v, want explicit schema-version error", err)
+	}
+	if len(versions) == 0 {
+		t.Fatal("old server saw no batches")
+	}
+	for _, version := range versions {
+		if version != 2 {
+			t.Fatalf("uploaded schemaVersion = %d, want 2", version)
+		}
+	}
+	if rows := pendingRows(t, db); len(rows) != len(versions) {
+		t.Fatalf("pending rows = %d, want all %d refused rows preserved", len(rows), len(versions))
 	}
 }
 

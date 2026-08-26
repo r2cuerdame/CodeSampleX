@@ -26,7 +26,11 @@ sends it as an observation batch; PostgreSQL delta-merges it into
 `evidence_agg`. Compatibility aggregation keeps the cluster fingerprint apart
 from environment variants, then materializes snapshots and
 `failure_clusters`. The API and web explorer read those materialized records;
-they never aggregate raw logs on a request.
+they never aggregate raw logs on a request. `failure_clusters` still holds the
+rows written before structured failure evidence existed, so a reader picks
+between the current clusters and every recorded one — the pages and the deploy
+ledger take the first, exact fingerprint search takes the second
+([schema.md](schema.md)).
 
 Verifier resolve/compile/contract failures use the same sanitizer and carry
 secret-safe `stageFailures` in the signed receipt. The full stage logs remain

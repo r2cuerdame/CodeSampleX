@@ -83,6 +83,15 @@ func (p *protector) restore(s string) string {
 // template, the dominant error code, a stable fingerprint, and the public
 // packages mentioned in raw.
 func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedError {
+	return sanitize(raw, stage, publicPkgs, true)
+}
+
+// sanitize performs the deterministic sanitizer pipeline. scrubHostUser is
+// true only at the producing machine's raw-log boundary. A server validating
+// an already-normalized wire summary must not apply its own account name: the
+// production container runs as "csx", which is also a legitimate substring
+// of public package and module names.
+func sanitize(raw string, stage domain.Stage, publicPkgs []string, scrubHostUser bool) SanitizedError {
 	code := extractCode(raw)
 
 	pub := make(map[string]bool, len(publicPkgs))
@@ -144,9 +153,12 @@ func Sanitize(raw string, stage domain.Stage, publicPkgs []string) SanitizedErro
 		return m
 	})
 
-	// (8) Current user and home dir.
-	for _, re := range userScrubPatterns() {
-		s = re.ReplaceAllString(s, "<user>")
+	// (8) Current user and home dir. This is producer-local secret removal,
+	// not a portable canonicalization rule.
+	if scrubHostUser {
+		for _, re := range userScrubPatterns() {
+			s = re.ReplaceAllString(s, "<user>")
+		}
 	}
 
 	// (9) Line/column numbers.
@@ -239,6 +251,13 @@ func PublicErrorSummary(normalized string) string {
 		s = strings.TrimSpace(s)
 	}
 	return s
+}
+
+// CanonicalPublicErrorSummary revalidates a normalized public-wire summary
+// without introducing facts from the validating host. Raw producers still
+// use SanitizeFailure, which removes their own username and home directory.
+func CanonicalPublicErrorSummary(summary string, stage domain.Stage) string {
+	return PublicErrorSummary(sanitize(summary, stage, nil, false).Template)
 }
 
 // observationStages are the stages an error can actually be RECORDED

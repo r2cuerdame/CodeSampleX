@@ -130,3 +130,57 @@ func TestAnalyzeFailureProcessStartIsNotOuterTest(t *testing.T) {
 		t.Fatalf("events = %#v", analysis.Events)
 	}
 }
+
+func TestAnalyzeFailureDoesNotTurnGenericRuntimeDiagnosticsIntoTests(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		profile scanner.CommandProfile
+		argv    []string
+		output  CommandOutput
+	}{
+		{
+			name:    "go run panic",
+			profile: scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "go"},
+			argv:    []string{"go", "run", "."},
+			output:  CommandOutput{Stderr: "panic: production startup failed\n"},
+		},
+		{
+			name:    "node process assertion",
+			profile: scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "node"},
+			argv:    []string{"node", "app.js"},
+			output:  CommandOutput{Stderr: "AssertionError: request invariant failed\n"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			analysis := AnalyzeFailure(tc.profile, tc.argv, tc.output)
+			if len(analysis.Events) != 1 {
+				t.Fatalf("events = %#v", analysis.Events)
+			}
+			if analysis.Events[0].Stage == domain.StageProjectTest || analysis.Events[0].StageEvidence == StageEvidenceTestRunnerDiagnostic {
+				t.Fatalf("generic runtime diagnostic became test evidence: %#v", analysis.Events[0])
+			}
+		})
+	}
+}
+
+func TestAnalyzeFailureAllowsGenericDiagnosticsAfterTestRunnerIsEstablished(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tool   string
+		argv   []string
+		output string
+	}{
+		{"go test panic", "go", []string{"go", "test", "./..."}, "panic: test setup failed\n"},
+		{"npm test assertion", "npm", []string{"npm", "test"}, "AssertionError: expected true\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			analysis := AnalyzeFailure(
+				scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tc.tool},
+				tc.argv, CommandOutput{Stderr: tc.output})
+			if len(analysis.Events) != 1 || analysis.Events[0].Stage != domain.StageProjectTest ||
+				analysis.Events[0].StageEvidence != StageEvidenceTestRunnerDiagnostic {
+				t.Fatalf("established test diagnostic = %#v", analysis.Events)
+			}
+		})
+	}
+}

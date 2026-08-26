@@ -85,6 +85,11 @@ func AnalyzeFailure(profile scanner.CommandProfile, argv []string, output Comman
 	var detected []detectedFailure
 	var buildAggregate bool
 	testEventIndex := -1
+	// The command classifier can establish a test runner before any output is
+	// produced. Otherwise only a runner-specific marker may do so; generic
+	// language runtime text such as "panic:" or "AssertionError" is not proof
+	// that a normal process was executing tests.
+	testRunnerEstablished := profile.Known && profile.Stage == domain.StageProjectTest
 
 	for i, raw := range lines {
 		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
@@ -139,7 +144,11 @@ func AnalyzeFailure(profile scanner.CommandProfile, argv []string, output Comman
 			buildAggregate = true
 			continue
 		}
-		if goTestStartRE.MatchString(line) || jsTestDiagnosticRE.MatchString(line) || strings.HasPrefix(line, "panic: ") {
+		goTestMarker := goTestStartRE.MatchString(line)
+		if goTestMarker {
+			testRunnerEstablished = true
+		}
+		if goTestMarker || (testRunnerEstablished && (jsTestDiagnosticRE.MatchString(line) || strings.HasPrefix(line, "panic: "))) {
 			event := detectedFailure{index: i, FailureEvent: FailureEvent{
 				Stage: domain.StageProjectTest, Toolchain: testToolchain(line, profile, argv), Diagnostic: line,
 				StageEvidence: StageEvidenceTestRunnerDiagnostic,

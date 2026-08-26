@@ -110,12 +110,12 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 			(failure.TimeoutMillis != 0 && failure.TerminationKind != domain.TerminationTimeout) || failure.TimeoutMillis < 0 {
 			return fmt.Errorf("stageFailures.%s has mismatched termination fields", stage)
 		}
-		canonical := sanitizer.PublicErrorSummary(sanitizer.Sanitize(failure.ErrorSummary, domain.Stage(strings.ToUpper(stage)), nil).Template)
+		canonical := sanitizer.CanonicalPublicErrorSummary(failure.ErrorSummary, domain.Stage(strings.ToUpper(stage)))
 		if canonical != failure.ErrorSummary || len(failure.ErrorSummary) > 512 || len(failure.Signal) > 32 || len(failure.ErrorCode) > 64 {
 			return fmt.Errorf("stageFailures.%s is not canonical secret-safe evidence", stage)
 		}
-		if len(failure.OuterCommand) > 32 || len(failure.ActualToolchain) > 64 {
-			return fmt.Errorf("stageFailures.%s has oversized lineage coordinates", stage)
+		if err := serverstore.ValidateFailureLineage(failure); err != nil {
+			return fmt.Errorf("stageFailures.%s has invalid lineage: %w", stage, err)
 		}
 		hasSummary := failure.ErrorSummary != ""
 		switch failure.EvidenceQuality {

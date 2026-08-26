@@ -189,6 +189,53 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	}
 }
 
+// These programs cross three parsers: PowerShell, the remote host's sh, and
+// a shell inside the Caddy/server container. A single-quoted `sh -c` body is
+// unsafe here because the privacy regex itself contains single quotes; the
+// remote shell then interprets its `|` alternatives as commands. Keep the
+// container program on stdin so regex quoting arrives byte-for-byte.
+func TestPrivacySmokeContainerProgramsCrossTheShellBoundaryOnStdin(t *testing.T) {
+	script := readDeployFixture(t, "deploy.ps1")
+
+	for _, required := range []string{
+		`docker exec -i "$name" sh -s <<'CSX_CADDY_PREFLIGHT_SMOKE'`,
+		`docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'`,
+		`docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_VERIFY'`,
+		`docker compose exec -T server sh -s <<'CSX_SAFE_LOG_SERVER_VERIFY'`,
+		`docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PURGE'`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("privacy smoke no longer transports the container program on stdin: missing %q", required)
+		}
+	}
+	for _, unsafe := range []string{
+		`docker exec "$name" sh -c '`,
+		`docker compose exec -T caddy sh -c '`,
+	} {
+		if strings.Contains(script, unsafe) {
+			t.Errorf("quote-sensitive privacy program still crosses a nested sh -c boundary: %q", unsafe)
+		}
+	}
+}
+
+func TestProductionEvidenceIgnoresPreservedLegacyClusterRows(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	collector := readDeployFixture(t, "collect-production-evidence.sh")
+	predicate := `COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')`
+	currentGap := `COALESCE(error_fp,'') = ''`
+	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
+		if !strings.Contains(script, predicate) || !strings.Contains(script, currentGap) {
+			t.Errorf("%s counts preserved pre-0024 legacy fingerprints as current failure clusters", name)
+		}
+		if strings.Contains(script, `(SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters)`) {
+			t.Errorf("%s still sums every historical and current failure-cluster row", name)
+		}
+		if strings.Contains(script, `:'failure_cluster_observations'`) || strings.Contains(script, `-v failure_cluster_observations=`) {
+			t.Errorf("%s relies on psql variable interpolation inside -c, which psql leaves as invalid SQL", name)
+		}
+	}
+}
+
 func TestActivityKeyInstallIsAtomicAcrossFreshUpgradeAndRerun(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {

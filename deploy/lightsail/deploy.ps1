@@ -249,7 +249,9 @@ SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
   (SELECT count(*) FROM samples WHERE status='PUBLISHED'),
-  (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters),
+  (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
+    WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+       OR COALESCE(error_fp,'') = ''),
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
 FROM evidence_agg"
@@ -517,13 +519,13 @@ while [ "$i" -lt 10 ]; do
 done
 docker exec "$name" wget -q -T 3 -t 1 -O /dev/null 'http://127.0.0.1:18080/v1/samples%2Fencoded-id-must-not-log/path' >/dev/null 2>&1 || true
 docker exec "$name" wget -q -T 3 -t 1 -O /dev/null 'http://127.0.0.1:18080/v1/unknown-secret-must-not-log/path' >/dev/null 2>&1 || true
-docker exec "$name" sh -c '
+docker exec -i "$name" sh -s <<'CSX_CADDY_PREFLIGHT_SMOKE'
   test "$(stat -c %a /var/log/caddy-safe/access-safe.log)" = 644
   grep -q '"csx_route":"samples"' /var/log/caddy-safe/access-safe.log
   grep -q '"csx_method":"get_head"' /var/log/caddy-safe/access-safe.log
   ! grep -Eq 'known-id-must-not-log|query-must-not-log|encoded-id-must-not-log|unknown-secret-must-not-log|remote_ip|client_ip|headers|user_id|"request"' /var/log/caddy-safe/access-safe.log
   ! grep -q '?' /var/log/caddy-safe/access-safe.log
-'
+CSX_CADDY_PREFLIGHT_SMOKE
 docker rm -f "$name" >/dev/null 2>&1
 passed=1
 '@
@@ -767,7 +769,7 @@ Write-Output "healthz: ok"
 $safeAccessLogSmoke = @'
 set -eu
 cd /opt/codesamplex/deploy
-docker compose exec -T caddy sh -c '
+docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'
   umask 022
   marker=/var/log/caddy-safe/access-safe.log.since
   if [ ! -f "$marker" ]; then
@@ -776,7 +778,7 @@ docker compose exec -T caddy sh -c '
     chmod 0644 "$tmp"
     mv "$tmp" "$marker"
   fi
-'
+CSX_SAFE_LOG_EPOCH
 curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/stats?csx_safe_log_smoke=discard-this-query'
 curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/samples%2Fencoded-marker-must-not-log/path'
 curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/secret-marker-must-not-log/path'
@@ -788,7 +790,7 @@ while [ "$i" -lt 10 ]; do
   i=$((i + 1))
   sleep 1
 done
-docker compose exec -T caddy sh -c '
+docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_VERIFY'
   test -f /var/log/caddy-safe/access-safe.log
   test "$(stat -c %a /var/log/caddy-safe/access-safe.log)" = 644
   test "$(stat -c %a /var/log/caddy-safe/access-safe.log.since)" = 644
@@ -798,12 +800,12 @@ docker compose exec -T caddy sh -c '
   ! grep -q '?' /var/log/caddy-safe/access-safe.log
   grep -q '"csx_method":"get_head"' /var/log/caddy-safe/access-safe.log
   ! grep -Eq 'remote_ip|client_ip|headers|user_id|"request"' /var/log/caddy-safe/access-safe.log
-'
-docker compose exec -T server sh -c '
+CSX_SAFE_LOG_VERIFY
+docker compose exec -T server sh -s <<'CSX_SAFE_LOG_SERVER_VERIFY'
   test -r /var/log/caddy-safe/access-safe.log
   test -r /var/log/caddy-safe/access-safe.log.since
   test ! -e /var/log/caddy/access.log
-'
+CSX_SAFE_LOG_SERVER_VERIFY
 '@
 $safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
 Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
@@ -1007,7 +1009,7 @@ Write-Output "landing sample: $($landing -join ' ' )"
 $legacyAccessPurge = @'
 set -eu
 cd /opt/codesamplex/deploy
-removed=$(docker compose exec -T caddy sh -c '
+removed=$(docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PURGE'
   set -eu
   old_dir=/var/log/caddy
   test "$(readlink -f "$old_dir")" = /var/log/caddy
@@ -1025,7 +1027,8 @@ removed=$(docker compose exec -T caddy sh -c '
     count=$((count + 1))
   done
   printf "%s" "$count"
-')
+CSX_LEGACY_ACCESS_PURGE
+)
 printf 'legacy query-bearing access files irrecoverably removed: %s\n' "$removed"
 '@
 if ($RequireNoLegacyAccessLogs) {

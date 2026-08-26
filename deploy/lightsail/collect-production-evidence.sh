@@ -13,12 +13,18 @@ migration_count=$(docker compose exec -T db psql -U csx -d csx -Atqc \
   "SELECT count(*) FROM schema_migrations")
 health=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz)
 
+# Migration 0024 preserves old derived rows instead of deleting them. The
+# current builder collapses missing/legacy fingerprints to error_fp='', so
+# only that row is live; non-empty legacy rows remain recoverable historical
+# material and must not double the current cluster observation invariant.
 invariants=$(docker compose exec -T db psql -U csx -d csx -Atqc "
 SELECT json_build_object(
   'pass', COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   'fail', COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
   'publishedSamples', (SELECT count(*) FROM samples WHERE status='PUBLISHED'),
-  'failureClusterObservations', (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters),
+  'failureClusterObservations', (SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters
+    WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+       OR COALESCE(error_fp,'') = ''),
   'pgxParseConfigPass', COALESCE(SUM(observation_count) FILTER (
     WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
   'pgxParseConfigFail', COALESCE(SUM(observation_count) FILTER (

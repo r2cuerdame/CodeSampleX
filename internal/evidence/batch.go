@@ -200,7 +200,7 @@ func (b *Batcher) build(ctx context.Context) ([]domain.ObservationBatch, []local
 			env = fp
 		}
 		batch := domain.ObservationBatch{
-			SchemaVersion:      1,
+			SchemaVersion:      2,
 			Epoch:              row.Epoch,
 			AnonID:             b.Ident.AnonID(row.Epoch),
 			ProjectBucket:      b.bucketFor(ctx, buckets, row),

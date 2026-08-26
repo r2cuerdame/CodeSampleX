@@ -2,6 +2,8 @@ package deploygate
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -64,12 +66,32 @@ ALTER TABLE failure_clusters ADD COLUMN diagnostic_candidate BOOLEAN NOT NULL DE
 }
 
 func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
-	sql, err := os.ReadFile("../serverstore/migrations/0025_failure_stage_lineage.sql")
-	if err != nil {
-		t.Fatal(err)
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
 	}
-	if err := ValidateMigrationSQL("0025_failure_stage_lineage.sql", string(sql)); err != nil {
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0025_failure_stage_lineage.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read failure-stage lineage migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
 		t.Fatalf("failure-stage lineage migration rejected: %v", err)
+	}
+}
+
+func TestR2C152MigrationFilePassesAutomaticGate(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0024_failure_evidence.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read production migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("production migration is not eligible for unattended additive rollout: %v", err)
 	}
 }
 

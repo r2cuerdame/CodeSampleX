@@ -750,7 +750,7 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 	var fingerprintPackages []domain.PURL
 	matchedPackage := map[string]bool{}
 	for _, p := range uniquePackageIdentities(packages) {
-		clusters, err := a.d.Store.ListFailureClusters(r.Context(), p.Name)
+		clusters, err := a.d.Store.ListFailureClustersIncludingPreserved(r.Context(), p.Name)
 		if err != nil {
 			continue
 		}
@@ -766,6 +766,14 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 					matchedPackage[key] = true
 					fingerprintPackages = append(fingerprintPackages, p)
 				}
+			}
+			// Preserved pre-0024 rows retain the only fingerprints emitted by
+			// older clients, so they remain eligible for the exact match above.
+			// They are not current failure evidence, however, and must not
+			// generate environment warnings or demote an otherwise compatible
+			// result.
+			if !serverstore.IsCurrentFailureCluster(c) {
+				continue
 			}
 			if c.EnvSummaryJSON == "" {
 				continue

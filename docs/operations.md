@@ -63,10 +63,14 @@ SSH identity. Only the workflow's `deploy` job enters the production
 Environment; eligibility has no secret access.
 
 `cmd/csx-deploy-gate` is the shared fail-closed eligibility check used by the
-workflow and available to ProjectOps before dispatch. Existing migrations may
-not be edited or removed. New migrations declared `additive-migration` may add
-columns and run the bounded evidence-quality backfill used by the R2C-152
-`0024_failure_evidence.sql` fixture. The automatic path uses an allowlist, so
+workflow and available to ProjectOps before dispatch. A migration recorded in
+production `schema_migrations` may not be edited or removed. A pending
+migration may be corrected before its first rollout, and its actual file must
+pass the deploy-gate regression test. Migrations declared `additive-migration`
+may add columns and run the bounded evidence-quality backfill used by the
+R2C-152 `0024_failure_evidence.sql` fixture. Destructive derived-data cleanup
+is a separate manual lifecycle and is not embedded in that migration. The
+automatic path uses an allowlist, so
 every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
 UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
 
@@ -80,6 +84,26 @@ The automatic wrapper also refuses to start if the retired query-bearing
 access logs still exist. Removing those logs is an irreversible privacy
 cleanup and therefore remains a named manual operation; a `safe` or
 `additive-migration` dispatch never deletes them as a side effect.
+
+The failure-cluster total in that check counts **current** clusters, not every
+row in the table. `failure_clusters` is derived data and migration 0024
+preserved its pre-contract rows instead of deleting them, so the rebuilt
+evidence-gap rows now sit beside the old fingerprinted ones and a raw
+`SUM(observation_count)` counts the same failures twice — which is what took
+the reported ledger from 17,737 to 35,488 on the 0024 rollout while the FAIL
+total stayed at 16,755. Both `deploy.ps1` and
+`collect-production-evidence.sh` compute it with
+`serverstore.CurrentFailureClusterPredicateSQL`, and
+`deploy/lightsail/failure_cluster_ledger_test.go` fails the build if either
+script drifts from the predicate the server itself reads with. See
+[schema.md](schema.md) for why the preserved rows stay.
+
+`modern_failure_clusters` in the same evidence file counts clusters carrying
+structured termination and a normalized error. It is zero until a client
+release that emits structured failure evidence records a failure; no
+deployment of the server can raise it, because legacy evidence is never
+promoted to a modern fingerprint. Read a zero there as "no modern producer has
+failed yet", and raise it by shipping a producer, not by rebuilding.
 
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
 target and previous SHA, image digest, migration version, health/smoke result,
@@ -620,8 +644,8 @@ Rollback the application before rolling back the schema. The new columns are
 additive and safe to leave in place; dropping them would destroy newly captured
 evidence and is intentionally not part of an automatic rollback.
 
-Migration `0025_failure_stage_lineage.sql` is additive. It adds the
-outer-command → actual-toolchain → actual-stage decision lineage to
+Migration `0025_failure_stage_lineage.sql` is additive. It adds the complete
+outer-command set → actual-toolchain → actual-stage decision lineage to
 `evidence_agg` and materialized failure clusters. After deployment, run one
 known `go test` compile failure and one assertion failure and confirm that the
 first appears under `PROJECT_COMPILE`/`go/compiler`, the second under
@@ -649,3 +673,57 @@ the length of the session.
 Naming a host is still honoured verbatim, `0.0.0.0` included — write
 `CSX_LISTEN=0.0.0.0:8080` to serve the local network deliberately. Linux and
 macOS are untouched, so the container contract above is unchanged.
+
+### When the Windows launcher loses its current payload
+
+`%LOCALAPPDATA%\csx\active.json` names the payload the stable `csx.exe`
+executes, and every descriptor in it carries the SHA-256 the launcher verifies
+before running anything. A verified payload does not stay verified: on this
+project's own Windows workstation, Microsoft Defender classified
+`csx-payload.exe` as `Trojan:Win32/Bearfoos.*!ml` and quarantined it minutes
+after a correctly staged, hashed and self-tested update had committed it
+(2026-08-24 for v0.1.44, 2026-08-25 for v0.1.43 and again for v0.1.41). The
+pointer was right; the file was simply gone, leaving `payloads/<current>/`
+present and empty.
+
+The launcher treats that as recoverable rather than fatal. When `current` fails
+verification — or becomes unstartable after verification but before the OS
+opens it — the launcher verifies the `previous` descriptor, retries it at most
+once, and repairs `active.json` so `csx update` and every ownership check in
+`internal/update` see a consistent install too. `rollbackHold` is rejection
+metadata for updater suppression and sequence floors, never an execution
+candidate. Payload directories left on disk by older releases are **not**
+candidates: this pointer never recorded a hash for them.
+
+What operators see:
+
+```
+csx launcher: recovered: payload-missing: current payload v0.1.43 is unusable; running last-known-good v0.1.41
+```
+
+That line always goes to stderr, never stdout — an MCP host reads stdout as
+JSON-RPC framing. The repaired pointer keeps the failed version as
+`rollbackHold`, which holds the automatic updater back from reinstalling the
+payload that just failed to run while still letting a genuinely newer release
+through, and preserves the sequence floor `mergeLauncherFloor` reads.
+
+With no verified fallback left, the launcher exits **126** with a stable reason
+code as the first field — `payload-missing`, `payload-corrupt`,
+`payload-not-regular`, `payload-unreadable`, `descriptor-invalid`,
+`pointer-unreadable`, `payload-start-failed` — and writes nothing to stdout. It
+never exits 0 without having executed a payload; a caller that cannot start csx
+must not be able to read that as the command having succeeded.
+
+An invalid current is recovered by the stable launcher before it starts any
+payload command. `csx update rollback` remains the explicit rollback command
+for a healthy pointer; it is not the entry point for an install whose current
+payload cannot start. Editing `active.json` directly is a last resort: write it
+as UTF-8 **without a BOM** (the launcher rejects one as
+`invalid character 'ï'`), and drop `previous` entirely rather than zeroing it,
+since a descriptor with `sequence: 0` or a non-hex digest fails validation and
+takes the whole file down with it.
+
+Defender's verdict is a false positive on an unsigned Go binary and is the
+trigger behind every occurrence so far; an install-root exclusion or Authenticode
+signing of the payload is the fix for the cause, and is tracked separately from
+the launcher's own resilience.

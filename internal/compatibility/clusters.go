@@ -92,7 +92,12 @@ func BuildClusters(ecosystem, packageName string,
 			if c.toolchain == "" {
 				c.toolchain, c.stageProof, c.gap = row.ActualToolchain, row.StageEvidence, row.FailureEvidenceGap
 			}
-			if row.OuterCommand != "" {
+			for _, command := range row.OuterCommands {
+				if command != "" {
+					c.outer[command] = true
+				}
+			}
+			if len(row.OuterCommands) == 0 && row.OuterCommand != "" {
 				c.outer[row.OuterCommand] = true
 			}
 			c.failEnvs = append(c.failEnvs, env)

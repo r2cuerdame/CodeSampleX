@@ -37,3 +37,58 @@ func TestReceiptFailureEvidenceAcceptsCanonicalAndRejectsRawOrMismatchedData(t *
 		t.Fatal("failure evidence was accepted on a PASS stage")
 	}
 }
+
+func TestReceiptFailureEvidenceDoesNotApplyVerifierUsername(t *testing.T) {
+	exitCode := 1
+	summary := "FAIL example.com/csx-production-modern-failure-canary: connection refused"
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	failure := domain.FailureEvidence{
+		TerminationKind: domain.TerminationExit, ExitCode: &exitCode,
+		ErrorSummary: summary, EvidenceQuality: domain.EvidenceComplete,
+	}
+	failure.Fingerprint = domain.FailureFingerprint(domain.StageContract, term, "", summary)
+	receipt := domain.VerificationReceipt{SchemaVersion: 2,
+		Stages: map[string]string{"contract": "FAIL"}, StageFailures: map[string]domain.FailureEvidence{"contract": failure}}
+	if err := receiptFailureEvidenceIsSafe(receipt); err != nil {
+		t.Fatalf("producer-canonical summary containing the verifier account name was rejected: %v", err)
+	}
+}
+
+func TestReceiptFailureEvidenceValidatesEveryLineageCoordinate(t *testing.T) {
+	base := domain.VerificationReceipt{
+		SchemaVersion: 2,
+		Stages:        map[string]string{"contract": "FAIL"},
+		StageFailures: map[string]domain.FailureEvidence{
+			"contract": {EvidenceQuality: domain.EvidenceMissing},
+		},
+	}
+	if err := receiptFailureEvidenceIsSafe(base); err != nil {
+		t.Fatalf("empty safe lineage rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		mut  func(*domain.FailureEvidence)
+		want string
+	}{
+		{"outer command allowlist", func(f *domain.FailureEvidence) { f.OuterCommand = "secret-project test" }, "outerCommand"},
+		{"outer command canonical spacing", func(f *domain.FailureEvidence) { f.OuterCommand = "go  test" }, "outerCommand"},
+		{"outer command cap", func(f *domain.FailureEvidence) { f.OuterCommand = strings.Repeat("g", 33) }, "outerCommand"},
+		{"outer stage vocabulary", func(f *domain.FailureEvidence) { f.OuterStage = domain.StageContract }, "outerStage"},
+		{"toolchain coordinate", func(f *domain.FailureEvidence) { f.ActualToolchain = `C:\Users\alice\private` }, "actualToolchain"},
+		{"toolchain cap", func(f *domain.FailureEvidence) { f.ActualToolchain = strings.Repeat("a", 65) }, "actualToolchain"},
+		{"stage evidence vocabulary", func(f *domain.FailureEvidence) { f.StageEvidence = "model-guessed" }, "stageEvidence"},
+		{"evidence gap vocabulary", func(f *domain.FailureEvidence) { f.EvidenceGap = "private-log-missing" }, "evidenceGap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receipt := base
+			failure := receipt.StageFailures["contract"]
+			tc.mut(&failure)
+			receipt.StageFailures = map[string]domain.FailureEvidence{"contract": failure}
+			err := receiptFailureEvidenceIsSafe(receipt)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid lineage error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

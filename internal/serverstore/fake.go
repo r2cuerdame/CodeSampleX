@@ -81,7 +81,7 @@ type fakeAggMeta struct {
 	timeoutMillis    int64
 	errorSummary     string
 	evidenceQuality  string
-	outerCommand     string
+	outerCommands    map[string]bool
 	outerStage       string
 	actualToolchain  string
 	stageEvidence    string
@@ -189,6 +189,7 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 			symbolConfidence: confidence,
 			envJSON:          string(domain.MustCanonicalJSON(env)),
 			firstSeen:        now,
+			outerCommands:    map[string]bool{},
 		}
 		f.aggMeta[k] = meta
 	}
@@ -234,8 +235,10 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	if meta.evidenceQuality == "" {
 		meta.evidenceQuality = normalizedEvidenceQuality(b)
 	}
-	if meta.outerCommand == "" {
-		meta.outerCommand = b.OuterCommand
+	if b.OuterCommand != "" {
+		meta.outerCommands[b.OuterCommand] = true
+	}
+	if meta.outerStage == "" {
 		meta.outerStage = string(b.OuterStage)
 		meta.actualToolchain = b.ActualToolchain
 		meta.stageEvidence = string(b.StageEvidence)
@@ -522,6 +525,15 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 		if k.PURL != purl || !want[k.Symbol] {
 			continue
 		}
+		outerCommands := make([]string, 0, len(meta.outerCommands))
+		for command := range meta.outerCommands {
+			outerCommands = append(outerCommands, command)
+		}
+		sort.Strings(outerCommands)
+		outerCommand := ""
+		if len(outerCommands) > 0 {
+			outerCommand = outerCommands[0]
+		}
 		out = append(out, EvidenceRow{
 			PURL: k.PURL, Symbol: k.Symbol,
 			SymbolConfidence: meta.symbolConfidence,
@@ -531,7 +543,7 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
 			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
 			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
-			OuterCommand: meta.outerCommand, OuterStage: meta.outerStage,
+			OuterCommand: outerCommand, OuterCommands: outerCommands, OuterStage: meta.outerStage,
 			ActualToolchain: meta.actualToolchain, StageEvidence: meta.stageEvidence,
 			FailureEvidenceGap:   meta.evidenceGap,
 			ObservationCount:     f.merge.observations[k],
@@ -1384,11 +1396,25 @@ func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 }
 
 func (f *Fake) ListFailureClusters(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, true)
+}
+
+// ListFailureClustersIncludingPreserved mirrors the PostgreSQL read of the
+// same name: exact failure matching still needs the pre-0024 fingerprints.
+func (f *Fake) ListFailureClustersIncludingPreserved(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, false)
+}
+
+func (f *Fake) listFailureClusters(packageName string, currentOnly bool) ([]ClusterRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ClusterRow
 	for _, c := range f.clusters {
-		if c.PackageName == packageName {
+		// Same rule as PostgreSQL: preserved pre-0024 rows stay stored and
+		// stay out of the reads that describe live clusters. A Fake that
+		// served them everywhere let a doubled cluster ledger pass a green
+		// suite.
+		if c.PackageName == packageName && (!currentOnly || IsCurrentFailureCluster(c)) {
 			out = append(out, c)
 		}
 	}
