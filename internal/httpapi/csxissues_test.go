@@ -35,7 +35,7 @@ func gptBrowserIssue() domain.CSXIssueReport {
 }
 
 func csxIssueEnvelopeFor(report domain.CSXIssueReport) csxIssueEnvelope {
-	return csxIssueEnvelope{SchemaVersion: 1, Epoch: "2026-08-24", AnonID: "anon-bucket-1", Report: report}
+	return csxIssueEnvelope{SchemaVersion: 1, Epoch: "2026-08-24", AnonID: "0123456789abcdef", Report: report}
 }
 
 func TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug(t *testing.T) {
@@ -84,7 +84,7 @@ func TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug(t *testi
 	second.ActualBehavior = "CSX answered a TypeScript build failure with a Dart package"
 	second.LLMHypothesis = "maybe the ecosystem filter is off"
 	envelope := csxIssueEnvelopeFor(second)
-	envelope.AnonID = "anon-bucket-2"
+	envelope.AnonID = "fedcba9876543210"
 
 	var out csxIssueResponse
 	postJSON(t, srv.URL+"/v1/csx-issues", envelope, &out)

@@ -116,7 +116,8 @@ type AnomalyObservation struct {
 	// the whole admission test.
 	Result string `json:"result"`
 	// Stage names where the result happened: resolve | compile | typecheck
-	// | test | run. Free-form but short.
+	// | test | run | contract. Empty means the reporter did not retain it;
+	// any other value is refused rather than stored as arbitrary text.
 	Stage string `json:"stage,omitempty"`
 	// Detail is a short sanitized statement. Never raw logs.
 	Detail string `json:"detail,omitempty"`
@@ -201,20 +202,16 @@ func anomalyContentID(s string) bool {
 	return true
 }
 
-// anomalyReferenceID accepts content ids, public package coordinates and
-// namespaced stable ids. It deliberately refuses paths, URLs, whitespace and
-// bare opaque strings: those shapes can carry client secrets but do not name
-// anything in CSX's public data model.
+// anomalyReferenceID accepts content ids and namespaced stable ids. It
+// deliberately refuses package coordinates, paths, URLs, whitespace and bare
+// opaque strings: RelatedIDs names CSX records, while packages have their own
+// separately publicness-checked field.
 func anomalyReferenceID(s string) bool {
 	if s == "" || len(s) > 256 {
 		return false
 	}
 	if anomalyContentID(s) {
 		return true
-	}
-	if strings.HasPrefix(s, "pkg:") {
-		_, err := ParsePURL(s)
-		return err == nil
 	}
 	if !strings.ContainsRune(s, ':') {
 		return false

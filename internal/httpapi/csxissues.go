@@ -83,8 +83,10 @@ func (a *api) handleCSXIssueReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "issue envelope schemaVersion must be 1")
 		return
 	}
-	if strings.TrimSpace(env.Epoch) == "" || strings.TrimSpace(env.AnonID) == "" {
-		writeErr(w, http.StatusBadRequest, "issue report requires epoch and anonId")
+	env.Epoch = strings.TrimSpace(env.Epoch)
+	env.AnonID = strings.TrimSpace(env.AnonID)
+	if !reporterBucketIsCanonical(env.Epoch, env.AnonID) {
+		writeErr(w, http.StatusBadRequest, "issue report epoch must be YYYY-MM-DD and anonId must be 16 lowercase hexadecimal characters")
 		return
 	}
 

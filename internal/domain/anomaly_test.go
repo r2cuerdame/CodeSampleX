@@ -82,6 +82,14 @@ func TestAReportWithNoPublicCoordinateIsRejected(t *testing.T) {
 	}
 }
 
+func TestRelatedIDsCannotSmuggleAnUncheckedPackageCoordinate(t *testing.T) {
+	r := passFailReport()
+	r.RelatedIDs = []string{"pkg:npm/@private/acme-billing@1.0.0"}
+	if err := r.Normalize().Validate(); err != ErrAnomalyIdentifier {
+		t.Fatalf("a package PURL in relatedIds bypassed the checked package field: %v", err)
+	}
+}
+
 // Dedupe is the whole defence against one bad answer queuing a thousand
 // containers, so the key must survive cosmetic differences.
 func TestTheFingerprintIgnoresHowTheModelExplainedIt(t *testing.T) {

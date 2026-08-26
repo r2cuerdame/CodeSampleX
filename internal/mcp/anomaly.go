@@ -79,6 +79,24 @@ func PrepareAnomalyReport(report domain.AnomalyReport, rawErrorText string,
 	report.CSXObserved.Detail = scrub(report.CSXObserved.Detail)
 	report.LocalObserved.Detail = scrub(report.LocalObserved.Detail)
 	report.LLMHypothesis = scrub(report.LLMHypothesis)
+	report.Symbol = scrub(report.Symbol)
+	for _, field := range []*string{
+		&report.Environment.Ecosystem, &report.Environment.OS, &report.Environment.OSVersionBucket,
+		&report.Environment.Arch, &report.Environment.Runtime, &report.Environment.RuntimeVersion,
+		&report.Environment.Language, &report.Environment.LanguageVersion,
+		&report.Environment.Compiler, &report.Environment.CompilerVersion,
+		&report.Environment.PackageManager, &report.Environment.PackageManagerVersion,
+		&report.Environment.ModuleSystem, &report.Environment.ExecutionContext,
+		&report.Environment.BrowserFamily, &report.Environment.BrowserMajor,
+		&report.Environment.Engine, &report.Environment.EngineVersion,
+		&report.Environment.Virtualization, &report.Environment.ContainerRuntime,
+		&report.Environment.Libc, &report.Environment.LibcVersion, &report.Environment.Distro,
+	} {
+		*field = scrub(*field)
+	}
+	for i := range report.Environment.Frameworks {
+		report.Environment.Frameworks[i] = scrub(report.Environment.Frameworks[i])
+	}
 
 	// Raw output never travels. What travels is what the sanitizer already
 	// produces for every other failure this product records: a template with

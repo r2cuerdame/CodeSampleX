@@ -163,7 +163,7 @@ func anomalyStructuredValueIsSafe(s string, maxBytes int) bool {
 		return false
 	}
 	for _, c := range s {
-		if unicode.IsControl(c) || unicode.IsSpace(c) {
+		if unicode.IsControl(c) {
 			return false
 		}
 	}
@@ -198,17 +198,15 @@ func anomalyStructuredFieldsAreSafe(r domain.AnomalyReport) bool {
 	return true
 }
 
-func anomalyBucketPartIsSafe(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" || len(s) > 128 || !anomalyIdentifierIsSafe(s) {
+func reporterBucketIsCanonical(epoch, anonID string) bool {
+	parsed, err := time.Parse("2006-01-02", epoch)
+	if err != nil || parsed.Format("2006-01-02") != epoch || len(anonID) != 16 {
 		return false
 	}
-	for _, c := range s {
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			c == '-' || c == '_' || c == '.' {
-			continue
+	for _, c := range anonID {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
 		}
-		return false
 	}
 	return true
 }
@@ -251,8 +249,8 @@ func (a *api) handleAnomalyReport(w http.ResponseWriter, r *http.Request) {
 	}
 	env.Epoch = strings.TrimSpace(env.Epoch)
 	env.AnonID = strings.TrimSpace(env.AnonID)
-	if !anomalyBucketPartIsSafe(env.Epoch) || !anomalyBucketPartIsSafe(env.AnonID) {
-		writeErr(w, http.StatusBadRequest, "anomaly report requires safe epoch and anonId identifiers")
+	if !reporterBucketIsCanonical(env.Epoch, env.AnonID) {
+		writeErr(w, http.StatusBadRequest, "anomaly report epoch must be YYYY-MM-DD and anonId must be 16 lowercase hexadecimal characters")
 		return
 	}
 
@@ -274,7 +272,7 @@ func (a *api) handleAnomalyReport(w http.ResponseWriter, r *http.Request) {
 	}
 	report, redacted := redactAnomalyFreeText(report)
 	if !anomalyStructuredFieldsAreSafe(report) {
-		writeErr(w, http.StatusBadRequest, "anomaly symbol and environment values must be bounded structured values, not arbitrary text")
+		writeErr(w, http.StatusBadRequest, "anomaly symbol and environment values must be valid, bounded text")
 		return
 	}
 

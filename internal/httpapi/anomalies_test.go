@@ -43,7 +43,7 @@ func anomalyEnvelopeFor(report domain.AnomalyReport) anomalyEnvelope {
 	return anomalyEnvelope{
 		SchemaVersion: 1,
 		Epoch:         "2026-08-24",
-		AnonID:        "anon-bucket-1",
+		AnonID:        "0123456789abcdef",
 		Report:        report,
 	}
 }
@@ -194,7 +194,7 @@ func TestADuplicateReportCreatesNoNewVerificationWork(t *testing.T) {
 	second.LLMHypothesis = "I now think this is a bundler problem"
 	second.Confidence = "low"
 	envelope := anomalyEnvelopeFor(second)
-	envelope.AnonID = "anon-bucket-2"
+	envelope.AnonID = "fedcba9876543210"
 
 	var out anomalyResponse
 	resp := postJSON(t, srv.URL+"/v1/anomalies", envelope, &out)
@@ -372,14 +372,15 @@ func TestStructuredAnomalyFieldsCannotCarryIdentifyingText(t *testing.T) {
 		{"evidence id", func(e *anomalyEnvelope) { e.Report.EvidenceID = "/home/alice/private-project" }},
 		{"search fingerprint", func(e *anomalyEnvelope) { e.Report.SearchFingerprint = "/home/alice/private-project" }},
 		{"related id", func(e *anomalyEnvelope) { e.Report.RelatedIDs = []string{"/home/alice/private-project"} }},
+		{"unchecked package in related ids", func(e *anomalyEnvelope) {
+			e.Report.RelatedIDs = []string{"pkg:npm/@private/acme-billing@1.0.0"}
+		}},
 		{"csx stage", func(e *anomalyEnvelope) { e.Report.CSXObserved.Stage = "/home/alice/private-project" }},
 		{"local stage", func(e *anomalyEnvelope) { e.Report.LocalObserved.Stage = "https://internal.example/stage" }},
 		{"error code", func(e *anomalyEnvelope) { e.Report.ErrorCode = "/home/alice/private-project" }},
 		{"error fingerprint", func(e *anomalyEnvelope) { e.Report.ErrorFingerprint = "/home/alice/private-project" }},
 		{"epoch", func(e *anomalyEnvelope) { e.Epoch = "/home/alice/private-project" }},
 		{"anon id", func(e *anomalyEnvelope) { e.AnonID = "https://internal.example/token" }},
-		{"arbitrary symbol text", func(e *anomalyEnvelope) { e.Report.Symbol = "my private project symbol" }},
-		{"arbitrary environment text", func(e *anomalyEnvelope) { e.Report.Environment.Runtime = "my private runtime" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

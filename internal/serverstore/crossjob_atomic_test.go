@@ -9,7 +9,16 @@ import (
 func runEnsureCrossJobAtomicContract(t *testing.T, store Store) {
 	t.Helper()
 	const callers = 24
+	const sampleID = "sha256:atomic-cross-job"
 	ctx := context.Background()
+	// PostgreSQL enforces the production foreign key from jobs to samples;
+	// exercise the atomic job operation against a real parent row rather than
+	// relying on the Fake's intentionally schema-free storage.
+	if err := store.SaveSample(ctx, SampleRow{
+		SampleID: sampleID, ManifestJSON: `{}`, Status: "PUBLISHED",
+	}); err != nil {
+		t.Fatalf("seed sample: %v", err)
+	}
 	start := make(chan struct{})
 	ids := make(chan int64, callers)
 	errs := make(chan error, callers)
@@ -20,7 +29,7 @@ func runEnsureCrossJobAtomicContract(t *testing.T, store Store) {
 			defer wg.Done()
 			<-start
 			id, err := store.EnsureCrossJob(ctx, JobRow{
-				SampleID: "sha256:atomic-cross-job", Reason: "cross",
+				SampleID: sampleID, Reason: "cross",
 				WantEnvJSON: `{"runtime":"node","runtimeVersion":"22"}`,
 			})
 			ids <- id
@@ -48,7 +57,7 @@ func runEnsureCrossJobAtomicContract(t *testing.T, store Store) {
 			t.Fatalf("concurrent callers got different jobs: %d and %d", wantID, id)
 		}
 	}
-	jobs, err := store.JobsForSample(ctx, "sha256:atomic-cross-job")
+	jobs, err := store.JobsForSample(ctx, sampleID)
 	if err != nil {
 		t.Fatal(err)
 	}

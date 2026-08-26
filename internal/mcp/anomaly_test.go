@@ -38,6 +38,9 @@ func TestPreparingAReportStripsRawOutputBeforeItCanBeSent(t *testing.T) {
 	report := concreteMismatch()
 	report.LocalObserved.Detail = `failed while reading C:\Users\ana\acme\src\pay.ts`
 	report.LLMHypothesis = "the runbook at https://internal.acme.corp/x says the same"
+	report.Symbol = "/home/alice/private-project/secret-symbol"
+	report.Environment.Runtime = "/home/alice/private-project/runtime"
+	report.Environment.Frameworks = []string{"https://internal.acme.corp/private-framework"}
 	raw := "Error: ENOENT: no such file or directory, open '/home/ana/acme/.env'\n" +
 		"  token=Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A"
 
@@ -49,7 +52,7 @@ func TestPreparingAReportStripsRawOutputBeforeItCanBeSent(t *testing.T) {
 		t.Fatal("redaction was not reported")
 	}
 	blob := string(domain.MustCanonicalJSON(prepared))
-	for _, secret := range []string{"ana", "acme", "pay.ts", ".env", "Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A", "internal.acme.corp"} {
+	for _, secret := range []string{"Users\\ana", "acme", "pay.ts", ".env", "Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A", "internal.acme.corp", "alice", "private-project", "secret-symbol"} {
 		if strings.Contains(blob, secret) {
 			t.Fatalf("%q would have been sent: %s", secret, blob)
 		}
