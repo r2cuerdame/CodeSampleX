@@ -81,7 +81,7 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	if err := store.UpsertFailureCluster(ctx, ClusterRow{
 		Ecosystem: "npm", PackageName: "axios", Symbol: "axios.post", Stage: "PROJECT_COMPILE",
 		ErrorFingerprint: batch.ErrorFingerprint, ErrorCode: batch.ErrorCode, ObservationCount: 17,
-		VersionsJSON: `["1.12.0"]`,
+		EvidenceQuality: string(domain.EvidenceComplete), VersionsJSON: `["1.12.0"]`,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,8 @@ func TestAuthoringExpansionSpreadsAcrossVersionsBeforeDeepening(t *testing.T) {
 	if err := store.UpsertFailureCluster(ctx, ClusterRow{
 		Ecosystem: "npm", PackageName: "axios", Symbol: "axios.post", Stage: "PROJECT_COMPILE",
 		ErrorFingerprint: "sha256:" + strings.Repeat("b", 64), ErrorCode: "ERR_T", ObservationCount: 31,
-		VersionsJSON: `["3.0.0"]`, EnvSummaryJSON: `{"os":"linux"}`,
+		EvidenceQuality: string(domain.EvidenceComplete),
+		VersionsJSON:    `["3.0.0"]`, EnvSummaryJSON: `{"os":"linux"}`,
 	}); err != nil {
 		t.Fatal(err)
 	}

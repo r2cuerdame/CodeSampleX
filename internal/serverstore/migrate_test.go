@@ -266,3 +266,41 @@ func TestAuthoringExpansionMigrationAddsBoundedWorkKinds(t *testing.T) {
 		}
 	}
 }
+
+// The miss counter sits one table away from the question itself, and the
+// question is the thing this project has never let leave a machine. The shape
+// is the guard: a column that could hold a query, a path or a package name
+// would make it possible, however carefully the writer behaves today.
+func TestSearchMissMigrationStoresOnlyADigestedQuestion(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var misses Migration
+	for _, migration := range migs {
+		if migration.Version == "0023_search_misses.sql" {
+			misses = migration
+			break
+		}
+	}
+	if misses.Version == "" {
+		t.Fatal("0023_search_misses.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(misses.Statements, "\n"))
+	for _, required := range []string{
+		"create table if not exists search_misses", "epoch", "anon_id", "dedup_key", "created_at",
+		"primary key (epoch, anon_id, dedup_key)",
+	} {
+		if !strings.Contains(all, required) {
+			t.Errorf("search miss migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"query", "package", "symbol", "ecosystem", "version", "path",
+		"ip_address", "user_agent", "request_id", "client",
+	} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("search miss schema contains identifying/raw field %q", forbidden)
+		}
+	}
+}

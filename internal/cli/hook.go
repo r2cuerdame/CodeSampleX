@@ -48,8 +48,14 @@ func init() {
 // hookProject is what the project says about the command that failed: whether
 // it was a build step at all, and the context a search needs.
 type hookProject struct {
-	Known    bool
-	Stage    domain.Stage
+	Known bool
+	Stage domain.Stage
+	// Argv is the segment the classifier recognised as the build step, out
+	// of everything the agent's shell line ran. The relevance gate needs the
+	// tool that failed, not the whole line: "cd api && npm test" is an npm
+	// failure, and reading "cd" off the front makes it belong to no
+	// ecosystem at all.
+	Argv     []string
 	Env      domain.EnvironmentFingerprint
 	Packages []string
 	Symbols  []string
@@ -192,8 +198,21 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 		return quiet(hookTraceNoMatch, "nothing here has been proven for this failure; asked: "+string(asked))
 	}
 
-	// One answer. This arrives unasked, in the middle of somebody's work, so
-	// it earns a few lines and not a list.
+	// Filter the full retrieval set before selecting the one hook answer.
+	// Similarity ranking and fact relevance are different questions: an
+	// unrelated #1 must not hide a relevant #2.
+	retrieved := append([]domain.SearchResult(nil), resp.Results...)
+	resp, _ = domain.GateNormalOutput(req, resp, proj.Argv)
+	if resp.Miss || len(resp.Results) == 0 {
+		if len(retrieved) > 0 {
+			if reason := retrieved[0].SuppressionReason(req, proj.Argv); reason != "" {
+				return quiet(reason, hookSuppressionDetail(retrieved[0], reason))
+			}
+		}
+		asked, _ := json.Marshal(req)
+		return quiet(hookTraceNoMatch, "nothing here has been proven for this failure; asked: "+string(asked))
+	}
+
 	if len(resp.Results) > 1 {
 		resp.Results = resp.Results[:1]
 	}
@@ -206,6 +225,12 @@ func hookAgentMain(ctx context.Context, env *hookEnv) int {
 	}
 	if reason != "" {
 		b.WriteString("Reason: " + reason + "\n")
+	}
+	// Why this sample, and not merely how well it matches the machine. The
+	// gate above named the concrete link that earned the interruption; a
+	// reader who cannot see it has no way to judge what follows.
+	if line := resp.Results[0].RelevanceLine(req, proj.Argv); line != "" {
+		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "Observed stage: %s\n\n", proj.Stage)
 	renderSearchText(&b, resp)
@@ -369,15 +394,38 @@ const (
 	hookTraceEmptyQuery   = "empty-query"
 	hookTraceSearchFailed = "search-failed"
 	hookTraceNoMatch      = "no-match"
+	hookTraceUnrelated    = domain.SuppressedUnrelatedEcosystem
+	hookTraceLowRelevance = domain.SuppressedInsufficientGoalOverlap
 	hookTraceEncodeFailed = "encode-failed"
 )
+
+// hookSuppressionDetail is the trace line beside a suppression code: which
+// sample was held back, and what the gate read to decide it. The hook's
+// normal answer is silence, so this is the only place the decision is
+// visible at all until the diagnostic mode lands.
+func hookSuppressionDetail(r domain.SearchResult, reason string) string {
+	switch reason {
+	case domain.SuppressedUnrelatedEcosystem:
+		return "the only match is a " + strings.Join(r.SampleEcosystems(), "/") +
+			" sample and the failed command does not build for it: " + r.SampleID
+	default:
+		var packages []string
+		if r.Case != nil {
+			packages = r.Case.Packages
+		}
+		return "the only match shares no package, symbol, error or subject with this failure" +
+			" — only the environment it runs in: " + r.SampleID +
+			" (" + strings.Join(packages, ", ") + ")"
+	}
+}
 
 // hookTraceCodes is every code the hook can emit, so a test can hold the
 // vocabulary the check reads and the one the hook writes to the same list.
 var hookTraceCodes = []string{
 	hookTraceAnswered, hookTraceBadInput, hookTraceNotBash, hookTraceNoConfig,
 	hookTraceOff, hookTraceNotFailed, hookTraceNoSegments, hookTraceNotBuildStep,
-	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceEncodeFailed,
+	hookTraceEmptyQuery, hookTraceSearchFailed, hookTraceNoMatch, hookTraceUnrelated,
+	hookTraceLowRelevance, hookTraceEncodeFailed,
 }
 
 // hookTracePrefix is what every trace line starts with.
@@ -441,7 +489,7 @@ func defaultHookEnv() *hookEnv {
 			}
 			for _, argv := range segments {
 				if prof := res.Classify(argv); prof.Known {
-					p.Known, p.Stage = true, prof.Stage
+					p.Known, p.Stage, p.Argv = true, prof.Stage, argv
 					break
 				}
 			}

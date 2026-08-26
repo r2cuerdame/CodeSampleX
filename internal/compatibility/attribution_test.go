@@ -34,7 +34,11 @@ func TestSnapshotCarriesHowManyFailuresWereAttributed(t *testing.T) {
 	now := time.Now().UTC()
 	snap := BuildSnapshot("pkg:npm/negotiator@1.0.0", "", []serverstore.EvidenceRow{
 		attrRow("PROJECT_TEST", "PASS", "", 30, now),
-		attrRow("PROJECT_TEST", "FAIL", "ERR_REQUIRE_ESM", 2, now),
+		func() serverstore.EvidenceRow {
+			r := attrRow("PROJECT_TEST", "FAIL", "ERR_REQUIRE_ESM", 2, now)
+			r.EvidenceQuality = string(domain.EvidenceComplete)
+			return r
+		}(),
 		attrRow("PROJECT_TEST", "FAIL", "", 8, now),
 	}, nil, nil, now)
 

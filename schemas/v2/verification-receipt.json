@@ -15,6 +15,25 @@
       "type": "object",
       "additionalProperties": {"enum": ["PASS", "FAIL", "SKIPPED"]}
     },
+    "stageFailures": {
+      "type": "object",
+      "description": "Secret-safe structured failure evidence keyed by failed stage. Raw logs remain local.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["evidenceQuality"],
+        "properties": {
+          "terminationKind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
+          "exitCode": {"type": "integer"},
+          "signal": {"type": "string", "maxLength": 32},
+          "timeoutMillis": {"type": "integer", "minimum": 0},
+          "errorSummary": {"type": "string", "maxLength": 512},
+          "errorCode": {"type": "string", "maxLength": 64},
+          "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "evidenceQuality": {"enum": ["complete", "partial", "missing"]}
+        },
+        "additionalProperties": false
+      }
+    },
     "resolvedPackages": {
       "type": "array",
       "description": "Package versions established by a successful resolve stage. Omitted when resolution did not run or the installed version could not be established.",
