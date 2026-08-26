@@ -409,6 +409,10 @@
       // has evidence against. It is here so the number the picker acts on and
       // the number an operator reads are the same one.
       stat("보류 좌표", num(h.withheldCoordinates || 0)),
+      // Verification work no verifier image can run. It is not a backlog:
+      // waiting does not consume it, and while it was invisible the queue
+      // reported work every worker skipped in silence for three days.
+      stat("실행 불가 작업", num(h.unsupportedJobs || 0), h.unsupportedJobs > 0),
       stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
         .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
     );

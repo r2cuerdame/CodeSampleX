@@ -329,6 +329,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 	} else {
 		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
 		data.SearchQuality = buildSearchQualityView(insights.Search)
+		data.Flow = buildFlowView(insights.Flow, insights.Jobs, now)
 		data.InsightsAvailable = true
 	}
 
@@ -389,7 +390,12 @@ type dashboardData struct {
 	ActivityError     string
 
 	SearchQuality searchQualityView
-	SourceIssues  []string
+
+	// Flow is the production-rate half of the summary. Everything above it is
+	// stock, and stock cannot answer whether the line is running right now.
+	Flow flowView
+
+	SourceIssues []string
 }
 
 func dashboardSourceIssues(data dashboardData) []string {

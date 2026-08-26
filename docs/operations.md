@@ -21,7 +21,7 @@ r2cuerdame) → `%USERPROFILE%\.ssh\lightsail-csx-r3`.
 ## Deploy / upgrade
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts
 ```
 
 Builds the linux/amd64 image locally (the 2GB host never builds), ships it +
@@ -32,6 +32,86 @@ permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
 user.
 Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
 The exact release set also includes `csx-update-stable.json`.
+
+The SSH host key is pinned. `deploy.ps1` uses `StrictHostKeyChecking=yes` and
+never learns a first-seen key during a deployment. Populate `known_hosts` from
+the Lightsail host-key fingerprint verified through the AWS console/account
+surface; do not make `ssh-keyscan` over the same untrusted network the source
+of trust.
+
+### Automatic production rollout after `main`
+
+`.github/workflows/production-deploy.yml` is separate from `release.yml`.
+ProjectOps dispatches it only after the immutable target SHA is in canonical
+`main`, the required `Test` check succeeded, Auditor `MergeVerdict=pass`,
+`requires_human_decision=no`, and the side effect class is `safe` or
+`additive-migration`. The dispatch also names the currently served known-good
+SHA. The workflow rejects drift between that SHA and the host before changing
+anything, and `codesamplex-production` concurrency serializes all rollouts.
+
+The `codesamplex-production` GitHub Environment owns only:
+
+- secret `CSX_PRODUCTION_SSH_KEY` — the dedicated deploy identity;
+- secret `CSX_PRODUCTION_KNOWN_HOSTS` — the verified host-key line;
+- variable `CSX_PRODUCTION_HOST` — the production address;
+- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`.
+
+It must not contain the updater signing seed, registry identity, release-write
+token, DNS/ruleset credentials, or a general AWS administrator credential.
+Conversely, the release signing Environment must not contain the production
+SSH identity. Only the workflow's `deploy` job enters the production
+Environment; eligibility has no secret access.
+
+`cmd/csx-deploy-gate` is the shared fail-closed eligibility check used by the
+workflow and available to ProjectOps before dispatch. A migration recorded in
+production `schema_migrations` may not be edited or removed. A pending
+migration may be corrected before its first rollout, and its actual file must
+pass the deploy-gate regression test. Migrations declared `additive-migration`
+may add columns and run the bounded evidence-quality backfill used by the
+R2C-152 `0024_failure_evidence.sql` fixture. Destructive derived-data cleanup
+is a separate manual lifecycle and is not embedded in that migration. The
+automatic path uses an allowlist, so
+every other statement shape (including DROP, TRUNCATE, DELETE, arbitrary
+UPDATE, column type/rename, GRANT and REVOKE) forces a manual gate.
+
+The deploy transaction verifies the running `CSX_VERSION` and OCI revision
+label against the dispatched SHA, the latest `schema_migrations` row against
+the checked-out migration set, `/healthz`, the public page/API/install smokes,
+and monotonic PASS/FAIL/published-sample/failure-cluster totals. The pgx
+v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
+before commit enters the existing exact image/config/environment rollback.
+The automatic wrapper also refuses to start if the retired query-bearing
+access logs still exist. Removing those logs is an irreversible privacy
+cleanup and therefore remains a named manual operation; a `safe` or
+`additive-migration` dispatch never deletes them as a side effect.
+
+The failure-cluster total in that check counts **current** clusters, not every
+row in the table. `failure_clusters` is derived data and migration 0024
+preserved its pre-contract rows instead of deleting them, so the rebuilt
+evidence-gap rows now sit beside the old fingerprinted ones and a raw
+`SUM(observation_count)` counts the same failures twice — which is what took
+the reported ledger from 17,737 to 35,488 on the 0024 rollout while the FAIL
+total stayed at 16,755. Both `deploy.ps1` and
+`collect-production-evidence.sh` compute it with
+`serverstore.CurrentFailureClusterPredicateSQL`, and
+`deploy/lightsail/failure_cluster_ledger_test.go` fails the build if either
+script drifts from the predicate the server itself reads with. See
+[schema.md](schema.md) for why the preserved rows stay.
+
+`modern_failure_clusters` in the same evidence file counts clusters carrying
+structured termination and a normalized error. It is zero until a client
+release that emits structured failure evidence records a failure; no
+deployment of the server can raise it, because legacy evidence is never
+promoted to a modern fingerprint. Read a zero there as "no modern producer has
+failed yet", and raise it by shipping a producer, not by rebuilding.
+
+Every run uploads `production-deploy-evidence.json`, including run URL/id,
+target and previous SHA, image digest, migration version, health/smoke result,
+before/after invariants, and rollback outcome. ProjectOps and the independent
+Auditor must read that artifact and the GitHub run conclusion; an Agent comment
+alone is not production evidence. A failed SHA is not redispatched in a loop:
+ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
+cooldown, while an explicit new dispatch remains an auditable recovery action.
 
 **A normal release is unattended.** Pushing a `v*` tag is the decision; nothing
 after it waits for a person. The release either completes or fails closed, and
@@ -130,7 +210,7 @@ The admin route is fail-closed: it stays indistinguishable from an unknown path
 deployment with:
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -ConfigureAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -ConfigureAdmin
 ```
 
 `-ConfigureAdmin` creates a 256-bit random password with the Windows CSPRNG and
@@ -144,7 +224,7 @@ When the running image already contains the dashboard and only its deployment
 wiring is being activated, the same operation may reuse the installed image:
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -SkipImage -ConfigureAdmin
 ```
 
 The deploy verifies `/healthz` and then requires an unauthenticated `/admin`
@@ -192,11 +272,49 @@ Rotate the password with a full deploy (omit `-SkipImage` when a new image is
 also required):
 
 ```powershell
-.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -SkipImage -ConfigureAdmin -RotateAdmin
+.\deploy\lightsail\deploy.ps1 -Ip 54.116.158.230 -KeyPath $env:USERPROFILE\.ssh\lightsail-csx-r3 -KnownHostsPath $env:USERPROFILE\.ssh\known_hosts -SkipImage -ConfigureAdmin -RotateAdmin
 ```
 
 Smoke: `ssh ... 'curl -fsS http://127.0.0.1/healthz'` → `ok`, and
 `docker compose ps` shows caddy/server/db healthy.
+
+### Reading the flow KPIs
+
+The top of **운영 요약** carries three windowed rates. Everything else on that
+page is stock — how much has accumulated — and stock cannot say whether the
+line is running: a corpus that stopped growing an hour ago looks exactly like
+one that is still growing.
+
+* **No match · 최근 24시간** — the share of searches the server saw that
+  returned nothing, with its numerator and denominator beside it. The
+  denominator is HITs (`search_hits`, one row per anonymous offer) plus MISSes
+  (`search_misses`, one row per question). Both sides deduplicate per reporter
+  per UTC day, so retrying the same search all afternoon counts once, and a
+  miss that named ten packages is one question rather than ten. Searches
+  answered from a client's local cache and installs outside community mode
+  reach neither side and are not in the rate.
+* **검증 완료 · 최근 1시간** — every completed receipt, not only PASS. A FAIL is
+  a verifier doing its job; counting passes alone makes a stalled farm and a
+  failing farm the same zero. The card turns amber when work is claimable and
+  nothing finished in the hour — that pair is the stall, and neither number
+  shows it alone.
+* **샘플 수용 · 최근 1시간** — samples uploaded in the window that the server
+  currently serves. **보류** is the same window's still-quarantined uploads: a
+  draft waiting on its cross verification, or one that was withdrawn.
+
+A zero is only readable next to the three ages under the cards (마지막 검증
+완료 / 샘플 수용 / 검색 결과). Zero with a six-minute-old receipt is a lull;
+the same zero with a day-old one is a stopped lane. A window with nothing to
+measure shows `—` and `표본 없음`, never `0%`.
+
+Every window opens and never closes at the reading clock, because rows are
+stamped by PostgreSQL and the window is cut by the server process. Where those
+two clocks differ, closing the window would silently drop the newest rows —
+which are the only ones this panel is about.
+
+Migration `0023_search_misses.sql` adds the miss counter and is additive; it
+records nothing the `wanted` tables did not already hold, and it starts empty,
+so the rate reads `표본 없음` until the first reports arrive after deploy.
 
 ### Authoring work the queue is refusing to hand out
 
@@ -220,11 +338,103 @@ fleet is acted on by are the same one. A withdrawn **sample** and a withheld
 Thresholds, the classification a worker reports and the reasoning behind every
 number are in [docs/authoring-quarantine.md](authoring-quarantine.md).
 
+### Verification work no verifier lane can run
+
+A cross job names the environment a reproduction needs, and it is built from
+the sample manifest — which records the machine that WROTE the sample, not a
+lane the fleet has. When one contributor's Windows machine moved to Go 1.27.0,
+three Go drafts produced jobs asking for a Go 1.27 lane. The only Go image this
+build pins is `golang:1.26-alpine`, so every worker skipped the rows in
+`canPrepare` before claiming them. The queue reported open work, every worker
+reported none, and both were telling the truth. It ran that way for three days.
+
+Two things keep it visible now:
+
+* `health.unsupportedJobs` on `GET /admin/api/farm`, rendered on the farm panel
+  as **실행 불가 작업**, counts jobs recorded `unsupported` — work no verifier
+  image in this build can run. It is deliberately not part of the queue depth:
+  waiting does not consume it. Non-zero means a lane is missing or something
+  asked for one that never existed.
+* `csx worker start` prints, when it claimed nothing, the coordinates the queue
+  offered that this build has no image for:
+
+  ```
+  no runnable work: the queue offered 2 coordinate(s) this build has no
+  verifier image for: golang go 1.27, golang go 1.27 host
+  ```
+
+  An empty queue prints nothing extra, so "no work" and "no lane for the work"
+  are different sentences.
+
+A cross job may only ask for what the fleet can serve. The runtime version and
+the execution context are relaxed when no image serves them — they describe the
+author's machine, exactly as the OS does (see `crossJobOS`) — and the same
+requirements are what the run executes against, so the receipt records the
+runtime the container really had. What no relaxation can serve is created
+`unsupported` instead of `open`.
+
+`ReconcileCrossJobLanes` runs at boot and applies that rule to jobs already in
+the table, both ways: it repairs a job asking for a lane nobody has, and it
+reopens an unsupported job the moment a lane serves it. `unsupported` is a
+statement about the images this build pins, never a verdict on the sample.
+
 Migration `0006_wanted_versions.sql` is forward-only with respect to older
 server binaries: it replaces the Wanted conflict key with
 `(ecosystem,name,version,symbol)`. Roll forward to a fixed server if the new
 image fails. Rolling back to a pre-0006 binary requires restoring the verified
 pre-deploy database backup; otherwise its old Wanted upsert returns 500.
+
+## The merge gate on `main`
+
+`.github/workflows/ci.yml` runs on every pull request, and the `Test` job is
+what proves the PostgreSQL suite actually executed rather than skipped. Running
+it is not the same as obeying it: a workflow cannot stop anyone from merging
+past its own red X. That part is a repository setting.
+
+Branch ruleset **`Protect main`** (id `21240909`) supplies it, targeting
+`~DEFAULT_BRANCH` with exactly two rules — a pull request is required, and the
+`Test` status check must pass. Review approval is deliberately not required
+(`required_approving_review_count: 0`), including for unattributed commits, so a
+single maintainer keeps merging at full speed; the gate is about evidence, not
+about attendance. Repository admins keep `bypass_mode: always`, which is the
+escape hatch for an incident — using it is a decision, and it is recorded.
+
+Like the signing Environment above, this lives in GitHub settings and no diff
+can show it still matches. Read it back instead:
+
+```
+gh api repos/r2cuerdame/CodeSampleX/rules/branches/main \
+  --jq '[.[] | .type]'
+# ["pull_request","required_status_checks"] — an empty list means main is open
+
+gh api repos/r2cuerdame/CodeSampleX/rules/branches/main \
+  --jq '[.[] | select(.type=="required_status_checks")
+         | .parameters.required_status_checks[].context]'
+# ["Test"] — anything else means the PostgreSQL gate is not the required check
+```
+
+**The required check is bound to the job's `name:`, not to its key.** GitHub
+identifies a status check by the name the job publishes, so
+renaming the `Test` job in `ci.yml` does not fail loudly — it silently produces
+a check nobody requires, while the required `Test` context never arrives and
+every pull request waits forever on a check that will never report. Renaming
+that job therefore means updating the ruleset in the same change:
+
+```
+gh api -X PUT repos/r2cuerdame/CodeSampleX/rulesets/21240909 --input <edited ruleset>
+```
+
+`scripts/ci_workflow_test.go` fails the build if the job name and this document
+stop agreeing, so the rename cannot pass CI without the operator reading this
+paragraph. It cannot reach into GitHub settings and check the ruleset itself —
+the `gh api` readback above is the only thing that confirms the other half.
+
+Both directions were observed on a throwaway pull request when the ruleset was
+installed: with `Test` failing GitHub reported `mergeStateStatus: BLOCKED`, and
+with `Test` green on the same branch the same pull request reported `CLEAN`.
+That is the reading to trust, and calling the merge API is not a substitute for
+it: an admin holds `bypass_mode: always`, so the API would have merged the red
+commit and proved the bypass rather than the gate.
 
 ## DNS — codesamplex.dev (Gabia)
 
@@ -412,6 +622,28 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    for the one-variable rollback.
 ```
 
+## Structured failure evidence rollout
+
+Migration `0024_failure_evidence.sql` is additive. It adds termination,
+normalized summary, quality, environment-variant, and diagnostic-candidate
+columns. Existing FAIL rows default to `legacy-evidence-incomplete`; existing
+PASS rows are reset to an empty quality. The migration does not fabricate an
+exit code or error summary and does not rewrite historical counts.
+
+After deployment, rebuild compatibility snapshots and compare these invariants
+on a known fixture such as `github.com/jackc/pgx/v5@v5.10.0 / ParseConfig`:
+
+1. PASS and FAIL totals are unchanged.
+2. `complete + partial + missing + legacy-evidence-incomplete = FAIL`.
+3. legacy rows render as Evidence gaps, not “error code not recorded”.
+4. a new failing command renders its structured termination, normalized
+   summary, and recorded environment variant.
+5. repeated missing/legacy clusters are marked diagnostic candidates.
+
+Rollback the application before rolling back the schema. The new columns are
+additive and safe to leave in place; dropping them would destroy newly captured
+evidence and is intentionally not part of an automatic rollback.
+
 ### Running csx-server on Windows
 
 Production csx-server is a Linux container binary; the Windows builds are the
@@ -431,3 +663,57 @@ the length of the session.
 Naming a host is still honoured verbatim, `0.0.0.0` included — write
 `CSX_LISTEN=0.0.0.0:8080` to serve the local network deliberately. Linux and
 macOS are untouched, so the container contract above is unchanged.
+
+### When the Windows launcher loses its current payload
+
+`%LOCALAPPDATA%\csx\active.json` names the payload the stable `csx.exe`
+executes, and every descriptor in it carries the SHA-256 the launcher verifies
+before running anything. A verified payload does not stay verified: on this
+project's own Windows workstation, Microsoft Defender classified
+`csx-payload.exe` as `Trojan:Win32/Bearfoos.*!ml` and quarantined it minutes
+after a correctly staged, hashed and self-tested update had committed it
+(2026-08-24 for v0.1.44, 2026-08-25 for v0.1.43 and again for v0.1.41). The
+pointer was right; the file was simply gone, leaving `payloads/<current>/`
+present and empty.
+
+The launcher treats that as recoverable rather than fatal. When `current` fails
+verification — or becomes unstartable after verification but before the OS
+opens it — the launcher verifies the `previous` descriptor, retries it at most
+once, and repairs `active.json` so `csx update` and every ownership check in
+`internal/update` see a consistent install too. `rollbackHold` is rejection
+metadata for updater suppression and sequence floors, never an execution
+candidate. Payload directories left on disk by older releases are **not**
+candidates: this pointer never recorded a hash for them.
+
+What operators see:
+
+```
+csx launcher: recovered: payload-missing: current payload v0.1.43 is unusable; running last-known-good v0.1.41
+```
+
+That line always goes to stderr, never stdout — an MCP host reads stdout as
+JSON-RPC framing. The repaired pointer keeps the failed version as
+`rollbackHold`, which holds the automatic updater back from reinstalling the
+payload that just failed to run while still letting a genuinely newer release
+through, and preserves the sequence floor `mergeLauncherFloor` reads.
+
+With no verified fallback left, the launcher exits **126** with a stable reason
+code as the first field — `payload-missing`, `payload-corrupt`,
+`payload-not-regular`, `payload-unreadable`, `descriptor-invalid`,
+`pointer-unreadable`, `payload-start-failed` — and writes nothing to stdout. It
+never exits 0 without having executed a payload; a caller that cannot start csx
+must not be able to read that as the command having succeeded.
+
+An invalid current is recovered by the stable launcher before it starts any
+payload command. `csx update rollback` remains the explicit rollback command
+for a healthy pointer; it is not the entry point for an install whose current
+payload cannot start. Editing `active.json` directly is a last resort: write it
+as UTF-8 **without a BOM** (the launcher rejects one as
+`invalid character 'ï'`), and drop `previous` entirely rather than zeroing it,
+since a descriptor with `sequence: 0` or a non-hex digest fails validation and
+takes the whole file down with it.
+
+Defender's verdict is a false positive on an unsigned Go binary and is the
+trigger behind every occurrence so far; an install-root exclusion or Authenticode
+signing of the payload is the fix for the cause, and is tracked separately from
+the launcher's own resilience.

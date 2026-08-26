@@ -201,12 +201,12 @@ func TestTheAnswerNamesEveryCountItRestsOn(t *testing.T) {
 		got[f.Label] = f.Value
 	}
 	want := map[string]string{
-		"Project observations":              "8 / 10",
-		"Contract verifications":            "1 / 1",
-		"Usage records":                     "5",
-		"Independent reporting peers":       "3",
-		"Failures with an identified cause": "1 / 2",
-		"Cross-checked":                     "reproduced by two or more independent peers",
+		"Project observations":                 "8 / 10",
+		"Contract verifications":               "1 / 1",
+		"Usage records":                        "5",
+		"Independent reporting peers":          "3",
+		"Failures with a captured fingerprint": "1 / 2",
+		"Cross-checked":                        "reproduced by two or more independent peers",
 		// The basis decides which clock: this coordinate was verified, so
 		// the date is the verification's, not the fresher observation's.
 		"Last recorded": "2026-08-13",

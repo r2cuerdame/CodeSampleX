@@ -104,6 +104,11 @@ func (f *Fake) FarmHealthNow(_ context.Context, now time.Time) (FarmHealth, erro
 			health.WithheldByReason[ledger.QuarantineReason]++
 		}
 	}
+	for _, job := range f.jobs {
+		if job.Status == JobStatusUnsupported {
+			health.UnsupportedJobs++
+		}
+	}
 	return health, nil
 }
 

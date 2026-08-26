@@ -370,55 +370,81 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 	return out, nil
 }
 
-// derivedFindingScan bounds how many recent samples are read looking for
-// declared beliefs. Only a minority of samples state one, so the scan is
-// wider than the number of findings it can return.
-const derivedFindingScan = 2000
-
-// DerivedFindings reads the newest samples and keeps the ones whose case
-// says what was believed.
+// derivedFindingPage is how many belief-declaring samples one database read
+// returns.
 //
-// It scans rather than filters in SQL because the belief lives inside the
-// manifest JSON, and the manifest is the artifact's own copy — no column
-// mirrors it, and adding one would put a second answer beside the sample
-// itself. The result is cached by the caller, so this runs on a timer, not
-// on a request.
+// It bounds a READ, not the answer. The number it replaced bounded the
+// answer: DerivedFindings used to take the newest 2,000 verified samples and
+// look for beliefs inside that slice, so a finding stayed public only while
+// fewer than 2,000 verified samples had been published after it. Production
+// crossed that line and the machine-derived group fell from 543 to 250 with
+// nothing quarantined, nothing invalidated and no receipt withdrawn — 308
+// findings measured as still eligible, aged out of a window. Raising the
+// number would have bought time and nothing else.
+//
+// So the eligibility test moved into the store and this pages through what
+// comes back. A page is a bounded query and a bounded parse; the loop below
+// stops when the caller has enough or the corpus runs out, which are the only
+// two things that should ever stop it.
+const derivedFindingPage = 500
+
+// DerivedFindings returns the published samples whose case says what was
+// believed, newest first, up to limit.
+//
+// The store narrows to samples that declare a belief — the JSON the manifest
+// itself carries, since no column mirrors it and adding one would put a
+// second answer beside the artifact's own copy. What is left here is the
+// judgement that cannot be made in SQL: whether a contract line reads as
+// prose a stranger can learn from. The result is cached by the caller, so
+// this runs on a timer, not on a request.
 func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.DerivedFinding, error) {
-	rows, err := w.s.ListVerifiedSamples(ctx, derivedFindingScan)
-	if err != nil {
-		return nil, err
+	if limit <= 0 {
+		return nil, nil
 	}
 	var out []web.DerivedFinding
-	for _, r := range rows {
-		m, ok := parseManifest(r.ManifestJSON)
-		if !ok || strings.TrimSpace(m.Case.Believed) == "" {
-			continue
+	var cursor serverstore.SampleCursor
+	for {
+		rows, err := w.s.ListVerifiedBeliefSamples(ctx, cursor, derivedFindingPage)
+		if err != nil {
+			return nil, err
 		}
-		measured := firstContractLine(m.Case.Contract)
-		if measured == "" {
-			// A belief with nothing measured against it is an opinion,
-			// and an opinion is what this page exists not to publish.
-			continue
+		if len(rows) == 0 {
+			return out, nil
 		}
-		eco, subject := findingSubject(m.Case.Packages)
-		if eco == "" {
-			continue
+		for _, r := range rows {
+			m, ok := parseManifest(r.ManifestJSON)
+			if !ok || strings.TrimSpace(m.Case.Believed) == "" {
+				continue
+			}
+			measured := firstContractLine(m.Case.Contract)
+			if measured == "" {
+				// A belief with nothing measured against it is an opinion,
+				// and an opinion is what this page exists not to publish.
+				continue
+			}
+			eco, subject := findingSubject(m.Case.Packages)
+			if eco == "" {
+				continue
+			}
+			out = append(out, web.DerivedFinding{
+				Ecosystem:   eco,
+				Subject:     subject,
+				Believed:    strings.TrimSpace(m.Case.Believed),
+				Measured:    measured,
+				SampleID:    r.SampleID,
+				OS:          web.RecordEnvironmentOS(m.Environment),
+				Runtime:     web.RecordEnvironmentRuntime(m.Environment),
+				Environment: web.RecordEnvironmentSummary(m.Environment),
+			})
+			if len(out) >= limit {
+				return out, nil
+			}
 		}
-		out = append(out, web.DerivedFinding{
-			Ecosystem:   eco,
-			Subject:     subject,
-			Believed:    strings.TrimSpace(m.Case.Believed),
-			Measured:    measured,
-			SampleID:    r.SampleID,
-			OS:          web.RecordEnvironmentOS(m.Environment),
-			Runtime:     web.RecordEnvironmentRuntime(m.Environment),
-			Environment: web.RecordEnvironmentSummary(m.Environment),
-		})
-		if len(out) >= limit {
-			break
+		if len(rows) < derivedFindingPage {
+			return out, nil
 		}
+		cursor = serverstore.CursorFor(rows[len(rows)-1])
 	}
-	return out, nil
 }
 
 // firstContractLine picks the assertion that reads as the measurement.
@@ -935,11 +961,22 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			"stage":               c.Stage,
 			"errorCode":           c.ErrorCode,
 			"fingerprint":         c.ErrorFingerprint,
+			"terminationKind":     c.TerminationKind,
+			"exitCode":            c.ExitCode,
+			"signal":              c.Signal,
+			"timeoutMillis":       c.TimeoutMillis,
+			"errorSummary":        c.ErrorSummary,
+			"evidenceQuality":     c.EvidenceQuality,
 			"count":               c.ObservationCount,
 			"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
+			"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
+			"evidenceBreakdown":   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
 			"hypotheses":          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
 			"regressionCandidate": c.RegressionCandidate,
+			"diagnosticCandidate": c.DiagnosticCandidate,
 			"versions":            json.RawMessage(orEmptyArr(c.VersionsJSON)),
+			"firstSeen":           c.FirstSeen.UTC().Format(time.RFC3339),
+			"lastSeen":            c.LastSeen.UTC().Format(time.RFC3339),
 		}
 		b, err := json.Marshal(doc)
 		if err != nil {

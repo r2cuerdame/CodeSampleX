@@ -18,7 +18,7 @@ CodeSampleX is an **open compatibility testing network** for developer libraries
 
 Two things are the asset, and a third is a bonus:
 
-- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container lane can: no container reproduces a macOS host — Docker on a Mac runs a Linux VM, which is a different machine wearing the same laptop — npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
+- **Evidence** — real builds on real developer machines, with the environment, stage, structured termination, and secret-safe normalized failure fingerprint. Missing or legacy failure detail is shown as an Evidence gap, never invented as a cause. It arrives automatically wherever csx is installed, so it reaches platforms no container lane can: no container reproduces a macOS host — Docker on a Mac runs a Linux VM, which is a different machine wearing the same laptop — npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
 - **Findings** — the contradictions we detected in that evidence: what a competent developer or model expects, measured against what happened. These are ours to stand behind, and they are what a model most often gets wrong, because they are exactly what the documentation does not say.
 - **Samples** — runnable code we write and verify ourselves. A bonus, deliberately: a container farm can never cover the space, so a verified sample is a confidence tier above the evidence, never the condition for having an answer at all.
 
@@ -238,7 +238,7 @@ Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolu
 
 ## Architecture
 
-Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. See [goal.md](goal.md), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
+Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. Current canonical references are [docs/architecture.md](docs/architecture.md), [docs/schema.md](docs/schema.md), [docs/execution-context.md](docs/execution-context.md), and [docs/operations.md](docs/operations.md). [goal.md](goal.md) is the initial product plan.
 
 ## Building from source
 
@@ -251,7 +251,9 @@ That needs no database: the `internal/serverstore` PostgreSQL tests skip
 themselves when `CSX_TEST_DSN` is unset. They are not optional in CI —
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs every pull request
 against a disposable `postgres:17-alpine` and fails the run if any of them
-skipped. To run them the same way locally:
+skipped. That run is a required check on `main`, so a red one stops the merge —
+the ruleset behind that, and what to do when the job is renamed, is in
+[docs/operations.md](docs/operations.md). To run them the same way locally:
 
 ```bash
 docker run -d --rm --name csx-pg -e POSTGRES_USER=csx -e POSTGRES_PASSWORD=csx \

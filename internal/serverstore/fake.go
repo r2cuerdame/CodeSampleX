@@ -75,6 +75,12 @@ type fakeAggMeta struct {
 	symbolConfidence string
 	envJSON          string
 	errorCode        string
+	terminationKind  string
+	exitCode         *int
+	signal           string
+	timeoutMillis    int64
+	errorSummary     string
+	evidenceQuality  string
 	// direct: the reporter listed this package in their own manifest. Chosen
 	// wins and never unsays itself.
 	direct    bool
@@ -210,6 +216,18 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	}
 	if meta.errorCode == "" {
 		meta.errorCode = b.ErrorCode
+	}
+	if meta.terminationKind == "" {
+		meta.terminationKind = string(b.TerminationKind)
+		meta.exitCode = b.ExitCode
+		meta.signal = b.Signal
+		meta.timeoutMillis = b.TimeoutMillis
+	}
+	if meta.errorSummary == "" {
+		meta.errorSummary = b.ErrorSummary
+	}
+	if meta.evidenceQuality == "" {
+		meta.evidenceQuality = normalizedEvidenceQuality(b)
 	}
 	meta.lastSeen = now
 	f.merge.apply(b)
@@ -498,6 +516,9 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			EnvHash:          k.EnvHash, EnvJSON: meta.envJSON,
 			Stage: k.Stage, Result: k.Result,
 			ErrorFingerprint: k.ErrorFP, ErrorCode: meta.errorCode, Direct: meta.direct,
+			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
+			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
+			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),
@@ -650,6 +671,76 @@ func (f *Fake) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow,
 		}
 	}
 	return out, nil
+}
+
+// ListVerifiedBeliefSamples mirrors the PG query, keyset and all, so a test
+// written against the Fake proves something about the server.
+//
+// The ordering is the SQL's: newest first, with sample_id DESC as the
+// tiebreak, because that pair is what the cursor compares. A missing
+// created_at sorts as the epoch here for the same reason it does there.
+func (f *Fake) ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []SampleRow
+	for _, s := range f.samples {
+		if s.Quarantined {
+			continue
+		}
+		if !f.hasContractPass(s.SampleID, "") {
+			continue
+		}
+		if manifestBelief(s.ManifestJSON) == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := CursorFor(out[i]), CursorFor(out[j])
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.SampleID > b.SampleID
+	})
+	if !after.IsZero() {
+		kept := out[:0]
+		for _, s := range out {
+			if cursorBefore(CursorFor(s), after) {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// cursorBefore is the Go form of the SQL's
+// (created_at, sample_id) < (cursor.created_at, cursor.sample_id).
+func cursorBefore(c, than SampleCursor) bool {
+	if !c.CreatedAt.Equal(than.CreatedAt) {
+		return c.CreatedAt.Before(than.CreatedAt)
+	}
+	return c.SampleID < than.SampleID
+}
+
+// manifestBelief reads the declared belief out of a manifest, matching the
+// SQL's manifest->'case'->>'believed'. Unparseable JSON states nothing.
+func manifestBelief(manifestJSON string) string {
+	var m struct {
+		Case struct {
+			Believed string `json:"believed"`
+		} `json:"case"`
+	}
+	if json.Unmarshal([]byte(manifestJSON), &m) != nil {
+		return ""
+	}
+	return m.Case.Believed
 }
 
 // matchesAnyPattern implements the "prefix%" form the SQL uses.
@@ -950,6 +1041,51 @@ func (f *Fake) Job(_ context.Context, id int64) (JobRow, bool, error) {
 	return JobRow{}, false, nil
 }
 
+func (f *Fake) CrossJobsForLaneReview(_ context.Context, limit int) ([]JobRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []JobRow
+	for _, j := range f.jobs {
+		if j.Reason != "cross" {
+			continue
+		}
+		expired := j.Status == "claimed" &&
+			(j.ClaimedAt.IsZero() || f.now().Sub(j.ClaimedAt) > JobLease)
+		if j.Status != "open" && j.Status != JobStatusUnsupported && !expired {
+			continue
+		}
+		out = append(out, *j)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *Fake) SetJobRequirements(_ context.Context, id int64, wantEnvJSON, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.ID != id {
+			continue
+		}
+		expired := j.Status == "claimed" &&
+			(j.ClaimedAt.IsZero() || f.now().Sub(j.ClaimedAt) > JobLease)
+		if j.Status != "open" && j.Status != JobStatusUnsupported && !expired {
+			return nil
+		}
+		j.WantEnvJSON = wantEnvJSON
+		j.Status = status
+		j.ClaimedBy = ""
+		j.ClaimedAt = time.Time{}
+		return nil
+	}
+	return nil
+}
+
 func (f *Fake) ClaimJob(_ context.Context, id int64, peerID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1216,24 +1352,42 @@ func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 	now := f.now()
 	if prev, ok := f.clusters[k]; ok {
 		c.ID = prev.ID
-		c.FirstSeen = prev.FirstSeen
+		if c.FirstSeen.IsZero() || (!prev.FirstSeen.IsZero() && prev.FirstSeen.Before(c.FirstSeen)) {
+			c.FirstSeen = prev.FirstSeen
+		}
 	} else {
 		c.ID = int64(len(f.clusters) + 1)
 		if c.FirstSeen.IsZero() {
 			c.FirstSeen = now
 		}
 	}
-	c.LastSeen = now
+	if c.LastSeen.IsZero() {
+		c.LastSeen = now
+	}
 	f.clusters[k] = c
 	return nil
 }
 
 func (f *Fake) ListFailureClusters(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, true)
+}
+
+// ListFailureClustersIncludingPreserved mirrors the PostgreSQL read of the
+// same name: exact failure matching still needs the pre-0024 fingerprints.
+func (f *Fake) ListFailureClustersIncludingPreserved(_ context.Context, packageName string) ([]ClusterRow, error) {
+	return f.listFailureClusters(packageName, false)
+}
+
+func (f *Fake) listFailureClusters(packageName string, currentOnly bool) ([]ClusterRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ClusterRow
 	for _, c := range f.clusters {
-		if c.PackageName == packageName {
+		// Same rule as PostgreSQL: preserved pre-0024 rows stay stored and
+		// stay out of the reads that describe live clusters. A Fake that
+		// served them everywhere let a doubled cluster ledger pass a green
+		// suite.
+		if c.PackageName == packageName && (!currentOnly || IsCurrentFailureCluster(c)) {
 			out = append(out, c)
 		}
 	}

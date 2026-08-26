@@ -156,19 +156,32 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	var aggID int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO evidence_agg
-			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result, error_fp, error_code, direct)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result,
+			 error_fp, error_code, direct, termination_kind, exit_code, signal,
+			 timeout_millis, error_summary, evidence_quality)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 			last_seen = now(),
 			symbol_confidence = EXCLUDED.symbol_confidence,
 			error_code = CASE WHEN evidence_agg.error_code = ''
 				THEN EXCLUDED.error_code ELSE evidence_agg.error_code END,
+			termination_kind = CASE WHEN evidence_agg.termination_kind = ''
+				THEN EXCLUDED.termination_kind ELSE evidence_agg.termination_kind END,
+			exit_code = COALESCE(evidence_agg.exit_code, EXCLUDED.exit_code),
+			signal = CASE WHEN evidence_agg.signal = '' THEN EXCLUDED.signal ELSE evidence_agg.signal END,
+			timeout_millis = GREATEST(evidence_agg.timeout_millis, EXCLUDED.timeout_millis),
+			error_summary = CASE WHEN evidence_agg.error_summary = ''
+				THEN EXCLUDED.error_summary ELSE evidence_agg.error_summary END,
+			evidence_quality = CASE WHEN evidence_agg.evidence_quality IN ('', 'legacy-evidence-incomplete')
+				THEN EXCLUDED.evidence_quality ELSE evidence_agg.evidence_quality END,
 			-- Chosen wins and never unsays itself: one project resolving a
 			-- package transitively does not undo another that listed it.
 			direct = evidence_agg.direct OR EXCLUDED.direct
 		RETURNING id`,
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
 		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
+		string(b.TerminationKind), b.ExitCode, b.Signal, b.TimeoutMillis,
+		b.ErrorSummary, string(normalizedEvidenceQuality(b)),
 	).Scan(&aggID); err != nil {
 		return err
 	}
@@ -687,7 +700,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
-			       stage, result, error_fp, error_code, observation_count,
+			       stage, result, error_fp, error_code, termination_kind, exit_code,
+			       signal, timeout_millis, error_summary, evidence_quality, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
 			WHERE purl=$1 AND symbol = ANY($2)
@@ -701,6 +715,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 			var first, last *time.Time
 			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
 				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
+				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
+				&e.ErrorSummary, &e.EvidenceQuality,
 				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
 				&first, &last); err != nil {
 				return err
@@ -907,6 +923,67 @@ func (p *PG) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, e
 				  AND verified_receipt.contract_result = 'PASS'
 			  )
 			ORDER BY created_at DESC, sample_id LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// ListVerifiedBeliefSamples pages the finding candidates.
+//
+// The predicate is the same verified-sample predicate as above plus the one
+// thing that makes a sample a finding: its case says what was believed. That
+// belief lives inside the manifest JSON — no column mirrors it, and adding
+// one would put a second answer beside the artifact's own copy — so the
+// filter reads the JSONB directly.
+//
+// Doing it here rather than in Go is the whole point. The caller used to
+// read the newest 2,000 verified samples and look for beliefs inside them,
+// which quietly turned "every finding" into "every finding published
+// recently": production crossed 2,000 verified samples and 308 findings fell
+// out of the window with nothing taken down. Only a minority of samples
+// state a belief (567 of 2,787 in production), so filtering first makes the
+// eligible set small enough to page through completely.
+//
+// The store's belief test is presence, not prose: a non-empty string in
+// the manifest. Whether it reads as a sentence, and whether a contract
+// line answers it, is judged in Go over a set this has already made
+// small — so no trimming rule has to be spelled twice, in two
+// languages, and stay identical forever.
+func (p *PG) ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	where := `
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM receipts verified_receipt
+				WHERE verified_receipt.sample_id = samples.sample_id
+				  AND verified_receipt.contract_result = 'PASS'
+			  )
+			  AND COALESCE(manifest->'case'->>'believed', '') <> ''`
+	args := []any{limit}
+	if !after.IsZero() {
+		where += `
+			  AND (COALESCE(created_at, 'epoch'::timestamptz), sample_id) < ($2, $3)`
+		args = append(args, after.CreatedAt, after.SampleID)
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples`+where+`
+			ORDER BY COALESCE(created_at, 'epoch'::timestamptz) DESC, sample_id DESC
+			LIMIT $1`, args...)
 		if err != nil {
 			return err
 		}
@@ -1155,10 +1232,17 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 	var id int64
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		if j.Reason != "matrix" {
+			// The status is written, not defaulted. Work no verifier lane can
+			// run is created unsupported so it never enters the open queue,
+			// and the column default would have made it open anyway.
+			status := j.Status
+			if status == "" {
+				status = "open"
+			}
 			return c.QueryRow(ctx, `
-			INSERT INTO verification_jobs(sample_id, reason, want_env)
-			VALUES($1,$2,$3) RETURNING id`,
-				j.SampleID, j.Reason, wantEnv).Scan(&id)
+			INSERT INTO verification_jobs(sample_id, reason, want_env, status)
+			VALUES($1,$2,$3,$4) RETURNING id`,
+				j.SampleID, j.Reason, wantEnv, status).Scan(&id)
 		}
 		tx, err := c.Begin(ctx)
 		if err != nil {
@@ -1190,6 +1274,59 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 		return tx.Commit(ctx)
 	})
 	return id, err
+}
+
+func (p *PG) CrossJobsForLaneReview(ctx context.Context, limit int) ([]JobRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []JobRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs
+			WHERE reason='cross'
+			  AND (status='open' OR status=$1
+			       -- A claim with no timestamp can never expire, so the queue
+			       -- will not offer it again either. If anything is going to
+			       -- look at that row, it is this.
+			       OR (status='claimed'
+			           AND (claimed_at IS NULL OR claimed_at < now() - $2::interval)))
+			ORDER BY id
+			LIMIT $3`, JobStatusUnsupported, JobLease.String(), limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, j)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func (p *PG) SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, status string) error {
+	var wantEnv []byte
+	if wantEnvJSON != "" {
+		wantEnv = []byte(wantEnvJSON)
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			UPDATE verification_jobs
+			   SET want_env=$2::jsonb, status=$3, claimed_by=NULL, claimed_at=NULL
+			 WHERE id=$1
+			   AND (status='open' OR status=$4
+			        OR (status='claimed'
+			            AND (claimed_at IS NULL OR claimed_at < now() - $5::interval)))`,
+			id, wantEnv, status, JobStatusUnsupported, JobLease.String())
+		return err
+	})
 }
 
 // OpenJobs lists claimable jobs. A job that pins want_env.sandboxCapability
@@ -1916,6 +2053,8 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
+	envVariants := []byte("[]")
+	evidenceBreakdown := []byte("{}")
 	if cl.EnvSummaryJSON != "" {
 		envSummary = []byte(cl.EnvSummaryJSON)
 	}
@@ -1925,12 +2064,21 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	if cl.VersionsJSON != "" {
 		versions = []byte(cl.VersionsJSON)
 	}
+	if cl.EnvVariantsJSON != "" {
+		envVariants = []byte(cl.EnvVariantsJSON)
+	}
+	if cl.EvidenceBreakdownJSON != "" {
+		evidenceBreakdown = []byte(cl.EvidenceBreakdownJSON)
+	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
 				error_code, observation_count, env_summary, hypotheses,
-				regression_candidate, versions)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				regression_candidate, versions, termination_kind, exit_code, signal,
+				timeout_millis, error_summary, evidence_quality, env_variants,
+				evidence_breakdown, diagnostic_candidate, first_seen, last_seen)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+			       COALESCE($21, now()), COALESCE($22, now()))
 			ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
 				error_code = EXCLUDED.error_code,
 				observation_count = EXCLUDED.observation_count,
@@ -1938,15 +2086,46 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 				hypotheses = EXCLUDED.hypotheses,
 				regression_candidate = EXCLUDED.regression_candidate,
 				versions = EXCLUDED.versions,
-				last_seen = now()`,
+				termination_kind = EXCLUDED.termination_kind,
+				exit_code = EXCLUDED.exit_code,
+				signal = EXCLUDED.signal,
+				timeout_millis = EXCLUDED.timeout_millis,
+				error_summary = EXCLUDED.error_summary,
+				evidence_quality = EXCLUDED.evidence_quality,
+				env_variants = EXCLUDED.env_variants,
+				evidence_breakdown = EXCLUDED.evidence_breakdown,
+				diagnostic_candidate = EXCLUDED.diagnostic_candidate,
+				first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+				last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)`,
 			cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
 			cl.ErrorCode, cl.ObservationCount, envSummary, hypotheses,
-			cl.RegressionCandidate, versions)
+			cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
+			cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
+			envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
+			nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen))
 		return err
 	})
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+}
+
+// ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
+//
+// Exact failure matching is the one question those rows still answer. Every
+// released client fingerprints a failure as `v1|stage|code|template`, and
+// every one of the fingerprints this network has on file was written by such
+// a client. Serving only current clusters would hand exact-match search a
+// surface where nothing can ever match: the rebuilt evidence-gap rows carry
+// no fingerprint at all, and v2 fingerprints only start arriving once a
+// client that computes them is released. A fingerprint that was recorded is
+// a fingerprint a caller can still hit.
+func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, "")
+}
+
+func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
@@ -1955,9 +2134,14 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(error_code,''), COALESCE(observation_count,0),
 			       COALESCE(env_summary::text,''), COALESCE(hypotheses::text,''),
 			       COALESCE(regression_candidate,false), COALESCE(versions::text,''),
+			       COALESCE(termination_kind,''), exit_code, COALESCE(signal,''),
+			       COALESCE(timeout_millis,0), COALESCE(error_summary,''),
+			       COALESCE(evidence_quality,'legacy-evidence-incomplete'),
+			       COALESCE(env_variants::text,'[]'), COALESCE(evidence_breakdown::text,'{}'),
+			       COALESCE(diagnostic_candidate,false),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1
+			WHERE package_name=$1`+extraWhere+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err
@@ -1969,7 +2153,10 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
 				&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
 				&cl.EnvSummaryJSON, &cl.HypothesesJSON, &cl.RegressionCandidate,
-				&cl.VersionsJSON, &first, &last); err != nil {
+				&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
+				&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
+				&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
+				&first, &last); err != nil {
 				return err
 			}
 			if first != nil {
@@ -2395,6 +2582,18 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 		}
 		defer tx.Rollback(ctx)
 		for _, report := range reports {
+			// One row per report, before the coordinates are expanded: the
+			// rate needs the question, the ranking below needs the rows, and
+			// counting the rows as questions would make a miss that named
+			// three packages outweigh three separate misses.
+			if key := searchMissKey(report.Rows); key != "" {
+				if _, err := tx.Exec(ctx, `
+				INSERT INTO search_misses(epoch, anon_id, dedup_key)
+				VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+					report.Epoch, report.AnonID, key); err != nil {
+					return err
+				}
+			}
 			for _, r := range report.Rows {
 				tag, err := tx.Exec(ctx, `
 				INSERT INTO wanted_dedup(ecosystem, name, version, symbol, target_os, epoch, anon_id)

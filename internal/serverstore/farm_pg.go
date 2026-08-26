@@ -84,6 +84,11 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 			Scan(&health.StaleClaims); err != nil {
 			return err
 		}
+		if err := c.QueryRow(ctx, `
+			SELECT count(*) FROM verification_jobs WHERE status=$1`,
+			JobStatusUnsupported).Scan(&health.UnsupportedJobs); err != nil {
+			return err
+		}
 		// Why things were withdrawn, not just how many. The reason was always
 		// recorded and never read.
 		reasons, err := c.Query(ctx, `
