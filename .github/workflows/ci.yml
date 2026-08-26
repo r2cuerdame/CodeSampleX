@@ -61,6 +61,11 @@ jobs:
       # Turns a lost DSN into a failure that names the variable, instead of 30
       # silent skips. See integrationDSN in internal/serverstore.
       CSX_REQUIRE_TEST_DSN: "1"
+      # Same bargain for the narrow-viewport render: ubuntu-latest ships
+      # Google Chrome, and a runner image that stops doing so must say so
+      # rather than skip the only test that measures the mobile layout.
+      # See findChrome in internal/web.
+      CSX_REQUIRE_CHROME: "1"
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
