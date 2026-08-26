@@ -132,8 +132,9 @@ The question has a per-machine answer and a fleet answer, and they are not
 the same question.
 
 **Per machine**, the sequence is fully knowable. The install knows it ran,
-knows it initialized, knows whether it synced, knows whether an MCP process
-ever started, knows its hook state, and knows whether it has ever had a hit.
+knows it initialized, knows whether it synced, knows whether an MCP client
+completed the protocol handshake, knows its hook state, and knows whether it
+has ever had a hit.
 It can present all of that, in order, with the exact next action for the
 first row that is not ready. That is §7.
 
@@ -161,13 +162,24 @@ day *d*'s wire at all.
 The ticket asks how these avoid inflating the funnel. Each has a different
 answer, and one of them is "it doesn't, and the number must say so".
 
-**Retries.** Already handled on every uploaded surface. `search_hits` is keyed
-`(epoch, anon_id, dedup_key)` where the dedup key is the offer id, so a
-search retried all afternoon is one hit. `search_misses` keys the digest of
-the whole coordinate set, so a retried miss collapses the same way — and a
-report naming ten packages is one question, not ten. `adoptions` is keyed
-`(sample_id, epoch, anon_id)`. `evidence_dedup` is keyed by bucket and epoch.
-Nothing new is needed for retries.
+**Transport retries and repeated searches are different events.** A
+`search_hits` row is keyed `(epoch, anon_id, dedup_key)`, with the offer ID as
+its dedup key. Re-delivery of the same queued hit payload carries the same
+offer ID and collapses as a transport retry. A later successful search — even
+with the same query and result — calls `RecordSearchOffer` again, receives a
+new random offer ID, and is a distinct hit. Hit-volume metrics may therefore
+count successful searches, but must not describe the deduplication as merging
+repeated searches.
+
+Misses have a different limitation: `search_misses` keys the digest of the
+whole coordinate set. A same-day repeat of the identical unsuccessful search
+collapses whether it was a transport retry or a deliberate re-search, while a
+report naming ten packages remains one question rather than ten. A miss row
+count is therefore a count of distinct daily coordinate sets per reporter,
+not a count of search attempts. `adoptions` is keyed
+`(sample_id, epoch, anon_id)`, and `evidence_dedup` is keyed by bucket and
+epoch. Any rollup must name these actual deduplicated units rather than claim
+one universal retry rule.
 
 **Reinstalls.** A reinstall that keeps `$CSX_HOME` keeps its local ledger and
 its `identity.json` seed, so it is continuous on both sides. A reinstall that
@@ -274,7 +286,7 @@ and the exact next action when it is not ready.
 Readiness                                        (nothing on this panel is uploaded)
   Mode            COMMUNITY                       config.json
   Shard cache     807 keys · synced 2h ago        csx.db
-  MCP             registered: Claude Code, Codex  last session 4m ago
+  MCP             registered: Claude Code, Codex  last completed handshake 4m ago
   Hook            Claude Code  verified 2026-08-24
                   Codex        registered — approval not verifiable
                                                → run /hooks in Codex and trust the lookup
@@ -291,22 +303,32 @@ right there:
 * Where a state is not readable, it says so in those words —
   `approval not verifiable` — and never guesses in either direction.
 * `never seen` is distinct from `not working`. An MCP row that has never seen
-  a session on a machine whose agent is registered means the agent has not
-  been started, not that the path is broken.
+  a completed handshake on a machine whose agent is registered means only
+  that no client has completed the protocol lifecycle; process startup alone
+  is not readiness, and the path is not inferred broken.
 * Every not-ready row carries the command that fixes it.
 
 Backing store: first-occurrence stamps in the local `meta` table
 (`internal/storage/localdb`, `stat:` namespace) — `firstRunAt`, `initAt`,
-`firstSyncAt`, `mcpFirstSeenAt`, `mcpLastSeenAt`, `firstHitAt`,
-`firstAdoptionAt`. Write-once for the `first*` keys. Each is one line at a
-site that already opens the store: `csx init` after `cfg.Save`, `csx mcp` at
-`newDeps`, the sync path after a successful warm, the hit writer, the
-adoption writer.
+`firstSyncAt`, `mcpFirstReadyAt`, `mcpLastReadyAt`, `firstHitAt`,
+`firstAdoptionAt`. Write-once for the `first*` keys. Existing success sites
+cover `csx init` after `cfg.Save`, the sync path after a successful warm, the
+hit writer, and the adoption writer.
 
-`firstRunAt` (S1) is the only one with no existing site, because there is no
-first-run path — the CLI opens the store lazily. It belongs wherever
-`config.EnsureHome` first creates the directory tree, which is the earliest
-moment the binary provably ran.
+The MCP stamps do **not** belong in `newDeps`: opening the database proves
+only process startup. A session becomes ready only after the same stdio
+session has successfully answered a valid `initialize` request and then
+received `notifications/initialized`. `mcpFirstReadyAt` and `mcpLastReadyAt`
+are written on that state transition; launching `csx mcp`, closing stdin, or
+failing between those two protocol messages records no ready session.
+
+`firstRunAt` (S1) must be attempted at the top of `cli.Main`, before it
+inspects or dispatches `argv`, so the no-argument, `help`, `--help`, `version`,
+and unknown-command early returns are real first executions too. Recording it
+from `config.EnsureHome` would instead mean "first command that needed the
+home" and would understate time to value. This write remains local-only and a
+failure to create the local ledger must remain visible as unmeasured rather
+than being replaced with a later timestamp.
 
 This panel is what makes S1–S5 answerable at all. It is also the entire
 answer for those stages: they are §2.1 signals and they do not have a network

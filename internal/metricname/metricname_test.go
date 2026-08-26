@@ -131,6 +131,32 @@ func TestNestedFieldsAreChecked(t *testing.T) {
 	}
 }
 
+type collectionEntry struct {
+	ActiveUsers int64 `json:"activeUsers"`
+}
+
+type collectionDoc struct {
+	Slices []collectionEntry             `json:"slices"`
+	Arrays [1]*collectionEntry           `json:"arrays"`
+	Maps   map[string][]*collectionEntry `json:"maps"`
+}
+
+// JSON collections do not hide the fields of their elements. The guard used
+// to stop at the slice/array/map type itself, allowing an actor claim nested
+// inside any collection to escape the naming contract.
+func TestFieldsInsideCollectionsAreChecked(t *testing.T) {
+	v := Check(collectionDoc{})
+	if len(v) != 3 {
+		t.Fatalf("violations = %d, want 3: %+v", len(v), v)
+	}
+	want := []string{"slices.activeUsers", "arrays.activeUsers", "maps.activeUsers"}
+	for i, got := range v {
+		if got.Field != want[i] || got.Rule != RuleForbiddenActor {
+			t.Errorf("violation[%d] = %+v, want %s/%s", i, got, want[i], RuleForbiddenActor)
+		}
+	}
+}
+
 type hiddenDoc struct {
 	Users  int64 `json:"-"`
 	hidden int64

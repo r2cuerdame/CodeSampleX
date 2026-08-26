@@ -87,7 +87,7 @@ func Check(doc any) []Violation {
 }
 
 func walk(t reflect.Type, prefix string, depth int, seen map[reflect.Type]struct{}, out *[]Violation) {
-	t = deref(t)
+	t = jsonValueType(t)
 	if t == nil || t.Kind() != reflect.Struct || depth > 4 {
 		return
 	}
@@ -163,7 +163,7 @@ func checkEstimateLabel(f reflect.StructField, name, path string, siblings map[s
 }
 
 func carriesEstimatedFlag(t reflect.Type) bool {
-	t = deref(t)
+	t = jsonValueType(t)
 	if t == nil || t.Kind() != reflect.Struct {
 		return false
 	}
@@ -201,11 +201,20 @@ func jsonName(f reflect.StructField) (string, bool) {
 	return name, true
 }
 
-func deref(t reflect.Type) reflect.Type {
-	for t != nil && t.Kind() == reflect.Ptr {
-		t = t.Elem()
+// jsonValueType unwraps the containers whose elements or values are encoded
+// beneath the field name. A public claim inside []T, [N]T, map[string]T, or
+// any pointer-wrapped combination is still visible to a JSON consumer and
+// must be checked just like a directly nested struct.
+func jsonValueType(t reflect.Type) reflect.Type {
+	for t != nil {
+		switch t.Kind() {
+		case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Map:
+			t = t.Elem()
+		default:
+			return t
+		}
 	}
-	return t
+	return nil
 }
 
 // tokens splits a camelCase or PascalCase field name into lowercase words.
