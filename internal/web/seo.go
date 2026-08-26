@@ -299,15 +299,21 @@ func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Every published sample. lastmod is the publication date: a sample is
-	// immutable once published (its id is the hash of its contents), so the
-	// date it was created is the only honest value.
+	// Every published sample, at the address it declares canonical: the
+	// human-readable /npm/<name>/<version>/samples/<slug> where the sample
+	// names a release this site routes, and the content address otherwise.
+	// Advertising the digest URL of a page that canonicalizes elsewhere asks
+	// a crawler to index one address and then tells it to index another.
+	//
+	// lastmod is the publication date: a sample is immutable once published
+	// (its id is the hash of its contents), so the date it was created is
+	// the only honest value.
 	if samples, err := s.d.Store.ListSamples(r.Context(), sitemapSampleLimit); err == nil {
 		for _, sm := range samples {
 			if !sampleIDRe.MatchString(sm.SampleID) {
 				continue
 			}
-			writeDated(base+sampleHref(sm.SampleID), datePart(sm.CreatedAt))
+			writeDated(base+sm.Href(), datePart(sm.CreatedAt))
 		}
 	}
 

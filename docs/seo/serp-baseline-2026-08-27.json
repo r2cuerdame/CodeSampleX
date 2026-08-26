@@ -1,0 +1,62 @@
+{
+  "label": "2026-08-27 Google Search Console export, whole period",
+  "source": "Transcribed from the figures recorded in Linear R2C-205 from the 2026-08-27 Search Console export. NOT parsed from the CSV: the export file is on the operator's machine, not in this repository. Regenerate this file from the export itself with: go run ./cmd/csx-seo-report -pages Pages.csv -queries Queries.csv -label \"2026-08-27 export\" -out docs/seo/serp-baseline-2026-08-27.json",
+  "partial": true,
+  "note": "Established here: the sample cohort totals, the page-one sample population, and four query rows. NOT established: the 1-3 against 4-10 split, the package and site cohorts, and the per-page rows beyond the three that were written down.",
+  "cohorts": {
+    "sample": {
+      "class": "sample",
+      "all": {
+        "pages": 187,
+        "clicks": 0,
+        "impressions": 1546,
+        "ctr": 0,
+        "meanPosition": 0
+      },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      },
+      "top": [
+        { "key": "sample A", "clicks": 0, "impressions": 315, "position": 6.95 },
+        { "key": "sample B", "clicks": 0, "impressions": 229, "position": 5.31 },
+        { "key": "sample C", "clicks": 0, "impressions": 105, "position": 6.49 }
+      ]
+    },
+    "package": {
+      "class": "package",
+      "all": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      }
+    },
+    "site": {
+      "class": "site",
+      "all": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      }
+    }
+  },
+  "queries": [
+    { "key": "nanoid npm", "clicks": 0, "impressions": 56, "position": 7.29 },
+    { "key": "registry.npmjs.org three 0.185.1 tgz", "clicks": 0, "impressions": 53, "position": 6.0 },
+    { "key": "eslint 9.39.5", "clicks": 0, "impressions": 9, "position": 5.33 },
+    { "key": "nanoid 3.3.17", "clicks": 0, "impressions": 8, "position": 4.88 }
+  ],
+  "sampleTop10": {
+    "pages": 157,
+    "clicks": 0,
+    "impressions": 1393,
+    "ctr": 0,
+    "meanPosition": 0
+  }
+}

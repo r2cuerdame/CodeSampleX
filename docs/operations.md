@@ -669,6 +669,67 @@ That is the reading to trust, and calling the merge API is not a substitute for
 it: an admin holds `bypass_mode: always`, so the API would have merged the red
 commit and proved the bypass rather than the gate.
 
+## Search SERP measurement (sample CTR)
+
+The instrument is `cmd/csx-seo-report`, the stored measurement is
+`docs/seo/serp-baseline-2026-08-27.json`, and the question is narrow: did
+pages that were ALREADY ranking start getting clicked.
+
+The 2026-08-27 Search Console export recorded 187 sample pages with 1,546
+impressions and 0 clicks, 157 of them averaging inside the first ten results
+and carrying 1,393 of those impressions. That is a snippet problem, not a
+ranking problem, and the two are only distinguishable if they are measured
+apart.
+
+**Taking a measurement.** Export Pages and Queries from Search Console for
+the period you want, then:
+
+```bash
+go run ./cmd/csx-seo-report \
+  -pages Pages.csv -queries Queries.csv \
+  -label "2026-09-24 export, 28 days" \
+  -baseline docs/seo/serp-baseline-2026-08-27.json
+```
+
+Add `-out docs/seo/serp-<date>.json` to store the measurement as the next
+baseline. The tool reads files and nothing else: no network, no database.
+
+**Reading the result.** Three rules, all of them enforced by the report
+rather than left to the reader.
+
+1. **Compare inside a position band, never across.** A page that fell from
+   rank 4 to rank 12 loses clicks for a reason that has nothing to do with
+   its title. Bands are `1-3 / 4-10 / 11-20 / 21+`, and a row with no
+   recorded position lands in the last band, not the first.
+2. **Read impressions and position before CTR.** A cohort that lost half its
+   impressions and climbed eight ranks has proven nothing about its
+   snippets. Those two columns sit to the right of the CTR change for
+   exactly that reason.
+3. **CTR moves in points.** 0.00% to 1.60% is `+1.60` points. Expressed as a
+   ratio against a zero baseline it is a division by zero being published as
+   a triumph.
+
+**The cohort is the page, not the address.** Sample pages answer at both
+`/samples/sha256:*` and `/{ecosystem}/{name}/{version}/samples/{slug}`, and
+`seoreport.Classify` counts both as `sample`. Matching one shape would show
+the sample cohort collapsing to zero impressions on the day the canonical
+moved, which is a reporting artifact and not a result.
+
+**The stored baseline is marked `partial`.** Its numbers were transcribed
+from the figures recorded on R2C-205, not parsed from the CSV — the export
+file lives on the operator's machine, not in this repository. What it
+establishes is the sample cohort total, the page-one sample population and
+four query rows; what it does not establish is the `1-3` against `4-10`
+split, the package and site cohorts, and the mean position. A comparison
+against it prints `not established` for those rows instead of subtracting
+from a zero. Anyone holding the original export should regenerate the file
+with `-out` and drop the flag.
+
+**When to re-measure.** Search Console lags by two to three days and the
+cohort needs enough impressions to say anything, so the first useful
+re-measurement is roughly four weeks after the deploy that changed the
+snippets. Re-measure the same period length as the baseline.
+
 ## Build identity
 
 The site footer ends with the identity of the process that rendered the page:
