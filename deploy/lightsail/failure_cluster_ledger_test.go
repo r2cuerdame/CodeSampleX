@@ -48,7 +48,6 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 		`$sourceInvariantIndexes = @(0, 1, 2, 4, 5)`,
 		`foreach ($i in $sourceInvariantIndexes)`,
 		`$afterValues[1] -gt 0 -and $afterValues[3] -le 0`,
-		`$beforeValues[6] -ne 0`,
 		`$afterValues[6] -ne 0`,
 		`$afterValues[7] -eq 1`,
 		`the new server did not complete a fresh full builder pass`,
@@ -64,6 +63,14 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 	}
 	if strings.Contains(deploy, `PASS/FAIL/sample/failure-cluster invariant decreased`) {
 		t.Error("deploy still reports the derived failure-cluster total as a monotonic source invariant")
+	}
+	if strings.Contains(deploy, `$beforeValues[6] -ne 0`) {
+		t.Error("deploy blocks the fresh full builder from repairing a pre-existing derived-ledger imbalance")
+	}
+	markerPos := strings.Index(deploy, `builder_fresh=1`)
+	valuePos := strings.Index(deploy, `values=$(docker compose exec -T db psql`)
+	if markerPos < 0 || valuePos <= markerPos {
+		t.Error("deploy samples derived values before proving the full builder completion marker")
 	}
 
 	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
@@ -125,7 +132,7 @@ func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
 	}
 
 	allows := func(before, after []int64) bool {
-		if len(before) != 8 || len(after) != 8 || before[6] != 0 || after[6] != 0 || after[7] != 1 {
+		if len(before) != 8 || len(after) != 8 || after[6] != 0 || after[7] != 1 {
 			return false
 		}
 		for _, index := range sourceIndexes {
@@ -140,6 +147,10 @@ func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
 	liveAfter := []int64{167173, 19262, 108, 20096, 0, 0, 0, 1}
 	if !allows(liveBefore, liveAfter) {
 		t.Error("the exact production reconciliation 20098 -> 20096 is still rejected")
+	}
+	repairBefore := []int64{167173, 19262, 108, 20098, 0, 0, 1, 1}
+	if !allows(repairBefore, liveAfter) {
+		t.Error("a fresh full builder cannot repair a pre-existing derived-ledger imbalance")
 	}
 
 	for _, tc := range []struct {

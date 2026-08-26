@@ -252,6 +252,18 @@ Write-Output "previous production image: $($productionStateParts[1])"
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
+server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
+builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
+builder_fresh=0
+if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
+  builder_fresh=1
+fi
+# Read the materialization only after the completion marker. If the first
+# full pass finishes between these probes, this iteration still reports
+# builder_fresh=0 and the caller retries; it can never bless a mid-pass tuple.
 values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
@@ -277,21 +289,11 @@ SELECT
              FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
              WHERE jsonb_typeof(item.value) = 'number'), 0)))
 FROM evidence_agg")
-server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
-builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
-  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
-server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
-builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
-builder_fresh=0
-if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
-  builder_fresh=1
-fi
 printf '%s|%s\n' "$values" "$builder_fresh"
 '@
 $invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
 if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed pre-deploy invariants" }
 $beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
-if ($beforeValues[6] -ne 0) { throw "pre-deploy failure-cluster ledger is internally inconsistent" }
 Write-Output "deployment invariants before: $invariantsBefore"
 
 $assertNoLegacyAccessLogs = @'
