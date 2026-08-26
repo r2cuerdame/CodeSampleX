@@ -170,7 +170,8 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 	if agg.obsPeers > 0 {
 		add(i18n.T(lang, "answer.peers"), n(agg.obsPeers), false)
 	}
-	// Observation evidence is co-occurrence: an unattributed failure says a
+	// Observation evidence is co-occurrence: a failure without a normalized
+	// fingerprint says a
 	// build CONTAINING this package broke, not that this package broke. The
 	// grid carries that caveat in its tooltip and the expanded record has to
 	// carry it too, or the number reads as stronger here than there.

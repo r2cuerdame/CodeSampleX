@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"context"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
@@ -35,6 +37,7 @@ type CommandOutput struct {
 	Stderr          string
 	StdoutTruncated bool
 	StderrTruncated bool
+	Termination     domain.FailureTermination
 }
 
 // FailureDiagnostics is the stream a failed command should be diagnosed and
@@ -94,6 +97,12 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 		return -1, CommandOutput{}, errors.New("evidence: empty command")
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var timeoutMillis int64
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeoutMillis = remaining.Milliseconds()
+		}
+	}
 	cmd.Dir = dir
 	cmd.Stdin = os.Stdin
 	stdoutRing := newLineRing(tailLines)
@@ -117,9 +126,19 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
-			// Child ran and failed (or was killed): pass its code through.
-			return ee.ExitCode(), output, nil
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				output.Termination = domain.FailureTermination{Kind: domain.TerminationTimeout, TimeoutMillis: timeoutMillis}
+				return ee.ExitCode(), output, nil
+			}
+			if signal := processSignal(ee.ProcessState); signal != "" {
+				output.Termination = domain.FailureTermination{Kind: domain.TerminationSignal, Signal: signal}
+				return ee.ExitCode(), output, nil
+			}
+			code := ee.ExitCode()
+			output.Termination = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+			return code, output, nil
 		}
+		output.Termination = domain.FailureTermination{Kind: domain.TerminationProcessStartFailed}
 		return -1, output, runErr
 	}
 	return 0, output, nil

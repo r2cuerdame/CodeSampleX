@@ -8,12 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
 // Run executes the verification pipeline over an unpacked sample dir and
@@ -135,6 +137,16 @@ func RunLogged(
 	if caseID == "" {
 		caseID = m.Case.ComputeID()
 	}
+	stageFailures := map[string]domain.FailureEvidence{}
+	publicNames := manifestPackageNames(m)
+	for stage, result := range map[string]sandbox.StageResult{
+		"resolve": resolve, "compile": compile, "contract": contract,
+	} {
+		if result.Result != sandbox.ResultFail {
+			continue
+		}
+		stageFailures[stage] = sanitizer.SanitizeFailure(result.Log, domain.Stage(strings.ToUpper(stage)), result.Termination, publicNames)
+	}
 	receipt := domain.VerificationReceipt{
 		SchemaVersion:    2,
 		SampleID:         sampleID,
@@ -148,6 +160,7 @@ func RunLogged(
 			"contract": contract.Result,
 			"load":     load,
 		},
+		StageFailures:     stageFailures,
 		VerifierImage:     image,
 		VerifierAdapter:   m.VerifierAdapter,
 		SandboxCapability: cap,
@@ -162,4 +175,14 @@ func RunLogged(
 		"compile":  compile.Log,
 		"contract": contract.Log,
 	}, nil
+}
+
+func manifestPackageNames(m domain.SampleManifest) []string {
+	var names []string
+	for _, raw := range m.Packages {
+		if p, err := domain.ParsePURL(raw); err == nil {
+			names = append(names, p.Name)
+		}
+	}
+	return names
 }
