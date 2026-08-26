@@ -26,14 +26,14 @@ CodeSampleX 是一个面向开发者库、运行时与工具链的**开放兼容
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 这个网格不是示意图，而是[真实的线上页面](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5)——所以上面的数字在抄下来之后已经变了。
 
-**单元格只带比率和标记，从不给出裁决。** 百分比和旁边的数字是观测：已记录的 1,209 条观测中有 82% 通过。一条观测是一次构建到达的一个阶段（编译、类型检查、测试），因此一次构建会留下多条；它既不是构建数，也不是机器数或人数。`≡` 标记是我们自己的样本：它在这里跑过并干净地结束。它刻意不是勾号——勾号是批准印章，而本网络不作评级。我们的运行若失败，标记会变成 `✕`。`≡ —` 表示：可用代码存在，但还没有人被看到在用。`—` 保持未知。
+**单元格只带比率和标记，从不给出裁决。** 百分比和旁边的数字是观测：已记录的 1,209 条观测中有 82% 通过。一条观测是一次构建到达的一个阶段（编译、类型检查、测试），因此一次构建会留下多条；它既不是构建数，也不是机器数或人数。`◆` 标记只说一件事：本网络**在这个环境里**跑了自己的契约，并且干净地结束。这个版本和 API 有没有代码，是另一个标记（文档图标）——样例不会因为你切换操作系统筛选就消失。它刻意不是勾号——勾号是批准印章，而本网络不作评级。我们的运行若失败，标记会变成 `✕`。`◆ —` 表示：我们的契约在这里跑过并干净地结束，而这个坐标上还没有任何构建被报告。`—` 保持未知。
 
 ## 为什么实测很重要
 
@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` 会自动配置 Claude Code、Codex、Gemini CLI 和 OpenCode。其他任何 stdio MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）只需使用 `csx mcp-config` 打印的配置即可接入（Codex 用 `--toml`）——它输出的是二进制文件的绝对路径，而这正是由编辑器启动的客户端所需要的。服务器本身就是 `csx mcp`。共八个工具：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`propose_public_sample`、`list_local_hits`、`get_local_stats`——并且有意不提供发布工具。
+`csx init` 会自动配置 Claude Code、Codex、Gemini CLI 和 OpenCode。其他任何 stdio MCP 客户端（Cursor、Windsurf、Cline、Zed、VS Code）只需使用 `csx mcp-config` 打印的配置即可接入（Codex 用 `--toml`）——它输出的是二进制文件的绝对路径，而这正是由编辑器启动的客户端所需要的。服务器本身就是 `csx mcp`。共十个工具：`search_known_solution`、`get_sample`、`explain_compatibility`、`run_observed_command`、`report_sample_adoption`、`report_anomaly`、`report_csx_issue`、`propose_public_sample`、`list_local_hits`、`get_local_stats`——并且有意不提供发布工具。 `report_csx_issue` 是同一个想法，只是对准我们自己而不是某个包：把你真正在看的失败挤到一边的答案、来自问题从未提及的生态的推荐、让模型做出错误行为的工具契约。它是 opt-in 且刻意安静的——没有任何东西要求代理在失败后调用它，不会创建任何工单，一整周没有报告是正常的一周。一百个代理遇到的同一个缺陷只是**一行**，只是出现次数在增加；这一行一旦与某个缺陷单关联，之后的每次报告都会以这个关联作答。两条通道共享接收、脱敏与去重，之后什么都不共享：本产品的缺陷永远不会变成兼容性证据。
+
+`report_anomaly` 指向相反的方向。当 CSX 给出的答案与代理自己机器上的观测**具体**冲突时——网络说通过的坐标在这里失败了，返回的符号签名并不是公开包实际导出的那个——代理可以把它作为一次验证请求提交。这不是缺陷报告：一次报告会把一次独立复跑排进产生其他所有回执的同一支验证队列，而只有那份回执才能确认它。没有实测本地结果的提交会被拒绝，同一处不一致报告两次仍是一份报告、一次复跑，并且在验证者同意之前，报告的内容不会出现在任何公开页面上。报告者对原因的猜测走在单独的字段里，永远不决定判定。
 
 面向智能体的安装步骤（包括 MCPB 捆绑包，以及附带 `SHA256SUMS.txt` 的二进制直接下载）：[llms-install.md](../../llms-install.md)。独立的社区安装通过 Ed25519 签名的清单自动更新，并可用 `csx update rollback` 回滚；`local-only` 安装不会发出任何更新请求。
 

@@ -77,6 +77,11 @@ type Store interface {
 	// package, newest first. This is what puts a link to a sample page on
 	// a page a crawler already reaches.
 	PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]SampleListItem, error)
+	// PackageCodeCounts returns exhaustive verified-sample counts by release
+	// and API. It is deliberately separate from the bounded PackageSamples
+	// display list: a newest-N page cannot prove that older code does not
+	// exist.
+	PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]PackageCodeCount, error)
 	// SearchPackages searches packages by name fragment.
 	SearchPackages(ctx context.Context, q string, limit int) ([]PackageHit, error)
 	// HotPackages returns the highest-traffic packages for sitemap use.
@@ -194,6 +199,14 @@ type SampleListItem struct {
 	Symbols []string
 	// Kind is the case kind: HOW | FIX | MIGRATION | CONFIG.
 	Kind string
+}
+
+// PackageCodeCount is one authoritative code-availability aggregate. An
+// empty Symbol is the whole-release count; a non-empty Symbol is one API.
+type PackageCodeCount struct {
+	Version string
+	Symbol  string
+	Samples int64
 }
 
 // DependencyEdge is one "this package pulled that version" relationship, as
@@ -563,11 +576,21 @@ func (b basePage) WithLang(path string) string {
 	if b.Lang == i18n.Default {
 		return path
 	}
+	// A same-page fragment needs no locale decoration: the current document
+	// is already in this language. Appending `?lang=` after `#` changes the
+	// fragment identifier itself ("#failures?lang=ko") and breaks the jump.
+	if strings.HasPrefix(path, "#") {
+		return path
+	}
+	fragment := ""
+	if i := strings.IndexByte(path, '#'); i >= 0 {
+		fragment, path = path[i:], path[:i]
+	}
 	sep := "?"
 	if strings.Contains(path, "?") {
 		sep = "&"
 	}
-	return path + sep + "lang=" + url.QueryEscape(b.Lang)
+	return path + sep + "lang=" + url.QueryEscape(b.Lang) + fragment
 }
 
 // LangLinks builds the footer language switcher. Every entry — English

@@ -26,14 +26,14 @@ Cada resultado é uma execução registrada com o seu ambiente anexado, então o
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Esta grade não é uma ilustração: é [a página ao vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) — então os números acima já se moveram desde que foram copiados.
 
-**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são observações: 82% de 1.209 observações registradas passaram. Uma observação é uma etapa que um build alcançou — compilar, checar tipos, testar — então um único build deixa várias, e o número não conta builds, nem máquinas, nem pessoas. A marca `≡` é a nossa própria amostra: ela rodou aqui e terminou limpa. Deliberadamente não é um sinal de visto, porque um visto é um carimbo de aprovação e esta rede não dá notas; uma execução nossa que falhou carrega `✕` no lugar. `≡ —` significa: existe código funcionando e ninguém foi visto usando ainda. `—` permanece desconhecido.
+**Uma célula carrega uma taxa e uma marca, nunca um veredito.** A porcentagem e o número ao lado são observações: 82% de 1.209 observações registradas passaram. Uma observação é uma etapa que um build alcançou — compilar, checar tipos, testar — então um único build deixa várias, e o número não conta builds, nem máquinas, nem pessoas. A marca `◆` diz uma coisa só: esta rede rodou o próprio contrato NESTE ambiente e ele terminou limpo. Se existe código para a versão e a API é outra marca — um documento —, porque uma amostra não deixa de existir quando você troca o filtro de sistema operacional. Deliberadamente não é um sinal de visto, porque um visto é um carimbo de aprovação e esta rede não dá notas; uma execução nossa que falhou carrega `✕` no lugar. `◆ —` significa: o nosso contrato rodou aqui e terminou limpo, e nenhum build foi reportado nesta coordenada. `—` permanece desconhecido.
 
 ## Por que testar importa
 
@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-O `csx init` configura Claude Code, Codex, Gemini CLI e OpenCode automaticamente. Qualquer outro cliente MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) funciona a partir do que o `csx mcp-config` imprime (`--toml` para o Codex) — ele emite o caminho absoluto do binário, que é o que um cliente iniciado por um editor precisa. O servidor em si é o `csx mcp`. Oito ferramentas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — e, deliberadamente, nenhuma ferramenta de publicação.
+O `csx init` configura Claude Code, Codex, Gemini CLI e OpenCode automaticamente. Qualquer outro cliente MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) funciona a partir do que o `csx mcp-config` imprime (`--toml` para o Codex) — ele emite o caminho absoluto do binário, que é o que um cliente iniciado por um editor precisa. O servidor em si é o `csx mcp`. Dez ferramentas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — e, deliberadamente, nenhuma ferramenta de publicação. `report_csx_issue` é a mesma ideia apontada para nós e não para um pacote: uma resposta que deslocou a falha que você estava de fato olhando, uma recomendação de um ecossistema que a pergunta nunca mencionou, um contrato de ferramenta que fez um modelo agir errado. É opt-in e deliberadamente silencioso — nada manda um agente chamá-lo após uma falha, nenhum ticket é criado, e uma semana sem relatos é uma semana normal. Um defeito que cem agentes encontram é UMA linha cujo contador de ocorrências sobe, e uma vez que essa linha está ligada a um bug, todo relato posterior responde com o link. Os dois canais compartilham ingestão, redação e deduplicação e nada depois disso: um defeito deste produto nunca pode virar evidência de compatibilidade.
+
+`report_anomaly` aponta na direção oposta. Quando uma resposta do CSX e a própria máquina do agente se contradizem de forma **concreta** — a rede serviu uma conclusão de sucesso para uma coordenada que falhou aqui, uma assinatura de símbolo devolvida não é a que o pacote exporta — o agente pode registrar isso como um pedido de verificação. Não é um relatório de bug: um relatório enfileira uma reexecução independente na mesma frota que produz todos os outros recibos, e só esse recibo pode confirmá-lo. Um envio sem nada medido por trás é recusado, o mesmo descompasso relatado duas vezes é um relatório e uma reexecução, e nada do que um relatório diz chega a uma página pública antes de um verificador concordar. O palpite de causa de quem relata viaja em um campo próprio e nunca decide o veredicto.
 
 Passos de instalação direcionados a agentes (incluindo o bundle MCPB e downloads diretos de binários com `SHA256SUMS.txt`): [llms-install.md](../../llms-install.md). Instalações standalone da comunidade se autoatualizam por meio de um manifesto assinado com Ed25519, com `csx update rollback` disponível; instalações `local-only` não fazem nenhuma requisição de atualização.
 

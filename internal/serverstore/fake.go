@@ -56,6 +56,18 @@ type Fake struct {
 	// authoring_quarantine.go.
 	authoringAttempts map[[4]string]*authoringLedger
 
+	// anomalies is the consumption-side feedback channel, keyed by
+	// fingerprint because that key IS the dedupe rule.
+	anomalies     map[string]*AnomalyReportRow
+	anomalyOrder  []string
+	nextAnomalyID int64
+
+	// csxIssues is the product-defect half. Separate map, separate life:
+	// an anomaly can become compatibility evidence and a product defect
+	// never can.
+	csxIssues      map[string]*CSXIssueReportRow
+	nextCSXIssueID int64
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -81,6 +93,11 @@ type fakeAggMeta struct {
 	timeoutMillis    int64
 	errorSummary     string
 	evidenceQuality  string
+	outerCommands    map[string]bool
+	outerStage       string
+	actualToolchain  string
+	stageEvidence    string
+	evidenceGap      string
 	// direct: the reporter listed this package in their own manifest. Chosen
 	// wins and never unsays itself.
 	direct    bool
@@ -124,6 +141,8 @@ func NewFake() *Fake {
 		authoringWork:   map[[4]string]AuthoringWorkRow{},
 
 		authoringAttempts: map[[4]string]*authoringLedger{},
+		anomalies:         map[string]*AnomalyReportRow{},
+		csxIssues:         map[string]*CSXIssueReportRow{},
 	}
 }
 
@@ -184,6 +203,7 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 			symbolConfidence: confidence,
 			envJSON:          string(domain.MustCanonicalJSON(env)),
 			firstSeen:        now,
+			outerCommands:    map[string]bool{},
 		}
 		f.aggMeta[k] = meta
 	}
@@ -228,6 +248,15 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	}
 	if meta.evidenceQuality == "" {
 		meta.evidenceQuality = normalizedEvidenceQuality(b)
+	}
+	if b.OuterCommand != "" {
+		meta.outerCommands[b.OuterCommand] = true
+	}
+	if meta.outerStage == "" {
+		meta.outerStage = string(b.OuterStage)
+		meta.actualToolchain = b.ActualToolchain
+		meta.stageEvidence = string(b.StageEvidence)
+		meta.evidenceGap = string(b.FailureEvidenceGap)
 	}
 	meta.lastSeen = now
 	f.merge.apply(b)
@@ -510,6 +539,15 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 		if k.PURL != purl || !want[k.Symbol] {
 			continue
 		}
+		outerCommands := make([]string, 0, len(meta.outerCommands))
+		for command := range meta.outerCommands {
+			outerCommands = append(outerCommands, command)
+		}
+		sort.Strings(outerCommands)
+		outerCommand := ""
+		if len(outerCommands) > 0 {
+			outerCommand = outerCommands[0]
+		}
 		out = append(out, EvidenceRow{
 			PURL: k.PURL, Symbol: k.Symbol,
 			SymbolConfidence: meta.symbolConfidence,
@@ -519,6 +557,9 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
 			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
 			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
+			OuterCommand: outerCommand, OuterCommands: outerCommands, OuterStage: meta.outerStage,
+			ActualToolchain: meta.actualToolchain, StageEvidence: meta.stageEvidence,
+			FailureEvidenceGap:   meta.evidenceGap,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),
@@ -650,6 +691,55 @@ func (f *Fake) VerifiedSamplesForPackages(ctx context.Context, patterns []string
 			break
 		}
 	}
+	return out, nil
+}
+
+func (f *Fake) VerifiedSampleCodeCounts(_ context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error) {
+	if packagePrefix == "" {
+		return nil, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	counts := map[[2]string]int64{}
+	for _, sample := range f.samples {
+		if sample.Quarantined || !f.hasContractPass(sample.SampleID, "") {
+			continue
+		}
+		var manifest domain.SampleManifest
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		// Count a coordinate at most once per sample even if malformed author
+		// input repeats a package or symbol. PostgreSQL uses the same DISTINCT
+		// sample boundary.
+		seen := map[[2]string]bool{}
+		for _, purl := range manifest.Packages {
+			if !strings.HasPrefix(purl, packagePrefix) {
+				continue
+			}
+			seen[[2]string{purl, ""}] = true
+			for _, symbol := range manifest.Symbols {
+				if symbol != "" {
+					seen[[2]string{purl, symbol}] = true
+				}
+			}
+		}
+		for key := range seen {
+			counts[key]++
+		}
+	}
+
+	out := make([]VerifiedSampleCodeCount, 0, len(counts))
+	for key, count := range counts {
+		out = append(out, VerifiedSampleCodeCount{PURL: key[0], Symbol: key[1], Samples: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
 	return out, nil
 }
 
@@ -883,6 +973,32 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 			if existing.SampleID == j.SampleID && existing.Reason == j.Reason && existing.WantEnvJSON == j.WantEnvJSON {
 				return existing.ID, nil
 			}
+		}
+	}
+	f.nextJobID++
+	j.ID = f.nextJobID
+	if j.Status == "" {
+		j.Status = "open"
+	}
+	if j.CreatedAt.IsZero() {
+		j.CreatedAt = f.now()
+	}
+	f.jobs = append(f.jobs, &j)
+	return j.ID, nil
+}
+
+func (f *Fake) EnsureCrossJob(_ context.Context, j JobRow) (int64, error) {
+	if j.Reason != "cross" || j.SampleID == "" {
+		return 0, fmt.Errorf("EnsureCrossJob requires a cross job with a sample id")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	reuseUnsupported := j.Status == JobStatusUnsupported
+	for _, existing := range f.jobs {
+		if existing.SampleID == j.SampleID && existing.Reason == "cross" &&
+			(existing.Status == "open" || existing.Status == "claimed" ||
+				reuseUnsupported && existing.Status == JobStatusUnsupported) {
+			return existing.ID, nil
 		}
 	}
 	f.nextJobID++

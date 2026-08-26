@@ -489,6 +489,102 @@ server binaries: it replaces the Wanted conflict key with
 image fails. Rolling back to a pre-0006 binary requires restoring the verified
 pre-deploy database backup; otherwise its old Wanted upsert returns 500.
 
+### The anomaly feedback channel (`report_anomaly`)
+
+An agent that used a CSX answer and then watched its own machine contradict it
+can file that through the `report_anomaly` MCP tool, which reaches
+`POST /v1/anomalies`. A report is a **verification request**. It is not
+evidence, it is not a finding, and nothing about it reaches a public page: the
+only thing a reader ever sees is the signed receipt a verifier writes
+afterwards, which travels the ordinary receipt path.
+
+The pipeline is `report → normalize → dedupe → cross job → claim → receipt →
+verdict`, and it deliberately owns none of its own infrastructure. An accepted
+report that names a sample this server holds queues an ordinary **cross job**
+on the same queue `csx worker` already polls, so workers already deployed in
+the field pick it up with no new version. A new job `reason` would have been
+invisible to every one of them, and the report would have sat "queued" forever
+against a queue nothing would ever offer it — which is the failure documented
+one section above, in a different disguise.
+
+What to look at, on the admin dashboard's **이상 신고 채널** panel:
+
+* **Duplicate rate.** The fingerprint is the exact public coordinate plus the
+  shape of the mismatch, and it is UNIQUE in the table. Many agents meeting one
+  wrong answer therefore produce one report and one re-run. A high duplicate
+  rate with confirmations is the channel working; a high duplicate rate with a
+  single anonymous bucket behind most of it — the panel flags this — is a
+  client in a retry loop, and the response is the client, not the queue.
+* **Confirmed ratio**, over reports that reached a verdict, and the
+  `confirmed-csx-defect` count inside it. That count is the one that means work
+  for us: an independent clean container did not support a conclusion this
+  network served.
+* **검증 lane 없음.** Reports nothing in the fleet can reproduce — usually
+  because they name no published sample. They are told so in the response and
+  shown here with the reason. They are NOT pending, and must not be read as
+  backlog.
+* **신고 → 판정 소요.** Report to verdict. It is `—`, never `0`, when nothing
+  has been decided yet.
+
+Verdicts are computed from the receipt alone (`domain.AnomalyVerdictFromReceipt`):
+the reporter's `llmHypothesis`, its confidence and how certain it sounded are
+stored, shown to a human, and read by nothing that decides. A receipt whose
+contract never ran decides nothing at all — that measured the verifier, not the
+sample — and the existing cross-verification retry sends it out again.
+
+Only `confirmed-csx-defect`, `confirmed-compatibility-boundary` and
+`confirmed-new-evidence` may promote anything, and the promotion is already
+done by the time the verdict is written: the confirming receipt entered the
+graph through the normal receipt path. The report row records the link so an
+operator can find it.
+
+Privacy: free-text fields are redacted on the client and again on arrival
+(`sanitizer.Redact`), raw error output never leaves the reporting machine —
+only the sanitizer's code, template and fingerprint travel — and a package this
+server cannot confirm is public is refused rather than stored. PRIVACY.md §4.5
+states the same thing field by field.
+
+### Product-defect reports (`report_csx_issue`)
+
+The second half of the same channel, and deliberately a different thing.
+`report_anomaly` says "your data is wrong about the world" and is settled by
+running the world again. This says "this product behaved wrongly" — an answer
+that hid the caller's own failure, a recommendation from an ecosystem the
+question never mentioned, a tool contract that made a model act wrongly — and
+nothing in a container can settle that.
+
+They share ingest, redaction and dedupe. They share nothing after it:
+separate table (`csx_issue_reports`), separate verdicts, separate queue. A
+defect in this product must never be able to reach the compatibility graph,
+and one table for both is how that boundary would eventually leak.
+
+The policy is conservative by instruction: **no automatic ticket**, no agent
+guidance to call it after a failure, and no target for report volume. Zero is
+a fine number, and report count is explicitly not a success KPI.
+
+- A defect many agents meet is **one row** whose `occurrences` count rises.
+  Once an operator sets its `canonical_ref`, every later report answers with
+  that reference instead of creating anything.
+- `canonical_ref` can only be set on a report already carrying the
+  `confirmed-csx-defect` verdict. That check lives in the UPDATE statement
+  rather than in a handler, so no second caller can forget it — linking an
+  unconfirmed candidate to a bug is how a candidate quietly becomes a claim.
+- **Replay is narrow, and the reason is the useful part.** Only a
+  server-surface report whose entire input is public coordinates on a public
+  READ route can be re-run. Everything else is triaged by a person and says
+  so. In particular, for the defect class this channel most wants to catch — a
+  search that answered the wrong question — the input that would have to be
+  replayed *is* the user's prompt, which this network deliberately never
+  receives. A stable fingerprint can travel; a fingerprint cannot be re-run.
+  `domain.CSXIssuePublicInput` has no field for a query, which is what makes
+  that a property of the type rather than a rule someone has to remember.
+
+The regression fixture is the GPTBrowser incident behind R2C-51: a
+`npm run typecheck` failure displaced by an unrelated Dart recommendation,
+accepted as a candidate, deduped across two differently-worded reports into
+one row with two occurrences, and linked to canonical `R2C-51`
+(`TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug`).
+
 ## The merge gate on `main`
 
 `.github/workflows/ci.yml` runs on every pull request, and the `Test` job is
@@ -807,6 +903,16 @@ on a known fixture such as `github.com/jackc/pgx/v5@v5.10.0 / ParseConfig`:
 Rollback the application before rolling back the schema. The new columns are
 additive and safe to leave in place; dropping them would destroy newly captured
 evidence and is intentionally not part of an automatic rollback.
+
+Migration `0025_failure_stage_lineage.sql` is additive. It adds the complete
+outer-command set → actual-toolchain → actual-stage decision lineage to
+`evidence_agg` and materialized failure clusters. After deployment, run one
+known `go test` compile failure and one assertion failure and confirm that the
+first appears under `PROJECT_COMPILE`/`go/compiler`, the second under
+`PROJECT_TEST`/`go/test`, and neither changes historical PASS/FAIL totals.
+Rows carrying only `[build failed]` must show `diagnostic-missing`; they must
+not publish that aggregate marker as a root diagnostic. Application rollback
+may leave these additive columns in place.
 
 ### Running csx-server on Windows
 

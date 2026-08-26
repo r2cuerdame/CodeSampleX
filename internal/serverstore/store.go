@@ -68,6 +68,12 @@ type EvidenceRow struct {
 	TimeoutMillis        int64
 	ErrorSummary         string
 	EvidenceQuality      string
+	OuterCommand         string
+	OuterCommands        []string
+	OuterStage           string
+	ActualToolchain      string
+	StageEvidence        string
+	FailureEvidenceGap   string
 	ObservationCount     int64
 	UniquePeerBuckets    int
 	UniqueProjectBuckets int
@@ -93,6 +99,16 @@ type SampleRow struct {
 	// receipts and case intact, so the action is reversible and auditable.
 	Quarantined      bool
 	QuarantineReason string
+}
+
+// VerifiedSampleCodeCount is one exhaustive serving count for a package
+// release. Symbol "" is the release-wide count; non-empty symbols count the
+// verified samples that name that API. Keeping this aggregate in the store
+// avoids treating a newest-N display page as the complete code inventory.
+type VerifiedSampleCodeCount struct {
+	PURL    string
+	Symbol  string
+	Samples int64
 }
 
 // SampleCursor is a position in a newest-first sample listing, used to page
@@ -264,6 +280,10 @@ type ClusterRow struct {
 	TimeoutMillis         int64
 	ErrorSummary          string
 	EvidenceQuality       string
+	OuterCommands         []string
+	ActualToolchain       string
+	StageEvidence         string
+	FailureEvidenceGap    string
 	ObservationCount      int64
 	EnvSummaryJSON        string
 	EnvVariantsJSON       string
@@ -328,6 +348,11 @@ type Store interface {
 	// Search keeps using SamplesForPackages so source-only candidates can be
 	// graded honestly rather than disappearing from the local resolver.
 	VerifiedSamplesForPackages(ctx context.Context, patterns []string, limit int) ([]SampleRow, error)
+	// VerifiedSampleCodeCounts returns exhaustive counts for the exact package
+	// prefix (for example "pkg:npm/axios@"). Unlike
+	// VerifiedSamplesForPackages, this is an aggregate rather than a newest-N
+	// listing and is therefore safe for authoritative availability claims.
+	VerifiedSampleCodeCounts(ctx context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error)
 	// ListVerifiedSamples returns newest non-quarantined samples with an
 	// actual contract-PASS receipt. Public measured findings must never be
 	// derived from author prose on a source-only upload.
@@ -381,6 +406,12 @@ type Store interface {
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.
 	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
+	// EnsureCrossJob atomically reuses live cross work for a sample or creates
+	// it. Unsupported work is reused when the requested row is also
+	// unsupported. Callers must not implement this as a separate
+	// JobsForSample/CreateJob pair: concurrent requests would both observe
+	// absence and create duplicate verification work.
+	EnsureCrossJob(ctx context.Context, j JobRow) (int64, error)
 	// Job reads one job for receipt-to-claim binding.
 	Job(ctx context.Context, id int64) (JobRow, bool, error)
 	// CrossJobsForLaneReview lists cross jobs whose requirements can still be

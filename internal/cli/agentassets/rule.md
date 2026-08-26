@@ -44,6 +44,39 @@ machine. Never source, never paths, never raw logs.
 passed. Nothing else tells the network whether its answers are any good; a
 sample nobody reports on stays unproven forever.
 
+**Report a contradiction, and only a contradiction.** If a CSX answer and
+what you actually ran here concretely disagree — the network served a passing
+conclusion for a package/version/symbol and the same coordinate failed on this
+machine, a returned symbol signature is not what the public package exports, a
+recommended upgrade path does not resolve — call `report_anomaly`. It is a
+verification request, not a bug report: it queues an independent re-run on the
+same fleet that produces every other receipt, and only that receipt decides.
+
+- You must have RUN something. `localObserved` needs a PASS or a FAIL you
+  measured; "this looks wrong to me" is refused, and a `NO_SAFE_MATCH` on its
+  own is a real answer rather than an anomaly.
+- Put your explanation in `llmHypothesis`. It is stored and shown to a human,
+  and it is deliberately excluded from the verdict — so being wrong there
+  costs the report nothing, and leaving it out costs the reader something.
+- Pass the raw failure as `errorText`. It is sanitized on this machine and
+  never forwarded raw; do not paste logs into the detail fields.
+- **Never tell the user you fixed or confirmed anything.** Reporting confirms
+  nothing. The response says `VERIFICATION PENDING` for exactly this reason;
+  say that, and say the report id.
+
+**If the problem is CSX itself, that has its own channel.** `report_csx_issue`
+is for a reproducible defect in this product rather than in a package: an
+answer that displaced the failure you were actually looking at, a
+recommendation from an ecosystem your question never mentioned, a tool
+contract that made you behave wrongly, a response that breaks its own shape
+inconsistently on the same input.
+
+It is **opt-in and quiet**. You are not expected to call it after a failure,
+there is no target for how many reports a week is healthy, and none at all is
+fine. No ticket is created and nothing is confirmed by reporting — a person
+triages it — so never tell the user a bug has been filed, accepted or fixed.
+Taste, wording preferences and "this seems off" are not reports.
+
 **Contribute what you learned.** If a search MISSED, and you then worked
 out the answer and your build passed, call `propose_public_sample` with the
 goal, the packages and the symbols. Do it while you still remember what you

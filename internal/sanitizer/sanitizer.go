@@ -208,6 +208,23 @@ func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTerminat
 	return f
 }
 
+// SanitizeClassifiedFailure builds public evidence for one actual failure
+// event while preserving the privacy-bounded outer-to-toolchain lineage.
+func SanitizeClassifiedFailure(raw string, stage domain.Stage, term domain.FailureTermination, _ []string,
+	outerCommand string, outerStage domain.Stage, actualToolchain string,
+	stageEvidence domain.FailureStageEvidence, evidenceGap domain.FailureEvidenceGap) domain.FailureEvidence {
+	f := SanitizeFailure(raw, stage, term, nil)
+	f.OuterCommand = outerCommand
+	f.OuterStage = outerStage
+	f.ActualToolchain = strings.ToLower(strings.TrimSpace(actualToolchain))
+	f.StageEvidence = stageEvidence
+	f.EvidenceGap = evidenceGap
+	if f.Fingerprint != "" && f.ActualToolchain != "" {
+		f.Fingerprint = domain.ClassifiedFailureFingerprint(stage, f.ActualToolchain, term, f.ErrorCode, f.ErrorSummary)
+	}
+	return f
+}
+
 // PublicErrorSummary keeps the first useful normalized lines within a strict
 // public-wire cap. It is idempotent, which lets the server reject any client
 // value that was not produced by the same canonical normalization.
@@ -247,11 +264,14 @@ func CanonicalPublicErrorSummary(summary string, stage domain.Stage) string {
 // under, and therefore the only stages a stored fingerprint can carry.
 var observationStages = []domain.Stage{
 	domain.StageUsed,
+	domain.StageProjectResolve,
 	domain.StageProjectTypecheck,
 	domain.StageProjectCompile,
 	domain.StageProjectTest,
 	domain.StageProjectProcess,
 	domain.StageProjectLoad,
+	domain.StageProcessStart,
+	domain.StageUnknown,
 }
 
 // Fingerprints returns the fingerprint this error would carry at each stage
@@ -268,7 +288,7 @@ var observationStages = []domain.Stage{
 // exempts "the failure the caller is explicitly looking for a fix to" from
 // being demoted to REFERENCE_ONLY.
 //
-// Asking about all six is the honest form of the question: the caller has
+// Asking about every observation stage is the honest form of the question: the caller has
 // this error, and does not claim to know when it happened.
 func (s SanitizedError) Fingerprints() []string {
 	out := make([]string, 0, len(observationStages))
@@ -382,4 +402,39 @@ func currentUsername() string {
 		return v
 	}
 	return os.Getenv("USER")
+}
+
+// Redact strips identifying material from a short free-text field and says
+// whether it had to.
+//
+// Sanitize is for tool OUTPUT: it needs a stage, it preserves error codes and
+// public package names, and it produces a fingerprint. An anomaly report's
+// prose fields are neither output nor evidence — they are a sentence a human
+// will read in a queue — and they arrive from a language model that was asked
+// not to include a path and may have included one anyway.
+//
+// So this applies only the destructive half, in the same order and with the
+// same expressions, and reports the fact of redaction. Both ends run it: the
+// client so nothing identifying is ever sent, the server because the client
+// is a program somebody else can replace.
+func Redact(raw string) (clean string, redacted bool) {
+	s := raw
+	s = reNodeModules.ReplaceAllString(s, "<path>")
+	s = reWinPath.ReplaceAllString(s, "${1}<path>")
+	s = reUnixPath.ReplaceAllString(s, "${1}<path>")
+	s = reRelPath.ReplaceAllString(s, "<path>")
+	s = reURL.ReplaceAllString(s, "<url>")
+	s = reEmail.ReplaceAllString(s, "<email>")
+	s = reDQuote.ReplaceAllString(s, "<str>")
+	s = reSQuote.ReplaceAllString(s, "<str>")
+	s = reTokenCand.ReplaceAllStringFunc(s, func(m string) string {
+		if tokenish(m) {
+			return "<token>"
+		}
+		return m
+	})
+	for _, re := range userScrubPatterns() {
+		s = re.ReplaceAllString(s, "<user>")
+	}
+	return s, s != raw
 }

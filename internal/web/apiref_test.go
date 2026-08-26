@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The features page described the CLI and the eight MCP tools and never
+// The features page described the CLI and the MCP tools and never
 // mentioned that the network answers HTTP directly. Everything the site
 // renders is served from those routes, so a reader who wanted the evidence
 // without either the CLI or an agent had no way to learn they exist.

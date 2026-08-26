@@ -35,6 +35,10 @@ func BuildClusters(ecosystem, packageName string,
 		timeout     int64
 		summary     string
 		quality     domain.EvidenceQuality
+		toolchain   string
+		stageProof  string
+		gap         string
+		outer       map[string]bool
 		breakdown   map[string]int64
 		failEnvs    []domain.EnvironmentFingerprint
 		variants    map[string]*variant
@@ -68,7 +72,7 @@ func BuildClusters(ecosystem, packageName string,
 			k := ckey{row.Symbol, row.Stage, clusterFingerprint}
 			c := clusters[k]
 			if c == nil {
-				c = &cluster{versions: map[string]bool{}, variants: map[string]*variant{}, breakdown: map[string]int64{}}
+				c = &cluster{versions: map[string]bool{}, variants: map[string]*variant{}, breakdown: map[string]int64{}, outer: map[string]bool{}}
 				clusters[k] = c
 			}
 			c.count += row.ObservationCount
@@ -84,6 +88,17 @@ func BuildClusters(ecosystem, packageName string,
 			}
 			if c.summary == "" {
 				c.summary = row.ErrorSummary
+			}
+			if c.toolchain == "" {
+				c.toolchain, c.stageProof, c.gap = row.ActualToolchain, row.StageEvidence, row.FailureEvidenceGap
+			}
+			for _, command := range row.OuterCommands {
+				if command != "" {
+					c.outer[command] = true
+				}
+			}
+			if len(row.OuterCommands) == 0 && row.OuterCommand != "" {
+				c.outer[row.OuterCommand] = true
 			}
 			c.failEnvs = append(c.failEnvs, env)
 			v := c.variants[row.EnvHash]
@@ -177,12 +192,19 @@ func BuildClusters(ecosystem, packageName string,
 			TimeoutMillis:       c.timeout,
 			ErrorSummary:        c.summary,
 			EvidenceQuality:     string(c.quality),
+			ActualToolchain:     c.toolchain,
+			StageEvidence:       c.stageProof,
+			FailureEvidenceGap:  c.gap,
 			ObservationCount:    c.count,
 			RegressionCandidate: isRegressed(k.symbol, k.stage, c.versions),
-			DiagnosticCandidate: !modernEvidence && c.count >= 2,
+			DiagnosticCandidate: c.gap != "" || (!modernEvidence && c.count >= 2),
 			FirstSeen:           c.first,
 			LastSeen:            c.last,
 		}
+		for command := range c.outer {
+			row.OuterCommands = append(row.OuterCommands, command)
+		}
+		sort.Strings(row.OuterCommands)
 		if row.FirstSeen.IsZero() {
 			row.FirstSeen = now
 		}

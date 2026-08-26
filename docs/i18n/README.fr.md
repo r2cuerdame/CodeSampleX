@@ -26,14 +26,14 @@ Chaque résultat est une exécution enregistrée accompagnée de son environneme
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Cette grille n’est pas une illustration : c’est [la page en direct](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), si bien que les chiffres ci-dessus ont déjà bougé depuis qu’ils ont été copiés.
 
-**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont des observations : 82 % des 1 209 observations enregistrées sont passées. Une observation, c’est une étape atteinte par un build — compilation, typage, tests — donc un seul build en dépose plusieurs, et le nombre ne compte ni des builds, ni des machines, ni des personnes. La marque `≡`, c’est notre propre échantillon : il a tourné ici et s’est terminé proprement. Ce n’est délibérément pas une coche, car une coche est un tampon d’approbation et ce réseau ne note pas ; une exécution à nous qui a échoué porte `✕` à la place. `≡ —` veut dire : du code qui fonctionne existe, et personne n’a encore été vu s’en servir. `—` reste inconnu.
+**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont des observations : 82 % des 1 209 observations enregistrées sont passées. Une observation, c’est une étape atteinte par un build — compilation, typage, tests — donc un seul build en dépose plusieurs, et le nombre ne compte ni des builds, ni des machines, ni des personnes. La marque `◆` ne dit qu’une chose : ce réseau a exécuté son propre contrat DANS CET environnement et il s’est terminé proprement. L’existence de code pour la version et l’API est une autre marque — un document —, car un échantillon ne disparaît pas quand on change le filtre d’OS. Ce n’est délibérément pas une coche, car une coche est un tampon d’approbation et ce réseau ne note pas ; une exécution à nous qui a échoué porte `✕` à la place. `◆ —` veut dire : notre contrat a tourné ici et s’est terminé proprement, et aucun build n’a été signalé à cette coordonnée. `—` reste inconnu.
 
 ## Pourquoi les tests comptent
 
@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` configure automatiquement Claude Code, Codex, Gemini CLI et OpenCode. Tout autre client MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) fonctionne à partir de ce qu'affiche `csx mcp-config` (`--toml` pour Codex) — la commande émet le chemin absolu du binaire, dont un client lancé par un éditeur a besoin. Le serveur lui-même est `csx mcp`. Huit outils : `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — et délibérément aucun outil de publication.
+`csx init` configure automatiquement Claude Code, Codex, Gemini CLI et OpenCode. Tout autre client MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) fonctionne à partir de ce qu'affiche `csx mcp-config` (`--toml` pour Codex) — la commande émet le chemin absolu du binaire, dont un client lancé par un éditeur a besoin. Le serveur lui-même est `csx mcp`. Dix outils : `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — et délibérément aucun outil de publication. `report_csx_issue` est la même idée dirigée vers nous plutôt que vers un paquet : une réponse qui a évincé l'échec que vous regardiez, une recommandation venue d'un écosystème que la question n'a jamais mentionné, un contrat d'outil qui a fait mal agir un modèle. Opt-in et délibérément discret — rien ne demande à un agent de l'appeler après un échec, aucun ticket n'est créé, et une semaine sans rapport est une semaine normale. Un défaut rencontré par cent agents est UNE ligne dont le compteur d'occurrences monte, et une fois cette ligne liée à un bug, chaque rapport ultérieur répond par ce lien. Les deux canaux partagent l'ingestion, la rédaction et la déduplication, et rien ensuite : un défaut de ce produit ne peut jamais devenir une preuve de compatibilité.
+
+`report_anomaly` pointe dans l'autre sens. Quand une réponse de CSX et la machine de l'agent se contredisent **concrètement** — le réseau a servi une conclusion en succès pour une coordonnée qui échoue ici, une signature de symbole renvoyée n'est pas celle qu'exporte le paquet — l'agent peut déposer cela comme une demande de vérification. Ce n'est pas un rapport de bug : un rapport met en file une réexécution indépendante sur la flotte même qui produit tous les autres reçus, et seul ce reçu peut le confirmer. Une soumission sans rien de mesuré derrière est refusée, le même écart signalé deux fois donne un rapport et une réexécution, et rien de ce que dit un rapport n'atteint une page publique avant qu'un vérificateur soit d'accord. L'hypothèse de cause du rapporteur voyage dans son propre champ et ne décide jamais du verdict.
 
 Les étapes d'installation destinées aux agents (y compris le bundle MCPB et les téléchargements directs de binaires avec `SHA256SUMS.txt`) : [llms-install.md](../../llms-install.md). Les installations communautaires autonomes se mettent à jour automatiquement via un manifeste signé Ed25519, avec `csx update rollback` disponible ; les installations `local-only` n'émettent aucune requête de mise à jour.
 

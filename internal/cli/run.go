@@ -78,9 +78,12 @@ func runMain(ctx context.Context, args []string) int {
 
 	exitCode, output, runErr := evidence.Run(ctx, args, dir)
 	if runErr != nil {
-		if db != nil && ident != nil && res != nil && profile.Known {
+		if output.Stderr == "" {
+			output.Stderr = runErr.Error()
+		}
+		if db != nil && ident != nil && res != nil {
 			rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-			if err := rec.RecordTerminatedRun(ctx, dir, res, profile, output.Termination, runErr.Error()); err != nil {
+			if err := rec.RecordCommandOutput(ctx, dir, res, profile, args, -1, output); err != nil {
 				fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", err)
 			}
 		}
@@ -90,12 +93,7 @@ func runMain(ctx context.Context, args []string) int {
 
 	if db != nil && ident != nil && res != nil {
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-		var recordErr error
-		if exitCode != 0 && output.Termination.Kind != "" {
-			recordErr = rec.RecordTerminatedRun(ctx, dir, res, profile, output.Termination, output.FailureDiagnostics())
-		} else {
-			recordErr = rec.RecordRun(ctx, dir, res, profile, exitCode, output.FailureDiagnostics())
-		}
+		recordErr := rec.RecordCommandOutput(ctx, dir, res, profile, args, exitCode, output)
 		if recordErr != nil {
 			fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", recordErr)
 		}

@@ -81,6 +81,14 @@ type Deps struct {
 	AdminTokens serverstore.AdminTokenStore
 	// Farm backs the operations panel. Nil hides it rather than showing zeros.
 	Farm serverstore.FarmStatsStore
+	// Anomalies backs the consumption-feedback panel. Nil hides it: a store
+	// that cannot answer has nothing honest to show, and a panel of zeros
+	// reads as "nobody reported anything" rather than "not measured here".
+	Anomalies serverstore.AnomalyStore
+	// CSXIssues backs the product-defect panel. Nil hides it, for the same
+	// reason: a panel of zeros reads as "nobody reported anything" rather
+	// than "not measured here".
+	CSXIssues serverstore.CSXIssueStore
 	// PoolStats backs the database pool panel. Nil hides it: a store
 	// without a pool has nothing honest to report there.
 	PoolStats PoolStatsReader
@@ -101,6 +109,8 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
+	anomalies     serverstore.AnomalyStore
+	csxIssues     serverstore.CSXIssueStore
 	poolStats     PoolStatsReader
 	instances     []Instance
 }
@@ -135,6 +145,8 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		authoringRate: newAuthoringRateLimiter(),
 		adminTokens:   d.AdminTokens,
 		farmStats:     d.Farm,
+		anomalies:     d.Anomalies,
+		csxIssues:     d.CSXIssues,
 		poolStats:     d.PoolStats,
 		instances:     d.Instances,
 	}
@@ -333,6 +345,35 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.InsightsAvailable = true
 	}
 
+	if h.anomalies == nil {
+		data.AnomalyError = "이 저장소는 이상 신고 채널을 제공하지 않습니다"
+	} else if insights, err := h.anomalies.AnomalyInsights(ctx, now, serverstore.AdminInsightDays); err != nil {
+		data.AnomalyError = "이상 신고 집계를 불러올 수 없습니다"
+	} else {
+		recent, listErr := h.anomalies.ListAnomalyReports(ctx, anomalyRecentLimit)
+		if listErr != nil {
+			// The aggregate is still worth showing without the table; a
+			// failed list is not a reason to hide the ratios that decide
+			// whether anyone should look at this at all.
+			recent = nil
+		}
+		data.Anomaly = buildAnomalyView(insights, recent, now)
+		data.AnomalyAvailable = true
+	}
+
+	if h.csxIssues == nil {
+		data.CSXIssueError = "이 저장소는 제품 결함 신고 채널을 제공하지 않습니다"
+	} else if insights, err := h.csxIssues.CSXIssueInsights(ctx, now, serverstore.AdminInsightDays); err != nil {
+		data.CSXIssueError = "제품 결함 신고 집계를 불러올 수 없습니다"
+	} else {
+		recent, listErr := h.csxIssues.ListCSXIssueReports(ctx, anomalyRecentLimit)
+		if listErr != nil {
+			recent = nil
+		}
+		data.CSXIssue = buildCSXIssueView(insights, recent, now)
+		data.CSXIssueAvailable = true
+	}
+
 	if h.accessMetrics == nil {
 		data.AccessError = "API 안전 로그 집계가 구성되지 않았습니다"
 	} else if metrics, err := h.accessMetrics.Metrics(ctx, now); err != nil {
@@ -390,6 +431,19 @@ type dashboardData struct {
 	ActivityError     string
 
 	SearchQuality searchQualityView
+
+	// Anomaly is the consumption side answering back: what agents reported,
+	// how much of it was the same thing twice, and how much of it turned out
+	// to be real.
+	Anomaly          anomalyView
+	AnomalyAvailable bool
+	AnomalyError     string
+
+	// CSXIssue is the same channel aimed at this product rather than at a
+	// package. Separate view, because they are separate things.
+	CSXIssue          csxIssueView
+	CSXIssueAvailable bool
+	CSXIssueError     string
 
 	// Flow is the production-rate half of the summary. Everything above it is
 	// stock, and stock cannot answer whether the line is running right now.

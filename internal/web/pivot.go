@@ -74,11 +74,18 @@ type pivotCell struct {
 	// rendered as a red tick beside 0/1 -- putting the verdict back into the
 	// glyph after taking it out of the word.
 	//
+	// Nor is it three bars any more. "≡" was read as a hamburger — menu,
+	// more, go deeper — and the READMEs had made that reading worse by
+	// glossing it as "there is code that works for this cell", which is a
+	// different fact with a different key (see cubecode.go). The mark now
+	// says one thing and only one: THIS ENVIRONMENT WAS VERIFIED. Code
+	// availability has its own mark, and drilling down has its own.
+	//
 	// buildPivotCell is the source of truth for these four values, and the
 	// site legend (templates/base.html) and the public READMEs are held to
 	// them by publiccopy_test.go. A pair of doubled diamonds was documented
 	// here for two releases after the code stopped producing them.
-	Glyph string // "≡" | "✕" | "" | "—"
+	Glyph string // "◆" | "✕" | "" | "—"
 	// Bang is retained as a field for the tooltip only; no marker renders.
 	// A cell carries at most one symbol now -- the check -- and colour says
 	// how the runs went. Every extra glyph was one more thing to learn
@@ -101,6 +108,19 @@ type pivotCell struct {
 	// on whichever basis the cell names.
 	PassCount int64
 	FailCount int64
+	// Code is how many published samples answer this cell's RELEASE and API.
+	// It is deliberately blind to every environment dimension: a sample the
+	// fleet could only run on Linux is still the code that exists for this
+	// release of this API, and blanking it under a Windows filter told the
+	// reader there was nothing to read when there were ninety-six answers.
+	// The compatibility of that code HERE is what the rest of the cell says.
+	Code int64
+	// CodeLabel and DrillLabel are the accessible wording for the two marks
+	// the cell carries besides the basis glyph. They are set in the page
+	// language by the caller that knows it; a grid built without them simply
+	// renders no such mark.
+	CodeLabel  string
+	DrillLabel string
 }
 
 // pivotAxis is one label along an axis, with the OS family it names when
@@ -852,7 +872,7 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// version of the same fact and stays in the tooltip.
 	switch {
 	case a.verPass > 0 && a.verFail == 0:
-		cell.Glyph = "≡"
+		cell.Glyph = "◆"
 	case a.verFail > 0:
 		cell.Glyph = "✕"
 	}

@@ -138,6 +138,11 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	canonical := purl.String()
 	env := b.Environment.Normalize()
 	envJSON := domain.MustCanonicalJSON(env)
+	outerCommands := []string{}
+	if b.OuterCommand != "" {
+		outerCommands = append(outerCommands, b.OuterCommand)
+	}
+	outerCommandsJSON := domain.MustCanonicalJSON(outerCommands)
 	confidence := string(b.SymbolConfidence)
 	if confidence == "" {
 		confidence = string(domain.SymbolUnknown)
@@ -158,8 +163,9 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		INSERT INTO evidence_agg
 			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result,
 			 error_fp, error_code, direct, termination_kind, exit_code, signal,
-			 timeout_millis, error_summary, evidence_quality)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 timeout_millis, error_summary, evidence_quality, outer_commands, outer_stage,
+			 actual_toolchain, stage_evidence, failure_evidence_gap)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 			last_seen = now(),
 			symbol_confidence = EXCLUDED.symbol_confidence,
@@ -174,6 +180,17 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 				THEN EXCLUDED.error_summary ELSE evidence_agg.error_summary END,
 			evidence_quality = CASE WHEN evidence_agg.evidence_quality IN ('', 'legacy-evidence-incomplete')
 				THEN EXCLUDED.evidence_quality ELSE evidence_agg.evidence_quality END,
+			outer_commands = (
+				SELECT COALESCE(jsonb_agg(command ORDER BY command), '[]'::jsonb)
+				FROM (
+					SELECT DISTINCT value AS command
+					FROM jsonb_array_elements_text(evidence_agg.outer_commands || EXCLUDED.outer_commands)
+				) commands
+			),
+			outer_stage = CASE WHEN evidence_agg.outer_stage = '' THEN EXCLUDED.outer_stage ELSE evidence_agg.outer_stage END,
+			actual_toolchain = CASE WHEN evidence_agg.actual_toolchain = '' THEN EXCLUDED.actual_toolchain ELSE evidence_agg.actual_toolchain END,
+			stage_evidence = CASE WHEN evidence_agg.stage_evidence = '' THEN EXCLUDED.stage_evidence ELSE evidence_agg.stage_evidence END,
+			failure_evidence_gap = CASE WHEN evidence_agg.failure_evidence_gap = '' THEN EXCLUDED.failure_evidence_gap ELSE evidence_agg.failure_evidence_gap END,
 			-- Chosen wins and never unsays itself: one project resolving a
 			-- package transitively does not undo another that listed it.
 			direct = evidence_agg.direct OR EXCLUDED.direct
@@ -181,7 +198,8 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
 		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
 		string(b.TerminationKind), b.ExitCode, b.Signal, b.TimeoutMillis,
-		b.ErrorSummary, string(normalizedEvidenceQuality(b)),
+		b.ErrorSummary, string(normalizedEvidenceQuality(b)), []byte(outerCommandsJSON), string(b.OuterStage),
+		b.ActualToolchain, string(b.StageEvidence), string(b.FailureEvidenceGap),
 	).Scan(&aggID); err != nil {
 		return err
 	}
@@ -701,7 +719,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		rows, err := c.Query(ctx, `
 			SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
 			       stage, result, error_fp, error_code, termination_kind, exit_code,
-			       signal, timeout_millis, error_summary, evidence_quality, observation_count,
+			       signal, timeout_millis, error_summary, evidence_quality, outer_commands::text,
+			       outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
 			WHERE purl=$1 AND symbol = ANY($2)
@@ -712,14 +731,22 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		defer rows.Close()
 		for rows.Next() {
 			var e EvidenceRow
+			var outerCommandsJSON string
 			var first, last *time.Time
 			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
 				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
 				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
-				&e.ErrorSummary, &e.EvidenceQuality,
+				&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
+				&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
 				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
 				&first, &last); err != nil {
 				return err
+			}
+			if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
+				return fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
+			}
+			if len(e.OuterCommands) > 0 {
+				e.OuterCommand = e.OuterCommands[0]
 			}
 			if first != nil {
 				e.FirstSeen = *first
@@ -902,6 +929,58 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 				return serr
 			}
 			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func (p *PG) VerifiedSampleCodeCounts(ctx context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error) {
+	if packagePrefix == "" {
+		return nil, nil
+	}
+	var out []VerifiedSampleCodeCount
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH eligible AS MATERIALIZED (
+				SELECT samples.sample_id, package.value AS purl, samples.manifest
+				FROM samples
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+					CASE WHEN jsonb_typeof(samples.manifest->'packages')='array'
+					     THEN samples.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+				WHERE NOT samples.quarantined
+				  AND left(package.value, char_length($1)) = $1
+				  AND EXISTS (
+					SELECT 1 FROM receipts verified_receipt
+					WHERE verified_receipt.sample_id = samples.sample_id
+					  AND verified_receipt.contract_result = 'PASS'
+				  )
+			), coordinates AS (
+				SELECT sample_id, purl, ''::text AS symbol FROM eligible
+				UNION ALL
+				SELECT eligible.sample_id, eligible.purl, symbol.value
+				FROM eligible
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+					CASE WHEN jsonb_typeof(eligible.manifest->'symbols')='array'
+					     THEN eligible.manifest->'symbols' ELSE '[]'::jsonb END
+				) AS symbol(value)
+				WHERE symbol.value <> ''
+			)
+			SELECT purl, symbol, count(DISTINCT sample_id)
+			FROM coordinates
+			GROUP BY purl, symbol
+			ORDER BY purl, symbol`, packagePrefix)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row VerifiedSampleCodeCount
+			if err := rows.Scan(&row.PURL, &row.Symbol, &row.Samples); err != nil {
+				return err
+			}
+			out = append(out, row)
 		}
 		return rows.Err()
 	})
@@ -1269,6 +1348,54 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO verification_jobs(sample_id, reason, want_env)
 			VALUES($1,'matrix',$2::jsonb) RETURNING id`, j.SampleID, wantEnv).Scan(&id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
+	return id, err
+}
+
+func (p *PG) EnsureCrossJob(ctx context.Context, j JobRow) (int64, error) {
+	if j.Reason != "cross" || j.SampleID == "" {
+		return 0, fmt.Errorf("EnsureCrossJob requires a cross job with a sample id")
+	}
+	var wantEnv []byte
+	if j.WantEnvJSON != "" {
+		wantEnv = []byte(j.WantEnvJSON)
+	}
+	status := j.Status
+	if status == "" {
+		status = "open"
+	}
+	var id int64
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		// Serialize every cross-job decision for one sample. Unlike a unique
+		// index this still permits a later retry after historical work is done.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			"cross\x1f"+j.SampleID); err != nil {
+			return err
+		}
+		reuseUnsupported := status == JobStatusUnsupported
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM verification_jobs
+			 WHERE sample_id=$1 AND reason='cross'
+			   AND (status IN ('open','claimed') OR ($3 AND status=$2))
+			 ORDER BY id LIMIT 1`, j.SampleID, JobStatusUnsupported, reuseUnsupported).Scan(&id)
+		if err == nil {
+			return tx.Commit(ctx)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO verification_jobs(sample_id, reason, want_env, status)
+			VALUES($1,'cross',$2,$3) RETURNING id`,
+			j.SampleID, wantEnv, status).Scan(&id); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -2055,6 +2182,7 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
 	envVariants := []byte("[]")
 	evidenceBreakdown := []byte("{}")
+	outerCommands := []byte("[]")
 	if cl.EnvSummaryJSON != "" {
 		envSummary = []byte(cl.EnvSummaryJSON)
 	}
@@ -2070,15 +2198,19 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	if cl.EvidenceBreakdownJSON != "" {
 		evidenceBreakdown = []byte(cl.EvidenceBreakdownJSON)
 	}
+	if len(cl.OuterCommands) > 0 {
+		outerCommands, _ = json.Marshal(cl.OuterCommands)
+	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
 				error_code, observation_count, env_summary, hypotheses,
 				regression_candidate, versions, termination_kind, exit_code, signal,
 				timeout_millis, error_summary, evidence_quality, env_variants,
-				evidence_breakdown, diagnostic_candidate, first_seen, last_seen)
+				evidence_breakdown, diagnostic_candidate, outer_commands, actual_toolchain,
+				stage_evidence, failure_evidence_gap, first_seen, last_seen)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-			       COALESCE($21, now()), COALESCE($22, now()))
+			       $21,$22,$23,$24,COALESCE($25, now()),COALESCE($26, now()))
 			ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
 				error_code = EXCLUDED.error_code,
 				observation_count = EXCLUDED.observation_count,
@@ -2095,6 +2227,10 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 				env_variants = EXCLUDED.env_variants,
 				evidence_breakdown = EXCLUDED.evidence_breakdown,
 				diagnostic_candidate = EXCLUDED.diagnostic_candidate,
+				outer_commands = EXCLUDED.outer_commands,
+				actual_toolchain = EXCLUDED.actual_toolchain,
+				stage_evidence = EXCLUDED.stage_evidence,
+				failure_evidence_gap = EXCLUDED.failure_evidence_gap,
 				first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
 				last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)`,
 			cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
@@ -2102,6 +2238,7 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 			cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
 			cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
 			envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
+			outerCommands, cl.ActualToolchain, cl.StageEvidence, cl.FailureEvidenceGap,
 			nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen))
 		return err
 	})
@@ -2139,6 +2276,8 @@ func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere st
 			       COALESCE(evidence_quality,'legacy-evidence-incomplete'),
 			       COALESCE(env_variants::text,'[]'), COALESCE(evidence_breakdown::text,'{}'),
 			       COALESCE(diagnostic_candidate,false),
+			       COALESCE(outer_commands::text,'[]'), COALESCE(actual_toolchain,''),
+			       COALESCE(stage_evidence,''), COALESCE(failure_evidence_gap,''),
 			       first_seen, last_seen
 			FROM failure_clusters
 			WHERE package_name=$1`+extraWhere+`
@@ -2149,6 +2288,7 @@ func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere st
 		defer rows.Close()
 		for rows.Next() {
 			var cl ClusterRow
+			var outerCommandsJSON string
 			var first, last *time.Time
 			if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
 				&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
@@ -2156,9 +2296,11 @@ func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere st
 				&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
 				&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
 				&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
+				&outerCommandsJSON, &cl.ActualToolchain, &cl.StageEvidence, &cl.FailureEvidenceGap,
 				&first, &last); err != nil {
 				return err
 			}
+			_ = json.Unmarshal([]byte(outerCommandsJSON), &cl.OuterCommands)
 			if first != nil {
 				cl.FirstSeen = *first
 			}

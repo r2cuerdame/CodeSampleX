@@ -26,14 +26,14 @@ Cada resultado es una ejecución registrada con su entorno adjunto, de modo que 
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 Esta cuadrícula no es una ilustración: es [la página en vivo](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), así que los números de arriba ya se han movido desde que se copiaron.
 
-**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son observaciones: el 82% de 1.209 observaciones registradas pasó. Una observación es una etapa que alcanzó un build —compilar, comprobar tipos, probar—, así que un solo build deja varias, y el número no cuenta builds, ni máquinas, ni personas. La marca `≡` es nuestra propia muestra: corrió aquí y terminó limpia. Deliberadamente no es una marca de verificación, porque eso es un sello de aprobación y esta red no califica; una ejecución nuestra que falló lleva `✕` en su lugar. `≡ —` significa: hay código que funciona y nadie ha sido visto usándolo todavía. `—` permanece desconocido.
+**Una celda lleva una tasa y una marca, nunca un veredicto.** El porcentaje y el número contiguo son observaciones: el 82% de 1.209 observaciones registradas pasó. Una observación es una etapa que alcanzó un build —compilar, comprobar tipos, probar—, así que un solo build deja varias, y el número no cuenta builds, ni máquinas, ni personas. La marca `◆` dice una sola cosa: esta red ejecutó su propio contrato EN ESTE entorno y terminó limpio. Que exista código para la versión y la API es otra marca — un documento —, porque una muestra no deja de existir al cambiar el filtro de sistema operativo. Deliberadamente no es una marca de verificación, porque eso es un sello de aprobación y esta red no califica; una ejecución nuestra que falló lleva `✕` en su lugar. `◆ —` significa: nuestro contrato corrió aquí y terminó limpio, y no se ha reportado ningún build en esta coordenada. `—` permanece desconocido.
 
 ## Por qué importan las pruebas
 
@@ -190,7 +190,9 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` configura automáticamente Claude Code, Codex, Gemini CLI y OpenCode. Cualquier otro cliente MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) funciona con lo que imprime `csx mcp-config` (`--toml` para Codex) — emite la ruta absoluta del binario, que es lo que necesita un cliente arrancado por un editor. El servidor en sí es `csx mcp`. Ocho herramientas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — y, deliberadamente, ninguna herramienta de publicación.
+`csx init` configura automáticamente Claude Code, Codex, Gemini CLI y OpenCode. Cualquier otro cliente MCP stdio (Cursor, Windsurf, Cline, Zed, VS Code) funciona con lo que imprime `csx mcp-config` (`--toml` para Codex) — emite la ruta absoluta del binario, que es lo que necesita un cliente arrancado por un editor. El servidor en sí es `csx mcp`. Diez herramientas: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — y, deliberadamente, ninguna herramienta de publicación. `report_csx_issue` es la misma idea apuntada a nosotros y no a un paquete: una respuesta que desplazó el fallo que en realidad estabas mirando, una recomendación de un ecosistema que la pregunta nunca mencionó, un contrato de herramienta que hizo actuar mal a un modelo. Es opt-in y deliberadamente silencioso — nada le dice a un agente que lo llame tras un fallo, no se crea ningún ticket, y una semana sin reportes es una semana normal. Un defecto que encuentran cien agentes es UNA fila cuyo contador de ocurrencias sube, y una vez que esa fila está enlazada a un bug, cada reporte posterior responde con el enlace. Los dos canales comparten ingesta, redacción y deduplicación, y nada después: un defecto de este producto nunca puede convertirse en evidencia de compatibilidad.
+
+`report_anomaly` apunta en la dirección contraria. Cuando una respuesta de CSX y la propia máquina del agente se contradicen de forma **concreta** — la red sirvió una conclusión en verde para una coordenada que aquí falló, una firma de símbolo devuelta no es la que el paquete exporta — el agente puede presentarlo como una solicitud de verificación. No es un reporte de bug: un reporte encola una reejecución independiente en la misma flota que produce cualquier otro recibo, y solo ese recibo puede confirmarlo. Un envío sin nada medido detrás se rechaza, el mismo desajuste reportado dos veces es un reporte y una reejecución, y nada de lo que dice un reporte llega a una página pública antes de que un verificador esté de acuerdo. La hipótesis de causa del reportante viaja en su propio campo y nunca decide el veredicto.
 
 Pasos de instalación dirigidos a agentes (incluido el bundle MCPB y las descargas directas de binarios con `SHA256SUMS.txt`): [llms-install.md](../../llms-install.md). Las instalaciones comunitarias independientes se actualizan solas mediante un manifiesto firmado con Ed25519, con `csx update rollback` disponible; las instalaciones `local-only` no hacen ninguna petición de actualización.
 

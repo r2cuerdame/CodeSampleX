@@ -58,11 +58,48 @@ type cubeAnswer struct {
 	// Headline is the one line the whole page exists to deliver.
 	Headline string
 	Facts    []cubeAnswerFact
-	// RecordsHref leads to the exact samples and receipts for this
-	// coordinate. It is labelled, unlike the links inside the cube, because
-	// it deliberately leaves the instrument.
-	RecordsHref  string
-	RecordsLabel string
+	// SymbolNote qualifies the coordinate's API where the API is not one.
+	// "whole package" is a package-level TOTAL, disjoint from the symbols
+	// beside it, and printing the package's name in the symbol slot made it
+	// read as an API the package exports.
+	SymbolNote string
+	// Code is how many published samples answer this release and API,
+	// whatever environment the coordinate names. CodeLabel says so in words;
+	// NoCodeLabel is set instead when there are none, because "no code yet"
+	// is an answer and an absent affordance is not.
+	Code        int64
+	CodeLabel   string
+	NoCodeLabel string
+	// CodeUnknownLabel is distinct from NoCodeLabel: a failed aggregate read
+	// cannot support a public absence claim.
+	CodeUnknownLabel string
+	// EnvLabel says whether THIS environment was verified, which is the other
+	// half of the pair the old single mark conflated. The template renders it
+	// only where the coordinate actually NAMES an environment: with none
+	// decided, "verified in this environment" points at nothing.
+	EnvLabel string
+	// Terminal marks the bottom of the drill. The card is built at the bottom
+	// and nowhere else, so this is always true where it is set; the WORDING
+	// lives on the navigator, which is the instrument that talks about depth,
+	// and printing it in both places said the same sentence twice on one
+	// screen.
+	Terminal bool
+	// Actions are the ways OUT of the instrument to real evidence. Each one
+	// is here only because the thing it opens exists: an action that leads to
+	// an empty page is the dead end this card was built to remove.
+	Actions []cubeAction
+}
+
+// cubeAction is one evidence destination at a terminal coordinate.
+//
+// It is deliberately not a bare coordinate wearing the drill-down's blue.
+// Every link inside the cube narrows the slice; these leave it, so they carry
+// a label saying what they open and are drawn as buttons rather than as more
+// of the instrument (the third visual grammar: filter, navigator, evidence).
+type cubeAction struct {
+	Kind  string // "samples" | "records" | "failures" | "deps"
+	Label string
+	Href  string
 }
 
 // cubeAnswerEnv joins the environment dimensions a coordinate has decided.
@@ -111,7 +148,7 @@ func cubeResultLine(a *pivotAgg, lang string) (headline, basisNote, basis string
 // buildCubeAnswer states one decided coordinate. nil when the slice carries
 // nothing to state.
 func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
-	eco, name, lang string, now time.Time) *cubeAnswer {
+	eco, name, lang string, now time.Time, code *codeIndex) *cubeAnswer {
 
 	if len(sliced) == 0 {
 		return nil
@@ -134,10 +171,23 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 		Glyph:     cell.Glyph,
 		Tone:      cell.Tone,
 		Headline:  headline,
+		// The card is built at the bottom of the drill and nowhere else, so
+		// its existence IS the terminal fact.
+		Terminal: true,
 	}
 	// "whole package" is what the evidence IS, and a reader standing on the
-	// package already knows which package that is.
-	if ans.Symbol == cubePackageLevel && name != "" {
+	// package already knows which package that is. The note is what the name
+	// alone stopped saying: this row is the release's TOTAL, not an API.
+	//
+	// Only for the package-level value, never for an undecided symbol. An
+	// undecided slice covers several APIs and is not the package-level total;
+	// labelling it as one states a coordinate the reader has not reached.
+	if ans.Symbol == cubePackageLevel {
+		if name != "" {
+			ans.Symbol = name
+		}
+		ans.SymbolNote = i18n.T(lang, "cube.package_aggregate")
+	} else if ans.Symbol == "" && name != "" {
 		ans.Symbol = name
 	}
 
@@ -189,19 +239,71 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 		add(i18n.T(lang, "answer.last_seen"), d, false)
 	}
 
-	// The way out of the instrument, said plainly. Every link inside the cube
-	// narrows the slice; this one goes to the samples and receipts for the
-	// coordinate, which is a different kind of move and gets a label instead
-	// of a bare coordinate wearing the same blue.
-	if v := coord["version"]; v != "" {
-		ans.RecordsLabel = i18n.T(lang, "answer.records")
-		if sym := coord["symbol"]; sym != "" && sym != cubePackageLevel {
-			ans.RecordsHref = symbolHref(eco, name, v, sym)
-		} else {
-			ans.RecordsHref = versionHref(eco, name, v)
+	// The two states the old single mark ran together, now stated apart.
+	//
+	// Code availability is keyed by release and API and is true or false
+	// wherever the reader is standing; verification is keyed by this exact
+	// environment. A sample the fleet ran only on Linux is still the code
+	// that exists for a Windows reader, and the Windows column is still
+	// unverified — both sentences are true at once and the page says both.
+	version, symbol := coord["version"], coord["symbol"]
+	ans.Code = code.at(version, symbol)
+	switch {
+	case code == nil || !code.known:
+		ans.CodeUnknownLabel = i18n.T(lang, "cube.code_unknown")
+	case ans.Code > 0:
+		ans.CodeLabel = i18n.T(lang, "cube.code_yes")
+	default:
+		ans.NoCodeLabel = i18n.T(lang, "cube.code_none")
+	}
+	if ver > 0 {
+		ans.EnvLabel = i18n.T(lang, "cube.env_verified")
+	} else {
+		ans.EnvLabel = i18n.T(lang, "cube.env_unverified")
+	}
+
+	// The ways out of the instrument, each one offered only because what it
+	// opens is there. An affordance that lands on an empty page is the dead
+	// end the reader complained about, and it costs more trust than the click
+	// it saved.
+	if version != "" {
+		listHref := versionHref(eco, name, version)
+		if symbol != "" && symbol != cubePackageLevel {
+			listHref = symbolHref(eco, name, version, symbol)
 		}
+		if ans.Code > 0 {
+			// To the page that LISTS them, never to one sample. Each page on
+			// the way down narrows by one dimension — the package counts
+			// answers per release, the release counts them per API, the API
+			// lists them — and a package page that linked a sample directly
+			// would put uuid's ninety-six back in one pile.
+			href := listHref
+			ans.Actions = append(ans.Actions, cubeAction{
+				Kind:  "samples",
+				Label: i18n.T(lang, "answer.action_samples", i18n.FormatInt(lang, ans.Code)),
+				Href:  href,
+			})
+		}
+		// The measured record for the coordinate: the matrix and the receipts
+		// behind the counts above. It is not labelled "samples" any more —
+		// that promised code on coordinates that have none, which is how a
+		// reader ended up on a page with nothing to read.
+		ans.Actions = append(ans.Actions, cubeAction{
+			Kind:  "records",
+			Label: i18n.T(lang, "answer.action_records"),
+			Href:  listHref,
+		})
 	}
 	return ans
+}
+
+// addAction appends one evidence destination, ignoring a nil card and a
+// destination the page has nothing to put behind.
+func (a *cubeAnswer) addAction(kind, label, href string) {
+	if a == nil || href == "" || label == "" {
+		return
+	}
+	a.Actions = append(a.Actions, cubeAction{Kind: kind, Label: label, Href: href})
 }
 
 // dropSharedCoordinate blanks the parts of each exact record the answer card

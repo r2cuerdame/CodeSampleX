@@ -1450,10 +1450,80 @@ td.pv .pvpasses { font-size: 0.66rem; }
 /* "Nothing at this coordinate" is a real answer and it is printed rather
    than hidden — but it is not a count, and must not look like one. */
 .answer-facts > div.absent dd { font-weight: 400; color: var(--dim); }
-.answer-records { margin: 0.7rem 0 0; }
-.answer-records a { font-weight: 650; text-decoration: none; color: var(--accent); }
-.answer-records a::after { content: " →"; }
-.answer-records a:hover { text-decoration: underline; }
+/* Three grammars, kept apart on purpose (R2C-127):
+     filter          — a chip or a select; the condition of the question
+     navigator       — the ladder and the chevron; depth and path
+     evidence action — a labelled button; the way OUT to real code
+   They were one blue and one triple-bar mark, and a reader could not tell
+   "there is code here" from "there is a level below here". */
+
+/* The ladder. Ahead of everything else in the instrument, because "where am
+   I" is the question a reader arriving on a pinned link asks first. */
+.cubenav {
+  margin: 0.35rem 0 0.9rem; padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line); border-radius: 0.6rem;
+  background: var(--panel-2);
+}
+.cubenav ol {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 0.15rem 0.1rem; margin: 0; padding: 0; list-style: none;
+}
+.cubenav .navstep { display: inline-flex; align-items: baseline; gap: 0.3rem; min-width: 0; }
+.cubenav .navstep + .navstep::before {
+  content: "›"; margin: 0 0.35rem; color: var(--line-strong);
+}
+.cubenav .navstep { padding: 0.05rem 0; }
+.cubenav .navlabel { font-size: 0.66rem; letter-spacing: 0.02em; text-transform: none; }
+.cubenav .navvalue { font-weight: 650; overflow-wrap: anywhere; }
+.cubenav .navstep a { text-decoration: none; color: inherit; display: inline-flex; gap: 0.3rem; align-items: baseline; }
+.cubenav .navstep a:hover .navvalue { text-decoration: underline; color: var(--accent); }
+.cubenav .navstep.current .navvalue,
+.cubenav .navstep.current .navlabel { color: var(--accent); }
+.cubenav .navstep.current .navlabel { font-weight: 700; }
+.cubenav .navstep:not(.done):not(.current) { opacity: 0.55; }
+.cubenav .navterminal { margin: 0.3rem 0 0; font-weight: 650; color: var(--accent-2); }
+.cubenav .navnext { margin: 0.3rem 0 0; }
+
+/* Code availability. A document, never a menu. */
+.codemark { display: inline-flex; align-items: center; color: var(--accent-2); }
+.codemark .ico-code { display: block; }
+/* Drill-down, and only drill-down. */
+.drill { color: var(--line-strong); font-weight: 700; }
+td.pv a:hover .drill { color: var(--accent); }
+
+.answer-aggregate { margin: -0.25rem 0 0.45rem; }
+/* Code / environment, side by side, because they are two answers and the
+   reader needs both at once. */
+.answer-states {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.55rem 0 0;
+}
+.answer-states .state {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.15rem 0.5rem; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel-2);
+}
+.answer-states .state.code.yes { color: var(--accent-2); }
+.answer-states .state.code.no { color: var(--dim); font-style: italic; }
+.answer-states .state.env.verified { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.answer-states .state.env.observed { color: var(--dim); }
+.answer-terminal { margin: 0.5rem 0 0; font-weight: 650; }
+
+.answer-actions { margin: 0.75rem 0 0; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+.answer-actions ul {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  margin: 0.35rem 0 0; padding: 0; list-style: none;
+}
+.evaction {
+  display: inline-block; padding: 0.3rem 0.7rem; border-radius: 0.5rem;
+  border: 1px solid var(--line-strong); background: var(--panel-2);
+  color: var(--accent-2); font-weight: 650; text-decoration: none;
+  font-size: 0.85rem;
+}
+.evaction:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.leafcode { display: flex; align-items: center; gap: 0.3rem; margin: 0.1rem 0 0; }
+.leafpin { margin: 0.35rem 0 0; }
+.leafpin a { text-decoration: none; color: var(--accent); font-weight: 650; }
+.leafpin a:hover { text-decoration: underline; }
 /* Folded once the coordinate is decided: the reader came for the answer,
    not for the picker. */
 .cubechange { margin: 0 0 0.9rem; }

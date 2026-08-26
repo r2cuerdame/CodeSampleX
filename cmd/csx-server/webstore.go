@@ -353,6 +353,25 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
+func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]web.PackageCodeCount, error) {
+	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
+	rows, err := w.s.VerifiedSampleCodeCounts(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PackageCodeCount, 0, len(rows))
+	for _, row := range rows {
+		p, err := domain.ParsePURL(row.PURL)
+		if err != nil || p.Ecosystem != ecosystem || p.Name != name || p.Version == "" {
+			continue
+		}
+		out = append(out, web.PackageCodeCount{
+			Version: p.Version, Symbol: row.Symbol, Samples: row.Samples,
+		})
+	}
+	return out, nil
+}
+
 // Dependencies adapts the parent-side view of the same edges.
 func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
 	rows, err := w.s.Dependencies(ctx, ecosystem, name)
@@ -967,6 +986,10 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			"timeoutMillis":       c.TimeoutMillis,
 			"errorSummary":        c.ErrorSummary,
 			"evidenceQuality":     c.EvidenceQuality,
+			"outerCommands":       c.OuterCommands,
+			"actualToolchain":     c.ActualToolchain,
+			"stageEvidence":       c.StageEvidence,
+			"evidenceGap":         c.FailureEvidenceGap,
 			"count":               c.ObservationCount,
 			"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
 			"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),

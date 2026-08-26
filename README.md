@@ -34,16 +34,16 @@ Every result is a recorded execution with its environment attached, so the data 
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ≡ 82% 1209  ≡ 100% 2  ≡ —
-Batch                                    ≡ 80% 689   —         —
-ParseConfig                              ≡ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
+Batch                                    ◆ 80% 689   —         —
+ParseConfig                              ◆ 82% 1188  —         —
 ```
 
 That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), so the numbers above have moved on since they were copied.
 
-**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `≡` mark is our own sample: it ran here and came back clean. It is deliberately not a check, because a check is an approval stamp and this network does not grade; `≡` is a line in a log. One clean run or a hundred, the mark says the same thing, and a run of ours that failed carries `✕` instead. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
+**A cell carries a rate and a mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `◆` mark says one thing and only one: this network ran its own contract in THIS environment and it came back clean. It is deliberately not a check, because a check is an approval stamp and this network does not grade. One clean run or a hundred, the mark says the same thing, and a run of ours that failed carries `✕` instead. Whether code EXISTS for the release and the API is a separate mark — a document — because a sample does not stop existing when you switch the OS filter, and carrying both facts on one mark is what sent readers down the grid to coordinates with nothing to open. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
 
-The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `≡ —` says exactly that: we have working code for it, and nobody has been seen using it yet.
+The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A cell reading `◆ —` says exactly that: our own contract ran here and came back clean, and no build has been reported at this coordinate.
 
 Colour carries how the runs came out, so a mostly-failing cell reddens without another glyph to learn. `—` stays unknown — never "works", never "broken". Nothing is inferred from the package's ecosystem or its docs.
 
@@ -204,7 +204,11 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` configures Claude Code, Codex, Gemini CLI and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Eight tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
+`csx init` configures Claude Code, Codex, Gemini CLI and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
+
+`report_anomaly` is the one that points the other way. When a CSX answer and the agent's own machine **concretely** disagree — the network served a passing conclusion for a coordinate that failed here, a returned symbol signature is not what the package exports — the agent can file that as a verification request. It is not a bug report: a report queues an independent re-run on the same fleet that produces every other receipt, and only that receipt can confirm it. A submission with nothing measured behind it is refused, the same mismatch reported twice is one report and one re-run, and nothing a report says reaches any public page before a verifier agrees with it. The reporter's guess at the cause travels in its own field and never decides the verdict.
+
+`report_csx_issue` is the same idea aimed at us rather than at a package: an answer that displaced the failure you were actually looking at, a recommendation from an ecosystem the question never mentioned, a tool contract that made a model behave wrongly. It is opt-in and deliberately quiet — nothing tells an agent to call it after a failure, no ticket is created, and a week with no reports is a normal week. A defect a hundred agents meet is one row whose occurrence count goes up, and once that row is linked to a bug every later report answers with the link. The two channels share ingest, redaction and dedupe and share nothing after it: a defect in this product can never become compatibility evidence.
 
 Agent-directed install steps (including the MCPB bundle and direct binary downloads with `SHA256SUMS.txt`): [llms-install.md](llms-install.md). Standalone community installs auto-update over an Ed25519-signed manifest with `csx update rollback` available; `local-only` installs make no update request.
 

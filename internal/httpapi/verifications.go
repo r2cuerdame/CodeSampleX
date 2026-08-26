@@ -114,6 +114,9 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 		if canonical != failure.ErrorSummary || len(failure.ErrorSummary) > 512 || len(failure.Signal) > 32 || len(failure.ErrorCode) > 64 {
 			return fmt.Errorf("stageFailures.%s is not canonical secret-safe evidence", stage)
 		}
+		if err := serverstore.ValidateFailureLineage(failure); err != nil {
+			return fmt.Errorf("stageFailures.%s has invalid lineage: %w", stage, err)
+		}
 		hasSummary := failure.ErrorSummary != ""
 		switch failure.EvidenceQuality {
 		case domain.EvidenceComplete:
@@ -133,6 +136,9 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 		}
 		if failure.EvidenceQuality != domain.EvidenceMissing {
 			want := domain.FailureFingerprint(domain.Stage(strings.ToUpper(stage)), term, failure.ErrorCode, failure.ErrorSummary)
+			if failure.ActualToolchain != "" {
+				want = domain.ClassifiedFailureFingerprint(domain.Stage(strings.ToUpper(stage)), failure.ActualToolchain, term, failure.ErrorCode, failure.ErrorSummary)
+			}
 			if failure.Fingerprint != want {
 				return fmt.Errorf("stageFailures.%s fingerprint does not match its evidence", stage)
 			}
@@ -540,6 +546,10 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	if claimedJobID != 0 && statusRank(newStatus) < statusRank("CROSS_PASS") {
 		a.requeueCrossVerification(ctx, receipt.SampleID, contractResult)
 	}
+	// Anomaly reports contesting this sample were waiting for exactly this:
+	// an independent run of the artifact the contested answer came from.
+	// After the receipt is stored and its signature checked, never before.
+	a.resolveAnomalyReports(ctx, receipt)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":       "accepted",
@@ -769,6 +779,10 @@ func (a *api) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "job already claimed or not open")
 		return
 	}
+	// A claimed report is a different fact from an unclaimed one: it is the
+	// difference between a slow fleet and a stuck queue, and the operator
+	// page cannot show it unless the claim says so.
+	a.markAnomalyReportsVerifying(r.Context(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "claimed", "id": id})
 }
 

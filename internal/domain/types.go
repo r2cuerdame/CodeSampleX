@@ -13,9 +13,16 @@ type Stage string
 const (
 	StageUsed             Stage = "USED"
 	StageProjectTypecheck Stage = "PROJECT_TYPECHECK"
+	StageProjectResolve   Stage = "PROJECT_RESOLVE"
 	StageProjectCompile   Stage = "PROJECT_COMPILE"
 	StageProjectTest      Stage = "PROJECT_TEST"
 	StageProjectProcess   Stage = "PROJECT_PROCESS"
+	// PROCESS_START and UNKNOWN are failure-only observation stages. The
+	// former is proven by a structured spawn error; the latter prevents an
+	// outer command name from being promoted to an actual failure stage when
+	// the captured diagnostics do not establish where execution stopped.
+	StageProcessStart Stage = "PROCESS_START"
+	StageUnknown      Stage = "UNKNOWN"
 	// PROJECT_LOAD observes module/library load in the executing context
 	// (import succeeded in node/bun/deno/browser) without asserting more.
 	StageProjectLoad Stage = "PROJECT_LOAD"
@@ -186,12 +193,17 @@ type ObservationBatch struct {
 	// Structured failure evidence. These optional fields preserve wire
 	// compatibility with pre-v2 clients; an omitted quality on a FAIL is
 	// stored as legacy-evidence-incomplete, never upgraded by inference.
-	TerminationKind TerminationKind `json:"terminationKind,omitempty"`
-	ExitCode        *int            `json:"exitCode,omitempty"`
-	Signal          string          `json:"signal,omitempty"`
-	TimeoutMillis   int64           `json:"timeoutMillis,omitempty"`
-	ErrorSummary    string          `json:"errorSummary,omitempty"`
-	EvidenceQuality EvidenceQuality `json:"evidenceQuality,omitempty"`
+	TerminationKind    TerminationKind      `json:"terminationKind,omitempty"`
+	ExitCode           *int                 `json:"exitCode,omitempty"`
+	Signal             string               `json:"signal,omitempty"`
+	TimeoutMillis      int64                `json:"timeoutMillis,omitempty"`
+	ErrorSummary       string               `json:"errorSummary,omitempty"`
+	EvidenceQuality    EvidenceQuality      `json:"evidenceQuality,omitempty"`
+	OuterCommand       string               `json:"outerCommand,omitempty"`
+	OuterStage         Stage                `json:"outerStage,omitempty"`
+	ActualToolchain    string               `json:"actualToolchain,omitempty"`
+	StageEvidence      FailureStageEvidence `json:"stageEvidence,omitempty"`
+	FailureEvidenceGap FailureEvidenceGap   `json:"evidenceGap,omitempty"`
 	// Direct says the reporter listed this package in their own manifest
 	// rather than receiving it through somebody else's.
 	//
