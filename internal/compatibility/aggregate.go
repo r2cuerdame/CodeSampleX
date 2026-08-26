@@ -135,7 +135,8 @@ func bucketOf(env domain.EnvironmentFingerprint) (bucketKey, domain.EnvironmentF
 func isObservationStage(stage string) bool {
 	switch domain.Stage(stage) {
 	case domain.StageUsed, domain.StageProjectTypecheck, domain.StageProjectCompile,
-		domain.StageProjectTest, domain.StageProjectLoad, domain.StageProjectProcess:
+		domain.StageProjectResolve, domain.StageProjectTest, domain.StageProjectLoad, domain.StageProjectProcess,
+		domain.StageProcessStart, domain.StageUnknown:
 		return true
 	}
 	return false

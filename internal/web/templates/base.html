@@ -266,6 +266,7 @@ document.addEventListener('keydown',event=>{
          line. When more was recorded, the whole stored text stays reachable
          in the title rather than being dropped. */}}
   {{- if .ErrorSummary}}<div class="row mono small"{{if .ErrorSummaryFull}} title="{{.ErrorSummaryFull}}"{{end}}>{{.ErrorSummary}}</div>{{end}}
+  {{- if or .ActualToolchain .StageEvidence .EvidenceGapKind .OuterCommands}}<div class="row mono small">{{if .ActualToolchain}}{{.ActualToolchain}}{{end}}{{if .StageEvidence}} · {{.StageEvidence}}{{end}}{{if .OuterCommands}} · outer {{.OuterCommands}}{{end}}{{if .EvidenceGapKind}} · gap {{.EvidenceGapKind}}{{end}}</div>{{end}}
   <div class="row dim mono small">
     {{$.T "symbol.evidence_quality"}}: {{.EvidenceQuality}}
     {{if .EnvironmentVariants}} · {{$.T "symbol.environment_variants"}}: {{.EnvironmentVariants}}{{end}}

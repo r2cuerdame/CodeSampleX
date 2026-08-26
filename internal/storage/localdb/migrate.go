@@ -34,6 +34,9 @@ var ddl = []string{
 	  termination_kind TEXT NOT NULL DEFAULT '', exit_code INTEGER,
 	  signal TEXT NOT NULL DEFAULT '', timeout_millis INTEGER NOT NULL DEFAULT 0,
 	  error_summary TEXT NOT NULL DEFAULT '', evidence_quality TEXT NOT NULL DEFAULT '',
+	  outer_command TEXT NOT NULL DEFAULT '', outer_stage TEXT NOT NULL DEFAULT '',
+	  actual_toolchain TEXT NOT NULL DEFAULT '', stage_evidence TEXT NOT NULL DEFAULT '',
+	  failure_evidence_gap TEXT NOT NULL DEFAULT '',
 	  direct INTEGER NOT NULL DEFAULT 0,
 	  coresident TEXT NOT NULL DEFAULT '',
 	  depends_on TEXT NOT NULL DEFAULT '',
@@ -203,6 +206,11 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		{"timeout_millis", `ALTER TABLE observations ADD COLUMN timeout_millis INTEGER NOT NULL DEFAULT 0`},
 		{"error_summary", `ALTER TABLE observations ADD COLUMN error_summary TEXT NOT NULL DEFAULT ''`},
 		{"evidence_quality", `ALTER TABLE observations ADD COLUMN evidence_quality TEXT NOT NULL DEFAULT ''`},
+		{"outer_command", `ALTER TABLE observations ADD COLUMN outer_command TEXT NOT NULL DEFAULT ''`},
+		{"outer_stage", `ALTER TABLE observations ADD COLUMN outer_stage TEXT NOT NULL DEFAULT ''`},
+		{"actual_toolchain", `ALTER TABLE observations ADD COLUMN actual_toolchain TEXT NOT NULL DEFAULT ''`},
+		{"stage_evidence", `ALTER TABLE observations ADD COLUMN stage_evidence TEXT NOT NULL DEFAULT ''`},
+		{"failure_evidence_gap", `ALTER TABLE observations ADD COLUMN failure_evidence_gap TEXT NOT NULL DEFAULT ''`},
 	} {
 		if !obsColumns[column.name] {
 			if _, err := tx.ExecContext(ctx, column.ddl); err != nil {

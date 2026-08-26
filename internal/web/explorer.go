@@ -78,6 +78,12 @@ type failureCluster struct {
 	TimeoutMillis       int64                              `json:"timeoutMillis"`
 	ErrorSummary        string                             `json:"errorSummary"`
 	EvidenceQuality     string                             `json:"evidenceQuality"`
+	OuterCommand        string                             `json:"outerCommand"`
+	OuterCommands       []string                           `json:"outerCommands"`
+	OuterStage          string                             `json:"outerStage"`
+	ActualToolchain     string                             `json:"actualToolchain"`
+	StageEvidence       string                             `json:"stageEvidence"`
+	EvidenceGapKind     string                             `json:"evidenceGap"`
 	Count               int64                              `json:"count"`
 	ObservationCount    int64                              `json:"observationCount"`
 	EnvSummary          map[string]string                  `json:"envSummary"`
@@ -151,6 +157,10 @@ type clusterView struct {
 	ErrorSummaryFull    string
 	EvidenceQuality     string
 	EvidenceGap         bool
+	EvidenceGapKind     string
+	OuterCommands       string
+	ActualToolchain     string
+	StageEvidence       string
 	EnvironmentVariants int
 	DiagnosticCandidate bool
 	Count               int64
@@ -335,9 +345,10 @@ func buildClusters(clusters []failureCluster) []clusterView {
 			count = c.ObservationCount
 		}
 		env := joinEnvSummary(c.EnvSummary)
-		evidenceGap := c.EvidenceQuality == string(domain.EvidenceMissing) || c.EvidenceQuality == string(domain.EvidenceLegacyIncomplete)
+		unfingerprintedGap := c.EvidenceQuality == string(domain.EvidenceMissing) || c.EvidenceQuality == string(domain.EvidenceLegacyIncomplete)
+		evidenceGap := unfingerprintedGap || c.EvidenceGapKind != ""
 		fingerprint := c.Fingerprint
-		if evidenceGap {
+		if unfingerprintedGap {
 			fingerprint = ""
 		}
 		key := groupKey{fingerprint, c.Stage, c.ErrorCode, env}
@@ -380,6 +391,10 @@ func buildClusters(clusters []failureCluster) []clusterView {
 			ErrorSummary: summary, ErrorSummaryFull: withheld,
 			EvidenceQuality:     c.EvidenceQuality,
 			EvidenceGap:         evidenceGap,
+			EvidenceGapKind:     c.EvidenceGapKind,
+			OuterCommands:       failureOuterCommands(c),
+			ActualToolchain:     c.ActualToolchain,
+			StageEvidence:       c.StageEvidence,
 			EnvironmentVariants: len(c.EnvVariants), DiagnosticCandidate: c.DiagnosticCandidate,
 			EnvSummary: env, Hypotheses: hyps,
 			RegressionCandidate: c.RegressionCandidate,
@@ -388,6 +403,21 @@ func buildClusters(clusters []failureCluster) []clusterView {
 		})
 	}
 	return out
+}
+
+func failureOuterCommands(c failureCluster) string {
+	seen := map[string]bool{}
+	for _, command := range append(append([]string(nil), c.OuterCommands...), c.OuterCommand) {
+		if command != "" {
+			seen[command] = true
+		}
+	}
+	commands := make([]string, 0, len(seen))
+	for command := range seen {
+		commands = append(commands, command)
+	}
+	sort.Strings(commands)
+	return strings.Join(commands, ", ")
 }
 
 // clusterErrorSummaryDisplayBytes is what a cluster row can spend on the

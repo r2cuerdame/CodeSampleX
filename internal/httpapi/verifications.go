@@ -114,6 +114,9 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 		if canonical != failure.ErrorSummary || len(failure.ErrorSummary) > 512 || len(failure.Signal) > 32 || len(failure.ErrorCode) > 64 {
 			return fmt.Errorf("stageFailures.%s is not canonical secret-safe evidence", stage)
 		}
+		if err := serverstore.ValidateFailureLineage(failure); err != nil {
+			return fmt.Errorf("stageFailures.%s has invalid lineage: %w", stage, err)
+		}
 		hasSummary := failure.ErrorSummary != ""
 		switch failure.EvidenceQuality {
 		case domain.EvidenceComplete:
@@ -133,6 +136,9 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 		}
 		if failure.EvidenceQuality != domain.EvidenceMissing {
 			want := domain.FailureFingerprint(domain.Stage(strings.ToUpper(stage)), term, failure.ErrorCode, failure.ErrorSummary)
+			if failure.ActualToolchain != "" {
+				want = domain.ClassifiedFailureFingerprint(domain.Stage(strings.ToUpper(stage)), failure.ActualToolchain, term, failure.ErrorCode, failure.ErrorSummary)
+			}
 			if failure.Fingerprint != want {
 				return fmt.Errorf("stageFailures.%s fingerprint does not match its evidence", stage)
 			}
