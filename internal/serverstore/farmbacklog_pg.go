@@ -36,6 +36,15 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 			   ) d)`).Scan(&backlog.CoverageHoles, &backlog.Dependencies); err != nil {
 			return err
 		}
+		// The same absence at the grain a reader sees it: symbol × version
+		// cells rather than releases. Counted from the stored snapshots the
+		// package pages render, so the panel and the page cannot disagree
+		// about how many dashes there are.
+		census, err := matrixCells(ctx, c)
+		if err != nil {
+			return err
+		}
+		backlog.Matrix = census
 		// Generation: what the scheduler actually handed out in the window,
 		// by queue source. Read from claimed_at rather than from a counter,
 		// so a restart does not reset it.
