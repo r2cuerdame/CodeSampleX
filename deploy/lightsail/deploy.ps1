@@ -252,7 +252,7 @@ Write-Output "previous production image: $($productionStateParts[1])"
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
-docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
+values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
   COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0),
@@ -261,11 +261,37 @@ SELECT
     WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
        OR COALESCE(error_fp,'') = ''),
   COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='PASS'),0),
-  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0)
-FROM evidence_agg"
+  COALESCE(SUM(observation_count) FILTER (WHERE purl='pkg:golang/github.com/jackc/pgx/v5@v5.10.0' AND symbol='ParseConfig' AND result='FAIL'),0),
+  (SELECT count(*) FROM failure_clusters fc
+    WHERE (COALESCE(fc.evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+           OR COALESCE(fc.error_fp,'') = '')
+      AND (fc.observation_count <= 0
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')
+                OR jsonb_typeof(item.value) <> 'number'
+                OR CASE WHEN jsonb_typeof(item.value) = 'number'
+                        THEN (item.value::text)::numeric < 0 ELSE false END)
+           OR fc.observation_count::numeric <> COALESCE((
+             SELECT SUM((item.value::text)::numeric)
+             FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
+             WHERE jsonb_typeof(item.value) = 'number'), 0)))
+FROM evidence_agg")
+server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
+builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
+builder_fresh=0
+if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
+  builder_fresh=1
+fi
+printf '%s|%s\n' "$values" "$builder_fresh"
 '@
-$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
-if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed pre-deploy invariants" }
+$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
+if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed pre-deploy invariants" }
+$beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
+if ($beforeValues[6] -ne 0) { throw "pre-deploy failure-cluster ledger is internally inconsistent" }
 Write-Output "deployment invariants before: $invariantsBefore"
 
 $assertNoLegacyAccessLogs = @'
@@ -980,20 +1006,33 @@ if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
-$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
-$beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
-$afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-for ($i = 0; $i -lt $beforeValues.Count; $i++) {
+$invariantsAfter = ""
+$afterValues = @()
+for ($attempt = 1; $attempt -le 90; $attempt++) {
+    $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
+    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
+    $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+    if ($afterValues[7] -eq 1) { break }
+    if ($attempt -lt 90) { Start-Sleep -Seconds 2 }
+}
+if ($afterValues[7] -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+$sourceInvariantIndexes = @(0, 1, 2, 4, 5)
+foreach ($i in $sourceInvariantIndexes) {
     if ($afterValues[$i] -lt $beforeValues[$i]) {
-        throw "a production PASS/FAIL/sample/failure-cluster invariant decreased"
+        throw "a production PASS/FAIL/sample source invariant decreased"
     }
 }
+if ($afterValues[1] -gt 0 -and $afterValues[3] -le 0) {
+    throw "failure-cluster materialization disappeared while FAIL evidence remains"
+}
+if ($afterValues[6] -ne 0) { throw "post-deploy failure-cluster ledger is internally inconsistent" }
+$failureClusterObservationDelta = $afterValues[3] - $beforeValues[3]
 Write-Output "deployed SHA: $($liveIdentityParts[0])"
 Write-Output "served /version SHA: $($liveIdentityParts[4])"
 Write-Output "image digest: $($liveIdentityParts[1])"
 Write-Output "migration version: $($liveIdentityParts[3])"
 Write-Output "deployment invariants after: $invariantsAfter"
+Write-Output "failure-cluster observation delta: $failureClusterObservationDelta"
 
 $failureEvidenceBalance = (Invoke-RemoteScript @'
 set -eu

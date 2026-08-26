@@ -2,6 +2,7 @@ package lightsail
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -31,6 +32,132 @@ func TestDeployLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T) {
 		if strings.Contains(script, normalizeSQL(`(SELECT COALESCE(SUM(observation_count),0) FROM failure_clusters)`)) {
 			t.Errorf("%s still sums every historical and current failure-cluster row", name)
 		}
+	}
+}
+
+// failure_clusters is a rebuildable materialization. A full builder pass can
+// regroup the same source FAIL evidence and legitimately reduce its summed
+// observation count (production did exactly that: 20098 -> 20096). The deploy
+// must still reject source loss, an empty materialization, or a cluster whose
+// quality breakdown no longer adds up to its observation count.
+func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	collector := readDeployFixture(t, "collect-production-evidence.sh")
+
+	for _, required := range []string{
+		`$sourceInvariantIndexes = @(0, 1, 2, 4, 5)`,
+		`foreach ($i in $sourceInvariantIndexes)`,
+		`$afterValues[1] -gt 0 -and $afterValues[3] -le 0`,
+		`$beforeValues[6] -ne 0`,
+		`$afterValues[6] -ne 0`,
+		`$afterValues[7] -eq 1`,
+		`the new server did not complete a fresh full builder pass`,
+		`failure-cluster observation delta: $failureClusterObservationDelta`,
+		`failure-cluster ledger is internally inconsistent`,
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("deploy does not enforce the split source/derived invariant: missing %q", required)
+		}
+	}
+	if strings.Contains(deploy, `for ($i = 0; $i -lt $beforeValues.Count; $i++)`) {
+		t.Error("deploy still applies monotonicity to the rebuildable failure-cluster total")
+	}
+	if strings.Contains(deploy, `PASS/FAIL/sample/failure-cluster invariant decreased`) {
+		t.Error("deploy still reports the derived failure-cluster total as a monotonic source invariant")
+	}
+
+	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
+		for _, required := range []string{
+			`jsonb_each(fc.evidence_breakdown)`,
+			`item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')`,
+			`fc.observation_count::numeric <> COALESCE`,
+		} {
+			if !strings.Contains(script, required) {
+				t.Errorf("%s does not fail closed on an inconsistent cluster row: missing %q", name, required)
+			}
+		}
+	}
+	if !strings.Contains(collector, `'unbalancedFailureClusterRows'`) {
+		t.Error("production evidence does not record the derived-ledger consistency result")
+	}
+	for _, required := range []string{
+		`server_started_at=$(docker inspect codesamplex-server-1`,
+		`builder_generated_at=$(docker compose exec -T db psql`,
+		`builder_fresh=true`,
+		`printf 'builder_fresh=%s\n' "$builder_fresh"`,
+	} {
+		if !strings.Contains(collector, required) {
+			t.Errorf("production evidence does not prove a fresh full builder pass: missing %q", required)
+		}
+	}
+
+	wrapper := readDeployFixture(t, "deploy-production.ps1")
+	for _, required := range []string{
+		`'server_started_at','builder_generated_at','builder_fresh'`,
+		`$after.builder_fresh -ne "true"`,
+		`$evidence.failureClusterObservationDelta = [int64]$after.invariants.failureClusterObservations - [int64]$before.invariants.failureClusterObservations`,
+	} {
+		if !strings.Contains(wrapper, required) {
+			t.Errorf("production artifact omits the builder/derived delta proof: missing %q", required)
+		}
+	}
+}
+
+func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
+	script := readDeployFixture(t, "deploy.ps1")
+	const marker = `$sourceInvariantIndexes = @(`
+	start := strings.Index(script, marker)
+	if start < 0 {
+		t.Fatal("source invariant index declaration is missing")
+	}
+	start += len(marker)
+	end := strings.Index(script[start:], ")")
+	if end < 0 {
+		t.Fatal("source invariant index declaration is malformed")
+	}
+	var sourceIndexes []int
+	for _, raw := range strings.Split(script[start:start+end], ",") {
+		index, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			t.Fatalf("source invariant index %q is not numeric: %v", raw, err)
+		}
+		sourceIndexes = append(sourceIndexes, index)
+	}
+
+	allows := func(before, after []int64) bool {
+		if len(before) != 8 || len(after) != 8 || before[6] != 0 || after[6] != 0 || after[7] != 1 {
+			return false
+		}
+		for _, index := range sourceIndexes {
+			if after[index] < before[index] {
+				return false
+			}
+		}
+		return after[1] == 0 || after[3] > 0
+	}
+
+	liveBefore := []int64{167173, 19262, 108, 20098, 0, 0, 0, 1}
+	liveAfter := []int64{167173, 19262, 108, 20096, 0, 0, 0, 1}
+	if !allows(liveBefore, liveAfter) {
+		t.Error("the exact production reconciliation 20098 -> 20096 is still rejected")
+	}
+
+	for _, tc := range []struct {
+		name  string
+		after []int64
+	}{
+		{"raw FAIL loss", []int64{167173, 19261, 108, 20096, 0, 0, 0, 1}},
+		{"published sample loss", []int64{167173, 19262, 107, 20096, 0, 0, 0, 1}},
+		{"derived ledger disappeared", []int64{167173, 19262, 108, 0, 0, 0, 0, 1}},
+		{"derived ledger unbalanced", []int64{167173, 19262, 108, 20096, 0, 0, 1, 1}},
+		{"builder not fresh", []int64{167173, 19262, 108, 20096, 0, 0, 0, 0}},
+		{"malformed legacy tuple", []int64{167173, 19262, 108, 20096, 0, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if allows(liveBefore, tc.after) {
+				t.Error("unsafe deployment transition was accepted")
+			}
+		})
 	}
 }
 
