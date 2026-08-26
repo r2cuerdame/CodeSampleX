@@ -983,7 +983,204 @@ as UTF-8 **without a BOM** (the launcher rejects one as
 since a descriptor with `sequence: 0` or a non-hex digest fails validation and
 takes the whole file down with it.
 
-Defender's verdict is a false positive on an unsigned Go binary and is the
-trigger behind every occurrence so far; an install-root exclusion or Authenticode
-signing of the payload is the fix for the cause, and is tracked separately from
-the launcher's own resilience.
+Defender's verdict is the trigger behind every occurrence so far. The launcher
+surviving it and the release causing it are separate problems; the next section
+owns the second one.
+
+Recovery is not silent any more, and that matters because recovery *works*. The
+command that triggered it exits 0, the pointer is repaired, and from the next
+run on nothing says a released payload was destroyed on this machine. So the
+launcher also writes `launcher-recovery.json` into the install root, and
+`csx update status` reads it back:
+
+```
+payload recovery: payload v0.1.44 was unusable (payload-missing); ran
+last-known-good v0.1.22 instead; seen 3 times since 2026-08-24 08:07:14
+payload recovery last seen: 2026-08-26 08:26:05
+```
+
+The record keeps the latest incident rather than a log — an editor can invoke
+the launcher hundreds of times a day — and a *different* failed version starts
+a new incident instead of extending the old count. `observations` is a floor:
+several csx processes can start at once and the last write wins. When the
+pointer could not be repaired the line says `the active pointer was NOT
+repaired` and why, because an install that recovers on every single run is a
+different fault from one that recovered once and healed.
+
+## Defender and the Windows release payload
+
+Microsoft Defender has quarantined this project's Windows payload repeatedly on
+its own workstation. What follows is what was measured on 2026-08-26, not what
+the shape of the problem suggested — the two turned out to disagree.
+
+### Two different false positives wearing the same threat name
+
+Both report as `Trojan:Win32/Bearfoos.A!ml` (ThreatID 2147731250; v0.1.39 drew
+`Bearfoos.B!ml`, 2147731849). They are unrelated.
+
+**The released payload.** `%LOCALAPPDATA%\csx\payloads\<version>\csx-payload.exe`
+was quarantined on 2026-08-24 (v0.1.44), 2026-08-25 (v0.1.44, v0.1.43, v0.1.41,
+v0.1.39) and 2026-08-26 (v0.1.44, v0.1.37). Every one of those came from
+real-time protection, `Detection Type: fast path`, with
+`%LOCALAPPDATA%\csx\csx.exe` — the stable launcher starting the payload — as the
+acting process. The staged `.csx-update-*.exe` downloads were caught the same
+way.
+
+**The repository's own test fixture.** Until 2026-08-26 the Windows launcher
+fixtures wrote a file whose entire content was the eleven ASCII bytes
+`old-payload`. Defender classifies exactly those eleven bytes as
+`Trojan:Win32/Bearfoos.A!ml`. No PE header, no code, eleven characters of
+lowercase text — and `old-payloa` is clean, `old-payload2` is clean, so nothing
+about the string predicted it.
+
+That second one had two costs. On any Windows machine with real-time protection
+on, `go test ./internal/update` failed six tests at once with
+
+```
+open ...\payloads\v1.0.0\csx-payload.exe: Operation did not complete
+successfully because the file contains a virus or potentially unwanted
+software.
+```
+
+which reads as an updater bug and is not one. GitHub's `windows-latest` runner
+did not reproduce it — v0.1.45's `windows-test` job passed on the same fixture
+— so the pipeline stayed green while every developer machine with real-time
+protection on could not run the suite at all. And every such run filed its own
+`csx-payload.exe` quarantine record into the machine's Defender history — the
+same history this project reads as evidence about released payloads. The test
+suite was contaminating the measurement it feeds.
+
+The fixture bodies are now named constants in
+`internal/update/defenderfixture_windows_test.go`, and
+`TestWindowsFixtureBodiesAreNotDefenderFalsePositives` asks Defender about them
+directly. If Microsoft's classifier ever objects to the new ones, that test
+says so in one line instead of six tests failing for a reason that names the
+wrong component. Note where it runs: `ci.yml` is ubuntu-only, so this guard
+executes in the release workflow's `windows-test` job and on Windows
+developer machines, not on pull-request CI.
+
+### What a scan can and cannot tell you
+
+`internal/defender` and `scripts/defender-release-check.ps1` both drive
+`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`. Three facts
+about that instrument, all measured:
+
+- **It is real.** It flags the eleven-byte fixture with the same threat name
+  real-time protection used, so it is not a weaker engine.
+- **It never remediates.** `-DisableRemediation` leaves the file in place; a
+  measurement that destroys its subject is not a measurement. Real-time
+  protection may still act on the file afterwards, independently.
+- **Its verdict is dated, not permanent.** v0.1.39's payload was quarantined as
+  `Bearfoos.B!ml` on 2026-08-25 and scanned **clean** with the same engine on
+  2026-08-26, at security intelligence 1.457.332.0. The bytes did not move; the
+  definitions did. So a verdict is only meaningful with the definition version
+  beside it, and both the Go API and the script carry it.
+
+And one limit that decides the shape of the release gate: **a clean pre-release
+scan does not predict the post-install outcome.** The exact published v0.1.45
+`csx-windows-amd64.exe` and `csx-launcher-windows-amd64.exe`, checksum-verified
+against the release's own `SHA256SUMS.txt`, scan clean — while payloads from
+four earlier releases were being quarantined on the same machine in the same
+week. A static scan of the artifact is worth running because it catches a build
+that is *already* flagged. It cannot promise the build stays unflagged, because
+the detections happen at execution and the classifier moves underneath.
+
+```powershell
+# the pre-release half: does Defender object to what we are about to ship?
+powershell -NoProfile -File scripts/defender-release-check.ps1 -Tag v0.1.46
+
+# the post-install half: did any install have to recover from a lost payload?
+csx update status
+```
+
+Exit codes: 0 clean, 1 flagged, 2 *unmeasured* — no Defender, no scanner, a
+failed download or a checksum mismatch. Unmeasured is never reported as clean.
+
+To read the machine's own history directly:
+
+```powershell
+Get-MpThreatDetection | Sort-Object InitialDetectionTime |
+  Select-Object -Last 25 InitialDetectionTime, ThreatID, ThreatStatusID,
+    @{n='Res';e={ $_.Resources -join ' | ' }} | Format-List
+
+# with the acting process and detection source, which Get-MpThreatDetection omits
+Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' |
+  Where-Object { $_.Id -in 1116,1117 } | Select-Object -First 5 | Format-List
+```
+
+### Updater manifest signing is not Authenticode, and neither substitutes
+
+These get conflated because both are called "signing", and the release pipeline
+does one of them thoroughly.
+
+`csx-update-stable.json` is signed with an Ed25519 key held only in the
+`codesamplex-release-signing` environment, and the public half is pinned in
+`.github/updater-public-key.b64` and stamped into every client binary at
+compile time. Three values must agree before anything is signed (see the header
+comment in `.github/workflows/release.yml`). That protects **what an installed
+csx will accept as an update**: an attacker who replaces a release asset cannot
+mint a signature, and the updater refuses the asset.
+
+Windows Authenticode is a different claim to a different verifier. It is what
+Defender, SmartScreen and enterprise policy look for, and CodeSampleX ships
+**none of it** — every Windows binary in every release is unsigned. Nothing in
+the updater trust root is visible to Defender, and no amount of hardening there
+changes a single Defender verdict. Conversely an Authenticode certificate would
+say nothing about which updates the client accepts.
+
+So: the updater signing story is complete and the code-signing story has not
+started. Reporting the first as if it covered the second is the specific
+mistake this section exists to prevent.
+
+### The mitigation ladder, and who may decide each rung
+
+| Mitigation | Cost | Automatable | Key exposure | Release UX | Decision |
+| --- | --- | --- | --- | --- | --- |
+| Stop the fixture false positive | none | done | none | none | engineering — **done** |
+| Measure the artifact before release | none | yes | none | one more check | engineering — **done** |
+| Record and surface post-install recovery | none | yes | none | `csx update status` line | engineering — **done** |
+| Report the false positive to Microsoft | free, days to weeks, per-build | no — the portal is interactive | none | fixes one build, not the next | **human gate: sends a public artifact to a third party** |
+| Authenticode certificate (OV) | annual fee, organisation identity verification | signing yes, obtaining no | a new signing key in CI, next to the updater seed | reputation builds over releases; does not start clean | **human gate: purchase + organisation identity** |
+| Authenticode certificate (EV) | higher fee, hardware token or cloud HSM | token models cannot be automated at all | HSM or token custody | immediate SmartScreen reputation | **human gate: purchase, custody, and it can break unattended release** |
+| Build-characteristic tuning (version resource, unstripped binaries) | none | yes | none | larger binaries | **not done — see below** |
+| Defender exclusion on the install root | none | technically yes | none | none | **refused: never added to a user's machine** |
+
+Two rows deserve their reasoning written down.
+
+**Build-characteristic tuning was not implemented, deliberately.** The obvious
+theory was that Defender objects to what a Go release binary looks like —
+unsigned, `-s -w` stripped, no `VERSIONINFO` resource, self-updating, running
+from `%LOCALAPPDATA%`. Adding a version resource and dropping `-s -w` are free
+and would be easy to ship. They were not shipped because the eleven-byte
+fixture demolishes the theory: a file with no PE header at all draws the same
+threat name, so "what the binary looks like" is not what is being scored, and
+nothing available here can measure whether either change helps. Shipping an
+unmeasurable change and calling it a mitigation is the one thing this project
+does not do. If a future release is flagged by
+`scripts/defender-release-check.ps1`, that build is a testable subject and the
+theory becomes checkable against it.
+
+**An install-root exclusion is refused outright.** It would work, and it would
+mean shipping software that turns off a user's virus protection for its own
+directory. `csx` will not do that on a machine it does not own. An operator may
+of course choose it for their own workstation; that is their decision and it is
+not the product's to make.
+
+### When it happens after a release
+
+1. `csx update status` names the failed version, the reason code, how many
+   times it has recurred and whether the pointer was repaired. The launcher's
+   stderr line says the same thing once, at the moment it happens.
+2. `scripts/defender-release-check.ps1 -Tag <the failed version>` against the
+   published artifact, which separates "this build is flagged" from "this
+   machine flagged it once".
+3. The Defender queries above for the acting process and the definition
+   version. A detection whose acting process is a `go-build` temp binary is the
+   test suite, not the release.
+4. Report the result on the release issue with the definition version attached.
+   Reporting the sample to Microsoft, and anything involving a certificate, are
+   human gates from the table above — do not take them unilaterally.
+
+Do not disable Defender, do not add an exclusion, and do not treat a green
+release pipeline as evidence that Windows users can run the artifact: the
+pipeline never executed the payload on a machine with real-time protection on.

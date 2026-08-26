@@ -579,6 +579,7 @@ machine because `--no-daemon` intentionally leaves only the contributor worker.
 | `%LOCALAPPDATA%\csx\csx.exe` | Windows stable launcher |
 | `%LOCALAPPDATA%\csx\payloads\vMAJOR.MINOR.PATCH\csx-payload.exe` | immutable Windows payload selected by `active.json` |
 | `%LOCALAPPDATA%\csx\active.json` | atomic Windows current/previous/rollback-hold descriptors |
+| `%LOCALAPPDATA%\csx\launcher-recovery.json` | written only if the launcher ever had to fall back to a last-known-good payload; `csx update status` reports it |
 | `~/.csx/` (or `$CSX_HOME`) | config.json, identity.json, csx.db, cas/, samples/, logs/ |
 | agent config files listed in step 2 | MCP entry + usage rule, marker-fenced |
 

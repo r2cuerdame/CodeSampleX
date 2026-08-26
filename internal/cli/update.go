@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/launcher"
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
@@ -90,6 +91,38 @@ func init() {
 	})
 }
 
+// reportLauncherRecovery surfaces the one thing a healthy-looking Windows
+// install will not otherwise tell anybody: that the launcher had to fall back
+// to a last-known-good payload because the current one was destroyed after it
+// was verified.
+//
+// The recovery is designed to succeed, so the command that triggered it exits
+// 0 and the pointer is repaired; from the next run on, nothing anywhere says a
+// released payload was lost. Every occurrence on this project's own Windows
+// workstation so far was Microsoft Defender quarantining `csx-payload.exe` as
+// a false positive, which is a release-quality fact, not a launcher fact.
+//
+// It writes to stdout because `csx update status` is a report a person asked
+// for, and it stays silent when there is nothing to report — including on
+// every non-launcher install, which has no such record and never will.
+func reportLauncherRecovery(home, exe string) {
+	in, err := csxupdate.ResolveInstall(home, exe)
+	if err != nil || in.Kind != "launcher" || in.InstallRoot == "" {
+		return
+	}
+	rec, ok, err := launcher.ReadRecoveryRecord(in.InstallRoot)
+	if err != nil {
+		// A record that cannot be read is still evidence that one exists.
+		fmt.Fprintf(os.Stderr, "csx update: payload recovery record is unreadable: %v\n", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	fmt.Printf("payload recovery: %s\n", rec.Summary())
+	fmt.Printf("payload recovery last seen: %s\n", rec.LastObservedAt.Local().Format("2006-01-02 15:04:05"))
+}
+
 func updateMain(ctx context.Context, args []string) int {
 	sub := "apply"
 	if len(args) > 0 {
@@ -158,6 +191,7 @@ func updateMain(ctx context.Context, args []string) int {
 		if st.LastError != "" {
 			fmt.Printf("last error: %s\n", st.LastError)
 		}
+		reportLauncherRecovery(home, exe)
 		return 0
 	case "rollback":
 		path, err := csxupdate.Rollback(home, exe)

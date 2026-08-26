@@ -83,7 +83,7 @@ func TestUpdaterAndLauncherSerializeAfterStaleInstallLockTakeover(t *testing.T) 
 
 func launcherClientFixture(t *testing.T) (*Client, string, string, string) {
 	t.Helper()
-	c, _, _ := clientFixture(t, []byte("new-payload"), 7)
+	c, _, _ := clientFixture(t, []byte(fixtureStagedPayload), 7)
 	home, local := t.TempDir(), t.TempDir()
 	root := filepath.Join(local, "csx")
 	t.Setenv("LOCALAPPDATA", local)
@@ -94,16 +94,16 @@ func launcherClientFixture(t *testing.T) (*Client, string, string, string) {
 	if err := os.MkdirAll(filepath.Dir(oldPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(oldPath, []byte("old-payload"), 0o700); err != nil {
+	if err := os.WriteFile(oldPath, []byte(fixtureInstalledPayload), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte("old-payload"))
+	sum := sha256.Sum256([]byte(fixtureInstalledPayload))
 	old := launcher.Descriptor{Version: "v1.0.0", SHA256: hex.EncodeToString(sum[:]), Sequence: 6}
 	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: old}); err != nil {
 		t.Fatal(err)
 	}
 	stable := filepath.Join(root, "csx.exe")
-	if err := os.WriteFile(stable, []byte("launcher"), 0o700); err != nil {
+	if err := os.WriteFile(stable, []byte(fixtureStableLauncher), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CSX_LAUNCHER_ROOT", root)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
 )
@@ -26,7 +27,7 @@ func main() {
 	if err != nil {
 		fail(launcher.Reason(err), err)
 	}
-	reportRecovery(res)
+	reportRecovery(root, res)
 	code, err := runResolution(res, self, root)
 	if err != nil {
 		var startFailure *childStartError
@@ -38,7 +39,7 @@ func main() {
 			if err != nil {
 				fail(launcher.Reason(err), err)
 			}
-			reportRecovery(res)
+			reportRecovery(root, res)
 			code, err = runResolution(res, self, root)
 		}
 	}
@@ -55,7 +56,7 @@ func runResolution(res launcher.Resolution, self, root string) (int, error) {
 	return runChild(cmd)
 }
 
-func reportRecovery(res launcher.Resolution) {
+func reportRecovery(root string, res launcher.Resolution) {
 	if !res.Recovered {
 		return
 	}
@@ -66,6 +67,15 @@ func reportRecovery(res launcher.Resolution) {
 		res.FailedReason, res.FailedVersion, res.Descriptor.Version)
 	if !res.Healed {
 		fmt.Fprintf(os.Stderr, "csx launcher: active pointer was not repaired: %v\n", res.HealError)
+	}
+	// That line is the only trace a recovery leaves, it goes to a log nobody
+	// reads, and once the pointer is repaired no later run repeats it -- so the
+	// install looks healthy again and a released payload that was destroyed on
+	// this machine becomes invisible. The record survives instead, and
+	// `csx update status` reads it back. Failing to write it must not stop the
+	// command the user asked for: this path is already the damaged one.
+	if err := launcher.RecordRecovery(root, res, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "csx launcher: recovery evidence was not recorded: %v\n", err)
 	}
 }
 
