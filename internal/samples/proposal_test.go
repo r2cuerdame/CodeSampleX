@@ -222,6 +222,44 @@ func TestNewProposalWorkspaceIsSafeUnderConcurrency(t *testing.T) {
 	}
 }
 
+// An MCP client may retry before the first reply arrives. Those overlapping
+// calls are one proposal, not sixteen independent authoring jobs, so the
+// lookup and create must be serialized as one operation.
+func TestConcurrentIdenticalProposalsReuseOneWorkspace(t *testing.T) {
+	home := t.TempDir()
+	spec := proposalSpec("post a JSON body with axios")
+	const n = 16
+
+	var wg sync.WaitGroup
+	dirs := make([]string, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			dirs[i], errs[i] = NewProposalWorkspace(home, spec, domain.EnvironmentFingerprint{
+				OS: "windows", Arch: "amd64", Ecosystem: "npm",
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range dirs {
+		if errs[i] != nil {
+			t.Fatalf("call %d: %v", i, errs[i])
+		}
+		if dirs[i] != dirs[0] {
+			t.Errorf("call %d returned %s, want shared workspace %s", i, dirs[i], dirs[0])
+		}
+	}
+	if got := countWorkspaces(t, home); got != 1 {
+		t.Errorf("%d workspaces for concurrent identical proposals, want 1", got)
+	}
+}
+
 // Retry policy. An agent that calls the same proposal again — because the
 // first reply scrolled away, because a transport dropped — used to leave one
 // more directory behind every time.
@@ -266,6 +304,56 @@ func TestIdenticalProposalReusesTheUntouchedWorkspace(t *testing.T) {
 	}
 	if after == first {
 		t.Fatal("a proposal reused a workspace an agent had already written into")
+	}
+}
+
+// The sanitized spec intentionally excludes machine facts. Reusing on the
+// spec alone returned a manifest for the previous OS/runtime when the same
+// home was used after an environment change.
+func TestProposalReuseRequiresMatchingEnvironmentFingerprint(t *testing.T) {
+	home := t.TempDir()
+	spec := proposalSpec("post a JSON body with axios")
+	windows := domain.EnvironmentFingerprint{
+		OS: "windows", Arch: "amd64", Ecosystem: "npm", Runtime: "node", RuntimeVersion: "24.1",
+	}
+	linux := domain.EnvironmentFingerprint{
+		OS: "linux", Arch: "amd64", Ecosystem: "npm", Runtime: "node", RuntimeVersion: "24.1",
+		Libc: "glibc", LibcVersion: "2.39", Distro: "ubuntu",
+	}
+
+	first, err := NewProposalWorkspace(home, spec, windows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewProposalWorkspace(home, spec, linux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatal("proposal with a different environment reused the old workspace")
+	}
+	if got := countWorkspaces(t, home); got != 2 {
+		t.Fatalf("%d workspaces for two environments, want 2", got)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(second, proposalManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest domain.SampleManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Environment.OS != "linux" || manifest.Environment.Libc != "glibc" || manifest.Environment.Distro != "ubuntu" {
+		t.Errorf("reused manifest has the wrong environment: %+v", manifest.Environment)
+	}
+
+	again, err := NewProposalWorkspace(home, spec, linux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != second {
+		t.Errorf("identical environment created %s instead of reusing %s", again, second)
 	}
 }
 

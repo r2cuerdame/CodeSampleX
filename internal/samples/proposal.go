@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -28,6 +29,12 @@ const (
 // machine could not create the workspace" — two failures an agent must
 // react to differently, and which used to arrive as the same opaque string.
 var ErrScaffold = errors.New("clean-room scaffold")
+
+// proposalWorkspaceMu keeps the reuse lookup and workspace creation in one
+// critical section. MCP requests can overlap when a client retries before the
+// first response arrives; without this lock both calls can observe no reusable
+// workspace and promote different staging directories for the same proposal.
+var proposalWorkspaceMu sync.Mutex
 
 // proposalWorkPrefix names a finished workspace; proposalStagePrefix names
 // one still being written. The two prefixes are what makes creation atomic:
@@ -77,6 +84,9 @@ func NewProposalWorkspace(home string, spec SanitizedSpec, fp domain.Environment
 		return "", err
 	}
 
+	proposalWorkspaceMu.Lock()
+	defer proposalWorkspaceMu.Unlock()
+
 	base := WorkspaceBase(home)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return "", fmt.Errorf("samples: %w: %w", ErrScaffold, err)
@@ -85,7 +95,7 @@ func NewProposalWorkspace(home string, spec SanitizedSpec, fp domain.Environment
 	// Reclaiming the debris and reusing an identical proposal are the two
 	// halves of bounding growth; both read the same directory listing.
 	entries, _ := os.ReadDir(base)
-	if reused, ok := reusableWorkspace(base, entries, specJSON); ok {
+	if reused, ok := reusableWorkspace(base, entries, specJSON, manifestJSON); ok {
 		return reused, nil
 	}
 	sweepEmptyWorkspaces(base, entries)
@@ -234,7 +244,7 @@ func proposalScaffold(spec SanitizedSpec, fp domain.EnvironmentFingerprint) (spe
 // "Untouched" is deliberately strict: the moment any file beyond the
 // scaffold appears, the workspace belongs to whoever wrote it and a fresh
 // one is created instead.
-func reusableWorkspace(base string, entries []os.DirEntry, specJSON []byte) (string, bool) {
+func reusableWorkspace(base string, entries []os.DirEntry, specJSON, manifestJSON []byte) (string, bool) {
 	for _, e := range entries {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), proposalWorkPrefix) {
 			continue
@@ -257,6 +267,10 @@ func reusableWorkspace(base string, entries []os.DirEntry, specJSON []byte) (str
 		}
 		got, err := os.ReadFile(filepath.Join(dir, proposalSpecFile))
 		if err != nil || string(got) != string(specJSON) {
+			continue
+		}
+		got, err = os.ReadFile(filepath.Join(dir, proposalManifestFile))
+		if err != nil || string(got) != string(manifestJSON) {
 			continue
 		}
 		if VerifyProposalWorkspace(dir) != nil {
