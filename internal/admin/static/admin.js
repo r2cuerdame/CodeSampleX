@@ -440,6 +440,26 @@
           stat("첫 증명", `${num(b.firstProvenInWindow || 0)} · ${perHour(b.firstProvenInWindow || 0)}`),
           stat("배포 출처", byKind),
         );
+        // The same absence at canonical symbol × version grain. This is the
+        // unbounded PUBLIC corpus cross-product, not the package page's
+        // bounded browse window. Display caps must not erase older or later
+        // coordinates from the completeness denominator.
+        const m = b.matrixCells;
+        if (m) {
+          const share = m.cells ? ` (${Math.round((m.observed / m.cells) * 100)}%)` : "";
+          backlog.append(
+            stat("전체 코퍼스 관측 셀", `${num(m.observed || 0)} / ${num(m.cells || 0)}${share}`),
+            stat("PASS 샘플만 있고 미관측", num(m.verifiedNoObservation || 0)),
+            stat("전체 코퍼스 미측정 셀", num(m.unmeasured || 0)),
+            stat("두 상태 공존 패키지", num(m.packagesShowingBothDashes || 0),
+              (m.packagesShowingBothDashes || 0) > 0),
+          );
+        } else {
+          // Absent, not zero — the same rule the whole-backlog case above
+          // follows. Rendering 0 for a census this payload never carried
+          // would say "no dashes left" about a grid nobody counted.
+          backlog.append(stat("전체 코퍼스 셀", "읽지 못함", true));
+        }
       }
     }
 
