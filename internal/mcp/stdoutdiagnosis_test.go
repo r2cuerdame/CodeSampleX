@@ -78,10 +78,8 @@ func TestHelperSilentFailure(t *testing.T) {
 	os.Exit(3)
 }
 
-// A command that printed nothing has no error to sanitize, and a fingerprint
-// of nothing is not a stand-in for one. It is the same hash for every silent
-// failure on every machine, so it matches nothing, and returning it alone
-// hands the caller a line that reads like an error and says nothing.
+// A command that printed nothing still has structured process evidence. Its
+// fingerprint must include that exit coordinate and must not fabricate text.
 func TestASilentFailureReportsNoSanitizedError(t *testing.T) {
 	t.Setenv("CSX_TEST_SILENT_FAILURE", "1")
 	cfg := config.Default()
@@ -96,7 +94,11 @@ func TestASilentFailureReportsNoSanitizedError(t *testing.T) {
 	if exitCode != 3 || result != "FAIL" {
 		t.Fatalf("exitCode = %d, result = %q; want 3/FAIL", exitCode, result)
 	}
-	if len(sanitized) != 0 {
-		t.Errorf("a silent failure still produced a sanitized error: %q", sanitized)
+	joined := strings.Join(sanitized, "\n")
+	if !strings.Contains(joined, "termination: exit:3") || !strings.Contains(joined, "evidenceQuality: partial") {
+		t.Errorf("silent termination evidence = %q", sanitized)
+	}
+	if strings.Contains(joined, "errorCode:") {
+		t.Errorf("silent failure invented an error code: %q", sanitized)
 	}
 }

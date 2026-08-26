@@ -11,11 +11,14 @@ import (
 // renderPropose drives the real handler and returns its reply text.
 func renderPropose(t *testing.T) string {
 	t.Helper()
+	// The reply describes a workspace, so the test gives it one that
+	// exists. The tool verifies the scaffold before saying any of this.
+	workdir := scaffoldedWorkdir(t)
 	deps := emptyDeps()
 	deps.Propose = func(_ context.Context, goal string, pkgs, symbols []string) (samples.SanitizedSpec, string, string, error) {
 		spec := samples.BuildSpec(samples.ScanInputs{
 			Goal: goal, Kind: "HOW", Packages: pkgs, Symbols: symbols})
-		return spec, spec.PromptText(), `C:\fake\work\sample-1`, nil
+		return spec, spec.PromptText(), workdir, nil
 	}
 	c := startServer(t, deps)
 	res := callTool(t, c, "propose_public_sample", map[string]any{

@@ -21,11 +21,25 @@ func BuildClusters(ecosystem, packageName string,
 	regressions []RegressionCandidate, now time.Time) []serverstore.ClusterRow {
 
 	type ckey struct{ symbol, stage, fp string }
+	type variant struct {
+		env         domain.EnvironmentFingerprint
+		count       int64
+		first, last time.Time
+	}
 	type cluster struct {
-		count    int64
-		code     string
-		failEnvs []domain.EnvironmentFingerprint
-		versions map[string]bool
+		count       int64
+		code        string
+		termination string
+		exitCode    *int
+		signal      string
+		timeout     int64
+		summary     string
+		quality     domain.EvidenceQuality
+		breakdown   map[string]int64
+		failEnvs    []domain.EnvironmentFingerprint
+		variants    map[string]*variant
+		versions    map[string]bool
+		first, last time.Time
 	}
 	clusters := map[ckey]*cluster{}
 	// passEnvs per (symbol, stage): where the same operation succeeded —
@@ -43,20 +57,53 @@ func BuildClusters(ecosystem, packageName string,
 				passEnvs[pk] = append(passEnvs[pk], env)
 				continue
 			}
-			if row.ErrorFingerprint == "" {
-				continue // clusters key on the fingerprint
+			q := evidenceQuality(row)
+			clusterFingerprint := row.ErrorFingerprint
+			if q == domain.EvidenceMissing || q == domain.EvidenceLegacyIncomplete {
+				// Historical hashes and empty-error hashes are provenance, not
+				// failure identities. Collapse them into an explicit stage-level
+				// Evidence gap instead of rendering N fake fingerprints.
+				clusterFingerprint = ""
 			}
-			k := ckey{row.Symbol, row.Stage, row.ErrorFingerprint}
+			k := ckey{row.Symbol, row.Stage, clusterFingerprint}
 			c := clusters[k]
 			if c == nil {
-				c = &cluster{versions: map[string]bool{}}
+				c = &cluster{versions: map[string]bool{}, variants: map[string]*variant{}, breakdown: map[string]int64{}}
 				clusters[k] = c
 			}
 			c.count += row.ObservationCount
+			c.breakdown[string(q)] += row.ObservationCount
+			if c.quality == "" || q == domain.EvidenceLegacyIncomplete || (q == domain.EvidenceMissing && c.quality != domain.EvidenceLegacyIncomplete) {
+				c.quality = q
+			}
 			if c.code == "" {
 				c.code = row.ErrorCode
 			}
+			if c.termination == "" {
+				c.termination, c.exitCode, c.signal, c.timeout = row.TerminationKind, row.ExitCode, row.Signal, row.TimeoutMillis
+			}
+			if c.summary == "" {
+				c.summary = row.ErrorSummary
+			}
 			c.failEnvs = append(c.failEnvs, env)
+			v := c.variants[row.EnvHash]
+			if v == nil {
+				v = &variant{env: env, first: row.FirstSeen, last: row.LastSeen}
+				c.variants[row.EnvHash] = v
+			}
+			v.count += row.ObservationCount
+			if v.first.IsZero() || (!row.FirstSeen.IsZero() && row.FirstSeen.Before(v.first)) {
+				v.first = row.FirstSeen
+			}
+			if row.LastSeen.After(v.last) {
+				v.last = row.LastSeen
+			}
+			if c.first.IsZero() || (!row.FirstSeen.IsZero() && row.FirstSeen.Before(c.first)) {
+				c.first = row.FirstSeen
+			}
+			if row.LastSeen.After(c.last) {
+				c.last = row.LastSeen
+			}
 			c.versions[version] = true
 		}
 	}
@@ -106,7 +153,11 @@ func BuildClusters(ecosystem, packageName string,
 	out := make([]serverstore.ClusterRow, 0, len(keys))
 	for _, k := range keys {
 		c := clusters[k]
-		hyps := Hypotheses(c.code, c.failEnvs, passEnvs[[2]string{k.symbol, k.stage}])
+		hyps := []domain.FailureHypothesis{}
+		modernEvidence := c.quality == domain.EvidenceComplete || c.quality == domain.EvidencePartial
+		if k.fp != "" && modernEvidence {
+			hyps = Hypotheses(c.code, c.failEnvs, passEnvs[[2]string{k.symbol, k.stage}])
+		}
 		versions := make([]string, 0, len(c.versions))
 		for v := range c.versions {
 			versions = append(versions, v)
@@ -120,14 +171,47 @@ func BuildClusters(ecosystem, packageName string,
 			Stage:               k.stage,
 			ErrorFingerprint:    k.fp,
 			ErrorCode:           c.code,
+			TerminationKind:     c.termination,
+			ExitCode:            c.exitCode,
+			Signal:              c.signal,
+			TimeoutMillis:       c.timeout,
+			ErrorSummary:        c.summary,
+			EvidenceQuality:     string(c.quality),
 			ObservationCount:    c.count,
 			RegressionCandidate: isRegressed(k.symbol, k.stage, c.versions),
-			LastSeen:            now,
+			DiagnosticCandidate: !modernEvidence && c.count >= 2,
+			FirstSeen:           c.first,
+			LastSeen:            c.last,
+		}
+		if row.FirstSeen.IsZero() {
+			row.FirstSeen = now
+		}
+		if row.LastSeen.IsZero() {
+			row.LastSeen = now
 		}
 		if summary := envSummary(c.failEnvs); summary != nil {
 			row.EnvSummaryJSON = string(domain.MustCanonicalJSON(summary))
 		}
 		row.HypothesesJSON = string(domain.MustCanonicalJSON(hyps))
+		row.EvidenceBreakdownJSON = string(domain.MustCanonicalJSON(c.breakdown))
+		variants := make([]domain.FailureEnvironmentVariant, 0, len(c.variants))
+		for _, v := range c.variants {
+			item := domain.FailureEnvironmentVariant{Environment: v.env, Summary: envSummary([]domain.EnvironmentFingerprint{v.env}), Count: v.count}
+			if !v.first.IsZero() {
+				item.FirstSeen = v.first.UTC().Format(time.RFC3339)
+			}
+			if !v.last.IsZero() {
+				item.LastSeen = v.last.UTC().Format(time.RFC3339)
+			}
+			variants = append(variants, item)
+		}
+		sort.Slice(variants, func(i, j int) bool {
+			if variants[i].Count != variants[j].Count {
+				return variants[i].Count > variants[j].Count
+			}
+			return variants[i].Environment.Hash() < variants[j].Environment.Hash()
+		})
+		row.EnvVariantsJSON = string(domain.MustCanonicalJSON(variants))
 		if b, err := json.Marshal(versions); err == nil {
 			row.VersionsJSON = string(b)
 		}

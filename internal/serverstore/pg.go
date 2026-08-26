@@ -156,19 +156,32 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	var aggID int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO evidence_agg
-			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result, error_fp, error_code, direct)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result,
+			 error_fp, error_code, direct, termination_kind, exit_code, signal,
+			 timeout_millis, error_summary, evidence_quality)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 			last_seen = now(),
 			symbol_confidence = EXCLUDED.symbol_confidence,
 			error_code = CASE WHEN evidence_agg.error_code = ''
 				THEN EXCLUDED.error_code ELSE evidence_agg.error_code END,
+			termination_kind = CASE WHEN evidence_agg.termination_kind = ''
+				THEN EXCLUDED.termination_kind ELSE evidence_agg.termination_kind END,
+			exit_code = COALESCE(evidence_agg.exit_code, EXCLUDED.exit_code),
+			signal = CASE WHEN evidence_agg.signal = '' THEN EXCLUDED.signal ELSE evidence_agg.signal END,
+			timeout_millis = GREATEST(evidence_agg.timeout_millis, EXCLUDED.timeout_millis),
+			error_summary = CASE WHEN evidence_agg.error_summary = ''
+				THEN EXCLUDED.error_summary ELSE evidence_agg.error_summary END,
+			evidence_quality = CASE WHEN evidence_agg.evidence_quality IN ('', 'legacy-evidence-incomplete')
+				THEN EXCLUDED.evidence_quality ELSE evidence_agg.evidence_quality END,
 			-- Chosen wins and never unsays itself: one project resolving a
 			-- package transitively does not undo another that listed it.
 			direct = evidence_agg.direct OR EXCLUDED.direct
 		RETURNING id`,
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
 		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
+		string(b.TerminationKind), b.ExitCode, b.Signal, b.TimeoutMillis,
+		b.ErrorSummary, string(normalizedEvidenceQuality(b)),
 	).Scan(&aggID); err != nil {
 		return err
 	}
@@ -687,7 +700,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
-			       stage, result, error_fp, error_code, observation_count,
+			       stage, result, error_fp, error_code, termination_kind, exit_code,
+			       signal, timeout_millis, error_summary, evidence_quality, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
 			WHERE purl=$1 AND symbol = ANY($2)
@@ -701,6 +715,8 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 			var first, last *time.Time
 			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
 				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
+				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
+				&e.ErrorSummary, &e.EvidenceQuality,
 				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
 				&first, &last); err != nil {
 				return err
@@ -2037,6 +2053,8 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
+	envVariants := []byte("[]")
+	evidenceBreakdown := []byte("{}")
 	if cl.EnvSummaryJSON != "" {
 		envSummary = []byte(cl.EnvSummaryJSON)
 	}
@@ -2046,12 +2064,21 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	if cl.VersionsJSON != "" {
 		versions = []byte(cl.VersionsJSON)
 	}
+	if cl.EnvVariantsJSON != "" {
+		envVariants = []byte(cl.EnvVariantsJSON)
+	}
+	if cl.EvidenceBreakdownJSON != "" {
+		evidenceBreakdown = []byte(cl.EvidenceBreakdownJSON)
+	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
 				error_code, observation_count, env_summary, hypotheses,
-				regression_candidate, versions)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				regression_candidate, versions, termination_kind, exit_code, signal,
+				timeout_millis, error_summary, evidence_quality, env_variants,
+				evidence_breakdown, diagnostic_candidate, first_seen, last_seen)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+			       COALESCE($21, now()), COALESCE($22, now()))
 			ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
 				error_code = EXCLUDED.error_code,
 				observation_count = EXCLUDED.observation_count,
@@ -2059,15 +2086,46 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 				hypotheses = EXCLUDED.hypotheses,
 				regression_candidate = EXCLUDED.regression_candidate,
 				versions = EXCLUDED.versions,
-				last_seen = now()`,
+				termination_kind = EXCLUDED.termination_kind,
+				exit_code = EXCLUDED.exit_code,
+				signal = EXCLUDED.signal,
+				timeout_millis = EXCLUDED.timeout_millis,
+				error_summary = EXCLUDED.error_summary,
+				evidence_quality = EXCLUDED.evidence_quality,
+				env_variants = EXCLUDED.env_variants,
+				evidence_breakdown = EXCLUDED.evidence_breakdown,
+				diagnostic_candidate = EXCLUDED.diagnostic_candidate,
+				first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+				last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)`,
 			cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
 			cl.ErrorCode, cl.ObservationCount, envSummary, hypotheses,
-			cl.RegressionCandidate, versions)
+			cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
+			cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
+			envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
+			nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen))
 		return err
 	})
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+}
+
+// ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
+//
+// Exact failure matching is the one question those rows still answer. Every
+// released client fingerprints a failure as `v1|stage|code|template`, and
+// every one of the fingerprints this network has on file was written by such
+// a client. Serving only current clusters would hand exact-match search a
+// surface where nothing can ever match: the rebuilt evidence-gap rows carry
+// no fingerprint at all, and v2 fingerprints only start arriving once a
+// client that computes them is released. A fingerprint that was recorded is
+// a fingerprint a caller can still hit.
+func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, "")
+}
+
+func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
@@ -2076,9 +2134,14 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(error_code,''), COALESCE(observation_count,0),
 			       COALESCE(env_summary::text,''), COALESCE(hypotheses::text,''),
 			       COALESCE(regression_candidate,false), COALESCE(versions::text,''),
+			       COALESCE(termination_kind,''), exit_code, COALESCE(signal,''),
+			       COALESCE(timeout_millis,0), COALESCE(error_summary,''),
+			       COALESCE(evidence_quality,'legacy-evidence-incomplete'),
+			       COALESCE(env_variants::text,'[]'), COALESCE(evidence_breakdown::text,'{}'),
+			       COALESCE(diagnostic_candidate,false),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1
+			WHERE package_name=$1`+extraWhere+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err
@@ -2090,7 +2153,10 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
 				&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
 				&cl.EnvSummaryJSON, &cl.HypothesesJSON, &cl.RegressionCandidate,
-				&cl.VersionsJSON, &first, &last); err != nil {
+				&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
+				&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
+				&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
+				&first, &last); err != nil {
 				return err
 			}
 			if first != nil {
