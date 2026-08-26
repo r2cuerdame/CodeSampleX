@@ -95,10 +95,17 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	completeness, err := h.farmStats.FarmCompletenessNow(r.Context())
+	if err != nil {
+		http.Error(w, "완성도 집계를 불러오지 못했습니다", http.StatusServiceUnavailable)
+		return
+	}
+
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"workers":         views,
 		"health":          farmHealthView(health),
 		"backlog":         farmBacklogView(backlog),
+		"completeness":    farmCompletenessView(completeness),
 		"coverage":        farmCoverageView(coverage),
 		"instances":       instances,
 		"monthlyTotalUsd": total,
@@ -125,10 +132,49 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	return map[string]any{
 		"coverageHoles":       backlog.CoverageHoles,
 		"dependencies":        backlog.Dependencies,
+		"matrixCells":         farmMatrixCellsView(backlog.Matrix),
 		"windowSeconds":       int(farmWindow / time.Second),
 		"handedOutInWindow":   handedOut,
 		"handedOutByKind":     claimed,
 		"firstProvenInWindow": backlog.FirstProven,
+	}
+}
+
+// farmMatrixCellsView reports the unbounded PUBLIC symbol x version corpus.
+// It intentionally does not apply the package UI's browse-window caps: this
+// value is the canonical completeness denominator, not the current viewport.
+// The three evidence states remain separate because they require different
+// work, and failed or mixed contracts are in none of the passing-only buckets.
+func farmMatrixCellsView(cells serverstore.MatrixCells) map[string]any {
+	return map[string]any{
+		"cells":                     cells.Cells,
+		"observed":                  cells.Observed,
+		"verifiedNoObservation":     cells.VerifiedNoObservation,
+		"unmeasured":                cells.Unmeasured,
+		"packagesShowingBothDashes": cells.PackagesShowingBothDashes,
+	}
+}
+
+// farmCompletenessView reports the corpus by three-axis completeness.
+//
+// All eight cells, always, including the ones at zero: a cell that appears
+// only once it has a value is a cell nobody notices arriving, and two of these
+// are zero for a structural reason rather than because the work is done.
+//
+// The dependency axis is split three ways beside the matrix because "this
+// release pulls nothing" and "nobody has resolved this release" are different
+// answers and only the first is a fact. A consumer that folded them would
+// print "no dependencies" for silence.
+func farmCompletenessView(c serverstore.FarmCompleteness) map[string]any {
+	states := make(map[string]int, len(c.States))
+	for state, n := range c.States {
+		states[clampAdminLabel(state)] = n
+	}
+	return map[string]any{
+		"states":               states,
+		"dependencyGraph":      c.DependencyGraph,
+		"dependencyProvenNone": c.DependencyProvenNone,
+		"dependencyUnknown":    c.DependencyUnknown,
 	}
 }
 

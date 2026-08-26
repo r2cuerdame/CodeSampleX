@@ -17,6 +17,7 @@ type ReceiptInfo struct {
 	Env               domain.EnvironmentFingerprint
 	ContractResult    string // PASS | FAIL | SKIPPED | ""
 	Stages            map[string]string
+	StageFailures     map[string]domain.FailureEvidence
 	ResolvedPackages  []domain.PURL
 	VerifierAdapter   string
 	SandboxCapability domain.SandboxCapability
@@ -43,6 +44,7 @@ func ParseReceiptRow(r serverstore.ReceiptRow) (ReceiptInfo, bool) {
 		Env:               rec.Environment.Normalize(),
 		ContractResult:    contractResult,
 		Stages:            rec.Stages,
+		StageFailures:     rec.StageFailures,
 		ResolvedPackages:  resolvedPURLsFromReceipt(rec),
 		VerifierAdapter:   rec.VerifierAdapter,
 		SandboxCapability: rec.SandboxCapability,
@@ -73,10 +75,15 @@ func resolvedPURLsFromReceipt(rec domain.VerificationReceipt) []domain.PURL {
 
 // StageCount is the pass/fail tally of one stage.
 type StageCount struct {
-	Pass int64 `json:"pass"`
-	Fail int64 `json:"fail"`
-	// FailAttributed is the subset of Fail whose sanitizer produced an error
-	// code — the failures anyone could name a cause for.
+	Pass                 int64 `json:"pass"`
+	Fail                 int64 `json:"fail"`
+	FailComplete         int64 `json:"failComplete,omitempty"`
+	FailPartial          int64 `json:"failPartial,omitempty"`
+	FailMissing          int64 `json:"failMissing,omitempty"`
+	FailLegacyIncomplete int64 `json:"failLegacyIncomplete,omitempty"`
+	// FailAttributed is the subset of Fail carrying a modern normalized
+	// fingerprint (complete or partial evidence). The historical JSON name is
+	// retained for compatibility; the public label names fingerprint coverage.
 	//
 	// An observation failure with no code says a build containing this
 	// package broke, and nothing about which package broke it. One tsc
@@ -87,6 +94,16 @@ type StageCount struct {
 	// a reader to tell a package that breaks from a package that was merely
 	// installed when something else broke.
 	FailAttributed int64 `json:"failAttributed,omitempty"`
+}
+
+func evidenceQuality(row serverstore.EvidenceRow) domain.EvidenceQuality {
+	if row.Result != string(domain.ResultFail) {
+		return ""
+	}
+	if q := domain.EvidenceQuality(row.EvidenceQuality); q != "" {
+		return q
+	}
+	return domain.EvidenceLegacyIncomplete
 }
 
 // parseEnv decodes an evidence row's env JSON. A row with unparsable env is
@@ -118,7 +135,8 @@ func bucketOf(env domain.EnvironmentFingerprint) (bucketKey, domain.EnvironmentF
 func isObservationStage(stage string) bool {
 	switch domain.Stage(stage) {
 	case domain.StageUsed, domain.StageProjectTypecheck, domain.StageProjectCompile,
-		domain.StageProjectTest, domain.StageProjectLoad, domain.StageProjectProcess:
+		domain.StageProjectResolve, domain.StageProjectTest, domain.StageProjectLoad, domain.StageProjectProcess,
+		domain.StageProcessStart, domain.StageUnknown:
 		return true
 	}
 	return false

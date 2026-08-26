@@ -116,7 +116,7 @@ csx sync                           # warm the shard cache — once, right after 
 샘플은 스니펫이 아닙니다. 정규 아티팩트의 `sha256:<hex>`로 콘텐츠 주소가 부여된 최소 프로젝트이며, **계약** — 고정된 컨테이너에서 오프라인으로 실행되어 통과한 단언(assertion)들 — 을 갖습니다. 태그가 아니라 이미지 digest로 고정합니다 — 태그는 읽는 사람을 위한 별칭이고, 실제로 실행되는 것은 digest입니다 — 그리고 서명된 receipt가 실행된 이미지 참조를 그대로 기록하므로, 말을 믿는 대신 누구든 같은 바이트를 다시 실행해 볼 수 있습니다([docs/adapters.md](../adapters.md#verifier-images)). 클린룸 작성 루프는 CLI 전용입니다:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse

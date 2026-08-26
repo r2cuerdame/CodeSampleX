@@ -104,7 +104,7 @@ csx sync                           # warm the shard cache — once, right after 
 Образец — это не сниппет. Это минимальный контентно-адресуемый проект (`sha256:<hex>` его канонического артефакта) с **контрактом**: набором утверждений, которые были выполнены офлайн в закреплённом контейнере и прошли. Закреплён по digest образа, а не по тегу — тег это псевдоним для читателя, а выполняется именно digest — и подписанная квитанция называет точную ссылку на образ, так что любой может заново запустить те же самые байты, а не верить на слово ([docs/adapters.md](../adapters.md#verifier-images)). Цикл создания образцов в «чистой комнате» доступен только через CLI:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse

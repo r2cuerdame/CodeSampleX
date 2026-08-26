@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
 )
@@ -35,6 +36,10 @@ type Deps struct {
 	Store serverstore.Store
 	Blobs blob.Store
 	Cfg   serverstore.ServerConfig
+	// Build is the identity of this server process, served by /version. It
+	// comes from stamps the deployment put on the artifact, so a rollback
+	// changes it back without anyone editing anything.
+	Build buildinfo.Info
 	// PublicnessChecker is an interface so the outbound-lookup behaviour is
 	// testable: this dependency is the one that reaches a third-party
 	// registry with a name the caller chose, and a test has to be able to
@@ -154,6 +159,13 @@ func NewMux(d Deps) *http.ServeMux {
 	// Deliberately unlimited: throttling it would take the deployment down
 	// on its own.
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
+	// Which build is answering. Unthrottled for the same reason as healthz
+	// and one more: it serves a fixed struct already in memory, so a
+	// limiter would cost more than the handler it guards. The deploy
+	// transaction reads this to prove the commit it shipped is the commit
+	// now serving requests -- a container environment variable only proves
+	// what was configured.
+	a.route(mux, "GET /version", a.handleVersion)
 	return mux
 }
 

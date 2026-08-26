@@ -21,7 +21,13 @@
     "result": {"enum": ["PASS", "FAIL"]},
     "observationCount": {"type": "integer", "minimum": 1},
     "errorFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "errorCode": {"type": "string", "maxLength": 64}
+    "errorCode": {"type": "string", "maxLength": 64},
+    "terminationKind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
+    "exitCode": {"type": "integer"},
+    "signal": {"type": "string", "maxLength": 32},
+    "timeoutMillis": {"type": "integer", "minimum": 0},
+    "errorSummary": {"type": "string", "maxLength": 512},
+    "evidenceQuality": {"enum": ["complete", "partial", "missing", "legacy-evidence-incomplete"]}
   },
   "additionalProperties": false
 }

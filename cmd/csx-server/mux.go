@@ -4,13 +4,13 @@ import (
 	"context"
 	"log"
 	"os"
-	"runtime/debug"
 	"time"
 
 	"net/http"
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/admin"
+	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
@@ -35,7 +35,8 @@ func buildMux(ctx context.Context, cfg serverstore.ServerConfig, store serversto
 }
 
 func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) (*http.ServeMux, *activity.Tracker) {
-	deps := httpapi.Deps{Store: store, Cfg: cfg}
+	build := buildinfo.FromEnvironment()
+	deps := httpapi.Deps{Store: store, Cfg: cfg, Build: build}
 	if cfg.BlobDir != "" {
 		blobs, err := blob.NewFS(cfg.BlobDir)
 		if err != nil {
@@ -94,7 +95,7 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
 		PublicURL:     cfg.PublicURL,
-		Version:       serverVersion(),
+		Version:       adminVersion(build),
 		StartedAt:     processStartedAt,
 		AccessMetrics: accessMetrics,
 		Activity:      activityTracker,
@@ -109,7 +110,7 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},
 		PublicURL: cfg.PublicURL,
-		Version:   serverVersion(),
+		Build:     build,
 		DistDir:   os.Getenv("CSX_DIST_DIR"),
 	})
 	outer := http.NewServeMux()
@@ -121,14 +122,16 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	return outer, activityTracker
 }
 
-// serverVersion prefers an explicit CSX_VERSION, falling back to the module
-// build info stamp.
-func serverVersion() string {
-	if v := os.Getenv("CSX_VERSION"); v != "" {
-		return v
+// adminVersion is the one line the private dashboard shows for "what is
+// running". The operator surface wants the immutable commit -- it is what a
+// deploy log, an image label and a rollback all name -- and falls back to the
+// build version only when nothing stamped a revision.
+func adminVersion(build buildinfo.Info) string {
+	if build.Revision != "" {
+		return build.Revision
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-		return bi.Main.Version
+	if build.Version != "" {
+		return build.Version
 	}
 	return "dev"
 }

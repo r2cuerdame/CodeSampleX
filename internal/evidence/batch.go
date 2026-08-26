@@ -200,21 +200,32 @@ func (b *Batcher) build(ctx context.Context) ([]domain.ObservationBatch, []local
 			env = fp
 		}
 		batch := domain.ObservationBatch{
-			SchemaVersion:    1,
-			Epoch:            row.Epoch,
-			AnonID:           b.Ident.AnonID(row.Epoch),
-			ProjectBucket:    b.bucketFor(ctx, buckets, row),
-			Package:          row.PURL,
-			Symbol:           row.Symbol,
-			Environment:      env,
-			Stage:            row.Stage,
-			Result:           row.Result,
-			ObservationCount: row.Count,
-			ErrorFingerprint: row.ErrorFP,
-			ErrorCode:        row.ErrorCode,
-			Direct:           row.Direct,
-			Coresident:       row.Coresident,
-			DependsOn:        row.DependsOn,
+			SchemaVersion:      2,
+			Epoch:              row.Epoch,
+			AnonID:             b.Ident.AnonID(row.Epoch),
+			ProjectBucket:      b.bucketFor(ctx, buckets, row),
+			Package:            row.PURL,
+			Symbol:             row.Symbol,
+			Environment:        env,
+			Stage:              row.Stage,
+			Result:             row.Result,
+			ObservationCount:   row.Count,
+			ErrorFingerprint:   row.ErrorFP,
+			ErrorCode:          row.ErrorCode,
+			TerminationKind:    row.TerminationKind,
+			ExitCode:           row.ExitCode,
+			Signal:             row.Signal,
+			TimeoutMillis:      row.TimeoutMillis,
+			ErrorSummary:       row.ErrorSummary,
+			EvidenceQuality:    row.EvidenceQuality,
+			OuterCommand:       row.OuterCommand,
+			OuterStage:         row.OuterStage,
+			ActualToolchain:    row.ActualToolchain,
+			StageEvidence:      row.StageEvidence,
+			FailureEvidenceGap: row.FailureEvidenceGap,
+			Direct:             row.Direct,
+			Coresident:         row.Coresident,
+			DependsOn:          row.DependsOn,
 		}
 		if row.Symbol != "" {
 			batch.SymbolConfidence = row.SymbolConfidence
@@ -266,12 +277,19 @@ func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.Symbo
 func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL string,
 	batches []domain.ObservationBatch) (int, []rejectedBatch, error) {
 
-	body, err := json.Marshal(map[string]any{"batches": batches})
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	// Keep sanitizer placeholders readable on the wire. The default HTML
+	// escaping turns "<path>:<n>" into a byte sequence containing "e:\\",
+	// which is indistinguishable from a Windows drive prefix to privacy
+	// scanners even though no path survived.
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(map[string]any{"batches": batches})
 	if err != nil {
 		return 0, nil, err
 	}
 	url := strings.TrimSuffix(serverURL, "/") + "/v1/evidence/batches"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		return 0, nil, err
 	}

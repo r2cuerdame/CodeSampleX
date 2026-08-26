@@ -104,7 +104,7 @@ csx sync                           # warm the shard cache — once, right after 
 Un échantillon (sample) n'est pas un extrait de code. C'est un projet minimal, adressé par contenu (`sha256:<hex>` de son artefact canonique), doté d'un **contrat** : des assertions qui ont été exécutées hors ligne dans un conteneur épinglé et qui ont réussi. Épinglé par digest d'image, pas par tag — le tag est un alias pour les lecteurs, le digest est ce qui s'exécute — et le reçu signé nomme la référence exacte de l'image, de sorte que n'importe qui peut réexécuter les mêmes octets au lieu de nous croire sur parole ([docs/adapters.md](../adapters.md#verifier-images)). La boucle de rédaction clean-room passe exclusivement par la CLI :
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse

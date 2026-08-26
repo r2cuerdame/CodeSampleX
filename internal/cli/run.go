@@ -78,15 +78,24 @@ func runMain(ctx context.Context, args []string) int {
 
 	exitCode, output, runErr := evidence.Run(ctx, args, dir)
 	if runErr != nil {
-		// The command never ran (not found, ...): report and record nothing.
+		if output.Stderr == "" {
+			output.Stderr = runErr.Error()
+		}
+		if db != nil && ident != nil && res != nil {
+			rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
+			if err := rec.RecordCommandOutput(ctx, dir, res, profile, args, -1, output); err != nil {
+				fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", err)
+			}
+		}
 		fmt.Fprintf(os.Stderr, "csx: %v\n", runErr)
 		return 127
 	}
 
 	if db != nil && ident != nil && res != nil {
 		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-		if err := rec.RecordRun(ctx, dir, res, profile, exitCode, output.Stderr); err != nil {
-			fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", err)
+		recordErr := rec.RecordCommandOutput(ctx, dir, res, profile, args, exitCode, output)
+		if recordErr != nil {
+			fmt.Fprintf(os.Stderr, "csx: record evidence: %v\n", recordErr)
 		}
 		// Opportunistic best-effort upload; failures leave rows queued for
 		// the next run or `csx sync` (§25.F).

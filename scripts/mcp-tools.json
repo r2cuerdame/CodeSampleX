@@ -5,7 +5,7 @@
       "name": "search_known_solution",
       "title": "Search verified compatibility samples",
       "summary": "Search the network for a community-verified solution before solving from scratch. Records a local search hit. In community mode a miss may fetch shards and file a public Wanted tuple, and a hit queues an anonymous count — never the query, the packages or the environment.",
-      "description": "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers.",
+      "description": "Search the CodeSampleX network cache for a community-verified solution before solving from scratch. Results are graded for YOUR environment (EXACT/COMPATIBLE/ADAPTATION_REQUIRED/REFERENCE_ONLY); NO_SAFE_MATCH means solve it fresh. A hit lists what that sample's contract PROVED — the assertions it ran offline in a pinned container and passed, which is where the per-overload, per-option behaviour is: which argument shapes are accepted, what is raised instead, which setting decides. Evidence keeps observation counts and verification counts separate — compile observations are never execution proof, and the counts pool every call shape, so a specific call is answered by the contract lines rather than by the numbers. A result reaches this answer only when a concrete link to your case can be named — a package or symbol you gave, the tool you ran, the same structured error, a question that names it, or a goal that describes what you asked for — and the Relevance: line says which one it was. Sharing a language, a runtime version or an architecture is not one of those links: those say where a sample can run, never what it is about. When nothing qualifies the answer is NO_SAFE_MATCH, not the nearest neighbour.",
       "annotations": {
         "title": "Search verified compatibility samples",
         "readOnlyHint": false,
@@ -43,7 +43,7 @@
       "name": "run_observed_command",
       "title": "Run a build command through the evidence loop",
       "summary": "Run a build, typecheck or test command in the user's project and record anonymous evidence from it. Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
-      "description": "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation, and LOW/reference/unrelated results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence.",
+      "description": "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence, and the sanitized error is built from whichever stream carried the diagnosis; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation: LOW/reference results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence, and a candidate with no nameable link to the failure — no shared package, symbol, tool, structured error or subject, only the environment both happen to run in — is reported as NO_RELEVANT_MATCH with the sample named but not rendered as an answer.",
       "annotations": {
         "title": "Run a build command through the evidence loop",
         "readOnlyHint": false,
@@ -94,13 +94,13 @@
     {
       "name": "propose_public_sample",
       "title": "Start a clean-room sample proposal",
-      "summary": "Build a sanitized clean-room sample spec and create an empty local workspace for it. Sends nothing; publishing always requires explicit CLI approval by the user.",
-      "description": "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), returns generation instructions and an empty workspace directory. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
+      "summary": "Build a sanitized clean-room sample spec and create a local workspace scaffolded with spec.json, PROMPT.md and a csx.json manifest. Sends nothing; publishing always requires explicit CLI approval by the user.",
+      "description": "Start a clean-room public sample proposal: builds a sanitized spec (public packages, symbols, goal — never project source or paths), and returns generation instructions plus a workspace directory already containing spec.json, PROMPT.md and a csx.json manifest scaffold whose contract you fill in. If the workspace cannot be created the call fails with isError and structuredContent.error — never write sample files or invent a csx.json in that case. This tool CANNOT publish: publishing requires the user's explicit approval via the csx CLI.",
       "annotations": {
         "title": "Start a clean-room sample proposal",
         "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": false,
+        "idempotentHint": true,
         "openWorldHint": false
       }
     },

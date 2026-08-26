@@ -138,6 +138,11 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	canonical := purl.String()
 	env := b.Environment.Normalize()
 	envJSON := domain.MustCanonicalJSON(env)
+	outerCommands := []string{}
+	if b.OuterCommand != "" {
+		outerCommands = append(outerCommands, b.OuterCommand)
+	}
+	outerCommandsJSON := domain.MustCanonicalJSON(outerCommands)
 	confidence := string(b.SymbolConfidence)
 	if confidence == "" {
 		confidence = string(domain.SymbolUnknown)
@@ -156,19 +161,45 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 	var aggID int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO evidence_agg
-			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result, error_fp, error_code, direct)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(purl, symbol, symbol_confidence, env_hash, env_json, stage, result,
+			 error_fp, error_code, direct, termination_kind, exit_code, signal,
+			 timeout_millis, error_summary, evidence_quality, outer_commands, outer_stage,
+			 actual_toolchain, stage_evidence, failure_evidence_gap)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 			last_seen = now(),
 			symbol_confidence = EXCLUDED.symbol_confidence,
 			error_code = CASE WHEN evidence_agg.error_code = ''
 				THEN EXCLUDED.error_code ELSE evidence_agg.error_code END,
+			termination_kind = CASE WHEN evidence_agg.termination_kind = ''
+				THEN EXCLUDED.termination_kind ELSE evidence_agg.termination_kind END,
+			exit_code = COALESCE(evidence_agg.exit_code, EXCLUDED.exit_code),
+			signal = CASE WHEN evidence_agg.signal = '' THEN EXCLUDED.signal ELSE evidence_agg.signal END,
+			timeout_millis = GREATEST(evidence_agg.timeout_millis, EXCLUDED.timeout_millis),
+			error_summary = CASE WHEN evidence_agg.error_summary = ''
+				THEN EXCLUDED.error_summary ELSE evidence_agg.error_summary END,
+			evidence_quality = CASE WHEN evidence_agg.evidence_quality IN ('', 'legacy-evidence-incomplete')
+				THEN EXCLUDED.evidence_quality ELSE evidence_agg.evidence_quality END,
+			outer_commands = (
+				SELECT COALESCE(jsonb_agg(command ORDER BY command), '[]'::jsonb)
+				FROM (
+					SELECT DISTINCT value AS command
+					FROM jsonb_array_elements_text(evidence_agg.outer_commands || EXCLUDED.outer_commands)
+				) commands
+			),
+			outer_stage = CASE WHEN evidence_agg.outer_stage = '' THEN EXCLUDED.outer_stage ELSE evidence_agg.outer_stage END,
+			actual_toolchain = CASE WHEN evidence_agg.actual_toolchain = '' THEN EXCLUDED.actual_toolchain ELSE evidence_agg.actual_toolchain END,
+			stage_evidence = CASE WHEN evidence_agg.stage_evidence = '' THEN EXCLUDED.stage_evidence ELSE evidence_agg.stage_evidence END,
+			failure_evidence_gap = CASE WHEN evidence_agg.failure_evidence_gap = '' THEN EXCLUDED.failure_evidence_gap ELSE evidence_agg.failure_evidence_gap END,
 			-- Chosen wins and never unsays itself: one project resolving a
 			-- package transitively does not undo another that listed it.
 			direct = evidence_agg.direct OR EXCLUDED.direct
 		RETURNING id`,
 		canonical, b.Symbol, confidence, env.Hash(), []byte(envJSON),
 		string(b.Stage), string(b.Result), b.ErrorFingerprint, b.ErrorCode, b.Direct,
+		string(b.TerminationKind), b.ExitCode, b.Signal, b.TimeoutMillis,
+		b.ErrorSummary, string(normalizedEvidenceQuality(b)), []byte(outerCommandsJSON), string(b.OuterStage),
+		b.ActualToolchain, string(b.StageEvidence), string(b.FailureEvidenceGap),
 	).Scan(&aggID); err != nil {
 		return err
 	}
@@ -687,7 +718,9 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
 			SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
-			       stage, result, error_fp, error_code, observation_count,
+			       stage, result, error_fp, error_code, termination_kind, exit_code,
+			       signal, timeout_millis, error_summary, evidence_quality, outer_commands::text,
+			       outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap, observation_count,
 			       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
 			FROM evidence_agg
 			WHERE purl=$1 AND symbol = ANY($2)
@@ -698,12 +731,22 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		defer rows.Close()
 		for rows.Next() {
 			var e EvidenceRow
+			var outerCommandsJSON string
 			var first, last *time.Time
 			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
 				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
+				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
+				&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
+				&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
 				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
 				&first, &last); err != nil {
 				return err
+			}
+			if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
+				return fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
+			}
+			if len(e.OuterCommands) > 0 {
+				e.OuterCommand = e.OuterCommands[0]
 			}
 			if first != nil {
 				e.FirstSeen = *first
@@ -907,6 +950,67 @@ func (p *PG) ListVerifiedSamples(ctx context.Context, limit int) ([]SampleRow, e
 				  AND verified_receipt.contract_result = 'PASS'
 			  )
 			ORDER BY created_at DESC, sample_id LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, serr := scanSample(rows)
+			if serr != nil {
+				return serr
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// ListVerifiedBeliefSamples pages the finding candidates.
+//
+// The predicate is the same verified-sample predicate as above plus the one
+// thing that makes a sample a finding: its case says what was believed. That
+// belief lives inside the manifest JSON — no column mirrors it, and adding
+// one would put a second answer beside the artifact's own copy — so the
+// filter reads the JSONB directly.
+//
+// Doing it here rather than in Go is the whole point. The caller used to
+// read the newest 2,000 verified samples and look for beliefs inside them,
+// which quietly turned "every finding" into "every finding published
+// recently": production crossed 2,000 verified samples and 308 findings fell
+// out of the window with nothing taken down. Only a minority of samples
+// state a belief (567 of 2,787 in production), so filtering first makes the
+// eligible set small enough to page through completely.
+//
+// The store's belief test is presence, not prose: a non-empty string in
+// the manifest. Whether it reads as a sentence, and whether a contract
+// line answers it, is judged in Go over a set this has already made
+// small — so no trimming rule has to be spelled twice, in two
+// languages, and stay identical forever.
+func (p *PG) ListVerifiedBeliefSamples(ctx context.Context, after SampleCursor, limit int) ([]SampleRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	where := `
+			WHERE NOT quarantined
+			  AND EXISTS (
+				SELECT 1 FROM receipts verified_receipt
+				WHERE verified_receipt.sample_id = samples.sample_id
+				  AND verified_receipt.contract_result = 'PASS'
+			  )
+			  AND COALESCE(manifest->'case'->>'believed', '') <> ''`
+	args := []any{limit}
+	if !after.IsZero() {
+		where += `
+			  AND (COALESCE(created_at, 'epoch'::timestamptz), sample_id) < ($2, $3)`
+		args = append(args, after.CreatedAt, after.SampleID)
+	}
+	var out []SampleRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples`+where+`
+			ORDER BY COALESCE(created_at, 'epoch'::timestamptz) DESC, sample_id DESC
+			LIMIT $1`, args...)
 		if err != nil {
 			return err
 		}
@@ -1976,6 +2080,9 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	var envSummary, hypotheses, versions []byte
+	envVariants := []byte("[]")
+	evidenceBreakdown := []byte("{}")
+	outerCommands := []byte("[]")
 	if cl.EnvSummaryJSON != "" {
 		envSummary = []byte(cl.EnvSummaryJSON)
 	}
@@ -1985,12 +2092,25 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	if cl.VersionsJSON != "" {
 		versions = []byte(cl.VersionsJSON)
 	}
+	if cl.EnvVariantsJSON != "" {
+		envVariants = []byte(cl.EnvVariantsJSON)
+	}
+	if cl.EvidenceBreakdownJSON != "" {
+		evidenceBreakdown = []byte(cl.EvidenceBreakdownJSON)
+	}
+	if len(cl.OuterCommands) > 0 {
+		outerCommands, _ = json.Marshal(cl.OuterCommands)
+	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
 				error_code, observation_count, env_summary, hypotheses,
-				regression_candidate, versions)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				regression_candidate, versions, termination_kind, exit_code, signal,
+				timeout_millis, error_summary, evidence_quality, env_variants,
+				evidence_breakdown, diagnostic_candidate, outer_commands, actual_toolchain,
+				stage_evidence, failure_evidence_gap, first_seen, last_seen)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+			       $21,$22,$23,$24,COALESCE($25, now()),COALESCE($26, now()))
 			ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
 				error_code = EXCLUDED.error_code,
 				observation_count = EXCLUDED.observation_count,
@@ -1998,15 +2118,51 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 				hypotheses = EXCLUDED.hypotheses,
 				regression_candidate = EXCLUDED.regression_candidate,
 				versions = EXCLUDED.versions,
-				last_seen = now()`,
+				termination_kind = EXCLUDED.termination_kind,
+				exit_code = EXCLUDED.exit_code,
+				signal = EXCLUDED.signal,
+				timeout_millis = EXCLUDED.timeout_millis,
+				error_summary = EXCLUDED.error_summary,
+				evidence_quality = EXCLUDED.evidence_quality,
+				env_variants = EXCLUDED.env_variants,
+				evidence_breakdown = EXCLUDED.evidence_breakdown,
+				diagnostic_candidate = EXCLUDED.diagnostic_candidate,
+				outer_commands = EXCLUDED.outer_commands,
+				actual_toolchain = EXCLUDED.actual_toolchain,
+				stage_evidence = EXCLUDED.stage_evidence,
+				failure_evidence_gap = EXCLUDED.failure_evidence_gap,
+				first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+				last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)`,
 			cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
 			cl.ErrorCode, cl.ObservationCount, envSummary, hypotheses,
-			cl.RegressionCandidate, versions)
+			cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
+			cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
+			envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
+			outerCommands, cl.ActualToolchain, cl.StageEvidence, cl.FailureEvidenceGap,
+			nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen))
 		return err
 	})
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+}
+
+// ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
+//
+// Exact failure matching is the one question those rows still answer. Every
+// released client fingerprints a failure as `v1|stage|code|template`, and
+// every one of the fingerprints this network has on file was written by such
+// a client. Serving only current clusters would hand exact-match search a
+// surface where nothing can ever match: the rebuilt evidence-gap rows carry
+// no fingerprint at all, and v2 fingerprints only start arriving once a
+// client that computes them is released. A fingerprint that was recorded is
+// a fingerprint a caller can still hit.
+func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
+	return p.listFailureClusters(ctx, packageName, "")
+}
+
+func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
@@ -2015,9 +2171,16 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 			       COALESCE(error_code,''), COALESCE(observation_count,0),
 			       COALESCE(env_summary::text,''), COALESCE(hypotheses::text,''),
 			       COALESCE(regression_candidate,false), COALESCE(versions::text,''),
+			       COALESCE(termination_kind,''), exit_code, COALESCE(signal,''),
+			       COALESCE(timeout_millis,0), COALESCE(error_summary,''),
+			       COALESCE(evidence_quality,'legacy-evidence-incomplete'),
+			       COALESCE(env_variants::text,'[]'), COALESCE(evidence_breakdown::text,'{}'),
+			       COALESCE(diagnostic_candidate,false),
+			       COALESCE(outer_commands::text,'[]'), COALESCE(actual_toolchain,''),
+			       COALESCE(stage_evidence,''), COALESCE(failure_evidence_gap,''),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1
+			WHERE package_name=$1`+extraWhere+`
 			ORDER BY observation_count DESC, id`, packageName)
 		if err != nil {
 			return err
@@ -2025,13 +2188,19 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 		defer rows.Close()
 		for rows.Next() {
 			var cl ClusterRow
+			var outerCommandsJSON string
 			var first, last *time.Time
 			if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
 				&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
 				&cl.EnvSummaryJSON, &cl.HypothesesJSON, &cl.RegressionCandidate,
-				&cl.VersionsJSON, &first, &last); err != nil {
+				&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
+				&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
+				&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
+				&outerCommandsJSON, &cl.ActualToolchain, &cl.StageEvidence, &cl.FailureEvidenceGap,
+				&first, &last); err != nil {
 				return err
 			}
+			_ = json.Unmarshal([]byte(outerCommandsJSON), &cl.OuterCommands)
 			if first != nil {
 				cl.FirstSeen = *first
 			}
@@ -2721,9 +2890,9 @@ type AdoptionCounts struct {
 // telling us more about the same event, not a second event.
 // RecordSearchHit counts one search that found something.
 //
-// One reporter counts once per offer per day, mirroring adoptions: an agent
-// that retries a search all afternoon is one hit, not an afternoon of demand.
-// A later report for the same key updates the counts rather than adding a row.
+// One reporter counts once per offer per day. Re-delivery of the same queued
+// hit carries the same offer and updates the row; a new search gets a new
+// offer and counts separately, even when its query and result are identical.
 func (p *PG) RecordSearchHit(ctx context.Context, r SearchHitRow) error {
 	dedup := r.OfferID
 	if dedup == "" {

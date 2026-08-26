@@ -2,7 +2,6 @@ package compatibility
 
 import (
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -39,11 +38,22 @@ type SnapshotRow struct {
 // cell a reader actually wants ("windows / node 20 failed at COMPILE with
 // ERR_REQUIRE_ESM") existed nowhere in the document.
 type FailureSummary struct {
-	Stage       string            `json:"stage"`
-	ErrorCode   string            `json:"errorCode,omitempty"`
-	Fingerprint string            `json:"fingerprint,omitempty"`
-	Count       int64             `json:"count"`
-	EnvSummary  map[string]string `json:"envSummary,omitempty"`
+	Stage           string            `json:"stage"`
+	ErrorCode       string            `json:"errorCode,omitempty"`
+	Fingerprint     string            `json:"fingerprint,omitempty"`
+	TerminationKind string            `json:"terminationKind,omitempty"`
+	ExitCode        *int              `json:"exitCode,omitempty"`
+	Signal          string            `json:"signal,omitempty"`
+	TimeoutMillis   int64             `json:"timeoutMillis,omitempty"`
+	ErrorSummary    string            `json:"errorSummary,omitempty"`
+	EvidenceQuality string            `json:"evidenceQuality"`
+	OuterCommand    string            `json:"outerCommand,omitempty"`
+	OuterStage      string            `json:"outerStage,omitempty"`
+	ActualToolchain string            `json:"actualToolchain,omitempty"`
+	StageEvidence   string            `json:"stageEvidence,omitempty"`
+	EvidenceGap     string            `json:"evidenceGap,omitempty"`
+	Count           int64             `json:"count"`
+	EnvSummary      map[string]string `json:"envSummary,omitempty"`
 	// Reporters and Projects are how WIDESPREAD the failure is, and they are
 	// the honest ranking axis. Count is observations, which one machine
 	// building all afternoon inflates without telling anyone anything: a
@@ -117,7 +127,17 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 			sc.Pass += row.ObservationCount
 		} else {
 			sc.Fail += row.ObservationCount
-			if strings.TrimSpace(row.ErrorCode) != "" {
+			switch evidenceQuality(row) {
+			case domain.EvidenceComplete:
+				sc.FailComplete += row.ObservationCount
+			case domain.EvidencePartial:
+				sc.FailPartial += row.ObservationCount
+			case domain.EvidenceMissing:
+				sc.FailMissing += row.ObservationCount
+			default:
+				sc.FailLegacyIncomplete += row.ObservationCount
+			}
+			if q := evidenceQuality(row); q == domain.EvidenceComplete || q == domain.EvidencePartial {
 				sc.FailAttributed += row.ObservationCount
 			}
 		}
@@ -161,6 +181,20 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 			sc.Pass++
 		} else {
 			sc.Fail++
+			if failure, ok := rec.StageFailures["contract"]; ok {
+				switch failure.EvidenceQuality {
+				case domain.EvidenceComplete:
+					sc.FailComplete++
+				case domain.EvidencePartial:
+					sc.FailPartial++
+				case domain.EvidenceMissing:
+					sc.FailMissing++
+				default:
+					sc.FailLegacyIncomplete++
+				}
+			} else {
+				sc.FailLegacyIncomplete++
+			}
 		}
 		g.byStage[string(domain.StageContract)] = sc
 		g.verCount++
@@ -253,25 +287,40 @@ func BuildSnapshot(purl, symbol string, evidence []serverstore.EvidenceRow,
 // failureSummaries groups FAIL evidence by (stage, fingerprint, code) AND by
 // the environment it happened in, ranked by how many distinct machines saw it.
 func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
-	type fkey struct{ stage, fp, code, envHash string }
+	type fkey struct{ stage, fp, code, term, quality, envHash string }
 	type agg struct {
 		count               int64
 		reporters, projects int
 		env                 domain.EnvironmentFingerprint
 		hasEnv              bool
+		exitCode            *int
+		signal              string
+		timeoutMillis       int64
+		errorSummary        string
+		outerCommand        string
+		outerStage          string
+		actualToolchain     string
+		stageEvidence       string
+		evidenceGap         string
 	}
 	groups := map[fkey]*agg{}
 	for _, row := range evidence {
 		if row.Result != string(domain.ResultFail) {
 			continue
 		}
-		if row.ErrorFingerprint == "" && row.ErrorCode == "" {
-			continue
+		quality := string(evidenceQuality(row))
+		fingerprint := row.ErrorFingerprint
+		if quality == string(domain.EvidenceMissing) || quality == string(domain.EvidenceLegacyIncomplete) {
+			fingerprint = ""
 		}
-		k := fkey{row.Stage, row.ErrorFingerprint, row.ErrorCode, row.EnvHash}
+		k := fkey{row.Stage, fingerprint, row.ErrorCode, row.TerminationKind, quality, row.EnvHash}
 		a := groups[k]
 		if a == nil {
-			a = &agg{}
+			a = &agg{exitCode: row.ExitCode, signal: row.Signal,
+				timeoutMillis: row.TimeoutMillis, errorSummary: row.ErrorSummary,
+				outerCommand: row.OuterCommand, outerStage: row.OuterStage,
+				actualToolchain: row.ActualToolchain, stageEvidence: row.StageEvidence,
+				evidenceGap: row.FailureEvidenceGap}
 			groups[k] = a
 		}
 		a.count += row.ObservationCount
@@ -310,12 +359,14 @@ func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
 	for _, k := range keys {
 		a := groups[k]
 		f := FailureSummary{
-			Stage:       k.stage,
-			ErrorCode:   k.code,
-			Fingerprint: k.fp,
-			Count:       a.count,
-			Reporters:   a.reporters,
-			Projects:    a.projects,
+			Stage: k.stage, ErrorCode: k.code, Fingerprint: k.fp,
+			TerminationKind: k.term, ExitCode: a.exitCode, Signal: a.signal,
+			TimeoutMillis: a.timeoutMillis, ErrorSummary: a.errorSummary,
+			EvidenceQuality: k.quality, Count: a.count,
+			OuterCommand: a.outerCommand, OuterStage: a.outerStage,
+			ActualToolchain: a.actualToolchain, StageEvidence: a.stageEvidence,
+			EvidenceGap: a.evidenceGap,
+			Reporters:   a.reporters, Projects: a.projects,
 		}
 		if a.hasEnv {
 			f.EnvSummary = envSummary([]domain.EnvironmentFingerprint{a.env})

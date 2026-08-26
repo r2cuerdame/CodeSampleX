@@ -66,14 +66,25 @@ minor/patch, OS build, 기기 모델 등은 수집하지 않는다. 서버 스�
 ```text
 USED                 사용 관측
 PROJECT_TYPECHECK    타입체크 결과
+PROJECT_RESOLVE      dependency/module restore·resolve 실패
 PROJECT_COMPILE      빌드 결과
 PROJECT_TEST         테스트 결과
 PROJECT_LOAD         module/library load 결과 (실행 context 기준)
 PROJECT_PROCESS      전체 실행 결과
+PROCESS_START        child process 시작 실패 (structured termination으로 증명)
+UNKNOWN              실제 실패 단계를 진단으로 증명하지 못함
 SYMBOL_EXECUTED      특정 API 실행이 직접 관측됨 (result 항상 PASS)
 SYMBOL_CALL          호출 성공/실패가 직접 관측됨 (PASS=returned, FAIL=threw)
 CONTRACT             공개 Sample의 의도 행동 검증 (VerificationReceipt 경로)
 ```
+
+`PROJECT_*`는 command 이름이 아니라 실제 실패 지점이다. 예를 들어 `go
+test`가 Go compiler 또는 nested `tsc` diagnostic으로 끝나면
+`PROJECT_COMPILE`, assertion/test-runner marker로 끝나면 `PROJECT_TEST`다.
+Verifier stage log의 `resolve`/`compile`/`contract`는 각각 관측 taxonomy의
+`PROJECT_RESOLVE`/`PROJECT_COMPILE`/`CONTRACT`에 명시적으로 대응한다.
+`PROCESS_START`와 `UNKNOWN`은 verifier stage log 밖에서 실행 wrapper가
+보존하는 failure-only 단계다.
 
 - `SYMBOL_EXECUTED`/`SYMBOL_CALL`은 **A3 capability를 가진 adapter만** 방출한다. Public v1의
   어떤 adapter도 A3를 주장하지 않는다(§13.1, §19). 실행 여부가 불확실하면 추측으로

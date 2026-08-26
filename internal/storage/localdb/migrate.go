@@ -31,6 +31,12 @@ var ddl = []string{
 	  symbol_confidence TEXT NOT NULL DEFAULT 'UNKNOWN', env_hash TEXT NOT NULL,
 	  stage TEXT NOT NULL, result TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
 	  error_fp TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
+	  termination_kind TEXT NOT NULL DEFAULT '', exit_code INTEGER,
+	  signal TEXT NOT NULL DEFAULT '', timeout_millis INTEGER NOT NULL DEFAULT 0,
+	  error_summary TEXT NOT NULL DEFAULT '', evidence_quality TEXT NOT NULL DEFAULT '',
+	  outer_command TEXT NOT NULL DEFAULT '', outer_stage TEXT NOT NULL DEFAULT '',
+	  actual_toolchain TEXT NOT NULL DEFAULT '', stage_evidence TEXT NOT NULL DEFAULT '',
+	  failure_evidence_gap TEXT NOT NULL DEFAULT '',
 	  direct INTEGER NOT NULL DEFAULT 0,
 	  coresident TEXT NOT NULL DEFAULT '',
 	  depends_on TEXT NOT NULL DEFAULT '',
@@ -191,6 +197,25 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		if _, err := tx.ExecContext(ctx,
 			`ALTER TABLE observations ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
+		}
+	}
+	for _, column := range []struct{ name, ddl string }{
+		{"termination_kind", `ALTER TABLE observations ADD COLUMN termination_kind TEXT NOT NULL DEFAULT ''`},
+		{"exit_code", `ALTER TABLE observations ADD COLUMN exit_code INTEGER`},
+		{"signal", `ALTER TABLE observations ADD COLUMN signal TEXT NOT NULL DEFAULT ''`},
+		{"timeout_millis", `ALTER TABLE observations ADD COLUMN timeout_millis INTEGER NOT NULL DEFAULT 0`},
+		{"error_summary", `ALTER TABLE observations ADD COLUMN error_summary TEXT NOT NULL DEFAULT ''`},
+		{"evidence_quality", `ALTER TABLE observations ADD COLUMN evidence_quality TEXT NOT NULL DEFAULT ''`},
+		{"outer_command", `ALTER TABLE observations ADD COLUMN outer_command TEXT NOT NULL DEFAULT ''`},
+		{"outer_stage", `ALTER TABLE observations ADD COLUMN outer_stage TEXT NOT NULL DEFAULT ''`},
+		{"actual_toolchain", `ALTER TABLE observations ADD COLUMN actual_toolchain TEXT NOT NULL DEFAULT ''`},
+		{"stage_evidence", `ALTER TABLE observations ADD COLUMN stage_evidence TEXT NOT NULL DEFAULT ''`},
+		{"failure_evidence_gap", `ALTER TABLE observations ADD COLUMN failure_evidence_gap TEXT NOT NULL DEFAULT ''`},
+	} {
+		if !obsColumns[column.name] {
+			if _, err := tx.ExecContext(ctx, column.ddl); err != nil {
+				return err
+			}
 		}
 	}
 	if !columns["offer_id"] {

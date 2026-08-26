@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -25,10 +26,13 @@ import (
 type stageCount struct {
 	Pass int64 `json:"pass"`
 	Fail int64 `json:"fail"`
-	// FailAttributed is the subset of Fail whose sanitizer named a cause. The
-	// rest say a build containing this package broke and nothing about which
-	// package broke it.
-	FailAttributed int64 `json:"failAttributed"`
+	// FailAttributed is the historical wire name for failures carrying a
+	// modern normalized fingerprint.
+	FailAttributed       int64 `json:"failAttributed"`
+	FailComplete         int64 `json:"failComplete"`
+	FailPartial          int64 `json:"failPartial"`
+	FailMissing          int64 `json:"failMissing"`
+	FailLegacyIncomplete int64 `json:"failLegacyIncomplete"`
 }
 
 type snapshotRow struct {
@@ -64,16 +68,33 @@ type snapshotRow struct {
 }
 
 type failureCluster struct {
-	Symbol              string                     `json:"symbol"`
-	Stage               string                     `json:"stage"`
-	ErrorCode           string                     `json:"errorCode"`
-	Fingerprint         string                     `json:"fingerprint"`
-	Count               int64                      `json:"count"`
-	ObservationCount    int64                      `json:"observationCount"`
-	EnvSummary          map[string]string          `json:"envSummary"`
-	Hypotheses          []domain.FailureHypothesis `json:"hypotheses"`
-	RegressionCandidate bool                       `json:"regressionCandidate"`
-	Versions            []string                   `json:"versions"`
+	Symbol              string                             `json:"symbol"`
+	Stage               string                             `json:"stage"`
+	ErrorCode           string                             `json:"errorCode"`
+	Fingerprint         string                             `json:"fingerprint"`
+	TerminationKind     string                             `json:"terminationKind"`
+	ExitCode            *int                               `json:"exitCode"`
+	Signal              string                             `json:"signal"`
+	TimeoutMillis       int64                              `json:"timeoutMillis"`
+	ErrorSummary        string                             `json:"errorSummary"`
+	EvidenceQuality     string                             `json:"evidenceQuality"`
+	OuterCommand        string                             `json:"outerCommand"`
+	OuterCommands       []string                           `json:"outerCommands"`
+	OuterStage          string                             `json:"outerStage"`
+	ActualToolchain     string                             `json:"actualToolchain"`
+	StageEvidence       string                             `json:"stageEvidence"`
+	EvidenceGapKind     string                             `json:"evidenceGap"`
+	Count               int64                              `json:"count"`
+	ObservationCount    int64                              `json:"observationCount"`
+	EnvSummary          map[string]string                  `json:"envSummary"`
+	EnvVariants         []domain.FailureEnvironmentVariant `json:"envVariants"`
+	EvidenceBreakdown   map[string]int64                   `json:"evidenceBreakdown"`
+	Hypotheses          []domain.FailureHypothesis         `json:"hypotheses"`
+	RegressionCandidate bool                               `json:"regressionCandidate"`
+	DiagnosticCandidate bool                               `json:"diagnosticCandidate"`
+	Versions            []string                           `json:"versions"`
+	FirstSeen           string                             `json:"firstSeen"`
+	LastSeen            string                             `json:"lastSeen"`
 }
 
 type snapshotDoc struct {
@@ -125,15 +146,30 @@ type hypothesisView struct {
 }
 
 type clusterView struct {
-	Symbol              string
-	Stage               string
-	ErrorCode           string
-	Fingerprint         string
+	Symbol       string
+	Stage        string
+	ErrorCode    string
+	Fingerprint  string
+	Termination  string
+	ErrorSummary string
+	// ErrorSummaryFull is the whole stored text when ErrorSummary had to be
+	// cut to stay a line, and empty when nothing was withheld.
+	ErrorSummaryFull    string
+	EvidenceQuality     string
+	EvidenceGap         bool
+	EvidenceGapKind     string
+	OuterCommands       string
+	ActualToolchain     string
+	StageEvidence       string
+	EnvironmentVariants int
+	DiagnosticCandidate bool
 	Count               int64
 	EnvSummary          string
 	Hypotheses          []hypothesisView
 	RegressionCandidate bool
 	Versions            string
+	FirstSeen           string
+	LastSeen            string
 }
 
 func chipFor(row snapshotRow, obs, ver int64) (chip, class, glyph string, noEvidence bool) {
@@ -309,8 +345,14 @@ func buildClusters(clusters []failureCluster) []clusterView {
 			count = c.ObservationCount
 		}
 		env := joinEnvSummary(c.EnvSummary)
-		key := groupKey{c.Fingerprint, c.Stage, c.ErrorCode, env}
-		if i, seen := at[key]; seen && c.Fingerprint != "" {
+		unfingerprintedGap := c.EvidenceQuality == string(domain.EvidenceMissing) || c.EvidenceQuality == string(domain.EvidenceLegacyIncomplete)
+		evidenceGap := unfingerprintedGap || c.EvidenceGapKind != ""
+		fingerprint := c.Fingerprint
+		if unfingerprintedGap {
+			fingerprint = ""
+		}
+		key := groupKey{fingerprint, c.Stage, c.ErrorCode, env}
+		if i, seen := at[key]; seen && (fingerprint != "" || evidenceGap) {
 			g := &out[i]
 			if count > g.Count {
 				g.Count = count
@@ -340,16 +382,96 @@ func buildClusters(clusters []failureCluster) []clusterView {
 				Pct:    i18n.FormatPercent("en", h.Confidence),
 			})
 		}
+		summary, withheld := clusterErrorSummary(c.ErrorSummary)
 		at[key] = len(out)
 		out = append(out, clusterView{
 			Symbol: c.Symbol, Stage: c.Stage, ErrorCode: c.ErrorCode,
-			Fingerprint: shortHash(c.Fingerprint), Count: count,
+			Fingerprint: shortHash(fingerprint), Count: count,
+			Termination:  terminationLabel(c),
+			ErrorSummary: summary, ErrorSummaryFull: withheld,
+			EvidenceQuality:     c.EvidenceQuality,
+			EvidenceGap:         evidenceGap,
+			EvidenceGapKind:     c.EvidenceGapKind,
+			OuterCommands:       failureOuterCommands(c),
+			ActualToolchain:     c.ActualToolchain,
+			StageEvidence:       c.StageEvidence,
+			EnvironmentVariants: len(c.EnvVariants), DiagnosticCandidate: c.DiagnosticCandidate,
 			EnvSummary: env, Hypotheses: hyps,
 			RegressionCandidate: c.RegressionCandidate,
 			Versions:            strings.Join(c.Versions, " → "),
+			FirstSeen:           datePart(c.FirstSeen), LastSeen: datePart(c.LastSeen),
 		})
 	}
 	return out
+}
+
+func failureOuterCommands(c failureCluster) string {
+	seen := map[string]bool{}
+	for _, command := range append(append([]string(nil), c.OuterCommands...), c.OuterCommand) {
+		if command != "" {
+			seen[command] = true
+		}
+	}
+	commands := make([]string, 0, len(seen))
+	for command := range seen {
+		commands = append(commands, command)
+	}
+	sort.Strings(commands)
+	return strings.Join(commands, ", ")
+}
+
+// clusterErrorSummaryDisplayBytes is what a cluster row can spend on the
+// normalized error and still read as one line. The producer cap is 512 bytes,
+// which is a paragraph: the first modern cluster production recorded was a Go
+// test failure block joined with " · " and the page printed the whole thing,
+// cut mid-word where the byte cap landed.
+const clusterErrorSummaryDisplayBytes = 160
+
+// clusterErrorSummary returns what the row shows and, when that is less than
+// the whole, the full stored text for the title. Nothing is dropped: the same
+// treatment the verifier image digest gets, where the label is shortened and
+// the value stays reachable.
+func clusterErrorSummary(summary string) (display, full string) {
+	if len(summary) <= clusterErrorSummaryDisplayBytes {
+		return summary, ""
+	}
+	cut := summary[:clusterErrorSummaryDisplayBytes]
+	// Prefer the segment boundary the normalizer itself wrote.
+	if i := strings.LastIndex(cut, " · "); i > 0 {
+		return summary[:i] + " …", summary
+	}
+	if i := strings.LastIndex(cut, " "); i > 0 {
+		cut = summary[:i]
+	}
+	for !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return strings.TrimSpace(cut) + " …", summary
+}
+
+func terminationLabel(c failureCluster) string {
+	switch domain.TerminationKind(c.TerminationKind) {
+	case domain.TerminationExit:
+		if c.ExitCode != nil {
+			return "exit " + strconv.Itoa(*c.ExitCode)
+		}
+	case domain.TerminationSignal:
+		if c.Signal != "" {
+			return "signal " + c.Signal
+		}
+	case domain.TerminationTimeout:
+		if c.TimeoutMillis > 0 {
+			d := time.Duration(c.TimeoutMillis) * time.Millisecond
+			if d%time.Minute == 0 {
+				return "timeout " + strconv.FormatInt(int64(d/time.Minute), 10) + "m"
+			}
+			return "timeout " + d.String()
+		}
+		return "timeout"
+	case domain.TerminationProcessStartFailed:
+		return "process start failed"
+	}
+	return ""
 }
 
 // joinEnvSummary renders an environment fingerprint in a stable order, so two

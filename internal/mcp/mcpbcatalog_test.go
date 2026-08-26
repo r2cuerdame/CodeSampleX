@@ -179,10 +179,18 @@ func TestToolAnnotationsDescribeWhatTheToolsActuallyDo(t *testing.T) {
 	if byName["search_known_solution"].Annotations.ReadOnlyHint {
 		t.Error("search_known_solution records a local hit and an offer token; it is not read-only")
 	}
-	// propose creates a fresh clean-room directory per call
-	// (samples.NewCleanRoom) and saves a proposal row.
-	if a := byName["propose_public_sample"].Annotations; a.ReadOnlyHint || a.IdempotentHint {
-		t.Error("propose_public_sample creates a new workspace directory on every call; it is neither read-only nor idempotent")
+	// propose creates a scaffolded clean-room directory
+	// (samples.NewProposalWorkspace) and saves a proposal row, so it is not
+	// read-only. It IS idempotent since R2C-180: an identical proposal whose
+	// workspace is still untouched is handed back rather than duplicated,
+	// and SaveProposal upserts on workdir — so a retry adds nothing. It
+	// destroys nothing a caller owns: the sweep only removes `sample-*`
+	// directories that hold no files at all.
+	if a := byName["propose_public_sample"].Annotations; a.ReadOnlyHint || !a.IdempotentHint {
+		t.Error("propose_public_sample writes a workspace and reuses it on retry; it is not read-only, and it is idempotent")
+	}
+	if a := byName["propose_public_sample"].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {
+		t.Error("propose_public_sample must not be marked destructive: it removes only empty directories it left behind")
 	}
 	// Adoption writes the local correlation and, in community mode, queues an
 	// upload (reportAdoptionReloaded).

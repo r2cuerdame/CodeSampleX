@@ -440,6 +440,60 @@
           stat("첫 증명", `${num(b.firstProvenInWindow || 0)} · ${perHour(b.firstProvenInWindow || 0)}`),
           stat("배포 출처", byKind),
         );
+        // The same absence at canonical symbol × version grain. This is the
+        // unbounded PUBLIC corpus cross-product, not the package page's
+        // bounded browse window. Display caps must not erase older or later
+        // coordinates from the completeness denominator.
+        const m = b.matrixCells;
+        if (m) {
+          const share = m.cells ? ` (${Math.round((m.observed / m.cells) * 100)}%)` : "";
+          backlog.append(
+            stat("전체 코퍼스 관측 셀", `${num(m.observed || 0)} / ${num(m.cells || 0)}${share}`),
+            stat("PASS 샘플만 있고 미관측", num(m.verifiedNoObservation || 0)),
+            stat("전체 코퍼스 미측정 셀", num(m.unmeasured || 0)),
+            stat("두 상태 공존 패키지", num(m.packagesShowingBothDashes || 0),
+              (m.packagesShowingBothDashes || 0) > 0),
+          );
+        } else {
+          // Absent, not zero — the same rule the whole-backlog case above
+          // follows. Rendering 0 for a census this payload never carried
+          // would say "no dashes left" about a grid nobody counted.
+          backlog.append(stat("전체 코퍼스 셀", "읽지 못함", true));
+        }
+      }
+    }
+
+    const completeness = document.querySelector("#farm-completeness");
+    if (completeness) {
+      completeness.replaceChildren();
+      const c = data.completeness;
+      if (!c || !c.states) {
+        // Absent, not zero -- the same rule as the backlog above. A matrix of
+        // zeros for a figure nobody read says the corpus is complete.
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "완성도 집계를 읽지 못했습니다.";
+        completeness.appendChild(p);
+      } else {
+        // Fixed order, all eight, including the empty ones. A cell that
+        // appears only when it has a value is a cell nobody notices arriving.
+        const cells = ["SED", "SE-", "S-D", "S--", "-ED", "-E-", "--D", "---"];
+        const missing = (cell) => {
+          const gaps = [];
+          if (cell[0] !== "S") gaps.push("샘플");
+          if (cell[1] !== "E") gaps.push("증거");
+          if (cell[2] !== "D") gaps.push("의존성");
+          return gaps.length ? `${cell} · ${gaps.join("·")} 필요` : `${cell} · 완료`;
+        };
+        for (const cell of cells) {
+          completeness.appendChild(stat(missing(cell), num(c.states[cell] || 0)));
+        }
+        completeness.append(
+          stat("의존성 그래프 확보", num(c.dependencyGraph || 0)),
+          // Two different absences, never one. Only the first is a fact.
+          stat("의존성 없음 (증명됨)", num(c.dependencyProvenNone || 0)),
+          stat("의존성 미상", num(c.dependencyUnknown || 0)),
+        );
       }
     }
 

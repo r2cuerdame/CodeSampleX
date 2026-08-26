@@ -1,5 +1,11 @@
 # v0.1.43 verifier digest — production 실행 증거 재검증 (2026-08-23)
 
+> **이 문서는 2026-08-23 시점의 기록이다.** 그때 production은 v0.1.43 verifier가
+> 기동한 뒤 아직 아무 검증도 실행하지 않은 상태였다. 그 뒤 실제로 실행이 시작됐고,
+> §4·5의 "verifierImage 0건"과 §6의 "가로 넘침은 모든 폭에서 0"은
+> [2026-08-24 문서](verifier-digest-production-evidence-2026-08-24.md)가 대체한다.
+> 나머지 절은 그 시점의 측정으로 유효하다.
+
 R2C-81. [R2C-64](https://linear.app/r2cuerdame/issue/R2C-64)에서 verifier 이미지를 전부
 immutable digest로 고정하고 receipt에 실행 이미지 식별자를 기록하도록 바꿨고,
 [R2C-80](https://linear.app/r2cuerdame/issue/R2C-80)의 release gate가 **v0.1.43**
@@ -170,6 +176,16 @@ ok  internal/domain    0.358s
   (headless Chrome은 요청한 창 폭보다 작게 렌더링하지 않아 360 요청도 실제로는
   497로 그려진다. 360 스크린샷에서 오른쪽이 잘려 보이는 것은 캔버스가 360이기
   때문이며 페이지의 가로 넘침이 아니다 — 위 측정이 그것을 구분한다.)
+
+> **정정 (2026-08-24, [R2C-148](https://linear.app/r2cuerdame/issue/R2C-148)).** 위 표의
+> "360 요청(실제 497)"은 360px에서 넘침이 없다는 증거가 아니다. headless Chrome이 창을
+> 497px 아래로 줄이지 않아 **360px는 측정된 적이 없고**, 이 표가 읽은 것은 전부 497px
+> 렌더다. 실제로 360px에서 렌더하면 `.badge-tip`가 hidden 상태로 레이아웃 폭을 밀어
+> `scrollWidth 426 / clientWidth 360`이 나온다. digest 표시의 기여분이 0이라는 §6의
+> 결론 자체는 R2C-148에서 다시 확인됐다 — 넘침의 원인은 digest가 아니라 tooltip이었다.
+> 창 대신 고정 폭 iframe 안에서 렌더하면 `100vw`·스크롤바·`documentElement.scrollWidth`가
+> 그 폭의 창과 똑같이 동작하므로 497px 바닥이 사라진다. 그 방식으로 320/360/480px를
+> 실제로 측정하는 회귀 테스트가 `internal/web/narrowviewport_test.go`다.
 
 ## 7. mutable tag로만 실행되는 lane 감사 — 남아 있지 않음
 

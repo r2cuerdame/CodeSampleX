@@ -119,6 +119,7 @@ func TestSymbollessFindingSurvivesAnAlreadyVerifiedPackage(t *testing.T) {
 	if err := f.UpsertFailureCluster(ctx, ClusterRow{
 		Ecosystem: "npm", PackageName: "three", Symbol: "",
 		Stage: "PROJECT_TEST", ErrorFingerprint: "fp-1", ErrorCode: "ERR_X",
+		EvidenceQuality:  string(domain.EvidenceComplete),
 		ObservationCount: 12, EnvSummaryJSON: `{"os":"windows"}`,
 		VersionsJSON: `["0.185.1"]`,
 	}); err != nil {

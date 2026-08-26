@@ -18,7 +18,7 @@ CodeSampleX is an **open compatibility testing network** for developer libraries
 
 Two things are the asset, and a third is a bonus:
 
-- **Evidence** — real builds on real developer machines, with the environment, the stage they reached, and the public error code when they failed. It arrives automatically wherever csx is installed, so it reaches platforms no container lane can: no container reproduces a macOS host — Docker on a Mac runs a Linux VM, which is a different machine wearing the same laptop — npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
+- **Evidence** — real builds on real developer machines, with the environment, stage, structured termination, and secret-safe normalized failure fingerprint. Missing or legacy failure detail is shown as an Evidence gap, never invented as a cause. It arrives automatically wherever csx is installed, so it reaches platforms no container lane can: no container reproduces a macOS host — Docker on a Mac runs a Linux VM, which is a different machine wearing the same laptop — npm publishes no Windows image, and the long tail of musl, ARM, corporate base images and actually-installed runtime versions is unbounded. This is the only thing that can fill the map.
 - **Findings** — the contradictions we detected in that evidence: what a competent developer or model expects, measured against what happened. These are ours to stand behind, and they are what a model most often gets wrong, because they are exactly what the documentation does not say.
 - **Samples** — runnable code we write and verify ourselves. A bonus, deliberately: a container farm can never cover the space, so a verified sample is a confidence tier above the evidence, never the condition for having an answer at all.
 
@@ -116,7 +116,7 @@ csx sync                           # warm the shard cache — once, right after 
 A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<hex>` of its canonical artifact) with a **contract**: assertions that were executed offline in a pinned container and passed. Pinned by image digest, not by tag — the tag is an alias for readers, the digest is what runs — and the signed receipt names the exact image reference, so anyone can re-run the same bytes rather than take the word for it ([docs/adapters.md](docs/adapters.md#verifier-images)). The clean-room authoring loop is CLI-only:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief, empty workspace
+csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
@@ -190,6 +190,7 @@ The same data the website renders, as JSON, without an account:
 | `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
 | `GET /v1/wanted` | the demand queue: what was asked for and not answered |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
+| `GET /version` | which build of the server answered, and in which environment |
 
 ## Agent adapter (MCP)
 
@@ -242,7 +243,7 @@ Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolu
 
 ## Architecture
 
-Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. See [goal.md](goal.md), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md).
+Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. Current canonical references are [docs/architecture.md](docs/architecture.md), [docs/schema.md](docs/schema.md), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md), and [docs/activation-funnel.md](docs/activation-funnel.md) — the latter being what may and may not be measured between install and a first useful answer, and why unique/active users are not on that list. [goal.md](goal.md) is the initial product plan.
 
 ## Building from source
 

@@ -350,5 +350,8 @@ without a trace.
   [SECURITY.md](SECURITY.md), not a public issue.
 
 Related reading: [README.md](README.md) ("The contract"),
+[docs/activation-funnel.md](docs/activation-funnel.md) (which activation
+signals may be aggregated, which are local status only, and which are never
+collected),
 [goal.md](goal.md) §5 (usage modes and the network contract), §8.5 (error sanitization) and §8.6 (anonymity),
 [docs/operations.md](docs/operations.md).

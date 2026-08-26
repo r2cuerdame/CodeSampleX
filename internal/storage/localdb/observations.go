@@ -15,15 +15,26 @@ import (
 // columns carried along with it. It holds no source, path, or project
 // name by construction.
 type ObsKey struct {
-	Epoch            string // daily bucket "2026-08-13"
-	PURL             string // canonical purl string
-	Symbol           string
-	SymbolConfidence domain.SymbolConfidence
-	EnvHash          string
-	Stage            domain.Stage
-	Result           domain.Result
-	ErrorFP          string
-	ErrorCode        string
+	Epoch              string // daily bucket "2026-08-13"
+	PURL               string // canonical purl string
+	Symbol             string
+	SymbolConfidence   domain.SymbolConfidence
+	EnvHash            string
+	Stage              domain.Stage
+	Result             domain.Result
+	ErrorFP            string
+	ErrorCode          string
+	TerminationKind    domain.TerminationKind
+	ExitCode           *int
+	Signal             string
+	TimeoutMillis      int64
+	ErrorSummary       string
+	EvidenceQuality    domain.EvidenceQuality
+	OuterCommand       string
+	OuterStage         domain.Stage
+	ActualToolchain    string
+	StageEvidence      domain.FailureStageEvidence
+	FailureEvidenceGap domain.FailureEvidenceGap
 	// Direct says the reporter listed this package in their own manifest
 	// rather than receiving it through somebody else's dependency.
 	Direct bool
@@ -51,12 +62,26 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 		conf = domain.SymbolUnknown
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code, direct, coresident, depends_on, uploaded)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code,
+		  termination_kind, exit_code, signal, timeout_millis, error_summary, evidence_quality,
+		  outer_command, outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap,
+		  direct, coresident, depends_on, uploaded)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(epoch, purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 		  count = count + excluded.count,
 		  symbol_confidence = excluded.symbol_confidence,
 		  error_code = excluded.error_code,
+		  termination_kind = excluded.termination_kind,
+		  exit_code = excluded.exit_code,
+		  signal = excluded.signal,
+		  timeout_millis = excluded.timeout_millis,
+		  error_summary = excluded.error_summary,
+		  evidence_quality = excluded.evidence_quality,
+		  outer_command = excluded.outer_command,
+		  outer_stage = excluded.outer_stage,
+		  actual_toolchain = excluded.actual_toolchain,
+		  stage_evidence = excluded.stage_evidence,
+		  failure_evidence_gap = excluded.failure_evidence_gap,
 		  -- Chosen wins: one build resolving a package transitively does not
 		  -- unsay another that listed it.
 		  direct = MAX(observations.direct, excluded.direct),
@@ -67,6 +92,9 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 		  uploaded = 0`,
 		key.Epoch, key.PURL, key.Symbol, string(conf), key.EnvHash,
 		string(key.Stage), string(key.Result), incr, key.ErrorFP, key.ErrorCode,
+		string(key.TerminationKind), key.ExitCode, key.Signal, key.TimeoutMillis,
+		key.ErrorSummary, string(key.EvidenceQuality),
+		key.OuterCommand, string(key.OuterStage), key.ActualToolchain, string(key.StageEvidence), string(key.FailureEvidenceGap),
 		boolToInt(key.Direct), strings.Join(key.Coresident, ","),
 		strings.Join(key.DependsOn, ","))
 	return err
@@ -76,7 +104,10 @@ func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error 
 // deterministic order.
 func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code, direct, coresident, depends_on, count
+		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code,
+		       termination_kind, exit_code, signal, timeout_millis, error_summary, evidence_quality,
+		       outer_command, outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap,
+		       direct, coresident, depends_on, count
 		FROM observations WHERE uploaded = 0
 		ORDER BY epoch, purl, symbol, env_hash, stage, result, error_fp
 		LIMIT ?`, limit)
@@ -90,7 +121,9 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 		var direct int
 		var coresident, dependsOn string
 		if err := rows.Scan(&r.Epoch, &r.PURL, &r.Symbol, &r.SymbolConfidence,
-			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode, &direct,
+			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode,
+			&r.TerminationKind, &r.ExitCode, &r.Signal, &r.TimeoutMillis, &r.ErrorSummary, &r.EvidenceQuality,
+			&r.OuterCommand, &r.OuterStage, &r.ActualToolchain, &r.StageEvidence, &r.FailureEvidenceGap, &direct,
 			&coresident, &dependsOn, &r.Count); err != nil {
 			return nil, err
 		}

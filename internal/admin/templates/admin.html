@@ -256,6 +256,9 @@
       <h3 style="margin-top:18px">남은 좌표와 처리 속도</h3>
       <p class="note">큐가 스스로 일감을 만들기 때문에 <strong>바쁘다</strong>와 <strong>거의 끝났다</strong>는 다른 말입니다. 남은 양이 없으면 그 둘이 구별되지 않습니다. <strong>미검증 좌표</strong>는 사람들이 쓰는 걸 보고 있지만 아직 증명하지 못한 릴리스이고, <strong>미관측 의존성</strong>은 아무도 보고한 적 없는 — 해결된 lockfile만이 이름을 아는 — 릴리스입니다. 둘은 다른 종류의 없음이라 합치지 않습니다. 배포·해결 건수는 위 워커 수치와 같은 1시간 창입니다.</p>
       <div id="farm-backlog" class="stats" style="margin-top:14px"><p class="empty">불러오는 중…</p></div>
+      <h3 style="margin-top:18px">3축 완성도</h3>
+      <p class="note">좌표 하나가 끝났다는 건 셋을 다 가졌다는 뜻입니다 — <strong>S</strong>ample(독립 검증된 실행 코드), <strong>E</strong>vidence(누군가 실제로 돌린 관측·영수증), <strong>D</strong>ependency(해결된 의존성 그래프). 샘플만 세면 샘플은 있고 그래프는 없는 릴리스가 <strong>완료</strong>로 읽힙니다. <code>S-D</code>와 <code>--D</code>가 0인 것은 일이 끝나서가 아닙니다: 지금 그래프를 기록하는 유일한 경로가 관측 배치이고 배치는 자기 패키지를 싣고 오므로, 그래프가 있으면 증거도 있습니다. <strong>의존성 미상</strong>은 <strong>의존성 없음</strong>이 아닙니다 — 앞은 아무도 해결해본 적이 없다는 침묵이고, 뒤는 해결해봤더니 없더라는 측정입니다. 지금은 뒤를 만들어내는 경로가 없어서 0으로 적혀 있고, 없는 필드가 아니라 0인 필드로 두는 이유가 그것입니다.</p>
+      <div id="farm-completeness" class="stats" style="margin-top:14px"><p class="empty">불러오는 중…</p></div>
       <h3 style="margin-top:18px">OS 축 진행률</h3>
       <p class="note">관측된 패키지 중 <strong>그 플랫폼에서</strong> 실제로 증명된 비율입니다. 다른 플랫폼의 통과는 여기 들어가지 않습니다 — 그게 이 표가 존재하는 이유입니다. 컨테이너가 없는 칸은 진행률이 아니라 <strong>검증 불가</strong>로 표시합니다: npm×Windows는 공식 이미지가 없어 영원히 0이고, 밀린 작업이 아닙니다.</p>
       <div id="farm-coverage" class="stats" style="margin-top:14px"><p class="empty">불러오는 중…</p></div>
