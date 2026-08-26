@@ -171,6 +171,16 @@ ok  internal/domain    0.358s
   497로 그려진다. 360 스크린샷에서 오른쪽이 잘려 보이는 것은 캔버스가 360이기
   때문이며 페이지의 가로 넘침이 아니다 — 위 측정이 그것을 구분한다.)
 
+> **정정 (2026-08-24, [R2C-148](https://linear.app/r2cuerdame/issue/R2C-148)).** 위 표의
+> "360 요청(실제 497)"은 360px에서 넘침이 없다는 증거가 아니다. headless Chrome이 창을
+> 497px 아래로 줄이지 않아 **360px는 측정된 적이 없고**, 이 표가 읽은 것은 전부 497px
+> 렌더다. 실제로 360px에서 렌더하면 `.badge-tip`가 hidden 상태로 레이아웃 폭을 밀어
+> `scrollWidth 426 / clientWidth 360`이 나온다. digest 표시의 기여분이 0이라는 §6의
+> 결론 자체는 R2C-148에서 다시 확인됐다 — 넘침의 원인은 digest가 아니라 tooltip이었다.
+> 창 대신 고정 폭 iframe 안에서 렌더하면 `100vw`·스크롤바·`documentElement.scrollWidth`가
+> 그 폭의 창과 똑같이 동작하므로 497px 바닥이 사라진다. 그 방식으로 320/360/480px를
+> 실제로 측정하는 회귀 테스트가 `internal/web/narrowviewport_test.go`다.
+
 ## 7. mutable tag로만 실행되는 lane 감사 — 남아 있지 않음
 
 코드 쪽은 다음이 실행으로 확인한다 (`internal/sandbox`, 전부 통과).
