@@ -3,12 +3,22 @@
      page is one new file plus its handler. Everything it can borrow from the
      shared stylesheet — panel, chip, mono, dim, eyebrow, note — it borrows. */}}
 <style>
-.findings { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.65rem; }
-.finding { display: flex; flex-direction: column; gap: 0.35rem; }
+/* An auto grid track is at least as wide as the widest thing that cannot
+   shrink, and a grid item's min-width is auto — so one unbroken token in a
+   claim below used to size this column, then the card, then the page
+   (R2C-196). minmax(0, …) says the column may be narrower than its content;
+   overflow-wrap on the claim says what happens then. Both are needed: the
+   first alone would clip the token, the second alone leaves any future
+   nowrap child free to widen the card again. */
+.findings { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.65rem; }
+.finding { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
 .finding.panel { padding: 0.9rem 1rem; border-radius: 0.85rem; }
 .fhead { margin: 0; display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .fhead .subject { color: var(--accent); font-size: 0.88rem; overflow-wrap: anywhere; }
-.finding p.claim { margin: 0; max-width: 74ch; }
+/* A measurement quotes what it measured, so this prose carries identifiers:
+   Plug.Session.init/1, a 64-character session id, a digest. They wrap here
+   rather than being cut, because the identifier IS the finding. */
+.finding p.claim { margin: 0; max-width: 74ch; overflow-wrap: anywhere; }
 .finding .k {
   display: inline-block; margin: 0 0.45rem 0.28rem 0; padding: 0.1rem 0.45rem;
   color: var(--accent); background: #e5efff; border: 1px solid #b7cdf6;
