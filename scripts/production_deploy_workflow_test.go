@@ -19,6 +19,20 @@ func productionWorkflow(t *testing.T) string {
 	return strings.ReplaceAll(string(raw), "\r\n", "\n")
 }
 
+func productionWorkflowStep(t *testing.T, workflow, name string) string {
+	t.Helper()
+	marker := "      - name: " + name
+	start := strings.Index(workflow, marker)
+	if start < 0 {
+		t.Fatalf("production workflow has no %q step", name)
+	}
+	tail := workflow[start+len(marker):]
+	if end := strings.Index(tail, "\n      - name: "); end >= 0 {
+		tail = tail[:end]
+	}
+	return tail
+}
+
 func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 	workflow := productionWorkflow(t)
 	head := workflow
@@ -50,11 +64,31 @@ func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 		"fetch-depth: 0",
 		"test \"$(git rev-parse HEAD)\" = \"$TARGET_SHA\"",
 		"git merge-base --is-ancestor \"$TARGET_SHA\" origin/main",
-		"commits/$TARGET_SHA/check-runs",
-		`select(.name == "Test" and .conclusion == "success")`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("immutable-main/required-CI guard is missing %q", required)
+		}
+	}
+}
+
+func TestProductionRequiresSuccessfulCanonicalMainCIRun(t *testing.T) {
+	step := productionWorkflowStep(t, productionWorkflow(t), "Require successful canonical main CI run")
+	for _, required := range []string{
+		"actions/workflows/ci.yml/runs?head_sha=${TARGET_SHA}&branch=main&event=push&status=success&per_page=1",
+		"--jq '.workflow_runs[0].id // 0'",
+		`if ! [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]; then`,
+		"Canonical CI evidence:",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("canonical push/main CI provenance gate is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"commits/$TARGET_SHA/check-runs",
+		`select(.name == "Test" and .conclusion == "success")`,
+	} {
+		if strings.Contains(step, forbidden) {
+			t.Errorf("canonical CI provenance can still be satisfied by an arbitrary check run: %q", forbidden)
 		}
 	}
 }

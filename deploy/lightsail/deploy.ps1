@@ -298,10 +298,15 @@ Write-Output "deployment invariants before: $invariantsBefore"
 
 $assertNoLegacyAccessLogs = @'
 set -eu
-old_dir=/opt/codesamplex/caddy-logs.pre-safe
+cd /opt/codesamplex/deploy
+docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'
+set -eu
+old_dir=/var/log/caddy
+test "$(readlink -f "$old_dir")" = /var/log/caddy
 for old in "$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz; do
   [ ! -e "$old" ] || { printf 'legacy query-bearing access log requires a manual privacy cleanup\n' >&2; exit 69; }
 done
+CSX_LEGACY_ACCESS_PREFLIGHT
 '@
 if ($RequireNoLegacyAccessLogs) {
     Invoke-RemoteScript $assertNoLegacyAccessLogs | Out-Null
