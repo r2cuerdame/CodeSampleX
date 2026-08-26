@@ -29,7 +29,12 @@
           "errorSummary": {"type": "string", "maxLength": 512},
           "errorCode": {"type": "string", "maxLength": 64},
           "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-          "evidenceQuality": {"enum": ["complete", "partial", "missing"]}
+          "evidenceQuality": {"enum": ["complete", "partial", "missing"]},
+          "outerCommand": {"type": "string", "pattern": "^[a-z0-9]+(?: [a-z0-9-]+)?$", "maxLength": 32},
+          "outerStage": {"enum": ["USED", "PROJECT_RESOLVE", "PROJECT_TYPECHECK", "PROJECT_COMPILE", "PROJECT_TEST", "PROJECT_PROCESS", "PROJECT_LOAD", "PROCESS_START", "UNKNOWN"]},
+          "actualToolchain": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+._/-]{0,63}$"},
+          "stageEvidence": {"enum": ["structured-termination", "resolve-diagnostic", "compiler-diagnostic", "test-runner-diagnostic", "build-aggregate", "unclassified-diagnostic"]},
+          "evidenceGap": {"enum": ["diagnostic-missing", "stage-unknown"]}
         },
         "additionalProperties": false
       }

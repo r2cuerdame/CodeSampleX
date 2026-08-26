@@ -19,6 +19,21 @@ const maxObservationCount = 1_000_000
 // via signed receipts, never via observation batches.
 var observationStages = map[domain.Stage]bool{
 	domain.StageUsed:             true,
+	domain.StageProjectResolve:   true,
+	domain.StageProjectTypecheck: true,
+	domain.StageProjectCompile:   true,
+	domain.StageProjectTest:      true,
+	domain.StageProjectLoad:      true,
+	domain.StageProjectProcess:   true,
+	domain.StageProcessStart:     true,
+	domain.StageUnknown:          true,
+}
+
+// observationStagesV1 is the frozen public v1 vocabulary. Actual-stage
+// lineage and the stages it introduced travel only on schema v2 batches, so a
+// document cannot claim the old wire contract while relying on new semantics.
+var observationStagesV1 = map[domain.Stage]bool{
+	domain.StageUsed:             true,
 	domain.StageProjectTypecheck: true,
 	domain.StageProjectCompile:   true,
 	domain.StageProjectTest:      true,
@@ -38,8 +53,11 @@ var observationStages = map[domain.Stage]bool{
 //   - errorFingerprint must be a sha256 content id — raw error text can
 //     never ride in on that field.
 func ValidateBatch(b domain.ObservationBatch) error {
-	if b.SchemaVersion != 1 {
-		return fmt.Errorf("schemaVersion must be 1, got %d", b.SchemaVersion)
+	if b.SchemaVersion != 1 && b.SchemaVersion != 2 {
+		return fmt.Errorf("schemaVersion must be 1 or 2, got %d", b.SchemaVersion)
+	}
+	if b.SchemaVersion == 1 && failureLineagePresent(b) {
+		return fmt.Errorf("schemaVersion 1 must not contain failure lineage")
 	}
 	if err := validEpoch(b.Epoch); err != nil {
 		return err
@@ -61,7 +79,11 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	case domain.StageSymbolExecuted, domain.StageSymbolCall:
 		return fmt.Errorf("stage %s is A3-only runtime instrumentation; no Public v1 adapter claims A3", b.Stage)
 	}
-	if !observationStages[b.Stage] {
+	allowedStages := observationStages
+	if b.SchemaVersion == 1 {
+		allowedStages = observationStagesV1
+	}
+	if !allowedStages[b.Stage] {
 		return fmt.Errorf("stage %q is not an observation stage", b.Stage)
 	}
 	if b.Result != domain.ResultPass && b.Result != domain.ResultFail {
@@ -112,7 +134,8 @@ func normalizedEvidenceQuality(b domain.ObservationBatch) string {
 func validFailureEvidence(b domain.ObservationBatch) error {
 	if b.Result == domain.ResultPass {
 		if b.TerminationKind != "" || b.ExitCode != nil || b.Signal != "" || b.TimeoutMillis != 0 ||
-			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" {
+			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" ||
+			b.OuterCommand != "" || b.OuterStage != "" || b.ActualToolchain != "" || b.StageEvidence != "" || b.FailureEvidenceGap != "" {
 			return fmt.Errorf("PASS must not carry failure evidence")
 		}
 		return nil
@@ -141,6 +164,9 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 	if len(b.ErrorSummary) > 512 {
 		return fmt.Errorf("errorSummary longer than 512 bytes")
 	}
+	if err := validFailureLineage(b); err != nil {
+		return err
+	}
 	if b.ErrorSummary != "" {
 		canonical := sanitizer.CanonicalPublicErrorSummary(b.ErrorSummary, b.Stage)
 		if canonical != b.ErrorSummary {
@@ -165,11 +191,94 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		// evidence so a buggy or hostile client cannot split identical failures
 		// or merge unrelated ones with an arbitrary syntactically-valid SHA.
 		expected := domain.FailureFingerprint(b.Stage, term, b.ErrorCode, b.ErrorSummary)
+		if b.ActualToolchain != "" {
+			expected = domain.ClassifiedFailureFingerprint(b.Stage, b.ActualToolchain, term, b.ErrorCode, b.ErrorSummary)
+		}
 		if b.ErrorFingerprint != expected {
 			return fmt.Errorf("errorFingerprint does not match structured failure evidence")
 		}
 	}
 	return nil
+}
+
+func failureLineagePresent(b domain.ObservationBatch) bool {
+	return b.OuterCommand != "" || b.OuterStage != "" || b.ActualToolchain != "" ||
+		b.StageEvidence != "" || b.FailureEvidenceGap != ""
+}
+
+func validFailureLineage(b domain.ObservationBatch) error {
+	return ValidateFailureLineage(domain.FailureEvidence{
+		OuterCommand: b.OuterCommand, OuterStage: b.OuterStage,
+		ActualToolchain: b.ActualToolchain, StageEvidence: b.StageEvidence,
+		EvidenceGap: b.FailureEvidenceGap,
+	})
+}
+
+// ValidateFailureLineage applies the shared privacy-bounded public-coordinate
+// contract to both anonymous observation batches and signed receipts. A
+// signature authenticates a string; it does not make arbitrary text safe to
+// retain or publish.
+func ValidateFailureLineage(f domain.FailureEvidence) error {
+	if len(f.OuterCommand) > 32 {
+		return fmt.Errorf("outerCommand longer than 32 bytes")
+	}
+	if !validOuterCommand(f.OuterCommand) {
+		return fmt.Errorf("outerCommand is not a known public tool/subcommand")
+	}
+	if f.OuterStage != "" && !observationStages[f.OuterStage] {
+		return fmt.Errorf("outerStage %q is not an observation stage", f.OuterStage)
+	}
+	if len(f.ActualToolchain) > 64 || !safeCoordinate(f.ActualToolchain) {
+		return fmt.Errorf("actualToolchain is not a safe public coordinate")
+	}
+	switch f.StageEvidence {
+	case "", domain.FailureStageStructuredTermination, domain.FailureStageResolveDiagnostic,
+		domain.FailureStageCompilerDiagnostic, domain.FailureStageTestRunnerDiagnostic,
+		domain.FailureStageBuildAggregate, domain.FailureStageUnclassifiedDiagnostic:
+	default:
+		return fmt.Errorf("stageEvidence %q is invalid", f.StageEvidence)
+	}
+	switch f.EvidenceGap {
+	case "", domain.FailureDiagnosticMissing, domain.FailureStageUnknown:
+	default:
+		return fmt.Errorf("evidenceGap %q is invalid", f.EvidenceGap)
+	}
+	return nil
+}
+
+func validOuterCommand(command string) bool {
+	if command == "" {
+		return true
+	}
+	parts := strings.Fields(command)
+	if len(parts) < 1 || len(parts) > 2 {
+		return false
+	}
+	if command != strings.Join(parts, " ") {
+		return false
+	}
+	tools := map[string]bool{"go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "dotnet": true, "gradle": true, "gradlew": true, "pytest": true, "python": true, "python3": true, "node": true, "tsc": true}
+	if !tools[parts[0]] {
+		return false
+	}
+	if len(parts) == 1 {
+		return true
+	}
+	subcommands := map[string]bool{"test": true, "build": true, "check": true, "run": true, "restore": true, "list": true, "mod": true, "get": true, "install": true}
+	return subcommands[parts[1]]
+}
+
+func safeCoordinate(s string) bool {
+	if s == "" {
+		return true
+	}
+	for i, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (i > 0 && strings.ContainsRune("+._/-", r)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // A batch's edge facts turn into one INSERT each, and their strings land in

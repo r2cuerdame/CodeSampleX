@@ -74,6 +74,24 @@ func TestNonExitTerminationKindsStayStructuredAndDistinct(t *testing.T) {
 	}
 }
 
+func TestClassifiedFingerprintGroupsAcrossOuterWrappersButSeparatesToolchains(t *testing.T) {
+	exitCode := 1
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	goOuter := SanitizeClassifiedFailure("src/index.ts(12,5): error TS2352: bad conversion", domain.StageProjectCompile, term, nil,
+		"go test", domain.StageProjectTest, "typescript/tsc", domain.FailureStageCompilerDiagnostic, "")
+	npmOuter := SanitizeClassifiedFailure("src/index.ts(12,5): error TS2352: bad conversion", domain.StageProjectCompile, term, nil,
+		"npm test", domain.StageProjectTest, "typescript/tsc", domain.FailureStageCompilerDiagnostic, "")
+	goCompiler := SanitizeClassifiedFailure("src/index.ts(12,5): error TS2352: bad conversion", domain.StageProjectCompile, term, nil,
+		"go test", domain.StageProjectTest, "go/compiler", domain.FailureStageCompilerDiagnostic, "")
+
+	if goOuter.Fingerprint != npmOuter.Fingerprint {
+		t.Fatalf("outer wrappers split one actual failure: %s != %s", goOuter.Fingerprint, npmOuter.Fingerprint)
+	}
+	if goOuter.Fingerprint == goCompiler.Fingerprint {
+		t.Fatalf("actual toolchains collapsed into one fingerprint: %s", goOuter.Fingerprint)
+	}
+}
+
 func TestCanonicalPublicErrorSummaryDoesNotApplyValidatorUsername(t *testing.T) {
 	summary := "FAIL example.com/csx-production-modern-failure-canary: connection refused"
 	if got := CanonicalPublicErrorSummary(summary, domain.StageProjectTest); got != summary {

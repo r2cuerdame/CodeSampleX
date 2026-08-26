@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v2/observation-batch.json",
+  "title": "ObservationBatch",
+  "description": "Anonymous automatic evidence unit with actual-stage failure lineage. Must never carry source, paths, project names, secrets, or raw logs.",
+  "type": "object",
+  "required": ["schemaVersion", "epoch", "anonId", "projectBucket", "package", "environment", "stage", "result", "observationCount"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "epoch": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "anonId": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "projectBucket": {"type": "string", "pattern": "^[0-9a-f]{12}$"},
+    "package": {"type": "string", "pattern": "^pkg:(npm|pypi|cargo|golang|maven)/.+@.+$"},
+    "symbol": {"type": "string"},
+    "symbolConfidence": {"enum": ["EXACT", "PROBABLE", "UNKNOWN"]},
+    "environment": {"$ref": "../v1/environment.json"},
+    "stage": {
+      "enum": ["USED", "PROJECT_RESOLVE", "PROJECT_TYPECHECK", "PROJECT_COMPILE", "PROJECT_TEST", "PROJECT_PROCESS", "PROJECT_LOAD", "PROCESS_START", "UNKNOWN", "SYMBOL_EXECUTED", "SYMBOL_CALL"],
+      "description": "SYMBOL_EXECUTED/SYMBOL_CALL are runtime-instrumentation stages: emitted only by A3-capable adapters that directly observed the call, never inferred. SYMBOL_EXECUTED result is always PASS; SYMBOL_CALL PASS = returned, FAIL = threw."
+    },
+    "result": {"enum": ["PASS", "FAIL"]},
+    "observationCount": {"type": "integer", "minimum": 1},
+    "errorFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "errorCode": {"type": "string", "maxLength": 64},
+    "terminationKind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
+    "exitCode": {"type": "integer"},
+    "signal": {"type": "string", "maxLength": 32},
+    "timeoutMillis": {"type": "integer", "minimum": 0},
+    "errorSummary": {"type": "string", "maxLength": 512},
+    "evidenceQuality": {"enum": ["complete", "partial", "missing", "legacy-evidence-incomplete"]},
+    "outerCommand": {"type": "string", "pattern": "^[a-z0-9]+(?: [a-z0-9-]+)?$", "maxLength": 32},
+    "outerStage": {"enum": ["USED", "PROJECT_RESOLVE", "PROJECT_TYPECHECK", "PROJECT_COMPILE", "PROJECT_TEST", "PROJECT_PROCESS", "PROJECT_LOAD", "PROCESS_START", "UNKNOWN"]},
+    "actualToolchain": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+._/-]{0,63}$"},
+    "stageEvidence": {"enum": ["structured-termination", "resolve-diagnostic", "compiler-diagnostic", "test-runner-diagnostic", "build-aggregate", "unclassified-diagnostic"]},
+    "evidenceGap": {"enum": ["diagnostic-missing", "stage-unknown"]}
+  },
+  "additionalProperties": false
+}

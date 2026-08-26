@@ -47,6 +47,11 @@ type FailureSummary struct {
 	TimeoutMillis   int64             `json:"timeoutMillis,omitempty"`
 	ErrorSummary    string            `json:"errorSummary,omitempty"`
 	EvidenceQuality string            `json:"evidenceQuality"`
+	OuterCommand    string            `json:"outerCommand,omitempty"`
+	OuterStage      string            `json:"outerStage,omitempty"`
+	ActualToolchain string            `json:"actualToolchain,omitempty"`
+	StageEvidence   string            `json:"stageEvidence,omitempty"`
+	EvidenceGap     string            `json:"evidenceGap,omitempty"`
 	Count           int64             `json:"count"`
 	EnvSummary      map[string]string `json:"envSummary,omitempty"`
 	// Reporters and Projects are how WIDESPREAD the failure is, and they are
@@ -292,6 +297,11 @@ func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
 		signal              string
 		timeoutMillis       int64
 		errorSummary        string
+		outerCommand        string
+		outerStage          string
+		actualToolchain     string
+		stageEvidence       string
+		evidenceGap         string
 	}
 	groups := map[fkey]*agg{}
 	for _, row := range evidence {
@@ -307,7 +317,10 @@ func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
 		a := groups[k]
 		if a == nil {
 			a = &agg{exitCode: row.ExitCode, signal: row.Signal,
-				timeoutMillis: row.TimeoutMillis, errorSummary: row.ErrorSummary}
+				timeoutMillis: row.TimeoutMillis, errorSummary: row.ErrorSummary,
+				outerCommand: row.OuterCommand, outerStage: row.OuterStage,
+				actualToolchain: row.ActualToolchain, stageEvidence: row.StageEvidence,
+				evidenceGap: row.FailureEvidenceGap}
 			groups[k] = a
 		}
 		a.count += row.ObservationCount
@@ -350,7 +363,10 @@ func failureSummaries(evidence []serverstore.EvidenceRow) []FailureSummary {
 			TerminationKind: k.term, ExitCode: a.exitCode, Signal: a.signal,
 			TimeoutMillis: a.timeoutMillis, ErrorSummary: a.errorSummary,
 			EvidenceQuality: k.quality, Count: a.count,
-			Reporters: a.reporters, Projects: a.projects,
+			OuterCommand: a.outerCommand, OuterStage: a.outerStage,
+			ActualToolchain: a.actualToolchain, StageEvidence: a.stageEvidence,
+			EvidenceGap: a.evidenceGap,
+			Reporters:   a.reporters, Projects: a.projects,
 		}
 		if a.hasEnv {
 			f.EnvSummary = envSummary([]domain.EnvironmentFingerprint{a.env})

@@ -9,8 +9,16 @@ implementation has evolved.
 `csx run` and MCP `run_observed_command` execute through the same runner. A
 failed executable command yields a structured termination (`exit`, `signal`,
 `timeout`, or `process-start-failed`) and a bounded local stdout/stderr tail.
+Before sanitization, the failure-stage analyzer separates the outer workflow
+intent from actual compiler, resolver, and test-runner diagnostics. One outer
+execution can emit multiple independent failure events; aggregate markers such
+as `[build failed]` prove a build stage but never become an invented root
+diagnostic. The public lineage is bounded to a known outer tool/subcommand,
+actual toolchain, stage-decision evidence, and an explicit Evidence gap.
 The sanitizer removes secrets and volatile coordinates, creates a short public
-error summary, and hashes the normalized stage + termination + error. Raw logs
+error summary, and hashes the actual stage + actual toolchain + termination +
+error. The outer command is excluded from fingerprint identity so equivalent
+nested failures reached through different wrappers remain one family. Raw logs
 stay local.
 
 The local SQLite queue stores that public failure evidence. Community sync

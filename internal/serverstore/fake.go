@@ -81,6 +81,11 @@ type fakeAggMeta struct {
 	timeoutMillis    int64
 	errorSummary     string
 	evidenceQuality  string
+	outerCommands    map[string]bool
+	outerStage       string
+	actualToolchain  string
+	stageEvidence    string
+	evidenceGap      string
 	// direct: the reporter listed this package in their own manifest. Chosen
 	// wins and never unsays itself.
 	direct    bool
@@ -184,6 +189,7 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 			symbolConfidence: confidence,
 			envJSON:          string(domain.MustCanonicalJSON(env)),
 			firstSeen:        now,
+			outerCommands:    map[string]bool{},
 		}
 		f.aggMeta[k] = meta
 	}
@@ -228,6 +234,15 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	}
 	if meta.evidenceQuality == "" {
 		meta.evidenceQuality = normalizedEvidenceQuality(b)
+	}
+	if b.OuterCommand != "" {
+		meta.outerCommands[b.OuterCommand] = true
+	}
+	if meta.outerStage == "" {
+		meta.outerStage = string(b.OuterStage)
+		meta.actualToolchain = b.ActualToolchain
+		meta.stageEvidence = string(b.StageEvidence)
+		meta.evidenceGap = string(b.FailureEvidenceGap)
 	}
 	meta.lastSeen = now
 	f.merge.apply(b)
@@ -510,6 +525,15 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 		if k.PURL != purl || !want[k.Symbol] {
 			continue
 		}
+		outerCommands := make([]string, 0, len(meta.outerCommands))
+		for command := range meta.outerCommands {
+			outerCommands = append(outerCommands, command)
+		}
+		sort.Strings(outerCommands)
+		outerCommand := ""
+		if len(outerCommands) > 0 {
+			outerCommand = outerCommands[0]
+		}
 		out = append(out, EvidenceRow{
 			PURL: k.PURL, Symbol: k.Symbol,
 			SymbolConfidence: meta.symbolConfidence,
@@ -519,6 +543,9 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 			TerminationKind: meta.terminationKind, ExitCode: meta.exitCode,
 			Signal: meta.signal, TimeoutMillis: meta.timeoutMillis,
 			ErrorSummary: meta.errorSummary, EvidenceQuality: meta.evidenceQuality,
+			OuterCommand: outerCommand, OuterCommands: outerCommands, OuterStage: meta.outerStage,
+			ActualToolchain: meta.actualToolchain, StageEvidence: meta.stageEvidence,
+			FailureEvidenceGap:   meta.evidenceGap,
 			ObservationCount:     f.merge.observations[k],
 			UniquePeerBuckets:    peakBuckets(f.merge.peerBuckets, k),
 			UniqueProjectBuckets: peakBuckets(f.merge.projectBuckets, k),

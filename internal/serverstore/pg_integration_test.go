@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
 // errIntegrationDSNUnset marks the one absence that is allowed to skip: a
@@ -1783,4 +1784,33 @@ func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
 	}
 	return total
+}
+
+func TestIntegrationEvidenceAggregateRetainsEveryOuterCommand(t *testing.T) {
+	pg := openTestPG(t)
+	exitCode := 1
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	classified := func(outer string) domain.ObservationBatch {
+		f := sanitizer.SanitizeClassifiedFailure("src/index.ts(12,5): error TS2352: bad conversion",
+			domain.StageProjectCompile, term, nil, outer, domain.StageProjectTest,
+			"typescript/tsc", domain.FailureStageCompilerDiagnostic, "")
+		b := reviewBatch(f)
+		b.Stage = domain.StageProjectCompile
+		return b
+	}
+	first := classified("go test")
+	second := classified("npm test")
+	second.AnonID = "anon-integration-two"
+	second.ProjectBucket = "project-integration-two"
+
+	if accepted, rejected, err := pg.IngestBatches(t.Context(), []domain.ObservationBatch{first, second}); err != nil || accepted != 2 || len(rejected) != 0 {
+		t.Fatalf("ingest = accepted %d, rejected %+v, err %v", accepted, rejected, err)
+	}
+	rows, err := pg.EvidenceForTarget(t.Context(), first.Package, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || strings.Join(rows[0].OuterCommands, ",") != "go test,npm test" {
+		t.Fatalf("PostgreSQL aggregate outer commands = %+v", rows)
+	}
 }
