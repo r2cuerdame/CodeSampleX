@@ -387,7 +387,7 @@ func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, samp
 			return nil
 		}
 	}
-	_, err = store.CreateJob(ctx, crossJobFor(sampleID, manifest))
+	_, err = store.EnsureCrossJob(ctx, crossJobFor(sampleID, manifest))
 	return err
 }
 

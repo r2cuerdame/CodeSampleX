@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -78,6 +80,25 @@ func countCrossJobs(t *testing.T, store *serverstore.Fake, sampleID string) int 
 		}
 	}
 	return n
+}
+
+// This wrapper recreates the old handler race deterministically: both
+// JobsForSample reads complete before either CreateJob can run. The fixed
+// handler never calls these split operations; its promoted EnsureCrossJob
+// method goes straight to the embedded store's atomic implementation.
+type legacyCrossJobRaceStore struct {
+	serverstore.Store
+	serverstore.AnomalyStore
+	reads atomic.Int32
+	gate  chan struct{}
+}
+
+func (s *legacyCrossJobRaceStore) JobsForSample(ctx context.Context, sampleID string) ([]serverstore.JobRow, error) {
+	if s.reads.Add(1) == 2 {
+		close(s.gate)
+	}
+	<-s.gate
+	return s.Store.JobsForSample(ctx, sampleID)
 }
 
 // The completion criterion, end to end: a mismatch is reported, the fleet's
@@ -197,6 +218,61 @@ func TestADuplicateReportCreatesNoNewVerificationWork(t *testing.T) {
 	}
 }
 
+func TestDistinctConcurrentReportsReuseOneCrossJob(t *testing.T) {
+	var racing *legacyCrossJobRaceStore
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		racing = &legacyCrossJobRaceStore{
+			Store: d.Store, AnomalyStore: d.Store.(serverstore.AnomalyStore), gate: make(chan struct{}),
+		}
+		d.Store = racing
+	})
+	sampleID := saveSampleForVerification(t, store, "cc")
+	reports := []domain.AnomalyReport{mismatchAgainst(sampleID), mismatchAgainst(sampleID)}
+	reports[1].Symbol = "axios.get" // a distinct fingerprint, same sample
+
+	type result struct {
+		status int
+		body   anomalyResponse
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, len(reports))
+	var wg sync.WaitGroup
+	for _, report := range reports {
+		report := report
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			raw, err := json.Marshal(anomalyEnvelopeFor(report))
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			resp, err := http.Post(srv.URL+"/v1/anomalies", "application/json", strings.NewReader(string(raw)))
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			defer resp.Body.Close()
+			var body anomalyResponse
+			err = json.NewDecoder(resp.Body).Decode(&body)
+			results <- result{status: resp.StatusCode, body: body, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if got.err != nil || got.status != http.StatusOK || got.body.VerificationJobID == 0 {
+			t.Fatalf("concurrent report = status %d body %+v err=%v", got.status, got.body, got.err)
+		}
+	}
+	if got := countCrossJobs(t, store, sampleID); got != 1 {
+		t.Fatalf("two fingerprints raced into %d cross jobs, want 1", got)
+	}
+}
+
 // The single most important refusal on the wire.
 func TestAPureHypothesisIsRefusedOnTheWire(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
@@ -232,6 +308,32 @@ func TestIdentifyingMaterialIsRedactedBeforeItIsStored(t *testing.T) {
 	report := mismatchAgainst(sampleID)
 	report.LocalObserved.Detail = `failed in C:\Users\ana\acme-billing\src\pay.ts with token Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A`
 	report.LLMHypothesis = "see https://internal.acme.corp/runbook for the same failure"
+	private := "/home/alice/private-project"
+	report.Symbol = private + "/secret-symbol"
+	report.Environment.Ecosystem = private + "/ecosystem"
+	report.Environment.OS = private + "/os"
+	report.Environment.OSVersionBucket = private + "/os-version"
+	report.Environment.Arch = private + "/arch"
+	report.Environment.Runtime = private + "/runtime"
+	report.Environment.RuntimeVersion = private + "/runtime-version"
+	report.Environment.Language = private + "/language"
+	report.Environment.LanguageVersion = private + "/language-version"
+	report.Environment.Compiler = private + "/compiler"
+	report.Environment.CompilerVersion = private + "/compiler-version"
+	report.Environment.PackageManager = private + "/package-manager"
+	report.Environment.PackageManagerVersion = private + "/package-manager-version"
+	report.Environment.ModuleSystem = private + "/module-system"
+	report.Environment.ExecutionContext = private + "/execution-context"
+	report.Environment.BrowserFamily = private + "/browser"
+	report.Environment.BrowserMajor = private + "/browser-version"
+	report.Environment.Engine = private + "/engine"
+	report.Environment.EngineVersion = private + "/engine-version"
+	report.Environment.Virtualization = private + "/virtualization"
+	report.Environment.ContainerRuntime = private + "/container-runtime"
+	report.Environment.Libc = private + "/libc"
+	report.Environment.LibcVersion = private + "/libc-version"
+	report.Environment.Distro = private + "/distro"
+	report.Environment.Frameworks = []string{private + "/framework"}
 
 	var out anomalyResponse
 	resp := postJSON(t, srv.URL+"/v1/anomalies", anomalyEnvelopeFor(report), &out)
@@ -246,7 +348,7 @@ func TestIdentifyingMaterialIsRedactedBeforeItIsStored(t *testing.T) {
 		t.Fatalf("stored rows = %+v err=%v", rows, err)
 	}
 	stored := rows[0].ReportJSON
-	for _, secret := range []string{"ana", "acme-billing", "pay.ts", "Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A", "internal.acme.corp"} {
+	for _, secret := range []string{"Users\\ana", "acme-billing", "pay.ts", "Zq7bY2mK9pW3nT6vR8sL1xC5dH0gJe4A", "internal.acme.corp", "alice", "private-project", "secret-symbol"} {
 		if strings.Contains(stored, secret) {
 			t.Fatalf("%q reached storage: %s", secret, stored)
 		}
@@ -258,6 +360,43 @@ func TestIdentifyingMaterialIsRedactedBeforeItIsStored(t *testing.T) {
 	}
 	if back.LocalObserved.Result != "FAIL" || back.Package != "pkg:npm/axios@1.12.0" {
 		t.Fatalf("redaction destroyed the local facts: %+v", back)
+	}
+}
+
+func TestStructuredAnomalyFieldsCannotCarryIdentifyingText(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*anomalyEnvelope)
+	}{
+		{"sample id", func(e *anomalyEnvelope) { e.Report.SampleID = "/home/alice/private-project" }},
+		{"evidence id", func(e *anomalyEnvelope) { e.Report.EvidenceID = "/home/alice/private-project" }},
+		{"search fingerprint", func(e *anomalyEnvelope) { e.Report.SearchFingerprint = "/home/alice/private-project" }},
+		{"related id", func(e *anomalyEnvelope) { e.Report.RelatedIDs = []string{"/home/alice/private-project"} }},
+		{"csx stage", func(e *anomalyEnvelope) { e.Report.CSXObserved.Stage = "/home/alice/private-project" }},
+		{"local stage", func(e *anomalyEnvelope) { e.Report.LocalObserved.Stage = "https://internal.example/stage" }},
+		{"error code", func(e *anomalyEnvelope) { e.Report.ErrorCode = "/home/alice/private-project" }},
+		{"error fingerprint", func(e *anomalyEnvelope) { e.Report.ErrorFingerprint = "/home/alice/private-project" }},
+		{"epoch", func(e *anomalyEnvelope) { e.Epoch = "/home/alice/private-project" }},
+		{"anon id", func(e *anomalyEnvelope) { e.AnonID = "https://internal.example/token" }},
+		{"arbitrary symbol text", func(e *anomalyEnvelope) { e.Report.Symbol = "my private project symbol" }},
+		{"arbitrary environment text", func(e *anomalyEnvelope) { e.Report.Environment.Runtime = "my private runtime" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store, _ := newTestServer(t, nil)
+			sampleID := saveSampleForVerification(t, store, "ee")
+			envelope := anomalyEnvelopeFor(mismatchAgainst(sampleID))
+			tc.set(&envelope)
+			var body map[string]string
+			resp := postJSON(t, srv.URL+"/v1/anomalies", envelope, &body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%v, want 400", resp.StatusCode, body)
+			}
+			rows, err := store.ListAnomalyReports(context.Background(), 10)
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("unsafe structured value reached storage: rows=%+v err=%v", rows, err)
+			}
+		})
 	}
 }
 

@@ -938,6 +938,32 @@ func (f *Fake) CreateJob(_ context.Context, j JobRow) (int64, error) {
 	return j.ID, nil
 }
 
+func (f *Fake) EnsureCrossJob(_ context.Context, j JobRow) (int64, error) {
+	if j.Reason != "cross" || j.SampleID == "" {
+		return 0, fmt.Errorf("EnsureCrossJob requires a cross job with a sample id")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	reuseUnsupported := j.Status == JobStatusUnsupported
+	for _, existing := range f.jobs {
+		if existing.SampleID == j.SampleID && existing.Reason == "cross" &&
+			(existing.Status == "open" || existing.Status == "claimed" ||
+				reuseUnsupported && existing.Status == JobStatusUnsupported) {
+			return existing.ID, nil
+		}
+	}
+	f.nextJobID++
+	j.ID = f.nextJobID
+	if j.Status == "" {
+		j.Status = "open"
+	}
+	if j.CreatedAt.IsZero() {
+		j.CreatedAt = f.now()
+	}
+	f.jobs = append(f.jobs, &j)
+	return j.ID, nil
+}
+
 func (f *Fake) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
 	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
 }

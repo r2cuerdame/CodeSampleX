@@ -1303,6 +1303,54 @@ func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {
 	return id, err
 }
 
+func (p *PG) EnsureCrossJob(ctx context.Context, j JobRow) (int64, error) {
+	if j.Reason != "cross" || j.SampleID == "" {
+		return 0, fmt.Errorf("EnsureCrossJob requires a cross job with a sample id")
+	}
+	var wantEnv []byte
+	if j.WantEnvJSON != "" {
+		wantEnv = []byte(j.WantEnvJSON)
+	}
+	status := j.Status
+	if status == "" {
+		status = "open"
+	}
+	var id int64
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		// Serialize every cross-job decision for one sample. Unlike a unique
+		// index this still permits a later retry after historical work is done.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			"cross\x1f"+j.SampleID); err != nil {
+			return err
+		}
+		reuseUnsupported := status == JobStatusUnsupported
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM verification_jobs
+			 WHERE sample_id=$1 AND reason='cross'
+			   AND (status IN ('open','claimed') OR ($3 AND status=$2))
+			 ORDER BY id LIMIT 1`, j.SampleID, JobStatusUnsupported, reuseUnsupported).Scan(&id)
+		if err == nil {
+			return tx.Commit(ctx)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO verification_jobs(sample_id, reason, want_env, status)
+			VALUES($1,'cross',$2,$3) RETURNING id`,
+			j.SampleID, wantEnv, status).Scan(&id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
+	return id, err
+}
+
 func (p *PG) CrossJobsForLaneReview(ctx context.Context, limit int) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 100

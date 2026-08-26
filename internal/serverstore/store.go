@@ -391,6 +391,12 @@ type Store interface {
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.
 	JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error)
+	// EnsureCrossJob atomically reuses live cross work for a sample or creates
+	// it. Unsupported work is reused when the requested row is also
+	// unsupported. Callers must not implement this as a separate
+	// JobsForSample/CreateJob pair: concurrent requests would both observe
+	// absence and create duplicate verification work.
+	EnsureCrossJob(ctx context.Context, j JobRow) (int64, error)
 	// Job reads one job for receipt-to-claim binding.
 	Job(ctx context.Context, id int64) (JobRow, bool, error)
 	// CrossJobsForLaneReview lists cross jobs whose requirements can still be

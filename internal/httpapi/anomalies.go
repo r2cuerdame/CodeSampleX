@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
@@ -74,7 +76,9 @@ const (
 		"It is not waiting on anything — treat it as unanswered, not as pending."
 )
 
-// redactAnomalyProse re-runs the client's redaction on the free-text fields.
+// redactAnomalyFreeText re-runs the client's redaction on every free-text
+// field. Structured ids and enums are validated separately; everything else
+// is scrubbed because a replacement client can put a path or token anywhere.
 //
 // The client redacts before sending. This runs again because the client is a
 // program somebody else can replace, and because the fields are written by a
@@ -84,7 +88,7 @@ const (
 // the part worth having, and throwing the whole report away because one
 // sentence named a directory would lose them to protect something the
 // redaction already removed.
-func redactAnomalyProse(r domain.AnomalyReport) (domain.AnomalyReport, bool) {
+func redactAnomalyFreeText(r domain.AnomalyReport) (domain.AnomalyReport, bool) {
 	redacted := false
 	scrub := func(s string) string {
 		clean, changed := sanitizer.Redact(s)
@@ -95,7 +99,118 @@ func redactAnomalyProse(r domain.AnomalyReport) (domain.AnomalyReport, bool) {
 	r.LocalObserved.Detail = scrub(r.LocalObserved.Detail)
 	r.ErrorTemplate = scrub(r.ErrorTemplate)
 	r.LLMHypothesis = scrub(r.LLMHypothesis)
+	r.Symbol = scrub(r.Symbol)
+	for _, field := range []*string{
+		&r.Environment.Ecosystem, &r.Environment.OS, &r.Environment.OSVersionBucket,
+		&r.Environment.Arch, &r.Environment.Runtime, &r.Environment.RuntimeVersion,
+		&r.Environment.Language, &r.Environment.LanguageVersion,
+		&r.Environment.Compiler, &r.Environment.CompilerVersion,
+		&r.Environment.PackageManager, &r.Environment.PackageManagerVersion,
+		&r.Environment.ModuleSystem, &r.Environment.ExecutionContext,
+		&r.Environment.BrowserFamily, &r.Environment.BrowserMajor,
+		&r.Environment.Engine, &r.Environment.EngineVersion,
+		&r.Environment.Virtualization, &r.Environment.ContainerRuntime,
+		&r.Environment.Libc, &r.Environment.LibcVersion, &r.Environment.Distro,
+	} {
+		*field = scrub(*field)
+	}
+	for i := range r.Environment.Frameworks {
+		r.Environment.Frameworks[i] = scrub(r.Environment.Frameworks[i])
+	}
 	return r, redacted
+}
+
+// anomalyIdentifierIsSafe is the second half of syntax validation. Domain
+// validation checks the id shapes; this server-boundary check refuses values
+// the privacy sanitizer recognizes as identifying material rather than
+// silently changing references into ids that never existed.
+func anomalyIdentifierIsSafe(s string) bool {
+	if s == "" {
+		return true
+	}
+	// Content hashes are intentionally token-shaped. Their complete canonical
+	// syntax was already checked by domain.Validate, and redacting one would
+	// turn a public reference into a different, nonexistent id.
+	if len(s) == len("sha256:")+64 && strings.HasPrefix(s, "sha256:") {
+		return true
+	}
+	_, changed := sanitizer.Redact(s)
+	return !changed
+}
+
+func anomalyIdentifiersAreSafe(r domain.AnomalyReport) bool {
+	for _, value := range []string{
+		r.SampleID, r.EvidenceID, r.SearchFingerprint,
+		r.ErrorCode, r.ErrorFingerprint,
+	} {
+		if !anomalyIdentifierIsSafe(value) {
+			return false
+		}
+	}
+	for _, value := range r.RelatedIDs {
+		if !anomalyIdentifierIsSafe(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func anomalyStructuredValueIsSafe(s string, maxBytes int) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) > maxBytes || !utf8.ValidString(s) {
+		return false
+	}
+	for _, c := range s {
+		if unicode.IsControl(c) || unicode.IsSpace(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func anomalyStructuredFieldsAreSafe(r domain.AnomalyReport) bool {
+	if !anomalyStructuredValueIsSafe(r.Symbol, 256) {
+		return false
+	}
+	for _, value := range []string{
+		r.Environment.Ecosystem, r.Environment.OS, r.Environment.OSVersionBucket,
+		r.Environment.Arch, r.Environment.Runtime, r.Environment.RuntimeVersion,
+		r.Environment.Language, r.Environment.LanguageVersion,
+		r.Environment.Compiler, r.Environment.CompilerVersion,
+		r.Environment.PackageManager, r.Environment.PackageManagerVersion,
+		r.Environment.ModuleSystem, r.Environment.ExecutionContext,
+		r.Environment.BrowserFamily, r.Environment.BrowserMajor,
+		r.Environment.Engine, r.Environment.EngineVersion,
+		r.Environment.Virtualization, r.Environment.ContainerRuntime,
+		r.Environment.Libc, r.Environment.LibcVersion, r.Environment.Distro,
+	} {
+		if !anomalyStructuredValueIsSafe(value, 128) {
+			return false
+		}
+	}
+	for _, value := range r.Environment.Frameworks {
+		if !anomalyStructuredValueIsSafe(value, 128) {
+			return false
+		}
+	}
+	return true
+}
+
+func anomalyBucketPartIsSafe(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > 128 || !anomalyIdentifierIsSafe(s) {
+		return false
+	}
+	for _, c := range s {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '-' || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // anomalyPackageIsPublic refuses a report about a package this network cannot
@@ -134,8 +249,10 @@ func (a *api) handleAnomalyReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "anomaly envelope schemaVersion must be 1")
 		return
 	}
-	if strings.TrimSpace(env.Epoch) == "" || strings.TrimSpace(env.AnonID) == "" {
-		writeErr(w, http.StatusBadRequest, "anomaly report requires epoch and anonId")
+	env.Epoch = strings.TrimSpace(env.Epoch)
+	env.AnonID = strings.TrimSpace(env.AnonID)
+	if !anomalyBucketPartIsSafe(env.Epoch) || !anomalyBucketPartIsSafe(env.AnonID) {
+		writeErr(w, http.StatusBadRequest, "anomaly report requires safe epoch and anonId identifiers")
 		return
 	}
 
@@ -147,11 +264,19 @@ func (a *api) handleAnomalyReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !anomalyIdentifiersAreSafe(report) {
+		writeErr(w, http.StatusBadRequest, "anomaly report identifiers contain path, URL or token material")
+		return
+	}
 	if err := a.anomalyPackageIsPublic(r.Context(), report.Package); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	report, redacted := redactAnomalyProse(report)
+	report, redacted := redactAnomalyFreeText(report)
+	if !anomalyStructuredFieldsAreSafe(report) {
+		writeErr(w, http.StatusBadRequest, "anomaly symbol and environment values must be bounded structured values, not arbitrary text")
+		return
+	}
 
 	// A sample id that this server does not have is not a reason to refuse:
 	// "the answer references a sample that does not exist" is one of the
@@ -282,25 +407,15 @@ func (a *api) queueAnomalyVerification(ctx context.Context, report domain.Anomal
 		return 0, "the stored sample manifest cannot be read, so no reproduction can be built from it"
 	}
 
-	// Reuse work already in flight. This is the second half of dedupe: two
-	// different fingerprints can still contest the same sample, and the
-	// answer to both is one re-run.
-	jobs, err := a.d.Store.JobsForSample(ctx, report.SampleID)
-	if err != nil {
-		return 0, "verification queue lookup failed"
-	}
-	for _, j := range jobs {
-		if j.Reason == "cross" && (j.Status == "open" || j.Status == "claimed") {
-			return j.ID, ""
-		}
-	}
-
 	job := crossJobFor(report.SampleID, manifest)
 	if job.Status == serverstore.JobStatusUnsupported {
 		return 0, fmt.Sprintf("no verifier image in this network serves %s/%s, so the sample cannot be re-run here",
 			strings.TrimSpace(manifest.Environment.Ecosystem), strings.TrimSpace(manifest.Environment.Runtime))
 	}
-	id, err := a.d.Store.CreateJob(ctx, job)
+	// Two distinct anomaly fingerprints can contest one sample at the same
+	// instant. The reuse check and insert must therefore be one store
+	// operation; a handler-level JobsForSample→CreateJob pair races open.
+	id, err := a.d.Store.EnsureCrossJob(ctx, job)
 	if err != nil || id == 0 {
 		return 0, "creating the verification job failed"
 	}

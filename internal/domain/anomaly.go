@@ -182,8 +182,77 @@ var (
 	ErrAnomalyNoMismatch       = errors.New("csxObserved and localObserved must actually disagree: a concrete mismatch is the admission test")
 	ErrAnomalyReproducible     = errors.New("reproducible must be yes, no or unknown")
 	ErrAnomalyConfidence       = errors.New("confidence must be low, medium or high")
+	ErrAnomalyStage            = errors.New("observation stage must be one of: resolve, compile, typecheck, test, run, contract")
+	ErrAnomalyIdentifier       = errors.New("sampleId, evidenceId, searchFingerprint, errorFingerprint and relatedIds must be canonical, non-identifying stable ids")
+	ErrAnomalyErrorCode        = errors.New("errorCode must be a short structured identifier")
 	ErrAnomalyNoSafeMatchAlone = errors.New("a repeated NO_SAFE_MATCH is not an anomaly on its own: attach a reproducible public failure (localObserved FAIL + errorFingerprint + reproducible=yes)")
 )
+
+func anomalyContentID(s string) bool {
+	const prefix = "sha256:"
+	if len(s) != len(prefix)+64 || !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	for _, c := range s[len(prefix):] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// anomalyReferenceID accepts content ids, public package coordinates and
+// namespaced stable ids. It deliberately refuses paths, URLs, whitespace and
+// bare opaque strings: those shapes can carry client secrets but do not name
+// anything in CSX's public data model.
+func anomalyReferenceID(s string) bool {
+	if s == "" || len(s) > 256 {
+		return false
+	}
+	if anomalyContentID(s) {
+		return true
+	}
+	if strings.HasPrefix(s, "pkg:") {
+		_, err := ParsePURL(s)
+		return err == nil
+	}
+	if !strings.ContainsRune(s, ':') {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			strings.ContainsRune("-_.:@+", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func anomalyErrorCode(s string) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) > 128 {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			strings.ContainsRune("-_.:", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func anomalyStage(s string) bool {
+	switch s {
+	case "", "resolve", "compile", "typecheck", "test", "run", "contract":
+		return true
+	}
+	return false
+}
 
 func normalizeResult(s string) string {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
@@ -259,6 +328,23 @@ func (r AnomalyReport) Validate() error {
 		// means an unrecognized literal, which is not a value we may guess.
 		return ErrAnomalyNoMismatch
 	}
+	if !anomalyStage(r.CSXObserved.Stage) || !anomalyStage(r.LocalObserved.Stage) {
+		return ErrAnomalyStage
+	}
+	if (r.SampleID != "" && !anomalyContentID(r.SampleID)) ||
+		(r.EvidenceID != "" && !anomalyContentID(r.EvidenceID)) ||
+		(r.SearchFingerprint != "" && !anomalyContentID(r.SearchFingerprint)) ||
+		(r.ErrorFingerprint != "" && !anomalyContentID(r.ErrorFingerprint)) {
+		return ErrAnomalyIdentifier
+	}
+	for _, id := range r.RelatedIDs {
+		if !anomalyReferenceID(id) {
+			return ErrAnomalyIdentifier
+		}
+	}
+	if !anomalyErrorCode(r.ErrorCode) {
+		return ErrAnomalyErrorCode
+	}
 	switch r.Reproducible {
 	case "yes", "no", "unknown":
 	default:
@@ -269,13 +355,19 @@ func (r AnomalyReport) Validate() error {
 	default:
 		return ErrAnomalyConfidence
 	}
-	// The mismatch itself. For the four types that are about CSX's own data
-	// rather than about a build outcome, CSX having said UNKNOWN *is* the
-	// mismatch — that is what "the graph says unknown for a sample that
-	// runs" means — so those are exempt from the PASS/FAIL disagreement.
+	// The mismatch itself. Unknown-style reports must say that CSX returned
+	// UNKNOWN. Conflict and signature reports must instead carry two concrete
+	// disagreeing outcomes. Exempting all four types here used to admit
+	// PASS/PASS reports with no mismatch at all.
 	switch r.AnomalyType {
-	case AnomalyDependencyGraphUnknown, AnomalyEvidenceConflict,
-		AnomalyBrokenInternalReference, AnomalySymbolSignatureMismatch:
+	case AnomalyDependencyGraphUnknown, AnomalyBrokenInternalReference:
+		if r.CSXObserved.Result != "UNKNOWN" {
+			return ErrAnomalyNoMismatch
+		}
+	case AnomalyEvidenceConflict, AnomalySymbolSignatureMismatch:
+		if r.CSXObserved.Result == "UNKNOWN" || r.CSXObserved.Result == r.LocalObserved.Result {
+			return ErrAnomalyNoMismatch
+		}
 	case AnomalyRepeatedNoSafeMatch:
 		// A miss is a real answer. It becomes a report only with a
 		// reproducible public failure attached to it.
@@ -357,6 +449,14 @@ func (r AnomalyReport) Fingerprint() string {
 // a run that never reached the assertion would be inventing one.
 func AnomalyVerdictFromReceipt(report AnomalyReport, receipt VerificationReceipt) (verdict string, decided bool) {
 	r := report.Normalize()
+	// A normal sample contract measures whether that sample runs. It does not
+	// inspect the dependency graph, compare two stored evidence records, or
+	// prove that an internal reference exists. Treating its PASS as evidence
+	// for any of those assertions confirmed defects the receipt never tested.
+	switch r.AnomalyType {
+	case AnomalyDependencyGraphUnknown, AnomalyEvidenceConflict, AnomalyBrokenInternalReference:
+		return anomalyVerdictUndecidedInternalMarker, false
+	}
 	contract := normalizeResult(receipt.Stages["contract"])
 	if contract != "PASS" && contract != "FAIL" {
 		return anomalyVerdictUndecidedInternalMarker, false

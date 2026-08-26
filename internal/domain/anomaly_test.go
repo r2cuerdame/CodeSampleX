@@ -67,7 +67,7 @@ func TestARepeatedMissAloneIsNotAnAnomaly(t *testing.T) {
 		t.Fatalf("NO_SAFE_MATCH with no reproducible failure attached must be refused, got %v", err)
 	}
 
-	r.ErrorFingerprint = hex64('b')
+	r.ErrorFingerprint = "sha256:" + hex64('b')
 	r.Reproducible = "yes"
 	if err := r.Normalize().Validate(); err != nil {
 		t.Fatalf("NO_SAFE_MATCH WITH a reproducible public failure is admissible, got %v", err)
@@ -156,6 +156,60 @@ func TestTheOppositeDirectionIsNewEvidenceRatherThanADefect(t *testing.T) {
 	verdict, decided := AnomalyVerdictFromReceipt(r, receiptWith("PASS", r.Environment))
 	if !decided || verdict != AnomalyVerdictNewEvidence {
 		t.Fatalf("want confirmed-new-evidence, got %q decided=%v", verdict, decided)
+	}
+}
+
+func TestDataAnomaliesNeedTheirOwnEvidenceRatherThanAnOrdinaryContractReceipt(t *testing.T) {
+	tests := []struct {
+		name          string
+		anomalyType   string
+		csxObserved   string
+		localObserved string
+	}{
+		{"dependency graph", AnomalyDependencyGraphUnknown, "UNKNOWN", "PASS"},
+		{"evidence conflict", AnomalyEvidenceConflict, "FAIL", "PASS"},
+		{"broken internal reference", AnomalyBrokenInternalReference, "UNKNOWN", "PASS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := passFailReport()
+			r.AnomalyType = tc.anomalyType
+			r.CSXObserved.Result = tc.csxObserved
+			r.LocalObserved.Result = tc.localObserved
+			if err := r.Normalize().Validate(); err != nil {
+				t.Fatalf("fixture is not admissible: %v", err)
+			}
+			if verdict, decided := AnomalyVerdictFromReceipt(r, receiptWith(tc.localObserved, r.Environment)); decided {
+				t.Fatalf("an ordinary contract receipt confirmed %s as %q without measuring it", tc.name, verdict)
+			}
+		})
+	}
+}
+
+func TestEveryAnomalyTypeRequiresTheMismatchItNames(t *testing.T) {
+	for _, anomalyType := range []string{AnomalyEvidenceConflict, AnomalySymbolSignatureMismatch} {
+		t.Run(anomalyType+" agreement", func(t *testing.T) {
+			r := passFailReport()
+			r.AnomalyType = anomalyType
+			r.CSXObserved.Result = "PASS"
+			r.LocalObserved.Result = "PASS"
+			if err := r.Normalize().Validate(); err != ErrAnomalyNoMismatch {
+				t.Fatalf("PASS/PASS must be refused, got %v", err)
+			}
+		})
+	}
+	for _, anomalyType := range []string{AnomalyDependencyGraphUnknown, AnomalyBrokenInternalReference} {
+		t.Run(anomalyType+" concrete result", func(t *testing.T) {
+			r := passFailReport()
+			r.AnomalyType = anomalyType
+			if err := r.Normalize().Validate(); err != ErrAnomalyNoMismatch {
+				t.Fatalf("an unknown-style anomaly with CSX PASS must be refused, got %v", err)
+			}
+			r.CSXObserved.Result = "UNKNOWN"
+			if err := r.Normalize().Validate(); err != nil {
+				t.Fatalf("CSX UNKNOWN plus a concrete local observation must be admissible, got %v", err)
+			}
+		})
 	}
 }
 
