@@ -187,6 +187,15 @@ ok  internal/domain    0.358s
 > 그 폭의 창과 똑같이 동작하므로 497px 바닥이 사라진다. 그 방식으로 320/360/480px를
 > 실제로 측정하는 회귀 테스트가 `internal/web/narrowviewport_test.go`다.
 
+> **추가 (2026-08-26, [R2C-196](https://linear.app/r2cuerdame/issue/R2C-196)).** 같은
+> iframe 측정 방식을 카드에 적용한 것이 `internal/web/cardoverflow_test.go`다. R2C-148이
+> 숨은 tooltip의 고정 폭이었다면 이쪽은 **보이는 텍스트**다: 끊을 곳이 없는 토큰
+> (`Plug.Session.init/1`, 96자 session id)의 min-content 폭이 `min-width: auto`인
+> flex/grid 자식을 통해 카드로, 카드에서 페이지로 전달돼 `/findings`가 360px에서 42px
+> 넘쳤다. 두 테스트가 재는 폭도 320/360/390/430(+`narrowviewport_test.go`는 480)으로
+> 맞췄다. 넘침은 문자열이 아니라 기하이므로, stylesheet를 문자열로 읽는 검사는 이
+> 종류의 회귀를 볼 수 없다 — 그것이 두 테스트가 모두 실제 렌더를 재는 이유다.
+
 ## 7. mutable tag로만 실행되는 lane 감사 — 남아 있지 않음
 
 코드 쪽은 다음이 실행으로 확인한다 (`internal/sandbox`, 전부 통과).

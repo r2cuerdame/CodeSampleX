@@ -29,9 +29,10 @@ import (
 // width. That is the difference between missing this bug and finding it.
 
 // narrowViewports are the widths the page has to survive. 320 is the
-// narrowest phone still in use, 360 the most common one, 480 the width where
+// narrowest phone still in use, 360 the most common one, 390 and 430 the two
+// current iPhone classes R2C-196 was reported on, and 480 the width where
 // the bug reported in R2C-148 stopped reproducing.
-var narrowViewports = []int{320, 360, 480}
+var narrowViewports = []int{320, 360, 390, 430, 480}
 
 type viewportBox struct {
 	Sel   string  `json:"sel"`
@@ -248,6 +249,22 @@ var measureRe = regexp.MustCompile(`(?s)<pre id="measure">(.*?)</pre>`)
 
 func measureViewports(t *testing.T, chrome, url string) []viewportReport {
 	t.Helper()
+	payload := renderMeasurement(t, chrome, url)
+	var reports []viewportReport
+	if err := json.Unmarshal([]byte(payload), &reports); err != nil {
+		t.Fatalf("measurement %q: %v", payload, err)
+	}
+	if len(reports) != len(narrowViewports) {
+		t.Fatalf("measured %d viewports, want %d", len(reports), len(narrowViewports))
+	}
+	return reports
+}
+
+// renderMeasurement loads a harness page in headless Chrome and returns the
+// JSON it left in <pre id="measure">. Every geometry check in this package
+// goes through here, so a harness only has to describe what it measures.
+func renderMeasurement(t *testing.T, chrome, url string) string {
+	t.Helper()
 	profile := t.TempDir()
 	cmd := exec.Command(chrome,
 		"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
@@ -271,14 +288,7 @@ func measureViewports(t *testing.T, chrome, url string) []viewportReport {
 	if strings.TrimSpace(payload) == "PENDING" {
 		t.Fatal("the page never reported a measurement")
 	}
-	var reports []viewportReport
-	if err := json.Unmarshal([]byte(payload), &reports); err != nil {
-		t.Fatalf("measurement %q: %v", payload, err)
-	}
-	if len(reports) != len(narrowViewports) {
-		t.Fatalf("measured %d viewports, want %d", len(reports), len(narrowViewports))
-	}
-	return reports
+	return payload
 }
 
 // findChrome locates a Chrome to measure in. A skip here is "not measured on
