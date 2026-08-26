@@ -141,4 +141,8 @@ type FarmStatsStore interface {
 	// since. The window is the caller's so the panel can keep one window for
 	// every rate it shows.
 	FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error)
+	// FarmCompletenessNow reports the three-axis stock: every verifiable
+	// coordinate by which of Sample, Evidence and Dependency it holds. No
+	// window -- it is a stock, and the flows beside it carry their own.
+	FarmCompletenessStore
 }

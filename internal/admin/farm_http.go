@@ -95,10 +95,17 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	completeness, err := h.farmStats.FarmCompletenessNow(r.Context())
+	if err != nil {
+		http.Error(w, "완성도 집계를 불러오지 못했습니다", http.StatusServiceUnavailable)
+		return
+	}
+
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"workers":         views,
 		"health":          farmHealthView(health),
 		"backlog":         farmBacklogView(backlog),
+		"completeness":    farmCompletenessView(completeness),
 		"coverage":        farmCoverageView(coverage),
 		"instances":       instances,
 		"monthlyTotalUsd": total,
@@ -133,22 +140,11 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	}
 }
 
-// farmMatrixCellsView reports the grid a reader actually sees.
-//
-// coverageHoles beside it counts RELEASES, and at that grain production reads
-// nearly covered while the pages are mostly dashes -- a package page spreads
-// symbol against version, so one proven release can draw forty cells and fill
-// one. Both numbers are true; neither substitutes for the other, so both are
-// printed.
-//
-// The three states are printed apart and never pooled into one "empty"
-// figure. They come from opposite causes and they are answered by different
-// work: `observed` is the only one R2C-89's criterion counts as covered,
-// `verifiedNoObservation` is a coordinate this network has already run and
-// nobody has been seen using, and `unmeasured` is one nothing has ever
-// touched. `packagesShowingBothDashes` is how many pages currently show a
-// linked and a plain dash at once, which is the state the issue reproduces
-// from two live URLs and the one a single sentence cannot explain.
+// farmMatrixCellsView reports the unbounded PUBLIC symbol x version corpus.
+// It intentionally does not apply the package UI's browse-window caps: this
+// value is the canonical completeness denominator, not the current viewport.
+// The three evidence states remain separate because they require different
+// work, and failed or mixed contracts are in none of the passing-only buckets.
 func farmMatrixCellsView(cells serverstore.MatrixCells) map[string]any {
 	return map[string]any{
 		"cells":                     cells.Cells,
@@ -156,6 +152,29 @@ func farmMatrixCellsView(cells serverstore.MatrixCells) map[string]any {
 		"verifiedNoObservation":     cells.VerifiedNoObservation,
 		"unmeasured":                cells.Unmeasured,
 		"packagesShowingBothDashes": cells.PackagesShowingBothDashes,
+	}
+}
+
+// farmCompletenessView reports the corpus by three-axis completeness.
+//
+// All eight cells, always, including the ones at zero: a cell that appears
+// only once it has a value is a cell nobody notices arriving, and two of these
+// are zero for a structural reason rather than because the work is done.
+//
+// The dependency axis is split three ways beside the matrix because "this
+// release pulls nothing" and "nobody has resolved this release" are different
+// answers and only the first is a fact. A consumer that folded them would
+// print "no dependencies" for silence.
+func farmCompletenessView(c serverstore.FarmCompleteness) map[string]any {
+	states := make(map[string]int, len(c.States))
+	for state, n := range c.States {
+		states[clampAdminLabel(state)] = n
+	}
+	return map[string]any{
+		"states":               states,
+		"dependencyGraph":      c.DependencyGraph,
+		"dependencyProvenNone": c.DependencyProvenNone,
+		"dependencyUnknown":    c.DependencyUnknown,
 	}
 }
 
