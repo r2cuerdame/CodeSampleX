@@ -249,6 +249,21 @@ if ($ExpectedPreviousRevision -ne "" -and $productionStateParts[0] -ne $Expected
 Write-Output "previous production SHA: $($productionStateParts[0])"
 Write-Output "previous production image: $($productionStateParts[1])"
 
+$collectBuilderFreshScript = @'
+set -eu
+cd /opt/codesamplex/deploy
+server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
+builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
+builder_fresh=0
+if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
+  builder_fresh=1
+fi
+printf '%s\n' "$builder_fresh"
+'@
+
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
@@ -261,9 +276,9 @@ builder_fresh=0
 if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
   builder_fresh=1
 fi
-# Read the materialization only after the completion marker. If the first
-# full pass finishes between these probes, this iteration still reports
-# builder_fresh=0 and the caller retries; it can never bless a mid-pass tuple.
+# Read the materialization only after sampling the completion marker. If a
+# full pass finishes between these probes, this snapshot still reports
+# builder_fresh=0; it can never bless a mid-pass tuple.
 values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
@@ -1013,16 +1028,22 @@ if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
-$invariantsAfter = ""
-$afterValues = @()
+$builderFresh = 0
 for ($attempt = 1; $attempt -le 90; $attempt++) {
-    $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
-    $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-    if ($afterValues[7] -eq 1) { break }
+    # The materialized invariant query is a whole-corpus scan. Poll only the
+    # cheap completion marker while the new builder owns that same database,
+    # then take one coherent full snapshot after the pass has finished.
+    $builderFreshText = (Invoke-RemoteScript $collectBuilderFreshScript | Select-Object -First 1).Trim()
+    if ($builderFreshText -notmatch '^[01]$') { throw "malformed post-deploy builder freshness" }
+    $builderFresh = [int]$builderFreshText
+    if ($builderFresh -eq 1) { break }
     if ($attempt -lt 90) { Start-Sleep -Seconds 2 }
 }
-if ($afterValues[7] -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
+if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
+$afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+if ($afterValues[7] -ne 1) { throw "the server restarted before the post-deploy invariant snapshot" }
 $sourceInvariantIndexes = @(0, 1, 2, 4, 5)
 foreach ($i in $sourceInvariantIndexes) {
     if ($afterValues[$i] -lt $beforeValues[$i]) {
