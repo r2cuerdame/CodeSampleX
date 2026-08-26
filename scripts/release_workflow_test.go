@@ -152,10 +152,11 @@ func TestSigningJobCarriesNoPublishAuthority(t *testing.T) {
 	}
 }
 
-// The environment is restricted to `v*` tags, which is only a restriction
-// while a tag push is the only way to start this workflow. A workflow_dispatch
-// or pull_request trigger would let another ref ask for the same environment.
-func TestOnlyATagPushCanStartTheRelease(t *testing.T) {
+// The environment is restricted to `v*` tags. A manual replay is permitted
+// only because the first job rejects every non-tag ref before any build or
+// signing job can start; this recovers a dropped GitHub tag event without
+// turning workflow_dispatch on main into release authority.
+func TestOnlyAVersionTagRefCanStartTheRelease(t *testing.T) {
 	workflow := releaseWorkflow(t)
 	head := workflow
 	if i := strings.Index(workflow, "\njobs:"); i > 0 {
@@ -164,10 +165,27 @@ func TestOnlyATagPushCanStartTheRelease(t *testing.T) {
 	if !strings.Contains(head, "  push:\n    tags: [\"v*\"]") {
 		t.Fatal("the release trigger is no longer a v* tag push")
 	}
-	for _, forbidden := range []string{"workflow_dispatch", "pull_request", "pull_request_target", "workflow_call", "schedule", "repository_dispatch"} {
+	if !strings.Contains(head, "  workflow_dispatch:") {
+		t.Fatal("the release has no authenticated replay path when GitHub drops a tag event")
+	}
+	for _, forbidden := range []string{"pull_request", "pull_request_target", "workflow_call", "schedule", "repository_dispatch"} {
 		if strings.Contains(head, forbidden) {
 			t.Fatalf("release trigger %q can reach the signing environment from a non-tag ref", forbidden)
 		}
+	}
+	jobs := releaseJobs(t, workflow)
+	refGate := jobs["release-ref"]
+	for _, required := range []string{
+		`test "$GITHUB_REF_TYPE" = "tag"`,
+		`refs/tags/v*) ;;`,
+		"contents: read",
+	} {
+		if !strings.Contains(refGate, required) {
+			t.Fatalf("manual release replay lacks tag-ref guard %q", required)
+		}
+	}
+	if !strings.Contains(jobs["windows-test"], "needs: release-ref") {
+		t.Fatal("release tests can start before the tag-ref gate")
 	}
 }
 

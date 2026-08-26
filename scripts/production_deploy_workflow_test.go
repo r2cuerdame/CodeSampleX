@@ -111,8 +111,8 @@ func TestProductionRequiresSuccessfulSameTargetReleaseAndFarm(t *testing.T) {
 	}
 	for _, required := range []string{
 		"Require successful same-target release and farm rollout",
-		"actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&event=push&status=success&per_page=1",
-		".workflow_runs[0].id // 0",
+		"actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&status=success&per_page=20",
+		`select(.event == "push" or .event == "workflow_dispatch")`,
 		`if ! [[ "$release_run" =~ ^[1-9][0-9]*$ ]]; then`,
 	} {
 		if !strings.Contains(eligibility, required) {

@@ -6,9 +6,11 @@
 #
 # The version comes from the tag, so nothing has to be edited in two places.
 #
-# A normal release is unattended. No step here waits for a human: pushing a
+# A normal release is unattended. No step here waits for a human: creating a
 # `v*` tag is the decision, and everything after it either completes or fails
-# closed. What used to be a required reviewer on the signing environment is
+# closed. workflow_dispatch exists only to replay a dropped GitHub tag event;
+# the first job rejects every ref that is not itself a v* tag. What used to be
+# a required reviewer on the signing environment is
 # now machine checks a person could not have performed anyway — the monotonic
 # release guard, the three-way trust-root agreement, the artifact-to-build
 # binding, and the exact published asset set.
@@ -24,6 +26,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -35,7 +38,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-ref:
+    name: Validate release tag ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require an immutable v* tag ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = "tag"
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::release replay requires a v* tag ref"; exit 1 ;;
+          esac
+
   windows-test:
+    needs: release-ref
     permissions:
       contents: read
     runs-on: windows-latest

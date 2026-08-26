@@ -136,8 +136,12 @@ alone is not production evidence. A failed SHA is not redispatched in a loop:
 ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
 cooldown, while an explicit new dispatch remains an auditable recovery action.
 
-**A normal release is unattended.** Pushing a `v*` tag is the decision; nothing
-after it waits for a person. The release either completes or fails closed, and
+**A normal release is unattended.** Creating a `v*` tag is the decision; nothing
+after it waits for a person. If GitHub accepts the tag but drops its Actions
+event, an operator may replay the same `Release` workflow with that exact tag
+as the dispatch ref. The workflow's first job rejects branches and non-`v*`
+tags before tests or signing can start, and the signing Environment separately
+allows only `v*` tags. The release either completes or fails closed, and
 a failure never publishes a partial release. The workflow runs as four stages
 so that the updater seed is reachable from exactly one of them: `build`
 (tests, monotonic guard, cross-compile, MCPB bundle — no credential, no
