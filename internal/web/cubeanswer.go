@@ -250,7 +250,7 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 	version, symbol := coord["version"], coord["symbol"]
 	ans.Code = code.at(version, symbol)
 	if code == nil || !code.known {
-		ans.SampleUnknownLabel = i18n.T(lang, "cube.code_unknown")
+		ans.SampleUnknownLabel = i18n.T(lang, "sample.unavailable")
 	} else {
 		ans.Sample = deriveSampleState(ans.Code, agg.verPass, agg.verFail)
 		ans.SampleLabel = sampleStateLabel(lang, ans.Sample)

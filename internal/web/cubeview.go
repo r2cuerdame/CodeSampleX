@@ -546,7 +546,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 		state := &cubeCodeState{}
 		if code == nil || !code.known {
 			state.Unknown = true
-			state.Label = i18n.T(lang, "cube.code_unknown")
+			state.Label = i18n.T(lang, "sample.unavailable")
 		} else {
 			// Existence only. This line stands above a grid whose every cell
 			// is a different environment, so there is no single coordinate
