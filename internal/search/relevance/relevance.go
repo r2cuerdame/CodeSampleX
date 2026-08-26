@@ -4,7 +4,10 @@
 // while generic pieces such as "server" or "json" are not.
 package relevance
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 var stopWords = map[string]bool{
 	"the": true, "and": true, "for": true, "with": true, "from": true,
@@ -37,7 +40,27 @@ var genericWords = map[string]bool{
 	// unrelated model, JSON, server, and process APIs.
 	"json": true, "model": true, "models": true, "process": true,
 	"protocol": true, "protocols": true,
+
+	// Forge hosts and the path scaffolding around them. A Go import path IS
+	// a URL, so every module hosted on GitHub carries "github" and "com" in
+	// its name -- and splitting the path into identifier words made both of
+	// them STRONG tokens, the class that means "the question named this
+	// library" and opens the topic gate on its own. A question about GitHub
+	// Actions therefore named github.com/dustin/go-humanize,
+	// github.com/caddyserver/caddy and every other module in the corpus
+	// equally well, which is how a deploy question was answered with a
+	// number-formatting sample.
+	"github": true, "gitlab": true, "bitbucket": true, "codeberg": true,
+	"sourcehut": true, "gitee": true, "gopkg": true, "git": true,
+	"com": true, "org": true, "www": true, "dev": true, "repo": true,
+	"repos": true,
 }
+
+// majorVersionSuffix matches the /v2, /v3 ... segment a Go module path
+// carries after a major version bump. It is part of the import path and
+// never a subject: as an identifier token it let "migrate to v2" name every
+// /v2 module in the corpus at once.
+var majorVersionSuffix = regexp.MustCompile(`^v[0-9]+$`)
 
 // ContentTokens reduces prose to the words that carry its topic.
 func ContentTokens(s string) []string {
@@ -55,7 +78,10 @@ func ContentTokens(s string) []string {
 
 // IsGeneric reports whether a package/symbol subtoken lacks identity value.
 // It is exported so regression tests can pin the single shared vocabulary.
-func IsGeneric(token string) bool { return genericWords[strings.ToLower(token)] }
+func IsGeneric(token string) bool {
+	token = strings.ToLower(token)
+	return genericWords[token] || majorVersionSuffix.MatchString(token)
+}
 
 // NameTokens retains a full package name and only its non-generic pieces.
 func NameTokens(name string) []string {
@@ -143,7 +169,15 @@ func Signal(query, goal string, packageNames, symbols []string) (strong, prose i
 	strongSet := map[string]bool{}
 	proseSet := map[string]bool{}
 	for _, token := range ContentTokens(goal) {
-		proseSet[token] = true
+		// The same vocabulary on both sides. A word that cannot identify a
+		// package inside its NAME cannot identify it inside the goal
+		// sentence either -- and goals routinely end "... in
+		// github.com/shopspring/decimal", so counting those path words as
+		// prose let a question that merely said "GitHub" collect the
+		// overlap this gate asks for before calling two texts one subject.
+		if !IsGeneric(token) {
+			proseSet[token] = true
+		}
 	}
 	for _, name := range packageNames {
 		for _, token := range NameTokens(name) {
@@ -175,6 +209,40 @@ func Signal(query, goal string, packageNames, symbols []string) (strong, prose i
 		}
 	}
 	return strong, prose
+}
+
+// GoalOverlap counts the DISTINCT topic words a question and a goal sentence
+// have in common, alongside how many each of them carries.
+//
+// It is the measurement behind "these two describe the same operation", which
+// is a different question from "the question named this library". Somebody
+// asking for exact half-to-even rounding of currency at cash intervals has
+// described the shopspring/decimal sample precisely without naming it once,
+// and an identifier-only gate throws that away. Somebody asking how a deploy
+// workflow pins a commit SHA shares one word with it, and no bar drawn at one
+// word can tell the two apart — so the caller draws the bar, and this returns
+// the numbers to draw it from.
+//
+// The same generic vocabulary applies on both sides: a word that cannot
+// identify a package cannot carry a topic either.
+func GoalOverlap(query, goal string) (shared, queryTokens, goalTokens int) {
+	inGoal := map[string]bool{}
+	for _, token := range ContentTokens(goal) {
+		if !IsGeneric(token) {
+			inGoal[token] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, token := range ContentTokens(query) {
+		if IsGeneric(token) || seen[token] {
+			continue
+		}
+		seen[token] = true
+		if inGoal[token] {
+			shared++
+		}
+	}
+	return shared, len(seen), len(inGoal)
 }
 
 // AboutSameThing applies the shared local/server topic gate.

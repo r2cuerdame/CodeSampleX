@@ -7,10 +7,10 @@ package serverstore
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
-	"strings"
 )
 
 // RejectedBatch reports one refused batch of an ingest call, mirroring the
@@ -62,6 +62,12 @@ type EvidenceRow struct {
 	Result               string
 	ErrorFingerprint     string
 	ErrorCode            string
+	TerminationKind      string
+	ExitCode             *int
+	Signal               string
+	TimeoutMillis        int64
+	ErrorSummary         string
+	EvidenceQuality      string
 	ObservationCount     int64
 	UniquePeerBuckets    int
 	UniqueProjectBuckets int
@@ -245,20 +251,29 @@ type IdentityRow struct {
 
 // ClusterRow is one failure_clusters-table row.
 type ClusterRow struct {
-	ID                  int64
-	Ecosystem           string
-	PackageName         string
-	Symbol              string
-	Stage               string
-	ErrorFingerprint    string
-	ErrorCode           string
-	ObservationCount    int64
-	EnvSummaryJSON      string
-	HypothesesJSON      string // [{domain,confidence}] — never a definitive cause
-	RegressionCandidate bool
-	VersionsJSON        string
-	FirstSeen           time.Time
-	LastSeen            time.Time
+	ID                    int64
+	Ecosystem             string
+	PackageName           string
+	Symbol                string
+	Stage                 string
+	ErrorFingerprint      string
+	ErrorCode             string
+	TerminationKind       string
+	ExitCode              *int
+	Signal                string
+	TimeoutMillis         int64
+	ErrorSummary          string
+	EvidenceQuality       string
+	ObservationCount      int64
+	EnvSummaryJSON        string
+	EnvVariantsJSON       string
+	EvidenceBreakdownJSON string
+	HypothesesJSON        string // [{domain,confidence}] — never a definitive cause
+	RegressionCandidate   bool
+	DiagnosticCandidate   bool
+	VersionsJSON          string
+	FirstSeen             time.Time
+	LastSeen              time.Time
 }
 
 // Store is everything csx-server needs from PostgreSQL. Handlers depend on
@@ -461,7 +476,13 @@ type Store interface {
 	IdentityByAPIToken(ctx context.Context, apiTokenHash string) (IdentityRow, bool, error)
 
 	UpsertFailureCluster(ctx context.Context, c ClusterRow) error
+	// ListFailureClusters returns the clusters the current builder writes.
+	// Rows preserved by migration 0024 are stored but not served here.
 	ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error)
+	// ListFailureClustersIncludingPreserved adds those preserved rows back,
+	// for the one question they still answer: has this exact fingerprint
+	// been recorded?
+	ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error)
 
 	SetStatsDaily(ctx context.Context, day string, statsJSON string) error
 	GetLatestStats(ctx context.Context) (statsJSON string, ok bool, err error)

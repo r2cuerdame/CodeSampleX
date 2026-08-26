@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,28 +19,76 @@ func main() {
 	}
 	self, err := os.Executable()
 	if err != nil {
-		fail(err)
+		fail(launcher.ReasonPointerUnreadable, err)
 	}
 	root := filepath.Dir(self)
-	a, err := launcher.Load(root)
+	res, err := launcher.Resolve(root)
 	if err != nil {
-		fail(err)
+		fail(launcher.Reason(err), err)
 	}
-	payload, err := launcher.PayloadPath(root, a.Current.Version)
+	reportRecovery(res)
+	code, err := runResolution(res, self, root)
 	if err != nil {
-		fail(err)
+		var startFailure *childStartError
+		if errors.As(err, &startFailure) {
+			// Resolve hashes before CreateProcess. Defender or an ACL change can
+			// still remove/block the file in that gap, so retry one recorded LKG
+			// exactly once. A normal non-zero payload exit never reaches here.
+			res, err = launcher.RecoverAfterStartFailure(root, res.Descriptor, startFailure)
+			if err != nil {
+				fail(launcher.Reason(err), err)
+			}
+			reportRecovery(res)
+			code, err = runResolution(res, self, root)
+		}
 	}
-	cmd := exec.Command(payload, os.Args[1:]...)
+	if err != nil {
+		fail(launcher.ReasonPayloadStartFailed, err)
+	}
+	finish(code)
+}
+
+func runResolution(res launcher.Resolution, self, root string) (int, error) {
+	cmd := exec.Command(res.PayloadPath, os.Args[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = launcherEnv(os.Environ(), self, root, a.Current, launcher.ProtocolVersion)
-	code, err := runChild(cmd)
-	if err != nil {
-		fail(err)
+	cmd.Env = launcherEnv(os.Environ(), self, root, res.Descriptor, launcher.ProtocolVersion)
+	return runChild(cmd)
+}
+
+func reportRecovery(res launcher.Resolution) {
+	if !res.Recovered {
+		return
+	}
+	// Diagnostics go to stderr and nowhere else. An MCP host reads this
+	// process's stdout as JSON-RPC framing, so a recovery note written there
+	// would corrupt the very session the recovery exists to save.
+	fmt.Fprintf(os.Stderr, "csx launcher: recovered: %s: current payload %s is unusable; running last-known-good %s\n",
+		res.FailedReason, res.FailedVersion, res.Descriptor.Version)
+	if !res.Healed {
+		fmt.Fprintf(os.Stderr, "csx launcher: active pointer was not repaired: %v\n", res.HealError)
+	}
+}
+
+func finish(code int) {
+	// ExitCode reports -1 for a process that was signalled or never exited.
+	// Passing that to os.Exit launders a failure into a platform-dependent
+	// code, so it becomes the launcher's own stable one.
+	if code < 0 {
+		fail(launcher.ReasonPayloadStartFailed, fmt.Errorf("payload did not report an exit status (%d)", code))
 	}
 	if code != 0 {
 		os.Exit(code)
 	}
 }
+
+// childStartError separates an actual exec/CreateProcess failure from launcher
+// setup failures. Only the former can truthfully mark this payload unusable and
+// trigger an LKG retry; a job-object failure, for example, must not rewrite the
+// active pointer.
+type childStartError struct{ err error }
+
+func (e *childStartError) Error() string { return e.err.Error() }
+func (e *childStartError) Unwrap() error { return e.err }
 
 func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor, protocol string) []string {
 	out := make([]string, 0, len(env)+6)
@@ -54,4 +103,13 @@ func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor,
 		"CSX_PAYLOAD_VERSION="+d.Version, "CSX_ACTIVE_SEQUENCE="+strconv.FormatUint(d.Sequence, 10), "CSX_ACTIVE_SHA256="+d.SHA256)
 }
 
-func fail(err error) { fmt.Fprintln(os.Stderr, "csx launcher:", err); os.Exit(126) }
+// fail is the only way this launcher stops without having run a payload, and it
+// always stops non-zero. A caller that cannot execute csx must never be able to
+// read that as the command having succeeded -- on MCP stdio the whole failure
+// is otherwise an empty stdout and a clean exit, which a host reports as a
+// server that closed rather than one that could not start. The reason code
+// leads the line so that message stays greppable across platforms.
+func fail(reason string, err error) {
+	fmt.Fprintf(os.Stderr, "csx launcher: %s: %v\n", reason, err)
+	os.Exit(126)
+}

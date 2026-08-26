@@ -178,7 +178,7 @@ func TestUploadPostsBatchesWithoutAnyPathLikeStrings(t *testing.T) {
 	// Privacy: no path-like strings, usernames, or private package names.
 	pathLike := regexp.MustCompile(`[A-Za-z]:[\\/]|/home/|/Users/|node_modules`)
 	if pathLike.MatchString(body) {
-		t.Errorf("payload contains path-like string:\n%s", body)
+		t.Errorf("payload contains path-like string %q:\n%s", pathLike.FindString(body), body)
 	}
 	for _, banned := range []string{"corp-secret-lib", "maybe-internal", "secret-project", "someone", dir, abs2(dir)} {
 		if banned != "" && strings.Contains(body, banned) {

@@ -12,7 +12,7 @@ import (
 // in. The propose command does not have to guess: the authoring queue assigns
 // one exact package and that is what --package carries.
 func TestProposedManifestStatesItsSubjectWhenOnePackageWasNamed(t *testing.T) {
-	m := proposalManifest(samples.SanitizedSpec{
+	m := samples.ProposalManifest(samples.SanitizedSpec{
 		Goal: "g", Packages: []string{"pkg:gem/faraday@2.9.0"},
 	}, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "gem"})
 	if m.Subject != "pkg:gem/faraday@2.9.0" {
@@ -24,7 +24,7 @@ func TestProposedManifestStatesItsSubjectWhenOnePackageWasNamed(t *testing.T) {
 // leaves the inference to run, which is what it is for; naming the first
 // would be a guess wearing a fact's clothes.
 func TestProposedManifestStaysSilentWhenTheSubjectIsAmbiguous(t *testing.T) {
-	m := proposalManifest(samples.SanitizedSpec{
+	m := samples.ProposalManifest(samples.SanitizedSpec{
 		Goal: "g", Packages: []string{"pkg:gem/faraday@2.9.0", "pkg:gem/minitest@5.27.0"},
 	}, domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "gem"})
 	if m.Subject != "" {

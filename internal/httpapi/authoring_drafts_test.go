@@ -172,7 +172,7 @@ func TestAuthoringWorkFallsBackToEvidenceDrivenFinding(t *testing.T) {
 	if err := store.UpsertFailureCluster(t.Context(), serverstore.ClusterRow{
 		Ecosystem: "npm", PackageName: "undici", Symbol: "MockAgent", Stage: "PROJECT_COMPILE",
 		ErrorFingerprint: batch.ErrorFingerprint, ErrorCode: batch.ErrorCode, ObservationCount: 23,
-		VersionsJSON: `["8.10.0"]`,
+		EvidenceQuality: string(domain.EvidenceComplete), VersionsJSON: `["8.10.0"]`,
 	}); err != nil {
 		t.Fatal(err)
 	}

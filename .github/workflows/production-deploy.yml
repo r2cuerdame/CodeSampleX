@@ -1,0 +1,204 @@
+name: Production deploy
+run-name: Production deploy ${{ inputs.commit_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Immutable commit on canonical main
+        required: true
+        type: string
+      previous_production_sha:
+        description: Known-good SHA currently serving production
+        required: true
+        type: string
+      merge_verdict:
+        description: ProjectOps Auditor MergeVerdict
+        required: true
+        type: choice
+        options: [pass, hold, fail]
+      requires_human_decision:
+        description: ProjectOps decision gate
+        required: true
+        type: choice
+        options: ['no', 'yes']
+      side_effect_class:
+        description: ProjectOps deploy taxonomy
+        required: true
+        type: choice
+        options: [safe, additive-migration, manual]
+      linear_issue:
+        description: Linear issue receiving the run evidence
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  eligibility:
+    name: Production eligibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prove canonical commit and ProjectOps decision
+        env:
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
+          MERGE_VERDICT: ${{ inputs.merge_verdict }}
+          REQUIRES_HUMAN_DECISION: ${{ inputs.requires_human_decision }}
+          SIDE_EFFECT_CLASS: ${{ inputs.side_effect_class }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          go run ./cmd/csx-deploy-gate \
+            -target "$TARGET_SHA" \
+            -previous "$PREVIOUS_SHA" \
+            -merge-verdict "$MERGE_VERDICT" \
+            -requires-human-decision "$REQUIRES_HUMAN_DECISION" \
+            -side-effect-class "$SIDE_EFFECT_CLASS"
+
+      - name: Require canonical Test check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          passed=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/commits/$TARGET_SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "Test" and .conclusion == "success")] | length')
+          test "$passed" -ge 1
+
+      - name: Require successful same-target release and farm rollout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          release_run=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&event=push&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // 0')
+          if ! [[ "$release_run" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::target $TARGET_SHA has no successful Release run; production requires that run's verified farm rollout first"
+            exit 1
+          fi
+          echo "Release/farm evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${release_run}" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Roll out production
+    needs: eligibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: codesamplex-production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Initialize fail-closed evidence
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
+          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+        run: |
+          @{
+            schemaVersion = 1
+            workflowRunId = "${{ github.run_id }}"
+            workflowRunUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            linearIssue = $env:LINEAR_ISSUE
+            targetSha = $env:TARGET_SHA
+            previousProductionSha = $env:PREVIOUS_SHA
+            conclusion = "failure"
+            deployedSha = ""
+            imageDigest = ""
+            migrationVersion = ""
+            health = "not-started"
+            smoke = "not-started"
+            rollback = "not-started"
+            invariants = @{ before = $null; after = $null }
+            failureEvidenceQuality = $null
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM production-deploy-evidence.json
+
+      - name: Install the dedicated SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-production-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-production-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-production-ssh/id"
+          test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+
+      - name: Deploy and verify
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
+          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+        run: |
+          $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
+          ./deploy/lightsail/deploy-production.ps1 `
+            -Ip $env:PRODUCTION_HOST `
+            -User $user `
+            -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `
+            -KnownHostsPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/known_hosts") `
+            -ExpectedRevision $env:TARGET_SHA `
+            -ExpectedPreviousRevision $env:PREVIOUS_SHA `
+            -LinearIssue $env:LINEAR_ISSUE `
+            -EvidencePath (Join-Path $env:GITHUB_WORKSPACE "production-deploy-evidence.json")
+
+      - name: Remove production SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
+
+      - name: Summarize production evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s production-deploy-evidence.json
+          jq '{deployedSha,imageDigest,migrationVersion,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: production-evidence-${{ github.run_id }}
+          path: production-deploy-evidence.json
+          if-no-files-found: error
+          retention-days: 30

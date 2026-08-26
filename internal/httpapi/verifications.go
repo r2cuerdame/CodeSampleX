@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -86,6 +88,55 @@ func receiptVerifierImageIsPinned(receipt domain.VerificationReceipt) error {
 	}
 	if img.Digest != m[1] {
 		return errors.New("verifierImage digest does not match its reference")
+	}
+	return nil
+}
+
+func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
+	if receipt.SchemaVersion == 1 && receipt.StageFailures != nil {
+		return errors.New("receipt schemaVersion 1 must not contain stageFailures")
+	}
+	for stage, failure := range receipt.StageFailures {
+		if receipt.Stages[stage] != string(domain.ResultFail) {
+			return fmt.Errorf("stageFailures.%s requires the stage result FAIL", stage)
+		}
+		term := failure.Termination()
+		structured := term.Structured()
+		if failure.TerminationKind != "" && !structured {
+			return fmt.Errorf("stageFailures.%s has invalid termination", stage)
+		}
+		if (failure.ExitCode != nil && failure.TerminationKind != domain.TerminationExit) ||
+			(failure.Signal != "" && failure.TerminationKind != domain.TerminationSignal) ||
+			(failure.TimeoutMillis != 0 && failure.TerminationKind != domain.TerminationTimeout) || failure.TimeoutMillis < 0 {
+			return fmt.Errorf("stageFailures.%s has mismatched termination fields", stage)
+		}
+		canonical := sanitizer.CanonicalPublicErrorSummary(failure.ErrorSummary, domain.Stage(strings.ToUpper(stage)))
+		if canonical != failure.ErrorSummary || len(failure.ErrorSummary) > 512 || len(failure.Signal) > 32 || len(failure.ErrorCode) > 64 {
+			return fmt.Errorf("stageFailures.%s is not canonical secret-safe evidence", stage)
+		}
+		hasSummary := failure.ErrorSummary != ""
+		switch failure.EvidenceQuality {
+		case domain.EvidenceComplete:
+			if !structured || !hasSummary {
+				return fmt.Errorf("stageFailures.%s complete evidence requires termination and summary", stage)
+			}
+		case domain.EvidencePartial:
+			if structured == hasSummary {
+				return fmt.Errorf("stageFailures.%s partial evidence requires exactly one of termination or summary", stage)
+			}
+		case domain.EvidenceMissing:
+			if structured || hasSummary || failure.ErrorCode != "" || failure.Fingerprint != "" {
+				return fmt.Errorf("stageFailures.%s missing evidence cannot carry a reason", stage)
+			}
+		default:
+			return fmt.Errorf("stageFailures.%s has invalid evidence quality", stage)
+		}
+		if failure.EvidenceQuality != domain.EvidenceMissing {
+			want := domain.FailureFingerprint(domain.Stage(strings.ToUpper(stage)), term, failure.ErrorCode, failure.ErrorSummary)
+			if failure.Fingerprint != want {
+				return fmt.Errorf("stageFailures.%s fingerprint does not match its evidence", stage)
+			}
+		}
 	}
 	return nil
 }
@@ -368,6 +419,10 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := receiptVerifierImageIsPinned(receipt); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := receiptFailureEvidenceIsSafe(receipt); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

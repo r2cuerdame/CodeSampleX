@@ -267,6 +267,24 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				WHERE version_rank <= $2
 				ORDER BY projects DESC,version DESC,ecosystem,name
 				LIMIT $3
+			), resolve_demand AS MATERIALIZED (
+				-- R2C-90. The distinct project-days that resolved each exact
+				-- release, read from the resolved graph rather than from
+				-- anybody's manifest. A carried sighting count says a machine
+				-- mentioned the package; this says a machine installed this
+				-- release, and authoringResolveWeight is what one of them is
+				-- worth beside a chosen sighting.
+				--
+				-- This is the whole graph, not dependency_open: the branch
+				-- above asks which children nobody has REPORTED, and the
+				-- ranking question here is about the ones they have.
+				SELECT 'pkg:'||ecosystem||'/'||
+				         CASE WHEN left(child_name,1)='@'
+				              THEN '%40'||substring(child_name from 2)
+				              ELSE child_name END||'@'||child_version AS purl,
+				       COUNT(DISTINCT bucket||epoch) AS projects
+				FROM dependency_edge
+				GROUP BY 1
 			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
 				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
@@ -282,6 +300,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				JOIN packages p ON p.ecosystem=fc.ecosystem AND p.name=fc.package_name
 				  AND p.version=version.value
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND `+CurrentFailureClusterPredicateSQL+`
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
 				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
@@ -293,7 +312,8 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
-				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
+				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END)
+				         + COALESCE(MAX(rd.projects),0) * $4 AS score,
 				       'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
 				       LOWER(COALESCE(e.env_json->>'os','')) AS target_os
 				-- Package-level work is for an environment that has evidence but no
@@ -305,6 +325,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				-- on the same OS, and left 37% of the corpus redundant.
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
+				LEFT JOIN resolve_demand rd ON rd.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
 				  AND LOWER(COALESCE(e.env_json->>'os',''))<>''
 				  AND NOT EXISTS (
@@ -424,6 +445,28 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				    ELSE true END)
 				  AND NOT EXISTS (
 					SELECT 1 FROM in_flight f WHERE f.purl=c.purl AND f.symbol=c.symbol)
+			), claimable AS (
+				-- Coordinates an assignment already answered. The claim
+				-- inserts ON CONFLICT DO NOTHING against a key nothing
+				-- deletes once a sample is attached, so a row here can never
+				-- be handed out again -- and it sorts by the observation
+				-- count that made it worth answering first, which puts it at
+				-- the TOP of a finite window rather than the bottom.
+				--
+				-- Package-level EXPANSION and DEPENDENCY hand their row back
+				-- on submission and a symbol-bearing row is already filtered
+				-- by verified_symbols, so what accumulates is the symbol-less
+				-- FINDING. Production held 407 of them on 2026-08-23; 141
+				-- were inside the 200-row window, 56 more were npm platform
+				-- builds the handler drops, and THREE rows were claimable.
+				-- Authoring went from 45 handouts an hour to zero for five
+				-- hours with 1,810 coverage holes on the board.
+				SELECT c.* FROM fresh c
+				WHERE NOT EXISTS (
+				  SELECT 1 FROM authoring_assignments a
+				  WHERE a.ecosystem=c.ecosystem AND a.name=c.name
+				    AND a.version=c.version AND a.symbol=c.symbol
+				    AND a.sample_id IS NOT NULL)
 			), spread AS (
 				-- How many jobs this version has already been offered higher up the
 				-- merit order. Ordering by it first means every version earns its
@@ -431,7 +474,7 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 				SELECT *, ROW_NUMBER() OVER (
 				         PARTITION BY ecosystem,name,version
 				         ORDER BY source_rank,score DESC,last_seen DESC,symbol) AS version_depth
-				FROM fresh
+				FROM claimable
 			)
 			SELECT ecosystem,name,version,symbol,score,kind,target_os
 			FROM spread
@@ -453,7 +496,8 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			-- pushed the entire measured demand behind work nobody asked for.
 			ORDER BY version_depth,
 			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
-			LIMIT $1`, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap)
+			LIMIT $1`, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
+			authoringResolveWeight)
 		if err != nil {
 			return err
 		}
