@@ -259,6 +259,9 @@ func toolDefs() []toolDef {
 	strArr := func(desc string) map[string]any {
 		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 	}
+	boolean := func(desc string) map[string]any {
+		return map[string]any{"type": "boolean", "description": desc}
+	}
 	return []toolDef{
 		{
 			Name:  "search_known_solution",
@@ -279,6 +282,7 @@ func toolDefs() []toolDef {
 				"symbols":     strArr("symbol families involved, e.g. axios.post"),
 				"environment": environmentSchema(),
 				"errorText":   str("raw error output, if fixing an error. It is sanitized locally (paths/tokens/usernames stripped) before any use and NEVER forwarded raw; only the derived error code and fingerprint enter the search."),
+				"debug":       boolean("include the canonical decision trace; does not change the search result. CSX_DEBUG=1 enables the same trace for the MCP session."),
 			}, "query"),
 		},
 		{
@@ -326,6 +330,7 @@ func toolDefs() []toolDef {
 			InputSchema: obj(map[string]any{
 				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
 				"cwd":     str("working directory (defaults to the current directory)"),
+				"debug":   boolean("include sanitized failure lineage and diagnostic gaps; CSX_DEBUG=1 enables the same trace for the MCP session."),
 			}, "command"),
 		},
 		{
@@ -569,6 +574,7 @@ type searchArgs struct {
 	Symbols     []string                      `json:"symbols"`
 	Environment domain.EnvironmentFingerprint `json:"environment"`
 	ErrorText   string                        `json:"errorText"`
+	Debug       bool                          `json:"debug"`
 }
 
 func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResult {
@@ -588,6 +594,7 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 		SymbolProvenance:      domain.SearchProvenanceExplicit,
 		Environment:           a.Environment,
 		EnvironmentProvenance: domain.SearchProvenanceExplicit,
+		Debug:                 diagnosticEnabled(a.Debug),
 	}
 	if req.Environment.SchemaVersion == 0 {
 		req.Environment.SchemaVersion = 1
@@ -638,7 +645,9 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	// because both things are Go on linux/amd64. Environment coordinates say
 	// where a sample can run, never what it is about. A candidate with no
 	// nameable link to the question does not reach the answer.
+	beforeGate := len(resp.Results)
 	resp, suppressed := domain.GateNormalOutput(req, resp, nil)
+	prepareSearchDiagnostic(&resp, req, beforeGate, suppressed, s.serverVersion())
 	if twoPhase {
 		offerID = s.Deps.RecordSearchOutcome(ctx, req, resp)
 	} else if len(suppressed) > 0 {
@@ -657,7 +666,8 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	if resp.Miss || len(resp.Results) == 0 {
 		hint, ready := s.readinessHint(ctx)
 		if len(overview) > 0 || hint != "" || resp.Observed != nil || len(suppressed) > 0 {
-			return textResult(renderMiss(overview, hint, resp.Observed), withSuppressed(map[string]any{
+			text := appendDiagnosticText(renderMiss(overview, hint, resp.Observed), resp.Diagnostic)
+			return textResult(text, withSuppressed(map[string]any{
 				"response": resp, "packageOverview": overview, "localReady": ready,
 				"observed": resp.Observed,
 			}, suppressed))
@@ -667,12 +677,54 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	for i := range resp.Results {
 		relevance[i] = resp.Results[i].RelevanceLine(req, nil)
 	}
-	text := renderSearchResponseWithRelevance(resp, relevance)
+	text := appendDiagnosticText(renderSearchResponseWithRelevance(resp, relevance), resp.Diagnostic)
 	return textResult(text, localSearchStructured{
 		SearchResponse: resp,
 		OfferID:        offerID,
 		Suppressed:     debugCandidates(suppressed),
 	})
+}
+
+func diagnosticEnabled(explicit bool) bool {
+	if explicit {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CSX_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) serverVersion() string {
+	if strings.TrimSpace(s.Version) == "" {
+		return "dev"
+	}
+	return s.Version
+}
+
+func prepareSearchDiagnostic(resp *domain.SearchResponse, req domain.SearchRequest, beforeGate int,
+	suppressed []domain.SuppressedCandidate, version string) {
+	if !req.Debug {
+		resp.Diagnostic = nil
+		return
+	}
+	domain.RecordOutputGateDiagnostic(resp, req, beforeGate, suppressed)
+	d := resp.Diagnostic
+	d.Versions.Server = version
+	d.Versions.Protocol = ProtocolVersion
+}
+
+func appendDiagnosticText(text string, diagnostic *domain.DiagnosticTrace) string {
+	if diagnostic == nil {
+		return text
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(text, "\n"))
+	b.WriteString("\n")
+	domain.RenderDiagnosticText(&b, diagnostic)
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // withRelevance puts the mechanically generated justification directly under
@@ -1164,6 +1216,7 @@ func (s *Server) toolExplain(ctx context.Context, raw json.RawMessage) *toolResu
 type runArgs struct {
 	Command []string `json:"command"`
 	Cwd     string   `json:"cwd"`
+	Debug   bool     `json:"debug"`
 }
 
 func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *toolResult {
@@ -1174,7 +1227,9 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	if len(a.Command) == 0 {
 		return errResult("run_observed_command: command is required")
 	}
+	commandStarted := time.Now()
 	exitCode, stage, result, sanitized, output, err := s.Deps.RunObserved(ctx, a.Command, a.Cwd)
+	commandElapsed := time.Since(commandStarted)
 	if err != nil {
 		return errResult("run_observed_command: " + err.Error())
 	}
@@ -1226,7 +1281,9 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	// the project was scanned, the error was sanitized. So it happens here,
 	// in the same turn, without anyone choosing to make it.
 	if exitCode != 0 {
+		lookupStarted := time.Now()
 		recommendation := s.lookupAfterFailure(ctx, a.Command, a.Cwd, sanitized)
+		lookupElapsed := time.Since(lookupStarted)
 		structured.Recommendation = &recommendation
 		b.WriteString("\nCODESAMPLEX SUPPORTING INFORMATION — SECONDARY\n")
 		b.WriteString(recommendation.render())
@@ -1234,24 +1291,153 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 			structured.AutoLookup = true
 			structured.NetworkAnswer = recommendation.Text
 		}
+		if diagnosticEnabled(a.Debug) {
+			structured.Diagnostic = buildFailureDiagnostic(s, a.Command, exitCode, stage, result,
+				sanitized, commandElapsed, lookupElapsed)
+		}
+	} else if diagnosticEnabled(a.Debug) {
+		structured.Diagnostic = buildFailureDiagnostic(s, a.Command, exitCode, stage, result,
+			sanitized, commandElapsed, 0)
+	}
+	if structured.Diagnostic != nil {
+		domain.RenderDiagnosticText(&b, structured.Diagnostic)
 	}
 	return textResult(b.String(), structured)
 }
 
 type observedCommandStructured struct {
-	ExitCode        int                    `json:"exitCode"`
-	Stdout          string                 `json:"stdout"`
-	Stderr          string                 `json:"stderr"`
-	StdoutTruncated bool                   `json:"stdoutTruncated"`
-	StderrTruncated bool                   `json:"stderrTruncated"`
-	Stage           string                 `json:"stage"`
-	Result          string                 `json:"result"`
-	SanitizedErrors []string               `json:"sanitizedErrors"`
-	EvidenceClass   string                 `json:"evidenceClass"`
-	Output          string                 `json:"output,omitempty"`
-	Recommendation  *failureRecommendation `json:"recommendation,omitempty"`
-	AutoLookup      bool                   `json:"autoLookup,omitempty"`
-	NetworkAnswer   string                 `json:"networkAnswer,omitempty"`
+	ExitCode        int                     `json:"exitCode"`
+	Stdout          string                  `json:"stdout"`
+	Stderr          string                  `json:"stderr"`
+	StdoutTruncated bool                    `json:"stdoutTruncated"`
+	StderrTruncated bool                    `json:"stderrTruncated"`
+	Stage           string                  `json:"stage"`
+	Result          string                  `json:"result"`
+	SanitizedErrors []string                `json:"sanitizedErrors"`
+	EvidenceClass   string                  `json:"evidenceClass"`
+	Output          string                  `json:"output,omitempty"`
+	Recommendation  *failureRecommendation  `json:"recommendation,omitempty"`
+	AutoLookup      bool                    `json:"autoLookup,omitempty"`
+	NetworkAnswer   string                  `json:"networkAnswer,omitempty"`
+	Diagnostic      *domain.DiagnosticTrace `json:"diagnostic,omitempty"`
+}
+
+func buildFailureDiagnostic(s *Server, argv []string, exitCode int, stage, result string,
+	sanitized []string, commandElapsed, lookupElapsed time.Duration) *domain.DiagnosticTrace {
+	req := domain.SearchRequest{SchemaVersion: 2, Debug: true}
+	if s.Deps != nil && s.Deps.MachineEnv != nil {
+		req.Environment = s.Deps.MachineEnv(context.Background())
+	}
+	d := domain.NewDiagnosticTrace(req)
+	d.Versions.Server = s.serverVersion()
+	d.Versions.Protocol = ProtocolVersion
+	d.Decision = result
+	d.Pipeline = append(d.Pipeline, domain.DiagnosticPipelineStep{
+		Stage: "command", InputCount: 1, OutputCount: 1,
+		ElapsedMicros: commandElapsed.Microseconds(), EvidenceSource: "local-process",
+	})
+	if lookupElapsed > 0 {
+		d.Pipeline = append(d.Pipeline, domain.DiagnosticPipelineStep{
+			Stage: "failure-lookup", InputCount: 1, OutputCount: 1,
+			ElapsedMicros: lookupElapsed.Microseconds(), EvidenceSource: "local-search",
+		})
+	}
+	d.Failure = parseFailureDiagnostic(argv, exitCode, stage, sanitized)
+	for _, event := range d.Failure.Events {
+		if event.EvidenceGap != "" {
+			d.AddGap("DIAG", strings.ToUpper(strings.ReplaceAll(event.EvidenceGap, "-", "_")),
+				"failure analyzer did not infer beyond captured evidence")
+		}
+	}
+	if len(d.Failure.Events) == 0 && exitCode != 0 {
+		d.AddGap("DIAG", "FAILURE_DIAGNOSTIC_MISSING", "no structured failure event was available")
+	}
+	return d
+}
+
+func parseFailureDiagnostic(argv []string, exitCode int, stage string, sanitized []string) *domain.DiagnosticFailure {
+	f := &domain.DiagnosticFailure{
+		OuterCommand: diagnosticOuterCommand(argv), OuterStage: diagnosticOuterStage(argv),
+		ExitCode: exitCode,
+	}
+	var current *domain.DiagnosticFailureEvent
+	for _, line := range sanitized {
+		switch {
+		case strings.HasPrefix(line, "failureEvent: "):
+			values := parseFailureEventLine(strings.TrimPrefix(line, "failureEvent: "))
+			event := domain.DiagnosticFailureEvent{
+				ActualStage: values["stage"], ActualToolchain: values["toolchain"],
+				StageEvidence: values["evidence"], EvidenceGap: values["gap"],
+			}
+			if f.OuterCommand == "" {
+				f.OuterCommand = values["outer"]
+			}
+			f.Events = append(f.Events, event)
+			current = &f.Events[len(f.Events)-1]
+		case strings.HasPrefix(line, "errorCode: ") && current != nil:
+			current.DiagnosticCode = strings.TrimSpace(strings.TrimPrefix(line, "errorCode: "))
+		case strings.HasPrefix(line, "fingerprint: ") && current != nil:
+			current.Fingerprint = strings.TrimSpace(strings.TrimPrefix(line, "fingerprint: "))
+		case strings.HasPrefix(line, "termination: "):
+			f.Termination = strings.TrimSpace(strings.TrimPrefix(line, "termination: "))
+		case strings.HasPrefix(line, "evidenceQuality: ") && current != nil:
+			current.DiagnosticQuality = strings.TrimSpace(strings.TrimPrefix(line, "evidenceQuality: "))
+		}
+	}
+	if len(f.Events) == 0 && stage != "" {
+		f.Events = append(f.Events, domain.DiagnosticFailureEvent{ActualStage: stage, EvidenceGap: "stage-lineage-unavailable"})
+	}
+	return f
+}
+
+func parseFailureEventLine(line string) map[string]string {
+	out := map[string]string{}
+	keys := []string{"stage", "toolchain", "outer", "evidence", "gap"}
+	for i, key := range keys {
+		marker := key + "="
+		start := strings.Index(line, marker)
+		if start < 0 {
+			continue
+		}
+		start += len(marker)
+		end := len(line)
+		for _, next := range keys[i+1:] {
+			if at := strings.Index(line[start:], " "+next+"="); at >= 0 && start+at < end {
+				end = start + at
+			}
+		}
+		out[key] = strings.TrimSpace(line[start:end])
+	}
+	return out
+}
+
+func diagnosticOuterCommand(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	tool := domain.CommandTool(argv)
+	if tool == "" {
+		return ""
+	}
+	if len(argv) > 1 {
+		sub := strings.ToLower(argv[1])
+		for _, allowed := range []string{"test", "build", "check", "run", "restore", "install"} {
+			if sub == allowed {
+				return tool + " " + sub
+			}
+		}
+	}
+	return tool
+}
+
+func diagnosticOuterStage(argv []string) string {
+	if len(argv) > 1 && strings.EqualFold(argv[1], "test") {
+		return string(domain.StageProjectTest)
+	}
+	if len(argv) > 1 && (strings.EqualFold(argv[1], "build") || strings.EqualFold(argv[1], "check")) {
+		return string(domain.StageProjectCompile)
+	}
+	return ""
 }
 
 func writeCapturedStream(b *strings.Builder, name, value string, truncated bool) {

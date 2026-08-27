@@ -242,6 +242,42 @@ func TestDaemonStatusSearchQueueEndpoints(t *testing.T) {
 	}
 }
 
+func TestSearchAndRecordGatesUnrelatedCandidateBeforeOffer(t *testing.T) {
+	home := newTestHome(t, nil)
+	d, err := New(home)
+	if err != nil {
+		t.Fatalf("daemon.New: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	seedSample(t, d, "sha256:unrelated-offer")
+
+	resp := d.SearchAndRecord(context.Background(), domain.SearchRequest{
+		SchemaVersion:   2,
+		Debug:           true,
+		Query:           "deploy immutable main SHA from workflow dispatch",
+		ProjectPackages: []string{"pkg:npm/axios@1.12.0"},
+		Environment:     testEnv(),
+	})
+	if !resp.Miss || len(resp.Results) != 0 || resp.OfferID != "" {
+		t.Fatalf("unrelated retrieval escaped output gate: %+v", resp)
+	}
+	if resp.Diagnostic == nil || resp.Diagnostic.Decision != string(domain.GradeNoSafeMatch) {
+		t.Fatalf("missing final gate decision: %+v", resp.Diagnostic)
+	}
+	if len(resp.Diagnostic.Candidates) != 1 || !contains(resp.Diagnostic.Candidates[0].ReasonCodes, domain.SuppressedInsufficientGoalOverlap) {
+		t.Fatalf("missing candidate suppression lineage: %+v", resp.Diagnostic.Candidates)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLegacySearchJSONIsNormalizedOnlyAtDaemonBoundary(t *testing.T) {
 	home := newTestHome(t, nil)
 	d, _ := startDaemon(t, home)
