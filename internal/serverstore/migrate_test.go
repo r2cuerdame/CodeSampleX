@@ -304,3 +304,36 @@ func TestSearchMissMigrationStoresOnlyADigestedQuestion(t *testing.T) {
 		}
 	}
 }
+
+func TestSamplePackageProjectionMigrationIsAdditiveAndBackfills(t *testing.T) {
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection Migration
+	for _, migration := range migs {
+		if migration.Version == "0028_sample_packages.sql" {
+			projection = migration
+			break
+		}
+	}
+	if projection.Version == "" {
+		t.Fatal("0028_sample_packages.sql not loaded")
+	}
+	all := strings.ToLower(strings.Join(projection.Statements, "\n"))
+	for _, required := range []string{
+		"create table sample_packages", "references samples(sample_id) on delete cascade",
+		"create index sample_packages_coord_idx", "insert into sample_packages",
+		"jsonb_array_elements_text", "strpos(reverse(package.value), '@')",
+		"on conflict do nothing",
+	} {
+		if !strings.Contains(all, required) {
+			t.Errorf("sample package projection migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"drop table", "truncate", "delete from samples", "update samples"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("sample package projection migration contains destructive operation %q", forbidden)
+		}
+	}
+}

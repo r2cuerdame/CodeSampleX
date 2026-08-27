@@ -791,7 +791,13 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 		caseID = &s.CaseID
 	}
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO samples(sample_id, case_id, manifest, status, origin_seeder,
 				license, size_bytes, hot_score, quarantined, quarantine_reason)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -812,8 +818,31 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 				-- moves; this is not.
 				hot_score = EXCLUDED.hot_score`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
-			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason)
-		return err
+			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason); err != nil {
+			return err
+		}
+
+		// A sample id is content-addressed, but rebuild the projection on a
+		// duplicate save as well. That keeps the relational index exactly in
+		// step with the manifest even if an operator repairs legacy data by
+		// replaying the sample.
+		if _, err := tx.Exec(ctx, `DELETE FROM sample_packages WHERE sample_id=$1`, s.SampleID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO sample_packages(sample_id, purl, coord)
+			SELECT $1, package.value,
+			       left(package.value,
+			            length(package.value) - strpos(reverse(package.value), '@') + 1)
+			  FROM jsonb_array_elements_text(
+			    CASE WHEN jsonb_typeof(($2::jsonb)->'packages') = 'array'
+			         THEN ($2::jsonb)->'packages' ELSE '[]'::jsonb END
+			  ) AS package(value)
+			 WHERE strpos(reverse(package.value), '@') > 0
+			ON CONFLICT DO NOTHING`, s.SampleID, []byte(s.ManifestJSON)); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	})
 }
 
@@ -875,8 +904,9 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 			SELECT `+sampleCols+` FROM samples
 			WHERE NOT quarantined
 			  AND EXISTS (
-				SELECT 1 FROM jsonb_array_elements_text(manifest->'packages') AS pkg
-				WHERE pkg LIKE ANY($1)
+				SELECT 1 FROM sample_packages package
+				WHERE package.sample_id = samples.sample_id
+				  AND package.purl LIKE ANY($1)
 			  )
 			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
 		if err != nil {
@@ -915,8 +945,9 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 				  AND verified_receipt.contract_result = 'PASS'
 			  )
 			  AND EXISTS (
-				SELECT 1 FROM jsonb_array_elements_text(manifest->'packages') AS pkg
-				WHERE pkg LIKE ANY($1)
+				SELECT 1 FROM sample_packages package
+				WHERE package.sample_id = samples.sample_id
+				  AND package.purl LIKE ANY($1)
 			  )
 			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
 		if err != nil {
@@ -935,42 +966,41 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 	return out, err
 }
 
+const verifiedSampleCodeCountsSQL = `
+	WITH eligible AS MATERIALIZED (
+		SELECT samples.sample_id, package.purl, samples.manifest
+		FROM sample_packages package
+		JOIN samples ON samples.sample_id = package.sample_id
+		WHERE package.coord = $1
+		  AND NOT samples.quarantined
+		  AND EXISTS (
+			SELECT 1 FROM receipts verified_receipt
+			WHERE verified_receipt.sample_id = samples.sample_id
+			  AND verified_receipt.contract_result = 'PASS'
+		  )
+	), coordinates AS (
+		SELECT sample_id, purl, ''::text AS symbol FROM eligible
+		UNION ALL
+		SELECT eligible.sample_id, eligible.purl, symbol.value
+		FROM eligible
+		CROSS JOIN LATERAL jsonb_array_elements_text(
+			CASE WHEN jsonb_typeof(eligible.manifest->'symbols')='array'
+			     THEN eligible.manifest->'symbols' ELSE '[]'::jsonb END
+		) AS symbol(value)
+		WHERE symbol.value <> ''
+	)
+	SELECT purl, symbol, count(DISTINCT sample_id)
+	FROM coordinates
+	GROUP BY purl, symbol
+	ORDER BY purl, symbol`
+
 func (p *PG) VerifiedSampleCodeCounts(ctx context.Context, packagePrefix string) ([]VerifiedSampleCodeCount, error) {
 	if packagePrefix == "" {
 		return nil, nil
 	}
 	var out []VerifiedSampleCodeCount
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			WITH eligible AS MATERIALIZED (
-				SELECT samples.sample_id, package.value AS purl, samples.manifest
-				FROM samples
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-					CASE WHEN jsonb_typeof(samples.manifest->'packages')='array'
-					     THEN samples.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
-				WHERE NOT samples.quarantined
-				  AND left(package.value, char_length($1)) = $1
-				  AND EXISTS (
-					SELECT 1 FROM receipts verified_receipt
-					WHERE verified_receipt.sample_id = samples.sample_id
-					  AND verified_receipt.contract_result = 'PASS'
-				  )
-			), coordinates AS (
-				SELECT sample_id, purl, ''::text AS symbol FROM eligible
-				UNION ALL
-				SELECT eligible.sample_id, eligible.purl, symbol.value
-				FROM eligible
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-					CASE WHEN jsonb_typeof(eligible.manifest->'symbols')='array'
-					     THEN eligible.manifest->'symbols' ELSE '[]'::jsonb END
-				) AS symbol(value)
-				WHERE symbol.value <> ''
-			)
-			SELECT purl, symbol, count(DISTINCT sample_id)
-			FROM coordinates
-			GROUP BY purl, symbol
-			ORDER BY purl, symbol`, packagePrefix)
+		rows, err := c.Query(ctx, verifiedSampleCodeCountsSQL, packagePrefix)
 		if err != nil {
 			return err
 		}
@@ -2797,17 +2827,15 @@ func (p *PG) WantedForPackage(ctx context.Context, ecosystem, name string) ([]Wa
 // corpus, so the page got slower as the network got better at its job, and
 // eight concurrent readers emptied the connection pool.
 //
-// The inverted form expands the corpus once into the coordinates it can
-// answer and hash-anti-joins the requests against it: 2,665 expansions
-// instead of 823,594, and the same 31 rows in 85ms.
+// Migration 0028 projects each immutable manifest package into
+// sample_packages once, when the sample is saved. Wanted reads now join that
+// indexed projection instead of reparsing the entire JSON corpus on every
+// package page and every author poll.
 //
-// coord is every prefix of a manifest PURL that ends at a literal '@'. That
-// is exactly what the correlated form tested with strpos(...) = 1: a wanted
-// row's key always ends in '@', so "pkg starts with the key" and "the key is
-// one of pkg's '@'-terminated prefixes" are the same statement. Taking every
-// such prefix rather than the first keeps the scoped npm spelling honest —
-// "pkg:npm/@scope/pkg@2.0.0" carries two literal '@' and must still match a
-// request for '@scope/pkg'.
+// coord is the manifest PURL through its last literal '@', which is the
+// package/version separator. Using the last separator keeps scoped npm honest:
+// "pkg:npm/@scope/pkg@2.0.0" becomes "pkg:npm/@scope/pkg@", not the incomplete
+// "pkg:npm/@" prefix.
 const listWantedSQL = `
 	WITH wanted_key AS MATERIALIZED (
 		-- Both accepted spellings of a request's own coordinate. The filtered
@@ -2823,24 +2851,16 @@ const listWantedSQL = `
 		               THEN '%40' || substring(w.name from 2)
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
-	), answer AS MATERIALIZED (
-		-- The live corpus, expanded once, as the coordinates it can close.
-		SELECT s.sample_id, s.manifest, left(pkg.value, at.pos) AS coord
-		  FROM samples s
-		  CROSS JOIN LATERAL jsonb_array_elements_text(s.manifest->'packages') AS pkg(value)
-		  CROSS JOIN LATERAL (
-		      SELECT g FROM generate_series(1, length(pkg.value)) AS g
-		       WHERE substr(pkg.value, g, 1) = '@') AS at(pos)
-		 WHERE NOT s.quarantined
-		   AND EXISTS (SELECT 1 FROM wanted_key)
 	), answered AS (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
-		  JOIN answer a ON a.coord = wk.coord
-		 WHERE (wk.symbol = '' OR COALESCE(a.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+		  JOIN sample_packages package ON package.coord = wk.coord
+		  JOIN samples answer_sample ON answer_sample.sample_id = package.sample_id
+		                              AND NOT answer_sample.quarantined
+		 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
 		   AND EXISTS (
 		       SELECT 1 FROM receipts answer_receipt
-		        WHERE answer_receipt.sample_id = a.sample_id
+		        WHERE answer_receipt.sample_id = answer_sample.sample_id
 		          AND answer_receipt.contract_result = 'PASS'
 		          -- A row that names a platform is answered only by a proof
 		          -- from that platform. Any-pass closure would delete the ask

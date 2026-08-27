@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -1772,7 +1773,7 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}
 }
 
-// TestIntegrationListWantedExpandsTheCorpusOncePerRequest pins the
+// TestIntegrationListWantedUsesTheNormalizedPackageProjection pins the
 // complexity class of the board's anti-join, which is what took
 // /wanted down rather than any error in its answer.
 //
@@ -1786,10 +1787,10 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 //
 // A wall-clock budget would only restate how fast the machine running the
 // test is. The invariant is structural, so this asserts on the plan the
-// shipped statement actually produced: the corpus is expanded a number of
-// times bounded by the corpus, never by the number of requests standing
-// against it. With the correlated form this count is wantedRows × samples.
-func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
+// shipped statement actually produced: request-time Wanted reads never parse
+// manifest package arrays. SaveSample and migration 0028 own that one-time
+// projection instead.
+func TestIntegrationListWantedUsesTheNormalizedPackageProjection(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
 
@@ -1847,17 +1848,23 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 			len(page), total)
 	}
 
-	// Two per sample: one manifest array expanded, one nested scan of the
-	// prefix positions inside it. Four leaves room for a differently shaped
-	// but still corpus-bounded plan; wantedRows × samples is 12,000.
-	const budget = 4 * samples
-	loops := listWantedExpansionLoops(t, pg)
-	if loops > budget {
-		t.Fatalf("the manifest corpus was expanded %.0f times for %d requests over %d samples, "+
-			"want at most %d: the corpus is being rescanned once per request again",
-			loops, wantedRows, samples, budget)
+	var projected int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT count(*) FROM sample_packages`).Scan(&projected)
+	}); err != nil {
+		t.Fatalf("count sample package projection: %v", err)
 	}
-	t.Logf("manifest expansions: %.0f for %d requests over %d samples", loops, wantedRows, samples)
+	if want := 2 * samples; projected != want {
+		t.Fatalf("sample package projection rows = %d, want %d", projected, want)
+	}
+
+	loops := listWantedExpansionLoops(t, pg)
+	if loops != 0 {
+		t.Fatalf("Wanted reparsed manifest package arrays %.0f times for %d requests over %d samples, want 0",
+			loops, wantedRows, samples)
+	}
+	t.Logf("request-time manifest expansions: %.0f for %d requests over %d projected samples",
+		loops, wantedRows, samples)
 
 	// Package pages ask only for their own wanted rows. A crawler can visit
 	// thousands of real package pages that have no open request; those pages
@@ -1869,28 +1876,89 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 	}
 }
 
+func TestIntegrationMigrateRepairsSamplesWrittenDuringOldBinaryRollback(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const sampleID = "sha256:rollback-gap"
+	const manifest = `{"packages":["pkg:npm/react@19.1.1","pkg:npm/%40scope/pkg@2.0.0"],"symbols":[]}`
+
+	// A pre-0028 binary writes only samples. Keep this direct SQL in the test:
+	// calling current SaveSample would populate the projection and fail to
+	// reproduce the rollback gap.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `INSERT INTO samples(sample_id,manifest,size_bytes) VALUES($1,$2,0)`,
+			sampleID, manifest)
+		return err
+	}); err != nil {
+		t.Fatalf("simulate old binary sample write: %v", err)
+	}
+
+	var before int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT count(*) FROM sample_packages WHERE sample_id=$1`, sampleID).Scan(&before)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if before != 0 {
+		t.Fatalf("rollback gap was not reproduced: projection rows before re-upgrade = %d", before)
+	}
+
+	if err := pg.Migrate(ctx); err != nil {
+		t.Fatalf("re-upgrade migrate: %v", err)
+	}
+	var got []string
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `SELECT purl || '|' || coord FROM sample_packages WHERE sample_id=$1 ORDER BY purl`, sampleID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				return err
+			}
+			got = append(got, value)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"pkg:npm/%40scope/pkg@2.0.0|pkg:npm/%40scope/pkg@",
+		"pkg:npm/react@19.1.1|pkg:npm/react@",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projection after re-upgrade = %v, want %v", got, want)
+	}
+}
+
 // listWantedExpansionLoops runs the shipped Wanted statement under EXPLAIN
 // ANALYZE and reports how many times it expanded a manifest package array.
 // It reads listWantedSQL itself so the guard cannot drift away from the
 // statement the server sends.
 func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 	t.Helper()
-	loops := listWantedExpansionLoopsFor(t, pg, "", "")
-	if loops == 0 {
-		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
-	}
-	return loops
+	return listWantedExpansionLoopsFor(t, pg, "", "")
 }
 
 func listWantedExpansionLoopsFor(t *testing.T, pg *PG, ecosystem, name string) float64 {
 	t.Helper()
+	return jsonbExpansionLoopsForAlias(t, pg, "", listWantedSQL,
+		2000, 0, ecosystem, name, []string{})
+}
+
+// jsonbExpansionLoopsForAlias runs the exact shipped statement and counts
+// manifest JSON array expansions in its actual plan. alias may be empty to
+// count every jsonb_array_elements_text node.
+func jsonbExpansionLoopsForAlias(t *testing.T, pg *PG, alias, query string, args ...any) float64 {
+	t.Helper()
 	ctx := context.Background()
 	var raw []byte
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
-		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+listWantedSQL,
-			2000, 0, ecosystem, name, []string{}).Scan(&raw)
+		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+query, args...).Scan(&raw)
 	}); err != nil {
-		t.Fatalf("explain wanted statement: %v", err)
+		t.Fatalf("explain statement: %v", err)
 	}
 	var plans []struct {
 		Plan json.RawMessage `json:"Plan"`
@@ -1909,7 +1977,11 @@ func listWantedExpansionLoopsFor(t *testing.T, pg *PG, ecosystem, name string) f
 		if v, ok := node["Function Name"]; ok {
 			_ = json.Unmarshal(v, &fn)
 		}
-		if fn == "jsonb_array_elements_text" {
+		var nodeAlias string
+		if v, ok := node["Alias"]; ok {
+			_ = json.Unmarshal(v, &nodeAlias)
+		}
+		if fn == "jsonb_array_elements_text" && (alias == "" || nodeAlias == alias) {
 			var loops float64
 			if v, ok := node["Actual Loops"]; ok {
 				_ = json.Unmarshal(v, &loops)

@@ -72,3 +72,12 @@ func TestVerifiedSampleCodeCountsAreExhaustiveAndExactInFake(t *testing.T) {
 func TestIntegrationVerifiedSampleCodeCountsMatchFake(t *testing.T) {
 	assertVerifiedSampleCodeCounts(t, openTestPG(t))
 }
+
+func TestIntegrationVerifiedSampleCodeCountsDoesNotScanManifestPackages(t *testing.T) {
+	pg := openTestPG(t)
+	seedVerifiedSampleCodeCounts(t, pg)
+	if loops := jsonbExpansionLoopsForAlias(t, pg, "package", verifiedSampleCodeCountsSQL,
+		"pkg:npm/axios@"); loops != 0 {
+		t.Fatalf("package code counts reparsed manifest package arrays %.0f times, want 0", loops)
+	}
+}

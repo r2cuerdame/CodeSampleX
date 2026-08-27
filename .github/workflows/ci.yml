@@ -133,7 +133,7 @@ jobs:
             exit 1
           fi
           # Named because it is why this gate exists: the /wanted outage guard.
-          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationListWantedExpandsTheCorpusOncePerRequest'; then
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationListWantedUsesTheNormalizedPackageProjection'; then
             echo "::error::the /wanted complexity guard (R2C-55) did not run"
             exit 1
           fi

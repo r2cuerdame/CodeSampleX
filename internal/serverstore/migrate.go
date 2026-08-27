@@ -98,6 +98,34 @@ func Migrate(ctx context.Context, conn *pgx.Conn) error {
 			return err
 		}
 	}
+	// A rollback to a binary older than 0028 can insert samples without the
+	// relational package projection. The migration row remains recorded, so
+	// merely re-running migrations would otherwise leave those samples
+	// permanently invisible to package reads. Reconcile only samples with no
+	// projection on every current-binary start; the CTE is materialized so
+	// already projected manifests are not expanded again.
+	if _, err := conn.Exec(ctx, `
+		WITH missing AS MATERIALIZED (
+			SELECT samples.sample_id, samples.manifest
+			FROM samples
+			WHERE NOT EXISTS (
+				SELECT 1 FROM sample_packages
+				WHERE sample_packages.sample_id = samples.sample_id
+			)
+		)
+		INSERT INTO sample_packages(sample_id, purl, coord)
+		SELECT missing.sample_id, package.value,
+		       left(package.value,
+		            length(package.value) - strpos(reverse(package.value), '@') + 1)
+		FROM missing
+		CROSS JOIN LATERAL jsonb_array_elements_text(
+			CASE WHEN jsonb_typeof(missing.manifest->'packages') = 'array'
+			     THEN missing.manifest->'packages' ELSE '[]'::jsonb END
+		) AS package(value)
+		WHERE strpos(reverse(package.value), '@') > 0
+		ON CONFLICT DO NOTHING`); err != nil {
+		return fmt.Errorf("serverstore: reconcile sample package projection: %w", err)
+	}
 	return nil
 }
 
