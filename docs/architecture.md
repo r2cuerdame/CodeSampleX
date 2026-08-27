@@ -41,6 +41,22 @@ and marked as a diagnostic re-verification candidate. Those cluster rows enter
 the existing Farm authoring work lane; a new verification appends evidence and
 does not rewrite history.
 
+## Decision diagnostics
+
+Search and observed-command diagnostics share `domain.DiagnosticTrace`. The
+search engine creates the actual candidate counts, score contributions,
+compatibility checks, rejections, gaps, and timing; MCP and CLI only add the
+versions known at their boundary and render that object. Normal output has no
+diagnostic object. An explicit tool option, global CLI `--debug`, or
+session-level `CSX_DEBUG=1` enables it without changing the search response or
+wrapped command result.
+
+Failure diagnostics project the already-sanitized R2C-156 analysis into the
+same trace. They do not reparse raw logs or create a second stage classifier.
+Search candidates are bounded and carry public coordinates, scores and reason
+codes only; their goal, contract, source, and evidence bodies remain behind the
+normal-output relevance gate. See [diagnostics.md](diagnostics.md).
+
 ## Code availability and compatibility
 
 The web explorer answers two questions that used to share one mark, and they

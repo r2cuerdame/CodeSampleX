@@ -66,6 +66,21 @@ must sum to its total FAIL count.
 Legacy rows are never backfilled with guessed causes. Re-verification produces
 a separate modern observation or receipt.
 
+## Diagnostic trace
+
+`csx.debug.v1` is a local response representation, not a persisted evidence
+schema and not an upload document. It may project public coordinates and
+sanitized failure fields already present in the contracts above, but it never
+adds query prose, source, raw logs, paths, usernames, credentials, or agent
+context. The normal `SearchResponse` omits `diagnostic`; it is populated only
+for an explicitly enabled debug request.
+
+The dependency state is a closed three-way value: `unknown`, `resolved`, and
+`proven-no-dependencies`. Search currently has no dependency graph in its local
+index, so it emits `unknown` plus a D gap; absence of an edge must not be
+promoted to proven absence. Candidate reason codes and canonical gap codes are
+machine-readable. Human diagnostic text is rendered from the same object.
+
 ## `failure_clusters` is derived, and 0024 preserved what it had
 
 Clusters are materialized from `evidence_agg`; the builder upserts and never

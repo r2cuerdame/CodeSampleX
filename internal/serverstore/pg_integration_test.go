@@ -317,6 +317,85 @@ func TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable(t *testi
 	}
 }
 
+// Production's candidate scan crossed the JIT cost threshold. The HTTP poll
+// returned its bounded 503, but PostgreSQL stayed in LLVM compilation for
+// roughly another minute and later polls accumulated behind it. A timeout is
+// not a useful ceiling if the executor cannot observe it, so prove the actual
+// candidate transaction disables JIT locally and gives the connection back
+// with its session setting intact.
+func TestIntegrationAuthoringExpansionDisablesJITAndRestoresTheConnection(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	pol.MaxConns = 1
+	pol.ProbeReserve = 0
+	pol.InteractiveConns = 1
+	pol.BackgroundConns = 1
+	pg := openTestPGWithPolicy(t, pol)
+	ctx := context.Background()
+	const purl = "pkg:npm/jit-boundary@1.0.0"
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	batch := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-27", AnonID: "jitboundarypeer",
+		ProjectBucket: "jitboundaryproject", Package: purl, Symbol: "compile",
+		SymbolConfidence: domain.SymbolProbable, Environment: env,
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 1,
+	}
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "jit-boundary", Version: "1.0.0",
+		Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The view is an executable assertion inside the candidate statement:
+	// without transaction-local jit=off it hides the only package and this
+	// test gets no candidate. Rename is safe because each integration test
+	// owns and drops its own schema.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		if _, err := c.Exec(ctx, `SET jit=on`); err != nil {
+			return err
+		}
+		if _, err := c.Exec(ctx, `ALTER TABLE packages RENAME TO packages_jit_source`); err != nil {
+			return err
+		}
+		_, err := c.Exec(ctx, `CREATE VIEW packages AS
+			SELECT * FROM packages_jit_source WHERE current_setting('jit')='off'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.Ecosystem == "npm" && candidate.Name == "jit-boundary" && candidate.Version == "1.0.0" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("candidate query did not execute with transaction-local jit=off: %+v", candidates)
+	}
+
+	var jit string
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SHOW jit`).Scan(&jit)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if jit != "on" {
+		t.Fatalf("pooled connection jit = %q after rollback, want on", jit)
+	}
+}
+
 // A symbol-scoped draft holds the whole package coordinate. PG's in_flight
 // used to yield the package-level (purl,”) pair only when the draft named no
 // symbols — while the fake has always marked it for every draft — so a purl

@@ -600,6 +600,21 @@ accepted as a candidate, deduped across two differently-worded reports into
 one row with two occurrences, and linked to canonical `R2C-51`
 (`TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug`).
 
+### Dogfooding decision traces
+
+For a CodeSampleX or ProjectOps diagnostic session, set `CSX_DEBUG=1` on the
+MCP server process so `search_known_solution` and `run_observed_command` use
+the same `csx.debug.v1` trace without relying on a per-call option. Leave it
+unset for normal users. A trace is local diagnostic context and is not stored
+or uploaded as evidence.
+
+When a trace surfaces an unrelated candidate, evidence-scope promotion,
+environment normalization error, or incomplete failure lineage, record the
+request ID and stable reason/gap code. Do not submit `report_anomaly` for a
+trace gap or `NO_SAFE_MATCH` alone; submit only a concrete conflict between a
+measured local outcome and a CSX fact. The privacy and field contract is in
+[diagnostics.md](diagnostics.md).
+
 ## The merge gate on `main`
 
 `.github/workflows/ci.yml` runs on every pull request, and the `Test` job is

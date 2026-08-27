@@ -101,6 +101,7 @@ One binary, one question. `csx init` shows the contract below and asks a single 
 ```bash
 csx run -- pnpm build              # wrap any build/test — its result becomes evidence
 csx search "axios multipart upload"  # a verified answer, graded for YOUR environment
+csx --debug search "axios multipart upload" # same answer plus local decision trace
 csx scan                           # record which public packages a project uses, no build
 csx stats                          # local dashboard: hits, adoptions, queue
 csx ui                             # browser dashboard + privacy preview
@@ -243,7 +244,7 @@ Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolu
 
 ## Architecture
 
-Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. Current canonical references are [docs/architecture.md](docs/architecture.md), [docs/schema.md](docs/schema.md), [docs/execution-context.md](docs/execution-context.md), [docs/operations.md](docs/operations.md), and [docs/activation-funnel.md](docs/activation-funnel.md) — the latter being what may and may not be measured between install and a first useful answer, and why unique/active users are not on that list. [goal.md](goal.md) is the initial product plan.
+Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. Current canonical references are [docs/architecture.md](docs/architecture.md), [docs/schema.md](docs/schema.md), [docs/execution-context.md](docs/execution-context.md), [docs/diagnostics.md](docs/diagnostics.md), [docs/operations.md](docs/operations.md), and [docs/activation-funnel.md](docs/activation-funnel.md) — the latter being what may and may not be measured between install and a first useful answer, and why unique/active users are not on that list. [goal.md](goal.md) is the initial product plan.
 
 ## Building from source
 

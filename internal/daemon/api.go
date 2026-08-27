@@ -398,6 +398,14 @@ func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) 
 	if resp.Miss && search.FetchMissing(ctx, *d.Engine, d.Syncer, d.Cfg.Mode, req) {
 		resp = d.Engine.Search(ctx, req)
 	}
+	// Search retrieves candidates; this boundary decides which ones are safe
+	// to present and therefore safe to record as offers. MCP already applies
+	// this gate before its two-phase record path. Keeping the daemon path on
+	// the same contract prevents an unrelated nearest neighbour from becoming
+	// a local HIT merely because the CLI happened to reach a running daemon.
+	beforeGate := len(resp.Results)
+	resp, suppressed := domain.GateNormalOutput(req, resp, nil)
+	domain.RecordOutputGateDiagnostic(&resp, req, beforeGate, suppressed)
 	if resp.Miss || len(resp.Results) == 0 {
 		d.incrStat(ctx, statMisses, 1)
 		// A miss is a demand signal. Queued rather than posted: the queue

@@ -164,6 +164,37 @@ type candidate struct {
 	contractStages map[string]string // from a shard sample entry, if any
 }
 
+// scoreDiagnostic is intentionally internal. It records how the numeric
+// score was built without making ranking weights part of the public search
+// response contract; debug projects the bounded, stable subset below.
+type scoreDiagnostic struct {
+	features              map[string]float64
+	reasons               []string
+	versionCompatible     bool
+	environmentCompatible bool
+	symbolCompatible      bool
+	evidenceSufficient    bool
+}
+
+func (d *scoreDiagnostic) feature(name string, value float64) {
+	if d.features != nil {
+		d.features[name] = value
+	}
+}
+
+func (d *scoreDiagnostic) reason(code string) {
+	if d.features != nil {
+		d.reasons = appendReason(d.reasons, code)
+	}
+}
+
+type scoredCandidate struct {
+	res   domain.SearchResult
+	score float64
+	id    string
+	debug scoreDiagnostic
+}
+
 // pkgEvidence aggregates shard symbol stats + failure lists for one
 // (ecosystem, package name).
 type pkgEvidence struct {
@@ -200,13 +231,20 @@ func sampleIDFromDocID(docID string) string {
 // decay, and the known-failure demotion. Best score below the threshold
 // means NO_SAFE_MATCH: Miss=true, no results.
 func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+	searchStarted := time.Now()
 	version := 1
 	if req.SchemaVersion >= 2 {
 		version = 2
 	}
 	resp := domain.SearchResponse{SchemaVersion: version, Results: []domain.SearchResult{}}
+	if req.Debug {
+		resp.Diagnostic = domain.NewDiagnosticTrace(req)
+		resp.Diagnostic.Query.TopicTokenCount = len(strings.Fields(req.Query))
+	}
+	normalizedAt := time.Now()
 	if e.DB == nil {
 		resp.Miss = true
+		finalizeSearchDiagnostic(&resp, 0, normalizedAt.Sub(searchStarted), "search-store-unavailable")
 		return resp
 	}
 	limit := req.Limit
@@ -215,23 +253,44 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 	}
 	reqEnv := req.Environment.Normalize()
 	reqPkgs := parsePURLs(req.Packages)
+	if resp.Diagnostic != nil {
+		resp.Diagnostic.Coordinate.Environment = reqEnv
+		resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+			Stage: "normalize", InputCount: 1, OutputCount: 1,
+			ElapsedMicros: normalizedAt.Sub(searchStarted).Microseconds(), EvidenceSource: "request",
+		})
+	}
 
+	lookupStarted := time.Now()
 	cands, evidence, fts, err := e.collect(ctx, req)
 	if err != nil || len(cands) == 0 {
 		resp.Miss = true
+		if resp.Diagnostic != nil {
+			resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+				Stage: "lookup", InputCount: 0, OutputCount: len(cands),
+				ElapsedMicros: time.Since(lookupStarted).Microseconds(), EvidenceSource: "local-corpus+fts",
+			})
+		}
+		reason := "initial-candidates-empty"
+		if err != nil {
+			reason = "candidate-lookup-failed"
+		}
+		finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), reason)
 		return resp
+	}
+	if resp.Diagnostic != nil {
+		resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+			Stage: "lookup", InputCount: 0, OutputCount: len(cands),
+			ElapsedMicros: time.Since(lookupStarted).Microseconds(), EvidenceSource: "local-corpus+fts",
+		})
 	}
 
 	now := time.Now().UTC()
-	type scored struct {
-		res   domain.SearchResult
-		score float64
-		id    string
-	}
-	all := make([]scored, 0, len(cands))
+	scoreStarted := time.Now()
+	all := make([]scoredCandidate, 0, len(cands))
 	for _, c := range cands {
-		res, sc := e.scoreCandidate(ctx, req, reqEnv, reqPkgs, c, evidence, fts[c.sampleID], now)
-		all = append(all, scored{res: res, score: sc, id: c.sampleID})
+		res, sc, debug := e.scoreCandidate(ctx, req, reqEnv, reqPkgs, c, evidence, fts[c.sampleID], now)
+		all = append(all, scoredCandidate{res: res, score: sc, id: c.sampleID, debug: debug})
 	}
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].score != all[j].score {
@@ -239,8 +298,55 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 		}
 		return all[i].id < all[j].id
 	})
+	if resp.Diagnostic != nil {
+		versionCompatible, environmentCompatible, symbolCompatible, evidenceSufficient := 0, 0, 0, 0
+		for _, candidate := range all {
+			if candidate.debug.versionCompatible {
+				versionCompatible++
+			}
+			if candidate.debug.environmentCompatible {
+				environmentCompatible++
+			}
+			if candidate.debug.symbolCompatible {
+				symbolCompatible++
+			}
+			if candidate.debug.evidenceSufficient {
+				evidenceSufficient++
+			}
+		}
+		for _, check := range []struct {
+			stage string
+			count int
+		}{{"version-compatibility-check", versionCompatible}, {"environment-compatibility-check", environmentCompatible},
+			{"symbol-api-compatibility-check", symbolCompatible}, {"evidence-sufficiency-check", evidenceSufficient}} {
+			resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+				Stage: check.stage, InputCount: len(all), OutputCount: check.count,
+				EvidenceSource: "candidate-coordinate-check",
+			})
+		}
+		resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline,
+			domain.DiagnosticPipelineStep{Stage: "dependency-lookup", InputCount: len(all), OutputCount: 0,
+				EvidenceSource: "not-indexed-dependency-state-is-unknown"},
+			domain.DiagnosticPipelineStep{Stage: "freshness-policy", InputCount: len(all), OutputCount: len(all),
+				EvidenceSource: "immutable-records-no-staleness-filter"})
+	}
+	eligible := 0
+	for _, s := range all {
+		if s.score >= missThreshold {
+			eligible++
+		}
+	}
+	if resp.Diagnostic != nil {
+		resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+			Stage: "filter-rank", InputCount: len(all), OutputCount: eligible,
+			RejectedCount: len(all) - eligible, ElapsedMicros: time.Since(scoreStarted).Microseconds(),
+			EvidenceSource: "actual-score+environment+evidence",
+		})
+	}
 	if all[0].score < missThreshold {
 		resp.Miss = true
+		appendCandidateDiagnostics(resp.Diagnostic, all, nil)
+		finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), "below-score-threshold")
 		return resp
 	}
 	// One result per (packages, symbols) coordinate — the same fold the HTTP
@@ -249,6 +355,8 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 	// corroboration, and this engine serves search_known_solution, the
 	// surface where that budget is three.
 	seenCoordinate := map[string]bool{}
+	selected := map[string]bool{}
+	dedupeStarted := time.Now()
 	for _, s := range all {
 		if len(resp.Results) == limit || s.score < missThreshold {
 			break
@@ -260,8 +368,113 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 			seenCoordinate[key] = true
 		}
 		resp.Results = append(resp.Results, s.res)
+		selected[s.id] = true
 	}
+	if resp.Diagnostic != nil {
+		resp.Diagnostic.Pipeline = append(resp.Diagnostic.Pipeline, domain.DiagnosticPipelineStep{
+			Stage: "coordinate-dedupe", InputCount: eligible, OutputCount: len(resp.Results),
+			RejectedCount: eligible - len(resp.Results), ElapsedMicros: time.Since(dedupeStarted).Microseconds(),
+			EvidenceSource: "package+symbol-coordinate",
+		})
+		appendCandidateDiagnostics(resp.Diagnostic, all, selected)
+	}
+	finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), "")
 	return resp
+}
+
+const maxDiagnosticCandidates = 50
+
+func appendCandidateDiagnostics(d *domain.DiagnosticTrace, all []scoredCandidate, selected map[string]bool) {
+	if d == nil {
+		return
+	}
+	limit := len(all)
+	if limit > maxDiagnosticCandidates {
+		limit = maxDiagnosticCandidates
+		d.AddGap("TRACE", "CANDIDATE_LIST_TRUNCATED", "candidate decisions are bounded to 50 entries")
+	}
+	for _, s := range all[:limit] {
+		reasons := append([]string(nil), s.debug.reasons...)
+		outcome := "rejected"
+		switch {
+		case selected != nil && selected[s.id]:
+			outcome = "selected"
+		case s.score < missThreshold:
+			reasons = appendReason(reasons, "below-score-threshold")
+		case selected != nil:
+			reasons = appendReason(reasons, "duplicate-coordinate-or-result-limit")
+		}
+		entry := domain.DiagnosticCandidate{
+			SampleID: s.id, Match: s.res.Grade, Score: s.score, Outcome: outcome,
+			ReasonCodes: reasons, FeatureContribution: s.debug.features,
+		}
+		if s.res.Case != nil {
+			entry.Packages = diagnosticCandidatePackages(s.res.Case.Packages)
+		}
+		d.Candidates = append(d.Candidates, entry)
+	}
+}
+
+func diagnosticCandidatePackages(raw []string) []string {
+	var out []string
+	for _, coordinate := range raw {
+		if p, err := domain.ParsePURL(coordinate); err == nil {
+			out = append(out, p.String())
+		}
+	}
+	return out
+}
+
+func appendReason(reasons []string, reason string) []string {
+	for _, have := range reasons {
+		if have == reason {
+			return reasons
+		}
+	}
+	return append(reasons, reason)
+}
+
+func finalizeSearchDiagnostic(resp *domain.SearchResponse, candidates int, elapsed time.Duration, reason string) {
+	d := resp.Diagnostic
+	if d == nil {
+		return
+	}
+	buildStarted := time.Now()
+	verified, unverified := 0, 0
+	for _, result := range resp.Results {
+		if result.Evidence.ContractPasses > 0 {
+			verified++
+		} else {
+			unverified++
+		}
+		if len(result.Different) > 0 || len(result.Adaptation) > 0 {
+			d.AddGap("ENV", "ENVIRONMENT_VARIANT_MISSING", "the selected sample was not proven at every requested environment coordinate")
+		}
+	}
+	d.Evidence.VerifiedCoordinateCount = verified
+	d.Evidence.UnverifiedCoordinateCount = unverified
+	if len(d.Coordinate.Packages) > 0 || candidates > 0 {
+		d.AddGap("D", "DEPENDENCY_GRAPH", "search does not establish resolved dependencies or proven absence")
+	}
+	if len(d.Coordinate.Symbols) > 0 && verified == 0 {
+		d.AddGap("E", "SYMBOL_EXECUTION_EVIDENCE", "USAGE_OBSERVATION is project-level and is not individual symbol execution proof")
+	}
+	if resp.Miss || len(resp.Results) == 0 {
+		d.Decision = string(domain.GradeNoSafeMatch)
+		d.AddGap("S", "NO_SAFE_MATCH", reason)
+		if candidates > 0 {
+			d.AddGap("E", "EVIDENCE_INSUFFICIENT", "retrieved candidates did not satisfy the answer contract")
+		}
+	} else {
+		d.Decision = string(resp.Results[0].Grade)
+	}
+	d.Pipeline = append(d.Pipeline, domain.DiagnosticPipelineStep{
+		Stage: "response-build", InputCount: len(resp.Results), OutputCount: len(resp.Results),
+		ElapsedMicros: time.Since(buildStarted).Microseconds(), EvidenceSource: "canonical-search-response",
+	}, domain.DiagnosticPipelineStep{
+		Stage: "total", InputCount: candidates, OutputCount: len(resp.Results),
+		ElapsedMicros: elapsed.Microseconds(), EvidenceSource: "end-to-end-search",
+	})
 }
 
 // collect gathers candidates from the local samples table, cached shards,
@@ -447,7 +660,11 @@ func (e Engine) loadCorpus(ctx context.Context) (map[string]*candidate, map[stri
 }
 
 // scoreCandidate produces one SearchResult plus its fused score.
-func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, ftsScore float64, now time.Time) (domain.SearchResult, float64) {
+func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint, reqPkgs []domain.PURL, c *candidate, evidence map[string]*pkgEvidence, ftsScore float64, now time.Time) (domain.SearchResult, float64, scoreDiagnostic) {
+	var debug scoreDiagnostic
+	if req.Debug {
+		debug.features = map[string]float64{}
+	}
 	receipts, _ := e.DB.ReceiptsForSample(ctx, c.sampleID)
 	askedPkgs := reqPkgs
 	fromTree := false
@@ -492,28 +709,36 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	}
 	// Steps 1–5: relevance fusion (exact tokens outrank lexical match).
 	base := relWeight(rel)
+	debug.feature("package", base)
 	if fromTree {
 		base *= treeRelevanceFactor
+		debug.feature("projectTreeMultiplier", treeRelevanceFactor)
 	}
 	declaredSymbolHit := len(matchingSymbols(req.Symbols, c)) > 0
 	contextSymbolHit := len(matchingSymbols(req.ContextSymbols, c)) > 0
 	if declaredSymbolHit || contextSymbolHit {
 		base += weightSymbol
+		debug.feature("symbol", weightSymbol)
 	}
 	_, codeHit := errorHits(req, syms)
 	fingerprintPackages := candidateFingerprintPackages(req, selection.claims, evidence, c)
 	fpHit := len(fingerprintPackages) > 0
 	if fpHit {
 		base += weightErrorFingerprint
+		debug.feature("errorFingerprint", weightErrorFingerprint)
 	}
 	if codeHit {
 		base += weightErrorCode
+		debug.feature("errorCode", weightErrorCode)
 	}
 	// Relevance to the question actually asked, as opposed to overlap with
 	// whatever happens to be in the caller's dependency tree.
 	relevance := weightFTS*ftsScore + weightIntent*intentOverlap(req.Query, c)
+	debug.feature("fullText", weightFTS*ftsScore)
+	debug.feature("intent", weightIntent*intentOverlap(req.Query, c))
 	if named, _ := intentSignal(req.Query, c); named > 0 {
 		relevance += weightNamedSubject
+		debug.feature("namedSubject", weightNamedSubject)
 	}
 	base += relevance
 
@@ -533,6 +758,19 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// Steps 7–8: verification-strength rerank + recency decay.
 	lvl := selection.level
 	score := base * envFit(grade, cd) * recency(c, now) * strengthBoost(lvl)
+	debug.feature("environmentMultiplier", envFit(grade, cd))
+	debug.feature("verificationMultiplier", strengthBoost(lvl))
+	debug.feature("recencyMultiplier", recency(c, now))
+	debug.versionCompatible = len(reqPkgs) == 0 || rel >= relPackageOnly
+	debug.environmentCompatible = grade == domain.GradeExact || grade == domain.GradeCompatible
+	debug.symbolCompatible = len(req.Symbols) == 0 || declaredSymbolHit
+	debug.evidenceSufficient = summary.ContractPasses > 0
+	if len(different) > 0 || len(adaptations) > 0 {
+		debug.reason("environment-mismatch")
+	}
+	if summary.ContractPasses == 0 {
+		debug.reason("evidence-scope-insufficient")
+	}
 
 	// A sample must be about the question asked. An exact package match
 	// alone scores 0.45 before any multiplier — past missThreshold on its
@@ -553,9 +791,11 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// hit is direct evidence of relevance whatever the prose says.
 	if len(req.Symbols) > 0 && !declaredSymbolHit {
 		score = 0
+		debug.reason("symbol-incompatible")
 	}
 	if !fpHit && !codeHit && !declaredSymbolHit && !aboutTheSameThing(req.Query, c) {
 		score = 0
+		debug.reason(domain.SuppressedInsufficientGoalOverlap)
 	}
 	// A package-less request searches the global candidate pool. An explicit
 	// ecosystem is a caller constraint there, not ambient project context;
@@ -563,6 +803,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	if len(reqPkgs) == 0 && !environmentContext && reqEnv.Ecosystem != "" &&
 		!declaredSymbolHit && !candidateSupportsEcosystem(c, reqEnv.Ecosystem) {
 		score = 0
+		debug.reason("ecosystem-mismatch")
 	}
 
 	// A caller who NAMED packages and got a sample about none of them has
@@ -581,6 +822,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 	// makes the two implementations agree.
 	if rel == relNone {
 		score = 0
+		debug.reason("package-mismatch")
 	}
 
 	exactFailureMatched := fpHit && selectedContractPassed(selection, fingerprintPackages) && candidateHasContract(c)
@@ -598,7 +840,7 @@ func (e Engine) scoreCandidate(ctx context.Context, req domain.SearchRequest, re
 		Evidence:            summary,
 		KnownFailures:       knownFailures(matched),
 	}
-	return res, score
+	return res, score, debug
 }
 
 // buildEvidence fills the honest numbers behind a result. PROJECT_*
