@@ -272,7 +272,14 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		statementTimeout = authoringStatementTimeout(ctx, statementTimeout)
-		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true)`, statementTimeout.String()); err != nil {
+		// The candidate query is large enough to cross PostgreSQL's JIT cost
+		// threshold on the production corpus. A timed-out fleet poll then
+		// returned to its caller while LLVM compilation kept the backend busy
+		// for another minute, because that compilation did not observe the
+		// pending statement interrupt promptly. Keep this transaction on the
+		// ordinary executor: it is both faster for this short-lived read and
+		// lets statement_timeout remain an actual upper bound.
+		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
