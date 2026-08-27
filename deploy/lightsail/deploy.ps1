@@ -840,9 +840,23 @@ docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'
     mv "$tmp" "$marker"
   fi
 CSX_SAFE_LOG_EPOCH
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/stats?csx_safe_log_smoke=discard-this-query'
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/samples%2Fencoded-marker-must-not-log/path'
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/secret-marker-must-not-log/path'
+# These three are the FIRST requests this deploy makes through the proxy, and
+# they carry a ten-second ceiling. When one of them timed out, the only thing
+# the transcript said was `curl: (28)` -- identifying which of the three had
+# stalled took the edge access log of the box afterwards. A fail-closed
+# production rollout has to name the request it failed on.
+log_probe() {
+    probe_path="$1"
+    probe_code=0
+    curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null "https://__CSX_DOMAIN__$probe_path" || probe_code=$?
+    if [ "$probe_code" -ne 0 ]; then
+        echo "FAIL privacy-safe log probe $probe_path: curl exit $probe_code" >&2
+        exit 1
+    fi
+}
+log_probe '/v1/stats?csx_safe_log_smoke=discard-this-query'
+log_probe '/v1/samples%2Fencoded-marker-must-not-log/path'
+log_probe '/v1/secret-marker-must-not-log/path'
 i=0
 while [ "$i" -lt 10 ]; do
   if docker compose exec -T caddy sh -c "grep -q '\"csx_route\":\"stats\"' /var/log/caddy-safe/access-safe.log 2>/dev/null"; then

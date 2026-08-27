@@ -817,6 +817,26 @@ and classifying by verb would have left the busiest reads unbounded. Anything
 unlisted is interactive: an unclassified read is merely capped, while an
 unclassified long job would start dying at eight seconds.
 
+**Neither ceiling is a ceiling on a request.** R2C-159 found the gap in
+production: `GET /v1/stats` issues the stats read and then the shard-warming
+hint, and the hint is four whole-corpus reads. Every one of those statements
+stayed inside its own 8-second limit and every checkout inside its 3-second
+wait, while the request as a whole crossed ten seconds — which is the ceiling
+the production deploy's first proxied request carries, so three of four
+unattended rollouts failed there or survived at nine seconds. Measured against
+production with an idle database, `/healthz` (the same stats read) answers in
+36ms and `/v1/stats` in 337-458ms: about ninety percent of the endpoint was
+the optional hint.
+
+So an endpoint that adds optional work to a read owns that work's budget. The
+hint now waits 2 seconds and no longer, is shared by simultaneous callers,
+is reused for `CSX_SNAPSHOT_INTERVAL`, and is omitted rather than waited for
+— which is what `withHotShards` already did for every other failure. The
+read a caller stopped waiting for is not cancelled: it keeps its own 30-second
+budget and publishes, so the hint returns during pressure without any request
+paying for it twice. An empty answer is deliberately not remembered, because
+"no shard built yet" is the one state a first builder pass is about to change.
+
 ### Watching it
 
 The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
