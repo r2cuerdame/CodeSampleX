@@ -1029,6 +1029,7 @@ Top 1만 강제하지 않고 필요 시 상위 2~3개의 다른 구현을 제공
 - 후보를 보여줄 때는 **왜 보여주는지 한 줄**(`Relevance:`)을 기계적으로 생성해 함께 낸다. 점수는 이유가 아니라 이유의 부재다.
 - 모두 억눌리면 답은 `NO_SAFE_MATCH`다. 억지 HIT도, 억지 REFERENCE도 그 자리를 대신하지 않는다(§3.8).
 - package 이름을 식별자 단어로 쪼갤 때 **forge host와 경로 비계**(`github`, `com`, `org`, `gopkg`, `/v2` 같은 major suffix)는 신원이 아니다. Go import path는 URL이라 GitHub에 있는 모든 module이 `github`·`com`을 이름에 갖고, 이를 strong token으로 취급하면 "GitHub Actions" 질문이 corpus의 모든 module을 똑같이 지명한다. 같은 어휘를 goal 문장의 prose에도 적용한다 — 이름 안에서 신원이 아닌 단어는 문장 안에서도 주제가 아니다.
+- 같은 이유로 **symbol을 단어로 쪼개면 그 단어는 신원이 아니다.** member 이름은 corpus 전체에서 주제를 식별하려고 지은 이름이 아니라 이미 신원을 가진 namespace 안에서 동작을 설명하는 이름이라, `Commit`·`Main`·`Dispatch`·`Machine`은 어느 registry에나 있고 prose에도 그대로 나타난다. 실제로 하나의 deploy 질문이 `pgx.Tx.Commit`("immutable canonical main commit"), `registry.LOCAL_MACHINE`("machine-readable evidence"), `pytest.main`·`certifi.__main__`·`express.Router.dispatch`를 한꺼번에 `query-names-subject`로 지명해 normal output까지 올렸다. 그러므로 normal output 승격에서의 지명은 **식별하는 철자**만 인정한다(`searchrelevance.NamesSubject`): symbol 전체, owner로 한정된 부분 identity(`Tx.Commit`), 또는 누구도 우연히 쓰지 않는 coined 이름(내부 대소문자 전환·내부 구분자·문자 옆의 숫자 — `RoundBank`, `FormatInteger`, `LOCAL_MACHINE`, `read_parquet`). package 이름은 종전과 같다 — registry 이름은 library를 식별하려고 지은 이름이기 때문이다. retrieval은 이보다 넓게 가져가도 된다 — 후보를 찾는 것과 답으로 내보이는 것은 다른 결정이고, 이 규칙은 두 번째 결정에만 적용된다.
 
 ---
 
