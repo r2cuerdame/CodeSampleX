@@ -78,6 +78,9 @@ func runStage(ctx context.Context, dir string, argv []string) StageResult {
 			term = domain.FailureTermination{Kind: domain.TerminationSignal, Signal: stageSignal(err)}
 		case errors.As(err, &exitErr):
 			code := exitErr.ExitCode()
+			if canonical, ok := domain.CanonicalExitCode(code); ok {
+				code = canonical
+			}
 			term = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
 		}
 		return StageResult{Result: ResultFail, Log: log + "\nerror: " + err.Error(), Termination: term}

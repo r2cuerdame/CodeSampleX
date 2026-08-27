@@ -116,6 +116,7 @@ func (p *PG) IngestBatches(ctx context.Context, batches []domain.ObservationBatc
 		accepted = 0
 		rejected = nil
 		for i, b := range batches {
+			b = domain.CanonicalizeObservationFailure(b)
 			if verr := ValidateBatch(b); verr != nil {
 				rejected = append(rejected, RejectedBatch{Index: i, Reason: verr.Error()})
 				continue
@@ -267,7 +268,7 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 			INSERT INTO evidence_dedup(bucket_kind, bucket, agg_id, epoch, count)
 			VALUES($1,$2,$3,$4,$5)
 			ON CONFLICT (bucket_kind, bucket, agg_id, epoch)
-			DO UPDATE SET count = EXCLUDED.count`,
+			DO UPDATE SET count = GREATEST(evidence_dedup.count, EXCLUDED.count)`,
 			bk.kind, bk.bucket, aggID, b.Epoch, incoming); err != nil {
 			return err
 		}

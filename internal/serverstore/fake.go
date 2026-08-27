@@ -165,6 +165,7 @@ func (f *Fake) IngestBatches(_ context.Context, batches []domain.ObservationBatc
 	accepted := 0
 	var rejected []RejectedBatch
 	for i, b := range batches {
+		b = domain.CanonicalizeObservationFailure(b)
 		if err := ValidateBatch(b); err != nil {
 			rejected = append(rejected, RejectedBatch{Index: i, Reason: err.Error()})
 			continue

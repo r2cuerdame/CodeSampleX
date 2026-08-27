@@ -135,6 +135,9 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 				return ee.ExitCode(), output, nil
 			}
 			code := ee.ExitCode()
+			if canonical, ok := domain.CanonicalExitCode(code); ok {
+				code = canonical
+			}
 			output.Termination = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
 			return code, output, nil
 		}

@@ -14,6 +14,18 @@ Every new executable failure should carry one structured termination:
 | `timeout` | `timeoutMillis` when known |
 | `process-start-failed` | no conventional exit code |
 
+`exitCode` has one canonical storage representation: signed 32-bit. Windows
+process status is returned by the OS as an unsigned DWORD, so older 64-bit
+clients can have durable values from `2147483648` through `4294967295` (for
+example, native `-1` as `4294967295`). During a rolling upgrade the client and
+server both translate that upper half to the identical two's-complement signed
+value before deriving the failure fingerprint. Values below `-2147483648` or
+above `4294967295` are invalid. PostgreSQL columns remain `INTEGER`; no
+production schema migration or historical data rewrite is required. The local
+SQLite queue adds only a `legacy_reconciled_count` high-water column so a
+still-running older uploader cannot steal the pending flag during a rolling
+client update; observation values are never rewritten or deleted.
+
 `errorSummary` is a redacted, normalized, 512-byte maximum summary. Source,
 paths, project names, private packages, secrets, and raw logs are prohibited.
 The legacy v2 fingerprint hashes stage, structured termination, error code,

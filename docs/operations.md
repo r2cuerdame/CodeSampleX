@@ -950,6 +950,27 @@ on a known fixture such as `github.com/jackc/pgx/v5@v5.10.0 / ParseConfig`:
    summary, and recorded environment variant.
 5. repeated missing/legacy clusters are marked diagnostic candidates.
 
+### Evidence upload queue health
+
+`csx daemon status`, `csx stats`, the local dashboard, and their JSON forms
+distinguish the last successful upload from the last attempt. A current
+`lastUploadError` means the daemon retained the rejected/failed rows and will
+retry on the next normal tick; it does not mean the daemon exited. The
+background loop also writes the bounded error to the local daemon log instead
+of discarding it. On recovery, `lastUpload` advances, `lastUploadAttempt`
+records the successful attempt, and `lastUploadError` clears.
+
+A deterministic queue whose depth remains high while `lastUpload` is old must
+be inspected for a repeated current error. In particular, clients predating
+the signed-int32 exit-code boundary may hold Windows DWORD `4294967295`; the
+current client normalizes such durable rows on upload and the current server
+normalizes the same legacy wire value before PostgreSQL ingest. Do not widen
+the PostgreSQL columns or delete the local queue to recover it. During a
+rolling client update, local SQLite keeps the last server-acknowledged combined
+count. If an older in-memory uploader drains either component afterward, the
+next current-client pass detects the larger durable raw+canonical total and
+requeues it; unchanged totals do not generate repeat uploads.
+
 Rollback the application before rolling back the schema. The new columns are
 additive and safe to leave in place; dropping them would destroy newly captured
 evidence and is intentionally not part of an automatic rollback.

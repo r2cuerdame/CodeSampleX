@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -763,6 +764,19 @@ func TestIntegrationIngestDeltaMerge(t *testing.T) {
 		t.Fatalf("grown count = %d, want 8", e.ObservationCount)
 	}
 
+	// A mixed-version component can be smaller than the combined full total.
+	// It must neither add now nor lower the durable high-water so restoring the
+	// same total later cannot add the already-counted delta a second time.
+	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonaaaa", "projaaaa", 3)}); err != nil {
+		t.Fatalf("shrunk component ingest: %v", err)
+	}
+	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonaaaa", "projaaaa", 8)}); err != nil {
+		t.Fatalf("restored full total ingest: %v", err)
+	}
+	if e = evidence(); e.ObservationCount != 8 {
+		t.Fatalf("shrunk/restored report re-inflated count: %+v", e)
+	}
+
 	// A second peer adds its own count and a new dedup bucket.
 	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonbbbb", "projbbbb", 2)}); err != nil {
 		t.Fatalf("second peer ingest: %v", err)
@@ -804,6 +818,45 @@ func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	// Migrate is idempotent.
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("second migrate: %v", err)
+	}
+}
+
+func TestIntegrationConcurrentIngestKeepsDedupHighWaterMonotone(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := t.Context()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, count := range []int{8, 3} {
+		count := count
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anon-race", "project-race", count)})
+			if err == nil && (accepted != 1 || len(rejected) != 0) {
+				err = fmt.Errorf("count %d: accepted %d rejected %+v", count, accepted, rejected)
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Whichever transaction won first, the aggregate and dedup high-water are
+	// both 8. Re-sending 8 proves a late smaller component did not lower the
+	// ledger and make the same observations count twice.
+	if _, _, err := pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anon-race", "project-race", 8)}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pg.EvidenceForTarget(ctx, "pkg:npm/axios@1.12.0", "axios.post")
+	if err != nil || len(rows) != 1 || rows[0].ObservationCount != 8 {
+		t.Fatalf("concurrent monotone evidence = %+v, err=%v; want count 8", rows, err)
 	}
 }
 
@@ -2029,5 +2082,49 @@ func TestIntegrationEvidenceAggregateRetainsEveryOuterCommand(t *testing.T) {
 	}
 	if len(rows) != 1 || strings.Join(rows[0].OuterCommands, ",") != "go test,npm test" {
 		t.Fatalf("PostgreSQL aggregate outer commands = %+v", rows)
+	}
+}
+
+// A pre-fix Windows client can have this exact durable row: os/exec returned
+// the DWORD representation of -1 (4294967295), the client fingerprinted it,
+// and PostgreSQL INTEGER then rejected it. Because ingest is atomic, one such
+// row rolled back every otherwise-valid batch in the request.
+func TestIntegrationIngestCanonicalizesLegacyWindowsUnsignedExitCode(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	pg := openTestPG(t)
+	legacyWire := uint64(1<<32 - 1)
+	legacyCode := int(legacyWire)
+	legacyTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	legacy := sanitizer.SanitizeClassifiedFailure("process exited without a conventional status",
+		domain.StageProjectTest, legacyTerm, nil, "go test", domain.StageProjectTest,
+		"go/test", domain.FailureStageTestRunnerDiagnostic, "")
+	poison := reviewBatch(legacy)
+	// The current sanitizer is itself fixed and emits -1. Restore the exact
+	// pre-fix signedness and matching pre-fix digest at the wire boundary; this
+	// is the value that used to overflow PostgreSQL INTEGER.
+	poison.ExitCode = &legacyCode
+	poison.ErrorFingerprint = domain.ClassifiedFailureFingerprint(poison.Stage, poison.ActualToolchain,
+		legacyTerm, poison.ErrorCode, poison.ErrorSummary)
+	good := obsBatch("anon-after-poison", "project-after-poison", 1)
+
+	accepted, rejected, err := pg.IngestBatches(t.Context(), []domain.ObservationBatch{poison, good})
+	if err != nil || accepted != 2 || len(rejected) != 0 {
+		t.Fatalf("atomic ingest with legacy Windows status = accepted %d, rejected %+v, err %v", accepted, rejected, err)
+	}
+	rows, err := pg.EvidenceForTarget(t.Context(), poison.Package, "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("stored poison row = %+v, err=%v", rows, err)
+	}
+	wantCode := -1
+	if rows[0].ExitCode == nil || *rows[0].ExitCode != wantCode {
+		t.Fatalf("stored exitCode = %v, want %d", rows[0].ExitCode, wantCode)
+	}
+	wantFingerprint := domain.ClassifiedFailureFingerprint(poison.Stage, poison.ActualToolchain,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &wantCode},
+		poison.ErrorCode, poison.ErrorSummary)
+	if rows[0].ErrorFingerprint != wantFingerprint {
+		t.Fatalf("stored fingerprint = %q, want canonical %q", rows[0].ErrorFingerprint, wantFingerprint)
 	}
 }

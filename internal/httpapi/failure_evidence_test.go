@@ -1,12 +1,45 @@
 package httpapi
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
+
+func TestReceiptFailureEvidenceEnforcesExitCodeWireBoundary(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	makeReceipt := func(code int) domain.VerificationReceipt {
+		term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+		summary := "process exited without a conventional status"
+		failure := domain.FailureEvidence{
+			TerminationKind: domain.TerminationExit,
+			ExitCode:        &code,
+			ErrorSummary:    summary,
+			EvidenceQuality: domain.EvidenceComplete,
+		}
+		failure.Fingerprint = domain.FailureFingerprint(domain.StageContract, term, "", summary)
+		return domain.VerificationReceipt{
+			SchemaVersion: 2,
+			Stages:        map[string]string{"contract": "FAIL"},
+			StageFailures: map[string]domain.FailureEvidence{"contract": failure},
+		}
+	}
+
+	legacyWindows := int(uint64(1<<32 - 1))
+	if err := receiptFailureEvidenceIsSafe(makeReceipt(legacyWindows)); err != nil {
+		t.Fatalf("matching legacy Windows receipt rejected: %v", err)
+	}
+	for _, code := range []int{int(int64(-1<<31) - 1), int(uint64(1 << 32))} {
+		if err := receiptFailureEvidenceIsSafe(makeReceipt(code)); err == nil || !strings.Contains(err.Error(), "exitCode") {
+			t.Errorf("out-of-bound exitCode %d accepted: %v", code, err)
+		}
+	}
+}
 
 func TestReceiptFailureEvidenceAcceptsCanonicalAndRejectsRawOrMismatchedData(t *testing.T) {
 	code := 1

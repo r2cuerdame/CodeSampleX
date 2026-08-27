@@ -23,7 +23,7 @@
         "required": ["evidenceQuality"],
         "properties": {
           "terminationKind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
-          "exitCode": {"type": "integer"},
+          "exitCode": {"type": "integer", "minimum": -2147483648, "maximum": 4294967295, "description": "Canonical producers emit signed int32. The unsigned upper half remains valid for receipts signed by older Windows verifiers."},
           "signal": {"type": "string", "maxLength": 32},
           "timeoutMillis": {"type": "integer", "minimum": 0},
           "errorSummary": {"type": "string", "maxLength": 512},

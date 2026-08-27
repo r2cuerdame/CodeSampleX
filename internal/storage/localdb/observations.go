@@ -48,7 +48,72 @@ type ObsKey struct {
 // ObsRow is one aggregate with its accumulated count.
 type ObsRow struct {
 	ObsKey
-	Count int
+	Count                 int
+	LegacyReconciledCount int
+}
+
+// LegacyWindowsObservations returns the durable unsigned-DWORD rows, including
+// rows an older uploader already marked complete. The upgraded batcher compares
+// their raw+canonical local total with LegacyReconciledCount so an old process
+// cannot permanently steal a repair by toggling uploaded between two calls.
+func (d *DB) LegacyWindowsObservations(ctx context.Context) ([]ObsRow, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT epoch, purl, symbol, env_hash, stage, result, error_fp, error_code,
+		       termination_kind, exit_code, signal, timeout_millis, error_summary,
+		       evidence_quality, actual_toolchain, count, legacy_reconciled_count
+		FROM observations
+		WHERE exit_code > 2147483647 AND exit_code <= 4294967295
+		ORDER BY epoch, purl, symbol, env_hash, stage, result, error_fp`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ObsRow
+	for rows.Next() {
+		var r ObsRow
+		if err := rows.Scan(&r.Epoch, &r.PURL, &r.Symbol, &r.EnvHash, &r.Stage, &r.Result,
+			&r.ErrorFP, &r.ErrorCode, &r.TerminationKind, &r.ExitCode, &r.Signal,
+			&r.TimeoutMillis, &r.ErrorSummary, &r.EvidenceQuality, &r.ActualToolchain,
+			&r.Count, &r.LegacyReconciledCount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RequeueLegacyWindowsObservation marks one raw row pending only while its
+// latest combined total has not been acknowledged by an upgraded client.
+// The predicate makes concurrent upgraded callers idempotent; an old client
+// does not know or modify the high-water column, so its later mark/upload is
+// detected again on the next pass.
+func (d *DB) RequeueLegacyWindowsObservation(ctx context.Context, key ObsKey, combinedCount int) (bool, error) {
+	result, err := d.sql.ExecContext(ctx, `
+		UPDATE observations SET uploaded = 0
+		WHERE epoch = ? AND purl = ? AND symbol = ? AND env_hash = ?
+		  AND stage = ? AND result = ? AND error_fp = ?
+		  AND legacy_reconciled_count < ?`,
+		key.Epoch, key.PURL, key.Symbol, key.EnvHash, string(key.Stage), string(key.Result), key.ErrorFP,
+		combinedCount)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+// MarkLegacyWindowsObservationReconciled advances the local delivery
+// high-water only after the server accepted the canonical combined batch.
+// MAX prevents a late acknowledgement from moving the durable proof backward.
+func (d *DB) MarkLegacyWindowsObservationReconciled(ctx context.Context, key ObsKey, combinedCount int) error {
+	_, err := d.sql.ExecContext(ctx, `
+		UPDATE observations
+		SET legacy_reconciled_count = MAX(legacy_reconciled_count, ?)
+		WHERE epoch = ? AND purl = ? AND symbol = ? AND env_hash = ?
+		  AND stage = ? AND result = ? AND error_fp = ?`,
+		combinedCount, key.Epoch, key.PURL, key.Symbol, key.EnvHash,
+		string(key.Stage), string(key.Result), key.ErrorFP)
+	return err
 }
 
 // RecordObservation adds incr to the aggregate identified by key,
@@ -137,6 +202,25 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ObservationCount returns the durable full-epoch count for one aggregate
+// identity, whether it is pending or already uploaded. The evidence batcher
+// uses this during a rolling exit-code repair: pre-fix and canonical
+// fingerprints can be two local rows for one server aggregate, and the wire
+// contribution must include both without rewriting or deleting either row.
+func (d *DB) ObservationCount(ctx context.Context, key ObsKey) (int, bool, error) {
+	var count int
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT count FROM observations
+		WHERE epoch = ? AND purl = ? AND symbol = ? AND env_hash = ?
+		  AND stage = ? AND result = ? AND error_fp = ?`,
+		key.Epoch, key.PURL, key.Symbol, key.EnvHash,
+		string(key.Stage), string(key.Result), key.ErrorFP).Scan(&count)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	return count, err == nil, err
 }
 
 // MarkObservationsUploaded flags the given aggregates as drained.

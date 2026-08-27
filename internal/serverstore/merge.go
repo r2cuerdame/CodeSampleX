@@ -8,7 +8,7 @@ import "github.com/r2cuerdame/codesamplex/internal/domain"
 // A client uploads its whole local aggregate row for the current epoch each
 // time it syncs, so the same (bucket, agg row, epoch) may arrive many times
 // with an equal or grown observationCount. Each evidence_dedup row therefore
-// stores the bucket's LAST-CONTRIBUTED count; an incoming batch adds only
+// stores the bucket's greatest contributed count; an incoming batch adds only
 // delta = max(0, incoming - previous) to evidence_agg.observation_count.
 // A re-sent identical batch adds exactly 0. unique_peer_buckets and
 // unique_project_buckets are always the count of distinct dedup buckets of
@@ -95,8 +95,11 @@ func (m *mergeState) apply(b domain.ObservationBatch) int64 {
 	incoming := int64(b.ObservationCount)
 
 	ck := contribKey{agg: k, epoch: b.Epoch, bucket: b.AnonID}
-	delta := deltaContribution(m.contributions[ck], incoming)
-	m.contributions[ck] = incoming
+	previous := m.contributions[ck]
+	delta := deltaContribution(previous, incoming)
+	if incoming > previous {
+		m.contributions[ck] = incoming
+	}
 	m.observations[k] += delta
 
 	addBucket(m.peerBuckets, k, b.Epoch, b.AnonID)

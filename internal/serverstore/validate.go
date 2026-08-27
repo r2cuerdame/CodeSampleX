@@ -146,6 +146,11 @@ func validFailureEvidence(b domain.ObservationBatch) error {
 		return fmt.Errorf("evidenceQuality %q is invalid", b.EvidenceQuality)
 	}
 	term := domain.FailureTermination{Kind: b.TerminationKind, ExitCode: b.ExitCode, Signal: b.Signal, TimeoutMillis: b.TimeoutMillis}
+	if b.ExitCode != nil {
+		if _, ok := domain.CanonicalExitCode(*b.ExitCode); !ok {
+			return fmt.Errorf("exitCode %d outside signed int32 or legacy Windows uint32 range", *b.ExitCode)
+		}
+	}
 	if b.TerminationKind != "" && !term.Structured() {
 		return fmt.Errorf("terminationKind %q lacks its required structured value", b.TerminationKind)
 	}

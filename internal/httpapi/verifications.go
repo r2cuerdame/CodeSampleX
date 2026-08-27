@@ -102,6 +102,11 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 		}
 		term := failure.Termination()
 		structured := term.Structured()
+		if failure.ExitCode != nil {
+			if _, ok := domain.CanonicalExitCode(*failure.ExitCode); !ok {
+				return fmt.Errorf("stageFailures.%s exitCode is outside signed int32 or legacy Windows uint32 range", stage)
+			}
+		}
 		if failure.TerminationKind != "" && !structured {
 			return fmt.Errorf("stageFailures.%s has invalid termination", stage)
 		}

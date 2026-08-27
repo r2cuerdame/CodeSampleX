@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,9 @@ func (b *Batcher) Drain(ctx context.Context) ([]domain.ObservationBatch, error) 
 func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL string) (int, error) {
 	if b.Cfg == nil || b.Cfg.Mode != config.ModeCommunity {
 		return 0, nil
+	}
+	if err := b.prepareLegacyWindowsReconciliation(ctx); err != nil {
+		return 0, fmt.Errorf("evidence: reconcile legacy Windows exit codes: %w", err)
 	}
 	sent := 0
 	// Rejections inside a 202 are collected and reported at the end. They
@@ -140,6 +144,14 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 					return sent, fmt.Errorf("evidence: restore refused batch %d: %w", rejection.Index, err)
 				}
 			}
+			for i := range chunkKeys {
+				if seen[i] {
+					continue
+				}
+				if err := b.markLegacyWindowsReconciled(restore, chunkKeys[i], chunkBatches[i]); err != nil {
+					return sent, fmt.Errorf("evidence: record legacy Windows reconciliation: %w", err)
+				}
+			}
 		}
 		// Do not immediately retry a payload the server refused. Finish every
 		// chunk from this drain, then leave the refused rows pending for the
@@ -149,6 +161,71 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 		}
 	}
 	return sent, rejectionError(refused)
+}
+
+func (b *Batcher) prepareLegacyWindowsReconciliation(ctx context.Context) error {
+	rows, err := b.DB.LegacyWindowsObservations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		probe := domain.ObservationBatch{
+			Stage: row.Stage, Result: row.Result, ErrorFingerprint: row.ErrorFP,
+			ErrorCode: row.ErrorCode, TerminationKind: row.TerminationKind,
+			ExitCode: row.ExitCode, Signal: row.Signal, TimeoutMillis: row.TimeoutMillis,
+			ErrorSummary: row.ErrorSummary, EvidenceQuality: row.EvidenceQuality,
+			ActualToolchain: row.ActualToolchain,
+		}
+		canonical := domain.CanonicalizeObservationFailure(probe)
+		if canonical.ExitCode == nil || row.ExitCode == nil || *canonical.ExitCode == *row.ExitCode {
+			// Invalid/mismatched evidence must remain unchanged for validation;
+			// never turn an unrelated fingerprint into a deliverable one here.
+			continue
+		}
+		combined := row.Count
+		if canonical.ErrorFingerprint != row.ErrorFP {
+			other := row.ObsKey
+			other.ErrorFP = canonical.ErrorFingerprint
+			if count, found, err := b.DB.ObservationCount(ctx, other); err != nil {
+				return err
+			} else if found {
+				combined += count
+			}
+		}
+		if combined <= row.LegacyReconciledCount {
+			continue
+		}
+		if _, err := b.DB.RequeueLegacyWindowsObservation(ctx, row.ObsKey, combined); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Batcher) markLegacyWindowsReconciled(ctx context.Context, original localdb.ObsKey, sent domain.ObservationBatch) error {
+	if sent.ExitCode == nil {
+		return nil
+	}
+	raw := original
+	if original.ExitCode != nil {
+		if canonical, ok := domain.CanonicalExitCode(*original.ExitCode); ok && canonical != *original.ExitCode && *sent.ExitCode == canonical {
+			return b.DB.MarkLegacyWindowsObservationReconciled(ctx, raw, sent.ObservationCount)
+		}
+	}
+	if *sent.ExitCode >= 0 || (sent.EvidenceQuality != domain.EvidenceComplete && sent.EvidenceQuality != domain.EvidencePartial) {
+		return nil
+	}
+	legacyCode := int(uint64(uint32(int32(*sent.ExitCode))))
+	legacyTerm := domain.FailureTermination{
+		Kind: sent.TerminationKind, ExitCode: &legacyCode,
+		Signal: sent.Signal, TimeoutMillis: sent.TimeoutMillis,
+	}
+	raw.ErrorFP = domain.FailureFingerprint(sent.Stage, legacyTerm, sent.ErrorCode, sent.ErrorSummary)
+	if sent.ActualToolchain != "" {
+		raw.ErrorFP = domain.ClassifiedFailureFingerprint(sent.Stage, sent.ActualToolchain,
+			legacyTerm, sent.ErrorCode, sent.ErrorSummary)
+	}
+	return b.DB.MarkLegacyWindowsObservationReconciled(ctx, raw, sent.ObservationCount)
 }
 
 // rejectedBatch is one refused batch of an ingest reply, mirroring the C5
@@ -230,10 +307,58 @@ func (b *Batcher) build(ctx context.Context) ([]domain.ObservationBatch, []local
 		if row.Symbol != "" {
 			batch.SymbolConfidence = row.SymbolConfidence
 		}
+		// Repair durable rows written by pre-fix Windows clients before they
+		// reach the wire. The local key remains untouched so the successful
+		// acknowledgement can mark that exact queued aggregate uploaded.
+		batch = domain.CanonicalizeObservationFailure(batch)
+		count, err := b.canonicalObservationCount(ctx, row, batch)
+		if err != nil {
+			return nil, nil, err
+		}
+		batch.ObservationCount = count
 		batches = append(batches, batch)
 		keys = append(keys, row.ObsKey)
 	}
 	return batches, keys, nil
+}
+
+// canonicalObservationCount keeps the delta ledger lossless when a local
+// daily aggregate straddles the Windows exit-code fix. The old unsigned and
+// new signed fingerprints are two SQLite keys but one canonical server key.
+// Every pending spelling therefore reports the sum of both full-epoch counts;
+// server dedup applies that total once, even if both rows share one request or
+// one is retried after the other was acknowledged.
+func (b *Batcher) canonicalObservationCount(ctx context.Context, row localdb.ObsRow, canonical domain.ObservationBatch) (int, error) {
+	total := row.Count
+	otherFingerprint := ""
+	if canonical.ErrorFingerprint != row.ErrorFP {
+		otherFingerprint = canonical.ErrorFingerprint
+	} else if strconv.IntSize >= 64 && row.ExitCode != nil && *row.ExitCode < 0 &&
+		(row.EvidenceQuality == domain.EvidenceComplete || row.EvidenceQuality == domain.EvidencePartial) {
+		legacyCode := int(uint64(uint32(int32(*row.ExitCode))))
+		legacyTerm := domain.FailureTermination{
+			Kind: row.TerminationKind, ExitCode: &legacyCode,
+			Signal: row.Signal, TimeoutMillis: row.TimeoutMillis,
+		}
+		otherFingerprint = domain.FailureFingerprint(row.Stage, legacyTerm, row.ErrorCode, row.ErrorSummary)
+		if row.ActualToolchain != "" {
+			otherFingerprint = domain.ClassifiedFailureFingerprint(row.Stage, row.ActualToolchain,
+				legacyTerm, row.ErrorCode, row.ErrorSummary)
+		}
+	}
+	if otherFingerprint == "" || otherFingerprint == row.ErrorFP {
+		return total, nil
+	}
+	other := row.ObsKey
+	other.ErrorFP = otherFingerprint
+	count, found, err := b.DB.ObservationCount(ctx, other)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		total += count
+	}
+	return total, nil
 }
 
 // bucketFor resolves the rotating project bucket recorded for this

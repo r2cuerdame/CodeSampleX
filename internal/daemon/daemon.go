@@ -293,7 +293,9 @@ func (d *Daemon) startBackground(ctx context.Context) {
 			orDefault(d.uploadEvery, defaultUploadEvery), func() {
 				uctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()
-				_, _ = d.uploadNow(uctx)
+				if _, err := d.uploadNow(uctx); err != nil && ctx.Err() == nil {
+					log.Printf("csx daemon: evidence upload: %v", err)
+				}
 			})
 		go tickLoopAfter(ctx, defaultQueueFirstDelay,
 			orDefault(d.uploadEvery, defaultUploadEvery), func() {
@@ -376,6 +378,18 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 	d.batchMu.Lock()
 	defer d.batchMu.Unlock()
 	n, err := d.Batcher.Upload(ctx, d.httpClient(), d.Cfg.ServerURL)
+	// An automatic loop used to discard err, leaving a deterministic poison
+	// batch to fail every tick while status continued to show only the last
+	// historical success. Persist the attempt and bounded current error on a
+	// non-cancelled context: upload failures commonly arrive with ctx already
+	// expired, and that is precisely when the diagnostic must survive.
+	statCtx := context.WithoutCancel(ctx)
+	_ = d.DB.SetStat(statCtx, statLastUploadAttempt, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		_ = d.DB.SetStat(statCtx, statLastUploadError, boundedUploadError(err))
+	} else {
+		_ = d.DB.SetStat(statCtx, statLastUploadError, "")
+	}
 	// Upload can return accepted work together with a refusal error. Stamp
 	// only the batches the server acknowledged; refused rows stay pending in
 	// the batcher and must not hide genuine progress from the liveness stats.
@@ -384,6 +398,19 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 		d.incrStat(ctx, statEvidenceSent, n)
 	}
 	return n, err
+}
+
+const maxLastUploadErrorRunes = 512
+
+func boundedUploadError(err error) string {
+	if err == nil {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(err.Error()))
+	if len(runes) > maxLastUploadErrorRunes {
+		runes = runes[:maxLastUploadErrorRunes]
+	}
+	return string(runes)
 }
 
 // warmNow syncs the §11.2 shard warm list. Server failures are returned

@@ -18,14 +18,16 @@ import (
 
 // StatusInfo is the GET /local/v1/status body.
 type StatusInfo struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Version       string `json:"version"`
-	Mode          string `json:"mode"`
-	Home          string `json:"home"`
-	PeerID        string `json:"peerId"`
-	Uptime        string `json:"uptime"`
-	QueueDepth    int    `json:"queueDepth"`
-	LastUpload    string `json:"lastUpload,omitempty"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	Version           string `json:"version"`
+	Mode              string `json:"mode"`
+	Home              string `json:"home"`
+	PeerID            string `json:"peerId"`
+	Uptime            string `json:"uptime"`
+	QueueDepth        int    `json:"queueDepth"`
+	LastUpload        string `json:"lastUpload,omitempty"`
+	LastUploadAttempt string `json:"lastUploadAttempt,omitempty"`
+	LastUploadError   string `json:"lastUploadError,omitempty"`
 }
 
 // SampleInfo is the GET /local/v1/samples/{id} body: the localdb row plus
@@ -133,6 +135,12 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st.QueueDepth, _ = d.queueDepth(ctx)
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
 		st.LastUpload = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadAttempt); ok {
+		st.LastUploadAttempt = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadError); ok {
+		st.LastUploadError = v
 	}
 	writeJSON(w, http.StatusOK, st)
 }
