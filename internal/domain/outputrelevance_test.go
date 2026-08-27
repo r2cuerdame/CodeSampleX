@@ -280,3 +280,105 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// The recurrence. The gate above closed the environment-overlap hole and the
+// same deploy question came back with pgx.Conn.Begin and
+// registry.LOCAL_MACHINE anyway, both graded COMPATIBLE, both in normal
+// output. The debug trace named the signal that promoted them:
+// query-names-subject.
+//
+// Nothing named either library. What happened is that a declared symbol was
+// shredded into words and every word became an identifier: "commit" out of
+// pgx.Tx.Commit met "immutable canonical main commit", and "machine" out of
+// registry.LOCAL_MACHINE met "machine-readable evidence". The same shredding
+// is what put pytest.main, Express dispatch and certifi.__main__ in front of
+// the same question through the words "main" and "dispatch".
+//
+// A member name is chosen to describe an operation inside a namespace, not to
+// identify a subject across a corpus, and the corpus is full of Commit, Main,
+// Dispatch and Machine. Naming a subject means using a name that identifies
+// it.
+func liveCorpusSubtokenCandidates() []SearchResult {
+	return []SearchResult{{
+		Grade: GradeCompatible, Confidence: "LOW", SampleID: "sha256:pgx-begin",
+		Case: &Case{
+			Goal: "Use pgx v5.10.0 Conn.Begin without assuming context cancellation manages " +
+				"transaction lifetime, and prove explicit/deferred rollback behavior against a " +
+				"deterministic PostgreSQL wire stub.",
+			Packages: []string{"pkg:golang/github.com/jackc/pgx/v5@v5.10.0"},
+			Symbols: []string{"pgx.Conn.Begin", "pgx.Tx.Commit", "pgx.Tx.Rollback",
+				"pgx.ErrTxClosed"},
+		},
+	}, {
+		Grade: GradeCompatible, Confidence: "MEDIUM", SampleID: "sha256:xsys-registry",
+		Case: &Case{
+			Goal:     "verify golang.org/x/sys/windows/registry.LOCAL_MACHINE in pkg:golang/golang.org/x/sys@v0.47.0",
+			Packages: []string{"pkg:golang/golang.org/x/sys@v0.47.0"},
+			Symbols:  []string{"golang.org/x/sys/windows/registry.LOCAL_MACHINE"},
+		},
+	}, {
+		Grade: GradeCompatible, Confidence: "LOW", SampleID: "sha256:pytest-main",
+		Case: &Case{
+			Goal:     "Run a test session in-process and read the exit status it returns",
+			Packages: []string{"pkg:pypi/pytest@8.3.3"},
+			Symbols:  []string{"pytest.main"},
+		},
+	}, {
+		Grade: GradeCompatible, Confidence: "LOW", SampleID: "sha256:express-dispatch",
+		Case: &Case{
+			Goal:     "Mount a router and observe how a layer forwards a request down the stack",
+			Packages: []string{"pkg:npm/express@4.21.1"},
+			Symbols:  []string{"express.Router.dispatch"},
+		},
+	}, {
+		Grade: GradeCompatible, Confidence: "LOW", SampleID: "sha256:certifi-main",
+		Case: &Case{
+			Goal:     "Print the path of the bundled CA store from the command line",
+			Packages: []string{"pkg:pypi/certifi@2024.8.30"},
+			Symbols:  []string{"certifi.__main__"},
+		},
+	}}
+}
+
+func TestASymbolSubtokenDoesNotNameTheSubject(t *testing.T) {
+	req := deployRequest()
+	for _, r := range liveCorpusSubtokenCandidates() {
+		if signals := r.RelevanceSignals(req, nil); len(signals) != 0 {
+			t.Errorf("%s claimed a link to a deploy question: %v", r.SampleID, signals)
+		}
+		if r.RelevantToRequest(req, nil) {
+			t.Errorf("%s was promoted into normal output for a deploy question", r.SampleID)
+		}
+		if got := r.SuppressionReason(req, nil); got != SuppressedInsufficientGoalOverlap {
+			t.Errorf("%s suppression reason = %q, want %q", r.SampleID, got,
+				SuppressedInsufficientGoalOverlap)
+		}
+	}
+}
+
+// Everything the gate still has to let through. A coined member name is an
+// identifier even on its own — nobody writes "RoundBank" by accident — and a
+// qualified one is an identifier however common its last word is.
+func TestNamingASymbolStillPromotes(t *testing.T) {
+	cases := []struct {
+		query string
+		r     SearchResult
+	}{
+		{"why does RoundBank turn 2.5 into 2", shopspringDecimal()},
+		{"decimal.Decimal.RoundCash is off by a cent", shopspringDecimal()},
+		{"humanize.FormatInteger prints the wrong thousand separator", goHumanize()},
+		{"FormatFloat drops my SI suffix", goHumanize()},
+		{"pgx.Tx.Commit returns ErrTxClosed after a deferred rollback",
+			liveCorpusSubtokenCandidates()[0]},
+		{"reading registry.LOCAL_MACHINE fails under wine",
+			liveCorpusSubtokenCandidates()[1]},
+		{"pytest exits 0 when no tests ran", liveCorpusSubtokenCandidates()[2]},
+	}
+	for _, c := range cases {
+		req := SearchRequest{Query: c.query}
+		if !contains(c.r.RelevanceSignals(req, nil), RelevanceNamedSubject) {
+			t.Errorf("a question that named the subject found nothing: %q -> %v",
+				c.query, c.r.RelevanceSignals(req, nil))
+		}
+	}
+}

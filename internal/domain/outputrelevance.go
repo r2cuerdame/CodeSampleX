@@ -59,6 +59,12 @@ const (
 	RelevanceSharedDiagnostic = "shared-diagnostic"
 	// RelevanceNamedSubject is the caller's own question naming this
 	// sample's package or symbol.
+	//
+	// Naming means using a spelling that identifies the thing: the package,
+	// a piece of its name, the whole symbol, or a qualified part of it. It
+	// does not mean sharing a word with one. See
+	// searchrelevance.NamesSubject for why the retrieval-side count is the
+	// wrong measurement to promote on.
 	RelevanceNamedSubject = "query-names-subject"
 	// RelevanceGoalSemantics is the question and the sample's goal
 	// describing the same operation in different words. It is the signal a
@@ -176,8 +182,7 @@ func (r SearchResult) RelevanceSignals(req SearchRequest, argv []string) []strin
 		}
 	}
 
-	strong, _ := searchrelevance.Signal(req.Query, r.Case.Goal, r.packageNames(), declared)
-	if strong > 0 {
+	if searchrelevance.NamesSubject(req.Query, r.packageNames(), declared) {
 		add(RelevanceNamedSubject)
 	}
 	if sameGoalSemantics(req.Query, r.Case.Goal) {
