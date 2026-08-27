@@ -198,12 +198,42 @@ func TestHotShardHintIsReusedForItsTTLThenRefreshed(t *testing.T) {
 		t.Errorf("hint reads inside the TTL = %d, want 1", got)
 	}
 
-	ck.t = ck.t.Add(hotShardTTL + time.Second)
+	ck.t = ck.t.Add(defaultHotShardTTL + time.Second)
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
 		t.Fatalf("hint after the TTL = %v, want the built shard key", keys)
 	}
 	if got := store.calls.Load(); got != 2 {
 		t.Errorf("hint reads after the TTL = %d, want a refresh", got)
+	}
+}
+
+func TestHotShardHintTTLTracksTheConfiguredSnapshotInterval(t *testing.T) {
+	store := &countingHotShards{Fake: serverstore.NewFake()}
+	ck := &clock{t: testNow}
+	a := &api{d: Deps{
+		Store: store,
+		Now:   ck.now,
+		Cfg:   serverstore.ServerConfig{SnapshotInterval: 5 * time.Second},
+	}}
+	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
+		t.Fatal(err)
+	}
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
+		t.Fatalf("initial hint = %v, want the one built shard key", keys)
+	}
+	ck.t = ck.t.Add(4 * time.Second)
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
+		t.Fatalf("hint inside configured interval = %v, want the cached key", keys)
+	}
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("hint reads inside configured interval = %d, want 1", got)
+	}
+	ck.t = ck.t.Add(2 * time.Second)
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
+		t.Fatalf("hint after configured interval = %v, want the refreshed key", keys)
+	}
+	if got := store.calls.Load(); got != 2 {
+		t.Fatalf("hint reads after configured interval = %d, want 2", got)
 	}
 }
 

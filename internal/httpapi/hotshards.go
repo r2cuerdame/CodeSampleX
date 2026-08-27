@@ -59,10 +59,11 @@ const (
 	// the interactive class's own eight-second ceiling; this bounds the
 	// sequence, so a read under pressure can still finish and fill the cache.
 	hotShardLoadTimeout = 30 * time.Second
-	// hotShardTTL is how long one computed hint is reused. Shards are built
-	// by the aggregation pass on CSX_SNAPSHOT_INTERVAL (5m by default), so a
-	// hint younger than that names the shards a fresh read would name.
-	hotShardTTL = 5 * time.Minute
+	// defaultHotShardTTL is used only by zero-valued test configuration.
+	// Production derives the lifetime from CSX_SNAPSHOT_INTERVAL so the hint
+	// cannot outlive (or needlessly refresh inside) the configured builder
+	// cadence.
+	defaultHotShardTTL = 5 * time.Minute
 )
 
 // hotShardHint is this process's view of the hint: the last answer it
@@ -83,7 +84,7 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 		wait = hotShardRequestWait
 	}
 	a.hotShards.mu.Lock()
-	if a.hotShards.keys != nil && a.now().Sub(a.hotShards.at) < hotShardTTL {
+	if a.hotShards.keys != nil && a.now().Sub(a.hotShards.at) < a.hotShardTTL() {
 		keys := a.hotShards.keys
 		a.hotShards.mu.Unlock()
 		return keys
@@ -110,6 +111,13 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 	// has not finished: a hint one interval old is still the hint, and
 	// dropping it would leave a fresh install with nothing to warm.
 	return a.hotShards.keys
+}
+
+func (a *api) hotShardTTL() time.Duration {
+	if a.d.Cfg.SnapshotInterval > 0 {
+		return a.d.Cfg.SnapshotInterval
+	}
+	return defaultHotShardTTL
 }
 
 // loadHotShards performs the one shared whole-corpus read and publishes it.

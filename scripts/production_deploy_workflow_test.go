@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -184,6 +185,52 @@ func TestProductionEvidenceIsAlwaysRetained(t *testing.T) {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("production evidence contract is missing %q", required)
 		}
+	}
+}
+
+func TestProductionJobOutlivesTheFreshBuilderAndRollbackBudget(t *testing.T) {
+	workflow := productionWorkflow(t)
+	deployJob, ok := releaseJobs(t, workflow)["deploy"]
+	if !ok {
+		t.Fatal("production workflow has no deploy job")
+	}
+
+	workflowTimeout := regexp.MustCompile(`(?m)^    timeout-minutes: ([0-9]+)$`).FindStringSubmatch(deployJob)
+	if workflowTimeout == nil {
+		t.Fatal("production deploy job has no numeric timeout-minutes")
+	}
+	jobMinutes, err := strconv.Atoi(workflowTimeout[1])
+	if err != nil {
+		t.Fatalf("parse production job timeout: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy.ps1"))
+	if err != nil {
+		t.Fatalf("read production deploy script: %v", err)
+	}
+	script := string(raw)
+	attemptsMatch := regexp.MustCompile(`\$builderFreshPollAttempts = ([0-9]+)`).FindStringSubmatch(script)
+	secondsMatch := regexp.MustCompile(`\$builderFreshPollSeconds = ([0-9]+)`).FindStringSubmatch(script)
+	if attemptsMatch == nil || secondsMatch == nil {
+		t.Fatal("production deploy script has no numeric fresh-builder budget")
+	}
+	attempts, err := strconv.Atoi(attemptsMatch[1])
+	if err != nil {
+		t.Fatalf("parse fresh-builder attempts: %v", err)
+	}
+	pollSeconds, err := strconv.Atoi(secondsMatch[1])
+	if err != nil {
+		t.Fatalf("parse fresh-builder poll seconds: %v", err)
+	}
+
+	// The outer timeout includes checkout, image preparation, transfer,
+	// cutover, final invariants/smoke, evidence upload and a possible rollback.
+	// If it merely equals the inner builder wait, GitHub cancels the job before
+	// deploy-production.ps1 can record success or run its rollback catch path.
+	const rolloutAndRollbackReserveSeconds = 15 * 60
+	wantSeconds := attempts*pollSeconds + rolloutAndRollbackReserveSeconds
+	if gotSeconds := jobMinutes * 60; gotSeconds < wantSeconds {
+		t.Fatalf("production job budget = %ds, want at least %ds (fresh builder + rollout/rollback reserve)", gotSeconds, wantSeconds)
 	}
 }
 
