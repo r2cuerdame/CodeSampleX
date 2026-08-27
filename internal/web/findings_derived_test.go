@@ -17,7 +17,7 @@ func TestFindingsIncludesDerivedSamples(t *testing.T) {
 		Measured:  "connect, read, write and pool each get their own 5 seconds",
 		SampleID:  "sha256:aaaa000000000000000000000000000000000000000000000000000000000001",
 	}}
-	body := get(t, mux, "/findings").Body.String()
+	body := getEventually(t, mux, "/findings", "httpx@0.28.1").Body.String()
 	mustContain(t, body, "Stated by the sample, measured by its contract")
 	mustContain(t, body, "httpx@0.28.1")
 	mustContain(t, body, "a timeout of 5 covers the whole request")
@@ -55,7 +55,7 @@ func TestFindingsCountIncludesDerived(t *testing.T) {
 	// process would see.
 	mux2, f2 := newTestMux(t, nil)
 	f2.derived = f.derived
-	if got := countFromBody(t, get(t, mux2, "/findings").Body.String()); got != base+1 {
+	if got := countFromBody(t, getEventually(t, mux2, "/findings", "ws@8.19.0").Body.String()); got != base+1 {
 		t.Errorf("count = %d, want %d: the derived rows are findings too", got, base+1)
 	}
 }

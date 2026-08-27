@@ -18,7 +18,7 @@ func TestFindingsLeadsWithTheGroupThatGrowsByItself(t *testing.T) {
 		Measured: "each phase gets its own timeout instead",
 		SampleID: "sha256:" + strings.Repeat("a", 64),
 	}}
-	body := get(t, mux, "/findings").Body.String()
+	body := getEventually(t, mux, "/findings", "httpx@0.28.1").Body.String()
 
 	mustContain(t, body, "httpx@0.28.1")
 	if strings.Contains(body, "Contradicts an official source</h2>") {

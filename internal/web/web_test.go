@@ -43,6 +43,26 @@ func get(t *testing.T, mux *http.ServeMux, target string, hdr ...string) *httpte
 	return rec
 }
 
+// getEventually waits for an out-of-band cache fill without weakening the
+// page assertion that follows. Production deliberately serves a complete
+// static /findings page on a cold miss; tests that seed derived rows must
+// therefore observe the next snapshot rather than depending on goroutine
+// scheduling during the first render.
+func getEventually(t *testing.T, mux *http.ServeMux, target, want string) *httptest.ResponseRecorder {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		rec := get(t, mux, target)
+		if strings.Contains(rec.Body.String(), want) {
+			return rec
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not contain %q after cache refresh", target, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func mustContain(t *testing.T, body, sub string) {
 	t.Helper()
 	if !strings.Contains(body, sub) {

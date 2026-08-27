@@ -28,7 +28,7 @@ func TestFindingsPaginatesTheDerivedGroup(t *testing.T) {
 	mux, f := newTestMux(t, nil)
 	f.derived = manyDerived(80)
 
-	body := get(t, mux, "/findings").Body.String()
+	body := getEventually(t, mux, "/findings", "pkg-0@1.0.0").Body.String()
 	if !strings.Contains(body, "pkg-0@1.0.0") {
 		t.Error("first page is missing the first finding")
 	}
@@ -56,6 +56,7 @@ func TestFindingsPaginatesTheDerivedGroup(t *testing.T) {
 func TestFindingsPastTheEndRedirects(t *testing.T) {
 	mux, f := newTestMux(t, nil)
 	f.derived = manyDerived(30)
+	getEventually(t, mux, "/findings", "pkg-0@1.0.0")
 	rec := get(t, mux, "/findings?page=99")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
@@ -85,7 +86,7 @@ func TestFindingsSearchCoversEveryGroup(t *testing.T) {
 		Measured: "connect, read, write and pool each get their own five seconds",
 		SampleID: "sha256:" + strings.Repeat("a", 64),
 	}}
-	body := get(t, mux, "/findings?q=httpx").Body.String()
+	body := getEventually(t, mux, "/findings?q=httpx", "httpx@0.28.1").Body.String()
 	mustContain(t, body, "httpx@0.28.1")
 	if strings.Contains(body, "bcryptjs") {
 		t.Error("a hand-written finding that does not match the query is still shown")
@@ -110,7 +111,7 @@ func TestFindingsSearchRequiresEveryWord(t *testing.T) {
 		{Ecosystem: "pypi", Subject: "httpx@0.28.1", Believed: "one timeout covers the request",
 			Measured: "each phase gets its own timeout", SampleID: "sha256:" + strings.Repeat("c", 64)},
 	}
-	body := get(t, mux, "/findings?q=pypi+timeout").Body.String()
+	body := getEventually(t, mux, "/findings?q=pypi+timeout", "httpx@0.28.1").Body.String()
 	mustContain(t, body, "httpx@0.28.1")
 	if strings.Contains(body, "ws@8.19.0") {
 		t.Error("a finding matching only one of two words was returned")

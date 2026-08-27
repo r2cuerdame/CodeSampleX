@@ -280,6 +280,11 @@ type site struct {
 	derivedMu    sync.Mutex
 	derivedCache []finding
 	derivedAt    time.Time
+	// A cold or stale findings cache refreshes out of band. The public page
+	// must never wait behind the whole-corpus scan that fills it, especially
+	// while a fresh production builder is using the background DB lanes.
+	derivedRefreshing bool
+	derivedRetryAt    time.Time
 
 	// hand* caches environment decoration for the static findings. Their
 	// sample IDs are immutable, but the linked sample may arrive after a
@@ -289,6 +294,8 @@ type site struct {
 	handDocumented []finding
 	handBelieved   []finding
 	handAt         time.Time
+	handRefreshing bool
+	handRetryAt    time.Time
 
 	// cube* caches assembled compatibility cubes per package (cube.go):
 	// one assembly reads dozens of snapshots, which is fine on a timer and

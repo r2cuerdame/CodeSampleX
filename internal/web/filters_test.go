@@ -80,7 +80,7 @@ func TestFindingsEnvironmentAndBasisFilters(t *testing.T) {
 		SampleID: "sha256:" + strings.Repeat("a", 64),
 		OS:       "linux", Runtime: "python", Environment: "python 3.13 · linux/amd64",
 	}}
-	body := get(t, mux, "/findings?eco=pypi&os=linux&runtime=python&basis=sample").Body.String()
+	body := getEventually(t, mux, "/findings?eco=pypi&os=linux&runtime=python&basis=sample", "httpx@0.28.1").Body.String()
 	mustContain(t, body, "httpx@0.28.1")
 	mustContain(t, body, "python 3.13 · linux/amd64")
 	if strings.Contains(body, "Contradicts an official source</h2>") {
