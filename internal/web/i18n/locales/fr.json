@@ -88,6 +88,7 @@
   "cube.swap": "Inverser les axes",
   "cube.window_note": "Le cube lit les 6 versions les plus récentes et les 10 premiers symboles de chacune ; une cellule vide ici peut donc signifier « hors de cette fenêtre » plutôt que « jamais mesuré ».",
   "sample.none": "pas encore d'échantillon à cette coordonnée",
+  "sample.exists": "il y a un échantillon pour cette version et cette API",
   "sample.unknown": "il y a un échantillon ici et nous ne l'avons pas encore exécuté à cette coordonnée",
   "sample.pass": "il y a un échantillon ici et notre exécution à cette coordonnée s'est terminée proprement",
   "sample.fail": "il y a un échantillon ici et notre exécution à cette coordonnée a échoué",

@@ -102,16 +102,18 @@ func TestPivotObservationOnlyCellCarriesNoVerificationMark(t *testing.T) {
 	if c.Basis != "observed" || c.Class != "observed" {
 		t.Fatalf("basis = %q/%q, want observed/observed", c.Basis, c.Class)
 	}
-	if c.Glyph != "" {
-		t.Errorf("observation-only cell carries a mark %q; absence is the signal", c.Glyph)
+	if c.Sample != sampleNone {
+		t.Errorf("observation-only cell draws a %q document; absence is the signal", c.Sample)
 	}
 	if c.Bang {
 		t.Error("passing observations are not an anomaly")
 	}
 }
 
-// A verification that failed carries the check's counterpart. Colour alone
-// was carrying it, and a red "—" reads as "missing data, and somehow bad".
+// A verification that failed is drawn, not merely tinted. Colour alone was
+// carrying it, and a red "—" reads as "missing data, and somehow bad"; the
+// failing document says which of the two it is without asking the reader to
+// distinguish two reds.
 func TestPivotVerificationFailureIsMarked(t *testing.T) {
 	rows := []snapshotRow{
 		pvRow("windows", "", "node", "24.1", "2026-08-12T10:00:00Z", map[string]stageCount{
@@ -123,12 +125,14 @@ func TestPivotVerificationFailureIsMarked(t *testing.T) {
 	}
 	g := buildPivot(rows, osRowKey, contextColKey, nil, pivotNow)
 	mixed := cellAt(t, g, "windows", "node 24")
-	if mixed.Glyph != "✕" || mixed.Tone != "mixed" {
-		t.Errorf("mixed cell = glyph %q tone %q, want the failure mark", mixed.Glyph, mixed.Tone)
+	// A pass and a fail at one coordinate is not "mostly fine": the document
+	// splits rather than averaging, so neither half is lost to one colour.
+	if mixed.Sample != sampleMixed || mixed.Tone != "mixed" {
+		t.Errorf("mixed cell = sample %q tone %q, want the split document", mixed.Sample, mixed.Tone)
 	}
 	fail := cellAt(t, g, "linux", "node 24")
-	if fail.Glyph != "✕" || fail.Tone != "fail" {
-		t.Errorf("fail cell = glyph %q tone %q, want the failure mark", fail.Glyph, fail.Tone)
+	if fail.Sample != sampleFail || fail.Tone != "fail" {
+		t.Errorf("fail cell = sample %q tone %q, want the failing document", fail.Sample, fail.Tone)
 	}
 	if !g.HasBang {
 		t.Error("grid must still record the anomaly for the tooltip")
@@ -168,8 +172,8 @@ func TestPivotDoesNotAgeAPinnedCoordinate(t *testing.T) {
 	if !strings.Contains(c.Tip, "last seen 2026-05-01") {
 		t.Errorf("tooltip %q must still date the evidence", c.Tip)
 	}
-	if c.Glyph != "◆" {
-		t.Errorf("glyph = %q; old evidence is still evidence we ran", c.Glyph)
+	if c.Sample != samplePass {
+		t.Errorf("sample = %q; old evidence is still evidence we ran", c.Sample)
 	}
 }
 

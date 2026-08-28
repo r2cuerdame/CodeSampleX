@@ -89,6 +89,28 @@ func sampleStateLabel(lang string, s sampleState) string {
 	return i18n.T(lang, sampleStateKey(s))
 }
 
+// sampleExistsLabel is the EXISTENCE-only sentence, for the one place that
+// speaks about a release and an API above a grid of environments.
+//
+// It is deliberately not sampleStateKey(sampleUnknown). That sentence says
+// "nothing of ours has run it at this coordinate", which is a claim about one
+// coordinate — and this line stands above forty of them, several of which our
+// fleet did run. Borrowing the cell's wording there states as fact the
+// opposite of what the cells underneath say.
+func sampleExistsLabel(lang string, published int64) string {
+	if published <= 0 {
+		return i18n.T(lang, "sample.none")
+	}
+	return i18n.T(lang, "sample.exists")
+}
+
+// sampleUnavailableLabel is what a FAILED aggregate read says. It is not an
+// absence: a transient database error must never become the public claim that
+// this coordinate has no sample.
+func sampleUnavailableLabel(lang string) string {
+	return i18n.T(lang, "sample.unavailable")
+}
+
 // sampleStates is the order the legend teaches them in: absent, then present
 // but unrun, then the two outcomes, then both at once.
 var sampleStates = []sampleState{sampleNone, sampleUnknown, samplePass, sampleFail, sampleMixed}

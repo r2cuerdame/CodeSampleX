@@ -29,6 +29,12 @@ import (
 //	code availability   version + symbol, environment-blind
 //	verification        this exact environment
 //	drill-down          navigation, and nothing else, wears the chevron
+//
+// The first two were then drawn as two marks — a document beside a diamond —
+// and that failed in use for the same underlying reason: a reader standing on
+// one coordinate wants one answer. Both facts now ride ONE document, whose
+// presence is availability and whose colour is the verification state
+// (samplestate.go). The keys are unchanged; only the number of glyphs is.
 
 // uuidNavStore is the reported coordinate as a store: one release measured on
 // two OS buckets, package-level observations plus a symbol this network ran a
@@ -87,30 +93,32 @@ func TestNoMarkOnTheSiteIsAHamburger(t *testing.T) {
 	}
 }
 
-// The two facts, apart. A cell says "there is code for this release and API"
-// with a document, and "we ran it HERE" with the basis glyph, and neither
-// borrows the other's mark.
-func TestCodeAvailabilityAndEnvironmentVerificationAreDifferentMarks(t *testing.T) {
+// The two facts, on one mark. A cell says "there is a sample for this release
+// and API" by drawing the document at all, and "how our run of it went HERE"
+// by its colour — and it never draws a second glyph to say the other half.
+func TestCodeAvailabilityAndEnvironmentVerificationAreOneMark(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = uuidNavStore() })
 	body := get(t, mux, uuidLeaf+"&lang=ko").Body.String()
 
 	card := answerCard(t, body)
-	if !strings.Contains(card, "코드 있음") {
-		t.Errorf("the leaf never says code exists for this release:\n%s", card)
-	}
 	// This coordinate is the package-level total, which developer machines
-	// reported and the fleet never ran a contract against — so the honest
-	// pair is "code exists" AND "not verified here", and the card has to be
-	// able to say both at once. That pairing is the whole point: one mark
-	// could only ever say one of them.
-	if !strings.Contains(card, "이 환경 미검증") {
-		t.Errorf("the leaf never says whether THIS environment was verified:\n%s", card)
+	// reported and the fleet never ran a contract against. Both halves are
+	// still said — a sample exists, and nothing of ours ran it here — and the
+	// grey document is what says them together.
+	if !strings.Contains(card, `class="smark s-unknown"`) {
+		t.Errorf("the leaf never draws the grey document for a sample nobody ran here:\n%s", card)
 	}
-	if !strings.Contains(card, `class="state env`) {
-		t.Errorf("the environment verdict has no mark of its own:\n%s", card)
+	if want := sampleStateLabel("ko", sampleUnknown); !strings.Contains(card, want) {
+		t.Errorf("the leaf never says %q:\n%s", want, card)
 	}
-	if !strings.Contains(card, `class="codemark"`) {
-		t.Errorf("code availability has no mark of its own:\n%s", card)
+	// One chip, not a pair. "Code available" beside "not verified in this
+	// environment" was the Sample and Evidence models handed to the reader as
+	// vocabulary and left for them to join.
+	if n := strings.Count(card, `class="state `); n != 1 {
+		t.Errorf("the card carries %d state chips; the contract is one:\n%s", n, card)
+	}
+	if strings.Contains(card, `class="codemark"`) {
+		t.Errorf("the retired second mark is still drawn beside the document:\n%s", card)
 	}
 }
 
@@ -149,17 +157,23 @@ func TestCodeStaysAndOnlyTheVerificationStateMovesAcrossEnvironments(t *testing.
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 
 	base := uuidPkg + "?f_version=v1.6.0&f_symbol=" + url.QueryEscape("uuid.New") + "&lang=ko&f_os="
-	for _, tc := range []struct{ os, wantEnv string }{
-		{"alpine musl", "이 환경 검증됨"},
-		{"windows", "이 환경 미검증"},
+	for _, tc := range []struct {
+		os   string
+		want sampleState
+	}{
+		{"alpine musl", samplePass},
+		{"windows", sampleUnknown},
 	} {
 		body := get(t, mux, base+url.QueryEscape(tc.os)).Body.String()
 		card := answerCard(t, body)
-		if !strings.Contains(card, "코드 있음") {
-			t.Errorf("os=%s: code availability vanished with the OS filter:\n%s", tc.os, card)
+		// The document survives the filter; only its colour moves. A sample
+		// written and run on Linux is still the sample that exists for a
+		// Windows reader, and it is still unrun there.
+		if !strings.Contains(card, `class="smark s-`+string(tc.want)+`"`) {
+			t.Errorf("os=%s: want the %q document in the card:\n%s", tc.os, tc.want, card)
 		}
-		if !strings.Contains(card, tc.wantEnv) {
-			t.Errorf("os=%s: want %q in the card:\n%s", tc.os, tc.wantEnv, card)
+		if want := sampleStateLabel("ko", tc.want); !strings.Contains(card, want) {
+			t.Errorf("os=%s: want %q in the card:\n%s", tc.os, want, card)
 		}
 	}
 }
@@ -206,8 +220,8 @@ func TestEvidenceActionsAppearOnlyWhereTheEvidenceDoes(t *testing.T) {
 	if strings.Contains(card2, "샘플 코드") {
 		t.Errorf("a coordinate with no published code still offers code:\n%s", card2)
 	}
-	if !strings.Contains(card2, "아직 코드/샘플 없음") {
-		t.Errorf("the absence is not stated, it is merely missing:\n%s", card2)
+	if want := sampleStateLabel("ko", sampleNone); !strings.Contains(card2, want) {
+		t.Errorf("the absence is not stated, it is merely missing (%q):\n%s", want, card2)
 	}
 }
 
@@ -257,8 +271,8 @@ func TestTheGridMarksCodeCellByCellAndNotEverywhere(t *testing.T) {
 	// Two: the release total and the one API that has a published answer.
 	// v1.5.0's cells carry none, which is what makes the mark readable — a
 	// mark on every cell says nothing.
-	if n := strings.Count(table, `class="codemark"`); n != 2 {
-		t.Errorf("the grid carries %d code marks; v1.6.0 has a published answer and v1.5.0 has none:\n%s",
+	if n := strings.Count(table, `class="smark s-`); n != 2 {
+		t.Errorf("the grid carries %d documents; v1.6.0 has a published answer and v1.5.0 has none:\n%s",
 			n, table)
 	}
 	for _, row := range strings.Split(table, "<td ")[1:] {
@@ -266,8 +280,8 @@ func TestTheGridMarksCodeCellByCellAndNotEverywhere(t *testing.T) {
 		if j := strings.Index(cell, "</td>"); j >= 0 {
 			cell = cell[:j]
 		}
-		if strings.Contains(cell, "f_version=v1.5.0") && strings.Contains(cell, "codemark") {
-			t.Errorf("a release with no published answer is marked as having code:\n%s", cell)
+		if strings.Contains(cell, "f_version=v1.5.0") && strings.Contains(cell, `class="smark s-`) {
+			t.Errorf("a release with no published answer draws a document:\n%s", cell)
 		}
 		// The chevron is on the doors and nowhere else, so "there is code
 		// here" and "there is a level below here" can never be read off one
@@ -383,7 +397,8 @@ func TestTheNavigatorContractHoldsInEveryEcosystem(t *testing.T) {
 				t.Error("no navigator")
 			}
 			card := answerCard(t, body)
-			for _, want := range []string{"코드 있음", "최종 결과", "샘플 코드"} {
+			wants := []string{sampleStateLabel("ko", samplePass), "최종 결과", "샘플 코드"}
+			for _, want := range wants {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s missing from the leaf:\n%s", want, card)
 				}
@@ -423,9 +438,9 @@ func TestCodeAvailabilityDoesNotUseTheBoundedSampleListAsAnInventory(t *testing.
 
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 	body := get(t, mux, uuidPkg+"?f_version=v1.6.0&f_symbol="+url.QueryEscape("uuid.New")).Body.String()
-	if !strings.Contains(answerCard(t, body), "Code available") {
+	if card := answerCard(t, body); !strings.Contains(card, `class="smark s-`) {
 		t.Errorf("older verified code vanished behind the newest-%d display bound:\n%s",
-			packageSampleLimit, answerCard(t, body))
+			packageSampleLimit, card)
 	}
 }
 
@@ -437,11 +452,16 @@ func TestCodeAggregateFailureIsRenderedAsUnknown(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 	body := get(t, mux, uuidLeaf).Body.String()
 	card := answerCard(t, body)
-	if !strings.Contains(card, "Code availability temporarily unavailable") {
-		t.Errorf("aggregate failure is not rendered as unknown:\n%s", card)
+	if want := sampleUnavailableLabel("en"); !strings.Contains(card, want) {
+		t.Errorf("aggregate failure is not rendered as unknown (%q):\n%s", want, card)
 	}
-	if strings.Contains(card, "No code or sample yet") {
+	if absent := sampleStateLabel("en", sampleNone); strings.Contains(card, absent) {
 		t.Errorf("aggregate failure was rendered as an authoritative absence:\n%s", card)
+	}
+	// And no document either: drawing one would claim the existence the read
+	// failed to establish.
+	if strings.Contains(card, `class="smark s-`) {
+		t.Errorf("a failed aggregate read still drew a document:\n%s", card)
 	}
 }
 
@@ -462,8 +482,21 @@ func TestPinnedReleaseAndAPIRenderCodeStateOnceAboveEnvironmentGrid(t *testing.T
 	if !strings.Contains(section, `class="cube-code-state`) {
 		t.Fatalf("pinned code state is missing above the environment grid:\n%s", truncate(section))
 	}
-	if n := strings.Count(section, "Code available"); n != 1 {
+	if n := strings.Count(section, `class="cube-code-state`); n != 1 {
 		t.Errorf("code state rendered %d times, want once:\n%s", n, truncate(section))
+	}
+	line := section[strings.Index(section, `class="cube-code-state`):]
+	line = line[:strings.Index(line, "</p>")]
+	if want := sampleExistsLabel("en", 1); !strings.Contains(line, want) {
+		t.Errorf("the one code state does not say %q:\n%s", want, line)
+	}
+	// Existence only. This line stands above a grid whose every cell is a
+	// different environment, so it must not borrow a cell's sentence and
+	// claim nothing of ours ran — the cells below it say that, per coordinate,
+	// and several of them record runs that did happen.
+	if borrowed := sampleStateLabel("en", sampleUnknown); strings.Contains(line, borrowed) {
+		t.Errorf("the existence line speaks for the coordinates below it (%q):\n%s",
+			borrowed, line)
 	}
 	if i, table := strings.Index(section, `class="cube-code-state`), strings.Index(section, `<table class="pivot">`); i < 0 || table < 0 || i > table {
 		t.Error("the one code state is not above the environment grid")

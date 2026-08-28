@@ -84,6 +84,16 @@ type cubeLeafRow struct {
 	PinHref  string
 	PinLabel string
 	Cell     pivotCell
+	// SampleText is the record's sample sentence as VISIBLE text. It is
+	// blanked where the card above already says the same sentence: the mark
+	// stays (its colour is this record's own outcome, and its accessible name
+	// and tooltip still carry the words), and only the repetition goes.
+	//
+	// "There is a sample here" is one fact about a release and an API. Four
+	// records at four environments are four coordinates, but they share that
+	// one fact, and printing it under each of them is how one screen came to
+	// state it five times.
+	SampleText string
 	// Result is the record in words, in the page language. The cell's own
 	// notation is a grid notation — a glyph, a percentage and a denominator,
 	// compressed so forty of them can be scanned — and at the bottom of a
@@ -546,14 +556,16 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 		state := &cubeCodeState{}
 		if code == nil || !code.known {
 			state.Unknown = true
-			state.Label = i18n.T(lang, "sample.unavailable")
+			state.Label = sampleUnavailableLabel(lang)
 		} else {
 			// Existence only. This line stands above a grid whose every cell
 			// is a different environment, so there is no single coordinate
-			// for a colour to be about — the cells carry that.
+			// for a colour to be about — the cells carry that — and it takes
+			// its own sentence rather than a cell's, which would say nothing
+			// of ours ran here above cells showing that it did.
 			state.Count = code.at(view.Coord["version"], view.Coord["symbol"])
 			state.State = deriveSampleState(state.Count, 0, 0)
-			state.Label = sampleStateLabel(lang, state.State)
+			state.Label = sampleExistsLabel(lang, state.Count)
 		}
 		view.CodeState = state
 	}
@@ -698,12 +710,9 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string, code *codeIndex,
 	merged := map[leafKey][]cubeFact{}
 	var order []leafKey
 	for _, f := range facts {
-		var envParts []string
-		for _, dim := range []string{"os", "libc", "arch", "runtime", "tool", "context"} {
-			if v := f.Dims[dim]; v != "" {
-				envParts = append(envParts, v)
-			}
-		}
+		// Same joiner as the answer card above these rows, so a record and
+		// the card that summarises it cannot spell one environment two ways.
+		envParts := cubeEnvParts(func(dim string) string { return f.Dims[dim] })
 		key := leafKey{f.Dims["version"], f.Dims["symbol"], joinDims(envParts)}
 		if _, seen := merged[key]; !seen {
 			order = append(order, key)
@@ -726,6 +735,9 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string, code *codeIndex,
 		// here.
 		row.Cell.setPublishedSamples(code.at(key.version, key.symbol))
 		row.Cell.SampleLabel = sampleStateLabel(lang, row.Cell.Sample)
+		if row.Cell.Sample != sampleNone {
+			row.SampleText = row.Cell.SampleLabel
+		}
 		// The link is decided from the STORED symbol, before the display name
 		// is applied. Renaming first gave the package-level row a link to a
 		// symbol page named after the package, which does not exist.
