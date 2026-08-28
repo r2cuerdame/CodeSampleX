@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -177,6 +178,194 @@ func TestCubeFactsDoesNotCacheAnAssemblyItsCallerAbandoned(t *testing.T) {
 	facts, _ := s.cubeFacts(context.Background(), "npm", "axios")
 	if len(facts) == 0 {
 		t.Error("an abandoned assembly was cached, so the next reader got an empty cube")
+	}
+}
+
+type deadlineBlockingStore struct {
+	*fakeStore
+	assemblies atomic.Int64
+	remaining  chan time.Duration
+}
+
+func (d *deadlineBlockingStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
+	d.assemblies.Add(1)
+	return d.fakeStore.PackageVersions(ctx, ecosystem, name)
+}
+
+func (d *deadlineBlockingStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
+	if d.assemblies.Load() != 1 {
+		return d.fakeStore.PackageSymbols(ctx, ecosystem, name, version)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		select {
+		case d.remaining <- time.Until(deadline):
+		default:
+		}
+	}
+	timer := time.NewTimer(300 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
+	}
+}
+
+func (d *deadlineBlockingStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
+	if ctx.Err() != nil {
+		return "", false
+	}
+	return d.fakeStore.SnapshotJSON(ctx, purl, symbol)
+}
+
+// Shared cube work ignores an initiating request's explicit cancellation,
+// but a background warm's deadline is the budget for the whole warm. Each
+// package assembly must inherit that remaining budget, and a timed-out partial
+// assembly must not become a five-minute empty cache entry.
+func TestCubeFactsRespectsIncomingDeadlineWithoutCachingEmptyAssembly(t *testing.T) {
+	base := cubeSingleflightStore()
+	store := &deadlineBlockingStore{
+		fakeStore: base.fakeStore,
+		remaining: make(chan time.Duration, 1),
+	}
+	s := &site{d: Deps{Store: store}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if facts, _ := s.cubeFacts(ctx, "npm", "axios"); len(facts) != 0 {
+		t.Fatalf("deadline-bounded assembly published %d partial facts", len(facts))
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("incoming deadline took %v to stop a cube assembly", elapsed)
+	}
+	select {
+	case remaining := <-store.remaining:
+		if remaining > 100*time.Millisecond {
+			t.Fatalf("cube assembly received %v instead of the incoming deadline", remaining)
+		}
+	default:
+		t.Fatal("cube assembly did not receive a deadline")
+	}
+
+	if facts, _ := s.cubeFacts(context.Background(), "npm", "axios"); len(facts) == 0 {
+		t.Fatal("timed-out empty assembly was cached instead of retrying")
+	}
+	if got := store.assemblies.Load(); got != 2 {
+		t.Fatalf("cube assemblies = %d, want timeout plus successful retry", got)
+	}
+}
+
+type dualLaneCubeStore struct {
+	*fakeStore
+	calls             atomic.Int64
+	backgroundStarted chan struct{}
+	backgroundRelease chan struct{}
+}
+
+func newDualLaneCubeStore() *dualLaneCubeStore {
+	return &dualLaneCubeStore{
+		fakeStore: &fakeStore{snapshots: map[string]string{
+			snapKey("pkg:npm/axios@1.0.0", ""): cubeSnap("pkg:npm/axios@1.0.0", "", "linux", "amd64", "node", "22", "npm", "PROJECT_COMPILE", 1, 0),
+			snapKey("pkg:npm/axios@2.0.0", ""): cubeSnap("pkg:npm/axios@2.0.0", "", "linux", "amd64", "node", "22", "npm", "PROJECT_COMPILE", 2, 0),
+		}},
+		backgroundStarted: make(chan struct{}),
+		backgroundRelease: make(chan struct{}),
+	}
+}
+
+func (d *dualLaneCubeStore) PackageVersions(ctx context.Context, _, _ string) ([]string, error) {
+	if d.calls.Add(1) == 1 {
+		close(d.backgroundStarted)
+		select {
+		case <-d.backgroundRelease:
+			return []string{"1.0.0"}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return []string{"2.0.0"}, nil
+}
+
+func cubeVersion(t *testing.T, facts []cubeFact) string {
+	t.Helper()
+	if len(facts) == 0 {
+		t.Fatal("cube contained no facts")
+	}
+	return facts[0].Dims["version"]
+}
+
+func TestHeroCubeFactsCollapsesConcurrentBackgroundFillers(t *testing.T) {
+	store := newDualLaneCubeStore()
+	s := &site{d: Deps{Store: store}}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s.heroCubeFacts(context.Background(), "npm", "axios")
+		}()
+	}
+	close(start)
+	select {
+	case <-store.backgroundStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background cube fill did not start")
+	}
+	close(store.backgroundRelease)
+	wg.Wait()
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("background package assemblies = %d for 16 fillers, want 1", got)
+	}
+}
+
+// A landing warm must never own the interactive singleflight lane. If a
+// package page arrives while that background read is stuck, foreground starts
+// one independent assembly; the late background result cannot replace it.
+func TestForegroundCubeBypassesBackgroundAndLateResultCannotOverwrite(t *testing.T) {
+	store := newDualLaneCubeStore()
+	s := &site{d: Deps{Store: store}}
+	background := make(chan []cubeFact, 1)
+	go func() {
+		facts, _ := s.heroCubeFacts(context.Background(), "npm", "axios")
+		background <- facts
+	}()
+	select {
+	case <-store.backgroundStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background cube fill did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	foreground, _ := s.cubeFacts(ctx, "npm", "axios")
+	if got := cubeVersion(t, foreground); got != "2.0.0" {
+		t.Fatalf("foreground cube version = %q, want 2.0.0", got)
+	}
+	select {
+	case <-background:
+		t.Fatal("background fill finished before its store read was released")
+	default:
+	}
+
+	close(store.backgroundRelease)
+	select {
+	case facts := <-background:
+		if got := cubeVersion(t, facts); got != "2.0.0" {
+			t.Fatalf("late background returned stale version %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background cube fill did not finish after release")
+	}
+	cached, ok := s.cubeFactsCached("npm", "axios")
+	if !ok || cubeVersion(t, cached) != "2.0.0" {
+		t.Fatalf("late background overwrote foreground cache: %+v", cached)
+	}
+	if got := store.calls.Load(); got != 2 {
+		t.Fatalf("package assemblies = %d, want one background plus one foreground", got)
 	}
 }
 

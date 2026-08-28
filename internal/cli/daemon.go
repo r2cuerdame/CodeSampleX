@@ -78,6 +78,12 @@ func daemonMain(ctx context.Context, args []string) int {
 		if st.LastUpload != "" {
 			fmt.Printf("  last upload: %s\n", st.LastUpload)
 		}
+		if st.LastUploadAttempt != "" {
+			fmt.Printf("  last upload attempt: %s\n", st.LastUploadAttempt)
+		}
+		if st.LastUploadError != "" {
+			fmt.Printf("  last upload error: %s\n", st.LastUploadError)
+		}
 		return 0
 	default:
 		fmt.Fprintln(os.Stderr, "usage: csx daemon run|start|stop|status")

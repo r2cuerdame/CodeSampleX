@@ -314,12 +314,13 @@ way a reader's page does.
 
 ### Cost
 
-One statement, one row, on an admin endpoint nobody polls. Against production
-(9,455 stored documents): 930 ms, of which 162 ms is the work -- the rest is
-PostgreSQL JIT-compiling a plan for a query that runs once. Written as a UNION
-of scalar aggregates it was 1.37 s and 83 compiled functions. If it ever moves
-somewhere hot it belongs in the aggregation pipeline that already materialises
-on `CSX_SNAPSHOT_INTERVAL`, not in a request handler.
+One statement, one row. Against production (9,455 stored documents): 930 ms,
+of which 162 ms is the work -- the rest is PostgreSQL JIT-compiling the plan.
+The admin farm panel polls this aggregate, so the request-scoped transaction
+disables JIT, applies a hard statement timeout, and rejects overlapping farm
+snapshots. If the corpus grows beyond that bounded request budget it belongs
+in the aggregation pipeline that already materialises on
+`CSX_SNAPSHOT_INTERVAL`, not in a request handler.
 
 ## Two stores, one behaviour
 

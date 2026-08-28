@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -236,6 +237,306 @@ func TestUploadPostsBatchesWithoutAnyPathLikeStrings(t *testing.T) {
 	n, err = b.Upload(ctx, srv.Client(), srv.URL)
 	if err != nil || n != 0 {
 		t.Fatalf("second upload = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// Windows exposes process status as a DWORD. Go therefore reports the native
+// -1 sentinel as 4294967295 on 64-bit Windows, and clients released before the
+// signed wire contract persisted that value in their durable local queue.
+// Upload must repair those already-pending rows; fixing only new recordings
+// leaves the deterministic queue pinned on the same poison batch forever.
+func TestUploadCanonicalizesPendingWindowsUnsignedExitCode(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	db := testDB(t)
+	ident := testIdentity(t)
+	ctx := context.Background()
+	env := testEnvFP()
+	if err := db.SaveEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyWire := uint64(1<<32 - 1)
+	legacyCode := int(legacyWire)
+	legacyTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	summary := "process exited without a conventional status"
+	legacyFingerprint := domain.ClassifiedFailureFingerprint(domain.StageProjectTest, "go/test", legacyTerm, "", summary)
+	if err := db.RecordObservation(ctx, localdb.ObsKey{
+		Epoch: "2026-08-27", PURL: "pkg:golang/github.com/Microsoft/go-winio@v0.6.2",
+		EnvHash: env.Hash(), Stage: domain.StageProjectTest, Result: domain.ResultFail,
+		ErrorFP: legacyFingerprint, TerminationKind: domain.TerminationExit,
+		ExitCode: &legacyCode, ErrorSummary: summary, EvidenceQuality: domain.EvidenceComplete,
+		OuterCommand: "go test", OuterStage: domain.StageProjectTest, ActualToolchain: "go/test",
+		StageEvidence: domain.FailureStageTestRunnerDiagnostic,
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	canonicalCode := -1
+	canonicalTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &canonicalCode}
+	canonicalFingerprint := domain.ClassifiedFailureFingerprint(domain.StageProjectTest, "go/test",
+		canonicalTerm, "", summary)
+	if err := db.RecordObservation(ctx, localdb.ObsKey{
+		Epoch: "2026-08-27", PURL: "pkg:golang/github.com/Microsoft/go-winio@v0.6.2",
+		EnvHash: env.Hash(), Stage: domain.StageProjectTest, Result: domain.ResultFail,
+		ErrorFP: canonicalFingerprint, TerminationKind: domain.TerminationExit,
+		ExitCode: &canonicalCode, ErrorSummary: summary, EvidenceQuality: domain.EvidenceComplete,
+		OuterCommand: "go test", OuterStage: domain.StageProjectTest, ActualToolchain: "go/test",
+		StageEvidence: domain.FailureStageTestRunnerDiagnostic,
+	}, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	var posted []domain.ObservationBatch
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		posted = body.Batches
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
+	}))
+	defer srv.Close()
+
+	b := &Batcher{DB: db, Ident: ident, Cfg: communityCfg(srv.URL)}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 2 {
+		t.Fatalf("Upload = (%d, %v), want (2, nil)", sent, err)
+	}
+	wantCode := -1
+	wantFingerprint := domain.ClassifiedFailureFingerprint(domain.StageProjectTest, "go/test",
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &wantCode}, "", summary)
+	if len(posted) != 2 {
+		t.Fatalf("posted batches = %d, want both durable rows", len(posted))
+	}
+	for i, batch := range posted {
+		if batch.ExitCode == nil || *batch.ExitCode != wantCode {
+			t.Errorf("batch %d exitCode = %v, want signed int32 %d", i, batch.ExitCode, wantCode)
+		}
+		if batch.ErrorFingerprint != wantFingerprint {
+			t.Errorf("batch %d fingerprint = %q, want canonical %q", i, batch.ErrorFingerprint, wantFingerprint)
+		}
+		if batch.ObservationCount != 3 {
+			t.Errorf("batch %d observationCount = %d, want lossless combined total 3", i, batch.ObservationCount)
+		}
+	}
+	if pending := pendingRows(t, db); len(pending) != 0 {
+		t.Fatalf("canonicalized backlog left %d row(s) pending", len(pending))
+	}
+}
+
+// During a rolling self-update an old daemon can upload both the unsigned and
+// signed spellings before the new daemon starts. The new server correctly
+// canonicalizes both identities, but its full-epoch dedup then observes max(a,
+// b), not the intended a+b. The upgraded client keeps a durable acknowledged
+// high-water so an old uploader cannot steal the pending flag or a later mixed
+// increment without the next upgraded upload detecting it again.
+func TestUploadReconcilesAlreadyUploadedMixedWindowsSpellingsAfterOldUploaderSteal(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	db := testDB(t)
+	ident := testIdentity(t)
+	ctx := context.Background()
+	env := testEnvFP()
+	if err := db.SaveEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyCode := int(uint64(1<<32 - 1))
+	canonicalCode := -1
+	summary := "process exited without a conventional status"
+	base := localdb.ObsKey{
+		Epoch: "2026-08-27", PURL: "pkg:golang/github.com/Microsoft/go-winio@v0.6.2",
+		EnvHash: env.Hash(), Stage: domain.StageProjectTest, Result: domain.ResultFail,
+		TerminationKind: domain.TerminationExit, ErrorSummary: summary,
+		EvidenceQuality: domain.EvidenceComplete, OuterCommand: "go test",
+		OuterStage: domain.StageProjectTest, ActualToolchain: "go/test",
+		StageEvidence: domain.FailureStageTestRunnerDiagnostic,
+	}
+	legacy := base
+	legacy.ExitCode = &legacyCode
+	legacy.ErrorFP = domain.ClassifiedFailureFingerprint(legacy.Stage, legacy.ActualToolchain,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}, "", summary)
+	canonical := base
+	canonical.ExitCode = &canonicalCode
+	canonical.ErrorFP = domain.ClassifiedFailureFingerprint(canonical.Stage, canonical.ActualToolchain,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &canonicalCode}, "", summary)
+	if err := db.RecordObservation(ctx, legacy, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordObservation(ctx, canonical, 2); err != nil {
+		t.Fatal(err)
+	}
+	// This is the exact post-old-uploader state: neither row is pending, while
+	// the canonical server aggregate contains only max(1,2).
+	if err := db.MarkObservationsUploaded(ctx, []localdb.ObsKey{legacy, canonical}); err != nil {
+		t.Fatal(err)
+	}
+
+	var posted []domain.ObservationBatch
+	rejectNext := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		posted = append(posted, body.Batches...)
+		w.WriteHeader(http.StatusAccepted)
+		if rejectNext {
+			rejectNext = false
+			fmt.Fprint(w, `{"accepted":0,"rejected":[{"index":0,"reason":"retry fixture"}]}`)
+			return
+		}
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
+	}))
+	defer srv.Close()
+
+	b := &Batcher{DB: db, Ident: ident, Cfg: communityCfg(srv.URL)}
+	// Force the narrow prepare→build gap, then let the old uploader steal the
+	// pending flag. Upload calls prepare again and must recover it. The first
+	// server reply refuses the repaired batch: rejected evidence must remain
+	// pending and must not advance the acknowledgement high-water.
+	if err := b.prepareLegacyWindowsReconciliation(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkObservationsUploaded(ctx, []localdb.ObsKey{legacy, canonical}); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err == nil || sent != 0 {
+		t.Fatalf("refused reconciliation Upload = (%d, %v), want retained refusal", sent, err)
+	}
+	legacyRows, err := db.LegacyWindowsObservations(ctx)
+	if err != nil || len(legacyRows) != 1 || legacyRows[0].LegacyReconciledCount != 0 {
+		t.Fatalf("refused reconciliation high-water = %+v, err=%v; want 0", legacyRows, err)
+	}
+	posted = nil
+	// The old uploader can steal the restored pending flag too; no marker was
+	// consumed, so the next current-client pass must rediscover it again.
+	if err := db.MarkObservationsUploaded(ctx, []localdb.ObsKey{legacy, canonical}); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 1 {
+		t.Fatalf("first upgraded Upload = (%d, %v), want one reconciliation batch", sent, err)
+	}
+	if len(posted) != 1 || posted[0].ExitCode == nil || *posted[0].ExitCode != -1 || posted[0].ObservationCount != 3 {
+		t.Fatalf("reconciliation payload = %+v, want signed exit -1 with combined count 3", posted)
+	}
+	legacyRows, err = db.LegacyWindowsObservations(ctx)
+	if err != nil || len(legacyRows) != 1 || legacyRows[0].LegacyReconciledCount != 3 {
+		t.Fatalf("accepted reconciliation high-water = %+v, err=%v; want 3", legacyRows, err)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 0 {
+		t.Fatalf("unchanged second Upload = (%d, %v), want durable high-water no-op", sent, err)
+	}
+	if len(posted) != 1 {
+		t.Fatalf("unchanged reconciliation posted %d batches", len(posted))
+	}
+
+	// A still-running old command records one canonical observation and its
+	// old uploader marks both component rows uploaded before the new daemon's
+	// next tick. It cannot update legacy_reconciled_count, so the combined
+	// durable total 4 must be rediscovered and sent despite pending=0.
+	if err := db.RecordObservation(ctx, canonical, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkObservationsUploaded(ctx, []localdb.ObsKey{legacy, canonical}); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 1 {
+		t.Fatalf("Upload after old-uploader steal = (%d, %v), want repaired combined batch", sent, err)
+	}
+	if len(posted) != 2 || posted[1].ObservationCount != 4 {
+		t.Fatalf("post-steal reconciliation payloads = %+v, want final combined count 4", posted)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 0 {
+		t.Fatalf("post-repair Upload = (%d, %v), want high-water no-op", sent, err)
+	}
+}
+
+func TestUploadAdvancesLegacyReconciliationHighWaterOnlyForAcceptedIndexes(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	db := testDB(t)
+	ident := testIdentity(t)
+	ctx := context.Background()
+	env := testEnvFP()
+	if err := db.SaveEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	legacyCode := int(uint64(1<<32 - 1))
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	summary := "process exited without a conventional status"
+	fingerprint := domain.FailureFingerprint(domain.StageProjectTest, term, "", summary)
+	keys := make([]localdb.ObsKey, 0, 2)
+	for _, symbol := range []string{"one", "two"} {
+		key := localdb.ObsKey{
+			Epoch: "2026-08-27", PURL: "pkg:npm/axios@1.12.0", Symbol: symbol,
+			EnvHash: env.Hash(), Stage: domain.StageProjectTest, Result: domain.ResultFail,
+			ErrorFP: fingerprint, TerminationKind: domain.TerminationExit, ExitCode: &legacyCode,
+			ErrorSummary: summary, EvidenceQuality: domain.EvidenceComplete,
+		}
+		if err := db.RecordObservation(ctx, key, 1); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+	}
+	if err := db.MarkObservationsUploaded(ctx, keys); err != nil {
+		t.Fatal(err)
+	}
+
+	rejectSecond := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		if rejectSecond {
+			rejectSecond = false
+			fmt.Fprint(w, `{"accepted":1,"rejected":[{"index":1,"reason":"second refused"}]}`)
+			return
+		}
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
+	}))
+	defer srv.Close()
+
+	b := &Batcher{DB: db, Ident: ident, Cfg: communityCfg(srv.URL)}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err == nil || sent != 1 {
+		t.Fatalf("partial reconciliation Upload = (%d, %v), want one accepted plus refusal", sent, err)
+	}
+	rows, err := db.LegacyWindowsObservations(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("legacy rows = %+v, err=%v", rows, err)
+	}
+	bySymbol := map[string]localdb.ObsRow{}
+	for _, row := range rows {
+		bySymbol[row.Symbol] = row
+	}
+	if bySymbol["one"].LegacyReconciledCount != 1 || bySymbol["two"].LegacyReconciledCount != 0 {
+		t.Fatalf("partial ack high-waters = one:%d two:%d, want 1/0",
+			bySymbol["one"].LegacyReconciledCount, bySymbol["two"].LegacyReconciledCount)
+	}
+	pending := pendingRows(t, db)
+	if len(pending) != 1 || pending[0].Symbol != "two" {
+		t.Fatalf("partial ack pending rows = %+v, want only rejected symbol two", pending)
+	}
+	if sent, err := b.Upload(ctx, srv.Client(), srv.URL); err != nil || sent != 1 {
+		t.Fatalf("rejected reconciliation retry = (%d, %v), want one accepted", sent, err)
+	}
+	rows, err = db.LegacyWindowsObservations(ctx)
+	if err != nil || len(rows) != 2 || rows[0].LegacyReconciledCount != 1 || rows[1].LegacyReconciledCount != 1 {
+		t.Fatalf("retried high-waters = %+v, err=%v; want both 1", rows, err)
 	}
 }
 

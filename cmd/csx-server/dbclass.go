@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -89,6 +90,7 @@ func withDBBudget(next http.Handler) http.Handler {
 }
 
 type pressureLog struct {
+	mu   sync.Mutex
 	now  func() time.Time
 	last [3]time.Time
 	out  func(format string, v ...any)
@@ -100,12 +102,13 @@ func newPressureLog() *pressureLog {
 
 func (p *pressureLog) report(class serverstore.QueryClass, path string, busy, timeouts int64, waited time.Duration) {
 	now := p.now()
-	// Racing reporters may both decide to print; that is one duplicate line
-	// under load, which is cheaper than a mutex on every request.
+	p.mu.Lock()
 	if last := p.last[class]; !last.IsZero() && now.Sub(last) < budgetPressureWindow {
+		p.mu.Unlock()
 		return
 	}
 	p.last[class] = now
+	p.mu.Unlock()
 	cause := "pool_busy"
 	if busy == 0 {
 		cause = "query_timeout"

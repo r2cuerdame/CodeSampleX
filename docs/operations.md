@@ -136,8 +136,12 @@ alone is not production evidence. A failed SHA is not redispatched in a loop:
 ProjectOps deduplicates by target SHA plus failure fingerprint and observes its
 cooldown, while an explicit new dispatch remains an auditable recovery action.
 
-**A normal release is unattended.** Pushing a `v*` tag is the decision; nothing
-after it waits for a person. The release either completes or fails closed, and
+**A normal release is unattended.** Creating a `v*` tag is the decision; nothing
+after it waits for a person. If GitHub accepts the tag but drops its Actions
+event, an operator may replay the same `Release` workflow with that exact tag
+as the dispatch ref. The workflow's first job rejects branches and non-`v*`
+tags before tests or signing can start, and the signing Environment separately
+allows only `v*` tags. The release either completes or fails closed, and
 a failure never publishes a partial release. The workflow runs as four stages
 so that the updater seed is reachable from exactly one of them: `build`
 (tests, monotonic guard, cross-compile, MCPB bundle — no credential, no
@@ -596,6 +600,21 @@ accepted as a candidate, deduped across two differently-worded reports into
 one row with two occurrences, and linked to canonical `R2C-51`
 (`TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug`).
 
+### Dogfooding decision traces
+
+For a CodeSampleX or ProjectOps diagnostic session, set `CSX_DEBUG=1` on the
+MCP server process so `search_known_solution` and `run_observed_command` use
+the same `csx.debug.v1` trace without relying on a per-call option. Leave it
+unset for normal users. A trace is local diagnostic context and is not stored
+or uploaded as evidence.
+
+When a trace surfaces an unrelated candidate, evidence-scope promotion,
+environment normalization error, or incomplete failure lineage, record the
+request ID and stable reason/gap code. Do not submit `report_anomaly` for a
+trace gap or `NO_SAFE_MATCH` alone; submit only a concrete conflict between a
+measured local outcome and a CSX fact. The privacy and field contract is in
+[diagnostics.md](diagnostics.md).
+
 ## The merge gate on `main`
 
 `.github/workflows/ci.yml` runs on every pull request, and the `Test` job is
@@ -798,6 +817,26 @@ and classifying by verb would have left the busiest reads unbounded. Anything
 unlisted is interactive: an unclassified read is merely capped, while an
 unclassified long job would start dying at eight seconds.
 
+**Neither ceiling is a ceiling on a request.** R2C-159 found the gap in
+production: `GET /v1/stats` issues the stats read and then the shard-warming
+hint, and the hint is four whole-corpus reads. Every one of those statements
+stayed inside its own 8-second limit and every checkout inside its 3-second
+wait, while the request as a whole crossed ten seconds — which is the ceiling
+the production deploy's first proxied request carries, so three of four
+unattended rollouts failed there or survived at nine seconds. Measured against
+production with an idle database, `/healthz` (the same stats read) answers in
+36ms and `/v1/stats` in 337-458ms: about ninety percent of the endpoint was
+the optional hint.
+
+So an endpoint that adds optional work to a read owns that work's budget. The
+hint now waits 2 seconds and no longer, is shared by simultaneous callers,
+is reused for `CSX_SNAPSHOT_INTERVAL`, and is omitted rather than waited for
+— which is what `withHotShards` already did for every other failure. The
+read a caller stopped waiting for is not cancelled: it keeps its own 30-second
+budget and publishes, so the hint returns during pressure without any request
+paying for it twice. An empty answer is deliberately not remembered, because
+"no shard built yet" is the one state a first builder pass is about to change.
+
 ### Watching it
 
 The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
@@ -910,6 +949,27 @@ on a known fixture such as `github.com/jackc/pgx/v5@v5.10.0 / ParseConfig`:
 4. a new failing command renders its structured termination, normalized
    summary, and recorded environment variant.
 5. repeated missing/legacy clusters are marked diagnostic candidates.
+
+### Evidence upload queue health
+
+`csx daemon status`, `csx stats`, the local dashboard, and their JSON forms
+distinguish the last successful upload from the last attempt. A current
+`lastUploadError` means the daemon retained the rejected/failed rows and will
+retry on the next normal tick; it does not mean the daemon exited. The
+background loop also writes the bounded error to the local daemon log instead
+of discarding it. On recovery, `lastUpload` advances, `lastUploadAttempt`
+records the successful attempt, and `lastUploadError` clears.
+
+A deterministic queue whose depth remains high while `lastUpload` is old must
+be inspected for a repeated current error. In particular, clients predating
+the signed-int32 exit-code boundary may hold Windows DWORD `4294967295`; the
+current client normalizes such durable rows on upload and the current server
+normalizes the same legacy wire value before PostgreSQL ingest. Do not widen
+the PostgreSQL columns or delete the local queue to recover it. During a
+rolling client update, local SQLite keeps the last server-acknowledged combined
+count. If an older in-memory uploader drains either component afterward, the
+next current-client pass detects the larger durable raw+canonical total and
+requeues it; unchanged totals do not generate repeat uploads.
 
 Rollback the application before rolling back the schema. The new columns are
 additive and safe to leave in place; dropping them would destroy newly captured

@@ -37,6 +37,21 @@ type webStore struct {
 	coverageMu   sync.Mutex
 	coverageAt   time.Time
 	coverageRows []web.CoverageRow
+	// A cold or expired coverage snapshot refreshes in the background. The
+	// landing page serves the last honest snapshot (or no disclosure yet)
+	// instead of making a visitor wait for this whole-corpus aggregate.
+	coverageRefreshing bool
+	coverageRetryAt    time.Time
+
+	// The landing and sitemap rank packages from the materialized page
+	// inventory. A process restart used to put even that full read back on the
+	// first landing request, before the response wrote a single byte. Keep the
+	// last complete ranking and refresh one copy in the background instead.
+	hotMu         sync.Mutex
+	hotAt         time.Time
+	hotRows       []web.PackageHit
+	hotRefreshing bool
+	hotRetryAt    time.Time
 
 	// The per-package evidence recency the record inventory orders by,
 	// cached on the same terms and for the same reason.
@@ -44,11 +59,9 @@ type webStore struct {
 	updatedAtRead time.Time
 	updatedAt     map[string]time.Time
 
-	// The whole-network (purl, symbol) inventory, cached for the same reason
-	// again. This one matters most: assembling a package's cube asks for it
-	// once for the version list and once more per version, so a package page
-	// issued seven of these and the landing page's six cubes issued
-	// forty-three -- each one two unbounded queries.
+	// The materialized (purl, symbol) page inventory, cached for the same
+	// reason again. This one matters most: assembling a package's cube asks
+	// for it once for the version list and once more per version.
 	targetsMu   sync.Mutex
 	targetsAt   time.Time
 	targetsRows []serverstore.SnapshotTarget
@@ -88,20 +101,30 @@ func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.
 	return w.updatedAt
 }
 
-// cachedSnapshotTargets serves the whole-network snapshot-target inventory
-// from one read per TTL. Holding the lock across the miss also collapses a
-// stampede: on the production host the pool is eight connections, so
-// concurrent cold readers each issuing this read is what turns a slow page
-// into a stalled server.
+// cachedSnapshotTargets serves the materialized snapshot page inventory from
+// one read per TTL. SnapshotKeys is intentionally not ListSnapshotTargets:
+// the latter expands evidence and signed receipts to tell the builder what it
+// SHOULD create, while every web consumer here needs pages that already
+// exist. Besides being the truthful source, SnapshotKeys is one bounded scan
+// of compatibility_snapshots instead of two whole-corpus source reads.
+// Holding the lock across an interactive miss collapses concurrent readers;
+// background/default contexts bypass that lane below.
 //
 // Callers only ever range over the result, so they share one slice.
 func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
+	// Only a visitor waiting on a page shares the foreground cache lane.
+	// QueryClassOf intentionally treats an unclassified context as background,
+	// so daemon/hero work cannot acquire this mutex by omission and move its
+	// stall onto the next interactive request.
+	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
+		return w.s.SnapshotKeys(ctx)
+	}
 	w.targetsMu.Lock()
 	defer w.targetsMu.Unlock()
 	if !w.targetsAt.IsZero() && time.Since(w.targetsAt) < recordSnapshotCacheTTL {
 		return w.targetsRows, nil
 	}
-	rows, err := w.s.ListSnapshotTargets(ctx)
+	rows, err := w.s.SnapshotKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -701,6 +724,13 @@ func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL
 	if err != nil {
 		return nil, err
 	}
+	return rankedPackages(targets, filter), nil
+}
+
+// rankedPackages is the pure grouping/ranking half of the package inventory.
+// Keeping the read outside lets a background refresh use its own query context
+// without occupying the foreground target-cache singleflight mutex.
+func rankedPackages(targets []serverstore.SnapshotTarget, filter func(p domain.PURL) bool) []web.PackageHit {
 	type agg struct {
 		hit     web.PackageHit
 		symbols map[string]bool
@@ -742,7 +772,7 @@ func (w *webStore) rankedPackages(ctx context.Context, filter func(p domain.PURL
 		}
 		return out[i].Name < out[j].Name
 	})
-	return out, nil
+	return out
 }
 
 // RecordPackages returns one page of the record, ranked, with the total
@@ -944,8 +974,53 @@ func (w *webStore) SearchPackages(ctx context.Context, q string, limit int) ([]w
 	}, limit)
 }
 
-func (w *webStore) HotPackages(ctx context.Context, limit int) ([]web.PackageHit, error) {
-	return w.packageHits(ctx, nil, limit)
+const (
+	hotPackagesTTL            = time.Minute
+	hotPackagesRefreshTimeout = 30 * time.Second
+	hotPackagesRetryDelay     = 30 * time.Second
+)
+
+func (w *webStore) HotPackages(_ context.Context, limit int) ([]web.PackageHit, error) {
+	w.hotMu.Lock()
+	now := time.Now()
+	rows := w.hotRows
+	if !w.hotAt.After(now.Add(-hotPackagesTTL)) &&
+		!w.hotRefreshing && !now.Before(w.hotRetryAt) {
+		w.hotRefreshing = true
+		go w.refreshHotPackages()
+	}
+	w.hotMu.Unlock()
+
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+func (w *webStore) refreshHotPackages() {
+	ctx, cancel := context.WithTimeout(
+		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
+		hotPackagesRefreshTimeout,
+	)
+	defer cancel()
+	// Keep the complete ranking. The landing asks for twelve rows while the
+	// sitemap asks for one hundred; letting the first caller choose the cache
+	// size would make the same snapshot mean two different things.
+	targets, err := w.s.SnapshotKeys(ctx)
+	var rows []web.PackageHit
+	if err == nil {
+		rows = rankedPackages(targets, nil)
+	}
+
+	w.hotMu.Lock()
+	defer w.hotMu.Unlock()
+	w.hotRefreshing = false
+	if err != nil {
+		w.hotRetryAt = time.Now().Add(hotPackagesRetryDelay)
+		return
+	}
+	w.hotRows, w.hotAt = rows, time.Now()
+	w.hotRetryAt = time.Time{}
 }
 
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
@@ -1080,21 +1155,49 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 // coverageTTL keeps the disclosure off the render path. It changes on the
 // hourly compatibility pass, so a minute of staleness costs nothing and a
 // full scan per page view would undo the landing page's own budget.
-const coverageTTL = time.Minute
+const (
+	coverageTTL            = time.Minute
+	coverageRefreshTimeout = 15 * time.Second
+	coverageRetryDelay     = 30 * time.Second
+)
 
-func (w *webStore) Coverage(ctx context.Context) ([]web.CoverageRow, error) {
+func (w *webStore) Coverage(_ context.Context) ([]web.CoverageRow, error) {
+	w.coverageMu.Lock()
+	now := time.Now()
+	if w.coverageAt.After(now.Add(-coverageTTL)) {
+		rows := w.coverageRows
+		w.coverageMu.Unlock()
+		return rows, nil
+	}
+	rows := w.coverageRows
+	if !w.coverageRefreshing && !now.Before(w.coverageRetryAt) {
+		if _, ok := w.s.(serverstore.FarmStatsStore); ok {
+			w.coverageRefreshing = true
+			go w.refreshCoverage()
+		}
+	}
+	w.coverageMu.Unlock()
+	return rows, nil
+}
+
+func (w *webStore) refreshCoverage() {
+	ctx, cancel := context.WithTimeout(
+		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
+		coverageRefreshTimeout,
+	)
+	defer cancel()
+	store := w.s.(serverstore.FarmStatsStore) // checked before the goroutine starts
+	cells, err := store.FarmCoverage(ctx)
+
 	w.coverageMu.Lock()
 	defer w.coverageMu.Unlock()
-	if w.coverageAt.After(time.Now().Add(-coverageTTL)) {
-		return w.coverageRows, nil
-	}
-	store, ok := w.s.(serverstore.FarmStatsStore)
-	if !ok {
-		return nil, nil
-	}
-	cells, err := store.FarmCoverage(ctx)
+	w.coverageRefreshing = false
 	if err != nil {
-		return nil, err
+		// A fast database error must not turn every landing request into a new
+		// whole-corpus goroutine. Keep serving the last honest snapshot and let
+		// one later request retry after a fixed, bounded cooldown.
+		w.coverageRetryAt = time.Now().Add(coverageRetryDelay)
+		return
 	}
 	rows := make([]web.CoverageRow, 0, len(cells))
 	for _, c := range cells {
@@ -1105,5 +1208,5 @@ func (w *webStore) Coverage(ctx context.Context) ([]web.CoverageRow, error) {
 		})
 	}
 	w.coverageRows, w.coverageAt = rows, time.Now()
-	return rows, nil
+	w.coverageRetryAt = time.Time{}
 }

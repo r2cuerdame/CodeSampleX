@@ -180,6 +180,7 @@ func sanitize(raw string, stage domain.Stage, publicPkgs []string, scrubHostUser
 // environment variants are stored beside it by aggregation, so an otherwise
 // identical failure does not split merely because it ran on another machine.
 func SanitizeFailure(raw string, stage domain.Stage, term domain.FailureTermination, _ []string) domain.FailureEvidence {
+	term = term.Canonical()
 	// Public FailureEvidence must be canonical without trusting producer-only
 	// allowlists. Package identity already travels separately as structured
 	// PURLs/receipt data, so node_modules paths are normalized here.
@@ -220,7 +221,7 @@ func SanitizeClassifiedFailure(raw string, stage domain.Stage, term domain.Failu
 	f.StageEvidence = stageEvidence
 	f.EvidenceGap = evidenceGap
 	if f.Fingerprint != "" && f.ActualToolchain != "" {
-		f.Fingerprint = domain.ClassifiedFailureFingerprint(stage, f.ActualToolchain, term, f.ErrorCode, f.ErrorSummary)
+		f.Fingerprint = domain.ClassifiedFailureFingerprint(stage, f.ActualToolchain, f.Termination(), f.ErrorCode, f.ErrorSummary)
 	}
 	return f
 }

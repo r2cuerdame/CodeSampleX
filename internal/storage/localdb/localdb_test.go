@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,59 @@ func TestOpenMigrateIdempotent(t *testing.T) {
 	// Third migration on a live handle must also be harmless.
 	if err := db2.migrate(ctx); err != nil {
 		t.Fatalf("re-migrate: %v", err)
+	}
+}
+
+func TestLegacyObservationMigrationAddsAndPreservesReconciliationHighWater(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range ddl {
+		legacy := strings.Replace(stmt, "legacy_reconciled_count INTEGER NOT NULL DEFAULT 0,", "", 1)
+		if _, err := raw.ExecContext(ctx, legacy); err != nil {
+			raw.Close()
+			t.Fatalf("create legacy schema: %v", err)
+		}
+	}
+	legacyCode := int64(4294967295)
+	if _, err := raw.ExecContext(ctx, `
+		INSERT INTO observations(epoch,purl,symbol,env_hash,stage,result,count,error_fp,exit_code,uploaded)
+		VALUES('2026-08-27','pkg:npm/axios@1.12.0','','sha256:env','PROJECT_TEST','FAIL',1,'sha256:legacy',?,1)`,
+		legacyCode); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy database: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.LegacyWindowsObservations(ctx)
+	if err != nil || len(rows) != 1 || rows[0].LegacyReconciledCount != 0 {
+		t.Fatalf("migrated legacy rows = %+v, err=%v; want default high-water 0", rows, err)
+	}
+	key := rows[0].ObsKey
+	if err := db.MarkLegacyWindowsObservationReconciled(ctx, key, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkLegacyWindowsObservationReconciled(ctx, key, 3); err != nil {
+		t.Fatal(err)
+	}
+	// RecordObservation is the same explicit-column UPSERT an older binary
+	// uses. It must increment the row without resetting the new high-water.
+	if err := db.RecordObservation(ctx, key, 1); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = db.LegacyWindowsObservations(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Count != 2 || rows[0].LegacyReconciledCount != 4 {
+		t.Fatalf("legacy-compatible UPSERT rows = %+v, err=%v; want count 2/high-water 4", rows, err)
 	}
 }
 

@@ -577,14 +577,20 @@ func (p *connPool) applyStatementTimeout(ctx context.Context, c *pooledConn, cla
 		return nil
 	}
 	// Bounded on its own: a SET that cannot complete is a connection that
-	// must not be handed out, not one more thing to wait on.
-	setCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	// must not be handed out, not one more thing to wait on. The caller's
+	// earlier deadline still wins; a health probe must never spend five
+	// seconds setting up a connection after its three-second budget expired.
+	setCtx, cancel := statementTimeoutSetupContext(ctx)
 	defer cancel()
 	if _, err := c.conn.Exec(setCtx, "SET statement_timeout = "+strconv.FormatInt(want.Milliseconds(), 10)); err != nil {
 		return fmt.Errorf("serverstore: set statement_timeout: %w", err)
 	}
 	c.stmtTimeout = want
 	return nil
+}
+
+func statementTimeoutSetupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, 5*time.Second)
 }
 
 // discard closes a connection the pool must not keep and gives back its
@@ -617,7 +623,7 @@ func (p *connPool) release(c *pooledConn) {
 // observeQueryError counts what the ceiling actually caught, for the class
 // that was holding the connection.
 func (p *connPool) observeQueryError(ctx context.Context, err error) {
-	if err == nil || !IsQueryCanceled(err) {
+	if err == nil || !IsQueryTimeout(err) {
 		return
 	}
 	budget := BudgetOf(ctx)

@@ -41,6 +41,7 @@ var ddl = []string{
 	  coresident TEXT NOT NULL DEFAULT '',
 	  depends_on TEXT NOT NULL DEFAULT '',
 	  uploaded INTEGER NOT NULL DEFAULT 0,
+	  legacy_reconciled_count INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
 	`CREATE TABLE IF NOT EXISTS environments(hash TEXT PRIMARY KEY, json TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS cases(case_id TEXT PRIMARY KEY, kind TEXT, goal TEXT, json TEXT NOT NULL)`,
@@ -211,6 +212,7 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		{"actual_toolchain", `ALTER TABLE observations ADD COLUMN actual_toolchain TEXT NOT NULL DEFAULT ''`},
 		{"stage_evidence", `ALTER TABLE observations ADD COLUMN stage_evidence TEXT NOT NULL DEFAULT ''`},
 		{"failure_evidence_gap", `ALTER TABLE observations ADD COLUMN failure_evidence_gap TEXT NOT NULL DEFAULT ''`},
+		{"legacy_reconciled_count", `ALTER TABLE observations ADD COLUMN legacy_reconciled_count INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if !obsColumns[column.name] {
 			if _, err := tx.ExecContext(ctx, column.ddl); err != nil {

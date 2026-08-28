@@ -60,6 +60,90 @@ type FailureTermination struct {
 	TimeoutMillis int64           `json:"timeoutMillis,omitempty"`
 }
 
+const (
+	minSignedProcessExitCode = int64(-1 << 31)
+	maxSignedProcessExitCode = int64(1<<31 - 1)
+	maxLegacyWindowsExitCode = int64(1<<32 - 1)
+)
+
+// CanonicalExitCode maps the process status carried on the public wire onto
+// the signed 32-bit representation used by the evidence schema and PostgreSQL
+// INTEGER columns. Windows returns a DWORD: on 64-bit Go, a native status such
+// as -1 is consequently exposed as 4294967295. Clients shipped before this
+// boundary persisted that unsigned spelling, so the upper uint32 half remains
+// accepted and is interpreted as the same two's-complement signed value.
+// Values outside signed-int32 or uint32 cannot be an OS process status and are
+// rejected by the server rather than reaching storage.
+func CanonicalExitCode(code int) (int, bool) {
+	v := int64(code)
+	switch {
+	case v >= minSignedProcessExitCode && v <= maxSignedProcessExitCode:
+		return code, true
+	case v > maxSignedProcessExitCode && v <= maxLegacyWindowsExitCode:
+		return int(int32(uint32(v))), true
+	default:
+		return 0, false
+	}
+}
+
+// Canonical returns t with an accepted exit status in signed-int32 form. An
+// invalid value is left intact so the validation boundary can reject it with
+// a useful field-level error instead of silently inventing a status.
+func (t FailureTermination) Canonical() FailureTermination {
+	if t.ExitCode == nil {
+		return t
+	}
+	code, ok := CanonicalExitCode(*t.ExitCode)
+	if !ok || code == *t.ExitCode {
+		return t
+	}
+	t.ExitCode = &code
+	return t
+}
+
+// CanonicalizeObservationFailure repairs the signed representation and its
+// derived fingerprint together. It is used both for already-durable client
+// backlog rows and at server ingest, so a rolling upgrade works in either
+// order. Legacy evidence whose fingerprint contract predates structured
+// termination is preserved byte-for-byte.
+func CanonicalizeObservationFailure(b ObservationBatch) ObservationBatch {
+	if b.ExitCode == nil {
+		return b
+	}
+	originalTerm := FailureTermination{
+		Kind: b.TerminationKind, ExitCode: b.ExitCode,
+		Signal: b.Signal, TimeoutMillis: b.TimeoutMillis,
+	}
+	code, ok := CanonicalExitCode(*b.ExitCode)
+	if !ok || code == *b.ExitCode {
+		return b
+	}
+	// Never repair an unrelated or forged fingerprint into a valid one. The
+	// compatibility transform is permitted only when the submitted digest is
+	// exactly the digest the legacy unsigned spelling would have produced.
+	if b.ErrorFingerprint != "" && (b.EvidenceQuality == EvidenceComplete || b.EvidenceQuality == EvidencePartial) {
+		legacyFingerprint := FailureFingerprint(b.Stage, originalTerm, b.ErrorCode, b.ErrorSummary)
+		if b.ActualToolchain != "" {
+			legacyFingerprint = ClassifiedFailureFingerprint(b.Stage, b.ActualToolchain, originalTerm, b.ErrorCode, b.ErrorSummary)
+		}
+		if b.ErrorFingerprint != legacyFingerprint {
+			return b
+		}
+	}
+	b.ExitCode = &code
+	term := FailureTermination{
+		Kind: b.TerminationKind, ExitCode: b.ExitCode,
+		Signal: b.Signal, TimeoutMillis: b.TimeoutMillis,
+	}
+	if b.ErrorFingerprint != "" && (b.EvidenceQuality == EvidenceComplete || b.EvidenceQuality == EvidencePartial) {
+		b.ErrorFingerprint = FailureFingerprint(b.Stage, term, b.ErrorCode, b.ErrorSummary)
+		if b.ActualToolchain != "" {
+			b.ErrorFingerprint = ClassifiedFailureFingerprint(b.Stage, b.ActualToolchain, term, b.ErrorCode, b.ErrorSummary)
+		}
+	}
+	return b
+}
+
 // FailureEvidence is safe public failure material. ErrorSummary is already
 // normalized/redacted and capped; raw stdout/stderr never belongs here.
 type FailureEvidence struct {

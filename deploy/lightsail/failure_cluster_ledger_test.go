@@ -49,7 +49,7 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 		`foreach ($i in $sourceInvariantIndexes)`,
 		`$afterValues[1] -gt 0 -and $afterValues[3] -le 0`,
 		`$afterValues[6] -ne 0`,
-		`$afterValues[7] -eq 1`,
+		`$builderFresh -eq 1`,
 		`the new server did not complete a fresh full builder pass`,
 		`failure-cluster observation delta: $failureClusterObservationDelta`,
 		`failure-cluster ledger is internally inconsistent`,
@@ -107,6 +107,48 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 		if !strings.Contains(wrapper, required) {
 			t.Errorf("production artifact omits the builder/derived delta proof: missing %q", required)
 		}
+	}
+}
+
+// The fresh-builder gate used to run the complete evidence/materialization
+// invariant query on every two-second poll. On the production corpus those
+// 90 reads took nineteen minutes and competed with the very full builder pass
+// the gate was waiting for. Freshness is one cheap timestamp comparison; the
+// full invariant tuple belongs after that marker and is read exactly once.
+// The cheap wait keeps a thirty-minute ceiling: more than twice the observed
+// fourteen-minute first full pass, with room for control-plane jitter.
+func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	for _, required := range []string{
+		`$builderFreshPollAttempts = 900`,
+		`$builderFreshPollSeconds = 2`,
+		`Start-Sleep -Seconds $builderFreshPollSeconds`,
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("fresh-builder wait does not preserve the measured production budget: missing %q", required)
+		}
+	}
+	loopStart := strings.Index(deploy, `for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++)`)
+	loopEndMarker := `if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }`
+	loopEnd := strings.Index(deploy, loopEndMarker)
+	if loopStart < 0 || loopEnd <= loopStart {
+		t.Fatal("post-deploy fresh-builder polling loop is missing or malformed")
+	}
+	loop := deploy[loopStart:loopEnd]
+	if !strings.Contains(loop, `Invoke-RemoteScript $collectBuilderFreshScript`) {
+		t.Error("fresh-builder loop does not use the cheap timestamp-only probe")
+	}
+	if strings.Contains(loop, `Invoke-RemoteScript $collectInvariantScript`) {
+		t.Error("fresh-builder loop still repeats the whole-corpus invariant query")
+	}
+
+	fullRead := strings.Index(deploy[loopEnd+len(loopEndMarker):],
+		`$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript`)
+	if fullRead < 0 {
+		t.Error("deploy does not read the full invariant tuple after builder freshness")
+	}
+	if got := strings.Count(deploy, `Invoke-RemoteScript $collectInvariantScript`); got != 2 {
+		t.Errorf("full invariant query invocation count = %d, want pre-deploy + one post-deploy", got)
 	}
 }
 

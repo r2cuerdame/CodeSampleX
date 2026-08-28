@@ -33,8 +33,9 @@ const (
 
 	// cubeTTL is how long one package's assembled cube is reused.
 	cubeTTL = 5 * time.Minute
-	// cubeLoadTimeout bounds one assembly. It replaces the initiating
-	// request's deadline, which is not the right clock for shared work.
+	// cubeLoadTimeout bounds one assembly. Explicit caller cancellation is
+	// detached because the work is shared, but an incoming deadline remains
+	// an upper bound so a bounded background warm cannot overrun its budget.
 	cubeLoadTimeout = 30 * time.Second
 	// cubeCacheMax bounds the per-process cube cache.
 	cubeCacheMax = 64
@@ -943,12 +944,48 @@ type cubeCacheEntry struct {
 	facts    []cubeFact
 	windowed bool
 	at       time.Time
+	revision uint64
+}
+
+func cubeLoadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	deadline := time.Now().Add(cubeLoadTimeout)
+	if incoming, ok := ctx.Deadline(); ok && incoming.Before(deadline) {
+		deadline = incoming
+	}
+	return context.WithDeadline(detached, deadline)
+}
+
+// publishCubeLocked installs one complete assembly. Callers hold cubeMu.
+func (s *site) publishCubeLocked(key string, facts []cubeFact, windowed bool) {
+	now := time.Now()
+	if s.cubeCache == nil {
+		s.cubeCache = map[string]cubeCacheEntry{}
+	}
+	if len(s.cubeCache) >= cubeCacheMax {
+		// Expired entries go first; only if none were expired does one
+		// arbitrary fresh entry make room.
+		for k, e := range s.cubeCache {
+			if now.Sub(e.at) >= cubeTTL {
+				delete(s.cubeCache, k)
+			}
+		}
+		if len(s.cubeCache) >= cubeCacheMax {
+			for k := range s.cubeCache {
+				delete(s.cubeCache, k)
+				break
+			}
+		}
+	}
+	s.cubeRevision++
+	s.cubeCache[key] = cubeCacheEntry{
+		facts: facts, windowed: windowed, at: now, revision: s.cubeRevision,
+	}
 }
 
 // cubeFactsCached reports an already-assembled cube, and never assembles
-// one. It exists so a page can prefer what is warm over what is best: the
-// landing hero ranks candidates by grid richness, and doing that by loading
-// each candidate put the whole fan-out on the request path.
+// one. The landing uses it to decide whether it can render without blocking;
+// cold candidate work is coalesced in the background.
 func (s *site) cubeFactsCached(eco, name string) ([]cubeFact, bool) {
 	s.cubeMu.Lock()
 	defer s.cubeMu.Unlock()
@@ -1008,37 +1045,94 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 			// yields a partial assembly — loadCubeFacts swallows per-hop failures
 			// on purpose, so cancellation arrives as emptiness rather than an
 			// error — and that emptiness gets cached for everyone for cubeTTL.
-			loadCtx, done := context.WithTimeout(context.WithoutCancel(ctx), cubeLoadTimeout)
-			defer done()
-			return loadCubeFacts(loadCtx, s.d.Store, eco, name)
+			// Keep the shared work independent from an explicit caller cancel,
+			// while preserving an incoming deadline from a bounded warmer.
+			loadCtx, cancel := cubeLoadContext(ctx)
+			defer cancel()
+			facts, windowed, err := loadCubeFacts(loadCtx, s.d.Store, eco, name)
+			if err == nil {
+				err = loadCtx.Err()
+			}
+			if err == nil {
+				s.cubeMu.Lock()
+				s.publishCubeLocked(key, facts, windowed)
+				s.cubeMu.Unlock()
+			}
+			return facts, windowed, err
 		}()
 		if err != nil {
 			return nil, false
 		}
-
-		s.cubeMu.Lock()
-		if s.cubeCache == nil {
-			s.cubeCache = map[string]cubeCacheEntry{}
-		}
-		if len(s.cubeCache) >= cubeCacheMax {
-			// Expired entries go first; only if none were expired does one
-			// arbitrary fresh entry make room.
-			for k, e := range s.cubeCache {
-				if now.Sub(e.at) >= cubeTTL {
-					delete(s.cubeCache, k)
-				}
-			}
-			if len(s.cubeCache) >= cubeCacheMax {
-				for k := range s.cubeCache {
-					delete(s.cubeCache, k)
-					break
-				}
-			}
-		}
-		s.cubeCache[key] = cubeCacheEntry{facts: facts, windowed: windowed, at: now}
-		s.cubeMu.Unlock()
 		return facts, windowed
 	}
+}
+
+// heroCubeFacts fills the shared cube cache on the landing's background lane.
+// Background callers coalesce with each other, while foreground cubeFacts
+// deliberately ignores this lane and can assemble the same package at once.
+func (s *site) heroCubeFacts(ctx context.Context, eco, name string) ([]cubeFact, bool) {
+	key := eco + "|" + name
+	now := time.Now()
+	s.cubeMu.Lock()
+	if e, ok := s.cubeCache[key]; ok && now.Sub(e.at) < cubeTTL {
+		s.cubeMu.Unlock()
+		return e.facts, e.windowed
+	}
+	if wait, loading := s.heroCubeLoading[key]; loading {
+		s.cubeMu.Unlock()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return nil, false
+		}
+		s.cubeMu.Lock()
+		e, ok := s.cubeCache[key]
+		fresh := ok && time.Since(e.at) < cubeTTL
+		s.cubeMu.Unlock()
+		if !fresh {
+			return nil, false
+		}
+		return e.facts, e.windowed
+	}
+	if s.heroCubeLoading == nil {
+		s.heroCubeLoading = map[string]chan struct{}{}
+	}
+	done := make(chan struct{})
+	s.heroCubeLoading[key] = done
+	startedAtRevision := s.cubeRevision
+	s.cubeMu.Unlock()
+
+	facts, windowed, err := func() ([]cubeFact, bool, error) {
+		defer func() {
+			s.cubeMu.Lock()
+			delete(s.heroCubeLoading, key)
+			close(done)
+			s.cubeMu.Unlock()
+		}()
+		loadCtx, cancel := cubeLoadContext(ctx)
+		defer cancel()
+		facts, windowed, err := loadCubeFacts(loadCtx, s.d.Store, eco, name)
+		if err == nil {
+			err = loadCtx.Err()
+		}
+		if err != nil {
+			return nil, false, err
+		}
+
+		s.cubeMu.Lock()
+		if current, ok := s.cubeCache[key]; ok &&
+			current.revision > startedAtRevision && time.Since(current.at) < cubeTTL {
+			facts, windowed = current.facts, current.windowed
+		} else {
+			s.publishCubeLocked(key, facts, windowed)
+		}
+		s.cubeMu.Unlock()
+		return facts, windowed, nil
+	}()
+	if err != nil {
+		return nil, false
+	}
+	return facts, windowed
 }
 
 // cubeHasRealSymbol reports whether the slice knows any symbol beyond the

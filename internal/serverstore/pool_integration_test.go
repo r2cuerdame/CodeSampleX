@@ -110,6 +110,30 @@ func TestIntegrationSlowReadsCannotStarveTheHealthProbe(t *testing.T) {
 	}
 }
 
+func TestIntegrationStatementTimeoutSetupHonorsTheCallerDeadline(t *testing.T) {
+	pg := openTestPGWithPolicy(t, testPoolPolicy())
+	granted := time.Duration(-1)
+	c, err := pg.pool.checkout(context.Background(), time.Now(), &granted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.pool.discard(c)
+	// Model an idle connection last used by an unbounded class so the probe
+	// must issue SET statement_timeout before it can use the connection.
+	c.stmtTimeout = 0
+	caller, cancel := context.WithCancel(WithQueryClass(context.Background(), ClassProbe))
+	cancel()
+
+	started := time.Now()
+	err = pg.pool.applyStatementTimeout(caller, c, ClassProbe)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("statement-timeout setup returned %v, want caller cancellation", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("statement-timeout setup ignored its caller for %v", elapsed)
+	}
+}
+
 // The other half of the same guarantee: ingest is not a page read, and a
 // storm of page reads must not stop the server from accepting evidence.
 func TestIntegrationSlowReadsLeaveBackgroundWorkAConnection(t *testing.T) {

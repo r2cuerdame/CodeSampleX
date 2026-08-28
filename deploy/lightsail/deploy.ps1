@@ -249,6 +249,21 @@ if ($ExpectedPreviousRevision -ne "" -and $productionStateParts[0] -ne $Expected
 Write-Output "previous production SHA: $($productionStateParts[0])"
 Write-Output "previous production image: $($productionStateParts[1])"
 
+$collectBuilderFreshScript = @'
+set -eu
+cd /opt/codesamplex/deploy
+server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
+builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
+  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
+server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
+builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
+builder_fresh=0
+if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
+  builder_fresh=1
+fi
+printf '%s\n' "$builder_fresh"
+'@
+
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
@@ -261,9 +276,9 @@ builder_fresh=0
 if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
   builder_fresh=1
 fi
-# Read the materialization only after the completion marker. If the first
-# full pass finishes between these probes, this iteration still reports
-# builder_fresh=0 and the caller retries; it can never bless a mid-pass tuple.
+# Read the materialization only after sampling the completion marker. If a
+# full pass finishes between these probes, this snapshot still reports
+# builder_fresh=0; it can never bless a mid-pass tuple.
 values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
@@ -825,9 +840,23 @@ docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'
     mv "$tmp" "$marker"
   fi
 CSX_SAFE_LOG_EPOCH
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/stats?csx_safe_log_smoke=discard-this-query'
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/samples%2Fencoded-marker-must-not-log/path'
-curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null 'https://__CSX_DOMAIN__/v1/secret-marker-must-not-log/path'
+# These three are the FIRST requests this deploy makes through the proxy, and
+# they carry a ten-second ceiling. When one of them timed out, the only thing
+# the transcript said was `curl: (28)` -- identifying which of the three had
+# stalled took the edge access log of the box afterwards. A fail-closed
+# production rollout has to name the request it failed on.
+log_probe() {
+    probe_path="$1"
+    probe_code=0
+    curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null "https://__CSX_DOMAIN__$probe_path" || probe_code=$?
+    if [ "$probe_code" -ne 0 ]; then
+        echo "FAIL privacy-safe log probe $probe_path: curl exit $probe_code" >&2
+        exit 1
+    fi
+}
+log_probe '/v1/stats?csx_safe_log_smoke=discard-this-query'
+log_probe '/v1/samples%2Fencoded-marker-must-not-log/path'
+log_probe '/v1/secret-marker-must-not-log/path'
 i=0
 while [ "$i" -lt 10 ]; do
   if docker compose exec -T caddy sh -c "grep -q '\"csx_route\":\"stats\"' /var/log/caddy-safe/access-safe.log 2>/dev/null"; then
@@ -1013,16 +1042,29 @@ if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
-$invariantsAfter = ""
-$afterValues = @()
-for ($attempt = 1; $attempt -le 90; $attempt++) {
-    $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-    if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
-    $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-    if ($afterValues[7] -eq 1) { break }
-    if ($attempt -lt 90) { Start-Sleep -Seconds 2 }
+$builderFresh = 0
+# The production corpus's first full pass currently completes in about
+# fourteen minutes under public traffic. Thirty minutes is more than twice
+# that measured pass plus control-plane jitter; the old nominal three-minute
+# ceiling was only hidden by repeatedly running a ten-second whole-corpus
+# invariant query inside this loop.
+$builderFreshPollAttempts = 900
+$builderFreshPollSeconds = 2
+for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {
+    # The materialized invariant query is a whole-corpus scan. Poll only the
+    # cheap completion marker while the new builder owns that same database,
+    # then take one coherent full snapshot after the pass has finished.
+    $builderFreshText = (Invoke-RemoteScript $collectBuilderFreshScript | Select-Object -First 1).Trim()
+    if ($builderFreshText -notmatch '^[01]$') { throw "malformed post-deploy builder freshness" }
+    $builderFresh = [int]$builderFreshText
+    if ($builderFresh -eq 1) { break }
+    if ($attempt -lt $builderFreshPollAttempts) { Start-Sleep -Seconds $builderFreshPollSeconds }
 }
-if ($afterValues[7] -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
+if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
+$afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
+if ($afterValues[7] -ne 1) { throw "the server restarted before the post-deploy invariant snapshot" }
 $sourceInvariantIndexes = @(0, 1, 2, 4, 5)
 foreach ($i in $sourceInvariantIndexes) {
     if ($afterValues[$i] -lt $beforeValues[$i]) {

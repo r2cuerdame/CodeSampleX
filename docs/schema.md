@@ -14,6 +14,18 @@ Every new executable failure should carry one structured termination:
 | `timeout` | `timeoutMillis` when known |
 | `process-start-failed` | no conventional exit code |
 
+`exitCode` has one canonical storage representation: signed 32-bit. Windows
+process status is returned by the OS as an unsigned DWORD, so older 64-bit
+clients can have durable values from `2147483648` through `4294967295` (for
+example, native `-1` as `4294967295`). During a rolling upgrade the client and
+server both translate that upper half to the identical two's-complement signed
+value before deriving the failure fingerprint. Values below `-2147483648` or
+above `4294967295` are invalid. PostgreSQL columns remain `INTEGER`; no
+production schema migration or historical data rewrite is required. The local
+SQLite queue adds only a `legacy_reconciled_count` high-water column so a
+still-running older uploader cannot steal the pending flag during a rolling
+client update; observation values are never rewritten or deleted.
+
 `errorSummary` is a redacted, normalized, 512-byte maximum summary. Source,
 paths, project names, private packages, secrets, and raw logs are prohibited.
 The legacy v2 fingerprint hashes stage, structured termination, error code,
@@ -65,6 +77,21 @@ must sum to its total FAIL count.
 
 Legacy rows are never backfilled with guessed causes. Re-verification produces
 a separate modern observation or receipt.
+
+## Diagnostic trace
+
+`csx.debug.v1` is a local response representation, not a persisted evidence
+schema and not an upload document. It may project public coordinates and
+sanitized failure fields already present in the contracts above, but it never
+adds query prose, source, raw logs, paths, usernames, credentials, or agent
+context. The normal `SearchResponse` omits `diagnostic`; it is populated only
+for an explicitly enabled debug request.
+
+The dependency state is a closed three-way value: `unknown`, `resolved`, and
+`proven-no-dependencies`. Search currently has no dependency graph in its local
+index, so it emits `unknown` plus a D gap; absence of an edge must not be
+promoted to proven absence. Candidate reason codes and canonical gap codes are
+machine-readable. Human diagnostic text is rendered from the same object.
 
 ## `failure_clusters` is derived, and 0024 preserved what it had
 

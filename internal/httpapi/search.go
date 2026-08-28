@@ -78,7 +78,7 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 		// place: the library an agent asks about is usually one it is
 		// about to add, so it is precisely NOT in the lockfile.
 		if err == nil {
-			samples = appendUnseenSamples(r, a, samples, req.ProjectPackages)
+			samples, err = appendUnseenSamples(r, a, samples, req.ProjectPackages)
 		}
 	}
 	if err != nil {
@@ -89,7 +89,11 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	now := a.now()
 	var results []domain.SearchResult
 	for _, row := range samples {
-		res, ok := a.scoreSample(r, row, req, reqEnv, reqPURLs, now)
+		res, ok, scoreErr := a.scoreSample(r, row, req, reqEnv, reqPURLs, now)
+		if scoreErr != nil {
+			writeStoreErr(w, scoreErr, http.StatusInternalServerError, "sample evidence read failed")
+			return
+		}
 		if ok {
 			results = append(results, res)
 		}
@@ -173,11 +177,11 @@ func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchR
 // means the exact filters excluded it.
 func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint,
-	reqPURLs []domain.PURL, now time.Time) (domain.SearchResult, bool) {
+	reqPURLs []domain.PURL, now time.Time) (domain.SearchResult, bool, error) {
 
 	var manifest domain.SampleManifest
 	if json.Unmarshal([]byte(row.ManifestJSON), &manifest) != nil {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, nil
 	}
 	var samplePURLs []domain.PURL
 	for _, ps := range manifest.Packages {
@@ -211,7 +215,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 			}
 		}
 		if !found {
-			return domain.SearchResult{}, false
+			return domain.SearchResult{}, false, nil
 		}
 	} else if len(samplePURLs) > 0 {
 		matched = samplePURLs[0]
@@ -224,7 +228,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	matchedSymbol := ""
 	if len(req.Symbols) > 0 {
 		if len(matchedDeclared) == 0 {
-			return domain.SearchResult{}, false
+			return domain.SearchResult{}, false, nil
 		}
 		matchedSymbol = matchedDeclared[0]
 	}
@@ -240,10 +244,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	overlap := tokenOverlap(req.Query+" "+req.ErrorCode, searchText(manifest))
 	score += 0.35 * overlap
 	if score == 0 {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, nil
 	}
 	if len(reqPURLs) == 0 && len(req.Symbols) == 0 && len(matchedContext) == 0 && overlap < 0.1 {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, nil
 	}
 
 	// A package in the caller's dependency tree says the sample is about
@@ -262,7 +266,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// caller's failure an exact match; conversely, a recorded cluster match
 	// is direct relevance even when the goal uses different words.
 	failureCandidates := eligibleFailurePackages(reqPURLs, samplePURLs)
-	knownFailures, fingerprintPackages := a.matchingClusters(r, failureCandidates, reqEnv, req, manifestDeclaredSymbols(manifest))
+	knownFailures, fingerprintPackages, err := a.matchingClusters(r, failureCandidates, reqEnv, req, manifestDeclaredSymbols(manifest))
+	if err != nil {
+		return domain.SearchResult{}, false, err
+	}
 	candidateFailureMatched := len(fingerprintPackages) > 0
 	codeMatched := req.ErrorCode != "" &&
 		strings.Contains(strings.ToLower(text), strings.ToLower(req.ErrorCode))
@@ -280,7 +287,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	packageNames := samplePackageNames(samplePURLs)
 	topicSupported := searchrelevance.AboutSameThing(req.Query, manifest.Case.Goal, packageNames, declaredSymbols)
 	if req.Query != "" && !fingerprintMatched && !codeMatched && matchedSymbol == "" && !topicSupported {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, nil
 	}
 	// With no requested package the server is scanning its newest global
 	// window. An explicitly declared ecosystem gates that broad fallback;
@@ -288,7 +295,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	environmentContext := req.EnvironmentIsContext()
 	if len(reqPURLs) == 0 && !environmentContext && reqEnv.Ecosystem != "" &&
 		matchedSymbol == "" && !purlsSupportEcosystem(samplePURLs, reqEnv.Ecosystem) {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, nil
 	}
 
 	// Verification receipts are execution variants: resolved package set,
@@ -299,7 +306,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// grade, evidence and exact-failure decision all use the same run.
 	receiptRows, err := a.d.Store.ReceiptsForSample(r.Context(), row.SampleID)
 	if err != nil {
-		return domain.SearchResult{}, false
+		return domain.SearchResult{}, false, err
 	}
 	var receipts []compatibility.ReceiptInfo
 	for _, rr := range receiptRows {
@@ -353,7 +360,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 
 	// Snapshot lookup: evidence summary + elevated-failure demotion in the
 	// requester's execution context.
-	summary, elevatedInContext := a.snapshotEvidence(r, matched, matchedSymbol, reqEnv)
+	summary, elevatedInContext, err := a.snapshotEvidence(r, matched, matchedSymbol, reqEnv)
+	if err != nil {
+		return domain.SearchResult{}, false, err
+	}
 	summary.ContractPasses = int64(contractPasses)
 	summary.IndependentCrossPeers = int64(passPeers)
 	if elevatedInContext {
@@ -384,7 +394,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	if result.Confidence == "" {
 		result.Confidence = "LOW"
 	}
-	return result, true
+	return result, true, nil
 }
 
 // receiptStrength returns contract-PASS count, distinct passing peers, and
@@ -664,22 +674,28 @@ func verifiedStatus(status string) bool {
 // summarizes it, reporting whether the requester's execution context shows
 // ELEVATED_FAILURE.
 func (a *api) snapshotEvidence(r *http.Request, p domain.PURL, symbol string,
-	reqEnv domain.EnvironmentFingerprint) (domain.EvidenceSummary, bool) {
+	reqEnv domain.EnvironmentFingerprint) (domain.EvidenceSummary, bool, error) {
 
 	summary := domain.EvidenceSummary{Confidence: "LOW"}
 	if p.Name == "" {
-		return summary, false
+		return summary, false, nil
 	}
 	js, ok, err := a.d.Store.GetSnapshot(r.Context(), p.String(), symbol)
-	if (err != nil || !ok) && symbol != "" {
+	if err != nil {
+		return summary, false, err
+	}
+	if !ok && symbol != "" {
 		js, ok, err = a.d.Store.GetSnapshot(r.Context(), p.String(), "")
 	}
-	if err != nil || !ok {
-		return summary, false
+	if err != nil {
+		return summary, false, err
+	}
+	if !ok {
+		return summary, false, nil
 	}
 	var snap compatibility.Snapshot
 	if json.Unmarshal([]byte(js), &snap) != nil {
-		return summary, false
+		return summary, false, nil
 	}
 
 	reqLabel := reqEnv.Bucketed().ContextLabel()
@@ -723,7 +739,7 @@ func (a *api) snapshotEvidence(r *http.Request, p domain.PURL, symbol string,
 		}
 	}
 	summary.LastSeen = lastSeen
-	return summary, elevated
+	return summary, elevated, nil
 }
 
 func confidenceRank(c string) int {
@@ -744,7 +760,7 @@ func confidenceRank(c string) int {
 // failure itself. The worst version gap used for grading is intentionally not
 // consulted here.
 func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
-	reqEnv domain.EnvironmentFingerprint, req domain.SearchRequest, declaredSymbols []string) ([]domain.KnownFailure, []domain.PURL) {
+	reqEnv domain.EnvironmentFingerprint, req domain.SearchRequest, declaredSymbols []string) ([]domain.KnownFailure, []domain.PURL, error) {
 	reqDims := envDims(reqEnv)
 	var out []domain.KnownFailure
 	var fingerprintPackages []domain.PURL
@@ -752,7 +768,7 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 	for _, p := range uniquePackageIdentities(packages) {
 		clusters, err := a.d.Store.ListFailureClustersIncludingPreserved(r.Context(), p.Name)
 		if err != nil {
-			continue
+			return nil, nil, err
 		}
 		for _, c := range clusters {
 			// The store looks clusters up by BARE PACKAGE NAME, so ecosystem
@@ -802,7 +818,7 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 			out = append(out, kf)
 		}
 	}
-	return out, fingerprintPackages
+	return out, fingerprintPackages, nil
 }
 
 func declaredFailureSymbol(clusterSymbol string, declared []string) bool {
@@ -1361,9 +1377,9 @@ func resolveContext(e domain.EnvironmentFingerprint) string {
 // appendUnseenSamples adds samples for the caller's dependency tree that
 // the recency window did not already include, capped so a large lockfile
 // cannot turn one search into an unbounded scan.
-func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, tree []string) []serverstore.SampleRow {
+func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, tree []string) ([]serverstore.SampleRow, error) {
 	if len(tree) == 0 {
-		return have
+		return have, nil
 	}
 	patterns := make([]string, 0, len(tree))
 	for _, ps := range tree {
@@ -1375,11 +1391,11 @@ func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, 
 		}
 	}
 	if len(patterns) == 0 {
-		return have
+		return have, nil
 	}
 	extra, err := a.d.Store.SamplesForPackages(r.Context(), patterns, maxSearchCandidates)
 	if err != nil {
-		return have // widening is best-effort; never fail a search over it
+		return nil, err
 	}
 	seen := make(map[string]bool, len(have))
 	for _, s := range have {
@@ -1390,5 +1406,5 @@ func appendUnseenSamples(r *http.Request, a *api, have []serverstore.SampleRow, 
 			have = append(have, s)
 		}
 	}
-	return have
+	return have, nil
 }

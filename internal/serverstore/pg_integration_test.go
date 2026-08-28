@@ -14,8 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -263,6 +265,136 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	next, ok, err := pg.ClaimAuthoringWork(ctx, "pg-expansion-writer-2", remaining, now, now.Add(24*time.Hour))
 	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "request" {
 		t.Fatalf("second claim = %+v ok=%v err=%v", next, ok, err)
+	}
+}
+
+func TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
+	pg := openTestPG(t)
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockResult := make(chan error, 1)
+	go func() {
+		lockResult <- pg.withConn(context.Background(), func(c *pgx.Conn) error {
+			tx, err := c.Begin(context.Background())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			if _, err := tx.Exec(context.Background(), `LOCK TABLE packages IN ACCESS EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("could not establish the blocking authoring fixture")
+	}
+
+	started := time.Now()
+	_, err := pg.listAuthoringExpansionCandidates(context.Background(), 10, 75*time.Millisecond)
+	elapsed := time.Since(started)
+	close(release)
+	if lockErr := <-lockResult; lockErr != nil {
+		t.Fatalf("release authoring fixture: %v", lockErr)
+	}
+	if !IsQueryTimeout(err) {
+		t.Fatalf("blocked authoring query error = %v, want PostgreSQL statement timeout", err)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("75ms statement timeout returned after %v", elapsed)
+	}
+
+	// PostgreSQL canceled the statement inside a read-only transaction. The
+	// pool must be able to serve the next candidate read without reconnecting
+	// or carrying the failed transaction forward.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := pg.listAuthoringExpansionCandidates(ctx, 1, time.Second); err != nil {
+		t.Fatalf("candidate query after timeout: %v", err)
+	}
+}
+
+// Production's candidate scan crossed the JIT cost threshold. The HTTP poll
+// returned its bounded 503, but PostgreSQL stayed in LLVM compilation for
+// roughly another minute and later polls accumulated behind it. A timeout is
+// not a useful ceiling if the executor cannot observe it, so prove the actual
+// candidate transaction disables JIT locally and gives the connection back
+// with its session setting intact.
+func TestIntegrationAuthoringExpansionDisablesJITAndRestoresTheConnection(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	pol.MaxConns = 1
+	pol.ProbeReserve = 0
+	pol.InteractiveConns = 1
+	pol.BackgroundConns = 1
+	pg := openTestPGWithPolicy(t, pol)
+	ctx := context.Background()
+	const purl = "pkg:npm/jit-boundary@1.0.0"
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+		Runtime: "node", RuntimeVersion: "22.18", ModuleSystem: "esm",
+	}
+	batch := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-27", AnonID: "jitboundarypeer",
+		ProjectBucket: "jitboundaryproject", Package: purl, Symbol: "compile",
+		SymbolConfidence: domain.SymbolProbable, Environment: env,
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 1,
+	}
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest = %d rejected=%v err=%v", accepted, rejected, err)
+	}
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: purl, Ecosystem: "npm", Name: "jit-boundary", Version: "1.0.0",
+		Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The view is an executable assertion inside the candidate statement:
+	// without transaction-local jit=off it hides the only package and this
+	// test gets no candidate. Rename is safe because each integration test
+	// owns and drops its own schema.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		if _, err := c.Exec(ctx, `SET jit=on`); err != nil {
+			return err
+		}
+		if _, err := c.Exec(ctx, `ALTER TABLE packages RENAME TO packages_jit_source`); err != nil {
+			return err
+		}
+		_, err := c.Exec(ctx, `CREATE VIEW packages AS
+			SELECT * FROM packages_jit_source WHERE current_setting('jit')='off'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.Ecosystem == "npm" && candidate.Name == "jit-boundary" && candidate.Version == "1.0.0" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("candidate query did not execute with transaction-local jit=off: %+v", candidates)
+	}
+
+	var jit string
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SHOW jit`).Scan(&jit)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if jit != "on" {
+		t.Fatalf("pooled connection jit = %q after rollback, want on", jit)
 	}
 }
 
@@ -632,6 +764,19 @@ func TestIntegrationIngestDeltaMerge(t *testing.T) {
 		t.Fatalf("grown count = %d, want 8", e.ObservationCount)
 	}
 
+	// A mixed-version component can be smaller than the combined full total.
+	// It must neither add now nor lower the durable high-water so restoring the
+	// same total later cannot add the already-counted delta a second time.
+	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonaaaa", "projaaaa", 3)}); err != nil {
+		t.Fatalf("shrunk component ingest: %v", err)
+	}
+	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonaaaa", "projaaaa", 8)}); err != nil {
+		t.Fatalf("restored full total ingest: %v", err)
+	}
+	if e = evidence(); e.ObservationCount != 8 {
+		t.Fatalf("shrunk/restored report re-inflated count: %+v", e)
+	}
+
 	// A second peer adds its own count and a new dedup bucket.
 	if _, _, err = pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anonbbbb", "projbbbb", 2)}); err != nil {
 		t.Fatalf("second peer ingest: %v", err)
@@ -673,6 +818,45 @@ func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	// Migrate is idempotent.
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("second migrate: %v", err)
+	}
+}
+
+func TestIntegrationConcurrentIngestKeepsDedupHighWaterMonotone(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := t.Context()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, count := range []int{8, 3} {
+		count := count
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anon-race", "project-race", count)})
+			if err == nil && (accepted != 1 || len(rejected) != 0) {
+				err = fmt.Errorf("count %d: accepted %d rejected %+v", count, accepted, rejected)
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Whichever transaction won first, the aggregate and dedup high-water are
+	// both 8. Re-sending 8 proves a late smaller component did not lower the
+	// ledger and make the same observations count twice.
+	if _, _, err := pg.IngestBatches(ctx, []domain.ObservationBatch{obsBatch("anon-race", "project-race", 8)}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pg.EvidenceForTarget(ctx, "pkg:npm/axios@1.12.0", "axios.post")
+	if err != nil || len(rows) != 1 || rows[0].ObservationCount != 8 {
+		t.Fatalf("concurrent monotone evidence = %+v, err=%v; want count 8", rows, err)
 	}
 }
 
@@ -1642,7 +1826,7 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}
 }
 
-// TestIntegrationListWantedExpandsTheCorpusOncePerRequest pins the
+// TestIntegrationListWantedUsesTheNormalizedPackageProjection pins the
 // complexity class of the board's anti-join, which is what took
 // /wanted down rather than any error in its answer.
 //
@@ -1656,10 +1840,10 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 //
 // A wall-clock budget would only restate how fast the machine running the
 // test is. The invariant is structural, so this asserts on the plan the
-// shipped statement actually produced: the corpus is expanded a number of
-// times bounded by the corpus, never by the number of requests standing
-// against it. With the correlated form this count is wantedRows × samples.
-func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
+// shipped statement actually produced: request-time Wanted reads never parse
+// manifest package arrays. SaveSample and migration 0028 own that one-time
+// projection instead.
+func TestIntegrationListWantedUsesTheNormalizedPackageProjection(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
 
@@ -1717,17 +1901,89 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 			len(page), total)
 	}
 
-	// Two per sample: one manifest array expanded, one nested scan of the
-	// prefix positions inside it. Four leaves room for a differently shaped
-	// but still corpus-bounded plan; wantedRows × samples is 12,000.
-	const budget = 4 * samples
-	loops := listWantedExpansionLoops(t, pg)
-	if loops > budget {
-		t.Fatalf("the manifest corpus was expanded %.0f times for %d requests over %d samples, "+
-			"want at most %d: the corpus is being rescanned once per request again",
-			loops, wantedRows, samples, budget)
+	var projected int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT count(*) FROM sample_packages`).Scan(&projected)
+	}); err != nil {
+		t.Fatalf("count sample package projection: %v", err)
 	}
-	t.Logf("manifest expansions: %.0f for %d requests over %d samples", loops, wantedRows, samples)
+	if want := 2 * samples; projected != want {
+		t.Fatalf("sample package projection rows = %d, want %d", projected, want)
+	}
+
+	loops := listWantedExpansionLoops(t, pg)
+	if loops != 0 {
+		t.Fatalf("Wanted reparsed manifest package arrays %.0f times for %d requests over %d samples, want 0",
+			loops, wantedRows, samples)
+	}
+	t.Logf("request-time manifest expansions: %.0f for %d requests over %d projected samples",
+		loops, wantedRows, samples)
+
+	// Package pages ask only for their own wanted rows. A crawler can visit
+	// thousands of real package pages that have no open request; those pages
+	// must not expand the entire sample corpus merely to prove the filtered
+	// wanted set is empty.
+	absentLoops := listWantedExpansionLoopsFor(t, pg, "npm", "package-with-no-wanted-row")
+	if absentLoops != 0 {
+		t.Fatalf("wanted-free package page expanded manifests %.0f times, want 0", absentLoops)
+	}
+}
+
+func TestIntegrationMigrateRepairsSamplesWrittenDuringOldBinaryRollback(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const sampleID = "sha256:rollback-gap"
+	const manifest = `{"packages":["pkg:npm/react@19.1.1","pkg:npm/%40scope/pkg@2.0.0"],"symbols":[]}`
+
+	// A pre-0028 binary writes only samples. Keep this direct SQL in the test:
+	// calling current SaveSample would populate the projection and fail to
+	// reproduce the rollback gap.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `INSERT INTO samples(sample_id,manifest,size_bytes) VALUES($1,$2,0)`,
+			sampleID, manifest)
+		return err
+	}); err != nil {
+		t.Fatalf("simulate old binary sample write: %v", err)
+	}
+
+	var before int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT count(*) FROM sample_packages WHERE sample_id=$1`, sampleID).Scan(&before)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if before != 0 {
+		t.Fatalf("rollback gap was not reproduced: projection rows before re-upgrade = %d", before)
+	}
+
+	if err := pg.Migrate(ctx); err != nil {
+		t.Fatalf("re-upgrade migrate: %v", err)
+	}
+	var got []string
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `SELECT purl || '|' || coord FROM sample_packages WHERE sample_id=$1 ORDER BY purl`, sampleID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				return err
+			}
+			got = append(got, value)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"pkg:npm/%40scope/pkg@2.0.0|pkg:npm/%40scope/pkg@",
+		"pkg:npm/react@19.1.1|pkg:npm/react@",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projection after re-upgrade = %v, want %v", got, want)
+	}
 }
 
 // listWantedExpansionLoops runs the shipped Wanted statement under EXPLAIN
@@ -1736,13 +1992,26 @@ func TestIntegrationListWantedExpandsTheCorpusOncePerRequest(t *testing.T) {
 // statement the server sends.
 func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 	t.Helper()
+	return listWantedExpansionLoopsFor(t, pg, "", "")
+}
+
+func listWantedExpansionLoopsFor(t *testing.T, pg *PG, ecosystem, name string) float64 {
+	t.Helper()
+	return jsonbExpansionLoopsForAlias(t, pg, "", listWantedSQL,
+		2000, 0, ecosystem, name, []string{})
+}
+
+// jsonbExpansionLoopsForAlias runs the exact shipped statement and counts
+// manifest JSON array expansions in its actual plan. alias may be empty to
+// count every jsonb_array_elements_text node.
+func jsonbExpansionLoopsForAlias(t *testing.T, pg *PG, alias, query string, args ...any) float64 {
+	t.Helper()
 	ctx := context.Background()
 	var raw []byte
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
-		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+listWantedSQL,
-			2000, 0, "", "", []string{}).Scan(&raw)
+		return c.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+query, args...).Scan(&raw)
 	}); err != nil {
-		t.Fatalf("explain wanted statement: %v", err)
+		t.Fatalf("explain statement: %v", err)
 	}
 	var plans []struct {
 		Plan json.RawMessage `json:"Plan"`
@@ -1761,7 +2030,11 @@ func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 		if v, ok := node["Function Name"]; ok {
 			_ = json.Unmarshal(v, &fn)
 		}
-		if fn == "jsonb_array_elements_text" {
+		var nodeAlias string
+		if v, ok := node["Alias"]; ok {
+			_ = json.Unmarshal(v, &nodeAlias)
+		}
+		if fn == "jsonb_array_elements_text" && (alias == "" || nodeAlias == alias) {
 			var loops float64
 			if v, ok := node["Actual Loops"]; ok {
 				_ = json.Unmarshal(v, &loops)
@@ -1779,9 +2052,6 @@ func listWantedExpansionLoops(t *testing.T, pg *PG) float64 {
 	}
 	for _, p := range plans {
 		walk(p.Plan)
-	}
-	if total == 0 {
-		t.Fatal("no manifest expansion appeared in the plan; the guard is measuring nothing")
 	}
 	return total
 }
@@ -1812,5 +2082,49 @@ func TestIntegrationEvidenceAggregateRetainsEveryOuterCommand(t *testing.T) {
 	}
 	if len(rows) != 1 || strings.Join(rows[0].OuterCommands, ",") != "go test,npm test" {
 		t.Fatalf("PostgreSQL aggregate outer commands = %+v", rows)
+	}
+}
+
+// A pre-fix Windows client can have this exact durable row: os/exec returned
+// the DWORD representation of -1 (4294967295), the client fingerprinted it,
+// and PostgreSQL INTEGER then rejected it. Because ingest is atomic, one such
+// row rolled back every otherwise-valid batch in the request.
+func TestIntegrationIngestCanonicalizesLegacyWindowsUnsignedExitCode(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	pg := openTestPG(t)
+	legacyWire := uint64(1<<32 - 1)
+	legacyCode := int(legacyWire)
+	legacyTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	legacy := sanitizer.SanitizeClassifiedFailure("process exited without a conventional status",
+		domain.StageProjectTest, legacyTerm, nil, "go test", domain.StageProjectTest,
+		"go/test", domain.FailureStageTestRunnerDiagnostic, "")
+	poison := reviewBatch(legacy)
+	// The current sanitizer is itself fixed and emits -1. Restore the exact
+	// pre-fix signedness and matching pre-fix digest at the wire boundary; this
+	// is the value that used to overflow PostgreSQL INTEGER.
+	poison.ExitCode = &legacyCode
+	poison.ErrorFingerprint = domain.ClassifiedFailureFingerprint(poison.Stage, poison.ActualToolchain,
+		legacyTerm, poison.ErrorCode, poison.ErrorSummary)
+	good := obsBatch("anon-after-poison", "project-after-poison", 1)
+
+	accepted, rejected, err := pg.IngestBatches(t.Context(), []domain.ObservationBatch{poison, good})
+	if err != nil || accepted != 2 || len(rejected) != 0 {
+		t.Fatalf("atomic ingest with legacy Windows status = accepted %d, rejected %+v, err %v", accepted, rejected, err)
+	}
+	rows, err := pg.EvidenceForTarget(t.Context(), poison.Package, "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("stored poison row = %+v, err=%v", rows, err)
+	}
+	wantCode := -1
+	if rows[0].ExitCode == nil || *rows[0].ExitCode != wantCode {
+		t.Fatalf("stored exitCode = %v, want %d", rows[0].ExitCode, wantCode)
+	}
+	wantFingerprint := domain.ClassifiedFailureFingerprint(poison.Stage, poison.ActualToolchain,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &wantCode},
+		poison.ErrorCode, poison.ErrorSummary)
+	if rows[0].ErrorFingerprint != wantFingerprint {
+		t.Fatalf("stored fingerprint = %q, want canonical %q", rows[0].ErrorFingerprint, wantFingerprint)
 	}
 }

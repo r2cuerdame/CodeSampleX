@@ -1,6 +1,7 @@
 package serverstore
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -126,6 +127,38 @@ func TestValidateBatchRejectsFingerprintThatDoesNotMatchEvidence(t *testing.T) {
 	b.ErrorFingerprint = "sha256:" + strings.Repeat("0", 64)
 	if err := ValidateBatch(b); err == nil || !strings.Contains(err.Error(), "does not match structured failure evidence") {
 		t.Fatalf("mismatched modern fingerprint accepted: %v", err)
+	}
+}
+
+func TestValidateBatchRejectsExitCodeOutsideSignedOrLegacyWindowsRange(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("out-of-range wire fixture does not fit in int on this architecture")
+	}
+	tooLargeWire := uint64(1 << 32)
+	tooLarge := int(tooLargeWire)
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &tooLarge}
+	f := sanitizer.SanitizeFailure("process exited", domain.StageProjectTest, term, nil)
+	if err := ValidateBatch(reviewBatch(f)); err == nil || !strings.Contains(err.Error(), "exitCode") {
+		t.Fatalf("exit code above uint32 range accepted: %v", err)
+	}
+}
+
+func TestIngestDoesNotRepairMismatchedLegacyWindowsFingerprint(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	legacyCode := int(uint64(1<<32 - 1))
+	legacyTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	f := sanitizer.SanitizeFailure("process exited", domain.StageProjectTest, legacyTerm, nil)
+	b := reviewBatch(f)
+	// SanitizeFailure is a current producer and therefore emits -1. Put the
+	// pre-fix wire spelling back explicitly so this exercises rolling server
+	// compatibility rather than only the canonical path.
+	b.ExitCode = &legacyCode
+	b.ErrorFingerprint = "sha256:" + strings.Repeat("0", 64)
+	accepted, rejected, err := NewFake().IngestBatches(t.Context(), []domain.ObservationBatch{b})
+	if err != nil || accepted != 0 || len(rejected) != 1 || !strings.Contains(strings.ToLower(rejected[0].Reason), "fingerprint") {
+		t.Fatalf("mismatched legacy fingerprint = accepted %d, rejected %+v, err %v", accepted, rejected, err)
 	}
 }
 

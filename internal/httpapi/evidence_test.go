@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,6 +37,43 @@ func TestIngestAcceptsValidBatch(t *testing.T) {
 	rows, err := store.EvidenceForTarget(context.Background(), "pkg:npm/axios@1.12.0", "axios.post")
 	if err != nil || len(rows) != 1 || rows[0].ObservationCount != 10 {
 		t.Fatalf("evidence rows = %+v err=%v", rows, err)
+	}
+}
+
+func TestIngestAcceptsAndCanonicalizesLegacyWindowsUnsignedExitCode(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("legacy uint32 exit status does not fit in int on this architecture")
+	}
+	srv, store, _ := newTestServer(t, nil)
+	legacyCode := int(uint64(1<<32 - 1))
+	legacyTerm := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &legacyCode}
+	b := testBatch("pkg:npm/axios@1.12.0", "", nodeEnv("esm"),
+		domain.StageProjectTest, domain.ResultFail, 1)
+	b.SchemaVersion = 2
+	b.TerminationKind = domain.TerminationExit
+	b.ExitCode = &legacyCode
+	b.ErrorSummary = "process exited without a conventional status"
+	b.EvidenceQuality = domain.EvidenceComplete
+	b.ErrorFingerprint = domain.FailureFingerprint(b.Stage, legacyTerm, "", b.ErrorSummary)
+
+	var out ingestResponse
+	resp := postJSON(t, srv.URL+"/v1/evidence/batches",
+		map[string]any{"batches": []domain.ObservationBatch{b}}, &out)
+	if resp.StatusCode != http.StatusAccepted || out.Accepted != 1 || len(out.Rejected) != 0 {
+		t.Fatalf("legacy Windows ingest = status %d, response %+v", resp.StatusCode, out)
+	}
+	rows, err := store.EvidenceForTarget(t.Context(), b.Package, "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("stored evidence = %+v, err=%v", rows, err)
+	}
+	wantCode := -1
+	if rows[0].ExitCode == nil || *rows[0].ExitCode != wantCode {
+		t.Fatalf("stored exitCode = %v, want %d", rows[0].ExitCode, wantCode)
+	}
+	wantFingerprint := domain.FailureFingerprint(b.Stage,
+		domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &wantCode}, "", b.ErrorSummary)
+	if rows[0].ErrorFingerprint != wantFingerprint {
+		t.Fatalf("stored fingerprint = %q, want canonical %q", rows[0].ErrorFingerprint, wantFingerprint)
 	}
 }
 

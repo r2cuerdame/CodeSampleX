@@ -482,7 +482,7 @@ func TestAnUnestablishedVersionCannotAssertADifferenceEither(t *testing.T) {
 		caseObj:  &domain.Case{SchemaVersion: 1, Kind: "HOW", Goal: "post json with axios"},
 	}
 	e, _ := seedCorpus(t)
-	res, _ := e.scoreCandidate(e.ctx, domain.SearchRequest{
+	res, _, _ := e.scoreCandidate(e.ctx, domain.SearchRequest{
 		SchemaVersion: 1, Query: "post json with axios",
 		Packages: []string{"pkg:npm/axios@1.12.0"},
 	}, domain.EnvironmentFingerprint{SchemaVersion: 1},

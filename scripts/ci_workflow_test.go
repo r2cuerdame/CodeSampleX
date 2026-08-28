@@ -114,6 +114,9 @@ func TestTheMergeGateStillCoversPullRequestsAndMain(t *testing.T) {
 	if !strings.Contains(on, "branches: [main]") {
 		t.Fatal("ci.yml no longer runs on pushes to main; nothing would record what was merged")
 	}
+	if !strings.Contains(on, "workflow_dispatch:") {
+		t.Fatal("ci.yml has no authenticated manual retrigger when GitHub drops a push event")
+	}
 }
 
 // The half of the gate that lives in GitHub settings cannot be asserted from

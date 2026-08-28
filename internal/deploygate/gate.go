@@ -48,6 +48,27 @@ var (
 	r2c152Backfill       = regexp.MustCompile(`(?is)^update\s+evidence_agg\s+set\s+evidence_quality\s*=\s*''\s+where\s+result\s*=\s*'PASS'$`)
 )
 
+var samplePackageProjectionStatements = []string{
+	`CREATE TABLE sample_packages(
+  sample_id TEXT NOT NULL REFERENCES samples(sample_id) ON DELETE CASCADE,
+  purl TEXT NOT NULL,
+  coord TEXT NOT NULL,
+  PRIMARY KEY(sample_id, purl))`,
+	`CREATE INDEX sample_packages_coord_idx ON sample_packages(coord, sample_id)`,
+	`INSERT INTO sample_packages(sample_id, purl, coord)
+SELECT s.sample_id,
+       package.value,
+       left(package.value,
+            length(package.value) - strpos(reverse(package.value), '@') + 1)
+  FROM samples s
+  CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(s.manifest->'packages') = 'array'
+         THEN s.manifest->'packages' ELSE '[]'::jsonb END
+  ) AS package(value)
+ WHERE strpos(reverse(package.value), '@') > 0
+ON CONFLICT DO NOTHING`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -61,15 +82,29 @@ func ValidateMigrationSQL(name, sql string) error {
 	// production table. Splitting first prevents a harmless first statement
 	// from hiding a destructive second statement on the same line.
 	clean := blockComment.ReplaceAllString(lineComment.ReplaceAllString(sql, ""), "")
-	statements := strings.Split(clean, ";")
-	createdTables := make(map[string]bool)
-	seen := 0
-	for _, raw := range statements {
-		statement := strings.TrimSpace(raw)
-		if statement == "" {
-			continue
+	var statements []string
+	for _, raw := range strings.Split(clean, ";") {
+		if statement := strings.TrimSpace(raw); statement != "" {
+			statements = append(statements, statement)
 		}
-		seen++
+	}
+	if len(statements) == 0 {
+		return fmt.Errorf("migration %s contains no SQL statements", name)
+	}
+	// This migration deliberately reads an existing table to populate a new
+	// projection. Approve only its exact three statements, in order. That keeps
+	// the general allowlist from learning arbitrary FKs or INSERT...SELECT and
+	// preserves fail-closed behavior if any source, target, constraint, index,
+	// conflict guard, or fourth statement changes.
+	if name == "0028_sample_packages.sql" {
+		if exactStatements(statements, samplePackageProjectionStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact automatic projection allowlist", name)
+	}
+
+	createdTables := make(map[string]bool)
+	for _, statement := range statements {
 		if addColumnStatement.MatchString(statement) || r2c152Backfill.MatchString(statement) {
 			continue
 		}
@@ -82,10 +117,23 @@ func ValidateMigrationSQL(name, sql string) error {
 		}
 		return fmt.Errorf("migration %s contains a statement outside the automatic additive allowlist: %s", name, statement)
 	}
-	if seen == 0 {
-		return fmt.Errorf("migration %s contains no SQL statements", name)
-	}
 	return nil
+}
+
+func exactStatements(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if normalizeStatement(got[i]) != normalizeStatement(want[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeStatement(statement string) string {
+	return strings.Join(strings.Fields(statement), " ")
 }
 
 func additiveCreatedTable(statement string) (string, bool) {

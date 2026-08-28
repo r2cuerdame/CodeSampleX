@@ -109,10 +109,14 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
-	anomalies     serverstore.AnomalyStore
-	csxIssues     serverstore.CSXIssueStore
-	poolStats     PoolStatsReader
-	instances     []Instance
+	// farmGate admits one whole-corpus farm snapshot at a time. The browser
+	// refreshes this panel on a timer; without a gate, a slow snapshot lets
+	// every tick add another copy of the same PostgreSQL work.
+	farmGate  chan struct{}
+	anomalies serverstore.AnomalyStore
+	csxIssues serverstore.CSXIssueStore
+	poolStats PoolStatsReader
+	instances []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -145,6 +149,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		authoringRate: newAuthoringRateLimiter(),
 		adminTokens:   d.AdminTokens,
 		farmStats:     d.Farm,
+		farmGate:      make(chan struct{}, 1),
 		anomalies:     d.Anomalies,
 		csxIssues:     d.CSXIssues,
 		poolStats:     d.PoolStats,

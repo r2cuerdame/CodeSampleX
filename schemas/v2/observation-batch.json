@@ -23,7 +23,7 @@
     "errorFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "errorCode": {"type": "string", "maxLength": 64},
     "terminationKind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
-    "exitCode": {"type": "integer"},
+    "exitCode": {"type": "integer", "minimum": -2147483648, "maximum": 4294967295, "description": "Canonical producers emit signed int32. The unsigned upper half is accepted only for rolling compatibility with older Windows clients and is normalized to its two's-complement signed value at ingest."},
     "signal": {"type": "string", "maxLength": 32},
     "timeoutMillis": {"type": "integer", "minimum": 0},
     "errorSummary": {"type": "string", "maxLength": 512},

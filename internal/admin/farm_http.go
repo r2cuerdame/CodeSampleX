@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -27,6 +28,12 @@ type Instance struct {
 // stops looking productive.
 const farmWindow = time.Hour
 
+// A farm snapshot reads the whole corpus, but it is still a request a browser
+// is waiting for. Bound the route above the store's per-aggregate ceiling so
+// a broken or unexpectedly expensive panel can never outlive the next poll
+// and accumulate behind itself.
+const farmRequestTimeout = 10 * time.Second
+
 func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
 	if _, ok := h.requireAdmin(w, r); !ok {
@@ -39,13 +46,23 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "팜 지표를 사용할 수 없습니다", http.StatusServiceUnavailable)
 		return
 	}
+	select {
+	case h.farmGate <- struct{}{}:
+		defer func() { <-h.farmGate }()
+	default:
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, "팜 지표 집계가 이미 진행 중입니다", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
+	defer cancel()
 	now := h.now().UTC()
-	workers, err := h.farmStats.FarmWorkers(r.Context(), now.Add(-farmWindow), now)
+	workers, err := h.farmStats.FarmWorkers(ctx, now.Add(-farmWindow), now)
 	if err != nil {
 		http.Error(w, "팜 워커를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
 	}
-	health, err := h.farmStats.FarmHealthNow(r.Context(), now)
+	health, err := h.farmStats.FarmHealthNow(ctx, now)
 	if err != nil {
 		http.Error(w, "팜 상태를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
@@ -81,7 +98,7 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		total += instance.MonthlyUSD
 	}
 
-	coverage, err := h.farmStats.FarmCoverage(r.Context())
+	coverage, err := h.farmStats.FarmCoverage(ctx)
 	if err != nil {
 		http.Error(w, "커버리지를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
@@ -89,13 +106,13 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
-	backlog, err := h.farmStats.FarmBacklogNow(r.Context(), now.Add(-farmWindow), now)
+	backlog, err := h.farmStats.FarmBacklogNow(ctx, now.Add(-farmWindow), now)
 	if err != nil {
 		http.Error(w, "백로그를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
 	}
 
-	completeness, err := h.farmStats.FarmCompletenessNow(r.Context())
+	completeness, err := h.farmStats.FarmCompletenessNow(ctx)
 	if err != nil {
 		http.Error(w, "완성도 집계를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return

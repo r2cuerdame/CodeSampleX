@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
@@ -17,7 +19,89 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const authoringWorkLease = 24 * time.Hour
+const (
+	authoringWorkLease = 24 * time.Hour
+	// The released client gives a poll 15 seconds. Keep the server's own
+	// ceiling below that so a caller gets a retryable answer and, critically,
+	// a disconnected caller cannot leave an expansion query running for
+	// minutes. The store has a slightly shorter PostgreSQL statement timeout
+	// so the connection is canceled by PostgreSQL and remains reusable.
+	authoringWorkPollTimeout = 12 * time.Second
+)
+
+type authoringCandidateSnapshot struct {
+	wanted    []serverstore.WantedRow
+	expansion []serverstore.WantedRow
+}
+
+type authoringCandidateCall struct {
+	done     chan struct{}
+	snapshot authoringCandidateSnapshot
+	err      error
+}
+
+type authoringCandidateGate struct {
+	mu   sync.Mutex
+	call *authoringCandidateCall
+}
+
+// loadAuthoringCandidates collapses simultaneous fleet polls onto one pair
+// of whole-corpus reads. It deliberately does not cache a completed answer:
+// a later poll must see newly verified work. The query owns a bounded context
+// independent of the first HTTP client, so one disconnect neither abandons
+// waiters nor leaves an unbounded database operation behind.
+func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.AuthoringSessionStore) (authoringCandidateSnapshot, error) {
+	a.authoringCandidates.mu.Lock()
+	call := a.authoringCandidates.call
+	if call == nil {
+		call = &authoringCandidateCall{done: make(chan struct{})}
+		a.authoringCandidates.call = call
+		baseCtx := context.WithoutCancel(ctx)
+		var callCtx context.Context
+		var cancel context.CancelFunc
+		if deadline, ok := ctx.Deadline(); ok {
+			// WithoutCancel intentionally ignores a disconnected first caller so
+			// joined workers can still receive the result. Put the poll's absolute
+			// deadline back: candidate discovery gets only the time that remains,
+			// never a fresh full timeout after session refresh was slow.
+			callCtx, cancel = context.WithDeadline(baseCtx, deadline)
+		} else {
+			callCtx, cancel = context.WithTimeout(baseCtx, a.d.authoringWorkTimeout)
+		}
+		callCtx = serverstore.WithAuthoringPoll(callCtx)
+		go func() {
+			defer cancel()
+			call.snapshot.wanted, call.err = a.d.Store.TopWanted(callCtx, 200)
+			if call.err == nil {
+				call.snapshot.expansion, call.err = store.ListAuthoringExpansionCandidates(callCtx, 200)
+			}
+			a.authoringCandidates.mu.Lock()
+			close(call.done)
+			if a.authoringCandidates.call == call {
+				a.authoringCandidates.call = nil
+			}
+			a.authoringCandidates.mu.Unlock()
+		}()
+	}
+	a.authoringCandidates.mu.Unlock()
+
+	select {
+	case <-call.done:
+		return call.snapshot, call.err
+	case <-ctx.Done():
+		return authoringCandidateSnapshot{}, ctx.Err()
+	}
+}
+
+func writeAuthoringWorkBusy(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
+		!serverstore.IsQueryTimeout(err) && !serverstore.IsPoolBusy(err) {
+		return false
+	}
+	w.Header().Set("Retry-After", "5")
+	writeErr(w, http.StatusServiceUnavailable, "authoring work is busy; retry shortly")
+	return true
+}
 
 var authoringSupportedEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "golang": true, "cargo": true,
@@ -298,39 +382,42 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
 		return
 	}
+	pollCtx, cancel := context.WithTimeout(r.Context(), a.d.authoringWorkTimeout)
+	defer cancel()
 	now := a.now().UTC()
 	ip := ""
 	if addr, ok := activity.ExternalRequestAddress(r); ok {
 		ip = addr.String()
 	}
-	session, err := store.RefreshAuthoringSession(r.Context(), tokenHash, ip, "", now, now.Add(time.Hour))
+	session, err := store.RefreshAuthoringSession(pollCtx, tokenHash, ip, "", now, now.Add(time.Hour))
 	if err != nil {
+		if writeAuthoringWorkBusy(w, err) {
+			return
+		}
 		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
 		return
 	}
-	candidates, err := a.d.Store.TopWanted(r.Context(), 200)
+	snapshot, err := a.loadAuthoringCandidates(pollCtx, store)
 	if err != nil {
+		if writeAuthoringWorkBusy(w, err) {
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "listing authoring work failed")
 		return
 	}
 	eligible := make([]serverstore.WantedRow, 0, 400)
-	for _, candidate := range candidates {
+	for _, candidate := range snapshot.wanted {
 		candidate.Kind = "WANTED"
 		candidate.Score = candidate.Asks
 		if authoringCandidateEligible(candidate, request) {
 			eligible = append(eligible, candidate)
 		}
 	}
-	expansion, err := store.ListAuthoringExpansionCandidates(r.Context(), 200)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "listing authoring expansion work failed")
-		return
-	}
 	// WANTED keeps its own order: it is somebody's explicit ask, and demand is
 	// the ranking. Expansion is the network choosing its own next move, so it
 	// is steered at the releases the site renders.
-	fresh := make([]serverstore.WantedRow, 0, len(expansion))
-	for _, candidate := range expansion {
+	fresh := make([]serverstore.WantedRow, 0, len(snapshot.expansion))
+	for _, candidate := range snapshot.expansion {
 		if authoringCandidateEligible(candidate, request) {
 			fresh = append(fresh, candidate)
 		}
@@ -341,14 +428,17 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	// resolved onto it, not because anybody reported using it. Confirm it
 	// against the registry before a worker is sent, and register it while we
 	// are there.
-	eligible = a.confirmDependencyWork(r.Context(), eligible)
+	eligible = a.confirmDependencyWork(pollCtx, eligible)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a
 	// fact about the artifact and not about this worker.
-	eligible = dropUnauthorableMaven(r.Context(), a.mavenJar, eligible)
-	work, found, err := store.ClaimAuthoringWork(r.Context(), session.SessionID, eligible, now, now.Add(authoringWorkLease))
+	eligible = dropUnauthorableMaven(pollCtx, a.mavenJar, eligible)
+	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {
+		if writeAuthoringWorkBusy(w, err) {
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "claiming authoring work failed")
 		return
 	}

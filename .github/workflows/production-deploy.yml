@@ -86,10 +86,10 @@ jobs:
           set -euo pipefail
           ci_run=$(gh api \
             -H 'Accept: application/vnd.github+json' \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${TARGET_SHA}&branch=main&event=push&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // 0')
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${TARGET_SHA}&branch=main&status=success&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // 0')
           if ! [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::target $TARGET_SHA has no successful canonical CI push on main"
+            echo "::error::target $TARGET_SHA has no successful canonical CI run on main"
             exit 1
           fi
           echo "Canonical CI evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run}" >> "$GITHUB_STEP_SUMMARY"
@@ -102,8 +102,8 @@ jobs:
           set -euo pipefail
           release_run=$(gh api \
             -H 'Accept: application/vnd.github+json' \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&event=push&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // 0')
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${TARGET_SHA}&status=success&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // 0')
           if ! [[ "$release_run" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::target $TARGET_SHA has no successful Release run; production requires that run's verified farm rollout first"
             exit 1
@@ -114,7 +114,10 @@ jobs:
     name: Roll out production
     needs: eligibility
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # deploy.ps1 owns a measured 30-minute fresh-builder budget after image
+    # preparation and cutover. Keep the outer runner alive long enough for
+    # setup, the final invariant/public-surface gates, and rollback as well.
+    timeout-minutes: 45
     environment: codesamplex-production
     permissions:
       contents: read

@@ -12,6 +12,8 @@ const (
 	statMisses             = "misses"
 	statEvidenceSent       = "evidenceBatchesSent"
 	statLastUpload         = "lastUpload"
+	statLastUploadAttempt  = "lastUploadAttempt"
+	statLastUploadError    = "lastUploadError"
 	statOriginSeeds        = "originSeeds"
 	statCrossVerifications = "crossVerifications"
 )
@@ -50,6 +52,8 @@ type Stats struct {
 	Packages                  int     `json:"packages"`
 	QueueDepth                int     `json:"queueDepth"`
 	LastUpload                string  `json:"lastUpload,omitempty"`
+	LastUploadAttempt         string  `json:"lastUploadAttempt,omitempty"`
+	LastUploadError           string  `json:"lastUploadError,omitempty"`
 	// CountsArePartial reports that adoption and build-report counts were
 	// tallied from the newest page of hits rather than the whole store,
 	// which happens once there are more hits than one page holds.
@@ -121,6 +125,12 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	st.CrossVerifications = d.intStat(ctx, statCrossVerifications)
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
 		st.LastUpload = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadAttempt); ok {
+		st.LastUploadAttempt = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadError); ok {
+		st.LastUploadError = v
 	}
 
 	if size, err := d.CAS.TotalSize(); err == nil {

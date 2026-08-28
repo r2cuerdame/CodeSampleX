@@ -140,6 +140,25 @@ func TestMergeGrownCountAddsOnlyDelta(t *testing.T) {
 	}
 }
 
+func TestMergeShrunkReportCannotLowerHighWaterAndReinflate(t *testing.T) {
+	m := newMergeState()
+	b := obsBatch("anonaaaa", "projaaaa", 8)
+	if delta := m.apply(b); delta != 8 {
+		t.Fatalf("first delta = %d, want 8", delta)
+	}
+	b.ObservationCount = 3
+	if delta := m.apply(b); delta != 0 {
+		t.Fatalf("shrunk component delta = %d, want 0", delta)
+	}
+	b.ObservationCount = 8
+	if delta := m.apply(b); delta != 0 {
+		t.Fatalf("restored full total delta = %d, want 0 after monotone high-water", delta)
+	}
+	if got := m.observations[aggKeyOf(b)]; got != 8 {
+		t.Fatalf("observation_count = %d, want 8 without re-inflation", got)
+	}
+}
+
 func TestMergeUniqueBuckets(t *testing.T) {
 	m := newMergeState()
 	m.apply(obsBatch("anonaaaa", "projaaaa", 5)) // new peer: +5

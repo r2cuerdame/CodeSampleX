@@ -11,6 +11,33 @@ import (
 
 const authoringAdvisoryLock int64 = 0x43535841555448 // "CSXAUTH"
 
+// Fleet clients stop waiting after 15 seconds. PostgreSQL gets the first say
+// at 10 seconds so it cancels the statement without discarding the pooled
+// connection; the HTTP layer's 12-second context is the outer backstop.
+const authoringExpansionStatementTimeout = 10 * time.Second
+
+const authoringStatementDeadlineMargin = 250 * time.Millisecond
+
+func authoringStatementTimeout(ctx context.Context, ceiling time.Duration) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline) - authoringStatementDeadlineMargin
+		if remaining < time.Millisecond {
+			return time.Millisecond
+		}
+		if remaining < ceiling {
+			return remaining
+		}
+	}
+	return ceiling
+}
+
+func authoringPollStatementTimeout(ctx context.Context) time.Duration {
+	if !isAuthoringPoll(ctx) {
+		return 0
+	}
+	return authoringStatementTimeout(ctx, authoringExpansionStatementTimeout)
+}
+
 func (p *PG) IssueAuthoringSessions(ctx context.Context, rows []AuthoringSessionRow, now time.Time) error {
 	if len(rows) == 0 {
 		return nil
@@ -227,6 +254,10 @@ func scanAuthoringWork(row pgx.Row) (AuthoringWorkRow, error) {
 }
 
 func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error) {
+	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionStatementTimeout)
+}
+
+func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration) ([]WantedRow, error) {
 	if limit < 1 {
 		return nil, nil
 	}
@@ -235,7 +266,23 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 	}
 	var out []WantedRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
+		tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		statementTimeout = authoringStatementTimeout(ctx, statementTimeout)
+		// The candidate query is large enough to cross PostgreSQL's JIT cost
+		// threshold on the production corpus. A timed-out fleet poll then
+		// returned to its caller while LLVM compilation kept the backend busy
+		// for another minute, because that compilation did not observe the
+		// pending statement interrupt promptly. Keep this transaction on the
+		// ordinary executor: it is both faster for this short-lived read and
+		// lets statement_timeout remain an actual upper bound.
+		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `
 			WITH `+authoringCoverageCTE+`, verified_symbols AS MATERIALIZED (
 				SELECT DISTINCT package.value AS purl,symbol.value AS symbol
 				FROM verified_samples s
@@ -509,7 +556,11 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 			}
 			out = append(out, row)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		return tx.Commit(ctx)
 	})
 	return out, err
 }

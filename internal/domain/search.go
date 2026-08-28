@@ -60,6 +60,9 @@ type SearchRequest struct {
 	ErrorFingerprints []string `json:"errorFingerprints,omitempty"`
 	ErrorCode         string   `json:"errorCode,omitempty"`
 	Limit             int      `json:"limit,omitempty"` // default 3
+	// Debug requests a local diagnostic trace. It never changes ranking or
+	// grading and is not part of the frozen public v1 request.
+	Debug bool `json:"debug,omitempty"`
 }
 
 // EnvironmentIsContext is fail-closed: absent/unknown provenance is explicit.
@@ -394,4 +397,7 @@ type SearchResponse struct {
 	// rather than off a result so it can never be read as a property of a
 	// sample, and so the grade path never has it in scope.
 	Observed *ObservedReports `json:"observed,omitempty"`
+	// Diagnostic is present only when SearchRequest.Debug was true. It is
+	// generated from the same pipeline result and never changes the answer.
+	Diagnostic *DiagnosticTrace `json:"diagnostic,omitempty"`
 }

@@ -68,6 +68,8 @@
       <dt>Home</dt><dd>{{.Home}}</dd>
       <dt>Automatic evidence sent</dt><dd>{{.Stats.EvidenceBatchesSent}} batches</dd>
       <dt>Last upload</dt><dd>{{if .Stats.LastUpload}}{{.Stats.LastUpload}}{{else}}never{{end}}</dd>
+      <dt>Last upload attempt</dt><dd>{{if .Stats.LastUploadAttempt}}{{.Stats.LastUploadAttempt}}{{else}}never{{end}}</dd>
+      <dt>Last upload error</dt><dd>{{if .Stats.LastUploadError}}{{.Stats.LastUploadError}}{{else}}none{{end}}</dd>
     </dl>
   </div>
 

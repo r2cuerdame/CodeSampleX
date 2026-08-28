@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,73 @@ func TestIsolatedTableMigrationsAreAutomaticAdditive(t *testing.T) {
 				t.Fatalf("isolated additive table migration rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestSamplePackageProjectionMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0028_sample_packages.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read sample-package projection migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("sample-package projection migration rejected: %v", err)
+	}
+}
+
+func TestSamplePackageProjectionExceptionRemainsFailClosed(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0028_sample_packages.sql")
+	raw, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read sample-package projection migration: %v", err)
+	}
+	valid := string(raw)
+	withoutStatement := func(i int) string {
+		return strings.Replace(valid, samplePackageProjectionStatements[i]+";", "", 1)
+	}
+
+	for name, sql := range map[string]string{
+		"wrong filename":           valid,
+		"missing table":            withoutStatement(0),
+		"missing index":            withoutStatement(1),
+		"missing backfill":         withoutStatement(2),
+		"wrong parent":             strings.Replace(valid, "REFERENCES samples(sample_id)", "REFERENCES receipts(receipt_id)", 1),
+		"missing cascade":          strings.Replace(valid, " ON DELETE CASCADE", "", 1),
+		"wrong index":              strings.Replace(valid, "sample_packages(coord, sample_id)", "sample_packages(purl, sample_id)", 1),
+		"wrong insert target":      strings.Replace(valid, "INSERT INTO sample_packages", "INSERT INTO receipts", 1),
+		"wrong source":             strings.Replace(valid, "FROM samples s", "FROM receipts s", 1),
+		"missing conflict guard":   strings.Replace(valid, "ON CONFLICT DO NOTHING;", "", 1),
+		"changed JSON literal":     strings.Replace(valid, "'packages'", "'PACKAGES'", 1),
+		"duplicate backfill":       valid + "\n" + samplePackageProjectionStatements[2] + ";",
+		"extra fourth statement":   valid + "\nCREATE TABLE harmless(id BIGINT);",
+		"drop suffix":              valid + "\nDROP TABLE samples;",
+		"truncate suffix":          valid + "\nTRUNCATE samples;",
+		"delete suffix":            valid + "\nDELETE FROM samples;",
+		"update suffix":            valid + "\nUPDATE samples SET status='gone';",
+		"add-column suffix":        valid + "\nALTER TABLE samples ADD COLUMN unsafe TEXT;",
+		"destructive alter suffix": valid + "\nALTER TABLE samples DROP COLUMN manifest;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			migrationName := "0028_sample_packages.sql"
+			if name == "wrong filename" {
+				migrationName = "0099_sample_packages.sql"
+			}
+			if err := ValidateMigrationSQL(migrationName, sql); err == nil {
+				t.Fatalf("unsafe sample-package migration accepted: %s", sql)
+			}
+		})
+	}
+	if err := ValidateMigrationSQL("0099_arbitrary.sql",
+		"INSERT INTO sample_packages SELECT sample_id, '', '' FROM samples;"); err == nil {
+		t.Fatal("arbitrary INSERT...SELECT was accepted")
 	}
 }
 

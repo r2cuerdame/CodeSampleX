@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -585,19 +587,51 @@ const maxFindingsPage = 10000
 // one scan serves every visitor in between.
 const derivedTTL = 5 * time.Minute
 
-// derivedFindings returns the machine-derived group, cached.
+const (
+	findingsRefreshTimeout = 30 * time.Second
+	findingsRetryDelay     = 30 * time.Second
+)
+
+// derivedFindings returns the last complete machine-derived group and starts
+// one bounded refresh when it is cold or stale.
 //
-// A miss returns nothing rather than an error page: the hand-written
-// findings are the page's substance and must render even when the store is
-// unreachable.
-func (s *site) derivedFindings(r *http.Request) []finding {
+// The scan below pages through the whole eligible corpus. Running it inside
+// the public request made the first /findings after a production restart wait
+// for an interactive DB connection while the fresh builder was using the
+// pool. The deployment smoke timed out without receiving a byte. A cold miss
+// now renders the hand-written findings immediately; a stale miss serves the
+// last complete snapshot. Concurrent readers only schedule one refresh.
+func (s *site) derivedFindings(_ *http.Request) []finding {
 	s.derivedMu.Lock()
-	defer s.derivedMu.Unlock()
-	if s.derivedAt.IsZero() || time.Since(s.derivedAt) > derivedTTL {
-		rows, err := s.d.Store.DerivedFindings(r.Context(), derivedCap)
-		if err != nil {
-			return s.derivedCache
+	now := time.Now()
+	rows := s.derivedCache
+	if !s.derivedAt.After(now.Add(-derivedTTL)) &&
+		!s.derivedRefreshing && !now.Before(s.derivedRetryAt) {
+		s.derivedRefreshing = true
+		go s.refreshDerivedFindings()
+	}
+	s.derivedMu.Unlock()
+	return rows
+}
+
+func (s *site) refreshDerivedFindings() {
+	s.refreshDerivedFindingsWithin(findingsRefreshTimeout)
+}
+
+func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("web: panic refreshing derived findings: %v", recovered)
+			s.failDerivedFindingsRefresh()
 		}
+	}()
+	// An unclassified context is deliberately a background DB class in the
+	// production adapter. It cannot consume an interactive lane and the
+	// deadline also covers waiting to acquire its own lane.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	rows, err := s.d.Store.DerivedFindings(ctx, derivedCap)
+	if err == nil {
 		out := make([]finding, 0, len(rows))
 		for _, d := range rows {
 			out = append(out, finding{
@@ -613,22 +647,35 @@ func (s *site) derivedFindings(r *http.Request) []finding {
 				Basis:       "sample",
 			})
 		}
+		s.derivedMu.Lock()
 		s.derivedCache, s.derivedAt = out, time.Now()
+		s.derivedRefreshing = false
+		s.derivedRetryAt = time.Time{}
+		s.derivedMu.Unlock()
+		return
 	}
-	return s.derivedCache
+
+	s.failDerivedFindingsRefresh()
+}
+
+func (s *site) failDerivedFindingsRefresh() {
+	s.derivedMu.Lock()
+	s.derivedRefreshing = false
+	s.derivedRetryAt = time.Now().Add(findingsRetryDelay)
+	s.derivedMu.Unlock()
 }
 
 // decorateFindings attaches the linked sample's recorded environment to the
 // hand-checked lists. Those entries predate machine-derived findings, so the
 // environment is not duplicated in their Go literals; the content-addressed
 // sample remains the source of truth. A missing or old manifest stays unknown.
-func (s *site) decorateFindings(r *http.Request, input []finding, basis, basisKey string) []finding {
+func (s *site) decorateFindings(ctx context.Context, input []finding, basis, basisKey string) []finding {
 	out := make([]finding, len(input))
 	copy(out, input)
 	for i := range out {
 		out[i].BasisKey = basisKey
 		out[i].Basis = basis
-		manifestJSON, ok := s.d.Store.SampleManifest(r.Context(), out[i].SampleID)
+		manifestJSON, ok := s.d.Store.SampleManifest(ctx, out[i].SampleID)
 		if !ok {
 			continue
 		}
@@ -643,19 +690,69 @@ func (s *site) decorateFindings(r *http.Request, input []finding, basis, basisKe
 	return out
 }
 
-// handFindings decorates the two static groups once per cache window.
-// Content-addressed sample manifests do not change, and a timed retry lets
-// a sample that was temporarily unavailable appear without making every
-// visitor pay dozens of sequential database reads.
-func (s *site) handFindings(r *http.Request) ([]finding, []finding) {
+// handFindings returns the last decorated static groups and refreshes their
+// immutable sample environments out of band. On a cold start the claims,
+// links and basis remain complete; only optional environment decoration waits
+// for the cache. That keeps 29 sequential manifest reads off the public path.
+func (s *site) handFindings(_ *http.Request) ([]finding, []finding) {
+	s.handMu.Lock()
+	now := time.Now()
+	documented, believed := s.handDocumented, s.handBelieved
+	if documented == nil && believed == nil {
+		documented = baseHandFindings(documentedFindings, "docs", "findings.basis_docs")
+		believed = baseHandFindings(believedFindings, "belief", "findings.basis_belief")
+	}
+	if !s.handAt.After(now.Add(-derivedTTL)) &&
+		!s.handRefreshing && !now.Before(s.handRetryAt) {
+		s.handRefreshing = true
+		go s.refreshHandFindings()
+	}
+	s.handMu.Unlock()
+	return append([]finding(nil), documented...), append([]finding(nil), believed...)
+}
+
+func baseHandFindings(input []finding, basis, basisKey string) []finding {
+	out := append([]finding(nil), input...)
+	for i := range out {
+		out[i].Basis = basis
+		out[i].BasisKey = basisKey
+	}
+	return out
+}
+
+func (s *site) refreshHandFindings() {
+	s.refreshHandFindingsWithin(findingsRefreshTimeout)
+}
+
+func (s *site) refreshHandFindingsWithin(timeout time.Duration) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("web: panic refreshing hand findings: %v", recovered)
+			s.failHandFindingsRefresh()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	documented := s.decorateFindings(ctx, documentedFindings, "docs", "findings.basis_docs")
+	believed := s.decorateFindings(ctx, believedFindings, "belief", "findings.basis_belief")
+	err := ctx.Err()
+
 	s.handMu.Lock()
 	defer s.handMu.Unlock()
-	if s.handAt.IsZero() || time.Since(s.handAt) > derivedTTL {
-		s.handDocumented = s.decorateFindings(r, documentedFindings, "docs", "findings.basis_docs")
-		s.handBelieved = s.decorateFindings(r, believedFindings, "belief", "findings.basis_belief")
-		s.handAt = time.Now()
+	s.handRefreshing = false
+	if err != nil {
+		s.handRetryAt = time.Now().Add(findingsRetryDelay)
+		return
 	}
-	return append([]finding(nil), s.handDocumented...), append([]finding(nil), s.handBelieved...)
+	s.handDocumented, s.handBelieved, s.handAt = documented, believed, time.Now()
+	s.handRetryAt = time.Time{}
+}
+
+func (s *site) failHandFindingsRefresh() {
+	s.handMu.Lock()
+	s.handRefreshing = false
+	s.handRetryAt = time.Now().Add(findingsRetryDelay)
+	s.handMu.Unlock()
 }
 
 func filterFindings(input []finding, filter findingsFilter) []finding {

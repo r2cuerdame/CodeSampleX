@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,6 +166,113 @@ func TestPartialEvidenceUploadStampsOnlyAcceptedBatches(t *testing.T) {
 	}
 	if got, want := pending[0].PURL, posted[1].Package; got != want {
 		t.Fatalf("pending purl = %q, want refused purl %q", got, want)
+	}
+}
+
+// A permanent 500 used to be invisible: the automatic loop discarded its
+// error, status showed only an old successful upload, and the same durable row
+// sat at the front of the deterministic queue. The daemon must expose the
+// failure locally and stay alive long enough for a later tick to recover.
+func TestAutomaticEvidenceUploadFailureIsVisibleAndNextTickRecovers(t *testing.T) {
+	var calls atomic.Int32
+	firstFailed := make(chan struct{})
+	recovered := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		if call == 1 {
+			http.Error(w, `{"error":"ingest failed"}`, http.StatusInternalServerError)
+			close(firstFailed)
+			return
+		}
+		var body struct {
+			Batches []json.RawMessage `json:"batches"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"accepted":%d,"rejected":[]}`, len(body.Batches))
+		if call == 2 {
+			close(recovered)
+		}
+	}))
+	defer srv.Close()
+
+	home := newTestHome(t, func(cfg *config.Config) {
+		cfg.Mode = config.ModeCommunity
+		cfg.ServerURL = srv.URL
+	})
+	d, err := New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedPendingObservation(t, d.DB, "pkg:npm/upload-recovery@1.0.0", "retry")
+	d.uploadFirstDelay = 20 * time.Millisecond
+	d.uploadEvery = 250 * time.Millisecond
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- d.Run(runCtx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(5 * time.Second):
+			t.Error("daemon did not stop")
+		}
+		_ = d.Close()
+	})
+	select {
+	case <-d.Ready():
+	case err := <-runDone:
+		t.Fatalf("daemon exited before ready: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not become ready")
+	}
+	select {
+	case <-firstFailed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first upload was not attempted")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		lastErr, ok, statErr := d.DB.GetStat(t.Context(), statLastUploadError)
+		if statErr == nil && ok && strings.Contains(lastErr, "500 Internal Server Error") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("upload failure not visible: value=%q ok=%v err=%v", lastErr, ok, statErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case err := <-runDone:
+		t.Fatalf("daemon exited after non-fatal upload error: %v", err)
+	default:
+	}
+
+	select {
+	case <-recovered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("next automatic upload tick did not retry")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		last, uploaded, _ := d.DB.GetStat(t.Context(), statLastUpload)
+		lastErr, _, _ := d.DB.GetStat(t.Context(), statLastUploadError)
+		attempt, attempted, _ := d.DB.GetStat(t.Context(), statLastUploadAttempt)
+		if uploaded && last != "" && attempted && attempt != "" && lastErr == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recovery not reflected: last=%q attempt=%q error=%q", last, attempt, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pending, err := d.DB.PendingObservations(t.Context(), 10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after recovered tick = %d, err=%v", len(pending), err)
 	}
 }
 

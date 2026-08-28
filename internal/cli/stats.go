@@ -83,6 +83,12 @@ func statsMain(ctx context.Context, args []string) int {
 	if st.LastUpload != "" {
 		fmt.Printf("Last upload:                   %s\n", st.LastUpload)
 	}
+	if st.LastUploadAttempt != "" {
+		fmt.Printf("Last upload attempt:           %s\n", st.LastUploadAttempt)
+	}
+	if st.LastUploadError != "" {
+		fmt.Printf("Last upload error:             %s\n", st.LastUploadError)
+	}
 	return 0
 }
 

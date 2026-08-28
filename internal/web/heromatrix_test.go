@@ -2,10 +2,14 @@ package web
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // countingAssemblies counts cube assemblies the same way the singleflight
@@ -29,6 +33,20 @@ func (c *countingAssemblies) count() int {
 	return c.calls
 }
 
+func waitHeroMatrix(t *testing.T, s *site, r *http.Request, lang string, hits []PackageHit) *heroMatrixData {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if matrix := s.heroMatrix(r, lang, hits); matrix != nil {
+			return matrix
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background hero warm did not publish a matrix")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // heroHits builds n measurable hot packages, each with a real snapshot so
 // every one of them could yield a renderable grid.
 func heroHits(n int) ([]PackageHit, *countingAssemblies) {
@@ -49,17 +67,139 @@ func heroHits(n int) ([]PackageHit, *countingAssemblies) {
 	}}
 }
 
-// The hero probes candidates for the richest grid and never stops early, so
-// a cold landing assembled six cubes before rendering one. The page needs a
-// matrix, not the best possible matrix: one assembly is the honest cost.
+type blockingHeroAssemblies struct {
+	*countingAssemblies
+	calls   atomic.Int64
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingHeroAssemblies) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
+	b.calls.Add(1)
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-b.release:
+		return b.fakeStore.PackageVersions(ctx, ecosystem, name)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestColdHeroIsNonBlockingCoalescedAndEventuallyPublished(t *testing.T) {
+	hits, base := heroHits(1)
+	store := &blockingHeroAssemblies{
+		countingAssemblies: base, started: make(chan struct{}, 1), release: make(chan struct{}),
+	}
+	s := &site{d: Deps{Store: store}}
+	r := httptest.NewRequest("GET", "/?m=npm/pkg0", nil)
+
+	started := time.Now()
+	if matrix := s.heroMatrix(r, "en", hits); matrix != nil {
+		t.Fatal("cold landing synchronously assembled a hero matrix")
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("cold hero blocked the landing for %v", elapsed)
+	}
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("background hero warm did not start")
+	}
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if matrix := s.heroMatrix(r, "en", hits); matrix != nil {
+				t.Error("in-flight cold hero unexpectedly rendered a partial matrix")
+			}
+		}()
+	}
+	wg.Wait()
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("package assemblies for concurrent cold landings = %d, want 1", got)
+	}
+
+	close(store.release)
+	matrix := waitHeroMatrix(t, s, r, "en", hits)
+	if matrix.Package != "pkg0" {
+		t.Fatalf("eventual selected hero = %q, want pkg0", matrix.Package)
+	}
+	if len(matrix.Tabs) != 1 || !matrix.Tabs[0].Selected {
+		t.Fatalf("eventual selected tab semantics = %+v", matrix.Tabs)
+	}
+}
+
+// A deadline can expire inside cubeFacts on the last candidate. That is an
+// incomplete warm, not a completed empty hero: publishing nil here would hide
+// the matrix for heroMatrixTTL instead of letting the cooldown retry it.
+func TestHeroDeadlineOnOnlyCandidateDoesNotPublishNilCache(t *testing.T) {
+	hits, base := heroHits(1)
+	store := &blockingHeroAssemblies{
+		countingAssemblies: base, started: make(chan struct{}, 1), release: make(chan struct{}),
+	}
+	s := &site{d: Deps{Store: store}}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequest("GET", "/", nil).WithContext(ctx)
+
+	data, complete := s.buildHeroMatrix(r, "en", hits, hits, true)
+	if data != nil {
+		t.Fatalf("deadline-bounded hero returned partial data: %+v", data)
+	}
+	// This is the publication gate used by warmHeroMatrix.
+	if complete {
+		s.cacheHeroMatrix("deadline", data)
+	}
+	s.heroMu.Lock()
+	_, cached := s.heroCache["deadline"]
+	s.heroMu.Unlock()
+	if complete || cached {
+		t.Fatalf("deadline-bounded hero complete=%v cached=%v; want retryable incomplete warm", complete, cached)
+	}
+}
+
+type failingHeroAssemblies struct{ *countingAssemblies }
+
+func (f *failingHeroAssemblies) PackageVersions(context.Context, string, string) ([]string, error) {
+	return nil, errors.New("snapshot inventory unavailable")
+}
+
+// A live outer context does not make an immediate store failure a successful
+// empty hero. cubeFacts leaves failures uncached, which the warmer must turn
+// into cooldown/retry rather than a nil hero cached for heroMatrixTTL.
+func TestHeroLoadFailureOnOnlyCandidateDoesNotPublishNilCache(t *testing.T) {
+	hits, base := heroHits(1)
+	s := &site{d: Deps{Store: &failingHeroAssemblies{countingAssemblies: base}}}
+	r := httptest.NewRequest("GET", "/", nil)
+
+	data, complete := s.buildHeroMatrix(r, "en", hits, hits, true)
+	if data != nil {
+		t.Fatalf("failed hero load returned partial data: %+v", data)
+	}
+	if complete {
+		s.cacheHeroMatrix("failure", data)
+	}
+	s.heroMu.Lock()
+	_, cached := s.heroCache["failure"]
+	s.heroMu.Unlock()
+	if complete || cached {
+		t.Fatalf("failed hero load complete=%v cached=%v; want retryable incomplete warm", complete, cached)
+	}
+}
+
+// The hero used to probe candidates on the request path. A cold view now
+// coalesces background work and stops once it has an honest renderable matrix.
 func TestHeroMatrixAssemblesOneCubeWhenNothingIsWarm(t *testing.T) {
 	hits, store := heroHits(heroMatrixTries)
 	s := &site{d: Deps{Store: store}}
 	r := httptest.NewRequest("GET", "/", nil)
 
-	if m := s.heroMatrix(r, "en", hits); m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	waitHeroMatrix(t, s, r, "en", hits)
 	if got := store.count(); got != 1 {
 		t.Errorf("assembled %d cubes for one cold landing view, want 1", got)
 	}
@@ -72,9 +212,7 @@ func TestHeroMatrixCostsNothingWhenWarm(t *testing.T) {
 	s := &site{d: Deps{Store: store}}
 	r := httptest.NewRequest("GET", "/", nil)
 
-	if m := s.heroMatrix(r, "en", hits); m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	waitHeroMatrix(t, s, r, "en", hits)
 	before := store.count()
 	for i := 0; i < 5; i++ {
 		if m := s.heroMatrix(r, "en", hits); m == nil {
@@ -95,15 +233,12 @@ func TestHeroMatrixIsMemoizedPerView(t *testing.T) {
 	s := &site{d: Deps{Store: store}}
 	r := httptest.NewRequest("GET", "/", nil)
 
-	first := s.heroMatrix(r, "en", hits)
-	if first == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	first := waitHeroMatrix(t, s, r, "en", hits)
 	if second := s.heroMatrix(r, "en", hits); second != first {
 		t.Error("a warm landing view rebuilt the hero matrix")
 	}
 	// The labels and hrefs are per-language, so languages never share one.
-	if other := s.heroMatrix(r, "ko", hits); other == first {
+	if other := waitHeroMatrix(t, s, r, "ko", hits); other == first {
 		t.Error("two languages were served one matrix")
 	}
 	// A junk ?m= is the unselected view, not its own cache entry — the key
@@ -124,10 +259,7 @@ func TestHeroMatrixSkipsCandidatesWithNoFacts(t *testing.T) {
 	delete(store.fakeStore.snapshots, snapKey("pkg:npm/pkg0@1.0.0", ""))
 
 	s := &site{d: Deps{Store: store}}
-	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
-	if m == nil {
-		t.Fatal("no hero matrix rendered despite five measurable candidates")
-	}
+	m := waitHeroMatrix(t, s, httptest.NewRequest("GET", "/", nil), "en", hits)
 	if m.Package == "pkg0" {
 		t.Fatalf("rendered the candidate with no facts: %+v", m)
 	}
@@ -149,10 +281,7 @@ func TestHeroMatrixFeaturesTheTopHitRegardlessOfWhatIsWarm(t *testing.T) {
 		t.Fatal("failed to warm the decoy cube")
 	}
 
-	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
-	if m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	m := waitHeroMatrix(t, s, httptest.NewRequest("GET", "/", nil), "en", hits)
 	if m.Package != "pkg0" {
 		t.Errorf("featured %q, want pkg0 — the top hit, not whatever was warm", m.Package)
 	}
@@ -162,10 +291,7 @@ func TestHeroMatrixFeaturesTheTopHitRegardlessOfWhatIsWarm(t *testing.T) {
 func TestHeroMatrixHonoursTheExplicitSelection(t *testing.T) {
 	hits, store := heroHits(heroMatrixTries)
 	s := &site{d: Deps{Store: store}}
-	m := s.heroMatrix(httptest.NewRequest("GET", "/?m=npm/pkg4", nil), "en", hits)
-	if m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	m := waitHeroMatrix(t, s, httptest.NewRequest("GET", "/?m=npm/pkg4", nil), "en", hits)
 	if m.Package != "pkg4" {
 		t.Errorf("featured %q, want the explicitly selected pkg4", m.Package)
 	}
@@ -185,10 +311,7 @@ func TestHeroMatrixPrefersASliceThatCarriesUsage(t *testing.T) {
 		cubeSnap(purl, "", "linux", "amd64", "node", "22", "npm", "CONTRACT", 3, 0)
 
 	s := &site{d: Deps{Store: store}}
-	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
-	if m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	m := waitHeroMatrix(t, s, httptest.NewRequest("GET", "/", nil), "en", hits)
 	if gridUsageCells(m.Grid) == 0 {
 		t.Errorf("featured %q, whose grid carries no usage at all", m.Package)
 	}
@@ -211,10 +334,7 @@ func TestHeroMatrixKeepsLookingPastAHalfMeasuredGrid(t *testing.T) {
 		cubeSnap(half, "", "linux", "amd64", "node", "22", "npm", "PROJECT_TEST", 4, 1)
 
 	s := &site{d: Deps{Store: store}}
-	m := s.heroMatrix(httptest.NewRequest("GET", "/", nil), "en", hits)
-	if m == nil {
-		t.Fatal("no hero matrix rendered")
-	}
+	m := waitHeroMatrix(t, s, httptest.NewRequest("GET", "/", nil), "en", hits)
 	total, used := gridCells(m.Grid), gridUsageCells(m.Grid)
 	if total == 0 {
 		t.Fatal("featured an empty grid")

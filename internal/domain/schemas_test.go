@@ -197,6 +197,13 @@ func TestObservationBatchSchemaRollingCompatibility(t *testing.T) {
 	_, v2 := read(filepath.Join(filepath.Dir(v1Dir), "v2", "observation-batch.json"))
 	v1Properties := v1["properties"].(map[string]any)
 	v2Properties := v2["properties"].(map[string]any)
+	v2ExitCode := v2Properties["exitCode"].(map[string]any)
+	if got := v2ExitCode["minimum"]; got != float64(-2147483648) {
+		t.Fatalf("v2 observation exitCode minimum = %v, want signed int32 minimum", got)
+	}
+	if got := v2ExitCode["maximum"]; got != float64(4294967295) {
+		t.Fatalf("v2 observation exitCode maximum = %v, want legacy Windows uint32 maximum", got)
+	}
 	for _, key := range []string{"outerCommand", "outerStage", "actualToolchain", "stageEvidence", "evidenceGap"} {
 		if _, present := v1Properties[key]; present {
 			t.Errorf("strict v1 observation batch unexpectedly contains %q", key)

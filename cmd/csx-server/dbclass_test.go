@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,6 +131,22 @@ func TestPressureLogNamesTheCauseAndDoesNotFlood(t *testing.T) {
 	if strings.Contains(lines[3], "?") {
 		t.Errorf("the log line carries a query string: %q", lines[3])
 	}
+}
+
+func TestPressureLogIsSafeForConcurrentRequests(t *testing.T) {
+	p := &pressureLog{
+		now: func() time.Time { return time.Unix(0, 0) },
+		out: func(string, ...any) {},
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.report(serverstore.ClassInteractive, "/wanted", 1, 0, time.Second)
+		}()
+	}
+	wg.Wait()
 }
 
 // The budget must survive being read after the handler returned, which is

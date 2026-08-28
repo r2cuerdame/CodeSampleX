@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+type authoringPollContextKey struct{}
+
+// WithAuthoringPoll marks the read half of /v1/authoring/work/next. It lets
+// TopWanted use the fleet poll's database-owned statement ceiling without
+// changing unrelated background/admin callers or the pool-guard-off contract.
+func WithAuthoringPoll(ctx context.Context) context.Context {
+	return context.WithValue(ctx, authoringPollContextKey{}, true)
+}
+
+func isAuthoringPoll(ctx context.Context) bool {
+	marked, _ := ctx.Value(authoringPollContextKey{}).(bool)
+	return marked
+}
+
 const MaxAuthoringSessions = 64
 
 var (

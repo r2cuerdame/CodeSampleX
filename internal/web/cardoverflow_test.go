@@ -108,6 +108,12 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 			if page.seed != nil {
 				page.seed(store)
 			}
+			// Derived findings intentionally fill out of band now. Make the
+			// browser measure the seeded card after that cache is complete;
+			// every geometric and full-token assertion below remains unchanged.
+			if page.name == "findings" {
+				getEventually(t, mux, page.path, longSessionToken)
+			}
 			srv := httptest.NewServer(cardHarness(mux, page.path, page.cardSel))
 			defer srv.Close()
 

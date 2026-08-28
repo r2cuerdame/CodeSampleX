@@ -555,11 +555,25 @@ func validateDownloadURL(u *url.URL) error {
 	return nil
 }
 
+// stagedBinarySelfTestTimeout is a safety bound, not a latency target. The
+// first execution of a newly downloaded Windows PE can be held by real-time
+// inspection before its main function gets CPU. Ten seconds was shorter than
+// that inspection on a saturated release runner, while other packages on the
+// same host took up to 472 seconds. The caller's context can still impose a
+// tighter deadline.
+const stagedBinarySelfTestTimeout = time.Minute
+
 func selfTestBinary(ctx context.Context, path, version string) error {
-	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	tctx, cancel := context.WithTimeout(ctx, stagedBinarySelfTestTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(tctx, path, "version").CombinedOutput()
 	if err != nil {
+		// On Windows Process.Kill uses TerminateProcess with exit code 1 and
+		// os/exec prefers that ExitError over its context watcher result. Restore
+		// the real cause so an expired budget is not reported as a bad payload.
+		if contextErr := tctx.Err(); contextErr != nil {
+			return fmt.Errorf("update: staged binary self-test did not complete: %w", contextErr)
+		}
 		return fmt.Errorf("update: staged binary self-test failed: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "csx "+version {

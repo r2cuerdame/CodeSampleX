@@ -18,14 +18,16 @@ import (
 
 // StatusInfo is the GET /local/v1/status body.
 type StatusInfo struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Version       string `json:"version"`
-	Mode          string `json:"mode"`
-	Home          string `json:"home"`
-	PeerID        string `json:"peerId"`
-	Uptime        string `json:"uptime"`
-	QueueDepth    int    `json:"queueDepth"`
-	LastUpload    string `json:"lastUpload,omitempty"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	Version           string `json:"version"`
+	Mode              string `json:"mode"`
+	Home              string `json:"home"`
+	PeerID            string `json:"peerId"`
+	Uptime            string `json:"uptime"`
+	QueueDepth        int    `json:"queueDepth"`
+	LastUpload        string `json:"lastUpload,omitempty"`
+	LastUploadAttempt string `json:"lastUploadAttempt,omitempty"`
+	LastUploadError   string `json:"lastUploadError,omitempty"`
 }
 
 // SampleInfo is the GET /local/v1/samples/{id} body: the localdb row plus
@@ -133,6 +135,12 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st.QueueDepth, _ = d.queueDepth(ctx)
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
 		st.LastUpload = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadAttempt); ok {
+		st.LastUploadAttempt = v
+	}
+	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadError); ok {
+		st.LastUploadError = v
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -398,6 +406,14 @@ func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) 
 	if resp.Miss && search.FetchMissing(ctx, *d.Engine, d.Syncer, d.Cfg.Mode, req) {
 		resp = d.Engine.Search(ctx, req)
 	}
+	// Search retrieves candidates; this boundary decides which ones are safe
+	// to present and therefore safe to record as offers. MCP already applies
+	// this gate before its two-phase record path. Keeping the daemon path on
+	// the same contract prevents an unrelated nearest neighbour from becoming
+	// a local HIT merely because the CLI happened to reach a running daemon.
+	beforeGate := len(resp.Results)
+	resp, suppressed := domain.GateNormalOutput(req, resp, nil)
+	domain.RecordOutputGateDiagnostic(&resp, req, beforeGate, suppressed)
 	if resp.Miss || len(resp.Results) == 0 {
 		d.incrStat(ctx, statMisses, 1)
 		// A miss is a demand signal. Queued rather than posted: the queue
