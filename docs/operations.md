@@ -595,7 +595,9 @@ a fine number, and report count is explicitly not a success KPI.
   that a property of the type rather than a rule someone has to remember.
 
 The regression fixture is the GPTBrowser incident behind R2C-51: a
-`npm run typecheck` failure displaced by an unrelated Dart recommendation,
+typecheck npm-script failure (that project's script, not one of this repo's —
+verification here is `go test ./...`) displaced by an unrelated Dart
+recommendation,
 accepted as a candidate, deduped across two differently-worded reports into
 one row with two occurrences, and linked to canonical `R2C-51`
 (`TestTheGPTBrowserDefectIsAcceptedDedupedAndLinkedToItsCanonicalBug`).

@@ -218,7 +218,8 @@ The MCPB bundle's own `mcp_config` was never affected: it uses
 ### B4 — Cline's attestation is the operator's to make, and nobody here has run Cline.
 
 
-Verbatim from `cline/mcp-marketplace/.github/ISSUE_TEMPLATE/mcp-server-submission.yml`:
+Verbatim from the submission template in the cline/mcp-marketplace repository
+(https://github.com/cline/mcp-marketplace/blob/main/.github/ISSUE_TEMPLATE/mcp-server-submission.yml):
 
 ```yaml
   - type: checkboxes
@@ -736,7 +737,7 @@ B4 before opening the form.
 
 - **Destination:** https://github.com/cline/mcp-marketplace/issues/new — the
   **MCP Server Submission** issue template
-  (`.github/ISSUE_TEMPLATE/mcp-server-submission.yml` on `main`).
+  (mcp-server-submission.yml under .github/ISSUE_TEMPLATE on that repo's `main`).
 - **Mechanism:** GitHub issue. Title is prefilled `[Server Submission]: `; label
   `server-submission`.
 - **Review criteria**, from the repo README: community adoption (GitHub metrics,

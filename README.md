@@ -246,6 +246,28 @@ Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolu
 
 Single Go binary (`csx`: daemon + CLI + MCP + peer node + verifier) and a small server (`csx-server`: PostgreSQL + server-rendered compatibility explorer behind Caddy). Samples are content-addressed and distributed local-cache-first → peers → main seeder. Downloaded samples never run on the host directly: resolve runs in a pinned sandbox with install scripts disabled where the ecosystem supports it, the artifact is re-hashed after resolve, and compile/contract stages run network-off. Current canonical references are [docs/architecture.md](docs/architecture.md), [docs/schema.md](docs/schema.md), [docs/execution-context.md](docs/execution-context.md), [docs/diagnostics.md](docs/diagnostics.md), [docs/operations.md](docs/operations.md), and [docs/activation-funnel.md](docs/activation-funnel.md) — the latter being what may and may not be measured between install and a first useful answer, and why unique/active users are not on that list. [goal.md](goal.md) is the initial product plan.
 
+## Operating model, principles, and Public v1 scope
+
+These are standing product decisions carried over from the initial plan ([goal.md](goal.md) — now a deprecated stub; the full plan text lives in git history). Code and the documents above win wherever the implementation has evolved past the plan.
+
+**Operating model.** The public network is free to join. Operation is funded by sponsorship (the GitHub Sponsors model in the initial plan; the site footer carries the Sponsor link). The plan reserves a possible future paid Hosted API for API-only consumers who contribute no evidence, storage, or verification — that tier is deliberately outside Public v1.
+
+**Non-negotiable principles.** Breaking any of these requires the project owner's explicit approval:
+
+- Real project source is never transmitted automatically, and automatic evidence covers packages on public registries only.
+- Community peers are consumers and producers at once — that is the protocol, not hidden telemetry.
+- The Evidence network and the Sample pool stay independent systems, and a project compiling is never presented as an individual API succeeding.
+- Unknown causes stay `UNKNOWN`; `NO_SAFE_MATCH` beats a forced HIT.
+- The product's default behavior depends on no server-side LLM inference and no central build farm, and local features keep working, as far as they can, while the central server is down.
+- Publishing sample source and contributing idle-CPU verification each require their own explicit consent.
+- A sample without a contract never climbs past L2 (compiled) on the verification ladder.
+- No blockchain, token economy, or global ledger — ever.
+- The core client and the public protocol stay open source.
+
+**Out of scope for Public v1** (initial-plan scope decision; where the shipped product has since gone further — e.g. the verified-only ecosystems above — the shipped product wins): enterprise/private package networks, SSO/SLA/on-premise, API-only billing, dedicated IDE extensions for every editor, full shell interception for every agent, runtime symbol instrumentation for every language, Android/iOS/Unreal/Unity/C++ verifiers, a central large-scale build farm, generic project memory or architecture/business-logic sharing, automatic source publication, definitive failure-cause verdicts, and a DHT-only network.
+
+**Success metrics.** Success is not judged by sample counts or sign-ups. The metrics the initial plan commits to: agent search invocation rate, Precision@1, accepted-HIT rate, post-HIT build pass rate, adaptation distance, evidence coverage, cross-verification rate, failure-attribution confidence, and estimated reasoning avoided — the last explicitly an estimate, never a measured count (see the stats table above).
+
 ## Building from source
 
 ```bash

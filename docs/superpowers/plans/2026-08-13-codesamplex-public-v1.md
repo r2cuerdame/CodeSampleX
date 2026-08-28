@@ -630,7 +630,7 @@ Execution notes: tasks within a phase sharing no files may run in parallel (work
 ## Phase 10 — E2E scenarios (P10)
 
 ### Task P10.1: E2E harness A–F
-**Files:** `test/e2e/{e2e.ps1,fixtures/npmproj/...,fixtures/private-proj/...}`, `deploy/docker-compose.e2e.yml` (fixed ports, CSX_PUBLIC_CHECK=trust, CSX_SNAPSHOT_INTERVAL=5s), `docs/e2e-report-template.md`.
+**Files:** `test/e2e/{e2e.ps1,fixtures/npmproj/...,fixtures/private-proj/...}`, `deploy/docker-compose.e2e.yml` (fixed ports, CSX_PUBLIC_CHECK=trust, CSX_SNAPSHOT_INTERVAL=5s), and a report template (docs/e2e-report-template.md was never created; the harness writes `docs/e2e-report.md` directly).
 **Produces:** scripted proof of §25 A–F using built binaries + compose stack + two CSX_HOME peer dirs; each scenario prints PASS/FAIL + evidence (curl outputs, DB counts); writes `docs/e2e-report.md`.
 **Acceptance:** `powershell -File test/e2e/e2e.ps1` exits 0 with all six scenarios PASS.
 
