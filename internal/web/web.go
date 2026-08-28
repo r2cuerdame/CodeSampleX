@@ -362,6 +362,14 @@ type site struct {
 	// somewhere and then hit repeatedly.
 	pinnedCube map[string]pinnedCubeEntry
 
+	// sitemap* caches the built sitemap index and shards. One rebuild reads
+	// the whole indexable corpus, which is fine once per freshness window
+	// and not fine per crawler request; every request inside the window is
+	// served from memory (sitemap.go).
+	sitemapMu    sync.Mutex
+	sitemapCache *sitemapSnapshot
+	sitemapAt    time.Time
+
 	// hero* memoizes the landing's finished hero matrix per (language,
 	// selection). Assembly is cached above; the PIVOTING was not, and a warm
 	// landing still built up to thirty grids per view — six candidates by
@@ -451,7 +459,10 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /samples/{id}", s.samplePage)
 	handle("GET /seeders/{login}", s.seederPage)
 	handle("GET /robots.txt", s.robots)
-	handle("GET /sitemap.xml", s.sitemap)
+	// /sitemap.xml is the index robots.txt advertises; the shards it names
+	// live under /sitemaps/. Both serve from the same cached snapshot.
+	handle("GET /sitemap.xml", s.sitemapIndex)
+	handle("GET /sitemaps/{file}", s.sitemapShardPage)
 	handle("GET /install.ps1", s.installScript("install/install.ps1"))
 	handle("GET /install.sh", s.installScript("install/install.sh"))
 	handle("GET /dl/{file}", s.download)

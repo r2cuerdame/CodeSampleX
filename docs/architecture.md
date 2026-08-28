@@ -122,6 +122,24 @@ package URL, twice, in front of every search that reached them.
 published samples across eight ecosystems, nine of them carrying that goal;
 `serpcorpus_test.go` renders the search surface of every one.
 
+**The sitemap follows the corpus by construction.** `/sitemap.xml` is an
+index over section shards under `/sitemaps/` (`static`, `packages`,
+`samples`), built from the same store queries the pages render from and
+cached in-process for a 15-minute freshness window
+(`internal/web/sitemap.go`). A new package or sample enters the served map
+because the store returns it, and a quarantined sample leaves the same way —
+there is no sitemap file to regenerate or deploy. The packages section is
+the full records inventory, not a hot-N window, filtered to the ecosystems
+the router actually serves; the samples section is every published sample at
+the address it declares canonical. `lastmod` is the page's own data change
+(a sample's publication date, a package's last snapshot materialization),
+never the generation clock, and pages with no honest date carry none. A
+section splits into numbered shards below the protocol's 50,000-URL/50MB
+file limits, and each rebuild logs advertised-versus-corpus counts (the
+divergence ledger `docs/operations.md` reads). Sitemap requests are
+background-class in `cmd/csx-server/dbclass.go`: one request per window
+rebuilds on a crawler's behalf, and the rest serve from memory.
+
 ## Clean-room proposal workspaces
 
 `csx sample propose` and MCP `propose_public_sample` build the same thing
