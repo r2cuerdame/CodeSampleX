@@ -129,7 +129,7 @@ func TestFeaturesRouteSEOAndResponsiveLayout(t *testing.T) {
 		t.Fatalf("trailing slash = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 
-	sitemap := get(t, mux, "/sitemap.xml").Body.String()
+	sitemap := sitemapBody(t, mux)
 	mustContain(t, sitemap, `<loc>https://codesamplex.dev/features</loc>`)
 
 	css := get(t, mux, "/static/site.css").Body.String()

@@ -3,9 +3,7 @@ package web
 import (
 	"encoding/json"
 	"html/template"
-	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -230,94 +228,5 @@ func xmlEscape(s string) string {
 	return r.Replace(s)
 }
 
-// sitemapSampleLimit caps the sample section of the map. The factory target
-// is 10,000 samples, so the old 5,000 cap silently dropped its oldest half.
-// 20,000 samples plus the bounded landing, static and package sections remain
-// well below the sitemap protocol's 50,000-URL limit while leaving headroom.
-const sitemapSampleLimit = 20_000
-
-// sampleIDRe guards the sample ids that go into the sitemap. Ids are
-// content addresses ("sha256:<hex>"), and the colon is a legal path
-// character that every canonical URL on the site already carries — so the
-// id is emitted verbatim rather than percent-escaped, which would
-// advertise a URL that differs from the page's own rel=canonical. Anything
-// that is not that shape is skipped instead of guessed at.
-var sampleIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:_-]{0,127}$`)
-
 // sampleHref is the site path of a published sample page.
 func sampleHref(id string) string { return "/samples/" + id }
-
-// sitemap lists the per-locale landing cluster (with xhtml alternates),
-// the static indexable pages, the hot packages (plan P6.3) and every
-// published sample.
-//
-// The samples are the point: each one is a page answering one specific
-// question ("deny_unknown_fields with flatten", "NewFromFloat 0.1"), and
-// before they were listed here nothing on the site linked to them at all —
-// the seeder page is the only other route to a sample page and every
-// published sample is anonymous, so all of them were unreachable.
-func (s *site) sitemap(w http.ResponseWriter, r *http.Request) {
-	base := s.base(r)
-	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
-	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">` + "\n")
-
-	writeURL := func(loc string, alts []alternate) {
-		b.WriteString("  <url>\n    <loc>" + xmlEscape(loc) + "</loc>\n")
-		for _, a := range alts {
-			b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Lang + `" href="` + xmlEscape(a.URL) + `"/>` + "\n")
-		}
-		b.WriteString("  </url>\n")
-	}
-	writeDated := func(loc, lastmod string) {
-		b.WriteString("  <url>\n    <loc>" + xmlEscape(loc) + "</loc>\n")
-		if lastmod != "" {
-			b.WriteString("    <lastmod>" + xmlEscape(lastmod) + "</lastmod>\n")
-		}
-		b.WriteString("  </url>\n")
-	}
-
-	// Landing: one entry per locale, each carrying the full alternate cluster.
-	landingAlts := landingAlternates(base)
-	for _, code := range i18n.Supported {
-		loc := base + "/"
-		if code != i18n.Default {
-			loc = base + "/" + code + "/"
-		}
-		writeURL(loc, landingAlts)
-	}
-
-	// /stats and /adapters are permanent redirects and stay out of the map.
-	for _, p := range []string{"/records", "/findings", "/wanted", "/features"} {
-		writeURL(base+p, nil)
-	}
-
-	if hot, err := s.d.Store.HotPackages(r.Context(), 100); err == nil {
-		for _, h := range hot {
-			loc := base + "/" + url.PathEscape(h.Ecosystem) + "/" + escapePathSegments(h.Name)
-			writeURL(loc, nil)
-		}
-	}
-
-	// Every published sample, at the address it declares canonical: the
-	// human-readable /npm/<name>/<version>/samples/<slug> where the sample
-	// names a release this site routes, and the content address otherwise.
-	// Advertising the digest URL of a page that canonicalizes elsewhere asks
-	// a crawler to index one address and then tells it to index another.
-	//
-	// lastmod is the publication date: a sample is immutable once published
-	// (its id is the hash of its contents), so the date it was created is
-	// the only honest value.
-	if samples, err := s.d.Store.ListSamples(r.Context(), sitemapSampleLimit); err == nil {
-		for _, sm := range samples {
-			if !sampleIDRe.MatchString(sm.SampleID) {
-				continue
-			}
-			writeDated(base+sm.Href(), datePart(sm.CreatedAt))
-		}
-	}
-
-	b.WriteString("</urlset>\n")
-	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	_, _ = w.Write([]byte(b.String()))
-}

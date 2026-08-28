@@ -47,6 +47,9 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 		{"GET", "/admin", serverstore.ClassBackground,
 			"the operator dashboard aggregates on purpose"},
 		{"GET", "/admin/api/farm", serverstore.ClassBackground, "and so do its panels"},
+		{"GET", "/sitemap.xml", serverstore.ClassBackground,
+			"one rebuild per freshness window reads the whole indexable corpus; a crawler waits"},
+		{"GET", "/sitemaps/samples-1.xml", serverstore.ClassBackground, "a shard of the same snapshot"},
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest(tc.method, tc.path, nil)

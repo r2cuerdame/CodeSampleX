@@ -39,6 +39,11 @@ var longRunningPrefixes = []string{
 	"/v1/wanted/batches",    // bulk ask ingest
 	"/v1/verification/jobs", // the fleet's own queue, polled continuously
 	"/admin",                // the operator dashboard aggregates on purpose
+	// /sitemap.xml and /sitemaps/*: at most one request per freshness
+	// window rebuilds the whole indexable corpus on a crawler's behalf —
+	// an aggregate by design, like /admin — and every other request serves
+	// from memory without touching the database at all.
+	"/sitemap",
 }
 
 // dbClassFor decides what a request may ask of the database.

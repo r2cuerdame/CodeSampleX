@@ -31,6 +31,9 @@ type fakeStore struct {
 	samplePackages map[string][]string
 	packageCodeErr error
 	derived        []DerivedFinding
+	// listSamplesCalls counts corpus reads, so a test can pin that the
+	// sitemap rebuilds once per freshness window rather than per request.
+	listSamplesCalls int
 }
 
 func snapKey(purl, symbol string) string { return purl + "\x00" + symbol }
@@ -89,6 +92,7 @@ func (f *fakeStore) SeederSamples(_ context.Context, login string) ([]SampleList
 }
 
 func (f *fakeStore) ListSamples(_ context.Context, limit int) ([]SampleListItem, error) {
+	f.listSamplesCalls++
 	out := make([]SampleListItem, 0, len(f.sampleList))
 	for _, it := range f.sampleList {
 		if limit > 0 && len(out) >= limit {

@@ -332,7 +332,7 @@ func TestSitemapAdvertisesTheCanonicalSampleURL(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	machineGoalSample(t, store)
 
-	body := get(t, mux, "/sitemap.xml").Body.String()
+	body := sitemapBody(t, mux)
 	mustContain(t, body, "<loc>https://codesamplex.dev"+browserslistHref()+"</loc>")
 	mustNotContain(t, body, "<loc>https://codesamplex.dev/samples/"+realSampleID+"</loc>")
 }
@@ -345,7 +345,7 @@ func TestEverySitemapURLIsAFinalSelfCanonicalPage(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	machineGoalSample(t, store)
 
-	body := get(t, mux, "/sitemap.xml").Body.String()
+	body := sitemapBody(t, mux)
 	locs := regexp.MustCompile(`<loc>([^<]+)</loc>`).FindAllStringSubmatch(body, -1)
 	if len(locs) == 0 {
 		t.Fatal("sitemap has no <loc> entries")
