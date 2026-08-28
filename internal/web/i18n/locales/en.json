@@ -88,6 +88,7 @@
   "cube.swap": "Swap axes",
   "cube.window_note": "The cube reads the newest 6 versions and the first 10 symbols of each, so an empty cell here can mean \"outside that window\" rather than \"never measured\".",
   "sample.none": "no sample at this coordinate yet",
+  "sample.exists": "there is a sample for this release and API",
   "sample.unknown": "there is a sample here, and nothing of ours has run it at this coordinate yet",
   "sample.pass": "there is a sample here, and our run of it at this coordinate came back clean",
   "sample.fail": "there is a sample here, and our run of it at this coordinate failed",

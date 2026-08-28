@@ -26,14 +26,14 @@ Chaque résultat est une exécution enregistrée accompagnée de son environneme
 
 ```text
                                          v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ◆ 82% 1209  ◆ 100% 2  ◆ —
-Batch                                    ◆ 80% 689   —         —
-ParseConfig                              ◆ 82% 1188  —         —
+github.com/jackc/pgx/v5                  ▤ 82% 1209  ▤ 100% 2  ▤ —
+Batch                                    ▤ 80% 689   —         —
+ParseConfig                              ▤ 82% 1188  —         —
 ```
 
 Cette grille n’est pas une illustration : c’est [la page en direct](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), si bien que les chiffres ci-dessus ont déjà bougé depuis qu’ils ont été copiés.
 
-**Une cellule porte un taux et une marque, jamais un verdict.** Le pourcentage et le nombre à côté sont des observations : 82 % des 1 209 observations enregistrées sont passées. Une observation, c’est une étape atteinte par un build — compilation, typage, tests — donc un seul build en dépose plusieurs, et le nombre ne compte ni des builds, ni des machines, ni des personnes. La marque `◆` ne dit qu’une chose : ce réseau a exécuté son propre contrat DANS CET environnement et il s’est terminé proprement. L’existence de code pour la version et l’API est une autre marque — un document —, car un échantillon ne disparaît pas quand on change le filtre d’OS. Ce n’est délibérément pas une coche, car une coche est un tampon d’approbation et ce réseau ne note pas ; une exécution à nous qui a échoué porte `✕` à la place. `◆ —` veut dire : notre contrat a tourné ici et s’est terminé proprement, et aucun build n’a été signalé à cette coordonnée. `—` reste inconnu.
+**Une cellule porte un taux et une seule marque, jamais un verdict.** Le pourcentage et le nombre à côté sont des observations : 82 % des 1 209 observations enregistrées sont passées. Une observation, c’est une étape atteinte par un build — compilation, typage, tests — donc un seul build en dépose plusieurs, et le nombre ne compte ni des builds, ni des machines, ni des personnes. La marque `▤` est un document, et un document ne dit qu’une chose : il y a un échantillon à cette coordonnée. Sa COULEUR dit comment notre propre exécution s’est passée ici — gris personne ne l’a exécuté ici, vert il est passé, rouge il a échoué, coupé en deux les deux résultats sont consignés. Un README ne peut pas imprimer la couleur : lisez chaque `▤` ci-dessus comme un vert. Une cellule sans échantillon ne porte aucun document, car laisser croire à du code qu’on ne peut pas ouvrir est pire qu’une cellule vide. Un `▤ —` vert veut dire : notre contrat a tourné ici et s’est terminé proprement, et aucun build n’a été signalé à cette coordonnée. `—` reste inconnu.
 
 ## Pourquoi les tests comptent
 

@@ -390,8 +390,8 @@ they are answered by different work and pooling them hides which:
 * `observed` — a real project build reached this coordinate.
 * `verifiedNoObservation` — the snapshot has `CONTRACT.pass > 0`, no
   `CONTRACT.fail`, and nobody has been seen using the coordinate. Failed or
-  mixed receipts are not included. When visible on the page this is `≡ —`,
-  and the cell is a link. **The fleet cannot
+  mixed receipts are not included. When visible on the page this is a green
+  document beside `—`, and the cell is a link. **The fleet cannot
   drain this.** Authoring another sample for a coordinate that already has one
   is duplicate work the queue refuses; only a `csx` install out in the world
   building that coordinate moves it.

@@ -40,8 +40,13 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	}
 
 	proven := buildPivotCell(agg(0, 0, 3, 0), now)
-	if proven.Basis != "verified" || proven.Glyph != "◆" {
-		t.Errorf("basis = %q glyph = %q, want verified with the mark", proven.Basis, proven.Glyph)
+	// The basis is legible without colour, and it is the DOCUMENT that
+	// carries it now: a run of ours that came back clean draws the passing
+	// document. It used to be a second glyph beside the document, which said
+	// the same fact twice in two vocabularies (R2C-127).
+	if proven.Basis != "verified" || proven.Sample != samplePass {
+		t.Errorf("basis = %q sample = %q, want verified with the passing document",
+			proven.Basis, proven.Sample)
 	}
 	// Our own runs are the mark, not the count: nobody has been seen using
 	// this, and the cell says so instead of reporting our runs as usage.
@@ -50,8 +55,12 @@ func TestPivotCellCarriesBasisAndRateNotAVerdict(t *testing.T) {
 	}
 
 	reported := buildPivotCell(agg(297, 15, 0, 0), now)
-	if reported.Basis != "observed" || reported.Glyph != "" {
-		t.Errorf("basis = %q glyph = %q, want observed with no mark", reported.Basis, reported.Glyph)
+	// Reported builds coloured nothing: a project that compiled is not a
+	// sample of ours that ran, so the cell carries no document of its own
+	// until the published aggregate adds one (setPublishedSamples).
+	if reported.Basis != "observed" || reported.Sample != sampleNone {
+		t.Errorf("basis = %q sample = %q, want observed with no document",
+			reported.Basis, reported.Sample)
 	}
 	if reported.Ratio != "95%" || reported.Passes != "312" || reported.Runs != 312 {
 		t.Errorf("cell = %q %q of %d, want 95%% of the 312 builds it rests on",
@@ -71,16 +80,16 @@ func TestALargeObservationRatioNeverBorrowsTheVerifiedBasis(t *testing.T) {
 	if big.Basis == small.Basis {
 		t.Fatalf("50,000 reports and one verified run share basis %q", big.Basis)
 	}
-	if big.Glyph == small.Glyph {
-		t.Errorf("both bases render as %q — basis must be legible without colour", big.Glyph)
+	if big.Sample == small.Sample {
+		t.Errorf("both bases render as %q — basis must be legible without colour", big.Sample)
 	}
-	// The mark follows the basis, not the size: absence of a mark is what
+	// The mark follows the basis, not the size: absence of a document is what
 	// says "reported, not proven", however large the number beside it.
-	if big.Glyph != "" {
-		t.Errorf("a 50,000-report cell carries a verification mark %q", big.Glyph)
+	if big.Sample != sampleNone {
+		t.Errorf("a 50,000-report cell draws a %q document off observations alone", big.Sample)
 	}
-	if small.Glyph != "◆" {
-		t.Error("a single verified run lost its mark to a larger observed one")
+	if small.Sample != samplePass {
+		t.Error("a single verified run lost its document to a larger observed one")
 	}
 }
 
@@ -106,8 +115,8 @@ func TestCrossReproductionAddsNoSecondMark(t *testing.T) {
 	both := agg(0, 0, 4, 0)
 	both.cross = true
 	crossed := buildPivotCell(both, now)
-	if crossed.Glyph != "◆" {
-		t.Errorf("cross-verified glyph = %q, want the single mark", crossed.Glyph)
+	if crossed.Sample != samplePass {
+		t.Errorf("cross-verified sample = %q, want the single passing document", crossed.Sample)
 	}
 	if !crossed.Cross {
 		t.Error("the cross flag must survive for the tooltip")
@@ -119,12 +128,12 @@ func TestCrossReproductionAddsNoSecondMark(t *testing.T) {
 func TestTheVerificationMarkIsNotAVerdict(t *testing.T) {
 	now := time.Now()
 	failed := buildPivotCell(agg(0, 0, 0, 3), now)
-	if failed.Glyph != "✕" {
-		t.Errorf("a failed run = %q, want the check's counterpart", failed.Glyph)
+	if failed.Sample != sampleFail {
+		t.Errorf("a failed run = %q, want the failing document", failed.Sample)
 	}
 	passed := buildPivotCell(agg(0, 0, 3, 0), now)
-	if passed.Glyph != "◆" {
-		t.Errorf("a clean run lost its mark: %q", passed.Glyph)
+	if passed.Sample != samplePass {
+		t.Errorf("a clean run lost its document: %q", passed.Sample)
 	}
 	if failed.Tone != "fail" || passed.Tone != "pass" {
 		t.Errorf("tone must carry the outcome: %q and %q", failed.Tone, passed.Tone)

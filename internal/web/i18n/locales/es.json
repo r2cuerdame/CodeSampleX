@@ -88,6 +88,7 @@
   "cube.swap": "Intercambiar ejes",
   "cube.window_note": "El cubo lee las 6 versiones más recientes y los primeros 10 símbolos de cada una, así que una celda vacía aquí puede significar «fuera de esa ventana» y no «nunca medido».",
   "sample.none": "todavía no hay muestra en esta coordenada",
+  "sample.exists": "hay una muestra para esta versión y esta API",
   "sample.unknown": "hay una muestra aquí y todavía no la hemos ejecutado en esta coordenada",
   "sample.pass": "hay una muestra aquí y nuestra ejecución en esta coordenada terminó limpia",
   "sample.fail": "hay una muestra aquí y nuestra ejecución en esta coordenada falló",

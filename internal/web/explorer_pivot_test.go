@@ -204,5 +204,8 @@ func TestSymbolPageShowsOSPivotAboveDetail(t *testing.T) {
 		t.Fatalf("pivot must render above the env detail anchor: pivot=%d detail=%d", pivot, detail)
 	}
 	mustContain(t, body, `href="#env-detail"`)
-	mustContain(t, body, `class="glyph" aria-hidden="true">◆</span>`)
+	// The linux row's contract came back clean, so its cell draws the passing
+	// document. It used to draw a diamond beside one; a coordinate carries one
+	// mark now (R2C-127).
+	mustContain(t, body, `class="smark s-pass"`)
 }

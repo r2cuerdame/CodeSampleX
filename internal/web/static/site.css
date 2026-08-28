@@ -1506,16 +1506,33 @@ td.pv .pvpasses { font-size: 0.66rem; }
 .cubenav .navterminal { margin: 0.3rem 0 0; font-weight: 650; color: var(--accent-2); }
 .cubenav .navnext { margin: 0.3rem 0 0; }
 
-/* Code availability. A document, never a menu. */
-.codemark { display: inline-flex; align-items: center; color: var(--accent-2); }
-.codemark .ico-code { display: block; }
+/* The sample mark. One document, never a menu, and its colour is the state.
+   Nothing else on the page may spend these four colours on a fifth meaning:
+   a reader who learns them here reads them everywhere. */
+.smark { display: inline-flex; align-items: center; color: var(--dim); }
+.smark .ico-sample { display: block; }
+.smark.s-unknown { color: var(--dim); }
+.smark.s-pass { color: var(--ok); }
+.smark.s-fail { color: var(--bad); }
+.smark.s-mixed { color: var(--mid); }
+/* Listed in the legend only: the absence has no icon, and the dash that
+   stands in for one is drawn quieter than any mark so it cannot be read as
+   one. */
+.smark.s-empty { color: var(--line-strong); }
+/* The record bar is filled, not stroked, so it survives at 12px; SVG's
+   default fill is black, so every filled shape has to name its colour. The
+   two halves of a mixed document keep their own, which is what makes the
+   split legible without reading the outline's hue. */
+.smark .s-body.pass, .smark .s-half.pass { fill: var(--ok); }
+.smark .s-half.fail { fill: var(--bad); }
 /* Drill-down, and only drill-down. */
 .drill { color: var(--line-strong); font-weight: 700; }
 td.pv a:hover .drill { color: var(--accent); }
 
 .answer-aggregate { margin: -0.25rem 0 0.45rem; }
-/* Code / environment, side by side, because they are two answers and the
-   reader needs both at once. */
+/* One chip. It used to be two side by side — code availability and the
+   environment verdict — which is the internal model handed to the reader as
+   vocabulary; the document says both at once now. */
 .answer-states {
   display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.55rem 0 0;
 }
@@ -1524,10 +1541,13 @@ td.pv a:hover .drill { color: var(--accent); }
   padding: 0.15rem 0.5rem; border-radius: 999px;
   border: 1px solid var(--line); background: var(--panel-2);
 }
-.answer-states .state.code.yes { color: var(--accent-2); }
-.answer-states .state.code.no { color: var(--dim); font-style: italic; }
-.answer-states .state.env.verified { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
-.answer-states .state.env.observed { color: var(--dim); }
+.answer-states .state.sample.s-pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.answer-states .state.sample.s-fail { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+.answer-states .state.sample.s-mixed { color: var(--mid); border-color: color-mix(in srgb, var(--mid) 40%, var(--line)); }
+.answer-states .state.sample.s-unknown { color: var(--dim); }
+/* An absence and a failed lookup are both quiet, and neither is a mark. */
+.answer-states .state.sample.none,
+.answer-states .state.sample.unavailable { color: var(--dim); font-style: italic; }
 .answer-terminal { margin: 0.5rem 0 0; font-weight: 650; }
 
 .answer-actions { margin: 0.75rem 0 0; padding-top: 0.7rem; border-top: 1px solid var(--line); }

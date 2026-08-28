@@ -88,6 +88,7 @@
   "cube.swap": "Achsen tauschen",
   "cube.window_note": "Der Würfel liest die neuesten 6 Versionen und die ersten 10 Symbole jeder Version; eine leere Zelle kann hier „außerhalb dieses Fensters“ bedeuten statt „nie gemessen“.",
   "sample.none": "an dieser Koordinate noch kein Sample",
+  "sample.exists": "für diese Version und diese API gibt es ein Beispiel",
   "sample.unknown": "hier gibt es ein Sample, und wir haben es an dieser Koordinate noch nicht ausgeführt",
   "sample.pass": "hier gibt es ein Sample, und unser Lauf an dieser Koordinate kam sauber zurück",
   "sample.fail": "hier gibt es ein Sample, und unser Lauf an dieser Koordinate ist fehlgeschlagen",

@@ -269,9 +269,11 @@ When a coordinate is inside the current browse window, these two corpus states
 map to visually different dashes. The difference decides what work would
 answer it.
 
-* **`≡ —`, and the cell is a LINK.** We wrote a sample, it passed here, and no
-  project build has been attributed to the coordinate. The mark is our run;
-  the dash sits where the usage rate would go. `verifiedNoObservation`.
+* **A green document beside `—`, and the cell is a LINK.** We wrote a sample,
+  it passed here, and no project build has been attributed to the coordinate.
+  The document says the sample is here and its colour says our run of it came
+  back clean; the dash sits where the usage rate would go.
+  `verifiedNoObservation`.
 * **A plain, unlinked `—`.** No evidence row, no sample. The cell exists only
   because the symbol was recorded at some OTHER release of the package, so the
   grid draws the pair. `unmeasured`.

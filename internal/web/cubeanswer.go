@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -103,15 +104,33 @@ type cubeAction struct {
 	Href  string
 }
 
-// cubeAnswerEnv joins the environment dimensions a coordinate has decided.
-func cubeAnswerEnv(coord map[string]string) string {
+// cubeEnvParts lists the environment dimensions a coordinate has decided,
+// without saying one of them twice.
+//
+// osLabel already binds libc to the platform — "ubuntu glibc", because which
+// libc a distro ships is the pairing a reader has to see at a glance — and the
+// libc dimension then printed it again two slots later, so the reported
+// coordinate read "ubuntu glibc · glibc · x64". Same fact, same word, twice on
+// a line whose whole job is to state the place once.
+func cubeEnvParts(value func(dim string) string) []string {
+	os := value("os")
 	var parts []string
 	for _, dim := range cubeAnswerEnvDims {
-		if v := coord[dim]; v != "" {
-			parts = append(parts, v)
+		v := value(dim)
+		if v == "" {
+			continue
 		}
+		if dim == "libc" && strings.HasSuffix(os, " "+v) {
+			continue
+		}
+		parts = append(parts, v)
 	}
-	return joinDims(parts)
+	return parts
+}
+
+// cubeAnswerEnv joins the environment dimensions a coordinate has decided.
+func cubeAnswerEnv(coord map[string]string) string {
+	return joinDims(cubeEnvParts(func(dim string) string { return coord[dim] }))
 }
 
 // cubeResultLine states an aggregate's outcome in words, in the page
@@ -250,7 +269,7 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 	version, symbol := coord["version"], coord["symbol"]
 	ans.Code = code.at(version, symbol)
 	if code == nil || !code.known {
-		ans.SampleUnknownLabel = i18n.T(lang, "sample.unavailable")
+		ans.SampleUnknownLabel = sampleUnavailableLabel(lang)
 	} else {
 		ans.Sample = deriveSampleState(ans.Code, agg.verPass, agg.verFail)
 		ans.SampleLabel = sampleStateLabel(lang, ans.Sample)
@@ -320,6 +339,20 @@ func dropSharedCoordinate(rows []cubeLeafRow, ans *cubeAnswer) []cubeLeafRow {
 		}
 		if ans.Env != "" && rows[i].Env == ans.Env {
 			rows[i].Env = ""
+		}
+		// And the sample sentence, once the card has said one.
+		//
+		// Every state's sentence opens with the same clause — a sample is
+		// here — and that clause belongs to the release and the API, so it is
+		// the same fact on every record under one card. What the record adds
+		// is its own outcome, and the record already states that in words on
+		// the line above ("2 of 3 passed") and in the colour of its mark. The
+		// published count goes with the words for the same reason: it is
+		// keyed to the release and the API, so it is the same number on every
+		// row. Nothing is lost to a screen reader — the mark keeps the whole
+		// sentence as its accessible name and its tooltip.
+		if ans.Sample != sampleNone {
+			rows[i].SampleText = ""
 		}
 	}
 	return rows

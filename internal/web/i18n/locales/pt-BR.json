@@ -88,6 +88,7 @@
   "cube.swap": "Trocar eixos",
   "cube.window_note": "O cubo lê as 6 versões mais recentes e os primeiros 10 símbolos de cada uma, então uma célula vazia aqui pode significar “fora dessa janela” e não “nunca medido”.",
   "sample.none": "ainda sem amostra nesta coordenada",
+  "sample.exists": "existe uma amostra para esta versão e esta API",
   "sample.unknown": "há uma amostra aqui e ainda não a executamos nesta coordenada",
   "sample.pass": "há uma amostra aqui e nossa execução nesta coordenada terminou limpa",
   "sample.fail": "há uma amostra aqui e nossa execução nesta coordenada falhou",

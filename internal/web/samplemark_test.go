@@ -39,9 +39,23 @@ import (
 
 const marksPkg = "/golang/example.com/marks"
 
-// The slice that spreads API down and OS across with the release pinned: the
-// one grid where every state is visible at once.
-const marksGrid = marksPkg + "?f_version=v1.0.0&x=os&y=symbol&lang=ko"
+// markRelease is the release every published answer in the fixture belongs
+// to. markOldRelease has observations and no published answer at all.
+const (
+	markRelease    = "v1.0.0"
+	markOldRelease = "v2.0.0"
+)
+
+// The slice that spreads API down and RELEASE across: the one grid where
+// every state is visible at once.
+//
+// Deliberately not an environment axis. A grid spread over WHERE things ran
+// carries observations only (observationsOnlyOnEnvironmentAxes), because this
+// network's own runs belong to a release and not to an OS — so an OS axis
+// drops every contract receipt in the fixture and the page falls back to the
+// axes it can actually draw. Release × API is the pair that renders our runs,
+// which is the pair the document's colour is about.
+const marksGrid = marksPkg + "?x=version&y=symbol&lang=ko"
 
 // sampleMarkStore holds one release whose four APIs cover every state, plus a
 // second release nobody published an answer for.
@@ -122,15 +136,15 @@ func markGridCells(t *testing.T, body string) []string {
 }
 
 // cellFor returns the one grid cell whose link pins these two axis values.
-func cellFor(t *testing.T, body, symbol, os string) string {
+func cellFor(t *testing.T, body, symbol, version string) string {
 	t.Helper()
 	for _, cell := range markGridCells(t, body) {
 		if strings.Contains(cell, "f_symbol="+url.QueryEscape(symbol)) &&
-			strings.Contains(cell, "f_os="+url.QueryEscape(os)) {
+			strings.Contains(cell, "f_version="+url.QueryEscape(version)) {
 			return cell
 		}
 	}
-	t.Fatalf("no cell for %s x %s in:\n%s", symbol, os, gridTable(t, body))
+	t.Fatalf("no cell for %s x %s in:\n%s", symbol, version, gridTable(t, body))
 	return ""
 }
 
@@ -147,6 +161,40 @@ func rowFor(t *testing.T, body, label string) string {
 	}
 	t.Fatalf("no row labelled %q in:\n%s", label, gridTable(t, body))
 	return ""
+}
+
+// sampleSurfaces returns every part of a page that speaks about samples: the
+// grids, the legends that teach their marks, the answer card and the exact
+// records. It exists so a rule about the sample vocabulary can be enforced
+// where that vocabulary is spoken, and nowhere else — the same characters do
+// honest work in prose elsewhere on the site, and banning them page-wide
+// would be a rule about the alphabet rather than about the marks.
+func sampleSurfaces(body string) []string {
+	var out []string
+	for _, open := range []struct{ start, end string }{
+		{`<table class="pivot">`, "</table>"},
+		{`class="pivotlegend-marks`, "</ul>"},
+		{`class="gridstats`, "</div>"},
+		{`class="answer `, "</div>"},
+		{`class="cubeleaf`, "</ul>"},
+	} {
+		rest := body
+		for {
+			i := strings.Index(rest, open.start)
+			if i < 0 {
+				break
+			}
+			rest = rest[i:]
+			j := strings.Index(rest, open.end)
+			if j < 0 {
+				out = append(out, rest)
+				break
+			}
+			out = append(out, rest[:j])
+			rest = rest[j+len(open.end):]
+		}
+	}
+	return out
 }
 
 func legendBlock(t *testing.T, body string) string {
@@ -187,7 +235,7 @@ func TestASampleNobodyRanHereIsGrey(t *testing.T) {
 	}
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = sampleMarkStore() })
 	body := get(t, mux, marksGrid).Body.String()
-	cell := cellFor(t, body, "marks.Quiet", "linux")
+	cell := cellFor(t, body, "marks.Quiet", markRelease)
 	got := marksIn(cell)
 	if len(got) != 1 || got[0].state != string(sampleUnknown) {
 		t.Fatalf("a published sample with no run of ours here is drawn %v:\n%s", got, cell)
@@ -223,7 +271,7 @@ func TestTheDocumentTakesItsColourFromHowTheSampleRanHere(t *testing.T) {
 			}
 			mux, _ := newTestMux(t, func(d *Deps) { d.Store = sampleMarkStore() })
 			body := get(t, mux, marksGrid).Body.String()
-			cell := cellFor(t, body, tc.symbol, "linux")
+			cell := cellFor(t, body, tc.symbol, markRelease)
 			got := marksIn(cell)
 			if len(got) != 1 || got[0].state != string(tc.want) {
 				t.Fatalf("%s is drawn %v, want one %q document:\n%s", tc.symbol, got, tc.want, cell)
@@ -240,7 +288,7 @@ func TestTheDocumentTakesItsColourFromHowTheSampleRanHere(t *testing.T) {
 func TestAMixedDocumentKeepsBothOutcomes(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = sampleMarkStore() })
 	body := get(t, mux, marksGrid).Body.String()
-	cell := cellFor(t, body, "marks.Both", "linux")
+	cell := cellFor(t, body, "marks.Both", markRelease)
 	if !strings.Contains(cell, `class="smark s-mixed"`) {
 		t.Fatalf("a coordinate with a pass and a fail is not drawn as mixed:\n%s", cell)
 	}
@@ -375,9 +423,14 @@ func TestAnEnvironmentFilterMovesTheColourAndKeepsTheDocument(t *testing.T) {
 	f.snapshots[snapKey(purl, "marks.Pass")] = twoEnvSnap(purl, "marks.Pass")
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 
+	// The OS dimension is the label the environment was RECORDED under, with
+	// libc attached where one was recorded: "alpine musl", not "alpine". The
+	// Windows row recorded no libc, so its label is the bare platform name —
+	// which is also how a family pin is spelled, and matches the same row
+	// either way (dimValueMatches).
 	base := marksPkg + "?f_version=v1.0.0&f_symbol=" + url.QueryEscape("marks.Pass") + "&lang=ko&f_os="
 	for _, tc := range []struct{ os, want string }{
-		{"alpine", "pass"},
+		{"alpine musl", "pass"},
 		{"windows", "unknown"},
 	} {
 		card := answerCard(t, get(t, mux, base+url.QueryEscape(tc.os)).Body.String())
@@ -400,9 +453,16 @@ func TestNoDiamondSurvivesAsAUserFacingMark(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = sampleMarkStore() })
 	for _, path := range []string{"/", marksPkg, marksGrid, marksPkg + "?f_version=v1.0.0&lang=ko"} {
 		body := get(t, mux, path).Body.String()
-		for _, glyph := range []string{"◆", "✕", "≡"} {
-			if strings.Contains(body, glyph) {
-				t.Errorf("%s still draws %q", path, glyph)
+		// Scoped to the surfaces that speak about samples. The same
+		// characters are legitimate elsewhere on the site — the landing's
+		// "this never leaves your machine" list is a column of crosses, and
+		// nothing there claims to be a cell.
+		for _, surface := range sampleSurfaces(body) {
+			for _, glyph := range []string{"◆", "✕", "≡"} {
+				if strings.Contains(surface, glyph) {
+					t.Errorf("%s still draws %q where it speaks about samples:\n%s",
+						path, glyph, surface)
+				}
 			}
 		}
 	}
@@ -420,13 +480,18 @@ func TestNoDiamondSurvivesAsAUserFacingMark(t *testing.T) {
 //    different sentences to a reader.
 
 type markBox struct {
-	State  string  `json:"state"`
-	Colour string  `json:"colour"`
-	Left   float64 `json:"left"`
-	Right  float64 `json:"right"`
-	Width  float64 `json:"width"`
-	Height float64 `json:"height"`
-	Aria   string  `json:"aria"`
+	State string `json:"state"`
+	// Decorative marks are the legend's swatches: the sentence beside them
+	// names the state, so repeating it on the icon would make a screen
+	// reader say it twice. They still have to be the right COLOUR, which is
+	// the whole reason the legend teaches anything.
+	Decorative bool    `json:"decorative"`
+	Colour     string  `json:"colour"`
+	Left       float64 `json:"left"`
+	Right      float64 `json:"right"`
+	Width      float64 `json:"width"`
+	Height     float64 `json:"height"`
+	Aria       string  `json:"aria"`
 }
 
 type markReport struct {
@@ -441,8 +506,32 @@ var markViewports = []int{320, 360, 390, 430}
 
 func TestTheSampleMarksSurviveAPhone(t *testing.T) {
 	chrome := findChrome(t)
-	mux, _ := newTestMux(t, func(d *Deps) { d.Store = sampleMarkStore() })
-	srv := httptest.NewServer(markHarness(mux, marksGrid))
+	// Both surfaces a phone reader meets a mark on: the grid, where several
+	// states sit side by side and have to be distinguishable, and the exact
+	// coordinate reported from production, where there is one mark and one
+	// card and neither may push the page sideways.
+	for _, page := range []struct {
+		name       string
+		store      func() *fakeStore
+		target     string
+		wantStates int
+		wantLegend bool
+	}{
+		{"grid", sampleMarkStore, marksGrid, 3, true},
+		{"reported leaf", pgxStore, pgxLeaf, 1, false},
+	} {
+		t.Run(page.name, func(t *testing.T) {
+			measureMarks(t, chrome, page.store(), page.target, page.wantStates, page.wantLegend)
+		})
+	}
+}
+
+func measureMarks(t *testing.T, chrome string, store *fakeStore, target string,
+	wantStates int, wantLegend bool) {
+
+	t.Helper()
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = store })
+	srv := httptest.NewServer(markHarness(mux, target))
 	defer srv.Close()
 
 	var reports []markReport
@@ -455,11 +544,17 @@ func TestTheSampleMarksSurviveAPhone(t *testing.T) {
 	}
 
 	for _, r := range reports {
+		// body carries overflow-x:hidden, which hides the scrollbar without
+		// shrinking scrollWidth — so this reads the number, not the bar.
+		if over := r.Scroll - r.Client; over > 0 {
+			t.Errorf("viewport %dpx: documentElement.scrollWidth %.0f > clientWidth %.0f (%.0fpx of horizontal overflow)",
+				r.Width, r.Scroll, r.Client, over)
+		}
 		if len(r.Marks) == 0 {
 			t.Errorf("viewport %dpx: no document mark rendered at all", r.Width)
 			continue
 		}
-		if r.Legend == 0 {
+		if wantLegend && r.Legend == 0 {
 			t.Errorf("viewport %dpx: the legend that names the states did not render", r.Width)
 		}
 		colours := map[string]string{}
@@ -472,7 +567,7 @@ func TestTheSampleMarksSurviveAPhone(t *testing.T) {
 				t.Errorf("viewport %dpx: a %s document sits at [%.0f, %.0f], outside [0, %.0f]",
 					r.Width, m.State, m.Left, m.Right, r.Client)
 			}
-			if strings.TrimSpace(m.Aria) == "" {
+			if !m.Decorative && strings.TrimSpace(m.Aria) == "" {
 				t.Errorf("viewport %dpx: a %s document has no accessible name", r.Width, m.State)
 			}
 			if prev, ok := colours[m.State]; ok && prev != m.Colour {
@@ -490,8 +585,9 @@ func TestTheSampleMarksSurviveAPhone(t *testing.T) {
 			}
 			byColour[c] = state
 		}
-		if len(colours) < 3 {
-			t.Errorf("viewport %dpx: only %d states rendered; the fixture carries four", r.Width, len(colours))
+		if len(colours) < wantStates {
+			t.Errorf("viewport %dpx: %d states rendered, want at least %d",
+				r.Width, len(colours), wantStates)
 		}
 	}
 }
@@ -540,6 +636,7 @@ function run(){
       var el = els[j], r = el.getBoundingClientRect(), cs = win.getComputedStyle(el);
       var cls = (el.getAttribute('class') || '').match(/s-([a-z]+)/);
       marks.push({state: cls ? cls[1] : '', colour: cs.color,
+        decorative: el.getAttribute('aria-hidden') === 'true',
         left: Math.round(r.left + win.scrollX), right: Math.round(r.right + win.scrollX),
         width: Math.round(r.width), height: Math.round(r.height),
         aria: el.getAttribute('aria-label') || ''});
