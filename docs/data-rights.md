@@ -111,12 +111,12 @@ one omits.
 
 | Surface | Location | Says today | Gap |
 |---|---|---|---|
-| README licence section | [`README.md`](../README.md) §License, line 267 | "Code: Apache-2.0. Published samples default to MIT-0." | silent on evidence and compatibility data |
+| README licence section | [`README.md`](../README.md) §License, line 299 | "Code: Apache-2.0. Published samples default to MIT-0." | silent on evidence and compatibility data |
 | README licence badge | [`README.md`](../README.md) line 5 | shields.io renders the repo licence, "Apache-2.0" | reads as though it covers everything the project publishes |
-| Localized READMEs | `docs/i18n/README.{de,es,fr,ja,ko,pt-BR,ru,zh-CN}.md`, line 239 (ko: 251) | same two sentences, translated | same gap, ×8 |
+| Localized READMEs | `docs/i18n/README.{de,es,fr,ja,ko,pt-BR,ru,zh-CN}.md`, line 241 (ko: 253) | same two sentences, translated | same gap, ×8 |
 | Site footer | `internal/web/templates/landing.html` line 116 | links `LICENSE` as "Apache-2.0" | same as the badge |
-| Privacy policy | [`PRIVACY.md`](../PRIVACY.md) §7 line 225 | "Published sample source is public, MIT-0 by default" | describes evidence as "the product" without stating reuse terms |
-| Privacy policy | [`PRIVACY.md`](../PRIVACY.md) §4.7 line 172 | sample upload is "under MIT-0" | the only contributor-facing grant stated anywhere, and it covers sample source only |
+| Privacy policy | [`PRIVACY.md`](../PRIVACY.md) §7 line 284 | "Published sample source is public, MIT-0 by default" | describes evidence as "the product" without stating reuse terms |
+| Privacy policy | [`PRIVACY.md`](../PRIVACY.md) §4.9 line 231 | sample upload is "under MIT-0" | the only contributor-facing grant stated anywhere, and it covers sample source only |
 | Contribution consent | `internal/cli/agentassets/contract.txt` | what is shared and what never is | states no grant of rights over what is shared |
 | Public API reference | `internal/web/apiref.go` | ten read endpoints, no account needed | no terms attached to the data served |
 | MCPB manifest | `scripts/make-mcpb.py` line 91 | `"license": "Apache-2.0"` | correct for the bundle; a directory may render it as the data licence |
