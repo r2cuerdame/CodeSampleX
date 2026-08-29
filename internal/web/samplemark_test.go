@@ -50,11 +50,11 @@ const (
 // every state is visible at once.
 //
 // Deliberately not an environment axis. A grid spread over WHERE things ran
-// carries observations only (observationsOnlyOnEnvironmentAxes), because this
-// network's own runs belong to a release and not to an OS — so an OS axis
-// drops every contract receipt in the fixture and the page falls back to the
-// axes it can actually draw. Release × API is the pair that renders our runs,
-// which is the pair the document's colour is about.
+// RATES its cells from observations only (observationsOnlyOnEnvironmentAxes)
+// and picks its axes over that rate evidence, so an OS axis would fall back
+// here — our runs would keep colouring the documents, but they give an
+// environment axis no measured spread. Release × API is the pair that renders
+// our runs in full, which is the pair the document's colour is about.
 const marksGrid = marksPkg + "?x=version&y=symbol&lang=ko"
 
 // sampleMarkStore holds one release whose four APIs cover every state, plus a

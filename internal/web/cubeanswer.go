@@ -269,7 +269,18 @@ func buildCubeAnswer(sliced []cubeFact, coord map[string]string,
 	version, symbol := coord["version"], coord["symbol"]
 	ans.Code = code.at(version, symbol)
 	if code == nil || !code.known {
-		ans.SampleUnknownLabel = sampleUnavailableLabel(lang)
+		// A failed read loses the COUNT, not the outcome. A signed run
+		// recorded here both proves a sample existed and says how it went,
+		// and recorded runs outrank the published aggregate — demoting them
+		// to "cannot be checked" erased a PASS/FAIL the page already holds.
+		// Only where nothing of ours ran does the failed read stay what it
+		// is: not an absence claim, and not an outcome either.
+		if s := deriveSampleState(0, agg.verPass, agg.verFail); s != sampleNone {
+			ans.Sample = s
+			ans.SampleLabel = sampleStateLabel(lang, s)
+		} else {
+			ans.SampleUnknownLabel = sampleUnavailableLabel(lang)
+		}
 	} else {
 		ans.Sample = deriveSampleState(ans.Code, agg.verPass, agg.verFail)
 		ans.SampleLabel = sampleStateLabel(lang, ans.Sample)
