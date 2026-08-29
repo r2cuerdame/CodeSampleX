@@ -135,6 +135,13 @@ func buildCubeNav(facts []cubeFact, coord, filters map[string]string,
 				if key == "symbol" && v == cubePackageLevel && name != "" {
 					v = name
 				}
+				// osLabel already binds libc to the platform ("ubuntu
+				// glibc"), so listing the libc dimension after it printed the
+				// same word twice in one rung — the same repetition the
+				// answer card below carries cubeEnvParts for.
+				if d == "libc" && strings.HasSuffix(coord["os"], " "+v) {
+					continue
+				}
 				vals = append(vals, v)
 			}
 			step.Value, step.Done = strings.Join(vals, " · "), decided

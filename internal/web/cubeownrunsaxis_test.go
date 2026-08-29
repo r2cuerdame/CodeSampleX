@@ -21,9 +21,10 @@ func verifiedOnlyFact(tool, symbol, version string, pkgLevel bool) cubeFact {
 
 // A package the farm authored and nobody has installed yet renders a blank
 // cube: the axes are picked over every dimension the facts carry, and then
-// observationsOnlyOnEnvironmentAxes drops this network's own runs from any
-// grid spread over WHERE things ran. With no other evidence to hold, every
-// cell empties and the page shows an empty shell.
+// observationsOnlyOnEnvironmentAxes keeps this network's own runs out of the
+// rate on any grid spread over WHERE things ran. The runs still colour the
+// documents, but a grid whose every cell is a mark with no measurement is
+// not an axis choice worth defaulting to.
 //
 // This is not a corner: 726 of the 2,362 public samples sit on a coordinate
 // no developer machine has ever reported, and gem/rack-test — 21 samples, 19

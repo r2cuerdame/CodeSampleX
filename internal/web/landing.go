@@ -384,6 +384,7 @@ func (s *site) buildHeroMatrix(r *http.Request, lang string, hits, ordered []Pac
 			// not recorded)" is answering a question about our instrument
 			// instead of "does it run there".
 			grid := dropUnrecordedAxes(buildCubeGrid(facts, x, y, links, now, false))
+			labelSampleMarks(&grid, lang)
 			if score := heroGridScore(grid, rank); score > bestScore {
 				bestScore = score
 				best = &heroMatrixData{

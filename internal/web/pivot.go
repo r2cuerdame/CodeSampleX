@@ -64,28 +64,34 @@ type pivotCell struct {
 	// text -- failure has to catch the eye, but the WORD claimed more than
 	// the measurement supported, so only the colour survives.
 	Tone string
-	// Glyph marks the rare thing: a cell WE RAN carries it. An unproven cell
-	// carries nothing here and needs none -- badging the exception is the
-	// point, since a mark on 95% of cells says nothing. Cross reproduction
-	// gets no second symbol; it stays in the tooltip.
+	// Glyph is now the empty-cell placeholder and nothing else: "—" where
+	// nothing at all was recorded, "" everywhere else.
 	//
-	// It is deliberately not a check mark. A check means "passed" everywhere
-	// it appears, and this marks the BASIS, so a cell we ran and that failed
-	// rendered as a red tick beside 0/1 -- putting the verdict back into the
-	// glyph after taking it out of the word.
-	//
-	// Nor is it three bars any more. "≡" was read as a hamburger — menu,
-	// more, go deeper — and the READMEs had made that reading worse by
-	// glossing it as "there is code that works for this cell", which is a
-	// different fact with a different key (see cubecode.go). The mark now
-	// says one thing and only one: THIS ENVIRONMENT WAS VERIFIED. Code
-	// availability has its own mark, and drilling down has its own.
-	//
-	// buildPivotCell is the source of truth for these four values, and the
-	// site legend (templates/base.html) and the public READMEs are held to
-	// them by publiccopy_test.go. A pair of doubled diamonds was documented
-	// here for two releases after the code stopped producing them.
-	Glyph string // "◆" | "✕" | "" | "—"
+	// It used to carry the basis — "◆" for a contract of ours that ran clean
+	// here, "✕" for one that failed — beside a document that said a sample
+	// existed for the release and the API. Two marks in one cell is two
+	// internal models (Evidence, Sample) handed to the reader as vocabulary,
+	// and readers did not want two answers. Both facts now ride the ONE
+	// document: Sample says whether it is drawn, and its colour says how it
+	// ran here (samplestate.go). Before the diamond it was three bars, which
+	// readers took for a hamburger; the lesson each time was the same, that a
+	// cell may hold one mark for one fact.
+	Glyph string // "—" | ""
+	// Sample is the state of this coordinate's sample: absent, present but
+	// never run here, passed, failed, or both. buildPivotCell derives it from
+	// OUR OWN runs; a caller that also knows how many samples are published
+	// for the release and API folds that in with setPublishedSamples, which
+	// is what turns "nothing ran here" into a grey document rather than no
+	// document at all.
+	Sample sampleState
+	// SampleLabel is that state in one sentence, in the page language. It is
+	// the cell's accessible name AND its tooltip AND the legend entry, so the
+	// three cannot drift. labelSampleMarks writes it; a grid built without a
+	// language renders the mark unlabelled rather than mislabelled.
+	SampleLabel string
+	// ranPass and ranFail are our own runs at this coordinate, kept so a
+	// later caller can re-derive Sample once it learns the published count.
+	ranPass, ranFail int64
 	// Bang is retained as a field for the tooltip only; no marker renders.
 	// A cell carries at most one symbol now -- the check -- and colour says
 	// how the runs went. Every extra glyph was one more thing to learn
@@ -115,12 +121,23 @@ type pivotCell struct {
 	// reader there was nothing to read when there were ninety-six answers.
 	// The compatibility of that code HERE is what the rest of the cell says.
 	Code int64
-	// CodeLabel and DrillLabel are the accessible wording for the two marks
-	// the cell carries besides the basis glyph. They are set in the page
-	// language by the caller that knows it; a grid built without them simply
-	// renders no such mark.
-	CodeLabel  string
+	// DrillLabel is the accessible wording for the chevron. Navigation, and
+	// nothing else, wears it: "there is a level below this cell" is not a
+	// fact about the sample and must never be readable off the document.
 	DrillLabel string
+}
+
+// setPublishedSamples folds the environment-blind published count into a cell
+// that already knows how our own runs went there.
+//
+// The order matters and only in one direction: a run recorded here decides the
+// colour, and the published count can only add the document a coordinate with
+// no runs would otherwise not have. That is the difference between "there is
+// no sample here" and "there is one and nobody has run it here", which is the
+// distinction the single old mark could not make.
+func (c *pivotCell) setPublishedSamples(n int64) {
+	c.Code = n
+	c.Sample = deriveSampleState(n, c.ranPass, c.ranFail)
 }
 
 // pivotAxis is one label along an axis, with the OS family it names when
@@ -209,6 +226,12 @@ type pivotGrid struct {
 	CountPass, CountFail, CountMixed, CountObserved int
 	Measured                                        int
 	LastSeen                                        string // date part
+	// The strip's wording. It used to be four bare glyphs with numbers
+	// beside them and nothing to read them by, which is how "◆ 12" came to
+	// stand on the page as its own sentence. labelSampleMarks fills these in
+	// the page language; a grid built without one renders the numbers with
+	// no name rather than an English one on a Korean page.
+	StatPass, StatFail, StatMixed, StatObserved string
 }
 
 // Empty reports whether the grid has nothing worth rendering.
@@ -245,6 +268,14 @@ type pivotAgg struct {
 	// ever push a rate upward.
 	used             int64
 	verPass, verFail int64
+	// ranPass and ranFail are verification outcomes that may colour the
+	// sample document but must not join the rate or the basis. An
+	// environment grid rates its cells from observations alone — a
+	// verification is about a sample, not about the container it ran in —
+	// but the DOCUMENT is the sample-state contract, and a contract of ours
+	// that passed or failed in this cell's environment keeps its colour
+	// there (observationsOnlyOnEnvironmentAxes moves verPass/verFail here).
+	ranPass, ranFail int64
 	elevated         bool
 	cross            bool
 	obsLastSeen      string // max RFC3339 (UTC strings compare lexically)
@@ -599,6 +630,8 @@ func (a *pivotAgg) mergeObservations(b pivotAgg) {
 func (a *pivotAgg) mergeVerifications(b pivotAgg) {
 	a.verPass += b.verPass
 	a.verFail += b.verFail
+	a.ranPass += b.ranPass
+	a.ranFail += b.ranFail
 	a.cross = a.cross || b.cross
 	if b.verLastSeen > a.verLastSeen {
 		a.verLastSeen = b.verLastSeen
@@ -710,15 +743,23 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			// beside it, and adding it to them counts everything twice.
 			isAgg := row.Aggregate || (aggLabel != "" && ck == aggLabel)
 			if !isAgg {
+				// The three sample tallies count the state the cells wear.
+				// They used to read the observation-backed rate counters, so
+				// a cell whose reported builds passed but whose contract run
+				// failed drew a red document and incremented the green tally.
+				// The outcome half of Sample is final here: the published
+				// count folded in later can only add a grey document, never
+				// change pass/fail/mixed. The fourth tally is cells that only
+				// real projects reported — not a sample state.
 				switch {
+				case cell.Sample == samplePass:
+					g.CountPass++
+				case cell.Sample == sampleFail:
+					g.CountFail++
+				case cell.Sample == sampleMixed:
+					g.CountMixed++
 				case cell.Basis == "observed":
 					g.CountObserved++
-				case cell.Basis != "" && cell.FailCount == 0:
-					g.CountPass++
-				case cell.Basis != "" && cell.PassCount == 0:
-					g.CountFail++
-				case cell.Basis != "":
-					g.CountMixed++
 				}
 				if cell.Class != "empty" {
 					g.Measured++
@@ -836,7 +877,19 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// A verification, however small, outranks any volume of observation:
 	// the basis is about who ran it, never about how many said so.
 	if obs == 0 && ver == 0 && a.used == 0 {
-		return pivotCell{Class: "empty", Glyph: "—"}
+		if a.ranPass+a.ranFail == 0 {
+			return pivotCell{Class: "empty", Glyph: "—"}
+		}
+		// A document-only cell: our own run is the whole record here, kept
+		// off the rate (an environment grid rates from observations) but
+		// still owed its mark — a coordinate that recorded a failure and
+		// drew "—" claimed nothing was recorded, which is false. The class
+		// stays "empty" because the RATE has no evidence; the document says
+		// what did happen.
+		cell.Class = "empty"
+		cell.ranPass, cell.ranFail = a.ranPass, a.ranFail
+		cell.Sample = deriveSampleState(0, a.ranPass, a.ranFail)
+		return cell
 	}
 	// The number is usage; the mark is our own code. They answer different
 	// questions, so a cell can hold either alone: a sample we verified that
@@ -853,29 +906,22 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	if obs == 0 {
 		cell.PassCount, cell.FailCount = a.verPass, a.verFail
 	}
-	// The mark is our own run and how it went: a record mark when our sample
-	// passed here, a cross when it failed, nothing when we have no sample
-	// for this cell at all. One clean run is as much of that fact as a
-	// hundred.
+	// The mark is our own run and how it went, and it is ONE mark: a document
+	// stands where a sample is, and its colour is the outcome recorded here.
+	// One clean run is as much of that fact as a hundred.
 	//
-	// It was a check. A check is an approval stamp — it reads as "this is
-	// fine", which is a grade, and this network does not grade. What it has
-	// is a record that the run happened and came back clean, so the mark
-	// looks like a line in a log rather than a tick on a form.
+	// Observations are deliberately not consulted. A build somebody reported
+	// says a project containing this package compiled; it does not say a
+	// sample of ours ran, and colouring the document from it would put a
+	// claim on the page that nothing of ours executed to support. The rate
+	// beside the mark is where observations speak.
 	//
-	// The cross exists because the alternative was colour alone. A verified
-	// FAILURE with no observations rendered as a red "—", which reads as
-	// "missing data, and somehow bad" -- the information was real and only
-	// the hue carried it. Marks are also legible without colour.
-	//
-	// Cross reproduction gets no third symbol: it is a strictly better
-	// version of the same fact and stays in the tooltip.
-	switch {
-	case a.verPass > 0 && a.verFail == 0:
-		cell.Glyph = "◆"
-	case a.verFail > 0:
-		cell.Glyph = "✕"
-	}
+	// Whether a sample EXISTS for the release and API is environment-blind
+	// and lives in cubecode.go; a caller that has that count calls
+	// setPublishedSamples, which is what turns a coordinate we never ran into
+	// a grey document rather than a bare cell.
+	cell.ranPass, cell.ranFail = a.verPass+a.ranPass, a.verFail+a.ranFail
+	cell.Sample = deriveSampleState(0, cell.ranPass, cell.ranFail)
 	switch {
 	case obs == 0 && ver == 0:
 		// Usage only: the package was there, and nothing ran. "No failures"

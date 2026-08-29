@@ -84,6 +84,16 @@ type cubeLeafRow struct {
 	PinHref  string
 	PinLabel string
 	Cell     pivotCell
+	// SampleText is the record's sample sentence as VISIBLE text. It is
+	// blanked where the card above already says the same sentence: the mark
+	// stays (its colour is this record's own outcome, and its accessible name
+	// and tooltip still carry the words), and only the repetition goes.
+	//
+	// "There is a sample here" is one fact about a release and an API. Four
+	// records at four environments are four coordinates, but they share that
+	// one fact, and printing it under each of them is how one screen came to
+	// state it five times.
+	SampleText string
 	// Result is the record in words, in the page language. The cell's own
 	// notation is a grid notation — a glyph, a percentage and a denominator,
 	// compressed so forty of them can be scanned — and at the bottom of a
@@ -143,9 +153,12 @@ type cubeView struct {
 }
 
 type cubeCodeState struct {
-	Count   int64
-	Label   string
-	HasCode bool
+	Count int64
+	Label string
+	// State is sampleUnknown where a sample exists and sampleNone where none
+	// does. It never carries an outcome: this line sits above a grid of
+	// environments, and an outcome belongs to one of them, not to all.
+	State   sampleState
 	Unknown bool
 }
 
@@ -537,17 +550,22 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 		markSharedSymbolAxis(s, r, eco, &view.Grid, x, y, lang)
 	}
 	markCodeAvailability(&view.Grid, x, y, view.Coord, name, code, lang)
+	labelSampleMarks(&view.Grid, lang)
 	if x != "version" && y != "version" && x != "symbol" && y != "symbol" &&
 		view.Coord["version"] != "" && view.Coord["symbol"] != "" {
 		state := &cubeCodeState{}
 		if code == nil || !code.known {
 			state.Unknown = true
-			state.Label = i18n.T(lang, "cube.code_unknown")
-		} else if state.Count = code.at(view.Coord["version"], view.Coord["symbol"]); state.Count > 0 {
-			state.HasCode = true
-			state.Label = i18n.T(lang, "cube.code_yes")
+			state.Label = sampleUnavailableLabel(lang)
 		} else {
-			state.Label = i18n.T(lang, "cube.code_none")
+			// Existence only. This line stands above a grid whose every cell
+			// is a different environment, so there is no single coordinate
+			// for a colour to be about — the cells carry that — and it takes
+			// its own sentence rather than a cell's, which would say nothing
+			// of ours ran here above cells showing that it did.
+			state.Count = code.at(view.Coord["version"], view.Coord["symbol"])
+			state.State = deriveSampleState(state.Count, 0, 0)
+			state.Label = sampleExistsLabel(lang, state.Count)
 		}
 		view.CodeState = state
 	}
@@ -566,7 +584,6 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 func markCodeAvailability(g *pivotGrid, x, y string, coord map[string]string,
 	name string, code *codeIndex, lang string) {
 
-	codeLabel := i18n.T(lang, "cube.code_yes")
 	drillLabel := i18n.T(lang, "cube.drill_in")
 	// The mark belongs on a cell only where the cell DECIDES part of its key.
 	// With both release and API pinned, every cell in the grid carries the
@@ -598,9 +615,11 @@ func markCodeAvailability(g *pivotGrid, x, y string, coord map[string]string,
 				return coord[dim]
 			}
 			if onAxis {
-				if n := code.at(pick("version"), pick("symbol")); n > 0 {
-					cell.Code, cell.CodeLabel = n, codeLabel
-				}
+				// Even on a cell with no evidence at all: "there is a sample
+				// for this release and API and nothing of ours has run it
+				// here" is exactly the coordinate the grey document exists
+				// for, and buildPivotCell returns an empty cell there.
+				cell.setPublishedSamples(code.at(pick("version"), pick("symbol")))
 			}
 			// Said on the affordance itself, so "there is code here" and
 			// "there is a level below here" can never be read off the same
@@ -691,12 +710,9 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string, code *codeIndex,
 	merged := map[leafKey][]cubeFact{}
 	var order []leafKey
 	for _, f := range facts {
-		var envParts []string
-		for _, dim := range []string{"os", "libc", "arch", "runtime", "tool", "context"} {
-			if v := f.Dims[dim]; v != "" {
-				envParts = append(envParts, v)
-			}
-		}
+		// Same joiner as the answer card above these rows, so a record and
+		// the card that summarises it cannot spell one environment two ways.
+		envParts := cubeEnvParts(func(dim string) string { return f.Dims[dim] })
 		key := leafKey{f.Dims["version"], f.Dims["symbol"], joinDims(envParts)}
 		if _, seen := merged[key]; !seen {
 			order = append(order, key)
@@ -713,11 +729,14 @@ func cubeLeafRows(facts []cubeFact, eco, name, lang string, code *codeIndex,
 			Cell:    buildPivotCell(agg, now),
 		}
 		row.Result, row.BasisNote, row.Basis = cubeResultLine(agg, lang)
-		// Code availability is a fact about the release and the API, so the
-		// record carries it beside the environment result rather than folded
-		// into it.
-		if n := code.at(key.version, key.symbol); n > 0 {
-			row.Cell.Code, row.Cell.CodeLabel = n, i18n.T(lang, "cube.code_yes")
+		// Sample existence is a fact about the release and the API; how the
+		// sample ran is a fact about this environment. One document carries
+		// both — drawn because the sample is there, coloured by what happened
+		// here.
+		row.Cell.setPublishedSamples(code.at(key.version, key.symbol))
+		row.Cell.SampleLabel = sampleStateLabel(lang, row.Cell.Sample)
+		if row.Cell.Sample != sampleNone {
+			row.SampleText = row.Cell.SampleLabel
 		}
 		// The link is decided from the STORED symbol, before the display name
 		// is applied. Renaming first gave the package-level row a link to a

@@ -73,18 +73,37 @@ func readRepoFile(t *testing.T, rel string) string {
 // gridMarks asks buildPivotCell itself what it puts in a cell rather than
 // restating the answer. Everything below compares the documents to these
 // three strings, so moving the glyph in one place moves the whole contract.
-func gridMarks(t *testing.T) (ourRunPassed, ourRunFailed, nothingRecorded string) {
+func gridMarks(t *testing.T) (ourRunPassed, ourRunFailed sampleState, nothingRecorded string) {
 	t.Helper()
 	now := time.Now()
-	ourRunPassed = buildPivotCell(&pivotAgg{verPass: 1}, now).Glyph
-	ourRunFailed = buildPivotCell(&pivotAgg{verFail: 1}, now).Glyph
+	ourRunPassed = buildPivotCell(&pivotAgg{verPass: 1}, now).Sample
+	ourRunFailed = buildPivotCell(&pivotAgg{verFail: 1}, now).Sample
 	nothingRecorded = buildPivotCell(nil, now).Glyph
-	if ourRunPassed == "" || ourRunFailed == "" || nothingRecorded == "" {
-		t.Fatalf("buildPivotCell returned no glyph for a cell that has one: %q/%q/%q",
-			ourRunPassed, ourRunFailed, nothingRecorded)
+	if ourRunPassed != samplePass || ourRunFailed != sampleFail {
+		t.Fatalf("a clean run and a failed one render as %q/%q; the document is the mark",
+			ourRunPassed, ourRunFailed)
+	}
+	if nothingRecorded == "" {
+		t.Fatal("a cell with nothing recorded lost its placeholder")
 	}
 	return ourRunPassed, ourRunFailed, nothingRecorded
 }
+
+// docMark is how the one sample mark is written where there is no colour to
+// draw it in. The site draws a document and its colour is the state; a README
+// is text, so the example grid draws the document and the prose beside it
+// says which colour each one is on the page.
+const docMark = "▤"
+
+// retiredMarks are the per-basis glyphs a cell used to carry beside the
+// document — a diamond for a clean run of ours, a cross for a failed one, and
+// before those a check and three bars. They are gone (R2C-127: one
+// coordinate, one mark), so no public description of a CELL may draw them.
+//
+// Scoped to the example grid and the legend on purpose. The same characters
+// are legitimate elsewhere in the same documents — the privacy table's
+// "leaves" and "never leaves" columns — where nothing claims they are cells.
+var retiredMarks = []string{"◆", "✕", "≡", "✓"}
 
 // fencedBlockContaining returns the fenced code block that holds needle. The
 // README example grids are the one place a reader sees the glyph before
@@ -114,33 +133,39 @@ func fencedBlockContaining(doc, needle string) (string, bool) {
 }
 
 // The example grid in the READMEs is the first thing a reader sees, and it
-// drew a check mark long after the grid stopped drawing one. A check is an
-// approval stamp — it reads as "this is fine", which is a grade — and the
-// mark that replaced it states a BASIS: our own code ran here.
+// has drawn the wrong mark twice: a check long after buildPivotCell stopped
+// rendering one, then a per-basis diamond after the cell came down to a
+// single document. A coordinate carries one mark, so the example carries one.
 func TestTheREADMEExampleGridsDrawTheMarkTheGridRenders(t *testing.T) {
-	pass, fail, _ := gridMarks(t)
+	gridMarks(t)
 	for _, rel := range publicREADMEs() {
 		grid, ok := fencedBlockContaining(readRepoFile(t, rel), "v5.10.0")
 		if !ok {
 			t.Errorf("%s: no example grid — the language bar links it as the same document", rel)
 			continue
 		}
-		if !strings.Contains(grid, pass) {
-			t.Errorf("%s: the example grid never draws %q, the mark buildPivotCell puts on a cell we ran:\n%s",
-				rel, pass, grid)
+		if !strings.Contains(grid, docMark) {
+			t.Errorf("%s: the example grid never draws %q, the one mark a cell carries:\n%s",
+				rel, docMark, grid)
 		}
-		if strings.Contains(grid, "\u2713") {
-			t.Errorf("%s: the example grid still draws a check mark; the grid renders %q for a clean run and %q for a failed one:\n%s",
-				rel, pass, fail, grid)
+		for _, mark := range retiredMarks {
+			if strings.Contains(grid, mark) {
+				t.Errorf("%s: the example grid still draws %q in a cell; a cell carries one mark:\n%s",
+					rel, mark, grid)
+			}
 		}
 	}
 }
 
-// The site's own legend is the second place the glyphs are stated, and the
-// one a reader sees beside the real grid. base.html carries them as literals,
-// so nothing but a test keeps them equal to the function's output.
+// The site's own legend is the second place the marks are stated, and the one
+// a reader sees beside the real grid. base.html carries them as literals, so
+// nothing but a test keeps them equal to what the grid renders.
+//
+// It teaches every state the document has, the one with no icon included:
+// "there is no sample here" is an answer, and a legend that lists only marks
+// cannot give it.
 func TestTheSiteLegendDrawsTheMarksTheGridRenders(t *testing.T) {
-	pass, fail, empty := gridMarks(t)
+	_, _, empty := gridMarks(t)
 	tpl := readRepoFile(t, "internal/web/templates/base.html")
 	i := strings.Index(tpl, `class="pivotlegend-marks`)
 	if i < 0 {
@@ -150,13 +175,27 @@ func TestTheSiteLegendDrawsTheMarksTheGridRenders(t *testing.T) {
 	if j := strings.Index(legend, "</ul>"); j >= 0 {
 		legend = legend[:j]
 	}
-	for _, mark := range []string{pass, fail, empty} {
-		if !strings.Contains(legend, mark) {
-			t.Errorf("the legend never shows %q, which buildPivotCell renders:\n%s", mark, legend)
+	for _, state := range sampleStates {
+		class := "s-empty"
+		if state != sampleNone {
+			class = "s-" + string(state)
+		}
+		if !strings.Contains(legend, `class="smark `+class+`"`) {
+			t.Errorf("the legend never draws the %q document:\n%s", state, legend)
+		}
+		if key := sampleStateKey(state); !strings.Contains(legend, key) {
+			t.Errorf("the legend never says what the %q document means (%s):\n%s",
+				state, key, legend)
 		}
 	}
-	if strings.Contains(legend, "\u2713") {
-		t.Errorf("the legend shows a check mark, which the grid does not render:\n%s", legend)
+	if !strings.Contains(legend, empty) {
+		t.Errorf("the legend never shows %q, the placeholder an unmeasured cell carries:\n%s",
+			empty, legend)
+	}
+	for _, mark := range retiredMarks {
+		if strings.Contains(legend, mark) {
+			t.Errorf("the legend still teaches %q, which the grid does not render:\n%s", mark, legend)
+		}
 	}
 }
 

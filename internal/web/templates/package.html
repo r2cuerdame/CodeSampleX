@@ -37,9 +37,13 @@
     {{- end}}
   </nav>
   {{- end}}
+  {{/* Sample existence, once, above a grid whose cells are all environments.
+       Existence belongs to the release and the API, so it is stated here and
+       not repeated in forty cells; the outcome belongs to one environment and
+       is what those cells colour. */}}
   {{- with .Cube.CodeState}}
   <p class="cube-code-state small{{if .Unknown}} unknown{{end}}">
-    {{- if .HasCode}}<span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.Label}} <span class="dim">({{$.N .Count}})</span>
+    {{- if .State}}<span class="smark s-{{.State}}" role="img" aria-label="{{.Label}}" title="{{.Label}}">{{template "sampleicon" .State}}</span>{{.Label}} <span class="dim">({{$.N .Count}})</span>
     {{- else}}{{.Label}}{{end}}
   </p>
   {{- end}}
@@ -74,17 +78,18 @@
          beside it. Printing the package's own name in the symbol slot read
          as an API the package exports, which is the one thing it is not. */}}
     {{- if .SymbolNote}}<p class="answer-aggregate dim small">{{.SymbolNote}}</p>{{end}}
-    <p class="answer-line">{{if .Glyph}}<span class="glyph" aria-hidden="true">{{.Glyph}}</span>{{end}}<span class="answer-headline">{{.Headline}}</span></p>
+    <p class="answer-line"><span class="answer-headline">{{.Headline}}</span></p>
     <p class="answer-basis dim small">{{.BasisNote}}</p>
-    {{/* The two facts the single mark used to run together. Code belongs to
-         the release and the API; verification belongs to this environment.
-         Both are stated, always, including the negative — "no code yet" is
-         an answer and a missing affordance is not. */}}
+    {{/* One chip. It used to be two — "code available" beside "not verified in
+         this environment" — which is the Sample and Evidence models handed to
+         the reader as vocabulary and left for them to join. The document says
+         a sample is here and its colour says how it ran here; the negative is
+         stated too, because "no sample yet" is an answer and a missing chip
+         is not. */}}
     <p class="answer-states small">
-      {{- if .CodeLabel}}<span class="state code yes"><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.CodeLabel}} <span class="dim">({{$.N .Code}})</span></span>{{end}}
-      {{- if .NoCodeLabel}}<span class="state code no">{{.NoCodeLabel}}</span>{{end}}
-      {{- if .CodeUnknownLabel}}<span class="state code unknown">{{.CodeUnknownLabel}}</span>{{end}}
-      {{- if and .EnvLabel .Env}}<span class="state env {{.Basis}}">{{.EnvLabel}}</span>{{end}}
+      {{- if .SampleUnknownLabel}}<span class="state sample unavailable">{{.SampleUnknownLabel}}</span>
+      {{- else if .Sample}}<span class="state sample s-{{.Sample}}"><span class="smark s-{{.Sample}}" role="img" aria-label="{{.SampleLabel}}" title="{{.SampleLabel}}">{{template "sampleicon" .Sample}}</span>{{.SampleLabel}}{{if .Code}} <span class="dim">({{$.N .Code}})</span>{{end}}</span>
+      {{- else}}<span class="state sample none">{{.SampleLabel}}</span>{{end}}
     </p>
     <dl class="answer-facts mono small">
       {{- range .Facts}}
@@ -152,7 +157,7 @@
       <p class="leafresult{{if .Basis}} {{.Basis}}{{end}}{{if .Cell.Tone}} t-{{.Cell.Tone}}{{end}}">
         {{- if .Cell.Glyph}}<span class="glyph" aria-hidden="true">{{.Cell.Glyph}}</span>{{end}}<span>{{.Result}}</span>
       </p>
-      {{- if .Cell.Code}}<p class="leafcode small"><span class="codemark" aria-hidden="true">{{template "codeicon"}}</span>{{.Cell.CodeLabel}} <span class="dim">({{$.N .Cell.Code}})</span></p>{{end}}
+      {{- if .Cell.Sample}}<p class="leafcode small"><span class="smark s-{{.Cell.Sample}}" role="img" aria-label="{{.Cell.SampleLabel}}" title="{{.Cell.SampleLabel}}">{{template "sampleicon" .Cell.Sample}}</span>{{if .SampleText}}{{.SampleText}}{{if .Cell.Code}} <span class="dim">({{$.N .Cell.Code}})</span>{{end}}{{end}}</p>{{end}}
       {{/* The way down. Where several records still share the coordinate,
            this is what tells the reader the descent is not over — and it
            wears the chevron, which on this page means navigation and only
