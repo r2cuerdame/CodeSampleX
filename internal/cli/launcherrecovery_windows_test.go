@@ -105,3 +105,65 @@ func TestUpdateStatusReportsAnUnreadableRecoveryRecord(t *testing.T) {
 		t.Fatalf("status output %q hid an unreadable record", out)
 	}
 }
+
+// A repair leaves an install that looks entirely healthy: the pointer never
+// changed, the payload is back, and every later run is ordinary. The one fact
+// that matters to a release decision -- that this machine's whole local
+// recovery set was destroyed and the payload had to come back over the network
+// -- survives only in the record, so status has to read it back.
+func TestUpdateStatusSurfacesAPayloadRepair(t *testing.T) {
+	root, payload := launcherInstallFixture(t)
+	at := time.Date(2026, 8, 29, 15, 43, 40, 0, time.UTC)
+	rec := launcher.RehydrateRecord{
+		Outcome:          launcher.RehydrateOutcomeRestored,
+		ExhaustedVersion: "v0.1.47",
+		RestoredVersions: []string{"v0.1.47"},
+	}
+	if err := launcher.RecordRehydrate(root, rec, at); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	out, _ := captureStdout(t, func() int { reportLauncherRehydrate(home, payload); return 0 })
+	for _, want := range []string{"payload repair:", "v0.1.47", "no verified fallback left", "payload repair last attempted:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output %q is missing %q", out, want)
+		}
+	}
+}
+
+// A failed repair is the more urgent report of the two: the install is still
+// down. It must not be reported as anything else.
+func TestUpdateStatusSurfacesAFailedPayloadRepair(t *testing.T) {
+	root, payload := launcherInstallFixture(t)
+	rec := launcher.RehydrateRecord{
+		Outcome:          launcher.RehydrateOutcomeFailed,
+		ExhaustedVersion: "v0.1.47",
+		Error:            "download refused",
+	}
+	if err := launcher.RecordRehydrate(root, rec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// A second consecutive failure is a different operational state from one.
+	if err := launcher.RecordRehydrate(root, rec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	out, _ := captureStdout(t, func() int { reportLauncherRehydrate(home, payload); return 0 })
+	for _, want := range []string{"refetch FAILED", "v0.1.47", "download refused", "2 consecutive attempts"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output %q is missing %q", out, want)
+		}
+	}
+}
+
+// An install that never ran out of payloads says nothing.
+func TestUpdateStatusSaysNothingWithoutARepair(t *testing.T) {
+	_, payload := launcherInstallFixture(t)
+	home := t.TempDir()
+	out, _ := captureStdout(t, func() int { reportLauncherRehydrate(home, payload); return 0 })
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("an install that never needed a repair reported %q", out)
+	}
+}

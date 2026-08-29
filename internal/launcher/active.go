@@ -507,6 +507,29 @@ func validateDescriptorShape(d Descriptor) error {
 }
 
 func validateContainedRegular(root, path string) error {
+	if err := validateContainedChain(root, path); err != nil {
+		return err
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Lstat(pathAbs)
+	if err != nil {
+		return classifyStat(err)
+	}
+	if !fi.Mode().IsRegular() {
+		return errPayloadNotRegular
+	}
+	return nil
+}
+
+// validateContainedChain proves that every component from path up to the
+// install root is a real directory or file this install owns -- no symlink, no
+// reparse point, nothing outside the root. Restoring a payload has to make the
+// same proof about the directory it is about to write into, before it writes,
+// which is why this is separate from the regular-file check above.
+func validateContainedChain(root, path string) error {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return err
@@ -533,13 +556,6 @@ func validateContainedRegular(root, path string) error {
 		if parent := filepath.Dir(current); parent == current {
 			return fmt.Errorf("%w: install root was not reached", errPayloadNotRegular)
 		}
-	}
-	fi, err := os.Lstat(pathAbs)
-	if err != nil {
-		return classifyStat(err)
-	}
-	if !fi.Mode().IsRegular() {
-		return errPayloadNotRegular
 	}
 	return nil
 }
