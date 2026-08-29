@@ -115,3 +115,85 @@ func TestTheModuleNameItselfStillNamesTheModule(t *testing.T) {
 		}
 	}
 }
+
+// Shredding a declared symbol into words made every word an identifier, and
+// the words a library calls its members are the words prose uses. This is the
+// R2C-158 dogfooding recurrence: one deploy question named pgx.Tx.Commit,
+// registry.LOCAL_MACHINE, pytest.main, express.Router.dispatch and
+// certifi.__main__ at once, through "commit", "machine", "main" and
+// "dispatch".
+func TestASymbolMemberWordDoesNotNameTheSubject(t *testing.T) {
+	const deploy = "GitHub Actions workflow_dispatch deploys an immutable canonical main " +
+		"commit, serializes production deploys, checks out exact SHA, uploads " +
+		"machine-readable evidence"
+	for _, c := range []struct {
+		name    string
+		pkg     string
+		symbols []string
+	}{
+		{"pgx", "github.com/jackc/pgx/v5", []string{"pgx.Conn.Begin", "pgx.Tx.Commit"}},
+		{"x/sys", "golang.org/x/sys", []string{"golang.org/x/sys/windows/registry.LOCAL_MACHINE"}},
+		{"pytest", "pytest", []string{"pytest.main"}},
+		{"express", "express", []string{"express.Router.dispatch"}},
+		{"certifi", "certifi", []string{"certifi.__main__"}},
+	} {
+		if NamesSubject(deploy, []string{c.pkg}, c.symbols) {
+			t.Errorf("%s: a deploy question was read as naming %v", c.name, c.symbols)
+		}
+	}
+}
+
+// The other side of the same bar. A coined member name identifies its API on
+// its own; a common one identifies it once it is qualified by its owner.
+func TestSymbolIdentitiesKeepsCoinedAndQualifiedSpellings(t *testing.T) {
+	got := SymbolIdentities("golang.org/x/sys/windows/registry.LOCAL_MACHINE")
+	for _, want := range []string{
+		"golang.org/x/sys/windows/registry.LOCAL_MACHINE",
+		"registry.LOCAL_MACHINE", "LOCAL_MACHINE",
+	} {
+		if !containsString(got, want) {
+			t.Errorf("%q is not a nameable identity: %v", want, got)
+		}
+	}
+	got = SymbolIdentities("pgx.Tx.Commit")
+	if !containsString(got, "Tx.Commit") {
+		t.Errorf("the qualified spelling was dropped: %v", got)
+	}
+	if containsString(got, "Commit") {
+		t.Errorf("a bare member word became an identity: %v", got)
+	}
+	for _, coined := range []string{"RoundBank", "FormatInteger", "S3Client", "read_parquet"} {
+		if !coinedIdentifier(coined) {
+			t.Errorf("%q was not recognised as a coined identifier", coined)
+		}
+	}
+	for _, word := range []string{"main", "commit", "dispatch", "machine", "Begin", "__main__"} {
+		if coinedIdentifier(word) {
+			t.Errorf("%q was treated as a coined identifier", word)
+		}
+	}
+}
+
+// Naming the library is unchanged: the registry name and its non-generic
+// pieces still identify it, which is the one signal a bare free-text question
+// can earn without knowing a symbol.
+func TestNamingThePackageStillNamesTheSubject(t *testing.T) {
+	for _, c := range []struct{ query, pkg string }{
+		{"go-humanize prints the wrong thousand separator", "github.com/dustin/go-humanize"},
+		{"humanize prints the wrong thousand separator", "github.com/dustin/go-humanize"},
+		{"pytest exits 0 when no tests ran", "pytest"},
+	} {
+		if !NamesSubject(c.query, []string{c.pkg}, nil) {
+			t.Errorf("a question that named %s found nothing: %q", c.pkg, c.query)
+		}
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}

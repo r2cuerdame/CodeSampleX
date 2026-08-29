@@ -256,3 +256,126 @@ func AboutSameThing(query, goal string, packageNames, symbols []string) bool {
 	}
 	return prose >= 1
 }
+
+// coinedIdentifier reports whether a single symbol segment is a name somebody
+// coined for this API rather than an ordinary word that happens to sit in it.
+//
+// The distinction is the difference between "the question named this symbol"
+// and "the question used a word". RoundBank, FormatInteger, S3Client and
+// read_parquet are spellings nobody types by accident. Commit, Main, Begin,
+// Dispatch and Machine are what every library in every registry calls its
+// members, and a corpus-wide search for them matches prose.
+//
+// The marks of a coined name are structural and need no vocabulary: an
+// internal case change, an internal separator, or a digit against a letter.
+func coinedIdentifier(segment string) bool {
+	if len(segment) < 3 {
+		return false
+	}
+	runes := []rune(segment)
+	for i := 1; i < len(runes); i++ {
+		prev, cur := runes[i-1], runes[i]
+		switch {
+		case isLowerOrDigit(prev) && cur >= 'A' && cur <= 'Z':
+			return true
+		case isLetter(prev) && cur >= '0' && cur <= '9',
+			prev >= '0' && prev <= '9' && isLetter(cur):
+			return true
+		case (cur == '_' || cur == '-') && isLetter(prev) &&
+			i+1 < len(runes) && isLetter(runes[i+1]):
+			return true
+		}
+	}
+	return false
+}
+
+func isLetter(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+}
+
+func isLowerOrDigit(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+}
+
+func isSymbolSeparator(r rune) bool {
+	return r == '.' || r == '/' || r == ':' || r == '#'
+}
+
+// SymbolIdentities returns the spellings of a declared symbol that a question
+// can NAME it by: the whole identity, and every qualified suffix of it, plus
+// a trailing bare segment only when that segment is a coined name.
+//
+// "golang.org/x/sys/windows/registry.LOCAL_MACHINE" is nameable as itself, as
+// "registry.LOCAL_MACHINE", and as "LOCAL_MACHINE". "pgx.Tx.Commit" is
+// nameable as itself and as "Tx.Commit" — never as "Commit", which is a word
+// half the corpus declares and prose uses freely.
+func SymbolIdentities(symbol string) []string {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil
+	}
+	var out []string
+	if len(symbol) >= 3 {
+		out = append(out, symbol)
+	}
+	runes := []rune(symbol)
+	for i := 1; i < len(runes); i++ {
+		if !isSymbolSeparator(runes[i-1]) || isSymbolSeparator(runes[i]) {
+			continue
+		}
+		suffix := string(runes[i:])
+		if suffix == symbol {
+			continue
+		}
+		if strings.ContainsFunc(suffix, isSymbolSeparator) {
+			// Still qualified by an owner, so still an identity however
+			// common its last segment reads.
+			if len(suffix) >= 3 {
+				out = append(out, suffix)
+			}
+			continue
+		}
+		if coinedIdentifier(suffix) {
+			out = append(out, suffix)
+		}
+	}
+	return out
+}
+
+// NamesSubject reports whether the question NAMES this sample's subject.
+//
+// It is deliberately narrower than Signal, which is a retrieval heuristic and
+// is allowed to reach: retrieval finding a candidate and normal output
+// presenting one are different decisions, and this is the second. Signal
+// counts a shared word between the question and any piece of any declared
+// symbol, so "immutable canonical main commit" named pgx.Tx.Commit,
+// "machine-readable evidence" named registry.LOCAL_MACHINE, and "main" named
+// both pytest.main and certifi.__main__ — a GitHub Actions deploy question
+// answered with a transaction sample, a Windows registry sample and a test
+// runner, all graded COMPATIBLE.
+//
+// Naming a package is different from naming a symbol member and stays as it
+// was: a registry name is chosen to identify the library, which is its whole
+// job, and its non-generic pieces identify it too ("humanize" for
+// go-humanize). A symbol member is chosen to describe an operation inside a
+// namespace that already carries the identity.
+func NamesSubject(query string, packageNames, symbols []string) bool {
+	for _, symbol := range symbols {
+		for _, identity := range SymbolIdentities(symbol) {
+			if ContainsIdentifier(query, identity) {
+				return true
+			}
+		}
+	}
+	for _, name := range packageNames {
+		for _, token := range NameTokens(name) {
+			if len(token) < 3 {
+				continue
+			}
+			if ContainsIdentifier(query, token) {
+				return true
+			}
+		}
+	}
+	return false
+}

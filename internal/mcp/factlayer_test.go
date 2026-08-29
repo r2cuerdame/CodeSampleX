@@ -198,3 +198,91 @@ func TestASameEcosystemButUnrelatedSampleIsDemotedAfterAFailure(t *testing.T) {
 		t.Errorf("the candidate was deleted rather than demoted:\n%s", body)
 	}
 }
+
+// The recurrence, on the same surface. The gate above held for go-humanize
+// and the same deploy question came back with pgx.Conn.Begin and
+// registry.LOCAL_MACHINE, both COMPATIBLE, both in normal output, because a
+// declared symbol was shredded into words: "commit" out of pgx.Tx.Commit met
+// "immutable canonical main commit", and "machine" out of
+// registry.LOCAL_MACHINE met "machine-readable evidence".
+func subtokenHits() domain.SearchResponse {
+	return domain.SearchResponse{Results: []domain.SearchResult{{
+		Grade: domain.GradeCompatible, Confidence: "LOW", Score: 0.39,
+		SampleID: "sha256:pgx-begin-live",
+		Case: &domain.Case{
+			Goal: "Use pgx v5.10.0 Conn.Begin without assuming context cancellation manages " +
+				"transaction lifetime, and prove explicit/deferred rollback behavior",
+			Packages: []string{"pkg:golang/github.com/jackc/pgx/v5@v5.10.0"},
+			Symbols:  []string{"pgx.Conn.Begin", "pgx.Tx.Commit", "pgx.Tx.Rollback"},
+		},
+		Evidence: domain.EvidenceSummary{ContractPasses: 3, Confidence: "LOW"},
+	}, {
+		Grade: domain.GradeCompatible, Confidence: "MEDIUM", Score: 0.37,
+		SampleID: "sha256:xsys-registry-live",
+		Case: &domain.Case{
+			Goal:     "verify golang.org/x/sys/windows/registry.LOCAL_MACHINE in pkg:golang/golang.org/x/sys@v0.47.0",
+			Packages: []string{"pkg:golang/golang.org/x/sys@v0.47.0"},
+			Symbols:  []string{"golang.org/x/sys/windows/registry.LOCAL_MACHINE"},
+		},
+		Evidence: domain.EvidenceSummary{ContractPasses: 1, Confidence: "MEDIUM"},
+	}}}
+}
+
+func TestTheDeployQuestionIsNoLongerAnsweredWithASharedMemberWord(t *testing.T) {
+	deps := emptyDeps()
+	deps.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
+		return subtokenHits(), "offer-1"
+	}
+	c := startServer(t, deps)
+
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query": deployQuery,
+		"environment": map[string]any{
+			"ecosystem": "golang", "os": "linux", "arch": "amd64",
+			"runtime": "go", "runtimeVersion": "1.26",
+		},
+	})
+	text := toolText(t, res)
+	for _, forbidden := range []string{
+		"sha256:pgx-begin-live", "sha256:xsys-registry-live", "pgx.Conn.Begin",
+		"LOCAL_MACHINE", "MATCH: COMPATIBLE", "REFERENCE_CANDIDATE",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("normal output still carries %q:\n%s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "NO_SAFE_MATCH") {
+		t.Errorf("the answer is neither the samples nor a miss:\n%s", text)
+	}
+	structured, _ := res["structuredContent"].(map[string]any)
+	response, _ := structured["response"].(map[string]any)
+	if response["miss"] != true {
+		t.Errorf("structured payload does not report a miss: %s", mustJSON(t, structured))
+	}
+}
+
+func TestBothSharedMemberWordCandidatesCarryAStableReasonUnderDebug(t *testing.T) {
+	t.Setenv("CSX_DEBUG", "1")
+	deps := emptyDeps()
+	deps.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
+		return subtokenHits(), "offer-1"
+	}
+	c := startServer(t, deps)
+
+	res := callTool(t, c, "search_known_solution", map[string]any{"query": deployQuery})
+	structured, _ := res["structuredContent"].(map[string]any)
+	suppressed, _ := structured["suppressed"].([]any)
+	if len(suppressed) != 2 {
+		t.Fatalf("debug output does not carry both suppressed candidates: %s", mustJSON(t, structured))
+	}
+	for _, raw := range suppressed {
+		entry, _ := raw.(map[string]any)
+		if entry["suppressedReason"] != domain.SuppressedInsufficientGoalOverlap {
+			t.Errorf("suppressedReason = %v, want %q", entry["suppressedReason"],
+				domain.SuppressedInsufficientGoalOverlap)
+		}
+		if signals, ok := entry["relevanceSignals"]; ok && signals != nil {
+			t.Errorf("a suppressed candidate still claims a relevance signal: %v", signals)
+		}
+	}
+}
