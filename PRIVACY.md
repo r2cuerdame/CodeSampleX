@@ -75,6 +75,14 @@ you to recall it by.
   that requires the human to type `yes`, and it is deliberately **not** an MCP
   capability. Leakage findings — secrets, paths, project names, private URLs —
   refuse publication with no override flag.
+- The readiness stamps behind `csx stats` and the panel at the top of
+  `csx ui`: when this install first ran, when `csx init` finished, when a sync
+  first warmed a shard, when an MCP client first and last completed the
+  protocol handshake, and when your first answer and first adoption happened.
+  The first two of those happen *before* `csx init` asks which mode you want,
+  so sending them would be collecting before you had answered
+  ([docs/activation-funnel.md](docs/activation-funnel.md) §2.3). They stay in
+  `csx.db` and no upload carries them.
 
 Local state lives under `$CSX_HOME` (default `~/.csx`): `config.json`,
 `identity.json`, `csx.db`, `cas/`, `samples/`, `logs/`. Deleting that

@@ -3,6 +3,9 @@ package daemon
 import (
 	"context"
 	"strconv"
+	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 // Meta stat keys owned by the daemon (namespaced by localdb under "stat:").
@@ -58,6 +61,37 @@ type Stats struct {
 	// tallied from the newest page of hits rather than the whole store,
 	// which happens once there are more hits than one page holds.
 	CountsArePartial bool `json:"countsArePartial,omitempty"`
+	// Readiness is where THIS install got to between first run and first
+	// proven value. It is a statement about one machine and never a count of
+	// anything, which is why it can exist at all: the fleet version of the
+	// same question has no honest answer (docs/activation-funnel.md §3).
+	Readiness Readiness `json:"readiness"`
+}
+
+// Readiness is the local activation ledger rendered for a reader
+// (docs/activation-funnel.md §7). Every field is an RFC3339 instant or empty,
+// and empty means the stage has not been reached — §6: an unmeasured thing
+// renders as a gap, never as a zero, so a consumer can tell "no first answer
+// yet" from "answered at the epoch".
+//
+// None of it is uploaded in any mode. S1 and S2 happen before `csx init` asks
+// the mode question, so transmitting them would be collecting before consent
+// exists (§2.3), and the daily anonId rotation means the server could not
+// assemble a funnel from them anyway.
+type Readiness struct {
+	FirstRunAt      string `json:"firstRunAt,omitempty"`
+	InitAt          string `json:"initAt,omitempty"`
+	FirstSyncAt     string `json:"firstSyncAt,omitempty"`
+	MCPFirstReadyAt string `json:"mcpFirstReadyAt,omitempty"`
+	MCPLastReadyAt  string `json:"mcpLastReadyAt,omitempty"`
+	FirstHitAt      string `json:"firstHitAt,omitempty"`
+	FirstAdoptionAt string `json:"firstAdoptionAt,omitempty"`
+	// SecondsToFirstAnswer is the §5 duration, init (the consent choice) to
+	// the first hit. A pointer because nil is "not both endpoints yet" and 0
+	// is a real, very fast install; an int with omitempty would collapse the
+	// two into the same absence. Computed here so csx stats, csx ui and
+	// get_local_stats cannot each pick different endpoints.
+	SecondsToFirstAnswer *int64 `json:"secondsToFirstAnswer,omitempty"`
 }
 
 // StatsNow computes the dashboard numbers from localdb + CAS.
@@ -133,6 +167,10 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		st.LastUploadError = v
 	}
 
+	if led, err := d.DB.ActivationLedger(ctx); err == nil {
+		st.Readiness = readinessFrom(led)
+	}
+
 	if size, err := d.CAS.TotalSize(); err == nil {
 		st.CacheBytes = size
 	}
@@ -141,6 +179,33 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	}
 	st.QueueDepth, _ = d.queueDepth(ctx)
 	return st, nil
+}
+
+// readinessFrom renders the ledger. An unreached stage stays the empty
+// string rather than becoming a formatted zero time, which is the difference
+// between a panel printing "—" and a panel printing 1970.
+func readinessFrom(led localdb.Activation) Readiness {
+	r := Readiness{
+		FirstRunAt:      stampString(led.FirstRunAt),
+		InitAt:          stampString(led.InitAt),
+		FirstSyncAt:     stampString(led.FirstSyncAt),
+		MCPFirstReadyAt: stampString(led.MCPFirstReadyAt),
+		MCPLastReadyAt:  stampString(led.MCPLastReadyAt),
+		FirstHitAt:      stampString(led.FirstHitAt),
+		FirstAdoptionAt: stampString(led.FirstAdoptionAt),
+	}
+	if d, ok := led.TimeToFirstAnswer(); ok {
+		secs := int64(d / time.Second)
+		r.SecondsToFirstAnswer = &secs
+	}
+	return r
+}
+
+func stampString(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // intStat reads a counter stat; missing or malformed means 0.

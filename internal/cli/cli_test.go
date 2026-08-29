@@ -5,7 +5,17 @@ import (
 	"testing"
 )
 
+// Main now stamps the local activation ledger before it looks at argv
+// (docs/activation-funnel.md §7), so every test that calls it needs its own
+// home. Without this the suite writes firstRunAt into the developer's real
+// ~/.csx.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("CSX_HOME", t.TempDir())
+}
+
 func TestDispatch(t *testing.T) {
+	isolateHome(t)
 	var gotArgs []string
 	Register(Command{
 		Name:    "test-dispatch-cmd",
@@ -25,6 +35,7 @@ func TestDispatch(t *testing.T) {
 }
 
 func TestDispatchUnknownAndHelp(t *testing.T) {
+	isolateHome(t)
 	if code := Main([]string{"no-such-command-xyz"}); code != 2 {
 		t.Fatalf("unknown command returned %d, want 2", code)
 	}
@@ -59,13 +70,14 @@ func TestBuiltinCommandsRegistered(t *testing.T) {
 }
 
 func TestVersionCommand(t *testing.T) {
+	isolateHome(t)
 	if code := Main([]string{"version"}); code != 0 {
 		t.Fatalf("version returned %d, want 0", code)
 	}
 }
 
 func TestRunUsageError(t *testing.T) {
-	t.Setenv("CSX_HOME", t.TempDir())
+	isolateHome(t)
 	if code := Main([]string{"run"}); code != 2 {
 		t.Fatalf("bare `csx run` returned %d, want 2", code)
 	}

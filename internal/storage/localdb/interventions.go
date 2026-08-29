@@ -127,6 +127,14 @@ func (d *DB) RecordSearchOffer(ctx context.Context, hit HitRow, intervention Int
 		if err := tx.Commit(); err != nil {
 			return "", err
 		}
+		// S6, and the far end of the only duration worth having
+		// (docs/activation-funnel.md §5). Stamped from the row's own ts, not
+		// from wall-clock now, so a replayed or backdated hit does not claim a
+		// first answer at the moment it happened to be written. Best effort:
+		// the offer is already committed and the caller is owed its token, so
+		// a failed stamp leaves the stage unmeasured rather than failing a
+		// search that worked.
+		_ = d.StampFirst(ctx, StatFirstHitAt, now)
 		return offerID, nil
 	}
 	return "", errors.New("could not allocate a unique local offerId")
@@ -199,6 +207,15 @@ func (d *DB) CorrelateInterventionAdoption(ctx context.Context, offerID, sampleI
 	}
 	if err := tx.Commit(); err != nil {
 		return out, err
+	}
+
+	// S7. Only an APPLIED report is an adoption: an explicit "I did not use
+	// this" is a completed report that the store already writes as -1 and
+	// every surface already shows as adopted=false, so stamping it would make
+	// the readiness panel say a sample was adopted when the user said it was
+	// not.
+	if applied {
+		_ = d.StampFirst(ctx, StatFirstAdoptionAt, time.Now().UTC())
 	}
 
 	out = InterventionOutcome{
