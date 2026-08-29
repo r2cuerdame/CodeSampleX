@@ -12,6 +12,27 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 )
 
+func activityTestMonth(now time.Time, offset int) time.Time {
+	utc := now.UTC()
+	return time.Date(utc.Year(), utc.Month()+time.Month(offset), 1, 12, 0, 0, 0, time.UTC)
+}
+
+func TestActivityRetentionMonthFixtureUsesCalendarMonths(t *testing.T) {
+	anchor := time.Date(2026, time.August, 31, 23, 0, 0, 0, time.UTC)
+	epochs := make(map[string]struct{}, 13)
+	for age := 0; age <= 12; age++ {
+		epochs[activityTestMonth(anchor, -age).Format("2006-01")] = struct{}{}
+	}
+	if len(epochs) != 13 {
+		t.Fatalf("month-end fixture produced %d distinct epochs, want 13", len(epochs))
+	}
+	for _, epoch := range []string{"2026-08", "2026-02", "2025-08"} {
+		if _, ok := epochs[epoch]; !ok {
+			t.Fatalf("month-end fixture omitted %s: %v", epoch, epochs)
+		}
+	}
+}
+
 func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
@@ -63,7 +84,10 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 		})
 	}
 	for age := 0; age <= 12; age++ {
-		seenAt := now.AddDate(0, -age, 0)
+		// Subtract from the first of the month. time.AddDate preserves the day
+		// and normalizes an invalid date, so subtracting from August 29-31 can
+		// turn February into March and silently collapse two calendar epochs.
+		seenAt := activityTestMonth(now, -age)
 		retentionRows = append(retentionRows, activity.Bucket{
 			Kind: activity.KindMonth, Epoch: seenAt.Format("2006-01"), Value: bucket(byte(80 + age)), SeenAt: seenAt,
 		})
@@ -73,7 +97,7 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 	}
 	staleDay, staleMonth := bucket(55), bucket(95)
 	staleDayEpoch := now.AddDate(0, 0, -35).Format("2006-01-02")
-	staleMonthEpoch := now.AddDate(0, -13, 0).Format("2006-01")
+	staleMonthEpoch := activityTestMonth(now, -13).Format("2006-01")
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `INSERT INTO activity_buckets(kind, epoch, bucket, owner, first_seen, last_seen) VALUES
 			('day',$1,$2,false,$4,$4), ('month',$3,$5,false,$4,$4)`, staleDayEpoch, staleDay[:], staleMonthEpoch, now, staleMonth[:])
@@ -248,8 +272,8 @@ func TestPGActivityRejectsBacklogAndFutureAndPrunesBothTails(t *testing.T) {
 
 	for _, row := range []activity.Bucket{
 		{Kind: activity.KindDay, Epoch: now.AddDate(0, 0, -35).Format("2006-01-02"), Value: bucket(203), SeenAt: now.AddDate(0, 0, -35)},
-		{Kind: activity.KindMonth, Epoch: now.AddDate(0, -13, 0).Format("2006-01"), Value: bucket(204), SeenAt: now.AddDate(0, -13, 0)},
-		{Kind: activity.KindMonth, Epoch: now.AddDate(0, 1, 0).Format("2006-01"), Value: bucket(205), SeenAt: now.AddDate(0, 1, 0)},
+		{Kind: activity.KindMonth, Epoch: activityTestMonth(now, -13).Format("2006-01"), Value: bucket(204), SeenAt: activityTestMonth(now, -13)},
+		{Kind: activity.KindMonth, Epoch: activityTestMonth(now, 1).Format("2006-01"), Value: bucket(205), SeenAt: activityTestMonth(now, 1)},
 	} {
 		if err := pg.RecordActivity(ctx, []activity.Bucket{row}); err == nil {
 			t.Fatalf("out-of-window valid epoch accepted: kind=%q epoch=%q", row.Kind, row.Epoch)
@@ -264,7 +288,7 @@ func TestPGActivityRejectsBacklogAndFutureAndPrunesBothTails(t *testing.T) {
 			('day',$1,$2,false,$5,$5), ('day',$3,$2,false,$5,$5),
 			('month',$4,$2,false,$5,$5)`,
 			now.AddDate(0, 0, -35).Format("2006-01-02"), b206[:],
-			now.AddDate(0, 0, 1).Format("2006-01-02"), now.AddDate(0, 1, 0).Format("2006-01"), now); err != nil {
+			now.AddDate(0, 0, 1).Format("2006-01-02"), activityTestMonth(now, 1).Format("2006-01"), now); err != nil {
 			return err
 		}
 		_, err := c.Exec(ctx, `INSERT INTO activity_health(epoch, checked_at) VALUES ($1,$3),($2,$3)`,
@@ -288,7 +312,7 @@ func TestPGActivityRejectsBacklogAndFutureAndPrunesBothTails(t *testing.T) {
 			(SELECT COUNT(*) FROM activity_health WHERE epoch < $1 OR epoch > $2),
 			(SELECT COUNT(*) FROM activity_health WHERE epoch=$2)`,
 			now.AddDate(0, 0, -34).Format("2006-01-02"), currentDay,
-			now.AddDate(0, -12, 0).Format("2006-01"), now.Format("2006-01")).Scan(&outside, &healthOutside, &healthCurrent)
+			activityTestMonth(now, -12).Format("2006-01"), activityTestMonth(now, 0).Format("2006-01")).Scan(&outside, &healthOutside, &healthCurrent)
 	}); err != nil {
 		t.Fatal(err)
 	}
