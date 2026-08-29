@@ -194,6 +194,17 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		Mode: func() string {
 			return currentConfig(home).Mode
 		},
+		// S4 of the activation funnel. Two stamps, not one: the first says
+		// the MCP path has ever worked on this machine, the last says it
+		// still worked recently — a panel that could only say "once, in June"
+		// cannot tell a live integration from a dead one. Both stay in
+		// $CSX_HOME (§2.1) and neither records which client handshook,
+		// because a developer's agent inventory is §2.3 never-collected.
+		MarkMCPReady: func(ctx context.Context) {
+			now := time.Now().UTC()
+			_ = db.StampFirst(ctx, localdb.StatMCPFirstReadyAt, now)
+			_ = db.Stamp(ctx, localdb.StatMCPLastReadyAt, now)
+		},
 		RunObserved: func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
 			return runObserved(ctx, db, ident, currentConfig(home), registryHTTP,
 				func() *config.Config { return currentConfig(home) }, argv, cwd)

@@ -558,6 +558,15 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 		if err != nil {
 			res.Errors = append(res.Errors, err.Error())
 		}
+		// S3 of the activation funnel (docs/activation-funnel.md §7). Tied to
+		// a warm that SUCCEEDED, for the same reason WarmedKeys is: an offline
+		// sync returns cleanly, and a stamp on that would say the stage was
+		// reached on a machine whose shard cache is still empty. Local-only
+		// never gets here — the mode gate above returns first — so the local
+		// ledger cannot contradict the mode's own promise.
+		if warmed > 0 {
+			_ = d.DB.StampFirst(ctx, localdb.StatFirstSyncAt, time.Now().UTC())
+		}
 	}
 	n, err := d.uploadNow(ctx)
 	res.UploadedBatches = n

@@ -44,6 +44,11 @@ type Server struct {
 	Version string
 
 	writeMu sync.Mutex
+	// answeredInitialize and markedReady track the MCP lifecycle for this one
+	// stdio session, which is what S4 of the activation funnel measures. They
+	// are read and written only from the serial Serve loop.
+	answeredInitialize bool
+	markedReady        bool
 }
 
 type rpcRequest struct {
@@ -132,6 +137,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 
 	notification := len(req.ID) == 0
 	result, rpcErr := s.dispatch(ctx, &req)
+	s.trackReadiness(ctx, req.Method, notification, rpcErr)
 	if notification {
 		return nil // notifications never get responses, success or error
 	}
@@ -162,6 +168,30 @@ func (s *Server) dispatch(ctx context.Context, req *rpcRequest) (result any, rpc
 		return s.toolsCall(ctx, req.Params)
 	default:
 		return nil, &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method}
+	}
+}
+
+// trackReadiness advances the one state machine S4 of the activation funnel
+// is defined against (docs/activation-funnel.md §7): a session is ready only
+// once it has ANSWERED a valid initialize — a notification-form initialize is
+// answered by nothing — and then received notifications/initialized.
+//
+// Launching `csx mcp`, listing tools, closing stdin, or failing between those
+// two messages therefore records no ready session, which is what makes
+// "never seen" distinguishable from "not working" on the readiness panel.
+func (s *Server) trackReadiness(ctx context.Context, method string, notification bool, rpcErr *rpcError) {
+	switch method {
+	case "initialize":
+		if !notification && rpcErr == nil {
+			s.answeredInitialize = true
+		}
+	case "notifications/initialized":
+		if s.answeredInitialize && !s.markedReady {
+			s.markedReady = true
+			if s.Deps != nil && s.Deps.MarkMCPReady != nil {
+				s.Deps.MarkMCPReady(ctx)
+			}
+		}
 	}
 }
 
