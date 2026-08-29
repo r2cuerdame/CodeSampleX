@@ -344,3 +344,69 @@ func TestHeroMatrixKeepsLookingPastAHalfMeasuredGrid(t *testing.T) {
 			m.Package, used, total)
 	}
 }
+
+// ageHeroCaches backdates every hero memo and every assembled cube, which is
+// the state a landing request finds after the memo expires and the candidate
+// cubes it would pivot are no longer all warm — the production shape below.
+func ageHeroCaches(s *site, by time.Duration) {
+	at := time.Now().Add(-by)
+	s.heroMu.Lock()
+	for k, e := range s.heroCache {
+		s.heroCache[k] = heroCacheEntry{data: e.data, at: at}
+	}
+	s.heroMu.Unlock()
+	s.cubeMu.Lock()
+	for k, e := range s.cubeCache {
+		e.at = at
+		s.cubeCache[k] = e
+	}
+	s.cubeMu.Unlock()
+}
+
+// A cold cube must not turn the front page into "this network has no evidence".
+//
+// Measured on production 2026-08-29 (server v0.1.62, build 3f6ad8d): polling
+// the landing once every 8s for 10.7 minutes, 11 of 80 responses rendered
+// landing.matrix_empty — "the first compatibility grids appear here as soon
+// as the network records enough environment evidence" — directly under this
+// page's own counters reading 92,472 recorded observations across 1,980
+// packages. Nothing was missing; the misses arrived at a strict ~66s cadence,
+// one per heroMatrixTTL expiry that found the probed cubes no longer all
+// warm. heroMatrix refuses to assemble on the request path, returned nil, and
+// a first-time visitor arriving in that window was told the network is empty.
+//
+// The last grid this process rendered is the honest thing to show while the
+// background refresh runs: one refresh older at worst, and it carries its own
+// observation date in the corner.
+func TestHeroServesLastGoodMatrixWhileTheCubeRefreshes(t *testing.T) {
+	hits, store := heroHits(1)
+	s := &site{d: Deps{Store: store}}
+	r := httptest.NewRequest("GET", "/?m=npm/pkg0", nil)
+
+	first := waitHeroMatrix(t, s, r, "en", hits)
+	ageHeroCaches(s, 2*cubeTTL)
+
+	got := s.heroMatrix(r, "en", hits)
+	if got == nil {
+		t.Fatal("landing fell back to the no-evidence-yet empty state once its cube aged out; want the last rendered grid while the refresh runs")
+	}
+	if got.Eco != first.Eco || got.Package != first.Package {
+		t.Fatalf("stale hero = %s/%s, want the last good %s/%s", got.Eco, got.Package, first.Eco, first.Package)
+	}
+}
+
+// Staleness is bounded. A grid held open indefinitely would let a store that
+// stopped answering keep a months-old slice on the front page, which is the
+// opposite failure to the one above.
+func TestHeroStopsServingAMatrixOlderThanTheStaleWindow(t *testing.T) {
+	hits, store := heroHits(1)
+	s := &site{d: Deps{Store: store}}
+	r := httptest.NewRequest("GET", "/?m=npm/pkg0", nil)
+
+	waitHeroMatrix(t, s, r, "en", hits)
+	ageHeroCaches(s, heroStaleTTL+time.Minute)
+
+	if got := s.heroMatrix(r, "en", hits); got != nil {
+		t.Fatalf("hero served a grid %v old; want the empty state past heroStaleTTL", heroStaleTTL+time.Minute)
+	}
+}

@@ -226,8 +226,15 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 // heroMatrixTTL bounds how long a finished matrix is served as-is. The cubes
 // beneath it hold for five minutes; a minute here keeps the page fresh while
 // a busy landing pays the pivot once, not per view.
+//
+// heroStaleTTL is how long past that a finished matrix may still be shown
+// while its refresh runs. A healthy process needs at most heroWarmTimeout
+// plus heroWarmRetryDelay of it; the hour is slack for a slow database, and
+// it is bounded so a store that stopped answering cannot keep an ancient
+// slice on the front page forever.
 const (
 	heroMatrixTTL      = time.Minute
+	heroStaleTTL       = time.Hour
 	heroWarmTimeout    = time.Minute
 	heroWarmRetryDelay = 30 * time.Second
 )
@@ -263,11 +270,11 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 
 	memoKey := lang + "\x00" + sel
 	s.heroMu.Lock()
-	if e, ok := s.heroCache[memoKey]; ok && time.Since(e.at) < heroMatrixTTL {
-		s.heroMu.Unlock()
-		return e.data
-	}
+	memo, memoized := s.heroCache[memoKey]
 	s.heroMu.Unlock()
+	if memoized && time.Since(memo.at) < heroMatrixTTL {
+		return memo.data
+	}
 
 	// A finished cube can still be pivoted on this request. A cold cube is a
 	// database fan-out, though, and the landing has an honest empty state for
@@ -276,6 +283,22 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 	data, complete := s.buildHeroMatrix(r, lang, hits, ordered, false)
 	if !complete {
 		s.warmHeroMatrix(r, lang, memoKey, hits, ordered)
+		// The empty state belongs to a process that has never rendered a
+		// grid, not to one whose candidate cubes happen to be cold right
+		// now. Polled once every 8s for 10.7 minutes on production
+		// 2026-08-29 (v0.1.62, 3f6ad8d), 11 of 80 landing responses carried
+		// landing.matrix_empty — "the first compatibility grids appear here
+		// as soon as the network records enough environment evidence" —
+		// under this page's own counters reading 92,472 observations across
+		// 1,980 packages. The misses land at a strict ~66s cadence: the memo
+		// expires, the six probed cubes are no longer all warm, and the
+		// request cannot assemble one, so every visitor in that window is
+		// told the network is empty. The last grid this process rendered is
+		// the honest thing to show meanwhile — it is one refresh older at
+		// worst and carries its own observation date in the corner.
+		if memoized && memo.data != nil && time.Since(memo.at) < heroStaleTTL {
+			return memo.data
+		}
 		return nil
 	}
 	s.cacheHeroMatrix(memoKey, data)
