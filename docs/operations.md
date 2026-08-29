@@ -504,6 +504,64 @@ server binaries: it replaces the Wanted conflict key with
 image fails. Rolling back to a pre-0006 binary requires restoring the verified
 pre-deploy database backup; otherwise its old Wanted upsert returns 500.
 
+### Re-verifying that production ran published digests
+
+R2C-81 asks whether production verifiers really executed immutable
+digest-pinned images and whether the receipts truthfully record which. It is
+not answerable from code review — a merged implementation is not a run — so it
+is answered by re-verifying stored receipts offline with the same code that
+signs them. Dump read-only, then run the audit:
+
+```bash
+# 1. dump (SELECT only). Base64 because COPY's text format escapes
+#    backslashes and corrupts every JSON string inside a manifest.
+cat > /tmp/dump.sql <<'SQL'
+COPY (
+  SELECT replace(encode(convert_to(
+      json_build_object('receiptId', receipt_id, 'peerId', peer_id,
+                        'sampleId', sample_id, 'envHash', env_hash,
+                        'createdAt', to_char(created_at at time zone 'UTC',
+                                             'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                        'receipt', receipt)::text, 'UTF8'), 'base64'), chr(10), '')
+  FROM receipts ORDER BY created_at
+) TO STDOUT;
+SQL
+ssh -i ~/.ssh/lightsail-csx-r3 ubuntu@54.116.158.230 \
+  "docker exec -i codesamplex-db-1 psql -U csx -d csx -q" < /tmp/dump.sql > receipts.b64
+
+# 2. audit (offline, no network, no production write)
+CSX_RECEIPT_DUMP=receipts.b64 go test ./internal/verifier/ \
+  -run TestProductionReceiptsRanPublishedDigests -v -count=1
+```
+
+The audit (`internal/verifier/receiptaudit.go`) checks eight things, and they
+are eight different statements. Five are about the document — signature, peer
+id derived from the signing key, stored id equal to the content hash, canonical
+round trip, and the store's own columns agreeing with the signed body. Three
+are about the image — the reference is `<alias>@sha256:<64 hex>` and not a
+mutable tag, the standalone digest is that reference's, and the reference is an
+entry **this build's registry publishes**.
+
+That last one is the check nothing else makes. `POST /v1/verifications` accepts
+any well-formed pin on purpose: a worker may run a newer registry than the
+server, and rejecting an unrecognised digest would refuse honest receipts. So
+`node:22-alpine@sha256:aaaa…` — perfect shape, bytes that never existed — is
+admitted, and only this audit would see it.
+
+A receipt with no image is not a failure. The native fallback entered no
+container and a pre-v0.1.43 peer could not record one; absent means NOT
+ESTABLISHED, never "the default image".
+
+Two things the dump cannot show, both read directly on the farm:
+
+* **The argv docker actually received.** The receipt is self-reported. The
+  worker's own stage log is not: `sudo bash -c 'cd /home/csxver/.csx/verify-logs
+  && grep -h "docker run" *.log'` prints the literal command line, digest and
+  all. Only the last 50 runs survive there.
+* **A stage's failure text.** Receipts keep a digest, the farm keeps the words —
+  `sandbox: verifier runtime version "1.26" cannot satisfy "1.27.0"` came from
+  one of those files and no receipt field held it.
+
 ### The anomaly feedback channel (`report_anomaly`)
 
 An agent that used a CSX answer and then watched its own machine contradict it

@@ -1,5 +1,10 @@
 # v0.1.43 verifier digest — production 실행 증거 (2026-08-24 실측)
 
+> 이 문서의 개수는 2026-08-24 시점의 것이다. 같은 질문의 최신 측정은
+> [2026-08-29 문서](verifier-digest-production-evidence-2026-08-29.md)에 있다
+> (receipt 7,204건, `verifierImage` 2,279건). 아래 §4·5의 431건은 그 시점의
+> 기록으로 유효하며, 회귀가 아니라 그 뒤 5일치가 더 쌓인 것이다.
+
 R2C-81, 3차 실행 세대. [2026-08-23 문서](verifier-digest-production-evidence-2026-08-23.md)는
 같은 질문을 **production이 아직 아무것도 실행하지 않은 시점**에 측정한 기록이다.
 그 뒤 production verifier가 실제로 돌기 시작했고, 이 문서는 그 결과를 다시 측정한다.
