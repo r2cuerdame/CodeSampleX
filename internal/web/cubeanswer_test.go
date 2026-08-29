@@ -26,10 +26,17 @@ func answerStore() *fakeStore {
 
 const exactLink = "/npm/semverish?f_symbol=semver.clean&f_version=6.3.1&f_os=ubuntu&f_runtime=node+22"
 
-// The coordinate and the result come before the picker. The page used to open
-// with the instrument — a reader who arrived by a link that already named
-// every dimension still had to read a grid legend to find out how it went.
-func TestTheAnswerComesBeforeTheControls(t *testing.T) {
+// A link that already named every dimension has to answer it. The page once
+// opened with the instrument and made that reader work a grid legend out
+// before learning how it went, so the answer was pulled up in front of the
+// expanded picker.
+//
+// It is no longer in front of the FOLD. R2C-68 puts 조건 변경 above 현재 조건:
+// the first thing a reader does here is ask a different question, and closed
+// the fold is a single summary line, so the answer still sits in view. What
+// this test pins is what the earlier order was actually protecting — that an
+// exact link lands on the answer and not on an expanded control panel.
+func TestAnExactLinkAnswersRatherThanOpeningThePicker(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = answerStore() })
 	body := get(t, mux, exactLink).Body.String()
 
@@ -37,12 +44,18 @@ func TestTheAnswerComesBeforeTheControls(t *testing.T) {
 	if answer < 0 {
 		t.Fatal("an exact link renders no answer")
 	}
+	// The controls stay folded away. Their markup is inside the fold, so what
+	// the reader meets above the answer is one summary line, not the grid.
+	fold := strings.Index(body, `<details id="cubechange"`)
 	controls := strings.Index(body, `class="cubecontrols`)
-	if controls < 0 || controls < answer {
-		t.Error("the controls come before the answer they were used to reach")
+	if fold < 0 || controls < 0 || controls < fold {
+		t.Error("the picker is no longer folded, so an exact link opens the instrument")
+	}
+	if fold > answer {
+		t.Error("the way to ask a different question is below the answer again")
 	}
 	// The anchor every shared link and every filter reload lands on has to
-	// land on the answer, not below it.
+	// contain the answer, not sit below it.
 	if cube := strings.Index(body, `id="cube"`); cube < 0 || cube > answer {
 		t.Error("the answer sits outside #cube, which is where a deep link scrolls to")
 	}
