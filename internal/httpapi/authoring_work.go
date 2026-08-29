@@ -405,6 +405,8 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "listing authoring work failed")
 		return
 	}
+	var funnel authoringFunnel
+	funnel.Wanted = len(snapshot.wanted)
 	eligible := make([]serverstore.WantedRow, 0, 400)
 	for _, candidate := range snapshot.wanted {
 		candidate.Kind = "WANTED"
@@ -413,6 +415,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 			eligible = append(eligible, candidate)
 		}
 	}
+	funnel.WantedEligible = len(eligible)
 	// WANTED keeps its own order: it is somebody's explicit ask, and demand is
 	// the ranking. Expansion is the network choosing its own next move, so it
 	// is steered at the releases the site renders.
@@ -422,6 +425,8 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 			fresh = append(fresh, candidate)
 		}
 	}
+	funnel.Expansion = len(snapshot.expansion)
+	funnel.ExpansionEligible = len(fresh)
 	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
 	// A dependency coordinate is the one kind of work whose release no
 	// publicness gate has necessarily seen: it exists because a lockfile
@@ -429,11 +434,14 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	// against the registry before a worker is sent, and register it while we
 	// are there.
 	eligible = a.confirmDependencyWork(pollCtx, eligible)
+	funnel.AfterDependency = len(eligible)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a
 	// fact about the artifact and not about this worker.
 	eligible = dropUnauthorableMaven(pollCtx, a.mavenJar, eligible)
+	funnel.AfterUnauthorable = len(eligible)
+	funnel.Offered = len(eligible)
 	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {
 		if writeAuthoringWorkBusy(w, err) {
@@ -443,7 +451,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "NO_WORK"})
+		writeJSON(w, http.StatusOK, funnel.noWork())
 		return
 	}
 	purl := domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
