@@ -1297,22 +1297,36 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A moment after creation: nothing has changed since.
-	time.Sleep(1100 * time.Millisecond)
-	mark := dbNow(t, pg)
-	changes, err := pg.ChangedSince(ctx, mark)
+	// Every mark here comes from the row, never from the clock.
+	//
+	// This test used to sleep 1.1s and read now(), which assumes the database
+	// clock only moves forward. It does not: measured against the container
+	// this suite runs, clock_timestamp() stepped BACKWARD four times in 300
+	// samples, by as much as 0.497s. One step is smaller than the sleep and
+	// hides; two in a row, or one plus scheduling delay, is not — and then the
+	// test failed in whichever direction the step happened to fall, either
+	// "expected no changes" for a row written before the mark or "a quarantine
+	// was not reported" for one written after it. Both readings were of the
+	// clock, not of the code.
+	//
+	// ChangedSince asks `> $1`, so a mark equal to a row's own stamp excludes
+	// it and a mark one nanosecond below it includes it. Taking the marks from
+	// updated_at makes both assertions exact whichever way the clock moves,
+	// and drops 2.2 seconds of sleeping.
+	afterSave := sampleUpdatedAt(t, pg, id)
+	changes, err := pg.ChangedSince(ctx, afterSave)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changes.Empty() {
-		t.Fatalf("expected no changes, got %+v", changes)
+		t.Fatalf("a sample reported itself as changed since its own stamp: %+v", changes)
 	}
 
 	// A status correction must make the package dirty.
 	if err := pg.SetSampleStatus(ctx, id, "CROSS_PASS"); err != nil {
 		t.Fatal(err)
 	}
-	changes, err = pg.ChangedSince(ctx, mark)
+	changes, err = pg.ChangedSince(ctx, sampleUpdatedAt(t, pg, id).Add(-time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1322,21 +1336,47 @@ func TestIntegrationChangedSinceSeesOutOfBandStatusChanges(t *testing.T) {
 
 	// So must a quarantine — otherwise a taken-down sample keeps being
 	// served from the shard it is already in.
-	mark2 := dbNow(t, pg)
-	time.Sleep(1100 * time.Millisecond)
 	if err := pg.SetSampleQuarantine(ctx, id, true, "abuse"); err != nil {
 		t.Fatal(err)
 	}
-	changes, err = pg.ChangedSince(ctx, mark2)
+	quarantined := sampleUpdatedAt(t, pg, id)
+	changes, err = pg.ChangedSince(ctx, quarantined.Add(-time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !contains(changes.SamplePURLs, purl) {
 		t.Errorf("a quarantine was not reported as a change: %+v", changes)
 	}
+	// And the same write is invisible to a reader that has already seen it.
+	changes, err = pg.ChangedSince(ctx, quarantined)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(changes.SamplePURLs, purl) {
+		t.Errorf("a quarantine was reported again to a reader already at its stamp: %+v", changes)
+	}
+}
+
+// sampleUpdatedAt reads the stamp ChangedSince compares against, so a test can
+// mark a point in the data instead of guessing one from a clock.
+func sampleUpdatedAt(t *testing.T, pg *PG, sampleID string) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	var updated time.Time
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT updated_at FROM samples WHERE sample_id=$1`, sampleID).Scan(&updated)
+	}); err != nil {
+		t.Fatalf("reading the sample stamp: %v", err)
+	}
+	return updated.UTC()
 }
 
 // dbNow reads the clock that stamps created_at and updated_at.
+//
+// It is a clock, so it is only safe where a test needs "roughly now" and not
+// an ordering: the container clock steps backward (measured at up to 0.497s).
+// A test that needs to be on one side of a write marks the row instead — see
+// sampleUpdatedAt.
 //
 // A mark taken from the test process's clock compares two different clocks:
 // the tests run on the host while PostgreSQL runs in its own container, and a
