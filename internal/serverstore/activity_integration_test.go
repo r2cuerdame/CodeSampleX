@@ -62,8 +62,21 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 			Kind: activity.KindDay, Epoch: seenAt.Format("2006-01-02"), Value: bucket(byte(20 + age)), SeenAt: seenAt,
 		})
 	}
+	// A month bucket is named by its month, so walking back has to move whole
+	// months. now.AddDate(0, -age, 0) moves the DAY of the month and lets Go
+	// normalise a date that does not exist: from 29 August, six months back is
+	// 29 February, which 2026 has not got, so Go answers 1 March — the same
+	// "2026-03" that five months back already produced. Thirteen ages collapse
+	// to twelve epochs and this test fails, but only on the 29th, 30th and
+	// 31st, which is why it passed every day until 2026-08-29 and then blocked
+	// every pull request at once.
+	//
+	// PruneActivity itself is right: it bounds months with
+	// date_trunc('month', $1) - interval '12 months', which cannot overflow.
+	// The walk is anchored the same way it is.
+	monthStart := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, time.UTC)
 	for age := 0; age <= 12; age++ {
-		seenAt := now.AddDate(0, -age, 0)
+		seenAt := monthStart.AddDate(0, -age, 0)
 		retentionRows = append(retentionRows, activity.Bucket{
 			Kind: activity.KindMonth, Epoch: seenAt.Format("2006-01"), Value: bucket(byte(80 + age)), SeenAt: seenAt,
 		})
@@ -73,7 +86,7 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 	}
 	staleDay, staleMonth := bucket(55), bucket(95)
 	staleDayEpoch := now.AddDate(0, 0, -35).Format("2006-01-02")
-	staleMonthEpoch := now.AddDate(0, -13, 0).Format("2006-01")
+	staleMonthEpoch := monthStart.AddDate(0, -13, 0).Format("2006-01")
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `INSERT INTO activity_buckets(kind, epoch, bucket, owner, first_seen, last_seen) VALUES
 			('day',$1,$2,false,$4,$4), ('month',$3,$5,false,$4,$4)`, staleDayEpoch, staleDay[:], staleMonthEpoch, now, staleMonth[:])
