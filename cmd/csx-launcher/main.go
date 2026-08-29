@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
+	"github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 func main() {
@@ -23,7 +25,13 @@ func main() {
 		fail(launcher.ReasonPointerUnreadable, err)
 	}
 	root := filepath.Dir(self)
+	if len(os.Args) == 2 && os.Args[1] == repairFlag {
+		os.Exit(repairMain(root))
+	}
 	res, err := launcher.Resolve(root)
+	if err != nil {
+		res, err = repairAndResolve(root, err)
+	}
 	if err != nil {
 		fail(launcher.Reason(err), err)
 	}
@@ -36,6 +44,9 @@ func main() {
 			// still remove/block the file in that gap, so retry one recorded LKG
 			// exactly once. A normal non-zero payload exit never reaches here.
 			res, err = launcher.RecoverAfterStartFailure(root, res.Descriptor, startFailure)
+			if err != nil {
+				res, err = repairAndResolve(root, err)
+			}
 			if err != nil {
 				fail(launcher.Reason(err), err)
 			}
@@ -122,4 +133,120 @@ func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor,
 func fail(reason string, err error) {
 	fmt.Fprintf(os.Stderr, "csx launcher: %s: %v\n", reason, err)
 	os.Exit(126)
+}
+
+// repairFlag is the explicit operator repair. It exists because the automatic
+// path deliberately backs off after a failure, and because an operator looking
+// at a dead install needs one command that says what it did rather than a
+// retry loop that may or may not be in its cooldown.
+const repairFlag = "--repair-payload"
+
+// repairBudget bounds the whole repair, network included. An MCP host is
+// waiting on this process; a repair that cannot finish inside it is reported as
+// a failure the operator can act on, which is still better than a hang.
+const repairBudget = 2 * time.Minute
+
+// repairEnvOptOut disables the automatic repair entirely. Anything that wants
+// a broken install to stay broken -- an air-gapped machine that should fail
+// fast, a test that must not reach the network -- sets it.
+const repairEnvOptOut = "CSX_LAUNCHER_NO_REPAIR"
+
+// repairAttempted keeps the repair to one attempt per process, the same bound
+// RecoverAfterStartFailure puts on the last-known-good retry.
+var repairAttempted bool
+
+// repairAndResolve is the launcher's last resort: the pointer is intact, but
+// every payload it records is gone from this machine, so there is nothing left
+// here to fall back to. It refetches those exact payloads from the official
+// release path, holding them to the SHA-256 the pointer already recorded, and
+// then resolves again.
+//
+// It returns the original resolve failure untouched when it cannot help, so a
+// caller reading stderr still gets the same stable reason code first. A repair
+// that silently converted "no payload" into some other error would take the one
+// greppable fact an MCP host has and replace it with a story about the network.
+func repairAndResolve(root string, resolveErr error) (launcher.Resolution, error) {
+	if err := repairable(resolveErr); err != nil {
+		return launcher.Resolution{}, fmt.Errorf("%w; automatic repair skipped: %v", resolveErr, err)
+	}
+	repairAttempted = true
+	ctx, cancel := context.WithTimeout(context.Background(), repairBudget)
+	defer cancel()
+	report, err := update.RehydrateInstall(ctx, root, update.RehydrateOptions{})
+	if err != nil {
+		return launcher.Resolution{}, fmt.Errorf("%w; automatic repair from the official release failed: %v", resolveErr, err)
+	}
+	// stderr only, for the same reason every other launcher diagnostic is:
+	// stdout is an MCP host's JSON-RPC framing.
+	fmt.Fprintf(os.Stderr, "csx launcher: repaired: %s had no verified fallback left; %s\n",
+		report.ExhaustedVersion, refetchSummary(report))
+	if report.FallbackVersion == "" {
+		fmt.Fprintln(os.Stderr, "csx launcher: this install has no local fallback payload; the next lost payload needs the network again")
+	}
+	res, err := launcher.Resolve(root)
+	if err != nil {
+		return launcher.Resolution{}, fmt.Errorf("%w; the repaired payload did not resolve: %v", resolveErr, err)
+	}
+	return res, nil
+}
+
+// repairable decides whether refetching can address this failure at all. Only
+// a payload whose bytes are wrong or gone is repairable from the release: a
+// pointer that will not parse has no recorded digest to hold a download to, and
+// a filesystem that refused to answer is not something a download fixes.
+func repairable(resolveErr error) error {
+	if repairAttempted {
+		return errors.New("already attempted once in this process")
+	}
+	if os.Getenv(repairEnvOptOut) != "" {
+		return errors.New("disabled by " + repairEnvOptOut)
+	}
+	switch launcher.Reason(resolveErr) {
+	case launcher.ReasonPayloadMissing, launcher.ReasonPayloadCorrupt,
+		launcher.ReasonPayloadNotRegular, launcher.ReasonPayloadStartFailed:
+		return nil
+	default:
+		return fmt.Errorf("%s is not a refetchable failure", launcher.Reason(resolveErr))
+	}
+}
+
+// repairMain is `csx.exe --repair-payload`: the same repair, asked for on
+// purpose. It ignores the cooldown and reports on stdout, because here a person
+// is the one reading.
+func repairMain(root string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), repairBudget)
+	defer cancel()
+	report, err := update.RehydrateInstall(ctx, root, update.RehydrateOptions{Force: true})
+	if err != nil {
+		// No reason code here: the reason codes describe why a payload could
+		// not be run, and this is a repair that could not be completed. Naming
+		// one of them would put a fact on stderr that was never measured.
+		fmt.Fprintf(os.Stderr, "csx launcher: payload repair failed: %v\n", err)
+		return 1
+	}
+	if report.ExhaustedVersion == "" {
+		fmt.Printf("nothing to repair: the current payload verifies; %s\n", refetchSummary(report))
+	} else {
+		fmt.Printf("repaired %s: %s\n", report.ExhaustedVersion, refetchSummary(report))
+	}
+	if len(report.AlreadyVerified) > 0 {
+		fmt.Printf("already verified on disk: %s\n", strings.Join(report.AlreadyVerified, ", "))
+	}
+	if report.FallbackVersion == "" {
+		fmt.Println("no local fallback payload: this pointer records no verified previous version")
+	} else {
+		fmt.Printf("verified fallback: %s\n", report.FallbackVersion)
+	}
+	return 0
+}
+
+// refetchSummary keeps an empty restore set readable. A repair can legitimately
+// restore nothing -- an updater may have published a working payload while this
+// process was deciding to act -- and "refetched  from the official release" is
+// the kind of line that sends an operator looking for a bug that is not there.
+func refetchSummary(report update.RehydrateReport) string {
+	if len(report.Restored) == 0 {
+		return "refetched nothing: every recorded payload was already verified on disk"
+	}
+	return "refetched " + strings.Join(report.Restored, ", ") + " from the official release"
 }
