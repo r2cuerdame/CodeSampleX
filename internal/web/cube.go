@@ -552,6 +552,19 @@ func defaultCubeAxes(facts []cubeFact, pinned map[string]string) (x, y string, o
 // survives is decided by the dimension beside it, not by that axis alone.
 func cubeAxisSpread(facts []cubeFact, dim, other string) int {
 	rendered := observationsOnlyOnEnvironmentAxes(cubeFactsOnAxes(facts, dim, other), dim, other)
+	// An axis spreads over RATE evidence. A document-only fact — our own run,
+	// kept so the sample document keeps its colour — renders a mark but no
+	// measurement, and letting it qualify an environment axis would reopen
+	// the empty-shell grids the observation rule exists to prevent.
+	if isEnvironmentDim(dim) || isEnvironmentDim(other) {
+		kept := make([]cubeFact, 0, len(rendered))
+		for _, f := range rendered {
+			if f.Agg.events() > 0 {
+				kept = append(kept, f)
+			}
+		}
+		rendered = kept
+	}
 	if dim == "symbol" {
 		return len(cubeRealSymbols(rendered))
 	}
@@ -637,31 +650,41 @@ func cubeAxesReadBetterTransposed(x, y string) bool {
 // failure clusters were recorded, so the page opened on six green rows for a
 // package with 42 recorded failures. It is kept and marked as a total —
 // sorted below its parts, outside the tallies.
-// observationsOnlyOnEnvironmentAxes drops this network's own runs from a
-// grid spread over WHERE things ran.
+// observationsOnlyOnEnvironmentAxes keeps this network's own runs out of the
+// RATE on a grid spread over WHERE things ran.
 //
 // Every receipt this network holds is signed inside a linux container, so
-// keying verification by environment put the check in the linux cell and
-// left every other cell of the row reading as "not verified there". That is
-// a per-platform verdict, and this network does not offer one: it offers a
-// sample that builds. A sample answers one version of one API — which OS
-// the container happened to be is not part of the claim.
+// keying the verification BASIS by environment put the check in the linux
+// cell and left every other cell of the row reading as "not verified there".
+// That is a per-platform verdict, and the rate does not offer one: it offers
+// a sample that builds. A sample answers one version of one API — which OS
+// the container happened to be is not part of that claim.
 //
 // So an environment grid answers the question it is actually about: where
-// did builds run, and how did they go. The verification is not lost — the
-// version and symbol axes still carry it, the exact records still state the
-// environment each run happened in, and the sample page counts the signing
-// keys that built it.
+// did builds run, and how did they go — the RATE and the basis come from
+// observations alone.
+//
+// The document is different. Its colour is the sample-state contract — a run
+// of ours recorded at a coordinate decides the colour there — and each
+// verification does record the environment it ran in. Dropping it wholesale
+// demoted every verified coordinate on exactly the grids that spread WHERE
+// things ran to a grey document, which states "nothing of ours ran here"
+// about the one cell where it did. So the outcome moves to the ran side of
+// the aggregate (colour only, never rate) instead of vanishing, and a fact
+// whose only evidence is our own run survives as a document-only cell.
 func observationsOnlyOnEnvironmentAxes(facts []cubeFact, x, y string) []cubeFact {
 	if !isEnvironmentDim(x) && !isEnvironmentDim(y) {
 		return facts
 	}
 	out := make([]cubeFact, 0, len(facts))
 	for _, f := range facts {
+		ranPass := f.Agg.verPass + f.Agg.ranPass
+		ranFail := f.Agg.verFail + f.Agg.ranFail
 		f.Agg = f.Agg.observationPart()
-		if f.Agg.events() == 0 {
+		if f.Agg.events() == 0 && ranPass+ranFail == 0 {
 			continue
 		}
+		f.Agg.ranPass, f.Agg.ranFail = ranPass, ranFail
 		out = append(out, f)
 	}
 	return out
@@ -871,7 +894,10 @@ func mergeCubeFacts(facts []cubeFact) *pivotAgg {
 	// rendered a package seen in hundreds of projects as "never measured" —
 	// the invariant buildPivot already keeps.
 	obsWeight := func(a pivotAgg) int64 { return a.obsPass + a.obsFail + a.used }
-	verWeight := func(a pivotAgg) int64 { return a.verPass + a.verFail }
+	// ran counts are verification outcomes an environment grid keeps for the
+	// document alone, so they ride the verification side of the fold: same
+	// dedupe, same one-fact-per-bucket rule.
+	verWeight := func(a pivotAgg) int64 { return a.verPass + a.verFail + a.ranPass + a.ranFail }
 
 	observed := map[verKey]cubeFact{}
 	verified := map[verKey]cubeFact{}

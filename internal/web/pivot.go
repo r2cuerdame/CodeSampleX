@@ -268,6 +268,14 @@ type pivotAgg struct {
 	// ever push a rate upward.
 	used             int64
 	verPass, verFail int64
+	// ranPass and ranFail are verification outcomes that may colour the
+	// sample document but must not join the rate or the basis. An
+	// environment grid rates its cells from observations alone — a
+	// verification is about a sample, not about the container it ran in —
+	// but the DOCUMENT is the sample-state contract, and a contract of ours
+	// that passed or failed in this cell's environment keeps its colour
+	// there (observationsOnlyOnEnvironmentAxes moves verPass/verFail here).
+	ranPass, ranFail int64
 	elevated         bool
 	cross            bool
 	obsLastSeen      string // max RFC3339 (UTC strings compare lexically)
@@ -622,6 +630,8 @@ func (a *pivotAgg) mergeObservations(b pivotAgg) {
 func (a *pivotAgg) mergeVerifications(b pivotAgg) {
 	a.verPass += b.verPass
 	a.verFail += b.verFail
+	a.ranPass += b.ranPass
+	a.ranFail += b.ranFail
 	a.cross = a.cross || b.cross
 	if b.verLastSeen > a.verLastSeen {
 		a.verLastSeen = b.verLastSeen
@@ -733,15 +743,23 @@ func assembleGrid(aggs map[cellKey]*pivotAgg,
 			// beside it, and adding it to them counts everything twice.
 			isAgg := row.Aggregate || (aggLabel != "" && ck == aggLabel)
 			if !isAgg {
+				// The three sample tallies count the state the cells wear.
+				// They used to read the observation-backed rate counters, so
+				// a cell whose reported builds passed but whose contract run
+				// failed drew a red document and incremented the green tally.
+				// The outcome half of Sample is final here: the published
+				// count folded in later can only add a grey document, never
+				// change pass/fail/mixed. The fourth tally is cells that only
+				// real projects reported — not a sample state.
 				switch {
+				case cell.Sample == samplePass:
+					g.CountPass++
+				case cell.Sample == sampleFail:
+					g.CountFail++
+				case cell.Sample == sampleMixed:
+					g.CountMixed++
 				case cell.Basis == "observed":
 					g.CountObserved++
-				case cell.Basis != "" && cell.FailCount == 0:
-					g.CountPass++
-				case cell.Basis != "" && cell.PassCount == 0:
-					g.CountFail++
-				case cell.Basis != "":
-					g.CountMixed++
 				}
 				if cell.Class != "empty" {
 					g.Measured++
@@ -859,7 +877,19 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// A verification, however small, outranks any volume of observation:
 	// the basis is about who ran it, never about how many said so.
 	if obs == 0 && ver == 0 && a.used == 0 {
-		return pivotCell{Class: "empty", Glyph: "—"}
+		if a.ranPass+a.ranFail == 0 {
+			return pivotCell{Class: "empty", Glyph: "—"}
+		}
+		// A document-only cell: our own run is the whole record here, kept
+		// off the rate (an environment grid rates from observations) but
+		// still owed its mark — a coordinate that recorded a failure and
+		// drew "—" claimed nothing was recorded, which is false. The class
+		// stays "empty" because the RATE has no evidence; the document says
+		// what did happen.
+		cell.Class = "empty"
+		cell.ranPass, cell.ranFail = a.ranPass, a.ranFail
+		cell.Sample = deriveSampleState(0, a.ranPass, a.ranFail)
+		return cell
 	}
 	// The number is usage; the mark is our own code. They answer different
 	// questions, so a cell can hold either alone: a sample we verified that
@@ -890,8 +920,8 @@ func buildPivotCell(a *pivotAgg, now time.Time) pivotCell {
 	// and lives in cubecode.go; a caller that has that count calls
 	// setPublishedSamples, which is what turns a coordinate we never ran into
 	// a grey document rather than a bare cell.
-	cell.ranPass, cell.ranFail = a.verPass, a.verFail
-	cell.Sample = deriveSampleState(0, a.verPass, a.verFail)
+	cell.ranPass, cell.ranFail = a.verPass+a.ranPass, a.verFail+a.ranFail
+	cell.Sample = deriveSampleState(0, cell.ranPass, cell.ranFail)
 	switch {
 	case obs == 0 && ver == 0:
 		// Usage only: the package was there, and nothing ran. "No failures"
