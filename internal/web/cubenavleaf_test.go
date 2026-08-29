@@ -479,8 +479,10 @@ func answerCard(t *testing.T, body string) string {
 	if i < 0 {
 		t.Fatalf("no answer card on the page:\n%s", truncate(body))
 	}
+	// The fold used to sit below the answer and delimited it. R2C-68 put it
+	// above, so the card now runs to the end of the section instead.
 	rest := body[i:]
-	j := strings.Index(rest, `<details id="cubechange"`)
+	j := strings.Index(rest, `</section>`)
 	if j < 0 {
 		j = len(rest)
 	}

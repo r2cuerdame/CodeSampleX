@@ -44,10 +44,18 @@
   </p>
   {{- end}}
   {{- if .Cube.Answer}}
-  {{/* The answer, before the instrument that found it — and INSIDE #cube,
-       because that anchor is what every shared link and every filter reload
-       lands on. Above the anchor it would have been the one thing a deep
-       link scrolled past. */}}
+  {{/* Both of these stay INSIDE #cube, because that anchor is what every
+       shared link and every filter reload lands on. Above the section they
+       would be the one thing a deep link scrolled past. */}}
+  {{/* The way to ask a different question, above the answer to the one that
+       was asked. Folded, because the coordinate is already decided and the
+       reader came for the answer — closed it is a single summary line, so
+       the answer still sits in view directly beneath it.
+       R2C-68 settles this order. */}}
+  <details id="cubechange" class="home-detail cubechange">
+    <summary><span class="eyebrow mono">{{.T "cube.change_heading"}}</span></summary>
+    <div class="home-detail-body">{{template "cubecontrols" .}}</div>
+  </details>
   {{- with .Cube.Answer}}
   <div class="answer{{if .Basis}} {{.Basis}}{{end}}{{if .Tone}} t-{{.Tone}}{{end}}">
     <h2 class="eyebrow mono">{{$.T "answer.heading"}}</h2>
@@ -99,13 +107,6 @@
     {{- end}}
   </div>
   {{- end}}
-  {{/* Folded, because the coordinate is already decided: the reader came for
-       the answer, not for the picker. Opening it is how they ask a different
-       question. */}}
-  <details id="cubechange" class="home-detail cubechange">
-    <summary><span class="eyebrow mono">{{.T "cube.change_heading"}}</span></summary>
-    <div class="home-detail-body">{{template "cubecontrols" .}}</div>
-  </details>
   {{- else}}
   <div class="section-heading">
     <div>
