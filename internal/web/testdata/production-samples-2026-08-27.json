@@ -1,0 +1,443 @@
+{
+  "source": "GET https://codesamplex.dev/v1/samples/<id> on 2026-08-27, for ids drawn from the public sitemap. Public data only: package URLs, symbol names, the manifest goal and the first contract line.",
+  "samples": [
+    {
+      "sampleId": "sha256:8345acff9638c570b383f63d50f7d0ae8c2559955a43fd5ce4514722f7b91551",
+      "status": "CROSS_PASS",
+      "goal": "Tokio broadcast channels require navigating zero-receiver SendError drops, RecvError::Lagged stream recovery without premature loop termination, and late subscription history exclusion",
+      "packages": [
+        "pkg:cargo/tokio@1.43.0"
+      ],
+      "symbols": [
+        "tokio::sync::broadcast::channel",
+        "tokio::sync::broadcast::Sender::send",
+        "tokio::sync::broadcast::Sender::subscribe",
+        "tokio::sync::broadcast::Receiver::recv",
+        "tokio::sync::broadcast::Receiver::resubscribe"
+      ],
+      "contract": [
+        "assert broadcast::channel(0) panics because broadcast capacity must be strictly positive"
+      ],
+      "runEnvironment": "rust",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:b51af65d0a29d58f2da432207c6472d366b11c2d5b6782709161c5e318fad7d2",
+      "status": "CROSS_PASS",
+      "goal": "Handle Symfony Console silent verbosity suppressing exception rendering, VALUE_NEGATABLE tri-state and boolean default resolution, ArgvInput greedy optional token capture, ArrayInput argument key prefix isolation, non-interactive Question normalizer skipping, and ChoiceQuestion associative key returns",
+      "packages": [
+        "pkg:composer/symfony/console@8.1.4"
+      ],
+      "symbols": [
+        "Symfony\\Component\\Console\\Application",
+        "Symfony\\Component\\Console\\Input\\InputOption",
+        "Symfony\\Component\\Console\\Input\\ArgvInput",
+        "Symfony\\Component\\Console\\Input\\ArrayInput",
+        "Symfony\\Component\\Console\\Helper\\QuestionHelper",
+        "Symfony\\Component\\Console\\Question\\ChoiceQuestion",
+        "Symfony\\Component\\Console\\Output\\OutputInterface"
+      ],
+      "contract": [
+        "Running a failing command with --silent (VERBOSITY_SILENT) exits with code 1 but completely suppresses exception rendering, while --quiet (VERBOSITY_QUIET) renders the exception message to error output"
+      ],
+      "runEnvironment": "php",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:19e4e8eba00e8dca2bf9eb099975a3c5176e2893cc7cebf61d6c84f5d3412a9b",
+      "status": "CROSS_PASS",
+      "goal": "ActiveSupport.gem_version returns a Gem::Version instance representing the ActiveSupport version string",
+      "packages": [
+        "pkg:gem/activesupport@8.1.3.1"
+      ],
+      "symbols": [
+        "ActiveSupport.gem_version"
+      ],
+      "contract": [
+        "ActiveSupport.gem_version returns a Gem::Version instance with version string 8.1.3.1 that supports semantic comparisons and segments decomposition."
+      ],
+      "runEnvironment": "ruby",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:7a0db88a02d2d431ed27cac32ea2c3cda11ac14a16223505805d4bb20d0f15fd",
+      "status": "CROSS_PASS",
+      "goal": "verify pkg:golang/github.com/jackc/pgx/v5@v5.10.0",
+      "packages": [
+        "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+      ],
+      "symbols": [
+        "github.com/jackc/pgx/v5.StrictNamedArgs"
+      ],
+      "contract": [
+        "pgx.StrictNamedArgs.RewriteQuery rewrites named parameters into positional parameters and extracts matching arguments"
+      ],
+      "runEnvironment": "",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:410bddea995d11fd7cd016edb8d816954a28483bf3ba96f8594332e0cbd59730",
+      "status": "CROSS_PASS",
+      "goal": "Construct transactional pipelines with Ecto.Multi: handle Ecto 3's two-arity run callback requirement, contrast with one-arity dynamic operation builders, and inspect pipeline stages",
+      "packages": [
+        "pkg:hex/ecto@3.12.5"
+      ],
+      "symbols": [
+        "Ecto.Multi.new",
+        "Ecto.Multi.run",
+        "Ecto.Multi.insert",
+        "Ecto.Multi.merge",
+        "Ecto.Multi.to_list",
+        "Ecto.Multi.prepend",
+        "Ecto.Multi.append"
+      ],
+      "contract": [
+        "assert Ecto.Multi.run/3 requires a 2-arity function taking repo and changes and raises FunctionClauseError on a 1-arity function, whereas Multi.insert/3 and Multi.merge/2 accept 1-arity functions receiving only changes"
+      ],
+      "runEnvironment": "elixir",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:f54a5cfafcccb778c5b07564e221b6cb7dfd5b2946c2a828ffdc9f4e05e3c36b",
+      "status": "CROSS_PASS",
+      "goal": "verify pkg:npm/yaml@2.9.0",
+      "packages": [
+        "pkg:npm/yaml@2.9.0"
+      ],
+      "symbols": [
+        "yaml.Lexer"
+      ],
+      "contract": [
+        "Lexer.lex tokenizes mapping keys, values, and delimiters into lexical token streams"
+      ],
+      "runEnvironment": "node 22.22.2",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:535513fc87e3efcb8f9ac7d45f728474355b54e7e09b60ce585f96328ae9f8b0",
+      "status": "CROSS_PASS",
+      "goal": "Assert that maps of equal length with differing keys and null values are evaluated as unequal under equatable 2.0.8, correcting the false positive in 2.0.7",
+      "packages": [
+        "pkg:pub/equatable@2.0.8"
+      ],
+      "symbols": [
+        "Equatable",
+        "mapEquals"
+      ],
+      "contract": [
+        "equatable 2.0.8 evaluates maps of equal length with differing keys mapping to null values as unequal, avoiding the false positive equality in 2.0.7."
+      ],
+      "runEnvironment": "dart",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:d0373902b8ccef8c40028ea3cf38618b01839ae31f872c4f5693809f8100af48",
+      "status": "CROSS_PASS",
+      "goal": "Resolve relative URLs strictly per RFC 3986 with URL.join while relying on Client base_url normalization for prefix-preserving path concatenation",
+      "packages": [
+        "pkg:pypi/httpx@0.28.1"
+      ],
+      "symbols": [
+        "httpx.URL.join",
+        "httpx.URL",
+        "httpx.Client",
+        "httpx.Client.build_request"
+      ],
+      "contract": [
+        "httpx.URL.join on a base path lacking a trailing slash replaces the final path segment rather than appending to it"
+      ],
+      "runEnvironment": "python",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:9b9720fef342edf7ef51c61e4781caeafe87bc3863b3fdfe9efd67fdb0a2caf8",
+      "status": "CROSS_PASS",
+      "goal": "Spawning non-Send futures in Tokio requires driving a LocalSet explicitly, avoiding uncontextualized spawn_local panics and unpolled task starvation",
+      "packages": [
+        "pkg:cargo/tokio@1.43.0"
+      ],
+      "symbols": [
+        "tokio::task::LocalSet",
+        "tokio::task::spawn_local",
+        "tokio::task::LocalSet::run_until",
+        "tokio::task::LocalSet::spawn_local"
+      ],
+      "contract": [
+        "assert tokio::task::spawn_local panics at runtime when called without an active LocalSet context on the current thread"
+      ],
+      "runEnvironment": "rust",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:106d01330645ca8607c6eba2a03c2fe697589bbc0b95d5851a31ee15b07f5126",
+      "status": "PUBLISHED",
+      "goal": "Configure Mustermann pattern options across ignore_unknown_options, space_matches_plus, capture constraints, except exclusions, and pattern type selection without unhandled option ArgumentErrors, anchored regex matching failures, or invalid expand errors",
+      "packages": [
+        "pkg:gem/mustermann@4.0.0"
+      ],
+      "symbols": [
+        "Mustermann.new",
+        "Mustermann::Sinatra",
+        "Mustermann::Rails",
+        "Mustermann::Identity",
+        "Mustermann::Pattern#expand",
+        "Mustermann::Pattern#===",
+        "Mustermann::Pattern#match",
+        "Mustermann::ExpandError"
+      ],
+      "contract": [
+        "assert Mustermann.new raises ArgumentError on unrecognized router configuration options unless ignore_unknown_options: true is explicitly configured"
+      ],
+      "runEnvironment": "ruby",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:db98aa6f098f65e100d9848bcf38fbf00688a6fc5ebd9ff44ecd5fb79d44a296",
+      "status": "CROSS_PASS",
+      "goal": "verify github.com/francoispqt/gojay.Encoder in pkg:golang/github.com/francoispqt/gojay@v1.2.13",
+      "packages": [
+        "pkg:golang/github.com/francoispqt/gojay@v1.2.13"
+      ],
+      "symbols": [
+        "github.com/francoispqt/gojay.Encoder"
+      ],
+      "contract": [
+        "gojay.NewEncoder serializes Go structs implementing MarshalerJSONObject with typed field encoding methods including IntKey, StringKey, BoolKey, Float64Key, StringKeyOmitEmpty, and ArrayKey."
+      ],
+      "runEnvironment": "",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:475bdc86c8f2c5a89597c7f8f5237496f32825061c30dacc220acfeee9daef91",
+      "status": "CROSS_PASS",
+      "goal": "Handle silent behavioral changes in lru-cache across version boundaries where set(key, undefined) deletes entries, legacy options are silently ignored, overwrites trigger dispose, and fetch rejection evicts stale data",
+      "packages": [
+        "pkg:npm/lru-cache@11.5.2"
+      ],
+      "symbols": [
+        "LRUCache",
+        "LRUCache#set",
+        "LRUCache#get",
+        "LRUCache#peek",
+        "LRUCache#fetch",
+        "LRUCache#dispose",
+        "LRUCache#keys"
+      ],
+      "contract": [
+        "assert set(key, undefined) silently deletes entry rather than storing undefined value like Map.set"
+      ],
+      "runEnvironment": "node",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:06a1477df6b12e3b1f576c70f050420128cd4aa9fd36e51bc1c81e36172685ef",
+      "status": "CROSS_PASS",
+      "goal": "Demonstrate that EquatableConfig.stringify defaults to true in debug mode (assertions enabled) in v2.0.0, enabling property stringification by default.",
+      "packages": [
+        "pkg:pub/equatable@2.0.0"
+      ],
+      "symbols": [
+        "EquatableConfig.stringify"
+      ],
+      "contract": [
+        "By default in debug mode (assertions enabled), printing an Equatable instance that does not override stringify prints its property values because EquatableConfig.stringify defaults to true."
+      ],
+      "runEnvironment": "dart",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:d7b91b85fd7f5360ec2a0f66baa7954d9f92a9c2a00db3cf2806ce74c4f978f4",
+      "status": "CROSS_PASS",
+      "goal": "verify pkg:pypi/distro@1.9.0",
+      "packages": [
+        "pkg:pypi/distro@1.9.0"
+      ],
+      "symbols": [],
+      "contract": [
+        "distro.LinuxDistribution parses standard os-release files to extract name, id, version, version_parts, major_version, minor_version, build_number, like, codename, and raw attributes"
+      ],
+      "runEnvironment": "python 3.12",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:135433c9e1bd94f656bcd195488e72bbd4deac30203f7ef9f814378f28aeb022",
+      "status": "CROSS_PASS",
+      "goal": "Enabling the serde feature on semver serializes Version and VersionReq as flat strings rather than nested structs, while bare requirement strings default to caret ranges and empty strings fail parsing",
+      "packages": [
+        "pkg:cargo/semver@1.0.28"
+      ],
+      "symbols": [
+        "semver::Version",
+        "semver::VersionReq",
+        "semver::Op",
+        "semver::Version::parse",
+        "semver::VersionReq::parse",
+        "semver::VersionReq::matches"
+      ],
+      "contract": [
+        "assert serde serializes Version and VersionReq as strings rejecting structural map JSON"
+      ],
+      "runEnvironment": "rust",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:21ca5fc9ca2933a20a58e3770f17479c8474f8cea99fdc98da692743a469c94b",
+      "status": "PUBLISHED",
+      "goal": "Configure CSV options (liberal_parsing for unescaped quotes, quote_char: nil vs empty string, skip_blanks combined with strip, quote_empty, and CRLF row_sep) to avoid MalformedCSVError, ArgumentError, and silent whitespace row parsing",
+      "packages": [
+        "pkg:gem/csv@3.3.2"
+      ],
+      "symbols": [
+        "CSV.parse",
+        "CSV.generate",
+        "CSV::MalformedCSVError"
+      ],
+      "contract": [
+        "assert RFC 4180 strict parsing raises CSV::MalformedCSVError on unescaped internal quotes and backslash quotes unless liberal_parsing is enabled"
+      ],
+      "runEnvironment": "ruby",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a",
+      "status": "CROSS_PASS",
+      "goal": "verify github.com/jackc/pgx/v5/pgconn.ParseConfig in pkg:golang/github.com/jackc/pgx/v5@v5.10.0",
+      "packages": [
+        "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+      ],
+      "symbols": [
+        "github.com/jackc/pgx/v5/pgconn.ParseConfig"
+      ],
+      "contract": [
+        "pgconn.ParseConfig parses standard PostgreSQL connection URI into Config with host, port, database, user, password, and runtime parameters"
+      ],
+      "runEnvironment": "",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:9e1778b697e5e0b73c4835bfc3f0f62ef19f69455bc64f9423679a4016eacda5",
+      "status": "CROSS_PASS",
+      "goal": "verify @modelcontextprotocol/sdk.LATEST_PROTOCOL_VERSION in pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+      "packages": [
+        "pkg:npm/%40modelcontextprotocol/sdk@1.30.0"
+      ],
+      "symbols": [
+        "@modelcontextprotocol/sdk.LATEST_PROTOCOL_VERSION"
+      ],
+      "contract": [
+        "LATEST_PROTOCOL_VERSION is a string constant exported from @modelcontextprotocol/sdk/types.js with value 2025-11-25"
+      ],
+      "runEnvironment": "node 22.23.2",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:27c56a5bd23ca2ec57ba237c2187cfc41474c4351bb361a0dc43337293a3c9ba",
+      "status": "CROSS_PASS",
+      "goal": "Resolve BCP 47 locales containing script codes in Intl.verifiedLocale to language-region fallback instead of stripping to base language, and format TRY and GHS with official currency symbols fixed in intl 0.20.3",
+      "packages": [
+        "pkg:pub/intl@0.20.3"
+      ],
+      "symbols": [
+        "Intl.verifiedLocale",
+        "NumberFormat.simpleCurrency"
+      ],
+      "contract": [
+        "assert Intl.verifiedLocale resolves zh-Hans-CN to zh_CN when only regional zh_CN is available"
+      ],
+      "runEnvironment": "dart",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:3ea8bc2e02e269464c4ff2edb5fac901d2c1c109ea6020628f8c94bf2ad780aa",
+      "status": "CROSS_PASS",
+      "goal": "Stack::new takes inner before outer middleware layers, causing the second argument to execute first on incoming requests unlike tuple composition",
+      "packages": [
+        "pkg:cargo/tower-layer@0.3.3"
+      ],
+      "symbols": [
+        "tower_layer::Stack",
+        "tower_layer::Layer",
+        "tower_layer::layer_fn",
+        "tower_layer::Identity"
+      ],
+      "contract": [
+        "Stack::new(layer_a, layer_b).layer(base) wraps base with layer_a first and layer_b second, executing layer_b before layer_a on incoming requests"
+      ],
+      "runEnvironment": "rust",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:4e027662d3f258c3788f1e5932f4ca92345bfed8df2039359c22722bfe374984",
+      "status": "CROSS_PASS",
+      "goal": "verify github.com/go-sql-driver/mysql.NewConfig in pkg:golang/github.com/go-sql-driver/mysql@v1.7.1",
+      "packages": [
+        "pkg:golang/github.com/go-sql-driver/mysql@v1.7.1"
+      ],
+      "symbols": [
+        "github.com/go-sql-driver/mysql.NewConfig"
+      ],
+      "contract": [
+        "mysql.NewConfig returns a non-nil *mysql.Config initialized with default collation utf8mb4_general_ci, UTC location, AllowNativePasswords true, and CheckConnLiveness true"
+      ],
+      "runEnvironment": "",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:c5375f25c142f1706c3b13c22cbe8b1d366b70169dd0633521c9f091eacbea94",
+      "status": "CROSS_PASS",
+      "goal": "Partially update nested locale configurations like formats and relativeTime with updateLocale without wiping untouched keys",
+      "packages": [
+        "pkg:npm/dayjs@1.11.20"
+      ],
+      "symbols": [
+        "dayjs",
+        "dayjs.extend",
+        "dayjs.updateLocale",
+        "dayjs.locale",
+        "updateLocale",
+        "localizedFormat",
+        "relativeTime"
+      ],
+      "contract": [
+        "extend dayjs with updateLocale, localizedFormat, and relativeTime plugins"
+      ],
+      "runEnvironment": "node",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:b1e6ba15021fef11c81bdfd7c542d380dc14846baee401db239f16c6302c14de",
+      "status": "CROSS_PASS",
+      "goal": "verify github.com/go-logfmt/logfmt.NewEncoder in pkg:golang/github.com/go-logfmt/logfmt@v0.6.0",
+      "packages": [
+        "pkg:golang/github.com/go-logfmt/logfmt@v0.6.0"
+      ],
+      "symbols": [
+        "github.com/go-logfmt/logfmt.NewEncoder"
+      ],
+      "contract": [
+        "logfmt.NewEncoder creates an Encoder writing logfmt formatted records to an io.Writer"
+      ],
+      "runEnvironment": "",
+      "contractPassed": true
+    },
+    {
+      "sampleId": "sha256:35c54b65d4802c577c6951092d8889f1b7f3a1f05d27e8191f2035becdc990d4",
+      "status": "CROSS_PASS",
+      "goal": "verify @babel/core in pkg:npm/%40babel/core@7.27.4",
+      "packages": [
+        "pkg:npm/%40babel/core@7.27.4"
+      ],
+      "symbols": [
+        "@babel/core",
+        "parseSync",
+        "types.isImportExpression",
+        "types.isImport"
+      ],
+      "contract": [
+        "Babel 7.27.4 parseSync represents dynamic import as a CallExpression with an Import callee by default."
+      ],
+      "runEnvironment": "node 22",
+      "contractPassed": true
+    }
+  ]
+}

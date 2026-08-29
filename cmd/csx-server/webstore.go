@@ -376,6 +376,52 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 	return out, nil
 }
 
+// ReleaseSamples returns the samples of ONE release, which is what resolves
+// a human-readable sample URL back to its content address.
+//
+// The pattern is the exact release purl rather than a package prefix, so the
+// bound applies per release. It is still re-checked in Go: the store matches
+// with SQL LIKE, where "_" is a wildcard, so "typing_extensions@1.0.0" would
+// also match "typing-extensions@1.0.0" — and resolving a URL to a sample
+// about a different package is worse than not resolving it.
+//
+// Verification is deliberately not required. A readable URL is addressing,
+// not a claim, and the page states for itself whether a contract ran.
+func (w *webStore) ReleaseSamples(ctx context.Context, ecosystem, name, version string, limit int) ([]web.SampleListItem, error) {
+	if version == "" {
+		return nil, nil
+	}
+	exact := domain.PURL{Ecosystem: ecosystem, Name: name, Version: version}.String()
+	rows, err := w.s.SamplesForPackages(ctx, []string{exact}, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []web.SampleListItem
+	for _, r := range rows {
+		if !manifestNamesRelease(r.ManifestJSON, exact) {
+			continue
+		}
+		out = append(out, sampleListItem(r))
+	}
+	return out, nil
+}
+
+// manifestNamesRelease is manifestNamesPackage for an exact release: the
+// purl has to match, not merely start the same way, so "@1.12.0" cannot
+// answer for "@1.12.01".
+func manifestNamesRelease(manifestJSON, purl string) bool {
+	m, ok := parseManifest(manifestJSON)
+	if !ok {
+		return false
+	}
+	for _, p := range m.Packages {
+		if p == purl {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]web.PackageCodeCount, error) {
 	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
 	rows, err := w.s.VerifiedSampleCodeCounts(ctx, prefix)
@@ -669,6 +715,12 @@ func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
 		// the version it answers for.
 		for _, p := range m.Packages {
 			if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+				// The whole coordinate, not only the version: a list row and
+				// the sitemap both have to be able to name the sample's
+				// human-readable canonical URL, and that needs the ecosystem
+				// and the name as well.
+				item.Ecosystem = parsed.Ecosystem
+				item.Name = parsed.Name
 				item.Version = parsed.Version
 				break
 			}

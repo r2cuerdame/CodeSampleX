@@ -538,13 +538,20 @@ func looksLikeVersion(ecosystem, seg string) bool {
 	return versionRe.MatchString(seg)
 }
 
-// splitPackagePath resolves the rest of a package URL into name, version
-// and symbol. The first version-looking segment after the minimum name
-// length ends the name; golang names may span many segments.
-func splitPackagePath(ecosystem, rest string) (name, version, symbol string, ok bool) {
+// splitPackageRest resolves the rest of a package URL into the name, the
+// version and whatever follows the version. The first version-looking
+// segment after the minimum name length ends the name; golang names may
+// span many segments.
+//
+// The tail is returned rather than resolved, because what may follow a
+// version is no longer one thing: a symbol is one segment, and a sample's
+// human-readable URL — /{ecosystem}/{name}/{version}/samples/{slug} — is
+// two. packageRoutes decides between them; this decides where the
+// coordinate ends.
+func splitPackageRest(ecosystem, rest string) (name, version string, tail []string, ok bool) {
 	segs := strings.Split(strings.Trim(rest, "/"), "/")
 	if len(segs) == 0 || segs[0] == "" {
-		return "", "", "", false
+		return "", "", nil, false
 	}
 	minName := 1
 	if ecosystem == "npm" && strings.HasPrefix(segs[0], "@") {
@@ -556,7 +563,7 @@ func splitPackagePath(ecosystem, rest string) (name, version, symbol string, ok 
 		minName = 2
 	}
 	if len(segs) < minName {
-		return "", "", "", false
+		return "", "", nil, false
 	}
 	verIdx := -1
 	for i := minName; i < len(segs); i++ {
@@ -566,21 +573,17 @@ func splitPackagePath(ecosystem, rest string) (name, version, symbol string, ok 
 		}
 	}
 	if verIdx == -1 {
-		return strings.Join(segs, "/"), "", "", true
+		return strings.Join(segs, "/"), "", nil, true
 	}
 	name = strings.Join(segs[:verIdx], "/")
 	version = segs[verIdx]
-	tail := segs[verIdx+1:]
-	if len(tail) > 1 {
-		return "", "", "", false
-	}
-	if len(tail) == 1 {
-		symbol = tail[0]
-		if symbol == "" {
-			return "", "", "", false
+	tail = segs[verIdx+1:]
+	for _, seg := range tail {
+		if seg == "" {
+			return "", "", nil, false
 		}
 	}
-	return name, version, symbol, true
+	return name, version, tail, true
 }
 
 func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
@@ -596,10 +599,26 @@ func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
 		redirectToSlashless(w, r)
 		return
 	}
-	name, version, symbol, ok := splitPackagePath(eco, r.PathValue("rest"))
+	// A sample's human-readable URL lives under the release it answers for:
+	// /npm/browserslist/4.28.7/samples/{slug}. It is resolved before the
+	// symbol split because it is the only two-segment tail the explorer
+	// routes, and a symbol may not contain a slash.
+	name, version, tail, ok := splitPackageRest(eco, r.PathValue("rest"))
 	if !ok {
 		s.notFound(w, r, lang)
 		return
+	}
+	if version != "" && len(tail) == 2 && tail[0] == sampleSegment {
+		s.semanticSamplePage(w, r, lang, eco, name, version, tail[1])
+		return
+	}
+	var symbol string
+	if len(tail) > 1 {
+		s.notFound(w, r, lang)
+		return
+	}
+	if len(tail) == 1 {
+		symbol = tail[0]
 	}
 	if querySymbols, present := r.URL.Query()["symbol"]; present {
 		// Two different symbol coordinates in one URL are ambiguous. The
@@ -1044,7 +1063,17 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	}
 	base := s.base(r)
 	title := i18n.T(lang, "title.compatibility", name, version) + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+"@"+version))
+	// The description used to be the same generic sentence on every release
+	// of every package, which is a description a search engine is free to
+	// ignore and rewrite. What makes THIS release's page worth opening is
+	// what was actually recorded against it, so the environments and the
+	// verified answers are named. Both come from data already on the page;
+	// neither is claimed when it is empty.
+	desc := i18n.T(lang, "meta.explorer", name+"@"+version)
+	if facts := releaseEvidenceFacts(lang, matrix, samples); facts != "" {
+		desc += " " + facts
+	}
+	b := s.page(r, lang, title, desc)
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
 		{name, base + pkgHref(eco, name)},
@@ -1299,6 +1328,43 @@ func (s *site) versionSamples(r *http.Request, eco, name, version string) []Samp
 		return out[i].CreatedAt > out[j].CreatedAt
 	})
 	return out
+}
+
+// metaContextLimit bounds how many recorded environments a description
+// names. It is a snippet, not an inventory.
+const metaContextLimit = 4
+
+// releaseEvidenceFacts is the release-specific half of a version page's
+// meta description: the environments this release was actually recorded in,
+// and how many verified answers were written against it.
+//
+// The searches that reach these pages are release lookups ("eslint 9.39.5",
+// "nanoid 3.3.17") and environment questions ("<package> node 22",
+// "<package> windows"). Those are answerable here — but only from what was
+// measured, so a dimension with nothing behind it contributes nothing
+// rather than a plausible-sounding blank.
+func releaseEvidenceFacts(lang string, matrix []matrixRow, samples []SampleListItem) string {
+	seen := map[string]bool{}
+	contexts := make([]string, 0, metaContextLimit)
+	for _, row := range matrix {
+		ctx := strings.TrimSpace(row.Context)
+		if ctx == "" || ctx == "unknown" || row.NoEvidence || seen[ctx] {
+			continue
+		}
+		seen[ctx] = true
+		contexts = append(contexts, ctx)
+		if len(contexts) == metaContextLimit {
+			break
+		}
+	}
+	var parts []string
+	if len(contexts) > 0 {
+		parts = append(parts, i18n.T(lang, "meta.recorded_in", strings.Join(contexts, " · ")))
+	}
+	if n := len(samples); n > 0 {
+		parts = append(parts, i18n.T(lang, "meta.verified_answers", i18n.FormatInt(lang, int64(n))))
+	}
+	return strings.Join(parts, " ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1665,6 +1731,14 @@ type samplePageData struct {
 	DeclaredEnvironment environmentView
 	EvidenceBasisKey    string
 	Crumbs              []crumb
+	// Headline is the <h1>: the release and what this sample answers for.
+	// The raw goal is still printed, under Case, where a reader who wants
+	// the author's own words can find them.
+	Headline string
+	// Lead is the first sentence of the page and the meta description, the
+	// same string. A snippet a search engine writes from the page body and
+	// a snippet it takes from the description should not disagree.
+	Lead string
 }
 
 // passingKeys counts the DISTINCT signing keys that filed a passing
@@ -1715,9 +1789,47 @@ func levelBadge(status string, contractPassed bool) string {
 	return string(domain.L0SourceOnly)
 }
 
+// releaseSampleLimit bounds the read that resolves a human-readable sample
+// URL back to its content address.
+//
+// It bounds a read of ONE release, not of a package: the query is filtered
+// on the exact "pkg:<eco>/<name>@<version>" coordinate, and no release in
+// the corpus is near this. The distinction matters — a newest-N window over
+// a package would silently stop resolving the older samples of a busy
+// package, and the URLs it stopped resolving are ones the sitemap has
+// already advertised.
+const releaseSampleLimit = 1000
+
+// semanticSamplePage serves a sample at its human-readable canonical URL,
+// /{ecosystem}/{name}/{version}/samples/{slug}.
+//
+// The slug is not stored. It is derived from the sample — its subject and a
+// piece of its content address — so resolving it is a matter of deriving the
+// same slug for the samples of this release and finding the one that
+// matches. That keeps the URL a pure function of the sample: nothing
+// published later can change it, and no column can drift out of agreement
+// with the page.
+func (s *site) semanticSamplePage(w http.ResponseWriter, r *http.Request, lang, eco, name, version, slug string) {
+	items, err := s.d.Store.ReleaseSamples(r.Context(), eco, name, version, releaseSampleLimit)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
+	for _, item := range items {
+		if sampleSlug(item.SampleID, sampleSubject(item.Name, item.Goal, item.Symbols)) == slug {
+			s.renderSample(w, r, lang, item.SampleID)
+			return
+		}
+	}
+	s.notFound(w, r, lang)
+}
+
 func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 	lang := s.negotiate(w, r)
-	id := r.PathValue("id")
+	s.renderSample(w, r, lang, r.PathValue("id"))
+}
+
+func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id string) {
 	meta, ok := s.d.Store.SampleMeta(r.Context(), id)
 	if !ok {
 		s.notFound(w, r, lang)
@@ -1779,55 +1891,62 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 		declaredEnvironment = makeEnvironmentView(lang, env)
 	}
 
-	// The title and description are the whole visible surface of this page
-	// in a search result, and the question the page answers is the goal.
-	// Titling it with the content address instead ("Sample sha256:9d1d…")
-	// gave every sample page a title nobody can search for.
-	title := i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID) + " — CodeSampleX"
-	if goal != "" {
-		title = goal
-		if len(refs) > 0 {
-			title += " · " + refs[0].Label
-		}
-		title += " — CodeSampleX"
-	}
-	// Description: the goal, then the facts that decide whether this
-	// answer applies to the reader — which packages, which environment.
-	// No adjective about how well it works; the level badge and the
-	// receipts on the page carry that, and they carry it exactly.
-	desc := i18n.T(lang, "site.meta_description")
-	if goal != "" {
-		desc = goal
-		var facts []string
-		for i, ref := range refs {
-			// A search snippet is ~160 characters and the goal already
-			// spends most of it. The page lists every package; the
-			// description names the ones that identify the sample.
-			if i == descPackageLimit {
-				facts = append(facts, "…")
-				break
-			}
-			facts = append(facts, strings.TrimPrefix(ref.PURL, "pkg:"))
-		}
-		if ctx != "" {
-			facts = append(facts, ctx)
-		}
-		if len(facts) > 0 {
-			desc += " — " + strings.Join(facts, " · ")
-		}
-	}
+	// The title and the description are the whole visible surface of this
+	// page in a search result. They used to be built from the manifest's
+	// goal, and most goals in the corpus are the line the authoring worker
+	// prints for an agent to start from — so the live title read "verify
+	// pkg:npm/browserslist@4.28.7 · browserslist 4.28.7", an internal
+	// identifier printed twice, on a page ranking for "browserslist 4.28.7".
+	// serpcopy.go builds the answer to that search instead: package,
+	// release, API, and whether a contract actually ran.
+	verified := anyContractPass(receipts)
+	relEco, relName, relVersion := sampleRelease(purls)
+	serp := buildSerpCopy(lang, serpInput{
+		SampleID: meta.SampleID, Ecosystem: relEco, Name: relName, Version: relVersion,
+		Goal: goal, Symbols: syms, Contract: manifestContract(manifest),
+		RunEnvironment: passingRunEnvironment(receipts), Verified: verified,
+	})
 
-	b := s.page(r, lang, title, desc)
+	b := s.page(r, lang, serp.Title, serp.Description)
 	b.OGType = "article"
 	base := s.base(r)
+	// The canonical URL is the human-readable one wherever the sample names
+	// a release this site routes. The content-addressed URL keeps answering
+	// 200 — it is the sample's permanent identity and it is what the API,
+	// the CLI and every external link already use, so a redirect would put
+	// one in front of all of them — but it names the readable URL as
+	// canonical, which makes the two addresses one indexed page instead of
+	// two competing ones.
+	semantic := semanticSampleHref(relEco, relName, relVersion, serp.Slug)
 	pageURL := base + sampleHref(meta.SampleID)
+	if semantic != "" {
+		pageURL = base + semantic
+		if r.URL.Path != semantic {
+			b.Canonical = pageURL
+			if lang != i18n.Default {
+				b.Canonical += "?lang=" + url.QueryEscape(lang)
+			}
+			// hreflang describes the locale cluster of the CANONICAL page.
+			// Emitting this address's own cluster while the canonical points
+			// elsewhere is a contradiction, and a crawler resolves a
+			// contradiction by discarding one half of it.
+			b.Alternates = nil
+		}
+	}
 	crumbs := [][2]string{{"CodeSampleX", base + "/"}}
 	if len(refs) > 0 && refs[0].Href != "" {
 		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil {
 			crumbs = append(crumbs, [2]string{parsed.Name, base + pkgHref(parsed.Ecosystem, parsed.Name)})
+			// The release is a real page and it is the sample's parent in the
+			// readable URL, so the trail names it instead of jumping from the
+			// package straight to the sample.
+			if semantic != "" {
+				crumbs = append(crumbs,
+					[2]string{relVersion, base + versionHref(relEco, relName, relVersion)})
+			}
 		}
 	}
-	crumbName := goal
+	crumbName := serp.Headline
 	if crumbName == "" {
 		crumbName = shortHash(meta.SampleID)
 	}
@@ -1835,7 +1954,7 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 	b.JSONLD = []template.JS{breadcrumbJSONLD(crumbs)}
 	if goal != "" {
 		b.JSONLD = append(b.JSONLD,
-			sampleJSONLD(pageURL, goal, desc, meta.CreatedAt, meta.License, purls, syms, env))
+			sampleJSONLD(pageURL, goal, serp.Description, meta.CreatedAt, meta.License, purls, syms, env))
 	}
 
 	// The basis is what the evidence IS, not what rung it earns. It used
@@ -1850,14 +1969,28 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 	sampleCrumbs := []crumb{{Label: i18n.T(lang, "nav.records"), Href: b.WithLang("/records")}}
 	if len(refs) > 0 {
 		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil && knownEcosystems[parsed.Ecosystem] {
-			sampleCrumbs = recordCrumbs(b, parsed.Ecosystem, parsed.Name, "", "")
+			// The release is a step of the trail wherever it is a step of
+			// the URL, so the visible trail and the address agree.
+			crumbVersion := ""
+			if semantic != "" {
+				crumbVersion = relVersion
+			}
+			sampleCrumbs = recordCrumbs(b, parsed.Ecosystem, parsed.Name, crumbVersion, "")
 		}
 	}
-	sampleCrumbs = append(sampleCrumbs, crumb{Label: i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID)})
+	// The last step is what the sample answers for. It was the content
+	// address, which is identity and not a name — and the address is printed
+	// under the heading anyway, where it can be copied.
+	leafLabel := i18n.T(lang, "sample.title") + " " + shortHash(meta.SampleID)
+	if serp.Subject != "" {
+		leafLabel = serp.Subject
+	}
+	sampleCrumbs = append(sampleCrumbs, crumb{Label: leafLabel})
 
 	s.render(w, "sample", http.StatusOK, samplePageData{
 		basePage: b, Meta: meta, Manifest: manifest,
 		PassingKeys: passingKeys(receipts), Context: ctx, Goal: goal,
+		Headline: serp.Headline, Lead: serp.Description,
 		Packages: refs, Receipts: receipts,
 		DeclaredEnvironment: declaredEnvironment, EvidenceBasisKey: basisKey,
 		Crumbs: sampleCrumbs,
@@ -1957,6 +2090,37 @@ func imageRefOf(rec domain.VerificationReceipt) string {
 		return ""
 	}
 	return rec.VerifierImage.Reference
+}
+
+// manifestContract is the sample's assertion list, or nil when the manifest
+// did not parse. A sample without a readable manifest states nothing, and
+// the copy must not fill that in.
+func manifestContract(manifest *domain.SampleManifest) []string {
+	if manifest == nil {
+		return nil
+	}
+	return manifest.Case.Contract
+}
+
+// passingRunEnvironment is where the contract actually ran and passed.
+//
+// It is the RECEIPT's environment, never the author's declared one. The page
+// keeps those apart on purpose and the description has to keep them apart
+// too: "the contract ran on node 22" is a claim about an execution, and the
+// only record of an execution is the receipt it produced.
+func passingRunEnvironment(receipts []receiptView) string {
+	for _, r := range receipts {
+		if !strings.EqualFold(r.Contract, "PASS") {
+			continue
+		}
+		if summary := r.Environment.Summary; summary != "" {
+			return summary
+		}
+		if r.Context != "" {
+			return r.Context
+		}
+	}
+	return ""
 }
 
 // anyContractPass reports whether any receipt on this sample records a

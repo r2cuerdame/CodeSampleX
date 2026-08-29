@@ -1,11 +1,21 @@
 {{define "content"}}
 {{template "crumbs" .Crumbs}}
 <article class="sample-detail">
-  {{/* The heading is the goal — the question this sample answers. The
-       content address is identity, not a title, so it moves below. */}}
+  {{/* The heading is the release and what this sample answers for. It used
+       to be the manifest's goal, and most goals in the corpus are the line
+       the authoring worker printed for an agent to start from, so the
+       heading of a page about browserslist read "verify
+       pkg:npm/browserslist@4.28.7". The author's own goal is still printed
+       verbatim, under Case. The content address is identity, not a title,
+       so it stays below the heading.
+
+       The lead is the same sentence as the meta description: a snippet a
+       search engine writes from the page and a snippet it takes from the
+       description should not be able to disagree. */}}
   <header class="sample-detail__hero">
     <p class="eyebrow mono">{{.T "sample.title"}}</p>
-    <h1>{{if .Goal}}{{.Goal}}{{else}}<span class="mono">{{.Meta.SampleID}}</span>{{end}}</h1>
+    <h1>{{if .Headline}}{{.Headline}}{{else}}<span class="mono">{{.Meta.SampleID}}</span>{{end}}</h1>
+    {{if .Lead}}<p class="lead">{{.Lead}}</p>{{end}}
     <p class="dim mono small sample-id">{{.Meta.SampleID}}</p>
     <div class="badges" aria-label="{{.T "sample.evidence_heading"}}">
       <span class="badge-help">

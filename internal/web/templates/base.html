@@ -291,14 +291,17 @@ document.addEventListener('keydown',event=>{
 {{- else}}<p class="dim">{{.T "pkg.no_clusters"}}</p>{{end}}
 {{end}}
 
-{{/* samplelist renders []SampleListItem. The link text is the sample's
-     goal — the question it answers — because that is what a reader (and a
-     crawler) needs to see; the content address is not readable text. */}}
+{{/* samplelist renders []SampleListItem. The link text is the release and
+     what the sample answers for, because that is what a reader (and a
+     crawler) needs to see; the content address is not readable text, and
+     neither is the machine-written goal most of the corpus carries. The
+     href is the sample's canonical URL, so the link a crawler follows and
+     the address the page declares are the same one. */}}
 {{define "samplelist"}}
 <ul class="samples">
 {{- range $i, $sample := .Samples}}
   <li>
-    <a href="/samples/{{$sample.SampleID}}">{{if $sample.Goal}}{{$sample.Goal}}{{else}}{{$sample.SampleID}}{{end}}</a>
+    <a href="{{$sample.Href}}">{{$sample.Headline}}</a>
     <span class="badge-help">
       <button type="button" class="chip status mono badge-trigger" data-badge-help aria-expanded="false" aria-controls="status-help-{{$i}}" aria-describedby="status-help-{{$i}}">{{$.T "sample.built"}} <span class="badge-mark" aria-hidden="true">?</span></button>
       <span class="badge-tip" id="status-help-{{$i}}" role="tooltip">{{$.T "sample.status_help"}}</span>

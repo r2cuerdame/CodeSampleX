@@ -77,6 +77,17 @@ type Store interface {
 	// package, newest first. This is what puts a link to a sample page on
 	// a page a crawler already reaches.
 	PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]SampleListItem, error)
+	// ReleaseSamples lists published samples whose manifest names one EXACT
+	// release. It is what resolves a sample's human-readable URL back to its
+	// content address, so unlike PackageSamples its bound is per release
+	// rather than per package: a newest-N window over a package would stop
+	// resolving the older samples of a busy package, and those are URLs the
+	// sitemap has already advertised.
+	//
+	// Quarantined samples must not appear. Verification must NOT be
+	// required: a readable address is addressing, and whether a contract ran
+	// is a separate fact the page states for itself.
+	ReleaseSamples(ctx context.Context, ecosystem, name, version string, limit int) ([]SampleListItem, error)
 	// PackageCodeCounts returns exhaustive verified-sample counts by release
 	// and API. It is deliberately separate from the bounded PackageSamples
 	// display list: a newest-N page cannot prove that older code does not
@@ -199,6 +210,39 @@ type SampleListItem struct {
 	Symbols []string
 	// Kind is the case kind: HOW | FIX | MIGRATION | CONFIG.
 	Kind string
+	// Ecosystem and Name complete the release coordinate Version starts.
+	// They come from the same manifest purl, and they are what lets a list
+	// row — and the sitemap — name the sample's canonical human-readable
+	// URL without opening the sample.
+	Ecosystem string
+	Name      string
+}
+
+// Href is where this sample should be linked FROM: its human-readable
+// canonical URL when it has one, and its content address otherwise.
+//
+// Internal links and the sitemap both use it. A site that links a page at
+// one address and declares another canonical is telling a crawler to ignore
+// every link it was given.
+func (s SampleListItem) Href() string {
+	slug := sampleSlug(s.SampleID, sampleSubject(s.Name, s.Goal, s.Symbols))
+	if href := semanticSampleHref(s.Ecosystem, s.Name, s.Version, slug); href != "" {
+		return href
+	}
+	return sampleHref(s.SampleID)
+}
+
+// Headline is the link text for this sample: the release and what it
+// answers for. It is the anchor text on every page that lists samples, and
+// it used to be the raw goal — which for most of the corpus is the line the
+// authoring worker printed, so package and version pages linked their own
+// samples as "verify pkg:npm/browserslist@4.28.7".
+func (s SampleListItem) Headline() string {
+	headline := serpHeadline(s.Name, s.Version, sampleSubject(s.Name, s.Goal, s.Symbols))
+	if headline == "" {
+		return s.SampleID
+	}
+	return headline
 }
 
 // PackageCodeCount is one authoritative code-availability aggregate. An
@@ -318,6 +362,14 @@ type site struct {
 	// somewhere and then hit repeatedly.
 	pinnedCube map[string]pinnedCubeEntry
 
+	// sitemap* caches the built sitemap index and shards. One rebuild reads
+	// the whole indexable corpus, which is fine once per freshness window
+	// and not fine per crawler request; every request inside the window is
+	// served from memory (sitemap.go).
+	sitemapMu    sync.Mutex
+	sitemapCache *sitemapSnapshot
+	sitemapAt    time.Time
+
 	// hero* memoizes the landing's finished hero matrix per (language,
 	// selection). Assembly is cached above; the PIVOTING was not, and a warm
 	// landing still built up to thirty grids per view — six candidates by
@@ -407,7 +459,10 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /samples/{id}", s.samplePage)
 	handle("GET /seeders/{login}", s.seederPage)
 	handle("GET /robots.txt", s.robots)
-	handle("GET /sitemap.xml", s.sitemap)
+	// /sitemap.xml is the index robots.txt advertises; the shards it names
+	// live under /sitemaps/. Both serve from the same cached snapshot.
+	handle("GET /sitemap.xml", s.sitemapIndex)
+	handle("GET /sitemaps/{file}", s.sitemapShardPage)
 	handle("GET /install.ps1", s.installScript("install/install.ps1"))
 	handle("GET /install.sh", s.installScript("install/install.sh"))
 	handle("GET /dl/{file}", s.download)

@@ -473,7 +473,7 @@ func TestSitemap(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "xml") {
 		t.Errorf("content type %q", ct)
 	}
-	body := rec.Body.String()
+	body := sitemapBody(t, mux)
 	// Per-locale landing entries with alternates.
 	mustContain(t, body, "<loc>https://codesamplex.dev/ko/</loc>")
 	mustContain(t, body, `hreflang="ja"`)

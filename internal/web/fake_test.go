@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // fakeStore is the full in-memory Store implementation used by the web
@@ -29,6 +31,9 @@ type fakeStore struct {
 	samplePackages map[string][]string
 	packageCodeErr error
 	derived        []DerivedFinding
+	// listSamplesCalls counts corpus reads, so a test can pin that the
+	// sitemap rebuilds once per freshness window rather than per request.
+	listSamplesCalls int
 }
 
 func snapKey(purl, symbol string) string { return purl + "\x00" + symbol }
@@ -78,18 +83,43 @@ func (f *fakeStore) SampleReceipts(_ context.Context, id string) ([]string, erro
 }
 
 func (f *fakeStore) SeederSamples(_ context.Context, login string) ([]SampleListItem, error) {
-	return f.seeders[login], nil
+	rows := f.seeders[login]
+	out := make([]SampleListItem, 0, len(rows))
+	for _, it := range rows {
+		out = append(out, f.withRelease(it))
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListSamples(_ context.Context, limit int) ([]SampleListItem, error) {
+	f.listSamplesCalls++
 	out := make([]SampleListItem, 0, len(f.sampleList))
 	for _, it := range f.sampleList {
 		if limit > 0 && len(out) >= limit {
 			break
 		}
-		out = append(out, it)
+		out = append(out, f.withRelease(it))
 	}
 	return out, nil
+}
+
+// withRelease fills the release coordinate the real adapter reads out of
+// the stored manifest. Without it a fake row carries no ecosystem or name,
+// and every test of the human-readable sample URL would silently exercise
+// the content-addressed fallback instead.
+func (f *fakeStore) withRelease(it SampleListItem) SampleListItem {
+	if it.Ecosystem != "" && it.Name != "" && it.Version != "" {
+		return it
+	}
+	for _, raw := range f.samplePackages[it.SampleID] {
+		parsed, err := domain.ParsePURL(raw)
+		if err != nil || parsed.Version == "" {
+			continue
+		}
+		it.Ecosystem, it.Name, it.Version = parsed.Ecosystem, parsed.Name, parsed.Version
+		break
+	}
+	return it
 }
 
 // derivedFindings lets a test hand the findings page machine-derived rows.
@@ -98,6 +128,29 @@ func (f *fakeStore) DerivedFindings(_ context.Context, limit int) ([]DerivedFind
 		return f.derived[:limit], nil
 	}
 	return f.derived, nil
+}
+
+// ReleaseSamples narrows the same list to one exact release, the way the
+// real adapter narrows the SQL pattern.
+func (f *fakeStore) ReleaseSamples(ctx context.Context, ecosystem, name, version string, limit int) ([]SampleListItem, error) {
+	if version == "" {
+		return nil, nil
+	}
+	all, err := f.PackageSamples(ctx, ecosystem, name, 0)
+	if err != nil {
+		return nil, err
+	}
+	var out []SampleListItem
+	for _, it := range all {
+		if it.Version != version {
+			continue
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		out = append(out, it)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, limit int) ([]SampleListItem, error) {
@@ -111,13 +164,13 @@ func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, li
 			if !strings.HasPrefix(p, prefix) {
 				continue
 			}
-			// The real adapter reads the version out of the manifest purl;
+			// The real adapter reads the release out of the manifest purl;
 			// the fake derives it the same way so version-scoped pages are
 			// exercised rather than silently empty.
 			if it.Version == "" {
 				it.Version = strings.TrimPrefix(p, prefix)
 			}
-			out = append(out, it)
+			out = append(out, f.withRelease(it))
 			break
 		}
 	}

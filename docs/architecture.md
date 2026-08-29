@@ -77,6 +77,69 @@ marked, and the bottom of the drill is stated rather than left to be inferred
 from an empty grid. A drill-down affordance renders only where a next
 coordinate exists, and an evidence action only where its destination does.
 
+## Public URLs and the search surface
+
+A published sample answers at two addresses and they are one page.
+
+`/samples/sha256:<digest>` is its **identity**. It is what the HTTP API and
+the CLI hand out, what external links point at, and what a content address
+means, so it keeps answering `200` and it is never redirected — a redirect
+would land in front of every one of those callers.
+
+`/{ecosystem}/{name}/{version}/samples/{slug}` is its **canonical** URL, and
+the readable one. `internal/web/serpcopy.go` derives the slug from the
+sample's subject and eight hex characters of its own content address, which
+makes it a pure function of the sample: nothing published later can change
+it, and two samples for the same release cannot collide. The digest URL
+names this one in `rel=canonical`, and — because hreflang describes the
+canonical page's locale cluster and not the disavowing page's — the digest
+URL emits no `hreflang` links of its own. The sitemap and every internal
+sample link use the canonical URL, so the address a crawler is given is the
+address the page declares.
+
+A sample whose manifest names no routable release (no version, or an
+ecosystem the explorer does not route) has no readable URL. It keeps the
+content address as its canonical and says so; nothing is advertised that the
+router cannot resolve back. `semanticSampleHref` proves that by splitting
+every URL it emits back apart with the router's own splitter before
+returning it.
+
+**The copy is bounded by what was established.** The title says "Verified
+sample" only when a receipt records a contract that passed — the same rule
+`levelBadge` applies to the badge — and says "Code sample" otherwise. The
+description quotes the first contract line only on the verified side: on a
+sample nothing ran for, the contract lines are a plan, and quoting them
+would read as a result. The environment it names is the RECEIPT's, never the
+author's declared one.
+
+**Why the copy is derived and not taken from the goal.** Most goals in the
+corpus are the line `csx sample-worker next` prints for an authoring agent
+to start from — "verify pkg:npm/browserslist@4.28.7". Agents are expected to
+replace it and often do not, and a published sample is immutable, so the
+whole existing corpus carries it. Titling pages with it put an internal
+package URL, twice, in front of every search that reached them.
+`internal/web/testdata/production-samples-2026-08-27.json` is 24 real
+published samples across eight ecosystems, nine of them carrying that goal;
+`serpcorpus_test.go` renders the search surface of every one.
+
+**The sitemap follows the corpus by construction.** `/sitemap.xml` is an
+index over section shards under `/sitemaps/` (`static`, `packages`,
+`samples`), built from the same store queries the pages render from and
+cached in-process for a 15-minute freshness window
+(`internal/web/sitemap.go`). A new package or sample enters the served map
+because the store returns it, and a quarantined sample leaves the same way —
+there is no sitemap file to regenerate or deploy. The packages section is
+the full records inventory, not a hot-N window, filtered to the ecosystems
+the router actually serves; the samples section is every published sample at
+the address it declares canonical. `lastmod` is the page's own data change
+(a sample's publication date, a package's last snapshot materialization),
+never the generation clock, and pages with no honest date carry none. A
+section splits into numbered shards below the protocol's 50,000-URL/50MB
+file limits, and each rebuild logs advertised-versus-corpus counts (the
+divergence ledger `docs/operations.md` reads). Sitemap requests are
+background-class in `cmd/csx-server/dbclass.go`: one request per window
+rebuilds on a crawler's behalf, and the rest serve from memory.
+
 ## Clean-room proposal workspaces
 
 `csx sample propose` and MCP `propose_public_sample` build the same thing

@@ -669,6 +669,117 @@ That is the reading to trust, and calling the merge API is not a substitute for
 it: an admin holds `bypass_mode: always`, so the API would have merged the red
 commit and proved the bypass rather than the gate.
 
+## Search SERP measurement (sample CTR)
+
+The instrument is `cmd/csx-seo-report`, the stored measurement is
+`docs/seo/serp-baseline-2026-08-27.json`, and the question is narrow: did
+pages that were ALREADY ranking start getting clicked.
+
+The 2026-08-27 Search Console export recorded 187 sample pages with 1,546
+impressions and 0 clicks, 157 of them averaging inside the first ten results
+and carrying 1,393 of those impressions. That is a snippet problem, not a
+ranking problem, and the two are only distinguishable if they are measured
+apart.
+
+**Taking a measurement.** Export Pages and Queries from Search Console for
+the period you want, then:
+
+```bash
+go run ./cmd/csx-seo-report \
+  -pages Pages.csv -queries Queries.csv \
+  -label "2026-09-24 export, 28 days" \
+  -baseline docs/seo/serp-baseline-2026-08-27.json
+```
+
+Add `-out docs/seo/serp-<date>.json` to store the measurement as the next
+baseline. The tool reads files and nothing else: no network, no database.
+
+**Reading the result.** Three rules, all of them enforced by the report
+rather than left to the reader.
+
+1. **Compare inside a position band, never across.** A page that fell from
+   rank 4 to rank 12 loses clicks for a reason that has nothing to do with
+   its title. Bands are `1-3 / 4-10 / 11-20 / 21+`, and a row with no
+   recorded position lands in the last band, not the first.
+2. **Read impressions and position before CTR.** A cohort that lost half its
+   impressions and climbed eight ranks has proven nothing about its
+   snippets. Those two columns sit to the right of the CTR change for
+   exactly that reason.
+3. **CTR moves in points.** 0.00% to 1.60% is `+1.60` points. Expressed as a
+   ratio against a zero baseline it is a division by zero being published as
+   a triumph.
+
+**The cohort is the page, not the address.** Sample pages answer at both
+`/samples/sha256:*` and `/{ecosystem}/{name}/{version}/samples/{slug}`, and
+`seoreport.Classify` counts both as `sample`. Matching one shape would show
+the sample cohort collapsing to zero impressions on the day the canonical
+moved, which is a reporting artifact and not a result.
+
+**The stored baseline is marked `partial`.** Its numbers were transcribed
+from the figures recorded on R2C-205, not parsed from the CSV — the export
+file lives on the operator's machine, not in this repository. What it
+establishes is the sample cohort total, the page-one sample population and
+four query rows; what it does not establish is the `1-3` against `4-10`
+split, the package and site cohorts, and the mean position. A comparison
+against it prints `not established` for those rows instead of subtracting
+from a zero. Anyone holding the original export should regenerate the file
+with `-out` and drop the flag.
+
+**When to re-measure.** Search Console lags by two to three days and the
+cohort needs enough impressions to say anything, so the first useful
+re-measurement is roughly four weeks after the deploy that changed the
+snippets. Re-measure the same period length as the baseline.
+
+## Sitemap freshness and health
+
+`/sitemap.xml` is a sitemap index over section shards (`/sitemaps/static-1.xml`,
+`packages-1.xml`, `samples-1.xml`, …), generated from the same store queries
+the pages render from and cached in-process for **15 minutes**
+(`sitemapTTL`, `internal/web/sitemap.go`). That TTL is the freshness
+contract: a new package or published sample is in the served sitemap at most
+15 minutes after the store starts returning it, and a quarantined sample
+leaves the same way. Nobody regenerates or deploys a sitemap file, ever — if
+a procedure seems to require that, the bug is in the generator.
+
+**Staleness probe.** The index and every shard answer with two headers:
+
+```bash
+curl -sI https://codesamplex.dev/sitemap.xml | grep -i x-sitemap
+# X-Sitemap-Built: 2026-08-29T07:15:26Z
+# X-Sitemap-Urls: 3299
+```
+
+`X-Sitemap-Built` older than the TTL plus a few minutes while the site is
+taking traffic means rebuilds are failing and a previous snapshot is being
+served (the server logs `web: sitemap rebuild failed: …` with the cause).
+`X-Sitemap-Urls` is the advertised URL count — the number to hold against
+Search Console's discovered count and against the corpus.
+
+**Count ledger.** Every successful rebuild logs one line with both sides of
+every count:
+
+```text
+web: sitemap rebuilt urls=3299 shards=3 static=13 packages=204/204
+  samples=3283/3283 unroutable_packages=0 malformed_sample_ids=0
+  sample_bound_hit=false
+```
+
+`packages=a/b` and `samples=a/b` are advertised against the store corpus
+read by the same criteria. When Search Console's number disagrees with
+production, this line names the cause: `unroutable_packages` are ranked
+packages whose ecosystem the router does not serve (no canonical page, so
+not indexable), `malformed_sample_ids` are ids that are not content
+addresses (skipped rather than escaped into a guess), and
+`sample_bound_hit=true` means the corpus read came back exactly at
+`sitemapSampleBound` (50,000) — the corpus has outgrown the bound and the
+oldest samples may be missing until the bound is raised or paged.
+
+**Limits.** A section splits into numbered shards at 40,000 URLs or 40MB,
+under the protocol's 50,000/50MB — growth adds `samples-2.xml` to the index
+instead of overflowing a file. There is no findings shard because findings
+have no detail URLs; they are rows of `/findings`, which the static shard
+lists.
+
 ## Build identity
 
 The site footer ends with the identity of the process that rendered the page:

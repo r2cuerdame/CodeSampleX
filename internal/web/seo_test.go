@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -44,100 +43,28 @@ func TestLandingLinksEcosystemsWithoutCapabilityClaims(t *testing.T) {
 	}
 }
 
-// TestSitemapURLsResolve walks every <loc> in the sitemap and fetches it.
-// A sitemap that advertises a URL the server does not serve spends crawl
-// budget on errors, and it is the kind of mistake that only shows up in
-// Search Console weeks later — so it is checked here instead.
-func TestSitemapURLsResolve(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/sitemap.xml").Body.String()
-	locs := regexp.MustCompile(`<loc>([^<]+)</loc>`).FindAllStringSubmatch(body, -1)
-	if len(locs) == 0 {
-		t.Fatal("sitemap has no <loc> entries")
-	}
-	for _, m := range locs {
-		path := strings.TrimPrefix(m[1], "https://codesamplex.dev")
-		if rec := get(t, mux, path); rec.Code != http.StatusOK {
-			t.Errorf("sitemap advertises %s, which answers %d", path, rec.Code)
-		}
-	}
-}
+// The sitemap tests live in sitemap_test.go, next to the index/shard/cache
+// machinery they pin.
 
-// TestSitemapListsSamplePages pins the fix for the discoverability hole
-// that made every published sample unreachable: the sitemap listed the
-// landing cluster, /records and the hot packages, and nothing else. A
-// sample page is the only page on this site that answers one specific
-// question in words, so it is the one that has to be listed.
-func TestSitemapListsSamplePages(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/sitemap.xml").Body.String()
-
-	mustContain(t, body, "<loc>https://codesamplex.dev/samples/sha256:d1e2f3</loc>")
-	// Publication date as lastmod: a sample is immutable once published.
-	mustContain(t, body, "<lastmod>2026-08-01</lastmod>")
-}
-
-// The factory target is 10,000 samples. Every one must remain discoverable;
-// ListSamples is newest-first, so checking the last row catches a cap that
-// quietly evicts the oldest samples. The resulting single sitemap must also
-// retain ample room under both protocol limits.
-func TestSitemapCoversFactoryTargetWithinProtocolBudget(t *testing.T) {
-	const (
-		factoryTarget     = 10_000
-		protocolURLLimit  = 50_000
-		protocolByteLimit = 50 * 1024 * 1024
-	)
-
-	mux, store := newTestMux(t, nil)
-	store.sampleList = make([]SampleListItem, 0, factoryTarget)
-	for i := 0; i < factoryTarget; i++ {
-		store.sampleList = append(store.sampleList, SampleListItem{
-			SampleID:  fmt.Sprintf("sha256:%064x", i),
-			CreatedAt: "2026-08-17",
-		})
-	}
-
-	body := get(t, mux, "/sitemap.xml").Body.String()
-	oldest := "https://codesamplex.dev/samples/" + store.sampleList[factoryTarget-1].SampleID
-	mustContain(t, body, "<loc>"+oldest+"</loc>")
-
-	if got := strings.Count(body, "<loc>https://codesamplex.dev/samples/"); got != factoryTarget {
-		t.Errorf("sample <loc> count = %d, want %d", got, factoryTarget)
-	}
-	if got := strings.Count(body, "<loc>"); got >= protocolURLLimit {
-		t.Errorf("sitemap URL count = %d, must stay below %d", got, protocolURLLimit)
-	}
-	if got := len(body); got >= protocolByteLimit {
-		t.Errorf("sitemap size = %d bytes, must stay below %d", got, protocolByteLimit)
-	}
-}
-
-// TestSitemapSkipsMalformedSampleIDs: a sitemap entry that does not
-// resolve is worse than a missing one, so anything that is not a content
-// address is left out rather than escaped into a guess.
-func TestSitemapSkipsMalformedSampleIDs(t *testing.T) {
-	mux, store := newTestMux(t, nil)
-	store.sampleList = append(store.sampleList, SampleListItem{
-		SampleID: "sha256:bad id/with spaces?", Goal: "junk",
-	})
-	body := get(t, mux, "/sitemap.xml").Body.String()
-	if strings.Contains(body, "with spaces") {
-		t.Error("sitemap advertised a sample id that is not a content address")
-	}
-}
-
-// TestSamplePageIsSearchable checks the head of a sample page: the title
-// used to be "Sample sha256:d1e2f3… — CodeSampleX", a string nobody types
-// into a search engine. The words a reader searches for are in the goal.
+// TestSamplePageIsSearchable checks the head of a sample page.
+//
+// The title used to be "Sample sha256:d1e2f3… — CodeSampleX", a string nobody
+// types into a search engine, so it was rebuilt from the goal. That was not
+// enough: most goals in the corpus are the line the authoring worker prints
+// for an agent to start from, so the live title became an internal purl
+// printed twice. What answers the search is the release and the API, and
+// whether a contract actually ran.
 func TestSamplePageIsSearchable(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/samples/sha256:d1e2f3").Body.String()
 
 	mustContain(t, body,
-		"<title>POST JSON with axios and retries · axios 1.12.0 — CodeSampleX</title>")
-	// Description: the goal plus the facts that decide whether this answer
-	// applies — the packages and the environment it ran in.
-	mustContain(t, body, `content="POST JSON with axios and retries — npm/axios@1.12.0 · node 22.18"`)
+		"<title>axios 1.12.0: POST JSON with axios and retries — Verified sample | CodeSampleX</title>")
+	// Description: what it is, for which release, and — because a receipt
+	// records it — where the contract ran and the first thing it established.
+	mustContain(t, body,
+		`content="Verified sample for npm axios 1.12.0: POST JSON with axios and retries.`)
+	mustContain(t, body, `The contract ran on node 22.18 · linux/amd64 and passed:`)
 	mustContain(t, body, `rel="canonical" href="https://codesamplex.dev/samples/sha256:d1e2f3"`)
 
 	// Structured data: the article shape plus a trail back to the package.
@@ -152,7 +79,7 @@ func TestSamplePageIsSearchable(t *testing.T) {
 	// explorer so the page is not a dead end in either direction. The
 	// target is the package page: a version page only exists when that
 	// exact version string has a snapshot.
-	mustContain(t, body, "<h1>POST JSON with axios and retries</h1>")
+	mustContain(t, body, "<h1>axios 1.12.0: POST JSON with axios and retries</h1>")
 	mustContain(t, body, `href="/npm/axios"`)
 }
 

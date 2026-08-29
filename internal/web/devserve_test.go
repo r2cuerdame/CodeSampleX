@@ -29,6 +29,13 @@ func TestDevServe(t *testing.T) {
 		store = deepLinkStore()
 	case "drilldown":
 		store = drillDownStore()
+	case "serp":
+		// A sample carrying the goal the authoring worker prints, which is
+		// what most of the published corpus carries. Reachable at both of
+		// its addresses, so the readable URL and the content address can be
+		// compared side by side in a browser.
+		store = newFakeStore()
+		machineGoalSample(t, store)
 	case "navleaf":
 		// The coordinate R2C-127 was reported from: a release with published
 		// samples, one environment this network verified and one it only
