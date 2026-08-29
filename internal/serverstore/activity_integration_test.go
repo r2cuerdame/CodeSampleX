@@ -62,8 +62,14 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 			Kind: activity.KindDay, Epoch: seenAt.Format("2006-01-02"), Value: bucket(byte(20 + age)), SeenAt: seenAt,
 		})
 	}
+	// Month epochs step back from the FIRST of the current month, never from
+	// `now` itself: AddDate normalizes a day the target month does not have
+	// (2026-08-29 minus 6 months is 2026-02-29, which Go rolls to 2026-03-01),
+	// so stepping from day 29 skips 2026-02 and writes 2026-03 twice — and the
+	// suite fails only on the 29th, 30th and 31st of a month.
+	monthAnchor := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, time.UTC)
 	for age := 0; age <= 12; age++ {
-		seenAt := now.AddDate(0, -age, 0)
+		seenAt := monthAnchor.AddDate(0, -age, 0)
 		retentionRows = append(retentionRows, activity.Bucket{
 			Kind: activity.KindMonth, Epoch: seenAt.Format("2006-01"), Value: bucket(byte(80 + age)), SeenAt: seenAt,
 		})
@@ -73,7 +79,7 @@ func TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention(t *testing.T) {
 	}
 	staleDay, staleMonth := bucket(55), bucket(95)
 	staleDayEpoch := now.AddDate(0, 0, -35).Format("2006-01-02")
-	staleMonthEpoch := now.AddDate(0, -13, 0).Format("2006-01")
+	staleMonthEpoch := monthAnchor.AddDate(0, -13, 0).Format("2006-01")
 	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `INSERT INTO activity_buckets(kind, epoch, bucket, owner, first_seen, last_seen) VALUES
 			('day',$1,$2,false,$4,$4), ('month',$3,$5,false,$4,$4)`, staleDayEpoch, staleDay[:], staleMonthEpoch, now, staleMonth[:])
