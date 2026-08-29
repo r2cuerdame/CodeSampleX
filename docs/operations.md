@@ -1187,6 +1187,39 @@ real-time protection, `Detection Type: fast path`, with
 acting process. The staged `.csx-update-*.exe` downloads were caught the same
 way.
 
+**The repository's own test binary.** On 2026-08-30, adding
+`internal/launcher/restore.go` — ordinary Go that hashes a file and renames it,
+with no exec and no network — made Defender block that package's compiled test
+binary at execution as `Trojan:Win32/Bearfoos.B!ml` (ThreatID 2147731849):
+
+```
+fork/exec ...\go-build<n>\b001\launcher.test.exe: Operation did not complete
+successfully because the file contains a virus or potentially unwanted software.
+```
+
+It is the compiled content, not the file's behaviour. Removing that one source
+file makes `go test ./internal/launcher/` pass and putting it back makes it
+fail, at the same definition build, in the same minute. The same code inside the
+shipping artifacts is clean: `defender-release-check.ps1` scanned
+`csx-windows-amd64.exe` and `csx-launcher-windows-amd64.exe` CLEAN at
+1.457.396.0, and both execute. And the verdict is dated like every other one
+here — the identical test binary (`sha256:0ff7b041...`) ran all 35 tests green
+at 00:41 and was blocked from 00:47 on.
+
+There is no honest fix in the source: unlike an eleven-byte fixture string,
+these bytes are a Go program and cannot be shuffled until a classifier stops
+objecting. Two things that do work while the verdict stands, neither of which
+weakens anything:
+
+```
+# build the test binary and run it directly -- same bytes, different writer
+go test -c -o C:\tmp\launcher.bin ./internal/launcher && C:\tmp\launcher.bin
+```
+
+and reading the result narrowly: `ci.yml` is ubuntu-only, so pull-request CI is
+unaffected, and the release workflow's `windows-test` job is where a genuine
+regression would surface.
+
 **The repository's own test fixture.** Until 2026-08-26 the Windows launcher
 fixtures wrote a file whose entire content was the eleven ASCII bytes
 `old-payload`. Defender classifies exactly those eleven bytes as
