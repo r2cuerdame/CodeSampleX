@@ -322,7 +322,10 @@ func installRoot(t *testing.T) string {
 func runLauncher(t *testing.T, root string, args ...string) (int, string, string) {
 	t.Helper()
 	cmd := exec.Command(filepath.Join(root, "csx.exe"), args...)
-	cmd.Env = append(os.Environ(), "LAUNCHER_TEST_HELPER=1")
+	// Repair reaches the official release over the network. Tests that assert
+	// the fail-closed contract must measure that contract, not this machine's
+	// connectivity, so they opt out; the repair tests below leave it on.
+	cmd.Env = append(os.Environ(), "LAUNCHER_TEST_HELPER=1", "CSX_LAUNCHER_NO_REPAIR=1")
 	cmd.Stdin = strings.NewReader("hello")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -377,6 +380,7 @@ func TestLauncherMcpStdioStartupFailureIsNotSilentSuccess(t *testing.T) {
 	}
 
 	cmd := exec.Command(filepath.Join(root, "csx.exe"), "mcp")
+	cmd.Env = append(os.Environ(), "CSX_LAUNCHER_NO_REPAIR=1")
 	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -544,4 +548,88 @@ func mustPayloadPath(t *testing.T, root, version string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func runLauncherWithEnv(t *testing.T, root string, env []string, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(root, "csx.exe"), args...)
+	cmd.Env = append(os.Environ(), env...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if err == nil {
+		return 0, stdout.String(), stderr.String()
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("run launcher: %v stderr=%q", err, stderr.String())
+	}
+	return exit.ExitCode(), stdout.String(), stderr.String()
+}
+
+// R2C-236: the pointer is intact and every payload it records is gone, so the
+// last-known-good recovery has nothing to run. The launcher then refetches from
+// the official release, and this asserts the wiring by pointing it at a version
+// that release path does not have: the repair is attempted, it fails, and the
+// launcher still exits non-zero with the same stable reason first.
+//
+// The version is deliberately unreachable rather than mocked. There is no
+// override for where a repair downloads from -- that is the security property
+// -- so the honest end-to-end assertion here is the failing half. The
+// succeeding half is covered by internal/update's repair tests and by the
+// recorded repair of this project's own Windows install.
+func TestLauncherAttemptsARepairWhenNothingIsLeftToFallBackOn(t *testing.T) {
+	root := installRoot(t)
+	d := copyPayload(t, root, "v999.999.999", 1)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mustPayloadPath(t, root, d.Version)); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLauncherWithEnv(t, root, []string{"LAUNCHER_TEST_HELPER=1"}, "version")
+	if code != 126 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("a failed repair wrote %q to stdout; an MCP host reads that as protocol framing", stdout)
+	}
+	if !strings.Contains(stderr, launcher.ReasonPayloadMissing) {
+		t.Fatalf("the repair attempt swallowed the stable reason: %q", stderr)
+	}
+	if !strings.Contains(stderr, "automatic repair from the official release failed") {
+		t.Fatalf("no evidence the repair was attempted: %q", stderr)
+	}
+	rec, ok, err := launcher.ReadRehydrateRecord(root)
+	if err != nil || !ok {
+		t.Fatalf("failed repair left no durable evidence: ok=%v err=%v", ok, err)
+	}
+	if rec.Outcome != launcher.RehydrateOutcomeFailed || rec.ExhaustedVersion != d.Version {
+		t.Fatalf("record=%+v", rec)
+	}
+}
+
+// An install that must never reach the network keeps the old behaviour exactly,
+// and says so rather than looking like a repair that silently did nothing.
+func TestLauncherRepairCanBeTurnedOff(t *testing.T) {
+	root := installRoot(t)
+	d := copyPayload(t, root, "v1.0.0", 1)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mustPayloadPath(t, root, d.Version)); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := runLauncher(t, root, "version")
+	if code != 126 || !strings.Contains(stderr, launcher.ReasonPayloadMissing) {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "automatic repair skipped: disabled by CSX_LAUNCHER_NO_REPAIR") {
+		t.Fatalf("the opt-out is not reported: %q", stderr)
+	}
+	if _, ok, err := launcher.ReadRehydrateRecord(root); ok || err != nil {
+		t.Fatalf("a disabled repair still wrote a record: ok=%v err=%v", ok, err)
+	}
 }

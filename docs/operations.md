@@ -1040,8 +1040,9 @@ JSON-RPC framing. The repaired pointer keeps the failed version as
 payload that just failed to run while still letting a genuinely newer release
 through, and preserves the sequence floor `mergeLauncherFloor` reads.
 
-With no verified fallback left, the launcher exits **126** with a stable reason
-code as the first field — `payload-missing`, `payload-corrupt`,
+With no verified fallback left, the launcher first tries to refetch one from
+the official release (next section). If that cannot be done, it exits **126**
+with a stable reason code as the first field — `payload-missing`, `payload-corrupt`,
 `payload-not-regular`, `payload-unreadable`, `descriptor-invalid`,
 `pointer-unreadable`, `payload-start-failed` — and writes nothing to stdout. It
 never exits 0 without having executed a payload; a caller that cannot start csx
@@ -1079,6 +1080,93 @@ several csx processes can start at once and the last write wins. When the
 pointer could not be repaired the line says `the active pointer was NOT
 repaired` and why, because an install that recovers on every single run is a
 different fault from one that recovered once and healed.
+
+### When there is nothing left to fall back to
+
+On 2026-08-29 the same machine lost both. Defender took v0.1.62, the launcher
+recovered onto the recorded fallback v0.1.47 and repaired the pointer as
+designed, and then Defender took v0.1.47 too. The pointer was still exactly
+right and every payload it named was gone:
+
+```
+csx launcher: payload-missing: launcher: current payload v0.1.47: payload file
+is missing: ...\payloads\v0.1.47\csx-payload.exe; no verified fallback payload
+remains
+```
+
+Exit 126, and with it the MCP server every other project's agents depend on --
+including the `csx update` that would have fetched a working payload, because
+that command lives *inside* the payload that will not start. The local recovery
+set was exhausted and nothing on the machine could rebuild it.
+
+So the launcher refetches. When resolution fails with `payload-missing`,
+`payload-corrupt`, `payload-not-regular` or `payload-start-failed`, it
+downloads the payloads this pointer already records from the official release
+path they came from, then resolves again.
+
+The trust boundary is the descriptor's own SHA-256. It was recorded by this
+install from a signed manifest when the payload was committed, and it is the
+only thing refetched bytes are accepted against -- a hash mismatch, an
+interrupted transfer, a substituted file and a redirect off
+`github.com/r2cuerdame/CodeSampleX/releases/download/<version>/` all end the
+same way, with the payload path untouched and the launcher still exiting 126
+with its original reason code first. Nothing local can move where a repair
+downloads from. A payload directory that merely happens to sit on this disk is
+still never adopted, exactly as `Resolve` refuses to.
+
+**`active.json` is not written by a repair at all.** The pointer already named
+the right payload; only the bytes were gone. Every pointer change stays with
+the verified-only paths that own it -- `CommitPayload`, `Rollback`, and the
+launcher's own healing -- so a repair cannot promote anything, and cannot
+resurrect a `rollbackHold` version the operator rejected.
+
+Two things bound it. It runs **once per process**, and after a failure it backs
+off for five minutes (`launcher-rehydrate.json` records the attempt), because
+an offline machine restarts csx all day and each restart would otherwise pay a
+full network timeout. `CSX_LAUNCHER_NO_REPAIR=1` disables it outright for an
+install that must never reach the network; the launcher then fails exactly as
+before and says `automatic repair skipped: disabled by CSX_LAUNCHER_NO_REPAIR`.
+
+An operator can also ask for it directly, which ignores the cooldown:
+
+```
+> %LOCALAPPDATA%\csx\csx.exe --repair-payload
+repaired v0.1.47: refetched v0.1.47 from the official release
+no local fallback payload: this pointer records no verified previous version
+```
+
+A repair restores the recorded `previous` as well as `current`, so the install
+gets its minimum recovery set back rather than only the payload it needs to
+boot -- the next quarantine is then handled locally, with no network. When the
+pointer records no previous, the repair says so on that second line: this is
+the state a heal leaves behind, since promoting the fallback to current is
+exactly what consumes it.
+
+**Retention.** Nothing in csx deletes a payload directory; every version an
+install has ever committed stays on disk, and the quarantine took the files out
+from under them. Depth beyond one recorded fallback would need a new field in
+`active.json`, and an older launcher rejects an unknown key
+(`DisallowUnknownFields`) as `pointer-unreadable` -- a schema change there
+bricks every install running the previous launcher, which is a worse outage
+than the one it would mitigate. It would also not have helped here: Defender
+matches on content, and on this machine it had emptied 14 of 19 payload
+directories, consecutive versions included. The standing fallback is therefore
+the refetch itself, which quarantine cannot exhaust.
+
+`csx update status` reads the record back, and keeps it separate from the
+local-recovery line because "there was no spare" is a much stronger fact about
+a release than "a spare was used":
+
+```
+payload repair: refetched the payload from the official release (v0.1.47);
+v0.1.47 had no verified fallback left on this machine
+payload repair last attempted: 2026-08-30 00:43:40
+```
+
+A failed repair reports `payload refetch FAILED for <version>: <why>` and, once
+it has happened more than once in a row, how many consecutive attempts -- an
+install that cannot repair itself is still down, and that is the more urgent of
+the two lines.
 
 ## Defender and the Windows release payload
 

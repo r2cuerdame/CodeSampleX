@@ -45,9 +45,12 @@ const (
 
 func windowsFixtureBodies() map[string]string {
 	return map[string]string{
-		"installed payload": fixtureInstalledPayload,
-		"staged payload":    fixtureStagedPayload,
-		"stable launcher":   fixtureStableLauncher,
+		"installed payload":  fixtureInstalledPayload,
+		"staged payload":     fixtureStagedPayload,
+		"stable launcher":    fixtureStableLauncher,
+		"refetched current":  fixtureRehydratedCurrent,
+		"refetched previous": fixtureRehydratedPrevious,
+		"refetched stranger": fixtureRehydratedStranger,
 	}
 }
 

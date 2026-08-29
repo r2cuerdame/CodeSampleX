@@ -123,6 +123,30 @@ func reportLauncherRecovery(home, exe string) {
 	fmt.Printf("payload recovery last seen: %s\n", rec.LastObservedAt.Local().Format("2006-01-02 15:04:05"))
 }
 
+// reportLauncherRehydrate surfaces the stronger fact: this install ran out of
+// payloads entirely and had to refetch one from the release it came from.
+//
+// A local recovery says one payload was destroyed and a spare was still there.
+// This says there was no spare — the whole recovery set on the machine was
+// gone — and it stays worth reporting long after the repair succeeded, because
+// nothing else on a repaired install remembers that it happened.
+func reportLauncherRehydrate(home, exe string) {
+	in, err := csxupdate.ResolveInstall(home, exe)
+	if err != nil || in.Kind != "launcher" || in.InstallRoot == "" {
+		return
+	}
+	rec, ok, err := launcher.ReadRehydrateRecord(in.InstallRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "csx update: payload repair record is unreadable: %v\n", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	fmt.Printf("payload repair: %s\n", rec.Summary())
+	fmt.Printf("payload repair last attempted: %s\n", rec.AttemptedAt.Local().Format("2006-01-02 15:04:05"))
+}
+
 func updateMain(ctx context.Context, args []string) int {
 	sub := "apply"
 	if len(args) > 0 {
@@ -192,6 +216,7 @@ func updateMain(ctx context.Context, args []string) int {
 			fmt.Printf("last error: %s\n", st.LastError)
 		}
 		reportLauncherRecovery(home, exe)
+		reportLauncherRehydrate(home, exe)
 		return 0
 	case "rollback":
 		path, err := csxupdate.Rollback(home, exe)
