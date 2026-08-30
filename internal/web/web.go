@@ -73,6 +73,12 @@ type Store interface {
 	// ListSamples lists published samples, newest first, for the sitemap.
 	// Quarantined samples must not appear.
 	ListSamples(ctx context.Context, limit int) ([]SampleListItem, error)
+	// SamplesPage is one page of the /samples collection, newest first, with
+	// the total so the page can say where the reader is. A sample nobody can
+	// reach is a sample nobody can reuse, and until this route existed the
+	// only way to a sample was a link from the package it happens to be
+	// about.
+	SamplesPage(ctx context.Context, offset, limit int) ([]SampleListItem, int, error)
 	// PackageSamples lists published samples whose manifest names this
 	// package, newest first. This is what puts a link to a sample page on
 	// a page a crawler already reaches.
@@ -456,6 +462,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /contribute/{$}", contributeGone)
 	handle("GET /stats", s.statsPage)
 	handle("GET /adapters", s.adaptersPage)
+	handle("GET /samples", s.samples)
 	handle("GET /samples/{id}", s.samplePage)
 	handle("GET /seeders/{login}", s.seederPage)
 	handle("GET /robots.txt", s.robots)
@@ -478,7 +485,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "wanted", "features", "package", "version",
+	pages := []string{"landing", "records", "findings", "samples", "wanted", "features", "package", "version",
 		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

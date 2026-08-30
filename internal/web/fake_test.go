@@ -91,6 +91,23 @@ func (f *fakeStore) SeederSamples(_ context.Context, login string) ([]SampleList
 	return out, nil
 }
 
+// SamplesPage is the collection route's slice of the same list the sitemap
+// walks, so the fake serves it from one place.
+func (f *fakeStore) SamplesPage(ctx context.Context, offset, limit int) ([]SampleListItem, int, error) {
+	all, err := f.ListSamples(ctx, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if offset >= len(all) {
+		return nil, len(all), nil
+	}
+	rest := all[offset:]
+	if limit > 0 && len(rest) > limit {
+		rest = rest[:limit]
+	}
+	return rest, len(all), nil
+}
+
 func (f *fakeStore) ListSamples(_ context.Context, limit int) ([]SampleListItem, error) {
 	f.listSamplesCalls++
 	out := make([]SampleListItem, 0, len(f.sampleList))
