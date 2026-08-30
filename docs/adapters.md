@@ -64,8 +64,8 @@ describes rather than in a parallel table that can drift from it.
 | npm | bun | `oven/bun:1-alpine@sha256:07235578f79e…` | alpine/musl |
 | npm | deno | `denoland/deno:alpine@sha256:b49ac52f05c3…` | alpine/musl |
 | npm | node + Chrome 134 (browser) | `ghcr.io/puppeteer/puppeteer:24.4.0@sha256:ca2087099ad5…` | debian/glibc |
-| pypi | python 3.12 (default) | `python:3.12-alpine@sha256:d09d15e60962…` | alpine/musl |
-| pypi | python 3.14 | `python:3.14-alpine@sha256:05b2b8b732ec…` | alpine/musl |
+| pypi | python 3.12 (default) | `python:3.12-slim@sha256:09f7da3bc104…` | debian/glibc |
+| pypi | python 3.14 | `python:3.14-slim@sha256:cae66f2ef0ec…` | debian/glibc |
 | golang | go | `golang:1.26-alpine@sha256:28d89ee9cc0f…` | alpine/musl |
 | cargo | rust | `rust:1-alpine@sha256:a10e64dd139b…` | alpine/musl |
 | composer | php | `composer:2@sha256:4d71c3c2109c…` | alpine/musl (despite the tag) |
