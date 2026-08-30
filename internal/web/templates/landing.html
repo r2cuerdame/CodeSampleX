@@ -4,7 +4,13 @@
 <section class="hero home-hero">
   <div class="hero-copy">
     <h1 class="tagline">{{.T "landing.tagline"}}</h1>
-    <p class="lead">{{.T "site.meta_description"}}</p>
+    {{/* The lead answers the reader, not a crawler. It used to be
+         site.meta_description, which describes the NETWORK — "CodeSampleX is
+         a public compatibility testing network that runs real builds and
+         records what happened" — so the first screen said what this is and
+         never what the reader gets out of it. A meta description is written
+         for a search result; it should stay in the meta tag. */}}
+    <p class="lead">{{.T "landing.lead"}}</p>
     <div class="hero-actions">
       {{/* The map button only scrolled down to a grid already on the page,
            and the search beside the counters now answers the question a
@@ -32,6 +38,22 @@
   </form>
 
   </div>
+</section>
+
+{{/* What the reader gets, in three lines, immediately under the promise.
+     These seven strings were written and translated into all nine locales
+     and no template rendered any of them — the page carried the answer to
+     "what do I get" the whole time and never showed it. cube.sub was in the
+     same state once, so the shape is worth naming: a string that exists,
+     translates and never reaches a screen is invisible to every check we
+     have except reading the page. */}}
+<section class="valueprops evidence-section" aria-labelledby="value-heading">
+  <h2 id="value-heading" class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
+  <ul class="valuegrid">
+    <li><h3>{{.T "landing.value_1_t"}}</h3><p class="dim small">{{.T "landing.value_1_b"}}</p></li>
+    <li><h3>{{.T "landing.value_2_t"}}</h3><p class="dim small">{{.T "landing.value_2_b"}}</p></li>
+    <li><h3>{{.T "landing.value_3_t"}}</h3><p class="dim small">{{.T "landing.value_3_b"}}</p></li>
+  </ul>
 </section>
 
 {{/* The compatibility matrix IS the product. It is a real slice of the

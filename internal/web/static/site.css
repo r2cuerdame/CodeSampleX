@@ -390,6 +390,21 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .evidence-section { padding: clamp(1.35rem, 3vw, 2rem); }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
 .section-heading p { margin: 0; max-width: 70ch; }
+/* What the reader gets, three across. Same auto-fit floor as .findinglist,
+   and the same min() for the same reason: a flat rem floor is wider than a
+   320px phone's content column and the card hangs out of the viewport. */
+.valuegrid {
+  list-style: none; margin: 0.9rem 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); gap: 0.8rem;
+}
+.valuegrid li {
+  min-width: 0; padding: 0.95rem 1.05rem;
+  border: 1px solid var(--line); border-radius: 1rem;
+  background: var(--panel); box-shadow: var(--shadow-soft);
+}
+.valuegrid h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+.valuegrid p { margin: 0; }
+
 .findinglist {
   list-style: none; margin: 1rem 0 0; padding: 0;
   /* A flat 17rem floor is 272px, and the content column of a 320px phone is
