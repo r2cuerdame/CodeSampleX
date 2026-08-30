@@ -173,6 +173,8 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
 	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
 	mux.HandleFunc("GET /admin/api/farm", h.farm)
+	mux.HandleFunc("POST /admin/api/csx-issues/verdict", h.setCSXIssueVerdict)
+	mux.HandleFunc("POST /admin/api/csx-issues/canonical", h.linkCSXIssueCanonical)
 	mux.HandleFunc("GET /admin/api/withheld-work", h.withheldWork)
 	mux.HandleFunc("POST /admin/api/withheld-work/reopen", h.reopenWithheldWork)
 	mux.HandleFunc("GET /admin/api/admin-tokens", h.handleAdminTokens)

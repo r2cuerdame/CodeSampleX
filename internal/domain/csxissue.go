@@ -101,6 +101,33 @@ const (
 	CSXIssueVerdictDuplicate            = "duplicate"
 )
 
+// CSXIssueVerdicts is the closed vocabulary a triage decision may use.
+//
+// It lives here rather than in the handler that accepts one, because a
+// free-text verdict would make this channel's own aggregates meaningless:
+// "confirmed" and "confirmed-csx-defect" would count as two different
+// outcomes of the same decision, and the panel would report both.
+func CSXIssueVerdicts() []string {
+	return []string{
+		CSXIssueVerdictDefect,
+		CSXIssueVerdictExpectedBehavior,
+		CSXIssueVerdictClientDifference,
+		CSXIssueVerdictNotReproducible,
+		CSXIssueVerdictInsufficientEvidence,
+		CSXIssueVerdictDuplicate,
+	}
+}
+
+// ValidCSXIssueVerdict reports whether a verdict is one this channel knows.
+func ValidCSXIssueVerdict(verdict string) bool {
+	for _, v := range CSXIssueVerdicts() {
+		if verdict == v {
+			return true
+		}
+	}
+	return false
+}
+
 // CSXIssueVerdictConfirmed reports whether a verdict may reach the repair
 // queue. It is the ONLY gate: everything else is a closed report.
 func CSXIssueVerdictConfirmed(verdict string) bool {
