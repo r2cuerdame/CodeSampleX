@@ -14,11 +14,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"time"
 
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 
-	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -42,16 +43,34 @@ func BaseURLFor(home string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d", cfg.DaemonPort), nil
+	// A port this home was deliberately given is this home's address, and the
+	// documented way to run several homes on one machine is to give each its
+	// own. The DEFAULT port is not an address: every home carries it, so
+	// reaching a home that published nothing by dialling the number they all
+	// share is how one daemon came to answer for three other homes.
+	//
+	// On a farm node with three worker slots plus a default home that is the
+	// normal state, not an edge case -- only one daemon can bind the shared
+	// port. It was reported from production as all four homes showing
+	// identical numbers, 28/14 hits and 6 known packages, which is
+	// indistinguishable from three stores that had been wiped.
+	if cfg.DaemonPort != 0 && cfg.DaemonPort != config.Default().DaemonPort {
+		return fmt.Sprintf("http://127.0.0.1:%d", cfg.DaemonPort), nil
+	}
+	return "", fmt.Errorf("daemon: no address published for home %s", home)
 }
 
-// NewClient builds a TCP client for the daemon serving home.
+// NewClient builds a client for the daemon serving home, and only that home.
+//
+// The published TCP address when there is one, and this home's own IPC socket
+// otherwise. Both are addresses this home owns; there is deliberately no third
+// case, because the third case was a shared port that belonged to somebody
+// else.
 func NewClient(home string) (*Client, error) {
-	base, err := BaseURLFor(home)
-	if err != nil {
-		return nil, err
+	if base, err := BaseURLFor(home); err == nil {
+		return &Client{BaseURL: base}, nil
 	}
-	return &Client{BaseURL: base}, nil
+	return NewIPCClient(home), nil
 }
 
 // NewIPCClient builds a client over the Windows named pipe / unix socket
