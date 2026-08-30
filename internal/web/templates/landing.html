@@ -130,11 +130,17 @@
      findings and before the install block, where it interrupts neither the
      lead nor the thing a reader came to check.
 
+     data-adisad-slot is the snippet's own opt-in hook and is what pins it
+     here. Without it the fallback inserts the unit at the midpoint of the
+     paragraphs inside <main>, and on this page that midpoint is inside a
+     finding card — an advertisement nested in a piece of measured evidence,
+     which is the one place on this site it must never appear.
+
      It reads no cookie and touches no storage; what it sends is this page's
      origin and path, the declared language, and how long the unit was
      actually visible. It is async and self-contained, so a slow or dead
      network leaves the rest of the page alone. */}}
-<aside class="home-ad" aria-label="Advertisement">
+<aside class="home-ad" data-adisad-slot aria-label="Advertisement">
   <script async src="https://adisad.jeongchi.in/p/ydpads8kquzopej7nps4oppu.js"></script>
 </aside>
 

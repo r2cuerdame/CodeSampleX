@@ -49,3 +49,22 @@ func newTestMuxOnly(t *testing.T) *http.ServeMux {
 	mux, _ := newTestMux(t, nil)
 	return mux
 }
+
+// The placement is pinned, not left to the snippet's fallback.
+//
+// Without [data-adisad-slot] the snippet inserts its unit at the midpoint of
+// the paragraphs inside <main>. Measured on the live page, that midpoint is
+// inside a finding card — so the ad rendered nested in a piece of measured
+// evidence, where a reader could take it as part of the finding. That is the
+// one place on this site an advertisement must never be.
+func TestTheAdSlotIsPinnedSoItCannotLandInsideEvidence(t *testing.T) {
+	body := get(t, newTestMuxOnly(t), "/").Body.String()
+	i := strings.Index(body, adSnippet)
+	if i < 0 {
+		t.Fatal("no ad placement on the home page")
+	}
+	slot := body[strings.LastIndex(body[:i], "<aside"):i]
+	if !strings.Contains(slot, "data-adisad-slot") {
+		t.Errorf("the ad slot carries no publisher hook, so the snippet chooses its own spot: %s", slot)
+	}
+}
