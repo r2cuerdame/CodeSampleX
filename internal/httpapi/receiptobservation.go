@@ -129,5 +129,5 @@ func receiptStageResult(verdict string) (domain.Result, bool) {
 // exactly 64 and identifies the sample just as well, so nothing about "many
 // receipts for one sample are one project" changes.
 func receiptProjectBucket(sampleID string) string {
-	return strings.TrimPrefix(sampleID, "sha256:")
+	return domain.SampleProjectBucket(sampleID)
 }
