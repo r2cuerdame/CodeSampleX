@@ -18,7 +18,6 @@ import (
 
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 
-	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -38,20 +37,31 @@ func BaseURLFor(home string) (string, error) {
 			return "http://" + addr, nil
 		}
 	}
-	cfg, err := config.Load(home)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("http://127.0.0.1:%d", cfg.DaemonPort), nil
+	// No guess. This used to fall back to cfg.DaemonPort, which is one number
+	// shared by every home on the machine -- so a home whose daemon was not
+	// running resolved to whichever daemon held that port, and answered every
+	// question from a store that was not its own.
+	//
+	// On a farm node with three worker slots plus a default home that is not
+	// an edge case, it is the normal state: only one daemon can bind the
+	// shared port, so three homes were permanently answered by the fourth.
+	// Reported from production as three worker homes reporting identical
+	// numbers -- 28/14 hits, 6 known packages -- which is indistinguishable
+	// from three stores that had been wiped.
+	return "", fmt.Errorf("daemon: no address published for home %s", home)
 }
 
-// NewClient builds a TCP client for the daemon serving home.
+// NewClient builds a client for the daemon serving home, and only that home.
+//
+// The published TCP address when there is one, and this home's own IPC socket
+// otherwise. Both are addresses this home owns; there is deliberately no third
+// case, because the third case was a shared port that belonged to somebody
+// else.
 func NewClient(home string) (*Client, error) {
-	base, err := BaseURLFor(home)
-	if err != nil {
-		return nil, err
+	if base, err := BaseURLFor(home); err == nil {
+		return &Client{BaseURL: base}, nil
 	}
-	return &Client{BaseURL: base}, nil
+	return NewIPCClient(home), nil
 }
 
 // NewIPCClient builds a client over the Windows named pipe / unix socket

@@ -219,9 +219,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.Cross.ServerURL = fresh.ServerURL
 	}
 
+	// The configured port is one number every home shares, so the second
+	// daemon on a machine can never have it. Failing here left that home with
+	// no daemon at all -- no upload loop, no sync, nothing draining its
+	// evidence -- and a client with no published address then fell back to
+	// that same shared port and was answered by the daemon that did get it.
+	//
+	// An ephemeral port instead. daemon.addr is already how every client finds
+	// this daemon, so publishing the port actually bound loses nothing and
+	// gives each home a daemon of its own.
 	tcpLn, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(d.Cfg.DaemonPort)))
 	if err != nil {
-		return fmt.Errorf("daemon: listen tcp: %w", err)
+		tcpLn, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("daemon: listen tcp: %w", err)
+		}
 	}
 	auxLn, err := listenAux(d.Home)
 	if err != nil {
