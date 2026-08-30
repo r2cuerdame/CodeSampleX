@@ -59,6 +59,18 @@
   <h1><span>CodeSampleX</span> — Local Dashboard</h1>
   <p class="sub">csx {{.Version}} · uptime {{.Uptime}} · generated {{.GeneratedAt}}</p>
 
+  <h2>Readiness <span class="note">— nothing on this panel is uploaded</span></h2>
+  <div class="panel">
+    <dl class="kv">
+      {{range .Readiness}}
+      <dt>{{.Label}}</dt>
+      <dd>{{if .State}}{{.State}}{{else}}<span class="empty">— never</span>{{end}}
+        {{if .Source}}<span class="note">{{.Source}}</span>{{end}}
+        {{if and (not .State) .Next}}<span class="note">→ {{.Next}}</span>{{end}}</dd>
+      {{end}}
+    </dl>
+  </div>
+
   <h2>Community status</h2>
   <div class="panel">
     <dl class="kv">

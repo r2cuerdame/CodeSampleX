@@ -45,6 +45,11 @@ func Open(path string) (*DB, error) {
 		sdb.Close()
 		return nil, err
 	}
+	// Derive the activation funnel from what this store already holds before
+	// anything reads it. Best effort: a store that cannot answer is a store
+	// whose funnel stays unmeasured, which is the honest reading anyway, and
+	// no caller of Open should fail because a panel would be incomplete.
+	_ = db.BackfillActivation(context.Background(), time.Now().UTC())
 	return db, nil
 }
 

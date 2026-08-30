@@ -13,6 +13,7 @@ import (
 // the user fixes their own PATH. Whatever this command prints must be
 // absolute.
 func TestMCPConfigPrintsAnAbsolutePath(t *testing.T) {
+	isolateHome(t)
 	out, code := captureStdout(t, func() int { return Main([]string{"mcp-config"}) })
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out)
@@ -43,6 +44,7 @@ func TestMCPConfigPrintsAnAbsolutePath(t *testing.T) {
 }
 
 func TestMCPConfigPathAndTOMLForms(t *testing.T) {
+	isolateHome(t)
 	out, code := captureStdout(t, func() int { return Main([]string{"mcp-config", "--path"}) })
 	if code != 0 {
 		t.Fatalf("--path exit = %d\n%s", code, out)
@@ -64,6 +66,7 @@ func TestMCPConfigPathAndTOMLForms(t *testing.T) {
 }
 
 func TestMCPConfigRejectsUnknownOption(t *testing.T) {
+	isolateHome(t)
 	if _, code := captureStdout(t, func() int {
 		return Main([]string{"mcp-config", "--nope"})
 	}); code != 2 {

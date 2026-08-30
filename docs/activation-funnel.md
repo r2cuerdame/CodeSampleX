@@ -1,9 +1,12 @@
 # Activation: what can be measured between install and first proven value
 
 CodeSampleX records misses, hits, adoptions, evidence and network activity.
-It does not record whether an install ever worked. Nothing in this repository
-says how many binaries were run, how many `csx init` runs finished, whether
-the MCP path is live, or how long it takes to reach a first useful answer.
+It did not record whether an install ever worked: nothing in this repository
+said whether the binary had run, whether `csx init` finished, whether the MCP
+path was live, or how long it took to reach a first useful answer.
+
+Those five are now stamped, locally, by §7. Everything about **why they are
+local and stay local** is unchanged, and is the rest of this document.
 
 This document is the contract for that gap. It states, stage by stage, what
 signal exists today, what could exist without changing what leaves the
@@ -45,13 +48,13 @@ the server can see today, without any new field on the wire.
 | # | Stage | Local signal today | Network signal today |
 |---|---|---|---|
 | S0 | download | — | GitHub release asset counter (public, already badged in [README](../README.md)); `GET /install.sh` and `/install.ps1` are served by the edge but **not** logged — both paths fall outside the `csx_route` allowlist in [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile) and are `log_skip`'d |
-| S1 | binary first run | **none** — nothing in `$CSX_HOME` records a first execution | none, and none is possible: this precedes the mode choice |
-| S2 | `csx init` complete | `config.json` `mode` is no longer `""` (`internal/config`) | none, and none is possible: the mode choice is the consent itself |
-| S3 | first sync complete | `shards` rows in `csx.db`; `SyncResult.WarmedKeys` from `csx sync` — neither is stamped with a time | `GET /v1/shards/*` is a `meaningfulRoute`, so it produces an IP-derived activity bucket (`internal/activity`) and a `csx_route shards` edge-log line. Both are network-level, not install-level |
-| S4 | MCP connected | **none** — `csx mcp` opens the local store at startup (`internal/cli/mcp.go` → `mcp.NewDeps`) and writes no mark | none: MCP is a stdio transport with no request of its own. MCP-originated searches and evidence are indistinguishable from CLI ones |
+| S1 | binary first run | `stat:firstRunAt`, written at the top of `cli.Main` (§7) | none, and none is possible: this precedes the mode choice |
+| S2 | `csx init` complete | `config.json` `mode` is no longer `""` (`internal/config`), and `stat:initAt` records when (§7) | none, and none is possible: the mode choice is the consent itself |
+| S3 | first sync complete | `shards` rows in `csx.db`; `SyncResult.WarmedKeys` from `csx sync`; `stat:firstSyncAt` is the time of the first warm that succeeded (§7) | `GET /v1/shards/*` is a `meaningfulRoute`, so it produces an IP-derived activity bucket (`internal/activity`) and a `csx_route shards` edge-log line. Both are network-level, not install-level |
+| S4 | MCP connected | `stat:mcpFirstReadyAt` / `stat:mcpLastReadyAt`, written on the protocol-lifecycle transition and never at startup (§7) | none: MCP is a stdio transport with no request of its own. MCP-originated searches and evidence are indistinguishable from CLI ones |
 | S5 | hook active / approval pending | `csx hook status` — six states, per agent, bound to a definition fingerprint (`internal/cli/hookready.go`, R2C-18) | none, and none is wanted (§3) |
-| S6 | first hit | `hits` table in `csx.db`, with `ts` | `search_hits(epoch, anon_id, …)` — deduplicated per reporter per offer per UTC day (`0020_search_hits.sql`) |
-| S7 | first adoption report | `hits.adopted` / `hits.post_build_pass` | `adoptions(sample_id, epoch, anon_id, …)` (`0005_adoptions.sql`) |
+| S6 | first hit | `hits` table in `csx.db`, with `ts`; `stat:firstHitAt` is the first row's own `ts` (§7) | `search_hits(epoch, anon_id, …)` — deduplicated per reporter per offer per UTC day (`0020_search_hits.sql`) |
+| S7 | first adoption report | `hits.adopted` / `hits.post_build_pass`; `stat:firstAdoptionAt` on the first report that said applied (§7) | `adoptions(sample_id, epoch, anon_id, …)` (`0005_adoptions.sql`) |
 
 Two stages sit alongside rather than inside the sequence, and both are
 already measured:
@@ -64,13 +67,17 @@ already measured:
 
 ### What the table says
 
-S1, S2, S4 and S5 have **no signal at all**, locally or on the network. S3
-has a local fact with no timestamp. So the four stages where setup actually
-loses people are exactly the four with nothing recorded, and three of them
-(S1, S2, S4) can be fixed with a local stamp that costs nothing and
-transmits nothing.
+When this document was written, S1, S2, S4 and S5 had **no signal at all**,
+locally or on the network, and S3 had a local fact with no timestamp: the four
+stages where setup actually loses people were exactly the four with nothing
+recorded. S6 and S7 were measured on both sides. The gap was never at the far
+end.
 
-S6 and S7 are measured on both sides. The gap is not at the far end.
+S1, S2, S3, S4, S6 and S7 now carry a local first-occurrence stamp (§7). S5
+keeps the answer it already had — `csx hook status` — and gains nothing,
+because hook state is §2.3 never-collected and a stamp would be the start of
+collecting it. Nothing in this change adds a field to the wire; the whole
+ledger stays in `$CSX_HOME`.
 
 ---
 
@@ -276,23 +283,30 @@ comment saying what it counts.
 
 ---
 
-## 7. Proposal: the local readiness view
+## 7. The local readiness view — shipped, minus the hook rows
 
 A panel at the top of `csx ui`, and the same rows as text in `csx stats`.
 One row per stage, each carrying its state, where the state was read from,
 and the exact next action when it is not ready.
 
+What `csx stats` prints today on a machine that has initialized and had one
+answer but never adopted anything:
+
 ```
-Readiness                                        (nothing on this panel is uploaded)
-  Mode            COMMUNITY                       config.json
-  Shard cache     807 keys · synced 2h ago        csx.db
-  MCP             registered: Claude Code, Codex  last completed handshake 4m ago
-  Hook            Claude Code  verified 2026-08-24
-                  Codex        registered — approval not verifiable
-                                               → run /hooks in Codex and trust the lookup
-  First answer    2026-08-20 (2h after init)
-  First adoption  — never reported               → report_sample_adoption after using a sample
+Readiness                      (local only — nothing here is uploaded)
+  First run                    2026-08-20T08:59:00Z  (csx.db)
+  Initialized                  2026-08-20T09:00:00Z  (config.json)
+  Shard cache warmed           2026-08-20T09:01:00Z  (csx.db)
+  MCP handshake                —  never  → restart your coding agent, then use a csx tool
+  First answer                 2026-08-20T11:00:00Z  (csx.db)
+  First adoption               —  never  → report_sample_adoption after using a sample
+  Time to first answer         2h0m0s after csx init
 ```
+
+The per-agent hook rows are **not** built. `csx hook status` already answers
+S5 with six states per agent, and folding it in is a rendering job, not a
+measurement one — it is the one part of this panel that has no missing signal
+behind it.
 
 Rules the panel obeys, inherited from `csx hook status` because they were
 right there:
@@ -315,6 +329,18 @@ Backing store: first-occurrence stamps in the local `meta` table
 cover `csx init` after `cfg.Save`, the sync path after a successful warm, the
 hit writer, and the adoption writer.
 
+Implemented in `internal/storage/localdb/activation.go`. `StampFirst` is a
+single `ON CONFLICT DO NOTHING` insert rather than a read-then-write, because
+the daemon, an MCP server and the CLI share this database on purpose and two
+of them reaching a stage in the same second must not race the earlier stamp
+away. The write sites are `cli.Main`, `csx init` after `cfg.Save`,
+`Daemon.SyncNow` when a warm actually succeeded, `RecordSearchOffer` (from the
+hit row's own `ts`, so a backdated hit does not claim a first answer at the
+moment it was written), and `CorrelateInterventionAdoption` when the report
+said applied — an explicit "I did not use this" is a completed report and not
+an adoption. Every stamp is best effort: a ledger that cannot be written must
+never be the reason a command that worked stops working.
+
 The MCP stamps do **not** belong in `newDeps`: opening the database proves
 only process startup. A session becomes ready only after the same stdio
 session has successfully answered a valid `initialize` request and then
@@ -333,6 +359,12 @@ than being replaced with a later timestamp.
 This panel is what makes S1–S5 answerable at all. It is also the entire
 answer for those stages: they are §2.1 signals and they do not have a network
 form.
+
+That last sentence is held by a test rather than by this paragraph:
+`TestNoActivationStampReachesTheWire` sets every stamp to an instant no other
+field could produce, queues real evidence, runs a community sync against a
+server that keeps every byte, and fails if any request body carries a stamp
+key or its value.
 
 ---
 
@@ -394,13 +426,18 @@ as a ratio.
 
 **Now — no privacy change, no new field on the wire:**
 
-1. The local activation ledger and the `csx ui` readiness panel (§7). It is
-   the only thing that makes S1–S5 answerable, it is local-only, and it is
-   the answer a user and a support conversation actually need.
-2. The admin daily stage-presence rollup (§8), from existing tables.
+1. **Shipped.** The local activation ledger and the readiness panel (§7), in
+   `csx stats` and at the top of `csx ui`. It is the only thing that makes
+   S1–S5 answerable, it is local-only, and it is the answer a user and a
+   support conversation actually need. The per-agent hook rows are not built:
+   S5 already has `csx hook status` behind it, so that part is rendering
+   rather than measurement.
+2. The admin daily stage-presence rollup (§8), from existing tables. **Not
+   built.**
 3. The naming-rule guard (§6). Shipped with this document.
 4. The `csx_route install` edge-log label (§8), as a measured count that is
-   never divided by anything.
+   never divided by anything. **Not built** — `/install.sh` and `/install.ps1`
+   are still `log_skip`'d.
 
 **Not now — this is the fork:**
 

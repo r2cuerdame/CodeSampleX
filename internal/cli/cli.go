@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 type debugContextKey struct{}
@@ -57,6 +59,14 @@ func Commands() []Command {
 // Main dispatches argv to the matching command and returns the process
 // exit code. No arguments or an explicit help request prints usage.
 func Main(argv []string) int {
+	// S1 of the activation funnel (docs/activation-funnel.md §7), before argv
+	// is inspected: the no-argument, help, version and unknown-command returns
+	// below are real first executions, and they are the ones a stalled install
+	// actually makes. Nothing in $CSX_HOME recorded that a binary had ever run
+	// until this line, which is why "how many installs worked" had no answer.
+	// Local-only, best effort, and never on the wire.
+	stampActivation(context.Background(), localdb.StatFirstRunAt)
+
 	debug, argv := parseGlobalDebug(argv)
 	if len(argv) == 0 || argv[0] == "help" || argv[0] == "--help" || argv[0] == "-h" {
 		usage(os.Stdout)

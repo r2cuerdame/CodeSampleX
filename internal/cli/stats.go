@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -89,7 +90,59 @@ func statsMain(ctx context.Context, args []string) int {
 	if st.LastUploadError != "" {
 		fmt.Printf("Last upload error:             %s\n", st.LastUploadError)
 	}
+	printReadiness(os.Stdout, st.Readiness)
 	return 0
+}
+
+// printReadiness renders the local activation ledger
+// (docs/activation-funnel.md §7). The rules are inherited from
+// `csx hook status`, because they were already right there:
+//
+//   - it may only say what it can show — every row names where it was read
+//     from, and none of them claims anything about anyone else's install;
+//   - an unreached stage is a gap, never a zero: "never" with the command
+//     that fixes it, not a formatted 1970;
+//   - "never seen" is distinct from "not working". An MCP row with no
+//     completed handshake means no client has finished the protocol
+//     lifecycle here. It is not a claim that the path is broken.
+//
+// Nothing on this panel is uploaded in any mode, and the header says so
+// where a reader will see it — the panel is about their machine, and the
+// first question a privacy-minded reader has about a new panel is whether it
+// is also about someone else's.
+func printReadiness(w io.Writer, r daemon.Readiness) {
+	fmt.Fprintf(w, "\nReadiness                      (local only — nothing here is uploaded)\n")
+	rows := []struct {
+		label, value, source, next string
+	}{
+		{"First run", r.FirstRunAt, "csx.db", ""},
+		{"Initialized", r.InitAt, "csx.db", "run csx init"},
+		{"Shard cache warmed", r.FirstSyncAt, "csx.db", "run csx sync"},
+		{"MCP handshake", r.MCPFirstReadyAt, "csx.db", "restart your coding agent, then use a csx tool"},
+		{"First answer", r.FirstHitAt, "csx.db", "ask an agent to search before writing library code"},
+		{"First adoption", r.FirstAdoptionAt, "csx.db", "report_sample_adoption after using a sample"},
+	}
+	for _, row := range rows {
+		if row.value == "" {
+			line := fmt.Sprintf("  %-28s —  never", row.label)
+			if row.next != "" {
+				line += "  → " + row.next
+			}
+			fmt.Fprintln(w, line)
+			continue
+		}
+		fmt.Fprintf(w, "  %-28s %s  (%s)\n", row.label, row.value, row.source)
+	}
+	if r.MCPLastReadyAt != "" && r.MCPLastReadyAt != r.MCPFirstReadyAt {
+		fmt.Fprintf(w, "  %-28s %s  (csx.db)\n", "MCP last handshake", r.MCPLastReadyAt)
+	}
+	// The one duration this product can honestly measure (§5): both endpoints
+	// are on this machine, and the server holds neither in a form that
+	// survives a UTC day boundary. It is rendered here and never uploaded.
+	if r.SecondsToFirstAnswer != nil {
+		fmt.Fprintf(w, "  %-28s %s after csx init\n", "Time to first answer",
+			(time.Duration(*r.SecondsToFirstAnswer) * time.Second).String())
+	}
 }
 
 func statsViaDaemon(ctx context.Context, home string) (*daemon.Stats, error) {
@@ -99,6 +152,28 @@ func statsViaDaemon(ctx context.Context, home string) (*daemon.Stats, error) {
 	}
 	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	// A daemon left over from another build answers with that build's fields,
+	// and the activation funnel is exactly the kind of new field an older one
+	// returns empty — the panel then reports an install as having reached no
+	// stage at all. So the version is checked before the answer is used.
+	//
+	// Checked, not corrected. csx ui may stop and replace a mismatched daemon
+	// because starting one is what that command is for; `csx stats` is a read
+	// and must not start a background service as a side effect. It reports the
+	// mismatch as an error and the caller falls back to reading the local
+	// store, which is where these numbers live anyway.
+	//
+	// The first attempt at this used EnsureRunning here, and that spawns
+	// os.Executable() as `daemon run`. Inside a test binary os.Executable() IS
+	// the test binary, so each spawn re-ran the suite and spawned again: 348
+	// processes off one `go test ./internal/cli/` before it was killed.
+	info, err := c.Status(pctx)
+	if err != nil {
+		return nil, err
+	}
+	if info.Version != "" && Version != "" && info.Version != Version {
+		return nil, fmt.Errorf("daemon is build %s, this is %s", info.Version, Version)
+	}
 	st, err := c.Stats(pctx)
 	if err != nil {
 		return nil, err

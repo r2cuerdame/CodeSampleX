@@ -14,6 +14,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/daemon"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 // contractText is the goal.md §5.4 contract screen, shown VERBATIM. It
@@ -160,6 +161,15 @@ func initMain(ctx context.Context, args []string, env *initEnv) int {
 		fmt.Fprintf(env.stderr, "csx init: %v\n", err)
 		return 1
 	}
+	// S2 of the activation funnel (docs/activation-funnel.md §7), and the near
+	// end of the only duration this product can honestly measure: init → first
+	// useful answer (§5). config.json records the mode the user chose but not
+	// when they chose it, so without this stamp that duration has no start.
+	//
+	// After Save, because init is complete when the choice is PERSISTED — a
+	// run that asked and then failed to write initialized nothing. Write-once,
+	// so a later `csx init --local-only` does not restart the clock.
+	stampActivation(ctx, localdb.StatInitAt)
 	ident, err := identity.LoadOrCreate(home)
 	if err != nil {
 		fmt.Fprintf(env.stderr, "csx init: %v\n", err)

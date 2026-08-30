@@ -82,6 +82,14 @@ type Deps struct {
 	// Mode reports the configured mode ("community", "local-only", or "").
 	// Tools consult it before telling a caller that anything will be sent.
 	Mode func() string
+	// MarkMCPReady records S4 of the activation funnel: this stdio session
+	// completed the MCP protocol lifecycle (docs/activation-funnel.md §7).
+	// It is called once per session, on the transition, and never at startup
+	// — opening the store proves only that a process ran. Local-only by
+	// contract: what agent tooling a developer uses is §2.3 never-collected,
+	// so this records that a client completed the handshake and never which
+	// one. nil is allowed and means the caller keeps no ledger.
+	MarkMCPReady func(ctx context.Context)
 }
 
 type commandOutput = evidence.CommandOutput
