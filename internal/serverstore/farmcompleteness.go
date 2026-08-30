@@ -131,6 +131,44 @@ type FarmCompletenessStore interface {
 //
 // Both stores call this, so the Fake and PostgreSQL cannot drift on the one
 // judgement the scheduler will be built on.
+// addResolved folds one group in by its three-way dependency state, so the
+// "graph" and "proven none" halves cannot be lost on the way.
+//
+// This exists because they were. add() takes a rendered three-character key,
+// which collapses both into 'D' by design — the split lives in the counters,
+// not the cell name. The Fake handled that by incrementing the counter itself
+// and skipping add entirely, and PostgreSQL, which can only produce the key,
+// had no way to say which kind of D it meant. Production reported
+// dependencyProvenNone=0 while dependency_resolution held rows.
+//
+// Both stores call this now. Nothing may call add with a key it built from a
+// dependency state of its own.
+func (f *FarmCompleteness) addResolved(sample, evidence bool, dep dependencyState, ecosystem, name string, n int) {
+	key := completenessKey(sample, evidence, dep)
+	if dep == dependencyProvenNone {
+		// Counted apart from the graph, and still out of the open column: the
+		// release was resolved, it just named nobody.
+		sampleNA := false
+		if _, na := domain.SampleNotApplicable(ecosystem, name); na {
+			sampleNA = true
+		}
+		_, depNA := domain.DependencyNotApplicable(ecosystem)
+		if sampleNA {
+			f.SampleNotApplicable += n
+		}
+		if depNA {
+			f.DependencyNotApplicable += n
+		}
+		if sampleNA && depNA {
+			return
+		}
+		f.States[key] += n
+		f.DependencyProvenNone += n
+		return
+	}
+	f.add(key, ecosystem, name, n)
+}
+
 func (f *FarmCompleteness) add(state, ecosystem, name string, n int) {
 	sampleNA := false
 	if _, na := domain.SampleNotApplicable(ecosystem, name); na {

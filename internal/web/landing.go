@@ -268,7 +268,7 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 		sel = ""
 	}
 
-	memoKey := lang + "\x00" + sel
+	memoKey := lang + heroMemoKey(sel)
 	s.heroMu.Lock()
 	memo, memoized := s.heroCache[memoKey]
 	s.heroMu.Unlock()
@@ -299,11 +299,39 @@ func (s *site) heroMatrix(r *http.Request, lang string, hits []PackageHit) *hero
 		if memoized && memo.data != nil && time.Since(memo.at) < heroStaleTTL {
 			return memo.data
 		}
+		// A selection that has never rendered has no memo of its own, and a
+		// selected build narrows `ordered` to that single package -- so one
+		// cold cube aborts it and the reader who just clicked a category is
+		// told the network is empty. Reported from the live homepage as the
+		// grid occasionally vanishing while browsing the categories; it is not
+		// occasional, it is every package this process has not assembled yet.
+		//
+		// The unselected grid is what to show meanwhile, for the same reason
+		// the stale memo above is: it is a grid this process really rendered,
+		// it contains the clicked package among its rows, and it carries its
+		// own observation date. One click behind is not the same claim as "the
+		// network has no evidence".
+		if sel != "" {
+			s.heroMu.Lock()
+			base, ok := s.heroCache[lang+heroMemoKey("")]
+			s.heroMu.Unlock()
+			if ok && base.data != nil && time.Since(base.at) < heroStaleTTL {
+				return base.data
+			}
+		}
 		return nil
 	}
 	s.cacheHeroMatrix(memoKey, data)
 	return data
 }
+
+// heroMemoKey renders a selection as the tail of a hero cache key.
+//
+// One place, because the key is built twice now: once for the selection being
+// rendered, and once to reach the unselected grid a cold selection falls back
+// to. Two hand-written separators is how those two quietly stop pointing at
+// the same map entry.
+func heroMemoKey(sel string) string { return "\x00" + sel }
 
 func (s *site) cacheHeroMatrix(key string, data *heroMatrixData) {
 	s.heroMu.Lock()

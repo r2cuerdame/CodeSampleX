@@ -103,3 +103,41 @@ func TestALeafCountsAsAnsweredOnTheDependencyAxis(t *testing.T) {
 			c.States, c.DependencyGraph, c.DependencyUnknown)
 	}
 }
+
+// The census must report a leaf as proven-none, not as a resolved graph.
+//
+// The two are different facts and the panel splits them on purpose: "this
+// release pulls nothing" was measured, "we know its children" was measured,
+// and folding the first into the second says the network holds a graph it
+// never recorded.
+//
+// This is a fake/PostgreSQL parity test because the first version of the fix
+// diverged: the fake counted a leaf as DependencyProvenNone while PostgreSQL
+// folded it into 'D' and therefore into DependencyGraph, which is the silent
+// production bug this store exists to prevent. Only the fake could show it,
+// and only if asked.
+func TestALeafIsCountedAsProvenNoneNotAsAGraph(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake()
+
+	if err := f.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/left-pad@1.3.0", Ecosystem: "npm", Name: "left-pad",
+		Version: "1.3.0", Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.IngestBatches(ctx, []domain.ObservationBatch{leafBatch()}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := f.FarmCompletenessNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DependencyProvenNone != 1 {
+		t.Errorf("dependencyProvenNone = %d, want 1", c.DependencyProvenNone)
+	}
+	if c.DependencyGraph != 0 {
+		t.Errorf("dependencyGraph = %d; a release whose resolution found nothing is not a graph", c.DependencyGraph)
+	}
+}

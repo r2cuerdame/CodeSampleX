@@ -1251,6 +1251,11 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		b.WriteString("\nOBSERVATION METADATA\n")
 	} else {
 		fmt.Fprintf(&b, "Exit code: %d\n", exitCode)
+		// What it printed, for the same reason the structured fields carry it:
+		// over MCP the runner's tee to os.Stdout reaches the protocol channel,
+		// not the reader.
+		writeCapturedStream(&b, "stdout", output.Stdout, output.StdoutTruncated)
+		writeCapturedStream(&b, "stderr", output.Stderr, output.StderrTruncated)
 	}
 	fmt.Fprintf(&b, "Observed stage: %s — result: %s\n", stage, result)
 	b.WriteString("Evidence class: USAGE_OBSERVATION (project-level observation; never execution proof for individual symbols)\n")
@@ -1264,13 +1269,32 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		ExitCode: exitCode, Stage: stage, Result: result,
 		SanitizedErrors: sanitized, EvidenceClass: string(domain.ClassUsageObservation),
 	}
+	// Both streams, whatever the exit code.
+	//
+	// They were filled only on failure, so a passing command came back as
+	// {"exitCode":0,"stdout":"","stderr":"","stdoutTruncated":false} — which
+	// does not read as "not provided". It reads as "the command printed
+	// nothing", with a truncation flag making a claim about a stream nobody
+	// looked at. Two defect reports said so, and it reproduces on one line:
+	// node -e "console.log('x')" came back with an empty stdout.
+	//
+	// Over MCP the loss is total rather than cosmetic. The runner tees the
+	// child's stdout to this process's own stdout, which for a stdio server is
+	// the protocol channel and not anything the agent reads — so on the
+	// success path the output did not merely go unreported, for the caller it
+	// did not exist. An agent told to wrap its builds in this tool got less
+	// back than from running the command itself, which is a reason to stop
+	// wrapping, and the wrapping is the whole point.
+	structured.Stdout = output.Stdout
+	structured.Stderr = output.Stderr
+	structured.StdoutTruncated = output.StdoutTruncated
+	structured.StderrTruncated = output.StderrTruncated
 	if exitCode != 0 {
-		structured.Stdout = output.Stdout
-		structured.Stderr = output.Stderr
-		structured.StdoutTruncated = output.StdoutTruncated
-		structured.StderrTruncated = output.StderrTruncated
 		// Backward-compatible alias for clients released before stdout/stderr
-		// were separated. stderr remains the failure-diagnostic default.
+		// were separated. stderr remains the failure-diagnostic default, and
+		// it stays failure-only: a client reading `output` was reading a
+		// diagnosis, and handing it a passing command's chatter would quietly
+		// change what that field means.
 		structured.Output = output.Stderr
 		if structured.Output == "" {
 			structured.Output = output.Stdout
@@ -1867,6 +1891,25 @@ func (s *Server) toolPropose(ctx context.Context, raw json.RawMessage) *toolResu
 	if len(a.Packages) == 0 {
 		return proposeErr("invalid_packages", "packages is required")
 	}
+	// An ecosystem this network cannot verify must be refused here, before a
+	// clean-room workspace exists.
+	//
+	// The allowlist was consulted in exactly one place -- the server's batch
+	// ingest -- so propose scaffolded a workspace for any ecosystem string at
+	// all. Checked against production: pkg:nuget/Newtonsoft.Json@13.0.3 was
+	// accepted, though nuget is in no allowlist and imageFor("nuget") errors.
+	// The agent writes the whole sample and learns at verify time that it can
+	// never be published, which is the tool promising a route that does not
+	// exist.
+	//
+	// The message names the coordinate, because report 8's actual complaint
+	// was that a rejected purl and an omitted list returned the same text and
+	// an agent could not tell which mistake it had made.
+	if bad, ok := unverifiableCoordinate(a.Packages); ok {
+		return proposeErr("unverifiable_ecosystem",
+			bad+": this network has no verifier for that ecosystem, so a sample for it could never be published. "+
+				"Verifiable ecosystems: "+strings.Join(domain.VerifiableEcosystems(), ", "))
+	}
 	spec, prompt, workdir, err := s.Deps.Propose(ctx, a.Goal, a.Packages, a.Symbols)
 	if err != nil {
 		return proposeErr(proposeErrorCode(err), err.Error())
@@ -2345,4 +2388,20 @@ func ToolNames() []string {
 		out = append(out, d.Name)
 	}
 	return out
+}
+
+// unverifiableCoordinate returns the first package whose ecosystem this
+// network cannot verify. A purl that does not parse is left to Propose, which
+// already reports it precisely.
+func unverifiableCoordinate(packages []string) (string, bool) {
+	for _, raw := range packages {
+		p, err := domain.ParsePURL(raw)
+		if err != nil {
+			continue
+		}
+		if !domain.AllowedEcosystems[p.Ecosystem] {
+			return raw, true
+		}
+	}
+	return "", false
 }
