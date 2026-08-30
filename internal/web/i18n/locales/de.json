@@ -146,7 +146,6 @@
   "findings.basis_docs": "Offizielle Quelle",
   "findings.basis_sample": "Sample-Vertrag",
   "findings.believed": "Angenommen",
-  "findings.capped": "Diese Liste steht an ihrer Obergrenze; ältere abgeleitete Findings werden nicht gezeigt.",
   "findings.contract": "Der Contract, der es belegt",
   "findings.count": "%d Befunde aus %d Ökosystemen.",
   "findings.filter_note": "Betriebssystem und Runtime stammen aus der aufgezeichneten Sample-Umgebung; fehlende Dimensionen werden ausgeschlossen.",

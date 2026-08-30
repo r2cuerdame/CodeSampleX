@@ -124,7 +124,7 @@ type Store interface {
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
-	DerivedFindings(ctx context.Context, limit int) ([]DerivedFinding, error)
+	DerivedFindings(ctx context.Context) ([]DerivedFinding, error)
 }
 
 // DerivedFinding is a finding the network produced rather than one a
