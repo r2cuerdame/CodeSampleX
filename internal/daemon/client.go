@@ -234,6 +234,19 @@ func spawnDetached(home string) error {
 	if err != nil {
 		return fmt.Errorf("daemon: locate csx binary: %w", err)
 	}
+	// A test binary must never be spawned as a daemon. os.Executable() inside
+	// `go test` is the TEST binary, so `exe daemon run` re-runs the whole
+	// package — and if anything in it reaches here again, so does that child.
+	// One `go test ./internal/cli/` produced 348 processes this way, kept
+	// respawning after its parent was killed, and had to be cleared by
+	// repeated taskkill passes.
+	//
+	// Refusing is right rather than merely safe: a test that wants a daemon
+	// should start the real binary or the in-process server, and one that
+	// reaches this by accident should fail loudly instead of forking.
+	if isTestBinary(exe) {
+		return fmt.Errorf("daemon: refusing to spawn a test binary as a daemon (%s)", filepath.Base(exe))
+	}
 	if stable, stableErr := csxupdate.StableExecutable(home, exe); stableErr == nil {
 		exe = stable
 	}
@@ -335,4 +348,16 @@ func daemonLockHeld(home string) bool {
 		return false
 	}
 	return pidAlive(pid)
+}
+
+// isTestBinary reports whether path looks like a `go test` binary. Go names
+// them <pkg>.test, plus .exe on Windows, and builds them under a go-build
+// temporary directory.
+func isTestBinary(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	base = strings.TrimSuffix(base, ".exe")
+	if strings.HasSuffix(base, ".test") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(filepath.ToSlash(path)), "/go-build")
 }

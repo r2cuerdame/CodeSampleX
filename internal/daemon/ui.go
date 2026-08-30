@@ -46,7 +46,7 @@ type uiReadinessRow struct {
 func uiReadiness(r Readiness) []uiReadinessRow {
 	rows := []uiReadinessRow{
 		{Label: "First run", State: r.FirstRunAt, Source: "csx.db"},
-		{Label: "Initialized", State: r.InitAt, Source: "config.json", Next: "run csx init"},
+		{Label: "Initialized", State: r.InitAt, Source: "csx.db", Next: "run csx init"},
 		{Label: "Shard cache warmed", State: r.FirstSyncAt, Source: "csx.db", Next: "run csx sync"},
 		// "never seen" is not "not working": no client has completed the
 		// protocol lifecycle here, and process startup alone was never

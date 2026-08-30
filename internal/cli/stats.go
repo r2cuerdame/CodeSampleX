@@ -116,7 +116,7 @@ func printReadiness(w io.Writer, r daemon.Readiness) {
 		label, value, source, next string
 	}{
 		{"First run", r.FirstRunAt, "csx.db", ""},
-		{"Initialized", r.InitAt, "config.json", "run csx init"},
+		{"Initialized", r.InitAt, "csx.db", "run csx init"},
 		{"Shard cache warmed", r.FirstSyncAt, "csx.db", "run csx sync"},
 		{"MCP handshake", r.MCPFirstReadyAt, "csx.db", "restart your coding agent, then use a csx tool"},
 		{"First answer", r.FirstHitAt, "csx.db", "ask an agent to search before writing library code"},
@@ -152,6 +152,28 @@ func statsViaDaemon(ctx context.Context, home string) (*daemon.Stats, error) {
 	}
 	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	// A daemon left over from another build answers with that build's fields,
+	// and the activation funnel is exactly the kind of new field an older one
+	// returns empty — the panel then reports an install as having reached no
+	// stage at all. So the version is checked before the answer is used.
+	//
+	// Checked, not corrected. csx ui may stop and replace a mismatched daemon
+	// because starting one is what that command is for; `csx stats` is a read
+	// and must not start a background service as a side effect. It reports the
+	// mismatch as an error and the caller falls back to reading the local
+	// store, which is where these numbers live anyway.
+	//
+	// The first attempt at this used EnsureRunning here, and that spawns
+	// os.Executable() as `daemon run`. Inside a test binary os.Executable() IS
+	// the test binary, so each spawn re-ran the suite and spawned again: 348
+	// processes off one `go test ./internal/cli/` before it was killed.
+	info, err := c.Status(pctx)
+	if err != nil {
+		return nil, err
+	}
+	if info.Version != "" && Version != "" && info.Version != Version {
+		return nil, fmt.Errorf("daemon is build %s, this is %s", info.Version, Version)
+	}
 	st, err := c.Stats(pctx)
 	if err != nil {
 		return nil, err
