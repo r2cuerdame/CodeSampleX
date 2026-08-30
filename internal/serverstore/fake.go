@@ -1334,6 +1334,37 @@ func (f *Fake) PutShard(_ context.Context, key, etag, shardJSON string) error {
 }
 
 // ListSamplesPage is ListSamples with an offset.
+// SearchSamplesPage mirrors the PG query: a case-insensitive substring over
+// the manifest, which is where the goal, the packages and the symbols live.
+func (f *Fake) SearchSamplesPage(ctx context.Context, query string, limit, offset int) ([]SampleRow, int, error) {
+	all, err := f.ListSamples(ctx, 1<<30)
+	if err != nil {
+		return nil, 0, err
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	var hits []SampleRow
+	for _, row := range all {
+		if strings.Contains(strings.ToLower(row.ManifestJSON), needle) {
+			hits = append(hits, row)
+		}
+	}
+	total := len(hits)
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(hits) {
+		return nil, total, nil
+	}
+	hits = hits[offset:]
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, total, nil
+}
+
 func (f *Fake) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
 	// Every row, then the window. ListSamples(0) means "use the default",
 	// which is 50 -- so this paged through the newest 50 and returned

@@ -373,6 +373,12 @@ type Store interface {
 	// ListSamplesPage is ListSamples with an offset, so a caller that means
 	// EVERY sample can page instead of quietly reading the newest N.
 	ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error)
+	// SearchSamplesPage narrows the same list by what a reader typed, matching
+	// the manifest: the goal sentence, the packages and the symbols are what
+	// somebody looking for a reusable answer knows to type. The sample id is
+	// deliberately not searched -- it is a content hash, and a query shaped
+	// like one would match a single row and teach the reader nothing.
+	SearchSamplesPage(ctx context.Context, query string, limit, offset int) ([]SampleRow, int, error)
 	// SamplesForPackages returns live samples naming any of these package
 	// patterns ("pkg:npm/axios@%"), so search does not depend on a global
 	// newest-N window.

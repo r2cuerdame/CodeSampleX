@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
@@ -52,19 +53,25 @@ type samplesView struct {
 	PrevHref string
 	NextHref string
 	Empty    bool
+	Query    string
+	Searched bool
 }
 
-func samplesHref(page int, lang string) string {
-	href := "/samples"
-	sep := "?"
+func samplesHref(query string, page int, lang string) string {
+	v := url.Values{}
+	if query != "" {
+		v.Set("q", query)
+	}
 	if page > 1 {
-		href += sep + "page=" + strconv.Itoa(page)
-		sep = "&"
+		v.Set("page", strconv.Itoa(page))
 	}
 	if lang != "en" {
-		href += sep + "lang=" + lang
+		v.Set("lang", lang)
 	}
-	return href
+	if len(v) == 0 {
+		return "/samples"
+	}
+	return "/samples?" + v.Encode()
 }
 
 // samples is the browsable collection.
@@ -79,24 +86,42 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 		page = min(p, maxSamplesPage)
 	}
 
-	rows, total, err := s.d.Store.SamplesPage(r.Context(), (page-1)*samplesPerPage, samplesPerPage)
+	// A reader looking for a reusable answer types the package, the API or a
+	// word from the goal. All three live in the manifest, so one box searches
+	// all of them rather than making them choose a field first.
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > 128 {
+		query = query[:128]
+	}
+	var rows []SampleListItem
+	var total int
+	var err error
+	if query != "" {
+		rows, total, err = s.d.Store.SearchSamples(r.Context(), query, (page-1)*samplesPerPage, samplesPerPage)
+	} else {
+		rows, total, err = s.d.Store.SamplesPage(r.Context(), (page-1)*samplesPerPage, samplesPerPage)
+	}
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
-	// A page number past the end is a stale link, not an error.
+	// A page number past the end is a stale link, not an error. The query is
+	// kept: dropping it would answer "page 40 of your search" with the whole
+	// collection, which is a different question.
 	if len(rows) == 0 && page > 1 {
-		http.Redirect(w, r, samplesHref(1, lang), http.StatusFound)
+		http.Redirect(w, r, samplesHref(query, 1, lang), http.StatusFound)
 		return
 	}
 
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
 	view := samplesView{
-		Page:  page,
-		Total: n(total),
-		From:  n((page-1)*samplesPerPage + 1),
-		To:    n((page-1)*samplesPerPage + len(rows)),
-		Empty: len(rows) == 0,
+		Page:     page,
+		Total:    n(total),
+		From:     n((page-1)*samplesPerPage + 1),
+		To:       n((page-1)*samplesPerPage + len(rows)),
+		Empty:    len(rows) == 0,
+		Query:    query,
+		Searched: query != "",
 	}
 	if view.Empty {
 		view.From = n(0)
@@ -105,7 +130,7 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 		view.Cards = append(view.Cards, sampleCard{
 			SampleID:  row.SampleID,
 			Href:      sampleHref(row.SampleID),
-			Goal:      row.Goal,
+			Goal:      sampleGoalHeadline(row.Goal),
 			Subject:   row.Version,
 			Symbols:   row.Symbols,
 			Context:   row.Context,
@@ -115,10 +140,10 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if page > 1 {
-		view.PrevHref = samplesHref(page-1, lang)
+		view.PrevHref = samplesHref(query, page-1, lang)
 	}
 	if len(rows) == samplesPerPage && total > page*samplesPerPage {
-		view.NextHref = samplesHref(page+1, lang)
+		view.NextHref = samplesHref(query, page+1, lang)
 	}
 
 	b := s.page(r, lang, i18n.T(lang, "samples.title")+" — CodeSampleX", i18n.T(lang, "samples.sub"))
@@ -132,4 +157,21 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 	}
 	view.basePage = b
 	s.render(w, "samples", http.StatusOK, view)
+}
+
+// sampleGoalHeadline is the goal with the coordinate taken off the end.
+//
+// The queue asks a worker to verify one symbol at one release, so the goal it
+// writes back reads "verify <symbol> in pkg:<eco>/<name>@<version>" — and the
+// card already prints that release and that symbol on the line below. The
+// suffix was therefore saying the same thing twice, in the one place a reader
+// scans first, and it is where the overflow came from: 175 characters with no
+// space to break at ran straight out of the card.
+//
+// A goal an author wrote themselves has no such suffix and is left alone.
+func sampleGoalHeadline(goal string) string {
+	if i := strings.LastIndex(goal, " in pkg:"); i > 0 {
+		return goal[:i]
+	}
+	return goal
 }
