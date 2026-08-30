@@ -69,12 +69,41 @@ function Invoke-RemoteScript([string]$Script) {
 
     # Windows OpenSSH does not preserve nested shell quotes when an entire
     # multiline program is passed as one argv element. Send programs on stdin
-    # to a fixed `sh -s` command so regex pipes, quotes and redirects arrive
-    # byte-for-byte. Secrets use Invoke-RemoteInput instead.
-    $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Script)
+    # so regex pipes, quotes and redirects arrive byte-for-byte. Secrets use
+    # Invoke-RemoteInput instead.
+    #
+    # The remote does NOT run `sh -s`, for two measured reasons.
+    #
+    # A program read from stdin shares that stdin with everything it runs. Most
+    # of these programs call `docker compose exec -T db psql`, and on a PIPE
+    # docker drains whatever the shell has not buffered yet — so the shell then
+    # meets EOF partway through its own source and dies with
+    # `Syntax error: Unterminated quoted string`. It is a race, not a constant:
+    # the 2,501-byte pre-deploy invariant program failed on one run of a pair
+    # and succeeded on the next, and the same bytes redirected from a FILE
+    # never failed at all, because the file was already whole. Writing the
+    # program to a temp file first and running it with stdin closed removes the
+    # shared channel: four consecutive runs clean, where `sh -s` had been
+    # flaky. That is also why the release pipeline never saw this — nothing in
+    # it drives deploy.ps1 through a pipe on a Windows host.
+    #
+    # The disposable first line is the guard Invoke-RemoteInput already
+    # carries. On .NET Framework — Windows PowerShell 5.1 — reading
+    # Process.StandardInput builds a StreamWriter over Console.InputEncoding
+    # with AutoFlush on, and that writes the encoding's preamble into the pipe
+    # before any byte of ours. Here Console.InputEncoding is UTF-8 with a
+    # three-byte preamble, so 2,501 bytes arrived as 2,504 and the remote sh
+    # answered `sh: 1: ï»¿set: not found` — with `set -eu` never
+    # applied. `printf '#'` makes that first line a comment whatever leads it,
+    # so the real program starts at line 2 and its `set -eu` runs.
+    #
+    # Remote error line numbers are therefore one higher than the here-string's
+    # own.
+    $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1`n" + $Script)
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $sshExecutable
-    $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "sh -s"'
+    $remoteRunner = 'f=$(mktemp); { printf ''#''; cat; } >$f; sh $f </dev/null; r=$?; rm -f $f; exit $r'
+    $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
