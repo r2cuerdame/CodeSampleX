@@ -52,10 +52,12 @@ the three it has. Measured against production:
 | `S-D` `--D` | 0 | see below |
 
 `S-D` and `--D` are on the wire and empty for a structural reason rather than
-because the work is done: the only thing that records a resolved graph today is
-an observation batch, and a batch carries the package it is about, so a graph
-implies evidence. The cells stay so that the day a resolution arrives from a
-verification instead of a scan, the number moves rather than the shape.
+because the work is done: the only thing that records a resolved graph is an
+observation batch, and a batch carries the package it is about, so a graph
+implies evidence. The cells stayed for the day a resolution would arrive from a
+verification instead of a scan. That day is v0.1.70: the verifier reads the
+lockfile its own resolve wrote and sends the edges by the same wire path, so
+the number moves rather than the shape.
 
 ### `dependency unknown` is not `no dependencies`
 
@@ -65,15 +67,28 @@ release pulls nothing" is something a resolution measured. "Nobody has resolved
 this release" is silence. Folding them prints the second as the first, which is
 the network asserting something it never ran.
 
-**Nothing populates `dependencyProvenNone` yet.** It is reported at zero rather
-than omitted, because a field that appears only once it has a value is a field
-nobody notices arriving. Today the whole D axis comes from `dependency_edge`,
-which is written from client scans: 213 of 2,880 releases have a resolved graph
-and the other 2,667 are unknown. `VerificationReceipt.ResolvedPackages` looks
-like a second source and is not — it is filtered to the packages the sample
-*declares*, so a single-package sample resolving to exactly itself says nothing
-about that package's dependencies. Every consumer of this axis, R2C-108
-included, has to render unknown as unknown.
+`dependencyProvenNone` is populated since v0.1.71, and until then it could not
+be. The axis answers a release when it appears as a PARENT in
+`dependency_edge`, and a package that declares nothing is never a parent — so
+every leaf sat in the open column forever and no amount of farm work closed it.
+Measured on production 2026-08-30: 490 releases appear as a child of some
+resolved tree and never as a parent, against 585 that are parents, out of 2,076
+open on the axis. A quarter of the gap, permanently unreachable.
+
+The fact travels explicitly, as `ObservationBatch.dependsOnNone`, and lands in
+`dependency_resolution` rather than as an edge with no child. It is not
+inferred from an absent edge: an empty `dependsOn` is also what a batch from an
+ecosystem with no scanner looks like, and what a scan that never found a
+lockfile looks like. Only the machine holding the lockfile knows, so it says so.
+
+The D axis has two sources. `dependency_edge` is written from client scans and,
+since v0.1.70, from verifications — a verification's batches carry the sample
+digest as their project bucket, which is how the two are told apart on
+inspection. `VerificationReceipt.ResolvedPackages` is still NOT a source: it is
+filtered to the packages the sample *declares*, so a single-package sample
+resolving to exactly itself says nothing about that package's dependencies.
+Every consumer of this axis, R2C-108 included, still has to render unknown as
+unknown.
 
 ## What keeps the window claimable
 
