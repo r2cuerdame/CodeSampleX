@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
@@ -97,6 +98,16 @@ type Readiness struct {
 	// two into the same absence. Computed here so csx stats, csx ui and
 	// get_local_stats cannot each pick different endpoints.
 	SecondsToFirstAnswer *int64 `json:"secondsToFirstAnswer,omitempty"`
+	// Unmeasured names the stages this install reached before anything was
+	// recording them, by field key ("initAt", "firstRunAt", ...).
+	//
+	// A separate list rather than a sentinel inside the stamp fields, because
+	// every one of those is documented as an RFC3339 instant or empty and a
+	// consumer parsing them must not suddenly meet a word. Empty still means
+	// "not reached"; a key listed here means "reached, before this ledger
+	// existed", and the two must not render the same — the panel used to tell
+	// an install that had been running for days to run csx init.
+	Unmeasured []string `json:"unmeasured,omitempty"`
 }
 
 // StatsNow computes the dashboard numbers from localdb + CAS.
@@ -200,6 +211,13 @@ func readinessFrom(led localdb.Activation) Readiness {
 		FirstHitAt:      stampString(led.FirstHitAt),
 		FirstAdoptionAt: stampString(led.FirstAdoptionAt),
 	}
+	// Carried, not recomputed: the ledger is the only place that can still
+	// tell "reached before this was recorded" from "never reached", because
+	// both arrive here as the zero time.
+	for k := range led.Unmeasured {
+		r.Unmeasured = append(r.Unmeasured, k)
+	}
+	sort.Strings(r.Unmeasured)
 	if d, ok := led.TimeToFirstAnswer(); ok {
 		secs := int64(d / time.Second)
 		r.SecondsToFirstAnswer = &secs

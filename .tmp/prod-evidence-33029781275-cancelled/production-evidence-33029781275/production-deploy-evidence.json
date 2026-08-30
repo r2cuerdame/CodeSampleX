@@ -1,0 +1,20 @@
+{
+  "migrationVersion": "",
+  "health": "not-started",
+  "linearIssue": "R2C-58",
+  "previousProductionSha": "b9d12995123a01e52bc06e665fee101523088bf5",
+  "smoke": "not-started",
+  "schemaVersion": 1,
+  "invariants": {
+    "after": null,
+    "before": null
+  },
+  "conclusion": "failure",
+  "deployedSha": "",
+  "failureEvidenceQuality": null,
+  "rollback": "not-started",
+  "workflowRunUrl": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/33029781275",
+  "workflowRunId": "33029781275",
+  "targetSha": "ec67e1cbd3b9bf6b3bc84d432ab039494d8e15a3",
+  "imageDigest": ""
+}

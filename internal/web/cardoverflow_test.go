@@ -96,7 +96,7 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 		// The same card, three of them, in the landing page's grid. Its
 		// track floor is its own failure mode, so it has to be measured
 		// where it is laid out rather than inferred from the other page.
-		{"landing", "/", "li.finding-card", false, seedLandingCoverage},
+		{"landing", "/", "li.finding-card", false, nil},
 		// Not a card, the same defect: a Go pseudo-version is 36 unbroken
 		// characters inside a pill that may not wrap.
 		{"records", "/records", ".pkglist li", true, seedSessionRecord},
@@ -211,16 +211,6 @@ func seedSessionRecord(f *fakeStore) {
 		EvidenceCount: 12,
 		UpdatedAt:     "2026-08-24",
 	}}
-}
-
-// seedLandingCoverage turns the landing page's coverage disclosure on. It is
-// the one wide table on that page, and a table that is not inside a scroll
-// container drags the document open exactly the way a card does.
-func seedLandingCoverage(f *fakeStore) {
-	f.coverage = []CoverageRow{
-		{OS: "windows", Ecosystem: "npm", Observed: 2287},
-		{OS: "linux", Ecosystem: "npm", Measured: 158, Proven: 158},
-	}
 }
 
 const cardMeasurePath = "/__card-overflow-measure"

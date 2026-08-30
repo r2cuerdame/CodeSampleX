@@ -35,6 +35,10 @@ type uiReadinessRow struct {
 	State  string
 	Source string
 	Next   string
+	// Unmeasured says this stage was reached before anything recorded it.
+	// Without it the panel showed "— never" beside a nudge, on an install
+	// that had been running for days and had already done the thing.
+	Unmeasured bool
 }
 
 // uiReadiness builds the §7 panel rows.
@@ -57,6 +61,18 @@ func uiReadiness(r Readiness) []uiReadinessRow {
 			Next: "ask an agent to search before writing library code"},
 		{Label: "First adoption", State: r.FirstAdoptionAt, Source: "csx.db",
 			Next: "report_sample_adoption after using a sample"},
+	}
+	// A stage reached before the ledger existed keeps its row but loses both
+	// the "never" and the instruction: telling somebody to run csx init on an
+	// initialized install is worse than saying nothing.
+	unmeasured := map[string]bool{}
+	for _, k := range r.Unmeasured {
+		unmeasured[k] = true
+	}
+	for i, key := range []string{"firstRunAt", "initAt", "firstSyncAt", "mcpFirstReadyAt", "firstHitAt", "firstAdoptionAt"} {
+		if rows[i].State == "" && unmeasured[key] {
+			rows[i].Unmeasured, rows[i].Next = true, ""
+		}
 	}
 	if r.MCPLastReadyAt != "" && r.MCPLastReadyAt != r.MCPFirstReadyAt {
 		rows = append(rows, uiReadinessRow{

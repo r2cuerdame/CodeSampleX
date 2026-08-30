@@ -64,7 +64,7 @@
     <dl class="kv">
       {{range .Readiness}}
       <dt>{{.Label}}</dt>
-      <dd>{{if .State}}{{.State}}{{else}}<span class="empty">— never</span>{{end}}
+      <dd>{{if .State}}{{.State}}{{else if .Unmeasured}}<span class="empty">— reached before this was recorded</span>{{else}}<span class="empty">— never</span>{{end}}
         {{if .Source}}<span class="note">{{.Source}}</span>{{end}}
         {{if and (not .State) .Next}}<span class="note">→ {{.Next}}</span>{{end}}</dd>
       {{end}}
