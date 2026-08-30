@@ -9,17 +9,18 @@ import (
 
 // The Linux Python lane must be able to install what PyPI actually ships.
 //
-// It ran python:3.12-alpine. Alpine is musl, musl rejects manylinux wheels,
-// and manylinux is the format essentially every compiled PyPI package is
-// distributed in — so pip fell back to building from source and any package
-// with a C extension failed on a toolchain the image does not carry.
+// It ran python:3.12-alpine. musl cannot use a manylinux wheel, so a project
+// publishing manylinux only falls back to an sdist build that image has no
+// toolchain for. Measured rather than assumed: llvmlite fails there and
+// installs on the glibc lane, while numpy, lxml and pyarrow install on both —
+// they publish musllinux wheels too. The break is narrower than "C
+// extensions"; it is "no musllinux wheel", and llvmlite is the case nine
+// defect reports named.
 //
-// This is not a theory. Eight separate defect reports arrived through
-// report_csx_issue naming it, one of them with a worked example: llvmlite,
-// where musl rejects the wheel and the sdist build finds no llvm-config. And
-// the data agrees — every pypi receipt in production carries libc=musl, 510 of
-// them, so a network built to answer "does it run there" had never once
-// measured the environment nearly every Python user is in.
+// The larger reason is the evidence itself. Every pypi receipt in production
+// carries libc=musl, 510 of them and not one glibc, so a network built to
+// answer "does it run there" had never once measured the environment nearly
+// every Python user is in.
 //
 // The musl entries stay in the registry: 510 receipts name them, and
 // PublishedImage has to keep resolving what already ran.

@@ -36,7 +36,7 @@
         "A4"
       ],
       "symbolConfidence": "PROBABLE",
-      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification uses python:3.12-slim when runtimeVersion is omitted or 3.12, and the digest-pinned python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5 when runtimeVersion is 3.14. Debian rather than Alpine: musl rejects manylinux wheels, so a package with a C extension could not be installed at all. Other Python lines are rejected before claim. pip resolves into the workspace vendor directory so the offline contract stage can import it (A4, proven by published samples)."
+      "notes": "Resolved versions from uv.lock, pinned requirements, poetry.lock (best-effort). AST-free regex import analysis; dynamic attribute access degrades to UNKNOWN. Sample verification uses python:3.12-slim when runtimeVersion is omitted or 3.12, and the digest-pinned python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5 when runtimeVersion is 3.14. Debian rather than Alpine: musl cannot use a manylinux wheel, so a package that publishes manylinux only falls back to an sdist build the Alpine image has no toolchain for. Packages that also publish musllinux wheels installed there fine. Other Python lines are rejected before claim. pip resolves into the workspace vendor directory so the offline contract stage can import it (A4, proven by published samples)."
     },
     {
       "ecosystem": "golang",

@@ -60,11 +60,19 @@ var verifierImages = map[string]verifierImage{
 	"node:22-alpine":       {"node:22-alpine", "sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32", "alpine", "", "musl"},
 	"oven/bun:1-alpine":    {"oven/bun:1-alpine", "sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb", "alpine", "", "musl"},
 	"denoland/deno:alpine": {"denoland/deno:alpine", "sha256:b49ac52f05c3d8d0da890b6628168e9bfb5721f7bccc00305bb3ad29ed0e40af", "alpine", "", "musl"},
-	// The Linux Python lane. Debian rather than Alpine, because musl rejects
-	// manylinux wheels and manylinux is the format essentially every compiled
-	// PyPI package ships in — on Alpine, pip falls back to building from
-	// source and anything with a C extension fails on a toolchain the image
-	// does not carry. Eight defect reports arrived naming it.
+	// The Linux Python lane. Debian rather than Alpine for two reasons, and
+	// the second is the bigger one.
+	//
+	// musl cannot use a manylinux wheel. A project that also publishes
+	// musllinux wheels is fine on Alpine — numpy, lxml and pyarrow all
+	// install there — but one that publishes manylinux only falls back to an
+	// sdist build that this image has no toolchain for. llvmlite is that
+	// case, and it is the one nine defect reports named.
+	//
+	// And every pypi receipt this network holds was musl: 510 of them on
+	// 2026-08-30, not one glibc. Honest about what it measured, and the only
+	// Python environment it had ever measured, while nearly every Python user
+	// is on glibc.
 	"python:3.12-slim": {"python:3.12-slim", "sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217", "debian", "", "glibc"},
 	"python:3.14-slim": {"python:3.14-slim", "sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5", "debian", "", "glibc"},
 	// Kept, and no longer selected. 510 receipts name these, and a published
