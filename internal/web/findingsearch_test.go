@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // manyDerived builds n derived findings, each distinguishable.
@@ -134,8 +135,36 @@ func TestFindingsSearchWithNoMatchSaysSo(t *testing.T) {
 func TestFindingsSlicesShareOneCanonical(t *testing.T) {
 	mux, f := newTestMux(t, nil)
 	f.derived = manyDerived(80)
+	// The derived corpus is served from a cache that a cold miss fills in the
+	// background, on purpose: scanning it inside the request made the first
+	// /findings after a restart wait on the pool and the deploy smoke time out
+	// without a byte. So a page asked for before the first refresh lands
+	// legitimately has no derived rows, and ?page=2 legitimately redirects to
+	// page 1 — with the tab flipped, since an empty derived group is a cold
+	// start. That is the page behaving correctly and the test racing it.
+	//
+	// It failed exactly once, on the Windows release runner, and passes on
+	// Linux CI and locally including 5 runs under -race. Waiting is the fix;
+	// asserting on an unwarmed cache is the bug.
+	waitDerivedFindings(t, mux, 80)
 	for _, u := range []string{"/findings", "/findings?page=2", "/findings?q=belief"} {
 		body := get(t, mux, u).Body.String()
 		mustContain(t, body, `<link rel="canonical" href="https://codesamplex.dev/findings"`)
 	}
+}
+
+// waitDerivedFindings blocks until the derived corpus a test seeded is the one
+// the page renders, so an assertion cannot land on a cache still filling.
+func waitDerivedFindings(t *testing.T, mux *http.ServeMux, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		body := get(t, mux, "/findings").Body.String()
+		if strings.Contains(body, `<link rel="canonical"`) &&
+			strings.Contains(body, "Showing") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the derived corpus never reached the page within 5s (wanted %d rows)", want)
 }
