@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"time"
 
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
@@ -37,17 +39,24 @@ func BaseURLFor(home string) (string, error) {
 			return "http://" + addr, nil
 		}
 	}
-	// No guess. This used to fall back to cfg.DaemonPort, which is one number
-	// shared by every home on the machine -- so a home whose daemon was not
-	// running resolved to whichever daemon held that port, and answered every
-	// question from a store that was not its own.
+	cfg, err := config.Load(home)
+	if err != nil {
+		return "", err
+	}
+	// A port this home was deliberately given is this home's address, and the
+	// documented way to run several homes on one machine is to give each its
+	// own. The DEFAULT port is not an address: every home carries it, so
+	// reaching a home that published nothing by dialling the number they all
+	// share is how one daemon came to answer for three other homes.
 	//
-	// On a farm node with three worker slots plus a default home that is not
-	// an edge case, it is the normal state: only one daemon can bind the
-	// shared port, so three homes were permanently answered by the fourth.
-	// Reported from production as three worker homes reporting identical
-	// numbers -- 28/14 hits, 6 known packages -- which is indistinguishable
-	// from three stores that had been wiped.
+	// On a farm node with three worker slots plus a default home that is the
+	// normal state, not an edge case -- only one daemon can bind the shared
+	// port. It was reported from production as all four homes showing
+	// identical numbers, 28/14 hits and 6 known packages, which is
+	// indistinguishable from three stores that had been wiped.
+	if cfg.DaemonPort != 0 && cfg.DaemonPort != config.Default().DaemonPort {
+		return fmt.Sprintf("http://127.0.0.1:%d", cfg.DaemonPort), nil
+	}
 	return "", fmt.Errorf("daemon: no address published for home %s", home)
 }
 
