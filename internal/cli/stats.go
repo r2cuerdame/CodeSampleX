@@ -122,17 +122,29 @@ func statsMain(ctx context.Context, args []string) int {
 func printReadiness(w io.Writer, r daemon.Readiness) {
 	fmt.Fprintf(w, "\nReadiness                      (local only — nothing here is uploaded)\n")
 	rows := []struct {
-		label, value, source, next string
+		label, key, value, source, next string
 	}{
-		{"First run", r.FirstRunAt, "csx.db", ""},
-		{"Initialized", r.InitAt, "csx.db", "run csx init"},
-		{"Shard cache warmed", r.FirstSyncAt, "csx.db", "run csx sync"},
-		{"MCP handshake", r.MCPFirstReadyAt, "csx.db", "restart your coding agent, then use a csx tool"},
-		{"First answer", r.FirstHitAt, "csx.db", "ask an agent to search before writing library code"},
-		{"First adoption", r.FirstAdoptionAt, "csx.db", "report_sample_adoption after using a sample"},
+		{"First run", "firstRunAt", r.FirstRunAt, "csx.db", ""},
+		{"Initialized", "initAt", r.InitAt, "csx.db", "run csx init"},
+		{"Shard cache warmed", "firstSyncAt", r.FirstSyncAt, "csx.db", "run csx sync"},
+		{"MCP handshake", "mcpFirstReadyAt", r.MCPFirstReadyAt, "csx.db", "restart your coding agent, then use a csx tool"},
+		{"First answer", "firstHitAt", r.FirstHitAt, "csx.db", "ask an agent to search before writing library code"},
+		{"First adoption", "firstAdoptionAt", r.FirstAdoptionAt, "csx.db", "report_sample_adoption after using a sample"},
+	}
+	unmeasured := map[string]bool{}
+	for _, k := range r.Unmeasured {
+		unmeasured[k] = true
 	}
 	for _, row := range rows {
 		if row.value == "" {
+			// A stage reached before this ledger existed is not a stage never
+			// reached, and the nudge is what made the difference matter: an
+			// install running for days, with a csx.db full of hits, was told
+			// to run csx init — a command that would have done nothing.
+			if unmeasured[row.key] {
+				fmt.Fprintf(w, "  %-28s —  reached before this was recorded\n", row.label)
+				continue
+			}
 			line := fmt.Sprintf("  %-28s —  never", row.label)
 			if row.next != "" {
 				line += "  → " + row.next

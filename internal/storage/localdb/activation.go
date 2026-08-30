@@ -51,6 +51,15 @@ type Activation struct {
 	MCPLastReadyAt  time.Time
 	FirstHitAt      time.Time
 	FirstAdoptionAt time.Time
+	// Unmeasured names the stages this install reached before anything was
+	// recording them, by stamp key.
+	//
+	// The sentinel exists so that "reached, but before the ledger did" and
+	// "never reached" are different states — and parseStamp turns both into
+	// the zero time, so without this the difference dies here and every
+	// reader downstream sees a fresh install. It is what stopped the panel
+	// telling a machine that had been up for days to run csx init.
+	Unmeasured map[string]bool
 }
 
 // TimeToFirstAnswer is the §5 duration: init (the consent choice, S2) to the
@@ -89,6 +98,14 @@ func (d *DB) ActivationLedger(ctx context.Context) (Activation, error) {
 	all, err := d.AllStats(ctx)
 	if err != nil {
 		return a, err
+	}
+	for _, k := range append([]string{StatMCPLastReadyAt}, FirstStampKeys...) {
+		if all[k] == activationUnmeasured {
+			if a.Unmeasured == nil {
+				a.Unmeasured = map[string]bool{}
+			}
+			a.Unmeasured[k] = true
+		}
 	}
 	a.FirstRunAt = parseStamp(all[StatFirstRunAt])
 	a.InitAt = parseStamp(all[StatInitAt])
