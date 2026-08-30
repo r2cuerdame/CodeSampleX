@@ -408,6 +408,10 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 /* The sample collection. Same auto-fit floor and the same min() as
    .findinglist: a flat rem floor is wider than a 320px phone's content column
    and the card hangs out of the viewport. */
+/* The search box over the collection. */
+.samplesearch { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.8rem 0 0; }
+.samplesearch input[type="search"] { flex: 1 1 18rem; min-width: 0; }
+
 .samplelist {
   list-style: none; margin: 1rem 0 0; padding: 0;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr)); gap: 0.8rem;
@@ -417,7 +421,14 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
   border: 1px solid var(--line); border-radius: 1rem;
   background: var(--panel); box-shadow: var(--shadow-soft);
 }
-.sample-card__goal { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+/* A goal is a sentence somebody wrote, and some of them are one unbroken
+   175-character token: a Go import path plus a pseudo-version has no space to
+   break at, so the line ran straight out of the card. Reported from the live
+   page on 2026-08-30. */
+.sample-card__goal {
+  display: block; font-weight: 600; margin-bottom: 0.4rem;
+  min-width: 0; overflow-wrap: anywhere;
+}
 .sample-card__coord { margin: 0 0 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .sample-card__coord span { min-width: 0; overflow-wrap: anywhere; }
 .sample-card__meta { margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }

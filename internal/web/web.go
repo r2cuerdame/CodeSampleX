@@ -79,6 +79,10 @@ type Store interface {
 	// only way to a sample was a link from the package it happens to be
 	// about.
 	SamplesPage(ctx context.Context, offset, limit int) ([]SampleListItem, int, error)
+	// SearchSamples is the same collection narrowed by what a reader typed.
+	// The query matches the manifest — goal, packages, symbols — because that
+	// is what somebody looking for a reusable answer knows to type.
+	SearchSamples(ctx context.Context, query string, offset, limit int) ([]SampleListItem, int, error)
 	// PackageSamples lists published samples whose manifest names this
 	// package, newest first. This is what puts a link to a sample page on
 	// a page a crawler already reaches.

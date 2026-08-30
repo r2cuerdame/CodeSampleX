@@ -1208,6 +1208,55 @@ func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRo
 	return out, err
 }
 
+// SearchSamplesPage is ListSamplesPage narrowed by a reader's words.
+//
+// It searches the manifest, because that is where everything a reader would
+// type lives: the goal sentence, the packages, the symbols. A sample id is a
+// content hash and nobody searches for one, so the id is deliberately not a
+// field here — a query that looked like a hash would match one row and teach
+// the reader nothing.
+//
+// ILIKE over the manifest text rather than a tsvector: the corpus is
+// thousands of rows, the query runs behind a page of 24, and a full-text index
+// on a JSON column would be a schema commitment made before anybody has typed
+// into this box. When that stops being true the query changes and this comment
+// is the reason why.
+func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset int) ([]SampleRow, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	pattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
+	var out []SampleRow
+	total := 0
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		if err := c.QueryRow(ctx, `
+			SELECT count(*) FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE $1`, pattern).Scan(&total); err != nil {
+			return err
+		}
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE $1
+			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, pattern, limit, offset)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, err := scanSample(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	return out, total, err
+}
+
 func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		tag, err := c.Exec(ctx,

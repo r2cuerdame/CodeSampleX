@@ -10,8 +10,20 @@
     </div>
   </div>
 
+  {{/* One box over the goal, the packages and the symbols. A reader looking
+       for a reusable answer types a package name or an API, not a field
+       name, so making them choose which field first would be asking them to
+       know the schema. */}}
+  <form class="samplesearch" action="/samples" method="get" role="search">
+    <label class="sr-only" for="sample-q">{{.T "samples.search_label"}}</label>
+    <input id="sample-q" type="search" name="q" value="{{.Query}}" placeholder="{{.T "samples.search_placeholder"}}">
+    {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+    <button type="submit">{{.T "explore.button"}}</button>
+    {{- if .Searched}}<a class="small dim" href="{{.WithLang "/samples"}}">{{.T "samples.clear"}}</a>{{end}}
+  </form>
+
   {{- if .Empty}}
-  <p class="note dim small">{{.T "samples.empty"}}</p>
+  <p class="note dim small">{{if .Searched}}{{.T "samples.no_match"}}{{else}}{{.T "samples.empty"}}{{end}}</p>
   {{- else}}
   <p class="dim small">{{.T "samples.range"}} {{.From}}–{{.To}} / {{.Total}}</p>
   <ul class="samplelist">

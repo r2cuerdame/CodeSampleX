@@ -91,6 +91,32 @@ func (f *fakeStore) SeederSamples(_ context.Context, login string) ([]SampleList
 	return out, nil
 }
 
+// SearchSamples narrows the same list the way the real store does: a
+// case-insensitive substring over what the sample is ABOUT.
+func (f *fakeStore) SearchSamples(ctx context.Context, query string, offset, limit int) ([]SampleListItem, int, error) {
+	all, err := f.ListSamples(ctx, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	var hits []SampleListItem
+	for _, it := range all {
+		hay := strings.ToLower(it.Goal + " " + it.Version + " " + strings.Join(it.Symbols, " "))
+		if strings.Contains(hay, needle) {
+			hits = append(hits, it)
+		}
+	}
+	total := len(hits)
+	if offset >= len(hits) {
+		return nil, total, nil
+	}
+	hits = hits[offset:]
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, total, nil
+}
+
 // SamplesPage is the collection route's slice of the same list the sitemap
 // walks, so the fake serves it from one place.
 func (f *fakeStore) SamplesPage(ctx context.Context, offset, limit int) ([]SampleListItem, int, error) {

@@ -359,6 +359,21 @@ func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.Sa
 	return out, total, nil
 }
 
+func (w *webStore) SearchSamples(ctx context.Context, query string, offset, limit int) ([]web.SampleListItem, int, error) {
+	if limit <= 0 {
+		limit = 24
+	}
+	rows, total, err := w.s.SearchSamplesPage(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]web.SampleListItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sampleListItem(r))
+	}
+	return out, total, nil
+}
+
 func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleListItem, error) {
 	rows, err := w.s.ListSamples(ctx, limit)
 	if err != nil {
