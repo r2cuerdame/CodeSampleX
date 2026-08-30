@@ -183,15 +183,14 @@ func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) 
 		// sample exists, so a verified coordinate must never be reported as
 		// Sample-without-Evidence merely because no observation batch arrived.
 		evidence := observed[purl] || verified[purl]
-		out.States[completenessKey(verified[purl], evidence, dependency)]++
-		switch dependency {
-		case dependencyGraph:
-			out.DependencyGraph++
-		case dependencyProvenNone:
+		if dependency == dependencyProvenNone {
+			// The one state add() does not carry, because nothing produces it
+			// yet and folding it through a three-character key would lose it.
+			out.States[completenessKey(verified[purl], evidence, dependency)]++
 			out.DependencyProvenNone++
-		default:
-			out.DependencyUnknown++
+			continue
 		}
+		out.add(completenessKey(verified[purl], evidence, dependency), pkg.Ecosystem, pkg.Name, 1)
 	}
 	return out, nil
 }

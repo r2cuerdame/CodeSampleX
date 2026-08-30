@@ -1,6 +1,6 @@
 package httpapi
 
-import "strings"
+import "github.com/r2cuerdame/codesamplex/internal/domain"
 
 // gradlePluginMarkerSuffix is how Gradle names the marker it publishes for a
 // plugin id. The artifactId is the plugin id with this appended, and the
@@ -21,10 +21,4 @@ const gradlePluginMarkerSuffix = ".gradle.plugin"
 //
 // The coordinate arrives as "groupId/artifactId"; a name without a slash is
 // read whole, which is what a caller that already split it would pass.
-func mavenPomOnlyByName(name string) bool {
-	artifact := name
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		artifact = name[i+1:]
-	}
-	return strings.HasSuffix(artifact, gradlePluginMarkerSuffix)
-}
+func mavenPomOnlyByName(name string) bool { return domain.MavenPomOnlyByName(name) }

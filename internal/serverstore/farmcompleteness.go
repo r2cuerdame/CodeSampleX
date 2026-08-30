@@ -1,5 +1,7 @@
 package serverstore
 
+import "github.com/r2cuerdame/codesamplex/internal/domain"
+
 import "context"
 
 // The production unit is not "a coordinate with no sample". R2C-126: it is
@@ -84,6 +86,23 @@ type FarmCompleteness struct {
 	DependencyGraph      int
 	DependencyProvenNone int
 	DependencyUnknown    int
+	// What this network cannot produce here, counted apart from what it has
+	// not produced yet.
+	//
+	// The census used to count both as missing. Measured on production: 398
+	// npm per-platform native builds and one Gradle plugin marker sat inside
+	// the 1,372 releases reported as having no sample, and the authoring
+	// queue declined every one of them on every poll — the queue's judgement
+	// and the backlog's denominator disagreed by 399 coordinates. 507 more
+	// were reported as having no dependency graph in ecosystems where no
+	// scanner ships, so nothing could ever produce one.
+	//
+	// A scheduler built on that denominator hands out work nobody can close,
+	// which is the failure #87 was opened for. These are subtracted from the
+	// eight states rather than hidden: a coordinate counted here is not in
+	// States at all on that axis.
+	SampleNotApplicable     int
+	DependencyNotApplicable int
 }
 
 // newFarmCompleteness returns a matrix with all eight cells at zero.
@@ -100,4 +119,43 @@ func newFarmCompleteness() FarmCompleteness {
 // every cell but SED is empty of coordinates the current policy can run.
 type FarmCompletenessStore interface {
 	FarmCompletenessNow(ctx context.Context) (FarmCompleteness, error)
+}
+
+// add folds one group of coordinates into the census, holding the eight
+// states to what this network can actually produce.
+//
+// A coordinate no sample can be written for is counted as
+// SampleNotApplicable, and one whose ecosystem has no dependency scanner as
+// DependencyNotApplicable. A coordinate unaskable on both axes leaves States
+// entirely: States is the backlog, and an unaskable coordinate is not backlog.
+//
+// Both stores call this, so the Fake and PostgreSQL cannot drift on the one
+// judgement the scheduler will be built on.
+func (f *FarmCompleteness) add(state, ecosystem, name string, n int) {
+	sampleNA := false
+	if _, na := domain.SampleNotApplicable(ecosystem, name); na {
+		sampleNA = true
+	}
+	_, depNA := domain.DependencyNotApplicable(ecosystem)
+
+	if sampleNA {
+		f.SampleNotApplicable += n
+	}
+	if depNA {
+		f.DependencyNotApplicable += n
+	}
+	// A coordinate unaskable on BOTH axes is not in the backlog at all.
+	if sampleNA && depNA {
+		return
+	}
+	f.States[state] += n
+	switch {
+	case depNA:
+		// Not counted as unknown: nobody can look, so "we never looked" would
+		// read as a gap somebody could close.
+	case state[2] == 'D':
+		f.DependencyGraph += n
+	default:
+		f.DependencyUnknown += n
+	}
 }
