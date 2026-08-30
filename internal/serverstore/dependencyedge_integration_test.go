@@ -128,3 +128,46 @@ func TestIntegrationAResolutionThatFoundNoDependenciesIsRecorded(t *testing.T) {
 		t.Error("a release nobody resolved was reported as proven to have no dependencies")
 	}
 }
+
+// The same split in Postgres. A leaf must leave the open column AND must not
+// be counted as a resolved graph — production reported dependencyProvenNone=0
+// while dependency_resolution held rows, because the census read only whether
+// the coordinate was a parent and never why.
+func TestIntegrationALeafIsCountedAsProvenNoneNotAsAGraph(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	if err := pg.UpsertPackage(ctx, PackageRow{
+		PURL: "pkg:npm/left-pad@1.3.0", Ecosystem: "npm", Name: "left-pad",
+		Version: "1.3.0", Major: "1", Publicness: "PUBLIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	batch := domain.ObservationBatch{
+		SchemaVersion:    1,
+		Epoch:            "2026-08-30",
+		AnonID:           "peer-abc",
+		ProjectBucket:    "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+		Package:          "pkg:npm/left-pad@1.3.0",
+		Environment:      domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64"},
+		Stage:            domain.StageUsed,
+		Result:           domain.ResultPass,
+		ObservationCount: 1,
+		DependsOnNone:    true,
+	}
+	if _, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{batch}); err != nil || len(rejected) != 0 {
+		t.Fatalf("ingest: err=%v rejected=%+v", err, rejected)
+	}
+
+	c, err := pg.FarmCompletenessNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DependencyProvenNone != 1 {
+		t.Errorf("dependencyProvenNone = %d, want 1 (states=%v graph=%d unknown=%d)",
+			c.DependencyProvenNone, c.States, c.DependencyGraph, c.DependencyUnknown)
+	}
+	if c.DependencyGraph != 0 {
+		t.Errorf("dependencyGraph = %d; a release whose resolution found nothing is not a graph", c.DependencyGraph)
+	}
+}

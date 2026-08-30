@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,21 @@ var AllowedEcosystems = map[string]bool{
 	"gem":    true,
 	"hex":    true,
 	"pub":    true,
+}
+
+// VerifiableEcosystems is AllowedEcosystems as a sorted list, for the one
+// place that has to tell a caller what it may use instead.
+//
+// A refusal that does not say what would have worked leaves an agent guessing,
+// and guessing here means writing a whole sample for another ecosystem this
+// network also cannot verify.
+func VerifiableEcosystems() []string {
+	out := make([]string, 0, len(AllowedEcosystems))
+	for eco := range AllowedEcosystems {
+		out = append(out, eco)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ParsePURL parses a package URL string. It accepts both canonical
