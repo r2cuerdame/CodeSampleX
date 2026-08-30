@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/adapters"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 const treeLock = `{
@@ -47,6 +49,10 @@ func treeReceipt(resolve string) domain.VerificationReceipt {
 		PeerID:   "peer-abc",
 		Stages:   map[string]string{"resolve": resolve},
 	}
+	// Whatever environment.Collect produces, because that is what a receipt
+	// actually carries. A fixture missing the schema version is how the
+	// backfill's refusals stayed invisible until production.
+	r.Environment.SchemaVersion = 1
 	r.Environment.Ecosystem = "npm"
 	r.Environment.OS = "linux"
 	r.Environment.Arch = "amd64"
@@ -170,5 +176,73 @@ func TestNoLockfileReportsNothing(t *testing.T) {
 
 	if len(got) != 0 {
 		t.Errorf("an empty workspace reported %d batches", len(got))
+	}
+}
+
+// Every batch a verification sends must survive the server's own validation.
+//
+// This is the check the receipt backfill did not have. That run produced 9,883
+// observations and the store refused every one of them, because the project
+// bucket carried its "sha256:" prefix and was 71 bytes against a 64-byte
+// limit — a shape no unit test had exercised, since the fixtures used short
+// ids. The run then reported the refusals as a bare count and looked like it
+// had worked.
+//
+// So the batches go through ValidateBatch here, built from a real 64-hex
+// sample id, rather than being trusted because the struct looks right.
+func TestEveryTreeBatchSurvivesTheServersValidation(t *testing.T) {
+	r := treeReceipt(sandbox.ResultPass)
+	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	batches := TreeBatches(edges, treeManifest(), r, "2026-08-30")
+	if len(batches) == 0 {
+		t.Fatal("no batches to validate")
+	}
+	for _, b := range batches {
+		if err := serverstore.ValidateBatch(b); err != nil {
+			t.Errorf("the server would refuse this batch: %v\n%+v", err, b)
+		}
+	}
+}
+
+// And the server must turn them into the edges they carry. A batch that
+// validates but contributes no dependency_edge row would fill nothing.
+func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	r := treeReceipt(sandbox.ResultPass)
+	edges := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
+
+	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, treeManifest(), r, "2026-08-30"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected) != 0 {
+		t.Fatalf("the store refused %d of them: %+v", len(rejected), rejected)
+	}
+	if accepted == 0 {
+		t.Fatal("nothing was accepted")
+	}
+
+	// Dependencies asks what a package depends ON, so the parent is the key.
+	got, err := store.Dependencies(ctx, "npm", "express")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 {
+		t.Fatal("the verification's tree produced no dependency edge — the axis it exists to fill stays empty")
+	}
+	if got[0].ParentName != "express" || got[0].ChildName != "body-parser" {
+		t.Errorf("edge = %s -> %s, want express -> body-parser", got[0].ParentName, got[0].ChildName)
+	}
+}
+
+// A fingerprint whose shape we cannot vouch for produces nothing, rather than
+// batches the server will refuse one at a time.
+func TestAnUnversionedEnvironmentSendsNoTree(t *testing.T) {
+	r := treeReceipt(sandbox.ResultPass)
+	r.Environment.SchemaVersion = 0
+	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	if got := TreeBatches(edges, treeManifest(), r, "2026-08-30"); len(got) != 0 {
+		t.Errorf("built %d batches the server would refuse", len(got))
 	}
 }
