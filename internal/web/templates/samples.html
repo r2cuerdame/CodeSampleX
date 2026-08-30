@@ -1,0 +1,45 @@
+{{define "content"}}
+{{/* The collection exists because a sample nobody can reach is a sample
+     nobody can reuse. Until this route, the only way to one was a link from
+     the package it happens to be about. R2C-136. */}}
+<section class="evidence-section">
+  <div class="section-heading">
+    <div>
+      <h1 class="eyebrow mono">{{.T "samples.title"}}</h1>
+      <p class="dim small">{{.T "samples.sub"}}</p>
+    </div>
+  </div>
+
+  {{- if .Empty}}
+  <p class="note dim small">{{.T "samples.empty"}}</p>
+  {{- else}}
+  <p class="dim small">{{.T "samples.range"}} {{.From}}–{{.To}} / {{.Total}}</p>
+  <ul class="samplelist">
+    {{- range .Cards}}
+    <li class="sample-card">
+      {{/* The goal first. A sample id is a content hash, and a reader
+           scanning a page of hashes learns nothing about which answer is
+           worth reusing. */}}
+      <a class="sample-card__goal" href="{{$.WithLang .Href}}">{{.Goal}}</a>
+      <p class="sample-card__coord mono small">
+        {{- if .Subject}}<span class="sample-card__version">{{.Subject}}</span>{{end}}
+        {{- range .Symbols}}<span class="sample-card__symbol">{{.}}</span>{{end}}
+      </p>
+      <p class="sample-card__meta small dim">
+        {{- if .Verified}}<span class="sample-card__verified">{{$.T "samples.verified"}}</span>{{end}}
+        {{- if .Context}}<span class="sample-card__ctx mono">{{.Context}}</span>{{end}}
+        {{- if .Kind}}<span class="sample-card__kind mono">{{.Kind}}</span>{{end}}
+      </p>
+    </li>
+    {{- end}}
+  </ul>
+
+  {{- if or .PrevHref .NextHref}}
+  <nav class="pager small" aria-label="{{.T "samples.title"}}">
+    {{- if .PrevHref}}<a rel="prev" href="{{.PrevHref}}">← {{.T "records.prev"}}</a>{{end}}
+    {{- if .NextHref}}<a rel="next" href="{{.NextHref}}">{{.T "records.next"}} →</a>{{end}}
+  </nav>
+  {{- end}}
+  {{- end}}
+</section>
+{{end}}

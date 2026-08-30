@@ -334,6 +334,31 @@ func (w *webStore) SeederSamples(ctx context.Context, login string) ([]web.Sampl
 
 // ListSamples feeds the sitemap. serverstore.ListSamples already excludes
 // quarantined rows, which is what makes it safe to advertise these URLs.
+// SamplesPage is one page of the browsable sample collection.
+//
+// It reads one page more than it needs so it can say whether there is a next
+// one without a second COUNT over a growing table: the collection is ordered
+// newest-first and a reader walking it does not need an exact total so much as
+// a page that does not lie about having more.
+func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.SampleListItem, int, error) {
+	if limit <= 0 {
+		limit = 24
+	}
+	rows, err := w.s.ListSamplesPage(ctx, limit+1, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := offset + len(rows)
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	out := make([]web.SampleListItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sampleListItem(r))
+	}
+	return out, total, nil
+}
+
 func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleListItem, error) {
 	rows, err := w.s.ListSamples(ctx, limit)
 	if err != nil {

@@ -405,6 +405,25 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
 .valuegrid h3 { margin: 0 0 0.35rem; font-size: 1rem; }
 .valuegrid p { margin: 0; }
 
+/* The sample collection. Same auto-fit floor and the same min() as
+   .findinglist: a flat rem floor is wider than a 320px phone's content column
+   and the card hangs out of the viewport. */
+.samplelist {
+  list-style: none; margin: 1rem 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr)); gap: 0.8rem;
+}
+.sample-card {
+  min-width: 0; padding: 1rem 1.05rem;
+  border: 1px solid var(--line); border-radius: 1rem;
+  background: var(--panel); box-shadow: var(--shadow-soft);
+}
+.sample-card__goal { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+.sample-card__coord { margin: 0 0 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.sample-card__coord span { min-width: 0; overflow-wrap: anywhere; }
+.sample-card__meta { margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.sample-card__verified { color: var(--ok); }
+.pager { display: flex; gap: 1rem; margin-top: 1rem; }
+
 .findinglist {
   list-style: none; margin: 1rem 0 0; padding: 0;
   /* A flat 17rem floor is 272px, and the content column of a 320px phone is
