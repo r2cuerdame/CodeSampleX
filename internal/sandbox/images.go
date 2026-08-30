@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -128,6 +129,40 @@ func pinned(alias string) string {
 func registryEntryFor(ref string) (verifierImage, bool) {
 	img, ok := byRef[ref]
 	return img, ok
+}
+
+// PublishedImage reports whether a receipt's image reference is an entry this
+// registry publishes, and returns it.
+//
+// Shape and provenance are different claims, and only the shape was askable
+// from outside this package. `node:22-alpine@sha256:aaaa…` is a perfectly
+// well-formed immutable pin naming bytes that were never published, and the
+// receipt endpoint accepts it: rejecting an unrecognised digest would break
+// every worker running a newer registry than the server, so the server checks
+// the form and nothing checks the provenance.
+//
+// R2C-81 then had to answer "did production execute the PUBLISHED digest"
+// three times (2026-08-23, 08-24, 08-29), and each audit had to be planted
+// inside this package to reach byRef — or retype the digests, which is the
+// drift this file exists to stop. One exported lookup makes the answer
+// recomputable from where the receipts actually live.
+func PublishedImage(reference string) (domain.VerifierImage, bool) {
+	img, ok := registryEntryFor(reference)
+	if !ok {
+		return domain.VerifierImage{}, false
+	}
+	return domain.VerifierImage{Reference: img.ref(), Digest: img.digest}, true
+}
+
+// PublishedReferences lists every immutable reference the registry publishes,
+// sorted, so a caller can enumerate the lanes without a copy of the table.
+func PublishedReferences() []string {
+	refs := make([]string, 0, len(byRef))
+	for ref := range byRef {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	return refs
 }
 
 // imageBase reports the distribution bucket and libc of a verifier image.
