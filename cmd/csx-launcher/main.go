@@ -172,7 +172,12 @@ func repairAndResolve(root string, resolveErr error) (launcher.Resolution, error
 	repairAttempted = true
 	ctx, cancel := context.WithTimeout(context.Background(), repairBudget)
 	defer cancel()
-	report, err := update.RehydrateInstall(ctx, root, update.RehydrateOptions{})
+	// A payload that failed to START hashes correctly, so the repair has to be
+	// told that is what happened; otherwise it looks at the bytes, finds them
+	// fine, and declines the repair the launcher just classified as possible.
+	report, err := update.RehydrateInstall(ctx, root, update.RehydrateOptions{
+		StartFailed: launcher.Reason(resolveErr) == launcher.ReasonPayloadStartFailed,
+	})
 	if err != nil {
 		return launcher.Resolution{}, fmt.Errorf("%w; automatic repair from the official release failed: %v", resolveErr, err)
 	}

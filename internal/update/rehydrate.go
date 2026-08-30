@@ -54,7 +54,19 @@ type RehydrateOptions struct {
 	Arch string
 	// Force skips the cooldown. Explicit operator repair sets it.
 	Force bool
-	Now   func() time.Time
+	// StartFailed says the caller watched this payload fail to START, not to
+	// hash. The launcher declares payload-start-failed repairable and routes
+	// it here, but the bytes verify — so without this the repair answered
+	// ErrRehydrateNotNeeded and the one failure meaning "these bytes are
+	// correct and still will not run" was the one it refused to act on. An
+	// install whose payload is blocked from executing stayed dead behind a
+	// repair path reporting nothing to do.
+	//
+	// It replaces the current payload's bytes with the official artifact and
+	// self-tests them, which is the only thing this path can do about a file
+	// that hashes and does not execute.
+	StartFailed bool
+	Now         func() time.Time
 }
 
 // RehydrateReport says what one repair did. It is returned on success and on
@@ -159,15 +171,9 @@ func rehydrate(ctx context.Context, root string, opts RehydrateOptions, now func
 	if err != nil {
 		return report, fmt.Errorf("update: payload repair needs a readable active pointer: %w", err)
 	}
-	if launcher.VerifyPayload(root, a.Current) == nil {
-		if !opts.Force {
-			return report, ErrRehydrateNotNeeded
-		}
-	} else {
-		// Only a current that does not verify is an exhaustion. An explicit
-		// repair run against a healthy install still walks the candidates, to
-		// restore a missing fallback, but it must not claim an outage.
-		report.ExhaustedVersion = a.Current.Version
+	currentVerified := launcher.VerifyPayload(root, a.Current) == nil
+	if currentVerified && !opts.Force && !opts.StartFailed {
+		return report, ErrRehydrateNotNeeded
 	}
 
 	arch := opts.Arch
@@ -185,9 +191,36 @@ func rehydrate(ctx context.Context, root string, opts RehydrateOptions, now func
 		candidates = append(candidates, *a.Previous)
 	}
 
+	// Exhaustion is a fact about the whole recovery set, decided after the
+	// fallback has been looked at rather than from the current payload alone.
+	//
+	// It used to be set the moment the current failed to verify, so an install
+	// whose recorded previous was sitting on disk and verifying — the state
+	// R2C-181's recovery exists FOR — reported its recovery set as spent.
+	// ExhaustedVersion is strong evidence: `csx update status` prints "had no
+	// verified fallback left on this machine" from it and release quality is
+	// judged on it, so overstating it is an evidence defect rather than a
+	// wording one.
+	if !currentVerified {
+		exhausted := true
+		for _, d := range candidates[1:] {
+			if launcher.VerifyPayload(root, d) == nil {
+				exhausted = false
+				break
+			}
+		}
+		if exhausted {
+			report.ExhaustedVersion = a.Current.Version
+		}
+	}
+
 	var currentErr error
 	for i, d := range candidates {
-		if launcher.VerifyPayload(root, d) == nil {
+		// A start failure is the one case where verified bytes are not good
+		// enough: they hash and they will not run, so the current payload is
+		// replaced from the release rather than skipped as already fine.
+		replace := i == 0 && opts.StartFailed
+		if launcher.VerifyPayload(root, d) == nil && !replace {
 			report.AlreadyVerified = append(report.AlreadyVerified, d.Version)
 			if i > 0 {
 				report.FallbackVersion = d.Version
