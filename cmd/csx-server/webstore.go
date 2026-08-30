@@ -32,17 +32,6 @@ type webStore struct {
 	snapshotAt   time.Time
 	snapshotRows []serverstore.SnapshotRow
 
-	// The coverage disclosure is a full scan of two aggregates. It changes
-	// on the hourly compatibility pass, so it is cached off the render path.
-	coverageMu   sync.Mutex
-	coverageAt   time.Time
-	coverageRows []web.CoverageRow
-	// A cold or expired coverage snapshot refreshes in the background. The
-	// landing page serves the last honest snapshot (or no disclosure yet)
-	// instead of making a visitor wait for this whole-corpus aggregate.
-	coverageRefreshing bool
-	coverageRetryAt    time.Time
-
 	// The landing and sitemap rank packages from the materialized page
 	// inventory. A process restart used to put even that full read back on the
 	// first landing request, before the response wrote a single byte. Keep the
@@ -1246,63 +1235,4 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 		})
 	}
 	return out, nil
-}
-
-// coverageTTL keeps the disclosure off the render path. It changes on the
-// hourly compatibility pass, so a minute of staleness costs nothing and a
-// full scan per page view would undo the landing page's own budget.
-const (
-	coverageTTL            = time.Minute
-	coverageRefreshTimeout = 15 * time.Second
-	coverageRetryDelay     = 30 * time.Second
-)
-
-func (w *webStore) Coverage(_ context.Context) ([]web.CoverageRow, error) {
-	w.coverageMu.Lock()
-	now := time.Now()
-	if w.coverageAt.After(now.Add(-coverageTTL)) {
-		rows := w.coverageRows
-		w.coverageMu.Unlock()
-		return rows, nil
-	}
-	rows := w.coverageRows
-	if !w.coverageRefreshing && !now.Before(w.coverageRetryAt) {
-		if _, ok := w.s.(serverstore.FarmStatsStore); ok {
-			w.coverageRefreshing = true
-			go w.refreshCoverage()
-		}
-	}
-	w.coverageMu.Unlock()
-	return rows, nil
-}
-
-func (w *webStore) refreshCoverage() {
-	ctx, cancel := context.WithTimeout(
-		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
-		coverageRefreshTimeout,
-	)
-	defer cancel()
-	store := w.s.(serverstore.FarmStatsStore) // checked before the goroutine starts
-	cells, err := store.FarmCoverage(ctx)
-
-	w.coverageMu.Lock()
-	defer w.coverageMu.Unlock()
-	w.coverageRefreshing = false
-	if err != nil {
-		// A fast database error must not turn every landing request into a new
-		// whole-corpus goroutine. Keep serving the last honest snapshot and let
-		// one later request retry after a fixed, bounded cooldown.
-		w.coverageRetryAt = time.Now().Add(coverageRetryDelay)
-		return
-	}
-	rows := make([]web.CoverageRow, 0, len(cells))
-	for _, c := range cells {
-		rows = append(rows, web.CoverageRow{
-			OS: c.OS, Ecosystem: c.Ecosystem,
-			Observed: c.Observed, Measured: c.Measured,
-			Proven: c.Proven, ObservedProven: c.ObservedProven,
-		})
-	}
-	w.coverageRows, w.coverageAt = rows, time.Now()
-	w.coverageRetryAt = time.Time{}
 }

@@ -11,7 +11,6 @@ import (
 // tests. The integrator adapts the real serverstore to the same
 // interface; nothing here touches a database.
 type fakeStore struct {
-	coverage     []CoverageRow
 	wanted       []WantedRow
 	statsJSON    string
 	statsOK      bool
@@ -481,8 +480,6 @@ func newFakeStore() *fakeStore {
 	}
 	return f
 }
-
-func (f *fakeStore) Coverage(context.Context) ([]CoverageRow, error) { return f.coverage, nil }
 
 func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
 	return f.dependencies, nil

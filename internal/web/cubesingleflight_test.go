@@ -368,5 +368,3 @@ func TestForegroundCubeBypassesBackgroundAndLateResultCannotOverwrite(t *testing
 		t.Fatalf("package assemblies = %d, want one background plus one foreground", got)
 	}
 }
-
-func (c *countingVersions) Coverage(context.Context) ([]CoverageRow, error) { return nil, nil }
