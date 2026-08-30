@@ -106,7 +106,7 @@ func TestFeaturesPageKoreanLocalizesToolDocumentation(t *testing.T) {
 		"증거 순환 완성하기",
 		"이 설치 상태 확인하기",
 		"설명한 환경을 기준으로 등급이 매겨진 검증 해법을 찾습니다.",
-		"3 도구",
+		"3개 도구",
 	} {
 		mustContain(t, body, want)
 	}

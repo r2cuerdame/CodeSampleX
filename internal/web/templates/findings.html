@@ -55,7 +55,7 @@
 </form>
 <p class="dim small filter-note">{{.T "findings.filter_note"}}</p>
 
-<p class="mono small dim">{{.T "findings.count" .Total (len .Ecosystems)}}</p>
+<p class="mono small dim">{{.T "findings.count" (.P "findings.n_findings" .Total) (.P "findings.n_ecosystems" (len .Ecosystems))}}</p>
 <ul class="ecolist">
 {{- range .Ecosystems}}
   <li><span class="chip mono">{{.}}</span></li>

@@ -26,7 +26,7 @@
         <a href="#feature-group-{{.ID}}">
           <strong>{{.Title}}</strong>
           <span>{{.Summary}}</span>
-          <span class="feature-page__tool-count mono">{{len .Tools}} {{$.T "features.tools"}}</span>
+          <span class="feature-page__tool-count mono">{{$.P "features.n_tools" (len .Tools)}}</span>
         </a>
       </li>
       {{end}}

@@ -655,6 +655,24 @@ func (b basePage) HomeHref() string {
 
 // WithLang decorates an internal link so the chosen language follows the
 // visitor across non-landing pages (?lang= + cookie, plan P6.3).
+// P renders a count together with the noun it counts, inflected for the
+// locale. Templates used to write the number and the noun separately, which is
+// how "1 findings across 1 ecosystems", "1 tools" and "1 anonymous daily
+// reports" reached the live pages: the number was right and nothing could make
+// the word agree with it.
+func (b basePage) P(key string, n any) string {
+	var v int64
+	switch t := n.(type) {
+	case int:
+		v = int64(t)
+	case int64:
+		v = t
+	case int32:
+		v = int64(t)
+	}
+	return i18n.Plural(b.Lang, key, v)
+}
+
 func (b basePage) WithLang(path string) string {
 	if b.Lang == i18n.Default {
 		return path
