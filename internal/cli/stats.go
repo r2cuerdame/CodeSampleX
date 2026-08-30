@@ -81,6 +81,15 @@ func statsMain(ctx context.Context, args []string) int {
 	fmt.Printf("Local cache:                   %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
 	fmt.Printf("Known packages:                %d\n", st.Packages)
 	fmt.Printf("Pending queue depth:           %d\n", st.QueueDepth)
+	// Sent, pending and refused-for-good are three different states and were
+	// reported as two. A queue pinned at its cap by refusals the server will
+	// never accept looked exactly like a delivery backlog: production read
+	// 7,432 sent, 1,000 pending and 852 refused, with the last number
+	// nowhere.
+	if st.EvidenceRefusedTerminal > 0 {
+		fmt.Printf("Evidence refused for good:     %d (the server will not accept these)\n",
+			st.EvidenceRefusedTerminal)
+	}
 	if st.LastUpload != "" {
 		fmt.Printf("Last upload:                   %s\n", st.LastUpload)
 	}

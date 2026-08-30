@@ -54,9 +54,14 @@ type Stats struct {
 	CacheBudgetMB             int     `json:"cacheBudgetMB"`
 	Packages                  int     `json:"packages"`
 	QueueDepth                int     `json:"queueDepth"`
-	LastUpload                string  `json:"lastUpload,omitempty"`
-	LastUploadAttempt         string  `json:"lastUploadAttempt,omitempty"`
-	LastUploadError           string  `json:"lastUploadError,omitempty"`
+	// EvidenceRefusedTerminal is evidence the server decided it will never
+	// accept. It is not pending and it was not delivered, and until it had a
+	// line of its own an operator could not tell a delivery problem from a
+	// server decision — the queue simply sat at its cap.
+	EvidenceRefusedTerminal int    `json:"evidenceRefusedTerminal,omitempty"`
+	LastUpload              string `json:"lastUpload,omitempty"`
+	LastUploadAttempt       string `json:"lastUploadAttempt,omitempty"`
+	LastUploadError         string `json:"lastUploadError,omitempty"`
 	// CountsArePartial reports that adoption and build-report counts were
 	// tallied from the newest page of hits rather than the whole store,
 	// which happens once there are more hits than one page holds.
@@ -178,6 +183,7 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		st.Packages = len(pkgs)
 	}
 	st.QueueDepth, _ = d.queueDepth(ctx)
+	st.EvidenceRefusedTerminal, _ = d.DB.RefusedEvidenceCount(ctx)
 	return st, nil
 }
 
