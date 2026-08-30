@@ -567,6 +567,20 @@ func (cv *CrossVerifier) VerifyAndReport(ctx context.Context, job *Job) (domain.
 		return zero, fmt.Errorf("verifier: rebuilt sample id %s != job sample id %s", receipt.SampleID, job.SampleID)
 	}
 
+	// The resolver has just written the dependency tree into this workspace,
+	// and the deferred cleanup above is about to delete it along with the
+	// workspace. Every verification did this and none of it was ever kept: the
+	// network knew a sample for 1,766 of 3,138 public coordinates and a
+	// dependency tree for 563, because edges arrived only from people running
+	// `csx run` on their own projects.
+	//
+	// The receipt cannot carry the tree — SigningBytes canonicalises the whole
+	// struct, so a new field would make every peer on an older build compute
+	// different signing bytes and reject a receipt that is perfectly valid.
+	// The caller holds the database, so it reads the tree here and sends it by
+	// the wire path that already exists for edges.
+	cv.reportResolvedTree(ctx, dir, m, receipt)
+
 	payload, err := json.Marshal(receipt)
 	if err != nil {
 		return zero, err
