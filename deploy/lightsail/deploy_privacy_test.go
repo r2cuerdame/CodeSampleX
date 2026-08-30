@@ -53,7 +53,13 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		// rest of the program; and because Windows PowerShell writes the
 		// console encoding's BOM ahead of it, which silently disabled the
 		// `set -eu` on line 1. See the comment above Invoke-RemoteScript.
-		`$remoteRunner = 'f=$(mktemp); { printf ''#''; cat; } >$f; sh $f </dev/null; r=$?; rm -f $f; exit $r'`,
+		// Fail-closed. The form this replaced continued past a failed mktemp
+		// and a failed redirection and returned 0, so a deploy that staged
+		// nothing would have been recorded as a successful rollout.
+		// TestTheRemoteRunnerIsFailClosed runs it and pins the exit codes;
+		// this pin is the other half — the invocation stays a fixed string
+		// rather than something a caller can shape.
+		`$remoteRunner = 'set -e; f=$(mktemp) || exit 91; case $f in *[!A-Za-z0-9./_-]*) exit 94;; esac; trap "rm -f $f" EXIT; { printf "#"; cat; } > $f || exit 92; head -n 1 $f | grep -q CSX-SCRIPT-V1 || exit 93; sh $f < /dev/null'`,
 		`$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'`,
 		`(New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1` + "`" + `n" + $Script)`,
 		`Invoke-RemoteScript $caddyConfigPreflight`,

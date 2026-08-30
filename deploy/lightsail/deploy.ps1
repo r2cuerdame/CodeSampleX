@@ -102,7 +102,29 @@ function Invoke-RemoteScript([string]$Script) {
     $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1`n" + $Script)
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $sshExecutable
-    $remoteRunner = 'f=$(mktemp); { printf ''#''; cat; } >$f; sh $f </dev/null; r=$?; rm -f $f; exit $r'
+    # Fail-closed, because the first version was not.
+    #
+    # `f=$(mktemp); { printf '#'; cat; } >$f; sh $f </dev/null` continues past
+    # both failures: with mktemp broken, $f is empty, the redirection fails,
+    # and `sh` with no argument reads an already-drained stdin and exits 0.
+    # Demonstrated against the production host with TMPDIR pointed at a
+    # missing directory — mktemp and the redirection both printed errors and
+    # the whole thing still returned 0. A deploy that staged nothing, promoted
+    # nothing and took no lock would have been recorded as a successful
+    # rollout.
+    #
+    # Each step now stops the run and says which one failed:
+    #   91  mktemp produced no file
+    #   92  the program could not be written to it
+    #   93  what landed is not the program we sent (the marker is missing)
+    #   94  the temp path holds a character that would need quoting
+    # and anything else is the remote program's own exit code, which `set -e`
+    # carries out and the EXIT trap cleans up behind without replacing.
+    #
+    # 94 rather than quoting: the runner crosses Windows argv inside double
+    # quotes, so a nested `"$f"` would end the argument. Refusing a path that
+    # would need quoting is checkable here; mktemp does not produce one.
+    $remoteRunner = 'set -e; f=$(mktemp) || exit 91; case $f in *[!A-Za-z0-9./_-]*) exit 94;; esac; trap "rm -f $f" EXIT; { printf "#"; cat; } > $f || exit 92; head -n 1 $f | grep -q CSX-SCRIPT-V1 || exit 93; sh $f < /dev/null'
     $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
