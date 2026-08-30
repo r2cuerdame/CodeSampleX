@@ -46,7 +46,16 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	for _, required := range []string{
 		`function Invoke-RemoteScript([string]$Script)`,
 		`$process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)`,
-		`$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "sh -s"'`,
+		// The remote runner is a fixed string, not built from anything a
+		// caller supplies — that is what this pin is for. It stopped being
+		// `sh -s` because a program read from stdin shares that stdin with
+		// the `docker compose exec` calls inside it, which on a pipe eat the
+		// rest of the program; and because Windows PowerShell writes the
+		// console encoding's BOM ahead of it, which silently disabled the
+		// `set -eu` on line 1. See the comment above Invoke-RemoteScript.
+		`$remoteRunner = 'f=$(mktemp); { printf ''#''; cat; } >$f; sh $f </dev/null; r=$?; rm -f $f; exit $r'`,
+		`$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'`,
+		`(New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1` + "`" + `n" + $Script)`,
 		`Invoke-RemoteScript $caddyConfigPreflight`,
 		`Invoke-RemoteScript $promoteCaddy`,
 		`Invoke-RemoteScript $safeAccessLogSmoke`,
