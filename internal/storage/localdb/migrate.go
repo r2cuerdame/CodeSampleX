@@ -95,6 +95,25 @@ var ddl = []string{
 	`CREATE TABLE IF NOT EXISTS proposals(
 	  workdir TEXT PRIMARY KEY, goal TEXT NOT NULL, packages TEXT NOT NULL,
 	  created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending')`,
+	// Evidence the server has decided it will never accept.
+	//
+	// A refusal used to be restored to pending and sent again on the next
+	// sync, forever: production measured 7,432 batches sent, 852 refused, and
+	// the pending queue pinned at its 1,000 cap by the same refusals coming
+	// back. Dropping them silently would have been worse — that is evidence
+	// disappearing with nothing to say it ever existed — so a terminal
+	// refusal stops being retried and becomes a row here instead.
+	//
+	// It records what the batch was ABOUT, not the batch: purl, symbol,
+	// environment hash, stage and result are the coordinate, and they are the
+	// same fields the observation itself carries. No path, no source, no
+	// local identity.
+	`CREATE TABLE IF NOT EXISTS refused_evidence(
+	  epoch TEXT NOT NULL, purl TEXT NOT NULL, symbol TEXT NOT NULL DEFAULT '',
+	  env_hash TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '',
+	  result TEXT NOT NULL DEFAULT '', code TEXT NOT NULL DEFAULT '',
+	  reason TEXT NOT NULL DEFAULT '', refused_at TEXT NOT NULL,
+	  PRIMARY KEY(epoch, purl, symbol, env_hash, stage, result))`,
 }
 
 // migrate applies the schema; every statement is IF NOT EXISTS so repeated

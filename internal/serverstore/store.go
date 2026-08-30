@@ -18,7 +18,41 @@ import (
 type RejectedBatch struct {
 	Index  int    `json:"index"`
 	Reason string `json:"reason"`
+	// Code is the stable machine-readable reason. Reason stays free text for
+	// a human; a client deciding what to do with a refusal must not have to
+	// parse it, and one that did would break the first time the wording was
+	// improved.
+	Code string `json:"code,omitempty"`
+	// Terminal says this exact payload will be refused again however many
+	// times it is sent. A client may stop retrying only when the server says
+	// so — never on its own reading of a status line or a string.
+	//
+	// Production measured 7,432 batches sent, 852 refused, and a pending
+	// queue pinned at its 1,000 cap: the same refusals came back every sync
+	// because nothing could tell "the server has decided" from "the server
+	// could not decide yet". Absent means retryable, which is what an older
+	// server's reply reads as.
+	Terminal bool `json:"terminal,omitempty"`
 }
+
+// Rejection codes. They are part of the wire contract: a client keys its
+// retry decision on these, so they are added to rather than reworded.
+const (
+	// RejectInvalidBatch is a payload that does not satisfy the batch
+	// contract. Terminal: the same bytes cannot become valid by waiting.
+	RejectInvalidBatch = "invalid-batch"
+	// RejectNotPublic is an authoritative answer from the registry that the
+	// package is not public. Terminal.
+	RejectNotPublic = "not-public"
+	// RejectPublicnessUnknown is the server declining to store evidence about
+	// a package it has NOT been able to check — the per-request registry
+	// lookup budget ran out, or no checker is configured. Retryable, and the
+	// distinction is the whole point: UNKNOWN is treated as private for
+	// STORAGE, which is the safe default, but it is not a decision about the
+	// package and a client that dropped it would be discarding evidence about
+	// a public package the server merely had no budget to confirm.
+	RejectPublicnessUnknown = "publicness-unknown"
+)
 
 // PackageRow is one packages-table row.
 type PackageRow struct {

@@ -82,6 +82,7 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 	// are not retried: the server refused this exact payload and would
 	// refuse it again.
 	var refused []rejectedBatch
+	refusedTerminal := 0
 	for pass := 0; pass < maxUploadPasses; pass++ {
 		batches, keys, err := b.build(ctx)
 		if err != nil {
@@ -140,7 +141,29 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 					continue
 				}
 				seen[rejection.Index] = true
-				if err := b.DB.RecordObservation(restore, chunkKeys[rejection.Index], 0); err != nil {
+				key := chunkKeys[rejection.Index]
+				// A refusal the server calls terminal is not restored to
+				// pending. Restoring it is what pinned production's queue at
+				// its 1,000 cap: 852 refusals came back every sync, crowded
+				// out the batches that would have been accepted, and made a
+				// real delivery failure indistinguishable from a server
+				// decision.
+				//
+				// It is not dropped either — evidence that vanishes with
+				// nothing to say it existed is the larger reliability problem
+				// — so it becomes a tombstone carrying the coordinate, the
+				// code and the time. The client never decides this: only the
+				// server's own terminal flag stops a retry, so a network
+				// error, a timeout, a 5xx or anything it cannot classify
+				// keeps its retry semantics untouched.
+				if rejection.Terminal {
+					if err := b.DB.RecordRefusedEvidence(restore, key, rejection.Code, rejection.Reason); err != nil {
+						return sent, fmt.Errorf("evidence: record refused batch %d: %w", rejection.Index, err)
+					}
+					refusedTerminal++
+					continue
+				}
+				if err := b.DB.RecordObservation(restore, key, 0); err != nil {
 					return sent, fmt.Errorf("evidence: restore refused batch %d: %w", rejection.Index, err)
 				}
 			}
@@ -156,7 +179,12 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 		// Do not immediately retry a payload the server refused. Finish every
 		// chunk from this drain, then leave the refused rows pending for the
 		// next scheduled pass and report the refusal to the caller.
-		if len(refused) > 0 {
+		//
+		// Terminal refusals are not pending any more — they are tombstoned —
+		// so a drain that met only those keeps going. Stopping on them is how
+		// a backlog of permanently-refused batches blocked the valid ones
+		// behind it from ever being reached.
+		if len(refused) > refusedTerminal {
 			return sent, rejectionError(refused)
 		}
 	}
@@ -229,12 +257,19 @@ func (b *Batcher) markLegacyWindowsReconciled(ctx context.Context, original loca
 }
 
 // rejectedBatch is one refused batch of an ingest reply, mirroring the C5
-// wire shape {index, reason}. It is declared here rather than imported from
-// the server package: this is a client, and the only thing it shares with
-// the server is the protocol.
+// wire shape {index, reason, code, terminal}. It is declared here rather than
+// imported from the server package: this is a client, and the only thing it
+// shares with the server is the protocol.
+//
+// Terminal is the server saying this exact payload will be refused again
+// however often it is sent. Absent — which is what an older server's reply
+// looks like — means retryable, so a client talking to one behaves exactly as
+// it did before.
 type rejectedBatch struct {
-	Index  int    `json:"index"`
-	Reason string `json:"reason"`
+	Index    int    `json:"index"`
+	Reason   string `json:"reason"`
+	Code     string `json:"code"`
+	Terminal bool   `json:"terminal"`
 }
 
 // rejectionError turns refused batches into one non-fatal error, so the

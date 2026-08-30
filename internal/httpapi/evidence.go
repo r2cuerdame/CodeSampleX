@@ -78,16 +78,37 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, b := range req.Batches {
 		if err := serverstore.ValidateBatch(b); err != nil {
-			rejected = append(rejected, serverstore.RejectedBatch{Index: i, Reason: err.Error()})
+			rejected = append(rejected, serverstore.RejectedBatch{
+				Index: i, Reason: err.Error(),
+				Code: serverstore.RejectInvalidBatch, Terminal: true,
+			})
 			continue
 		}
 		if !a.trustMode() {
 			p, _ := domain.ParsePURL(b.Package) // parse checked by ValidateBatch
 			if status := publicness(p); status != scanner.PublicnessPublic {
-				// UNKNOWN is treated as private — the safe default (§25.E).
-				rejected = append(rejected, serverstore.RejectedBatch{
+				// UNKNOWN is treated as private — the safe default (§25.E) —
+				// but it is not the same ANSWER as private, and the client
+				// has to be able to tell them apart.
+				//
+				// PRIVATE is the registry's decision and will not change by
+				// being asked again. UNKNOWN is this server declining to
+				// store what it could not check: the per-request lookup
+				// budget ran out, or no checker is configured. A client that
+				// treated that as final would discard evidence about a public
+				// package nobody had got around to confirming — and
+				// production is exactly where that happens, because the
+				// budget is per request and the backlog is thousands of
+				// batches deep.
+				rej := serverstore.RejectedBatch{
 					Index: i, Reason: "package is not public (" + status + ")",
-				})
+					Code: serverstore.RejectNotPublic, Terminal: true,
+				}
+				if status != scanner.PublicnessPrivate {
+					rej.Reason = "package publicness not determined (" + status + ")"
+					rej.Code, rej.Terminal = serverstore.RejectPublicnessUnknown, false
+				}
+				rejected = append(rejected, rej)
 				continue
 			}
 			// A dependsOn child is a package name too, and the gate above
