@@ -123,10 +123,7 @@ func (f *fakeStore) withRelease(it SampleListItem) SampleListItem {
 }
 
 // derivedFindings lets a test hand the findings page machine-derived rows.
-func (f *fakeStore) DerivedFindings(_ context.Context, limit int) ([]DerivedFinding, error) {
-	if limit < len(f.derived) {
-		return f.derived[:limit], nil
-	}
+func (f *fakeStore) DerivedFindings(_ context.Context) ([]DerivedFinding, error) {
 	return f.derived, nil
 }
 

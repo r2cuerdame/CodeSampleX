@@ -146,7 +146,6 @@
   "findings.basis_docs": "Source officielle",
   "findings.basis_sample": "Contrat d'échantillon",
   "findings.believed": "On croit",
-  "findings.capped": "Cette liste est à son plafond ; les découvertes dérivées plus anciennes ne sont pas affichées.",
   "findings.contract": "Le contract qui le prouve",
   "findings.count": "%d constats sur %d écosystèmes.",
   "findings.filter_note": "Le système et le runtime viennent de l'environnement enregistré par l'échantillon ; les dimensions absentes sont exclues.",

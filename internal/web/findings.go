@@ -484,7 +484,6 @@ type findingsPage struct {
 	PrevHref         string
 	NextHref         string
 	Empty            bool
-	Capped           bool
 	GrowingHref      string
 	CuratedHref      string
 	EcosystemOptions []filterOption
@@ -570,15 +569,25 @@ func (f finding) ShortID() string {
 	return id
 }
 
-// derivedCap bounds how many derived findings the page will hold in memory
-// at once. It is a ceiling on the whole collection, not on what is shown:
-// the page pages through them.
+// The page used to ask for at most derivedCap = 2000 derived findings and
+// keep the prefix. R2C-133's product rule is that a durable finding must not
+// vanish merely because the corpus grew, and a newest-N read is exactly what
+// that forbids: past two thousand findings the oldest stopped being reachable
+// at all. The store side had already been fixed to keyset-page the belief
+// samples instead of reading the newest two thousand of them; the window had
+// simply moved one layer up, from samples to findings, where production's 545
+// of 2,000 kept it in the future rather than in view.
 //
-// Filtering and paging happen in memory over this cache, which is honest at
-// today's scale (hundreds) and stops being so somewhere past a thousand,
-// where the search belongs in SQL against the manifest column. When that
-// day comes the handler changes and this comment is the reason why.
-const derivedCap = 2000
+// There is no count ceiling now. The scan is still bounded per query — the
+// store pages the belief subset 500 rows at a time — and it runs off the
+// request path behind a five-minute cache, which is what "avoid O(all corpus)
+// work on every request" asks for. What is no longer bounded is the ANSWER,
+// and that is the point.
+//
+// Filtering and paging still happen in memory over this cache, which is
+// honest at today's scale (hundreds) and stops being so somewhere past a
+// thousand, where the search belongs in SQL against the manifest column. When
+// that day comes the handler changes and this comment is the reason why.
 
 // findingsPerPage is how many derived findings one page shows.
 const findingsPerPage = 25
@@ -637,7 +646,7 @@ func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
 	// deadline also covers waiting to acquire its own lane.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	rows, err := s.d.Store.DerivedFindings(ctx, derivedCap)
+	rows, err := s.d.Store.DerivedFindings(ctx)
 	if err == nil {
 		out := make([]finding, 0, len(rows))
 		for _, d := range rows {
@@ -802,7 +811,6 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	derived := s.derivedFindings(r)
-	rawDerivedTotal := len(derived)
 
 	// A query searches EVERYTHING, hand-written groups included. Someone
 	// typing "timeout" wants the finding about timeouts, and which of three
@@ -892,9 +900,6 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	if view.HasFilters && view.Total == 0 {
 		view.Empty = true
 	}
-	// Only meaningful when the cache is full: at that point the page really
-	// is not showing everything published, and must say so.
-	view.Capped = rawDerivedTotal >= derivedCap
 
 	s.render(w, "findings", http.StatusOK, view)
 }

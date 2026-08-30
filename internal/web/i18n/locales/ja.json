@@ -146,7 +146,6 @@
   "findings.basis_docs": "公式情報源",
   "findings.basis_sample": "サンプル契約",
   "findings.believed": "信じられていること",
-  "findings.capped": "この一覧は上限に達している。古い派生発見は表示されない。",
   "findings.contract": "それを証明する contract",
   "findings.count": "%d 件の発見、%d 個のエコシステム。",
   "findings.filter_note": "OS とランタイムはリンク先サンプルに記録された環境です。その項目がない記録は選択時に除外されます。",

@@ -485,10 +485,14 @@ const derivedFindingPage = 500
 // judgement that cannot be made in SQL: whether a contract line reads as
 // prose a stranger can learn from. The result is cached by the caller, so
 // this runs on a timer, not on a request.
-func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.DerivedFinding, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
+// DerivedFindings walks the whole belief subset, not a window of it.
+//
+// The scan is bounded per query — ListVerifiedBeliefSamples narrows to
+// non-quarantined samples with a contract PASS and a stated belief, and this
+// pages it derivedFindingPage rows at a time — but the result is every finding
+// the corpus holds. R2C-133: a durable finding must not vanish because newer
+// samples arrived, and any count ceiling here reintroduces exactly that.
+func (w *webStore) DerivedFindings(ctx context.Context) ([]web.DerivedFinding, error) {
 	var out []web.DerivedFinding
 	var cursor serverstore.SampleCursor
 	for {
@@ -524,9 +528,6 @@ func (w *webStore) DerivedFindings(ctx context.Context, limit int) ([]web.Derive
 				Runtime:     web.RecordEnvironmentRuntime(m.Environment),
 				Environment: web.RecordEnvironmentSummary(m.Environment),
 			})
-			if len(out) >= limit {
-				return out, nil
-			}
 		}
 		if len(rows) < derivedFindingPage {
 			return out, nil

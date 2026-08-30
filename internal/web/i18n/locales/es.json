@@ -146,7 +146,6 @@
   "findings.basis_docs": "Fuente oficial",
   "findings.basis_sample": "Contrato de muestra",
   "findings.believed": "Se cree",
-  "findings.capped": "Esta lista está en su tope; los hallazgos derivados más antiguos no se muestran.",
   "findings.contract": "El contract que lo demuestra",
   "findings.count": "%d hallazgos en %d ecosistemas.",
   "findings.filter_note": "El sistema y el runtime proceden del entorno registrado por la muestra; al filtrar se omiten los datos ausentes.",

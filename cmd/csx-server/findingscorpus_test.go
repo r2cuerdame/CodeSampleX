@@ -74,7 +74,7 @@ func TestDerivedFindingsSurviveCorpusGrowthPastAnyScanWindow(t *testing.T) {
 			plainManifest(fmt.Sprintf("newlib%05d", i)), base.Add(time.Duration(1000+i)*time.Minute))
 	}
 
-	findings, err := w.DerivedFindings(ctx, 2000)
+	findings, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestDerivedFindingsSurviveCorpusGrowthPastAnyScanWindow(t *testing.T) {
 		saveVerified(t, store, fmt.Sprintf("sha256:more-plain-%05d", i),
 			plainManifest(fmt.Sprintf("morelib%05d", i)), base.Add(time.Duration(9000+i)*time.Minute))
 	}
-	grown, err := w.DerivedFindings(ctx, 2000)
+	grown, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestDerivedFindingsSurviveCorpusGrowthPastAnyScanWindow(t *testing.T) {
 	// A new finding raises it.
 	saveVerified(t, store, "sha256:new-finding", findingManifest("freshlib"),
 		base.Add(20000*time.Minute))
-	added, err := w.DerivedFindings(ctx, 2000)
+	added, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestDerivedFindingsSurviveCorpusGrowthPastAnyScanWindow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	unproved, err := w.DerivedFindings(ctx, 2000)
+	unproved, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestDerivedFindingsSurviveCorpusGrowthPastAnyScanWindow(t *testing.T) {
 	if err := store.SetSampleQuarantine(ctx, "sha256:old-finding-00", true, "takedown"); err != nil {
 		t.Fatal(err)
 	}
-	after, err := w.DerivedFindings(ctx, 2000)
+	after, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestDerivedFindingsPageThroughEveryEligibleSampleExactlyOnce(t *testing.T) 
 			findingManifest(fmt.Sprintf("lib%05d", i)), base.Add(time.Duration(i)*time.Minute))
 	}
 
-	findings, err := w.DerivedFindings(ctx, 5000)
+	findings, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,12 +179,19 @@ func TestDerivedFindingsPageThroughEveryEligibleSampleExactlyOnce(t *testing.T) 
 		t.Fatalf("last finding = %s, want the oldest", findings[len(findings)-1].SampleID)
 	}
 
-	// limit still bounds the answer, and takes the newest.
-	capped, err := w.DerivedFindings(ctx, 600)
+	// Nothing bounds the answer any more. This block used to assert that a
+	// limit took the newest 600 — and since the walk is newest-first, that is
+	// precisely the cut R2C-133 forbids: the oldest durable findings were the
+	// ones it dropped. The scan is still bounded per query by the store's
+	// keyset paging and runs off the request path; the ANSWER is not.
+	again, err := w.DerivedFindings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(capped) != 600 || capped[0].SampleID != findings[0].SampleID {
-		t.Fatalf("capped findings = %d starting at %s", len(capped), capped[0].SampleID)
+	if len(again) != total {
+		t.Fatalf("a second walk returned %d findings, want all %d", len(again), total)
+	}
+	if again[len(again)-1].SampleID != "sha256:finding-00000" {
+		t.Fatalf("the oldest finding was dropped: last = %s", again[len(again)-1].SampleID)
 	}
 }

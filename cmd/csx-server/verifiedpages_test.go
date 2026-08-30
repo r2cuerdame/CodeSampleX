@@ -40,7 +40,7 @@ func TestPackageSamplesAndDerivedFindingsRequireContractPass(t *testing.T) {
 	if err != nil || len(samples) != 1 || samples[0].SampleID != "sha256:proved" {
 		t.Fatalf("package samples = %+v, err=%v", samples, err)
 	}
-	findings, err := w.DerivedFindings(ctx, 25)
+	findings, err := w.DerivedFindings(ctx)
 	if err != nil || len(findings) != 1 || findings[0].SampleID != "sha256:proved" {
 		t.Fatalf("derived findings = %+v, err=%v", findings, err)
 	}

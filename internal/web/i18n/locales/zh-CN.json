@@ -146,7 +146,6 @@
   "findings.basis_docs": "官方来源",
   "findings.basis_sample": "样本契约",
   "findings.believed": "普遍认为",
-  "findings.capped": "此列表已达上限，较早的派生发现未予显示。",
   "findings.contract": "证明它的 contract",
   "findings.count": "%d 条发现，覆盖 %d 个生态。",
   "findings.filter_note": "操作系统和运行时来自所链接样本记录的环境；缺少该维度的条目会在筛选时排除。",

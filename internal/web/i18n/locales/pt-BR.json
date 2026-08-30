@@ -146,7 +146,6 @@
   "findings.basis_docs": "Fonte oficial",
   "findings.basis_sample": "Contrato da amostra",
   "findings.believed": "Acredita-se",
-  "findings.capped": "Esta lista está no seu teto; achados derivados mais antigos não são exibidos.",
   "findings.contract": "O contract que prova isso",
   "findings.count": "%d achados em %d ecossistemas.",
   "findings.filter_note": "O sistema e o runtime vêm do ambiente registrado pela amostra; dimensões ausentes são excluídas ao filtrar.",

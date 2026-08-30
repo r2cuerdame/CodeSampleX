@@ -146,7 +146,6 @@
   "findings.basis_docs": "Official source",
   "findings.basis_sample": "Sample contract",
   "findings.believed": "Believed",
-  "findings.capped": "This list is held at its ceiling; older derived findings are not shown.",
   "findings.contract": "The contract that proves it",
   "findings.count": "%d findings across %d ecosystems.",
   "findings.filter_note": "OS and runtime come from the environment recorded by the linked sample. Entries without that dimension are omitted when you select it.",

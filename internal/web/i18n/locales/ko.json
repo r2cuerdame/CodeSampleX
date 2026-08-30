@@ -146,7 +146,6 @@
   "findings.basis_docs": "공식 출처",
   "findings.basis_sample": "샘플 컨트랙트",
   "findings.believed": "믿는 것",
-  "findings.capped": "이 목록은 상한에 걸려 있다. 오래된 파생 발견은 표시되지 않는다.",
   "findings.contract": "이를 증명하는 contract",
   "findings.count": "%d개 발견, %d개 생태계.",
   "findings.filter_note": "운영체제와 런타임은 연결된 샘플에 실제 기록된 환경을 기준으로 합니다. 해당 값이 없는 항목은 필터 선택 시 제외됩니다.",

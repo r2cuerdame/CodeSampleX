@@ -33,7 +33,7 @@ type panickingFindingsStore struct {
 	manifestCalls atomic.Int64
 }
 
-func (s *panickingFindingsStore) DerivedFindings(context.Context, int) ([]DerivedFinding, error) {
+func (s *panickingFindingsStore) DerivedFindings(context.Context) ([]DerivedFinding, error) {
 	s.derivedCalls.Add(1)
 	panic("derived store panic")
 }
@@ -64,7 +64,7 @@ func refreshDeadline(ctx context.Context) time.Duration {
 	return time.Until(deadline)
 }
 
-func (s *blockingFindingsStore) DerivedFindings(ctx context.Context, limit int) ([]DerivedFinding, error) {
+func (s *blockingFindingsStore) DerivedFindings(ctx context.Context) ([]DerivedFinding, error) {
 	s.derivedCalls.Add(1)
 	select {
 	case s.derivedStarted <- refreshDeadline(ctx):
@@ -79,7 +79,7 @@ func (s *blockingFindingsStore) DerivedFindings(ctx context.Context, limit int) 
 	}
 	select {
 	case <-s.release:
-		return s.fakeStore.DerivedFindings(ctx, limit)
+		return s.fakeStore.DerivedFindings(ctx)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

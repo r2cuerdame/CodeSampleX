@@ -74,7 +74,6 @@
   <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
   <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
   {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
-  {{if .Capped}}<p class="note dim small">{{.T "findings.capped"}}</p>{{end}}
   <ol class="findings">
   {{- range .Derived}}
     <li class="finding panel">
