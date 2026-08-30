@@ -178,6 +178,11 @@ func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) 
 		dependency := dependencyUnknown
 		if resolved[purl] {
 			dependency = dependencyGraph
+		} else if f.resolvedNone[[3]string{pkg.Ecosystem, pkg.Name, pkg.Version}] {
+			// A resolver read this release's own entry and it declared
+			// nothing. Answered, not open: leaving it unknown is what kept
+			// 490 production coordinates permanently in the gap.
+			dependency = dependencyProvenNone
 		}
 		// A passing receipt is evidence in its own right. It also proves that a
 		// sample exists, so a verified coordinate must never be reported as

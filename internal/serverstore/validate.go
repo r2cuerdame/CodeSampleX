@@ -115,6 +115,11 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err := validCoresident(b.Coresident); err != nil {
 		return err
 	}
+	// A batch cannot both list dependencies and claim there are none. One of
+	// the two is wrong and the store must not have to guess which.
+	if b.DependsOnNone && len(b.DependsOn) > 0 {
+		return fmt.Errorf("dependsOnNone is set alongside %d dependsOn entries", len(b.DependsOn))
+	}
 	if err := validDependsOn(p, b.DependsOn); err != nil {
 		return err
 	}

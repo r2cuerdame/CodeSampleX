@@ -205,6 +205,25 @@ func ingestOne(ctx context.Context, tx pgx.Tx, b domain.ObservationBatch) error 
 		return err
 	}
 
+	// "Resolved, and it declares nothing." Only the machine that held the
+	// lockfile can say this, and the axis cannot infer it: an absent edge is
+	// also what an unscanned ecosystem and a missing lockfile look like.
+	// Without it a leaf can never be answered, because the axis reads
+	// dependency_edge for a PARENT and a leaf is never one.
+	if b.ProjectBucket != "" && b.DependsOnNone && b.Symbol == "" {
+		if parent, err := domain.ParsePURL(b.Package); err == nil && parent.Version != "" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO dependency_resolution
+					(ecosystem, name, version, bucket, epoch)
+				VALUES($1,$2,$3,$4,$5)
+				ON CONFLICT (ecosystem, name, version, bucket, epoch)
+				DO UPDATE SET last_seen = now()`,
+				parent.Ecosystem, parent.Name, parent.Version, b.ProjectBucket, b.Epoch); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Who pulled what, one row per (edge, project, day). The server cannot
 	// derive this: a batch carries one package, so a resolution arrives
 	// already shredded.
@@ -1266,6 +1285,20 @@ func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset 
 		return rows.Err()
 	})
 	return out, total, err
+}
+
+// DependencyProvenNone reports whether a resolver read this release's own
+// entry and found that it declares no dependencies.
+func (p *PG) DependencyProvenNone(ctx context.Context, ecosystem, name, version string) (bool, error) {
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1 FROM dependency_resolution
+			  WHERE ecosystem=$1 AND name=$2 AND version=$3)`,
+			ecosystem, name, version).Scan(&found)
+	})
+	return found, err
 }
 
 func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error {

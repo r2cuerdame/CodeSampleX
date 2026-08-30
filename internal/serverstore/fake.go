@@ -26,6 +26,10 @@ type Fake struct {
 	// (library, pair), holding the project-days that saw it and whether a
 	// build failed there with a named cause.
 	coresidence map[coresKey]map[string]bool
+	// resolvedNone mirrors dependency_resolution: coordinates a resolver read
+	// and found no dependencies for. Kept apart from edges because it is the
+	// absence of any, not a relationship with a missing end.
+	resolvedNone map[[3]string]bool
 	// edges mirrors dependency_edge: one entry per relationship, holding the
 	// project-days that saw it.
 	edges map[edgeKey]map[string]bool
@@ -122,6 +126,7 @@ func NewFake() *Fake {
 		aggMeta:         map[aggKey]*fakeAggMeta{},
 		coresidence:     map[coresKey]map[string]bool{},
 		edges:           map[edgeKey]map[string]bool{},
+		resolvedNone:    map[[3]string]bool{},
 		packages:        map[string]PackageRow{},
 		snapshots:       map[[2]string]string{},
 		snapshotAt:      map[[2]string]time.Time{},
@@ -221,6 +226,14 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 			}
 			f.coresidence[ck][projectDay] = f.coresidence[ck][projectDay] ||
 				batchNamesAnAttributedFailure(b)
+		}
+	}
+	// "Resolved, and it declares nothing." Only the machine that held the
+	// lockfile can say this, and without it a leaf is indistinguishable from a
+	// coordinate nobody has looked at.
+	if b.ProjectBucket != "" && b.DependsOnNone && b.Symbol == "" {
+		if p, err := domain.ParsePURL(b.Package); err == nil && p.Version != "" {
+			f.resolvedNone[[3]string{p.Ecosystem, p.Name, p.Version}] = true
 		}
 	}
 	// Who pulled what, one entry per project-day.
@@ -1640,6 +1653,17 @@ func (f *Fake) Dependants(_ context.Context, ecosystem, name string) ([]Dependen
 // Upgrade a library and its dependencies move under you; the one that moved
 // is usually the one that broke the build. Same table as Dependants, read
 // from the parent end.
+// DependencyProvenNone reports whether a resolver read this release's own
+// entry and found that it declares no dependencies.
+//
+// Distinct from "no edges recorded", which is also what an ecosystem with no
+// scanner and a scan that never found a lockfile both look like.
+func (f *Fake) DependencyProvenNone(_ context.Context, ecosystem, name, version string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resolvedNone[[3]string{ecosystem, name, version}], nil
+}
+
 func (f *Fake) Dependencies(_ context.Context, ecosystem, name string) ([]DependencyEdge, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

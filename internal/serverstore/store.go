@@ -488,6 +488,11 @@ type Store interface {
 	// upgrade a library and its dependencies move under you, and the one that
 	// moved is usually the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// DependencyProvenNone reports whether a resolver read this release's own
+	// entry and found that it declares no dependencies. Distinct from "no
+	// edges recorded", which is also what an ecosystem with no scanner and a
+	// scan that never found a lockfile both look like.
+	DependencyProvenNone(ctx context.Context, ecosystem, name, version string) (bool, error)
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier
