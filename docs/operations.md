@@ -289,6 +289,31 @@ Each active row has a per-worker re-copy action. Because plaintext bearers are
 never stored, re-copy atomically rotates that worker to a newly generated token,
 copies a fresh complete prompt and CLI command, and invalidates the old command.
 
+### Several homes on one machine
+
+Give each home its own `CSX_HOME` and nothing else: since v0.1.70 a daemon
+whose configured port is already taken binds an ephemeral one and publishes it
+in `$CSX_HOME/daemon.addr`, which is how every client finds it anyway.
+
+Before that, it could not. Every home carries the same default `daemonPort`, so
+only the FIRST daemon on a machine bound it and the rest exited on `listen
+tcp`. That is not a missing status endpoint: the upload loop, the syncer and
+the verification loop all live inside a running daemon, so those homes stopped
+draining their own evidence entirely. And a client with no published address
+fell back to that same shared port, so `csx stats`, `csx search`, `csx sync`
+and the build-failure hook for those homes were answered by whichever daemon
+did get it — from a store that was not theirs.
+
+On a farm node with three worker slots plus a default home that was the normal
+state, not an edge case. It was reported as all four homes showing identical
+numbers — 28/14 hits, 6 known packages, 0 batches — which is indistinguishable
+from three stores that had been wiped, and was read as one. Nothing had been
+wiped: `Home()` is `$CSX_HOME` or `~/.csx` with no migration, `config.Load`
+never rewrites, and the updater removes only staged binaries and locks.
+
+Assigning each home a distinct `daemonPort` still works and is still honoured;
+it is simply no longer required.
+
 Re-run the authenticated status-only smoke at any time with:
 
 ```powershell

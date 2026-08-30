@@ -162,7 +162,7 @@ func TestDockerRunnerArgs(t *testing.T) {
 func TestDockerRunnerImages(t *testing.T) {
 	cases := map[string]string{
 		"npm":    pinned("node:22-alpine"),
-		"pypi":   pinned("python:3.12-alpine"),
+		"pypi":   pinned("python:3.12-slim"),
 		"golang": pinned("golang:1.26-alpine"),
 		"cargo":  pinned("rust:1-alpine"),
 		"maven":  mavenJavaImage,
@@ -327,8 +327,8 @@ func TestPythonRuntimeVersionPicksPinnedImageAndReceipt(t *testing.T) {
 	for _, tc := range []struct {
 		version, wantImage, wantReceipt string
 	}{
-		{"", pinned("python:3.12-alpine"), "3.12"},
-		{"3.12", pinned("python:3.12-alpine"), "3.12"},
+		{"", pinned("python:3.12-slim"), "3.12"},
+		{"3.12", pinned("python:3.12-slim"), "3.12"},
 		{"3.14", python314Image, "3.14"},
 	} {
 		m := manifest(tc.version)
@@ -341,7 +341,11 @@ func TestPythonRuntimeVersionPicksPinnedImageAndReceipt(t *testing.T) {
 		if env.Runtime != "python" || env.RuntimeVersion != tc.wantReceipt || env.ExecutionContext != "python" {
 			t.Errorf("python %q receipt runtime = %+v", tc.version, env)
 		}
-		if env.OS != "linux" || env.OSVersionBucket != "alpine" || env.Libc != "musl" {
+		// Debian, not Alpine. musl rejects manylinux wheels — the format
+		// essentially every compiled PyPI package ships in — so the Alpine
+		// lane could not install them at all, which is what eight defect
+		// reports said and what a container run confirmed.
+		if env.OS != "linux" || env.OSVersionBucket != "debian" || env.Libc != "glibc" {
 			t.Errorf("python %q receipt base = %+v", tc.version, env)
 		}
 		if !ContainerSupportsRequirements(domain.WorkerRequirements{

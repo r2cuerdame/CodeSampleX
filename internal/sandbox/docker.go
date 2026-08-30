@@ -121,7 +121,7 @@ var (
 	chrome134Image  = pinned("ghcr.io/puppeteer/puppeteer:24.4.0")
 	mavenJavaImage  = pinned("maven:3.9.11-eclipse-temurin-21-alpine")
 	gradleJavaImage = pinned("gradle:8.14.3-jdk21-alpine")
-	python314Image  = pinned("python:3.14-alpine")
+	python314Image  = pinned("python:3.14-slim")
 )
 
 // javaVerifierImage is one line of the Java matrix. The base, distro and
@@ -251,7 +251,7 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, 
 		}
 		switch runtimeVersion {
 		case "", "3.12":
-			return pinned("python:3.12-alpine"), nil
+			return pinned("python:3.12-slim"), nil
 		case "3.14":
 			return python314Image, nil
 		default:
