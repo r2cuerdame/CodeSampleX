@@ -170,26 +170,22 @@ func (p *PG) farmCompletenessNow(ctx context.Context, statementTimeout time.Dura
 			             THEN 'E' ELSE '-' END)
 			    || (CASE WHEN EXISTS (SELECT 1 FROM resolved_parents d WHERE d.purl=pk.purl)
 			             THEN 'D' ELSE '-' END) AS state,
+			       pk.ecosystem, pk.name,
 			       count(*)
 			FROM packages pk
 			WHERE pk.version<>'' AND pk.publicness='PUBLIC'
-			GROUP BY 1`)
+			GROUP BY 1,2,3`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var state string
+			var state, ecosystem, name string
 			var n int
-			if err := rows.Scan(&state, &n); err != nil {
+			if err := rows.Scan(&state, &ecosystem, &name, &n); err != nil {
 				return err
 			}
-			out.States[state] += n
-			if state[2] == 'D' {
-				out.DependencyGraph += n
-			} else {
-				out.DependencyUnknown += n
-			}
+			out.add(state, ecosystem, name, n)
 		}
 		return rows.Err()
 	})
