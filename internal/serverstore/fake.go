@@ -1365,6 +1365,15 @@ func (f *Fake) SearchSamplesPage(ctx context.Context, query string, limit, offse
 	return hits, total, nil
 }
 
+// CountSamples counts what ListSamplesPage can reach, over the same list.
+func (f *Fake) CountSamples(ctx context.Context) (int, error) {
+	all, err := f.ListSamples(ctx, 1<<30)
+	if err != nil {
+		return 0, err
+	}
+	return len(all), nil
+}
+
 func (f *Fake) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
 	// Every row, then the window. ListSamples(0) means "use the default",
 	// which is 50 -- so this paged through the newest 50 and returned

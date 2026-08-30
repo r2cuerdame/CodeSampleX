@@ -6,7 +6,7 @@
   <strong>{{.T "pkg.requested"}}</strong>
   <span>{{.T "pkg.requested_note"}}</span>
   <ul class="wanted-stub-list mono small">
-    {{range .Wanted}}<li>{{if .Version}}@{{.Version}}{{end}}{{if .Symbol}}{{if .Version}} · {{end}}{{.Symbol}}{{end}} · {{$.N .Asks}} {{$.T "wanted.asks"}}</li>{{end}}
+    {{range .Wanted}}<li>{{if .Version}}@{{.Version}}{{end}}{{if .Symbol}}{{if .Version}} · {{end}}{{.Symbol}}{{end}} · {{$.P "wanted.n_asks" .Asks}}</li>{{end}}
   </ul>
 </aside>
 {{end}}

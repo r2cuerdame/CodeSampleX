@@ -515,6 +515,13 @@ const (
 
 var findingTabValues = []string{tabGrowing, tabCurated}
 
+// hasFilters says the reader narrowed the page themselves. An empty result
+// they asked for is different from an empty page they walked into, and the
+// two must not be handled the same way.
+func (f findingsFilter) hasFilters() bool {
+	return f.Query != "" || f.Ecosystem != "" || f.OS != "" || f.Runtime != "" || f.Basis != ""
+}
+
 var findingBasisValues = []string{"docs", "belief", "sample"}
 
 func cleanFindingsFilter(f findingsFilter) findingsFilter {
@@ -833,9 +840,15 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		// is an authoring detail they never chose.
 	case filter.Tab == tabCurated:
 		derived = nil
-	case len(derived) == 0:
+	case len(derived) == 0 && !filter.hasFilters():
 		// Nothing has grown yet — an empty default tab would read as an
 		// empty page. The curated group is what there is, so it is shown.
+		//
+		// Only for a reader who filtered nothing. When somebody CHOSE this
+		// tab and narrowed it to nothing, moving them is not help: the
+		// active-tab marker and the "Clear filters" link both followed the
+		// flip, so the one escape hatch on an empty page led to a tab they
+		// never asked for. An empty result they caused is theirs to see.
 		filter.Tab = tabCurated
 	default:
 		documented, believed = nil, nil
@@ -879,7 +892,7 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		OSOptions:        osOptions(filter.OS),
 		RuntimeOptions:   runtimeOptions(filter.Runtime),
 		BasisOptions:     findingBasisOptions(lang, filter.Basis),
-		HasFilters:       filter.Query != "" || filter.Ecosystem != "" || filter.OS != "" || filter.Runtime != "" || filter.Basis != "",
+		HasFilters:       filter.hasFilters(),
 		ClearHref:        findingsHref(findingsFilter{Tab: filter.Tab}, 1, lang),
 		GrowingHref:      findingsHref(findingsFilter{Tab: tabGrowing}, 1, lang),
 		CuratedHref:      findingsHref(findingsFilter{Tab: tabCurated}, 1, lang),

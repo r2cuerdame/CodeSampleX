@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,5 +99,29 @@ func TestPagingKeepsTheSearch(t *testing.T) {
 	}
 	if got := samplesHref("", 1, "en"); got != "/samples" {
 		t.Errorf("the plain collection link is %q, want /samples", got)
+	}
+}
+
+// A stale deep link should land the reader on the last real page, the way
+// /records, /findings and /wanted all do. /samples alone sent them back to
+// page 1 with no explanation — so a bookmark into a collection that has since
+// grown quietly returns the newest samples instead of the ones near where the
+// reader was standing, and nothing on the page says it moved them.
+func TestAStalePageLandsOnTheLastRealPage(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	f.sampleList = nil
+	for i := 0; i < samplesPerPage+6; i++ { // two pages, the second part-full
+		f.sampleList = append(f.sampleList, SampleListItem{
+			SampleID: fmt.Sprintf("sha256:stale-%02d", i),
+			Goal:     "prove something",
+		})
+	}
+
+	res := get(t, mux, "/samples?page=99")
+	if res.Code != http.StatusFound {
+		t.Fatalf("status = %d, want a redirect for a page past the end", res.Code)
+	}
+	if got := res.Header().Get("Location"); got != samplesHref("", 2, "en") {
+		t.Errorf("Location = %q, want the last real page %q", got, samplesHref("", 2, "en"))
 	}
 }

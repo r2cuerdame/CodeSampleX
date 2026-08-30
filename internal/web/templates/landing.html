@@ -105,7 +105,11 @@
       <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
       <p class="dim small">{{.T "landing.findings_sub"}}</p>
     </div>
-    <a class="small" href="{{.WithLang "/findings"}}">{{.T "landing.findings_more"}}</a>
+    {{/* The teased entries come from the documented and believed groups, which
+         live behind the hand-checked tab. Linking to /findings sent a reader
+         who clicked the thing they just read about to a page that does not
+         contain it. */}}
+    <a class="small" href="{{.WithLang "/findings?tab=curated"}}">{{.T "landing.findings_more"}}</a>
   </div>
   <ul class="findinglist">
   {{- range .Findings}}
@@ -118,6 +122,21 @@
   </ul>
 </section>
 {{- end}}
+
+{{/* ADisAD placement, home page only.
+
+     The snippet inserts its own container immediately after itself, so this
+     tag's position IS the ad's position: mid-page, after the measured
+     findings and before the install block, where it interrupts neither the
+     lead nor the thing a reader came to check.
+
+     It reads no cookie and touches no storage; what it sends is this page's
+     origin and path, the declared language, and how long the unit was
+     actually visible. It is async and self-contained, so a slow or dead
+     network leaves the rest of the page alone. */}}
+<aside class="home-ad" aria-label="Advertisement">
+  <script async src="https://adisad.jeongchi.in/p/ydpads8kquzopej7nps4oppu.js"></script>
+</aside>
 
 {{/* The CLI is the product's local tester. Install commands first, what it
      does second; the agent path follows as an integration, not the point. */}}

@@ -24,12 +24,20 @@ func TestI18nLocaleCompleteness(t *testing.T) {
 	if len(enKeys) == 0 {
 		t.Fatal("en catalog is empty")
 	}
+	// Plural variants are counted separately. A locale's plural CATEGORIES
+	// are a property of the language -- Russian needs three where English
+	// needs two -- so demanding the same set as English would either forbid
+	// the third form or force English to carry a duplicate of "other" under
+	// two more names. What every locale must have is the "other" form, which
+	// is what Plural falls back to.
+	enPlain, enPlural := splitPluralKeys(enKeys)
 	for _, lang := range Supported {
 		keys := keySet(t, lang)
-		if len(keys) != len(enKeys) {
-			t.Errorf("locale %s: %d keys, en has %d", lang, len(keys), len(enKeys))
+		plain, plural := splitPluralKeys(keys)
+		if len(plain) != len(enPlain) {
+			t.Errorf("locale %s: %d non-plural keys, en has %d", lang, len(plain), len(enPlain))
 		}
-		for _, k := range enKeys {
+		for _, k := range enPlain {
 			v, ok := catalogs[lang][k]
 			if !ok {
 				t.Errorf("locale %s: missing key %q", lang, k)
@@ -39,9 +47,22 @@ func TestI18nLocaleCompleteness(t *testing.T) {
 				t.Errorf("locale %s: empty value for %q", lang, k)
 			}
 		}
-		for _, k := range keys {
+		for _, k := range plain {
 			if _, ok := catalogs["en"][k]; !ok {
 				t.Errorf("locale %s: extra key %q not in en", lang, k)
+			}
+		}
+		// Every plural key English declares must exist here in at least its
+		// "other" form, and every form this locale declares must belong to a
+		// key English declares.
+		for base := range enPlural {
+			if v, ok := catalogs[lang][base+".other"]; !ok || strings.TrimSpace(v) == "" {
+				t.Errorf("locale %s: plural %q has no \"other\" form", lang, base)
+			}
+		}
+		for base := range plural {
+			if _, ok := enPlural[base]; !ok {
+				t.Errorf("locale %s: plural %q is not declared in en", lang, base)
 			}
 		}
 	}
@@ -185,4 +206,25 @@ func TestI18nFormatCompactInt(t *testing.T) {
 			t.Errorf("locale %s compact value = %q, want %q", lang, got, want)
 		}
 	}
+}
+
+// splitPluralKeys separates ordinary keys from plural variants, returning the
+// plain keys and the set of plural bases ("wanted.n_asks.one" -> "wanted.n_asks").
+func splitPluralKeys(keys []string) ([]string, map[string]bool) {
+	plain := make([]string, 0, len(keys))
+	plural := map[string]bool{}
+	for _, k := range keys {
+		matched := false
+		for _, form := range []string{".one", ".few", ".many", ".other"} {
+			if strings.HasSuffix(k, form) {
+				plural[strings.TrimSuffix(k, form)] = true
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			plain = append(plain, k)
+		}
+	}
+	return plain, plural
 }
