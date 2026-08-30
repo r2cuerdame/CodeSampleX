@@ -110,7 +110,14 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 			RankText:   i18n.FormatInt(lang, int64((page-1)*wantedPerPage+i+1)),
 			// Every supported row has a stable, honest wanted-only page even
 			// before compatibility evidence exists.
-			Href: b.WithLang(pkgHref(row.Ecosystem, row.Name)),
+			//
+			// To the RELEASE when the row names one. The label reads
+			// "npm/three@0.180.0" and this used to drop the version, so rows
+			// asking about different releases of one package all resolved to
+			// the same destination -- 72 rows onto 60 URLs in production --
+			// and a reader who clicked the release they cared about got the
+			// package, with nothing on the page saying it had moved them.
+			Href: b.WithLang(wantedRowHref(row)),
 		})
 	}
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
@@ -132,6 +139,19 @@ func (s *site) wanted(w http.ResponseWriter, r *http.Request) {
 		view.NextHref = wantedHref(query, page+1, lang)
 	}
 	s.render(w, "wanted", http.StatusOK, view)
+}
+
+// wantedRowHref points at the exact coordinate the row advertises.
+//
+// A row without a version is a question about the package itself, and the
+// package page is the honest answer to it. A row WITH one is a question about
+// that release, and answering it with the package would quietly discard the
+// half the reader chose.
+func wantedRowHref(row WantedRollupRow) string {
+	if row.Version == "" {
+		return pkgHref(row.Ecosystem, row.Name)
+	}
+	return versionHref(row.Ecosystem, row.Name, row.Version)
 }
 
 // wantedHref keeps the active search and language while moving through the

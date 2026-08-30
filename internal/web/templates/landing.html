@@ -105,7 +105,11 @@
       <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
       <p class="dim small">{{.T "landing.findings_sub"}}</p>
     </div>
-    <a class="small" href="{{.WithLang "/findings"}}">{{.T "landing.findings_more"}}</a>
+    {{/* The teased entries come from the documented and believed groups, which
+         live behind the hand-checked tab. Linking to /findings sent a reader
+         who clicked the thing they just read about to a page that does not
+         contain it. */}}
+    <a class="small" href="{{.WithLang "/findings?tab=curated"}}">{{.T "landing.findings_more"}}</a>
   </div>
   <ul class="findinglist">
   {{- range .Findings}}
