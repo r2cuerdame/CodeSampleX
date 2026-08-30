@@ -124,7 +124,15 @@ function Invoke-RemoteScript([string]$Script) {
     # 94 rather than quoting: the runner crosses Windows argv inside double
     # quotes, so a nested `"$f"` would end the argument. Refusing a path that
     # would need quoting is checkable here; mktemp does not produce one.
-    $remoteRunner = 'set -e; f=$(mktemp) || exit 91; case $f in *[!A-Za-z0-9./_-]*) exit 94;; esac; trap "rm -f $f" EXIT; { printf "#"; cat; } > $f || exit 92; head -n 1 $f | grep -q CSX-SCRIPT-V1 || exit 93; sh $f < /dev/null'
+    # No double quote may appear in this string. It is embedded in
+    # $psi.Arguments inside a "..." argv element, so a double quote here ends
+    # the remote command early — the first fail-closed runner used
+    # `trap "rm -f $f"` and `printf "#"` and the host answered
+    # `bash: -c: line 2: syntax error: unexpected end of file`. The deploy
+    # stopped without touching production, which is the behaviour this runner
+    # exists for, but it stopped on its own quoting rather than on a real
+    # failure. TestTheRemoteRunnerSurvivesTheArgvWrapper pins it.
+    $remoteRunner = 'set -e; f=$(mktemp) || exit 91; case $f in *[!A-Za-z0-9./_-]*) exit 94;; esac; trap ''rm -f $f'' EXIT; { printf ''#''; cat; } > $f || exit 92; head -n 1 $f | grep -q CSX-SCRIPT-V1 || exit 93; sh $f < /dev/null'
     $psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true

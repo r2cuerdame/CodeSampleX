@@ -70,3 +70,26 @@ func TestTheRemoteRunnerIsFailClosed(t *testing.T) {
 		})
 	}
 }
+
+// The runner is embedded in $psi.Arguments inside a "..." argv element, so a
+// double quote in it ends the remote command early. The first fail-closed
+// runner used trap "rm -f $f" and printf "#", and the host answered
+//
+//	bash: -c: line 2: syntax error: unexpected end of file
+//
+// The deploy stopped without touching production — which is what a
+// fail-closed runner is for — but it stopped on its own quoting rather than
+// on a real failure, and the fixture above did not catch it because it runs
+// the program through sh -c directly and never crosses the wrapper.
+func TestTheRemoteRunnerSurvivesTheArgvWrapper(t *testing.T) {
+	runner := remoteRunner(t)
+	if strings.Contains(runner, `"`) {
+		t.Errorf("the remote runner contains a double quote, which ends the ssh argument early:\n%s", runner)
+	}
+	// And the wrapper it actually goes into still balances.
+	script := readDeployFixture(t, "deploy.ps1")
+	line := `$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'`
+	if !strings.Contains(script, line) {
+		t.Error("the ssh invocation no longer wraps the runner the way this test reasons about")
+	}
+}
