@@ -96,9 +96,16 @@ func TreeBatches(edges []scanner.Edge, m domain.SampleManifest, r domain.Verific
 		return nil
 	}
 	env := r.Environment.Normalize()
-	if env.Ecosystem == "" || env.OS == "" || env.Arch == "" {
-		// The ingest path requires these, and a run we cannot place is one we
-		// must not record.
+	// Exactly what the ingest path requires, checked here so a batch this
+	// build cannot get accepted is never built.
+	//
+	// The receipt backfill is why this is a guard and not a hope: it produced
+	// 9,883 observations, the store refused every one of them on a field the
+	// unit tests never exercised, and the run reported the refusals as a bare
+	// count that read like success. A fingerprint with no schema version has
+	// a shape we cannot vouch for, and stamping one on would be labelling it
+	// rather than reading it.
+	if env.SchemaVersion != 1 || env.Ecosystem == "" || env.OS == "" || env.Arch == "" {
 		return nil
 	}
 
