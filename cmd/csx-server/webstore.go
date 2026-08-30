@@ -336,21 +336,24 @@ func (w *webStore) SeederSamples(ctx context.Context, login string) ([]web.Sampl
 // quarantined rows, which is what makes it safe to advertise these URLs.
 // SamplesPage is one page of the browsable sample collection.
 //
-// It reads one page more than it needs so it can say whether there is a next
-// one without a second COUNT over a growing table: the collection is ordered
-// newest-first and a reader walking it does not need an exact total so much as
-// a page that does not lie about having more.
+// The total is counted, not probed. This used to read one row past the page to
+// learn whether a next page existed and return `offset + len(rows)`, which is
+// right only on the last page -- and the template renders it as an
+// authoritative "{{.From}}-{{.To}} / {{.Total}}", so page 1 of a 4,683-sample
+// corpus told the reader there were 25. A number a reader uses to decide
+// whether the collection is worth walking has to be a number somebody counted;
+// Records and Findings both count theirs.
 func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.SampleListItem, int, error) {
 	if limit <= 0 {
 		limit = 24
 	}
-	rows, err := w.s.ListSamplesPage(ctx, limit+1, offset)
+	total, err := w.s.CountSamples(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	total := offset + len(rows)
-	if len(rows) > limit {
-		rows = rows[:limit]
+	rows, err := w.s.ListSamplesPage(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]web.SampleListItem, 0, len(rows))
 	for _, r := range rows {

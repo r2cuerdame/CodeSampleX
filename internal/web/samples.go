@@ -105,11 +105,22 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 		s.unavailable(w, r, lang)
 		return
 	}
-	// A page number past the end is a stale link, not an error. The query is
-	// kept: dropping it would answer "page 40 of your search" with the whole
-	// collection, which is a different question.
+	// A page number past the end is a stale link, not an error. Send the
+	// reader to the LAST real page, the way /records, /findings and /wanted
+	// all do: a bookmark into a collection that has since grown belongs near
+	// where its owner was standing, and page 1 is the one place they can
+	// always get to anyway. The query is kept -- dropping it would answer
+	// "page 40 of your search" with the whole collection, a different
+	// question.
 	if len(rows) == 0 && page > 1 {
-		http.Redirect(w, r, samplesHref(query, 1, lang), http.StatusFound)
+		last := 1
+		if total > 0 {
+			last = (total + samplesPerPage - 1) / samplesPerPage
+		}
+		if last > maxSamplesPage {
+			last = maxSamplesPage
+		}
+		http.Redirect(w, r, samplesHref(query, last, lang), http.StatusFound)
 		return
 	}
 

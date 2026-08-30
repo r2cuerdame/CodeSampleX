@@ -2331,3 +2331,18 @@ func (s *Server) toolReportCSXIssue(ctx context.Context, raw json.RawMessage) *t
 	b.WriteString("\n" + out.Note + "\n")
 	return textResult(b.String(), structured)
 }
+
+// ToolNames is every tool this server registers, in the order it offers them.
+//
+// Exported so the public page that documents the MCP surface can be checked
+// against the surface itself. It claimed to be complete and listed eight of
+// ten: report_anomaly and report_csx_issue were added to the server and never
+// to the page, and nothing could notice because the page's list was hand-kept.
+func ToolNames() []string {
+	defs := toolDefs()
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Name)
+	}
+	return out
+}

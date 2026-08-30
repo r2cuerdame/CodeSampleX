@@ -1179,6 +1179,17 @@ func (p *PG) ListSamples(ctx context.Context, limit int) ([]SampleRow, error) {
 // Warning about it was not enough either: the list is ordered newest-first,
 // so the "re-run until the count drops" advice returned the identical page
 // every time and could never converge.
+// CountSamples counts what the collection can reach, with the same predicate
+// ListSamplesPage pages over. Two different predicates would be a total that
+// does not match the pages under it.
+func (p *PG) CountSamples(ctx context.Context) (int, error) {
+	total := 0
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `SELECT count(*) FROM samples WHERE NOT quarantined`).Scan(&total)
+	})
+	return total, err
+}
+
 func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error) {
 	if limit <= 0 {
 		limit = 50

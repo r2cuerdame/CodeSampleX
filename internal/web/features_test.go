@@ -6,10 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/mcp"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
-func TestFeaturesPageDocumentsTheEightPublicMCPTools(t *testing.T) {
+// The count used to be the literal 8, and the name said "Eight". The server
+// grew to ten tools and neither the page nor this test noticed, because both
+// were hand-kept lists that agreed with each other. It asks the server now.
+func TestFeaturesPageDocumentsThePublicMCPTools(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	rec := get(t, mux, "/features")
 	if rec.Code != http.StatusOK {
@@ -20,8 +24,9 @@ func TestFeaturesPageDocumentsTheEightPublicMCPTools(t *testing.T) {
 	mustContain(t, body, `<link rel="canonical" href="https://codesamplex.dev/features">`)
 	mustContain(t, body, `href="/features">Features</a>`)
 	mustContain(t, body, `id="feature-summary-heading"`)
-	if got := strings.Count(body, `<details class="feature-page__tool"`); got != 8 {
-		t.Fatalf("public MCP tool details = %d, want 8", got)
+	if want := len(mcp.ToolNames()); strings.Count(body, `<details class="feature-page__tool"`) != want {
+		t.Fatalf("public MCP tool details = %d, want %d — the page claims to be complete",
+			strings.Count(body, `<details class="feature-page__tool"`), want)
 	}
 	if strings.Contains(body, `<details class="feature-page__tool" open`) {
 		t.Error("tool details must be collapsed initially")

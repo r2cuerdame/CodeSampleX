@@ -373,6 +373,13 @@ type Store interface {
 	// ListSamplesPage is ListSamples with an offset, so a caller that means
 	// EVERY sample can page instead of quietly reading the newest N.
 	ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRow, error)
+	// CountSamples is how many rows ListSamplesPage can reach.
+	//
+	// The collection page had no way to ask. It read one row past a page to
+	// learn whether a next one existed and rendered that probe as a total, so
+	// every page but the last told the reader the corpus ends just past where
+	// they are standing: "Showing 1-24 / 25" over 4,683 samples.
+	CountSamples(ctx context.Context) (int, error)
 	// SearchSamplesPage narrows the same list by what a reader typed, matching
 	// the manifest: the goal sentence, the packages and the symbols are what
 	// somebody looking for a reusable answer knows to type. The sample id is

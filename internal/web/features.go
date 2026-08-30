@@ -304,6 +304,70 @@ func publicMCPFeatureGroups() []featureGroup {
 					Privacy: "The correlation and hit stay local. Community mode may queue the anonymous adoption outcome; local-only mode records it locally and uploads nothing.",
 				},
 				{
+					Name:    "report_anomaly",
+					Summary: "Submit a verification request when a CSX answer and your own local run concretely disagree.",
+					What:    "Files a CONCRETE, reproducible disagreement between what CodeSampleX returned and what was measured locally \u2014 a passing conclusion that fails on this machine, or a returned symbol signature the public package does not export. It is a verification request, not a finding: the report is queued for an independent re-run, and only a signed receipt can confirm it. Idempotent by fingerprint, so the same mismatch twice is one report.",
+					When:    "Use only with a measured local PASS or FAIL. \"This looks wrong to me\" is refused, and so is a NO_SAFE_MATCH with no reproducible public failure attached.",
+					Required: []featureField{
+						{"anomalyType", "string", "Which kind of mismatch this is."},
+						{"package", "string", "The exact public coordinate the mismatch is about."},
+						{"csxObserved", "object", "What CSX actually concluded."},
+						{"localObserved", "object", "What was measured locally; result must be PASS or FAIL."},
+					},
+					Optional: []featureField{
+						{"symbol", "string", "Symbol family involved."},
+						{"environment", "object", "Sparse environment fingerprint."},
+						{"sampleId", "string", "The sample the contested answer came from \u2014 what makes it reproducible."},
+						{"evidenceId", "string", "The evidence id the contested answer came from."},
+						{"reproducible", "string", "yes | no | unknown, as measured."},
+						{"confidence", "string", "low | medium | high. Ranking only, never truth."},
+						{"errorText", "string", "Raw local error output. Sanitized on this machine and never forwarded raw."},
+						{"relatedIds", "string[]", "Related sample, evidence or dependency ids."},
+						{"llmHypothesis", "string", "A guess at the cause. Stored separately and excluded from the verdict."},
+					},
+					InputExample: `{"anomalyType":"CONTRACT_DISAGREES","package":"pkg:npm/axios@1.12.0","csxObserved":{"result":"PASS"},"localObserved":{"result":"FAIL"}}`,
+					OutputShape:  "MCP content text plus structuredContent with the report id and its queued state.",
+					OutputExample: `{
+  "structuredContent": {
+    "reported": true,
+    "queuedForVerification": true,
+    "confirmed": false
+  }
+}`,
+					Privacy: "Free text is redacted locally and raw output is never sent \u2014 only the derived error code, template and fingerprint leave the machine. Nothing is confirmed by reporting: a verifier must reproduce it first.",
+				},
+				{
+					Name:    "report_csx_issue",
+					Summary: "Report a reproducible defect in CodeSampleX itself \u2014 the tools, server, site, verifier or farm.",
+					What:    "Files a defect in the product as distinct from its data: an answer that hid the failure you were looking at, a recommendation from an ecosystem the question never mentioned, a tool contract that made an agent behave wrongly, a response contract that breaks inconsistently on the same input. Idempotent by fingerprint: the same defect twice is one report with a higher occurrence count, never a second ticket.",
+					When:    "Use report_anomaly instead when the disagreement is about a PACKAGE rather than about this product. This one is opt-in: it creates no ticket, a person triages it, and a week with no reports is normal.",
+					Required: []featureField{
+						{"affectedSurface", "string", "Which surface this is about."},
+						{"issueKind", "string", "Which kind of defect this is."},
+						{"component", "string", "The tool or endpoint, e.g. search_known_solution."},
+						{"actualBehavior", "string", "What actually happened, in one short sanitized sentence."},
+						{"expectedBehavior", "string", "What should have happened. It must differ from actualBehavior."},
+					},
+					Optional: []featureField{
+						{"requestFingerprint", "string", "A stable non-identifying request id \u2014 what makes two occurrences one report."},
+						{"publicInput", "object", "The public part of the input that triggered it."},
+						{"reproducible", "string", "yes | no | unknown, as measured."},
+						{"confidence", "string", "low | medium | high. Priority hint only, never truth."},
+						{"relatedIds", "string[]", "Related stable ids: sample, evidence, dependency, finding."},
+						{"llmHypothesis", "string", "A guess at the cause. Stored separately and excluded from the verdict."},
+					},
+					InputExample: `{"affectedSurface":"MCP_TOOL","issueKind":"WRONG_RESULT","component":"search_known_solution","actualBehavior":"returned a cargo sample for a go build","expectedBehavior":"NO_SAFE_MATCH"}`,
+					OutputShape:  "MCP content text plus structuredContent with the report id and its occurrence count.",
+					OutputExample: `{
+  "structuredContent": {
+    "reported": true,
+    "occurrences": 1,
+    "ticketCreated": false
+  }
+}`,
+					Privacy: "Only the sanitized public input and the two behaviour sentences are sent. No ticket is created and nothing is confirmed \u2014 reporting is not a fix, and a person triages every report.",
+				},
+				{
 					Name:    "propose_public_sample",
 					Summary: "Create a sanitized clean-room brief and a scaffolded local workspace.",
 					What:    "Builds a proposal from a goal, public package purls, and public symbols, then returns generation instructions and a workspace path that already holds spec.json, PROMPT.md and a csx.json manifest scaffold. If it cannot create that workspace it fails instead of returning a path. This tool cannot publish.",
