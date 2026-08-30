@@ -15,12 +15,23 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
+// What npm actually writes: every entry carries the registry artifact it came
+// from, and resolvedPackages checks that URL before believing a version. A
+// fixture without it reports nothing resolved, which is not what production
+// looks like.
 const treeLock = `{
   "lockfileVersion": 3,
   "packages": {
-    "": {"name": "sample", "version": "1.0.0"},
-    "node_modules/express": {"version": "4.18.2", "dependencies": {"body-parser": "1.20.1"}},
-    "node_modules/body-parser": {"version": "1.20.1"}
+    "": {"name": "sample", "version": "1.0.0", "dependencies": {"express": "^4.18.2"}},
+    "node_modules/express": {
+      "version": "4.18.2",
+      "resolved": "https://registry.npmjs.org/express/-/express-4.18.2.tgz",
+      "dependencies": {"body-parser": "1.20.1"}
+    },
+    "node_modules/body-parser": {
+      "version": "1.20.1",
+      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.1.tgz"
+    }
   }
 }`
 
@@ -33,7 +44,25 @@ func treeWorkspace(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"sample"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	installNPM(t, dir, "express", "4.18.2")
+	installNPM(t, dir, "body-parser", "1.20.1")
 	return dir
+}
+
+// installNPM writes the on-disk half of a resolution. resolvedPackages
+// deliberately refuses a lockfile entry the installed tree does not agree
+// with, so a workspace with only a lockfile is a workspace where nothing
+// resolved — which is not what a verification looks like.
+func installNPM(t *testing.T, dir, name, version string) {
+	t.Helper()
+	pkgDir := filepath.Join(dir, "node_modules", filepath.FromSlash(name))
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"` + name + `","version":"` + version + `"}`
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func treeManifest() domain.SampleManifest {
@@ -193,7 +222,7 @@ func TestNoLockfileReportsNothing(t *testing.T) {
 func TestEveryTreeBatchSurvivesTheServersValidation(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	batches := TreeBatches(edges, treeManifest(), r, "2026-08-30")
+	batches := TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
 	if len(batches) == 0 {
 		t.Fatal("no batches to validate")
 	}
@@ -212,7 +241,7 @@ func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	edges := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
 
-	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, treeManifest(), r, "2026-08-30"))
+	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +271,83 @@ func TestAnUnversionedEnvironmentSendsNoTree(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	r.Environment.SchemaVersion = 0
 	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	if got := TreeBatches(edges, treeManifest(), r, "2026-08-30"); len(got) != 0 {
+	if got := TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"); len(got) != 0 {
 		t.Errorf("built %d batches the server would refuse", len(got))
+	}
+}
+
+// A sample whose package genuinely declares no dependencies must say so.
+//
+// Reporting nothing leaves the coordinate indistinguishable from one nobody
+// resolved, and the dependency axis answers a release only when it appears as
+// a PARENT of an edge — which a leaf never is. Measured on production: 490
+// coordinates appear as a child of a resolved tree and never as a parent, a
+// quarter of everything open on that axis, and no amount of farm work could
+// close them.
+func TestASampleWhosePackageHasNoDependenciesSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	// left-pad is in the lockfile with its own entry and no dependencies.
+	lock := `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {"name": "sample", "version": "1.0.0", "dependencies": {"left-pad": "^1.3.0"}},
+	    "node_modules/left-pad": {
+	      "version": "1.3.0",
+	      "resolved": "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
+	    }
+	  }
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"sample"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installNPM(t, dir, "left-pad", "1.3.0")
+
+	var m domain.SampleManifest
+	m.Environment.Ecosystem = "npm"
+	m.Packages = []string{"pkg:npm/left-pad@1.3.0"}
+
+	var got []domain.ObservationBatch
+	srv := treeServer(t, &got)
+	defer srv.Close()
+
+	cv := &CrossVerifier{ServerURL: srv.URL, HTTP: srv.Client()}
+	cv.reportResolvedTree(context.Background(), dir, m, treeReceipt(sandbox.ResultPass))
+
+	if len(got) != 1 {
+		t.Fatalf("posted %d batches, want one saying the package declares nothing: %+v", len(got), got)
+	}
+	b := got[0]
+	if b.Package != "pkg:npm/left-pad@1.3.0" {
+		t.Errorf("package = %q", b.Package)
+	}
+	if !b.DependsOnNone {
+		t.Error("the batch does not say the resolution found no dependencies, so the coordinate stays an open gap")
+	}
+	if len(b.DependsOn) != 0 {
+		t.Errorf("dependsOn = %v, want empty", b.DependsOn)
+	}
+}
+
+// Silence is not the same claim. A package the resolver never placed in the
+// lockfile must produce nothing at all rather than a claim that it has no
+// dependencies.
+func TestAPackageTheResolverNeverPlacedClaimsNothing(t *testing.T) {
+	var got []domain.ObservationBatch
+	srv := treeServer(t, &got)
+	defer srv.Close()
+
+	m := treeManifest()
+	m.Packages = []string{"pkg:npm/never-installed@9.9.9"}
+
+	cv := &CrossVerifier{ServerURL: srv.URL, HTTP: srv.Client()}
+	cv.reportResolvedTree(context.Background(), treeWorkspace(t), m, treeReceipt(sandbox.ResultPass))
+
+	for _, b := range got {
+		if b.Package == "pkg:npm/never-installed@9.9.9" {
+			t.Errorf("a package the lockfile never contained was reported: %+v", b)
+		}
 	}
 }

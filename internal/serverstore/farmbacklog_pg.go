@@ -162,6 +162,16 @@ func (p *PG) farmCompletenessNow(ctx context.Context, statementTimeout time.Dura
 				              THEN '%40'||substring(parent_name from 2)
 				              ELSE parent_name END||'@'||parent_version AS purl
 				FROM dependency_edge
+				UNION
+				-- A release a resolver read and found nothing in is answered
+				-- too. It can never be a parent, so without this every leaf
+				-- stayed open forever: 490 coordinates on production appear as
+				-- a child of some resolved tree and never as a parent.
+				SELECT DISTINCT 'pkg:'||ecosystem||'/'||
+				         CASE WHEN left(name,1)='@'
+				              THEN '%40'||substring(name from 2)
+				              ELSE name END||'@'||version AS purl
+				FROM dependency_resolution
 			)
 			SELECT (CASE WHEN EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
 			             THEN 'S' ELSE '-' END)

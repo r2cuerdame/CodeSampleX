@@ -240,6 +240,24 @@ type ObservationBatch struct {
 	// registry information, and npm will tell anyone that a@1.2.0 depends on
 	// b. Edges with a private end are dropped before this is built.
 	DependsOn []string `json:"dependsOn,omitempty"`
+	// DependsOnNone says the resolver read THIS package's own entry in the
+	// lockfile and it declared no dependencies at all.
+	//
+	// An empty DependsOn cannot carry this. It is also what a batch from an
+	// ecosystem with no edge scanner looks like, and what a scan that never
+	// found a lockfile looks like — so the server would be reading meaning
+	// into an absence, which is the one thing it must not do.
+	//
+	// Without it a package with no dependencies can never be answered on the
+	// dependency axis: that axis counts a coordinate as resolved when it
+	// appears as a PARENT of an edge, and a leaf is never a parent. Measured
+	// on production: 490 coordinates appear as a child of some resolved tree
+	// and never as a parent — a quarter of everything open on that axis, and
+	// no amount of farm work could ever close them.
+	//
+	// Only the machine holding the lockfile can say this, which is why it is
+	// stated here rather than inferred there.
+	DependsOnNone bool `json:"dependsOnNone,omitempty"`
 }
 
 // Wire caps for a batch's edge facts, shared by the server that refuses a

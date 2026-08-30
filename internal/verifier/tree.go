@@ -90,9 +90,9 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 // registry resolved into it; the machine's own projects are never in it. That
 // is why this path needs no publicness pass, and why it must never be pointed
 // at a directory a person works in.
-func TreeBatches(edges []scanner.Edge, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
+func TreeBatches(edges []scanner.Edge, resolved []string, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
 	bucket := domain.SampleProjectBucket(r.SampleID)
-	if bucket == "" || r.PeerID == "" || len(edges) == 0 {
+	if bucket == "" || r.PeerID == "" || (len(edges) == 0 && len(resolved) == 0) {
 		return nil
 	}
 	env := r.Environment.Normalize()
@@ -127,6 +127,29 @@ func TreeBatches(edges []scanner.Edge, m domain.SampleManifest, r domain.Verific
 		}
 		children[p] = append(children[p], e.Child.String())
 	}
+
+	// A declared package the resolver placed, with no edges of its own, is a
+	// leaf — and saying nothing about it is not the same as saying that.
+	//
+	// The dependency axis answers a release only when it appears as a PARENT
+	// of an edge, so a leaf could never be answered: 490 coordinates on
+	// production appear as a child of some resolved tree and never as a
+	// parent, a quarter of everything open on that axis and unreachable by
+	// any amount of farm work.
+	//
+	// leaves is separate from children so the claim is explicit on the wire.
+	// It is made only for a package this resolution actually placed, because
+	// a package the lockfile never contained was not measured at all.
+	leaves := map[string]bool{}
+	for _, raw := range resolved {
+		if _, hasEdges := children[raw]; hasEdges {
+			continue
+		}
+		if _, alreadyListed := leaves[raw]; !alreadyListed {
+			leaves[raw] = true
+			parents = append(parents, raw)
+		}
+	}
 	sort.Strings(parents)
 
 	out := make([]domain.ObservationBatch, 0, len(parents))
@@ -150,6 +173,7 @@ func TreeBatches(edges []scanner.Edge, m domain.SampleManifest, r domain.Verific
 			ObservationCount: 1,
 			Direct:           declared[p],
 			DependsOn:        kids,
+			DependsOnNone:    leaves[p],
 		})
 	}
 	return out
@@ -186,7 +210,11 @@ func (cv *CrossVerifier) reportResolvedTree(ctx context.Context, dir string, m d
 		return
 	}
 	edges := ResolvedEdges(ctx, dir, m, adapters.All())
-	batches := TreeBatches(edges, m, r, time.Now().UTC().Format("2006-01-02"))
+	// Which of the sample's own declared packages this resolution actually
+	// placed, at a concrete version. A package the lockfile never contained
+	// was not measured, and must not be reported either way.
+	resolved := resolvedPackages(dir, m)
+	batches := TreeBatches(edges, resolved, m, r, time.Now().UTC().Format("2006-01-02"))
 	if len(batches) == 0 {
 		return
 	}

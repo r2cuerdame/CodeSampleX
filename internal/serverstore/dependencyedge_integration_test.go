@@ -81,3 +81,50 @@ func TestIntegrationABatchWithDependsOnWritesAnEdge(t *testing.T) {
 		t.Errorf("a repeated resolution changed the edge: %+v", rows)
 	}
 }
+
+// The same fact in Postgres: a resolution that found nothing must be
+// recordable there too, or the axis closes on the fake and stays open in
+// production — the exact divergence this store treats as a silent bug.
+func TestIntegrationAResolutionThatFoundNoDependenciesIsRecorded(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	batch := domain.ObservationBatch{
+		SchemaVersion:    1,
+		Epoch:            "2026-08-30",
+		AnonID:           "peer-abc",
+		ProjectBucket:    "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+		Package:          "pkg:npm/left-pad@1.3.0",
+		Environment:      domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64"},
+		Stage:            domain.StageUsed,
+		Result:           domain.ResultPass,
+		ObservationCount: 1,
+		DependsOnNone:    true,
+	}
+
+	accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{batch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected) != 0 || accepted != 1 {
+		t.Fatalf("accepted=%d rejected=%+v", accepted, rejected)
+	}
+
+	none, err := pg.DependencyProvenNone(ctx, "npm", "left-pad", "1.3.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !none {
+		t.Error("postgres did not record the resolution, so the coordinate stays an open gap forever")
+	}
+
+	// A release nobody resolved must not come back as proven-none: that would
+	// turn an unmeasured coordinate into a measured zero.
+	other, err := pg.DependencyProvenNone(ctx, "npm", "left-pad", "1.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other {
+		t.Error("a release nobody resolved was reported as proven to have no dependencies")
+	}
+}
