@@ -2166,3 +2166,10 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
    demonstration to type its name. */
 .hero-evidence .home-search { margin: 1rem 0 0; }
 .hero-evidence .home-search input { min-width: 0; }
+
+/* Home ad slot. The publisher snippet inserts its own container after the
+   script tag, so this only reserves the space around it and keeps the unit
+   from pushing the page wider than it is. Nothing here assumes a size: an
+   unfilled placement collapses to nothing rather than leaving a hole. */
+.home-ad { display: block; margin: 2rem auto; max-width: 100%; overflow: hidden; }
+.home-ad .adisad-unit { margin: 0 auto; }
