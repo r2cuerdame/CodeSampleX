@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -67,7 +66,7 @@ func receiptDescribesWhereItRan(receipt domain.VerificationReceipt) error {
 
 // pinnedImageReference is the only shape a recorded verifier image may
 // take: a readable alias, then the immutable digest that decides the bytes.
-var pinnedImageReference = regexp.MustCompile(`^[^@\s]+@(sha256:[0-9a-f]{64})$`)
+var pinnedImageReference = domain.PinnedImageReference
 
 // receiptVerifierImageIsPinned checks the image identity a receipt records.
 //

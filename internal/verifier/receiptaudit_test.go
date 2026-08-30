@@ -25,6 +25,10 @@ func signedRow(t *testing.T, ident *identity.Identity, r domain.VerificationRece
 		EnvHash:   r.EnvironmentHash,
 		CreatedAt: r.CreatedAt,
 		Receipt:   r,
+		// A truthful store holds the document, not only the decode of it.
+		// The round-trip check compares the two, so a row without the stored
+		// bytes is a row that check cannot speak about.
+		RawReceipt: domain.MustCanonicalJSON(r),
 	}
 }
 

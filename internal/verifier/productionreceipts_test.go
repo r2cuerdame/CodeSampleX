@@ -73,6 +73,18 @@ func TestProductionReceiptsRanPublishedDigests(t *testing.T) {
 			t.Errorf("%s = %d, want %d", c.name, c.got, c.want)
 		}
 	}
+
+	// The three image comparisons above are all "== WithImage", and every one
+	// of them holds when WithImage is 0. Run against the first 200 rows of a
+	// dump whose peers predate v0.1.43 they therefore passed while proving
+	// nothing about the property this test is named for. The question the
+	// issue asks is whether production RAN published digests, and a dump in
+	// which nothing recorded an image cannot answer it either way.
+	if got.WithImage == 0 {
+		t.Fatalf("no receipt in this dump of %d recorded a verifier image, so it "+
+			"says nothing about whether production ran published digests; "+
+			"dump a window that includes v0.1.43 or later peers", got.Receipts)
+	}
 	if len(got.Problems) > 0 {
 		shown := got.Problems
 		if len(shown) > 20 {

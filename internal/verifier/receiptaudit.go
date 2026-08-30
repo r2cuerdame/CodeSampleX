@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -44,6 +43,10 @@ type AuditedReceipt struct {
 	EnvHash   string
 	CreatedAt string
 	Receipt   domain.VerificationReceipt
+	// RawReceipt is the receipt exactly as stored, before this package's
+	// schema saw it. Without it the round-trip check below has nothing to
+	// compare against and cannot fail.
+	RawReceipt []byte
 }
 
 // ReceiptAudit counts, per check, how many receipts passed. Counts rather
@@ -86,9 +89,11 @@ type ReceiptAudit struct {
 	Problems []string
 }
 
-// pinnedImageReference is the server's own admission shape
-// (receiptVerifierImageIsPinned): alias, then an immutable digest.
-var pinnedImageReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$`)
+// pinnedImageReference is the server's own admission shape, and now literally
+// so rather than by description. The copy that used to be here demanded a tag
+// before the digest, which the server does not, so a reference the server had
+// admitted could be counted here as unpinned — an audit disagreeing with the
+// thing it audits.
 
 // AuditReceipts re-verifies stored receipts offline, using the same code the
 // verifier signs with, and reports how many passed each check.
@@ -122,7 +127,7 @@ func AuditReceipts(rows []AuditedReceipt) ReceiptAudit {
 		} else {
 			fail("receiptId")
 		}
-		if canonicalRoundTrips(r) {
+		if canonicalRoundTrips(row.RawReceipt, r) {
 			a.CanonicalRoundTrip++
 		} else {
 			fail("canonicalRoundTrip")
@@ -142,7 +147,7 @@ func AuditReceipts(rows []AuditedReceipt) ReceiptAudit {
 		}
 		a.WithImage++
 		a.ByReference[img.Reference]++
-		if pinnedImageReference.MatchString(img.Reference) {
+		if domain.PinnedImageReference.MatchString(img.Reference) {
 			a.DigestPinned++
 		} else {
 			fail("notDigestPinned")
@@ -170,17 +175,68 @@ func peerIDOf(pubkeyB64 string) string {
 	return "ed25519:" + hex.EncodeToString(sum[:])[:16]
 }
 
-// canonicalRoundTrips reports whether the document survives being decoded and
-// re-canonicalised unchanged. A field the schema does not carry would be
-// dropped here, and dropping it would move the content hash — so this is what
-// says the checks above read the whole stored document and not a subset.
-func canonicalRoundTrips(r domain.VerificationReceipt) bool {
-	first := domain.MustCanonicalJSON(r)
-	var again domain.VerificationReceipt
-	if err := json.Unmarshal(first, &again); err != nil {
+// canonicalRoundTrips reports whether this package's schema read the WHOLE
+// stored document. A field the schema does not carry is dropped on decode,
+// and dropping it moves the content hash — so a receipt that fails here is
+// one whose other checks were run against a subset of what production stored.
+//
+// It compares the canonical form of the decoded receipt against the canonical
+// form of the raw bytes. The version before it compared the decoded struct
+// against ITSELF re-encoded and re-decoded, which is a tautology: whatever the
+// schema had already dropped was gone before the function was called, so it
+// could not fail. Stubbing it to `return true` left every test in this
+// package passing, which is how that was found.
+func canonicalRoundTrips(raw []byte, r domain.VerificationReceipt) bool {
+	if len(raw) == 0 {
+		// Nothing to compare against. A check with no evidence must not
+		// report a pass.
 		return false
 	}
-	return string(domain.MustCanonicalJSON(again)) == string(first)
+	var stored any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return false
+	}
+	var kept any
+	if err := json.Unmarshal(domain.MustCanonicalJSON(r), &kept); err != nil {
+		return false
+	}
+	// Subset, not equality. The struct emits every field the schema declares,
+	// including the ones this document left out, so equality would fail every
+	// receipt that omits an optional field. What matters is the other
+	// direction: nothing the document CARRIED may be missing afterwards.
+	return survivesDecoding(stored, kept)
+}
+
+// survivesDecoding reports whether every value present in the stored document
+// is present and identical in what the schema kept.
+func survivesDecoding(stored, kept any) bool {
+	switch want := stored.(type) {
+	case map[string]any:
+		got, ok := kept.(map[string]any)
+		if !ok {
+			return false
+		}
+		for k, v := range want {
+			other, present := got[k]
+			if !present || !survivesDecoding(v, other) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		got, ok := kept.([]any)
+		if !ok || len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if !survivesDecoding(want[i], got[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return string(domain.MustCanonicalJSON(stored)) == string(domain.MustCanonicalJSON(kept))
+	}
 }
 
 // ReadReceiptDump decodes a production receipt dump: one base64-encoded JSON
@@ -206,18 +262,30 @@ func ReadReceiptDump(r io.Reader) ([]AuditedReceipt, error) {
 		if err != nil {
 			return nil, fmt.Errorf("receipt dump line %d: base64: %w", line, err)
 		}
+		// The receipt is taken as written first and decoded from those
+		// bytes second. Two fields cannot share one json tag — Go drops
+		// both — so the raw document and the typed one come from one read
+		// of the row and one of the receipt, not from two tags.
 		var row struct {
-			ReceiptID string                     `json:"receiptId"`
-			PeerID    string                     `json:"peerId"`
-			SampleID  string                     `json:"sampleId"`
-			EnvHash   string                     `json:"envHash"`
-			CreatedAt string                     `json:"createdAt"`
-			Receipt   domain.VerificationReceipt `json:"receipt"`
+			ReceiptID string          `json:"receiptId"`
+			PeerID    string          `json:"peerId"`
+			SampleID  string          `json:"sampleId"`
+			EnvHash   string          `json:"envHash"`
+			CreatedAt string          `json:"createdAt"`
+			Receipt   json.RawMessage `json:"receipt"`
 		}
 		if err := json.Unmarshal(raw, &row); err != nil {
 			return nil, fmt.Errorf("receipt dump line %d: json: %w", line, err)
 		}
-		rows = append(rows, AuditedReceipt(row))
+		var receipt domain.VerificationReceipt
+		if err := json.Unmarshal(row.Receipt, &receipt); err != nil {
+			return nil, fmt.Errorf("receipt dump line %d: receipt: %w", line, err)
+		}
+		rows = append(rows, AuditedReceipt{
+			ReceiptID: row.ReceiptID, PeerID: row.PeerID, SampleID: row.SampleID,
+			EnvHash: row.EnvHash, CreatedAt: row.CreatedAt, Receipt: receipt,
+			RawReceipt: append([]byte(nil), row.Receipt...),
+		})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("receipt dump: %w", err)

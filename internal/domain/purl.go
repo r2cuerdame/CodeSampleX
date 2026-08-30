@@ -5,6 +5,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -332,3 +333,14 @@ func leadingRun(s string) (run, rest string) {
 	}
 	return s, ""
 }
+
+// PinnedImageReference is the admission shape for a verifier image: any
+// reference at all, bound to an immutable digest.
+//
+// It lives here because two places have to agree on it and did not. The
+// server admits a receipt with this shape; the offline receipt audit had its
+// own stricter copy that additionally demanded a tag, so a receipt the server
+// had ACCEPTED — repo@sha256:… with no tag — was counted by the audit as not
+// digest-pinned. The audit's whole job is to re-derive the server's answer,
+// and it cannot do that from a different rule.
+var PinnedImageReference = regexp.MustCompile(`^[^@\s]+@(sha256:[0-9a-f]{64})$`)
