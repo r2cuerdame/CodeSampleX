@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -467,4 +468,98 @@ func within(root, target string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// TextFile is one readable file out of a sample artifact.
+type TextFile struct {
+	Name string
+	Body string
+	// Truncated says the body is the first MaxViewBytes of a longer file.
+	Truncated bool
+}
+
+// MaxViewBytes bounds how much of one file a reader is shown in a browser.
+//
+// It is a display bound, not a safety one: the safety caps are the artifact's
+// own (MaxCompressedBytes, MaxFiles, maxUnpackedBytes) and they already hold
+// before a byte of this is reached. 64 KiB is more source than anyone reads on
+// a page and small enough that a sample full of large fixtures cannot turn one
+// page render into megabytes of HTML.
+const MaxViewBytes = 64 * 1024
+
+// ReadTextFiles returns the readable files of a sample artifact, in the order
+// the archive holds them.
+//
+// Unpack's sibling, sharing its safety posture — the same compressed cap, the
+// same entry and file limits, the same safeEntryName check that refuses
+// traversal and absolute names — but returning contents instead of writing
+// them, because a page that shows source must not need a directory to put it
+// in first.
+//
+// A file that is not valid UTF-8, or that carries a NUL, is left out entirely
+// rather than rendered as replacement characters: a sample's fixtures can be
+// binary, and a page of U+FFFD is not source anybody can read or copy. Its name
+// still appears in the file list, which is where a reader learns it exists.
+func ReadTextFiles(tgz []byte) ([]TextFile, error) {
+	if len(tgz) > MaxCompressedBytes {
+		return nil, fmt.Errorf("samples: artifact is %d bytes, limit is %d", len(tgz), MaxCompressedBytes)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, fmt.Errorf("samples: read: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var out []TextFile
+	var files, entries int
+	var total int64
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("samples: read: %w", err)
+		}
+		entries++
+		if entries > maxUnpackEntries {
+			return nil, fmt.Errorf("samples: read: more than %d entries", maxUnpackEntries)
+		}
+		isDir := hdr.Typeflag == tar.TypeDir
+		clean, err := safeEntryName(hdr.Name, isDir)
+		if err != nil {
+			return nil, err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		files++
+		if files > MaxFiles {
+			return nil, fmt.Errorf("samples: read: more than %d files", MaxFiles)
+		}
+		if hdr.Size < 0 || hdr.Size > maxUnpackedBytes {
+			return nil, fmt.Errorf("samples: read: entry %s is %d bytes", clean, hdr.Size)
+		}
+		total += hdr.Size
+		if total > maxUnpackedBytes {
+			return nil, fmt.Errorf("samples: read: exceeds %d-byte unpacked cap", maxUnpackedBytes)
+		}
+		// One byte past the display bound, so a file exactly at it is not
+		// reported as truncated.
+		body, err := io.ReadAll(io.LimitReader(tr, MaxViewBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("samples: read %s: %w", clean, err)
+		}
+		truncated := false
+		if len(body) > MaxViewBytes {
+			body = body[:MaxViewBytes]
+			truncated = true
+		}
+		if !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 {
+			continue
+		}
+		out = append(out, TextFile{Name: clean, Body: string(body), Truncated: truncated})
+	}
+	return out, nil
 }

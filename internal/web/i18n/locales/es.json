@@ -367,6 +367,8 @@
   "sample.run_when": "Ejecución",
   "sample.scope": "Un documento significa que hay una muestra en esa coordenada. Que EXISTA es un hecho sobre esta versión y esta API y no cambia con el sistema operativo, el runtime ni el gestor de paquetes; su COLOR es cómo se ejecutó esa muestra en el entorno que estás mirando.",
   "sample.signing_keys": "Claves de firma que lo compilaron",
+  "sample.source": "Código fuente",
+  "sample.source_truncated": "(solo la primera parte)",
   "sample.status": "Estado",
   "sample.status_help": "Esta red ofrece una sola cosa: una muestra que compila. La ejecutó en un sandbox y guardó el recibo firmado. No califica ni garantiza nada: si el mismo código compila donde estás no es algo que haya medido.",
   "sample.title": "Ejemplo",

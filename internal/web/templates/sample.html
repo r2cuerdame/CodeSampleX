@@ -170,6 +170,29 @@
       <p class="sample-detail__action"><a class="mono" href="/v1/samples/{{.Meta.SampleID}}/artifact">{{.T "sample.download"}}</a></p>
     </section>
 
+    {{if .Source}}
+    {{/* The source itself. Naming the files and offering a tarball let a
+         visitor see that a sample exists without seeing what it says, and
+         downloading an archive to read forty lines is a barrier with a link
+         on it.
+
+         Rendered as text on the page rather than fetched: it is the thing the
+         page is about, it is what makes the page worth indexing, and a reader
+         with no JavaScript still gets it. Binary files are absent rather than
+         mangled -- the list above still names them. */}}
+    <section class="sample-detail__card sample-source" aria-labelledby="sample-source-heading">
+      <div class="sample-detail__section-heading">
+        <h2 class="eyebrow mono" id="sample-source-heading">{{.T "sample.source"}}</h2>
+      </div>
+      {{- range .Source}}
+      <figure class="srcfile">
+        <figcaption class="mono">{{.Name}}{{if .Truncated}} <span class="dim">{{$.T "sample.source_truncated"}}</span>{{end}}</figcaption>
+        <pre><code>{{.Body}}</code></pre>
+      </figure>
+      {{- end}}
+    </section>
+    {{end}}
+
     <section class="sample-detail__card" aria-labelledby="sample-origin-heading">
       <div class="sample-detail__section-heading">
         <h2 class="eyebrow mono" id="sample-origin-heading">{{.T "sample.origin"}}</h2>

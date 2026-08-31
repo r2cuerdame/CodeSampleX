@@ -1802,6 +1802,10 @@ type samplePageData struct {
 	Receipts            []receiptView
 	DeclaredEnvironment environmentView
 	EvidenceBasisKey    string
+	// Source is the sample's readable files. Empty when the artifact is
+	// unavailable or holds nothing readable, and the page then falls back to
+	// naming the files and offering the archive, which is what it did before.
+	Source []SampleFile
 	Crumbs              []crumb
 	// Headline is the <h1>: the release and what this sample answers for.
 	// The raw goal is still printed, under Case, where a reader who wants
@@ -2059,8 +2063,14 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	}
 	sampleCrumbs = append(sampleCrumbs, crumb{Label: leafLabel})
 
+	// Best effort, and deliberately after everything the page needs: a sample
+	// whose artifact cannot be read still has a page, with its files named and
+	// the archive offered. Source is an improvement on that, never a
+	// precondition for it.
+	source, _ := s.d.Store.SampleSource(r.Context(), meta.SampleID)
+
 	s.render(w, "sample", http.StatusOK, samplePageData{
-		basePage: b, Meta: meta, Manifest: manifest,
+		basePage: b, Meta: meta, Manifest: manifest, Source: source,
 		PassingKeys: passingKeys(receipts), Context: ctx, Goal: goal,
 		Headline: serp.Headline, Lead: serp.Description,
 		Packages: refs, Receipts: receipts,

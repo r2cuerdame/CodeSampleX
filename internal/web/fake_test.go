@@ -19,6 +19,8 @@ type fakeStore struct {
 	// resolvedNone mirrors dependency_resolution: releases a resolver read and
 	// found empty, keyed "name@version".
 	resolvedNone map[string]bool
+	// sampleSource is the readable files a sample page renders, keyed by id.
+	sampleSource map[string][]SampleFile
 	statsJSON    string
 	statsOK      bool
 	snapshots    map[string]string // purl+"\x00"+symbol → snapshot JSON
@@ -538,6 +540,10 @@ func (f *fakeStore) DependencySubjects(_ context.Context, query string, offset, 
 		end = total
 	}
 	return out[offset:end], total, nil
+}
+
+func (f *fakeStore) SampleSource(_ context.Context, id string) ([]SampleFile, error) {
+	return f.sampleSource[id], nil
 }
 
 func (f *fakeStore) DependencyResolvedNone(_ context.Context, _, name, version string) (bool, error) {

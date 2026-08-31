@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
 	"github.com/r2cuerdame/codesamplex/internal/web"
@@ -1270,4 +1271,33 @@ func (w *webStore) DependencyParents(ctx context.Context, ecosystem, name, versi
 
 func (w *webStore) DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error) {
 	return w.s.DependencyResolvedNone(ctx, ecosystem, name, version)
+}
+
+// SampleSource reads the artifact and returns its readable files.
+//
+// The blob is the same one /v1/samples/{id}/artifact serves, and the same
+// quarantine rule applies by construction: this is only reached from a sample
+// page, and a quarantined sample has no page.
+func (w *webStore) SampleSource(ctx context.Context, id string) ([]web.SampleFile, error) {
+	if w.blobs == nil {
+		return nil, nil
+	}
+	rc, err := w.blobs.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	tgz, err := io.ReadAll(io.LimitReader(rc, samples.MaxCompressedBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	files, err := samples.ReadTextFiles(tgz)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.SampleFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, web.SampleFile{Name: f.Name, Body: f.Body, Truncated: f.Truncated})
+	}
+	return out, nil
 }
