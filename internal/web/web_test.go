@@ -153,7 +153,11 @@ func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) 
 	ordered := []string{
 		`class="hero home-hero"`,
 		`class="home-search"`,
-		`id="measured"`,
+		// The evidence between the search and the install block used to be
+		// the findings strip; the home page carries the compatibility grid
+		// there now. What the order protects is unchanged: a visitor sees
+		// something measured before being asked to install anything.
+		`id="matrix"`,
 		`id="install"`,
 		`id="agents"`,
 	}
@@ -182,21 +186,28 @@ func TestLandingPutsSearchAndEvidenceBeforeInstallationAndSupport(t *testing.T) 
 	}
 }
 
-func TestLandingWithoutFeaturedFindingsHasNoBrokenMeasuredAnchor(t *testing.T) {
+// The home page must not link to sections it no longer carries.
+//
+// It used to lead with findings, samples and a dependency strip; all three
+// were removed because the page had become a wall. An anchor left pointing at
+// #measured would scroll a visitor nowhere, which is the failure this has
+// always guarded — the reason changed, the property did not.
+func TestLandingHasNoAnchorToARemovedSection(t *testing.T) {
 	var out bytes.Buffer
 	page := landingPage{
 		basePage:  basePage{Lang: "en", Title: "CodeSampleX", IsLanding: true},
 		InstallPS: "install-windows",
 		InstallSH: "install-unix",
 		LLMPrompt: "install with an agent",
-		Findings:  nil,
 	}
 	if err := parseTemplates()["landing"].ExecuteTemplate(&out, "base.html", page); err != nil {
 		t.Fatal(err)
 	}
 	body := out.String()
-	if strings.Contains(body, `href="#measured"`) {
-		t.Error("empty findings render links to an absent #measured section")
+	for _, gone := range []string{`href="#measured"`, `href="#samples"`, `href="#moved"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the home page links to %s, a section it no longer has", gone)
+		}
 	}
 	// The hero's one action is the install. The map button was removed: it
 	// only scrolled to a grid already on the page, and the search beside the

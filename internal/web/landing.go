@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -550,20 +549,6 @@ type landingPage struct {
 	// copy button's data attribute, from this one field, so the text a
 	// reader checks is byte-for-byte the text their agent receives.
 	LLMPrompt string
-	// Findings are the few measured contradictions shown on the home page.
-	//
-	// The rest of this page EXPLAINS why the network is needed; these PROVE
-	// it. One line of "the documentation says X, the contract measured Y"
-	// does more than every paragraph above it, because a reader recognises
-	// the shape of it from their own week.
-	Findings []homeFinding
-	// Samples is the reusable half of what this network makes: a finding says
-	// what is not true, a sample is the thing a reader can take and run.
-	Samples []homeSample
-	// Moved is the dependency map as the one question it answers best --
-	// which child moved under a release. A count of edges says how big the
-	// map is; this says what is in it.
-	Moved []homeMoved
 	// Coverage is the instrument describing its own shape. An observatory's
 	// failure mode is not a false claim but an unstated skew, and this one is
 	// extreme enough to publish rather than let a reader discover it.
@@ -571,15 +556,6 @@ type landingPage struct {
 	// when the network has no renderable cube yet; the page stays honest
 	// and simply says what will appear here.
 	Matrix *heroMatrixData
-}
-
-// homeFinding is one measured contradiction, trimmed for the home page.
-type homeFinding struct {
-	Ecosystem string
-	Subject   string
-	Believed  string
-	Measured  string
-	Href      string
 }
 
 // heroEco is one measured ecosystem, linked straight into the filtered
@@ -624,12 +600,6 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	b.JSONLD = landingJSONLD(base, lang)
 
 	st := s.loadStats(r)
-	// Both strips come from a timer-backed cache: the front page is the first
-	// thing a visitor sees and the first thing the deployment smoke checks,
-	// and it must not wait on an aggregate. Cold means the sections do not
-	// render, which is honest -- a placeholder row would be this network
-	// inventing activity.
-	sampleRows, movedRows := s.homeAssets()
 	hits, err := s.d.Store.HotPackages(r.Context(), 12)
 	if err != nil {
 		hits = nil // an empty map is still a usable landing page
@@ -641,9 +611,6 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		InstallPS: "irm " + base + "/install.ps1 | iex",
 		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
 		LLMPrompt: llmPrompt(lang, base),
-		Findings:  homeFindings(lang),
-		Samples:   buildHomeSamples(sampleRows),
-		Moved:     buildHomeMoved(lang, movedRows),
 		Matrix:    s.heroMatrix(r, lang, hits),
 	})
 }
@@ -658,46 +625,6 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 // and tells the agent to ADD to an MCP config rather than replace it.
 func llmPrompt(lang, base string) string {
 	return i18n.T(lang, "landing.llm_prompt", base, base)
-}
-
-// homeFindingsShown is how many measured contradictions the front page
-// carries. Three: enough that the shape is unmistakable, few enough that
-// the page still opens with what this is.
-const homeFindingsShown = 3
-
-// homeFindings picks the contradictions that land fastest on a stranger.
-//
-// They are chosen by hand rather than by recency, because what makes one
-// land is not how new it is: it is whether the reader has been bitten by it
-// — an empty form field arriving as 0, a password silently truncated at 72
-// bytes. Every one of them links to the sample whose contract measured it,
-// so the claim is checkable in one click.
-func homeFindings(lang string) []homeFinding {
-	want := []string{"zod", "bcryptjs", "jose"}
-	var out []homeFinding
-	for _, w := range want {
-		for _, f := range append(append([]finding{}, documentedFindings...), believedFindings...) {
-			if !strings.HasPrefix(f.Subject, w) {
-				continue
-			}
-			href := "/findings"
-			if f.SampleID != "" {
-				href = "/samples/" + f.SampleID
-			}
-			out = append(out, homeFinding{
-				Ecosystem: f.Ecosystem,
-				Subject:   f.Subject,
-				Believed:  f.Believed,
-				Measured:  f.Measured,
-				Href:      href,
-			})
-			break
-		}
-		if len(out) == homeFindingsShown {
-			break
-		}
-	}
-	return out
 }
 
 // statsPage and adaptersPage are permanent redirects. Both pages folded

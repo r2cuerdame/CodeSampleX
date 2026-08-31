@@ -93,8 +93,8 @@ func TestEverySourceLinkIsRendered(t *testing.T) {
 // back to printing the key itself.
 func TestFindingsChromeIsTranslated(t *testing.T) {
 	keys := []string{
-		"findings.title", "findings.intro", "findings.rerun",
-		"findings.untranslated", "findings.count", "findings.group_docs",
+		"findings.title", "findings.intro",
+		"findings.count", "findings.group_docs",
 		"findings.group_docs_note", "findings.group_belief",
 		"findings.group_belief_note", "findings.believed", "findings.measured",
 		"findings.contract", "findings.source", "findings.method_heading",

@@ -1208,22 +1208,6 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	return out, nil
 }
 
-// MovedDependencies carries the moved-child list to the home page.
-func (w *webStore) MovedDependencies(ctx context.Context, limit int) ([]web.MovedDependency, error) {
-	rows, err := w.s.MovedDependencies(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.MovedDependency, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.MovedDependency{
-			Ecosystem: r.Ecosystem, ParentName: r.ParentName, ChildName: r.ChildName,
-			Versions: r.Versions, Releases: r.Releases,
-		})
-	}
-	return out, nil
-}
-
 // PackageAssets carries the release-level census rolled up to packages.
 func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error) {
 	rows, err := w.s.PackageAssets(ctx)

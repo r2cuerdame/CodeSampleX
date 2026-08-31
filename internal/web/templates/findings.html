@@ -42,8 +42,6 @@
 
 <h1>{{.T "findings.title"}}</h1>
 <p class="lead">{{.T "findings.intro"}}</p>
-<p class="note dim small">{{.T "findings.rerun"}}</p>
-<p class="note dim small">{{.T "findings.untranslated"}}</p>
 <form class="filterbar" action="/findings" method="get" role="search">
   <label class="filterquery"><span>{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Filter.Query}}" placeholder="{{.T "findings.search"}}"></label>
   <label><span>{{.T "adapters.ecosystem"}}</span><select name="eco"><option value="">{{.T "filters.all"}}</option>{{range .EcosystemOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
@@ -72,8 +70,7 @@
 {{- if .Derived}}
 <section>
   <h2 class="eyebrow mono">{{.T "findings.group_derived"}}</h2>
-  <p class="note dim small">{{.T "findings.group_derived_note"}}</p>
-  {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
+    {{if .RangeText}}<p class="dim mono small">{{.RangeText}}</p>{{end}}
   <ol class="findings">
   {{- range .Derived}}
     <li class="finding panel">

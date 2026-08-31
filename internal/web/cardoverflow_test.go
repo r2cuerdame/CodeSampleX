@@ -93,10 +93,10 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 		// identifiers: Plug.Session.init/1, CanvasRenderingContext2D.getImageData,
 		// a session id. The fixture is the worst of those shapes.
 		{"findings", "/findings", "li.finding", true, seedSessionFinding},
-		// The same card, three of them, in the landing page's grid. Its
-		// track floor is its own failure mode, so it has to be measured
-		// where it is laid out rather than inferred from the other page.
-		{"landing", "/", "li.finding-card", false, nil},
+		// The landing page used to lay the same card out in a three-track
+		// grid, which had its own floor and its own failure mode. That strip
+		// and its .finding-card styles are gone, so the row measured a
+		// selector no page renders.
 		// Not a card, the same defect: a Go pseudo-version is 36 unbroken
 		// characters inside a pill that may not wrap.
 		{"records", "/compatibility", ".pkglist li", true, seedSessionRecord},
@@ -346,12 +346,9 @@ func TestNarrowCardRulesSurviveWithoutABrowser(t *testing.T) {
 	sheet := css.Body.String()
 
 	for _, want := range []string{
-		// A card track floor may not exceed the width the viewport offers:
-		// a flat 17rem minimum is wider than a 320px phone's content column.
-		"repeat(auto-fit, minmax(min(17rem, 100%), 1fr))",
-		// Believed/measured prose quotes identifiers, and an identifier has
-		// no break opportunity in it.
-		".finding-card p { margin: 0.7rem 0 0; font-size: 0.86rem; overflow-wrap: anywhere; }",
+		// The card-track floor and the .finding-card prose rule were the home
+		// page's findings strip. That strip is gone and so are its styles;
+		// /findings keeps its own rules inline, asserted from the page below.
 		// A panel heading on a phone may shrink and wrap; on a desktop it
 		// still may not, which is what keeps that layout as it was.
 		".home-detail .eyebrow { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }",
