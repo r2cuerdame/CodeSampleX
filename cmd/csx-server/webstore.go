@@ -1236,3 +1236,34 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 	}
 	return out, nil
 }
+
+func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {
+	rows, total, err := w.s.DependencySubjects(ctx, query, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]web.DependencySubject, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.DependencySubject{
+			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version,
+			Parents: int64(r.Parents), Projects: int64(r.Projects),
+		})
+	}
+	return out, total, nil
+}
+
+func (w *webStore) DependencyParents(ctx context.Context, ecosystem, name, version string) ([]web.DependencyEdge, error) {
+	rows, err := w.s.DependencyParents(ctx, ecosystem, name, version)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DependencyEdge, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.DependencyEdge{
+			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
+			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
+			Projects: int64(r.Projects),
+		})
+	}
+	return out, nil
+}

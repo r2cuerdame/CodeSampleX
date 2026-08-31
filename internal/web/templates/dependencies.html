@@ -1,0 +1,84 @@
+{{define "content"}}
+{{/* Page-specific rules live here rather than in static/site.css, so the page
+     is one new file plus its handler. Everything it can borrow from the shared
+     stylesheet — panel, mono, dim, note, lead — it borrows. */}}
+<style>
+.deplist { list-style: none; margin: 1.4rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+.deprow {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 0.9rem;
+  align-items: baseline; padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.deprow.is-selected { border-color: var(--fg); }
+.depname { overflow-wrap: anywhere; }
+.depeco { color: var(--dim); font-size: 0.85rem; font-family: var(--mono); }
+.depcount {
+  font-family: var(--mono); font-size: 0.85rem; color: var(--dim);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.deppanel { margin-top: 1.6rem; padding: 1.1rem; border: 1px solid var(--line); border-radius: 6px; }
+.deppanel h2 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+.deppanel > p { margin: 0 0 0.9rem; max-width: 74ch; }
+.depparents { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.depparent { display: grid; grid-template-columns: 1fr auto; gap: 0.9rem; align-items: baseline; }
+.depempty { margin-top: 1.4rem; padding: 1.1rem; border: 1px dashed var(--line); border-radius: 6px; }
+.depempty p { margin: 0 0 0.5rem; max-width: 74ch; }
+.depempty p:last-child { margin-bottom: 0; }
+@media (max-width: 40rem) {
+  .deprow { grid-template-columns: 1fr; }
+  .depcount { grid-column: 1; }
+}
+</style>
+
+<h1>{{.T "dependencies.title"}}</h1>
+<p class="lead">{{.T "dependencies.intro"}}</p>
+<p class="note dim small">{{.T "dependencies.caveat"}}</p>
+
+<form class="filterbar filterbar-compact" action="/dependencies" method="get" role="search">
+  <label class="filterquery"><span class="sr-only">{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Query}}" placeholder="{{.T "dependencies.placeholder"}}"></label>
+  {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+  <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasQuery}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
+</form>
+
+{{if .SelectedCoord}}
+<section class="deppanel">
+  <h2>{{.T "dependencies.pulledby" .SelectedCoord}}</h2>
+  {{if .ParentsEmpty}}
+  <p class="dim">{{.T "dependencies.noparents"}}</p>
+  {{else}}
+  <ul class="depparents">
+    {{range .Parents}}
+    <li class="depparent">
+      <a class="mono" href="{{.Href}}">{{.Coord}}</a>
+      <span class="depcount">{{.ProjectsText}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+  <p class="dim small" style="margin:0.9rem 0 0"><a href="{{.SelectedHref}}">{{.T "dependencies.openrelease"}}</a></p>
+</section>
+{{end}}
+
+{{if .Items}}
+<p class="dim mono small">{{.RangeText}}</p>
+<ol class="deplist">
+  {{range .Items}}
+  <li class="deprow{{if .Selected}} is-selected{{end}}">
+    <span class="depname"><a href="{{.Href}}">{{.Coord}}</a> <span class="depeco">{{.Ecosystem}}</span></span>
+    <span class="depcount">{{.ParentsText}}</span>
+    <span class="depcount">{{.ProjectsText}}</span>
+  </li>
+  {{end}}
+</ol>
+<nav class="pager" aria-label="{{.T "dependencies.title"}}">
+  {{if .PrevHref}}<a rel="prev" href="{{.PrevHref}}">{{.T "records.prev"}}</a>{{else}}<span class="dim">{{.T "records.prev"}}</span>{{end}}
+  <span class="dim mono small">{{.PageText}}</span>
+  {{if .NextHref}}<a rel="next" href="{{.NextHref}}">{{.T "records.next"}}</a>{{else}}<span class="dim">{{.T "records.next"}}</span>{{end}}
+</nav>
+{{else}}
+<div class="depempty">
+  <p>{{.T "dependencies.empty"}}</p>
+  <p class="dim small">{{.T "dependencies.emptywhy"}}</p>
+</div>
+{{end}}
+{{end}}

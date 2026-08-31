@@ -488,6 +488,15 @@ type Store interface {
 	// upgrade a library and its dependencies move under you, and the one that
 	// moved is usually the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// DependencySubjects browses the graph from the CHILD's side: one ranked,
+	// searchable page of releases other packages resolved onto, plus how many
+	// match in total. Dependencies answers "what did this pull", which requires
+	// already knowing a parent; this is the entry point for the question a
+	// reader actually arrives with.
+	DependencySubjects(ctx context.Context, query string, offset, limit int) ([]DependencySubject, int, error)
+	// DependencyParents lists the exact releases that resolved onto one exact
+	// release.
+	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
 	// DependencyProvenNone reports whether a resolver read this release's own
 	// entry and found that it declares no dependencies. Distinct from "no
 	// edges recorded", which is also what an ecosystem with no scanner and a
