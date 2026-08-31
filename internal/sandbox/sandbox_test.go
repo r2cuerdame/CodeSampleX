@@ -51,7 +51,7 @@ func TestDetectCapability(t *testing.T) {
 func TestResolveCommandPerEcosystem(t *testing.T) {
 	cases := map[string][]string{
 		"npm":    {"sh", "-c", "rm -rf /work/node_modules; npm ci --ignore-scripts"},
-		"pypi":   {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-deps --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
+		"pypi":   {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
 		"golang": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json"},
 		"cargo":  {"sh", "-c", "rm -rf /work/.csx-vendor/cargo /work/.csx-vendor/target; cargo fetch --locked"},
 		"maven":  {"sh", "-c", mavenResolveScript},
@@ -575,5 +575,35 @@ func TestResolveNeverRunsSampleCode(t *testing.T) {
 		if strings.Contains(mavenScript, forbidden) {
 			t.Errorf("Maven resolve contains %q, which would trust project-controlled Maven configuration", forbidden)
 		}
+	}
+}
+
+// The pypi resolve stage lets pip resolve the tree.
+//
+// It used to pass --no-deps, so only what the manifest named was installed and
+// the author had to enumerate a transitive tree they cannot see from the
+// package page. Miss one and the contract stage dies with "ImportError: import
+// numpy failed" — a failure that reads like infrastructure and was reported as
+// one. onnxruntime@1.28.0 was handed out ten times across every symbol and
+// quarantined without producing a single sample. Measured with its tree
+// installed, the same package imports and answers get_available_providers
+// inside the same 512MB container in ten seconds.
+//
+// Pinned as a test because the flag is one word and its absence is invisible:
+// nothing about reading this command tells you that removing --no-deps was a
+// decision rather than an oversight.
+func TestThePythonResolveStageInstallsTheDependencyTree(t *testing.T) {
+	cmd, err := resolveCommand("pypi", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cmd, " ")
+	if strings.Contains(joined, "--no-deps") {
+		t.Error("--no-deps is back: a sample would have to name every transitive " +
+			"dependency, and one it misses fails as an ImportError inside the contract stage")
+	}
+	// Provenance is what made this safe to change, so it has to stay.
+	if !strings.Contains(joined, "--report") {
+		t.Error("the pip report is gone; nothing else records where each distribution came from")
 	}
 }

@@ -143,8 +143,26 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// distribution was installed but not whether it came from PyPI, a
 		// private index, VCS, or a local path; the signed receipt must not
 		// reconstruct a public purl without that provenance.
+		//
+		// pip resolves the tree. It used to run --no-deps, which installed
+		// only what the manifest named and left the author to enumerate a
+		// transitive tree they cannot see from the package page. Miss one and
+		// the contract stage dies with "ImportError: import numpy failed",
+		// which reads like an infrastructure fault and was reported as one:
+		// onnxruntime was handed out ten times across every symbol and
+		// quarantined without a single sample. Installed with its tree, the
+		// same package imports and answers get_available_providers inside the
+		// same 512MB container in ten seconds.
+		//
+		// Provenance is unaffected, which is the only reason this is safe to
+		// change. --report records download_info for EVERYTHING pip installs,
+		// and both readers of it look a package up by name and require exactly
+		// one match: distInfoResolved over the .dist-info directories,
+		// pipReportResolved over the report. Extra entries are skipped, not
+		// misread. Measured on onnxruntime==1.28.0: five installs, every one
+		// is_direct=false with a files.pythonhosted.org URL.
 		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/py " + vendorDir +
-			"/pip-report.json; mkdir -p " + vendorDir + "; pip install --no-deps --no-compile --report " +
+			"/pip-report.json; mkdir -p " + vendorDir + "; pip install --no-compile --report " +
 			vendorDir + "/pip-report.json --target " + vendorDir + "/py -r requirements.txt"}, nil
 	case "golang":
 		// go.mod is a request, not the selected build list: Minimal Version
