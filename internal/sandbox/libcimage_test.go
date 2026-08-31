@@ -90,3 +90,43 @@ func TestEveryLinuxVerifierImageDeclaresItsLibc(t *testing.T) {
 		}
 	}
 }
+
+// Every libc a manifest declares needs a lane, or the guard turns a wrong
+// answer into no answer.
+//
+// Measured on production 2026-09-01, after the guard shipped: 898 golang
+// samples declare glibc and the only golang image was Alpine, so the guard
+// refused all of them. 18 pypi samples declare musl and the Python lane had
+// moved to Debian, so those were refused too. Refusing is safer than
+// answering from the wrong machine — it writes no false evidence — but a
+// thousand samples that can never be verified is not a fix.
+func TestEveryDeclaredLibcHasALane(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ecosystem string
+		runtime   string
+		libc      string
+		want      string
+	}{
+		{"golang on glibc", "golang", "", "glibc", "golang:1.26@"},
+		{"golang on musl", "golang", "", "musl", "golang:1.26-alpine@"},
+		{"golang undeclared keeps the default", "golang", "", "", "golang:1.26-alpine@"},
+		{"python on musl", "pypi", "python", "musl", "python:3.12-alpine@"},
+		{"python on glibc", "pypi", "python", "glibc", "python:3.12-slim@"},
+		{"python undeclared keeps the default", "pypi", "python", "", "python:3.12-slim@"},
+	} {
+		got, err := imageForManifestLinux(domain.SampleManifest{
+			Environment: domain.EnvironmentFingerprint{
+				SchemaVersion: 1, Ecosystem: tc.ecosystem, OS: "linux", Arch: "x64",
+				Runtime: tc.runtime, Libc: tc.libc,
+			},
+		})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%s: image = %q, want one pinned from %s", tc.name, got, tc.want)
+		}
+	}
+}

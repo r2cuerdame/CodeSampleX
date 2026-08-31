@@ -258,6 +258,20 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion, libc string) (st
 		if runtime != "" && runtime != "python" {
 			return "", fmt.Errorf("sandbox: no verifier image for pypi runtime %q", runtime)
 		}
+		// The Alpine Python entries were kept "and no longer selected" when
+		// the lane moved to Debian, because 510 published receipts name them.
+		// A manifest that asks for musl is not the default coming back: it is
+		// a sample stating the environment it is about, and refusing it would
+		// leave 18 samples with no lane at all.
+		if libc == "musl" {
+			switch runtimeVersion {
+			case "", "3.12":
+				return pinned("python:3.12-alpine"), nil
+			case "3.14":
+				return pinned("python:3.14-alpine"), nil
+			}
+			return "", fmt.Errorf("sandbox: no musl verifier image for python runtime version %q", runtimeVersion)
+		}
 		switch runtimeVersion {
 		case "", "3.12":
 			return pinned("python:3.12-slim"), nil
@@ -267,6 +281,11 @@ func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion, libc string) (st
 			return "", fmt.Errorf("sandbox: no verifier image for python runtime version %q", runtimeVersion)
 		}
 	case "golang":
+		// Same rule as npm: a declared libc is honoured, an undeclared one
+		// keeps the historical default so nothing moves lanes on its own.
+		if libc == "glibc" {
+			return pinned("golang:1.26"), nil
+		}
 		return pinned("golang:1.26-alpine"), nil
 	case "cargo":
 		return pinned("rust:1-alpine"), nil

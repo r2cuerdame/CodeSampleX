@@ -96,7 +96,14 @@ var verifierImages = map[string]verifierImage{
 	// with the other published architectures behind the same index digest.
 	"python:3.14-alpine": {"python:3.14-alpine", "sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc", "alpine", "", "musl"},
 	"golang:1.26-alpine": {"golang:1.26-alpine", "sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468", "alpine", "", "musl"},
-	"rust:1-alpine":      {"rust:1-alpine", "sha256:a10e64dd139b7387337c7fbe8aca31b959b57b2fd4c8ae20a02cf1d6ea424dce", "alpine", "", "musl"},
+	// The glibc Go lane. 898 golang samples declare glibc — most of the
+	// golang corpus — and until this entry existed the only Go image was
+	// Alpine, so every one of them either ran on the wrong libc or, once the
+	// guard shipped, was refused outright.
+	//
+	// Measured 2026-09-01 by running it: Debian 13, go1.26.7, glibc 2.41.
+	"golang:1.26":   {"golang:1.26", "sha256:e30143be198ab04cf7ba25fba83ab3a692ca584c994aad0bf131fa0eb32dd8c1", "debian", "", "glibc"},
+	"rust:1-alpine": {"rust:1-alpine", "sha256:a10e64dd139b7387337c7fbe8aca31b959b57b2fd4c8ae20a02cf1d6ea424dce", "alpine", "", "musl"},
 	// Alpine, despite the tag. See imageBase.
 	"composer:2": {"composer:2", "sha256:4d71c3c2109c61d5415544264b59ad4087e4c5b7244481723664138fd36d5040", "alpine", "", "musl"},
 	// Debian, not alpine, and the difference is the whole ecosystem: a gem
