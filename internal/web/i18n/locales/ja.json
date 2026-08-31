@@ -365,7 +365,7 @@
   "pkg.symbols": "シンボル",
   "pkg.versions": "全バージョン",
   "records.entries": "エントリ",
-  "records.filter_note": "環境フィルターは記録済みの行だけに一致し、不明な環境を推測しません。",
+  "records.filter_note": "環境フィルタは実際に記録されたものと照合します。記録のない環境は、パッケージのエコシステムから推測せずに除外します。",
   "records.next": "次へ",
   "records.page": "%s / %s ページ",
   "records.prev": "前へ",

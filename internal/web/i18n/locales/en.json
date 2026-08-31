@@ -370,7 +370,7 @@
   "pkg.symbols": "Symbols",
   "pkg.versions": "All versions",
   "records.entries": "entries",
-  "records.filter_note": "Environment filters match recorded snapshot rows. Unknown environments are excluded rather than inferred from the package ecosystem.",
+  "records.filter_note": "Environment filters match what was actually recorded. An environment nothing recorded is left out rather than guessed from the package's ecosystem.",
   "records.next": "Next",
   "records.page": "Page %s of %s",
   "records.prev": "Previous",

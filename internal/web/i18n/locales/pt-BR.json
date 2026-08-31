@@ -370,7 +370,7 @@
   "pkg.symbols": "Símbolos",
   "pkg.versions": "Todas as versões",
   "records.entries": "entradas",
-  "records.filter_note": "Os filtros só correspondem a linhas registradas; ambientes desconhecidos não são inferidos.",
+  "records.filter_note": "Os filtros de ambiente correspondem ao que foi de fato registrado. Um ambiente sem registro fica de fora, em vez de ser adivinhado pelo ecossistema do pacote.",
   "records.next": "Próxima",
   "records.page": "Página %s de %s",
   "records.prev": "Anterior",

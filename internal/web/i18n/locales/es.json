@@ -370,7 +370,7 @@
   "pkg.symbols": "Símbolos",
   "pkg.versions": "Todas las versiones",
   "records.entries": "entradas",
-  "records.filter_note": "Los filtros solo coinciden con filas registradas; un entorno desconocido no se infiere.",
+  "records.filter_note": "Los filtros de entorno coinciden con lo que realmente se registró. Un entorno sin registro se omite en lugar de adivinarse por el ecosistema del paquete.",
   "records.next": "Siguiente",
   "records.page": "Página %s de %s",
   "records.prev": "Anterior",

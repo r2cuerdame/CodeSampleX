@@ -41,10 +41,14 @@
 <header class="top">
   <div class="wrap bar">
     <a class="brand" href="{{.HomeHref}}"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="shield" d="M12 2.5 20 5.4v6.2c0 5.2-3.3 8.7-8 10.4-4.7-1.7-8-5.2-8-10.4V5.4L12 2.5Z"/><path class="check" d="m7.8 12 2.6 2.6 5.9-6.1"/></svg></span><span class="brand-word">CodeSample<span class="x">X</span></span></a>
+    {{/* Ordered by what the reader gets, not by what we built first: what
+         was found out, then what they can take away, then the evidence
+         underneath both. Compatibility used to sit second, ahead of the
+         findings it exists to support. */}}
     <nav class="nav">
+      <a href="{{.WithLang "/findings"}}">{{.T "nav.findings"}}</a>
       <a href="{{.WithLang "/samples"}}">{{.T "nav.samples"}}</a>
       <a href="{{.WithLang "/compatibility"}}">{{.T "nav.compatibility"}}</a>
-      <a href="{{.WithLang "/findings"}}">{{.T "nav.findings"}}</a>
       {{/* /gaps and /dependencies are not here on purpose. Both are lists of
            coordinates -- a thousand rows of package names -- and a reader
            arriving at the top of the site cannot act on either. The dependency

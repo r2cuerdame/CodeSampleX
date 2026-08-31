@@ -55,3 +55,27 @@ func TestAPackagePageCarriesNoCollectionTrail(t *testing.T) {
 		t.Error("a package page carries the collection trail")
 	}
 }
+
+// The navigation is ordered by what a reader gets.
+//
+// R2C-135 sets the order: what was found out, then what can be taken away,
+// then the evidence underneath both. Compatibility used to sit second, ahead
+// of the findings it exists to support.
+func TestTheNavigationLeadsWithFindings(t *testing.T) {
+	body := get(t, newTestMuxOnly(t), "/findings?lang=en").Body.String()
+	nav := body[strings.Index(body, `<nav class="nav">`):]
+	nav = nav[:strings.Index(nav, "</nav>")]
+
+	order := []string{`href="/findings"`, `href="/samples"`, `href="/compatibility"`}
+	at := -1
+	for _, want := range order {
+		i := strings.Index(nav, want)
+		if i < 0 {
+			t.Fatalf("%s is not in the navigation", want)
+		}
+		if i < at {
+			t.Errorf("%s comes before the entry that should precede it", want)
+		}
+		at = i
+	}
+}

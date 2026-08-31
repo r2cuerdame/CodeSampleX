@@ -370,7 +370,7 @@
   "pkg.symbols": "Symbole",
   "pkg.versions": "Alle Versionen",
   "records.entries": "Einträge",
-  "records.filter_note": "Umgebungsfilter treffen nur aufgezeichnete Zeilen; unbekannte Umgebungen werden nicht abgeleitet.",
+  "records.filter_note": "Umgebungsfilter greifen auf das zurück, was tatsächlich aufgezeichnet wurde. Eine Umgebung ohne Aufzeichnung wird weggelassen statt aus dem Ökosystem des Pakets erraten.",
   "records.next": "Weiter",
   "records.page": "Seite %s von %s",
   "records.prev": "Zurück",

@@ -365,7 +365,7 @@
   "pkg.symbols": "符号",
   "pkg.versions": "全部版本",
   "records.entries": "条目",
-  "records.filter_note": "环境筛选仅匹配已记录的快照行，不会推断未知环境。",
+  "records.filter_note": "环境筛选匹配实际记录到的内容。没有任何记录的环境会被排除，而不是根据包所属生态系统去推测。",
   "records.next": "下一页",
   "records.page": "第 %s 页，共 %s 页",
   "records.prev": "上一页",
