@@ -48,6 +48,7 @@
   "compatibility.axis_sample": "Sample",
   "compatibility.axis_some": "%s of %s releases",
   "compatibility.axis_unknown": "not measured yet",
+  "compatibility.dep_unaskable": "no scanner for this ecosystem",
   "compatibility.evidence_observed": "observed in real projects",
   "compatibility.finding_none": "none recorded",
   "compatibility.finding_yes": "a sample contradicts a belief",

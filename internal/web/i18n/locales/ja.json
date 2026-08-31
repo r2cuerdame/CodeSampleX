@@ -48,6 +48,7 @@
   "compatibility.axis_sample": "サンプル",
   "compatibility.axis_some": "%s / %s リリース",
   "compatibility.axis_unknown": "まだ測っていません",
+  "compatibility.dep_unaskable": "このエコシステムにはスキャナがありません",
   "compatibility.evidence_observed": "実際のプロジェクトで観測",
   "compatibility.finding_none": "記録なし",
   "compatibility.finding_yes": "通説を覆したサンプルがあります",

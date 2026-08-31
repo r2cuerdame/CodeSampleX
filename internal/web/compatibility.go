@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -167,7 +168,19 @@ func compatRowFor(lang string, base basePage, hit PackageHit, asset PackageAsset
 		Label: i18n.T(lang, "compatibility.axis_evidence"),
 		Text:  i18n.T(lang, "compatibility.evidence_observed"), Held: true,
 	}
-	row.Axes[2] = ratio("compatibility.axis_dependency", asset.WithDependency, asset.Releases)
+	// The dependency axis is not askable in every ecosystem: nothing here
+	// ships a scanner for golang, maven, gem, pub, hex or composer. "None
+	// yet" on those rows promises a gap somebody could close, and the census
+	// already subtracts them from the backlog -- so the collection has to
+	// make the same distinction or it contradicts /gaps about one package.
+	if _, unaskable := domain.DependencyNotApplicable(hit.Ecosystem); unaskable {
+		row.Axes[2] = compatAxis{
+			Label: i18n.T(lang, "compatibility.axis_dependency"),
+			Text:  i18n.T(lang, "compatibility.dep_unaskable"),
+		}
+	} else {
+		row.Axes[2] = ratio("compatibility.axis_dependency", asset.WithDependency, asset.Releases)
+	}
 	finding := compatAxis{Label: i18n.T(lang, "compatibility.axis_finding")}
 	if hasFinding {
 		finding.Text, finding.Held = i18n.T(lang, "compatibility.finding_yes"), true

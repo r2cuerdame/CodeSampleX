@@ -48,6 +48,7 @@
   "compatibility.axis_sample": "Образец",
   "compatibility.axis_some": "%s из %s выпусков",
   "compatibility.axis_unknown": "ещё не измерено",
+  "compatibility.dep_unaskable": "для этой экосистемы нет сканера",
   "compatibility.evidence_observed": "наблюдалось в реальных проектах",
   "compatibility.finding_none": "ничего не записано",
   "compatibility.finding_yes": "образец опровергает убеждение",

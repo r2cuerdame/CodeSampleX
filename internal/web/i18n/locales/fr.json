@@ -48,6 +48,7 @@
   "compatibility.axis_sample": "Échantillon",
   "compatibility.axis_some": "%s versions sur %s",
   "compatibility.axis_unknown": "pas encore mesuré",
+  "compatibility.dep_unaskable": "pas de scanner pour cet écosystème",
   "compatibility.evidence_observed": "observé dans de vrais projets",
   "compatibility.finding_none": "rien d'enregistré",
   "compatibility.finding_yes": "un échantillon contredit une idée reçue",

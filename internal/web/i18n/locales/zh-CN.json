@@ -48,6 +48,7 @@
   "compatibility.axis_sample": "样本",
   "compatibility.axis_some": "%s / %s 个版本",
   "compatibility.axis_unknown": "尚未测量",
+  "compatibility.dep_unaskable": "该生态系统没有扫描器",
   "compatibility.evidence_observed": "在真实项目中被观测到",
   "compatibility.finding_none": "没有记录",
   "compatibility.finding_yes": "有样本推翻了一个看法",

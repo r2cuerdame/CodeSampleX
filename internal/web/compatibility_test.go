@@ -136,6 +136,12 @@ func compatRowHTML(t *testing.T, body, coord string) string {
 // which is what these tests are about; the cold state has its own test.
 func warmCompat(t *testing.T, store *fakeStore) string {
 	t.Helper()
+	return warmCompatLang(t, store, "en")
+}
+
+// warmCompatLang renders the collection in one language with the rollup loaded.
+func warmCompatLang(t *testing.T, store *fakeStore, lang string) string {
+	t.Helper()
 	s := &site{
 		d:    Deps{Store: store, PublicURL: "https://codesamplex.dev", Build: testBuild()},
 		tmpl: parseTemplates(),
@@ -153,11 +159,66 @@ func warmCompat(t *testing.T, store *fakeStore) string {
 	s.derivedCache, s.derivedAt = derived, time.Now()
 	s.handAt = time.Now()
 
-	req := httptest.NewRequest(http.MethodGet, "https://codesamplex.dev/compatibility?lang=en", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://codesamplex.dev/compatibility?lang="+lang, nil)
 	rec := httptest.NewRecorder()
 	s.records(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	return rec.Body.String()
+}
+
+// A ratio has to read as a ratio in every language.
+//
+// The arguments arrive as (have, total). Korean shipped "릴리스 %s개 중 %s개",
+// which puts the first argument where the total belongs, so a package proven
+// at 14 of 24 releases rendered as "릴리스 14개 중 24개" -- fourteen releases,
+// of which twenty-four. The English read correctly the whole time.
+func TestTheRatioReadsCorrectlyInKorean(t *testing.T) {
+	store := newFakeStore()
+	store.packages = []PackageHit{{Ecosystem: "npm", Name: "part", LatestVersion: "1.0.0"}}
+	store.packageAssets = []PackageAsset{
+		{Ecosystem: "npm", Name: "part", Releases: 24, WithSample: 14},
+	}
+	body := warmCompatLang(t, store, "ko")
+
+	// The total belongs to the word for release; the count stands alone.
+	if !strings.Contains(body, "릴리스 24개") {
+		t.Errorf("the total is not attached to the release count: %s", compatRowHTML(t, body, "npm/part"))
+	}
+	if strings.Contains(body, "릴리스 14개") {
+		t.Error("the proven count was rendered as the number of releases")
+	}
+}
+
+// An axis this network cannot answer must not read as work not done yet.
+//
+// No dependency scanner ships for golang, maven, gem, pub, hex or composer, so
+// "none yet" on those rows promises a gap somebody could close. The census
+// already subtracts them from the backlog; the collection has to make the same
+// distinction or it contradicts /gaps about the same package.
+func TestAnUnscannableEcosystemSaysSoRatherThanNoneYet(t *testing.T) {
+	store := newFakeStore()
+	store.packages = []PackageHit{
+		{Ecosystem: "golang", Name: "golang.org/x/net", LatestVersion: "v0.58.0"},
+		{Ecosystem: "npm", Name: "unscanned", LatestVersion: "1.0.0"},
+	}
+	store.packageAssets = []PackageAsset{
+		{Ecosystem: "golang", Name: "golang.org/x/net", Releases: 24, WithSample: 14},
+		{Ecosystem: "npm", Name: "unscanned", Releases: 2, WithSample: 0},
+	}
+	body := warmCompatLang(t, store, "en")
+
+	golang := compatRowHTML(t, body, "golang/golang.org/x/net")
+	npm := compatRowHTML(t, body, "npm/unscanned")
+	if !strings.Contains(golang, "no scanner") {
+		t.Errorf("an unscannable ecosystem does not say so: %s", golang)
+	}
+	// An npm package genuinely has an open dependency axis, and must keep it.
+	if strings.Contains(npm, "no scanner") {
+		t.Error("a scannable ecosystem was reported as unaskable")
+	}
+	if !strings.Contains(npm, "no release yet") {
+		t.Error("an open dependency axis stopped saying it is open")
+	}
 }
