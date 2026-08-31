@@ -265,7 +265,11 @@
   {{- range .DepsMatrix.Versions}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
 <tbody>
 {{- range .DepsMatrix.Rows}}
-<tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono">{{.Child}}</th>
+{{/* The name links to the PACKAGE, not to a release. The table above keeps
+     its names unlinked because a name there would land on one exact version
+     while promising the package; here the row IS the package across every
+     release, so the link says what it goes to. */}}
+<tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Child}}</a></th>
   {{- range .Cells}}
   {{/* A blank cell is an absent measurement, never "this release does not
        depend on it": no resolution recorded that pair, and a resolver that

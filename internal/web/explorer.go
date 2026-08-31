@@ -780,7 +780,7 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]
 	// forces the page to pick which release; the comparison picks none, and
 	// the reader who most needs it is the one who has just arrived and chosen
 	// nothing yet.
-	matrix := buildDependencyMatrix(rows)
+	matrix := buildDependencyMatrix(eco, rows)
 	if version == "" {
 		return nil, false, matrix
 	}

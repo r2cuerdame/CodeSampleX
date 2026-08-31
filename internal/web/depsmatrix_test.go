@@ -14,7 +14,7 @@ import (
 // resolve to different child versions at different releases of the parent.
 // Nothing on the site could show one of them.
 func TestTheMatrixShowsWhichChildMovedBetweenReleases(t *testing.T) {
-	m := buildDependencyMatrix([]DependencyEdge{
+	m := buildDependencyMatrix("npm", []DependencyEdge{
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "debug", ChildVersion: "4.4.1"},
 		{ParentName: "app", ParentVersion: "2.0.0", ChildName: "debug", ChildVersion: "4.4.3"},
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "cookie", ChildVersion: "0.7.2"},
@@ -52,7 +52,7 @@ func TestTheMatrixShowsWhichChildMovedBetweenReleases(t *testing.T) {
 // an absent measurement, and a resolver that never ran at that release says
 // nothing about what it would have found.
 func TestAnUnresolvedCombinationIsBlank(t *testing.T) {
-	m := buildDependencyMatrix([]DependencyEdge{
+	m := buildDependencyMatrix("npm", []DependencyEdge{
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "only-old", ChildVersion: "1.0.0"},
 		{ParentName: "app", ParentVersion: "2.0.0", ChildName: "shared", ChildVersion: "1.0.0"},
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "shared", ChildVersion: "1.0.0"},
@@ -84,7 +84,7 @@ func TestAnUnresolvedCombinationIsBlank(t *testing.T) {
 // one-column grid dressed as a comparison invites a reader to see a trend in
 // one point.
 func TestOneReleaseBuildsNoMatrix(t *testing.T) {
-	if m := buildDependencyMatrix([]DependencyEdge{
+	if m := buildDependencyMatrix("npm", []DependencyEdge{
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "debug", ChildVersion: "4.4.1"},
 	}); m != nil {
 		t.Errorf("a single release produced a matrix: %+v", m)

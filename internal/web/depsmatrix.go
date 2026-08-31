@@ -22,6 +22,10 @@ type dependencyMatrixCell struct {
 
 type dependencyMatrixRow struct {
 	Child string
+	// Href points at the child PACKAGE. The table above keeps its names
+	// unlinked because a name there would land on one exact version while
+	// promising the package; here the row is the package across releases.
+	Href  string
 	Cells []dependencyMatrixCell
 	// Moves is true when this child resolved to more than one version across
 	// the releases below. It is the only thing on the page that points at a
@@ -61,7 +65,7 @@ type dependencyMatrix struct {
 // A single release returns nil. Every row would repeat the table above it, and
 // a one-column grid dressed as a comparison invites a reader to see a trend in
 // one point.
-func buildDependencyMatrix(edges []DependencyEdge) *dependencyMatrix {
+func buildDependencyMatrix(ecosystem string, edges []DependencyEdge) *dependencyMatrix {
 	byChild := map[string]map[string]string{}
 	versions := map[string]bool{}
 	for _, e := range edges {
@@ -88,7 +92,8 @@ func buildDependencyMatrix(edges []DependencyEdge) *dependencyMatrix {
 	m := &dependencyMatrix{Versions: order}
 	rows := make([]dependencyMatrixRow, 0, len(byChild))
 	for child, at := range byChild {
-		row := dependencyMatrixRow{Child: child, Cells: make([]dependencyMatrixCell, len(order))}
+		row := dependencyMatrixRow{Child: child, Href: pkgHref(ecosystem, child),
+			Cells: make([]dependencyMatrixCell, len(order))}
 		seen := map[string]bool{}
 		for i, v := range order {
 			cv := at[v]
