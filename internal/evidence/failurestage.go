@@ -348,8 +348,24 @@ func testToolchain(line string, profile scanner.CommandProfile, argv []string) s
 		return "dotnet/test"
 	case "gradle", "gradlew":
 		return "jvm/test"
-	default:
+	case "npm", "pnpm", "yarn", "node":
 		return "javascript/test-runner"
+	default:
+		// Unknown, not JavaScript.
+		//
+		// This was the fallthrough, so every command whose outer tool was not
+		// recognised became a JavaScript test run -- and a Go test invoked
+		// through PowerShell was attributed to two toolchains at once:
+		// go/test from the lines carrying _test.go:, and this from everything
+		// else. One command, two events, one of them naming an ecosystem
+		// nothing observed. Reported through report_csx_issue (12).
+		//
+		// The JavaScript runners it was quietly serving are listed above, so
+		// npm test is still npm test. What is left here is a command this
+		// build cannot place, and an empty toolchain says that. A guess in
+		// the shape of a measurement is worse than a gap, because a gap is
+		// visible.
+		return ""
 	}
 }
 
