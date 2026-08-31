@@ -145,6 +145,12 @@ type Store interface {
 	// release to declare nothing. An answer, as opposed to a release nothing
 	// has read -- which is a gap, and must not render as the same blank.
 	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	// PackageAssets reports, per package, how many of its releases this
+	// network has proven and how many have an answered dependency question.
+	//
+	// Ratios rather than flags: "this package has a sample" is true of one
+	// sample across fifty releases, and a reader takes it to mean covered.
+	PackageAssets(ctx context.Context) ([]PackageAsset, error)
 	// CompletenessGaps lists coordinates missing at least one of Sample,
 	// Evidence and Dependency -- the census's eight cells, listed rather than
 	// counted, emptiest first. The matrix could say two thirds of the corpus
@@ -323,6 +329,21 @@ const (
 	GapDependencyProvenNone = "none"
 )
 
+// PackageAsset is what this network holds for one package, counted over its
+// releases rather than over its snapshot entries.
+//
+// /records ranked packages by entry count, which is a fact about this
+// network's bookkeeping and not about the package: a library with 400 entries
+// and no contract is less proven than one with three entries and a passing
+// one.
+type PackageAsset struct {
+	Ecosystem      string
+	Name           string
+	Releases       int
+	WithSample     int
+	WithDependency int
+}
+
 // CompletenessGap is one coordinate with an axis still missing, and the reason
 // an axis cannot be closed at all when that is the answer.
 type CompletenessGap struct {
@@ -416,6 +437,11 @@ type site struct {
 	// while a fresh production builder is using the background DB lanes.
 	derivedRefreshing bool
 	derivedRetryAt    time.Time
+
+	// assets caches the per-package three-axis rollup behind /compatibility.
+	// It classifies every public release, which is a timer job and not a
+	// per-request one.
+	assets assetCache
 
 	// hand* caches environment decoration for the static findings. Their
 	// sample IDs are immutable, but the linked sample may arrive after a
@@ -515,7 +541,12 @@ func Register(mux *http.ServeMux, d Deps) {
 			s.landing(w, r, lang)
 		})
 	}
-	handle("GET /records", s.records)
+	// /records named this network's bookkeeping, not the reader's question.
+	// The page answers "what does CodeSampleX know about this package", so it
+	// is /compatibility; the old address keeps working because it is in old
+	// READMEs, old MCP replies and external links.
+	handle("GET /records", recordsGone)
+	handle("GET /compatibility", s.records)
 	handle("GET /findings", s.findings)
 	// /wanted ranked what people searched for and missed. That is demand, and
 	// the page it belonged on claimed to be the work left over -- a coordinate
@@ -532,6 +563,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	// URLs. Both halves of that are fixed by picking one form and sending
 	// the other to it.
 	handle("GET /records/{$}", redirectToSlashless)
+	handle("GET /compatibility/{$}", redirectToSlashless)
 	handle("GET /findings/{$}", redirectToSlashless)
 	handle("GET /wanted/{$}", redirectToSlashless)
 	handle("GET /gaps/{$}", redirectToSlashless)
@@ -574,7 +606,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "samples", "gaps", "dependencies", "features", "package", "version",
+	pages := []string{"landing", "compatibility", "findings", "samples", "gaps", "dependencies", "features", "package", "version",
 		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

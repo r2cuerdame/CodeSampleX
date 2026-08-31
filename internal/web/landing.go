@@ -593,7 +593,7 @@ var landingEcosystems = []string{
 func buildHeroEcos(lang string) []heroEco {
 	ecos := make([]heroEco, 0, len(landingEcosystems))
 	for _, e := range landingEcosystems {
-		ecos = append(ecos, heroEco{Name: e, Href: recordsHref(RecordFilter{Ecosystem: e}, 1, lang)})
+		ecos = append(ecos, heroEco{Name: e, Href: compatibilityHref(RecordFilter{Ecosystem: e}, 1, lang)})
 	}
 	return ecos
 }
@@ -690,12 +690,12 @@ func homeFindings(lang string) []homeFinding {
 // and old links, bookmarks and indexed URLs still land somewhere correct.
 // The full capability data stays published at GET /v1/adapters and in
 // docs/adapters.md, which is what goal.md §13.1 actually requires.
-// statsPage points at /records directly. It used to redirect to /explore,
-// which is itself a 301 to /records: measured on the live site, /stats was
+// statsPage points at /compatibility directly. It used to redirect to
+// /explore, itself a 301: measured on the live site, /stats was
 // a two-hop chain (301 → 301), and a chain is a link that only partly
 // arrives.
 func (s *site) statsPage(w http.ResponseWriter, r *http.Request) {
-	s.redirectTo(w, r, "/records")
+	s.redirectTo(w, r, "/compatibility")
 }
 
 func (s *site) adaptersPage(w http.ResponseWriter, r *http.Request) {

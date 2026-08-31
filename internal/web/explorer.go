@@ -670,12 +670,12 @@ type crumb struct {
 // page, so a reader who arrived from a search result or an agent link can
 // climb to the level they actually wanted instead of starting over.
 func recordCrumbs(b basePage, eco, name, version, symbol string) []crumb {
-	out := []crumb{{Label: i18n.T(b.Lang, "nav.records"), Href: b.WithLang("/records")}}
+	out := []crumb{{Label: i18n.T(b.Lang, "nav.compatibility"), Href: b.WithLang("/compatibility")}}
 	if eco == "" {
 		return out
 	}
 	out = append(out, crumb{Label: eco,
-		Href: b.WithLang(recordsHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default))})
+		Href: b.WithLang(compatibilityHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default))})
 	if name == "" {
 		return out
 	}
@@ -1026,7 +1026,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+" ("+eco+")"))
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
-		{eco, base + recordsHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
+		{eco, base + compatibilityHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
 		{name, base + pkgHref(eco, name)},
 	})}
 	s.render(w, "package", http.StatusOK, packagePage{
@@ -1575,7 +1575,7 @@ const maxRecordsPage = 1 << 20
 type recordsPage struct {
 	basePage
 	Filter           RecordFilter
-	Hits             []PackageHit
+	Hits             []compatRow
 	Total            int
 	EcosystemOptions []filterOption
 	OSOptions        []filterOption
@@ -1592,9 +1592,9 @@ type recordsPage struct {
 	PrevHref, NextHref string
 }
 
-// explorePage redirects the former URL; the page is now /records.
+// explorePage redirects the former URL; the page is now /compatibility.
 func (s *site) explorePage(w http.ResponseWriter, r *http.Request) {
-	target := "/records"
+	target := "/compatibility"
 	if q := r.URL.RawQuery; q != "" {
 		target += "?" + q
 	}
@@ -1632,7 +1632,7 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	// A page number past the end is a stale link, not an error: show the
 	// last real page instead of an empty screen.
 	if page > pages {
-		http.Redirect(w, r, recordsHref(filter, pages, lang), http.StatusFound)
+		http.Redirect(w, r, compatibilityHref(filter, pages, lang), http.StatusFound)
 		return
 	}
 
@@ -1642,37 +1642,50 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 		from = 0
 	}
 	n := func(v int) string { return i18n.FormatInt(lang, int64(v)) }
+	// What the network holds per package, from the timer-backed rollup. A
+	// cold cache is an empty map and every axis reads "not measured yet",
+	// which is true and does not make the page wait for a corpus scan.
+	assets := s.packageAssets()
+	findings := findingPackages(s.derivedFindings(r))
+	rows := make([]compatRow, 0, len(hits))
+
 	view := recordsPage{
-		Filter: filter, Hits: hits, Total: total,
+		Filter: filter, Total: total,
 		EcosystemOptions: ecosystemOptions(filter.Ecosystem),
 		OSOptions:        osOptions(filter.OS),
 		RuntimeOptions:   runtimeOptions(filter.Runtime),
 		BasisOptions:     basisOptions(lang, filter.Basis),
 		HasFilters:       filter.Query != "" || filter.Ecosystem != "" || filter.OS != "" || filter.Runtime != "" || filter.Basis != "",
-		ClearHref:        recordsHref(RecordFilter{}, 1, lang),
+		ClearHref:        compatibilityHref(RecordFilter{}, 1, lang),
 		Page:             page, Pages: pages,
 		RangeText: i18n.T(lang, "records.range", n(from), n(to), n(total)),
 		PageText:  i18n.T(lang, "records.page", n(page), n(pages)),
 	}
 	if page > 1 {
-		view.PrevHref = recordsHref(filter, page-1, lang)
+		view.PrevHref = compatibilityHref(filter, page-1, lang)
 	}
 	if page < pages {
-		view.NextHref = recordsHref(filter, page+1, lang)
+		view.NextHref = compatibilityHref(filter, page+1, lang)
 	}
 
-	title := i18n.T(lang, "records.title") + " — CodeSampleX"
+	title := i18n.T(lang, "compatibility.title") + " — CodeSampleX"
 	b := s.page(r, lang, title, i18n.T(lang, "meta.explore"))
 	// One canonical URL PER LANGUAGE for the record: paged and searched
 	// views are the same collection sliced differently, and indexing each
 	// slice separately would just split the page's signal — but the language
 	// is not a slice of the same page, it is a different page, and dropping
 	// it here made every translation point at the English one.
-	b.Canonical = s.base(r) + "/records"
+	b.Canonical = s.base(r) + "/compatibility"
 	if lang != i18n.Default {
 		b.Canonical += "?lang=" + url.QueryEscape(lang)
 	}
 	view.basePage = b
+	for _, h := range hits {
+		key := h.Ecosystem + "/" + h.Name
+		asset, known := assets[key]
+		rows = append(rows, compatRowFor(lang, b, h, asset, known, findings[key]))
+	}
+	view.Hits = rows
 	// Only on the canonical view: the canonical drops every filter and the
 	// page number, so an ItemList emitted from a filtered or later page would
 	// describe rows that URL does not serve.
@@ -1685,15 +1698,15 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		b.JSONLD = append(b.JSONLD, collectionJSONLD(b.Canonical,
-			i18n.T(lang, "records.title"), i18n.T(lang, "meta.explore"), entries))
+			i18n.T(lang, "compatibility.title"), i18n.T(lang, "meta.explore"), entries))
 		view.basePage = b
 	}
-	s.render(w, "records", http.StatusOK, view)
+	s.render(w, "compatibility", http.StatusOK, view)
 }
 
-// recordsHref builds a /records link that keeps the query, page and
+// compatibilityHref builds a /records link that keeps the query, page and
 // language the reader is on.
-func recordsHref(filter RecordFilter, page int, lang string) string {
+func compatibilityHref(filter RecordFilter, page int, lang string) string {
 	v := url.Values{}
 	if filter.Query != "" {
 		v.Set("q", filter.Query)
@@ -1717,9 +1730,9 @@ func recordsHref(filter RecordFilter, page int, lang string) string {
 		v.Set("lang", lang)
 	}
 	if len(v) == 0 {
-		return "/records"
+		return "/compatibility"
 	}
-	return "/records?" + v.Encode()
+	return "/compatibility?" + v.Encode()
 }
 
 // ---------------------------------------------------------------------------
@@ -2056,7 +2069,7 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	}
 	// The sample is a tracked object like any other: give it the same path
 	// back up through the package it is about.
-	sampleCrumbs := []crumb{{Label: i18n.T(lang, "nav.records"), Href: b.WithLang("/records")}}
+	sampleCrumbs := []crumb{{Label: i18n.T(lang, "nav.compatibility"), Href: b.WithLang("/compatibility")}}
 	if len(refs) > 0 {
 		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil && knownEcosystems[parsed.Ecosystem] {
 			// The release is a step of the trail wherever it is a step of

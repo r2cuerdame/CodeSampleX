@@ -1072,7 +1072,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
      inherited the narrow half, so seven short filenames had 511px and the code
      had 377px with a horizontal scrollbar under it. The file list is a table
      of contents and needs only enough room for a filename. */
-  grid-template-columns: minmax(9rem, 0.32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr);
   gap: clamp(1rem, 2.5vw, 1.5rem);
   min-width: 0;
 }
@@ -2240,3 +2240,38 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
   font-size: 0.78rem; line-height: 1.5; tab-size: 4;
 }
 .sample-source pre code { font-family: var(--mono); white-space: pre; }
+
+/* /compatibility: what the network holds for one package, four axes to a row.
+   The list led with an entry count before this — rows in this network's own
+   bookkeeping — so a library with four hundred of them and no contract
+   outranked one with three and a passing one. */
+.record-axes {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  /* The row is a wrapping flex line, so this has to claim a line of its own:
+     as an ordinary flex item it shrank to one track and every answer wrapped
+     inside 92px however wide the screen was. */
+  flex: 1 0 100%;
+  display: grid;
+  /* Wide enough that the 5.5rem label and its answer both fit: at 11rem the
+     track split in half and every answer wrapped inside 92px. */
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.15rem 0.9rem;
+}
+/* Scoped under .record-axes deliberately. These are list items inside
+   .pkglist, whose own `.pkglist li` rule is more specific than a bare
+   `.record-axis` -- so the unscoped version lost, the axes stayed flex items
+   and inherited the row border and padding meant for package rows. */
+.record-axes .record-axis {
+  display: grid; grid-template-columns: 5.5rem 1fr;
+  gap: 0.5rem; align-items: baseline; font-size: 0.86rem;
+  padding: 0; border-bottom: 0; flex-wrap: nowrap;
+}
+.record-axes .record-axis__label { color: var(--dim); font-size: 0.78rem; }
+.record-axes .record-axis__text { color: var(--dim); }
+.record-axes .record-axis.is-held .record-axis__text { color: var(--fg); }
+.record-axes .record-axis.is-partial .record-axis__text { color: var(--fg); opacity: 0.8; }
+@media (max-width: 40rem) {
+  .record-axes { grid-template-columns: 1fr; }
+}

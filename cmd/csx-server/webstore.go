@@ -1208,6 +1208,22 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	return out, nil
 }
 
+// PackageAssets carries the release-level census rolled up to packages.
+func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error) {
+	rows, err := w.s.PackageAssets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PackageAsset, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.PackageAsset{
+			Ecosystem: r.Ecosystem, Name: r.Name, Releases: r.Releases,
+			WithSample: r.WithSample, WithDependency: r.WithDependency,
+		})
+	}
+	return out, nil
+}
+
 // CompletenessGaps carries the census's own rows to the page.
 //
 // The judgement -- which coordinates are backlog, in what order, and which

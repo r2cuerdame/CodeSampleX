@@ -44,7 +44,7 @@ func jsonLDOfType(t *testing.T, body, want string) map[string]any {
 func TestTheListPagesSayTheyAreCollections(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.versions["npm|axios"] = []string{"1.12.0"}
-	for _, path := range []string{"/samples", "/records", "/findings", "/dependencies"} {
+	for _, path := range []string{"/samples", "/compatibility", "/findings", "/dependencies"} {
 		body := get(t, mux, path).Body.String()
 		types := jsonLDTypes(t, body)
 		found := false
@@ -70,7 +70,7 @@ func TestAFilteredListPageClaimsNoItemList(t *testing.T) {
 	store.versions["npm|axios"] = []string{"1.12.0"}
 	for _, path := range []string{
 		"/samples?q=axios",
-		"/records?q=axios",
+		"/compatibility?q=axios",
 		"/dependencies?q=axios",
 		"/samples?page=2",
 	} {
@@ -134,7 +134,7 @@ func TestEveryStructuredDataBlockParses(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	store.versions["npm|axios"] = []string{"1.12.0"}
 	for _, path := range []string{
-		"/", "/samples", "/records", "/findings", "/dependencies", "/features",
+		"/", "/samples", "/compatibility", "/findings", "/dependencies", "/features",
 		"/npm/axios", "/npm/axios/1.12.0",
 	} {
 		body := get(t, mux, path).Body.String()

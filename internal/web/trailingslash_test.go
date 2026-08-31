@@ -13,7 +13,7 @@ import (
 func TestTrailingSlashAlwaysRedirects(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	for _, path := range []string{
-		"/records/",
+		"/compatibility/",
 		"/findings/",
 		"/npm/axios/",
 		"/npm/axios/1.12.0/",
@@ -35,11 +35,11 @@ func TestTrailingSlashAlwaysRedirects(t *testing.T) {
 // back into English.
 func TestTrailingSlashRedirectKeepsTheLanguage(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/records/?lang=ko", nil)
+	req := httptest.NewRequest(http.MethodGet, "/compatibility/?lang=ko", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Location"); got != "/records?lang=ko" {
+	if got := rec.Header().Get("Location"); got != "/compatibility?lang=ko" {
 		t.Errorf("Location = %q, want /records?lang=ko", got)
 	}
 }

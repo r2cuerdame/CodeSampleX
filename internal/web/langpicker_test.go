@@ -30,7 +30,7 @@ import (
 func TestOpeningTheLanguagePickerDoesNotGrowTheHeader(t *testing.T) {
 	chrome := findChrome(t)
 	mux, _ := newTestMux(t, nil)
-	srv := httptest.NewServer(langHarness(mux, "/records"))
+	srv := httptest.NewServer(langHarness(mux, "/compatibility"))
 	defer srv.Close()
 
 	var reports []langReport

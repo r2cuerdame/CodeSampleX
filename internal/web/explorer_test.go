@@ -95,8 +95,8 @@ func TestPackagePageDoesNotAdvertiseLegacyExploreURL(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/npm/axios?lang=de").Body.String()
 
-	mustContain(t, body, `href="/records?lang=de"`)
-	mustContain(t, body, `https://codesamplex.dev/records?eco=npm`)
+	mustContain(t, body, `href="/compatibility?lang=de"`)
+	mustContain(t, body, `https://codesamplex.dev/compatibility?eco=npm`)
 	if strings.Contains(body, "/explore") {
 		t.Error("package page still advertises the legacy /explore redirect")
 	}
@@ -177,7 +177,7 @@ func TestUnknownEcosystemAndPackage404(t *testing.T) {
 
 func TestRecordsSearchAndList(t *testing.T) {
 	mux, store := newTestMux(t, nil)
-	body := get(t, mux, "/records?q=axios").Body.String()
+	body := get(t, mux, "/compatibility?q=axios").Body.String()
 	mustContain(t, body, `href="/npm/axios"`)
 	mustContain(t, body, `class="record-version mono"`)
 	mustContain(t, body, `class="record-symbols mono"`)
@@ -188,16 +188,16 @@ func TestRecordsSearchAndList(t *testing.T) {
 		PackageHit{Ecosystem: "npm", Name: "react", LatestVersion: "19.2.8"},
 		PackageHit{Ecosystem: "npm", Name: "lodash", LatestVersion: "4.18.1"},
 	)
-	batch := get(t, mux, "/records?q=axios+react%2Clodash").Body.String()
+	batch := get(t, mux, "/compatibility?q=axios+react%2Clodash").Body.String()
 	for _, href := range []string{`href="/npm/axios"`, `href="/npm/react"`, `href="/npm/lodash"`} {
 		mustContain(t, batch, href)
 	}
 
-	all := get(t, mux, "/records").Body.String()
+	all := get(t, mux, "/compatibility").Body.String()
 	mustContain(t, all, `href="/npm/axios"`)
 	mustContain(t, all, `href="/golang/github.com/a/b"`)
 
-	none := get(t, mux, "/records?q=zzzznothing").Body.String()
+	none := get(t, mux, "/compatibility?q=zzzznothing").Body.String()
 	mustContain(t, none, "No packages found.")
 
 	// The old URL keeps working, query intact.
@@ -205,7 +205,7 @@ func TestRecordsSearchAndList(t *testing.T) {
 	if rec.Code != http.StatusMovedPermanently {
 		t.Fatalf("/explore status = %d, want 301", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/records?q=axios" {
+	if loc := rec.Header().Get("Location"); loc != "/compatibility?q=axios" {
 		t.Errorf("Location = %q, want /records?q=axios", loc)
 	}
 }
@@ -223,25 +223,25 @@ func TestRecordsPagination(t *testing.T) {
 		})
 	}
 
-	first := get(t, mux, "/records").Body.String()
+	first := get(t, mux, "/compatibility").Body.String()
 	mustContain(t, first, "1–40 of 45")
-	mustContain(t, first, `href="/records?page=2"`)
+	mustContain(t, first, `href="/compatibility?page=2"`)
 	if strings.Contains(first, "pkg-040") {
 		t.Error("page 1 spilled past its slice")
 	}
 
-	second := get(t, mux, "/records?page=2").Body.String()
+	second := get(t, mux, "/compatibility?page=2").Body.String()
 	mustContain(t, second, "41–45 of 45")
 	mustContain(t, second, "pkg-044")
-	mustContain(t, second, `href="/records"`) // prev returns to page 1
+	mustContain(t, second, `href="/compatibility"`) // prev returns to page 1
 
 	// A page beyond the end redirects to the last page rather than 404ing
 	// or rendering nothing.
-	rec := get(t, mux, "/records?page=99")
+	rec := get(t, mux, "/compatibility?page=99")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("page=99 status = %d, want 302", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/records?page=2" {
+	if loc := rec.Header().Get("Location"); loc != "/compatibility?page=2" {
 		t.Errorf("Location = %q, want /records?page=2", loc)
 	}
 }

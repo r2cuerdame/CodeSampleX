@@ -992,7 +992,7 @@ canonical() { printf '<link rel="canonical" href="https://%s%s">' "$DOMAIN" "$1"
 
 check /          'text/html'        "$(canonical /)"
 check /gaps      'text/html'        "$(canonical /gaps)"
-check /records   'text/html'        "$(canonical /records)"
+check /compatibility 'text/html'    "$(canonical /compatibility)"
 check /findings  'text/html'        "$(canonical /findings)"
 check /features  'text/html'        "$(canonical /features)"
 check /v1/stats  'application/json' '"packages":'

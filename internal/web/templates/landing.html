@@ -30,7 +30,7 @@
       <a href="{{.Href}}">{{.Name}}</a>
       {{- end}}
     </nav>
-  <form class="home-search" action="/records" method="get" role="search">
+  <form class="home-search" action="/compatibility" method="get" role="search">
     <label class="sr-only" for="home-record-search">{{.T "explore.button"}}</label>
     <input id="home-record-search" type="search" name="q" placeholder="{{.T "explore.placeholder"}}">
     {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}

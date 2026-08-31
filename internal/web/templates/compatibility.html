@@ -1,8 +1,8 @@
 {{define "content"}}
-<h1>{{.T "records.title"}}</h1>
-<p class="dim">{{.T "records.intro"}}</p>
+<h1>{{.T "compatibility.title"}}</h1>
+<p class="dim">{{.T "compatibility.intro"}}</p>
 
-<form class="filterbar" action="/records" method="get" role="search">
+<form class="filterbar" action="/compatibility" method="get" role="search">
   <label class="filterquery"><span>{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Filter.Query}}" placeholder="{{.T "explore.placeholder"}}"></label>
   <label><span>{{.T "adapters.ecosystem"}}</span><select name="eco">
     <option value="">{{.T "filters.all"}}</option>
@@ -22,7 +22,19 @@
 <ul class="pkglist">
 {{- range .Hits}}
   <li>
-    <a class="record-package mono" href="/{{.Ecosystem}}/{{.Name}}">{{.Ecosystem}}/{{.Name}}</a>
+    <a class="record-package mono" href="{{.Href}}">{{.Ecosystem}}/{{.Name}}</a>
+    {{/* What this network actually holds for the package, which is the
+         question the list is for. It used to lead with an entry count -- rows
+         in this network's own bookkeeping -- so a library with four hundred of
+         them and no contract outranked one with three and a passing one. */}}
+    <ul class="record-axes">
+      {{- range .Axes}}
+      <li class="record-axis{{if .Held}} is-held{{else if .Partial}} is-partial{{end}}">
+        <span class="record-axis__label mono">{{.Label}}</span>
+        <span class="record-axis__text">{{.Text}}</span>
+      </li>
+      {{- end}}
+    </ul>
     <span class="record-meta">
       {{if .LatestVersion}}<span class="record-version mono"><span class="record-meta-label">{{$.T "pkg.versions"}}</span>{{.LatestVersion}}</span>{{end}}
       {{if .Symbols}}<span class="record-symbols mono"><span class="record-meta-label">{{$.T "pkg.symbols"}}</span><strong>{{.Symbols}}</strong></span>{{end}}
@@ -41,7 +53,7 @@
 </ul>
 
 {{if gt .Pages 1}}
-<nav class="pager" aria-label="{{.T "records.title"}}">
+<nav class="pager" aria-label="{{.T "compatibility.title"}}">
   {{if .PrevHref}}<a class="pagebtn mono" href="{{.PrevHref}}" rel="prev">← {{.T "records.prev"}}</a>{{else}}<span class="pagebtn mono off">← {{.T "records.prev"}}</span>{{end}}
   <span class="dim mono small">{{.PageText}}</span>
   {{if .NextHref}}<a class="pagebtn mono" href="{{.NextHref}}" rel="next">{{.T "records.next"}} →</a>{{else}}<span class="pagebtn mono off">{{.T "records.next"}} →</span>{{end}}

@@ -22,9 +22,9 @@ func TestLandingLinksEcosystemsWithoutCapabilityClaims(t *testing.T) {
 		}
 		body := get(t, mux, path).Body.String()
 		for _, eco := range landingEcosystems {
-			href := `href="/records?eco=` + eco
+			href := `href="/compatibility?eco=` + eco
 			if lang != i18n.Default {
-				href = `href="/records?eco=` + eco + `&amp;lang=` + lang
+				href = `href="/compatibility?eco=` + eco + `&amp;lang=` + lang
 			}
 			if !strings.Contains(body, href) {
 				t.Errorf("%s: missing ecosystem record link for %q", path, eco)
@@ -185,7 +185,7 @@ func TestSamplesAreListedUnderTheirSymbol(t *testing.T) {
 // TestOGTypeDefaultsToWebsite: only dated documents are articles.
 func TestOGTypeDefaultsToWebsite(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	for _, path := range []string{"/", "/records", "/npm/axios"} {
+	for _, path := range []string{"/", "/compatibility", "/npm/axios"} {
 		body := get(t, mux, path).Body.String()
 		if !strings.Contains(body, `property="og:type" content="website"`) {
 			t.Errorf("%s: og:type is not website", path)

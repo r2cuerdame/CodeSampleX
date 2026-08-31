@@ -32,7 +32,7 @@ func TestHexRuntimeFilterUsesRecordedElixir(t *testing.T) {
 	// ecosystem (npm is node, pypi is python, golang is go), so it offered a
 	// second control for a choice already made. The PARAMETER still filters,
 	// because links carrying it were published and must keep working.
-	body := get(t, mux, "/records?eco=hex&runtime=elixir").Body.String()
+	body := get(t, mux, "/compatibility?eco=hex&runtime=elixir").Body.String()
 	mustContain(t, body, `href="/hex/req"`)
 	mustNotContain(t, body, `<select name="runtime">`)
 	mustNotContain(t, body, `<select name="basis">`)
@@ -63,7 +63,7 @@ func TestRecordQueryMatchesSeveralPackageNamesAtOnce(t *testing.T) {
 
 func TestRecordsFiltersUseRecordedDimensions(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	body := get(t, mux, "/records?eco=npm&os=windows&runtime=node&basis=verified").Body.String()
+	body := get(t, mux, "/compatibility?eco=npm&os=windows&runtime=node&basis=verified").Body.String()
 	mustContain(t, body, `href="/npm/axios"`)
 	if strings.Contains(body, "github.com/a/b") {
 		t.Error("record without the selected runtime/basis was shown")

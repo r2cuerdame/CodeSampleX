@@ -99,7 +99,7 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 		{"landing", "/", "li.finding-card", false, nil},
 		// Not a card, the same defect: a Go pseudo-version is 36 unbroken
 		// characters inside a pill that may not wrap.
-		{"records", "/records", ".pkglist li", true, seedSessionRecord},
+		{"records", "/compatibility", ".pkglist li", true, seedSessionRecord},
 	} {
 		t.Run(page.name, func(t *testing.T) {
 			mux, store := newTestMux(t, func(d *Deps) {

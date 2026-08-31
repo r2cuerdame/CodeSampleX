@@ -100,7 +100,7 @@ func TestLandingEnglish(t *testing.T) {
 	// longer competes with search and measured evidence in the visible page.
 	mustContain(t, body, `content="https://codesamplex.dev/static/inspector-hero-v1.webp"`)
 	mustContain(t, body, `content="summary_large_image"`)
-	mustContain(t, body, `class="home-search" action="/records"`)
+	mustContain(t, body, `class="home-search" action="/compatibility"`)
 	// The matrix IS the example now; the old hero example card is gone.
 	if strings.Contains(body, `class="evidence-question"`) {
 		t.Error("landing still renders the decorative hero example card")
@@ -113,7 +113,7 @@ func TestLandingEnglish(t *testing.T) {
 	// One page carries the whole story: the focused counters and the
 	// measured ecosystems linked straight into the records inventory.
 	for _, s := range []string{"Observations", "Samples that built", "Packages",
-		`class="ecorow`, `href="/records?eco=npm"`, `href="/records?eco=maven"`} {
+		`class="ecorow`, `href="/compatibility?eco=npm"`, `href="/compatibility?eco=maven"`} {
 		mustContain(t, body, s)
 	}
 	if got := strings.Count(body, `<div class="stat">`); got != 3 {
@@ -323,8 +323,8 @@ func TestStatsPathRedirects(t *testing.T) {
 	}
 	// Straight to the destination: /explore is itself a 301 to /records,
 	// so pointing here made /stats a two-hop redirect chain.
-	if loc := rec.Header().Get("Location"); loc != "/records" {
-		t.Errorf("Location = %q, want /records", loc)
+	if loc := rec.Header().Get("Location"); loc != "/compatibility" {
+		t.Errorf("Location = %q, want /compatibility", loc)
 	}
 	// And the nav no longer carries a Stats entry.
 	body := get(t, mux, "/").Body.String()
@@ -350,7 +350,7 @@ func TestLandingEcosystemRowIsAPlainInventory(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
 	for _, ecosystem := range landingEcosystems {
-		mustContain(t, body, `href="/records?eco=`+ecosystem+`"`)
+		mustContain(t, body, `href="/compatibility?eco=`+ecosystem+`"`)
 	}
 	if strings.Contains(body, ">A0<") || strings.Contains(body, ">A4<") {
 		t.Error("landing shows raw capability codes")
@@ -429,17 +429,17 @@ func TestLandingRedirectBareLang(t *testing.T) {
 
 func TestLangQueryAndCookie(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	rec := get(t, mux, "/records?lang=ko")
+	rec := get(t, mux, "/compatibility?lang=ko")
 	body := rec.Body.String()
 	mustContain(t, body, "기록")
 	if !strings.Contains(rec.Header().Get("Set-Cookie"), "csx_lang=ko") {
 		t.Errorf("missing lang cookie, got %q", rec.Header().Get("Set-Cookie"))
 	}
 	// Cookie alone selects the language on later requests.
-	rec2 := get(t, mux, "/records", "Cookie", "csx_lang=ko")
+	rec2 := get(t, mux, "/compatibility", "Cookie", "csx_lang=ko")
 	mustContain(t, rec2.Body.String(), "기록")
 	// Accept-Language fallback.
-	rec3 := get(t, mux, "/records", "Accept-Language", "ja,en;q=0.5")
+	rec3 := get(t, mux, "/compatibility", "Accept-Language", "ja,en;q=0.5")
 	mustContain(t, rec3.Body.String(), "記録")
 }
 
@@ -478,7 +478,7 @@ func TestSitemap(t *testing.T) {
 	mustContain(t, body, "<loc>https://codesamplex.dev/ko/</loc>")
 	mustContain(t, body, `hreflang="ja"`)
 	mustContain(t, body, "<loc>https://codesamplex.dev/npm/axios</loc>")
-	mustContain(t, body, "<loc>https://codesamplex.dev/records</loc>")
+	mustContain(t, body, "<loc>https://codesamplex.dev/compatibility</loc>")
 	// Redirect-only paths stay out of the map.
 	for _, gone := range []string{"/adapters", "/stats"} {
 		if strings.Contains(body, "codesamplex.dev"+gone+"<") {

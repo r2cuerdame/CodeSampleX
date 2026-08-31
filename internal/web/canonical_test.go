@@ -16,7 +16,7 @@ import (
 func TestLocalizedPagesAreSelfCanonical(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	for _, lang := range i18n.Supported {
-		req := httptest.NewRequest(http.MethodGet, "/records?lang="+lang, nil)
+		req := httptest.NewRequest(http.MethodGet, "/compatibility?lang="+lang, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -42,7 +42,7 @@ func TestLocalizedPagesAreSelfCanonical(t *testing.T) {
 // next.
 func TestLanguageVaryIsDeclared(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/records", nil)
+	req := httptest.NewRequest(http.MethodGet, "/compatibility", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

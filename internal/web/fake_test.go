@@ -12,8 +12,9 @@ import (
 // tests. The integrator adapts the real serverstore to the same
 // interface; nothing here touches a database.
 type fakeStore struct {
-	wanted []WantedRow
-	gaps   []CompletenessGap
+	wanted        []WantedRow
+	gaps          []CompletenessGap
+	packageAssets []PackageAsset
 	// dependencyEcosystem is what the atlas reports for every edge the fake
 	// holds; the edge rows themselves carry no ecosystem.
 	dependencyEcosystem string
@@ -586,4 +587,11 @@ func (f *fakeStore) CompletenessGaps(_ context.Context, query string, offset, li
 		out = out[:limit]
 	}
 	return out, total, nil
+}
+
+// PackageAssets returns whatever rollup the test seeded. A test that seeds
+// none gets an empty map on the page, which is the cold-cache state and
+// renders every axis as not measured yet.
+func (f *fakeStore) PackageAssets(_ context.Context) ([]PackageAsset, error) {
+	return f.packageAssets, nil
 }
