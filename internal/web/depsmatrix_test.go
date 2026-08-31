@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,32 @@ func TestOneReleaseBuildsNoMatrix(t *testing.T) {
 		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "debug", ChildVersion: "4.4.1"},
 	}); m != nil {
 		t.Errorf("a single release produced a matrix: %+v", m)
+	}
+}
+
+// The comparison does not need a release pinned.
+//
+// Picking one release is exactly what the matrix does not do, so the rule that
+// keeps the single-release table behind a pin has no purchase here -- and the
+// reader who most needs it is the one who has just landed on the package and
+// not yet chosen anything.
+func TestTheMatrixDoesNotWaitForAPinnedRelease(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.dependencies = []DependencyEdge{
+		{ParentVersion: "2.0.4", ChildName: "function-bind", ChildVersion: "1.1.2"},
+		{ParentVersion: "2.0.3", ChildName: "function-bind", ChildVersion: "1.1.1"},
+	}
+	body := mustGet(t, mux, "/npm/axios?lang=en")
+	if !strings.Contains(body, `id="depmatrix"`) {
+		t.Fatal("the unpinned page has no cross-release comparison")
+	}
+	if !strings.Contains(body, "1.1.2") || !strings.Contains(body, "1.1.1") {
+		t.Error("both releases' resolved versions are not shown")
+	}
+	// And it says what an edge is. Two releases resolved side by side is not
+	// a claim that they work together, and a grid of versions reads like one
+	// unless the page says otherwise.
+	if !strings.Contains(body, "not a claim that the two work together") {
+		t.Error("the matrix does not say what an edge records")
 	}
 }

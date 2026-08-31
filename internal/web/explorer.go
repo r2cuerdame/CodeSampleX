@@ -768,16 +768,22 @@ type packagePage struct {
 // would have to choose which to show — a choice nobody asked for and one the
 // reader cannot check.
 func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]PackageDep, bool, *dependencyMatrix) {
-	if version == "" {
-		return nil, false, nil
-	}
 	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
 	if err != nil {
 		return nil, false, nil
 	}
 	// Built from the same read: Dependencies returns every release's edges and
 	// the table below throws away all but the pinned one.
+	//
+	// Deliberately before the pin check. The rule that keeps the table behind
+	// a pinned version exists because printing one release's dependencies
+	// forces the page to pick which release; the comparison picks none, and
+	// the reader who most needs it is the one who has just arrived and chosen
+	// nothing yet.
 	matrix := buildDependencyMatrix(rows)
+	if version == "" {
+		return nil, false, matrix
+	}
 	kept := make([]DependencyEdge, 0, len(rows))
 	for _, e := range rows {
 		if e.ParentVersion == version {

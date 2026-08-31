@@ -278,6 +278,11 @@
 </table>
 </div>
 <p class="note dim small">{{.T "pkg.depmatrix_summary" (printf "%d" .DepsMatrix.Moved) (printf "%d" .DepsMatrix.Steady)}}{{if .DepsMatrix.Truncated}} {{.T "pkg.depmatrix_truncated"}}{{end}}</p>
+{{/* What a row is NOT. An edge records that a resolver placed two releases
+     side by side in some project, which is why a newer parent can appear
+     beside an older child; a grid of versions reads as a pinning claim, and
+     as a compatibility claim, unless the page says otherwise. */}}
+<p class="note dim small">{{.T "dependencies.caveat"}}</p>
 {{- end}}
 
 {{/* Only at a decided coordinate. A failure cluster is a fact about one
