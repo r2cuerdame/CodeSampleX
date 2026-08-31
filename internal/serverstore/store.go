@@ -497,6 +497,10 @@ type Store interface {
 	// DependencyParents lists the exact releases that resolved onto one exact
 	// release.
 	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
+	// DependencyResolvedNone reports whether a resolution measured this exact
+	// release to declare nothing -- an answer, as opposed to a release nothing
+	// has read, which is a gap.
+	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
 	// DependencyProvenNone reports whether a resolver read this release's own
 	// entry and found that it declares no dependencies. Distinct from "no
 	// edges recorded", which is also what an ecosystem with no scanner and a

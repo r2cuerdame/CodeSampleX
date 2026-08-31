@@ -137,6 +137,10 @@ type Store interface {
 	// DependencyParents lists the exact releases that resolved onto one exact
 	// release.
 	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
+	// DependencyResolvedNone reports whether a resolution measured this exact
+	// release to declare nothing. An answer, as opposed to a release nothing
+	// has read -- which is a gap, and must not render as the same blank.
+	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.

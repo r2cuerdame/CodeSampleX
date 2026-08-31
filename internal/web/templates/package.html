@@ -207,17 +207,33 @@
 <h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
 <div class="tablewrap">
 <table class="shipswith">
-<thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th></tr></thead>
+<thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th><th>{{.T "pkg.dep_col_measured"}}</th><th>{{.T "pkg.dependants_col_projects"}}</th></tr></thead>
 <tbody>
 {{- range .Deps}}
 {{/* The name is not a link. It promises "the package" and would land on one
      exact version, which is a different thing from what it says; the version
      beside it promises that version and goes there. */}}
-<tr><th class="rowlabel mono">{{.Library}}</th><td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td></tr>
+<tr><th class="rowlabel mono">{{.Library}}</th>
+    <td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td>
+    <td class="depstate depstate-{{.State}}">{{.StateText}}</td>
+    <td class="mono dim"><a href="{{$.WithLang .AtlasHref}}">{{.ProjectsText}}</a></td></tr>
 {{- end}}
 </tbody>
 </table>
 </div>
+{{/* What the column does NOT say. A resolver placing two releases side by side
+     is not evidence that either works, and the measured column is about the
+     child coordinate alone. Without this line the table reads as a
+     compatibility verdict, which is exactly the claim this network refuses to
+     make without a contract. */}}
+<p class="note dim small">{{.T "pkg.dep_measured_caveat"}}</p>
+{{- else if .DepsProvenNone}}
+{{/* Measured to declare nothing, which is an ANSWER. Rendering it as an empty
+     section would make it indistinguishable from a release nothing has read,
+     and those are opposite states: one closes the dependency axis, the other
+     leaves it open. */}}
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
 {{- end}}
 
 {{/* Only at a decided coordinate. A failure cluster is a fact about one

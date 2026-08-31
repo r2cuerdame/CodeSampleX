@@ -1267,3 +1267,7 @@ func (w *webStore) DependencyParents(ctx context.Context, ecosystem, name, versi
 	}
 	return out, nil
 }
+
+func (w *webStore) DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error) {
+	return w.s.DependencyResolvedNone(ctx, ecosystem, name, version)
+}
