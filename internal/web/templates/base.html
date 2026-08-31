@@ -60,6 +60,24 @@
 <main id="main" class="wrap">
 {{block "content" .}}{{end}}
 </main>
+{{/* The site-wide ad slot, between the content and the footer.
+
+     Outside <main> on purpose. The snippet's fallback, when it finds no
+     slot, inserts the unit at the midpoint of the paragraphs inside <main> --
+     and on a page whose content IS the evidence, that midpoint is inside a
+     finding card. It happened on the live home page: an advertisement nested
+     under a finding's measured line, where a reader scanning findings has no
+     reason to expect the box below is paid.
+
+     The home page has its own slot, mid-page between the findings and the
+     install block, so this one stands down there. The snippet takes the FIRST
+     [data-adisad-slot] in the document, so two would be a coin toss rather
+     than a choice. */}}
+{{- if not .IsLanding}}
+<aside class="site-ad" data-adisad-slot aria-label="Advertisement">
+  <script async src="https://adisad.com/s/ydpads8kquzopej7nps4oppu.js"></script>
+</aside>
+{{- end}}
 <footer class="foot">
   <div class="wrap">
     <p class="dim small">{{.T "footer.note"}}{{with .Build}} <span class="mono build" title="{{.Detail}}">· server {{.Version}}{{if .ShortRevision}} · {{.ShortRevision}}{{end}} · {{.Environment}}</span>{{end}}
