@@ -2179,3 +2179,41 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
    nothing when the placement is unfilled. */
 .site-ad { display: block; margin: 2rem auto; max-width: 100%; overflow: hidden; }
 .site-ad .adisad-unit { margin: 0 auto; }
+
+/* Header language picker. A <details> rather than a <select>: the options are
+   links, which is how a crawler walks between the nine translations, and a
+   select would need script to navigate at all. */
+.langpick { position: relative; font-size: 0.85rem; }
+.langpick > summary {
+  list-style: none; cursor: pointer; color: #3e577f; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.1rem;
+}
+.langpick > summary::-webkit-details-marker { display: none; }
+.langpick > summary::after { content: "\25BE"; font-size: 0.75em; opacity: 0.75; }
+.langpick > summary:hover { color: var(--text); }
+.langpick[open] > summary { color: var(--text); }
+.langpick > ul {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 40;
+  margin: 0; padding: 0.35rem; list-style: none; min-width: 9.5rem;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(11, 42, 107, 0.12);
+}
+.langpick > ul a { display: block; padding: 0.32rem 0.5rem; border-radius: 4px; color: var(--text); font-weight: 500; }
+.langpick > ul a:hover { background: var(--panel); text-decoration: none; }
+.langpick > ul a.on { color: var(--accent); font-weight: 700; }
+@media (max-width: 40rem) {
+  /* An absolutely positioned panel is anchored to the summary, and on a 320px
+     screen the summary is already near the right edge -- so the panel ran off
+     it, measured at x=398 against a 320px viewport by the narrow-viewport
+     tests. In flow it wraps inside the nav instead, which is what every other
+     item in that nav already does. */
+  .langpick > ul {
+    position: static; min-width: 0; box-shadow: none;
+    margin-top: 0.35rem; padding: 0.35rem 0; border: 0;
+  }
+  /* One per line. Side by side, the longest name -- "Portugues (Brasil)" --
+     is wider than the column it gets and pushed 5px past a 320px viewport,
+     which the narrow-viewport tests measured. A name that cannot be broken
+     needs a line of its own. */
+  .langpick > ul a { padding-left: 0; overflow-wrap: anywhere; }
+}
