@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -66,10 +67,24 @@ func startDaemon(t *testing.T, home string) (*Daemon, *Client) {
 	}
 	t.Cleanup(func() {
 		cancel()
+		stopping := time.Now()
 		select {
 		case <-errCh:
 		case <-time.After(10 * time.Second):
-			t.Error("daemon did not shut down")
+			// Say what was holding it. This budget expired once on the
+			// Windows release runner and blocked a tag, and the message was
+			// "daemon did not shut down" — which names no function, so the
+			// investigation had to start from the code rather than the
+			// failure. Run bounds its own srv.Shutdown at 5s and its only
+			// other work is three cheap defers, so a stack is the difference
+			// between an answer and another afternoon.
+			//
+			// Dumped rather than reproduced: it has not been reproduced
+			// locally, standalone or under GOMAXPROCS=2, and a fix guessed
+			// against a failure this rare would be a fix nobody can check.
+			buf := make([]byte, 1<<20)
+			buf = buf[:runtime.Stack(buf, true)]
+			t.Errorf("daemon did not shut down within %v of cancel\n%s", time.Since(stopping), buf)
 		}
 		d.Close()
 	})

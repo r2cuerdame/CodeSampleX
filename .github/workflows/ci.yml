@@ -189,3 +189,36 @@ jobs:
             echo ""
             echo "One page held on a table lock; /healthz and an unrelated page stayed up."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Windows, on main only.
+  #
+  # Until now the only Windows run was windows-test in release.yml, which fires
+  # after a v* tag — so a change to daemon listeners, named pipes, process
+  # spawning or path handling got no Windows signal until the release, and the
+  # release is what fails closed on it. That is the wrong order: the feedback
+  # arrives after the decision, and twice in one afternoon a Windows-only test
+  # race stopped a tag that was otherwise ready.
+  #
+  # On main rather than on every pull request. A Windows runner bills at
+  # several times a Linux one, and this repository is already carrying an
+  # Actions billing problem that fails the farm rollout job on every release.
+  # Once per merge catches the same class before a tag exists, without
+  # multiplying by the number of pushes to a branch.
+  windows:
+    name: Windows
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # Keep repository fixtures byte-identical to Linux. Several contracts
+      # freeze schema and document hashes; Git's Windows CRLF conversion
+      # changes those inputs before Go sees them.
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Native Windows tests
+        run: go test ./...
