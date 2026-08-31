@@ -98,3 +98,26 @@ func warmHome(t *testing.T, seed func(*fakeStore)) string {
 	}
 	return rec.Body.String()
 }
+
+// The front page uses the same headline the collection does.
+//
+// The queue writes goals as "verify <symbol> in pkg:<eco>/<name>@<version>",
+// and the coordinate is already on the line below. Printing the suffix says
+// the same thing twice in the one place a reader scans first, and it is what
+// overflowed the collection's cards before sampleGoalHeadline existed.
+func TestTheFrontPageTrimsTheCoordinateOffAGoal(t *testing.T) {
+	body := warmHome(t, func(f *fakeStore) {
+		f.sampleList = []SampleListItem{{
+			SampleID:  "sha256:bbb",
+			Goal:      "verify go.etcd.io/bbolt.DB.Batch in pkg:golang/go.etcd.io/bbolt@v1.4.3",
+			Ecosystem: "golang", Name: "go.etcd.io/bbolt", Version: "v1.4.3",
+			Symbols: []string{"go.etcd.io/bbolt.DB.Batch"}, Status: "PUBLISHED",
+		}}
+	})
+	if !strings.Contains(body, "verify go.etcd.io/bbolt.DB.Batch") {
+		t.Error("the goal is missing from the sample strip")
+	}
+	if strings.Contains(body, "in pkg:golang/go.etcd.io/bbolt@v1.4.3") {
+		t.Error("the goal still carries the coordinate its own row prints")
+	}
+}

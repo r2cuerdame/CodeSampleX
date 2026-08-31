@@ -126,7 +126,11 @@ func buildHomeSamples(rows []SampleListItem) []homeSample {
 			coord += " · " + r.Symbols[0]
 		}
 		out = append(out, homeSample{
-			Goal: r.Goal, Coord: strings.TrimSpace(coord), Context: r.Context,
+			// The same headline the collection uses. The queue writes goals
+			// as "verify <symbol> in pkg:<eco>/<name>@<version>" and the
+			// coordinate is already on the line below, so the suffix says the
+			// same thing twice in the one place a reader scans first.
+			Goal: sampleGoalHeadline(r.Goal), Coord: strings.TrimSpace(coord), Context: r.Context,
 			Href: "/samples/" + r.SampleID,
 		})
 	}
