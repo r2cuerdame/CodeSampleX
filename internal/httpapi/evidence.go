@@ -68,6 +68,22 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 			// case, since batches cluster on a handful of packages.
 			return status
 		}
+		// An answer the server already holds costs no outbound request, so it
+		// must not be charged to a cap that exists to bound outbound requests.
+		// Charging it meant a request about packages this server knows well
+		// spent the entire budget without contacting anyone, and every package
+		// past the twentieth was refused as publicness-unknown. That refusal
+		// is retryable by design, so those batches came back every sync and
+		// were refused the same way — 226 packages in production had never
+		// been checked once, the oldest first seen two weeks earlier, while a
+		// farm daemon refused 826, 890, 976, 916 and 920 batches on five
+		// consecutive cycles with the number never falling (#106).
+		if cached, ok := a.d.Checker.(CachedPublicnessChecker); ok {
+			if status, hit := cached.CachedPublicness(r.Context(), p); hit {
+				seenPublicness[key] = status
+				return status
+			}
+		}
 		if lookups >= maxRegistryLookupsPerRequest {
 			return scanner.PublicnessUnknown
 		}
