@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -111,11 +112,15 @@ func TestFarmCoverageSeparatesMeasuredFromProven(t *testing.T) {
 func TestFarmCoverageCreditsWhatResolvedNotWhatWasClaimed(t *testing.T) {
 	ctx := context.Background()
 	f := NewFake()
-	claimed := "pkg:golang/example.com/mod@1.0.0"
-	actual := "pkg:golang/example.com/mod@1.0.1"
+	// Canonical Go module versions: a bare one is malformed rather than an
+	// alternative spelling, and ParsePURL now repairs it (#125). A fixture
+	// registering the bare form would store a row nothing parsed can match.
+	claimed := "pkg:golang/example.com/mod@v1.0.0"
+	actual := "pkg:golang/example.com/mod@v1.0.1"
 	for _, purl := range []string{claimed, actual} {
 		if err := f.UpsertPackage(ctx, PackageRow{PURL: purl, Ecosystem: "golang",
-			Name: "example.com/mod", Version: purl[len(purl)-5:], Publicness: "PUBLIC"}); err != nil {
+			Name: "example.com/mod", Version: purl[strings.LastIndex(purl, "@")+1:],
+			Publicness: "PUBLIC"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,7 +148,7 @@ func TestFarmCoverageCreditsWhatResolvedNotWhatWasClaimed(t *testing.T) {
 	// resolved package from the registry: the cell must then be empty.
 	f2 := NewFake()
 	if err := f2.UpsertPackage(ctx, PackageRow{PURL: claimed, Ecosystem: "golang",
-		Name: "example.com/mod", Version: "1.0.0", Publicness: "PUBLIC"}); err != nil {
+		Name: "example.com/mod", Version: "v1.0.0", Publicness: "PUBLIC"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f2.SaveSample(ctx, SampleRow{SampleID: "sha256:matrix",

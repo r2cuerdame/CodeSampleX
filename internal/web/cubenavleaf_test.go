@@ -367,27 +367,31 @@ func TestTheNavigatorNamesTheDepthAndStepsBackCleanly(t *testing.T) {
 
 // The same contract in three ecosystems, because none of it is about Go.
 func TestTheNavigatorContractHoldsInEveryEcosystem(t *testing.T) {
-	for _, eco := range []struct{ eco, name, symbol string }{
-		{"npm", "semverish", "semver.clean"},
-		{"golang", "example.com/mod", "Mod.New"},
-		{"pypi", "flasky", "flasky.Flask"},
+	// Each ecosystem gets the version spelling it actually uses. Go modules
+	// are canonically v-prefixed and ParsePURL repairs a bare one (#125), so a
+	// golang fixture written as "1.2.3" would describe a coordinate no parsed
+	// purl can reach.
+	for _, eco := range []struct{ eco, name, symbol, ver string }{
+		{"npm", "semverish", "semver.clean", "1.2.3"},
+		{"golang", "example.com/mod", "Mod.New", "v1.2.3"},
+		{"pypi", "flasky", "flasky.Flask", "1.2.3"},
 	} {
 		t.Run(eco.eco, func(t *testing.T) {
 			f := newFakeStore()
-			purl := "pkg:" + eco.eco + "/" + eco.name + "@1.2.3"
-			f.versions[eco.eco+"|"+eco.name] = []string{"1.2.3"}
-			f.symbols[eco.eco+"|"+eco.name+"|1.2.3"] = []string{eco.symbol}
+			purl := "pkg:" + eco.eco + "/" + eco.name + "@" + eco.ver
+			f.versions[eco.eco+"|"+eco.name] = []string{eco.ver}
+			f.symbols[eco.eco+"|"+eco.name+"|"+eco.ver] = []string{eco.symbol}
 			f.snapshots[snapKey(purl, "")] = cubeSnap(purl, "", "linux", "x64",
 				"node", "22", "npm", "PROJECT_COMPILE", 5, 0)
 			f.snapshots[snapKey(purl, eco.symbol)] = cubeSnap(purl, eco.symbol, "linux", "x64",
 				"node", "22", "npm", "CONTRACT", 1, 0)
 			f.sampleList = []SampleListItem{{
-				SampleID: "s", Version: "1.2.3", Symbols: []string{eco.symbol},
+				SampleID: "s", Version: eco.ver, Symbols: []string{eco.symbol},
 			}}
 			f.samplePackages["s"] = []string{purl}
 			mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
 
-			leaf := pkgHref(eco.eco, eco.name) + "?f_version=1.2.3&f_symbol=" +
+			leaf := pkgHref(eco.eco, eco.name) + "?f_version=" + eco.ver + "&f_symbol=" +
 				url.QueryEscape(eco.symbol) + "&lang=ko"
 			body := get(t, mux, leaf).Body.String()
 			if strings.Contains(body, "≡") {
