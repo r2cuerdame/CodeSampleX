@@ -129,3 +129,89 @@ func TestTheGoVersionFoldMergesAndCarriesTheFacts(t *testing.T) {
 		t.Errorf("re-running the fold gave %d rows / %d asks, want 1 / 7", rows, asks)
 	}
 }
+
+// 0031 removes leaf claims nothing measured, and leaves the measured ones.
+//
+// The distinction is the whole point and it is not visible in the row: a
+// dependency_resolution row says "this release declares no dependencies"
+// whether a scanner looked and found none, or no scanner existed and the
+// verifier mistook that for an answer. Only the ecosystem and the time
+// separate them.
+func TestTheUnmeasuredLeafClaimsAreRemovedAndTheMeasuredOnesStay(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			_, err := c.Exec(ctx, sql, args...)
+			return err
+		}); err != nil {
+			t.Fatalf("%v\nSQL: %s", err, strings.TrimSpace(sql))
+		}
+	}
+	names := func() []string {
+		t.Helper()
+		var out []string
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			rows, err := c.Query(ctx, `SELECT ecosystem||' '||name FROM dependency_resolution ORDER BY 1`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var s string
+				if err := rows.Scan(&s); err != nil {
+					return err
+				}
+				out = append(out, s)
+			}
+			return rows.Err()
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	before := time.Date(2026, 8, 31, 2, 20, 42, 0, time.UTC) // farm on v0.1.76
+	after := time.Date(2026, 8, 31, 4, 30, 0, 0, time.UTC)   // farm on v0.1.77
+	ins := func(eco, name, version string, seen time.Time) {
+		exec(`INSERT INTO dependency_resolution(ecosystem,name,version,bucket,epoch,last_seen)
+			VALUES($1,$2,$3,$4,'2026-08-31',$5)`, eco, name, version, name+version, seen)
+	}
+	// Unmeasured: golang had no EdgeScanner before the rollout, and these five
+	// ecosystems have none at all.
+	ins("golang", "go.etcd.io/bbolt", "v1.4.3", before)
+	ins("maven", "org.example:lib", "1.0.0", after)
+	ins("gem", "rack", "3.1.0", after)
+	// Measured: a scanner ran and found no children.
+	ins("npm", "ws", "8.21.1", before)
+	ins("pypi", "pooch", "1.9.0", before)
+	ins("golang", "example.com/leaf", "v1.0.0", after)
+
+	migs, err := LoadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := false
+	for _, m := range migs {
+		if m.Version != "0031_drop_unmeasured_leaf_claims.sql" {
+			continue
+		}
+		for _, stmt := range m.Statements {
+			if strings.TrimSpace(stmt) != "" {
+				exec(stmt)
+			}
+		}
+		applied = true
+	}
+	if !applied {
+		t.Fatal("0031_drop_unmeasured_leaf_claims.sql not loaded")
+	}
+
+	got := strings.Join(names(), " | ")
+	want := "golang example.com/leaf | npm ws | pypi pooch"
+	if got != want {
+		t.Errorf("rows after the cleanup:\n got %s\nwant %s", got, want)
+	}
+}

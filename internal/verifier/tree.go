@@ -24,18 +24,19 @@ import (
 // edges would claim transitive dependencies as direct — an assertion nothing
 // measured. The lockfile says who pulled whom; that is the fact, and it is the
 // half of a version conflict a person can actually act on.
-func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all []scanner.Adapter) []scanner.Edge {
+func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all []scanner.Adapter) ([]scanner.Edge, bool) {
 	// One verification runs one resolver. A lockfile for another ecosystem may
 	// merely be shipped beside the sample, and reading it would turn an npm
 	// PASS into a Cargo claim that nothing ran — the same rule resolvedPackages
 	// applies to versions, applied here to edges.
 	resolverEcosystem := strings.ToLower(strings.TrimSpace(m.Environment.Ecosystem))
 	if resolverEcosystem == "" {
-		return nil
+		return nil, false
 	}
 
 	seen := map[[2]string]bool{}
 	var out []scanner.Edge
+	scanned := false
 	for _, a := range all {
 		es, ok := a.(scanner.EdgeScanner)
 		if !ok || !a.Detect(dir) {
@@ -49,6 +50,11 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 		if err != nil {
 			continue
 		}
+		// Something read a tree here. An empty result from this point on is
+		// a measurement, "no edges", rather than the absence of a reader --
+		// and only a caller that knows which of the two it holds may turn it
+		// into a claim.
+		scanned = true
 		for _, e := range edges {
 			if e.Parent.Ecosystem != resolverEcosystem || e.Child.Ecosystem != resolverEcosystem {
 				continue
@@ -73,7 +79,7 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 		}
 		return out[i].Child.String() < out[j].Child.String()
 	})
-	return out
+	return out, scanned
 }
 
 // TreeBatches is the dependency tree a verification resolved, as the wire
@@ -90,7 +96,7 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 // registry resolved into it; the machine's own projects are never in it. That
 // is why this path needs no publicness pass, and why it must never be pointed
 // at a directory a person works in.
-func TreeBatches(edges []scanner.Edge, resolved []string, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
+func TreeBatches(edges []scanner.Edge, scanned bool, resolved []string, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
 	bucket := domain.SampleProjectBucket(r.SampleID)
 	if bucket == "" || r.PeerID == "" || (len(edges) == 0 && len(resolved) == 0) {
 		return nil
@@ -140,8 +146,22 @@ func TreeBatches(edges []scanner.Edge, resolved []string, m domain.SampleManifes
 	// leaves is separate from children so the claim is explicit on the wire.
 	// It is made only for a package this resolution actually placed, because
 	// a package the lockfile never contained was not measured at all.
+	// Only when something actually read this workspace's tree. An empty edge
+	// list means "no dependencies" and "no reader" alike, and calling the
+	// second one a leaf states a fact from a run in which nothing looked.
+	//
+	// It reached production: go.etcd.io/bbolt@v1.4.3 was recorded as declaring
+	// nothing at 02:20Z on 2026-08-31 by a farm on v0.1.76, where golang had no
+	// EdgeScanner yet. bbolt's go.mod names six direct requires. Four more
+	// golang rows beside it, out of nine in the whole table.
+	//
+	// A gap is visible and recoverable. A false leaf is neither: it closes the
+	// dependency axis for that coordinate, so no future work revisits it.
 	leaves := map[string]bool{}
 	for _, raw := range resolved {
+		if !scanned {
+			break
+		}
 		if _, hasEdges := children[raw]; hasEdges {
 			continue
 		}
@@ -209,12 +229,12 @@ func (cv *CrossVerifier) reportResolvedTree(ctx context.Context, dir string, m d
 	if r.Stages["resolve"] != sandbox.ResultPass {
 		return
 	}
-	edges := ResolvedEdges(ctx, dir, m, adapters.All())
+	edges, scanned := ResolvedEdges(ctx, dir, m, adapters.All())
 	// Which of the sample's own declared packages this resolution actually
 	// placed, at a concrete version. A package the lockfile never contained
 	// was not measured, and must not be reported either way.
 	resolved := resolvedPackages(dir, m)
-	batches := TreeBatches(edges, resolved, m, r, time.Now().UTC().Format("2006-01-02"))
+	batches := TreeBatches(edges, scanned, resolved, m, r, time.Now().UTC().Format("2006-01-02"))
 	if len(batches) == 0 {
 		return
 	}
