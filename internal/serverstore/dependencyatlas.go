@@ -43,6 +43,17 @@ type DependencySubject struct {
 // is a measurement rather than a preference. The query matches the child name
 // only; matching versions would let "1.0" pull in every package that happens
 // to have such a release, which is noise dressed as a search.
+//
+// position() rather than ILIKE. Built as '%' || $1 || '%', a query containing
+// % or _ became a pattern: "a_c" matched "abc" and a bare "%" matched
+// everything. Nobody typing an underscore into a search box means "any
+// character", and the Fake's strings.Contains never did -- so the two stores
+// also disagreed.
+//
+// The order ends at ecosystem, and it has to end somewhere total. Two
+// ecosystems can hold the same name at the same version; tied, PostgreSQL may
+// return them either way round between one page and the next, and the row on
+// the boundary is then shown twice or not at all.
 func (p *PG) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]DependencySubject, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -57,7 +68,7 @@ func (p *PG) DependencySubjects(ctx context.Context, query string, offset, limit
 		if err := c.QueryRow(ctx, `
 			SELECT count(*) FROM (
 			  SELECT 1 FROM dependency_edge
-			   WHERE ($1 = '' OR child_name ILIKE '%' || $1 || '%')
+			   WHERE ($1 = '' OR position(lower($1) in lower(child_name)) > 0)
 			   GROUP BY ecosystem, child_name, child_version) t`, q).Scan(&total); err != nil {
 			return err
 		}
@@ -66,9 +77,9 @@ func (p *PG) DependencySubjects(ctx context.Context, query string, offset, limit
 			       count(DISTINCT parent_name || '@' || parent_version) AS parents,
 			       count(*) AS projects
 			  FROM dependency_edge
-			 WHERE ($1 = '' OR child_name ILIKE '%' || $1 || '%')
+			 WHERE ($1 = '' OR position(lower($1) in lower(child_name)) > 0)
 			 GROUP BY 1, 2, 3
-			 ORDER BY projects DESC, parents DESC, child_name, child_version
+			 ORDER BY projects DESC, parents DESC, child_name, child_version, ecosystem
 			 LIMIT $2 OFFSET $3`, q, limit, offset)
 		if err != nil {
 			return err
@@ -140,7 +151,7 @@ func (f *Fake) DependencySubjects(_ context.Context, query string, offset, limit
 	type key struct{ ecosystem, name, version string }
 	parents := map[key]map[string]bool{}
 	projects := map[key]int{}
-	for k := range f.edges {
+	for k, projectDays := range f.edges {
 		if q != "" && !strings.Contains(strings.ToLower(k.childName), q) {
 			continue
 		}
@@ -149,7 +160,12 @@ func (f *Fake) DependencySubjects(_ context.Context, query string, offset, limit
 			parents[id] = map[string]bool{}
 		}
 		parents[id][k.parentName+"@"+k.parentVersion] = true
-		projects[id]++
+		// The project-days this edge was seen on, not the edge. PostgreSQL
+		// counts dependency_edge rows and that table's key includes bucket and
+		// epoch, so a row IS a project-day -- incrementing once per edge made
+		// the Fake rank the same corpus differently from the store the site
+		// actually reads, on the very number the atlas is ordered by.
+		projects[id] += len(projectDays)
 	}
 	all := make([]DependencySubject, 0, len(parents))
 	for id, ps := range parents {
@@ -168,7 +184,10 @@ func (f *Fake) DependencySubjects(_ context.Context, query string, offset, limit
 		if all[i].Name != all[j].Name {
 			return all[i].Name < all[j].Name
 		}
-		return all[i].Version < all[j].Version
+		if all[i].Version != all[j].Version {
+			return all[i].Version < all[j].Version
+		}
+		return all[i].Ecosystem < all[j].Ecosystem
 	})
 	total := len(all)
 	if offset > total {
