@@ -92,6 +92,12 @@ func (o CommandOutput) FailureDiagnostics() string {
 // The child's exit code passes through: a non-zero child exit is NOT an
 // error here (exitCode carries it, err stays nil). err is reserved for
 // failures to run at all (command not found, ...).
+// treeWaitDelay bounds the wait for pipes after the command itself is gone.
+//
+// Long enough that a shell flushing its last output is not truncated, short
+// enough that a grandchild which ignored the kill cannot hold the caller.
+const treeWaitDelay = 5 * time.Second
+
 func Run(ctx context.Context, argv []string, dir string) (exitCode int, output CommandOutput, err error) {
 	if len(argv) == 0 {
 		return -1, CommandOutput{}, errors.New("evidence: empty command")
@@ -116,7 +122,32 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 	}
 	cmd.Stderr = newStreamTee(stderrRing, stderrThrough...)
 
-	runErr := cmd.Run()
+	// Everything this command spawns, not just the command.
+	//
+	// CommandContext kills the process it started and nothing below it, and
+	// every command observed here is a shell -- so on a timeout the thing
+	// doing the work outlived the call. Two defect reports said so.
+	//
+	// cmd.Cancel replaces the default kill, so the tree goes down by the same
+	// path the deadline already used. WaitDelay bounds what happens after:
+	// Wait otherwise returns only once every copy of the pipes is closed, and
+	// a surviving grandchild holds them -- which is the second report, the one
+	// with "no handle to retrieve the eventual exit code", because there was
+	// no return to attach one to.
+	tree := &processTree{}
+	tree.prepare(cmd)
+	cmd.Cancel = func() error {
+		tree.kill(cmd)
+		return nil
+	}
+	cmd.WaitDelay = treeWaitDelay
+
+	runErr := cmd.Start()
+	if runErr == nil {
+		tree.started(cmd)
+		runErr = cmd.Wait()
+	}
+	tree.release()
 	output = CommandOutput{
 		Stdout:          stdoutRing.Tail(),
 		Stderr:          stderrRing.Tail(),
