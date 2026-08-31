@@ -60,6 +60,13 @@ a:hover { text-decoration: underline; }
 
 .wrap { max-width: 60rem; margin: 0 auto; padding: 0 1.5rem; }
 .landing-page .wrap { max-width: 74rem; }
+/* The home page's own rhythm. `section { margin-bottom: 4.5rem }` was set
+   when this page carried five sections; it now carries three, and an
+   .evidence-section pads its own top on top of that margin — measured at
+   1280px, 104px of nothing between the hero and the first card row, and the
+   same again before the grid. A section break has to read as a break, not as
+   a section that failed to load. */
+.landing-page main > section { margin-bottom: 1.75rem; }
 
 /* header ------------------------------------------------------------ */
 .top {
