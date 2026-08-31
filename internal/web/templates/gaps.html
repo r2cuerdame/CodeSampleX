@@ -16,13 +16,18 @@
 .gapaxis { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.7rem; align-items: baseline; font-size: 0.9rem; }
 .gapaxis .lbl { color: var(--dim); font-family: var(--mono); font-size: 0.8rem; }
 .gapaxis.is-held .ans { color: var(--dim); }
-.gapwhy { margin: 0.15rem 0 0; color: var(--dim); font-size: 0.82rem; max-width: 74ch; }
+/* The reason is a sentence, and it is a third item in a two-column grid --
+   without a span it lands in the label column and wraps at 7.5rem, four words
+   to a line. It reads under the answer it explains. */
+.gapwhy { grid-column: 2 / -1; margin: 0.15rem 0 0; color: var(--dim); font-size: 0.82rem; max-width: 74ch; }
 .gapempty { margin-top: 1.4rem; padding: 1.1rem; border: 1px dashed var(--line); border-radius: 6px; }
 .gapempty p { margin: 0 0 0.5rem; max-width: 74ch; }
 .gapempty p:last-child { margin-bottom: 0; }
 @media (max-width: 40rem) {
   .gaphead { grid-template-columns: 1fr; }
   .gapaxis { grid-template-columns: 1fr; gap: 0; }
+  /* One column, so the span is the whole of it. */
+  .gapwhy { grid-column: 1 / -1; }
 }
 </style>
 

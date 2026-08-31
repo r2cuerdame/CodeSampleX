@@ -60,6 +60,14 @@ func TestTheGapListDoesNotScrollSidewaysOnAPhone(t *testing.T) {
 			t.Errorf("viewport %dpx: a gap row is %.0fpx wide in a %.0fpx viewport",
 				r.Width, r.WidestRow, r.ClientWidth)
 		}
+		// The unaskable reason is a sentence and has to read as one. It is a
+		// third item in a two-column grid, so without an explicit span it
+		// lands in the label column and wraps at 7.5rem -- four words to a
+		// line, which is what production shipped before this assertion.
+		if r.NarrowWhy < r.RowWidth*0.5 {
+			t.Errorf("viewport %dpx: a reason is %.0fpx wide inside a %.0fpx row — it is squeezed into the label column",
+				r.Width, r.NarrowWhy, r.RowWidth)
+		}
 	}
 }
 
@@ -74,6 +82,8 @@ type gapLayoutReport struct {
 	ScrollWidth float64 `json:"scrollWidth"`
 	ClientWidth float64 `json:"clientWidth"`
 	WidestRow   float64 `json:"widestRow"`
+	NarrowWhy   float64 `json:"narrowWhy"`
+	RowWidth    float64 `json:"rowWidth"`
 }
 
 const gapsMeasurePath = "/__gaps-layout-measure"
@@ -113,15 +123,22 @@ function run(){
     var w = widths[i], fr = document.getElementById('g' + w);
     var doc = fr.contentDocument;
     var rows = doc.querySelectorAll('.gaprow');
-    var widest = 0;
+    var widest = 0, rowWidth = 0, narrowWhy = 1e9;
     for (var j = 0; j < rows.length; j++) {
       var r = rows[j].getBoundingClientRect();
       if (r.right > widest) widest = r.right;
+      if (r.width > rowWidth) rowWidth = r.width;
     }
+    var whys = doc.querySelectorAll('.gapwhy');
+    for (var k = 0; k < whys.length; k++) {
+      var ww = whys[k].getBoundingClientRect().width;
+      if (ww < narrowWhy) narrowWhy = ww;
+    }
+    if (whys.length === 0) narrowWhy = 0;
     out.push({width: w, rows: rows.length,
               scrollWidth: doc.documentElement.scrollWidth,
               clientWidth: doc.documentElement.clientWidth,
-              widestRow: widest});
+              widestRow: widest, rowWidth: rowWidth, narrowWhy: narrowWhy});
   }
   document.getElementById('measure').textContent = JSON.stringify(out);
 }
