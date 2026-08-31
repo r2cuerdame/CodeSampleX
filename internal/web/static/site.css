@@ -2220,3 +2220,18 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
      name that cannot be broken needs a line of its own. */
   .langpick > ul a { overflow-wrap: anywhere; }
 }
+
+/* Sample source. The file is the subject, so it gets the room: full width of
+   the card, its own scroll, and a caption that names it. */
+.sample-source .srcfile { margin: 0 0 1.1rem; }
+.sample-source .srcfile:last-child { margin-bottom: 0; }
+.sample-source figcaption {
+  font-size: 0.8rem; color: var(--dim); padding: 0 0 0.35rem;
+  overflow-wrap: anywhere;
+}
+.sample-source pre {
+  margin: 0; padding: 0.7rem 0.85rem; overflow-x: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  font-size: 0.78rem; line-height: 1.5; tab-size: 4;
+}
+.sample-source pre code { font-family: var(--mono); white-space: pre; }

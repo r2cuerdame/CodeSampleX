@@ -367,6 +367,8 @@
   "sample.run_when": "Execução",
   "sample.scope": "Um documento significa que há uma amostra naquela coordenada. Se ela EXISTE é um fato sobre esta versão e esta API e não muda com o sistema operacional, o runtime ou o gerenciador de pacotes; a COR diz como essa amostra rodou no ambiente que você está vendo.",
   "sample.signing_keys": "Chaves de assinatura que o compilaram",
+  "sample.source": "Código-fonte",
+  "sample.source_truncated": "(apenas o início)",
   "sample.status": "Status",
   "sample.status_help": "Esta rede oferece uma coisa: uma amostra que compila. Ela a executou em um sandbox e guardou o recibo assinado. Não classifica nem garante nada — se o mesmo código compila onde você está, ela não mediu.",
   "sample.title": "Exemplo",

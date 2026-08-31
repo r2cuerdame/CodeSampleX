@@ -68,6 +68,13 @@ type Store interface {
 	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool)
 	// SampleReceipts returns the verification-receipt JSON documents of a sample.
 	SampleReceipts(ctx context.Context, id string) ([]string, error)
+	// SampleSource returns the readable files of a sample's artifact.
+	//
+	// Naming the files without offering them left a visitor able to see that a
+	// sample exists and not what it says. The archive was the only way in, and
+	// downloading a tarball to read forty lines of Go is not inspection -- it
+	// is a barrier with a link on it.
+	SampleSource(ctx context.Context, id string) ([]SampleFile, error)
 	// SeederSamples lists samples published under a seeder login.
 	SeederSamples(ctx context.Context, login string) ([]SampleListItem, error)
 	// ListSamples lists published samples, newest first, for the sitemap.
@@ -198,6 +205,20 @@ type WantedRow struct {
 	// A wanted package usually has neither sample nor evidence, so linking
 	// every row made a board of 404s.
 	HasPage bool
+}
+
+// SampleFile is one readable file of a sample, as the page shows it.
+//
+// Binary files are absent rather than mangled: a page of replacement
+// characters is not source anybody can read or copy. The file LIST still names
+// them, which is where a reader learns they exist.
+type SampleFile struct {
+	Name string
+	Body string
+	// Truncated says this is the first part of a longer file, and the page
+	// says so rather than letting a reader copy half a file believing it is
+	// whole.
+	Truncated bool
 }
 
 // SampleMeta is the sample header the sample page renders.

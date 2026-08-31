@@ -362,6 +362,8 @@
   "sample.run_when": "运行日期",
   "sample.scope": "有文档，就说明该坐标有样例。样例是否存在，是关于这个版本和这个 API 的事实，不随操作系统、运行时或包管理器改变；颜色说的是它在你正在看的那个环境里跑得怎么样。",
   "sample.signing_keys": "构建过它的签名密钥",
+  "sample.source": "源代码",
+  "sample.source_truncated": "（仅开头部分）",
   "sample.status": "状态",
   "sample.status_help": "本网络只提供一件事：能构建的样本。它在沙箱中运行并保留签名回执。它不评级、不担保——同样的代码能否在你的环境构建，它没有测量过。",
   "sample.title": "示例",

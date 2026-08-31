@@ -367,6 +367,8 @@
   "sample.run_when": "Exécution",
   "sample.scope": "Un document signifie qu'il y a un échantillon à cette coordonnée. Son EXISTENCE est un fait sur cette version et cette API et ne change pas avec l'OS, le runtime ou le gestionnaire de paquets ; sa COULEUR dit comment cet échantillon s'est exécuté dans l'environnement que vous regardez.",
   "sample.signing_keys": "Clés de signature qui l’ont compilé",
+  "sample.source": "Code source",
+  "sample.source_truncated": "(début seulement)",
   "sample.status": "Statut",
   "sample.status_help": "Ce réseau offre une seule chose : un échantillon qui compile. Il l'a exécuté dans un bac à sable et conservé le reçu signé. Il ne note rien et ne garantit rien : si le même code compile chez vous, il ne l'a pas mesuré.",
   "sample.title": "Exemple",

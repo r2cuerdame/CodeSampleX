@@ -367,6 +367,8 @@
   "sample.run_when": "Lauf",
   "sample.scope": "Ein Dokument bedeutet: An dieser Koordinate gibt es ein Sample. DASS es existiert, ist eine Aussage über diese Version und diese API und ändert sich nicht mit Betriebssystem, Runtime oder Paketmanager; seine FARBE sagt, wie dieses Sample in der Umgebung gelaufen ist, die Sie gerade ansehen.",
   "sample.signing_keys": "Signaturschlüssel, die es gebaut haben",
+  "sample.source": "Quelltext",
+  "sample.source_truncated": "(nur der Anfang)",
   "sample.status": "Status",
   "sample.status_help": "Dieses Netzwerk bietet eine Sache: ein Sample, das baut. Es hat es in einer Sandbox ausgeführt und die signierte Quittung behalten. Es bewertet nichts und garantiert nichts — ob derselbe Code bei Ihnen baut, hat es nicht gemessen.",
   "sample.title": "Beispiel",

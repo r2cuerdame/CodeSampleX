@@ -367,6 +367,8 @@
   "sample.run_when": "Run",
   "sample.scope": "A document means there is a sample at that coordinate. Whether one EXISTS is a fact about this release and this API and does not change with OS, runtime or package manager; its COLOUR is how that sample ran in the environment you are looking at.",
   "sample.signing_keys": "Signing keys that built it",
+  "sample.source": "Source",
+  "sample.source_truncated": "(first part only)",
   "sample.status": "Status",
   "sample.status_help": "This network offers one thing: a sample that builds. It ran the sample in a sandbox and kept the signed receipt. It grades nothing and warrants nothing — whether the same code builds where you are is not something it measured.",
   "sample.title": "Sample",
