@@ -91,7 +91,23 @@ func init() {
 	})
 }
 
-// reportLauncherRecovery surfaces the one thing a healthy-looking Windows
+// reportPayloadHealth says whether this install lost a payload and had to
+// repair itself.
+//
+// Both commands that report on the install call it. `csx update status` is
+// where an operator goes deliberately; `csx stats` is the local dashboard a
+// user opens when something feels wrong, and until now it was the one place
+// that could not tell them their payload had been destroyed and replaced.
+//
+// Silent on every install that has nothing to report, which is almost all of
+// them: a dashboard that always mentions recovery teaches people to skip the
+// line that matters.
+func reportPayloadHealth(home, exe string) {
+	reportLauncherRecovery(home, exe)
+	reportLauncherRehydrate(home, exe)
+}
+
+// reportLauncherRecovery surfaces the one thing a healthy-looking Windows// reportLauncherRecovery surfaces the one thing a healthy-looking Windows
 // install will not otherwise tell anybody: that the launcher had to fall back
 // to a last-known-good payload because the current one was destroyed after it
 // was verified.
@@ -215,8 +231,7 @@ func updateMain(ctx context.Context, args []string) int {
 		if st.LastError != "" {
 			fmt.Printf("last error: %s\n", st.LastError)
 		}
-		reportLauncherRecovery(home, exe)
-		reportLauncherRehydrate(home, exe)
+		reportPayloadHealth(home, exe)
 		return 0
 	case "rollback":
 		path, err := csxupdate.Rollback(home, exe)

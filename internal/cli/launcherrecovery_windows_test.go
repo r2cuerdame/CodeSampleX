@@ -167,3 +167,46 @@ func TestUpdateStatusSaysNothingWithoutARepair(t *testing.T) {
 		t.Fatalf("an install that never needed a repair reported %q", out)
 	}
 }
+
+// R2C-189. `csx stats` is the local dashboard a user opens when something
+// feels wrong, and it was the one place that could not tell them a released
+// payload had been destroyed on this machine and replaced with an older one.
+//
+// The recovery is designed to succeed, so nothing else on a repaired install
+// remembers it happened: the command that triggered it exited 0, the pointer
+// was healed, and every later run is ordinary. On Windows every occurrence so
+// far has been Defender quarantining a verified payload as a false positive.
+func TestPayloadHealthReportsBothRecords(t *testing.T) {
+	root, payload := launcherInstallFixture(t)
+	if err := launcher.RecordRecovery(root, launcher.Resolution{
+		Descriptor:    launcher.Descriptor{Version: "v0.1.22", SHA256: strings.Repeat("b", 64), Sequence: 4},
+		Recovered:     true,
+		FailedVersion: "v0.1.44",
+		FailedReason:  launcher.ReasonPayloadMissing,
+		Healed:        true,
+	}, time.Date(2026, 8, 24, 8, 7, 14, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	out, _ := captureStdout(t, func() int { reportPayloadHealth(home, payload); return 0 })
+	if !strings.Contains(out, "payload recovery:") {
+		t.Errorf("payload health said nothing about a recovery: %q", out)
+	}
+	if !strings.Contains(out, "v0.1.44") || !strings.Contains(out, "v0.1.22") {
+		t.Errorf("payload health did not name the lost and the substituted payload: %q", out)
+	}
+}
+
+// A healthy install says nothing, on both commands.
+//
+// A dashboard that always mentions recovery teaches people to skip the line
+// that matters, and almost every install has nothing to report.
+func TestPayloadHealthIsSilentOnAHealthyInstall(t *testing.T) {
+	_, payload := launcherInstallFixture(t)
+	home := t.TempDir()
+	out, _ := captureStdout(t, func() int { reportPayloadHealth(home, payload); return 0 })
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("a healthy install reported %q", out)
+	}
+}

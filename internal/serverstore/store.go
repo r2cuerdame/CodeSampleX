@@ -7,6 +7,7 @@ package serverstore
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -228,13 +229,66 @@ type JobRow struct {
 // says something about the verifier that night. It is kept — it is signed
 // evidence and the audit trail is the point — and it stops locking anyone
 // out.
-func ContractWasJudged(contractResult string) bool {
+// The same rule applies one layer deeper. Measured on production
+// 2026-08-31: the farm node runs at 79% CPU steal, so a `go test` that
+// finishes in a minute on an idle box exceeded the 300-second contract
+// timeout and was killed. The kill was written as contract=FAIL — a verdict —
+// and within an hour the network's only verifier had excluded itself from
+// every open cross job. Sixteen open, zero visible to the one peer that could
+// run them, and 27% of every FAIL receipt this network holds is a timeout.
+//
+// A contract that was killed for running too long did run, and still reached
+// no verdict about the sample: what it reports is that the verifier ran out
+// of time. So did one whose process never started.
+//
+// A signal is deliberately still a verdict. An OOM kill from the memory cap
+// says nothing about the sample and a segfault in the code under test says
+// everything, and the receipt does not yet distinguish them; guessing in the
+// permissive direction would let a peer re-verify samples it genuinely broke.
+func ContractWasJudged(contractResult, terminationKind string) bool {
+	switch strings.ToLower(strings.TrimSpace(terminationKind)) {
+	case string(domain.TerminationTimeout), string(domain.TerminationProcessStartFailed):
+		return false
+	}
 	switch strings.ToUpper(strings.TrimSpace(contractResult)) {
 	case "PASS", "FAIL":
 		return true
 	}
 	return false
 }
+
+// ReceiptTerminationKind reads how a receipt's contract stage ended.
+//
+// Empty when the receipt does not say — which is never another spelling of
+// "it exited cleanly". Receipts written before the verifier recorded stage
+// failures have no answer here, and they keep whatever their contract_result
+// claimed.
+func ReceiptTerminationKind(receiptJSON string) string {
+	if receiptJSON == "" {
+		return ""
+	}
+	var doc struct {
+		StageFailures struct {
+			Contract struct {
+				TerminationKind string `json:"terminationKind"`
+			} `json:"contract"`
+		} `json:"stageFailures"`
+	}
+	if err := json.Unmarshal([]byte(receiptJSON), &doc); err != nil {
+		return ""
+	}
+	return doc.StageFailures.Contract.TerminationKind
+}
+
+// contractJudgedSQL is ContractWasJudged as PostgreSQL evaluates it, for the
+// one query that has to apply the rule in the database.
+//
+// Written beside the function on purpose. The Fake evaluates the predicate in
+// Go and PostgreSQL evaluates it in SQL, which is precisely how the two came
+// to disagree about SKIPPED receipts in the first place.
+const contractJudgedSQL = `upper(coalesce(r.contract_result,'')) IN ('PASS','FAIL')
+	          AND coalesce(r.receipt::jsonb #>> '{stageFailures,contract,terminationKind}','')
+	              NOT IN ('timeout','process-start-failed')`
 
 // PeerRow is one peers-table row (tracker state, TTL-expired).
 type PeerRow struct {

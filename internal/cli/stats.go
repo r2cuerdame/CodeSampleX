@@ -100,6 +100,13 @@ func statsMain(ctx context.Context, args []string) int {
 		fmt.Printf("Last upload error:             %s\n", st.LastUploadError)
 	}
 	printReadiness(os.Stdout, st.Readiness)
+	// Whether this install had to repair itself. On Windows the cause so far
+	// has always been Defender quarantining a verified payload minutes after
+	// an update committed it; the launcher survives that by design, so
+	// nothing else on a repaired install remembers it happened.
+	if exe, err := os.Executable(); err == nil {
+		reportPayloadHealth(home, exe)
+	}
 	return 0
 }
 

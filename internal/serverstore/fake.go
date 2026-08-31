@@ -1059,7 +1059,7 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 		if peerID != "" && j.Reason == "cross" {
 			var mine bool
 			for _, r := range f.receipts[j.SampleID] {
-				if r.PeerID == peerID && ContractWasJudged(r.ContractResult) {
+				if r.PeerID == peerID && ContractWasJudged(r.ContractResult, ReceiptTerminationKind(r.ReceiptJSON)) {
 					mine = true
 					break
 				}

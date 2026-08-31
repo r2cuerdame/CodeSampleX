@@ -1616,13 +1616,15 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 				OR want_env->>'sandboxCapability' = $1)
 			  -- A peer that already JUDGED this sample cannot cross-verify it.
 			  -- Only a receipt that reached a verdict counts: one whose contract
-			  -- never ran (resolve or compile died, contract SKIPPED) says nothing
-			  -- about the sample and used to lock its peer out forever. See
-			  -- ContractWasJudged.
+			  -- never ran (resolve or compile died, contract SKIPPED) and one
+			  -- whose contract was killed for running too long both say nothing
+			  -- about the sample, and both used to lock their peer out forever.
+			  -- The predicate is ContractWasJudged; this is the same rule, kept
+			  -- beside it in contractJudgedSQL.
 			  AND ($4 = '' OR j.reason <> 'cross' OR NOT EXISTS (
 				SELECT 1 FROM receipts r
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4
-				   AND upper(coalesce(r.contract_result,'')) IN ('PASS','FAIL')))
+				   AND `+contractJudgedSQL+`))
 			  -- A job names the platform its sample needs. Without this the queue
 			  -- handed a Linux verifier the Windows rows too: the window is twenty
 			  -- deep, and whatever it could actually run was whatever was left. The
