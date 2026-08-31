@@ -182,7 +182,19 @@ func javaImageForManifest(m domain.SampleManifest) (javaVerifierImage, bool, err
 	default:
 		return javaVerifierImage{}, true, fmt.Errorf("sandbox: unsupported Maven verifier adapter %q", m.VerifierAdapter)
 	}
-	spec, ok := images[env.RuntimeVersion]
+	// The pre-matrix compatibility lane is Alpine, so it cannot serve a
+	// manifest that declares glibc. Measured on production: exactly one
+	// sample is in that position -- every other Java manifest that declares
+	// glibc pins a runtime version and already lands on Amazon Linux 2023.
+	// The JDK-21 corretto lane is the same Java 21 and the same Maven
+	// 3.9.11; its receipt records the package manager as 3.9.11 rather than
+	// the coarser 3.9, and recording more precisely is not what that lane
+	// was protecting.
+	version := env.RuntimeVersion
+	if version == "" && env.Libc == "glibc" {
+		version = "21"
+	}
+	spec, ok := images[version]
 	if !ok {
 		return javaVerifierImage{}, true, fmt.Errorf("sandbox: no %s verifier image for Java runtime version %q", m.VerifierAdapter, env.RuntimeVersion)
 	}
@@ -355,10 +367,36 @@ func imageForManifestOn(containerOS string, m domain.SampleManifest) (string, er
 	return imageForManifestLinux(m)
 }
 
+// refuseLibcMismatch rejects an image that cannot provide the libc a manifest
+// declared.
+//
+// Substituting silently writes a receipt saying a sample was verified in an
+// environment it was not verified in, which is the one claim this project
+// cannot make. The registry records each image's real libc, established by
+// running it, so this is a lookup and not a guess; an image that declares
+// none -- every Windows entry -- imposes nothing.
+func refuseLibcMismatch(image, declared string) error {
+	if declared == "" {
+		return nil
+	}
+	entry, ok := registryEntryFor(image)
+	if !ok || entry.libc == "" || strings.EqualFold(entry.libc, declared) {
+		return nil
+	}
+	return fmt.Errorf("sandbox: verifier image %s provides libc %q and cannot satisfy %q",
+		entry.alias, entry.libc, declared)
+}
+
 func imageForManifestLinux(m domain.SampleManifest) (string, error) {
 	env := m.Environment.Normalize()
 	if spec, java, err := javaImageForManifest(m); java {
 		if err != nil {
+			return "", err
+		}
+		// The same guard the rest of the selector applies. This branch
+		// returned before it and always has, so a Java manifest could name a
+		// libc its image did not provide and nothing noticed.
+		if err := refuseLibcMismatch(spec.image, env.Libc); err != nil {
 			return "", err
 		}
 		return spec.image, nil
@@ -371,17 +409,8 @@ func imageForManifestLinux(m domain.SampleManifest) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		// The image must provide the libc the manifest asked for, or this
-		// refuses. Substituting silently writes a receipt saying a sample was
-		// verified in an environment it was not verified in, which is the one
-		// claim this project cannot make -- the same rule the Python runtime
-		// lines already follow. The registry records each image's real libc,
-		// established by running it, so this is a lookup and not a guess.
-		if env.Libc != "" {
-			if entry, ok := registryEntryFor(img); ok && entry.libc != "" && entry.libc != env.Libc {
-				return "", fmt.Errorf("sandbox: verifier image %s provides libc %q and cannot satisfy %q",
-					entry.alias, entry.libc, env.Libc)
-			}
+		if err := refuseLibcMismatch(img, env.Libc); err != nil {
+			return "", err
 		}
 		rt, providedVersion, _ := imageRuntimeForVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion)
 		if env.RuntimeVersion != "" && env.Ecosystem != "pypi" &&

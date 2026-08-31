@@ -130,3 +130,60 @@ func TestEveryDeclaredLibcHasALane(t *testing.T) {
 		}
 	}
 }
+
+// The Java path obeys the libc guard too.
+//
+// It returns before the general check and always has, so a Maven or Gradle
+// manifest could name a libc its image did not provide and nothing noticed.
+// Measured on production: 24 of the 25 maven samples that declare glibc pin a
+// runtime version and already land on an Amazon Linux 2023 image, which is
+// glibc. Exactly one declares glibc with no runtime version and so falls to
+// the pre-matrix compatibility lane, which is Alpine.
+//
+// That one is not refused. It asked for glibc and the JDK-21 corretto lane is
+// the same Java 21 and the same Maven 3.9.11 the pinned lane uses — the only
+// difference is that its receipt records the package manager as 3.9.11 rather
+// than the coarser 3.9 the legacy lane carries. Recording more precisely is
+// not the thing that lane was protecting.
+func TestTheJavaPathHonoursADeclaredLibc(t *testing.T) {
+	glibcUnpinned, err := imageForManifestLinux(domain.SampleManifest{
+		VerifierAdapter: "maven-java@1",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "maven", OS: "linux", Arch: "x64",
+			Runtime: "java", Libc: "glibc",
+		},
+	})
+	if err != nil {
+		t.Fatalf("a glibc maven manifest with no runtime version was refused: %v", err)
+	}
+	if strings.Contains(glibcUnpinned, "alpine") {
+		t.Errorf("a glibc manifest landed on an Alpine image: %s", glibcUnpinned)
+	}
+
+	// A manifest that pins a version keeps the image that version names.
+	pinnedLane, err := imageForManifestLinux(domain.SampleManifest{
+		VerifierAdapter: "maven-java@1",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "maven", OS: "linux", Arch: "x64",
+			Runtime: "java", RuntimeVersion: "21", Libc: "glibc",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(pinnedLane, "maven:3.9.11-amazoncorretto-21-al2023@") {
+		t.Errorf("the pinned lane moved: %s", pinnedLane)
+	}
+
+	// And a libc no Java image provides is refused rather than substituted,
+	// which is what the rest of the selector already does.
+	if _, err := imageForManifestLinux(domain.SampleManifest{
+		VerifierAdapter: "maven-java@1",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "maven", OS: "linux", Arch: "x64",
+			Runtime: "java", RuntimeVersion: "21", Libc: "musl",
+		},
+	}); err == nil {
+		t.Error("a musl manifest was accepted on a glibc-only Java lane")
+	}
+}
