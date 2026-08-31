@@ -720,7 +720,12 @@ func (b basePage) WithLang(path string) string {
 	return path + sep + "lang=" + url.QueryEscape(b.Lang) + fragment
 }
 
-// LangLinks builds the footer language switcher. Every entry — English
+// LangName is the current language in its own name, for the header picker's
+// closed state. A picker labelled in a language the reader cannot read is the
+// one control on the page they most need to recognise without reading it.
+func (b basePage) LangName() string { return i18n.NativeName[b.Lang] }
+
+// LangLinks builds the language switcher. Every entry — English
 // included — carries an explicit locale: linking English to bare "/" made
 // the switcher a no-op for anyone whose browser asks for another language,
 // because "/" re-runs Accept-Language negotiation and lands right back on

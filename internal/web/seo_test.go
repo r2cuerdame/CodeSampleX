@@ -192,3 +192,38 @@ func TestOGTypeDefaultsToWebsite(t *testing.T) {
 		}
 	}
 }
+
+// The language picker is in the header, and its options are links.
+//
+// It used to be nine links along the bottom of every page, which a reader had
+// to reach the end of the page to find — and the reader who needs it is the
+// one who cannot read the page they are scrolling through.
+//
+// Links rather than a <select>, and this is the half worth pinning: a select
+// needs script to navigate anywhere, and these anchors are how a crawler walks
+// between the nine translations. The head's hreflang cluster says the same
+// thing; losing one of the two would still be losing half the signal.
+func TestTheLanguagePickerIsInTheHeaderAndKeepsItsLinks(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	body := get(t, mux, "/").Body.String()
+
+	head, _, ok := strings.Cut(body, "</nav>")
+	if !ok {
+		t.Fatal("no nav on the page")
+	}
+	if !strings.Contains(head, `class="langpick"`) {
+		t.Error("the language picker is not in the primary navigation")
+	}
+	if strings.Contains(body, `class="langs"`) {
+		t.Error("the old footer language row is still rendered")
+	}
+	// Every supported locale is reachable as an anchor.
+	for _, code := range i18n.Supported {
+		if !strings.Contains(head, `lang="`+code+`"`) {
+			t.Errorf("locale %s has no link in the picker", code)
+		}
+	}
+	if strings.Contains(head, "<select") {
+		t.Error("the picker became a select; its options stop being links a crawler can follow")
+	}
+}

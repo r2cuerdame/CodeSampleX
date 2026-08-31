@@ -60,6 +60,23 @@
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4.25 2.5c-1.336 0-2.75 1.164-2.75 3 0 2.15 1.58 4.144 3.365 5.682A20.6 20.6 0 0 0 8 13.393a20.6 20.6 0 0 0 3.135-2.211C12.92 9.644 14.5 7.65 14.5 5.5c0-1.836-1.414-3-2.75-3-1.373 0-2.609.986-3.029 2.456a.75.75 0 0 1-1.442 0C6.859 3.486 5.623 2.5 4.25 2.5z"/></svg>
       </a>
       <a class="cta" href="{{.HomeHref}}#install">{{.T "nav.install"}}</a>
+      {{/* The language picker sits here rather than in the footer, where a
+           reader who needs it has to reach the bottom of the page to find out
+           it exists — and the reader who needs it most is the one who cannot
+           read the page they are scrolling through.
+
+           A <details> holding the same links, not a <select>: a select needs
+           script to navigate, and these links are how a crawler walks between
+           the nine translations. The head's hreflang cluster says the same
+           thing, and saying it twice costs nothing. */}}
+      <details class="langpick">
+        <summary aria-label="{{.T "lang.label"}}"><span class="langnow">{{.LangName}}</span></summary>
+        <ul>
+          {{- range .LangLinks}}
+          <li><a {{if eq .Code $.Lang}}class="on" aria-current="true" {{end}}href="{{.URL}}" lang="{{.Code}}">{{.Name}}</a></li>
+          {{- end}}
+        </ul>
+      </details>
     </nav>
   </div>
 </header>
@@ -96,11 +113,10 @@
       · <a href="{{.WithLang "/dependencies"}}">{{.T "nav.dependencies"}}</a>
       · <a href="{{.RepoURL}}" rel="noopener">{{.T "footer.github"}}</a>
       · <a href="{{.SponsorURL}}" rel="noopener">{{.T "footer.sponsor"}}</a></p>
-    <nav class="langs" aria-label="{{.T "lang.label"}}">
-      {{- range .LangLinks}}
-      <a {{if eq .Code $.Lang}}class="on" {{end}}href="{{.URL}}" lang="{{.Code}}">{{.Name}}</a>
-      {{- end}}
-    </nav>
+    {{/* The language switcher moved to the header. Nine links along the
+         bottom of every page were nine links a reader had to reach the end of
+         the page to find, and the reader who needs them is the one who cannot
+         read the page they are scrolling through. */}}
   </div>
 </footer>
 {{/* Copy actions may carry text directly or point at the one visible source
