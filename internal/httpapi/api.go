@@ -295,3 +295,21 @@ func bearerToken(r *http.Request) string {
 type PublicnessChecker interface {
 	Check(ctx context.Context, p domain.PURL) string
 }
+
+// CachedPublicnessChecker is a checker that can answer from what it already
+// knows, without reaching a registry.
+//
+// The per-request lookup cap exists to bound how many NEW names one anonymous
+// request can push at npmjs.org or pypi.org. Without this, the cap was charged
+// for every answer including the ones that never left the process, so a
+// request whose batches cluster on packages the server already knows — the
+// ordinary case, since evidence follows what people actually run — spent the
+// whole budget on cache hits and returned UNKNOWN for everything after the
+// twentieth package.
+//
+// A checker that cannot answer this way is not required to: the fallback is
+// the old behaviour, which is safe and merely thriftier than it needs to be.
+type CachedPublicnessChecker interface {
+	PublicnessChecker
+	CachedPublicness(ctx context.Context, p domain.PURL) (string, bool)
+}

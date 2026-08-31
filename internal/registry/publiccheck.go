@@ -64,27 +64,46 @@ type Checker struct {
 // returned without a network call; UNKNOWN verdicts are never cached so the
 // next call retries.
 func (c *Checker) Check(ctx context.Context, p domain.PURL) string {
-	// A PURL parser separates fields; it does not prove that the name has a
-	// valid shape for its registry. In particular, an unescaped '?' or '#'
-	// changes the meaning of a URL assembled from that name: an exact npm
-	// probe for "react?anything" would otherwise request /react and grade a
-	// made-up package PUBLIC. Validate before consulting the cache as well,
-	// so an old poisoned verdict cannot bypass the corrected boundary.
+	if status, ok := c.CachedPublicness(ctx, p); ok {
+		return status
+	}
 	if !ValidPackageName(p.Ecosystem, p.Name) ||
 		(p.Version != "" && !domain.ConcreteResolvedVersion(p.Version)) {
 		return scanner.PublicnessUnknown
 	}
 	key := p.String()
-	if c.Cache != nil {
-		if status, at, ok := c.Cache.GetPublicness(ctx, key); ok && time.Since(at) < cacheTTL {
-			return status
-		}
-	}
 	status := c.probe(ctx, p)
 	if status != scanner.PublicnessUnknown && c.Cache != nil {
 		c.Cache.SetPublicness(ctx, key, status)
 	}
 	return status
+}
+
+// CachedPublicness answers from the cache alone, and reports whether it could.
+//
+// It is the whole of Check's cache path, called by Check rather than
+// duplicated beside it, so the validation and the TTL cannot drift between the
+// two callers. A caller bounding outbound registry traffic asks this first: an
+// answer from here reached nobody and must not be charged to that bound.
+//
+// A PURL parser separates fields; it does not prove that the name has a valid
+// shape for its registry. An unescaped '?' or '#' changes the meaning of a URL
+// assembled from that name: an exact npm probe for "react?anything" would
+// otherwise request /react and grade a made-up package PUBLIC. Validating
+// before the cache read as well means an old poisoned verdict cannot bypass
+// the corrected boundary.
+func (c *Checker) CachedPublicness(ctx context.Context, p domain.PURL) (string, bool) {
+	if !ValidPackageName(p.Ecosystem, p.Name) ||
+		(p.Version != "" && !domain.ConcreteResolvedVersion(p.Version)) {
+		return "", false
+	}
+	if c.Cache == nil {
+		return "", false
+	}
+	if status, at, ok := c.Cache.GetPublicness(ctx, p.String()); ok && time.Since(at) < cacheTTL {
+		return status, true
+	}
+	return "", false
 }
 
 // ValidPackageName reports whether name has a safe public-registry shape.
