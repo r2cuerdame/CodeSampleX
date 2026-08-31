@@ -169,9 +169,32 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// Selection and replace directives can make a newer or differently
 		// sourced module run. Persist `go list -m` immediately after download
 		// so the receipt can sign what the Go tool actually selected.
+		//
+		// Then warm GOCACHE, which this stage has always configured and never
+		// written. `go mod download` fills the MODULE cache only, so every
+		// golang contract compiled its whole dependency graph from source
+		// inside the 300-second contract budget. Go is the only ecosystem
+		// whose contract compiles at all -- node, python, ruby and the rest
+		// just run a file -- and it is the only one that has never passed:
+		// measured on production, 3,875 npm passes, 507 pypi, 301 gem, and
+		// zero golang, against 39 contracts killed at exactly 300000ms.
+		//
+		// Measured here: contract CPU falls from 38.4s to 4.3s on a small
+		// otel sample. On a node losing 79% of its cycles to steal, the first
+		// number is past the budget and the second is not.
+		//
+		// build then vet, because vet type-checks _test.go files and so
+		// compiles the test-only dependencies build alone leaves out. Neither
+		// EXECUTES sample code, which is the whole reason they belong here:
+		// this stage has the network, and the stage that runs the sample does
+		// not. Failure is swallowed -- a sample that cannot build must fail at
+		// its contract, where that is a fact about the sample, not here, where
+		// it would read as a dependency that could not be fetched.
 		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/gomod " + vendorDir +
 			"/gobuild " + vendorDir + "/go-modules.json; mkdir -p " + vendorDir +
-			"; go mod download; go list -m -json all > " + vendorDir + "/go-modules.json"}, nil
+			"; go mod download; go list -m -json all > " + vendorDir + "/go-modules.json" +
+			"; go build ./... >/dev/null 2>&1 || true" +
+			"; go vet ./... >/dev/null 2>&1 || true"}, nil
 	case "cargo":
 		return []string{"sh", "-c", "rm -rf " + vendorDir + "/cargo " + vendorDir +
 			"/target; cargo fetch --locked"}, nil

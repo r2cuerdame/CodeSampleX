@@ -50,9 +50,11 @@ func TestDetectCapability(t *testing.T) {
 
 func TestResolveCommandPerEcosystem(t *testing.T) {
 	cases := map[string][]string{
-		"npm":    {"sh", "-c", "rm -rf /work/node_modules; npm ci --ignore-scripts"},
-		"pypi":   {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
-		"golang": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json"},
+		"npm":  {"sh", "-c", "rm -rf /work/node_modules; npm ci --ignore-scripts"},
+		"pypi": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/py /work/.csx-vendor/pip-report.json; mkdir -p /work/.csx-vendor; pip install --no-compile --report /work/.csx-vendor/pip-report.json --target /work/.csx-vendor/py -r requirements.txt"},
+		// The two warm steps at the end fill GOCACHE, which this stage
+		// configured and never wrote; see gowarm_test.go for why.
+		"golang": {"sh", "-c", "set -e; rm -rf /work/.csx-vendor/gomod /work/.csx-vendor/gobuild /work/.csx-vendor/go-modules.json; mkdir -p /work/.csx-vendor; go mod download; go list -m -json all > /work/.csx-vendor/go-modules.json; go build ./... >/dev/null 2>&1 || true; go vet ./... >/dev/null 2>&1 || true"},
 		"cargo":  {"sh", "-c", "rm -rf /work/.csx-vendor/cargo /work/.csx-vendor/target; cargo fetch --locked"},
 		"maven":  {"sh", "-c", mavenResolveScript},
 	}
