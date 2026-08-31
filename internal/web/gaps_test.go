@@ -189,3 +189,36 @@ func TestAnUnscannableEcosystemSaysSoOnThePackagePage(t *testing.T) {
 		t.Error("a reader was sent to the gap list for work nothing can do")
 	}
 }
+
+// The reason a gap cannot be closed is written in the reader's language.
+//
+// The store carries the authoring queue's own sentence, which is English. On
+// a Korean page that was the one untranslated line in the row, while
+// /compatibility and the package page had already learned to say the same
+// fact in nine languages — the terminology split R2C-135 asks for.
+func TestTheUnaskableReasonIsTranslated(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.gaps = []CompletenessGap{
+		{Ecosystem: "npm", Name: "@esbuild/linux-x64", Version: "0.25.0",
+			HasEvidence: true, Dependency: GapDependencyUnknown,
+			SampleNAReason: "npm per-platform native build: what a sample would import is the .node binary its parent selects"},
+		{Ecosystem: "golang", Name: "example.com/mod", Version: "v1.0.0",
+			HasEvidence: true, Dependency: GapDependencyUnknown,
+			DependencyNAReason: "no dependency scanner ships for golang: the tree is unread, not empty"},
+	}
+	body := get(t, mux, "/gaps?lang=ko").Body.String()
+
+	if !strings.Contains(body, "플랫폼별 네이티브 빌드") {
+		t.Error("the sample reason was not translated")
+	}
+	if !strings.Contains(body, "의존성 스캐너가 없어") {
+		t.Error("the dependency reason was not translated")
+	}
+	if strings.Contains(body, "what a sample would import") {
+		t.Error("the store's English sentence reached a Korean page")
+	}
+	// The ecosystem is still named, because which one it is, is the fact.
+	if !strings.Contains(body, "golang") {
+		t.Error("the untranslatable part — the ecosystem name — was dropped")
+	}
+}

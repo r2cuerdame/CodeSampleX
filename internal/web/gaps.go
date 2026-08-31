@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -134,7 +135,7 @@ func gapItemFor(lang string, base basePage, row CompletenessGap) gapItem {
 	item.Axes[0] = gapAxis{
 		Label: i18n.T(lang, "gaps.axis_sample"), Held: row.HasSample,
 		Answer:    i18n.T(lang, boolKey(row.HasSample, "gaps.sample_have", "gaps.sample_missing")),
-		Unaskable: row.SampleNAReason,
+		Unaskable: sampleUnaskableText(lang, row),
 	}
 	item.Axes[1] = gapAxis{
 		Label: i18n.T(lang, "gaps.axis_evidence"), Held: row.HasEvidence,
@@ -144,8 +145,10 @@ func gapItemFor(lang string, base basePage, row CompletenessGap) gapItem {
 		Label: i18n.T(lang, "gaps.axis_dependency"),
 		Held:  row.Dependency != GapDependencyUnknown,
 		// Default is the honest one: nothing has looked.
-		Answer:    i18n.T(lang, "gaps.dep_unknown"),
-		Unaskable: row.DependencyNAReason,
+		Answer: i18n.T(lang, "gaps.dep_unknown"),
+	}
+	if row.DependencyNAReason != "" {
+		dep.Unaskable = i18n.T(lang, "gaps.na_no_scanner", row.Ecosystem)
 	}
 	switch row.Dependency {
 	case GapDependencyGraph:
@@ -210,4 +213,32 @@ func gapsHref(query string, page int, lang string) string {
 // decision about whether people arrive at all, and that one was not made.
 func wantedGone(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/gaps", http.StatusMovedPermanently)
+}
+
+// sampleUnaskableText says, in the reader's language, why no sample can be
+// written for this coordinate.
+//
+// The store carries the authoring queue's own sentence, which is English. On
+// a Korean page that sentence was the one untranslated line in the row, and
+// /compatibility and the package page had already learned to say the same
+// fact in nine languages. The predicates are the store's, so the two cannot
+// disagree about which coordinates are unaskable -- only about wording.
+func sampleUnaskableText(lang string, row CompletenessGap) string {
+	if row.SampleNAReason == "" {
+		return ""
+	}
+	switch row.Ecosystem {
+	case "npm":
+		if _, locked := domain.NPMPackagePlatform(row.Name); locked {
+			return i18n.T(lang, "gaps.na_npm_platform")
+		}
+	case "maven":
+		if domain.MavenPomOnlyByName(row.Name) {
+			return i18n.T(lang, "gaps.na_gradle_marker")
+		}
+	}
+	// A rule this page has not been taught yet. The store's sentence is
+	// English and true, which beats saying nothing about a coordinate the
+	// census has already removed from the backlog.
+	return row.SampleNAReason
 }
