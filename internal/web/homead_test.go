@@ -8,39 +8,101 @@ import (
 
 const adSnippet = `src="https://adisad.com/s/ydpads8kquzopej7nps4oppu.js"`
 
-// The ad is a home-page placement, and only that.
-//
-// The snippet inserts its container immediately after its own script tag, so
-// the tag's position is the ad's position — which also means a tag that leaks
-// into the shared base template would put an ad on every record, finding and
-// sample page without anyone choosing to.
-func TestTheAdIsOnTheHomePageAndNowhereElse(t *testing.T) {
-	mux, _ := newTestMux(t, nil)
+// adPages is every page a reader can reach from the navigation, plus the home
+// page. All of them carry the placement now.
+var adPages = []string{"/", "/samples", "/records", "/findings", "/wanted", "/features"}
 
-	if body := get(t, mux, "/").Body.String(); !strings.Contains(body, adSnippet) {
-		t.Error("the home page carries no ad placement")
+// Every page carries the placement, and exactly one.
+//
+// The snippet takes the FIRST [data-adisad-slot] in the document, so a page
+// with two slots would place its ad by document order rather than by anyone's
+// decision. The home page has its own, mid-page between the findings and the
+// install block; the shared one in base.html stands down there and serves
+// everywhere else.
+func TestEveryPageCarriesExactlyOnePlacement(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	for _, path := range adPages {
+		body := get(t, mux, path).Body.String()
+		if n := strings.Count(body, adSnippet); n != 1 {
+			t.Errorf("%s carries %d ad scripts, want exactly 1", path, n)
+		}
+		if n := strings.Count(body, "data-adisad-slot"); n != 1 {
+			t.Errorf("%s declares %d slots; the snippet takes the first and the rest are a coin toss", path, n)
+		}
 	}
-	for _, path := range []string{"/samples", "/records", "/findings", "/wanted", "/features"} {
-		if strings.Contains(get(t, mux, path).Body.String(), adSnippet) {
-			t.Errorf("%s carries the home ad placement", path)
+}
+
+// The slot is outside <main> on every page but the home page.
+//
+// This is the rule that matters. Without a slot the snippet inserts its unit
+// at the midpoint of the paragraphs inside <main> — and on a page whose
+// content IS the evidence, that midpoint is inside a finding card. It happened
+// on the live home page: an advertisement nested under a finding's measured
+// line, where a reader scanning findings has no reason to expect that the box
+// below it is paid.
+func TestTheSharedSlotIsOutsideTheContent(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	for _, path := range adPages {
+		if path == "/" {
+			continue // the home page places its own, deliberately mid-page
+		}
+		body := get(t, mux, path).Body.String()
+		mainEnd := strings.Index(body, "</main>")
+		slot := strings.Index(body, "data-adisad-slot")
+		if mainEnd < 0 || slot < 0 {
+			t.Errorf("%s: main=%d slot=%d", path, mainEnd, slot)
+			continue
+		}
+		if slot < mainEnd {
+			t.Errorf("%s puts the ad inside <main>, where the evidence is", path)
 		}
 	}
 }
 
 // Async, so a slow or dead ad network cannot hold up the page a reader came
-// for. This is the one attribute the placement must not lose.
+// for. This is the one attribute the placement must not lose, on any page.
 func TestTheAdNeverBlocksTheRestOfThePage(t *testing.T) {
-	body := get(t, newTestMuxOnly(t), "/").Body.String()
-	i := strings.Index(body, adSnippet)
-	if i < 0 {
-		t.Fatal("no ad placement on the home page")
+	mux, _ := newTestMux(t, nil)
+	for _, path := range adPages {
+		body := get(t, mux, path).Body.String()
+		i := strings.Index(body, adSnippet)
+		if i < 0 {
+			t.Errorf("%s has no ad placement", path)
+			continue
+		}
+		tag := body[strings.LastIndex(body[:i], "<script"):]
+		if j := strings.Index(tag, ">"); j > 0 {
+			tag = tag[:j]
+		}
+		if !strings.Contains(tag, "async") {
+			t.Errorf("%s loads the ad script render-blocking: %s", path, tag)
+		}
 	}
-	tag := body[strings.LastIndex(body[:i], "<script"):]
-	if j := strings.Index(tag, ">"); j > 0 {
-		tag = tag[:j]
-	}
-	if !strings.Contains(tag, "async") {
-		t.Errorf("the ad script is render-blocking: %s", tag)
+}
+
+// The drill-down pages carry it too, which is what "every step" means: a
+// reader who clicks from the collection into a package, a version, a symbol or
+// a sample never leaves the placement behind.
+//
+// They inherit it rather than declaring it — every one of these templates is a
+// "content" block inside base.html — so this test exists to notice if one ever
+// stops being, not because each needed wiring.
+func TestTheDrillDownPagesCarryItToo(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.versions["npm|axios"] = []string{"1.12.0"}
+	for _, path := range []string{
+		"/npm/axios",
+		"/npm/axios?f_version=1.12.0",
+	} {
+		body := get(t, mux, path).Body.String()
+		if n := strings.Count(body, adSnippet); n != 1 {
+			t.Errorf("%s carries %d ad scripts, want exactly 1", path, n)
+		}
+		mainEnd := strings.Index(body, "</main>")
+		slot := strings.Index(body, "data-adisad-slot")
+		if mainEnd >= 0 && slot >= 0 && slot < mainEnd {
+			t.Errorf("%s puts the ad inside <main>", path)
+		}
 	}
 }
 
@@ -48,23 +110,4 @@ func newTestMuxOnly(t *testing.T) *http.ServeMux {
 	t.Helper()
 	mux, _ := newTestMux(t, nil)
 	return mux
-}
-
-// The placement is pinned, not left to the snippet's fallback.
-//
-// Without [data-adisad-slot] the snippet inserts its unit at the midpoint of
-// the paragraphs inside <main>. Measured on the live page, that midpoint is
-// inside a finding card — so the ad rendered nested in a piece of measured
-// evidence, where a reader could take it as part of the finding. That is the
-// one place on this site an advertisement must never be.
-func TestTheAdSlotIsPinnedSoItCannotLandInsideEvidence(t *testing.T) {
-	body := get(t, newTestMuxOnly(t), "/").Body.String()
-	i := strings.Index(body, adSnippet)
-	if i < 0 {
-		t.Fatal("no ad placement on the home page")
-	}
-	slot := body[strings.LastIndex(body[:i], "<aside"):i]
-	if !strings.Contains(slot, "data-adisad-slot") {
-		t.Errorf("the ad slot carries no publisher hook, so the snippet chooses its own spot: %s", slot)
-	}
 }

@@ -2173,3 +2173,9 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
    unfilled placement collapses to nothing rather than leaving a hole. */
 .home-ad { display: block; margin: 2rem auto; max-width: 100%; overflow: hidden; }
 .home-ad .adisad-unit { margin: 0 auto; }
+
+/* The site-wide ad slot, between the content and the footer. Same rules as
+   the home slot: reserve the space, never widen the page, and collapse to
+   nothing when the placement is unfilled. */
+.site-ad { display: block; margin: 2rem auto; max-width: 100%; overflow: hidden; }
+.site-ad .adisad-unit { margin: 0 auto; }
