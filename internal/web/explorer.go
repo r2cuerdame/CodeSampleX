@@ -1123,6 +1123,17 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		{name, base + pkgHref(eco, name)},
 		{version, base + versionHref(eco, name, version)},
 	})}
+	// A release page is not an article about a library. It is the
+	// measurements this network took at one coordinate, and Dataset is the
+	// vocabulary for exactly that -- with a distribution pointing at the
+	// registry endpoint that serves the same evidence as JSON, so the claim
+	// is checkable rather than decorative.
+	//
+	// Only with a version pinned. The package page spans releases and has no
+	// single coordinate to describe, and a dataset that names a package
+	// without a version would describe something nothing measured.
+	b.JSONLD = append(b.JSONLD, packageDatasetJSONLD(base, b.Canonical, eco, name, version,
+		desc, matrixLastSeen(matrix)))
 	// Costs no query: it reads the same cached target list the symbol list is
 	// built from.
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
@@ -1648,6 +1659,21 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 		b.Canonical += "?lang=" + url.QueryEscape(lang)
 	}
 	view.basePage = b
+	// Only on the canonical view: the canonical drops every filter and the
+	// page number, so an ItemList emitted from a filtered or later page would
+	// describe rows that URL does not serve.
+	if !view.HasFilters && page == 1 {
+		entries := make([]collectionEntry, 0, len(hits))
+		for _, h := range hits {
+			entries = append(entries, collectionEntry{
+				Name: h.Name + " (" + h.Ecosystem + ")",
+				URL:  s.base(r) + pkgHref(h.Ecosystem, h.Name),
+			})
+		}
+		b.JSONLD = append(b.JSONLD, collectionJSONLD(b.Canonical,
+			i18n.T(lang, "records.title"), i18n.T(lang, "meta.explore"), entries))
+		view.basePage = b
+	}
 	s.render(w, "records", http.StatusOK, view)
 }
 

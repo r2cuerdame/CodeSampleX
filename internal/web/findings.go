@@ -914,6 +914,25 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 		view.Empty = true
 	}
 
+	// Only on the canonical view: the canonical drops every filter and the
+	// page number, so an ItemList emitted from a filtered or later page would
+	// describe rows that URL does not serve.
+	if !view.HasFilters && page == 1 {
+		entries := make([]collectionEntry, 0, len(view.Derived)+len(view.Documented)+len(view.Believed))
+		for _, group := range [][]finding{view.Documented, view.Believed, view.Derived} {
+			for _, f := range group {
+				if f.SampleID == "" {
+					continue
+				}
+				entries = append(entries, collectionEntry{
+					Name: f.Subject + ": " + f.Measured,
+					URL:  s.base(r) + sampleHref(f.SampleID),
+				})
+			}
+		}
+		view.JSONLD = append(view.JSONLD, collectionJSONLD(view.Canonical,
+			i18n.T(lang, "findings.title"), i18n.T(lang, "meta.findings"), entries))
+	}
 	s.render(w, "findings", http.StatusOK, view)
 }
 

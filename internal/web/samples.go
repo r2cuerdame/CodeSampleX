@@ -1,6 +1,7 @@
 package web
 
 import (
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -167,6 +168,17 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 		b.Canonical += "?lang=" + url.QueryEscape(lang)
 	}
 	view.basePage = b
+	// Only on the canonical view: the canonical drops the query and the page
+	// number, so an ItemList emitted from a search or a later page would
+	// describe rows that URL does not serve.
+	if query == "" && page == 1 {
+		entries := make([]collectionEntry, 0, len(view.Cards))
+		for _, c := range view.Cards {
+			entries = append(entries, collectionEntry{Name: c.Goal, URL: s.base(r) + c.Href})
+		}
+		view.JSONLD = []template.JS{collectionJSONLD(b.Canonical,
+			i18n.T(lang, "samples.title"), i18n.T(lang, "samples.sub"), entries)}
+	}
 	s.render(w, "samples", http.StatusOK, view)
 }
 
