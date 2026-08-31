@@ -2202,18 +2202,21 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .langpick > ul a:hover { background: var(--panel); text-decoration: none; }
 .langpick > ul a.on { color: var(--accent); font-weight: 700; }
 @media (max-width: 40rem) {
-  /* An absolutely positioned panel is anchored to the summary, and on a 320px
-     screen the summary is already near the right edge -- so the panel ran off
-     it, measured at x=398 against a 320px viewport by the narrow-viewport
-     tests. In flow it wraps inside the nav instead, which is what every other
-     item in that nav already does. */
+  /* Anchored to the header bar rather than to its own summary. On a 320px
+     screen the summary already sits near the right edge, so a panel anchored
+     to it ran off the viewport — measured at x=398 against 320px.
+
+     Still absolutely positioned, and that is the point. A panel in flow grows
+     the bar every time somebody opens it, and the bar is sticky: the header
+     would take a bite out of every page the moment a reader went looking for
+     their language. It overlays, it never resizes what it hangs from. */
+  .langpick { position: static; }
   .langpick > ul {
-    position: static; min-width: 0; box-shadow: none;
-    margin-top: 0.35rem; padding: 0.35rem 0; border: 0;
+    right: 0; left: auto; top: 100%; margin-top: 0.3rem;
+    min-width: 0; max-width: calc(100vw - 2rem);
   }
-  /* One per line. Side by side, the longest name -- "Portugues (Brasil)" --
-     is wider than the column it gets and pushed 5px past a 320px viewport,
-     which the narrow-viewport tests measured. A name that cannot be broken
-     needs a line of its own. */
-  .langpick > ul a { padding-left: 0; overflow-wrap: anywhere; }
+  /* One per line. Side by side, the longest name — "Português (Brasil)" — is
+     wider than the column it gets and pushed 5px past a 320px viewport. A
+     name that cannot be broken needs a line of its own. */
+  .langpick > ul a { overflow-wrap: anywhere; }
 }
