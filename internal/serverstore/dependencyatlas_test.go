@@ -169,11 +169,23 @@ func TestParentsAreListedAtExactVersions(t *testing.T) {
 func TestIntegrationDependencyAtlasParity(t *testing.T) {
 	pg := openTestPG(t)
 	f := NewFake()
-	seedAtlas(t, pg)
-	seedAtlas(t, f)
+	for _, store := range []Store{pg, f} {
+		seedAtlas(t, store)
+		// The three shapes the first version of this fixture never had, each
+		// of which hid a divergence: one edge seen on several project-days
+		// (the Fake counted the edge, PostgreSQL counted the days), a name
+		// holding a LIKE metacharacter (PostgreSQL read it as a pattern, the
+		// Fake as text), and one name at one version in two ecosystems (the
+		// order was not total, so a page boundary could duplicate or drop it).
+		atlasEdge(t, store, "p9", "express", "5.1.0", "raw-body", "3.0.0")
+		atlasEdge(t, store, "p1", "app", "1.0.0", "a_c", "1.0.0")
+		atlasEdge(t, store, "p2", "app", "1.0.0", "abc", "2.0.0")
+		atlasEdge(t, store, "p1", "app", "1.0.0", "shared", "1.0.0")
+		edgeIn(t, store, "pypi", "p2", "pyapp", "1.0.0", "shared", "1.0.0")
+	}
 	ctx := context.Background()
 
-	for _, query := range []string{"", "body-parser", "raw", "nothing-matches"} {
+	for _, query := range []string{"", "body-parser", "raw", "a_c", "%", "_", "nothing-matches"} {
 		pgRows, pgTotal, err := pg.DependencySubjects(ctx, query, 0, 50)
 		if err != nil {
 			t.Fatal(err)
@@ -272,5 +284,114 @@ func TestIntegrationResolvedNoneParity(t *testing.T) {
 		if got != c.want || fake != c.want {
 			t.Errorf("%s@%s: pg=%v fake=%v want=%v", c.name, c.version, got, fake, c.want)
 		}
+	}
+}
+
+// One edge seen on several project-days counts as several.
+//
+// The Fake incremented once per edge key while PostgreSQL counted rows, and
+// dependency_edge's key includes bucket and epoch — so a row IS a project-day.
+// The two stores therefore ranked the same corpus differently, and the atlas
+// is ordered by exactly this number.
+//
+// The first parity fixture never caught it because every edge in it was seen
+// once.
+func TestOneEdgeOnSeveralProjectDaysCountsAsSeveral(t *testing.T) {
+	f := NewFake()
+	atlasEdge(t, f, "p1", "express", "5.1.0", "body-parser", "2.2.0")
+	atlasEdge(t, f, "p2", "express", "5.1.0", "body-parser", "2.2.0")
+	atlasEdge(t, f, "p3", "express", "5.1.0", "body-parser", "2.2.0")
+
+	got, _, err := f.DependencySubjects(context.Background(), "", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d subjects, want 1: %v", len(got), atlasLines(got))
+	}
+	if got[0].Projects != 3 {
+		t.Errorf("projects = %d, want 3: one edge on three project-days is three", got[0].Projects)
+	}
+	if got[0].Parents != 1 {
+		t.Errorf("parents = %d, want 1: it is the same parent release each time", got[0].Parents)
+	}
+}
+
+// A search is over text, so the characters in it are text.
+//
+// PostgreSQL built the pattern as '%' || $1 || '%' and passed it to ILIKE, so
+// a query containing % or _ became a wildcard: "a_c" matched "abc", and
+// "%" matched everything. The Fake used strings.Contains and matched neither.
+// Two stores, two answers, and the PostgreSQL one is also the wrong answer —
+// nobody typing an underscore into a search box means "any character".
+func TestASearchTreatsWildcardCharactersAsText(t *testing.T) {
+	f := NewFake()
+	atlasEdge(t, f, "p1", "app", "1.0.0", "a_c", "1.0.0")
+	atlasEdge(t, f, "p2", "app", "1.0.0", "abc", "2.0.0")
+
+	// The underscore is a character, not "any character".
+	got, total, err := f.DependencySubjects(context.Background(), "a_c", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(got) != 1 || got[0].Name != "a_c" {
+		t.Errorf("query \"a_c\" matched %d subjects %v, want only a_c", total, atlasLines(got))
+	}
+	// And a bare percent matches a name containing one, not every name.
+	if _, total, err = f.DependencySubjects(context.Background(), "%", 0, 50); err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 {
+		t.Errorf("query \"%%\" matched %d subjects; it is a character no name here contains", total)
+	}
+}
+
+// Two ecosystems can hold the same name at the same version, and the page
+// order has to be total.
+//
+// Ordering ended at (projects, parents, name, version), so two such rows were
+// tied and PostgreSQL could return them in either order between one page and
+// the next — the row that lands on a page boundary is then shown twice or not
+// at all.
+func TestTheSubjectOrderIsTotalAcrossEcosystems(t *testing.T) {
+	f := NewFake()
+	atlasEdge(t, f, "p1", "app", "1.0.0", "shared", "1.0.0")
+	// The same child name and version, reached through a pypi parent.
+	edgeIn(t, f, "pypi", "p2", "pyapp", "1.0.0", "shared", "1.0.0")
+
+	first, _, err := f.DependencySubjects(context.Background(), "", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := f.DependencySubjects(context.Background(), "", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("paging returned %d and %d rows", len(first), len(second))
+	}
+	if first[0].Ecosystem == second[0].Ecosystem {
+		t.Errorf("both pages returned the %s row; the order is not total", first[0].Ecosystem)
+	}
+}
+
+// edgeIn is atlasEdge for an ecosystem other than npm.
+func edgeIn(t *testing.T, store Store, ecosystem, bucket, parent, parentVersion, child, childVersion string) {
+	t.Helper()
+	b := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-31", AnonID: "anon-" + parent,
+		ProjectBucket: bucket,
+		Package:       "pkg:" + ecosystem + "/" + parent + "@" + parentVersion,
+		Direct:        true,
+		DependsOn:     []string{"pkg:" + ecosystem + "/" + child + "@" + childVersion},
+		Stage:         domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 1,
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: ecosystem, OS: "linux", Arch: "amd64",
+			Runtime: "python", RuntimeVersion: "3.12",
+		},
+	}
+	accepted, rejected, err := store.IngestBatches(context.Background(), []domain.ObservationBatch{b})
+	if err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest %s: accepted=%d rejected=%v err=%v", ecosystem, accepted, rejected, err)
 	}
 }

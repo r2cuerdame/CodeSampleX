@@ -424,3 +424,50 @@ func TestResolvedEdgesSaysWhetherAnythingScanned(t *testing.T) {
 		t.Error("an npm workspace with a package-lock.json reported no scan")
 	}
 }
+
+// A scanner for ANOTHER ecosystem is not a reader of this one.
+//
+// ResolvedEdges reported "something scanned" as soon as any adapter both
+// detected the workspace and returned without error. The ecosystem check was
+// applied afterwards, to the edges — so in a polyglot workspace the node
+// adapter reading a package-lock.json beside a Maven sample counted as having
+// read the Maven tree. Every package that resolution placed then became a
+// leaf, which is the exact claim #152 exists to prevent, arriving through a
+// different door.
+//
+// The fixture is that workspace: a real package-lock.json the node adapter
+// scans happily, and a manifest saying the resolver that ran was maven — an
+// ecosystem no adapter can read a tree for.
+func TestAnotherEcosystemsScannerIsNotAReaderOfThisOne(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(treeLock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"sample"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := treeManifest()
+	m.Environment.Ecosystem = "maven"
+	m.Packages = []string{"pkg:maven/org.example/lib@1.0.0"}
+
+	edges, scanned := ResolvedEdges(context.Background(), dir, m, adapters.All())
+	if len(edges) != 0 {
+		t.Errorf("maven resolution produced %d edges from another ecosystem's lockfile", len(edges))
+	}
+	if scanned {
+		t.Fatal("an npm lockfile counted as having read the maven tree")
+	}
+
+	// And the claim that follows from it is not made.
+	r := treeReceipt(sandbox.ResultPass)
+	r.Environment.Ecosystem = "maven"
+	for _, b := range TreeBatches(edges, scanned, []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31") {
+		if b.DependsOnNone {
+			t.Errorf("%s was claimed to declare nothing, on the strength of an npm lockfile", b.Package)
+		}
+	}
+}

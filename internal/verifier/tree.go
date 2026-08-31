@@ -42,6 +42,16 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 		if !ok || !a.Detect(dir) {
 			continue
 		}
+		// And it has to be THIS ecosystem's reader. A workspace can hold more
+		// than one lockfile -- a Maven sample with a package-lock.json beside
+		// it -- and without this the node adapter reading that lockfile
+		// counted as having read the Maven tree. Every package the Maven
+		// resolution placed then became a leaf: the exact false claim this
+		// function's caller exists to prevent, arriving through a different
+		// door.
+		if !strings.EqualFold(strings.TrimSpace(a.Ecosystem()), resolverEcosystem) {
+			continue
+		}
 		// Best-effort, like every other read of a lockfile: an adapter that
 		// errors contributes no edges and never fails the verification. The
 		// contract passing is the answer this job exists for; the tree is a
@@ -56,6 +66,10 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 		// into a claim.
 		scanned = true
 		for _, e := range edges {
+			// Kept even though only this ecosystem's adapter reaches here: an
+			// adapter that returns an edge for another ecosystem is a bug in
+			// that adapter, and this is the line that stops it becoming a
+			// false claim rather than a wrong one.
 			if e.Parent.Ecosystem != resolverEcosystem || e.Child.Ecosystem != resolverEcosystem {
 				continue
 			}
