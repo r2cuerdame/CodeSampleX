@@ -991,7 +991,7 @@ check() {
 canonical() { printf '<link rel="canonical" href="https://%s%s">' "$DOMAIN" "$1"; }
 
 check /          'text/html'        "$(canonical /)"
-check /wanted    'text/html'        "$(canonical /wanted)"
+check /gaps      'text/html'        "$(canonical /gaps)"
 check /records   'text/html'        "$(canonical /records)"
 check /findings  'text/html'        "$(canonical /findings)"
 check /features  'text/html'        "$(canonical /features)"
