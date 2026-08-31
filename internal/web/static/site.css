@@ -2304,3 +2304,7 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
   .homesamplelist { grid-template-columns: 1fr; }
   .homemoved__count { margin-left: 0; flex: 1 0 100%; }
 }
+
+/* The counters, now beside the evidence grid they support rather than opening
+   the page. They keep .stats' own layout; this only gives them room. */
+.matrixtiles { margin: 0 0 1.1rem; }

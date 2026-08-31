@@ -121,3 +121,27 @@ func TestTheFrontPageTrimsTheCoordinateOffAGoal(t *testing.T) {
 		t.Error("the goal still carries the coordinate its own row prints")
 	}
 }
+
+// The network's own size is trust support, not the opening statement.
+//
+// The page opened with 151.9K observations, 6K samples and 2K packages. Those
+// are facts about this network; a visitor is asking what it found out. They
+// stay on the page -- they are what makes the findings above them worth
+// believing -- and they sit with the evidence grid they belong to.
+func TestTheCountersComeAfterWhatWasFound(t *testing.T) {
+	body := warmHome(t, func(f *fakeStore) {
+		f.sampleList = []SampleListItem{{
+			SampleID: "sha256:ccc", Goal: "verify something",
+			Ecosystem: "npm", Name: "zod", Version: "4.4.3", Status: "PUBLISHED",
+		}}
+	})
+	tiles := strings.Index(body, `class="matrixtiles"`)
+	if tiles < 0 {
+		t.Fatal("the counters left the page entirely")
+	}
+	for _, before := range []string{`id="measured"`, `id="samples"`} {
+		if i := strings.Index(body, before); i < 0 || i > tiles {
+			t.Errorf("%s is at %d, after the counters at %d", before, i, tiles)
+		}
+	}
+}

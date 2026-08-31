@@ -24,7 +24,10 @@
     </div>
   </div>
   <div class="hero-evidence">
-    {{template "tiles" .}}
+    {{/* The counters used to open the page: observations, samples, packages.
+         They say how big this network is, which is a fact about the network,
+         and a visitor is asking what it found out. They are trust support and
+         now sit with the evidence grid, below the things they support. */}}
     <nav class="ecorow mono small" aria-label="{{.T "landing.support_heading"}}">
       {{- range .Ecos}}
       <a href="{{.Href}}">{{.Name}}</a>
@@ -126,6 +129,8 @@
       <p class="dim small">{{.T "landing.matrix_sub"}}</p>
     </div>
   </div>
+  {{/* How much has been measured, beside what was measured. */}}
+  <div class="matrixtiles">{{template "tiles" .}}</div>
   {{- if .Matrix}}
   <div class="gridpanel">
     <div class="gridbar">
