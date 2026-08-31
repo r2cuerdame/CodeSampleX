@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -216,6 +217,23 @@ func readinessFrom(led localdb.Activation) Readiness {
 	// both arrive here as the zero time.
 	for k := range led.Unmeasured {
 		r.Unmeasured = append(r.Unmeasured, k)
+	}
+	// One inference the ledger cannot make for itself: a recorded LAST
+	// handshake is standing evidence that a first one happened, whether or not
+	// anything wrote the stamp for it.
+	//
+	// Without this the panel contradicted itself two lines apart, on a farm
+	// home that had been up for days:
+	//
+	//	MCP handshake        —  never  → restart your coding agent, then use a csx tool
+	//	MCP last handshake   2026-08-30T14:23:27Z  (csx.db)
+	//
+	// Wrong advice a reader can see is wrong costs more than silence: it
+	// invites them to go looking for a broken MCP path that is working, and it
+	// makes every other line on the panel worth less.
+	if r.MCPFirstReadyAt == "" && r.MCPLastReadyAt != "" &&
+		!slices.Contains(r.Unmeasured, "mcpFirstReadyAt") {
+		r.Unmeasured = append(r.Unmeasured, "mcpFirstReadyAt")
 	}
 	sort.Strings(r.Unmeasured)
 	if d, ok := led.TimeToFirstAnswer(); ok {
