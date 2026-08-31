@@ -145,6 +145,10 @@ type Store interface {
 	// release to declare nothing. An answer, as opposed to a release nothing
 	// has read -- which is a gap, and must not render as the same blank.
 	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	// MovedDependencies lists children that resolved to more than one version
+	// across the releases of one parent -- where an upgrade changed something
+	// underneath the reader.
+	MovedDependencies(ctx context.Context, limit int) ([]MovedDependency, error)
 	// PackageAssets reports, per package, how many of its releases this
 	// network has proven and how many have an answered dependency question.
 	//
@@ -329,6 +333,16 @@ const (
 	GapDependencyProvenNone = "none"
 )
 
+// MovedDependency is one child that resolved to more than one version across
+// the releases of a single parent.
+type MovedDependency struct {
+	Ecosystem  string
+	ParentName string
+	ChildName  string
+	Versions   int
+	Releases   int
+}
+
 // PackageAsset is what this network holds for one package, counted over its
 // releases rather than over its snapshot entries.
 //
@@ -437,6 +451,9 @@ type site struct {
 	// while a fresh production builder is using the background DB lanes.
 	derivedRefreshing bool
 	derivedRetryAt    time.Time
+
+	// home caches the two product strips the front page leads with.
+	home homeAssetCache
 
 	// assets caches the per-package three-axis rollup behind /compatibility.
 	// It classifies every public release, which is a timer job and not a

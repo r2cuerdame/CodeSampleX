@@ -497,6 +497,10 @@ type Store interface {
 	// DependencyParents lists the exact releases that resolved onto one exact
 	// release.
 	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
+	// MovedDependencies lists children that resolved to more than one version
+	// across the releases of one parent.
+	MovedDependencies(ctx context.Context, limit int) ([]MovedDependency, error)
+
 	// PackageAssets rolls the release-level census up to one row per package.
 	PackageAssets(ctx context.Context) ([]PackageAsset, error)
 

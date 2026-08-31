@@ -40,21 +40,81 @@
   </div>
 </section>
 
-{{/* What the reader gets, in three lines, immediately under the promise.
-     These seven strings were written and translated into all nine locales
-     and no template rendered any of them — the page carried the answer to
-     "what do I get" the whole time and never showed it. cube.sub was in the
-     same state once, so the shape is worth naming: a string that exists,
-     translates and never reaches a screen is invisible to every check we
-     have except reading the page. */}}
-<section class="valueprops evidence-section" aria-labelledby="value-heading">
-  <h2 id="value-heading" class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
-  <ul class="valuegrid">
-    <li><h3>{{.T "landing.value_1_t"}}</h3><p class="dim small">{{.T "landing.value_1_b"}}</p></li>
-    <li><h3>{{.T "landing.value_2_t"}}</h3><p class="dim small">{{.T "landing.value_2_b"}}</p></li>
-    <li><h3>{{.T "landing.value_3_t"}}</h3><p class="dim small">{{.T "landing.value_3_b"}}</p></li>
+{{/* Where does it break? Measured contradictions are the proof that
+     testing beats guessing — each links to the contract that measured it. */}}
+{{- if .Findings}}
+<section id="measured" class="homefindings evidence-section">
+  <div class="section-heading">
+    <div>
+      <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
+      <p class="dim small">{{.T "landing.findings_sub"}}</p>
+    </div>
+    {{/* The teased entries come from the documented and believed groups, which
+         live behind the hand-checked tab. Linking to /findings sent a reader
+         who clicked the thing they just read about to a page that does not
+         contain it. */}}
+    <a class="small" href="{{.WithLang "/findings?tab=curated"}}">{{.T "landing.findings_more"}}</a>
+  </div>
+  <ul class="findinglist">
+  {{- range .Findings}}
+    <li class="finding-card">
+      <a class="fsubject mono" href="{{.Href}}"><span class="eco mono">{{.Ecosystem}}</span> {{.Subject}}</a>
+      <p class="believed"><span class="flabel mono">{{$.T "findings.believed"}}</span> {{.Believed}}</p>
+      <p class="measured"><span class="flabel mono">{{$.T "findings.measured"}}</span> {{.Measured}}</p>
+    </li>
+  {{- end}}
   </ul>
 </section>
+{{- end}}
+
+{{/* A reusable answer, straight from the collection. A finding says what is
+     not true; a sample is the thing a reader can take away and run, which is
+     the other half of what this network is for. Real rows or nothing: an
+     empty strip is honest and a placeholder is not. */}}
+{{- if .Samples}}
+<section id="samples" class="homesamples evidence-section">
+  <div class="section-heading">
+    <h2 class="eyebrow mono">{{.T "landing.samples_heading"}}</h2>
+    <a class="section-more" href="{{.WithLang "/samples"}}">{{.T "landing.samples_more"}}</a>
+  </div>
+  <p class="dim small">{{.T "landing.samples_sub"}}</p>
+  <ul class="homesamplelist">
+  {{- range .Samples}}
+    <li class="homesample">
+      <a class="homesample__goal" href="{{$.WithLang .Href}}">{{.Goal}}</a>
+      <p class="homesample__coord mono small">{{.Coord}}</p>
+      <p class="homesample__meta dim small">{{.Context}}</p>
+    </li>
+  {{- end}}
+  </ul>
+</section>
+{{- end}}
+
+{{/* The dependency map, as the one question it answers best: what moved under
+     a release. A count of edges says how big the map is; this says what is in
+     it. Every row links to the package page where the versions sit side by
+     side. */}}
+{{- if .Moved}}
+<section id="moved" class="homemoved evidence-section">
+  <div class="section-heading">
+    <h2 class="eyebrow mono">{{.T "landing.moved_heading"}}</h2>
+    <a class="section-more" href="{{.WithLang "/dependencies"}}">{{.T "landing.moved_more"}}</a>
+  </div>
+  <p class="dim small">{{.T "landing.moved_sub"}}</p>
+  <ul class="homemovedlist">
+  {{- range .Moved}}
+    <li class="homemoved__row">
+      <a class="mono" href="{{$.WithLang .Href}}">{{.ParentName}}</a>
+      <span class="homemoved__arrow dim" aria-hidden="true">&rarr;</span>
+      <span class="mono">{{.ChildName}}</span>
+      <span class="homemoved__count dim small">{{.CountText}}</span>
+    </li>
+  {{- end}}
+  </ul>
+  <p class="note dim small">{{.T "dependencies.caveat"}}</p>
+</section>
+{{- end}}
+
 
 {{/* The compatibility matrix IS the product. It is a real slice of the
      most-measured package's cube; every cell drills into that package's
@@ -96,32 +156,21 @@
   </details>
 </section>
 
-{{/* Where does it break? Measured contradictions are the proof that
-     testing beats guessing — each links to the contract that measured it. */}}
-{{- if .Findings}}
-<section id="measured" class="homefindings evidence-section">
-  <div class="section-heading">
-    <div>
-      <h2 class="eyebrow mono">{{.T "landing.findings_heading"}}</h2>
-      <p class="dim small">{{.T "landing.findings_sub"}}</p>
-    </div>
-    {{/* The teased entries come from the documented and believed groups, which
-         live behind the hand-checked tab. Linking to /findings sent a reader
-         who clicked the thing they just read about to a page that does not
-         contain it. */}}
-    <a class="small" href="{{.WithLang "/findings?tab=curated"}}">{{.T "landing.findings_more"}}</a>
-  </div>
-  <ul class="findinglist">
-  {{- range .Findings}}
-    <li class="finding-card">
-      <a class="fsubject mono" href="{{.Href}}"><span class="eco mono">{{.Ecosystem}}</span> {{.Subject}}</a>
-      <p class="believed"><span class="flabel mono">{{$.T "findings.believed"}}</span> {{.Believed}}</p>
-      <p class="measured"><span class="flabel mono">{{$.T "findings.measured"}}</span> {{.Measured}}</p>
-    </li>
-  {{- end}}
+{{/* What the reader gets, in three lines, immediately under the promise.
+     These seven strings were written and translated into all nine locales
+     and no template rendered any of them — the page carried the answer to
+     "what do I get" the whole time and never showed it. cube.sub was in the
+     same state once, so the shape is worth naming: a string that exists,
+     translates and never reaches a screen is invisible to every check we
+     have except reading the page. */}}
+<section class="valueprops evidence-section" aria-labelledby="value-heading">
+  <h2 id="value-heading" class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
+  <ul class="valuegrid">
+    <li><h3>{{.T "landing.value_1_t"}}</h3><p class="dim small">{{.T "landing.value_1_b"}}</p></li>
+    <li><h3>{{.T "landing.value_2_t"}}</h3><p class="dim small">{{.T "landing.value_2_b"}}</p></li>
+    <li><h3>{{.T "landing.value_3_t"}}</h3><p class="dim small">{{.T "landing.value_3_b"}}</p></li>
   </ul>
 </section>
-{{- end}}
 
 {{/* ADisAD placement, home page only.
 

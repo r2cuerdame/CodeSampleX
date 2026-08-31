@@ -2285,3 +2285,22 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .depmatrix .rowlabel { font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .depmatrix tr.is-moved { background: #f7faff; }
 .depmatrix tr.is-moved .rowlabel { color: var(--accent); }
+
+/* The two product strips the front page leads with. Both borrow the section
+   chrome the findings block already uses; what is new is the row shape. */
+.homesamplelist, .homemovedlist { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.homesamplelist { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+.homesample { padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--panel); }
+.homesample__goal { font-weight: 700; overflow-wrap: anywhere; }
+.homesample__coord { margin: 0.4rem 0 0; color: var(--dim); overflow-wrap: anywhere; }
+.homesample__meta { margin: 0.2rem 0 0; }
+.homemoved__row {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem;
+  padding: 0.45rem 0; border-bottom: 1px solid var(--line);
+}
+.homemoved__arrow { flex: 0 0 auto; }
+.homemoved__count { margin-left: auto; white-space: nowrap; }
+@media (max-width: 40rem) {
+  .homesamplelist { grid-template-columns: 1fr; }
+  .homemoved__count { margin-left: 0; flex: 1 0 100%; }
+}

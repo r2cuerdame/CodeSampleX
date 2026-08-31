@@ -557,6 +557,13 @@ type landingPage struct {
 	// does more than every paragraph above it, because a reader recognises
 	// the shape of it from their own week.
 	Findings []homeFinding
+	// Samples is the reusable half of what this network makes: a finding says
+	// what is not true, a sample is the thing a reader can take and run.
+	Samples []homeSample
+	// Moved is the dependency map as the one question it answers best --
+	// which child moved under a release. A count of edges says how big the
+	// map is; this says what is in it.
+	Moved []homeMoved
 	// Coverage is the instrument describing its own shape. An observatory's
 	// failure mode is not a false claim but an unstated skew, and this one is
 	// extreme enough to publish rather than let a reader discover it.
@@ -617,6 +624,12 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	b.JSONLD = landingJSONLD(base, lang)
 
 	st := s.loadStats(r)
+	// Both strips come from a timer-backed cache: the front page is the first
+	// thing a visitor sees and the first thing the deployment smoke checks,
+	// and it must not wait on an aggregate. Cold means the sections do not
+	// render, which is honest -- a placeholder row would be this network
+	// inventing activity.
+	sampleRows, movedRows := s.homeAssets()
 	hits, err := s.d.Store.HotPackages(r.Context(), 12)
 	if err != nil {
 		hits = nil // an empty map is still a usable landing page
@@ -629,6 +642,8 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 		InstallSH: "curl -fsSL " + base + "/install.sh | sh",
 		LLMPrompt: llmPrompt(lang, base),
 		Findings:  homeFindings(lang),
+		Samples:   buildHomeSamples(sampleRows),
+		Moved:     buildHomeMoved(lang, movedRows),
 		Matrix:    s.heroMatrix(r, lang, hits),
 	})
 }
