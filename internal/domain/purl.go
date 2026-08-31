@@ -83,7 +83,38 @@ func ParsePURL(s string) (PURL, error) {
 	if err != nil {
 		return PURL{}, fmt.Errorf("purl: bad escaping in %q: %w", s, err)
 	}
-	return PURL{Ecosystem: eco, Name: decoded, Version: version}, nil
+	return PURL{Ecosystem: eco, Name: decoded, Version: CanonicalVersion(eco, version)}, nil
+}
+
+// CanonicalVersion repairs the one spelling difference that is a malformation
+// rather than a choice: a Go module version without its leading "v".
+//
+// Go module versions are canonically v-prefixed, so a bare `5.10.0` for golang
+// names no release — but it parses, stores and renders exactly like one. The
+// corpus therefore held the same release twice:
+// `github.com/jackc/pgx/v5@v5.10.0` at rank 4 on the wanted board with
+// `@5.10.0` as a separate row below it, their asks not adding up, one question
+// shown to a reader as two entries. Production on 2026-08-31: 8 package rows
+// across 6 names, and 16 wanted rows.
+//
+// It is deliberately narrow in both directions. Every other ecosystem writes
+// bare versions canonically, so prefixing there would invent the split this
+// removes. And a version that does not start with a digit is not a Go release
+// missing its prefix — "latest" is a channel, and "vlatest" would be a
+// coordinate nobody published.
+//
+// PURL.Major() has compensated for the missing prefix at shard-key time for as
+// long as both shapes existed. That stays: it covers PURLs built directly
+// rather than parsed, and defends the shard keys if a new construction path
+// ever skips this.
+func CanonicalVersion(ecosystem, version string) string {
+	if ecosystem != "golang" || version == "" || strings.HasPrefix(version, "v") {
+		return version
+	}
+	if version[0] < '0' || version[0] > '9' {
+		return version
+	}
+	return "v" + version
 }
 
 // String renders the canonical purl form; a leading '@' in npm scoped names

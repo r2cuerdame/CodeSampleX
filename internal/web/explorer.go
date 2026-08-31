@@ -608,6 +608,23 @@ func (s *site) packageRoutes(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, lang)
 		return
 	}
+	// A Go release spelled without its "v" is a real address for a real
+	// release, wrongly written. Both spellings used to have pages, because the
+	// corpus stored both rows; ParsePURL now repairs the spelling and
+	// migration 0030 folds the rows, which would leave every bare URL already
+	// linked or indexed pointing at nothing. 301 moves whatever authority
+	// those URLs hold onto the page that is now the only one.
+	if canonical := domain.CanonicalVersion(eco, version); canonical != version {
+		target := versionHref(eco, name, canonical)
+		for _, seg := range tail {
+			target += "/" + seg
+		}
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return
+	}
 	if version != "" && len(tail) == 2 && tail[0] == sampleSegment {
 		s.semanticSamplePage(w, r, lang, eco, name, version, tail[1])
 		return
