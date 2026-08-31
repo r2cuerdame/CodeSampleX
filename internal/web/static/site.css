@@ -1067,7 +1067,12 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .sample-detail__contract-list li::marker { color: var(--accent); font-weight: 800; }
 .sample-detail__source-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  /* The source gets the wide column. This split was 1.15fr / 0.85fr, written
+     when the second cell held something small; the source moved in later and
+     inherited the narrow half, so seven short filenames had 511px and the code
+     had 377px with a horizontal scrollbar under it. The file list is a table
+     of contents and needs only enough room for a filename. */
+  grid-template-columns: minmax(9rem, 0.32fr) minmax(0, 1fr);
   gap: clamp(1rem, 2.5vw, 1.5rem);
   min-width: 0;
 }
