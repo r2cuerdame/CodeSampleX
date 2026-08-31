@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -12,6 +13,9 @@ import (
 // interface; nothing here touches a database.
 type fakeStore struct {
 	wanted       []WantedRow
+	// dependencyEcosystem is what the atlas reports for every edge the fake
+	// holds; the edge rows themselves carry no ecosystem.
+	dependencyEcosystem string
 	statsJSON    string
 	statsOK      bool
 	snapshots    map[string]string // purl+"\x00"+symbol → snapshot JSON
@@ -483,4 +487,68 @@ func newFakeStore() *fakeStore {
 
 func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
 	return f.dependencies, nil
+}
+
+// The atlas half. The fake stores whatever the test handed it and derives the
+// two views from that one slice, so a test cannot set up a subject list that
+// disagrees with the parents it drills into.
+func (f *fakeStore) DependencySubjects(_ context.Context, query string, offset, limit int) ([]DependencySubject, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	type key struct{ name, version string }
+	parents := map[key]map[string]bool{}
+	projects := map[key]int64{}
+	for _, e := range f.dependencies {
+		if query != "" && !strings.Contains(strings.ToLower(e.ChildName), strings.ToLower(query)) {
+			continue
+		}
+		id := key{e.ChildName, e.ChildVersion}
+		if parents[id] == nil {
+			parents[id] = map[string]bool{}
+		}
+		parents[id][e.ParentName+"@"+e.ParentVersion] = true
+		projects[id] += e.Projects
+	}
+	out := make([]DependencySubject, 0, len(parents))
+	for id, ps := range parents {
+		out = append(out, DependencySubject{
+			Ecosystem: f.dependencyEcosystem, Name: id.name, Version: id.version,
+			Parents: int64(len(ps)), Projects: projects[id],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Projects != out[j].Projects {
+			return out[i].Projects > out[j].Projects
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Version < out[j].Version
+	})
+	total := len(out)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
+func (f *fakeStore) DependencyParents(_ context.Context, _, name, version string) ([]DependencyEdge, error) {
+	var out []DependencyEdge
+	for _, e := range f.dependencies {
+		if e.ChildName == name && e.ChildVersion == version {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Projects != out[j].Projects {
+			return out[i].Projects > out[j].Projects
+		}
+		return out[i].ParentName < out[j].ParentName
+	})
+	return out, nil
 }

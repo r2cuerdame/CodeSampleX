@@ -129,6 +129,14 @@ type Store interface {
 	// its first-level children, which is all anyone needs: the version that
 	// moved under an upgrade is the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// DependencySubjects browses the graph from the CHILD's side -- one ranked,
+	// searchable page of releases other packages resolved onto, and how many
+	// match in total. Dependencies needs a parent named up front, so "who pulls
+	// this" had no entry point at all.
+	DependencySubjects(ctx context.Context, query string, offset, limit int) (rows []DependencySubject, total int, err error)
+	// DependencyParents lists the exact releases that resolved onto one exact
+	// release.
+	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -275,6 +283,20 @@ type DependencyEdge struct {
 	// here does not fail loudly: html/template aborts mid-render and the page
 	// simply stops, which looks like a missing item rather than an error.
 	Projects int64
+}
+
+// DependencySubject is one release other packages resolved onto, as the
+// atlas ranks it.
+//
+// Parents counts distinct parent RELEASES, not names: "four releases of one
+// library pulled this" and "four different libraries pulled this" are
+// different facts, and the second is the one a reader is looking for.
+type DependencySubject struct {
+	Ecosystem string
+	Name      string
+	Version   string
+	Parents   int64
+	Projects  int64
 }
 
 // PackageHit is one package search/hot result.
@@ -439,6 +461,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records", s.records)
 	handle("GET /findings", s.findings)
 	handle("GET /wanted", s.wanted)
+	handle("GET /dependencies", s.dependencies)
 	handle("GET /features", s.features)
 	// One rule for a trailing slash, applied everywhere: redirect to the
 	// slashless form. It was inconsistent — /records/ and /findings/ hard
@@ -449,6 +472,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records/{$}", redirectToSlashless)
 	handle("GET /findings/{$}", redirectToSlashless)
 	handle("GET /wanted/{$}", redirectToSlashless)
+	handle("GET /dependencies/{$}", redirectToSlashless)
 	handle("GET /features/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
 	handle("GET /explore", s.explorePage)
@@ -487,7 +511,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "samples", "wanted", "features", "package", "version",
+	pages := []string{"landing", "records", "findings", "samples", "wanted", "dependencies", "features", "package", "version",
 		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
