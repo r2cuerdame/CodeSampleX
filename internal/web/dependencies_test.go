@@ -121,14 +121,39 @@ func TestAnEmptyAtlasExplainsItself(t *testing.T) {
 	}
 }
 
-// Reachable from every page, or it may as well not exist.
-func TestTheAtlasIsInTheNavigation(t *testing.T) {
+// The atlas is reachable, and deliberately not in the primary navigation.
+//
+// A thousand rows of package coordinates is not something a reader arriving at
+// the top of the site can act on. The dependency question is answered where it
+// is asked -- at the end of a release's own page -- and the atlas is where a
+// row there leads when the reader wants the other side of that edge.
+//
+// So it stays out of the nav and stays reachable. Both halves are pinned here
+// because either one alone is wrong: in the nav it is clutter, unlinked it is
+// a page nobody can find.
+func TestTheAtlasIsReachableButNotFeatured(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
-	for _, path := range []string{"/", "/samples", "/wanted", "/findings"} {
-		body := get(t, mux, path).Body.String()
-		if !strings.Contains(body, `href="/dependencies"`) {
-			t.Errorf("%s has no link to the atlas", path)
-		}
+	body := get(t, mux, "/").Body.String()
+
+	nav := body
+	if i := strings.Index(nav, "</nav>"); i > 0 {
+		nav = nav[:i]
+	}
+	if strings.Contains(nav, `href="/dependencies"`) {
+		t.Error("the atlas is in the primary navigation")
+	}
+	if !strings.Contains(body, `href="/dependencies"`) {
+		t.Error("nothing on the page links to the atlas at all")
+	}
+}
+
+// And the place it is meant to be entered from: a dependency row on the
+// release whose tree it belongs to.
+func TestADependencyRowIsTheWayIntoTheAtlas(t *testing.T) {
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = depsFixture(t) })
+	body := get(t, mux, "/npm/app?f_version=1.0.0").Body.String()
+	if !strings.Contains(body, "eco=npm&amp;name=proven&amp;ver=2.0.0") {
+		t.Error("a dependency row does not lead into the atlas")
 	}
 }
 
