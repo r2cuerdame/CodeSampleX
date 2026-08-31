@@ -82,6 +82,22 @@
 </header>
 <main id="main" class="wrap">
 {{block "content" .}}{{end}}
+{{/* The way out of one collection into the next. Measured on the live site,
+     exactly one of the twenty ordered pairs among the five collections had a
+     link in the page body, and two of the five are deliberately not in the
+     header — so a reader who arrived at one of those from a search result had
+     no route to any of the others. Two links, each with the question it
+     answers, rather than a row of every link on every page. */}}
+{{- if .Related}}
+<nav class="related" aria-label="{{.T "related.heading"}}">
+  <h2 class="eyebrow mono">{{.T "related.heading"}}</h2>
+  <ul>
+  {{- range .Related}}
+    <li><a href="{{$.WithLang .Href}}">{{.Label}}</a> <span class="dim small">{{.Why}}</span></li>
+  {{- end}}
+  </ul>
+</nav>
+{{- end}}
 </main>
 {{/* The site-wide ad slot, between the content and the footer.
 

@@ -2308,3 +2308,11 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 /* The counters, now beside the evidence grid they support rather than opening
    the page. They keep .stats' own layout; this only gives them room. */
 .matrixtiles { margin: 0 0 1.1rem; }
+
+/* The way out of one collection into the next. Quiet by design: it is the
+   last thing on the page, not a second navigation competing with the first. */
+.related { margin: 2.6rem 0 0; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+.related h2 { margin: 0 0 0.6rem; }
+.related ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
+.related li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.related a { font-weight: 600; }

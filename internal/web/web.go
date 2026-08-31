@@ -697,8 +697,11 @@ type basePage struct {
 	// OGType is the og:type of the page. Empty renders "website"; pages
 	// that are a dated document rather than a site section set "article".
 	OGType string
-	path   string
-	query  url.Values // current query without lang
+	// Related is the way out of this collection into the next one. Empty on
+	// every page that is not one of the five collections.
+	Related []relatedLink
+	path    string
+	query   url.Values // current query without lang
 }
 
 // buildLine is the server-identity line in the footer: which build of this
@@ -888,6 +891,10 @@ func (s *site) page(r *http.Request, lang, title, desc string) basePage {
 		query:       q,
 	}
 	b.Alternates = queryAlternates(base, path)
+	// Derived from the path rather than set by each handler: the five
+	// collections were reachable from one another only through the header,
+	// and two of them are deliberately not in the header.
+	b.Related = relatedCollections(lang, path)
 	return b
 }
 
