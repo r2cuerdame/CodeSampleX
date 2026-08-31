@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const adSnippet = `src="https://adisad.jeongchi.in/p/ydpads8kquzopej7nps4oppu.js"`
+const adSnippet = `src="https://adisad.com/s/ydpads8kquzopej7nps4oppu.js"`
 
 // The ad is a home-page placement, and only that.
 //

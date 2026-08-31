@@ -269,6 +269,13 @@ func spawnDetached(home string) error {
 	if stable, stableErr := csxupdate.StableExecutable(home, exe); stableErr == nil {
 		exe = stable
 	}
+	// Nothing of this process goes with it. A daemon outlives whatever
+	// spawned it, so any descriptor it inherits is one the parent's own
+	// parent may be waiting to see closed -- and on the farm that was
+	// literally true: the daemon came up holding the agent's stdout pipe on
+	// fd 10, tee never saw EOF, and the worker script never reached the next
+	// assignment.
+	sealInheritedDescriptors()
 	cmd := exec.Command(exe, "daemon", "run")
 	cmd.Env = append(os.Environ(), "CSX_HOME="+home)
 	cmd.SysProcAttr = detachSysProcAttr()

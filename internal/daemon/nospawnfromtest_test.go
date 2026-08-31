@@ -48,4 +48,3 @@ func TestSpawnDetachedRefusesTheTestBinaryItIsRunningIn(t *testing.T) {
 		t.Errorf("error = %v, want the refusal", err)
 	}
 }
-
