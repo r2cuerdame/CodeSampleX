@@ -128,9 +128,6 @@ type Store interface {
 	// Coverage reports the network's own coverage per (platform, ecosystem).
 	// A nil slice is not an error: the section simply does not render, which
 	// is honest — an instrument that cannot describe itself should say
-	// WantedRows returns one searchable, ranked page plus the number of
-	// unanswered rows matching that query.
-	WantedRows(ctx context.Context, query string, offset, limit int) (rows []WantedRow, total int, err error)
 	WantedForPackage(ctx context.Context, ecosystem, name string) ([]WantedRow, error)
 	// Dependencies lists what shipped ALONGSIDE each version of one package —
 	// its first-level children, which is all anyone needs: the version that
@@ -148,6 +145,12 @@ type Store interface {
 	// release to declare nothing. An answer, as opposed to a release nothing
 	// has read -- which is a gap, and must not render as the same blank.
 	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	// CompletenessGaps lists coordinates missing at least one of Sample,
+	// Evidence and Dependency -- the census's eight cells, listed rather than
+	// counted, emptiest first. The matrix could say two thirds of the corpus
+	// was incomplete and not which two thirds, so the number was true and
+	// nobody could act on it.
+	CompletenessGaps(ctx context.Context, query string, offset, limit int) (rows []CompletenessGap, total int, err error)
 	// DerivedFindings returns published samples that state the belief they
 	// correct, newest first. These grow the /findings page without anyone
 	// editing Go source.
@@ -308,6 +311,35 @@ type DependencyEdge struct {
 	// here does not fail loudly: html/template aborts mid-render and the page
 	// simply stops, which looks like a missing item rather than an error.
 	Projects int64
+}
+
+// The dependency axis's three answers, mirroring serverstore's constants.
+//
+// "Resolved and it declares nothing" and "nobody has ever looked" are the same
+// blank on screen and opposite facts, and the page has to render them apart.
+const (
+	GapDependencyUnknown    = "unknown"
+	GapDependencyGraph      = "graph"
+	GapDependencyProvenNone = "none"
+)
+
+// CompletenessGap is one coordinate with an axis still missing, and the reason
+// an axis cannot be closed at all when that is the answer.
+type CompletenessGap struct {
+	Ecosystem string
+	Name      string
+	Version   string
+
+	HasSample   bool
+	HasEvidence bool
+	// Dependency is one of the GapDependency* constants.
+	Dependency string
+
+	// Non-empty when this network cannot produce that axis for this
+	// coordinate -- the authoring queue's own sentence, so a contributor is
+	// not handed work every poll will decline.
+	SampleNAReason     string
+	DependencyNAReason string
 }
 
 // DependencySubject is one release other packages resolved onto, as the
@@ -485,7 +517,12 @@ func Register(mux *http.ServeMux, d Deps) {
 	}
 	handle("GET /records", s.records)
 	handle("GET /findings", s.findings)
-	handle("GET /wanted", s.wanted)
+	// /wanted ranked what people searched for and missed. That is demand, and
+	// the page it belonged on claimed to be the work left over -- a coordinate
+	// nobody has ever asked about can be the largest hole in the corpus. /gaps
+	// is the same question answered from the completeness census instead.
+	handle("GET /wanted", wantedGone)
+	handle("GET /gaps", s.gaps)
 	handle("GET /dependencies", s.dependencies)
 	handle("GET /features", s.features)
 	// One rule for a trailing slash, applied everywhere: redirect to the
@@ -497,6 +534,7 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records/{$}", redirectToSlashless)
 	handle("GET /findings/{$}", redirectToSlashless)
 	handle("GET /wanted/{$}", redirectToSlashless)
+	handle("GET /gaps/{$}", redirectToSlashless)
 	handle("GET /dependencies/{$}", redirectToSlashless)
 	handle("GET /features/{$}", redirectToSlashless)
 	// /explore was the old name for the same page.
@@ -504,10 +542,10 @@ func Register(mux *http.ServeMux, d Deps) {
 	// /contribute is retired, and its address survives in old READMEs, old
 	// MCP replies and external links. A URL people were sent to gets a
 	// redirect, not a 404; the nearest living answer to "how do I
-	// contribute" is the request board — installing csx already contributes
-	// evidence, and /wanted is where the asks land.
+	// contribute" is the gap list — installing csx already contributes
+	// evidence, and /gaps is what is left to write.
 	contributeGone := func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/wanted", http.StatusMovedPermanently)
+		http.Redirect(w, r, "/gaps", http.StatusMovedPermanently)
 	}
 	handle("GET /contribute", contributeGone)
 	handle("GET /contribute/{$}", contributeGone)
@@ -536,7 +574,7 @@ func cacheControl(next http.Handler) http.Handler {
 }
 
 func parseTemplates() map[string]*template.Template {
-	pages := []string{"landing", "records", "findings", "samples", "wanted", "dependencies", "features", "package", "version",
+	pages := []string{"landing", "records", "findings", "samples", "gaps", "dependencies", "features", "package", "version",
 		"symbol", "sample", "seeder", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {

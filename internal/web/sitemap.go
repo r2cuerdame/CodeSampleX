@@ -133,7 +133,7 @@ func sitemapStaticEntries(base string) []sitemapEntry {
 		}
 		out = append(out, sitemapEntry{loc: loc, alts: landingAlts})
 	}
-	for _, p := range []string{"/records", "/findings", "/wanted", "/dependencies", "/features"} {
+	for _, p := range []string{"/records", "/findings", "/gaps", "/dependencies", "/features"} {
 		out = append(out, sitemapEntry{loc: base + p})
 	}
 	return out

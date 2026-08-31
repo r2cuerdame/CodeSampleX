@@ -168,9 +168,24 @@ func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := newFarmCompleteness()
+	for _, r := range f.completenessRows() {
+		out.addResolved(r.sample, r.evidence, r.dep, r.ecosystem, r.name, 1)
+	}
+	return out, nil
+}
+
+// completenessRows decides the three axes for every PUBLIC release. Caller
+// holds f.mu.
+//
+// The census and the /gaps listing both read this and nothing else. They used
+// to be one loop and one page query, which is how a page can report work that
+// never shrinks however hard the farm runs: it was counting a different set
+// from the matrix above it. Splitting them again means writing this twice.
+func (f *Fake) completenessRows() []completenessRow {
 	observed, _ := f.sightedCoordinates()
 	verified, _ := f.provenCoordinates()
 	resolved := f.resolvedParents()
+	rows := make([]completenessRow, 0, len(f.packages))
 	for purl, pkg := range f.packages {
 		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
 			continue
@@ -187,10 +202,14 @@ func (f *Fake) FarmCompletenessNow(_ context.Context) (FarmCompleteness, error) 
 		// A passing receipt is evidence in its own right. It also proves that a
 		// sample exists, so a verified coordinate must never be reported as
 		// Sample-without-Evidence merely because no observation batch arrived.
-		evidence := observed[purl] || verified[purl]
-		out.addResolved(verified[purl], evidence, dependency, pkg.Ecosystem, pkg.Name, 1)
+		rows = append(rows, completenessRow{
+			ecosystem: pkg.Ecosystem, name: pkg.Name, version: pkg.Version,
+			sample:   verified[purl],
+			evidence: observed[purl] || verified[purl],
+			dep:      dependency,
+		})
 	}
-	return out, nil
+	return rows
 }
 
 // resolvedParents is every release a resolution named the children of. Caller

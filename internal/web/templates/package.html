@@ -234,6 +234,14 @@
      leaves it open. */}}
 <h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
 <p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
+{{- else if .DepsUnread}}
+{{/* Nothing has resolved this release. The section used to render nothing at
+     all, which is right about the dependencies and silent about everything
+     else: a reader could not tell an unread axis from a finished one. This
+     says which it is and where it is counted, and still makes no claim about
+     what the release pulls. */}}
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<p class="note dim small">{{.T "pkg.deps_unread"}} <a href="{{.DepsGapHref}}">{{.T "pkg.deps_unread_link"}}</a></p>
 {{- end}}
 
 {{/* Only at a decided coordinate. A failure cluster is a fact about one

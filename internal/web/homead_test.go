@@ -10,7 +10,7 @@ const adSnippet = `src="https://adisad.com/s/ydpads8kquzopej7nps4oppu.js"`
 
 // adPages is every page a reader can reach from the navigation, plus the home
 // page. All of them carry the placement now.
-var adPages = []string{"/", "/samples", "/records", "/findings", "/wanted", "/features"}
+var adPages = []string{"/", "/samples", "/records", "/findings", "/gaps", "/features"}
 
 // Every page carries the placement, and exactly one.
 //

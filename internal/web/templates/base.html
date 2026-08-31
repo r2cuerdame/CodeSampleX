@@ -45,7 +45,7 @@
       <a href="{{.WithLang "/samples"}}">{{.T "nav.samples"}}</a>
       <a href="{{.WithLang "/records"}}">{{.T "nav.records"}}</a>
       <a href="{{.WithLang "/findings"}}">{{.T "nav.findings"}}</a>
-      {{/* /wanted and /dependencies are not here on purpose. Both are lists of
+      {{/* /gaps and /dependencies are not here on purpose. Both are lists of
            coordinates -- a thousand rows of package names -- and a reader
            arriving at the top of the site cannot act on either. The dependency
            question is answered where it is asked, at the end of a release's
@@ -109,7 +109,7 @@
            long, which is not something a reader arriving at the top of the site
            can act on — but they are real pages with real answers in them, and
            orphaning a page is not the same as declining to feature it. */}}
-      · <a href="{{.WithLang "/wanted"}}">{{.T "nav.wanted"}}</a>
+      · <a href="{{.WithLang "/gaps"}}">{{.T "nav.gaps"}}</a>
       · <a href="{{.WithLang "/dependencies"}}">{{.T "nav.dependencies"}}</a>
       · <a href="{{.RepoURL}}" rel="noopener">{{.T "footer.github"}}</a>
       · <a href="{{.SponsorURL}}" rel="noopener">{{.T "footer.sponsor"}}</a></p>

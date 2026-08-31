@@ -741,6 +741,17 @@ type packagePage struct {
 	// empty. It is an answer, and must not render as the same blank as a
 	// release nothing has read.
 	DepsProvenNone bool
+	// DepsUnread says a version is pinned and nothing has resolved it: the
+	// dependency axis is open, not empty. DepsGapHref is where that open axis
+	// is counted.
+	//
+	// The section renders nothing in this state and that is correct as far as
+	// it goes -- claiming "no dependencies" would assert a measurement nobody
+	// made. An absent section is also how a reader learns nothing at all,
+	// including that this is known work. These two say the second thing
+	// without saying the first.
+	DepsUnread  bool
+	DepsGapHref string
 }
 
 // packageDeps lists the first-level dependencies of one PINNED release.
@@ -981,7 +992,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// lockfile resolves the same way whichever symbol or runtime the reader is
 	// looking at. Deciding the version is the whole requirement — by pinning
 	// it, or by the package only ever having had one.
-	deps, depsProvenNone := s.packageDeps(r, lang, eco, name, decidedVersion(r, cube))
+	decided := decidedVersion(r, cube)
+	deps, depsProvenNone := s.packageDeps(r, lang, eco, name, decided)
 	// A failure cluster belongs to the whole coordinate — this release, this
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
@@ -1026,10 +1038,12 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		// this coordinate — and those are jumps, so they belong in the
 		// navigator rather than inside an instrument whose every other link
 		// narrows the slice.
-		Crumbs: leaf(recordCrumbs(b, eco, name, cubeCrumbVersion(cube), cubeCrumbSymbol(cube))),
-		Cube:   cube,
-		Deps:   deps,
+		Crumbs:         leaf(recordCrumbs(b, eco, name, cubeCrumbVersion(cube), cubeCrumbSymbol(cube))),
+		Cube:           cube,
+		Deps:           deps,
 		DepsProvenNone: depsProvenNone,
+		DepsUnread:     decided != "" && len(deps) == 0 && !depsProvenNone,
+		DepsGapHref:    b.WithLang(gapsHref(name, 1, i18n.Default)),
 	})
 }
 
@@ -1806,7 +1820,7 @@ type samplePageData struct {
 	// unavailable or holds nothing readable, and the page then falls back to
 	// naming the files and offering the archive, which is what it did before.
 	Source []SampleFile
-	Crumbs              []crumb
+	Crumbs []crumb
 	// Headline is the <h1>: the release and what this sample answers for.
 	// The raw goal is still printed, under Case, where a reader who wants
 	// the author's own words can find them.

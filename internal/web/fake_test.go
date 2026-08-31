@@ -12,7 +12,8 @@ import (
 // tests. The integrator adapts the real serverstore to the same
 // interface; nothing here touches a database.
 type fakeStore struct {
-	wanted       []WantedRow
+	wanted []WantedRow
+	gaps   []CompletenessGap
 	// dependencyEcosystem is what the atlas reports for every edge the fake
 	// holds; the edge rows themselves carry no ecosystem.
 	dependencyEcosystem string
@@ -564,4 +565,25 @@ func (f *fakeStore) DependencyParents(_ context.Context, _, name, version string
 		return out[i].ParentName < out[j].ParentName
 	})
 	return out, nil
+}
+
+// CompletenessGaps returns whatever the test seeded, filtered and paged the
+// way both real stores do.
+func (f *fakeStore) CompletenessGaps(_ context.Context, query string, offset, limit int) ([]CompletenessGap, int, error) {
+	var out []CompletenessGap
+	for _, g := range f.gaps {
+		if query != "" && !strings.Contains(strings.ToLower(g.Name), strings.ToLower(query)) {
+			continue
+		}
+		out = append(out, g)
+	}
+	total := len(out)
+	if offset >= total {
+		return nil, total, nil
+	}
+	out = out[offset:]
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total, nil
 }

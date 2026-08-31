@@ -1,0 +1,71 @@
+{{define "content"}}
+{{/* Page-specific rules live here rather than in static/site.css, so the page
+     is one new file plus its handler. Everything it can borrow from the shared
+     stylesheet — panel, mono, dim, note, lead — it borrows. */}}
+<style>
+.gaplist { list-style: none; margin: 1.4rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.gaprow { padding: 0.8rem 0.9rem; border: 1px solid var(--line); border-radius: 6px; }
+.gaphead { display: grid; grid-template-columns: 1fr auto; gap: 0.9rem; align-items: baseline; }
+.gapname { overflow-wrap: anywhere; }
+.gapeco { color: var(--dim); font-size: 0.85rem; font-family: var(--mono); }
+.gapstate {
+  font-family: var(--mono); font-size: 0.85rem; color: var(--dim);
+  letter-spacing: 0.12em; white-space: nowrap;
+}
+.gapaxes { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.25rem; }
+.gapaxis { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.7rem; align-items: baseline; font-size: 0.9rem; }
+.gapaxis .lbl { color: var(--dim); font-family: var(--mono); font-size: 0.8rem; }
+.gapaxis.is-held .ans { color: var(--dim); }
+.gapwhy { margin: 0.15rem 0 0; color: var(--dim); font-size: 0.82rem; max-width: 74ch; }
+.gapempty { margin-top: 1.4rem; padding: 1.1rem; border: 1px dashed var(--line); border-radius: 6px; }
+.gapempty p { margin: 0 0 0.5rem; max-width: 74ch; }
+.gapempty p:last-child { margin-bottom: 0; }
+@media (max-width: 40rem) {
+  .gaphead { grid-template-columns: 1fr; }
+  .gapaxis { grid-template-columns: 1fr; gap: 0; }
+}
+</style>
+
+<h1>{{.T "gaps.title"}}</h1>
+<p class="lead">{{.T "gaps.intro"}}</p>
+<p class="note dim small">{{.T "gaps.caveat"}}</p>
+
+<form class="filterbar filterbar-compact" action="/gaps" method="get" role="search">
+  <label class="filterquery"><span class="sr-only">{{.T "explore.button"}}</span><input type="search" name="q" value="{{.Query}}" placeholder="{{.T "gaps.placeholder"}}"></label>
+  {{if ne .Lang "en"}}<input type="hidden" name="lang" value="{{.Lang}}">{{end}}
+  <div class="filteractions"><button type="submit">{{.T "explore.button"}}</button>{{if .HasQuery}}<a href="{{.ClearHref}}">{{.T "filters.clear"}}</a>{{end}}</div>
+</form>
+
+{{if .Items}}
+<p class="dim mono small">{{.RangeText}}</p>
+<ol class="gaplist">
+  {{range .Items}}
+  <li class="gaprow">
+    <div class="gaphead">
+      <span class="gapname"><a href="{{.Href}}">{{.Coord}}</a> <span class="gapeco">{{.Ecosystem}}</span></span>
+      <span class="gapstate" title="{{$.T "gaps.state_title"}}">{{.State}}</span>
+    </div>
+    <ul class="gapaxes">
+      {{range .Axes}}
+      <li class="gapaxis{{if .Held}} is-held{{end}}">
+        <span class="lbl">{{.Label}}</span>
+        <span class="ans">{{.Answer}}</span>
+        {{if .Unaskable}}<p class="gapwhy">{{.Unaskable}}</p>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </li>
+  {{end}}
+</ol>
+<nav class="pager" aria-label="{{.T "gaps.title"}}">
+  {{if .PrevHref}}<a rel="prev" href="{{.PrevHref}}">{{.T "records.prev"}}</a>{{else}}<span class="dim">{{.T "records.prev"}}</span>{{end}}
+  <span class="dim mono small">{{.PageText}}</span>
+  {{if .NextHref}}<a rel="next" href="{{.NextHref}}">{{.T "records.next"}}</a>{{else}}<span class="dim">{{.T "records.next"}}</span>{{end}}
+</nav>
+{{else}}
+<div class="gapempty">
+  <p>{{.T "gaps.empty"}}</p>
+  <p class="dim small">{{.T "gaps.emptywhy"}}</p>
+</div>
+{{end}}
+{{end}}

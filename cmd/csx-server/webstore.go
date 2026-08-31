@@ -1208,16 +1208,23 @@ func (w *webStore) TopWanted(ctx context.Context, limit int) ([]web.WantedRow, e
 	return out, nil
 }
 
-func (w *webStore) WantedRows(ctx context.Context, query string, offset, limit int) ([]web.WantedRow, int, error) {
-	rows, total, err := w.s.ListWanted(ctx, query, offset, limit)
+// CompletenessGaps carries the census's own rows to the page.
+//
+// The judgement -- which coordinates are backlog, in what order, and which
+// axes nothing here can close -- was already made in serverstore, beside the
+// matrix it has to agree with. This only changes the type.
+func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]web.CompletenessGap, int, error) {
+	rows, total, err := w.s.CompletenessGaps(ctx, query, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
-	out := make([]web.WantedRow, 0, len(rows))
+	out := make([]web.CompletenessGap, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, web.WantedRow{
-			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
-			Asks: r.Asks, TargetOS: r.TargetOS, HasPage: r.HasPage,
+		out = append(out, web.CompletenessGap{
+			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version,
+			HasSample: r.HasSample, HasEvidence: r.HasEvidence,
+			Dependency:     r.Dependency,
+			SampleNAReason: r.SampleNAReason, DependencyNAReason: r.DependencyNAReason,
 		})
 	}
 	return out, total, nil

@@ -16,7 +16,7 @@ func TestRetiredContributeURLRedirects(t *testing.T) {
 	if rec.Code != http.StatusMovedPermanently {
 		t.Fatalf("status = %d, want 301", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/wanted" {
-		t.Errorf("Location = %q, want /wanted", loc)
+	if loc := rec.Header().Get("Location"); loc != "/gaps" {
+		t.Errorf("Location = %q, want /gaps", loc)
 	}
 }

@@ -497,6 +497,13 @@ type Store interface {
 	// DependencyParents lists the exact releases that resolved onto one exact
 	// release.
 	DependencyParents(ctx context.Context, ecosystem, name, version string) ([]DependencyEdge, error)
+	// CompletenessGaps lists the coordinates behind the three-axis census:
+	// every PUBLIC release missing at least one of Sample, Evidence and
+	// Dependency, emptiest first. The matrix could say how much of the corpus
+	// was incomplete and never which part, so the figure was true and nobody
+	// could act on it.
+	CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]CompletenessGap, int, error)
+
 	// DependencyResolvedNone reports whether a resolution measured this exact
 	// release to declare nothing -- an answer, as opposed to a release nothing
 	// has read, which is a gap.

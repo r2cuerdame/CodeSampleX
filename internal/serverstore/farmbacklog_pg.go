@@ -153,52 +153,12 @@ func (p *PG) farmCompletenessNow(ctx context.Context, statementTimeout time.Dura
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		rows, err := tx.Query(ctx, `
-			WITH `+authoringCoverageCTE+`, dependency_edge_parents AS MATERIALIZED (
-				-- The PARENT end, deliberately. Being pulled BY somebody says
-				-- nothing about what this release pulls, and the dependency
-				-- axis is the second question.
-				SELECT DISTINCT 'pkg:'||ecosystem||'/'||
-				         CASE WHEN left(parent_name,1)='@'
-				              THEN '%40'||substring(parent_name from 2)
-				              ELSE parent_name END||'@'||parent_version AS purl
-				FROM dependency_edge
-			), resolved_none AS MATERIALIZED (
-				-- A release a resolver read and found nothing in. It can never
-				-- be a parent, so without this every leaf stayed open forever:
-				-- 490 coordinates on production appear as a child of some
-				-- resolved tree and never as a parent.
-				--
-				-- Held apart from the parents so the census can say WHICH kind
-				-- of answer it has. Both leave the open column; only one of
-				-- them is a graph, and reporting a leaf as a graph claims
-				-- children that were never recorded.
-				SELECT DISTINCT 'pkg:'||ecosystem||'/'||
-				         CASE WHEN left(name,1)='@'
-				              THEN '%40'||substring(name from 2)
-				              ELSE name END||'@'||version AS purl
-				FROM dependency_resolution
-			), resolved_parents AS MATERIALIZED (
-				SELECT purl FROM dependency_edge_parents
-				UNION
-				SELECT purl FROM resolved_none
-			)
-			SELECT (CASE WHEN EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
-			             THEN 'S' ELSE '-' END)
-			    || (CASE WHEN EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=pk.purl)
-			                   OR EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
-			             THEN 'E' ELSE '-' END)
-			    || (CASE WHEN EXISTS (SELECT 1 FROM resolved_parents d WHERE d.purl=pk.purl)
-			             THEN 'D' ELSE '-' END) AS state,
-			       -- A release whose only answer is "it named nobody". Edges
-			       -- win when both exist: a package can be a leaf in one
-			       -- resolution and a parent in another, and the graph is the
-			       -- stronger fact.
-			       (EXISTS (SELECT 1 FROM resolved_none n WHERE n.purl=pk.purl)
-			        AND NOT EXISTS (SELECT 1 FROM dependency_edge_parents p WHERE p.purl=pk.purl)) AS proven_none,
+			WITH `+authoringCoverageCTE+`, `+completenessRelationsCTE+`
+			SELECT `+completenessAxesSQL+`,
 			       pk.ecosystem, pk.name,
 			       count(*)
 			FROM packages pk
-			WHERE pk.version<>'' AND pk.publicness='PUBLIC'
+			WHERE `+completenessSubjectSQL+`
 			GROUP BY 1,2,3,4`)
 		if err != nil {
 			return err
