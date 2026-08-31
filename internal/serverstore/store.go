@@ -278,6 +278,92 @@ func ContractWasJudged(contractResult, terminationKind string, hasFailureEvidenc
 // "it exited cleanly". Receipts written before the verifier recorded stage
 // failures have no answer here, and they keep whatever their contract_result
 // claimed.
+// loadBearingDimensions are the environment facts that decide whether code
+// can run at all, as opposed to how it behaves once it does.
+//
+// A different distro, OS version or runtime patch is exactly the kind of
+// difference this network exists to observe, and a verdict from one of those
+// is a real verdict. A different libc, architecture or operating system is a
+// different machine: a binary linked for one does not load on the other, and
+// what comes back says nothing about the sample.
+var loadBearingDimensions = [3]string{"os", "arch", "libc"}
+
+// EnvironmentAgrees reports whether a receipt was produced somewhere the
+// sample said it would work.
+//
+// Measured on production 2026-09-01, after the image selector was fixed: all
+// eight open cross jobs were invisible to the network's only verifier, every
+// one excluded by a FAIL receipt recording that the sample declared
+// linux/x64/glibc and the contract ran on linux/x64/musl. Seven died with
+// ERR_DLOPEN_FAILED -- glibc's dynamic linker is not in an Alpine image --
+// and the eighth exited 1 for the same reason. The contract ran, it did not
+// time out, and it recorded its failure, so none of the earlier rules reach
+// it. It simply ran on the wrong machine.
+//
+// The discriminator is structural on purpose. Matching the error text would
+// be a guess that the next environment bug spells itself the same way, and
+// would silence a sample that genuinely fails with those letters in it. The
+// receipt states where it ran and the manifest states what it asked for.
+//
+// A dimension the manifest does not declare imposes no requirement: a sample
+// that never named a libc is making no claim about one. A dimension the
+// receipt does not record cannot contradict anything either -- absence is not
+// disagreement, and reading it as such would discard every older receipt.
+func EnvironmentAgrees(declared, ranIn map[string]string) bool {
+	for _, dim := range loadBearingDimensions {
+		want := strings.TrimSpace(declared[dim])
+		got := strings.TrimSpace(ranIn[dim])
+		if want == "" || got == "" {
+			continue
+		}
+		if !strings.EqualFold(want, got) {
+			return false
+		}
+	}
+	return true
+}
+
+// environmentAgreesSQL is EnvironmentAgrees as PostgreSQL evaluates it, over
+// a receipt r and its sample sm. Written beside the function for the reason
+// contractJudgedSQL is: the Fake decides this in Go and PostgreSQL decides it
+// in SQL, and that split is how the two have drifted before.
+const environmentAgreesSQL = `NOT (
+	                 coalesce(sm.manifest #>> '{environment,os}','') <> ''
+	             AND coalesce(r.receipt::jsonb #>> '{environment,os}','') <> ''
+	             AND lower(sm.manifest #>> '{environment,os}')
+	                 <> lower(r.receipt::jsonb #>> '{environment,os}'))
+	          AND NOT (
+	                 coalesce(sm.manifest #>> '{environment,arch}','') <> ''
+	             AND coalesce(r.receipt::jsonb #>> '{environment,arch}','') <> ''
+	             AND lower(sm.manifest #>> '{environment,arch}')
+	                 <> lower(r.receipt::jsonb #>> '{environment,arch}'))
+	          AND NOT (
+	                 coalesce(sm.manifest #>> '{environment,libc}','') <> ''
+	             AND coalesce(r.receipt::jsonb #>> '{environment,libc}','') <> ''
+	             AND lower(sm.manifest #>> '{environment,libc}')
+	                 <> lower(r.receipt::jsonb #>> '{environment,libc}'))`
+
+// jsonEnvironment reads an {"environment":{...}} object into flat strings.
+// Missing or unparseable is an empty map, which contradicts nothing.
+func jsonEnvironment(doc string) map[string]string {
+	if doc == "" {
+		return nil
+	}
+	var parsed struct {
+		Environment map[string]any `json:"environment"`
+	}
+	if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(parsed.Environment))
+	for k, v := range parsed.Environment {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 // ReceiptHasFailureEvidence reports whether a receipt recorded anything about
 // how its stage failed. False on every receipt written before the
 // stage-failure contract, and on nothing written since.

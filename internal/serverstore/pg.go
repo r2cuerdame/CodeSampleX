@@ -1623,8 +1623,10 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 			  -- beside it in contractJudgedSQL.
 			  AND ($4 = '' OR j.reason <> 'cross' OR NOT EXISTS (
 				SELECT 1 FROM receipts r
+				  JOIN samples sm ON sm.sample_id = r.sample_id
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4
-				   AND `+contractJudgedSQL+`))
+				   AND `+contractJudgedSQL+`
+				   AND `+environmentAgreesSQL+`))
 			  -- A job names the platform its sample needs. Without this the queue
 			  -- handed a Linux verifier the Windows rows too: the window is twenty
 			  -- deep, and whatever it could actually run was whatever was left. The

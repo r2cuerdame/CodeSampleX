@@ -1058,12 +1058,22 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 		// whose contract never ran judged nothing — see ContractWasJudged.
 		if peerID != "" && j.Reason == "cross" {
 			var mine bool
+			declared := jsonEnvironment(f.samples[j.SampleID].ManifestJSON)
 			for _, r := range f.receipts[j.SampleID] {
-				if r.PeerID == peerID && ContractWasJudged(r.ContractResult, ReceiptTerminationKind(r.ReceiptJSON),
-					ReceiptHasFailureEvidence(r.ReceiptJSON)) {
-					mine = true
-					break
+				if r.PeerID != peerID {
+					continue
 				}
+				if !ContractWasJudged(r.ContractResult, ReceiptTerminationKind(r.ReceiptJSON),
+					ReceiptHasFailureEvidence(r.ReceiptJSON)) {
+					continue
+				}
+				// A receipt from a machine the sample never claimed says
+				// nothing about the sample. See EnvironmentAgrees.
+				if !EnvironmentAgrees(declared, jsonEnvironment(r.ReceiptJSON)) {
+					continue
+				}
+				mine = true
+				break
 			}
 			if mine {
 				continue
