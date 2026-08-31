@@ -34,9 +34,13 @@ func TestWantedPageRanksUnansweredQuestions(t *testing.T) {
 	if strings.Index(body, "undici") > strings.Index(body, "protobuf") {
 		t.Error("the list is not ranked most-asked first")
 	}
-	// The nav reaches it, or nobody finds it.
+	// Reachable from the front page, or nobody finds it. It is no longer in
+	// the primary navigation -- a thousand rows of coordinates is not
+	// something a reader arriving at the top of the site can act on -- but it
+	// is a real page with real answers, and declining to feature a page is not
+	// the same as orphaning it. The footer carries it.
 	if !strings.Contains(get(t, mux, "/").Body.String(), `href="/wanted"`) {
-		t.Error("the front page does not link to the wanted board")
+		t.Error("nothing on the front page links to the wanted board")
 	}
 }
 
