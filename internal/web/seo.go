@@ -230,3 +230,120 @@ func xmlEscape(s string) string {
 
 // sampleHref is the site path of a published sample page.
 func sampleHref(id string) string { return "/samples/" + id }
+
+// collectionJSONLD describes a list page and the rows currently on it.
+//
+// The four list pages carried no structured data at all, which left a crawler
+// to infer from markup alone that /findings is a collection of findings rather
+// than one long article. CollectionPage says what the page is; the ItemList
+// says what is on it and in what order, which is the ordering a reader sees
+// and the one the page argues for.
+//
+// Only the rows actually rendered are listed. A page that claimed its whole
+// corpus in an ItemList would be describing something the URL does not serve,
+// and the pagination is what carries the rest.
+func collectionJSONLD(pageURL, name, description string, items []collectionEntry) template.JS {
+	elements := make([]any, 0, len(items))
+	for i, it := range items {
+		if it.URL == "" || it.Name == "" {
+			continue
+		}
+		elements = append(elements, map[string]any{
+			"@type":    "ListItem",
+			"position": i + 1,
+			"url":      it.URL,
+			"name":     it.Name,
+		})
+	}
+	doc := map[string]any{
+		"@context":    "https://schema.org",
+		"@type":       "CollectionPage",
+		"url":         pageURL,
+		"name":        name,
+		"description": description,
+	}
+	if len(elements) > 0 {
+		doc["mainEntity"] = map[string]any{
+			"@type":           "ItemList",
+			"itemListOrder":   "https://schema.org/ItemListOrderDescending",
+			"numberOfItems":   len(elements),
+			"itemListElement": elements,
+		}
+	}
+	return jsonLD(doc)
+}
+
+// collectionEntry is one row of a list page, as the structured data names it.
+type collectionEntry struct {
+	Name string
+	URL  string
+}
+
+// packageDatasetJSONLD describes one release's compatibility evidence as what
+// it actually is: a dataset, machine-readable at a public URL.
+//
+// This is the site's own shape rather than a borrowed one. A package page is
+// not an article about a library — it is the measurements this network took at
+// one coordinate, and Dataset is the vocabulary for that. The distribution
+// points at the registry endpoint that serves the same evidence as JSON, so
+// the claim is checkable rather than decorative.
+//
+// No license is asserted. What may be done with this evidence has not been
+// decided (#75), and a dataset that names a license it does not have is worse
+// than one that names none.
+//
+// variableMeasured lists what the network separates and never sums: an
+// observation is a build somebody ran, a verification is a contract this
+// network executed in a pinned container, and conflating them is the error the
+// whole evidence model exists to prevent.
+func packageDatasetJSONLD(base, pageURL, ecosystem, name, version, description, lastSeen string) template.JS {
+	purl := domain.PURL{Ecosystem: ecosystem, Name: name, Version: version}.String()
+	doc := map[string]any{
+		"@context":            "https://schema.org",
+		"@type":               "Dataset",
+		"url":                 pageURL,
+		"name":                name + "@" + version + " (" + ecosystem + ") compatibility evidence",
+		"description":         description,
+		"isAccessibleForFree": true,
+		"creator": map[string]any{
+			"@type": "Organization",
+			"name":  "CodeSampleX",
+			"url":   base + "/",
+		},
+		"variableMeasured": []any{
+			map[string]any{"@type": "PropertyValue", "name": "contract verification",
+				"description": "a contract this network executed in a digest-pinned container"},
+			map[string]any{"@type": "PropertyValue", "name": "project observation",
+				"description": "a build or test run observed on a real developer machine"},
+			map[string]any{"@type": "PropertyValue", "name": "execution environment",
+				"description": "OS, architecture, libc, runtime and package manager of each run"},
+		},
+		"distribution": []any{
+			map[string]any{
+				"@type":          "DataDownload",
+				"encodingFormat": "application/json",
+				"contentUrl":     base + "/v1/registry/packages/" + url.PathEscape(purl),
+			},
+		},
+	}
+	if lastSeen != "" {
+		doc["dateModified"] = lastSeen
+	}
+	return jsonLD(doc)
+}
+
+// matrixLastSeen is the newest date any row of a release's matrix carries.
+//
+// dateModified on the Dataset has to mean the evidence changed, not that the
+// page was rendered. Rendering time is what a crawler would assume from a page
+// with no date at all, and it would be wrong in the direction that matters: it
+// would claim freshness this network did not measure.
+func matrixLastSeen(rows []matrixRow) string {
+	newest := ""
+	for _, r := range rows {
+		if r.LastSeen > newest {
+			newest = r.LastSeen
+		}
+	}
+	return newest
+}

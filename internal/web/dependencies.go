@@ -1,6 +1,7 @@
 package web
 
 import (
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -151,6 +152,26 @@ func (s *site) dependencies(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		view.ParentsEmpty = len(view.Parents) == 0
+	}
+
+	// What this page is and what is on it. Without it a crawler has only the
+	// markup to tell a collection of releases from one long article.
+	//
+	// Only on the canonical view. s.page drops every query parameter from the
+	// canonical URL, so a search or a fifth page canonicalises to
+	// /dependencies -- and an ItemList emitted there would describe rows that
+	// URL does not serve. The rest of the corpus is carried by the pager and
+	// the sitemap, which is what they are for.
+	if query == "" && page == 1 {
+		entries := make([]collectionEntry, 0, len(view.Items))
+		for _, it := range view.Items {
+			entries = append(entries, collectionEntry{
+				Name: it.Coord + " (" + it.Ecosystem + ")",
+				URL:  s.base(r) + it.PackageHref,
+			})
+		}
+		view.JSONLD = []template.JS{collectionJSONLD(view.Canonical,
+			i18n.T(lang, "dependencies.title"), i18n.T(lang, "meta.dependencies"), entries)}
 	}
 
 	if page > 1 {
