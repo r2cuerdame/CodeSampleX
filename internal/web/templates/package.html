@@ -251,6 +251,35 @@
 <p class="note dim small">{{.T "pkg.deps_unread"}} <a href="{{.DepsGapHref}}">{{.T "pkg.deps_unread_link"}}</a></p>
 {{- end}}
 
+{{/* What each release resolved its children to, side by side. The table above
+     answers "what shipped with THIS release"; the question a reader arrives
+     with after an upgrade broke a build is which child moved between the
+     release that worked and the one that does not. Movers lead, because they
+     are the only rows that answer it. */}}
+{{- if .DepsMatrix}}
+<h2 id="depmatrix" class="eyebrow mono">{{.T "pkg.depmatrix"}}</h2>
+<p class="note dim small">{{.T "pkg.depmatrix_note"}}</p>
+<div class="tablewrap">
+<table class="depmatrix">
+<thead><tr><th>{{.T "pkg.shipswith_col"}}</th>
+  {{- range .DepsMatrix.Versions}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range .DepsMatrix.Rows}}
+<tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono">{{.Child}}</th>
+  {{- range .Cells}}
+  {{/* A blank cell is an absent measurement, never "this release does not
+       depend on it": no resolution recorded that pair, and a resolver that
+       never ran says nothing about what it would have found. */}}
+  <td class="mono">{{if .Version}}{{.Version}}{{else}}<span class="dim" title="{{$.T "pkg.depmatrix_blank"}}">—</span>{{end}}</td>
+  {{- end}}
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+<p class="note dim small">{{.T "pkg.depmatrix_summary" (printf "%d" .DepsMatrix.Moved) (printf "%d" .DepsMatrix.Steady)}}{{if .DepsMatrix.Truncated}} {{.T "pkg.depmatrix_truncated"}}{{end}}</p>
+{{- end}}
+
 {{/* Only at a decided coordinate. A failure cluster is a fact about one
      release in one environment, and listing every one the package has beside
      an undecided grid made the reader diff them against the cube by eye. */}}

@@ -15,8 +15,13 @@ func TestDependenciesAppearOnlyWithAVersionPinned(t *testing.T) {
 		{ParentVersion: "2.0.4", ChildName: "function-bind", ChildVersion: "1.1.2"},
 		{ParentVersion: "2.0.3", ChildName: "function-bind", ChildVersion: "1.1.1"},
 	}
-	if body := mustGet(t, mux, "/npm/axios"); strings.Contains(body, "function-bind") {
-		t.Error("the unpinned page listed dependencies")
+	// The unpinned page must not print ONE release's dependency table: the
+	// page would have to pick which release, which is a choice nobody asked
+	// it to make. The cross-release matrix picks none -- it shows every
+	// release side by side -- so it is exactly the answer to that objection
+	// and is allowed to appear here. The assertion is on the table.
+	if body := mustGet(t, mux, "/npm/axios"); strings.Contains(body, `<table class="shipswith">`) {
+		t.Error("the unpinned page printed one release's dependency table")
 	}
 	body := mustGet(t, mux, "/npm/axios?f_version=2.0.4")
 	i := strings.Index(body, `<table class="shipswith">`)

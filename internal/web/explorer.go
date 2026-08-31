@@ -756,6 +756,9 @@ type packagePage struct {
 	// reader to the gap list offers work nothing here can do.
 	DepsUnaskable string
 	DepsGapHref   string
+	// DepsMatrix compares what each release resolved its children to. Nil
+	// with fewer than two released trees, where there is nothing to compare.
+	DepsMatrix *dependencyMatrix
 }
 
 // packageDeps lists the first-level dependencies of one PINNED release.
@@ -764,14 +767,17 @@ type packagePage struct {
 // releases the same library appears at several versions, so an unpinned page
 // would have to choose which to show — a choice nobody asked for and one the
 // reader cannot check.
-func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]PackageDep, bool) {
+func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]PackageDep, bool, *dependencyMatrix) {
 	if version == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
+	// Built from the same read: Dependencies returns every release's edges and
+	// the table below throws away all but the pinned one.
+	matrix := buildDependencyMatrix(rows)
 	kept := make([]DependencyEdge, 0, len(rows))
 	for _, e := range rows {
 		if e.ParentVersion == version {
@@ -795,12 +801,12 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]
 		deps[i].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[i].Projects)
 	}
 	if len(deps) > 0 {
-		return deps, false
+		return deps, false, matrix
 	}
 	// No edges. Whether that is an answer or a gap is the one thing this page
 	// cannot infer, and the store is the only place that knows.
 	none, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
-	return nil, err == nil && none
+	return nil, err == nil && none, matrix
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -997,7 +1003,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// looking at. Deciding the version is the whole requirement — by pinning
 	// it, or by the package only ever having had one.
 	decided := decidedVersion(r, cube)
-	deps, depsProvenNone := s.packageDeps(r, lang, eco, name, decided)
+	deps, depsProvenNone, depMatrix := s.packageDeps(r, lang, eco, name, decided)
 	// Whether this network could answer the dependency question here at all.
 	// The census subtracts these ecosystems from the backlog; the page has to
 	// make the same distinction or it promises work that cannot be done.
@@ -1056,6 +1062,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		DepsUnread:     decided != "" && len(deps) == 0 && !depsProvenNone && !depUnaskable,
 		DepsUnaskable:  depUnaskableReason,
 		DepsGapHref:    b.WithLang(gapsHref(name, 1, i18n.Default)),
+		DepsMatrix:     depMatrix,
 	})
 }
 

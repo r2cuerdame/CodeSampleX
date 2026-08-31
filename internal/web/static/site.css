@@ -2275,3 +2275,13 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 @media (max-width: 40rem) {
   .record-axes { grid-template-columns: 1fr; }
 }
+
+/* The dependency version matrix: one column per release of this package.
+   A moved row is the answer the reader came for, so it is the one thing
+   marked; everything else stays quiet. */
+.depmatrix { border-collapse: collapse; width: 100%; font-size: 0.84rem; }
+.depmatrix th, .depmatrix td { padding: 0.35rem 0.6rem; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.depmatrix thead th { color: var(--dim); font: 700 0.7rem/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; }
+.depmatrix .rowlabel { font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.depmatrix tr.is-moved { background: #f7faff; }
+.depmatrix tr.is-moved .rowlabel { color: var(--accent); }
