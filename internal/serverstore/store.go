@@ -245,14 +245,29 @@ type JobRow struct {
 // says nothing about the sample and a segfault in the code under test says
 // everything, and the receipt does not yet distinguish them; guessing in the
 // permissive direction would let a peer re-verify samples it genuinely broke.
-func ContractWasJudged(contractResult, terminationKind string) bool {
+// A FAIL that carries no failure evidence at all is not a verdict either.
+// Measured on production and split perfectly by date: every FAIL receipt
+// written 2026-08-18 to 08-21 carries no stageFailures (63), and every one
+// written from 08-28 carries them (29 of 29). The stage-failure contract
+// landed in between, so this is a closed historical set that cannot grow —
+// which is the difference between scoping a rule to the past and weakening
+// independence forever. Eleven of them were permanent exclusions on the
+// network's only verifier, from the window the PrivateTmp incident covers.
+//
+// It is what EvidenceLegacyIncomplete already says in this codebase: a
+// historical record must not masquerade as complete modern evidence. A PASS
+// needs none of this; there is nothing to evidence about a contract that ran
+// and passed.
+func ContractWasJudged(contractResult, terminationKind string, hasFailureEvidence bool) bool {
 	switch strings.ToLower(strings.TrimSpace(terminationKind)) {
 	case string(domain.TerminationTimeout), string(domain.TerminationProcessStartFailed):
 		return false
 	}
 	switch strings.ToUpper(strings.TrimSpace(contractResult)) {
-	case "PASS", "FAIL":
+	case "PASS":
 		return true
+	case "FAIL":
+		return hasFailureEvidence
 	}
 	return false
 }
@@ -263,6 +278,22 @@ func ContractWasJudged(contractResult, terminationKind string) bool {
 // "it exited cleanly". Receipts written before the verifier recorded stage
 // failures have no answer here, and they keep whatever their contract_result
 // claimed.
+// ReceiptHasFailureEvidence reports whether a receipt recorded anything about
+// how its stage failed. False on every receipt written before the
+// stage-failure contract, and on nothing written since.
+func ReceiptHasFailureEvidence(receiptJSON string) bool {
+	if receiptJSON == "" {
+		return false
+	}
+	var doc struct {
+		StageFailures map[string]json.RawMessage `json:"stageFailures"`
+	}
+	if err := json.Unmarshal([]byte(receiptJSON), &doc); err != nil {
+		return false
+	}
+	return doc.StageFailures != nil
+}
+
 func ReceiptTerminationKind(receiptJSON string) string {
 	if receiptJSON == "" {
 		return ""
@@ -287,6 +318,8 @@ func ReceiptTerminationKind(receiptJSON string) string {
 // Go and PostgreSQL evaluates it in SQL, which is precisely how the two came
 // to disagree about SKIPPED receipts in the first place.
 const contractJudgedSQL = `upper(coalesce(r.contract_result,'')) IN ('PASS','FAIL')
+	          AND (upper(coalesce(r.contract_result,'')) = 'PASS'
+	               OR (r.receipt::jsonb) ? 'stageFailures')
 	          AND coalesce(r.receipt::jsonb #>> '{stageFailures,contract,terminationKind}','')
 	              NOT IN ('timeout','process-start-failed')`
 

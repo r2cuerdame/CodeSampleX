@@ -72,10 +72,20 @@ func TestAContractVerdictStillLocksAPeerOut(t *testing.T) {
 		if _, err := f.CreateJob(ctx, JobRow{SampleID: sample, Reason: "cross"}); err != nil {
 			t.Fatal(err)
 		}
+		// A FAIL carries what it failed on. Every FAIL receipt written since
+		// 2026-08-28 does, and the fixture said nothing here only because the
+		// question had not come up yet: a FAIL with no failure evidence is a
+		// different case, tested separately below, and it is not what this
+		// test is about.
+		body := `{"stages":{"contract":"` + verdict + `"}}`
+		if verdict == "FAIL" {
+			body = `{"stages":{"contract":"FAIL"},"stageFailures":{"contract":` +
+				`{"terminationKind":"exit","evidenceQuality":"complete"}}}`
+		}
 		if err := f.SaveReceipt(ctx, ReceiptRow{
 			ReceiptID: "r-" + verdict, SampleID: sample, PeerID: peer,
 			ContractResult: verdict, CreatedAt: time.Now(),
-			ReceiptJSON: `{"stages":{"contract":"` + verdict + `"}}`,
+			ReceiptJSON: body,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -87,6 +97,43 @@ func TestAContractVerdictStillLocksAPeerOut(t *testing.T) {
 		if len(jobs) != 0 {
 			t.Errorf("contract=%s left the job visible to the peer that judged it", verdict)
 		}
+	}
+}
+
+// A FAIL that recorded nothing about the failure does NOT lock its peer out.
+//
+// The rule above is about verdicts. This is about what a verdict has to carry
+// to be one: measured on production and split perfectly by date, every FAIL
+// receipt written 2026-08-18 to 08-21 has no stageFailures at all and every
+// one written from 08-28 has them, so the evidence-less shape is a closed
+// historical set. Eleven of them were permanent exclusions on the network's
+// only verifier, from the window the PrivateTmp incident covers, claiming a
+// verdict and holding nothing anyone could check.
+func TestAFailWithNothingRecordedDoesNotLockAPeerOut(t *testing.T) {
+	f := NewFake()
+	ctx := context.Background()
+	const sample = "sha256:legacy"
+	const peer = "ed25519:onlyverifier"
+
+	if err := f.SaveSample(ctx, SampleRow{SampleID: sample, Status: "PUBLISHED"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.CreateJob(ctx, JobRow{SampleID: sample, Reason: "cross"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "r-legacy", SampleID: sample, PeerID: peer,
+		ContractResult: "FAIL", CreatedAt: time.Now(),
+		ReceiptJSON: `{"schemaVersion":2,"stages":{"contract":"FAIL"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Errorf("a FAIL with nothing recorded still hides the job: %d offered", len(jobs))
 	}
 }
 

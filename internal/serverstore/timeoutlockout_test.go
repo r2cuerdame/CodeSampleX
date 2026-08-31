@@ -36,7 +36,7 @@ func TestATimedOutContractIsNotAVerdict(t *testing.T) {
 		{"killed by a signal", "FAIL", "signal", true},
 		{"the contract never ran", "SKIPPED", "", false},
 	} {
-		if got := ContractWasJudged(tc.result, tc.termination); got != tc.judged {
+		if got := ContractWasJudged(tc.result, tc.termination, true); got != tc.judged {
 			t.Errorf("%s: judged=%v, want %v", tc.name, got, tc.judged)
 		}
 	}
@@ -122,19 +122,23 @@ func TestIntegrationTimedOutLockoutParity(t *testing.T) {
 		seedCrossJob(t, store, "sha256:nostart", now)
 		seedCrossJob(t, store, "sha256:reallyfailed", now)
 		seedCrossJob(t, store, "sha256:passed", now)
+		seedCrossJob(t, store, "sha256:legacyfail", now)
 		seedReceipt(t, store, "sha256:timedout", peer, "FAIL", "timeout", now)
 		seedReceipt(t, store, "sha256:nostart", peer, "FAIL", "process-start-failed", now)
 		seedReceipt(t, store, "sha256:reallyfailed", peer, "FAIL", "exit", now)
 		seedReceipt(t, store, "sha256:passed", peer, "PASS", "", now)
+		seedLegacyFailReceipt(t, store, "sha256:legacyfail", peer, now)
 	}
 	seedCrossJobPG(t, pg, "sha256:timedout", now)
 	seedCrossJobPG(t, pg, "sha256:nostart", now)
 	seedCrossJobPG(t, pg, "sha256:reallyfailed", now)
 	seedCrossJobPG(t, pg, "sha256:passed", now)
+	seedCrossJobPG(t, pg, "sha256:legacyfail", now)
 	seedReceiptPG(t, pg, "sha256:timedout", peer, "FAIL", "timeout", now)
 	seedReceiptPG(t, pg, "sha256:nostart", peer, "FAIL", "process-start-failed", now)
 	seedReceiptPG(t, pg, "sha256:reallyfailed", peer, "FAIL", "exit", now)
 	seedReceiptPG(t, pg, "sha256:passed", peer, "PASS", "", now)
+	seedLegacyFailReceiptPG(t, pg, "sha256:legacyfail", peer, now)
 
 	ctx := context.Background()
 	offered := func(s interface {
@@ -151,7 +155,7 @@ func TestIntegrationTimedOutLockoutParity(t *testing.T) {
 		return out
 	}
 	got, want := offered(pg), offered(f)
-	for _, id := range []string{"sha256:timedout", "sha256:nostart", "sha256:reallyfailed", "sha256:passed"} {
+	for _, id := range []string{"sha256:timedout", "sha256:nostart", "sha256:reallyfailed", "sha256:passed", "sha256:legacyfail"} {
 		if got[id] != want[id] {
 			t.Errorf("%s: pg offered=%v fake offered=%v", id, got[id], want[id])
 		}
@@ -160,6 +164,9 @@ func TestIntegrationTimedOutLockoutParity(t *testing.T) {
 	// verdict does not.
 	if !got["sha256:timedout"] || !got["sha256:nostart"] {
 		t.Errorf("an infrastructure kill still locks the peer out: %v", got)
+	}
+	if !got["sha256:legacyfail"] {
+		t.Errorf("a FAIL with no failure evidence still locks the peer out: %v", got)
 	}
 	if got["sha256:reallyfailed"] || got["sha256:passed"] {
 		t.Errorf("a real verdict stopped excluding its peer: %v", got)
@@ -192,6 +199,63 @@ func seedReceiptPG(t *testing.T, store *PG, sampleID, peer, result, termination 
 		SampleID: sampleID, ReceiptID: "r-" + sampleID + "-" + termination,
 		PeerID: peer, EnvHash: "env", ContractResult: result,
 		ReceiptJSON: body, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A FAIL that carries no failure evidence at all is not a verdict either.
+//
+// Measured on production 2026-08-31, split perfectly by date: every FAIL
+// receipt written 2026-08-18 to 08-21 carries no stageFailures (63 of them),
+// and every FAIL receipt written 08-28 onward carries them (29 of 29). The
+// stage-failure contract landed in between, so evidence-less FAILs are a
+// closed historical set that cannot grow.
+//
+// Eleven of those sat on the network's only verifier as permanent exclusions
+// from samples nobody else can check, all from the window the PrivateTmp
+// incident covers. They claim a verdict and hold nothing that would let
+// anyone check it — which is exactly what EvidenceLegacyIncomplete exists to
+// say: a historical record must not masquerade as complete modern evidence.
+//
+// A PASS needs no such evidence. There is nothing to evidence about a
+// contract that ran and passed.
+func TestAFailWithNoFailureEvidenceIsNotAVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		result   string
+		evidence bool
+		judged   bool
+	}{
+		{"a modern FAIL with its failure recorded", "FAIL", true, true},
+		{"a 2026-08-20 FAIL with nothing recorded", "FAIL", false, false},
+		{"a PASS, which has nothing to evidence", "PASS", false, true},
+	} {
+		if got := ContractWasJudged(tc.result, "", tc.evidence); got != tc.judged {
+			t.Errorf("%s: judged=%v, want %v", tc.name, got, tc.judged)
+		}
+	}
+}
+
+// seedLegacyFailReceipt writes the shape every FAIL receipt had before the
+// stage-failure contract: a verdict with nothing recorded about the failure.
+func seedLegacyFailReceipt(t *testing.T, store *Fake, sampleID, peer string, now time.Time) {
+	t.Helper()
+	if err := store.SaveReceipt(t.Context(), ReceiptRow{
+		SampleID: sampleID, ReceiptID: "r-" + sampleID + "-legacy",
+		PeerID: peer, EnvHash: "env", ContractResult: "FAIL",
+		ReceiptJSON: `{"schemaVersion":2,"stages":{"contract":"FAIL"}}`, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedLegacyFailReceiptPG(t *testing.T, store *PG, sampleID, peer string, now time.Time) {
+	t.Helper()
+	if err := store.SaveReceipt(t.Context(), ReceiptRow{
+		SampleID: sampleID, ReceiptID: "r-" + sampleID + "-legacy",
+		PeerID: peer, EnvHash: "env", ContractResult: "FAIL",
+		ReceiptJSON: `{"schemaVersion":2,"stages":{"contract":"FAIL"}}`, CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
