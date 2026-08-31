@@ -737,6 +737,10 @@ type packagePage struct {
 	// without ?f_version, deliberately: across releases the same library
 	// appears at several versions and the page would have to choose one.
 	Deps []PackageDep
+	// DepsProvenNone says a resolution read this release's tree and found it
+	// empty. It is an answer, and must not render as the same blank as a
+	// release nothing has read.
+	DepsProvenNone bool
 }
 
 // packageDeps lists the first-level dependencies of one PINNED release.
@@ -745,13 +749,13 @@ type packagePage struct {
 // releases the same library appears at several versions, so an unpinned page
 // would have to choose which to show — a choice nobody asked for and one the
 // reader cannot check.
-func (s *site) packageDeps(r *http.Request, eco, name, version string) []PackageDep {
+func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]PackageDep, bool) {
 	if version == "" {
-		return nil
+		return nil, false
 	}
 	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	kept := make([]DependencyEdge, 0, len(rows))
 	for _, e := range rows {
@@ -759,7 +763,29 @@ func (s *site) packageDeps(r *http.Request, eco, name, version string) []Package
 			kept = append(kept, e)
 		}
 	}
-	return buildPackageDeps(eco, kept)
+	deps := buildPackageDeps(eco, kept)
+
+	// What this network measured about each CHILD release, read from that
+	// coordinate's own snapshot. Bounded, and one read per row: the same shape
+	// the cube already uses, and the alternative -- inferring a state from the
+	// edge -- would be the page asserting that two releases resolved together
+	// therefore work together.
+	if len(deps) > maxDependencyRows {
+		deps = deps[:maxDependencyRows]
+	}
+	for i := range deps {
+		purl := domain.PURL{Ecosystem: eco, Name: deps[i].Library, Version: deps[i].Version}.String()
+		deps[i].State = dependencyEvidenceState(r, s.d.Store, purl)
+		deps[i].StateText = i18n.T(lang, "pkg.dep_state_"+deps[i].State)
+		deps[i].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[i].Projects)
+	}
+	if len(deps) > 0 {
+		return deps, false
+	}
+	// No edges. Whether that is an answer or a gap is the one thing this page
+	// cannot infer, and the store is the only place that knows.
+	none, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
+	return nil, err == nil && none
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -955,7 +981,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// lockfile resolves the same way whichever symbol or runtime the reader is
 	// looking at. Deciding the version is the whole requirement — by pinning
 	// it, or by the package only ever having had one.
-	deps = s.packageDeps(r, eco, name, decidedVersion(r, cube))
+	deps, depsProvenNone := s.packageDeps(r, lang, eco, name, decidedVersion(r, cube))
 	// A failure cluster belongs to the whole coordinate — this release, this
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
@@ -1003,6 +1029,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Crumbs: leaf(recordCrumbs(b, eco, name, cubeCrumbVersion(cube), cubeCrumbSymbol(cube))),
 		Cube:   cube,
 		Deps:   deps,
+		DepsProvenNone: depsProvenNone,
 	})
 }
 

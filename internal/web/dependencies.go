@@ -199,3 +199,13 @@ func dependencySubjectHref(query string, page int, lang string, row DependencySu
 	q.Set("ver", row.Version)
 	return "/dependencies?" + q.Encode()
 }
+
+// dependencyAtlasHref points at one release in the atlas, with its parents
+// already open — the other side of the edge the reader is looking at.
+func dependencyAtlasHref(ecosystem, name, version string) string {
+	q := url.Values{}
+	q.Set("eco", ecosystem)
+	q.Set("name", name)
+	q.Set("ver", version)
+	return "/dependencies?" + q.Encode()
+}

@@ -224,3 +224,53 @@ func TestIntegrationDependencyAtlasParity(t *testing.T) {
 		}
 	}
 }
+
+// "Read and found empty" must answer the same in both stores.
+//
+// It is the one dependency fact that is an ANSWER rather than a count, and the
+// page renders it as prose rather than a number — so a disagreement here shows
+// up as one store telling a reader a release declares nothing while the other
+// leaves its axis open.
+func TestIntegrationResolvedNoneParity(t *testing.T) {
+	pg := openTestPG(t)
+	f := NewFake()
+	ctx := context.Background()
+
+	// A release a resolution read and found empty, in both stores.
+	leaf := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-31", AnonID: "anon-leaf", ProjectBucket: "p1",
+		Package: "pkg:npm/left-pad@1.3.0", Direct: true, DependsOnNone: true,
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 1,
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+			Runtime: "node", RuntimeVersion: "22", ModuleSystem: "esm",
+		},
+	}
+	for _, store := range []Store{pg, f} {
+		accepted, rejected, err := store.IngestBatches(ctx, []domain.ObservationBatch{leaf})
+		if err != nil || accepted != 1 || len(rejected) != 0 {
+			t.Fatalf("ingest: accepted=%d rejected=%v err=%v", accepted, rejected, err)
+		}
+	}
+
+	for _, c := range []struct {
+		name, version string
+		want          bool
+	}{
+		{"left-pad", "1.3.0", true},
+		{"left-pad", "9.9.9", false},
+		{"never-seen", "1.0.0", false},
+	} {
+		got, err := pg.DependencyResolvedNone(ctx, "npm", c.name, c.version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake, err := f.DependencyResolvedNone(ctx, "npm", c.name, c.version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want || fake != c.want {
+			t.Errorf("%s@%s: pg=%v fake=%v want=%v", c.name, c.version, got, fake, c.want)
+		}
+	}
+}

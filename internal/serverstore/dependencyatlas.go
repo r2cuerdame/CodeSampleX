@@ -214,3 +214,32 @@ func sortDependencyParents(edges []DependencyEdge) {
 		return edges[i].ParentVersion < edges[j].ParentVersion
 	})
 }
+
+// DependencyResolvedNone reports whether some resolution measured this exact
+// release to declare no dependencies at all.
+//
+// It is the difference between two things a blank row cannot tell apart: a
+// release whose tree was read and found empty, and one nothing has ever read.
+// The first is an answer and closes the dependency axis for that coordinate;
+// the second is a gap and must stay on the board.
+//
+// A row only exists when something actually looked — an ecosystem with no edge
+// scanner produces silence rather than a leaf claim (#152) — so presence here
+// is a measurement rather than an absence of evidence.
+func (p *PG) DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error) {
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM dependency_resolution
+			                WHERE ecosystem = $1 AND name = $2 AND version = $3)`,
+			ecosystem, name, version).Scan(&found)
+	})
+	return found, err
+}
+
+// DependencyResolvedNone is the Fake's half.
+func (f *Fake) DependencyResolvedNone(_ context.Context, ecosystem, name, version string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resolvedNone[[3]string{ecosystem, name, version}], nil
+}

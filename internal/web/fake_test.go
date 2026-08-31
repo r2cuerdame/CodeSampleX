@@ -16,6 +16,9 @@ type fakeStore struct {
 	// dependencyEcosystem is what the atlas reports for every edge the fake
 	// holds; the edge rows themselves carry no ecosystem.
 	dependencyEcosystem string
+	// resolvedNone mirrors dependency_resolution: releases a resolver read and
+	// found empty, keyed "name@version".
+	resolvedNone map[string]bool
 	statsJSON    string
 	statsOK      bool
 	snapshots    map[string]string // purl+"\x00"+symbol → snapshot JSON
@@ -535,6 +538,10 @@ func (f *fakeStore) DependencySubjects(_ context.Context, query string, offset, 
 		end = total
 	}
 	return out[offset:end], total, nil
+}
+
+func (f *fakeStore) DependencyResolvedNone(_ context.Context, _, name, version string) (bool, error) {
+	return f.resolvedNone[name+"@"+version], nil
 }
 
 func (f *fakeStore) DependencyParents(_ context.Context, _, name, version string) ([]DependencyEdge, error) {
