@@ -221,8 +221,8 @@ func TestNoLockfileReportsNothing(t *testing.T) {
 // sample id, rather than being trusted because the struct looks right.
 func TestEveryTreeBatchSurvivesTheServersValidation(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
-	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	batches := TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
+	edges, scanned := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	batches := TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
 	if len(batches) == 0 {
 		t.Fatal("no batches to validate")
 	}
@@ -239,9 +239,9 @@ func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
 	ctx := context.Background()
 	store := serverstore.NewFake()
 	r := treeReceipt(sandbox.ResultPass)
-	edges := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
+	edges, scanned := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
 
-	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"))
+	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,8 +270,8 @@ func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
 func TestAnUnversionedEnvironmentSendsNoTree(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	r.Environment.SchemaVersion = 0
-	edges := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	if got := TreeBatches(edges, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"); len(got) != 0 {
+	edges, scanned := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	if got := TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"); len(got) != 0 {
 		t.Errorf("built %d batches the server would refuse", len(got))
 	}
 }
@@ -349,5 +349,78 @@ func TestAPackageTheResolverNeverPlacedClaimsNothing(t *testing.T) {
 		if b.Package == "pkg:npm/never-installed@9.9.9" {
 			t.Errorf("a package the lockfile never contained was reported: %+v", b)
 		}
+	}
+}
+
+// An ecosystem nothing can read a tree for must not be reported as having no
+// dependencies.
+//
+// TreeBatches called every resolved package a leaf when no edge pointed at it,
+// and edges come only from an adapter implementing EdgeScanner. For an
+// ecosystem with no such adapter -- maven, gem, pub, hex, composer today, and
+// golang until v0.1.77 -- that produced a "this release declares nothing"
+// claim for every package a verification resolved, from a run in which nothing
+// looked.
+//
+// It reached production. `go.etcd.io/bbolt@v1.4.3` was recorded as having no
+// dependencies at 02:20Z on 2026-08-31, from a farm still on v0.1.76. bbolt's
+// go.mod names six direct requires. Four more golang rows beside it, out of
+// nine in the whole table.
+//
+// A gap is recoverable and visible. A false leaf is neither: it closes the
+// dependency axis for that coordinate, so no future work will ever revisit it.
+func TestAnUnreadableEcosystemNeverClaimsNoDependencies(t *testing.T) {
+	m := treeManifest()
+	m.Environment.Ecosystem = "maven"
+	m.Packages = []string{"pkg:maven/org.example/lib@1.0.0"}
+	r := treeReceipt(sandbox.ResultPass)
+	r.Environment.Ecosystem = "maven"
+
+	got := TreeBatches(nil, false, []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31")
+	for _, b := range got {
+		if b.DependsOnNone {
+			t.Errorf("%s was claimed to have no dependencies by a run that could not read its tree", b.Package)
+		}
+	}
+	if len(got) != 0 {
+		t.Errorf("posted %d batches from a resolution nothing scanned, want none", len(got))
+	}
+}
+
+// The claim survives where it was earned: a scanner that ran, read the tree,
+// and found this package has no children of its own.
+func TestAScannedResolutionStillReportsARealLeaf(t *testing.T) {
+	m := treeManifest()
+	m.Packages = []string{"pkg:npm/left-pad@1.3.0"}
+	got := TreeBatches(nil, true, []string{"pkg:npm/left-pad@1.3.0"}, m,
+		treeReceipt(sandbox.ResultPass), "2026-08-31")
+	if len(got) != 1 {
+		t.Fatalf("posted %d batches, want one leaf claim: %+v", len(got), got)
+	}
+	if !got[0].DependsOnNone {
+		t.Error("a scanned resolution stopped saying the package declares nothing")
+	}
+}
+
+// ResolvedEdges reports whether anything actually looked, which is the fact
+// TreeBatches needs and cannot infer: an empty edge list means "no
+// dependencies" and "no reader" alike.
+func TestResolvedEdgesSaysWhetherAnythingScanned(t *testing.T) {
+	ctx := context.Background()
+
+	// A workspace no registered adapter detects.
+	bare := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bare, "pom.xml"), []byte("<project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := treeManifest()
+	m.Environment.Ecosystem = "maven"
+	if _, scanned := ResolvedEdges(ctx, bare, m, adapters.All()); scanned {
+		t.Error("a maven workspace reported a scan, but no adapter can read one")
+	}
+
+	// And the npm workspace the other tests use, which one can.
+	if _, scanned := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All()); !scanned {
+		t.Error("an npm workspace with a package-lock.json reported no scan")
 	}
 }
