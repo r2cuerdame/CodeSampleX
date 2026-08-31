@@ -57,7 +57,20 @@ func (v verifierImage) ref() string { return v.alias + "@" + v.digest }
 // reach it.
 var verifierImages = map[string]verifierImage{
 	// Linux verifier lanes.
-	"node:22-alpine":       {"node:22-alpine", "sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32", "alpine", "", "musl"},
+	"node:22-alpine": {"node:22-alpine", "sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32", "alpine", "", "musl"},
+	// The glibc Node lane, for manifests that declare it.
+	//
+	// A prebuilt native .node binary is linked against one libc and does not
+	// load on the other. Measured on production 2026-09-01: ten npm samples
+	// declared environment.libc = "glibc" and every one was verified on
+	// node:22-alpine, which is musl. Six died inside two minutes with
+	// "Error loading shared library ld-linux-x86-64.so.2: No such file or
+	// directory", code ERR_DLOPEN_FAILED — recorded as contract=FAIL, a
+	// verdict on the sample, for a mismatch between what its author declared
+	// and what the verifier provided.
+	//
+	// Measured 2026-09-01 by running it: Debian 12, Node v22.23.2, glibc 2.36.
+	"node:22":              {"node:22", "sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8ccd56d56024c4d", "debian", "", "glibc"},
 	"oven/bun:1-alpine":    {"oven/bun:1-alpine", "sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb", "alpine", "", "musl"},
 	"denoland/deno:alpine": {"denoland/deno:alpine", "sha256:b49ac52f05c3d8d0da890b6628168e9bfb5721f7bccc00305bb3ad29ed0e40af", "alpine", "", "musl"},
 	// The Linux Python lane. Debian rather than Alpine for two reasons, and

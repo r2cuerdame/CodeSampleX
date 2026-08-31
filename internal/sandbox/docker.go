@@ -226,18 +226,27 @@ func javaReleaseNumber(version string) (int, bool) {
 // unusable — every sample in the network claimed executionContext "node"
 // because no other one could be produced.
 func imageFor(ecosystem, runtime string) (string, error) {
-	return imageForRuntimeVersion(ecosystem, runtime, "")
+	return imageForRuntimeVersion(ecosystem, runtime, "", "")
 }
 
 // imageForRuntimeVersion selects the runtime line promised by a manifest.
 // Python 3.12 remains the compatibility default for old manifests; 3.14 is
 // opt-in and immutable. Other Python lines are refused instead of silently
 // producing a receipt for a different interpreter.
-func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion string) (string, error) {
+func imageForRuntimeVersion(ecosystem, runtime, runtimeVersion, libc string) (string, error) {
 	switch ecosystem {
 	case "npm":
 		switch runtime {
 		case "", "node":
+			// A manifest that declares glibc gets glibc. Native modules are
+			// linked against one libc and do not load on the other, which is
+			// what EnvironmentFingerprint.Libc exists to record; running such
+			// a sample on musl produces a contract verdict about the verifier.
+			// An undeclared libc keeps the historical default, so nothing that
+			// was verifiable yesterday moves lanes today.
+			if libc == "glibc" {
+				return pinned("node:22"), nil
+			}
 			return pinned("node:22-alpine"), nil
 		case "bun":
 			return pinned("oven/bun:1-alpine"), nil
@@ -339,9 +348,21 @@ func imageForManifestLinux(m domain.SampleManifest) (string, error) {
 		if env.BrowserFamily != "" || env.BrowserMajor != "" || env.Engine != "" || env.EngineVersion != "" {
 			return "", fmt.Errorf("sandbox: browser dimensions require browser execution context")
 		}
-		img, err := imageForRuntimeVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion)
+		img, err := imageForRuntimeVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion, env.Libc)
 		if err != nil {
 			return "", err
+		}
+		// The image must provide the libc the manifest asked for, or this
+		// refuses. Substituting silently writes a receipt saying a sample was
+		// verified in an environment it was not verified in, which is the one
+		// claim this project cannot make -- the same rule the Python runtime
+		// lines already follow. The registry records each image's real libc,
+		// established by running it, so this is a lookup and not a guess.
+		if env.Libc != "" {
+			if entry, ok := registryEntryFor(img); ok && entry.libc != "" && entry.libc != env.Libc {
+				return "", fmt.Errorf("sandbox: verifier image %s provides libc %q and cannot satisfy %q",
+					entry.alias, entry.libc, env.Libc)
+			}
 		}
 		rt, providedVersion, _ := imageRuntimeForVersion(env.Ecosystem, env.Runtime, env.RuntimeVersion)
 		if env.RuntimeVersion != "" && env.Ecosystem != "pypi" &&

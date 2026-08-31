@@ -43,6 +43,24 @@
   </div>
 </section>
 
+{{/* Directly under the title, by request. The reader who has just read the
+     promise gets the three lines saying what they get out of it, before any
+     of the evidence; it sat below the compatibility grid until now, so the
+     answer to "what do I get" arrived after four screens of proof.
+
+     These seven strings were written and translated into all nine locales
+     and for a while no template rendered any of them — a string that exists,
+     translates and never reaches a screen is invisible to every check we
+     have except reading the page. */}}
+<section class="valueprops evidence-section" aria-labelledby="value-heading">
+  <h2 id="value-heading" class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
+  <ul class="valuegrid">
+    <li><h3>{{.T "landing.value_1_t"}}</h3><p class="dim small">{{.T "landing.value_1_b"}}</p></li>
+    <li><h3>{{.T "landing.value_2_t"}}</h3><p class="dim small">{{.T "landing.value_2_b"}}</p></li>
+    <li><h3>{{.T "landing.value_3_t"}}</h3><p class="dim small">{{.T "landing.value_3_b"}}</p></li>
+  </ul>
+</section>
+
 {{/* Where does it break? Measured contradictions are the proof that
      testing beats guessing — each links to the contract that measured it. */}}
 {{- if .Findings}}
@@ -161,21 +179,6 @@
   </details>
 </section>
 
-{{/* What the reader gets, in three lines, immediately under the promise.
-     These seven strings were written and translated into all nine locales
-     and no template rendered any of them — the page carried the answer to
-     "what do I get" the whole time and never showed it. cube.sub was in the
-     same state once, so the shape is worth naming: a string that exists,
-     translates and never reaches a screen is invisible to every check we
-     have except reading the page. */}}
-<section class="valueprops evidence-section" aria-labelledby="value-heading">
-  <h2 id="value-heading" class="eyebrow mono">{{.T "landing.value_heading"}}</h2>
-  <ul class="valuegrid">
-    <li><h3>{{.T "landing.value_1_t"}}</h3><p class="dim small">{{.T "landing.value_1_b"}}</p></li>
-    <li><h3>{{.T "landing.value_2_t"}}</h3><p class="dim small">{{.T "landing.value_2_b"}}</p></li>
-    <li><h3>{{.T "landing.value_3_t"}}</h3><p class="dim small">{{.T "landing.value_3_b"}}</p></li>
-  </ul>
-</section>
 
 {{/* ADisAD placement, home page only.
 
