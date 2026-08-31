@@ -343,6 +343,7 @@
   "pkg.dependants_sub": "Del lockfile que la resolvió — la mitad del choque de versiones sobre la que puedes actuar.",
   "pkg.deps": "Dependencias",
   "pkg.deps_proven_none": "Una resolución leyó el árbol de esta versión y no encontró dependencias. Es una medición, no una que falte.",
+  "pkg.deps_unaskable": "Aquí no hay escáner de dependencias para %s, así que el árbol de esta versión está sin leer, no vacío.",
   "pkg.deps_unread": "Nadie ha resuelto aún esta versión, así que sus dependencias están sin leer, no vacías.",
   "pkg.deps_unread_link": "Ver dónde se cuenta",
   "pkg.latest": "más reciente con evidencia",

@@ -338,6 +338,7 @@
   "pkg.dependants_sub": "来自完成解析的锁文件——版本冲突中你能动手的那一半。",
   "pkg.deps": "依赖",
   "pkg.deps_proven_none": "某次解析读取了该版本的依赖树，没有发现依赖。这是一次测量结果，而不是缺失。",
+  "pkg.deps_unaskable": "此处没有面向 %s 的依赖扫描器，因此该版本的依赖树是未读取，而非为空。",
   "pkg.deps_unread": "尚无任何一方解析过此版本，因此其依赖是未读取，而非为空。",
   "pkg.deps_unread_link": "查看它被计入何处",
   "pkg.latest": "有证据的最新版本",

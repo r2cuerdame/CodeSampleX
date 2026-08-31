@@ -343,6 +343,7 @@
   "pkg.dependants_sub": "Du lockfile qui l'a résolue — la moitié du conflit sur laquelle on peut agir.",
   "pkg.deps": "Dépendances",
   "pkg.deps_proven_none": "Une résolution a lu l'arbre de cette version et n'a trouvé aucune dépendance. C'est une mesure, pas une mesure manquante.",
+  "pkg.deps_unaskable": "Aucun scanner de dépendances pour %s ici : l'arbre de cette version n'est pas vide, il n'a pas été lu.",
   "pkg.deps_unread": "Personne n'a encore résolu cette version : ses dépendances ne sont pas vides, elles n'ont pas été lues.",
   "pkg.deps_unread_link": "Voir où elle est comptée",
   "pkg.latest": "dernière avec preuve",

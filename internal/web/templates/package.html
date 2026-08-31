@@ -234,6 +234,13 @@
      leaves it open. */}}
 <h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
 <p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
+{{- else if .DepsUnaskable}}
+{{/* Nothing here ships a scanner for this ecosystem. That is a fact about
+     this network, not about the release: the module has dependencies, and
+     saying otherwise would assert a measurement nobody made. It is also not
+     work anybody can pick up, so there is no link to the gap list. */}}
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<p class="note dim small">{{.DepsUnaskable}}</p>
 {{- else if .DepsUnread}}
 {{/* Nothing has resolved this release. The section used to render nothing at
      all, which is right about the dependencies and silent about everything

@@ -343,6 +343,7 @@
   "pkg.dependants_sub": "From the lockfile that resolved it — the half of a version clash you can act on.",
   "pkg.deps": "Dependencies",
   "pkg.deps_proven_none": "A resolution read this release's tree and found no dependencies. That is a measurement, not a missing one.",
+  "pkg.deps_unaskable": "No dependency scanner ships for %s here, so this release's tree is unread rather than empty.",
   "pkg.deps_unread": "Nothing has resolved this release yet, so its dependencies are unread rather than empty.",
   "pkg.deps_unread_link": "See where it is counted",
   "pkg.latest": "latest with evidence",

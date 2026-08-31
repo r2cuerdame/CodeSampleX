@@ -343,6 +343,7 @@
   "pkg.dependants_sub": "Aus der Lockdatei, die sie auflöste — die Hälfte eines Versionskonflikts, an der man ansetzen kann.",
   "pkg.deps": "Abhängigkeiten",
   "pkg.deps_proven_none": "Eine Auflösung hat den Baum dieses Releases gelesen und keine Abhängigkeiten gefunden. Das ist eine Messung, keine fehlende.",
+  "pkg.deps_unaskable": "Für %s gibt es hier keinen Abhängigkeits-Scanner; der Baum dieses Releases ist ungelesen, nicht leer.",
   "pkg.deps_unread": "Dieses Release wurde noch von niemandem aufgelöst; seine Abhängigkeiten sind ungelesen, nicht leer.",
   "pkg.deps_unread_link": "Sehen, wo es gezählt wird",
   "pkg.latest": "neueste mit Evidenz",

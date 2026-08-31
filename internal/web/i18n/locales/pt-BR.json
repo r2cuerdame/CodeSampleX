@@ -343,6 +343,7 @@
   "pkg.dependants_sub": "Do lockfile que a resolveu — a metade do conflito em que dá para agir.",
   "pkg.deps": "Dependências",
   "pkg.deps_proven_none": "Uma resolução leu a árvore desta versão e não encontrou dependências. Isso é uma medição, não uma medição ausente.",
+  "pkg.deps_unaskable": "Não há scanner de dependências para %s aqui, então a árvore desta versão está por ler, não vazia.",
   "pkg.deps_unread": "Ninguém resolveu esta versão ainda, então suas dependências estão por ler, não vazias.",
   "pkg.deps_unread_link": "Ver onde ela é contada",
   "pkg.latest": "mais recente com evidência",

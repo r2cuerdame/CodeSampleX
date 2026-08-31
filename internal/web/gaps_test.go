@@ -160,3 +160,32 @@ func TestAMeasuredLeafIsNotSentToTheGapList(t *testing.T) {
 		t.Error("a closed dependency axis was listed as work left to do")
 	}
 }
+
+// A release in an ecosystem with no scanner says that, not "not yet".
+//
+// This is the same distinction /compatibility makes and the census makes.
+// "Nothing has resolved this release yet" promises a gap somebody could
+// close; for golang, maven, gem, pub, hex and composer nothing here can ever
+// resolve it, and pointing that reader at the gap list offers work that does
+// not exist.
+func TestAnUnscannableEcosystemSaysSoOnThePackagePage(t *testing.T) {
+	f := newFakeStore()
+	f.dependencyEcosystem = "golang"
+	f.versions["golang|example.com/mod"] = []string{"v1.0.0"}
+
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
+	body := get(t, mux, "/golang/example.com/mod?f_version=v1.0.0&lang=en").Body.String()
+
+	if !strings.Contains(body, "No dependency scanner ships for golang") {
+		t.Error("an ecosystem with no scanner was reported as merely unread")
+	}
+	// Both sentences end "unread rather than empty", deliberately: neither
+	// claims the release has no dependencies. What separates them is whether
+	// anybody could look, so the assertion is on the opening clause.
+	if strings.Contains(body, "Nothing has resolved this release yet") {
+		t.Error("an unaskable axis was offered as work not done yet")
+	}
+	if strings.Contains(body, "/gaps?q=") {
+		t.Error("a reader was sent to the gap list for work nothing can do")
+	}
+}

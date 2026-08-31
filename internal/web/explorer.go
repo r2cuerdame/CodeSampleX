@@ -750,8 +750,12 @@ type packagePage struct {
 	// made. An absent section is also how a reader learns nothing at all,
 	// including that this is known work. These two say the second thing
 	// without saying the first.
-	DepsUnread  bool
-	DepsGapHref string
+	DepsUnread bool
+	// DepsUnaskable is the stronger answer: no scanner ships for this
+	// ecosystem, so the axis is not work waiting to be done. Sending that
+	// reader to the gap list offers work nothing here can do.
+	DepsUnaskable string
+	DepsGapHref   string
 }
 
 // packageDeps lists the first-level dependencies of one PINNED release.
@@ -994,6 +998,13 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// it, or by the package only ever having had one.
 	decided := decidedVersion(r, cube)
 	deps, depsProvenNone := s.packageDeps(r, lang, eco, name, decided)
+	// Whether this network could answer the dependency question here at all.
+	// The census subtracts these ecosystems from the backlog; the page has to
+	// make the same distinction or it promises work that cannot be done.
+	depUnaskableReason, depUnaskable := "", false
+	if _, na := domain.DependencyNotApplicable(eco); na && decided != "" && len(deps) == 0 && !depsProvenNone {
+		depUnaskableReason, depUnaskable = i18n.T(lang, "pkg.deps_unaskable", eco), true
+	}
 	// A failure cluster belongs to the whole coordinate — this release, this
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
@@ -1042,7 +1053,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Cube:           cube,
 		Deps:           deps,
 		DepsProvenNone: depsProvenNone,
-		DepsUnread:     decided != "" && len(deps) == 0 && !depsProvenNone,
+		DepsUnread:     decided != "" && len(deps) == 0 && !depsProvenNone && !depUnaskable,
+		DepsUnaskable:  depUnaskableReason,
 		DepsGapHref:    b.WithLang(gapsHref(name, 1, i18n.Default)),
 	})
 }
