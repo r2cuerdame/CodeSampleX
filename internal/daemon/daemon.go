@@ -87,6 +87,9 @@ type Daemon struct {
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
 	uploadFirstDelay, verifyFirstDelay               time.Duration
+	// shutdownGrace is how long srv.Shutdown may drain in-flight requests
+	// before the listeners and connections are closed outright.
+	shutdownGrace time.Duration
 
 	batchMu sync.Mutex // serializes drain/upload/preview over the batcher
 	statMu  sync.Mutex // serializes read-modify-write stat counters
@@ -273,12 +276,38 @@ func (d *Daemon) Run(ctx context.Context) error {
 			runErr = err
 		}
 	}
-	shutCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
-	defer done()
-	if err := srv.Shutdown(shutCtx); err != nil && runErr == nil {
+	if err := stopServer(srv, orDefault(d.shutdownGrace, defaultShutdownGrace)); err != nil && runErr == nil {
 		runErr = err
 	}
 	return runErr
+}
+
+// defaultShutdownGrace is how long in-flight requests have to finish once a
+// stop is asked for. Long enough for an ordinary handler, short enough that a
+// stuck one cannot hold a release-blocking test past its budget.
+const defaultShutdownGrace = 5 * time.Second
+
+// stopServer drains srv for grace, then ends whatever is left.
+//
+// Shutdown alone was not a stop. It closes the listeners, waits for in-flight
+// requests, and at its deadline gives up and returns -- leaving every
+// connection it was waiting on still running, owned by nothing that will ever
+// end it. So the grace period bounded how long the caller WAITED, not how long
+// the server LIVED, and a handler still working after the deadline kept its
+// connection, its goroutine and whatever it held open past the point where the
+// process believed it had stopped. Close is what ends them.
+//
+// A function of its own because that is the only way to test it: the failing
+// case needs a handler that outlives the grace period, and reaching one
+// through Run would mean a test-only hook in the daemon.
+func stopServer(srv *http.Server, grace time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	err := srv.Shutdown(ctx)
+	if err != nil {
+		_ = srv.Close()
+	}
+	return err
 }
 
 // requestShutdown triggers a graceful stop exactly once (POST /local/v1/shutdown).
