@@ -3,13 +3,14 @@ module github.com/r2cuerdame/codesamplex
 go 1.26.5
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.56.0
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
