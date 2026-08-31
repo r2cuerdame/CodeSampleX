@@ -265,7 +265,28 @@ func measureViewports(t *testing.T, chrome, url string) []viewportReport {
 // goes through here, so a harness only has to describe what it measures.
 func renderMeasurement(t *testing.T, chrome, url string) string {
 	t.Helper()
-	profile := t.TempDir()
+	// One retry. The measurement runs on a timer inside the page and the DOM
+	// is dumped when the virtual-time budget runs out, so a machine busy
+	// enough can dump before the script has reported -- twice in one session,
+	// both times while a deploy and a container build were running beside the
+	// suite, and neither reproducible afterwards. A real failure fails both
+	// times; a loaded machine does not.
+	if out, ok := measureOnce(chrome, url); ok {
+		return out
+	}
+	if out, ok := measureOnce(chrome, url); ok {
+		return out
+	}
+	t.Fatalf("headless chrome reported no measurement for %s in two attempts", url)
+	return ""
+}
+
+func measureOnce(chrome, url string) (string, bool) {
+	profile, err := os.MkdirTemp("", "csx-measure")
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = os.RemoveAll(profile) }()
 	cmd := exec.Command(chrome,
 		"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
 		"--disable-extensions", "--hide-scrollbars=false",
@@ -278,17 +299,17 @@ func renderMeasurement(t *testing.T, chrome, url string) string {
 		"--virtual-time-budget=8000", "--dump-dom", url)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("headless chrome: %v", err)
+		return "", false
 	}
 	m := measureRe.FindSubmatch(out)
 	if m == nil {
-		t.Fatalf("no measurement in rendered DOM (%d bytes)", len(out))
+		return "", false
 	}
 	payload := html.UnescapeString(string(m[1]))
 	if strings.TrimSpace(payload) == "PENDING" {
-		t.Fatal("the page never reported a measurement")
+		return "", false
 	}
-	return payload
+	return payload, true
 }
 
 // findChrome locates a Chrome to measure in. A skip here is "not measured on
