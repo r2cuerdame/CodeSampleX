@@ -87,6 +87,9 @@ func printSyncResult(res *daemon.SyncResult) {
 	fmt.Printf("warmed shard keys:  %d\n", res.WarmedKeys)
 	fmt.Printf("uploaded batches:   %d\n", res.UploadedBatches)
 	fmt.Printf("adoption reports:   %d\n", res.UploadedReports)
+	if res.ReconcileNote != "" {
+		fmt.Printf("note:               %s\n", res.ReconcileNote)
+	}
 	if res.SetAsideReports > 0 {
 		fmt.Printf("set aside:          %d (the server rejected these; they are kept, not sent)\n",
 			res.SetAsideReports)

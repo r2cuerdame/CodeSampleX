@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -36,6 +37,14 @@ type Batcher struct {
 	DB    *localdb.DB
 	Ident *identity.Identity
 	Cfg   *config.Config
+
+	// reconcile overrides the legacy-Windows reconciliation pass. nil means
+	// the real one; tests use it to make a pass that never finishes, which is
+	// the condition that stopped a farm node's queue draining at all.
+	reconcile func(context.Context) error
+
+	reconcileMu   sync.Mutex
+	reconcileNote string
 }
 
 // Drain builds wire batches from every pending observation aggregate and
@@ -74,9 +83,24 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 	if b.Cfg == nil || b.Cfg.Mode != config.ModeCommunity {
 		return 0, nil
 	}
-	if err := b.prepareLegacyWindowsReconciliation(ctx); err != nil {
-		return 0, fmt.Errorf("evidence: reconcile legacy Windows exit codes: %w", err)
-	}
+	// Housekeeping, and housekeeping never stops the delivery.
+	//
+	// This used to return the reconciliation's error straight out of Upload.
+	// Reported from csx-farm-linux-1 (CodeSampleX-Farm#15): five consecutive
+	// converges flushed 0 items with the queue full, one slot hitting its
+	// 300-second limit with a pending depth of ONE, and `csx stats` naming
+	//
+	//	evidence: reconcile legacy Windows exit codes: context canceled
+	//
+	// A pass that cannot finish inside the caller's budget therefore stopped
+	// every batch behind it -- permanently, because the pass does not get
+	// faster and the budget does not grow. One sync on that node burned 1,245
+	// CPU-seconds over 2,721 seconds and printed nothing.
+	//
+	// The reconciliation corrects old rows; the upload is the product. An
+	// unfinished correction is a reason to try again later, never a reason to
+	// deliver nothing.
+	b.noteReconcile(b.runReconcile(ctx))
 	sent := 0
 	// Rejections inside a 202 are collected and reported at the end. They
 	// are not retried: the server refused this exact payload and would

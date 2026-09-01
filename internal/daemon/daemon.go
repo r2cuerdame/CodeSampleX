@@ -669,6 +669,11 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	}
 	n, err := d.uploadNow(ctx)
 	res.UploadedBatches = n
+	// Why the queue is not draining, when it is not. A stalled correction
+	// pass no longer fails the upload, so without this line it would be
+	// silent -- and the node that reported it could not tell a stalled pass
+	// from a hung process across 601 seconds of no output.
+	res.ReconcileNote = d.Batcher.LastReconcileNote()
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())
 	}
@@ -695,6 +700,10 @@ type SyncResult struct {
 	SchemaVersion   int `json:"schemaVersion"`
 	WarmedKeys      int `json:"warmedKeys"`
 	UploadedBatches int `json:"uploadedBatches"`
+	// ReconcileNote is non-empty when the legacy-Windows reconciliation pass
+	// did not finish inside its budget. Uploads still ran; the pass resumes
+	// on the next sync.
+	ReconcileNote string `json:"reconcileNote,omitempty"`
 	// UploadedReports is queued items delivered (adoption reports today).
 	UploadedReports int `json:"uploadedReports"`
 	// SetAsideReports is queued items that stopped being retried because
