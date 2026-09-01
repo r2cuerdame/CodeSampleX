@@ -155,26 +155,26 @@ func assets(dist, version string) []csxupdate.Asset {
 		})
 		if target.os == "windows" {
 			out[len(out)-1].MinLauncherVersion = "v1.0.0"
-			// The launcher travels in the SIGNED manifest, so `csx update`
-			// can replace it the way it replaces a payload.
+			// The launcher deliberately does NOT travel here.
 			//
-			// Before this it could not: the only code that downloaded a
-			// launcher was install.ps1, so a machine kept whatever launcher
-			// it was installed with. Measured on a workstation running a
-			// current payload -- its launcher was 26 releases old, missing
-			// both the quarantine rehydrate and the console-subsystem build.
-			// Every launcher-side fix was shipping to a release page and
-			// stopping there.
-			launcherName := "csx-launcher-windows-" + target.arch + ".exe"
-			launcherRaw, err := os.ReadFile(filepath.Join(dist, launcherName))
-			if err != nil {
-				fatal(err.Error())
-			}
-			launcherSum := sha256.Sum256(launcherRaw)
-			out[len(out)-1].LauncherURL = "https://github.com/r2cuerdame/CodeSampleX/releases/download/" +
-				version + "/" + launcherName
-			out[len(out)-1].LauncherSize = int64(len(launcherRaw))
-			out[len(out)-1].LauncherSHA256 = hex.EncodeToString(launcherSum[:])
+			// v0.1.92 put launcherUrl/launcherSize/launcherSha256 in this
+			// structure so `csx update` could deliver the launcher.
+			// VerifyEnvelope decodes the signed payload with
+			// DisallowUnknownFields, so every client built before those
+			// fields existed stopped being able to read the manifest at all.
+			// Measured against the live manifest with a real v0.1.87 binary:
+			//
+			//	decode signed manifest: json: unknown field "launcherUrl"
+			//
+			// An update is the only way to fix a client, and the update is
+			// what broke -- so every csx at or below v0.1.91 was frozen,
+			// the farm node among them, pinned at v0.1.90 and unable to
+			// move.
+			//
+			// The client half stays: v0.1.92 and later understand these
+			// fields if they ever appear. Nothing goes back into this
+			// structure until no supported client rejects unknown fields,
+			// and that is a measurement rather than a date.
 		}
 	}
 	return out
