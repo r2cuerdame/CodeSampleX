@@ -40,45 +40,56 @@ var getConsoleCP = kernel32.NewProc("GetConsoleCP")
 var getConsoleMode = kernel32.NewProc("GetConsoleMode")
 var getFileType = kernel32.NewProc("GetFileType")
 var closeHandle = kernel32.NewProc("CloseHandle")
-var attachConsoleProc = kernel32.NewProc("AttachConsole")
+var getConsoleWindow = kernel32.NewProc("GetConsoleWindow")
+var getConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
+var showWindow = syscall.NewLazyDLL("user32.dll").NewProc("ShowWindow")
 
-// attachParentProcess is ATTACH_PARENT_PROCESS, (DWORD)-1.
-const attachParentProcess = ^uintptr(0)
+// swHide is SW_HIDE.
+const swHide = 0
 
 var launcherJobOnce sync.Once
 var launcherJobErr error
 var launcherJob uintptr
 
-// attachParentConsole is the other half of building this binary for the GUI
-// subsystem.
+// hideOwnConsoleWindow removes the console window Windows opened for this
+// process, and only that one.
 //
-// -H=windowsgui is why an MCP host no longer gets a cmd window per csx:
+// The cmd window an MCP host shows for every csx is the LAUNCHER's own.
 // Windows allocates a console for a console-subsystem process before any of
-// its code can run, so nothing the launcher does could have prevented its own.
-// Measured from a console-less parent with pipes on stdio: two windows built
-// CONSOLE, none built windowsgui.
+// its code runs, whenever the process that started it has none -- and a host
+// like Claude Code has none, while a terminal does, which is why the window
+// appeared under one host and not another.
 //
-// The cost is that such a process is not ATTACHED to the terminal's console
-// either. Output was never at risk -- inherited handles still write there, and
-// cmd.exe still waits for it, both measured -- but console control events go
-// to attached processes, so Ctrl+C would stop reaching a long `csx run`.
+// Building for the GUI subsystem removes it, and that was tried: v0.1.90
+// shipped -H=windowsgui. It cost more than it bought. PowerShell 5.1 does not
+// redirect a GUI-subsystem child's stdout, so `$v = csx version` came back
+// EMPTY -- for install.ps1's own self-test, and for anything anyone scripts
+// around this CLI. Measured: console build printed "csx-launcher v1.0.0",
+// both GUI builds printed nothing, same command, same shell.
 //
-// The guard is the point. A first attempt called AttachConsole
-// unconditionally and a window came back: ATTACH_PARENT_PROCESS takes whatever
-// console the parent happens to hold, which under a host is some unrelated
-// terminal further up. So attach only when this invocation's own stdio is a
-// terminal -- a console HANDLE on stdout or stdin, which a pipe can never be.
-// That is the same question the window policy asks, from the other side.
-func attachParentConsole() {
-	if hasConsole() {
+// So the subsystem stays, and only the WINDOW goes. The condition has to be
+// exact, because hiding a console we merely inherited would hide the user's
+// terminal. GetConsoleProcessList answers it: measured at 1 when Windows
+// allocated the console for this process alone, and at 4 when it was the
+// terminal's, shared with the shell above it.
+func hideOwnConsoleWindow() {
+	if !ownsItsConsoleAlone() {
 		return
 	}
-	if !handleIsConsole(uintptr(syscall.Stdout)) && !handleIsConsole(uintptr(syscall.Stdin)) {
+	hwnd, _, _ := getConsoleWindow.Call()
+	if hwnd == 0 {
 		return
 	}
-	// Failure means the parent held no console after all, which changes
-	// nothing: without one there is no Ctrl+C to deliver.
-	_, _, _ = attachConsoleProc.Call(attachParentProcess)
+	_, _, _ = showWindow.Call(hwnd, swHide)
+}
+
+// ownsItsConsoleAlone reports whether this process is the only one attached to
+// its console -- which is true exactly when Windows created that console for
+// it, and false for every console it inherited.
+func ownsItsConsoleAlone() bool {
+	var pids [4]uint32
+	n, _, _ := getConsoleProcessList.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
+	return n == 1
 }
 
 // hasConsole reports whether this launcher owns a console at all.

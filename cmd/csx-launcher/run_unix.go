@@ -17,5 +17,5 @@ func runChild(cmd *exec.Cmd) (int, error) {
 	return 0, err
 }
 
-// attachParentConsole is a Windows concept; there is nothing to attach to.
-func attachParentConsole() {}
+// hideOwnConsoleWindow is a Windows concept; nothing here opens a window.
+func hideOwnConsoleWindow() {}

@@ -144,13 +144,13 @@ jobs:
               -o "dist/csx-$os-$arch$ext" ./cmd/csx
           done
           for arch in amd64 arm64; do
-            # -H=windowsgui: Windows allocates a console for a console-subsystem
-            # process before any of its code runs, so a host with no console of
-            # its own gets one cmd window per csx it starts. A GUI-subsystem
-            # binary still inherits the stdio handles its parent gives it --
-            # terminal, pipe or file all keep working -- and it attaches to a
-            # parent console when there is one, so a terminal keeps Ctrl+C.
-            GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H=windowsgui" \
+            # NOT -H=windowsgui. That removes the cmd window an MCP host
+            # shows, and v0.1.90 shipped it, but PowerShell 5.1 does not
+            # redirect a GUI-subsystem child's stdout: `$v = csx version` came
+            # back empty, including install.ps1's own launcher self-test. The
+            # launcher hides its own console window instead, which costs
+            # nothing -- see hideOwnConsoleWindow.
+            GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w" \
               -o "dist/csx-launcher-windows-$arch.exe" ./cmd/csx-launcher
           done
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \

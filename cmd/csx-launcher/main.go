@@ -16,11 +16,10 @@ import (
 )
 
 func main() {
-	// This binary is built for the Windows GUI subsystem so that a host with
-	// no console of its own does not get a cmd window per csx it starts.
-	// Rejoin the terminal's console when there is one, before anything can
-	// print or read.
-	attachParentConsole()
+	// Windows opens a console for this process when the one that started it
+	// has none -- an MCP host, typically. Close that window before anything
+	// can be seen, without touching a console we merely inherited.
+	hideOwnConsoleWindow()
 	if len(os.Args) == 2 && os.Args[1] == "--launcher-version" {
 		fmt.Println("csx-launcher " + launcher.ProtocolVersion)
 		return

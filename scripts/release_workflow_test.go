@@ -389,54 +389,39 @@ func jobKeys(jobs map[string]string) []string {
 	return names
 }
 
-// The Windows launcher must be a GUI-subsystem binary.
+// The Windows launcher must NOT be built for the GUI subsystem.
 //
-// Measured on this workstation 2026-09-01, spawned from a console-less parent
-// with pipes on stdio -- the shape an MCP host uses:
+// v0.1.90 shipped -H=windowsgui to remove the cmd window an MCP host opens
+// for every csx. It worked, and it broke something worse: PowerShell 5.1 does
+// not redirect a GUI-subsystem child's stdout, so ordinary capture came back
+// empty. Measured with one command in one shell:
 //
-//	launcher built CONSOLE   2 console windows appeared
-//	launcher built windowsgui  0
+//	console subsystem   launcherVersion = "csx-launcher v1.0.0"
+//	windowsgui          launcherVersion = ""
+//	windowsgui + AttachConsole(ATTACH_PARENT_PROCESS)  launcherVersion = ""
 //
-// Windows allocates a console for a console-subsystem process BEFORE any of
-// its code runs, so no amount of CreateProcess policy inside the launcher can
-// prevent its own window; the launcher can only decide what its payload gets.
-// A host that has no console of its own -- and Claude Code has none, while
-// codex.exe does, which is why only one of them showed the window -- therefore
-// gets a fresh console per csx it starts.
+// install.ps1's own launcher self-test reads that value, so every install
+// failed with "staged launcher self-test failed" -- and so would anything a
+// user scripts around this CLI.
 //
-// A GUI-subsystem process still inherits whatever stdio handles its parent
-// gives it. Verified against a real cmd.exe console: `--launcher-version`
-// prints on stdout and launcher diagnostics print on stderr exactly as before,
-// and the same holds for a pipe and for a file redirect.
-func TestTheWindowsLauncherIsBuiltWithoutAConsole(t *testing.T) {
+// The window is removed by hiding it instead, which needs no subsystem change.
+func TestTheWindowsLauncherKeepsItsConsoleSubsystem(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	at := strings.Index(body, "csx-launcher-windows-$arch.exe")
+	at := strings.Index(body, `-o "dist/csx-launcher-windows-$arch.exe"`)
 	if at < 0 {
 		t.Fatal("the release workflow no longer builds a Windows launcher")
 	}
-	// The ldflags for that build are on the line above the -o.
 	start := strings.LastIndex(body[:at], "GOOS=windows")
 	if start < 0 {
 		t.Fatal("could not find the Windows launcher build")
 	}
-	build := body[start : at+len("csx-launcher-windows-$arch.exe")]
-	if !strings.Contains(build, "-H=windowsgui") {
-		t.Errorf("the Windows launcher is built as a console binary, so Windows "+
-			"gives every csx an MCP host starts its own cmd window:\n%s", build)
-	}
-	// And only the launcher: the payload is run BY the launcher, which decides
-	// its window, and a GUI-subsystem payload would lose that distinction.
-	payloadAt := strings.Index(body, "csx-$os-$arch$ext")
-	if payloadAt < 0 {
-		t.Fatal("the release workflow no longer builds the payload")
-	}
-	payloadStart := strings.LastIndex(body[:payloadAt], "go build")
-	if strings.Contains(body[payloadStart:payloadAt], "-H=windowsgui") {
-		t.Error("the payload is built without a console; the launcher decides that, per invocation")
+	if strings.Contains(body[start:at], "-H=windowsgui") {
+		t.Error("the launcher is built for the GUI subsystem again; PowerShell will not " +
+			"capture its output and install.ps1's self-test will fail for every user")
 	}
 }
 
