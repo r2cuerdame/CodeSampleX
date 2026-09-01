@@ -594,13 +594,54 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /install.ps1", s.installScript("install/install.ps1"))
 	handle("GET /install.sh", s.installScript("install/install.sh"))
 	handle("GET /dl/{file}", s.download)
-	mux.Handle("GET /static/", cacheControl(http.FileServerFS(staticFS)))
+	// The asset version is the deployed build's short revision, the same
+	// token every page appends to its stylesheet link.
+	assetVersion := ""
+	if line := buildLineFor(d.Build, i18n.Default); line != nil {
+		assetVersion = line.ShortRevision
+		if assetVersion == "" {
+			assetVersion = line.Version
+		}
+	}
+	mux.Handle("GET /static/", staticCache(assetVersion, http.FileServerFS(staticFS)))
 	handle("GET /{ecosystem}/{rest...}", s.packageRoutes)
 }
 
-func cacheControl(next http.Handler) http.Handler {
+// staticCache decides how long a static asset may be kept, and gives it a
+// validator so that revalidating costs a header rather than the file.
+//
+// Every page links the stylesheet as /static/site.css?v=<short revision>, so
+// that URL's bytes never change: it can be cached for a year and never asked
+// about again. It was served with max-age=3600 and no ETag and no
+// Last-Modified, which made a returning visitor re-fetch 26KB every hour over
+// whatever link they have, and made the revalidation a full re-send because
+// there was nothing to revalidate against.
+//
+// The same file WITHOUT the token is a different promise. Nothing makes that
+// URL change, so it gets a short life -- long enough to help a burst of
+// requests, short enough that a deploy is picked up.
+//
+// An unstamped build has no version, and then there is nothing honest to
+// promise: no ETag, short life for everything.
+func staticCache(version string, next http.Handler) http.Handler {
+	etag := ""
+	if version != "" {
+		etag = `"` + version + `"`
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		if etag != "" {
+			w.Header().Set("ETag", etag)
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			if r.URL.Query().Get("v") == version {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		w.Header().Set("Cache-Control", "public, max-age=300")
 		next.ServeHTTP(w, r)
 	})
 }

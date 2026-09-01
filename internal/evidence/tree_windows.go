@@ -4,6 +4,7 @@ package evidence
 
 import (
 	"os/exec"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -27,9 +28,45 @@ type processTree struct {
 	job windows.Handle
 }
 
-// prepare runs before Start. Nothing to set here: the job captures the process
-// after it exists.
-func (t *processTree) prepare(*exec.Cmd) {}
+// createNoWindow gives a console-subsystem child a console with no window.
+const createNoWindow = 0x08000000
+
+// hasConsole reports whether this process owns a console. GetConsoleCP returns
+// zero when it does not, which is the state an MCP host over pipes leaves us
+// in.
+func hasConsole() bool {
+	cp, _, _ := procGetConsoleCP.Call()
+	return cp != 0
+}
+
+var procGetConsoleCP = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleCP")
+
+// prepare runs before Start. The job captures the process after it exists, so
+// the only thing to set here is whether the child may open a window.
+//
+// Windows hands a console-subsystem child a brand new console -- and a
+// Terminal window on the desktop with it -- whenever the process creating it
+// owns none. An MCP host spawns csx over pipes and gives it no console, so
+// every command run through run_observed_command flashed a window: `npm test`,
+// `go build`, whatever the tool was asked to observe.
+//
+// CREATE_NO_WINDOW gives the child a console with no window. Standard handles
+// are already redirected to the pipes this runner reads, so the output, the
+// exit code and the job membership are untouched.
+//
+// Only when this process has no console of its own. Somebody typing
+// `csx run -- npm test` in their terminal owns one, the child inherits it,
+// no new window appears, and the flag would only take away a console the
+// command may legitimately query.
+func (t *processTree) prepare(cmd *exec.Cmd) {
+	if hasConsole() {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= createNoWindow
+}
 
 // started runs immediately after Start and puts the process in the job.
 //

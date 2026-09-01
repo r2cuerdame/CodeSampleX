@@ -13,7 +13,11 @@
 
 	encode zstd gzip
 
-	@static path /static/* /install.ps1 /install.sh /robots.txt /sitemap.xml
+	# /static/* is deliberately absent: the app sets Cache-Control there
+	# itself, because only it knows whether the request carried the version
+	# token that makes the bytes immutable. Caddy's header directive ADDS,
+	# so listing it here sent two Cache-Control lines for every asset.
+	@static path /install.ps1 /install.sh /robots.txt /sitemap.xml
 	header @static Cache-Control "public, max-age=3600"
 
 	header {
