@@ -14,6 +14,7 @@ const jobObjectExtendedLimitInformation = 9
 const jobObjectLimitKillOnJobClose = 0x00002000
 const jobObjectLimitBreakawayOK = 0x00000800
 const createNoWindow = 0x08000000
+const fileTypePipe = 0x0003
 
 type ioCounters struct{ ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount uint64 }
 type basicLimitInformation struct {
@@ -36,20 +37,86 @@ var setInformationJobObject = kernel32.NewProc("SetInformationJobObject")
 var assignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
 var getCurrentProcess = kernel32.NewProc("GetCurrentProcess")
 var getConsoleCP = kernel32.NewProc("GetConsoleCP")
+var getConsoleMode = kernel32.NewProc("GetConsoleMode")
+var getFileType = kernel32.NewProc("GetFileType")
 var closeHandle = kernel32.NewProc("CloseHandle")
 
 var launcherJobOnce sync.Once
 var launcherJobErr error
 var launcherJob uintptr
 
-// hasConsole reports whether this launcher owns a console the payload can be
-// handed. GetConsoleCP has no console-independent meaning, so it fails --
-// returning code page 0 -- for a process attached to none. A console with no
-// window still answers, which is what keeps a host that already passed
-// CREATE_NO_WINDOW down to a single console instead of two.
+// hasConsole reports whether this launcher owns a console at all.
+//
+// Kept because it still answers half the question: a process attached to no
+// console has nothing to hand the payload. It is no longer the whole test --
+// see consoleIsTheOutput.
 func hasConsole() bool {
 	cp, _, _ := getConsoleCP.Call()
 	return cp != 0
+}
+
+// handleIsConsole reports whether a handle is a console. GetConsoleMode
+// succeeds only on a console handle.
+func handleIsConsole(h uintptr) bool {
+	var mode uint32
+	r, _, _ := getConsoleMode.Call(h, uintptr(unsafe.Pointer(&mode)))
+	return r != 0
+}
+
+// handleIsPipe reports whether a handle is a pipe, as opposed to a console, a
+// file or the null device.
+func handleIsPipe(h uintptr) bool {
+	t, _, _ := getFileType.Call(h)
+	return uint32(t) == fileTypePipe
+}
+
+// consoleIsTheOutput reports whether this launcher's own stdout is a console.
+//
+// Owning a console was the wrong question, and it answered wrongly for half
+// the hosts. Measured on a workstation running four MCP clients at once:
+//
+//	conhost 28656 hosts csx.exe 32896   (parent claude.exe)
+//	conhost 25852 hosts csx.exe  5252   (parent claude.exe)
+//	conhost 38788 hosts csx.exe 32800   (parent claude.exe)
+//	conhost 16644 hosts csx.exe 49156   (parent claude.exe)
+//
+// and no conhost at all for the csx processes another MCP host had spawned.
+// One host allocates a console for the child and the other does not, so
+// hasConsole() said yes for half of them, the flag stayed off, and the payload
+// inherited a console nobody reads -- the window users report, titled with the
+// payload path.
+//
+// What actually separates a person typing `csx search` from an MCP host is
+// whether anything is reading the output. A terminal gives the process a
+// console handle on stdout; an MCP host gives it a pipe, because that is what
+// the protocol is. So the question is stdout, not ownership.
+func consoleIsTheOutput() bool {
+	if !hasConsole() {
+		return false
+	}
+	// A pipe on both ends is what an MCP host looks like, and only that.
+	//
+	// The first attempt asked whether stdout was a console, which took the
+	// console away from `csx search > out.txt` too -- a person in a terminal
+	// redirecting output still wants Ctrl+C and still owns the console. A
+	// pipe is the narrow signal: a terminal gives a console handle, a
+	// redirect gives a file, the null device gives a character device, and
+	// only a host speaking a protocol over stdio gives a pipe.
+	if handleIsPipe(uintptr(syscall.Stdin)) && handleIsPipe(uintptr(syscall.Stdout)) {
+		return false
+	}
+	return true
+}
+
+// applyWindowPolicy decides whether the child may keep a console window.
+func applyWindowPolicy(cmd *exec.Cmd) {
+	if consoleIsTheOutput() {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= createNoWindow
 }
 
 func runChild(cmd *exec.Cmd) (int, error) {
@@ -68,12 +135,7 @@ func runChild(cmd *exec.Cmd) (int, error) {
 	// launcher does own a console -- someone typing `csx search` -- the flag
 	// stays off so the child inherits that console and keeps its output,
 	// prompts and Ctrl+C exactly as before.
-	if !hasConsole() {
-		if cmd.SysProcAttr == nil {
-			cmd.SysProcAttr = &syscall.SysProcAttr{}
-		}
-		cmd.SysProcAttr.CreationFlags |= createNoWindow
-	}
+	applyWindowPolicy(cmd)
 	// The child inherits job membership at creation, eliminating the fast-child
 	// Start->Assign race. Deliberately leave the handle open until process exit;
 	// closing it here would also terminate this launcher, which is a job member.
