@@ -59,6 +59,18 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	seenPublicness := map[string]string{}
 	lookups := 0
 	publicness := func(p domain.PURL) string {
+		// A fixed public target is public, and no registry can say so.
+		//
+		// The checker exists to ask npm, PyPI, crates.io and the rest.
+		// engine/unreal lives on none of them, so the answer was UNKNOWN and
+		// UNKNOWN is refused -- which meant every observation an Unreal
+		// project could produce was rejected on arrival, retried on the next
+		// sync, and rejected again, forever. domain.IsWantedTarget is
+		// already the publicness boundary for coordinates that do not live
+		// on a registry; it simply was not consulted here.
+		if status := publicTargetPublicness(p); status == scanner.PublicnessPublic {
+			return status
+		}
 		if a.d.Checker == nil {
 			return scanner.PublicnessUnknown
 		}
@@ -158,6 +170,21 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		"accepted": accepted,
 		"rejected": rejected,
 	})
+}
+
+// publicTargetPublicness answers for the fixed public target vocabulary --
+// engines and SDKs that have no registry -- and declines to answer for
+// everything else.
+//
+// Deliberately narrow. The vocabulary is a closed list, which is what keeps
+// this from becoming "any generic purl is public": an arbitrary generic name
+// is exactly what would be sent to get an unchecked coordinate onto public
+// pages, and it still resolves to UNKNOWN and is still refused.
+func publicTargetPublicness(p domain.PURL) string {
+	if domain.IsWantedTarget(p) {
+		return scanner.PublicnessPublic
+	}
+	return scanner.PublicnessUnknown
 }
 
 // publicDependsOn keeps the edges whose child resolved as public. UNKNOWN is

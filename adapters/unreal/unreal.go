@@ -46,9 +46,40 @@ func (Adapter) Capabilities() []string { return []string{"A0"} }
 // Detect reports whether dir holds a .uproject file.
 func (Adapter) Detect(dir string) bool { return projectFile(dir) != "" }
 
-// ScanPackages returns nothing, always. See the package comment.
-func (Adapter) ScanPackages(context.Context, string) ([]scanner.ResolvedPackage, error) {
-	return nil, nil
+// ScanPackages returns the engine the project targets, and nothing else.
+//
+// It has to return something, or an Unreal project records nothing: an
+// observation is written per PUBLIC package a scan found, so a project with
+// no packages produces no rows at all however the build went.
+//
+// The engine is the one coordinate here that is public and stable, and
+// domain.IsWantedTarget is already documented as the publicness boundary for
+// targets that do not live on a package registry. So it is marked PUBLIC
+// outright rather than sent to a registry that has never heard of it.
+//
+// Marketplace plugins and engine modules are still not reported. That is a
+// different judgement rather than this one relaxed: they have no stable
+// public identifier, so any coordinate for them would be invented.
+func (a Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.ResolvedPackage, error) {
+	p, ok := a.engine(ctx, dir)
+	if !ok {
+		return nil, nil
+	}
+	return []scanner.ResolvedPackage{{
+		PURL:       p,
+		Publicness: scanner.PublicnessPublic,
+		Direct:     true,
+		Source:     "uproject",
+	}}, nil
+}
+
+// engine resolves the .uproject to its public engine coordinate.
+func (Adapter) engine(_ context.Context, dir string) (domain.PURL, bool) {
+	descriptor := engineDescriptor(dir)
+	if descriptor == "" {
+		return domain.PURL{}, false
+	}
+	return domain.WantedTargetFromFramework(descriptor)
 }
 
 // ScanSymbols returns nothing: there are no packages to attribute symbols to.
@@ -71,25 +102,35 @@ func (Adapter) ClassifyCommand([]string) scanner.CommandProfile {
 // there -- yields no hint at all, since an unconvertible descriptor would
 // travel as an arbitrary framework string and mean nothing to anyone.
 func (Adapter) EnvironmentHints(_ context.Context, dir string) map[string]string {
+	descriptor := engineDescriptor(dir)
+	if descriptor == "" {
+		return nil
+	}
+	return map[string]string{"frameworks": descriptor}
+}
+
+// engineDescriptor reads the .uproject and returns "unreal@<version>", or ""
+// when nothing convertible is there.
+func engineDescriptor(dir string) string {
 	path := projectFile(dir)
 	if path == "" {
-		return nil
+		return ""
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return ""
 	}
 	var doc struct {
 		EngineAssociation string `json:"EngineAssociation"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil
+		return ""
 	}
 	descriptor := "unreal@" + strings.TrimSpace(doc.EngineAssociation)
 	if _, ok := domain.WantedTargetFromFramework(descriptor); !ok {
-		return nil
+		return ""
 	}
-	return map[string]string{"frameworks": descriptor}
+	return descriptor
 }
 
 // projectFile returns the .uproject in dir, or "" when there is none. Only

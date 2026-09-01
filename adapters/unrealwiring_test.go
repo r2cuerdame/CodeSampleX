@@ -47,9 +47,15 @@ func TestAnUnrealProjectIsDetectedThroughTheRegistry(t *testing.T) {
 	if p.Name != "engine/unreal" || p.Version != "5.5" {
 		t.Errorf("scan produced %+v, want engine/unreal 5.5", p)
 	}
-	// And it still claims no packages, so nothing invents coordinates.
-	if len(res.Packages) != 0 {
-		t.Errorf("the scan claimed %d packages for an Unreal project", len(res.Packages))
+	// The engine is also reported as a package, and marked public without a
+	// registry lookup -- an observation is written per PUBLIC package, so
+	// without this an Unreal project records nothing whatever it builds.
+	if len(res.Packages) != 1 {
+		t.Fatalf("the scan named %d packages; want exactly the engine", len(res.Packages))
+	}
+	if got := res.Packages[0]; !domain.IsWantedTarget(got.PURL) || got.Publicness != scanner.PublicnessPublic {
+		t.Errorf("scan named %s publicness=%q, want a PUBLIC fixed target",
+			got.PURL, got.Publicness)
 	}
 }
 

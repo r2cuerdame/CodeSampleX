@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
 
 // An Unreal project must be recognisable as one.
@@ -77,25 +78,40 @@ func TestAnEngineAssociationThatIsNotAVersionProducesNoHint(t *testing.T) {
 	}
 }
 
-// It claims no ecosystem and no packages. Unreal dependencies are engine
-// modules and marketplace plugins, and neither has a stable public
-// identifier this network could hold anyone to.
-func TestTheAdapterClaimsNoPackages(t *testing.T) {
-	dir := writeProject(t, `{"EngineAssociation":"5.5"}`)
+// It names the engine and nothing else.
+//
+// The engine is public and stable and inside domain.IsWantedTarget's
+// boundary. Marketplace plugins and engine modules are not: they have no
+// stable public identifier, so any coordinate for them would be invented --
+// and an invented coordinate is worse than a missing one, because everything
+// downstream would treat it as a real subject other people could match.
+func TestTheAdapterNamesTheEngineAndNothingElse(t *testing.T) {
+	dir := writeProject(t, `{
+  "EngineAssociation": "5.5",
+  "Modules": [ { "Name": "MyGame", "Type": "Runtime" } ],
+  "Plugins": [ { "Name": "EnhancedInput", "Enabled": true },
+               { "Name": "SomeMarketplaceThing", "Enabled": true } ]
+}`)
 	a := New()
 	pkgs, err := a.ScanPackages(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 0 {
-		t.Errorf("claimed %d packages; Unreal plugins have no stable public identifier", len(pkgs))
+	for _, p := range pkgs {
+		if !domain.IsWantedTarget(p.PURL) {
+			t.Errorf("named %s, which is outside the public target vocabulary", p.PURL)
+		}
 	}
-	syms, err := a.ScanSymbols(context.Background(), dir, nil)
+	if len(pkgs) != 1 {
+		t.Errorf("named %d coordinates for a project with two plugins and a module; "+
+			"only the engine has a stable public identifier", len(pkgs))
+	}
+	syms, err := a.ScanSymbols(context.Background(), dir, pkgs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(syms) != 0 {
-		t.Errorf("claimed %d symbols", len(syms))
+		t.Errorf("claimed %d symbols; nothing here reads C++ source", len(syms))
 	}
 }
 
@@ -126,4 +142,54 @@ func quote(s string) string {
 		return `""`
 	}
 	return string(b)
+}
+
+// The engine itself is a package, and the only one this adapter may name.
+//
+// Recording an observation is per public package -- recordRun iterates the
+// PUBLIC purls a scan found -- so an Unreal project with no packages produced
+// no observation rows at all, whatever command was wrapped. The engine is the
+// one coordinate here that is public and stable, and domain.IsWantedTarget is
+// already documented as "the publicness boundary for targets that do not live
+// on a package registry". So it is reported as a package, marked PUBLIC
+// without asking a registry that has never heard of it.
+//
+// Marketplace plugins and engine modules are still not reported, and that is
+// a different judgement, not the same one relaxed: they have no stable public
+// identifier, so any coordinate for them would be invented.
+func TestTheEngineIsReportedAsAPublicPackage(t *testing.T) {
+	dir := writeProject(t, `{"EngineAssociation":"5.5"}`)
+	pkgs, err := New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("reported %d packages, want exactly the engine", len(pkgs))
+	}
+	p := pkgs[0]
+	if p.PURL.Ecosystem != "generic" || p.PURL.Name != "engine/unreal" || p.PURL.Version != "5.5" {
+		t.Errorf("reported %+v, want generic engine/unreal 5.5", p.PURL)
+	}
+	if p.Publicness != scanner.PublicnessPublic {
+		t.Errorf("publicness = %q; a fixed public target must not wait on a registry lookup", p.Publicness)
+	}
+	if !p.Direct {
+		t.Error("the engine a project targets is a direct dependency of it")
+	}
+	if !domain.IsWantedTarget(p.PURL) {
+		t.Error("the coordinate is outside the public target boundary")
+	}
+}
+
+// An EngineAssociation that is not a version yields no package either. The
+// same rule as the hint: a coordinate that cannot be named is not reported.
+func TestNoEngineVersionMeansNoPackage(t *testing.T) {
+	dir := writeProject(t, `{"EngineAssociation":"{5F4E1C3A-0000-0000-0000-000000000000}"}`)
+	pkgs, err := New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("reported %d packages for a source-build project", len(pkgs))
+	}
 }
