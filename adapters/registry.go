@@ -8,13 +8,18 @@ import (
 	"github.com/r2cuerdame/codesamplex/adapters/node"
 	"github.com/r2cuerdame/codesamplex/adapters/python"
 	"github.com/r2cuerdame/codesamplex/adapters/rust"
+	"github.com/r2cuerdame/codesamplex/adapters/unreal"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
 
 // All returns every ecosystem adapter, in the order they are tried.
 // Node/TS is the reference ecosystem and goes first (goal.md §13.2).
 func All() []scanner.Adapter {
-	return []scanner.Adapter{node.Adapter{}, python.New(), goadapter.New(), rust.New()}
+	// Unreal is last and contributes no packages: it names the engine a
+	// project targets, which is the only public coordinate an Unreal
+	// project has. EnvironmentHints is first-adapter-wins per key, so it
+	// can never displace a real ecosystem's hint.
+	return []scanner.Adapter{node.Adapter{}, python.New(), goadapter.New(), rust.New(), unreal.New()}
 }
 
 // Detect returns the adapters whose ecosystems are present in dir.

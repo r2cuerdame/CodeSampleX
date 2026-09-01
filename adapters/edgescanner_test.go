@@ -29,6 +29,11 @@ func TestWhichRegisteredAdaptersCanReportATree(t *testing.T) {
 		"pypi":   true,
 		"golang": true,
 		"cargo":  true,
+		// Unreal names an engine, not a package set. Its dependencies are
+		// engine modules and marketplace plugins, and neither has a stable
+		// public identifier, so there is no tree here to report and never
+		// will be until one exists.
+		"generic": false,
 	}
 	seen := map[string]bool{}
 	for _, a := range All() {

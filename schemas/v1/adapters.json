@@ -147,6 +147,17 @@
       ],
       "symbolConfidence": "UNKNOWN",
       "notes": "Verification-only Gradle/Java adapter. The sample's build.gradle(.kts), settings.gradle(.kts), init scripts, wrapper, gradle.properties and plugins are never executed while networking is enabled. Exact canonical Maven purls are the complete JAR closure; ranges, dynamic + selectors, SNAPSHOTs, classifiers, non-JAR packaging and transitive expansion are rejected. CodeSampleX generates a Central-only Gradle resolver, runs it from /tmp with a clean workspace GRADLE_USER_HOME, verifies the resolved coordinate set, copies and hashes each JAR, then uses a second generated Gradle Java project for network-off compile and Contract execution. Exact Java 8, 11, 17 and 21 use digest-pinned Gradle 8.14.3 / Amazon Corretto / Amazon Linux 2023 (glibc) images; Java 25 uses Gradle 9.7.0 in the same image family and therefore is not classified as a pure-JDK comparison with the earlier lines. Omitted and unsupported runtime versions are rejected before claim. No local Java/Gradle project scanner exists, so this adapter claims no A0/A1/A2."
+    },
+    {
+      "ecosystem": "generic",
+      "name": "unreal",
+      "version": "1.0.0",
+      "packageManagers": [],
+      "capabilities": [
+        "A0"
+      ],
+      "symbolConfidence": "UNKNOWN",
+      "notes": "Recognises an Unreal Engine project by its .uproject and reports the engine it targets as the public coordinate engine/unreal. It claims no packages, deliberately: Unreal's dependencies are engine modules and marketplace plugins and neither has a stable public identifier this network could hold anyone to, so any package coordinate here would be invented. The engine version is read from EngineAssociation and is required -- a source build writes a GUID there, and a descriptor that cannot become a coordinate produces no hint at all. There is no verification lane and there is not going to be one from this adapter: the verifier runs contracts in a fixed 512MB linux container with no network, and an Unreal build needs tens of gigabytes, Windows and a licence."
     }
   ],
   "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."
