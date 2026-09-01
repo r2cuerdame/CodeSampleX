@@ -114,10 +114,14 @@ jobs:
     name: Roll out production
     needs: eligibility
     runs-on: ubuntu-latest
-    # deploy.ps1 owns a measured 30-minute fresh-builder budget after image
-    # preparation and cutover. Keep the outer runner alive long enough for
-    # setup, the final invariant/public-surface gates, and rollback as well.
-    timeout-minutes: 45
+    # deploy.ps1 owns a measured fresh-builder budget after image preparation
+    # and cutover -- 80 minutes since 2026-09-01, raised from 30 when the pass
+    # itself was measured at 49 minutes on a corpus that had tripled that day.
+    # Keep the outer runner alive long enough for setup, the final
+    # invariant/public-surface gates, and rollback as well: if this merely
+    # equals the inner wait, GitHub cancels the job before the script can
+    # record success or run its rollback path.
+    timeout-minutes: 95
     environment: codesamplex-production
     permissions:
       contents: read

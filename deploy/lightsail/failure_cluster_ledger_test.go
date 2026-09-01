@@ -115,12 +115,16 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 // 90 reads took nineteen minutes and competed with the very full builder pass
 // the gate was waiting for. Freshness is one cheap timestamp comparison; the
 // full invariant tuple belongs after that marker and is read exactly once.
-// The cheap wait keeps a thirty-minute ceiling: more than twice the observed
-// fourteen-minute first full pass, with room for control-plane jitter.
+// The ceiling follows the measurement and has moved once. It was thirty
+// minutes, set at more than twice an observed fourteen-minute first full
+// pass. On 2026-09-01 the pass took forty-nine minutes -- server up 19:39:12Z,
+// builder generatedAt 20:28:42Z -- because evidence_agg had gone from roughly
+// 72k rows to 216k that day, and the gate rolled a healthy v0.1.97 server back
+// to v0.1.96. Eighty minutes is the same rule applied to the newer number.
 func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
 	for _, required := range []string{
-		`$builderFreshPollAttempts = 900`,
+		`$builderFreshPollAttempts = 2400`,
 		`$builderFreshPollSeconds = 2`,
 		`Start-Sleep -Seconds $builderFreshPollSeconds`,
 	} {
@@ -129,7 +133,7 @@ func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T)
 		}
 	}
 	loopStart := strings.Index(deploy, `for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++)`)
-	loopEndMarker := `if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }`
+	loopEndMarker := `if ($builderFresh -ne 1) {`
 	loopEnd := strings.Index(deploy, loopEndMarker)
 	if loopStart < 0 || loopEnd <= loopStart {
 		t.Fatal("post-deploy fresh-builder polling loop is missing or malformed")

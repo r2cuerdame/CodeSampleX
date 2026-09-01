@@ -1097,7 +1097,23 @@ $builderFresh = 0
 # that measured pass plus control-plane jitter; the old nominal three-minute
 # ceiling was only hidden by repeatedly running a ten-second whole-corpus
 # invariant query inside this loop.
-$builderFreshPollAttempts = 900
+# The budget follows a measurement, not a guess.
+#
+# Measured on production 2026-09-01: the server restarted at 19:39:12Z and the
+# builder wrote its generatedAt at 20:28:42Z -- 49 minutes. CSX_SNAPSHOT_INTERVAL
+# is 5m and RunOnce is called immediately at startup, so that is the pass
+# itself, not schedule latency. The old budget was 900 x 2s = 30 minutes, so
+# the deploy gave up on a working server and rolled a healthy v0.1.97 back to
+# v0.1.96.
+#
+# What made the pass slow is capacity rather than code: evidence_agg went from
+# roughly 72k rows to 216k that day, on a host whose server container sits at
+# 97% of its 768MiB limit with a load average of 3.69 on 2 vCPU.
+#
+# The gate still demands a COMPLETE pass. Nothing here is weakened; it simply
+# stops calling a slow host a broken one. If a pass ever outgrows this too,
+# the number is wrong again and the answer is the same: measure, then set it.
+$builderFreshPollAttempts = 2400
 $builderFreshPollSeconds = 2
 for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {
     # The materialized invariant query is a whole-corpus scan. Poll only the
@@ -1109,7 +1125,13 @@ for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {
     if ($builderFresh -eq 1) { break }
     if ($attempt -lt $builderFreshPollAttempts) { Start-Sleep -Seconds $builderFreshPollSeconds }
 }
-if ($builderFresh -ne 1) { throw "the new server did not complete a fresh full builder pass" }
+if ($builderFresh -ne 1) {
+    $waitedMin = [int](($builderFreshPollAttempts * $builderFreshPollSeconds) / 60)
+    throw ("the new server did not complete a fresh full builder pass; waited $waitedMin min " +
+        "(builder generatedAt must be at or after the server's StartedAt). A pass this slow is " +
+        "usually capacity: check evidence_agg row count, container memory and load average before " +
+        "raising this budget again.")
+}
 $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
 if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
 $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })

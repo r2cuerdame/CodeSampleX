@@ -171,61 +171,37 @@ func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	swap := func(body []byte) {
-		t.Helper()
-		sum := sha256.Sum256(body)
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write(body)
-		}))
-		defer srv.Close()
-		c := &Client{HTTP: srv.Client()}
-		// The self-test cannot run a text file, so drive the rename directly:
-		// this test is about the aside, not about starting a binary.
-		staged := filepath.Join(root, "staged.exe")
-		if err := os.WriteFile(staged, body, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := c.installLauncher(exe, staged); err != nil {
-			t.Fatalf("swap: %v", err)
-		}
-		_ = sum
+	// A displaced launcher from an earlier update, still being executed:
+	// open with no sharing, which is what a running image looks like.
+	oldAside := exe + ".previous-1"
+	if err := os.WriteFile(oldAside, []byte("launcher zero"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-
-	swap([]byte("launcher two"))
-
-	// Hold every displaced launcher open with no sharing, exactly as a
-	// running process does.
-	var held []*os.File
-	defer func() {
-		for _, f := range held {
-			_ = f.Close()
-		}
-	}()
-	entries, err := os.ReadDir(root)
+	holder, err := os.Open(oldAside)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range entries {
-		if e.Name() == "csx.exe" || e.Name() == "staged.exe" {
-			continue
-		}
-		f, err := os.Open(filepath.Join(root, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		held = append(held, f)
-	}
-	if len(held) == 0 {
-		t.Fatal("the first swap displaced nothing")
-	}
+	defer holder.Close()
 
-	swap([]byte("launcher three"))
+	staged := filepath.Join(root, "staged.exe")
+	if err := os.WriteFile(staged, []byte("launcher two"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{}
+	if err := c.installLauncher(exe, staged); err != nil {
+		t.Fatalf("a held earlier aside blocked the swap: %v", err)
+	}
 
 	got, err := os.ReadFile(exe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "launcher three" {
+	if string(got) != "launcher two" {
 		t.Errorf("installed launcher is %q, want the newest", got)
+	}
+	// The held one is left alone rather than failing the update over
+	// housekeeping.
+	if _, err := os.Stat(oldAside); err != nil {
+		t.Errorf("the held aside was disturbed: %v", err)
 	}
 }
