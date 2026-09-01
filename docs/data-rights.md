@@ -56,11 +56,17 @@ no `created_at`/`received_at` column and no terms-version dimension. Likewise,
 to an individual contribution. Consequently, even an intact ledger cannot
 prove which contributions were submitted or accepted before a legal cutoff.
 
-The schema comments and goal.md §14.4 describe an intended bounded retention
-policy, and the store exposes `PurgeDedupOlderThan`. The inspected repository,
-however, has no non-test caller that schedules that method and no deployment
-step that deletes from `evidence_dedup`. A direct test call proves what the
-capability does; it is not evidence that production currently runs it.
+The schema comments and goal.md §14.4 describe a bounded retention policy, and
+the store exposes `PurgeDedupOlderThan`. Until 2026-09-01 nothing called it:
+the repository had no non-test caller and no deployment step that deleted from
+`evidence_dedup`, so the policy stated here was not applied to anyone's data.
+It is now applied at server boot, beside the other reconciles, with the window
+named as `dedupRetentionDays` so the promise and the code cannot drift apart.
+
+What that changed on the day it shipped was small and worth stating rather
+than rounding up: production held 553,823 dedup rows across 21 epochs and
+1,102 of them were past the window. The purge matters as the corpus ages past
+thirty days, not as an answer to any pressure measured that day.
 
 Measured in `internal/serverstore/datarights_test.go`
 (`TestEvidenceRightsCutoffIsNotRepresentedByClientEpochs`), against a real

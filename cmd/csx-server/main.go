@@ -48,6 +48,10 @@ const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompu
                csx-server backfill-observations [--apply]
 `
 
+// dedupRetentionDays is the rotating-bucket retention window from
+// goal.md 14.4. Named so the promise and the code cannot drift apart.
+const dedupRetentionDays = 30
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -153,6 +157,29 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	} else if repaired > 0 || unsupported > 0 {
 		fmt.Fprintf(stdout, "csx-server: repaired %d cross jobs, recorded %d as unsupported\n",
 			repaired, unsupported)
+	}
+
+	// Apply the dedup retention window.
+	//
+	// PurgeDedupOlderThan has existed with a documented 30-day window and no
+	// caller at all -- docs/data-rights.md says so outright: "no non-test
+	// caller that schedules that method and no deployment step that deletes
+	// from evidence_dedup". A retention policy this project states to its
+	// contributors was not being applied to their data.
+	//
+	// Measured on production 2026-09-01: 553,823 dedup rows across 21 epochs,
+	// of which 1,102 were past the window. So this is not an answer to the
+	// database pressure measured the same hour; it is a commitment being
+	// kept, and it becomes load-bearing as the corpus ages past thirty days.
+	//
+	// Aggregates are untouched. Only the rotating bucket linkage goes, so
+	// unique_*_buckets freeze at their accumulated values rather than
+	// shrinking retroactively.
+	if removed, err := pg.PurgeDedupOlderThan(ctx, dedupRetentionDays); err != nil {
+		fmt.Fprintf(stderr, "csx-server: dedup retention purge failed: %v\n", err)
+	} else if removed > 0 {
+		fmt.Fprintf(stdout, "csx-server: purged %d dedup buckets older than %d days\n",
+			removed, dedupRetentionDays)
 	}
 
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a
