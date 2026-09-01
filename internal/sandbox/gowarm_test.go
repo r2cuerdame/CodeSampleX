@@ -1,23 +1,25 @@
 package sandbox
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // The golang resolve stage has to leave a warm build cache behind.
 //
-// Measured on production 2026-09-01: npm has 3,875 contract passes, pypi 507,
-// gem 301, hex 89, maven 62 — and golang has zero, ever, against 39 contracts
-// killed at exactly 300000ms. Go is the only ecosystem whose contract stage
-// compiles anything; every other one runs a file that is already there.
+// Measured on production 2026-09-01: 39 golang contracts killed at exactly
+// 300000ms, every one terminationKind=timeout rather than the 512MB memory
+// limit they looked like. Beside them golang holds 1,869 passes, so this is
+// the tail of a working lane. An earlier version of this note said golang had
+// never passed at all; that was read off a query with a LIMIT on it and was
+// wrong.
 //
-// `go mod download` fills the MODULE cache. GOCACHE, the build cache, was
-// configured for this stage and never written, so each contract compiled the
-// whole dependency graph from source inside the 300-second budget. Measured
-// on a small otel sample: 38.4 CPU-seconds with a cold cache, 4.3 with a warm
-// one. On a node losing 79% of its cycles to steal, the first is past the
-// budget and the second is not.
+// Go is the only ecosystem whose contract stage compiles anything; every
+// other one runs a file that is already there. `go mod download` fills the
+// MODULE cache, and GOCACHE — configured for this stage and never written —
+// meant each contract compiled the whole dependency graph from source inside
+// the 300-second budget.
 func TestTheGolangResolveStageWarmsTheBuildCache(t *testing.T) {
 	cmd, err := resolveCommand("golang", "")
 	if err != nil {
@@ -25,16 +27,45 @@ func TestTheGolangResolveStageWarmsTheBuildCache(t *testing.T) {
 	}
 	script := strings.Join(cmd, " ")
 
-	for _, want := range []string{"go mod download", "go build ./...", "go vet ./..."} {
+	for _, want := range []string{"go mod download", "go build ./..."} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the golang resolve stage never runs %q:\n%s", want, script)
 		}
 	}
-	// vet as well as build: vet type-checks _test.go, so it compiles the
-	// test-only dependencies that `go build ./...` alone leaves out. That
-	// difference was 5.3 CPU-seconds against 4.3 in the contract stage.
-	if strings.Index(script, "go build ./...") > strings.Index(script, "go vet ./...") {
-		t.Error("vet runs before build; build is what fills the cache vet then extends")
+	// Not vet with it. Measured wall-clock on the same sample: download alone
+	// leaves 35.0s of contract; build makes it 18.6s of resolve plus 7.9s of
+	// contract; build and vet together make it 22.6s plus 6.4s. Each stage is
+	// timed separately, so a budget sees the LARGER of the two, and vet spends
+	// four seconds to save one and a half — it raises the number that matters.
+	if strings.Contains(script, "go vet") {
+		t.Errorf("vet is back; it raises the number the stage budget looks at:\n%s", script)
+	}
+}
+
+// Warming is an optimisation, and an optimisation may never be why a stage
+// fails.
+//
+// It was. Measured on production after the warm step shipped: twelve golang
+// resolves died at exactly 300000ms, having moved the contract's timeout into
+// resolve rather than removing it. Bounded well inside the stage budget, the
+// build stops when it runs out and the contract compiles what is left — the
+// behaviour from before any of this existed.
+func TestTheWarmStepCannotConsumeTheStageBudget(t *testing.T) {
+	cmd, err := resolveCommand("golang", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Join(cmd, " ")
+	if !strings.Contains(script, "timeout "+goWarmSeconds+" go build") {
+		t.Errorf("the warm build is unbounded:\n%s", script)
+	}
+	bound, err := strconv.Atoi(goWarmSeconds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if float64(bound) >= stageTimeout.Seconds() {
+		t.Errorf("the warm bound is %ds against a %.0fs stage budget; it can still be the cause of death",
+			bound, stageTimeout.Seconds())
 	}
 }
 
@@ -73,7 +104,7 @@ func TestACompileFailureDoesNotFailTheGolangResolveStage(t *testing.T) {
 	if !strings.Contains(script, "set -e") {
 		t.Fatal("the stage no longer stops on a genuine resolve failure")
 	}
-	for _, warm := range []string{"go build ./...", "go vet ./..."} {
+	for _, warm := range []string{"go build ./..."} {
 		at := strings.Index(script, warm)
 		if at < 0 {
 			t.Fatalf("%q is missing", warm)

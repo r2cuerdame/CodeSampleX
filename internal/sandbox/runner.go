@@ -50,6 +50,14 @@ type Runner interface {
 	VerifierImage(m domain.SampleManifest) *domain.VerifierImage
 }
 
+// goWarmSeconds bounds the golang resolve stage's cache warming, well inside
+// the stage budget so the warming cannot be the reason the stage dies.
+//
+// Two thirds of the stage, not all of it: `go mod download` has to finish
+// first and it is the part that actually resolves, so the warming gets what
+// is left over rather than the whole budget.
+const goWarmSeconds = "200"
+
 // stageTimeout bounds every stage (plan C13: 5m/stage).
 const stageTimeout = 5 * time.Minute
 
@@ -175,26 +183,37 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// golang contract compiled its whole dependency graph from source
 		// inside the 300-second contract budget. Go is the only ecosystem
 		// whose contract compiles at all -- node, python, ruby and the rest
-		// just run a file -- and it is the only one that has never passed:
-		// measured on production, 3,875 npm passes, 507 pypi, 301 gem, and
-		// zero golang, against 39 contracts killed at exactly 300000ms.
+		// just run a file that is already there.
 		//
-		// Measured here: contract CPU falls from 38.4s to 4.3s on a small
-		// otel sample. On a node losing 79% of its cycles to steal, the first
-		// number is past the budget and the second is not.
+		// Measured on production: 39 golang contracts killed at exactly
+		// 300000ms, every one terminationKind=timeout rather than the 512MB
+		// memory limit they looked like. Beside them golang holds 1,869
+		// passes, so this is the tail of a working lane. An earlier version
+		// of this note said golang had never passed at all; that was read off
+		// a query with a LIMIT on it and was wrong.
 		//
-		// build then vet, because vet type-checks _test.go files and so
-		// compiles the test-only dependencies build alone leaves out. Neither
-		// EXECUTES sample code, which is the whole reason they belong here:
-		// this stage has the network, and the stage that runs the sample does
-		// not. Failure is swallowed -- a sample that cannot build must fail at
-		// its contract, where that is a fact about the sample, not here, where
-		// it would read as a dependency that could not be fetched.
+		// `go build`, and no longer `go vet` with it. Measured wall-clock on
+		// the same sample: download alone leaves 35.0s of contract; build
+		// makes it 18.6s of resolve plus 7.9s of contract; build and vet
+		// together make it 22.6s plus 6.4s. Each stage is timed separately,
+		// so what a budget sees is the LARGER of the two, and vet spends four
+		// seconds to save one and a half -- it raises the number that matters.
+		//
+		// It does not EXECUTE sample code, which is the whole reason it
+		// belongs here: this stage has the network and the stage that runs the
+		// sample does not.
+		//
+		// Bounded, and its failure swallowed, because warming is an
+		// optimisation and an optimisation may never be why a stage fails.
+		// It was: measured on production after this shipped, twelve golang
+		// resolves died at exactly 300000ms having moved the contract's
+		// timeout into resolve rather than removing it. Past the bound the
+		// build simply stops and the contract compiles what is left, which is
+		// the behaviour before any of this existed.
 		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/gomod " + vendorDir +
 			"/gobuild " + vendorDir + "/go-modules.json; mkdir -p " + vendorDir +
 			"; go mod download; go list -m -json all > " + vendorDir + "/go-modules.json" +
-			"; go build ./... >/dev/null 2>&1 || true" +
-			"; go vet ./... >/dev/null 2>&1 || true"}, nil
+			"; timeout " + goWarmSeconds + " go build ./... >/dev/null 2>&1 || true"}, nil
 	case "cargo":
 		return []string{"sh", "-c", "rm -rf " + vendorDir + "/cargo " + vendorDir +
 			"/target; cargo fetch --locked"}, nil
