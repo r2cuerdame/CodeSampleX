@@ -1527,11 +1527,32 @@ mistake this section exists to prevent.
 | Stop the fixture false positive | none | done | none | none | engineering — **done** |
 | Measure the artifact before release | none | yes | none | one more check | engineering — **done** |
 | Record and surface post-install recovery | none | yes | none | `csx update status` line | engineering — **done** |
-| Report the false positive to Microsoft | free, days to weeks, per-build | no — the portal is interactive | none | fixes one build, not the next | **human gate: sends a public artifact to a third party** |
+| Report the false positive to Microsoft | free, days to weeks, per-build | no — the portal is interactive | none | fixes one build, not the next | human gate — **submitted 2026-09-01**, see below |
 | Authenticode certificate (OV) | annual fee, organisation identity verification | signing yes, obtaining no | a new signing key in CI, next to the updater seed | reputation builds over releases; does not start clean | **human gate: purchase + organisation identity** |
 | Authenticode certificate (EV) | higher fee, hardware token or cloud HSM | token models cannot be automated at all | HSM or token custody | immediate SmartScreen reputation | **human gate: purchase, custody, and it can break unattended release** |
 | Build-characteristic tuning (version resource, unstripped binaries) | none | yes | none | larger binaries | **not done — see below** |
 | Defender exclusion on the install root | none | technically yes | none | none | **refused: never added to a user's machine** |
+
+**The submission was made on 2026-09-01.** Until then this row had a decision
+and no action: the analysis finished on 2026-08-26 and the portal step, being
+interactive and being the act of sending a public artifact to a third party,
+waited for a person. The ticket is:
+
+```
+Submission ID   3e13330b-dcee-4708-9436-f59a5dca3399
+Status          Submitted
+Submitted       2026-09-01 21:51:55 KST
+Detection name  Trojan:Win32/Bearfoos.A!ml
+Definition      1.457.441.0
+File            csx-windows-amd64.exe (v0.1.89)
+                sha256 bd90c12a0483869ca089b89590dfbbd70f2663dac39ed2bb37d2f2e38a43eea8
+```
+
+The sample reached the portal without changing a Defender setting or restoring
+anything from quarantine: the plain binary does not survive on disk here, which
+is the defect being reported, so it was fetched and hashed on the Linux
+production host and carried in a password-protected archive -- the convention
+the portal itself asks for, and one Defender does not scan inside.
 
 Two rows deserve their reasoning written down.
 
