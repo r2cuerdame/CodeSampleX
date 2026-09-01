@@ -500,38 +500,12 @@ $requiredReleaseAssets = @(
     "codesamplex-mcp.mcpb.sha256"
 )
 
-function Assert-ReleaseDirectory([string]$Directory) {
-    $actual = @(Get-ChildItem $Directory -File | ForEach-Object { $_.Name } | Sort-Object)
-    $expected = @($requiredReleaseAssets | Sort-Object)
-    $difference = @(Compare-Object $expected $actual)
-    if ($difference.Count -ne 0) {
-        throw "release asset set is incomplete or unexpected: $($difference | Out-String)"
-    }
-
-    $verified = @{}
-    foreach ($line in Get-Content (Join-Path $Directory "SHA256SUMS.txt")) {
-        $parts = $line -split '\s+', 2
-        if ($parts.Count -ne 2) { throw "malformed SHA256SUMS.txt line" }
-        $name = $parts[1].TrimStart('*').Trim()
-        $file = Join-Path $Directory $name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "checksum names missing asset: $name" }
-        $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-        if ($have -ne $parts[0].ToLower()) { throw "checksum mismatch for $name" }
-        $verified[$name] = $true
-    }
-    foreach ($name in $requiredReleaseAssets[0..8]) {
-        if (-not $verified[$name]) { throw "SHA256SUMS.txt does not cover $name" }
-    }
-
-    $bundleLine = @(Get-Content (Join-Path $Directory "codesamplex-mcp.mcpb.sha256"))
-    if ($bundleLine.Count -ne 1) { throw "malformed MCPB checksum file" }
-    $bundleParts = $bundleLine[0] -split '\s+', 2
-    if ($bundleParts.Count -ne 2 -or $bundleParts[1].TrimStart('*').Trim() -ne "codesamplex-mcp.mcpb") {
-        throw "MCPB checksum names the wrong asset"
-    }
-    $bundleHash = (Get-FileHash (Join-Path $Directory "codesamplex-mcp.mcpb") -Algorithm SHA256).Hash.ToLower()
-    if ($bundleHash -ne $bundleParts[0].ToLower()) { throw "MCPB checksum mismatch" }
-}
+# Assert-ReleaseDirectory used to verify a local copy of the release here.
+# It was removed with the local download: the check that decides anything runs
+# on the host, against the bytes that will actually be served -- `sha256sum -c
+# SHA256SUMS.txt`, the per-asset `test -f`, and the exact file count. Keeping a
+# second copy of it on a machine the artifacts no longer touch would be a
+# verification of nothing.
 
 $localImageTag = "codesamplex/csx-server:deploy-$deployLockOwner"
 $imageTar = Join-Path ([IO.Path]::GetTempPath()) "csx-server-image-$deployLockOwner.tar"
@@ -688,23 +662,39 @@ if ($releaseReady) {
     # making that counter mostly measure our own deploys instead of people.
     Write-Output "== release artifacts already served from $tag; skipping download =="
 } else {
-    $dist = Join-Path $repo "dist"
-    New-Item -ItemType Directory -Force $dist | Out-Null
-    Write-Output "== fetching release artifacts for $tag =="
-    Get-ChildItem $dist -File | Remove-Item -Force
-    Invoke-Native "gh release download" {
-        & gh release download $tag --repo r2cuerdame/CodeSampleX --dir $dist --clobber
-    }
-    Assert-ReleaseDirectory $dist
-    Write-Output "checksums and exact release asset set verified"
-
-    # Stage beside the live directory. The server keeps its old bind mount
-    # while these files transfer, so it can never serve a partially copied
-    # executable. The compose restart below remounts the atomically swapped
-    # directory only after every checksum passes on the host too.
+    # The host fetches its own artifacts. This workstation is not in the path.
+    #
+    # It used to download all thirteen assets here, verify them, and copy them
+    # up. Measured 2026-09-01: Windows Defender quarantined
+    # dist/csx-windows-amd64.exe out of that staging directory mid-verification
+    # -- Get-FileHash returned null on a file Test-Path had just confirmed --
+    # and the deploy died. The same ThreatID (2147731250) had taken the
+    # installed payload six minutes earlier, and this machine holds 57 of them.
+    #
+    # A Windows workstation has no business being the courier for Linux and
+    # macOS binaries, and for the Windows ones it is the worst possible
+    # courier: it is the only machine on the path that inspects and deletes
+    # them. Nothing is weakened by moving the fetch, because the integrity
+    # check that decides anything was already remote -- `sha256sum -c` against
+    # the release's own SHA256SUMS.txt, run below on the bytes that will
+    # actually be served. The local pass was a duplicate of it.
+    #
+    # No Defender setting is touched, no exclusion added, and no quarantined
+    # file is restored. The bytes simply never land here.
+    Write-Output "== fetching release artifacts for $tag on the host =="
     $stage = "/opt/codesamplex/dist.stage"
-    Invoke-Remote "rm -rf /opt/codesamplex/dist.stage && mkdir -p /opt/codesamplex/dist.stage" | Out-Null
-    Get-ChildItem $dist -File | ForEach-Object { Copy-Remote $_.FullName "$stage/$($_.Name)" }
+    if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "refusing an unexpected release tag: $tag" }
+    $assetList = ($requiredReleaseAssets -join " ")
+    $fetch = @"
+set -eu
+rm -rf $stage
+mkdir -p $stage
+cd $stage
+for a in $assetList; do
+  curl -fsSL --retry 3 --retry-delay 2 -o "`$a"     "https://github.com/r2cuerdame/CodeSampleX/releases/download/$tag/`$a"
+done
+"@
+    Invoke-RemoteScript $fetch | Out-Null
     $tagTmp = Join-Path ([IO.Path]::GetTempPath()) "csx-release-tag-$deployLockOwner.txt"
     Set-Content -Path $tagTmp -Value $tag -Encoding ascii -NoNewline
     Copy-Remote $tagTmp "$stage/.release-tag"
@@ -713,7 +703,7 @@ if ($releaseReady) {
     Invoke-Remote $stageValidation | Out-Null
     Invoke-Remote "set -eu; rm -rf /opt/codesamplex/dist.previous; mv /opt/codesamplex/dist /opt/codesamplex/dist.previous; if mv /opt/codesamplex/dist.stage /opt/codesamplex/dist; then :; else mv /opt/codesamplex/dist.previous /opt/codesamplex/dist; exit 1; fi" | Out-Null
     $distPromoted = $true
-    Write-Output "atomically shipped $($requiredReleaseAssets.Count) artifacts from $tag"
+    Write-Output "host fetched and verified $($requiredReleaseAssets.Count) artifacts from $tag; promoted atomically"
 }
 
 # .env holds the generated DB password: write once, never overwrite.
