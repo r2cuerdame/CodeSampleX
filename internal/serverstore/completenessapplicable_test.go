@@ -24,13 +24,13 @@ func TestTheCensusDoesNotCountWorkNobodyCanDo(t *testing.T) {
 	f := NewFake()
 
 	// One ordinary coordinate, one npm per-platform native build, one Gradle
-	// plugin marker, and one golang release whose ecosystem has no dependency
+	// plugin marker, and one gem release whose ecosystem has no dependency
 	// scanner at all.
 	for _, pkg := range []PackageRow{
 		{PURL: "pkg:npm/axios@1.12.0", Ecosystem: "npm", Name: "axios", Version: "1.12.0", Publicness: "PUBLIC"},
 		{PURL: "pkg:npm/%40esbuild/win32-x64@0.28.1", Ecosystem: "npm", Name: "@esbuild/win32-x64", Version: "0.28.1", Publicness: "PUBLIC"},
 		{PURL: "pkg:maven/org.jetbrains.kotlin.plugin.serialization.gradle.plugin@2.2.20", Ecosystem: "maven", Name: "org.jetbrains.kotlin.plugin.serialization.gradle.plugin", Version: "2.2.20", Publicness: "PUBLIC"},
-		{PURL: "pkg:golang/github.com/jackc/pgx/v5@v5.7.3", Ecosystem: "golang", Name: "github.com/jackc/pgx/v5", Version: "v5.7.3", Publicness: "PUBLIC"},
+		{PURL: "pkg:gem/nokogiri@1.18.10", Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10", Publicness: "PUBLIC"},
 	} {
 		if err := f.UpsertPackage(ctx, pkg); err != nil {
 			t.Fatal(err)
@@ -47,7 +47,7 @@ func TestTheCensusDoesNotCountWorkNobodyCanDo(t *testing.T) {
 	}
 	// npm and maven differ here: npm has a dependency scanner, maven does not.
 	if got.DependencyNotApplicable != 2 {
-		t.Errorf("DependencyNotApplicable = %d, want 2 (the maven marker and the golang release)", got.DependencyNotApplicable)
+		t.Errorf("DependencyNotApplicable = %d, want 2 (the maven marker and the gem release)", got.DependencyNotApplicable)
 	}
 
 	// The marker is unaskable on both axes, so it is not backlog at all.
@@ -82,7 +82,7 @@ func TestTheQueueAndTheCensusAgreeOnWhatCannotBeSampled(t *testing.T) {
 		{"npm", "node-linux-utils", false},
 		{"maven", "org.jetbrains.kotlin.plugin.serialization.gradle.plugin", true},
 		{"maven", "com.google.guava/guava", false},
-		{"golang", "github.com/jackc/pgx/v5", false},
+		{"gem", "nokogiri", false},
 	} {
 		_, got := domain.SampleNotApplicable(tc.ecosystem, tc.name)
 		if got != tc.want {
@@ -92,7 +92,7 @@ func TestTheQueueAndTheCensusAgreeOnWhatCannotBeSampled(t *testing.T) {
 }
 
 // The dependency rule is a fact about the scanner, not about the package. A
-// golang module has dependencies; saying otherwise would be the network
+// gem has dependencies; saying otherwise would be the network
 // asserting something it never measured.
 func TestTheDependencyRuleSaysNobodyCanLookNotThatThereIsNothing(t *testing.T) {
 	for _, eco := range []string{"npm", "pypi", "cargo"} {
@@ -100,7 +100,9 @@ func TestTheDependencyRuleSaysNobodyCanLookNotThatThereIsNothing(t *testing.T) {
 			t.Errorf("%s ships a dependency scanner and must stay askable", eco)
 		}
 	}
-	for _, eco := range []string{"golang", "maven", "gem", "hex", "pub"} {
+	// golang is deliberately absent: goadapter ships an EdgeScanner, so a
+	// Go release with no graph is unmeasured rather than unaskable.
+	for _, eco := range []string{"maven", "gem", "hex", "pub", "composer"} {
 		reason, na := domain.DependencyNotApplicable(eco)
 		if !na {
 			t.Errorf("%s has no dependency scanner and would be counted as a closable gap", eco)

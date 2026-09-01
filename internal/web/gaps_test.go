@@ -170,13 +170,13 @@ func TestAMeasuredLeafIsNotSentToTheGapList(t *testing.T) {
 // not exist.
 func TestAnUnscannableEcosystemSaysSoOnThePackagePage(t *testing.T) {
 	f := newFakeStore()
-	f.dependencyEcosystem = "golang"
-	f.versions["golang|example.com/mod"] = []string{"v1.0.0"}
+	f.dependencyEcosystem = "gem"
+	f.versions["gem|nokogiri"] = []string{"1.18.10"}
 
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = f })
-	body := get(t, mux, "/golang/example.com/mod?f_version=v1.0.0&lang=en").Body.String()
+	body := get(t, mux, "/gem/nokogiri?f_version=1.18.10&lang=en").Body.String()
 
-	if !strings.Contains(body, "No dependency scanner ships for golang") {
+	if !strings.Contains(body, "No dependency scanner ships for gem") {
 		t.Error("an ecosystem with no scanner was reported as merely unread")
 	}
 	// Both sentences end "unread rather than empty", deliberately: neither
@@ -202,9 +202,9 @@ func TestTheUnaskableReasonIsTranslated(t *testing.T) {
 		{Ecosystem: "npm", Name: "@esbuild/linux-x64", Version: "0.25.0",
 			HasEvidence: true, Dependency: GapDependencyUnknown,
 			SampleNAReason: "npm per-platform native build: what a sample would import is the .node binary its parent selects"},
-		{Ecosystem: "golang", Name: "example.com/mod", Version: "v1.0.0",
+		{Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10",
 			HasEvidence: true, Dependency: GapDependencyUnknown,
-			DependencyNAReason: "no dependency scanner ships for golang: the tree is unread, not empty"},
+			DependencyNAReason: "no dependency scanner ships for gem: the tree is unread, not empty"},
 	}
 	body := get(t, mux, "/gaps?lang=ko").Body.String()
 
@@ -218,7 +218,7 @@ func TestTheUnaskableReasonIsTranslated(t *testing.T) {
 		t.Error("the store's English sentence reached a Korean page")
 	}
 	// The ecosystem is still named, because which one it is, is the fact.
-	if !strings.Contains(body, "golang") {
+	if !strings.Contains(body, "gem") {
 		t.Error("the untranslatable part — the ecosystem name — was dropped")
 	}
 }

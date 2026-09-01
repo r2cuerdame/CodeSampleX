@@ -113,10 +113,26 @@ func SampleNotApplicable(ecosystem, name string) (string, bool) {
 }
 
 // dependencyScannable is the set of ecosystems whose adapter can read a
-// resolved tree at all. npm, pypi and cargo implement scanner.EdgeScanner;
-// nothing else does, so a dependency graph for a golang or maven release is
-// not missing — it is unaskable with what this network ships.
-var dependencyScannable = map[string]bool{"npm": true, "pypi": true, "cargo": true}
+// resolved tree at all. An ecosystem outside it has no scanner in this
+// binary, so a missing dependency graph there is unaskable rather than
+// unmeasured — and the site says so on every release of every such package.
+//
+// It has to track scanner.EdgeScanner and it did not. goadapter grew one and
+// this list did not follow, so every Go release on the public site said "no
+// dependency scanner ships for golang" while the scanner was compiled into
+// the binary serving the page. A hardcoded taxonomy beside a real capability
+// is a claim that drifts silently, and this one drifted into telling visitors
+// the opposite of the truth.
+//
+// The list stays here because internal/domain cannot import the adapters
+// without inverting the layering. What stops it drifting again is
+// TestTheDependencyTaxonomyMatchesTheRegisteredAdapters in adapters/, which
+// derives the set from the adapters actually registered and fails in either
+// direction: a scanner that ships and is not claimed, or a claim with no
+// scanner behind it.
+var dependencyScannable = map[string]bool{
+	"npm": true, "pypi": true, "cargo": true, "golang": true,
+}
 
 // DependencyNotApplicable reports whether no dependency graph can be produced
 // for this ecosystem, and why.

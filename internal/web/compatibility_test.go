@@ -200,19 +200,19 @@ func TestTheRatioReadsCorrectlyInKorean(t *testing.T) {
 func TestAnUnscannableEcosystemSaysSoRatherThanNoneYet(t *testing.T) {
 	store := newFakeStore()
 	store.packages = []PackageHit{
-		{Ecosystem: "golang", Name: "golang.org/x/net", LatestVersion: "v0.58.0"},
+		{Ecosystem: "gem", Name: "nokogiri", LatestVersion: "1.18.10"},
 		{Ecosystem: "npm", Name: "unscanned", LatestVersion: "1.0.0"},
 	}
 	store.packageAssets = []PackageAsset{
-		{Ecosystem: "golang", Name: "golang.org/x/net", Releases: 24, WithSample: 14},
+		{Ecosystem: "gem", Name: "nokogiri", Releases: 24, WithSample: 14},
 		{Ecosystem: "npm", Name: "unscanned", Releases: 2, WithSample: 0},
 	}
 	body := warmCompatLang(t, store, "en")
 
-	golang := compatRowHTML(t, body, "golang/golang.org/x/net")
+	unscannable := compatRowHTML(t, body, "gem/nokogiri")
 	npm := compatRowHTML(t, body, "npm/unscanned")
-	if !strings.Contains(golang, "no scanner") {
-		t.Errorf("an unscannable ecosystem does not say so: %s", golang)
+	if !strings.Contains(unscannable, "no scanner") {
+		t.Errorf("an unscannable ecosystem does not say so: %s", unscannable)
 	}
 	// An npm package genuinely has an open dependency axis, and must keep it.
 	if strings.Contains(npm, "no scanner") {
