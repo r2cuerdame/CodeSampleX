@@ -174,6 +174,11 @@ func NewDeps(home string) (*Deps, func() error, error) {
 		},
 		SearchRaw:           searchRaw,
 		RecordSearchOutcome: recordSearch,
+		// What this machine is, completed with what the project standing
+		// here says about itself. The field was declared and never assigned,
+		// so the server fell through to collecting with nil hints and every
+		// adapter's EnvironmentHints reached the scan path and nothing else.
+		MachineEnv: machineEnvWithProject(),
 		GetSample: func(ctx context.Context, id string) (domain.SampleManifest, map[string]string, error) {
 			return getSample(ctx, db, store, fetcher, id)
 		},
