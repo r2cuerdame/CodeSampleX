@@ -6,10 +6,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
+
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 // acquireLock takes the single-instance lock $home/daemon.lock via
@@ -47,24 +47,23 @@ func acquireLock(home string) (release func(), err error) {
 	return nil, fmt.Errorf("daemon: could not acquire lock %s", path)
 }
 
-// pidAlive reports whether pid names a live process, best-effort. Our own
-// pid is always alive (a second daemon in the same process must refuse).
-// On Windows os.FindProcess fails for dead pids; on Unix it always
-// succeeds, so signal 0 probes for liveness there.
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	if pid == os.Getpid() {
-		return true
-	}
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	defer p.Release() //nolint:errcheck
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return p.Signal(syscall.Signal(0)) == nil
-}
+// pidAlive reports whether pid names a live process.
+//
+// Delegated rather than implemented here. The version that lived at this spot
+// read os.FindProcess succeeding as proof of life on Windows -- its comment
+// said "on Windows os.FindProcess fails for dead pids", and that is simply
+// not so: it fails for an INVALID pid, never for a dead one. Measured on the
+// pid from a real stale lock:
+//
+//	os.FindProcess(3664)     err=nil                       -> "alive"
+//	GetExitCodeProcess(3664) exitCode 0, not STILL_ACTIVE  -> dead
+//
+// So on Windows a stale lock was never cleared, and a daemon that died
+// without releasing its own blocked every later daemon for that home
+// permanently. This machine's had been blocked for two days, reported as
+// "spawned but not ready within 10s" -- the symptom, never the cause.
+//
+// internal/update already had the correct check, with the ACCESS_DENIED and
+// ERROR_INVALID_PARAMETER cases reasoned through. A third copy of that
+// reasoning is how a fourth one goes wrong.
+func pidAlive(pid int) bool { return csxupdate.LockPidAlive(pid) }
