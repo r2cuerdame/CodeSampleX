@@ -16,3 +16,6 @@ func runChild(cmd *exec.Cmd) (int, error) {
 	}
 	return 0, err
 }
+
+// attachParentConsole is a Windows concept; there is nothing to attach to.
+func attachParentConsole() {}

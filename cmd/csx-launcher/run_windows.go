@@ -40,10 +40,46 @@ var getConsoleCP = kernel32.NewProc("GetConsoleCP")
 var getConsoleMode = kernel32.NewProc("GetConsoleMode")
 var getFileType = kernel32.NewProc("GetFileType")
 var closeHandle = kernel32.NewProc("CloseHandle")
+var attachConsoleProc = kernel32.NewProc("AttachConsole")
+
+// attachParentProcess is ATTACH_PARENT_PROCESS, (DWORD)-1.
+const attachParentProcess = ^uintptr(0)
 
 var launcherJobOnce sync.Once
 var launcherJobErr error
 var launcherJob uintptr
+
+// attachParentConsole is the other half of building this binary for the GUI
+// subsystem.
+//
+// -H=windowsgui is why an MCP host no longer gets a cmd window per csx:
+// Windows allocates a console for a console-subsystem process before any of
+// its code can run, so nothing the launcher does could have prevented its own.
+// Measured from a console-less parent with pipes on stdio: two windows built
+// CONSOLE, none built windowsgui.
+//
+// The cost is that such a process is not ATTACHED to the terminal's console
+// either. Output was never at risk -- inherited handles still write there, and
+// cmd.exe still waits for it, both measured -- but console control events go
+// to attached processes, so Ctrl+C would stop reaching a long `csx run`.
+//
+// The guard is the point. A first attempt called AttachConsole
+// unconditionally and a window came back: ATTACH_PARENT_PROCESS takes whatever
+// console the parent happens to hold, which under a host is some unrelated
+// terminal further up. So attach only when this invocation's own stdio is a
+// terminal -- a console HANDLE on stdout or stdin, which a pipe can never be.
+// That is the same question the window policy asks, from the other side.
+func attachParentConsole() {
+	if hasConsole() {
+		return
+	}
+	if !handleIsConsole(uintptr(syscall.Stdout)) && !handleIsConsole(uintptr(syscall.Stdin)) {
+		return
+	}
+	// Failure means the parent held no console after all, which changes
+	// nothing: without one there is no Ctrl+C to deliver.
+	_, _, _ = attachConsoleProc.Call(attachParentProcess)
+}
 
 // hasConsole reports whether this launcher owns a console at all.
 //
@@ -81,10 +117,17 @@ func handleIsPipe(h uintptr) bool {
 //	conhost 16644 hosts csx.exe 49156   (parent claude.exe)
 //
 // and no conhost at all for the csx processes another MCP host had spawned.
-// One host allocates a console for the child and the other does not, so
-// hasConsole() said yes for half of them, the flag stayed off, and the payload
-// inherited a console nobody reads -- the window users report, titled with the
-// payload path.
+//
+// The reading of that was backwards at first. Neither host allocates anything:
+// codex.exe HAS a console of its own, so its children inherit it and Windows
+// creates no second one, while claude.exe has none, so Windows gives every
+// console-subsystem child a fresh console. hasConsole() therefore said yes for
+// half of them, the flag stayed off, and the payload inherited a console
+// nobody reads.
+//
+// That is also why this test is only half the fix. The launcher's OWN console
+// is allocated before its code runs and no flag here could refuse it; that
+// half is -H=windowsgui, in the release build.
 //
 // What actually separates a person typing `csx search` from an MCP host is
 // whether anything is reading the output. A terminal gives the process a
