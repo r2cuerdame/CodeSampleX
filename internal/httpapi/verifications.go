@@ -560,7 +560,14 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	// ran, the sample has not been measured and still needs a machine that
 	// can measure it.
 	if claimedJobID != 0 && statusRank(newStatus) < statusRank("CROSS_PASS") {
-		a.requeueCrossVerification(ctx, receipt.SampleID, contractResult)
+		// Unless every machine that has tried ran out of time. Then another
+		// machine is not what it needs, and leaving the sample as a draft
+		// nothing has reached is the one description that is false.
+		if crossWorkIsOutOfTime(receipts) {
+			a.recordCrossWorkOutOfTime(ctx, receipt.SampleID, manifest)
+		} else {
+			a.requeueCrossVerification(ctx, receipt.SampleID, contractResult)
+		}
 	}
 	// Anomaly reports contesting this sample were waiting for exactly this:
 	// an independent run of the artifact the contested answer came from.

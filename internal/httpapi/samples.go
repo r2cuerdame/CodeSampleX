@@ -231,6 +231,57 @@ func (a *api) handleSampleUpload(w http.ResponseWriter, r *http.Request) {
 // letting a genuinely unbuildable sample become permanent work.
 const maxCrossAttempts = 4
 
+// maxTimedOutCrossAttempts is how many runs killed by the sandbox stage
+// budget a sample may collect before its cross work is written down as
+// something no lane here completes.
+//
+// Two, because the first is a bad night on a loaded node and the second is a
+// pattern. Measured on production 2026-09-01: seven samples hold two or more
+// such receipts, every one of them golang, and four had spent the full
+// four-attempt budget five minutes at a time. What was wrong with that was
+// not mainly the cost -- it was that the sample ends up looking exactly like
+// a draft nothing has reached yet, when in fact the network reached it four
+// times and has nothing to say.
+const maxTimedOutCrossAttempts = 2
+
+// crossWorkIsOutOfTime reports whether every attempt at this sample so far
+// has been killed by the clock, often enough to say so.
+//
+// A judgement anywhere in the history settles it whichever way it went: the
+// contract ran, the sample WAS measured, and time is not what stands between
+// it and an answer. SKIPPED does not count either -- that is the resolve
+// stage failing, which has its own bounded retry.
+func crossWorkIsOutOfTime(rows []serverstore.ReceiptRow) bool {
+	timedOut := 0
+	for _, row := range rows {
+		kind := serverstore.ReceiptTerminationKind(row.ReceiptJSON)
+		if serverstore.ContractWasJudged(row.ContractResult, kind,
+			serverstore.ReceiptHasFailureEvidence(row.ReceiptJSON)) {
+			return false
+		}
+		if kind == string(domain.TerminationTimeout) {
+			timedOut++
+		}
+	}
+	return timedOut >= maxTimedOutCrossAttempts
+}
+
+// recordCrossWorkOutOfTime writes the sample's state down where the fleet and
+// the operator can both see it, instead of leaving a draft that reads as
+// untouched.
+//
+// It is a job row and not a verdict on the sample, and that distinction is
+// load-bearing: one production sample timed out four times and then PASSED
+// on the fifth, minutes after the lane it kept dying in got faster.
+// "unsupported" has to keep meaning "no lane here runs this today".
+func (a *api) recordCrossWorkOutOfTime(ctx context.Context, sampleID string, manifest domain.SampleManifest) {
+	job := crossJobFor(sampleID, manifest)
+	job.Status = serverstore.JobStatusUnsupported
+	// Best effort, like every other queue write on the receipt path: a row
+	// that fails to land must never fail the receipt a verifier just signed.
+	_, _ = a.d.Store.EnsureCrossJob(ctx, job)
+}
+
 // requeueCrossVerification offers a sample for cross verification again
 // after an attempt ended without the contract running.
 //
@@ -343,6 +394,16 @@ func ReconcileCrossJobLanes(ctx context.Context, store serverstore.Store, limit 
 		if encoded == string(domain.MustCanonicalJSON(want)) && status == job.Status {
 			continue
 		}
+		// Reopening is what keeps "unsupported" a statement about images
+		// rather than a verdict, but it must not manufacture attempts the
+		// retry cap forbids. The cap counts job ROWS and never sees a status
+		// flipped in place, so without this a sample recorded as out of time
+		// -- whose coordinates a lane DOES serve -- would be handed back to
+		// the fleet at every boot, forever.
+		if status == "open" && job.Status == serverstore.JobStatusUnsupported &&
+			crossAttemptsSpent(ctx, store, job.SampleID) {
+			continue
+		}
 		if setErr := store.SetJobRequirements(ctx, job.ID, encoded, status); setErr != nil {
 			// One unrepairable row must not stop the rest; the next boot
 			// tries again and the others are waiting now.
@@ -355,6 +416,24 @@ func ReconcileCrossJobLanes(ctx context.Context, store serverstore.Store, limit 
 		}
 	}
 	return repaired, unsupported, nil
+}
+
+// crossAttemptsSpent reports whether a sample has used up its bounded cross
+// attempts. Read only for a job about to be reopened, which is rare.
+func crossAttemptsSpent(ctx context.Context, store serverstore.Store, sampleID string) bool {
+	jobs, err := store.JobsForSample(ctx, sampleID)
+	if err != nil {
+		// Unknown is not "spent". Failing to read must not silently retire a
+		// sample; the next boot asks again.
+		return false
+	}
+	attempts := 0
+	for _, j := range jobs {
+		if j.Reason == "cross" {
+			attempts++
+		}
+	}
+	return attempts >= maxCrossAttempts
 }
 
 func queueCrossVerificationOn(ctx context.Context, store serverstore.Store, sampleID string) error {
