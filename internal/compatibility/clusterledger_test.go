@@ -29,9 +29,9 @@ func TestRebuildingOverPreservedLegacyRowsDoesNotDoubleTheClusterLedger(t *testi
 	ctx := context.Background()
 	now := time.Date(2026, 8, 25, 6, 0, 0, 0, time.UTC)
 	const (
-		purl    = "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
-		pkgName = "github.com/jackc/pgx/v5"
-		symbol  = "ParseConfig"
+		purl     = "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+		pkgName  = "github.com/jackc/pgx/v5"
+		symbol   = "ParseConfig"
 		failures = 227
 	)
 

@@ -256,6 +256,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	for k := range byPkg {
 		pkgKeys = append(pkgKeys, k)
 	}
+
 	sort.Slice(pkgKeys, func(i, j int) bool {
 		if pkgKeys[i].ecosystem != pkgKeys[j].ecosystem {
 			return pkgKeys[i].ecosystem < pkgKeys[j].ecosystem
@@ -274,12 +275,11 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	// its version list. The stored cluster then understated the failure and
 	// named the wrong version — and that is what the search shows a caller
 	// as a known failure.
-	clusterEvidence, err := b.evidenceForPackages(ctx, pkgKeys, allTargets, byPkg)
-	if err != nil {
-		return err
-	}
 	for _, k := range pkgKeys {
-		evidenceByVersion := clusterEvidence[k]
+		evidenceByVersion, err := b.evidenceForPackage(ctx, k, allTargets, byPkg)
+		if err != nil {
+			return err
+		}
 		// Regressions recomputed over the SAME evidence the cluster is
 		// built from, not over whatever versions this pass happened to
 		// touch.
@@ -1195,42 +1195,44 @@ func keyOf(row serverstore.EvidenceRow) evidenceKey {
 	return evidenceKey{row.PURL, row.Symbol, row.EnvHash, row.Stage, row.Result, row.ErrorFingerprint}
 }
 
-func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
+// evidenceForPackage gathers every version's evidence for ONE package.
+//
+// Per package, and not the whole set at once, because the caller consumes it
+// one package at a time and the whole set does not fit. Measured on
+// production 2026-09-01: the server was OOM-killed eight times, anon-rss
+// 694MB against a 768MiB limit, while a full pass held the corpus twice over
+// -- once in byPkg and once in this function's output, plus a dedup index the
+// same size again. evidence_agg had gone from roughly 72k rows to 216k that
+// day. The kill left lastRun zero, which forces the next pass to be full
+// too, so the process rebuilt the same map and died again on a five-minute
+// cycle.
+//
+// One symbol reaches the server under two spellings -- the scanner's
+// qualified name on anonymous evidence, the author's bare one on a signed
+// receipt -- and both become live snapshot targets. EvidenceForTarget answers
+// either with the same rows on purpose (symbolSpellings), which is right per
+// target and wrong here, where every target's rows are summed into one
+// per-package bucket: the shared rows would be counted once per spelling.
+// Production carried a failure cluster of 520 for 260 observed failures
+// because of it. Identity, not arrival, decides what is counted -- and the
+// dedup index is now one package's worth rather than the corpus's.
+func (b *Builder) evidenceForPackage(ctx context.Context, k pkgKey,
 	allTargets []serverstore.SnapshotTarget, byPkg map[pkgKey]symVer,
-) (map[pkgKey]map[string][]serverstore.EvidenceRow, error) {
-	want := make(map[pkgKey]bool, len(keys))
-	for _, k := range keys {
-		want[k] = true
-	}
-	out := make(map[pkgKey]map[string][]serverstore.EvidenceRow, len(keys))
-	// One symbol reaches the server under two spellings — the scanner's
-	// qualified name on anonymous evidence, the author's bare one on a signed
-	// receipt — and both become live snapshot targets. EvidenceForTarget
-	// answers either with the same rows on purpose (symbolSpellings), which is
-	// right per target and wrong here, where every target's rows are summed
-	// into one per-package bucket: the shared rows would be counted once per
-	// spelling. Production carried a failure cluster of 520 for 260 observed
-	// failures because of it, and because a pass only reads the targets it is
-	// rebuilding, the doubling came and went with the pass shape — so the
-	// ledger the deploy transaction compares before and after moved with no
-	// evidence gained or lost. Identity, not arrival, decides what is counted.
-	seen := make(map[pkgKey]map[evidenceKey]bool, len(keys))
-	add := func(k pkgKey, version string, rows []serverstore.EvidenceRow) {
+) (map[string][]serverstore.EvidenceRow, error) {
+	out := map[string][]serverstore.EvidenceRow{}
+	seen := map[evidenceKey]bool{}
+	add := func(version string, rows []serverstore.EvidenceRow) {
 		for _, row := range rows {
-			if seen[k][keyOf(row)] {
+			if seen[keyOf(row)] {
 				continue
 			}
-			seen[k][keyOf(row)] = true
-			out[k][version] = append(out[k][version], row)
+			seen[keyOf(row)] = true
+			out[version] = append(out[version], row)
 		}
 	}
-	for _, k := range keys {
-		out[k] = map[string][]serverstore.EvidenceRow{}
-		seen[k] = map[evidenceKey]bool{}
-		for _, versions := range byPkg[k] {
-			for version, rows := range versions {
-				add(k, version, rows)
-			}
+	for _, versions := range byPkg[k] {
+		for version, rows := range versions {
+			add(version, rows)
 		}
 	}
 	for _, t := range allTargets {
@@ -1238,8 +1240,7 @@ func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 		if err != nil {
 			continue
 		}
-		k := pkgKey{p.Ecosystem, p.Name}
-		if !want[k] {
+		if (pkgKey{p.Ecosystem, p.Name}) != k {
 			continue
 		}
 		if _, loaded := byPkg[k][t.Symbol][p.Version]; loaded {
@@ -1249,7 +1250,7 @@ func (b *Builder) evidenceForPackages(ctx context.Context, keys []pkgKey,
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", t.PURL, t.Symbol, err)
 		}
-		add(k, p.Version, rows)
+		add(p.Version, rows)
 	}
 	return out, nil
 }
