@@ -101,6 +101,14 @@ func validateLauncherAsset(a Asset, version string) error {
 	return validateSignedLauncherURL(a.LauncherURL, version, a.Arch)
 }
 
+// ValidateLauncherAssetForTest exposes validateLauncherAsset so the release
+// signer's own test can check that what it writes is what every client will
+// accept. The two live on opposite sides of a signature, and a disagreement
+// between them is an outage that begins at the moment of release.
+func ValidateLauncherAssetForTest(a Asset, version string) error {
+	return validateLauncherAsset(a, version)
+}
+
 // isSHA256Hex reports whether s is exactly 64 lowercase-or-uppercase hex
 // characters.
 func isSHA256Hex(s string) bool {
