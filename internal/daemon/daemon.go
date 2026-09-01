@@ -276,7 +276,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			runErr = err
 		}
 	}
-	if err := stopServer(srv, orDefault(d.shutdownGrace, defaultShutdownGrace)); err != nil && runErr == nil {
+	if err := stopServing(srv, orDefault(d.shutdownGrace, defaultShutdownGrace)); err != nil && runErr == nil {
 		runErr = err
 	}
 	return runErr
@@ -286,6 +286,64 @@ func (d *Daemon) Run(ctx context.Context) error {
 // stop is asked for. Long enough for an ordinary handler, short enough that a
 // stuck one cannot hold a release-blocking test past its budget.
 const defaultShutdownGrace = 5 * time.Second
+
+// stopSlack is how long past the drain grace stopServing waits before it
+// accepts that the stop is not going to finish.
+//
+// Small: by the time it expires the drain's own budget is already spent, and
+// anything still outstanding is a handle the operating system releases when
+// the process does.
+const stopSlack = 2 * time.Second
+
+// errStopWedged is returned when the stop gave up.
+//
+// An error and not a silent success, because "the daemon stopped" and "the
+// daemon walked away from a stop that would not finish" are different facts,
+// and the second is the one worth seeing in a log.
+var errStopWedged = errors.New("daemon: shutdown did not finish; abandoning it")
+
+// stopServing drains srv, bounded even when the shutdown itself cannot
+// finish.
+//
+// Measured on the v0.1.88 release runner, where the stack named every frame
+// of the cycle:
+//
+//	Run -> stopServer -> Shutdown -> closeListenersLocked   [holds srv.mu]
+//	    -> onceCloseListener.Close -> winio pipe Close      [chan receive]
+//	Run.func2 -> Serve(pipe) -> trackListener               [sync.Mutex.Lock]
+//
+// Shutdown closes listeners while holding srv.mu; the Windows named pipe's
+// Close never returned; and that pipe's own Serve was left wanting the same
+// mutex to untrack itself. go-winio v0.6.2 -- the newest published -- sends
+// its close signal on an unbuffered channel exactly once, and
+// makeConnectedServerPipe's select can consume it instead of the listener
+// routine. When the aborted connect then returns anything but nil or
+// ErrFileClosed, the routine does not set closed, returns to its select, and
+// doneCh is never closed; Close waits on doneCh (pipe.go:578) forever.
+//
+// So the fix cannot be an ordering: there is no order in which a close that
+// never returns returns, and closing the pipe first only hangs earlier.
+// Neither could a bigger grace -- Shutdown's grace bounds the drain that
+// happens AFTER the listeners are closed, so it was never reached, and
+// neither was the 10-second budget above it.
+//
+// What has to be true is that Run returns. The process is on its way out,
+// and a handle nothing can release is released by exiting.
+//
+// Read for three releases as a shutdown flake that blocks a tag. It is a
+// deadlock, and a user's daemon can reach it too.
+func stopServing(srv *http.Server, grace time.Duration) error {
+	stopped := make(chan error, 1)
+	// Not waited on beyond the bound: this is the goroutine that may never
+	// finish, and surviving that is the whole point.
+	go func() { stopped <- stopServer(srv, grace) }()
+	select {
+	case err := <-stopped:
+		return err
+	case <-time.After(grace + stopSlack):
+		return errStopWedged
+	}
+}
 
 // stopServer drains srv for grace, then ends whatever is left.
 //
