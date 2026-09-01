@@ -50,13 +50,21 @@ type Runner interface {
 	VerifierImage(m domain.SampleManifest) *domain.VerifierImage
 }
 
-// goWarmSeconds bounds the golang resolve stage's cache warming, well inside
-// the stage budget so the warming cannot be the reason the stage dies.
+// goResolveDeadline is the wall clock, in seconds from the start of the
+// golang resolve stage, by which cache warming must stop.
 //
-// Two thirds of the stage, not all of it: `go mod download` has to finish
-// first and it is the part that actually resolves, so the warming gets what
-// is left over rather than the whole budget.
-const goWarmSeconds = "200"
+// A DEADLINE and not a duration. The first version gave the warm build a
+// fixed 200 seconds, which silently assumed the unbounded work before it --
+// `go mod download` and `go list -m -json all` -- costs nothing. Measured on
+// production 2026-09-01 after that shipped: golang contract timeouts fell
+// from 19 of 29 receipts to 4 of 65, and 31 receipts arrived instead with
+// RESOLVE killed at the 300-second stage budget. Download plus a full-length
+// warm build exceeds the stage on its own, and no constant can know how much
+// of the budget the download already spent. The elapsed time can.
+//
+// 240 against a 300-second stage leaves the container its startup, the
+// module list its write, and the stage a minute of slack.
+const goResolveDeadline = "240"
 
 // stageTimeout bounds every stage (plan C13: 5m/stage).
 const stageTimeout = 5 * time.Minute
@@ -212,8 +220,9 @@ func resolveCommand(ecosystem, runtime string) ([]string, error) {
 		// the behaviour before any of this existed.
 		return []string{"sh", "-c", "set -e; rm -rf " + vendorDir + "/gomod " + vendorDir +
 			"/gobuild " + vendorDir + "/go-modules.json; mkdir -p " + vendorDir +
-			"; go mod download; go list -m -json all > " + vendorDir + "/go-modules.json" +
-			"; timeout " + goWarmSeconds + " go build ./... >/dev/null 2>&1 || true"}, nil
+			"; S=$(date +%s); go mod download; go list -m -json all > " + vendorDir + "/go-modules.json" +
+			"; W=$((" + goResolveDeadline + " - $(date +%s) + S))" +
+			"; if [ \"$W\" -gt 10 ]; then timeout \"$W\" go build ./... >/dev/null 2>&1 || true; fi"}, nil
 	case "cargo":
 		return []string{"sh", "-c", "rm -rf " + vendorDir + "/cargo " + vendorDir +
 			"/target; cargo fetch --locked"}, nil

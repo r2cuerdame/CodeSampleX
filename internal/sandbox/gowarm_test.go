@@ -56,10 +56,10 @@ func TestTheWarmStepCannotConsumeTheStageBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := strings.Join(cmd, " ")
-	if !strings.Contains(script, "timeout "+goWarmSeconds+" go build") {
+	if !strings.Contains(script, "timeout \"$W\" go build") {
 		t.Errorf("the warm build is unbounded:\n%s", script)
 	}
-	bound, err := strconv.Atoi(goWarmSeconds)
+	bound, err := strconv.Atoi(goResolveDeadline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,5 +139,43 @@ func TestTheGolangStagesForbidModuleEdits(t *testing.T) {
 	script := strings.Join(cmd, " ")
 	if strings.Index(script, "go-modules.json") > strings.Index(script, "go build ./...") {
 		t.Error("the build runs before the selected build list is recorded")
+	}
+}
+
+// The warm build's bound has to be what is LEFT of the stage, not a constant.
+//
+// Measured on production 2026-09-01, after the fixed 200-second bound
+// shipped: golang contract timeouts fell from 19 of 29 receipts to 4 of 65,
+// and 31 receipts arrived with the RESOLVE stage killed at the 300-second
+// budget instead. `go mod download` and `go list -m -json all` run first and
+// neither is bounded, so a slow download plus a full-length warm build
+// exceeds the stage on its own. A constant can only ever be wrong in one of
+// the two directions; the elapsed time is the only thing that knows.
+func TestTheWarmBoundIsWhatIsLeftOfTheStage(t *testing.T) {
+	cmd, err := resolveCommand("golang", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Join(cmd, " ")
+
+	// It reads the clock before the unbounded part and again after it.
+	if strings.Count(script, "date +%s") < 2 {
+		t.Errorf("the warm bound is not computed from elapsed time:\n%s", script)
+	}
+	if strings.Contains(script, "timeout "+goResolveDeadline+" go build") {
+		t.Errorf("the warm build still gets a fixed bound, ignoring what download spent:\n%s", script)
+	}
+	// The clock starts before the part that is not bounded, or the deadline
+	// measures the wrong interval.
+	if strings.Index(script, "date +%s") > strings.Index(script, "go mod download") {
+		t.Errorf("the stage clock starts after the download it is meant to account for:\n%s", script)
+	}
+	deadline, err := strconv.Atoi(goResolveDeadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if float64(deadline) >= stageTimeout.Seconds() {
+		t.Errorf("the resolve deadline is %ds against a %.0fs stage budget; it leaves no room for the container",
+			deadline, stageTimeout.Seconds())
 	}
 }
