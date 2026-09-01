@@ -155,6 +155,26 @@ func assets(dist, version string) []csxupdate.Asset {
 		})
 		if target.os == "windows" {
 			out[len(out)-1].MinLauncherVersion = "v1.0.0"
+			// The launcher travels in the SIGNED manifest, so `csx update`
+			// can replace it the way it replaces a payload.
+			//
+			// Before this it could not: the only code that downloaded a
+			// launcher was install.ps1, so a machine kept whatever launcher
+			// it was installed with. Measured on a workstation running a
+			// current payload -- its launcher was 26 releases old, missing
+			// both the quarantine rehydrate and the console-subsystem build.
+			// Every launcher-side fix was shipping to a release page and
+			// stopping there.
+			launcherName := "csx-launcher-windows-" + target.arch + ".exe"
+			launcherRaw, err := os.ReadFile(filepath.Join(dist, launcherName))
+			if err != nil {
+				fatal(err.Error())
+			}
+			launcherSum := sha256.Sum256(launcherRaw)
+			out[len(out)-1].LauncherURL = "https://github.com/r2cuerdame/CodeSampleX/releases/download/" +
+				version + "/" + launcherName
+			out[len(out)-1].LauncherSize = int64(len(launcherRaw))
+			out[len(out)-1].LauncherSHA256 = hex.EncodeToString(launcherSum[:])
 		}
 	}
 	return out

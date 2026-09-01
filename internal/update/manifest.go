@@ -59,6 +59,62 @@ type Asset struct {
 	Size               int64  `json:"size"`
 	SHA256             string `json:"sha256"`
 	MinLauncherVersion string `json:"minLauncherVersion,omitempty"`
+
+	// LauncherURL, LauncherSize and LauncherSHA256 name the Windows launcher
+	// published with this release. Optional, and absent on every manifest
+	// signed before they existed.
+	//
+	// They live in the SIGNED manifest rather than being read from the
+	// release's SHA256SUMS.txt, because a launcher is the binary that runs
+	// before the payload does. SHA256SUMS.txt is a file served beside the
+	// release and nothing vouches for it; the manifest is the one artifact
+	// the updater's own key covers. Taking the first thing that executes from
+	// an unsigned list would hand it to whoever can write the download
+	// surface.
+	LauncherURL    string `json:"launcherUrl,omitempty"`
+	LauncherSize   int64  `json:"launcherSize,omitempty"`
+	LauncherSHA256 string `json:"launcherSha256,omitempty"`
+}
+
+// validateLauncherAsset checks the launcher fields of one asset.
+//
+// Absent is legal and means only that this release's manifest predates them,
+// or that the target has no launcher: a client that finds none leaves the
+// launcher on disk alone rather than refusing the payload update.
+//
+// Half a launcher is not. A URL with no digest is a binary nothing holds to
+// anything, and a digest with no URL is a promise about a file that will
+// never be fetched.
+func validateLauncherAsset(a Asset, version string) error {
+	if a.LauncherURL == "" && a.LauncherSHA256 == "" && a.LauncherSize == 0 {
+		return nil
+	}
+	if !strings.EqualFold(a.OS, "windows") {
+		return fmt.Errorf("update: %s/%s names a launcher, which only Windows has", a.OS, a.Arch)
+	}
+	if a.LauncherURL == "" || a.LauncherSHA256 == "" || a.LauncherSize <= 0 {
+		return errors.New("update: launcher asset is incomplete: url, sha256 and size are all required together")
+	}
+	if !isSHA256Hex(a.LauncherSHA256) {
+		return errors.New("update: launcher sha256 is not a 64-character hex digest")
+	}
+	return validateSignedLauncherURL(a.LauncherURL, version, a.Arch)
+}
+
+// isSHA256Hex reports whether s is exactly 64 lowercase-or-uppercase hex
+// characters.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // VerifyEnvelope authenticates the raw payload before parsing it. Signing the
@@ -118,6 +174,15 @@ func VerifyEnvelope(raw []byte, publicKey ed25519.PublicKey, now time.Time, chan
 	}
 	if m.ExpiresAt.Sub(m.PublishedAt) > maxManifestValidity {
 		return Manifest{}, errors.New("update: manifest validity exceeds 90 days")
+	}
+	// Refuse a malformed launcher here, at verification, rather than at the
+	// moment one is about to be fetched. A signed manifest that names half a
+	// launcher is a signing bug, and finding it while deciding what to run is
+	// too late to say anything useful about it.
+	for _, a := range m.Assets {
+		if err := validateLauncherAsset(a, m.Version); err != nil {
+			return Manifest{}, err
+		}
 	}
 	if m.MinUpdaterVersion != "" && !IsCanonicalReleaseVersion(m.MinUpdaterVersion) {
 		return Manifest{}, fmt.Errorf("update: minimum updater version %q is not canonical", m.MinUpdaterVersion)

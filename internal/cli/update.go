@@ -269,6 +269,16 @@ func updateMain(ctx context.Context, args []string) int {
 			return 0
 		}
 		fmt.Printf("Installed csx %s; previous binary kept at %s.\n", res.LatestVersion, res.PreviousPath)
+		// The launcher half, said out loud either way. A machine quietly
+		// keeping an old launcher is exactly how launcher-side fixes reached
+		// a release page and stopped there for 26 releases.
+		if res.LauncherReplaced {
+			fmt.Println("The launcher was updated with it.")
+		}
+		if res.LauncherError != "" {
+			fmt.Fprintf(os.Stderr, "csx update: the payload was installed but the launcher was not updated: %s\n", res.LauncherError)
+			fmt.Fprintln(os.Stderr, "csx update: the previous launcher is still installed and working; the next update will try again.")
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "csx update: installed, but post-install durability reporting failed: %v\n", err)
 		}

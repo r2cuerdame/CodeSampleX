@@ -41,6 +41,15 @@ type Result struct {
 	RollbackHeld          bool
 	PreviousPath          string
 	NextCheck             time.Time
+
+	// LauncherReplaced and LauncherError report the launcher half of the
+	// update, which is separate because it is best effort: the payload has
+	// already committed by the time it runs, and it must not be able to fail
+	// an update that succeeded. An error here is worth SAYING -- a machine
+	// silently keeping an old launcher is how a fix reached a release page
+	// and stopped there for 26 releases -- but never worth failing over.
+	LauncherReplaced bool
+	LauncherError    string
 }
 
 type Client struct {
@@ -300,6 +309,17 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 			st.PreviousPath = "active.json:" + next.Previous.Version
 		}
 		res.Applied, res.RestartRequired, res.PreviousPath = true, true, st.PreviousPath
+		// And the launcher, which nothing updated before this. Deliberately
+		// after the payload has committed and deliberately not fatal: a
+		// launcher that cannot be fetched, verified or swapped leaves the
+		// machine exactly as it was, running the launcher it already had,
+		// and the next update tries again. Turning a committed payload
+		// update into a failure over it would be strictly worse.
+		if replaced, lerr := c.replaceLauncherIfStale(ctx, in.InstallRoot, asset); lerr != nil {
+			res.LauncherError = lerr.Error()
+		} else if replaced {
+			res.LauncherReplaced = true
+		}
 		return res, nil
 	}
 	validateTarget := c.ValidateTarget
@@ -542,6 +562,31 @@ func validateSignedAssetURL(raw, version, osName, arch string) error {
 		}
 	}
 	return fmt.Errorf("update: asset URL does not name the exact %s/%s release binary", osName, arch)
+}
+
+// validateSignedLauncherURL holds the launcher URL to the same rule as the
+// payload's: it must name the launcher asset of this exact release, on a host
+// this build trusts.
+func validateSignedLauncherURL(raw, version, arch string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("update: invalid launcher URL: %w", err)
+	}
+	if err := validateDownloadURL(u); err != nil {
+		return err
+	}
+	want := "csx-launcher-windows-" + arch + ".exe"
+	switch strings.ToLower(u.Hostname()) {
+	case "github.com":
+		if u.Path == "/r2cuerdame/CodeSampleX/releases/download/"+version+"/"+want {
+			return nil
+		}
+	case "codesamplex.dev":
+		if u.Path == "/dl/"+want {
+			return nil
+		}
+	}
+	return fmt.Errorf("update: launcher URL does not name the windows/%s launcher of %s", arch, version)
 }
 
 func validateDownloadURL(u *url.URL) error {
