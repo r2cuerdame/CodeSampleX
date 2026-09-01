@@ -194,6 +194,60 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Ask Defender what it thinks of the artifact about to be published.
+  #
+  # scripts/defender-release-check.ps1 has existed since 2026-08-26 and
+  # docs/operations.md listed this mitigation as done. Nothing invoked it. It
+  # was a script a person had to remember to run, and on 2026-09-01 nobody
+  # did: v0.1.89 published a Windows payload that current definitions
+  # quarantine, and the first anyone knew was a user who could not install.
+  #
+  # Deliberately NOT a gate. The verdict is a machine-learning output and it
+  # is dated -- the same bytes have scanned clean and been quarantined on
+  # consecutive definition builds, which is the substance of the false-positive
+  # report filed as 3e13330b-dcee-4708-9436-f59a5dca3399. A blocking check
+  # would have held every release on the day the shipped payload was flagged.
+  # The value is knowing before deploying, not refusing to ship.
+  defender-scan:
+    needs: build
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-dist
+      - name: Scan the Windows release binaries
+        id: scan
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $files = @(
+            'dist/csx-windows-amd64.exe'
+            'dist/csx-windows-arm64.exe'
+            'dist/csx-launcher-windows-amd64.exe'
+            'dist/csx-launcher-windows-arm64.exe'
+          )
+          # -DisableRemediation lives inside the script: asking must not be
+          # able to quarantine the artifact being asked about.
+          ./scripts/defender-release-check.ps1 -Path $files
+          exit $LASTEXITCODE
+      - name: Say what it found, where a person will see it
+        if: always()
+        shell: pwsh
+        run: |
+          $verdict = if ($env:SCAN_OUTCOME -eq 'success') {
+            'CLEAN against the definitions on this runner today.'
+          } else {
+            'FLAGGED, or could not be measured. A published release may be unusable for new Windows installs.'
+          }
+          "## Defender pre-release scan`n`n$verdict`n`nRead narrowly: a static scan at one definition build. See docs/operations.md." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+
   # The only job that can reach the updater signing seed. It holds no write
   # scope, publishes nothing, and runs no code from outside this repository —
   # it exists to turn a set of digests into one signature and then stop.

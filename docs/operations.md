@@ -1525,13 +1525,29 @@ mistake this section exists to prevent.
 | Mitigation | Cost | Automatable | Key exposure | Release UX | Decision |
 | --- | --- | --- | --- | --- | --- |
 | Stop the fixture false positive | none | done | none | none | engineering — **done** |
-| Measure the artifact before release | none | yes | none | one more check | engineering — **done** |
+| Measure the artifact before release | none | yes | none | one more check | engineering — **done, and wired into the release on 2026-09-01** |
 | Record and surface post-install recovery | none | yes | none | `csx update status` line | engineering — **done** |
 | Report the false positive to Microsoft | free, days to weeks, per-build | no — the portal is interactive | none | fixes one build, not the next | human gate — **submitted 2026-09-01**, see below |
 | Authenticode certificate (OV) | annual fee, organisation identity verification | signing yes, obtaining no | a new signing key in CI, next to the updater seed | reputation builds over releases; does not start clean | **human gate: purchase + organisation identity** |
 | Authenticode certificate (EV) | higher fee, hardware token or cloud HSM | token models cannot be automated at all | HSM or token custody | immediate SmartScreen reputation | **human gate: purchase, custody, and it can break unattended release** |
 | Build-characteristic tuning (version resource, unstripped binaries) | none | yes | none | larger binaries | **not done — see below** |
 | Defender exclusion on the install root | none | technically yes | none | none | **refused: never added to a user's machine** |
+
+**"Measure the artifact before release" was marked done and ran nowhere.**
+`scripts/defender-release-check.ps1` was written on 2026-08-26 and this table
+called the mitigation done, but no workflow invoked it: it was a script a
+person had to remember. On 2026-09-01 nobody did, v0.1.89 published a Windows
+payload that current definitions quarantine, and the first anyone knew was a
+user who could not install. The release now runs it in a `defender-scan` job
+on a Windows runner after the binaries exist, and a test asserts that wiring
+so it cannot quietly come loose again.
+
+It is deliberately not a gate. `continue-on-error: true`, and the verdict goes
+to the job summary. The classification is a model output and a dated one --
+the same bytes have scanned clean and been quarantined on consecutive
+definition builds -- so a blocking check would have stopped every release on
+the day the shipped payload was flagged. Knowing before deploying is the
+value; refusing to ship is not.
 
 **The submission was made on 2026-09-01.** Until then this row had a decision
 and no action: the analysis finished on 2026-08-26 and the portal step, being

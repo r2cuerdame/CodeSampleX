@@ -498,3 +498,52 @@ func TestNothingModifiesABinaryAfterItsChecksumIsTaken(t *testing.T) {
 		}
 	}
 }
+
+// The Defender pre-release check must actually run.
+//
+// docs/operations.md listed "Measure the artifact before release" as **done**
+// and scripts/defender-release-check.ps1 existed -- but nothing invoked it.
+// It was a script a person had to remember, and on 2026-09-01 nobody did:
+// v0.1.89 published a Windows payload that current definitions quarantine, and
+// the first anyone knew was a user unable to install.
+//
+// A capability documented as done and wired to nothing is the same failure as
+// a launcher fix that never leaves the release page. This test is what makes
+// the difference visible.
+func TestTheReleaseAsksDefenderAboutWhatItIsAboutToShip(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+
+	// The INVOCATION, not the first mention: the job carries a comment that
+	// names the script, and matching that would pass while nothing ran it.
+	at := strings.Index(body, "./scripts/defender-release-check.ps1 -Path")
+	if at < 0 {
+		t.Fatal("the release never runs scripts/defender-release-check.ps1")
+	}
+	// On a Windows runner, because that is the only place Defender is.
+	before := body[:at]
+	job := strings.LastIndex(before, "runs-on:")
+	if job < 0 || !strings.Contains(body[job:job+40], "windows") {
+		t.Error("the Defender check does not run on a Windows runner")
+	}
+	// After the binaries exist.
+	if !strings.Contains(body[:at], "download-artifact") {
+		t.Error("the Defender check runs before the artifacts it scans are available")
+	}
+	// And it must not be able to stop a release. The verdict is dated and
+	// unstable by nature -- the same bytes have been clean and flagged on
+	// consecutive definition builds -- so a blocking gate would have held
+	// every release on 2026-09-01, when the shipped payload was flagged.
+	// Knowing before deploying is the whole value; refusing to ship is not.
+	tail := body[at:]
+	end := len(tail)
+	if next := strings.Index(tail, "\n  publish:"); next > 0 {
+		end = next
+	}
+	if !strings.Contains(body[:at], "continue-on-error: true") && !strings.Contains(tail[:end], "continue-on-error: true") {
+		t.Error("the Defender check can fail a release; a dated model verdict must not be a release gate")
+	}
+}
