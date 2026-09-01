@@ -439,3 +439,62 @@ func TestTheWindowsLauncherIsBuiltWithoutAConsole(t *testing.T) {
 		t.Error("the payload is built without a console; the launcher decides that, per invocation")
 	}
 }
+
+// Nothing may touch a release binary after its checksum is taken.
+//
+// SHA256SUMS.txt is what the installer holds its download to, and the signed
+// updater manifest carries the same digests. Authenticode signing MODIFIES
+// the file it signs, so a signing step placed after `sha256sum` would produce
+// a release whose every recorded digest describes bytes that were never
+// published -- and the failure appears not at release time but at the moment
+// a user tries to install, as a checksum mismatch on a file that is perfectly
+// intact.
+//
+// This is the invariant to hold when Authenticode signing lands. It cannot be
+// done in the build job at all: Authenticode requires a Windows runner and
+// the cross-compile runs on ubuntu, so signing arrives as its own job between
+// build and the manifest signer -- and that job must recompute SHA256SUMS.txt
+// over what it produced.
+func TestNothingModifiesABinaryAfterItsChecksumIsTaken(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+
+	sums := strings.Index(body, "sha256sum csx-* > SHA256SUMS.txt")
+	if sums < 0 {
+		t.Fatal("the release no longer records asset checksums")
+	}
+	// Every Go build of a release binary happens before that line.
+	for _, build := range []string{
+		`-o "dist/csx-$os-$arch$ext" ./cmd/csx`,
+		`-o "dist/csx-launcher-windows-$arch.exe" ./cmd/csx-launcher`,
+		"-o dist/csx-server-linux-amd64 ./cmd/csx-server",
+	} {
+		at := strings.Index(body, build)
+		if at < 0 {
+			t.Errorf("the release no longer builds %q", build)
+			continue
+		}
+		if at > sums {
+			t.Errorf("%q is built after its checksum is taken", build)
+		}
+	}
+
+	// And if a signing step ever appears, it must come before the checksums
+	// too -- in this file that means before this line, or in an earlier job.
+	for _, marker := range []string{"trusted-signing", "Trusted Signing", "signtool", "dotnet sign"} {
+		at := strings.Index(body, marker)
+		if at < 0 {
+			continue
+		}
+		// A signing job that recomputes the checksums itself is the shape
+		// that works; require the recomputation to be visible beside it.
+		tail := body[at:]
+		if !strings.Contains(tail, "SHA256SUMS.txt") {
+			t.Errorf("a signing step (%q) appears with no checksum recomputation after it; "+
+				"every recorded digest would describe unsigned bytes", marker)
+		}
+	}
+}

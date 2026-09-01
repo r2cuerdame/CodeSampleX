@@ -1,3 +1,5 @@
+//go:build windows
+
 package update
 
 import (
@@ -7,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -27,7 +28,7 @@ import (
 // left exactly as it was, running the launcher it already had, and the next
 // update tries again.
 func (c *Client) replaceLauncherIfStale(ctx context.Context, root string, asset Asset) (bool, error) {
-	if runtime.GOOS != "windows" || asset.LauncherSHA256 == "" {
+	if asset.LauncherSHA256 == "" {
 		return false, nil
 	}
 	exe := filepath.Join(root, "csx.exe")
