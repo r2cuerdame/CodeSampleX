@@ -145,3 +145,87 @@ func TestAManifestWithoutALauncherChangesNothing(t *testing.T) {
 		t.Errorf("replaced=%v err=%v, want a silent no-op", replaced, err)
 	}
 }
+
+// A launcher displaced by an earlier update is still running, and the next
+// update must not trip over it.
+//
+// Measured on this workstation 2026-09-01. The first swap worked. The second
+// reported:
+//
+//	csx update: the payload was installed but the launcher was not updated:
+//	move the installed launcher aside: rename ...\csx.exe
+//	...\csx.exe.previous-launcher: Access is denied.
+//
+// because the aside name was a constant. Windows lets a running executable be
+// RENAMED, which is what makes the swap possible at all -- but it does not
+// let one be overwritten, and the previous aside was still being executed by
+// the MCP servers started before the last update. On a machine with
+// long-lived MCP servers that is not an edge case; it is every update after
+// the first, forever, until every one of them exits.
+//
+// install.ps1 has always used a unique name for exactly this reason.
+func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "csx.exe")
+	if err := os.WriteFile(exe, []byte("launcher one"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	swap := func(body []byte) {
+		t.Helper()
+		sum := sha256.Sum256(body)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+		c := &Client{HTTP: srv.Client()}
+		// The self-test cannot run a text file, so drive the rename directly:
+		// this test is about the aside, not about starting a binary.
+		staged := filepath.Join(root, "staged.exe")
+		if err := os.WriteFile(staged, body, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.installLauncher(exe, staged); err != nil {
+			t.Fatalf("swap: %v", err)
+		}
+		_ = sum
+	}
+
+	swap([]byte("launcher two"))
+
+	// Hold every displaced launcher open with no sharing, exactly as a
+	// running process does.
+	var held []*os.File
+	defer func() {
+		for _, f := range held {
+			_ = f.Close()
+		}
+	}()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "csx.exe" || e.Name() == "staged.exe" {
+			continue
+		}
+		f, err := os.Open(filepath.Join(root, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, f)
+	}
+	if len(held) == 0 {
+		t.Fatal("the first swap displaced nothing")
+	}
+
+	swap([]byte("launcher three"))
+
+	got, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "launcher three" {
+		t.Errorf("installed launcher is %q, want the newest", got)
+	}
+}

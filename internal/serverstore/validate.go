@@ -72,7 +72,20 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err != nil {
 		return fmt.Errorf("bad purl: %v", err)
 	}
-	if !domain.AllowedEcosystems[p.Ecosystem] {
+	// A fixed public target is admissible even though its ecosystem is not.
+	//
+	// "generic" is where an arbitrary name lives, so it cannot join the
+	// allowlist wholesale -- that would put unchecked coordinates on public
+	// pages, which is what the allowlist exists to prevent. But engines and
+	// SDKs have no registry to belong to, and IsWantedTarget is already the
+	// publicness boundary for exactly them: a closed vocabulary, each entry
+	// requiring a concrete version.
+	//
+	// This check runs BEFORE the ingest publicness gate, so without it an
+	// Unreal observation was refused here and the gate's own shortcut never
+	// ran. Measured against production 2026-09-01: with the client and the
+	// gate both fixed, csx sync still landed nothing.
+	if !domain.AllowedEcosystems[p.Ecosystem] && !domain.IsWantedTarget(p) {
 		return fmt.Errorf("ecosystem %q not in the public allowlist", p.Ecosystem)
 	}
 	switch b.Stage {

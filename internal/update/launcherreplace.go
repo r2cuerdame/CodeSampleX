@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // replaceLauncherIfStale installs the launcher this release publishes, when
@@ -58,25 +59,66 @@ func (c *Client) replaceLauncherIfStale(ctx context.Context, root string, asset 
 		return false, err
 	}
 
-	// Windows will not let anything WRITE a running executable, and after
-	// `csx init` this launcher is exactly that. It does allow a rename, so
-	// the old binary moves aside and the new one takes its place; anything
-	// already running keeps the file it opened.
-	aside := exe + ".previous-launcher"
-	_ = os.Remove(aside)
+	if err := c.installLauncher(exe, staged); err != nil {
+		return false, err
+	}
+	keep = true
+	return true, nil
+}
+
+// installLauncher puts staged in place of exe, keeping the displaced binary.
+//
+// Windows will not let anything WRITE a running executable, and after
+// `csx init` this launcher is exactly that. It does allow a RENAME, so the
+// old binary moves aside and the new one takes its place; anything already
+// running keeps the file it opened.
+//
+// The aside name is unique per swap, and that is not tidiness. A constant
+// name worked once and failed every time after: measured on this workstation
+// 2026-09-01, the second update reported "move the installed launcher aside:
+// ... Access is denied" because the previous aside was still being EXECUTED
+// by the MCP servers started before the last update, and Windows will not
+// overwrite that either. On a machine with long-lived MCP servers that is not
+// an edge case, it is every update after the first until all of them exit.
+// install.ps1 has always used a unique name for exactly this reason.
+func (c *Client) installLauncher(exe, staged string) error {
+	aside := fmt.Sprintf("%s.previous-%d", exe, time.Now().UnixNano())
 	if err := retryRename(exe, aside); err != nil {
-		return false, fmt.Errorf("update: move the installed launcher aside: %w", err)
+		return fmt.Errorf("update: move the installed launcher aside: %w", err)
 	}
 	if err := retryRename(staged, exe); err != nil {
 		// Put back exactly what was there. A machine with no launcher at all
 		// is worse than one with an old launcher.
 		if back := retryRename(aside, exe); back != nil {
-			return false, fmt.Errorf("update: launcher swap failed (%v) and the previous launcher could not be restored: %w", err, back)
+			return fmt.Errorf("update: launcher swap failed (%v) and the previous launcher could not be restored: %w", err, back)
 		}
-		return false, fmt.Errorf("update: install the new launcher: %w", err)
+		return fmt.Errorf("update: install the new launcher: %w", err)
 	}
-	keep = true
-	return true, nil
+	// Sweep the ones nothing is running any more. Best effort by
+	// construction: a file still held is a launcher still in use, and
+	// failing an update over housekeeping would be absurd.
+	removeUnusedAsides(filepath.Dir(exe), filepath.Base(exe), aside)
+	return nil
+}
+
+// removeUnusedAsides deletes displaced launchers no process still holds open,
+// except the one just created. A locked one is left for the next update.
+func removeUnusedAsides(dir, base, keep string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, base+".previous-") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if path == keep {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 }
 
 // launcherSelfTest runs the staged launcher's own version probe.
