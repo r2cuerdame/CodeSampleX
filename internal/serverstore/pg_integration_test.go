@@ -296,7 +296,7 @@ func TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable(t *testi
 	}
 
 	started := time.Now()
-	_, err := pg.listAuthoringExpansionCandidates(context.Background(), 10, 75*time.Millisecond)
+	_, err := pg.listAuthoringExpansionCandidates(context.Background(), 10, 75*time.Millisecond, false)
 	elapsed := time.Since(started)
 	close(release)
 	if lockErr := <-lockResult; lockErr != nil {
@@ -314,7 +314,7 @@ func TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable(t *testi
 	// or carrying the failed transaction forward.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := pg.listAuthoringExpansionCandidates(ctx, 1, time.Second); err != nil {
+	if _, err := pg.listAuthoringExpansionCandidates(ctx, 1, time.Second, false); err != nil {
 		t.Fatalf("candidate query after timeout: %v", err)
 	}
 }

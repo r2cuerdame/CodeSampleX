@@ -29,7 +29,7 @@ func beginFarmAggregate(ctx context.Context, c *pgx.Conn, ceiling time.Duration)
 	// The matrix query also measured 162ms of execution behind roughly 770ms
 	// of JIT compilation, so this request-scoped transaction turns JIT off.
 	statementTimeout := authoringStatementTimeout(ctx, ceiling)
-	if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, pgStatementTimeout(statementTimeout)); err != nil {
 		_ = tx.Rollback(context.Background())
 		return nil, err
 	}

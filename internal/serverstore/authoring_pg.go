@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,19 @@ const authoringExpansionStatementTimeout = 10 * time.Second
 const authoringExpansionUnhurriedStatementTimeout = 8 * time.Minute
 
 const authoringStatementDeadlineMargin = 250 * time.Millisecond
+
+// pgStatementTimeout renders a duration the way statement_timeout accepts
+// it: an integer number of milliseconds. time.Duration.String() is not that
+// -- ten seconds is "10s" and passes, eight minutes is "8m0s" and PostgreSQL
+// refuses it (SQLSTATE 22023). The unhurried refresh was the first caller to
+// cross a minute, and the first to find out.
+func pgStatementTimeout(d time.Duration) string {
+	ms := d.Milliseconds()
+	if ms < 1 {
+		ms = 1
+	}
+	return strconv.FormatInt(ms, 10)
+}
 
 func authoringStatementTimeout(ctx context.Context, ceiling time.Duration) time.Duration {
 	if deadline, ok := ctx.Deadline(); ok {
@@ -260,11 +274,18 @@ func scanAuthoringWork(row pgx.Row) (AuthoringWorkRow, error) {
 }
 
 func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error) {
-	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionStatementTimeout)
+	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionStatementTimeout, false)
 }
 
+// ListAuthoringExpansionCandidatesUnhurried runs the same read under the
+// refresh budget AND on one core. The host has two; the parallel plan takes
+// both for the ~4 minutes the read needs on production, and for that whole
+// window the website shares the box with nothing. Measured 2026-09-02 with
+// parallelism off the read took 300s instead of 249s -- a fifth slower, for
+// a core the site keeps. A refresh answers no caller; it has no claim on
+// the second core.
 func (p *PG) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limit int) ([]WantedRow, error) {
-	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionUnhurriedStatementTimeout)
+	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionUnhurriedStatementTimeout, true)
 }
 
 // authoringExpansionCandidatesSQL is the candidate query on its own, so a
@@ -548,7 +569,7 @@ var authoringExpansionCandidatesSQL = `
 			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
 			LIMIT $1`
 
-func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration) ([]WantedRow, error) {
+func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration, oneCore bool) ([]WantedRow, error) {
 	if limit < 1 {
 		return nil, nil
 	}
@@ -570,8 +591,15 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 		// pending statement interrupt promptly. Keep this transaction on the
 		// ordinary executor: it is both faster for this short-lived read and
 		// lets statement_timeout remain an actual upper bound.
-		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, pgStatementTimeout(statementTimeout)); err != nil {
 			return err
+		}
+		if oneCore {
+			// Transaction-local like the two above, so the pooled connection
+			// goes back to the shipped setting on commit or rollback.
+			if _, err := tx.Exec(ctx, `SELECT set_config('max_parallel_workers_per_gather','0',true)`); err != nil {
+				return err
+			}
 		}
 		rows, err := tx.Query(ctx, authoringExpansionCandidatesSQL, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
 			authoringResolveWeight)

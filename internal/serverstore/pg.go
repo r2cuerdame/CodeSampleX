@@ -3049,7 +3049,7 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 		// ceiling, so it must not retain a connection after that caller left.
 		// Interactive callers already have the stricter shipped 8-second limit.
 		if statementTimeout := authoringPollStatementTimeout(ctx); statementTimeout > 0 {
-			if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true)`, statementTimeout.String()); err != nil {
+			if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true)`, pgStatementTimeout(statementTimeout)); err != nil {
 				return err
 			}
 		}

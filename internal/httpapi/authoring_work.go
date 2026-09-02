@@ -30,12 +30,20 @@ const (
 	authoringWorkPollTimeout = 12 * time.Second
 
 	// authoringCandidateTTL is how long a completed candidate snapshot answers
-	// polls before a refresh is started behind the next one. Five minutes is
-	// the builder's own cadence (CSX_SNAPSHOT_INTERVAL), and staleness inside
-	// it costs a worker at most one wasted claim: ClaimAuthoringWork inserts
-	// ON CONFLICT DO NOTHING on the coordinate, so a candidate somebody else
-	// took since the snapshot yields no row and the worker moves on.
-	authoringCandidateTTL = 5 * time.Minute
+	// polls before a refresh is started behind the next one.
+	//
+	// It was five minutes first, the builder's cadence. That sized the TTL by
+	// staleness alone and forgot duty cycle: the refresh is a ~4-minute
+	// whole-disk read, so with idle workers polling every 60s a five-minute
+	// TTL keeps that read running about half the time -- and for that half
+	// the website shares a two-core host with it. Thirty minutes bounds the
+	// read to a few percent of the clock. Staleness inside it still costs a
+	// worker at most one wasted claim: ClaimAuthoringWork inserts ON CONFLICT
+	// DO NOTHING on the coordinate, so a candidate somebody else took since
+	// the snapshot yields no row and the worker moves on; and a lease runs
+	// 24 hours, so half an hour of not-yet-visible new work is nothing a
+	// worker would have reached sooner anyway.
+	authoringCandidateTTL = 30 * time.Minute
 
 	// authoringCandidateRefreshBudget bounds one background refresh. The
 	// production read is ~700MB from disk and measured 249s under farm load
