@@ -78,7 +78,7 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 				switch {
 				case eerr == nil:
 					call.snapshot.expansion = expansion
-				case authoringWorkBusyErr(eerr):
+				case expansionUnavailable(eerr):
 					// Expansion is the network choosing its own next move on
 					// top of WANTED, which is somebody's explicit ask. When
 					// the slower read cannot answer in time, narrowing what a
@@ -123,6 +123,27 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 func authoringWorkBusyErr(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 		serverstore.IsQueryTimeout(err) || serverstore.IsPoolBusy(err)
+}
+
+// expansionUnavailable is the narrower question: did the EXPANSION source
+// alone fail, while the poll still has time to answer from WANTED?
+//
+// Deliberately not authoringWorkBusyErr. A blown poll deadline or a
+// cancellation is about the whole request -- the caller is out of time, or
+// gone -- and serving a partial answer into it helps nobody. Only a
+// PostgreSQL statement timeout (this query's own 10s bound, inside the poll's
+// 12s one) or a pool with nothing free means this one read could not answer
+// while the request itself is still live.
+//
+// The distinction is not academic. Swallowing the deadline made
+// TestAuthoringCandidateScanPreservesThePollAbsoluteDeadline pass or fail
+// depending on WHICH of the two reads the deadline happened to land on: it
+// passed here and failed on the Windows runner.
+func expansionUnavailable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return serverstore.IsQueryTimeout(err) || serverstore.IsPoolBusy(err)
 }
 
 func writeAuthoringWorkBusy(w http.ResponseWriter, err error) bool {

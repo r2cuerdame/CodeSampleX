@@ -38,6 +38,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -59,10 +61,16 @@ func TestWorkIsStillHandedOutWhenExpansionCandidatesTimeOut(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The slow read, cancelled by its own statement timeout. This is what
-	// production returns, not a stand-in: the cancellation arrives as a
-	// deadline error from the query the poll is waiting on.
-	store.ExpansionCandidatesErr = context.DeadlineExceeded
+	// The slow read, cancelled by its OWN statement timeout. This is the
+	// error production returns, not a stand-in for it: PostgreSQL raises
+	// 57014 with this exact message when statement_timeout fires, and
+	// serverstore.IsQueryTimeout is what classifies it.
+	//
+	// Not context.DeadlineExceeded. That would be the whole poll running
+	// out, which is a different situation and must still refuse.
+	store.ExpansionCandidatesErr = &pgconn.PgError{
+		Code: "57014", Message: "canceling statement due to statement timeout",
+	}
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next",
 		bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"CONTAINER_RUN","verifierOS":["linux"],"clientVersion":"v0.1.22"}`))
@@ -139,3 +147,38 @@ var errBrokenExpansion = errBroken{}
 type errBroken struct{}
 
 func (errBroken) Error() string { return "expansion candidates: relation does not exist" }
+
+// The distinction between "this source timed out" and "the poll ran out of
+// time" has to hold by construction, not by which read the clock lands on.
+//
+// A first version degraded on any busy-classed error, context deadlines
+// included. That made TestAuthoringCandidateScanPreservesThePollAbsoluteDeadline
+// pass on one machine and fail on another, because whether the deadline
+// surfaced depended on whether it hit TopWanted or the expansion query.
+func TestOnlyTheExpansionQuerysOwnFailureDegrades(t *testing.T) {
+	statementTimeout := &pgconn.PgError{
+		Code: "57014", Message: "canceling statement due to statement timeout",
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the expansion statement hit its own timeout", statementTimeout, true},
+		{"the whole poll ran out of time", context.DeadlineExceeded, false},
+		{"the caller went away", context.Canceled, false},
+		{"the store is broken", errBrokenExpansion, false},
+	} {
+		if got := expansionUnavailable(tc.err); got != tc.want {
+			t.Errorf("%s: expansionUnavailable = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// And every one of them still counts as busy for the endpoint's own 503,
+	// which is a separate question from whether one source may be dropped.
+	for _, err := range []error{statementTimeout, context.DeadlineExceeded, context.Canceled} {
+		if !authoringWorkBusyErr(err) {
+			t.Errorf("authoringWorkBusyErr(%v) = false", err)
+		}
+	}
+}
