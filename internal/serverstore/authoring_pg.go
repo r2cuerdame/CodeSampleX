@@ -257,33 +257,12 @@ func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([
 	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionStatementTimeout)
 }
 
-func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration) ([]WantedRow, error) {
-	if limit < 1 {
-		return nil, nil
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	var out []WantedRow
-	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-		if err != nil {
-			return err
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		statementTimeout = authoringStatementTimeout(ctx, statementTimeout)
-		// The candidate query is large enough to cross PostgreSQL's JIT cost
-		// threshold on the production corpus. A timed-out fleet poll then
-		// returned to its caller while LLVM compilation kept the backend busy
-		// for another minute, because that compilation did not observe the
-		// pending statement interrupt promptly. Keep this transaction on the
-		// ordinary executor: it is both faster for this short-lived read and
-		// lets statement_timeout remain an actual upper bound.
-		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `
-			WITH `+authoringCoverageCTE+`, verified_symbols AS MATERIALIZED (
+// authoringExpansionCandidatesSQL is the candidate query on its own, so a
+// test can EXPLAIN the statement the store actually runs rather than a
+// copy of it. $1 limit, $2 sibling versions per package, $3 dependency
+// closure cap, $4 resolve weight.
+var authoringExpansionCandidatesSQL = `
+			WITH ` + authoringCoverageCTE + `, verified_symbols AS MATERIALIZED (
 				SELECT DISTINCT package.value AS purl,symbol.value AS symbol
 				FROM verified_samples s
 				CROSS JOIN LATERAL jsonb_array_elements_text(
@@ -332,22 +311,36 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 				       COUNT(DISTINCT bucket||epoch) AS projects
 				FROM dependency_edge
 				GROUP BY 1
-			), candidates AS (
-				SELECT p.purl,p.ecosystem,p.name,p.version,fc.symbol,
-				       fc.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
-				       COALESCE(NULLIF(fc.env_summary->>'os',''),(
-				         SELECT e2.env_json->>'os' FROM evidence_agg e2
-				         WHERE e2.purl=p.purl AND e2.symbol=fc.symbol AND e2.error_fp=fc.error_fp
-				         ORDER BY e2.observation_count DESC LIMIT 1
-				       ),'') AS target_os
+			), finding_versions AS MATERIALIZED (
+				-- Every current cluster, expanded to one row per version it
+				-- names, BEFORE the join to packages. Written inline, the
+				-- LATERAL expansion made the planner answer that join once per
+				-- expanded row: an index scan on packages and a four-row hash
+				-- rebuilt 159,601 times, 0.5ms each, 84 of the 101 seconds the
+				-- FINDING branch cost on production (#173). Materialised, the
+				-- expansion is one stream and packages is hashed once. Only the
+				-- columns the branch needs travel: env_summary is a wide jsonb
+				-- and carrying it through 160k rows would cost what it saves.
+				SELECT fc.ecosystem,fc.package_name,fc.symbol,fc.error_fp,fc.observation_count,
+				       COALESCE(NULLIF(fc.env_summary->>'os',''),'') AS env_os,
+				       version.value AS version
 				FROM failure_clusters fc
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(fc.versions)='array' THEN fc.versions ELSE '[]'::jsonb END
 				) AS version(value)
-				JOIN packages p ON p.ecosystem=fc.ecosystem AND p.name=fc.package_name
-				  AND p.version=version.value
+				WHERE ` + CurrentFailureClusterPredicateSQL + `
+			), candidates AS (
+				SELECT p.purl,p.ecosystem,p.name,p.version,fv.symbol,
+				       fv.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
+				       COALESCE(NULLIF(fv.env_os,''),(
+				         SELECT e2.env_json->>'os' FROM evidence_agg e2
+				         WHERE e2.purl=p.purl AND e2.symbol=fv.symbol AND e2.error_fp=fv.error_fp
+				         ORDER BY e2.observation_count DESC LIMIT 1
+				       ),'') AS target_os
+				FROM finding_versions fv
+				JOIN packages p ON p.ecosystem=fv.ecosystem AND p.name=fv.package_name
+				  AND p.version=fv.version
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
-				  AND `+CurrentFailureClusterPredicateSQL+`
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
 				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
@@ -543,7 +536,34 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 			-- pushed the entire measured demand behind work nobody asked for.
 			ORDER BY version_depth,
 			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
-			LIMIT $1`, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
+			LIMIT $1`
+
+func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration) ([]WantedRow, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var out []WantedRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		statementTimeout = authoringStatementTimeout(ctx, statementTimeout)
+		// The candidate query is large enough to cross PostgreSQL's JIT cost
+		// threshold on the production corpus. A timed-out fleet poll then
+		// returned to its caller while LLVM compilation kept the backend busy
+		// for another minute, because that compilation did not observe the
+		// pending statement interrupt promptly. Keep this transaction on the
+		// ordinary executor: it is both faster for this short-lived read and
+		// lets statement_timeout remain an actual upper bound.
+		if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true), set_config('jit','off',true)`, statementTimeout.String()); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, authoringExpansionCandidatesSQL, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
 			authoringResolveWeight)
 		if err != nil {
 			return err
