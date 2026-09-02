@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -73,7 +74,30 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 			defer cancel()
 			call.snapshot.wanted, call.err = a.d.Store.TopWanted(callCtx, 200)
 			if call.err == nil {
-				call.snapshot.expansion, call.err = store.ListAuthoringExpansionCandidates(callCtx, 200)
+				expansion, eerr := store.ListAuthoringExpansionCandidates(callCtx, 200)
+				switch {
+				case eerr == nil:
+					call.snapshot.expansion = expansion
+				case authoringWorkBusyErr(eerr):
+					// Expansion is the network choosing its own next move on
+					// top of WANTED, which is somebody's explicit ask. When
+					// the slower read cannot answer in time, narrowing what a
+					// worker is offered is the right loss; refusing the poll
+					// throws away the work the fast read already found.
+					//
+					// A farm node measured what refusing costs: HTTP 503 to
+					// every poll from 2026-09-01T22:03Z, no assignment at all
+					// after 02:01Z, three slots idle for hours. On this
+					// database TopWanted takes 377ms and this query takes
+					// 83s against its own 10s statement timeout, so the poll
+					// could never have succeeded, and the whole endpoint was
+					// down for a reason that only ever concerned one of its
+					// two sources.
+					log.Printf("csx-server: authoring expansion candidates unavailable (%v); "+
+						"serving WANTED-only work this poll", eerr)
+				default:
+					call.err = eerr
+				}
 			}
 			a.authoringCandidates.mu.Lock()
 			close(call.done)
@@ -93,9 +117,16 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	}
 }
 
+// authoringWorkBusyErr reports whether err is the database saying "not now"
+// rather than "this is broken": a deadline, a cancellation, a statement
+// timeout, or a pool with nothing free.
+func authoringWorkBusyErr(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		serverstore.IsQueryTimeout(err) || serverstore.IsPoolBusy(err)
+}
+
 func writeAuthoringWorkBusy(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
-		!serverstore.IsQueryTimeout(err) && !serverstore.IsPoolBusy(err) {
+	if !authoringWorkBusyErr(err) {
 		return false
 	}
 	w.Header().Set("Retry-After", "5")

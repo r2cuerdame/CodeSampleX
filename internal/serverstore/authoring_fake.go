@@ -159,6 +159,9 @@ const (
 func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([]WantedRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.ExpansionCandidatesErr != nil {
+		return nil, f.ExpansionCandidatesErr
+	}
 	if limit < 1 {
 		return nil, nil
 	}

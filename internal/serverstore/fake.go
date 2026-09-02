@@ -77,6 +77,14 @@ type Fake struct {
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
 	// timestamps, so incremental-rebuild tests script it directly.
 	ChangedSinceFn func(context.Context, time.Time) (Changes, error)
+	// ExpansionCandidatesErr, when set, is what
+	// ListAuthoringExpansionCandidates returns instead of candidates.
+	//
+	// The PostgreSQL version of that query runs under its own statement
+	// timeout, and on the production corpus it exceeded it -- so the only
+	// behaviour that matters for the poll is the one the fake cannot reach
+	// by holding data: the query failing while the rest of the poll is fine.
+	ExpansionCandidatesErr error
 }
 
 // coresKey identifies one version pair of one library.
