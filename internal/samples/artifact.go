@@ -124,6 +124,40 @@ var generatedFileNames = map[string]bool{
 	"npm-debug.log":         true,
 	"yarn-error.log":        true,
 	"erl_crash.dump":        true,
+	// csx's own output, and the one entry here that csx writes itself:
+	// `csx sample create` records which sample the directory became, so a
+	// tree can be asked whether it was ingested (CodeSampleX-Farm#12).
+	//
+	// It describes the directory, not the sample, and it lands in the
+	// directory that is about to be packed. Left in, the second create of
+	// an unchanged tree hashes the first create's id and returns a
+	// different one -- content addressing that depends on how many times
+	// you ran the command.
+	WorkspaceIdentityFile: true,
+}
+
+// WorkspaceIdentityFile is what `csx sample create` writes into the directory
+// to record which sample it became (CodeSampleX-Farm#12). It is named here,
+// beside the rule that keeps it out of artifacts, so the writer and the
+// packer cannot drift apart.
+const WorkspaceIdentityFile = "csx-workspace.json"
+
+// WorkspaceTempPrefix is the partial file that write goes through before it
+// is renamed into place.
+//
+// It exists only between two syscalls, but a create killed in that window
+// leaves one behind, and it lands in the directory that is about to be
+// packed -- so the NEXT create would fold it into the artifact and move the
+// sample id of a tree nobody edited. That is the defect this whole list
+// exists to prevent, so the temporary name is covered too rather than
+// trusted to be short-lived.
+const WorkspaceTempPrefix = ".csx-workspace-"
+
+func generatedFile(base string) bool {
+	lower := strings.ToLower(base)
+	return generatedFileNames[lower] ||
+		generatedFileExts[path.Ext(lower)] ||
+		strings.HasPrefix(lower, WorkspaceTempPrefix)
 }
 
 // generatedFileExts are compiled outputs. A sample is source plus a
@@ -131,11 +165,6 @@ var generatedFileNames = map[string]bool{
 // the machine that compiled it.
 var generatedFileExts = map[string]bool{
 	".pyc": true, ".pyo": true, ".class": true, ".beam": true, ".o": true,
-}
-
-func generatedFile(base string) bool {
-	lower := strings.ToLower(base)
-	return generatedFileNames[lower] || generatedFileExts[path.Ext(lower)]
 }
 
 // forbiddenFile reports whether an INCOMING artifact entry names run

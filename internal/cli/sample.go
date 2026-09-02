@@ -449,6 +449,27 @@ func sampleCreate(ctx context.Context, args []string) int {
 		return 1
 	}
 
+	// Leave the workspace able to say which sample it became.
+	//
+	// Reported from a farm node (CodeSampleX-Farm#12), checked there rather
+	// than assumed: a csx-sample-* workspace holds PROMPT.md, csx.json,
+	// spec.json and the sample source, and carries no sample id, no
+	// submission record and no ack. Nothing on that machine could answer
+	// "has this been durably ingested?" for a directory, because
+	// `csx sample list` keys on an id the directory does not contain.
+	//
+	// Their collector had to fall back to "is there a second copy of this on
+	// this machine", which is a different question. Measured over 214 expired
+	// trees: 29 carried sample source, 9 of those existed nowhere else, and
+	// an age-only collector would have destroyed exactly those 9.
+	//
+	// Written after the store row is durable, so a file that exists is a
+	// claim the local store can be asked to confirm. Best effort: a
+	// read-only directory is not a reason to fail a create that succeeded.
+	if err := writeWorkspaceIdentity(dir, created.SampleID, time.Now().UTC()); err != nil {
+		fmt.Fprintf(sampleStderr, "csx sample create: note: workspace identity not written: %v\n", err)
+	}
+
 	// The proposal has been acted on: it now lives in `csx sample list`,
 	// so it should stop being offered as pending work.
 	if err := env.db.SetProposalState(ctx, dir, "created"); err != nil {
