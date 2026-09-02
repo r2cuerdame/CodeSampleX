@@ -358,6 +358,13 @@ func effectiveWorkerParallel(opts workerOptions) int {
 // runContributorWorker schedules Docker verification lanes. Queue polling is
 // cheap and declarative; the shared CrossVerifier serializes only list+claim,
 // then the expensive container work proceeds in parallel.
+// noWorkHeartbeat bounds how often an idle worker repeats itself.
+//
+// Fifteen minutes: often enough that a watcher can tell a live idle node from
+// a hung one within one check, rare enough that a day of legitimate idleness
+// is ninety-six lines rather than tens of thousands.
+const noWorkHeartbeat = 15 * time.Minute
+
 func runContributorWorker(ctx context.Context, cv contributionVerifier, opts workerOptions, out io.Writer) (workerStats, error) {
 	duration, ok := workerBudgetDuration(opts.budget)
 	if !ok {
@@ -400,6 +407,48 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 			fmt.Fprintf(out, "verification failed; stage logs kept locally: %s\n", path)
 		})
 	}
+	// An idle worker has to be able to say it is idle.
+	//
+	// Reported from the farm: 140 jobs in 24 hours, then a day of "0 seconds
+	// of CPU, idle since restart", with not one line in the log -- no "no
+	// work", no "waiting", no "idle". From outside, a verifier that is
+	// correctly idle and one that has hung are the same thing.
+	//
+	// And idleness is the EXPECTED state here, not a fault: a peer holding a
+	// receipt for a sample is never offered that sample's cross job again, so
+	// a node that authored nearly everything has almost nothing left it is
+	// allowed to verify. Silence is the wrong way to report a designed
+	// outcome.
+	//
+	// A heartbeat rather than a line per poll: the poll interval is seconds,
+	// and a line per poll is a log nobody reads -- the same failure wearing
+	// different clothes.
+	var idleMu sync.Mutex
+	var idlePolls int
+	var idleSince time.Time
+	var lastIdleSaid time.Time
+	reportIdle := func(now time.Time) {
+		idleMu.Lock()
+		defer idleMu.Unlock()
+		idlePolls++
+		if idleSince.IsZero() {
+			idleSince = now
+		}
+		if !lastIdleSaid.IsZero() && now.Sub(lastIdleSaid) < noWorkHeartbeat {
+			return
+		}
+		lastIdleSaid = now
+		printMu.Lock()
+		defer printMu.Unlock()
+		fmt.Fprintf(out, "no work offered: %d poll(s) over %v; completed=%d failed=%d\n",
+			idlePolls, now.Sub(idleSince).Round(time.Second), completed.Load(), failed.Load())
+	}
+	clearIdle := func() {
+		idleMu.Lock()
+		defer idleMu.Unlock()
+		idlePolls, idleSince, lastIdleSaid = 0, time.Time{}, time.Time{}
+	}
+
 	printCounts := func(label string, err error) {
 		printMu.Lock()
 		defer printMu.Unlock()
@@ -460,12 +509,14 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 				}
 				if worked {
 					completed.Add(1)
+					clearIdle()
 					printCounts("job completed:", nil)
 					if opts.once {
 						return
 					}
 					continue
 				}
+				reportIdle(time.Now())
 				if opts.once || !waitWorkerPoll(runCtx, opts.pollInterval) {
 					return
 				}
