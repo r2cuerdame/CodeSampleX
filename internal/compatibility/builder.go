@@ -77,13 +77,25 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 }
 
 // resumeWindow bounds how old a recorded pass may be and still be resumed
-// from. Past it the incremental path would be asked for everything that
-// changed over hours, which is a full rebuild reached by the slower route.
+// from: past it, this deployment has been absent long enough that building
+// from nothing is the honest answer.
 //
-// An hour matches the periodic full pass (fullPassEvery ticks of the default
-// five-minute interval), so a gap long enough to lose the resume is a gap
-// long enough that a full pass was due regardless.
-const resumeWindow = time.Hour
+// It was an hour first, on the reasoning that an hour is the periodic full
+// pass. That would have made this whole change a no-op, and production said
+// so. The stamp is written at the START of a pass -- refreshStats is handed
+// the pass's own `now` -- and the full pass measured here ran from 02:49:25Z
+// to 04:48:51Z. Its stamp was therefore 119 minutes old the moment it
+// landed, so an hour would have refused every resume that follows a full
+// pass, which is exactly the restart worth rescuing.
+//
+// A day is the bound that means what it says. Inside it, resuming asks
+// ChangedSince for the same window the surviving process would have asked
+// for on its next tick -- lastRun is passStart there too, so a process that
+// just finished a two-hour pass already queries two hours of changes. The
+// window is not protecting the incremental path from a long span; it is
+// protecting it from a deployment that has been down long enough for
+// "everything that changed since" to stop resembling a delta at all.
+const resumeWindow = 24 * time.Hour
 
 // resumeFromLastCompletedPass seeds lastRun from what the previous process
 // durably recorded, so a restart does not force the most expensive pass.

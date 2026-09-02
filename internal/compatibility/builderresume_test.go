@@ -217,3 +217,52 @@ func TestAFutureStampIsNotResumedFrom(t *testing.T) {
 		t.Error("the pass rebuilt nothing")
 	}
 }
+
+// The window has to outlast a full pass, or it rescues nothing.
+//
+// The stamp is written at the START of a pass, so a pass that takes two
+// hours leaves a two-hour-old stamp behind the instant it finishes. A window
+// shorter than a full pass therefore refuses every resume that follows one --
+// the exact restart the resume exists for. Production measured 02:49:25Z to
+// 04:48:51Z, 119 minutes, which an earlier one-hour window would have
+// rejected.
+func TestTheWindowOutlastsAFullPass(t *testing.T) {
+	const measuredFullPass = 119 * time.Minute
+	if resumeWindow <= measuredFullPass {
+		t.Errorf("resumeWindow %v does not outlast the %v full pass measured in production; "+
+			"every resume after a full pass would be refused", resumeWindow, measuredFullPass)
+	}
+}
+
+// And a pass whose stamp is as old as a slow full pass is still resumed from.
+func TestAStampAsOldAsAFullPassStillResumes(t *testing.T) {
+	ctx := context.Background()
+	store := serverstore.NewFake()
+	store.NowFn = func() time.Time { return testNow }
+	seedBuilderFixture(t, store)
+
+	first := &Builder{Store: store, Now: func() time.Time { return testNow }}
+	if err := first.RunOnce(ctx); err != nil {
+		t.Fatalf("pre-restart pass: %v", err)
+	}
+
+	// A restart two hours on, which is what following a slow full pass looks
+	// like from the stamp's point of view.
+	restarted := &Builder{Store: store, Now: func() time.Time { return testNow.Add(2 * time.Hour) }}
+	asked := false
+	store.ChangedSinceFn = func(context.Context, time.Time) (serverstore.Changes, error) {
+		asked = true
+		return serverstore.Changes{}, nil
+	}
+
+	before := store.ShardWrites()
+	if err := restarted.RunOnce(ctx); err != nil {
+		t.Fatalf("post-restart pass: %v", err)
+	}
+	if !asked {
+		t.Error("a two-hour-old stamp was not resumed from; a full pass was taken instead")
+	}
+	if wrote := store.ShardWrites() - before; wrote != 0 {
+		t.Errorf("rewrote %d shards; nothing had changed", wrote)
+	}
+}
