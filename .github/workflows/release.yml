@@ -72,7 +72,20 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Native Windows launcher and updater tests
-        run: go test ./...
+        # An explicit ceiling, because the default one was already being
+        # grazed. `go test` gives each package binary ten minutes, and on a
+        # PASSING run of this job (v0.1.102) internal/sandbox took 471s and
+        # internal/evidence 256s -- sandbox at 78% of the limit with nothing
+        # wrong. The next runner was a little slower and both hit 600s:
+        #
+        #   panic: test timed out after 10m0s
+        #   FAIL  internal/evidence   600.987s
+        #   FAIL  internal/sandbox    601.192s
+        #
+        # That failed a release for a reason that had nothing to do with the
+        # code in it. The ceiling is for a hung test, not a slow runner; set
+        # it where only a hang can reach it.
+        run: go test -timeout 30m ./...
 
   # Everything that needs no credential. This job executes the repository's
   # own test code and bundles the built binaries; it is deliberately the one

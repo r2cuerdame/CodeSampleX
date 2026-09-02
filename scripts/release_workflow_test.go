@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -530,5 +531,39 @@ func TestTheReleaseAsksDefenderAboutWhatItIsAboutToShip(t *testing.T) {
 	}
 	if !strings.Contains(body[:at], "continue-on-error: true") && !strings.Contains(tail[:end], "continue-on-error: true") {
 		t.Error("the Defender check can fail a release; a dated model verdict must not be a release gate")
+	}
+}
+
+// The Windows test job needs a ceiling only a hang can reach.
+//
+// `go test` gives each package binary ten minutes by default. On a PASSING
+// run of this job (v0.1.102) internal/sandbox took 471s and internal/evidence
+// 256s: sandbox at 78% of the limit with nothing wrong. The next runner was a
+// little slower and both crossed 600s, and a release failed for a reason
+// that had nothing to do with the code in it.
+//
+// So the job has to set the ceiling itself, and set it far enough above a
+// slow-but-healthy run that only a genuinely stuck test reaches it. Twenty
+// minutes is the floor this pins: 2.5x the slowest package ever measured
+// passing.
+func TestWindowsTestsCarryATimeoutOnlyAHangCanReach(t *testing.T) {
+	jobs := releaseJobs(t, releaseWorkflow(t))
+	job, ok := jobs["windows-test"]
+	if !ok {
+		t.Fatal("release workflow has no windows-test job")
+	}
+	m := regexp.MustCompile(`go test\s+(?:\S+\s+)*?-timeout[= ](\d+)m\b`).FindStringSubmatch(job)
+	if m == nil {
+		t.Fatal("windows-test runs `go test` with no explicit -timeout; the 10m default " +
+			"was already at 78% on a passing run (internal/sandbox 471s) and has failed a release")
+	}
+	const floorMinutes = 20
+	minutes, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minutes < floorMinutes {
+		t.Errorf("windows-test -timeout is %dm; a slow-but-healthy run reached 471s for one package, "+
+			"so anything under %dm is a runner-speed lottery", minutes, floorMinutes)
 	}
 }
