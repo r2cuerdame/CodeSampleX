@@ -8,6 +8,7 @@ package httpapi
 
 import (
 	"context"
+	"sync/atomic"
 
 	"encoding/json"
 	"errors"
@@ -94,6 +95,10 @@ type api struct {
 	// whole-corpus read, so it is coalesced, reused and bounded rather than
 	// recomputed for each caller on the request's own clock.
 	hotShards hotShardHint
+
+	// authoringPolls counts work polls for the gap rotation; see
+	// authoringGapEvery.
+	authoringPolls atomic.Uint64
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.

@@ -53,6 +53,19 @@ const (
 	// statement timeout beneath it so a wedged scan still frees its
 	// connection.
 	authoringCandidateRefreshBudget = 9 * time.Minute
+
+	// authoringGapEvery is the poll on which the matrix gaps are offered
+	// before WANTED. WANTED is somebody's explicit ask and ranks first on
+	// every other poll; on this one, EXPANSION and DEPENDENCY candidates --
+	// the blank cells of the matrix -- come first, in the order they already
+	// carry. Measured 2026-09-02: the farm completed 157 WANTED coordinates
+	// in 24 hours and zero of either other kind, while the snapshot held 198
+	// linux expansion candidates and dependency_edge named 2,333 child
+	// coordinates with no sample. At ~150 claims a day the 3,083-row WANTED
+	// backlog is never exhausted, so without a turn of their own the gaps
+	// are never reached. One poll in four costs WANTED a quarter of its
+	// throughput and starts filling the gaps the same day.
+	authoringGapEvery = 4
 )
 
 type authoringCandidateSnapshot struct {
@@ -210,6 +223,28 @@ func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSes
 		return authoringCandidateSnapshot{}, eerr
 	}
 	return snap, nil
+}
+
+// gapsFirst moves every non-WANTED candidate ahead of the WANTED ones,
+// keeping each group in the order it arrived. It is what a gap turn does to
+// the offer; the claim that follows is unchanged, so a coordinate another
+// worker took in the meantime yields no row and the loop moves on.
+func gapsFirst(eligible []serverstore.WantedRow) []serverstore.WantedRow {
+	out := make([]serverstore.WantedRow, 0, len(eligible))
+	for _, c := range eligible {
+		if c.Kind != "WANTED" {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return eligible
+	}
+	for _, c := range eligible {
+		if c.Kind == "WANTED" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // authoringWorkBusyErr reports whether err is the database saying "not now"
@@ -588,6 +623,9 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	// fact about the artifact and not about this worker.
 	eligible = dropUnauthorableMaven(pollCtx, a.mavenJar, eligible)
 	funnel.AfterUnauthorable = len(eligible)
+	if a.authoringPolls.Add(1)%authoringGapEvery == 0 {
+		eligible = gapsFirst(eligible)
+	}
 	funnel.Offered = len(eligible)
 	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {
