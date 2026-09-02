@@ -64,18 +64,22 @@ type webStore struct {
 }
 
 // The records page reads the whole snapshot table to rank and filter it.
-// On production that table is 17,255 rows but 149MB of jsonb serialised, and
-// ListSnapshots takes 36s there -- all from cache, so two cores of CPU, not
-// disk. Snapshots change only when the builder writes them, once per tick at
-// most, so the cache is sized to that cadence and refreshed BEHIND a request
-// the way HotPackages is: hand back what is cached at once, reload under a
-// background-class context with its own budget, retry later on failure.
+// On production that table is 17,255 rows but 149MB of jsonb serialised.
+// With the builder idle the full read costs under a second (0.59s measured
+// after 35s idle); while a builder pass runs on the same two cores it took
+// 36.5s under EXPLAIN ANALYZE -- all buffer hits, so CPU contention, not
+// disk. Snapshots change only when the builder writes them, once per tick
+// at most, so the cache is sized to that cadence and refreshed BEHIND a
+// request the way HotPackages is: hand back what is cached at once, reload
+// under a background-class context with its own budget, retry later on
+// failure.
 //
 // This used to be a 30-second TTL refreshed synchronously under the mutex.
-// Any visitor more than 30s after the last one paid the full reload and
-// everyone behind them queued on the lock; during a builder pass the read
-// hit its statement timeout and the page came back empty. Measured
-// 2026-09-02: 7.5s cold, then 1.0s and 1.8s.
+// Any visitor more than 30s after the last one paid the reload and everyone
+// behind them queued on the lock, which was harmless when the box was idle
+// and the whole page when it was not: during a builder pass the read hit its
+// statement timeout and the page came back empty. Measured 2026-09-02 with
+// a pass running: 7.5s, 16.6s; without one: 0.6s.
 //
 // The one difference from HotPackages is the cold start. A widget may render
 // empty; the records page may not, so with nothing cached the first request
@@ -96,17 +100,16 @@ func backgroundRefreshCtx() (context.Context, context.CancelFunc) {
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
 	w.snapshotMu.Lock()
 	if w.snapshotAt.IsZero() {
-		// Cold: nothing to serve, so this request loads on its own clock.
-		w.snapshotMu.Unlock()
+		// Cold: nothing to serve, so this request loads on its own clock --
+		// and holds the lock while it does, so sixteen cold readers issue
+		// one read and fifteen wait for it. The pool is eight connections;
+		// a stampede is what turns a slow page into a stalled server.
 		rows, err := w.s.ListSnapshots(ctx)
 		if err != nil {
+			w.snapshotMu.Unlock()
 			return nil, err
 		}
-		w.snapshotMu.Lock()
-		if w.snapshotAt.IsZero() {
-			w.snapshotRows, w.snapshotAt = rows, time.Now()
-		}
-		rows = w.snapshotRows
+		w.snapshotRows, w.snapshotAt = rows, time.Now()
 		w.snapshotMu.Unlock()
 		return rows, nil
 	}
@@ -139,16 +142,13 @@ func (w *webStore) refreshSnapshots() {
 func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.Time {
 	w.updatedMu.Lock()
 	if w.updatedAtRead.IsZero() {
-		w.updatedMu.Unlock()
-		updated, err := w.s.SnapshotUpdatedAt(ctx)
-		w.updatedMu.Lock()
+		// Cold: load under the lock, so concurrent cold readers coalesce.
 		defer w.updatedMu.Unlock()
+		updated, err := w.s.SnapshotUpdatedAt(ctx)
 		if err != nil {
 			return w.updatedAt
 		}
-		if w.updatedAtRead.IsZero() {
-			w.updatedAt, w.updatedAtRead = updated, time.Now()
-		}
+		w.updatedAt, w.updatedAtRead = updated, time.Now()
 		return w.updatedAt
 	}
 	now := time.Now()
@@ -187,16 +187,13 @@ func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.Sna
 	}
 	w.targetsMu.Lock()
 	if w.targetsAt.IsZero() {
-		w.targetsMu.Unlock()
+		// Cold: load under the lock, so concurrent cold readers coalesce.
 		rows, err := w.s.SnapshotKeys(ctx)
 		if err != nil {
+			w.targetsMu.Unlock()
 			return nil, err
 		}
-		w.targetsMu.Lock()
-		if w.targetsAt.IsZero() {
-			w.targetsRows, w.targetsAt = rows, time.Now()
-		}
-		rows = w.targetsRows
+		w.targetsRows, w.targetsAt = rows, time.Now()
 		w.targetsMu.Unlock()
 		return rows, nil
 	}

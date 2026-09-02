@@ -4,14 +4,16 @@ package main
 // request.
 //
 // Reported 2026-09-02 as "the 기록 menu is slow" and measured on production:
-// compatibility_snapshots is 17,255 rows but 149MB of jsonb once serialised,
-// and the full read ListSnapshots performs took 36.5s -- every page from
-// cache, so CPU on two cores, not disk. The page cached that read for 30
-// seconds and refreshed it SYNCHRONOUSLY under a mutex, so any visitor more
-// than 30s after the last one paid the whole reload and everyone behind them
-// queued on the lock; during a builder pass the read hit its statement
-// timeout and the page came back empty (path=/compatibility
-// cause=query_timeout). Measured: 7.5s cold, 1.0s and 1.8s warm.
+// compatibility_snapshots is 17,255 rows but 149MB of jsonb once serialised.
+// The full read ListSnapshots performs costs under a second with the builder
+// idle (0.59s after 35s idle) and took 36.5s while a builder pass ran on the
+// same two cores -- every page a buffer hit, so CPU contention, not disk.
+// The page cached that read for 30 seconds and refreshed it SYNCHRONOUSLY
+// under a mutex, so during a pass every visitor more than 30s after the last
+// one paid that reload on the request, everyone behind them queued on the
+// lock, and the read hit its statement timeout and the page came back empty
+// (path=/compatibility cause=query_timeout). Measured with a pass running:
+// 7.5s and 16.6s; without one: 0.6s.
 //
 // Snapshots change only when the builder writes them, once per tick at most,
 // so a 30-second TTL bought nothing but reloads. The house idiom for this is
@@ -81,7 +83,7 @@ func TestSnapshotCacheTTLIsAtLeastTheBuilderTick(t *testing.T) {
 	const builderTick = 5 * time.Minute
 	if recordSnapshotCacheTTL < builderTick {
 		t.Fatalf("recordSnapshotCacheTTL = %v; snapshots only change when the builder writes them (every %v), "+
-			"and a full reload is 36s of CPU on production", recordSnapshotCacheTTL, builderTick)
+			"and a reload during a pass cost 36s of CPU on production", recordSnapshotCacheTTL, builderTick)
 	}
 }
 
@@ -190,5 +192,34 @@ func TestTheColdStartStillWaitsForTheFirstRead(t *testing.T) {
 	defer cancel()
 	if _, err := w.cachedSnapshots(ctx); err == nil {
 		t.Fatal("the cold first request returned without rows and without an error")
+	}
+}
+
+// Sixteen cold readers issue one read. The pool on the production host is
+// eight connections, and the read behind this cache is the 149MB one: a
+// stampede here is what turns a slow page into a stalled server. The first
+// version of the background-refresh rewrite released the lock around the
+// cold read and CI caught the equivalent defect on the targets cache with
+// "SnapshotKeys called 2 times for 16 concurrent readers, want 1".
+func TestColdSnapshotReadersCollapseOntoOneRead(t *testing.T) {
+	store := &snapshotCountingStore{Store: serverstore.NewFake(), rows: []serverstore.SnapshotRow{snapRow("pkg:npm/a@1")}, block: make(chan struct{})}
+	w := &webStore{s: store}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := w.cachedSnapshots(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	// Let every reader reach the cache before the one read is released.
+	waitUntil(t, func() bool { return store.calls.Load() >= 1 }, "no reader reached the store")
+	time.Sleep(50 * time.Millisecond)
+	close(store.block)
+	wg.Wait()
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("ListSnapshots called %d times for 16 concurrent cold readers, want 1", got)
 	}
 }
