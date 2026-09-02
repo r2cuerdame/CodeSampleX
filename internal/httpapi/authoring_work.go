@@ -28,6 +28,23 @@ const (
 	// minutes. The store has a slightly shorter PostgreSQL statement timeout
 	// so the connection is canceled by PostgreSQL and remains reusable.
 	authoringWorkPollTimeout = 12 * time.Second
+
+	// authoringCandidateTTL is how long a completed candidate snapshot answers
+	// polls before a refresh is started behind the next one. Five minutes is
+	// the builder's own cadence (CSX_SNAPSHOT_INTERVAL), and staleness inside
+	// it costs a worker at most one wasted claim: ClaimAuthoringWork inserts
+	// ON CONFLICT DO NOTHING on the coordinate, so a candidate somebody else
+	// took since the snapshot yields no row and the worker moves on.
+	authoringCandidateTTL = 5 * time.Minute
+
+	// authoringCandidateRefreshBudget bounds one background refresh. The
+	// production read is ~700MB from disk and measured 249s under farm load
+	// (#173); the 12s poll ceiling is right for a request and is exactly
+	// what guaranteed that read could never finish. A refresh answers no
+	// caller, so it gets the budget the read actually needs, with a store
+	// statement timeout beneath it so a wedged scan still frees its
+	// connection.
+	authoringCandidateRefreshBudget = 9 * time.Minute
 )
 
 type authoringCandidateSnapshot struct {
@@ -43,20 +60,55 @@ type authoringCandidateCall struct {
 
 type authoringCandidateGate struct {
 	mu   sync.Mutex
-	call *authoringCandidateCall
+	call *authoringCandidateCall // the synchronous first scan, coalesced
+
+	// The last completed answer, served to every poll inside the TTL and to
+	// stale polls while one refresh runs behind them.
+	have     bool
+	snapshot authoringCandidateSnapshot
+	takenAt  time.Time
+	refresh  *authoringCandidateCall // the background refresh, coalesced
 }
 
-// loadAuthoringCandidates collapses simultaneous fleet polls onto one pair
-// of whole-corpus reads. It deliberately does not cache a completed answer:
-// a later poll must see newly verified work. The query owns a bounded context
-// independent of the first HTTP client, so one disconnect neither abandons
-// waiters nor leaves an unbounded database operation behind.
+// loadAuthoringCandidates answers a poll from the last completed candidate
+// snapshot when one exists, and reads the corpus otherwise.
+//
+// The read is whole-corpus and, on production, whole-disk: ~700MB against a
+// 320MB buffer cache, 249s under farm load, against a 10s statement timeout
+// (#173). Three workers polling every 60s ran that scan to its timeout for
+// half of every minute and none of them ever received expansion work. This
+// used to refuse to cache "so a later poll sees newly verified work"; the
+// claim that follows a poll is authoritative (ON CONFLICT DO NOTHING on the
+// coordinate), so what a stale snapshot costs is a wasted attempt, never a
+// duplicate assignment, and a bounded staleness is the right trade for a
+// read the host cannot afford per request.
+//
+// Three paths:
+//
+//   - a snapshot inside authoringCandidateTTL answers the poll outright;
+//   - a stale snapshot answers the poll outright too, and one refresh is
+//     started behind it under its own budget -- later stale polls join that
+//     refresh, they do not start another;
+//   - no snapshot at all keeps the original behaviour: one coalesced scan
+//     bound to the poll's deadline, whose failure the poll reports. That is
+//     the state a fresh process is in, and why the first poll after a deploy
+//     can still be refused while every later one is not.
 func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.AuthoringSessionStore) (authoringCandidateSnapshot, error) {
-	a.authoringCandidates.mu.Lock()
-	call := a.authoringCandidates.call
+	now := a.now()
+	g := &a.authoringCandidates
+	g.mu.Lock()
+	if g.have {
+		snap := g.snapshot
+		if now.Sub(g.takenAt) >= authoringCandidateTTL && g.refresh == nil {
+			g.refresh = a.startCandidateRefresh(ctx, store)
+		}
+		g.mu.Unlock()
+		return snap, nil
+	}
+	call := g.call
 	if call == nil {
 		call = &authoringCandidateCall{done: make(chan struct{})}
-		a.authoringCandidates.call = call
+		g.call = call
 		baseCtx := context.WithoutCancel(ctx)
 		var callCtx context.Context
 		var cancel context.CancelFunc
@@ -72,42 +124,19 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 		callCtx = serverstore.WithAuthoringPoll(callCtx)
 		go func() {
 			defer cancel()
-			call.snapshot.wanted, call.err = a.d.Store.TopWanted(callCtx, 200)
+			call.snapshot, call.err = a.readCandidates(callCtx, store, store.ListAuthoringExpansionCandidates)
+			g.mu.Lock()
 			if call.err == nil {
-				expansion, eerr := store.ListAuthoringExpansionCandidates(callCtx, 200)
-				switch {
-				case eerr == nil:
-					call.snapshot.expansion = expansion
-				case expansionUnavailable(eerr):
-					// Expansion is the network choosing its own next move on
-					// top of WANTED, which is somebody's explicit ask. When
-					// the slower read cannot answer in time, narrowing what a
-					// worker is offered is the right loss; refusing the poll
-					// throws away the work the fast read already found.
-					//
-					// A farm node measured what refusing costs: HTTP 503 to
-					// every poll from 2026-09-01T22:03Z, no assignment at all
-					// after 02:01Z, three slots idle for hours. On this
-					// database TopWanted takes 377ms and this query takes
-					// 83s against its own 10s statement timeout, so the poll
-					// could never have succeeded, and the whole endpoint was
-					// down for a reason that only ever concerned one of its
-					// two sources.
-					log.Printf("csx-server: authoring expansion candidates unavailable (%v); "+
-						"serving WANTED-only work this poll", eerr)
-				default:
-					call.err = eerr
-				}
+				g.have, g.snapshot, g.takenAt = true, call.snapshot, a.now()
 			}
-			a.authoringCandidates.mu.Lock()
 			close(call.done)
-			if a.authoringCandidates.call == call {
-				a.authoringCandidates.call = nil
+			if g.call == call {
+				g.call = nil
 			}
-			a.authoringCandidates.mu.Unlock()
+			g.mu.Unlock()
 		}()
 	}
-	a.authoringCandidates.mu.Unlock()
+	g.mu.Unlock()
 
 	select {
 	case <-call.done:
@@ -115,6 +144,64 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	case <-ctx.Done():
 		return authoringCandidateSnapshot{}, ctx.Err()
 	}
+}
+
+// startCandidateRefresh begins one background re-read of the corpus under
+// the refresh budget, detached from the poll that noticed the snapshot was
+// stale. The caller holds the gate lock.
+func (a *api) startCandidateRefresh(ctx context.Context, store serverstore.AuthoringSessionStore) *authoringCandidateCall {
+	g := &a.authoringCandidates
+	call := &authoringCandidateCall{done: make(chan struct{})}
+	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authoringCandidateRefreshBudget)
+	go func() {
+		defer cancel()
+		snap, err := a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
+		g.mu.Lock()
+		if err == nil {
+			g.have, g.snapshot, g.takenAt = true, snap, a.now()
+		} else {
+			// The old snapshot stays. The next stale poll starts another try;
+			// nothing is served that was not once true.
+			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", err)
+		}
+		call.snapshot, call.err = snap, err
+		close(call.done)
+		if g.refresh == call {
+			g.refresh = nil
+		}
+		g.mu.Unlock()
+	}()
+	return call
+}
+
+// readCandidates performs the pair of reads behind one snapshot. expansion
+// is the read to use for the slower half: the poll-bounded one for a first
+// scan, the unhurried one for a refresh.
+func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSessionStore,
+	expansion func(context.Context, int) ([]serverstore.WantedRow, error)) (authoringCandidateSnapshot, error) {
+	var snap authoringCandidateSnapshot
+	var err error
+	snap.wanted, err = a.d.Store.TopWanted(ctx, 200)
+	if err != nil {
+		return authoringCandidateSnapshot{}, err
+	}
+	rows, eerr := expansion(ctx, 200)
+	switch {
+	case eerr == nil:
+		snap.expansion = rows
+	case expansionUnavailable(eerr):
+		// Expansion is the network choosing its own next move on top of
+		// WANTED, which is somebody's explicit ask. When the slower read
+		// cannot answer in time, narrowing what a worker is offered is the
+		// right loss; refusing the poll throws away the work the fast read
+		// already found. A farm node measured what refusing costs: HTTP 503
+		// to every poll from 2026-09-01T22:03Z, three slots idle for hours.
+		log.Printf("csx-server: authoring expansion candidates unavailable (%v); "+
+			"serving WANTED-only work this snapshot", eerr)
+	default:
+		return authoringCandidateSnapshot{}, eerr
+	}
+	return snap, nil
 }
 
 // authoringWorkBusyErr reports whether err is the database saying "not now"

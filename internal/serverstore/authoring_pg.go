@@ -16,6 +16,12 @@ const authoringAdvisoryLock int64 = 0x43535841555448 // "CSXAUTH"
 // connection; the HTTP layer's 12-second context is the outer backstop.
 const authoringExpansionStatementTimeout = 10 * time.Second
 
+// authoringExpansionUnhurriedStatementTimeout bounds the background refresh
+// of the candidate snapshot. Eight minutes is above the 249s measured on
+// production under farm load and far below anything a poll would wait for;
+// it exists so a wedged scan still releases its connection.
+const authoringExpansionUnhurriedStatementTimeout = 8 * time.Minute
+
 const authoringStatementDeadlineMargin = 250 * time.Millisecond
 
 func authoringStatementTimeout(ctx context.Context, ceiling time.Duration) time.Duration {
@@ -255,6 +261,10 @@ func scanAuthoringWork(row pgx.Row) (AuthoringWorkRow, error) {
 
 func (p *PG) ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error) {
 	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionStatementTimeout)
+}
+
+func (p *PG) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limit int) ([]WantedRow, error) {
+	return p.listAuthoringExpansionCandidates(ctx, limit, authoringExpansionUnhurriedStatementTimeout)
 }
 
 // authoringExpansionCandidatesSQL is the candidate query on its own, so a

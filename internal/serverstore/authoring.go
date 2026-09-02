@@ -128,6 +128,13 @@ type AuthoringSessionStore interface {
 	// Failure-cluster symbols rank first, then observed package-version-symbol
 	// coordinates that still have no independently verified sample.
 	ListAuthoringExpansionCandidates(ctx context.Context, limit int) ([]WantedRow, error)
+	// ListAuthoringExpansionCandidatesUnhurried is the same read under a
+	// budget sized for a background refresh rather than a request. On
+	// production the read takes minutes -- it is ~700MB from disk on a host
+	// whose cache holds 320MB -- and the 10s ceiling that is right for a
+	// poll guaranteed it could never finish (#173). Nothing that answers a
+	// caller directly may use this.
+	ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limit int) ([]WantedRow, error)
 	ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
 	AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error)
 	AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error)

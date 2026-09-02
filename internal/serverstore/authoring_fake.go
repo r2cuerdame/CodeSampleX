@@ -156,6 +156,12 @@ const (
 	authoringRankSibling      = 4
 )
 
+// ListAuthoringExpansionCandidatesUnhurried is the same read; the fake has
+// no statement timeout to lengthen.
+func (f *Fake) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limit int) ([]WantedRow, error) {
+	return f.ListAuthoringExpansionCandidates(ctx, limit)
+}
+
 func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([]WantedRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
