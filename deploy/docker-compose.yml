@@ -65,6 +65,22 @@ services:
       CSX_DB_READ_TIMEOUT: ${CSX_DB_READ_TIMEOUT:-}
       CSX_DB_READ_WAIT: ${CSX_DB_READ_WAIT:-}
       CSX_DB_PROBE_TIMEOUT: ${CSX_DB_PROBE_TIMEOUT:-}
+      # The ceiling the Go runtime is otherwise not told about.
+      #
+      # The container is capped at 768M below. Without this the runtime sizes
+      # the heap from GOGC alone -- goal = 2x live heap -- and production sat
+      # flat at 697MiB of anon RSS, 93.6% of the cap, which is the same band
+      # the kernel killed it in three times on 2026-09-01 (anon-rss 741872kB,
+      # 697448kB, 694388kB). Fixing the builder pass that spiked into the
+      # ceiling stopped those kills; it did not move the ceiling away from
+      # where the process actually lives.
+      #
+      # 600MiB sits above the ~350MiB live heap that steady state implies and
+      # 168MiB under the cap, which is what non-heap memory needs: goroutine
+      # stacks and runtime metadata are real and do not answer to this knob.
+      # Soft on purpose -- over it the collector works harder, capped by the
+      # runtime at 50% CPU; over the cgroup limit the process is killed.
+      GOMEMLIMIT: ${GOMEMLIMIT:-600MiB}
     volumes:
       - blobs:/data/blobs
       - ${CSX_DIST_HOST_DIR:-../dist}:/data/dist:ro
