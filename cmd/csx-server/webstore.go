@@ -29,9 +29,11 @@ type webStore struct {
 	// immutable read briefly and serialize refreshes so concurrent public
 	// filter requests do not each materialize and parse the whole table on
 	// the small production host.
-	snapshotMu   sync.Mutex
-	snapshotAt   time.Time
-	snapshotRows []serverstore.SnapshotRow
+	snapshotMu         sync.Mutex
+	snapshotAt         time.Time
+	snapshotRows       []serverstore.SnapshotRow
+	snapshotRefreshing bool
+	snapshotRetryAt    time.Time
 
 	// The landing and sitemap rank packages from the materialized page
 	// inventory. A process restart used to put even that full read back on the
@@ -45,62 +47,136 @@ type webStore struct {
 
 	// The per-package evidence recency the record inventory orders by,
 	// cached on the same terms and for the same reason.
-	updatedMu     sync.Mutex
-	updatedAtRead time.Time
-	updatedAt     map[string]time.Time
+	updatedMu         sync.Mutex
+	updatedAtRead     time.Time
+	updatedAt         map[string]time.Time
+	updatedRefreshing bool
+	updatedRetryAt    time.Time
 
 	// The materialized (purl, symbol) page inventory, cached for the same
 	// reason again. This one matters most: assembling a package's cube asks
 	// for it once for the version list and once more per version.
-	targetsMu   sync.Mutex
-	targetsAt   time.Time
-	targetsRows []serverstore.SnapshotTarget
+	targetsMu         sync.Mutex
+	targetsAt         time.Time
+	targetsRows       []serverstore.SnapshotTarget
+	targetsRefreshing bool
+	targetsRetryAt    time.Time
 }
 
-const recordSnapshotCacheTTL = 30 * time.Second
+// The records page reads the whole snapshot table to rank and filter it.
+// On production that table is 17,255 rows but 149MB of jsonb serialised, and
+// ListSnapshots takes 36s there -- all from cache, so two cores of CPU, not
+// disk. Snapshots change only when the builder writes them, once per tick at
+// most, so the cache is sized to that cadence and refreshed BEHIND a request
+// the way HotPackages is: hand back what is cached at once, reload under a
+// background-class context with its own budget, retry later on failure.
+//
+// This used to be a 30-second TTL refreshed synchronously under the mutex.
+// Any visitor more than 30s after the last one paid the full reload and
+// everyone behind them queued on the lock; during a builder pass the read
+// hit its statement timeout and the page came back empty. Measured
+// 2026-09-02: 7.5s cold, then 1.0s and 1.8s.
+//
+// The one difference from HotPackages is the cold start. A widget may render
+// empty; the records page may not, so with nothing cached the first request
+// still waits for the read on its own deadline.
+const (
+	recordSnapshotCacheTTL       = 5 * time.Minute
+	recordSnapshotRefreshTimeout = 2 * time.Minute
+	recordSnapshotRetryDelay     = 30 * time.Second
+)
+
+func backgroundRefreshCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(
+		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
+		recordSnapshotRefreshTimeout,
+	)
+}
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
 	w.snapshotMu.Lock()
-	defer w.snapshotMu.Unlock()
-	if !w.snapshotAt.IsZero() && time.Since(w.snapshotAt) < recordSnapshotCacheTTL {
-		return w.snapshotRows, nil
+	if w.snapshotAt.IsZero() {
+		// Cold: nothing to serve, so this request loads on its own clock.
+		w.snapshotMu.Unlock()
+		rows, err := w.s.ListSnapshots(ctx)
+		if err != nil {
+			return nil, err
+		}
+		w.snapshotMu.Lock()
+		if w.snapshotAt.IsZero() {
+			w.snapshotRows, w.snapshotAt = rows, time.Now()
+		}
+		rows = w.snapshotRows
+		w.snapshotMu.Unlock()
+		return rows, nil
 	}
+	now := time.Now()
+	rows := w.snapshotRows
+	if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
+		!w.snapshotRefreshing && !now.Before(w.snapshotRetryAt) {
+		w.snapshotRefreshing = true
+		go w.refreshSnapshots()
+	}
+	w.snapshotMu.Unlock()
+	return rows, nil
+}
+
+func (w *webStore) refreshSnapshots() {
+	ctx, cancel := backgroundRefreshCtx()
+	defer cancel()
 	rows, err := w.s.ListSnapshots(ctx)
+	w.snapshotMu.Lock()
+	defer w.snapshotMu.Unlock()
+	w.snapshotRefreshing = false
 	if err != nil {
-		return nil, err
+		w.snapshotRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		return
 	}
 	w.snapshotRows, w.snapshotAt = rows, time.Now()
-	return w.snapshotRows, nil
+	w.snapshotRetryAt = time.Time{}
 }
 
-// cachedSnapshotUpdatedAt caches the per-package evidence recency the
-// record inventory orders by. The query walks every snapshot's rows —
-// measured at 160ms over 8,379 snapshots — which is fine on a timer and
-// not fine on every page view.
 func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.Time {
 	w.updatedMu.Lock()
-	defer w.updatedMu.Unlock()
-	if !w.updatedAtRead.IsZero() && time.Since(w.updatedAtRead) < recordSnapshotCacheTTL {
+	if w.updatedAtRead.IsZero() {
+		w.updatedMu.Unlock()
+		updated, err := w.s.SnapshotUpdatedAt(ctx)
+		w.updatedMu.Lock()
+		defer w.updatedMu.Unlock()
+		if err != nil {
+			return w.updatedAt
+		}
+		if w.updatedAtRead.IsZero() {
+			w.updatedAt, w.updatedAtRead = updated, time.Now()
+		}
 		return w.updatedAt
 	}
-	updated, err := w.s.SnapshotUpdatedAt(ctx)
-	if err != nil {
-		return w.updatedAt
+	now := time.Now()
+	updated := w.updatedAt
+	if !w.updatedAtRead.After(now.Add(-recordSnapshotCacheTTL)) &&
+		!w.updatedRefreshing && !now.Before(w.updatedRetryAt) {
+		w.updatedRefreshing = true
+		go w.refreshSnapshotUpdatedAt()
 	}
-	w.updatedAt, w.updatedAtRead = updated, time.Now()
-	return w.updatedAt
+	w.updatedMu.Unlock()
+	return updated
 }
 
-// cachedSnapshotTargets serves the materialized snapshot page inventory from
-// one read per TTL. SnapshotKeys is intentionally not ListSnapshotTargets:
-// the latter expands evidence and signed receipts to tell the builder what it
-// SHOULD create, while every web consumer here needs pages that already
-// exist. Besides being the truthful source, SnapshotKeys is one bounded scan
-// of compatibility_snapshots instead of two whole-corpus source reads.
-// Holding the lock across an interactive miss collapses concurrent readers;
-// background/default contexts bypass that lane below.
-//
-// Callers only ever range over the result, so they share one slice.
+func (w *webStore) refreshSnapshotUpdatedAt() {
+	ctx, cancel := backgroundRefreshCtx()
+	defer cancel()
+	updated, err := w.s.SnapshotUpdatedAt(ctx)
+	w.updatedMu.Lock()
+	defer w.updatedMu.Unlock()
+	w.updatedRefreshing = false
+	if err != nil {
+		w.updatedRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		return
+	}
+	w.updatedAt, w.updatedAtRead = updated, time.Now()
+	w.updatedRetryAt = time.Time{}
+}
+
 func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
 	// Only a visitor waiting on a page shares the foreground cache lane.
 	// QueryClassOf intentionally treats an unclassified context as background,
@@ -110,16 +186,44 @@ func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.Sna
 		return w.s.SnapshotKeys(ctx)
 	}
 	w.targetsMu.Lock()
-	defer w.targetsMu.Unlock()
-	if !w.targetsAt.IsZero() && time.Since(w.targetsAt) < recordSnapshotCacheTTL {
-		return w.targetsRows, nil
+	if w.targetsAt.IsZero() {
+		w.targetsMu.Unlock()
+		rows, err := w.s.SnapshotKeys(ctx)
+		if err != nil {
+			return nil, err
+		}
+		w.targetsMu.Lock()
+		if w.targetsAt.IsZero() {
+			w.targetsRows, w.targetsAt = rows, time.Now()
+		}
+		rows = w.targetsRows
+		w.targetsMu.Unlock()
+		return rows, nil
 	}
+	now := time.Now()
+	rows := w.targetsRows
+	if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
+		!w.targetsRefreshing && !now.Before(w.targetsRetryAt) {
+		w.targetsRefreshing = true
+		go w.refreshSnapshotTargets()
+	}
+	w.targetsMu.Unlock()
+	return rows, nil
+}
+
+func (w *webStore) refreshSnapshotTargets() {
+	ctx, cancel := backgroundRefreshCtx()
+	defer cancel()
 	rows, err := w.s.SnapshotKeys(ctx)
+	w.targetsMu.Lock()
+	defer w.targetsMu.Unlock()
+	w.targetsRefreshing = false
 	if err != nil {
-		return nil, err
+		w.targetsRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		return
 	}
 	w.targetsRows, w.targetsAt = rows, time.Now()
-	return w.targetsRows, nil
+	w.targetsRetryAt = time.Time{}
 }
 
 func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
