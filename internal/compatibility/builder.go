@@ -76,6 +76,56 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// resumeWindow bounds how old a recorded pass may be and still be resumed
+// from. Past it the incremental path would be asked for everything that
+// changed over hours, which is a full rebuild reached by the slower route.
+//
+// An hour matches the periodic full pass (fullPassEvery ticks of the default
+// five-minute interval), so a gap long enough to lose the resume is a gap
+// long enough that a full pass was due regardless.
+const resumeWindow = time.Hour
+
+// resumeFromLastCompletedPass seeds lastRun from what the previous process
+// durably recorded, so a restart does not force the most expensive pass.
+//
+// A completed pass writes generatedAt into stats, which already makes that
+// timestamp the "last run" marker -- it was simply never read back, so every
+// restart began from zero and rebuilt the whole corpus. Measured on
+// production 2026-09-02: a container recreated four minutes after a pass
+// completed took a full pass anyway, and had not finished it 104 minutes
+// later, during which the site's clock could not move at all (RunLoop calls
+// the first pass synchronously, and stats are written at the end of one).
+//
+// Best effort in both directions. A store that cannot answer, a stamp that
+// will not parse, one from the future, and one older than resumeWindow all
+// leave lastRun zero, which is the previous behaviour: take the full pass.
+func (b *Builder) resumeFromLastCompletedPass(ctx context.Context, now time.Time) {
+	if !b.lastRun.IsZero() {
+		return // already running; this is only about the first pass
+	}
+	js, ok, err := b.Store.GetLatestStats(ctx)
+	if err != nil || !ok {
+		return
+	}
+	var doc struct {
+		GeneratedAt string `json:"generatedAt"`
+	}
+	if json.Unmarshal([]byte(js), &doc) != nil || doc.GeneratedAt == "" {
+		return
+	}
+	stamp, perr := time.Parse(time.RFC3339, doc.GeneratedAt)
+	if perr != nil || stamp.After(now) || now.Sub(stamp) > resumeWindow {
+		return
+	}
+	b.lastRun = stamp
+
+	// passes must move off zero too, or the periodic full-pass rule
+	// (passes%fullPassEvery == 0) fires on this very pass and undoes the
+	// resume -- the seeded lastRun would be read, and a full pass taken
+	// anyway. One is simply "not the first", which is what resuming means.
+	b.passes = 1
+}
+
 // pkgKey identifies a package across versions.
 type pkgKey struct{ ecosystem, name string }
 
@@ -105,6 +155,7 @@ type sampleData struct {
 func (b *Builder) RunOnce(ctx context.Context) error {
 	now := b.now()
 	passStart := now
+	b.resumeFromLastCompletedPass(ctx, now)
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
 
 	// affected limits the rebuild to shard keys touched since the last
