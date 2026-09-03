@@ -187,8 +187,10 @@ csx worker start --parallel 4 --budget 15m
 | `GET /v1/registry/symbols/{eco}/{package}/{family}` | 한 심볼의 버전별 스냅샷 |
 | `GET /v1/shards/{eco}/{package}/{major}` | 사전 생성된 호환성 shard (ETag 캐시) |
 | `GET /v1/samples/{id}`, `…/artifact` | 샘플 메타데이터, 영수증, tar.gz 소스 |
+| `GET /v1/peers/for-sample/{sampleId}` | 중앙 서버 없이 샘플을 받기 위한 해당 샘플 보유 피어 목록 |
 | `GET /v1/wanted` | 수요 큐: 요청되었지만 답을 얻지 못한 것 |
 | `GET /v1/adapters` | 생태계별 기능 매트릭스 |
+| `GET /version` | 응답한 서버의 빌드 및 환경 정보 |
 
 ## 에이전트 어댑터 (MCP)
 
@@ -202,7 +204,7 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init`은 Claude Code, Codex, Gemini CLI, OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 서버 자체는 `csx mcp`입니다. 도구는 열 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다. `report_csx_issue`는 같은 발상을 패키지가 아니라 **우리 자신**에게 겨눈 것입니다. 정작 사용자가 보고 있던 실패를 밀어낸 답, 질문이 언급한 적 없는 생태계의 추천, 모델을 잘못 행동하게 만든 도구 계약이 대상입니다. opt-in이며 의도적으로 조용합니다 — 실패할 때마다 호출하라고 지시하는 것은 없고, 티켓도 만들지 않으며, 신고가 하나도 없는 주가 정상입니다. 백 개의 에이전트가 만난 결함은 발생 횟수만 올라가는 **한 줄**이고, 그 줄이 한 번 버그에 연결되면 이후의 신고는 그 연결을 답으로 돌려줍니다. 두 채널은 ingest·redaction·dedupe를 공유하고 그 뒤로는 아무것도 공유하지 않습니다. 이 제품의 결함이 호환성 evidence가 되는 일은 없습니다.
+`csx init`은 Claude Code, Codex, Gemini CLI, Antigravity (agy), OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 서버 자체는 `csx mcp`입니다. 도구는 열 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다. `report_csx_issue`는 같은 발상을 패키지가 아니라 **우리 자신**에게 겨눈 것입니다. 정작 사용자가 보고 있던 실패를 밀어낸 답, 질문이 언급한 적 없는 생태계의 추천, 모델을 잘못 행동하게 만든 도구 계약이 대상입니다. opt-in이며 의도적으로 조용합니다 — 실패할 때마다 호출하라고 지시하는 것은 없고, 티켓도 만들지 않으며, 신고가 하나도 없는 주가 정상입니다. 백 개의 에이전트가 만난 결함은 발생 횟수만 올라가는 **한 줄**이고, 그 줄이 한 번 버그에 연결되면 이후의 신고는 그 연결을 답으로 돌려줍니다. 두 채널은 ingest·redaction·dedupe를 공유하고 그 뒤로는 아무것도 공유하지 않습니다. 이 제품의 결함이 호환성 evidence가 되는 일은 없습니다.
 
 `report_anomaly`는 반대 방향을 가리키는 도구입니다. CSX가 준 답과 에이전트 자신의 로컬 실행이 **구체적으로** 충돌할 때 — 네트워크는 통과했다고 말한 좌표가 여기서는 실패했다, 반환된 심볼 시그니처가 공개 패키지가 실제로 내보내는 것과 다르다 — 에이전트는 그것을 검증 요청으로 제출할 수 있습니다. 버그 리포트가 아닙니다. 제출은 다른 모든 receipt를 만들어내는 바로 그 검증 fleet에 독립적인 재실행을 넣고, 확정할 수 있는 것은 그 receipt뿐입니다. 측정된 로컬 결과가 없는 제출은 거부되고, 같은 불일치를 두 번 신고해도 리포트 하나와 재실행 한 번이며, 검증자가 동의하기 전에는 리포트의 내용이 공개 페이지에 반영되지 않습니다. 신고자의 원인 추측은 별도 필드로 이동하며 판정을 결정하지 않습니다.
 
@@ -234,6 +236,8 @@ Never shared automatically
 **스캔 + 검증** — 프로젝트 감지, lockfile 기반 패키지 해석, 샘플 종단 간 검증: Node/TypeScript(npm, pnpm, yarn — 레퍼런스), Python(pip, uv), Go, Rust/Cargo. Node 샘플은 스스로 선언한 런타임에서 실행되므로, Bun과 Deno의 결과도 가정이 아니라 실측입니다.
 
 **검증만** — 아직 프로젝트 스캐너는 없지만, 게시된 샘플은 고정된 컨테이너에서 빌드되고 계약 테스트를 거칩니다: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Java(Maven/Gradle) 계약 검증은 정확한 JDK 8/11/17/21/25 레인을 고정합니다.
+
+**관측 증거만** — 프로젝트 감지 및 빌드 관측(컨테이너 검증기 제외): Unreal Engine (`.uproject` — `adapters/unreal`을 통해 목표 엔진 버전을 개발자 워크스테이션 관측 증거로 수집하며, 컨테이너 검증 레인은 없음).
 
 정직한 기능 매트릭스: [docs/adapters.md](../adapters.md) — 심볼 해석 신뢰도에는 항상 라벨이 붙습니다 (`EXACT`/`PROBABLE`/`UNKNOWN`).
 

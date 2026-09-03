@@ -173,19 +173,20 @@ uploads nothing.
 `init` also registers `csx` with any of these agents whose config directory
 already exists, writing the absolute path for you:
 
-| Agent      | detected by                | MCP entry written to               | usage rule written to               |
-|------------|----------------------------|------------------------------------|-------------------------------------|
-| Claude Code| `~/.claude/`               | `~/.claude.json`                   | `~/.claude/CLAUDE.md`               |
-| Codex      | `~/.codex/`                | `~/.codex/config.toml`             | `~/.codex/AGENTS.md`                |
-| Gemini CLI | `~/.gemini/`               | `~/.gemini/settings.json`          | `~/.gemini/GEMINI.md`               |
-| OpenCode   | `~/.config/opencode/`      | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md`      |
+| Agent            | detected by                                  | MCP entry written to               | usage rule written to               |
+|------------------|----------------------------------------------|------------------------------------|-------------------------------------|
+| Claude Code      | `~/.claude/`                                 | `~/.claude.json`                   | `~/.claude/CLAUDE.md`               |
+| Codex            | `~/.codex/`                                  | `~/.codex/config.toml`             | `~/.codex/AGENTS.md`                |
+| Gemini CLI       | `~/.gemini/`                                 | `~/.gemini/settings.json`          | `~/.gemini/GEMINI.md`               |
+| Antigravity (agy)| `PATH` / `%LOCALAPPDATA%\agy\bin`            | `agy mcp add csx ...`              | —                                   |
+| OpenCode         | `~/.config/opencode/`                        | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md`      |
 
 Edits are marker-fenced and idempotent; re-run `csx init` after installing one
 of these agents. `--no-agents` skips this entirely and writes nothing outside
 `CSX_HOME` (default `~/.csx`); `CSX_AGENT_HOME` redirects it.
 
 In a clean container none of those directories exist, so `init` prints
-`skipped (not detected)` for all four. That is the expected result of a
+`skipped (not detected)` for all five. That is the expected result of a
 correct install, not a symptom — step 3 covers registering the server by hand.
 
 ## Step 3 — register the server with any other MCP client

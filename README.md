@@ -205,7 +205,7 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` configures Claude Code, Codex, Gemini CLI and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
+`csx init` configures Claude Code, Codex, Gemini CLI, Antigravity (agy), and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
 
 `report_anomaly` is the one that points the other way. When a CSX answer and the agent's own machine **concretely** disagree — the network served a passing conclusion for a coordinate that failed here, a returned symbol signature is not what the package exports — the agent can file that as a verification request. It is not a bug report: a report queues an independent re-run on the same fleet that produces every other receipt, and only that receipt can confirm it. A submission with nothing measured behind it is refused, the same mismatch reported twice is one report and one re-run, and nothing a report says reaches any public page before a verifier agrees with it. The reporter's guess at the cause travels in its own field and never decides the verdict.
 
@@ -240,6 +240,8 @@ The contract above is what the code does. [PRIVACY.md](PRIVACY.md) states the sa
 
 **Verified only** — no project scanner yet, but published samples are built and contract-tested in a pinned container: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Java (Maven/Gradle) contract verification pins exact JDK 8/11/17/21/25 lanes.
 
+**Observed evidence only** — project detection and build observation without container verifiers: Unreal Engine (`.uproject` via `adapters/unreal` — reports targeted engine versions as observed evidence on developer workstations; no container verification lane).
+
 Honest capability matrix: [docs/adapters.md](docs/adapters.md) — symbol resolution confidence is always labeled (`EXACT`/`PROBABLE`/`UNKNOWN`).
 
 ## Architecture
@@ -264,7 +266,7 @@ These are standing product decisions carried over from the initial plan ([goal.m
 - No blockchain, token economy, or global ledger — ever.
 - The core client and the public protocol stay open source.
 
-**Out of scope for Public v1** (initial-plan scope decision; where the shipped product has since gone further — e.g. the verified-only ecosystems above — the shipped product wins): enterprise/private package networks, SSO/SLA/on-premise, API-only billing, dedicated IDE extensions for every editor, full shell interception for every agent, runtime symbol instrumentation for every language, Android/iOS/Unreal/Unity/C++ verifiers, a central large-scale build farm, generic project memory or architecture/business-logic sharing, automatic source publication, definitive failure-cause verdicts, and a DHT-only network.
+**Out of scope for Public v1** (initial-plan scope decision; where the shipped product has since gone further — e.g. the verified-only ecosystems above — the shipped product wins): enterprise/private package networks, SSO/SLA/on-premise, API-only billing, dedicated IDE extensions for every editor, full shell interception for every agent, runtime symbol instrumentation for every language, Android/iOS/Unreal/Unity/C++ verifiers (note: Unreal Engine project detection and engine-version observation are supported via `adapters/unreal`), a central large-scale build farm, generic project memory or architecture/business-logic sharing, automatic source publication, definitive failure-cause verdicts, and a DHT-only network.
 
 **Success metrics.** Success is not judged by sample counts or sign-ups. The metrics the initial plan commits to: agent search invocation rate, Precision@1, accepted-HIT rate, post-HIT build pass rate, adaptation distance, evidence coverage, cross-verification rate, failure-attribution confidence, and estimated reasoning avoided — the last explicitly an estimate, never a measured count (see the stats table above).
 

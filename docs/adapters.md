@@ -13,7 +13,7 @@ A4  Clean Sample + Contract verification
 Two of these describe different halves of the system, and the split is the
 most useful thing this table says. A0–A2 are what the **local scanner** does
 to *your* project. A4 is what the **verifier** does to a *published sample*.
-An ecosystem can have one without the other, and five of them do.
+An ecosystem can have one without the other, and six of them do (including generic adapters like Unreal Engine, which detects projects and records engine targets as observed evidence without running container verification).
 
 The evidence model is not limited to libraries. Engines, SDKs, operating
 systems, built-in commands and standalone CLIs are fixed public `generic`
@@ -35,6 +35,7 @@ not the same as pretending it has already been verified.
 | hex | elixir@1 | mix | – | – | – | – | ✓ | UNKNOWN |
 | maven | maven-java@1 | Maven | – | – | – | – | ✓ | UNKNOWN |
 | maven | gradle-java@1 | Gradle | – | – | – | – | ✓ | UNKNOWN |
+| generic | unreal@1 | .uproject (EngineAssociation) | ✓ | – | – | – | – | UNKNOWN |
 
 ## Verifier images
 
