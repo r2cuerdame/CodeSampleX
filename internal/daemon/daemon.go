@@ -69,13 +69,17 @@ var ErrAlreadyRunning = errors.New("daemon: already running")
 
 // Daemon is one local daemon instance bound to a CSX_HOME.
 type Daemon struct {
-	Cfg     *config.Config
-	Home    string
-	DB      *localdb.DB
-	Ident   *identity.Identity
-	CAS     *cas.Store
-	Engine  *search.Engine
-	Syncer  *search.Syncer
+	Cfg    *config.Config
+	Home   string
+	DB     *localdb.DB
+	Ident  *identity.Identity
+	CAS    *cas.Store
+	Engine *search.Engine
+	Syncer *search.Syncer
+
+	// syncMu guards sync, the progress of the sync in flight (nil when none).
+	syncMu  sync.Mutex
+	sync    *SyncProgress
 	Batcher *evidence.Batcher
 	Peer    *peer.Node              // nil unless cfg.peerListen
 	Cross   *verifier.CrossVerifier // nil unless cfg.idleVerification != off
@@ -646,12 +650,15 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	if !d.communityNetworkEnabled() {
 		return res
 	}
+	defer d.endSync()
 	// WarmedKeys is what SUCCEEDED, not what was attempted. Assigning
 	// len(keys) before the sync ran meant a completely failed sync still
 	// printed "warmed shard keys: 124" and exited 0, and the number is read
 	// as a statement of fact about the local cache.
 	keys := d.warmKeyList(ctx)
 	if len(keys) > 0 {
+		d.beginSyncStage("warming", len(keys), time.Now().UTC())
+		d.Syncer.Progress = func(walked, _ int) { d.advanceSync(walked) }
 		warmed, err := d.Syncer.SyncAll(ctx, keys)
 		res.WarmedKeys = warmed
 		if err != nil {
@@ -667,6 +674,7 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 			_ = d.DB.StampFirst(ctx, localdb.StatFirstSyncAt, time.Now().UTC())
 		}
 	}
+	d.beginSyncStage("uploading", 0, time.Now().UTC())
 	n, err := d.uploadNow(ctx)
 	res.UploadedBatches = n
 	// Why the queue is not draining, when it is not. A stalled correction
@@ -696,6 +704,41 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 }
 
 // SyncResult is the POST /local/v1/sync (and csx sync) outcome.
+// beginSyncStage records that a sync is in the named stage with total steps
+// ahead (0 when unknown). A new stage starts from zero.
+func (d *Daemon) beginSyncStage(stage string, total int, at time.Time) {
+	d.syncMu.Lock()
+	d.sync = &SyncProgress{Stage: stage, Total: total, StartedAt: at}
+	d.syncMu.Unlock()
+}
+
+// advanceSync records progress within the current stage.
+func (d *Daemon) advanceSync(done int) {
+	d.syncMu.Lock()
+	if d.sync != nil {
+		d.sync.Done = done
+	}
+	d.syncMu.Unlock()
+}
+
+// endSync clears the progress: nothing is syncing.
+func (d *Daemon) endSync() {
+	d.syncMu.Lock()
+	d.sync = nil
+	d.syncMu.Unlock()
+}
+
+// syncProgress returns a copy of the sync in flight, or nil.
+func (d *Daemon) syncProgress() *SyncProgress {
+	d.syncMu.Lock()
+	defer d.syncMu.Unlock()
+	if d.sync == nil {
+		return nil
+	}
+	p := *d.sync
+	return &p
+}
+
 type SyncResult struct {
 	SchemaVersion   int `json:"schemaVersion"`
 	WarmedKeys      int `json:"warmedKeys"`

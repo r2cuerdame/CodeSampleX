@@ -26,6 +26,12 @@ type Syncer struct {
 	DB        *localdb.DB
 	HTTP      *http.Client
 	ServerURL string
+	// Progress, when set, is called after each key with how many keys have
+	// been walked so far and how many there are. A sync of 1,558 keys took
+	// fifteen minutes on a 246MB local database and told nobody where it
+	// was; this is how the daemon publishes it and the CLI renders it.
+	// nil is the previous behaviour.
+	Progress func(walked, total int)
 }
 
 // shardDoc mirrors the C6 wire shape (schemas/v1/shard.json). Only the
@@ -346,8 +352,11 @@ func (s *Syncer) indexShard(ctx context.Context, key string, body []byte) error 
 func (s *Syncer) SyncAll(ctx context.Context, keys []string) (int, error) {
 	var errs []error
 	done := 0
-	for _, key := range keys {
+	for i, key := range keys {
 		err := s.syncKeyWithRetry(ctx, key)
+		if s.Progress != nil {
+			s.Progress(i+1, len(keys))
+		}
 		if errors.Is(err, errShardAbsent) {
 			continue // nothing there to warm, and nothing wrong either
 		}

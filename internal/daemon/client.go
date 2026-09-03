@@ -25,6 +25,10 @@ import (
 
 // Client talks to a running daemon's local API, either over TCP
 // (BaseURL) or over the platform IPC transport (NewIPCClient).
+// requestTimeout bounds every daemon call except Sync. A variable so a test
+// can shrink it instead of waiting thirty seconds.
+var requestTimeout = 30 * time.Second
+
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
@@ -78,7 +82,7 @@ func NewClient(home string) (*Client, error) {
 func NewIPCClient(home string) *Client {
 	return &Client{
 		BaseURL: "http://csx-daemon",
-		HTTP:    &http.Client{Transport: ipcTransport(home), Timeout: 30 * time.Second},
+		HTTP:    &http.Client{Transport: ipcTransport(home), Timeout: requestTimeout},
 	}
 }
 
@@ -86,7 +90,7 @@ func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: requestTimeout}
 }
 
 // do performs one JSON round-trip. in==nil sends no body; out==nil
@@ -163,9 +167,20 @@ func (c *Client) Queue(ctx context.Context) (QueuePreview, error) {
 }
 
 // Sync triggers POST /local/v1/sync (shard warm + upload now).
+// Sync runs POST /local/v1/sync and waits for it. It is the one call not
+// bound by requestTimeout: a sync took fifteen minutes on a 246MB local
+// database, so a 30-second bound meant "context deadline exceeded" every
+// time, after which the CLI ran the same sync again in its own process
+// while the daemon's copy carried on -- two syncs on one sqlite. The
+// caller's context is the only deadline.
 func (c *Client) Sync(ctx context.Context) (SyncResult, error) {
 	var res SyncResult
+	long := *c.http()
+	long.Timeout = 0
+	saved := c.HTTP
+	c.HTTP = &long
 	err := c.do(ctx, http.MethodPost, "/local/v1/sync", nil, &res)
+	c.HTTP = saved
 	return res, err
 }
 

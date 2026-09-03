@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -60,22 +63,28 @@ func syncMain(ctx context.Context, args []string) int {
 		return 0
 	}
 
-	res, err := syncViaDaemon(ctx, home)
-	if err != nil {
-		// Daemon down: run the sync directly in-process.
+	res, probeErr, err := syncViaDaemon(ctx, home, stderrIsTerminal())
+	if err != nil && fallBackInProcess(probeErr) {
+		// No daemon to talk to: run it here. Never for a daemon that merely
+		// did not answer in time -- that daemon is still working, and a
+		// second sync on the same database is what Farm#18 measured.
 		d, derr := daemon.New(home)
 		if derr != nil {
-			fmt.Fprintf(os.Stderr, "csx: sync: %v\n", derr)
+			fmt.Fprintf(os.Stderr, "csx: sync: %v\\n", derr)
 			return 1
 		}
 		defer d.Close()
 		r := d.SyncNow(ctx)
-		res = &r
+		res, err = &r, nil
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "csx: sync: %v\\n", err)
+		return 1
 	}
 
 	printSyncResult(res)
-	for _, e := range res.Errors {
-		fmt.Fprintf(os.Stderr, "csx: sync (non-fatal): %s\n", e)
+	for _, e := range collapseErrors(res.Errors) {
+		fmt.Fprintf(os.Stderr, "csx: sync (non-fatal): %s\\n", e)
 	}
 	return 0
 }
@@ -106,20 +115,113 @@ func modeLabel(mode string) string {
 	return "in " + mode + " mode"
 }
 
-func syncViaDaemon(ctx context.Context, home string) (*daemon.SyncResult, error) {
+// syncViaDaemon asks the daemon to sync and waits. probeErr is the status
+// probe's failure, kept apart from the sync's own so the caller can tell
+// "no daemon" from "daemon busy". With showProgress the wait is narrated on
+// stderr, one rewritable line, from the progress the daemon publishes.
+func syncViaDaemon(ctx context.Context, home string, showProgress bool) (res *daemon.SyncResult, probeErr, err error) {
 	c, err := daemon.NewClient(home)
 	if err != nil {
-		return nil, err
+		return nil, err, err
 	}
 	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	_, err = c.Status(pctx)
+	_, probeErr = c.Status(pctx)
 	cancel()
-	if err != nil {
-		return nil, err
+	if probeErr != nil {
+		return nil, probeErr, probeErr
 	}
-	res, err := c.Sync(ctx)
-	if err != nil {
-		return nil, err
+	stop := make(chan struct{})
+	if showProgress {
+		go narrateSync(ctx, c, stop)
 	}
-	return &res, nil
+	r, err := c.Sync(ctx)
+	close(stop)
+	if showProgress {
+		fmt.Fprint(os.Stderr, "\\r\\033[K")
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return &r, nil, nil
+}
+
+// narrateSync rewrites one stderr line every second until stop closes.
+func narrateSync(ctx context.Context, c *daemon.Client, stop <-chan struct{}) {
+	started := time.Now()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		var p *daemon.SyncProgress
+		sctx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+		if st, err := c.Status(sctx); err == nil {
+			p = st.Sync
+		}
+		cancel()
+		fmt.Fprint(os.Stderr, "\\r\\033[K"+progressLine(p, time.Since(started)))
+	}
+}
+
+// progressLine is what the wait looks like: the daemon's stage and count
+// when it reports one, and the elapsed time always.
+func progressLine(p *daemon.SyncProgress, elapsed time.Duration) string {
+	e := elapsed.Round(time.Second)
+	clock := fmt.Sprintf("%02d:%02d", int(e.Minutes()), int(e.Seconds())%60)
+	if p == nil {
+		return "csx sync: waiting on the daemon · " + clock
+	}
+	if p.Total > 0 {
+		return fmt.Sprintf("csx sync: %s %d/%d · %s", p.Stage, p.Done, p.Total, clock)
+	}
+	return fmt.Sprintf("csx sync: %s · %s", p.Stage, clock)
+}
+
+// collapseErrors folds repeated messages into one line each, in first-seen
+// order: thirteen identical "context deadline exceeded" lines said less
+// than "13× context deadline exceeded" does.
+func collapseErrors(errs []string) []string {
+	counts := map[string]int{}
+	var order []string
+	for _, e := range errs {
+		if counts[e] == 0 {
+			order = append(order, e)
+		}
+		counts[e]++
+	}
+	out := make([]string, 0, len(order))
+	for _, e := range order {
+		if counts[e] > 1 {
+			out = append(out, fmt.Sprintf("%d× %s", counts[e], e))
+		} else {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// fallBackInProcess reports whether the CLI may run the sync itself: only
+// when there is no daemon to reach. A probe that timed out, or a daemon that
+// answered with an error, is a daemon that exists and is working.
+func fallBackInProcess(probeErr error) bool {
+	if probeErr == nil {
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(probeErr, &opErr) {
+		return true
+	}
+	return errors.Is(probeErr, syscall.ECONNREFUSED) || errors.Is(probeErr, os.ErrNotExist)
+}
+
+// stderrIsTerminal reports whether progress should be narrated: only to a
+// person, never into a script's or a farm worker's captured output.
+func stderrIsTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

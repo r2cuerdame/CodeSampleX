@@ -28,6 +28,18 @@ type StatusInfo struct {
 	LastUpload        string `json:"lastUpload,omitempty"`
 	LastUploadAttempt string `json:"lastUploadAttempt,omitempty"`
 	LastUploadError   string `json:"lastUploadError,omitempty"`
+	// Sync is present only while a sync is running: which stage, how far
+	// through it, and when it began. A client waiting on POST /local/v1/sync
+	// polls this to say something during the minutes it takes.
+	Sync *SyncProgress `json:"sync,omitempty"`
+}
+
+// SyncProgress is where a running sync is.
+type SyncProgress struct {
+	Stage     string    `json:"stage"`
+	Done      int       `json:"done"`
+	Total     int       `json:"total"`
+	StartedAt time.Time `json:"startedAt"`
 }
 
 // SampleInfo is the GET /local/v1/samples/{id} body: the localdb row plus
@@ -133,6 +145,7 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Uptime:        d.uptime(),
 	}
 	st.QueueDepth, _ = d.queueDepth(ctx)
+	st.Sync = d.syncProgress()
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
 		st.LastUpload = v
 	}
