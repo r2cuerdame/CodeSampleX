@@ -200,12 +200,10 @@
 {{/* One list. A sample answers one version of one API, so the count
      belongs on the version's own row and the answers themselves live on
      the version page — not in a second list of the same versions. */}}
-{{- if .Deps}}
-{{/* Only with a version pinned. Across releases the same library appears at
-     several versions and the page has to pick one to show, which is a choice
-     nobody asked it to make; pinned, there is exactly one answer. */}}
+{{- if or .Deps .DepsMatrix}}
 <section id="dependency-health" class="dephealth">
 <h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
+<p class="dim small">{{.T "pkg.dep_health_sub"}}</p>
 
 {{- with .DepsHealth}}
 <div class="dephealth-summary panel">
@@ -245,6 +243,7 @@
 </div>
 {{- end}}
 
+{{- if .Deps}}
 <div class="tablewrap">
 <table class="shipswith">
 <thead><tr>
@@ -270,44 +269,11 @@
 </tbody>
 </table>
 </div>
-{{/* What the column does NOT say. A resolver placing two releases side by side
-     is not evidence that either works, and the measured column is about the
-     child coordinate alone. Without this line the table reads as a
-     compatibility verdict, which is exactly the claim this network refuses to
-     make without a contract. */}}
 <p class="note dim small">{{.T "pkg.dep_measured_caveat"}}</p>
-</section>
-{{- else if .DepsProvenNone}}
-{{/* Measured to declare nothing, which is an ANSWER. Rendering it as an empty
-     section would make it indistinguishable from a release nothing has read,
-     and those are opposite states: one closes the dependency axis, the other
-     leaves it open. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
-<p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
-{{- else if .DepsUnaskable}}
-{{/* Nothing here ships a scanner for this ecosystem. That is a fact about
-     this network, not about the release: the module has dependencies, and
-     saying otherwise would assert a measurement nobody made. It is also not
-     work anybody can pick up, so there is no link to the gap list. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
-<p class="note dim small">{{.DepsUnaskable}}</p>
-{{- else if .DepsUnread}}
-{{/* Nothing has resolved this release. The section used to render nothing at
-     all, which is right about the dependencies and silent about everything
-     else: a reader could not tell an unread axis from a finished one. This
-     says which it is and where it is counted, and still makes no claim about
-     what the release pulls. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
-<p class="note dim small">{{.T "pkg.deps_unread"}} <a href="{{.DepsGapHref}}">{{.T "pkg.deps_unread_link"}}</a></p>
 {{- end}}
 
-{{/* What each release resolved its children to, side by side. The table above
-     answers "what shipped with THIS release"; the question a reader arrives
-     with after an upgrade broke a build is which child moved between the
-     release that worked and the one that does not. Movers lead, because they
-     are the only rows that answer it. */}}
 {{- if .DepsMatrix}}
-<h2 id="depmatrix" class="eyebrow mono">{{.T "pkg.depmatrix"}}</h2>
+<h3 id="depmatrix" class="eyebrow mono small" style="margin-top: 1.5rem;">{{.T "pkg.depmatrix"}}</h3>
 <p class="note dim small">{{.T "pkg.depmatrix_note"}}</p>
 <div class="tablewrap">
 <table class="depmatrix">
@@ -315,10 +281,6 @@
   {{- range .DepsMatrix.Versions}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
 <tbody>
 {{- range .DepsMatrix.Rows}}
-{{/* The name links to the PACKAGE, not to a release. The table above keeps
-     its names unlinked because a name there would land on one exact version
-     while promising the package; here the row IS the package across every
-     release, so the link says what it goes to. */}}
 <tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Child}}</a></th>
   {{- range .Cells}}
   <td class="mono cell-{{.State}}">{{if eq .State "version"}}{{.Version}}{{else}}<span class="dim {{.State}}" title="{{.Title}}">—</span>{{end}}</td>
@@ -329,11 +291,25 @@
 </table>
 </div>
 <p class="note dim small">{{.T "pkg.depmatrix_summary" (printf "%d" .DepsMatrix.Moved) (printf "%d" .DepsMatrix.Steady)}}{{if .DepsMatrix.Truncated}} {{.T "pkg.depmatrix_truncated"}}{{end}}</p>
-{{/* What a row is NOT. An edge records that a resolver placed two releases
-     side by side in some project, which is why a newer parent can appear
-     beside an older child; a grid of versions reads as a pinning claim, and
-     as a compatibility claim, unless the page says otherwise. */}}
 <p class="note dim small">{{.T "dependencies.caveat"}}</p>
+{{- end}}
+
+</section>
+{{- else if .DepsProvenNone}}
+<section id="dependency-health" class="dephealth">
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
+<p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
+</section>
+{{- else if .DepsUnaskable}}
+<section id="dependency-health" class="dephealth">
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
+<p class="note dim small">{{.DepsUnaskable}}</p>
+</section>
+{{- else if .DepsUnread}}
+<section id="dependency-health" class="dephealth">
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
+<p class="note dim small">{{.T "pkg.deps_unread"}} <a href="{{.DepsGapHref}}">{{.T "pkg.deps_unread_link"}}</a></p>
+</section>
 {{- end}}
 
 {{/* Only at a decided coordinate. A failure cluster is a fact about one

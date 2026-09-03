@@ -200,3 +200,38 @@ func TestDependencyHealthHTMLRendering(t *testing.T) {
 	// Matrix cell state
 	mustContain(t, body, `cell-version`)
 }
+
+// Issue #178: Test 7 - Unpinned page HTML rendering.
+// When no version is pinned, Dependency Health summary and cross-release matrix
+// must still be prominently displayed, without the single-release table.
+func TestDependencyHealthUnpinnedHTMLRendering(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.dependencies = []DependencyEdge{
+		{ParentVersion: "2.0.0", ChildName: "alpha", ChildVersion: "2.0.0"},
+		{ParentVersion: "1.0.0", ChildName: "alpha", ChildVersion: "1.0.0"},
+		{ParentVersion: "2.0.0", ChildName: "beta", ChildVersion: "1.0.0"},
+		{ParentVersion: "1.0.0", ChildName: "beta", ChildVersion: "1.0.0"},
+	}
+	store.clusters["npm|axios"] = []string{
+		`{"stage":"test","fingerprint":"ERR_REQUIRE_ESM","count":5,"versions":["2.0.0"],"envSummary":{"os":"windows","runtime":"node@22"}}`,
+	}
+
+	body := mustGet(t, mux, "/npm/axios")
+
+	// Section, Heading and Summary must be present even without ?f_version
+	mustContain(t, body, `id="dependency-health"`)
+	mustContain(t, body, `class="dephealth-summary`)
+	mustContain(t, body, `class="dephealth-break"`)
+	mustContain(t, body, "First observed break")
+	mustContain(t, body, "5 FAIL")
+	mustContain(t, body, "ERR_REQUIRE_ESM")
+
+	// Matrix must be rendered directly in this section
+	mustContain(t, body, `class="depmatrix"`)
+	mustContain(t, body, `cell-version`)
+
+	// Single release table must NOT be rendered on unpinned page
+	if strings.Contains(body, `<table class="shipswith">`) {
+		t.Error("the unpinned page printed single release table")
+	}
+}

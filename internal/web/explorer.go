@@ -784,7 +784,8 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, all
 	// nothing yet.
 	matrix := buildDependencyMatrix(eco, rows)
 	if version == "" {
-		return nil, false, matrix, nil
+		healthSummary := evaluateCrossReleaseHealth(eco, name, allClusters, matrix, lang)
+		return nil, false, matrix, healthSummary
 	}
 	kept := make([]DependencyEdge, 0, len(rows))
 	for _, e := range rows {
@@ -802,21 +803,31 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, all
 	if len(deps) > maxDependencyRows {
 		deps = deps[:maxDependencyRows]
 	}
+	var wg sync.WaitGroup
 	for i := range deps {
-		purl := domain.PURL{Ecosystem: eco, Name: deps[i].Library, Version: deps[i].Version}.String()
-		deps[i].State = dependencyEvidenceState(r, s.d.Store, purl)
-		deps[i].StateText = i18n.T(lang, "pkg.dep_state_"+deps[i].State)
-		deps[i].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[i].Projects)
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			purl := domain.PURL{Ecosystem: eco, Name: deps[idx].Library, Version: deps[idx].Version}.String()
+			deps[idx].State = dependencyEvidenceState(r, s.d.Store, purl)
+			deps[idx].StateText = i18n.T(lang, "pkg.dep_state_"+deps[idx].State)
+			deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
+		}(i)
 	}
+	wg.Wait()
 	if len(deps) > 0 {
 		var healthSummary *DependencyHealthSummary
 		deps, healthSummary = evaluateDependencyHealth(eco, name, version, deps, allClusters, matrix, lang)
 		return deps, false, matrix, healthSummary
 	}
-	// No edges. Whether that is an answer or a gap is the one thing this page
+	// No edges for this version. Whether that is an answer or a gap is the one thing this page
 	// cannot infer, and the store is the only place that knows.
 	none, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
-	return nil, err == nil && none, matrix, nil
+	var healthSummary *DependencyHealthSummary
+	if matrix != nil {
+		healthSummary = evaluateCrossReleaseHealth(eco, name, allClusters, matrix, lang)
+	}
+	return nil, err == nil && none, matrix, healthSummary
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -863,7 +874,7 @@ func decidedVersion(r *http.Request, cube *cubeView) string {
 	if v := r.URL.Query().Get("f_version"); v != "" {
 		return v
 	}
-	if cube != nil {
+	if cube != nil && cube.Decided {
 		return cube.Coord["version"]
 	}
 	return ""

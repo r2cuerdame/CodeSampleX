@@ -316,3 +316,62 @@ func evaluateDependencyHealth(
 	return deps, summary
 }
 
+// evaluateCrossReleaseHealth produces a problem-first summary across all observed
+// releases when no single version is pinned (#178).
+func evaluateCrossReleaseHealth(
+	ecosystem, name string,
+	clusters []failureCluster,
+	matrix *dependencyMatrix,
+	lang string,
+) *DependencyHealthSummary {
+	if matrix == nil {
+		return nil
+	}
+	summary := &DependencyHealthSummary{
+		ChangedCount: matrix.Moved,
+		SteadyCount:  matrix.Steady,
+	}
+
+	if len(clusters) > 0 {
+		fc := clusters[0]
+		summary.HasBreak = true
+		summary.ProblemsCount = 1
+		pVer := ""
+		if len(fc.Versions) > 0 {
+			pVer = fc.Versions[0]
+		} else if len(matrix.Versions) > 0 {
+			pVer = matrix.Versions[0]
+		}
+		b := &DependencyBreakDetail{
+			ParentVersion: pVer,
+			Env:           formatClusterEnv(fc.EnvSummary),
+			FailCount:     fc.Count,
+			PassCount:     fc.ObservationCount - fc.Count,
+			Stage:         fc.Stage,
+			Fingerprint:   fc.Fingerprint,
+			CubeHref:      depHref(ecosystem, name, pVer),
+			FailureHref:   "#failures",
+		}
+		if b.PassCount < 0 {
+			b.PassCount = 0
+		}
+		for _, row := range matrix.Rows {
+			if row.Moves {
+				for col, cell := range row.Cells {
+					if col < len(matrix.Versions) && matrix.Versions[col] == pVer && cell.State == "version" {
+						b.ChildLibrary = row.Child
+						b.ChildVersion = cell.Version
+						break
+					}
+				}
+				if b.ChildLibrary != "" {
+					break
+				}
+			}
+		}
+		summary.FirstBreak = b
+	}
+
+	return summary
+}
+
