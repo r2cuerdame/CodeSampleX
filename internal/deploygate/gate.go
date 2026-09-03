@@ -69,6 +69,10 @@ SELECT s.sample_id,
 ON CONFLICT DO NOTHING`,
 }
 
+var dependencyEdgeParentIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS dependency_edge_parent_idx ON dependency_edge (ecosystem, parent_name)`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -101,6 +105,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact automatic projection allowlist", name)
+	}
+	if name == "0032_dependency_edge_parent_idx.sql" {
+		if exactStatements(statements, dependencyEdgeParentIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact dependency edge index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)
