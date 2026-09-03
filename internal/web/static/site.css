@@ -1764,6 +1764,7 @@ table.pivot th.rowlabel {
   position: sticky; left: 0; z-index: 1;
   background: var(--panel-2);
   box-shadow: 1px 0 0 var(--line);
+  min-width: 10rem;
 }
 table.pivot tbody tr:hover td.pv:not(.empty) {
   filter: brightness(0.97);
@@ -1952,7 +1953,7 @@ table.pivot thead th.corner {
   .cubecontrols { gap: 0.5rem 0.7rem; }
   .cubecontrols select { width: 100%; font-size: 16px; }
   .gridbar .axes { margin-left: 0; flex-basis: 100%; white-space: normal; }
-  table.pivot th.rowlabel { max-width: 42vw; white-space: normal; overflow-wrap: anywhere; }
+  table.pivot th.rowlabel { min-width: 10rem; max-width: 18rem; white-space: normal; word-break: normal; overflow-wrap: break-word; }
   table.pivot th, table.pivot td { padding: 0.3rem 0.38rem; font-size: 0.72rem; }
   .cubechips .filterchip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 }
@@ -2267,7 +2268,7 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .depmatrix { border-collapse: collapse; width: 100%; font-size: 0.84rem; }
 .depmatrix th, .depmatrix td { padding: 0.35rem 0.6rem; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .depmatrix thead th { color: var(--dim); font: 700 0.7rem/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; }
-.depmatrix .rowlabel { font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.depmatrix .rowlabel { font-weight: 600; min-width: 9rem; white-space: normal; word-break: normal; overflow-wrap: break-word; }
 .depmatrix tr.is-moved { background: #f7faff; }
 .depmatrix tr.is-moved .rowlabel { color: var(--accent); }
 .depmatrix td.cell-not_in_tree .not-in-tree { opacity: 0.45; }
