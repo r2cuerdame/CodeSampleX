@@ -759,6 +759,8 @@ type packagePage struct {
 	// DepsMatrix compares what each release resolved its children to. Nil
 	// with fewer than two released trees, where there is nothing to compare.
 	DepsMatrix *dependencyMatrix
+	// DepsHealth is the problem-first health summary for the dependency tree (#178).
+	DepsHealth *DependencyHealthSummary
 }
 
 // packageDeps lists the first-level dependencies of one PINNED release.
@@ -767,10 +769,10 @@ type packagePage struct {
 // releases the same library appears at several versions, so an unpinned page
 // would have to choose which to show — a choice nobody asked for and one the
 // reader cannot check.
-func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]PackageDep, bool, *dependencyMatrix) {
+func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, allClusters []failureCluster) ([]PackageDep, bool, *dependencyMatrix, *DependencyHealthSummary) {
 	rows, err := s.d.Store.Dependencies(r.Context(), eco, name)
 	if err != nil {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
 	// Built from the same read: Dependencies returns every release's edges and
 	// the table below throws away all but the pinned one.
@@ -782,7 +784,7 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]
 	// nothing yet.
 	matrix := buildDependencyMatrix(eco, rows)
 	if version == "" {
-		return nil, false, matrix
+		return nil, false, matrix, nil
 	}
 	kept := make([]DependencyEdge, 0, len(rows))
 	for _, e := range rows {
@@ -807,12 +809,14 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string) ([]
 		deps[i].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[i].Projects)
 	}
 	if len(deps) > 0 {
-		return deps, false, matrix
+		var healthSummary *DependencyHealthSummary
+		deps, healthSummary = evaluateDependencyHealth(eco, name, version, deps, allClusters, matrix, lang)
+		return deps, false, matrix, healthSummary
 	}
 	// No edges. Whether that is an answer or a gap is the one thing this page
 	// cannot infer, and the store is the only place that knows.
 	none, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
-	return nil, err == nil && none, matrix
+	return nil, err == nil && none, matrix, nil
 }
 
 // packageSampleLimit bounds how many of a package's samples one page
@@ -1004,12 +1008,23 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var clusters []clusterView
 	var clusterTotal int
 	var deps []PackageDep
+	var allClusters []failureCluster
+	if rawClusters, _, err := s.d.Store.FailureClusters(r.Context(), eco, name); err == nil && len(rawClusters) > 0 {
+		allClusters = make([]failureCluster, 0, len(rawClusters))
+		for _, doc := range rawClusters {
+			var c failureCluster
+			if json.Unmarshal([]byte(doc), &c) == nil {
+				allClusters = append(allClusters, c)
+			}
+		}
+	}
+
 	// A dependency list belongs to the RELEASE and to nothing else: the same
 	// lockfile resolves the same way whichever symbol or runtime the reader is
 	// looking at. Deciding the version is the whole requirement — by pinning
 	// it, or by the package only ever having had one.
 	decided := decidedVersion(r, cube)
-	deps, depsProvenNone, depMatrix := s.packageDeps(r, lang, eco, name, decided)
+	deps, depsProvenNone, depMatrix, depsHealth := s.packageDeps(r, lang, eco, name, decided, allClusters)
 	// Whether this network could answer the dependency question here at all.
 	// The census subtracts these ecosystems from the backlog; the page has to
 	// make the same distinction or it promises work that cannot be done.
@@ -1069,6 +1084,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		DepsUnaskable:  depUnaskableReason,
 		DepsGapHref:    b.WithLang(gapsHref(name, 1, i18n.Default)),
 		DepsMatrix:     depMatrix,
+		DepsHealth:     depsHealth,
 	})
 }
 

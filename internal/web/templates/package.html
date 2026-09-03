@@ -204,19 +204,68 @@
 {{/* Only with a version pinned. Across releases the same library appears at
      several versions and the page has to pick one to show, which is a choice
      nobody asked it to make; pinned, there is exactly one answer. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<section id="dependency-health" class="dephealth">
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
+
+{{- with .DepsHealth}}
+<div class="dephealth-summary panel">
+  <div class="dephealth-counts mono small">
+    {{if .ProblemsCount}}<span class="dh-problem font-bold">{{$.T "pkg.dh_problems" (printf "%d" .ProblemsCount)}}</span> · {{end}}
+    {{if .MixedCount}}<span class="dh-mixed">{{$.T "pkg.dh_mixed" (printf "%d" .MixedCount)}}</span> · {{end}}
+    {{if .ChangedCount}}<span class="dh-changed">{{$.T "pkg.dh_changed" (printf "%d" .ChangedCount)}}</span> · {{end}}
+    {{if .UnknownCount}}<span class="dim">{{$.T "pkg.dh_unknown" (printf "%d" .UnknownCount)}}</span> · {{end}}
+    <span class="dh-steady dim">{{$.T "pkg.dh_steady" (printf "%d" .SteadyCount)}}</span>
+  </div>
+
+  {{- if .HasBreak}}
+  {{- with .FirstBreak}}
+  <div class="dephealth-break">
+    <h3 class="break-title small eyebrow mono">{{$.T "pkg.dep_health_first_break"}}</h3>
+    <p class="break-coord mono">
+      <strong>{{.ParentVersion}}</strong>
+      {{if .ChildLibrary}}<span class="break-arrow" aria-hidden="true">→</span> <strong>{{.ChildLibrary}}@{{.ChildVersion}}</strong>{{end}}
+    </p>
+    {{if .Env}}<p class="break-env dim small mono">{{.Env}}</p>{{end}}
+    <p class="break-evidence small mono">
+      <span class="t-red font-bold">{{.FailCount}} FAIL</span>{{if .PassCount}} / <span class="t-green">{{.PassCount}} PASS</span>{{end}}
+      {{if .Stage}} · <span class="dim">stage:</span> {{.Stage}}{{end}}
+      {{if .Fingerprint}} · <span class="dim">fingerprint:</span> <code class="mono">{{.Fingerprint}}</code>{{end}}
+    </p>
+    <div class="break-actions small mono">
+      {{if .CubeHref}}<a class="evaction" href="{{$.WithLang .CubeHref}}">{{$.T "pkg.dh_view_cube"}}</a>{{end}}
+      {{if .FailureHref}}<a class="evaction" href="{{$.WithLang .FailureHref}}">{{$.T "pkg.dh_view_failure"}}</a>{{end}}
+    </div>
+  </div>
+  {{- end}}
+  {{- else if .ChangedCount}}
+  <p class="dephealth-clean dim small">{{$.T "pkg.dep_health_no_break" (printf "%d" .ChangedCount)}}</p>
+  {{- else}}
+  <p class="dephealth-clean dim small">{{$.T "pkg.dep_health_all_healthy" (printf "%d" .SteadyCount)}}</p>
+  {{- end}}
+</div>
+{{- end}}
+
 <div class="tablewrap">
 <table class="shipswith">
-<thead><tr><th>{{.T "pkg.shipswith_col"}}</th><th>{{.T "pkg.dependants_col_version"}}</th><th>{{.T "pkg.dep_col_measured"}}</th><th>{{.T "pkg.dependants_col_projects"}}</th></tr></thead>
+<thead><tr>
+  <th>{{.T "pkg.shipswith_col"}}</th>
+  <th>{{.T "pkg.dependants_col_version"}}</th>
+  <th>{{.T "pkg.dep_col_health"}}</th>
+  <th>{{.T "pkg.dep_col_measured"}}</th>
+  <th>{{.T "pkg.dependants_col_projects"}}</th>
+</tr></thead>
 <tbody>
 {{- range .Deps}}
-{{/* The name is not a link. It promises "the package" and would land on one
-     exact version, which is a different thing from what it says; the version
-     beside it promises that version and goes there. */}}
-<tr><th class="rowlabel mono">{{.Library}}</th>
-    <td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td>
-    <td class="depstate depstate-{{.State}}">{{.StateText}}</td>
-    <td class="mono dim"><a href="{{$.WithLang .AtlasHref}}">{{.ProjectsText}}</a></td></tr>
+<tr class="dep-row dep-health-{{.Health}}">
+  <th class="rowlabel mono">{{.Library}}</th>
+  <td class="mono"><a href="{{$.WithLang .Href}}">{{.Version}}</a></td>
+  <td>
+    <span class="depbadge badge-{{.HealthTone}}">{{.HealthBadge}}</span>
+    {{if .HealthNote}}<span class="dim small mono depnote">{{.HealthNote}}</span>{{end}}
+  </td>
+  <td class="depstate depstate-{{.State}}">{{.StateText}}</td>
+  <td class="mono dim"><a href="{{$.WithLang .AtlasHref}}">{{.ProjectsText}}</a></td>
+</tr>
 {{- end}}
 </tbody>
 </table>
@@ -227,19 +276,20 @@
      compatibility verdict, which is exactly the claim this network refuses to
      make without a contract. */}}
 <p class="note dim small">{{.T "pkg.dep_measured_caveat"}}</p>
+</section>
 {{- else if .DepsProvenNone}}
 {{/* Measured to declare nothing, which is an ANSWER. Rendering it as an empty
      section would make it indistinguishable from a release nothing has read,
      and those are opposite states: one closes the dependency axis, the other
      leaves it open. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
 <p class="note dim small">{{.T "pkg.deps_proven_none"}}</p>
 {{- else if .DepsUnaskable}}
 {{/* Nothing here ships a scanner for this ecosystem. That is a fact about
      this network, not about the release: the module has dependencies, and
      saying otherwise would assert a measurement nobody made. It is also not
      work anybody can pick up, so there is no link to the gap list. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
 <p class="note dim small">{{.DepsUnaskable}}</p>
 {{- else if .DepsUnread}}
 {{/* Nothing has resolved this release. The section used to render nothing at
@@ -247,7 +297,7 @@
      else: a reader could not tell an unread axis from a finished one. This
      says which it is and where it is counted, and still makes no claim about
      what the release pulls. */}}
-<h2 id="deps" class="eyebrow mono">{{.T "pkg.deps"}}</h2>
+<h2 id="deps" class="eyebrow mono">{{.T "pkg.dep_health_heading"}}</h2>
 <p class="note dim small">{{.T "pkg.deps_unread"}} <a href="{{.DepsGapHref}}">{{.T "pkg.deps_unread_link"}}</a></p>
 {{- end}}
 
@@ -271,10 +321,7 @@
      release, so the link says what it goes to. */}}
 <tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Child}}</a></th>
   {{- range .Cells}}
-  {{/* A blank cell is an absent measurement, never "this release does not
-       depend on it": no resolution recorded that pair, and a resolver that
-       never ran says nothing about what it would have found. */}}
-  <td class="mono">{{if .Version}}{{.Version}}{{else}}<span class="dim" title="{{$.T "pkg.depmatrix_blank"}}">—</span>{{end}}</td>
+  <td class="mono cell-{{.State}}">{{if eq .State "version"}}{{.Version}}{{else}}<span class="dim {{.State}}" title="{{.Title}}">—</span>{{end}}</td>
   {{- end}}
 </tr>
 {{- end}}

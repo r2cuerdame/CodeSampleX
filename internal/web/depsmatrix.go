@@ -13,11 +13,14 @@ const maxMatrixRows = 40
 
 // dependencyMatrixCell is what one release resolved one child to.
 //
-// An empty Version is not "this release does not depend on it". It is an
-// absent measurement: no resolution recorded that pair, and a resolver that
-// never ran says nothing about what it would have found.
+// State explicitly differentiates between:
+// - "version": child was resolved to a specific version
+// - "not_in_tree": this parent release had a complete tree observed, but this child was absent
+// - "unmeasured": this parent release's dependency tree was never measured
 type dependencyMatrixCell struct {
 	Version string
+	State   string
+	Title   string
 }
 
 type dependencyMatrixRow struct {
@@ -97,9 +100,19 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge) *dependency
 		seen := map[string]bool{}
 		for i, v := range order {
 			cv := at[v]
-			row.Cells[i] = dependencyMatrixCell{Version: cv}
 			if cv != "" {
+				row.Cells[i] = dependencyMatrixCell{Version: cv, State: "version"}
 				seen[cv] = true
+			} else if versions[v] {
+				row.Cells[i] = dependencyMatrixCell{
+					State: "not_in_tree",
+					Title: "Not declared in this release's observed tree",
+				}
+			} else {
+				row.Cells[i] = dependencyMatrixCell{
+					State: "unmeasured",
+					Title: "Tree unmeasured for this release",
+				}
 			}
 		}
 		row.Moves = len(seen) > 1

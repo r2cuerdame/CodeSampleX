@@ -2270,6 +2270,70 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .depmatrix .rowlabel { font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .depmatrix tr.is-moved { background: #f7faff; }
 .depmatrix tr.is-moved .rowlabel { color: var(--accent); }
+.depmatrix td.cell-not_in_tree .not-in-tree { opacity: 0.45; }
+.depmatrix td.cell-unmeasured .unmeasured { opacity: 0.25; }
+
+/* Dependency Health styles (#178) */
+.dephealth { margin-top: 2rem; }
+.dephealth-summary {
+  margin: 0.8rem 0 1.2rem;
+  padding: 1rem 1.2rem;
+  border-radius: 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.dephealth-counts {
+  margin-bottom: 0.6rem;
+  color: var(--dim);
+}
+.dephealth-counts .dh-problem { color: #dc2626; }
+.dephealth-counts .dh-mixed { color: #d97706; }
+.dephealth-counts .dh-changed { color: var(--accent); }
+.dephealth-counts .dh-steady { color: var(--fg); opacity: 0.85; }
+
+.dephealth-break {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--line);
+}
+.dephealth-break .break-title {
+  color: #dc2626;
+  margin: 0 0 0.4rem;
+  letter-spacing: 0.05em;
+  font-size: 0.78rem;
+}
+.dephealth-break .break-coord {
+  font-size: 0.95rem;
+  margin: 0 0 0.35rem;
+}
+.dephealth-break .break-coord strong { color: var(--fg); }
+.dephealth-break .break-arrow { color: var(--dim); padding: 0 0.3rem; }
+.dephealth-break .break-env { margin: 0 0 0.35rem; }
+.dephealth-break .break-evidence { margin: 0 0 0.6rem; }
+.dephealth-break .break-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.dephealth-clean { margin: 0.4rem 0 0; }
+
+.shipswith .dep-row.dep-health-fail { background: rgba(220, 38, 38, 0.04); }
+.shipswith .dep-row.dep-health-mixed { background: rgba(217, 119, 6, 0.04); }
+.shipswith .depbadge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.35rem;
+  font: 700 0.7rem/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.shipswith .badge-red { background: #fee2e2; color: #991b1b; }
+.shipswith .badge-yellow { background: #fef3c7; color: #92400e; }
+.shipswith .badge-blue { background: #e0f2fe; color: #0369a1; }
+.shipswith .badge-green { background: #dcfce7; color: #166534; }
+.shipswith .badge-dim { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
+.shipswith .depnote { margin-left: 0.4rem; font-size: 0.76rem; }
 
 
 /* The counters, now beside the evidence grid they support rather than opening

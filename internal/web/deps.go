@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
 // depHref points at one library at one exact version — the same pinned view
@@ -13,36 +16,54 @@ func depHref(ecosystem, name, version string) string {
 	return pkgHref(ecosystem, name) + "?f_version=" + url.QueryEscape(version)
 }
 
+// DependencyHealthSummary summarizes the health of dependencies for a release (#178).
+type DependencyHealthSummary struct {
+	ProblemsCount int
+	MixedCount    int
+	ChangedCount  int
+	SteadyCount   int
+	UnknownCount  int
+	TotalCount    int
+
+	HasBreak   bool
+	FirstBreak *DependencyBreakDetail
+}
+
+// DependencyBreakDetail captures the first observed break linked to this dependency tree.
+type DependencyBreakDetail struct {
+	ParentVersion string
+	ChildLibrary  string
+	ChildVersion  string
+	Env           string
+	FailCount     int64
+	PassCount     int64
+	Stage         string
+	Fingerprint   string
+	CubeHref      string
+	FailureHref   string
+}
+
 // PackageDep is one first-level dependency of ONE release, at the version
 // that release resolved it to.
 type PackageDep struct {
 	Library string
 	Version string
-	// Href is that library at that exact version. The row already names the
-	// coordinate; making the reader go and find it is a step it was holding
-	// the answer to.
+	// Href is that library at that exact version.
 	Href string
-	// AtlasHref is the same release read from the other side: who else pulled
-	// it. A reader deciding whether a version bump is safe wants to know
-	// whether anything else in their tree wants a different one.
+	// AtlasHref is the same release read from the other side.
 	AtlasHref string
-	// ProjectsText is how many project-days resolved this exact pair. It was
-	// measured all along and thrown away at this boundary, and it is the
-	// difference between a dependency the whole ecosystem shares and one this
-	// release alone pulled.
 	Projects     int64
 	ProjectsText string
-	// State is what this network has MEASURED about the child release itself,
-	// not about the edge: "verified" when a contract ran and passed there,
-	// "observed" when builds were seen but no contract, "none" when nothing
-	// has been measured at that coordinate at all.
-	//
-	// Never inferred from the edge. A resolver placing two releases side by
-	// side says nothing about whether either works, and a row that let a
-	// reader read it that way would be the page asserting what it did not
-	// measure.
+	// State is what this network has MEASURED about the child release itself.
 	State     string
 	StateText string
+
+	// Health diagnostics (#178)
+	Health      string // "fail", "mixed", "changed", "pass", "unknown"
+	HealthBadge string // "FAIL", "MIXED", "CHANGED", "PASS", "UNKNOWN"
+	HealthTone  string // "red", "yellow", "blue", "green", "dim"
+	HealthNote  string
+	IsMover     bool
 }
 
 // buildPackageDeps lists what one pinned release pulled.
@@ -126,3 +147,172 @@ func dependencyEvidenceState(r *http.Request, store Store, purl string) string {
 		return "none"
 	}
 }
+
+func formatClusterEnv(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(env))
+	for _, key := range []string{"os", "runtime", "packageManager", "execution", "libc", "arch"} {
+		if val, ok := env[key]; ok && val != "" {
+			parts = append(parts, val)
+		}
+	}
+	for k, v := range env {
+		if k == "os" || k == "runtime" || k == "packageManager" || k == "execution" || k == "libc" || k == "arch" {
+			continue
+		}
+		if v != "" {
+			parts = append(parts, k+"="+v)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// evaluateDependencyHealth computes combination and regression health for the
+// dependencies of parentVersion (#178).
+func evaluateDependencyHealth(
+	eco, name, parentVersion string,
+	deps []PackageDep,
+	clusters []failureCluster,
+	matrix *dependencyMatrix,
+	lang string,
+) ([]PackageDep, *DependencyHealthSummary) {
+	summary := &DependencyHealthSummary{
+		TotalCount: len(deps),
+	}
+	if len(deps) == 0 {
+		return deps, summary
+	}
+
+	moverMap := map[string]bool{}
+	if matrix != nil {
+		for _, row := range matrix.Rows {
+			if row.Moves {
+				moverMap[row.Child] = true
+			}
+		}
+	}
+
+	var parentFailures []failureCluster
+	var totalFailCount, totalObsCount int64
+	for _, c := range clusters {
+		applies := false
+		if len(c.Versions) == 0 {
+			applies = true
+		} else {
+			for _, v := range c.Versions {
+				if v == parentVersion {
+					applies = true
+					break
+				}
+			}
+		}
+		if applies {
+			parentFailures = append(parentFailures, c)
+			totalFailCount += c.Count
+			totalObsCount += c.ObservationCount
+		}
+	}
+
+	hasParentFailure := len(parentFailures) > 0
+
+	for i := range deps {
+		d := &deps[i]
+		d.IsMover = moverMap[d.Library]
+
+		if hasParentFailure && d.IsMover {
+			d.Health = "fail"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_fail")
+			d.HealthTone = "red"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_fail")
+			summary.ProblemsCount++
+		} else if hasParentFailure && totalObsCount > totalFailCount {
+			d.Health = "mixed"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_mixed")
+			d.HealthTone = "yellow"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_mixed")
+			summary.MixedCount++
+		} else if hasParentFailure {
+			d.Health = "fail"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_fail")
+			d.HealthTone = "red"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_fail_unmoved")
+			summary.ProblemsCount++
+		} else if d.IsMover {
+			d.Health = "changed"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_changed")
+			d.HealthTone = "blue"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_changed")
+			summary.ChangedCount++
+		} else if d.State == "verified" || d.State == "observed" {
+			d.Health = "pass"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_pass")
+			d.HealthTone = "green"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_pass")
+			summary.SteadyCount++
+		} else {
+			d.Health = "unknown"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_unknown")
+			d.HealthTone = "dim"
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_unknown")
+			summary.UnknownCount++
+		}
+	}
+
+	if hasParentFailure {
+		fc := parentFailures[0]
+		summary.HasBreak = true
+		b := &DependencyBreakDetail{
+			ParentVersion: parentVersion,
+			Env:           formatClusterEnv(fc.EnvSummary),
+			FailCount:     fc.Count,
+			PassCount:     fc.ObservationCount - fc.Count,
+			Stage:         fc.Stage,
+			Fingerprint:   fc.Fingerprint,
+			CubeHref:      depHref(eco, name, parentVersion),
+			FailureHref:   "#failures",
+		}
+		if b.PassCount < 0 {
+			b.PassCount = 0
+		}
+		for _, d := range deps {
+			if d.Health == "fail" && d.IsMover {
+				b.ChildLibrary = d.Library
+				b.ChildVersion = d.Version
+				break
+			}
+		}
+		summary.FirstBreak = b
+	}
+
+	sort.Slice(deps, func(i, j int) bool {
+		rank := func(h string) int {
+			switch h {
+			case "fail":
+				return 1
+			case "mixed":
+				return 2
+			case "changed":
+				return 3
+			case "unknown":
+				return 4
+			case "pass":
+				return 5
+			default:
+				return 6
+			}
+		}
+		ri, rj := rank(deps[i].Health), rank(deps[j].Health)
+		if ri != rj {
+			return ri < rj
+		}
+		if deps[i].Library != deps[j].Library {
+			return deps[i].Library < deps[j].Library
+		}
+		return deps[i].Version < deps[j].Version
+	})
+
+	return deps, summary
+}
+
