@@ -21,6 +21,7 @@ type dependencyMatrixCell struct {
 	Version string
 	State   string
 	Title   string
+	Href    string
 }
 
 type dependencyMatrixRow struct {
@@ -101,7 +102,11 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge) *dependency
 		for i, v := range order {
 			cv := at[v]
 			if cv != "" {
-				row.Cells[i] = dependencyMatrixCell{Version: cv, State: "version"}
+				row.Cells[i] = dependencyMatrixCell{
+					Version: cv,
+					State:   "version",
+					Href:    depHref(ecosystem, child, cv),
+				}
 				seen[cv] = true
 			} else if versions[v] {
 				row.Cells[i] = dependencyMatrixCell{

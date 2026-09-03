@@ -63,8 +63,15 @@ type webStore struct {
 	targetsRetryAt    time.Time
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
-	pkgSamples sync.Map // key: "eco|name", value: cachedPackageSamples
-	pkgCounts  sync.Map // key: "eco|name", value: cachedPackageCounts
+	pkgSamples   sync.Map // key: "eco|name", value: cachedPackageSamples
+	pkgCounts    sync.Map // key: "eco|name", value: cachedPackageCounts
+	snapshotJSON sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+}
+
+type cachedSnapshotJSON struct {
+	at   time.Time
+	json string
+	ok   bool
 }
 
 type cachedPackageSamples struct {
@@ -158,14 +165,14 @@ func (w *webStore) refreshSnapshots() {
 func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.Time {
 	w.updatedMu.Lock()
 	if w.updatedAtRead.IsZero() {
-		// Cold: load under the lock, so concurrent cold readers coalesce.
-		defer w.updatedMu.Unlock()
-		updated, err := w.s.SnapshotUpdatedAt(ctx)
-		if err != nil {
-			return w.updatedAt
+		// Cold: trigger background refresh without blocking visitors on a 10-30s JSON corpus scan.
+		if !w.updatedRefreshing && !time.Now().Before(w.updatedRetryAt) {
+			w.updatedRefreshing = true
+			go w.refreshSnapshotUpdatedAt()
 		}
-		w.updatedAt, w.updatedAtRead = updated, time.Now()
-		return w.updatedAt
+		updated := w.updatedAt
+		w.updatedMu.Unlock()
+		return updated
 	}
 	now := time.Now()
 	updated := w.updatedAt
@@ -242,7 +249,19 @@ func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
 }
 
 func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
+	key := purl + "|" + symbol
+	if val, ok := w.snapshotJSON.Load(key); ok {
+		entry := val.(cachedSnapshotJSON)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.json, entry.ok
+		}
+	}
 	js, ok, err := w.s.GetSnapshot(ctx, purl, symbol)
+	w.snapshotJSON.Store(key, cachedSnapshotJSON{
+		at:   time.Now(),
+		json: js,
+		ok:   err == nil && ok,
+	})
 	return js, err == nil && ok
 }
 

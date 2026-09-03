@@ -2273,6 +2273,8 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .depmatrix tr.is-moved .rowlabel { color: var(--accent); }
 .depmatrix td.cell-not_in_tree .not-in-tree { opacity: 0.45; }
 .depmatrix td.cell-unmeasured .unmeasured { opacity: 0.25; }
+.depmatrix td a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--line); }
+.depmatrix td a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* Dependency Health styles (#178) */
 .dephealth { margin-top: 2rem; }

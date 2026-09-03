@@ -107,8 +107,8 @@ func TestTheMatrixDoesNotWaitForAPinnedRelease(t *testing.T) {
 	if !strings.Contains(body, `id="depmatrix"`) {
 		t.Fatal("the unpinned page has no cross-release comparison")
 	}
-	if !strings.Contains(body, "1.1.2") || !strings.Contains(body, "1.1.1") {
-		t.Error("both releases' resolved versions are not shown")
+	if !strings.Contains(body, `href="/npm/function-bind?f_version=1.1.2"`) {
+		t.Error("matrix cell does not link to child package version")
 	}
 	// And it says what an edge is. Two releases resolved side by side is not
 	// a claim that they work together, and a grid of versions reads like one

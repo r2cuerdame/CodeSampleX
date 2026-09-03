@@ -283,7 +283,7 @@
 {{- range .DepsMatrix.Rows}}
 <tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Child}}</a></th>
   {{- range .Cells}}
-  <td class="mono cell-{{.State}}">{{if eq .State "version"}}{{.Version}}{{else}}<span class="dim {{.State}}" title="{{.Title}}">—</span>{{end}}</td>
+  <td class="mono cell-{{.State}}">{{if eq .State "version"}}{{if .Href}}<a href="{{$.WithLang .Href}}">{{.Version}}</a>{{else}}{{.Version}}{{end}}{{else}}<span class="dim {{.State}}" title="{{.Title}}">—</span>{{end}}</td>
   {{- end}}
 </tr>
 {{- end}}

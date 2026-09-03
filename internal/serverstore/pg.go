@@ -948,14 +948,13 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT `+sampleCols+` FROM samples
-			WHERE NOT quarantined
-			  AND EXISTS (
-				SELECT 1 FROM sample_packages package
-				WHERE package.sample_id = samples.sample_id
-				  AND package.purl LIKE ANY($1)
-			  )
-			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
+			SELECT `+sampleCols+` FROM samples s
+			WHERE s.sample_id IN (
+				SELECT package.sample_id FROM sample_packages package
+				WHERE package.purl LIKE ANY($1)
+			)
+			  AND NOT s.quarantined
+			ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		if err != nil {
 			return err
 		}
