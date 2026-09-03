@@ -352,6 +352,24 @@ func (f *Fake) ListPackageVersions(_ context.Context, ecosystem, name string) ([
 	return out, nil
 }
 
+func (f *Fake) ListUncheckedPackages(_ context.Context, limit int) ([]PackageRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []PackageRow
+	for _, p := range f.packages {
+		if p.CheckedAt.IsZero() && p.Publicness == "UNKNOWN" {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].FirstSeen.Before(out[j].FirstSeen)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ------------------------------------------------------------- snapshots --
 
 func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool, error) {

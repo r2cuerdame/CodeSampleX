@@ -17,9 +17,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -417,6 +420,62 @@ func ReconcileCrossJobLanes(ctx context.Context, store serverstore.Store, limit 
 	}
 	return repaired, unsupported, nil
 }
+
+// ReconcileUncheckedPublicness resolves publicness for packages that have never
+// been verified against a registry (checked_at IS NULL, publicness UNKNOWN).
+//
+// Background: in production, packages seeded or ingested past the per-request
+// lookup budget were stored with checked_at IS NULL and refused on every subsequent
+// evidence upload (#176). Running this at server boot reconciles that historical
+// backlog without charging active ingest requests.
+func ReconcileUncheckedPublicness(ctx context.Context, store serverstore.Store, checker PublicnessChecker, limit int) (int, error) {
+	if store == nil || checker == nil {
+		return 0, nil
+	}
+	pkgs, err := store.ListUncheckedPackages(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	reconciled := 0
+	now := time.Now().UTC()
+	for _, pkg := range pkgs {
+		p, err := domain.ParsePURL(pkg.PURL)
+		if err != nil {
+			continue
+		}
+		// If the name is structurally invalid for a public registry, it can
+		// never be public. Settle it as PRIVATE so it stops starving lookups.
+		if !registry.ValidPackageName(p.Ecosystem, p.Name) {
+			_ = store.UpsertPackage(ctx, serverstore.PackageRow{
+				PURL:       pkg.PURL,
+				Ecosystem:  pkg.Ecosystem,
+				Name:       pkg.Name,
+				Version:    pkg.Version,
+				Major:      pkg.Major,
+				Publicness: scanner.PublicnessPrivate,
+				CheckedAt:  now,
+			})
+			reconciled++
+			continue
+		}
+
+		status := checker.Check(ctx, p)
+		if status != scanner.PublicnessUnknown {
+			_ = store.UpsertPackage(ctx, serverstore.PackageRow{
+				PURL:       pkg.PURL,
+				Ecosystem:  pkg.Ecosystem,
+				Name:       pkg.Name,
+				Version:    pkg.Version,
+				Major:      pkg.Major,
+				Publicness: status,
+				CheckedAt:  now,
+			})
+			reconciled++
+		}
+	}
+	return reconciled, nil
+}
+
 
 // crossAttemptsSpent reports whether a sample has used up its bounded cross
 // attempts. Read only for a job about to be reopened, which is rare.

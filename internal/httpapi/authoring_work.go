@@ -71,6 +71,7 @@ const (
 type authoringCandidateSnapshot struct {
 	wanted    []serverstore.WantedRow
 	expansion []serverstore.WantedRow
+	takenAt   time.Time
 }
 
 type authoringCandidateCall struct {
@@ -148,7 +149,9 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 			call.snapshot, call.err = a.readCandidates(callCtx, store, store.ListAuthoringExpansionCandidates)
 			g.mu.Lock()
 			if call.err == nil {
-				g.have, g.snapshot, g.takenAt = true, call.snapshot, a.now()
+				now := a.now()
+				call.snapshot.takenAt = now
+				g.have, g.snapshot, g.takenAt = true, call.snapshot, now
 			}
 			close(call.done)
 			if g.call == call {
@@ -179,7 +182,9 @@ func (a *api) startCandidateRefresh(ctx context.Context, store serverstore.Autho
 		snap, err := a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
 		g.mu.Lock()
 		if err == nil {
-			g.have, g.snapshot, g.takenAt = true, snap, a.now()
+			now := a.now()
+			snap.takenAt = now
+			g.have, g.snapshot, g.takenAt = true, snap, now
 		} else {
 			// The old snapshot stays. The next stale poll starts another try;
 			// nothing is served that was not once true.
@@ -201,6 +206,7 @@ func (a *api) startCandidateRefresh(ctx context.Context, store serverstore.Autho
 func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSessionStore,
 	expansion func(context.Context, int) ([]serverstore.WantedRow, error)) (authoringCandidateSnapshot, error) {
 	var snap authoringCandidateSnapshot
+	snap.takenAt = a.now()
 	var err error
 	snap.wanted, err = a.d.Store.TopWanted(ctx, 200)
 	if err != nil {
@@ -635,10 +641,18 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "claiming authoring work failed")
 		return
 	}
+	snapAge := "0s"
+	if !snapshot.takenAt.IsZero() {
+		snapAge = now.Sub(snapshot.takenAt).Round(time.Second).String()
+	}
 	if !found {
+		log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d served=NO_WORK snapshotAge=%s",
+			session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, snapAge)
 		writeJSON(w, http.StatusOK, funnel.noWork())
 		return
 	}
+	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d served=%s snapshotAge=%s",
+		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, work.Kind, snapAge)
 	purl := domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ASSIGNED",

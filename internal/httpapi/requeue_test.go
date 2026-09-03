@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -10,8 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/scanner"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -225,3 +228,83 @@ func TestReconcileWakesDraftsStrandedBeforeTheRetryExisted(t *testing.T) {
 		t.Errorf("second reconcile woke %d (err %v), want 0", again, err)
 	}
 }
+
+type fakePublicChecker struct {
+	verdict map[string]string
+}
+
+func (f *fakePublicChecker) Check(_ context.Context, p domain.PURL) string {
+	if v, ok := f.verdict[p.String()]; ok {
+		return v
+	}
+	return scanner.PublicnessUnknown
+}
+
+func TestReconcileUncheckedPublicness(t *testing.T) {
+	ctx := t.Context()
+	store := serverstore.NewFake()
+
+	// 1. Unchecked package that registry confirms is PUBLIC
+	if err := store.UpsertPackage(ctx, serverstore.PackageRow{
+		PURL: "pkg:npm/valid-pkg@1.0.0", Ecosystem: "npm", Name: "valid-pkg",
+		Version: "1.0.0", Major: "1", Publicness: scanner.PublicnessUnknown,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Unchecked package with invalid name shape
+	if err := store.UpsertPackage(ctx, serverstore.PackageRow{
+		PURL: "pkg:npm/invalid%20name@1.0.0", Ecosystem: "npm", Name: "invalid name",
+		Version: "1.0.0", Major: "1", Publicness: scanner.PublicnessUnknown,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Already checked package
+	if err := store.UpsertPackage(ctx, serverstore.PackageRow{
+		PURL: "pkg:npm/already-checked@1.0.0", Ecosystem: "npm", Name: "already-checked",
+		Version: "1.0.0", Major: "1", Publicness: scanner.PublicnessPublic,
+		CheckedAt: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	checker := &fakePublicChecker{
+		verdict: map[string]string{
+			"pkg:npm/valid-pkg@1.0.0": scanner.PublicnessPublic,
+		},
+	}
+
+	reconciled, err := ReconcileUncheckedPublicness(ctx, store, checker, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled != 2 {
+		t.Fatalf("reconciled = %d, want 2", reconciled)
+	}
+
+	// valid-pkg should now be PUBLIC with checked_at populated
+	p1, ok, err := store.GetPackage(ctx, "pkg:npm/valid-pkg@1.0.0")
+	if err != nil || !ok {
+		t.Fatalf("valid-pkg missing: %v", err)
+	}
+	if p1.Publicness != scanner.PublicnessPublic || p1.CheckedAt.IsZero() {
+		t.Errorf("valid-pkg not resolved: %+v", p1)
+	}
+
+	// invalid name should be settled as PRIVATE with checked_at populated
+	p2, ok, err := store.GetPackage(ctx, "pkg:npm/invalid%20name@1.0.0")
+	if err != nil || !ok {
+		t.Fatalf("invalid name missing: %v", err)
+	}
+	if p2.Publicness != scanner.PublicnessPrivate || p2.CheckedAt.IsZero() {
+		t.Errorf("invalid name not settled: %+v", p2)
+	}
+
+	// Idempotent: second run should reconcile 0
+	again, err := ReconcileUncheckedPublicness(ctx, store, checker, 100)
+	if err != nil || again != 0 {
+		t.Errorf("second reconcile = %d (err %v), want 0", again, err)
+	}
+}
+

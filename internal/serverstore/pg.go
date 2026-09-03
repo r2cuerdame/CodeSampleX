@@ -423,6 +423,33 @@ func (p *PG) ListPackageVersions(ctx context.Context, ecosystem, name string) ([
 	return out, err
 }
 
+func (p *PG) ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	var out []PackageRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+packageCols+` FROM packages
+			WHERE checked_at IS NULL AND publicness = 'UNKNOWN'
+			ORDER BY first_seen ASC
+			LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			pkg, err := scanPackage(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, pkg)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // ------------------------------------------------------------- snapshots --
 
 func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
+	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -158,6 +159,22 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "csx-server: repaired %d cross jobs, recorded %d as unsupported\n",
 			repaired, unsupported)
 	}
+
+	// Resolve publicness for coordinates that arrived without being checked (#176).
+	//
+	// Packages seeded early or ingested past the per-request lookup budget
+	// were stored with checked_at IS NULL and refused on every subsequent
+	// evidence upload. Reconciling them at boot settles their publicness and
+	// clears the refusal loop without charging active clients.
+	if cfg.PublicCheck != "trust" {
+		checker := &registry.Checker{Cache: &registry.ServerCache{Store: pg}}
+		if checked, err := httpapi.ReconcileUncheckedPublicness(ctx, pg, checker, 500); err != nil {
+			fmt.Fprintf(stderr, "csx-server: publicness reconcile failed: %v\n", err)
+		} else if checked > 0 {
+			fmt.Fprintf(stdout, "csx-server: checked and resolved publicness for %d unverified packages\n", checked)
+		}
+	}
+
 
 	// Apply the dedup retention window.
 	//

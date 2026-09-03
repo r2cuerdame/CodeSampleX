@@ -514,6 +514,7 @@ type Store interface {
 	UpsertPackage(ctx context.Context, p PackageRow) error
 	GetPackage(ctx context.Context, purl string) (PackageRow, bool, error)
 	ListPackageVersions(ctx context.Context, ecosystem, name string) ([]PackageRow, error)
+	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
 	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)

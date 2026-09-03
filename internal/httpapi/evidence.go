@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
 	"sort"
 
@@ -165,6 +166,14 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Index < rejected[j].Index })
+	if len(rejected) > 0 {
+		pkg := ""
+		if rejected[0].Index >= 0 && rejected[0].Index < len(req.Batches) {
+			pkg = req.Batches[rejected[0].Index].Package
+		}
+		log.Printf("csx-server: evidence ingest refused %d/%d batches (first: %s on %s)",
+			len(rejected), len(req.Batches), rejected[0].Reason, pkg)
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted": accepted,
