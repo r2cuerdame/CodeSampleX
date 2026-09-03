@@ -984,19 +984,18 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `
-			SELECT `+sampleCols+` FROM samples
-			WHERE NOT quarantined
+			SELECT `+sampleCols+` FROM samples s
+			WHERE s.sample_id IN (
+				SELECT package.sample_id FROM sample_packages package
+				WHERE package.purl LIKE ANY($1)
+			)
+			  AND NOT s.quarantined
 			  AND EXISTS (
 				SELECT 1 FROM receipts verified_receipt
-				WHERE verified_receipt.sample_id = samples.sample_id
+				WHERE verified_receipt.sample_id = s.sample_id
 				  AND verified_receipt.contract_result = 'PASS'
 			  )
-			  AND EXISTS (
-				SELECT 1 FROM sample_packages package
-				WHERE package.sample_id = samples.sample_id
-				  AND package.purl LIKE ANY($1)
-			  )
-			ORDER BY created_at DESC, sample_id LIMIT $2`, names, limit)
+			ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		if err != nil {
 			return err
 		}

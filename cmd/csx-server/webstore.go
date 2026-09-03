@@ -61,7 +61,23 @@ type webStore struct {
 	targetsRows       []serverstore.SnapshotTarget
 	targetsRefreshing bool
 	targetsRetryAt    time.Time
+
+	// Package-level query caches to eliminate cold DB stalls during builder passes.
+	pkgSamples sync.Map // key: "eco|name", value: cachedPackageSamples
+	pkgCounts  sync.Map // key: "eco|name", value: cachedPackageCounts
 }
+
+type cachedPackageSamples struct {
+	at    time.Time
+	items []web.SampleListItem
+}
+
+type cachedPackageCounts struct {
+	at    time.Time
+	items []web.PackageCodeCount
+}
+
+const packageDetailCacheTTL = 5 * time.Minute
 
 // The records page reads the whole snapshot table to rank and filter it.
 // On production that table is 17,255 rows but 149MB of jsonb serialised.
@@ -178,32 +194,29 @@ func (w *webStore) refreshSnapshotUpdatedAt() {
 }
 
 func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
-	// Only a visitor waiting on a page shares the foreground cache lane.
-	// QueryClassOf intentionally treats an unclassified context as background,
-	// so daemon/hero work cannot acquire this mutex by omission and move its
-	// stall onto the next interactive request.
-	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
-		return w.s.SnapshotKeys(ctx)
-	}
 	w.targetsMu.Lock()
-	if w.targetsAt.IsZero() {
-		// Cold: load under the lock, so concurrent cold readers coalesce.
-		rows, err := w.s.SnapshotKeys(ctx)
-		if err != nil {
-			w.targetsMu.Unlock()
-			return nil, err
+	if !w.targetsAt.IsZero() {
+		now := time.Now()
+		rows := w.targetsRows
+		if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
+			!w.targetsRefreshing && !now.Before(w.targetsRetryAt) {
+			w.targetsRefreshing = true
+			go w.refreshSnapshotTargets()
 		}
-		w.targetsRows, w.targetsAt = rows, time.Now()
 		w.targetsMu.Unlock()
 		return rows, nil
 	}
-	now := time.Now()
-	rows := w.targetsRows
-	if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
-		!w.targetsRefreshing && !now.Before(w.targetsRetryAt) {
-		w.targetsRefreshing = true
-		go w.refreshSnapshotTargets()
+	// Cold: only an interactive visitor loads synchronously under the lock.
+	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
+		w.targetsMu.Unlock()
+		return w.s.SnapshotKeys(ctx)
 	}
+	rows, err := w.s.SnapshotKeys(ctx)
+	if err != nil {
+		w.targetsMu.Unlock()
+		return nil, err
+	}
+	w.targetsRows, w.targetsAt = rows, time.Now()
 	w.targetsMu.Unlock()
 	return rows, nil
 }
@@ -487,16 +500,23 @@ func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleList
 // manifest is re-checked here for an exact "pkg:<eco>/<name>@" prefix so
 // a package page never advertises a sample about a different package.
 func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]web.SampleListItem, error) {
-	// The CANONICAL prefix. PURL.String() escapes a leading "@" to "%40",
-	// so a scoped npm package is stored as pkg:npm/%40scope/name@... and a
-	// prefix built by concatenation matched none of them. Every scoped
-	// package — @tanstack, @babel, @modelcontextprotocol, a large share of
-	// npm — showed an empty sample list on its own page while its samples
-	// sat published and unreachable.
-	// An empty version still renders its "@", which is what makes this an
-	// exact-name prefix rather than one "foo" shares with "foo-bar".
+	cacheKey := ecosystem + "|" + name
+	if val, ok := w.pkgSamples.Load(cacheKey); ok {
+		entry := val.(cachedPackageSamples)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			if limit > 0 && len(entry.items) > limit {
+				return entry.items[:limit], nil
+			}
+			return entry.items, nil
+		}
+	}
+
 	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
-	rows, err := w.s.VerifiedSamplesForPackages(ctx, []string{prefix + "%"}, limit)
+	fetchLimit := limit
+	if fetchLimit <= 0 || fetchLimit < 50 {
+		fetchLimit = 50
+	}
+	rows, err := w.s.VerifiedSamplesForPackages(ctx, []string{prefix + "%"}, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -506,6 +526,13 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			continue
 		}
 		out = append(out, sampleListItem(r))
+	}
+	w.pkgSamples.Store(cacheKey, cachedPackageSamples{
+		at:    time.Now(),
+		items: out,
+	})
+	if limit > 0 && len(out) > limit {
+		return out[:limit], nil
 	}
 	return out, nil
 }
@@ -557,6 +584,14 @@ func manifestNamesRelease(manifestJSON, purl string) bool {
 }
 
 func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]web.PackageCodeCount, error) {
+	cacheKey := ecosystem + "|" + name
+	if val, ok := w.pkgCounts.Load(cacheKey); ok {
+		entry := val.(cachedPackageCounts)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.items, nil
+		}
+	}
+
 	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
 	rows, err := w.s.VerifiedSampleCodeCounts(ctx, prefix)
 	if err != nil {
@@ -572,6 +607,10 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 			Version: p.Version, Symbol: row.Symbol, Samples: row.Samples,
 		})
 	}
+	w.pkgCounts.Store(cacheKey, cachedPackageCounts{
+		at:    time.Now(),
+		items: out,
+	})
 	return out, nil
 }
 
