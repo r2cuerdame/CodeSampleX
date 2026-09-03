@@ -45,8 +45,8 @@ func parseJSONFile(t *testing.T, path string) map[string]any {
 func TestAgentInstallNothingDetected(t *testing.T) {
 	home := t.TempDir()
 	results := installAgents(home, nil)
-	if len(results) != 4 {
-		t.Fatalf("got %d results, want 4", len(results))
+	if len(results) != 5 {
+		t.Fatalf("got %d results, want 5", len(results))
 	}
 	for _, r := range results {
 		if !r.Skipped {

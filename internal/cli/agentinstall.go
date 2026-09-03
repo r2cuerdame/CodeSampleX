@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -153,12 +154,27 @@ func installAgents(userHome string, confirm func(agent string) (ok, asked bool))
 		{"Codex", filepath.Join(userHome, ".codex"), installCodex},
 		{"Gemini CLI", filepath.Join(userHome, ".gemini"), installGemini},
 		{"OpenCode", filepath.Join(userHome, ".config", "opencode"), installOpenCode},
+		// agy keeps no config directory this installer can write; it is
+		// detected by its binary and registered through its own `mcp add`.
+		// The path is the Windows layout, which is where agy runs csx's
+		// authoring workers; on other platforms locateAgy falls back to PATH.
+		{"agy", filepath.Join(userHome, "AppData", "Local", "agy", "bin"), installAgy},
 	}
 
 	results := make([]agentInstallResult, 0, len(agents))
 	for _, a := range agents {
 		r := agentInstallResult{Agent: a.name}
-		if fi, err := os.Stat(a.detectDir); err != nil || !fi.IsDir() {
+		detected := false
+		if fi, err := os.Stat(a.detectDir); err == nil && fi.IsDir() {
+			detected = true
+		}
+		if a.name == "agy" {
+			// Detection looks only under this home, so a test with a temp
+			// home never sees the machine's real agy; locateAgy adds the
+			// PATH fallback only once we are installing for real.
+			detected = agyUnder(a.detectDir) != ""
+		}
+		if !detected {
 			r.Skipped, r.Reason = true, "not detected"
 			results = append(results, r)
 			continue
@@ -186,6 +202,58 @@ func installAgents(userHome string, confirm func(agent string) (ok, asked bool))
 		results = append(results, r)
 	}
 	return results
+}
+
+// agentExec runs an agent's own CLI on the installer's behalf. It is a
+// variable so tests can record the invocation instead of running agy.
+var agentExec = func(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+// locateAgy returns the agy binary to invoke, or "" when there is none:
+// the Windows install location first, then PATH. A variable for tests.
+var locateAgy = func(binDir string) string {
+	if p := agyUnder(binDir); p != "" {
+		return p
+	}
+	for _, name := range []string{"agy", "agy.exe"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// agyUnder returns the agy binary inside binDir, or "".
+func agyUnder(binDir string) string {
+	for _, cand := range []string{filepath.Join(binDir, "agy.exe"), filepath.Join(binDir, "agy")} {
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+	}
+	return ""
+}
+
+// installAgy registers the MCP server with agy through `agy mcp add`,
+// documented as "add or update", so re-running is safe. agy keeps its
+// configuration in a store this installer cannot write directly (no file
+// under %APPDATA%, %LOCALAPPDATA% or the home directory), which is why
+// this target shells out where the others edit files.
+//
+// The command is the launcher's absolute path, as for every other agent.
+// A bare `csx` resolves only if agy's own environment has the install
+// directory on PATH -- the hand-added entry on the reporting machine did
+// exactly that, and worked only by luck of PATH.
+func installAgy(userHome string) ([]string, error) {
+	agy := locateAgy(filepath.Join(userHome, "AppData", "Local", "agy", "bin"))
+	if agy == "" {
+		return nil, errors.New("agy binary not found")
+	}
+	out, err := agentExec(agy, "mcp", "add", "csx", mcpCommand(), "mcp")
+	if err != nil {
+		return nil, fmt.Errorf("agy mcp add: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return []string{"registered MCP server with agy (`agy mcp add csx`)"}, nil
 }
 
 // installClaude registers the MCP server in ~/.claude.json (created if
