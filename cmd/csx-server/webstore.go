@@ -1456,13 +1456,7 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 	}
 	rows, total, err := w.s.CompletenessGaps(ctx, query, offset, limit)
 	if err != nil {
-		if val, ok := w.completenessGaps.Load(cacheKey); ok {
-			entry := val.(cachedCompletenessGaps)
-			return entry.rows, entry.total, nil
-		}
-		// Cold-start fallback: during initial boot or cold cache under load,
-		// avoid failing smoke tests with HTTP 503 while database warms up.
-		return []web.CompletenessGap{}, 0, nil
+		return nil, 0, err
 	}
 	out := make([]web.CompletenessGap, 0, len(rows))
 	for _, r := range rows {

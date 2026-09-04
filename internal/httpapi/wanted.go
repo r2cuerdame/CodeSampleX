@@ -101,23 +101,7 @@ func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
 	// deliberately shorter presentation limit.
 	rows, err := a.d.Store.TopWanted(r.Context(), 200)
 	if err != nil {
-		a.wantedMu.Lock()
-		if len(a.wantedItems) > 0 {
-			items := a.wantedItems
-			a.wantedMu.Unlock()
-			writeJSON(w, http.StatusOK, map[string]any{
-				"schemaVersion": 1,
-				"generatedAt":   a.now().UTC(),
-				"items":         items,
-			})
-			return
-		}
-		a.wantedMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"schemaVersion": 1,
-			"generatedAt":   a.now().UTC(),
-			"items":         []wantedListItem{},
-		})
+		writeStoreErr(w, err, http.StatusInternalServerError, "listing wanted requests failed")
 		return
 	}
 	items := make([]wantedListItem, 0, len(rows))
