@@ -36,10 +36,10 @@ const (
 	// It avoids materializing the heavy dependency_open closure which is only needed
 	// by authoring queue scheduling, not completeness auditing.
 	completenessCoverageCTE = `verified_samples AS MATERIALIZED (
-				SELECT DISTINCT s.sample_id,s.manifest
+				SELECT s.sample_id,s.manifest
 				FROM samples s
-				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
 				WHERE NOT s.quarantined
+				  AND EXISTS (SELECT 1 FROM receipts r WHERE r.sample_id=s.sample_id AND r.contract_result='PASS')
 			), verified_packages AS MATERIALIZED (
 				SELECT DISTINCT package.value AS purl
 				FROM verified_samples s
@@ -69,6 +69,8 @@ const (
 				              THEN '%40'||substring(name from 2)
 				              ELSE name END||'@'||version AS purl
 				FROM dependency_resolution
+			), observed_packages AS MATERIALIZED (
+				SELECT DISTINCT purl FROM evidence_agg
 			)`
 
 	// completenessClassifiedSQL runs the single-pass multi-axis classification
@@ -77,7 +79,7 @@ const (
 			WITH ` + completenessCoverageCTE + `, ` + completenessRelationsCTE + `,
 			classified AS MATERIALIZED (
 				SELECT (CASE WHEN v.purl IS NOT NULL THEN 'S' ELSE '-' END)
-				    || (CASE WHEN v.purl IS NOT NULL OR EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl = pk.purl) THEN 'E' ELSE '-' END)
+				    || (CASE WHEN v.purl IS NOT NULL OR obs.purl IS NOT NULL THEN 'E' ELSE '-' END)
 				    || (CASE WHEN dep.purl IS NOT NULL OR rn.purl IS NOT NULL THEN 'D' ELSE '-' END) AS state,
 				       (rn.purl IS NOT NULL AND dep.purl IS NULL) AS proven_none,
 				       pk.ecosystem, pk.name, pk.version
@@ -85,6 +87,7 @@ const (
 				  LEFT JOIN verified_packages v ON v.purl = pk.purl
 				  LEFT JOIN dependency_edge_parents dep ON dep.purl = pk.purl
 				  LEFT JOIN resolved_none rn ON rn.purl = pk.purl
+				  LEFT JOIN observed_packages obs ON obs.purl = pk.purl
 				 WHERE ` + completenessSubjectSQL + `
 			)`
 

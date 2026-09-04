@@ -2998,41 +2998,43 @@ const listWantedSQL = `
 		               THEN '%40' || substring(w.name from 2)
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
+	), candidate_samples AS MATERIALIZED (
+		-- Only samples whose manifest carries a coordinate matching a requested wanted_key.
+		-- This bounds the subsequent receipt index scan to just the candidate samples (~5 rows)
+		-- instead of evaluating hundreds of thousands of receipts across all samples.
+		SELECT DISTINCT sp.sample_id, sp.coord
+		  FROM wanted_key wk
+		  JOIN sample_packages sp ON sp.coord = wk.coord
+		  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
+	), candidate_receipts AS MATERIALIZED (
+		-- Index-scan receipts using receipts_sample_idx for only the candidate samples.
+		SELECT r.sample_id,
+		       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
+		       r.receipt->>'schemaVersion' AS schema_version,
+		       r.receipt->'stages'->>'resolve' AS resolve_stage,
+		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
+		  FROM candidate_samples cs
+		  JOIN receipts r ON r.sample_id = cs.sample_id
+		 WHERE r.contract_result = 'PASS'
 	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
-		  JOIN sample_packages package ON package.coord = wk.coord
-		  JOIN samples answer_sample ON answer_sample.sample_id = package.sample_id
-		                              AND NOT answer_sample.quarantined
+		  JOIN candidate_samples cs ON cs.coord = wk.coord
+		  JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
+		  JOIN candidate_receipts cr ON cr.sample_id = cs.sample_id
 		 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
-		   AND EXISTS (
-		       SELECT 1 FROM receipts answer_receipt
-		        WHERE answer_receipt.sample_id = answer_sample.sample_id
-		          AND answer_receipt.contract_result = 'PASS'
-		          -- A row that names a platform is answered only by a proof
-		          -- from that platform. Any-pass closure would delete the ask
-		          -- before the platform it was about had been measured at all.
-		          AND (wk.target_os = ''
-		               OR LOWER(COALESCE(answer_receipt.receipt->'environment'->>'os','')) = wk.target_os)
-		          AND (
-		              -- Pre-version Wanted rows cannot recover the release
-		              -- that was originally requested. Keep the legacy policy
-		              -- honest and broad: any contract pass for the same
-		              -- package answers that unversioned historical row.
-		              wk.version = ''
-		              OR (
-		                  -- A versioned request is answered only by the signed
-		                  -- v2 resolver claim for the release that actually
-		                  -- ran. The manifest version is author input and may
-		                  -- differ in a matrix verification.
-		                  answer_receipt.receipt->>'schemaVersion' = '2'
-		                  AND answer_receipt.receipt->'stages'->>'resolve' = 'PASS'
-		                  AND COALESCE(answer_receipt.receipt->'resolvedPackages', '[]'::jsonb) ?
-		                      ('pkg:' || wk.ecosystem || '/' ||
-		                       CASE WHEN left(wk.name, 1) = '@'
-		                            THEN '%40' || substring(wk.name from 2)
-		                            ELSE wk.name END || '@' || wk.version)
-		              )))
+		   AND (wk.target_os = '' OR cr.os = wk.target_os)
+		   AND (
+		       wk.version = ''
+		       OR (
+		           cr.schema_version = '2'
+		           AND cr.resolve_stage = 'PASS'
+		           AND cr.resolved_packages ?
+		               ('pkg:' || wk.ecosystem || '/' ||
+		                CASE WHEN left(wk.name, 1) = '@'
+		                     THEN '%40' || substring(wk.name from 2)
+		                     ELSE wk.name END || '@' || wk.version)
+		       ))
 	), unanswered AS MATERIALIZED (
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
 		       w.asks, w.first_seen, w.last_seen,

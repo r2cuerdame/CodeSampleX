@@ -83,6 +83,19 @@ type wantedListItem struct {
 // contains only public package coordinates and symbols; the caller's prose,
 // project and identity never entered the wanted table in the first place.
 func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
+	a.wantedMu.Lock()
+	if !a.wantedAt.IsZero() && time.Since(a.wantedAt) < 30*time.Second {
+		items := a.wantedItems
+		a.wantedMu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"schemaVersion": 1,
+			"generatedAt":   a.now().UTC(),
+			"items":         items,
+		})
+		return
+	}
+	a.wantedMu.Unlock()
+
 	// The contributor producer asks for this feed directly.  Keep enough
 	// headroom for a useful batch while the human /wanted page stays at its
 	// deliberately shorter presentation limit.
@@ -101,6 +114,11 @@ func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
 			Asks:      row.Asks,
 		})
 	}
+	a.wantedMu.Lock()
+	a.wantedAt = a.now()
+	a.wantedItems = items
+	a.wantedMu.Unlock()
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schemaVersion": 1,
 		"generatedAt":   a.now().UTC(),
@@ -137,6 +155,9 @@ func (a *api) handleWanted(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "recording the report failed")
 		return
 	}
+	a.wantedMu.Lock()
+	a.wantedAt = time.Time{}
+	a.wantedMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "accepted", "counted": len(rows)})
 }
 
@@ -175,8 +196,8 @@ func (a *api) handleWantedBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		parsed[i] = rows
 	}
-	total := 0
 	submissions := make([]serverstore.WantedSubmission, 0, len(batch.Reports))
+	total := 0
 	for i, req := range batch.Reports {
 		rows := parsed[i]
 		submissions = append(submissions, serverstore.WantedSubmission{Epoch: req.Epoch, AnonID: req.AnonID, Rows: rows})
@@ -186,6 +207,9 @@ func (a *api) handleWantedBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "recording the reports failed")
 		return
 	}
+	a.wantedMu.Lock()
+	a.wantedAt = time.Time{}
+	a.wantedMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "accepted", "reports": len(batch.Reports), "counted": total,
 	})

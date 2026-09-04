@@ -8,6 +8,7 @@ package httpapi
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"encoding/json"
@@ -99,6 +100,10 @@ type api struct {
 	// authoringPolls counts work polls for the gap rotation; see
 	// authoringGapEvery.
 	authoringPolls atomic.Uint64
+
+	wantedMu    sync.Mutex
+	wantedAt    time.Time
+	wantedItems []wantedListItem
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.
