@@ -422,8 +422,8 @@ func validAuthoringToken(token string) ([sha256.Size]byte, bool) {
 
 func authoringPrompt(baseURL string, grant authoringGrant) string {
 	baseURL = strings.TrimRight(baseURL, "/")
-	refreshCommand := authoringCommand(baseURL, grant.Token)
-	nextCommand := authoringNextCommand(baseURL, grant.Token)
+	refreshCommand := authoringCommand(baseURL)
+	nextCommand := authoringNextCommand(baseURL)
 	return fmt.Sprintf(`CodeSampleX 샘플 작성 세션을 시작한다.
 
 작업 식별: %s
@@ -454,28 +454,28 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 %s
 9. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
-이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand,
-		authoringReportCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token))
+supervisor가 환경으로 제공하는 세션 자격은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 프롬프트·명령 인자·로그에 값을 복사하지 말고, 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand,
+		authoringReportCommand(baseURL), authoringSubmitCommand(baseURL))
 }
 
-func authoringCommand(baseURL, token string) string {
-	return fmt.Sprintf("csx sample-worker refresh --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+func authoringCommand(baseURL string) string {
+	return fmt.Sprintf("csx sample-worker refresh --server %q", strings.TrimRight(baseURL, "/"))
 }
 
-func authoringSubmitCommand(baseURL, token string) string {
-	return fmt.Sprintf("csx sample-worker submit <sampleId> --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+func authoringSubmitCommand(baseURL string) string {
+	return fmt.Sprintf("csx sample-worker submit <sampleId> --server %q", strings.TrimRight(baseURL, "/"))
 }
 
 // authoringReportCommand is how a writer hands back work it cannot author,
 // with the reason. Without it the only thing the server ever learns about a
 // hopeless coordinate is silence, and silence is what a busy worker looks like.
-func authoringReportCommand(baseURL, token string) string {
-	return fmt.Sprintf("csx sample-worker report --outcome no-callable-symbol --detail %q --server %q --token %q",
-		"왜 작성할 수 없는지 한 줄", strings.TrimRight(baseURL, "/"), token)
+func authoringReportCommand(baseURL string) string {
+	return fmt.Sprintf("csx sample-worker report --outcome no-callable-symbol --detail %q --server %q",
+		"왜 작성할 수 없는지 한 줄", strings.TrimRight(baseURL, "/"))
 }
 
-func authoringNextCommand(baseURL, token string) string {
-	return fmt.Sprintf("csx sample-worker next --server %q --token %q", strings.TrimRight(baseURL, "/"), token)
+func authoringNextCommand(baseURL string) string {
+	return fmt.Sprintf("csx sample-worker next --server %q", strings.TrimRight(baseURL, "/"))
 }
 
 func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
@@ -493,7 +493,7 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		"title CodeSampleX sample worker " + sessionID,
 		`set "CSX_SESSION_ID=` + sessionID + `"`,
 		`set "CSX_SERVER=` + baseURL + `"`,
-		`set "CSX_TOKEN=` + grant.Token + `"`,
+		`set "CSX_SAMPLE_WORKER_TOKEN=` + grant.Token + `"`,
 		`set "CSX_REASONING=` + grant.Reasoning + `"`,
 		`set "CSX_WORKER=` + authoringWorkerKey(grant.Label) + `"`,
 		`set "CSX_HOME=%LOCALAPPDATA%\CodeSampleX\sample-workers\%CSX_WORKER%"`,
@@ -532,7 +532,7 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 	lines = append(lines,
 		`echo CodeSampleX sample worker is running. Close this window or press Ctrl+C to stop.`,
 		`:poll`,
-		`csx sample-worker refresh --server "%CSX_SERVER%" --token "%CSX_TOKEN%" >"%CSX_REFRESH_LOG%" 2>&1`,
+		`csx sample-worker refresh --server "%CSX_SERVER%" >"%CSX_REFRESH_LOG%" 2>&1`,
 		`set "CSX_RC=%ERRORLEVEL%"`,
 		`type "%CSX_REFRESH_LOG%"`,
 		`if "%CSX_RC%"=="0" goto :next_work`,
@@ -542,7 +542,7 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`timeout /t 60 /nobreak >nul`,
 		`goto :poll`,
 		`:next_work`,
-		`csx sample-worker next --server "%CSX_SERVER%" --token "%CSX_TOKEN%" >"%CSX_NEXT_LOG%" 2>&1`,
+		`csx sample-worker next --server "%CSX_SERVER%" >"%CSX_NEXT_LOG%" 2>&1`,
 		`set "CSX_RC=%ERRORLEVEL%"`,
 		`type "%CSX_NEXT_LOG%"`,
 		`if not "%CSX_RC%"=="0" goto :retry_work`,
@@ -589,7 +589,7 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 		`export PATH="$HOME/.local/bin:$PATH"`,
 		`CSX_SESSION_ID='` + sessionID + `'`,
 		`CSX_SERVER='` + baseURL + `'`,
-		`CSX_TOKEN='` + grant.Token + `'`,
+		`export CSX_SAMPLE_WORKER_TOKEN='` + grant.Token + `'`,
 		`CSX_REASONING='` + grant.Reasoning + `'`,
 		`export CSX_WORKER="` + authoringWorkerKey(grant.Label) + `"`,
 		`export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_WORKER"`,
@@ -606,13 +606,13 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 		`command -v csx >/dev/null 2>&1 || { echo "csx was not found. Install it with: curl -fsSL https://codesamplex.dev/install.sh | bash"; exit 3; }`,
 		`printf '%s\n' 'CodeSampleX Linux sample worker is running. Press Ctrl+C to stop.'`,
 		`while true; do`,
-		`  if ! csx sample-worker refresh --server "$CSX_SERVER" --token "$CSX_TOKEN" >"$CSX_REFRESH_LOG" 2>&1; then`,
+		`  if ! csx sample-worker refresh --server "$CSX_SERVER" >"$CSX_REFRESH_LOG" 2>&1; then`,
 		`    cat "$CSX_REFRESH_LOG"`,
 		`    if grep -q 'HTTP 410' "$CSX_REFRESH_LOG"; then echo 'This sample-worker token expired. Rotate it in the admin page and download a new SH file.'; exit 2; fi`,
 		`    echo 'Temporary refresh failure. Retrying in 60 seconds.'; sleep 60; continue`,
 		`  fi`,
 		`  cat "$CSX_REFRESH_LOG"`,
-		`  if ! csx sample-worker next --server "$CSX_SERVER" --token "$CSX_TOKEN" >"$CSX_NEXT_LOG" 2>&1; then`,
+		`  if ! csx sample-worker next --server "$CSX_SERVER" >"$CSX_NEXT_LOG" 2>&1; then`,
 		`    cat "$CSX_NEXT_LOG"; echo 'Work lookup failed. Retrying in 60 seconds.'; sleep 60; continue`,
 		`  fi`,
 		`  cat "$CSX_NEXT_LOG"`,
@@ -649,7 +649,7 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 7. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
 8. 한 샘플을 제출하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
 9. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
-%s`, grant.Label, grant.Reasoning, authoringNextCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token), authoringCommand(baseURL, grant.Token))
+%s`, grant.Label, grant.Reasoning, authoringNextCommand(baseURL), authoringSubmitCommand(baseURL), authoringCommand(baseURL))
 }
 
 func safeAuthoringCMDID(raw string) string {

@@ -19,7 +19,14 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 )
 
-const sampleWorkerResponseLimit = 32 << 10
+const (
+	sampleWorkerResponseLimit = 32 << 10
+	// The generated authoring supervisors put the narrowly scoped session
+	// bearer here. Keeping it out of argv matters on multi-user builders:
+	// /proc/<pid>/cmdline and service managers expose argv to accounts that
+	// cannot read the mode-0600 worker script itself.
+	sampleWorkerTokenEnv = "CSX_SAMPLE_WORKER_TOKEN"
+)
 
 var (
 	sampleWorkerStdout io.Writer = os.Stdout
@@ -66,8 +73,9 @@ func sampleWorkerMain(ctx context.Context, args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if fs.NArg() != 0 || *token == "" {
-		fmt.Fprintln(sampleWorkerStderr, "usage: csx sample-worker refresh --server URL --token TOKEN")
+	resolvedToken := sampleWorkerToken(*token)
+	if fs.NArg() != 0 || resolvedToken == "" {
+		fmt.Fprintln(sampleWorkerStderr, "usage: csx sample-worker refresh --server URL [--token TOKEN]")
 		return 2
 	}
 	base, err := sampleWorkerServerURL(*server)
@@ -86,7 +94,7 @@ func sampleWorkerMain(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker: invalid refresh request")
 		return 2
 	}
-	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Authorization", "Bearer "+resolvedToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := sampleWorkerClient.Do(req)
@@ -116,11 +124,23 @@ func sampleWorkerMain(ctx context.Context, args []string) int {
 }
 
 func sampleWorkerUsage() {
-	fmt.Fprintln(sampleWorkerStderr, "usage: csx sample-worker refresh --server URL --token TOKEN")
-	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker next --server URL --token TOKEN")
-	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL --token TOKEN")
-	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker report --outcome KIND [--detail TEXT] --server URL --token TOKEN")
+	fmt.Fprintln(sampleWorkerStderr, "usage: csx sample-worker refresh --server URL [--token TOKEN]")
+	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker next --server URL [--token TOKEN]")
+	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL [--token TOKEN]")
+	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker report --outcome KIND [--detail TEXT] --server URL [--token TOKEN]")
+	fmt.Fprintf(sampleWorkerStderr, "       generated supervisors supply the token through %s\n", sampleWorkerTokenEnv)
 	fmt.Fprintln(sampleWorkerStderr, "         KIND: no-callable-symbol | transient | infrastructure | no-output")
+}
+
+// sampleWorkerToken keeps the legacy flag usable for operators with an old
+// one-shot command while letting generated supervisors use an argv-free
+// channel. The explicit flag wins so an operator can deliberately override a
+// stale inherited environment when diagnosing a session.
+func sampleWorkerToken(flagToken string) string {
+	if token := strings.TrimSpace(flagToken); token != "" {
+		return token
+	}
+	return strings.TrimSpace(os.Getenv(sampleWorkerTokenEnv))
 }
 
 // sampleWorkerOutcomes maps what a writer types to what the protocol carries.
@@ -166,7 +186,12 @@ func sampleWorkerReport(ctx context.Context, args []string) int {
 	token := fs.String("token", "", "sample-worker session token")
 	outcome := fs.String("outcome", "", "why the work produced nothing: "+sampleWorkerOutcomeNames())
 	detail := fs.String("detail", "", "one line an operator will read, e.g. \"pom-only artifact: no jar\"")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *token == "" {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		sampleWorkerUsage()
+		return 2
+	}
+	resolvedToken := sampleWorkerToken(*token)
+	if resolvedToken == "" {
 		sampleWorkerUsage()
 		return 2
 	}
@@ -191,7 +216,7 @@ func sampleWorkerReport(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid request")
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Authorization", "Bearer "+resolvedToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := sampleWorkerClient.Do(req)
@@ -256,7 +281,11 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	fs.SetOutput(sampleWorkerStderr)
 	server := fs.String("server", "https://codesamplex.dev", "CodeSampleX server URL")
 	token := fs.String("token", "", "sample-worker session token")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *token == "" {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return 2
+	}
+	resolvedToken := sampleWorkerToken(*token)
+	if resolvedToken == "" {
 		return 2
 	}
 	base, err := sampleWorkerServerURL(*server)
@@ -270,7 +299,7 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Authorization", "Bearer "+resolvedToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := sampleWorkerClient.Do(req)
@@ -351,7 +380,11 @@ func sampleWorkerSubmit(ctx context.Context, args []string) int {
 	fs.SetOutput(sampleWorkerStderr)
 	server := fs.String("server", "https://codesamplex.dev", "CodeSampleX server URL")
 	token := fs.String("token", "", "sample-worker session token")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 || *token == "" {
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+		return 2
+	}
+	resolvedToken := sampleWorkerToken(*token)
+	if resolvedToken == "" {
 		return 2
 	}
 	base, err := sampleWorkerServerURL(*server)
@@ -418,7 +451,7 @@ func sampleWorkerSubmit(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker submit: invalid request")
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Authorization", "Bearer "+resolvedToken)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 	resp, err := sampleWorkerClient.Do(req)

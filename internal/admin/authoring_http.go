@@ -131,7 +131,7 @@ func (h *handler) authoringSessions(w http.ResponseWriter, r *http.Request) {
 		prompts := make([]string, 0, len(grants))
 		for index, grant := range grants {
 			workers = append(workers, issuedAuthoringWorker{
-				Command: authoringCommand(h.publicURL, grant.Token), WindowsCMD: authoringWindowsCMD(h.publicURL, grant),
+				Command: authoringCommand(h.publicURL), WindowsCMD: authoringWindowsCMD(h.publicURL, grant),
 				LinuxSH: authoringLinuxSH(h.publicURL, grant), Session: grant,
 			})
 			prompts = append(prompts, fmt.Sprintf("===== SAMPLE WORKER %d/%d · %s =====\n%s", index+1, len(grants), grant.Label, authoringPrompt(h.publicURL, grant)))
@@ -231,7 +231,7 @@ func (h *handler) rotateAuthoringSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	worker := issuedAuthoringWorker{
-		Command: authoringCommand(h.publicURL, grant.Token), WindowsCMD: authoringWindowsCMD(h.publicURL, grant),
+		Command: authoringCommand(h.publicURL), WindowsCMD: authoringWindowsCMD(h.publicURL, grant),
 		LinuxSH: authoringLinuxSH(h.publicURL, grant), Session: grant,
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"prompt": authoringPrompt(h.publicURL, grant), "worker": worker})

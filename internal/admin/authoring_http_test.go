@@ -61,9 +61,13 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 		}
 	}
 
-	tokenMatch := regexp.MustCompile(`--token "([^"]+)"`).FindStringSubmatch(response.Workers[0].Command)
+	tokenMatch := regexp.MustCompile(`CSX_SAMPLE_WORKER_TOKEN='([^']+)'`).FindStringSubmatch(response.Workers[0].LinuxSH)
 	if len(tokenMatch) != 2 {
-		t.Fatalf("complete CLI command = %q", response.Workers[0].Command)
+		t.Fatalf("worker script does not carry its private environment credential")
+	}
+	if strings.Contains(response.Workers[0].Command, tokenMatch[1]) || strings.Contains(response.Prompt, tokenMatch[1]) ||
+		strings.Contains(response.Workers[0].Command, "--token") || strings.Contains(response.Prompt, "--token") {
+		t.Fatal("issue response copied the credential into a command or prompt")
 	}
 	rotate := httptest.NewRequest(http.MethodPost, "/admin/api/authoring-sessions/"+response.Workers[0].Session.ID+"/rotate", strings.NewReader("{}"))
 	rotate.SetBasicAuth("recuerdame", secret)
@@ -86,7 +90,7 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedResponse); err != nil {
 		t.Fatal(err)
 	}
-	rotatedToken := regexp.MustCompile(`--token "([^"]+)"`).FindStringSubmatch(rotatedResponse.Worker.Command)
+	rotatedToken := regexp.MustCompile(`CSX_SAMPLE_WORKER_TOKEN='([^']+)'`).FindStringSubmatch(rotatedResponse.Worker.LinuxSH)
 	if len(rotatedToken) != 2 || rotatedToken[1] == tokenMatch[1] || rotatedResponse.Prompt == "" || !strings.Contains(rotatedResponse.Worker.WindowsCMD, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.WindowsCMD, tokenMatch[1]) || !strings.Contains(rotatedResponse.Worker.LinuxSH, rotatedToken[1]) || strings.Contains(rotatedResponse.Worker.LinuxSH, tokenMatch[1]) {
 		t.Fatalf("rotated response = %+v", rotatedResponse)
 	}

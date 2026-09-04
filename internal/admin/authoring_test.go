@@ -136,13 +136,16 @@ func TestAuthoringTokenIsStrictAndPromptStopsBeforePublish(t *testing.T) {
 	}
 	prompt := authoringPrompt("https://codesamplex.dev/", authoringGrant{Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"})
 	for _, want := range []string{
-		`csx sample-worker refresh --server "https://codesamplex.dev" --token "sentinel"`,
+		`csx sample-worker refresh --server "https://codesamplex.dev"`,
 		"45분마다", "5분 기다린 뒤 다시 호출", "2번으로 돌아가 다음 일감", "실패 관측과 사용량으로 새 Finding·커버리지 일감", "worker-laptop", "agy", "auto", "CSX_HOME", "search_known_solution", "run_observed_command",
 		"csx sample create", "csx sample verify", "csx sample preview", "csx sample publish를 실행하지 않는다",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+	if strings.Contains(prompt, "sentinel") || strings.Contains(prompt, "--token") {
+		t.Fatalf("authoring prompt exposed its session credential: %q", prompt)
 	}
 }
 
@@ -192,6 +195,10 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 			t.Errorf("CMD agent prompt missing %q", want)
 		}
 	}
+	if strings.Contains(prompt, grant.Token) || strings.Contains(prompt, "--token") ||
+		strings.Contains(script, `--token "%CSX_SAMPLE_WORKER_TOKEN%"`) {
+		t.Fatal("CMD put the authoring credential in its prompt or a child process argv")
+	}
 	if got := authoringWindowsCMD("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
 		t.Fatalf("non-AGY CMD = %q", got)
 	}
@@ -226,6 +233,10 @@ func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(script[start : start+end])
 	if err != nil || !strings.Contains(string(decoded), "Linux shell supervisor") {
 		t.Fatalf("Linux SH prompt = %q err=%v", decoded, err)
+	}
+	if strings.Contains(string(decoded), grant.Token) || strings.Contains(string(decoded), "--token") ||
+		strings.Contains(script, `--token "$CSX_SAMPLE_WORKER_TOKEN"`) {
+		t.Fatal("Linux SH put the authoring credential in its prompt or a child process argv")
 	}
 	if got := authoringLinuxSH("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
 		t.Fatalf("non-AGY Linux SH = %q", got)
@@ -328,11 +339,14 @@ func TestAuthoringPromptTellsAWriterHowToHandBackHopelessWork(t *testing.T) {
 		Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"})
 	for _, want := range []string{
 		`csx sample-worker report --outcome`,
-		`--server "https://codesamplex.dev" --token "sentinel"`,
+		`--server "https://codesamplex.dev"`,
 		"no-callable-symbol", "transient", "infrastructure",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+	if strings.Contains(prompt, "sentinel") || strings.Contains(prompt, "--token") {
+		t.Fatalf("handoff prompt exposed its session credential: %q", prompt)
 	}
 }

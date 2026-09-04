@@ -50,6 +50,37 @@ func TestSampleWorkerRefreshUsesCompleteCLICommand(t *testing.T) {
 	}
 }
 
+// Generated supervisors use an inherited environment entry rather than a
+// flag. The bearer therefore never appears in /proc/<pid>/cmdline, service
+// start records, or shell command logging, while the headless loop can still
+// authenticate every sample-worker operation.
+func TestSampleWorkerRefreshUsesEnvironmentTokenWithoutArgv(t *testing.T) {
+	const token = "csx_author_v1_environment-only"
+	t.Setenv(sampleWorkerTokenEnv, token)
+	expires := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"idleExpiresAt":%q}`, expires.Format(time.RFC3339))
+	}))
+	defer srv.Close()
+
+	oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
+	t.Cleanup(func() { sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr = oldClient, oldOut, oldErr })
+	sampleWorkerClient = srv.Client()
+	var out, stderr bytes.Buffer
+	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+	args := []string{"refresh", "--server", srv.URL}
+	if strings.Contains(strings.Join(args, "\x00"), token) {
+		t.Fatal("test setup put the credential in argv")
+	}
+	if code := sampleWorkerMain(context.Background(), args); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+	}
+}
+
 func TestSampleWorkerRefreshFailsClosed(t *testing.T) {
 	for _, server := range []string{"http://example.com", "https://user@example.com", "https://example.com/path"} {
 		if _, err := sampleWorkerServerURL(server); err == nil {
