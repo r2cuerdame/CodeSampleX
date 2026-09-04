@@ -3007,15 +3007,22 @@ const listWantedSQL = `
 		  JOIN sample_packages sp ON sp.coord = wk.coord
 		  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
 	), candidate_receipts AS MATERIALIZED (
-		-- Index-scan receipts using receipts_sample_idx for only the candidate samples.
-		SELECT r.sample_id,
+		-- Index-scan receipts using receipts_sample_idx for candidate samples.
+		-- A sample can have accumulated thousands of automated re-runs; we only
+		-- need the most recent passing receipt for each distinct environment hash.
+		SELECT cs.sample_id,
 		       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
 		       r.receipt->>'schemaVersion' AS schema_version,
 		       r.receipt->'stages'->>'resolve' AS resolve_stage,
 		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
 		  FROM candidate_samples cs
-		  JOIN receipts r ON r.sample_id = cs.sample_id
-		 WHERE r.contract_result = 'PASS'
+		  CROSS JOIN LATERAL (
+		      SELECT DISTINCT ON (r.env_hash) r.receipt
+		        FROM receipts r
+		       WHERE r.sample_id = cs.sample_id
+		         AND r.contract_result = 'PASS'
+		       ORDER BY r.env_hash, r.created_at DESC
+		  ) r
 	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk

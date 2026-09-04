@@ -35,17 +35,12 @@ const (
 	// completenessCoverageCTE provides verified packages for the sample axis.
 	// It avoids materializing the heavy dependency_open closure which is only needed
 	// by authoring queue scheduling, not completeness auditing.
-	completenessCoverageCTE = `verified_samples AS MATERIALIZED (
-				SELECT s.sample_id,s.manifest
-				FROM samples s
+	completenessCoverageCTE = `verified_packages AS MATERIALIZED (
+				SELECT DISTINCT sp.purl
+				FROM sample_packages sp
+				JOIN samples s ON s.sample_id = sp.sample_id
 				WHERE NOT s.quarantined
-				  AND EXISTS (SELECT 1 FROM receipts r WHERE r.sample_id=s.sample_id AND r.contract_result='PASS')
-			), verified_packages AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl
-				FROM verified_samples s
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
+				  AND EXISTS (SELECT 1 FROM receipts r WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS')
 			)`
 
 	// completenessRelationsCTE names the two ways a release's dependencies
@@ -70,7 +65,10 @@ const (
 				              ELSE name END||'@'||version AS purl
 				FROM dependency_resolution
 			), observed_packages AS MATERIALIZED (
-				SELECT DISTINCT purl FROM evidence_agg
+				SELECT pk.purl
+				  FROM packages pk
+				 WHERE ` + completenessSubjectSQL + `
+				   AND EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl = pk.purl)
 			)`
 
 	// completenessClassifiedSQL runs the single-pass multi-axis classification

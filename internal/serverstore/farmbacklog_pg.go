@@ -12,7 +12,7 @@ import (
 // otherwise let later polls accumulate identical xid-less SELECTs. Cap every
 // store call independently as a final defense even when it is invoked outside
 // the HTTP handler. An earlier caller deadline still wins.
-const farmAggregateTimeout = 8 * time.Second
+const farmAggregateTimeout = 25 * time.Second
 
 func farmAggregateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, farmAggregateTimeout)
