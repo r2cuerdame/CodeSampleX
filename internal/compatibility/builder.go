@@ -165,16 +165,18 @@ type sampleData struct {
 // Every fullPassEvery-th pass rebuilds everything anyway, so a missed
 // change repairs itself rather than leaving a shard permanently stale.
 func (b *Builder) RunOnce(ctx context.Context) error {
+	started := time.Now()
 	now := b.now()
 	passStart := now
 	b.resumeFromLastCompletedPass(ctx, now)
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
+	changeSince := b.lastRun.Add(-changeOverlap)
 
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.
 	var affected map[shardKey]bool
 	if !full {
-		changes, cerr := b.Store.ChangedSince(ctx, b.lastRun.Add(-changeOverlap))
+		changes, cerr := b.Store.ChangedSince(ctx, changeSince)
 		if cerr != nil {
 			return fmt.Errorf("compatibility: changes since %s: %w", b.lastRun, cerr)
 		}
@@ -186,6 +188,8 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 			}
 			b.passes++
 			b.lastRun = passStart
+			log.Printf("compatibility: builder pass complete full=false since=%s targets=0 packages=0 clusters=0 cluster_read=0s cluster_calculate=0s cluster_write=0s total=%s",
+				changeSince.UTC().Format(time.RFC3339Nano), time.Since(started))
 			return nil
 		}
 		affected = affectedKeys(changes)
@@ -338,8 +342,20 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	// its version list. The stored cluster then understated the failure and
 	// named the wrong version — and that is what the search shows a caller
 	// as a known failure.
+	type packageTiming struct {
+		key                    pkgKey
+		read, calculate, write time.Duration
+		clusters               int
+	}
+	var clusterRead, clusterCalculate, clusterWrite time.Duration
+	var clusterCount int
+	var slowest packageTiming
 	for _, k := range pkgKeys {
+		pkgTiming := packageTiming{key: k}
+		phaseStart := time.Now()
 		evidenceByVersion, err := b.evidenceForPackage(ctx, k, allTargets, byPkg)
+		pkgTiming.read = time.Since(phaseStart)
+		clusterRead += pkgTiming.read
 		if err != nil {
 			return err
 		}
@@ -354,11 +370,32 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		// -- and got it back on the following full pass. A flag that
 		// flickers with the aggregation schedule is not a finding anyone
 		// can act on, and this is the axis the bug/fix work is built on.
+		phaseStart = time.Now()
 		regs := regressionsForPackage(k, evidenceByVersion)
-		for _, cluster := range BuildClusters(k.ecosystem, k.name, evidenceByVersion, regs, now) {
-			if err := b.Store.UpsertFailureCluster(ctx, cluster); err != nil {
-				return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
+		clusters := BuildClusters(k.ecosystem, k.name, evidenceByVersion, regs, now)
+		pkgTiming.calculate = time.Since(phaseStart)
+		clusterCalculate += pkgTiming.calculate
+		pkgTiming.clusters = len(clusters)
+		clusterCount += len(clusters)
+
+		phaseStart = time.Now()
+		if batchStore, ok := b.Store.(interface {
+			UpsertFailureClusters(context.Context, []serverstore.ClusterRow) error
+		}); ok {
+			if err := batchStore.UpsertFailureClusters(ctx, clusters); err != nil {
+				return fmt.Errorf("compatibility: upsert clusters %s/%s: %w", k.ecosystem, k.name, err)
 			}
+		} else {
+			for _, cluster := range clusters {
+				if err := b.Store.UpsertFailureCluster(ctx, cluster); err != nil {
+					return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
+				}
+			}
+		}
+		pkgTiming.write = time.Since(phaseStart)
+		clusterWrite += pkgTiming.write
+		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > slowest.read+slowest.calculate+slowest.write {
+			slowest = pkgTiming
 		}
 	}
 
@@ -377,6 +414,10 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	}
 	b.passes++
 	b.lastRun = passStart
+	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d total=%s",
+		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
+		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,
+		slowest.read, slowest.calculate, slowest.write, slowest.clusters, time.Since(started))
 	return nil
 }
 

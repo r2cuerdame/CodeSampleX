@@ -1570,6 +1570,23 @@ func (f *Fake) IdentityByAPIToken(_ context.Context, apiTokenHash string) (Ident
 func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.upsertFailureCluster(c)
+	return nil
+}
+
+// UpsertFailureClusters mirrors PG's package-atomic fast path. Fake has no
+// fallible writes, but taking the lock once keeps its observation boundary
+// identical to production for builder tests.
+func (f *Fake) UpsertFailureClusters(_ context.Context, clusters []ClusterRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range clusters {
+		f.upsertFailureCluster(c)
+	}
+	return nil
+}
+
+func (f *Fake) upsertFailureCluster(c ClusterRow) {
 	k := fakeClusterKey{c.Ecosystem, c.PackageName, c.Symbol, c.Stage, c.ErrorFingerprint}
 	now := f.now()
 	if prev, ok := f.clusters[k]; ok {
@@ -1587,7 +1604,6 @@ func (f *Fake) UpsertFailureCluster(_ context.Context, c ClusterRow) error {
 		c.LastSeen = now
 	}
 	f.clusters[k] = c
-	return nil
 }
 
 func (f *Fake) ListFailureClusters(_ context.Context, packageName string) ([]ClusterRow, error) {
