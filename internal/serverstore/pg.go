@@ -3017,11 +3017,12 @@ const listWantedSQL = `
 		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
 		  FROM candidate_samples cs
 		  CROSS JOIN LATERAL (
-		      SELECT DISTINCT ON (r.env_hash) r.receipt
+		      SELECT r.receipt
 		        FROM receipts r
 		       WHERE r.sample_id = cs.sample_id
 		         AND r.contract_result = 'PASS'
-		       ORDER BY r.env_hash, r.created_at DESC
+		       ORDER BY r.created_at DESC
+		       LIMIT 10
 		  ) r
 	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os

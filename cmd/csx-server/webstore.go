@@ -68,7 +68,9 @@ type webStore struct {
 	pkgCounts        sync.Map // key: "eco|name", value: cachedPackageCounts
 	snapshotJSON     sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
 	purlsLoaded      sync.Map // key: purl, value: time.Time
-	completenessGaps sync.Map // key: "query|offset|limit", value: cachedCompletenessGaps
+	completenessGaps   sync.Map // key: "query|offset|limit", value: cachedCompletenessGaps
+	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
+	dependencySubjects sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
 }
 
 type cachedSnapshotJSON struct {
@@ -80,6 +82,17 @@ type cachedSnapshotJSON struct {
 type cachedCompletenessGaps struct {
 	at    time.Time
 	rows  []web.CompletenessGap
+	total int
+}
+
+type cachedWantedRows struct {
+	at   time.Time
+	rows []web.WantedRow
+}
+
+type cachedDependencySubjects struct {
+	at    time.Time
+	rows  []web.DependencySubject
 	total int
 }
 
@@ -1476,6 +1489,13 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 }
 
 func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
+	cacheKey := ecosystem + "|" + name
+	if val, ok := w.wantedPackage.Load(cacheKey); ok {
+		entry := val.(cachedWantedRows)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.rows, nil
+		}
+	}
 	rows, err := w.s.WantedForPackage(ctx, ecosystem, name)
 	if err != nil {
 		return nil, err
@@ -1487,10 +1507,21 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 			Asks: r.Asks, HasPage: true,
 		})
 	}
+	w.wantedPackage.Store(cacheKey, cachedWantedRows{
+		at:   time.Now(),
+		rows: out,
+	})
 	return out, nil
 }
 
 func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {
+	cacheKey := fmt.Sprintf("%s|%d|%d", query, offset, limit)
+	if val, ok := w.dependencySubjects.Load(cacheKey); ok {
+		entry := val.(cachedDependencySubjects)
+		if time.Since(entry.at) < 60*time.Second {
+			return entry.rows, entry.total, nil
+		}
+	}
 	rows, total, err := w.s.DependencySubjects(ctx, query, offset, limit)
 	if err != nil {
 		return nil, 0, err
@@ -1502,6 +1533,11 @@ func (w *webStore) DependencySubjects(ctx context.Context, query string, offset,
 			Parents: int64(r.Parents), Projects: int64(r.Projects),
 		})
 	}
+	w.dependencySubjects.Store(cacheKey, cachedDependencySubjects{
+		at:    time.Now(),
+		rows:  out,
+		total: total,
+	})
 	return out, total, nil
 }
 

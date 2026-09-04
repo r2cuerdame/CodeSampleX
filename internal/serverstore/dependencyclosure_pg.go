@@ -14,26 +14,21 @@ package serverstore
 // It is the body of a WITH list: a caller writes "WITH " + authoringCoverageCTE
 // and may append further CTEs after it.
 const authoringCoverageCTE = `verified_samples AS MATERIALIZED (
-				SELECT DISTINCT s.sample_id,s.manifest
+				SELECT s.sample_id,s.manifest
 				FROM samples s
-				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
 				WHERE NOT s.quarantined
+				  AND EXISTS (SELECT 1 FROM receipts r WHERE r.sample_id=s.sample_id AND r.contract_result='PASS')
 			), verified_packages AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl
+				SELECT DISTINCT sp.purl
 				FROM verified_samples s
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
+				JOIN sample_packages sp ON sp.sample_id=s.sample_id
 			), verified_package_targets AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl,
+				SELECT DISTINCT sp.purl,
 				       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS target_os
-				FROM samples s
+				FROM verified_samples s
 				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
-				WHERE NOT s.quarantined
-				  AND LOWER(COALESCE(r.receipt->'environment'->>'os',''))<>''
+				JOIN sample_packages sp ON sp.sample_id=s.sample_id
+				WHERE LOWER(COALESCE(r.receipt->'environment'->>'os',''))<>''
 			), proven_names AS MATERIALIZED (
 				-- Package names the network already proves at SOME version.
 				-- Their unproven releases are the sibling branch's business;

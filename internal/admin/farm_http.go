@@ -33,7 +33,7 @@ const farmWindow = time.Hour
 // is waiting for. Bound the route above the store's per-aggregate ceiling so
 // a broken or unexpectedly expensive panel can never outlive the next poll
 // and accumulate behind itself.
-const farmRequestTimeout = 10 * time.Second
+const farmRequestTimeout = 25 * time.Second
 
 func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())

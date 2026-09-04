@@ -294,11 +294,9 @@ func (p *PG) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limi
 // closure cap, $4 resolve weight.
 var authoringExpansionCandidatesSQL = `
 			WITH ` + authoringCoverageCTE + `, verified_symbols AS MATERIALIZED (
-				SELECT DISTINCT package.value AS purl,symbol.value AS symbol
+				SELECT DISTINCT sp.purl,symbol.value AS symbol
 				FROM verified_samples s
-				CROSS JOIN LATERAL jsonb_array_elements_text(
-				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
-				) AS package(value)
+				JOIN sample_packages sp ON sp.sample_id=s.sample_id
 				CROSS JOIN LATERAL jsonb_array_elements_text(
 				  CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END
 				) AS symbol(value)
