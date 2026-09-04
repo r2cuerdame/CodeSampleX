@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -45,8 +46,8 @@ type webStore struct {
 	hotRefreshing bool
 	hotRetryAt    time.Time
 
-	// The per-package evidence recency the record inventory orders by,
-	// cached on the same terms and for the same reason.
+	// The set of (purl) whose snapshots were last seen, cached for the same
+	// reason.
 	updatedMu         sync.Mutex
 	updatedAtRead     time.Time
 	updatedAt         map[string]time.Time
@@ -63,15 +64,23 @@ type webStore struct {
 	targetsRetryAt    time.Time
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
-	pkgSamples   sync.Map // key: "eco|name", value: cachedPackageSamples
-	pkgCounts    sync.Map // key: "eco|name", value: cachedPackageCounts
-	snapshotJSON sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+	pkgSamples       sync.Map // key: "eco|name", value: cachedPackageSamples
+	pkgCounts        sync.Map // key: "eco|name", value: cachedPackageCounts
+	snapshotJSON     sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+	purlsLoaded      sync.Map // key: purl, value: time.Time
+	completenessGaps sync.Map // key: "query|offset|limit", value: cachedCompletenessGaps
 }
 
 type cachedSnapshotJSON struct {
 	at   time.Time
 	json string
 	ok   bool
+}
+
+type cachedCompletenessGaps struct {
+	at    time.Time
+	rows  []web.CompletenessGap
+	total int
 }
 
 type cachedPackageSamples struct {
@@ -282,6 +291,33 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 		return "", false
 	}
 	w.snapshotMu.Unlock()
+
+	// If this PURL's snapshots have not been loaded recently, bulk-fetch all symbols for this PURL in one roundtrip.
+	if loadedAt, loaded := w.purlsLoaded.Load(purl); !loaded || time.Since(loadedAt.(time.Time)) >= packageDetailCacheTTL {
+		rows, err := w.s.GetSnapshotsForPURL(ctx, purl)
+		if err == nil {
+			now := time.Now()
+			for _, r := range rows {
+				w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
+					at:   now,
+					json: r.SnapshotJSON,
+					ok:   true,
+				})
+			}
+			w.purlsLoaded.Store(purl, now)
+			if val, ok := w.snapshotJSON.Load(key); ok {
+				entry := val.(cachedSnapshotJSON)
+				return entry.json, entry.ok
+			}
+			// Symbol not found in this PURL: negative cache entry.
+			w.snapshotJSON.Store(key, cachedSnapshotJSON{
+				at:   now,
+				json: "",
+				ok:   false,
+			})
+			return "", false
+		}
+	}
 
 	js, ok, err := w.s.GetSnapshot(ctx, purl, symbol)
 	w.snapshotJSON.Store(key, cachedSnapshotJSON{
@@ -1411,6 +1447,13 @@ func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error
 // axes nothing here can close -- was already made in serverstore, beside the
 // matrix it has to agree with. This only changes the type.
 func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]web.CompletenessGap, int, error) {
+	cacheKey := fmt.Sprintf("%s|%d|%d", query, offset, limit)
+	if val, ok := w.completenessGaps.Load(cacheKey); ok {
+		entry := val.(cachedCompletenessGaps)
+		if time.Since(entry.at) < 60*time.Second {
+			return entry.rows, entry.total, nil
+		}
+	}
 	rows, total, err := w.s.CompletenessGaps(ctx, query, offset, limit)
 	if err != nil {
 		return nil, 0, err
@@ -1424,6 +1467,11 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 			SampleNAReason: r.SampleNAReason, DependencyNAReason: r.DependencyNAReason,
 		})
 	}
+	w.completenessGaps.Store(cacheKey, cachedCompletenessGaps{
+		at:    time.Now(),
+		rows:  out,
+		total: total,
+	})
 	return out, total, nil
 }
 

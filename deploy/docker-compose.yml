@@ -112,6 +112,7 @@ services:
     command: >-
       postgres -c shared_buffers=256MB -c max_connections=40
       -c effective_cache_size=768MB -c maintenance_work_mem=64MB
+      -c work_mem=16MB
       -c wal_compression=on
     volumes:
       - pgdata:/var/lib/postgresql/data

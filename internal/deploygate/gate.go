@@ -73,6 +73,10 @@ var dependencyEdgeParentIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS dependency_edge_parent_idx ON dependency_edge (ecosystem, parent_name)`,
 }
 
+var evidenceAggDirectIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS evidence_agg_direct_purl_idx ON evidence_agg (purl) WHERE direct`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -111,6 +115,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact dependency edge index allowlist", name)
+	}
+	if name == "0033_evidence_agg_direct_idx.sql" {
+		if exactStatements(statements, evidenceAggDirectIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact evidence agg direct index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

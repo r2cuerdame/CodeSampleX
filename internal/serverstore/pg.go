@@ -471,6 +471,30 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 	return js, found, err
 }
 
+func (p *PG) GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error) {
+	var out []SnapshotRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, symbol, snapshot::text
+			FROM compatibility_snapshots
+			WHERE purl = $1
+			ORDER BY symbol`, purl)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row SnapshotRow
+			if err := rows.Scan(&row.PURL, &row.Symbol, &row.SnapshotJSON); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	var out []SnapshotRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

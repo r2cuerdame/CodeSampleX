@@ -517,6 +517,7 @@ type Store interface {
 	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error)
 	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
 	// SnapshotKeys lists materialized rows already stored. It is distinct

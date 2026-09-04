@@ -61,13 +61,12 @@ const authoringCoverageCTE = `verified_samples AS MATERIALIZED (
 				-- The anchor: a package somebody LISTED, or one already
 				-- proven. Without it the closure walks out of every shadow
 				-- the network has ever seen.
-				WHERE (EXISTS (SELECT 1 FROM evidence_agg a
-				               WHERE a.purl=k.parent_purl AND a.direct)
-				    OR EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=k.parent_purl))
+				WHERE (EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=k.parent_purl)
+				    OR EXISTS (SELECT 1 FROM evidence_agg a WHERE a.purl=k.parent_purl AND a.direct))
 				  -- Already observed means every other branch can already
 				  -- reach it; already proven means there is nothing to ask.
-				  AND NOT EXISTS (SELECT 1 FROM evidence_agg a WHERE a.purl=k.child_purl)
 				  AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=k.child_purl)
 				  AND NOT EXISTS (SELECT 1 FROM proven_names n
 				                  WHERE n.ecosystem=e.ecosystem AND n.name=e.child_name)
+				  AND NOT EXISTS (SELECT 1 FROM evidence_agg a WHERE a.purl=k.child_purl)
 			)`

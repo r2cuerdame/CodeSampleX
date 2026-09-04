@@ -65,17 +65,11 @@ func (p *PG) DependencySubjects(ctx context.Context, query string, offset, limit
 	var out []DependencySubject
 	total := 0
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		if err := c.QueryRow(ctx, `
-			SELECT count(*) FROM (
-			  SELECT 1 FROM dependency_edge
-			   WHERE ($1 = '' OR position(lower($1) in lower(child_name)) > 0)
-			   GROUP BY ecosystem, child_name, child_version) t`, q).Scan(&total); err != nil {
-			return err
-		}
 		rows, err := c.Query(ctx, `
 			SELECT ecosystem, child_name, child_version,
 			       count(DISTINCT parent_name || '@' || parent_version) AS parents,
-			       count(*) AS projects
+			       count(*) AS projects,
+			       count(*) OVER () AS full_count
 			  FROM dependency_edge
 			 WHERE ($1 = '' OR position(lower($1) in lower(child_name)) > 0)
 			 GROUP BY 1, 2, 3
@@ -87,12 +81,26 @@ func (p *PG) DependencySubjects(ctx context.Context, query string, offset, limit
 		defer rows.Close()
 		for rows.Next() {
 			var s DependencySubject
-			if err := rows.Scan(&s.Ecosystem, &s.Name, &s.Version, &s.Parents, &s.Projects); err != nil {
+			var fullCount int
+			if err := rows.Scan(&s.Ecosystem, &s.Name, &s.Version, &s.Parents, &s.Projects, &fullCount); err != nil {
 				return err
 			}
+			total = fullCount
 			out = append(out, s)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(out) == 0 && offset > 0 {
+			if err := c.QueryRow(ctx, `
+				SELECT count(*) FROM (
+				  SELECT 1 FROM dependency_edge
+				   WHERE ($1 = '' OR position(lower($1) in lower(child_name)) > 0)
+				   GROUP BY ecosystem, child_name, child_version) t`, q).Scan(&total); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, 0, err

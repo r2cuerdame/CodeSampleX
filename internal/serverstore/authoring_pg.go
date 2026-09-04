@@ -380,6 +380,9 @@ var authoringExpansionCandidatesSQL = `
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND NOT EXISTS (
+				        SELECT 1 FROM verified_symbols v
+				        WHERE v.purl=p.purl AND v.symbol=e.symbol)
 				GROUP BY p.purl,p.ecosystem,p.name,p.version,e.symbol,p.last_seen,target_os
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
@@ -398,6 +401,9 @@ var authoringExpansionCandidatesSQL = `
 				JOIN evidence_agg e ON e.purl=p.purl
 				LEFT JOIN resolve_demand rd ON rd.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND NOT EXISTS (
+				        SELECT 1 FROM verified_packages v
+				        WHERE v.purl=p.purl)
 				  AND LOWER(COALESCE(e.env_json->>'os',''))<>''
 				  AND NOT EXISTS (
 				        SELECT 1 FROM verified_package_targets t
