@@ -75,6 +75,30 @@ func TestAStalledReconciliationDoesNotStopTheUpload(t *testing.T) {
 	}
 }
 
+// An empty upload queue must not pay the historical-reconciliation cost.
+// Farm#18 measured a ~95MB database reading ~11.7GB while one `csx sync`
+// failed to finish. The duplicate sync was one cause; entering a repeatable
+// full-history correction before discovering there was no evidence was
+// another avoidable cost. This seam makes the fast path deterministic: if
+// reconciliation is called at all, the test fails.
+func TestEmptyQueueSkipsHistoricalReconciliation(t *testing.T) {
+	db := testDB(t)
+	batcher := &Batcher{DB: db, Ident: testIdentity(t), Cfg: communityCfg("http://127.0.0.1:1")}
+	called := false
+	batcher.reconcile = func(context.Context) error {
+		called = true
+		return context.Canceled
+	}
+
+	sent, err := batcher.Upload(context.Background(), http.DefaultClient, batcher.Cfg.ServerURL)
+	if err != nil || sent != 0 {
+		t.Fatalf("empty upload = (%d, %v), want (0, nil)", sent, err)
+	}
+	if called {
+		t.Fatal("empty queue entered the historical reconciliation scan")
+	}
+}
+
 // And it is bounded, so it cannot spend the caller's whole window before the
 // upload begins. The node measured 1,245 CPU-seconds inside one pass.
 func TestTheReconciliationIsBounded(t *testing.T) {

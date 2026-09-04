@@ -174,12 +174,22 @@ func (c *Client) Queue(ctx context.Context) (QueuePreview, error) {
 // while the daemon's copy carried on -- two syncs on one sqlite. The
 // caller's context is the only deadline.
 func (c *Client) Sync(ctx context.Context) (SyncResult, error) {
+	return c.sync(ctx, "/local/v1/sync")
+}
+
+// SyncUploads flushes durable evidence/report queues without the independent
+// shard-cache warm. It has the same caller-owned deadline as Sync.
+func (c *Client) SyncUploads(ctx context.Context) (SyncResult, error) {
+	return c.sync(ctx, "/local/v1/sync?uploadsOnly=1")
+}
+
+func (c *Client) sync(ctx context.Context, path string) (SyncResult, error) {
 	var res SyncResult
 	long := *c.http()
 	long.Timeout = 0
 	saved := c.HTTP
 	c.HTTP = &long
-	err := c.do(ctx, http.MethodPost, "/local/v1/sync", nil, &res)
+	err := c.do(ctx, http.MethodPost, path, nil, &res)
 	c.HTTP = saved
 	return res, err
 }

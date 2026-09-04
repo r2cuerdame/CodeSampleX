@@ -33,29 +33,30 @@ const avgMissLLMCalls = 3
 // estimate by construction; Estimated is always true so no consumer can
 // present it as measured.
 type Stats struct {
-	SchemaVersion             int     `json:"schemaVersion"`
-	Mode                      string  `json:"mode"`
-	Hits                      int     `json:"hits"`
-	Misses                    int     `json:"misses"`
-	Adoptions                 int     `json:"adoptions"`
-	PostHitBuildReports       int     `json:"postHitBuildReports"`
-	PostHitBuildPassRate      float64 `json:"postHitBuildPassRate"`
-	ExactFailureMatches       int     `json:"exactFailureMatches"`
-	VerifiedDetoursOffered    int     `json:"verifiedDetoursOffered"`
-	VerifiedDetoursApplied    int     `json:"verifiedDetoursApplied"`
-	DetourPostHitPass         int     `json:"detourPostHitPass"`
-	DetourPostHitFail         int     `json:"detourPostHitFail"`
-	DetourPostHitUnknown      int     `json:"detourPostHitUnknown"`
-	ReportedFailuresAvoided   int     `json:"reportedFailuresAvoided"`
-	EvidenceBatchesSent       int     `json:"evidenceBatchesSent"`
-	OriginSeeds               int     `json:"originSeeds"`
-	CrossVerifications        int     `json:"crossVerifications"`
-	EstimatedReasoningAvoided int     `json:"estimatedReasoningAvoided"`
-	Estimated                 bool    `json:"estimated"` // always true: the reasoning-avoided figure is an estimate
-	CacheBytes                int64   `json:"cacheBytes"`
-	CacheBudgetMB             int     `json:"cacheBudgetMB"`
-	Packages                  int     `json:"packages"`
-	QueueDepth                int     `json:"queueDepth"`
+	SchemaVersion             int         `json:"schemaVersion"`
+	Mode                      string      `json:"mode"`
+	Hits                      int         `json:"hits"`
+	Misses                    int         `json:"misses"`
+	Adoptions                 int         `json:"adoptions"`
+	PostHitBuildReports       int         `json:"postHitBuildReports"`
+	PostHitBuildPassRate      float64     `json:"postHitBuildPassRate"`
+	ExactFailureMatches       int         `json:"exactFailureMatches"`
+	VerifiedDetoursOffered    int         `json:"verifiedDetoursOffered"`
+	VerifiedDetoursApplied    int         `json:"verifiedDetoursApplied"`
+	DetourPostHitPass         int         `json:"detourPostHitPass"`
+	DetourPostHitFail         int         `json:"detourPostHitFail"`
+	DetourPostHitUnknown      int         `json:"detourPostHitUnknown"`
+	ReportedFailuresAvoided   int         `json:"reportedFailuresAvoided"`
+	EvidenceBatchesSent       int         `json:"evidenceBatchesSent"`
+	OriginSeeds               int         `json:"originSeeds"`
+	CrossVerifications        int         `json:"crossVerifications"`
+	EstimatedReasoningAvoided int         `json:"estimatedReasoningAvoided"`
+	Estimated                 bool        `json:"estimated"` // always true: the reasoning-avoided figure is an estimate
+	CacheBytes                int64       `json:"cacheBytes"`
+	CacheBudgetMB             int         `json:"cacheBudgetMB"`
+	Packages                  int         `json:"packages"`
+	QueueDepth                int         `json:"queueDepth"`
+	Queue                     QueueCounts `json:"queue"`
 	// EvidenceRefusedTerminal is evidence the server decided it will never
 	// accept. It is not pending and it was not delivered, and until it had a
 	// line of its own an operator could not tell a delivery problem from a
@@ -194,7 +195,10 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	if pkgs, err := d.DB.ListPackages(ctx); err == nil {
 		st.Packages = len(pkgs)
 	}
-	st.QueueDepth, _ = d.queueDepth(ctx)
+	if q, err := d.queueCounts(ctx); err == nil {
+		st.Queue = q
+		st.QueueDepth = q.EvidenceBatches + q.Uploads
+	}
 	st.EvidenceRefusedTerminal, _ = d.DB.RefusedEvidenceCount(ctx)
 	return st, nil
 }

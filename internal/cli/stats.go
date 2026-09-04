@@ -80,6 +80,8 @@ func statsMain(ctx context.Context, args []string) int {
 	fmt.Printf("Cross verifications:           %d\n", st.CrossVerifications)
 	fmt.Printf("Local cache:                   %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
 	fmt.Printf("Known packages:                %d\n", st.Packages)
+	fmt.Printf("Pending evidence batches:      %d\n", st.Queue.EvidenceBatches)
+	fmt.Printf("Pending upload reports:        %d\n", st.Queue.Uploads)
 	fmt.Printf("Pending queue depth:           %d\n", st.QueueDepth)
 	// Sent, pending and refused-for-good are three different states and were
 	// reported as two. A queue pinned at its cap by refusals the server will

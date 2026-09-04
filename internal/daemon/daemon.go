@@ -674,6 +674,27 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 			_ = d.DB.StampFirst(ctx, localdb.StatFirstSyncAt, time.Now().UTC())
 		}
 	}
+	d.flushInto(ctx, &res)
+	return res
+}
+
+// FlushNow uploads durable evidence and typed reports without warming shard
+// keys. Farm convergence needs this operation: using the full SyncNow for an
+// empty upload queue walked roughly 1,558 unrelated shard keys, and before
+// the v0.1.112 daemon-client fix could start the same walk twice on one DB.
+// Keeping the explicit full sync preserves `csx sync` as a cache-warming tool;
+// callers interested in delivery can choose bounded, near-empty-queue work.
+func (d *Daemon) FlushNow(ctx context.Context) SyncResult {
+	res := SyncResult{SchemaVersion: 1}
+	if !d.communityNetworkEnabled() {
+		return res
+	}
+	defer d.endSync()
+	d.flushInto(ctx, &res)
+	return res
+}
+
+func (d *Daemon) flushInto(ctx context.Context, res *SyncResult) {
 	d.beginSyncStage("uploading", 0, time.Now().UTC())
 	n, err := d.uploadNow(ctx)
 	res.UploadedBatches = n
@@ -700,7 +721,6 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 	if n, cerr := d.DB.QueueSetAsideCount(ctx); cerr == nil {
 		res.SetAsideReports = n
 	}
-	return res
 }
 
 // SyncResult is the POST /local/v1/sync (and csx sync) outcome.

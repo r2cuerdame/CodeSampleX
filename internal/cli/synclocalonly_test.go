@@ -140,6 +140,12 @@ func TestSyncInACommunityHomeStillUsesItsDaemon(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsUnknownOptions(t *testing.T) {
+	if code := syncMain(context.Background(), []string{"--not-a-sync-option"}); code != 2 {
+		t.Fatalf("unknown sync option exited %d, want usage error 2", code)
+	}
+}
+
 // A local-only sync must also say what it did, or a user who ran it and saw
 // zeroes has no way to tell a working no-op from a broken install. The
 // llms-install.md step describes exactly this output.

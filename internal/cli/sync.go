@@ -16,7 +16,7 @@ import (
 func init() {
 	Register(Command{
 		Name:    "sync",
-		Summary: "warm compatibility shards and flush the evidence upload queue now",
+		Summary: "warm shards and flush queues: csx sync [--uploads-only]",
 		Run:     syncMain,
 	})
 }
@@ -43,6 +43,16 @@ func init() {
 // so the check has to come before anything that could reach a socket —
 // including the probe that looks for a daemon at all.
 func syncMain(ctx context.Context, args []string) int {
+	uploadsOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "--uploads-only":
+			uploadsOnly = true
+		default:
+			fmt.Fprintln(os.Stderr, "usage: csx sync [--uploads-only]")
+			return 2
+		}
+	}
 	home, err := config.Home()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "csx: %v\n", err)
@@ -63,7 +73,7 @@ func syncMain(ctx context.Context, args []string) int {
 		return 0
 	}
 
-	res, probeErr, err := syncViaDaemon(ctx, home, stderrIsTerminal())
+	res, probeErr, err := syncViaDaemon(ctx, home, stderrIsTerminal(), uploadsOnly)
 	if err != nil && fallBackInProcess(probeErr) {
 		// No daemon to talk to: run it here. Never for a daemon that merely
 		// did not answer in time -- that daemon is still working, and a
@@ -74,7 +84,12 @@ func syncMain(ctx context.Context, args []string) int {
 			return 1
 		}
 		defer d.Close()
-		r := d.SyncNow(ctx)
+		var r daemon.SyncResult
+		if uploadsOnly {
+			r = d.FlushNow(ctx)
+		} else {
+			r = d.SyncNow(ctx)
+		}
 		res, err = &r, nil
 	}
 	if err != nil {
@@ -119,7 +134,7 @@ func modeLabel(mode string) string {
 // probe's failure, kept apart from the sync's own so the caller can tell
 // "no daemon" from "daemon busy". With showProgress the wait is narrated on
 // stderr, one rewritable line, from the progress the daemon publishes.
-func syncViaDaemon(ctx context.Context, home string, showProgress bool) (res *daemon.SyncResult, probeErr, err error) {
+func syncViaDaemon(ctx context.Context, home string, showProgress, uploadsOnly bool) (res *daemon.SyncResult, probeErr, err error) {
 	c, err := daemon.NewClient(home)
 	if err != nil {
 		return nil, err, err
@@ -134,7 +149,12 @@ func syncViaDaemon(ctx context.Context, home string, showProgress bool) (res *da
 	if showProgress {
 		go narrateSync(ctx, c, stop)
 	}
-	r, err := c.Sync(ctx)
+	var r daemon.SyncResult
+	if uploadsOnly {
+		r, err = c.SyncUploads(ctx)
+	} else {
+		r, err = c.Sync(ctx)
+	}
 	close(stop)
 	if showProgress {
 		fmt.Fprint(os.Stderr, "\\r\\033[K")
