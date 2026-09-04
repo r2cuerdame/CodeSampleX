@@ -23,6 +23,20 @@ const (
 	maxComposerMetadataBody = 4 << 20
 )
 
+// userAgent identifies this client to the public registries it probes.
+//
+// crates.io enforces a crawler policy: a request whose User-Agent does not
+// identify the caller is answered 403. Go's default "Go-http-client/1.1" is
+// exactly such a request, and 403 is neither the 200 that means PUBLIC nor
+// the 404 that means PRIVATE, so probe returned UNKNOWN — which is never
+// cached, so every cargo coordinate was re-probed and refused forever, and
+// every observation about it was rejected at ingest (#176).
+//
+// The other registries do not demand this, but a probe that says who is
+// asking is the correct shape for all of them, so it is set once for every
+// outbound request rather than per ecosystem.
+const userAgent = "codesamplex/1.0 (+https://codesamplex.dev)"
+
 // Cache stores publicness verdicts keyed by canonical purl string.
 // Implementations are expected to be backed by localdb.
 type Cache interface {
@@ -236,7 +250,7 @@ func (c *Checker) probeComposer(ctx context.Context, p domain.PURL) string {
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
+	req, err := newRegistryRequest(reqCtx, http.MethodGet, u)
 	if err != nil {
 		return scanner.PublicnessUnknown
 	}
@@ -300,7 +314,7 @@ func (c *Checker) get(ctx context.Context, u string) int {
 func (c *Checker) requestStatus(ctx context.Context, method, u string) int {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, method, u, nil)
+	req, err := newRegistryRequest(reqCtx, method, u)
 	if err != nil {
 		return 0
 	}
@@ -310,6 +324,18 @@ func (c *Checker) requestStatus(ctx context.Context, method, u string) int {
 	}
 	resp.Body.Close()
 	return resp.StatusCode
+}
+
+// newRegistryRequest builds an outbound registry probe. Every request in this
+// file is built here so the identifying User-Agent cannot be set on one probe
+// path and forgotten on another.
+func newRegistryRequest(ctx context.Context, method, u string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	return req, nil
 }
 
 func (c *Checker) httpClient() *http.Client {
