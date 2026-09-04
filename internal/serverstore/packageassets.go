@@ -93,12 +93,9 @@ func (p *PG) PackageAssets(ctx context.Context) ([]PackageAsset, error) {
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		q, err := tx.Query(ctx, `
-			WITH `+authoringCoverageCTE+`, `+completenessRelationsCTE+`
-			SELECT `+completenessAxesSQL+`,
-			       pk.ecosystem, pk.name, pk.version
-			FROM packages pk
-			WHERE `+completenessSubjectSQL)
+		q, err := tx.Query(ctx, completenessClassifiedSQL+`
+			SELECT state, proven_none, ecosystem, name, version
+			FROM classified`)
 		if err != nil {
 			return err
 		}

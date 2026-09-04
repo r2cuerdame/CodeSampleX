@@ -32,8 +32,24 @@ const (
 // runs. The Go halves share completenessRow; these are the PostgreSQL halves
 // of the same promise.
 const (
+	// completenessCoverageCTE provides verified packages for the sample axis.
+	// It avoids materializing the heavy dependency_open closure which is only needed
+	// by authoring queue scheduling, not completeness auditing.
+	completenessCoverageCTE = `verified_samples AS MATERIALIZED (
+				SELECT DISTINCT s.sample_id,s.manifest
+				FROM samples s
+				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
+				WHERE NOT s.quarantined
+			), verified_packages AS MATERIALIZED (
+				SELECT DISTINCT package.value AS purl
+				FROM verified_samples s
+				CROSS JOIN LATERAL jsonb_array_elements_text(
+				  CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+				) AS package(value)
+			)`
+
 	// completenessRelationsCTE names the two ways a release's dependencies
-	// can have been answered, and their union.
+	// can have been answered.
 	completenessRelationsCTE = `dependency_edge_parents AS MATERIALIZED (
 				-- The PARENT end, deliberately. Being pulled BY somebody says
 				-- nothing about what this release pulls, and the dependency
@@ -48,37 +64,33 @@ const (
 				-- be a parent, so without this every leaf stayed open forever:
 				-- 490 coordinates on production appear as a child of some
 				-- resolved tree and never as a parent.
-				--
-				-- Held apart from the parents so the census can say WHICH kind
-				-- of answer it has. Both leave the open column; only one of
-				-- them is a graph, and reporting a leaf as a graph claims
-				-- children that were never recorded.
 				SELECT DISTINCT 'pkg:'||ecosystem||'/'||
 				         CASE WHEN left(name,1)='@'
 				              THEN '%40'||substring(name from 2)
 				              ELSE name END||'@'||version AS purl
 				FROM dependency_resolution
-			), resolved_parents AS MATERIALIZED (
-				SELECT purl FROM dependency_edge_parents
-				UNION
-				SELECT purl FROM resolved_none
 			)`
 
-	// completenessAxesSQL decides one packages row `pk` on all three axes,
-	// yielding the cell name and whether its D is a measured absence.
-	completenessAxesSQL = `(CASE WHEN EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
-			             THEN 'S' ELSE '-' END)
-			    || (CASE WHEN EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=pk.purl)
-			                   OR EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
-			             THEN 'E' ELSE '-' END)
-			    || (CASE WHEN EXISTS (SELECT 1 FROM resolved_parents d WHERE d.purl=pk.purl)
-			             THEN 'D' ELSE '-' END) AS state,
-			       -- A release whose only answer is "it named nobody". Edges
-			       -- win when both exist: a package can be a leaf in one
-			       -- resolution and a parent in another, and the graph is the
-			       -- stronger fact.
-			       (EXISTS (SELECT 1 FROM resolved_none n WHERE n.purl=pk.purl)
-			        AND NOT EXISTS (SELECT 1 FROM dependency_edge_parents p WHERE p.purl=pk.purl)) AS proven_none`
+	// completenessClassifiedSQL runs the single-pass multi-axis classification
+	// using hash joins instead of nested scalar subqueries.
+	completenessClassifiedSQL = `
+			WITH ` + completenessCoverageCTE + `, ` + completenessRelationsCTE + `,
+			evidence_purls AS MATERIALIZED (
+				SELECT DISTINCT purl FROM evidence_agg
+			),
+			classified AS MATERIALIZED (
+				SELECT (CASE WHEN v.purl IS NOT NULL THEN 'S' ELSE '-' END)
+				    || (CASE WHEN v.purl IS NOT NULL OR e.purl IS NOT NULL THEN 'E' ELSE '-' END)
+				    || (CASE WHEN dep.purl IS NOT NULL OR rn.purl IS NOT NULL THEN 'D' ELSE '-' END) AS state,
+				       (rn.purl IS NOT NULL AND dep.purl IS NULL) AS proven_none,
+				       pk.ecosystem, pk.name, pk.version
+				  FROM packages pk
+				  LEFT JOIN verified_packages v ON v.purl = pk.purl
+				  LEFT JOIN evidence_purls e ON e.purl = pk.purl
+				  LEFT JOIN dependency_edge_parents dep ON dep.purl = pk.purl
+				  LEFT JOIN resolved_none rn ON rn.purl = pk.purl
+				 WHERE ` + completenessSubjectSQL + `
+			)`
 
 	// completenessSubjectSQL is the corpus both read: every public release.
 	completenessSubjectSQL = `pk.version<>'' AND pk.publicness='PUBLIC'`
@@ -254,14 +266,7 @@ func (p *PG) CompletenessGaps(ctx context.Context, query string, offset, limit i
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		// SED is dropped here rather than in Go: it is the large majority of
 		// the corpus on a healthy network, and the page never shows it.
-		q, err := tx.Query(ctx, `
-			WITH `+authoringCoverageCTE+`, `+completenessRelationsCTE+`,
-			classified AS (
-				SELECT `+completenessAxesSQL+`,
-				       pk.ecosystem, pk.name, pk.version
-				FROM packages pk
-				WHERE `+completenessSubjectSQL+`
-			)
+		q, err := tx.Query(ctx, completenessClassifiedSQL+`
 			SELECT state, proven_none, ecosystem, name, version
 			FROM classified
 			WHERE state <> 'SED'`)

@@ -235,19 +235,28 @@ func (p *PG) farmCoverage(ctx context.Context, statementTimeout time.Duration) (
 			  SELECT os, ecosystem FROM observed
 			  UNION
 			  SELECT os, ecosystem FROM measured
+			), o_cnt AS (
+			  SELECT os, ecosystem, count(*) AS cnt FROM observed GROUP BY os, ecosystem
+			), m_cnt AS (
+			  SELECT os, ecosystem, count(*) AS cnt FROM measured GROUP BY os, ecosystem
+			), p_cnt AS (
+			  SELECT os, ecosystem, count(*) AS cnt FROM proven GROUP BY os, ecosystem
+			), op_cnt AS (
+			  SELECT o.os, o.ecosystem, count(*) AS cnt
+			    FROM observed o
+			    JOIN proven v ON v.os = o.os AND v.ecosystem = o.ecosystem AND v.purl = o.purl
+			   GROUP BY o.os, o.ecosystem
 			)
 			SELECT k.os, k.ecosystem,
-			       (SELECT count(*) FROM observed o
-			         WHERE o.os = k.os AND o.ecosystem = k.ecosystem),
-			       (SELECT count(*) FROM measured m
-			         WHERE m.os = k.os AND m.ecosystem = k.ecosystem),
-			       (SELECT count(*) FROM proven v
-			         WHERE v.os = k.os AND v.ecosystem = k.ecosystem),
-			       (SELECT count(*) FROM observed o
-			          JOIN proven v ON v.os = o.os AND v.ecosystem = o.ecosystem
-			                       AND v.purl = o.purl
-			         WHERE o.os = k.os AND o.ecosystem = k.ecosystem)
+			       COALESCE(o.cnt, 0),
+			       COALESCE(m.cnt, 0),
+			       COALESCE(p.cnt, 0),
+			       COALESCE(op.cnt, 0)
 			  FROM keys k
+			  LEFT JOIN o_cnt o ON o.os = k.os AND o.ecosystem = k.ecosystem
+			  LEFT JOIN m_cnt m ON m.os = k.os AND m.ecosystem = k.ecosystem
+			  LEFT JOIN p_cnt p ON p.os = k.os AND p.ecosystem = k.ecosystem
+			  LEFT JOIN op_cnt op ON op.os = k.os AND op.ecosystem = k.ecosystem
 			 ORDER BY 1 ASC, 3 DESC, 2 ASC
 			 LIMIT 500`)
 		if err != nil {

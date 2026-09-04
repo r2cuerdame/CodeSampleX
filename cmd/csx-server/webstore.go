@@ -133,6 +133,13 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 			return nil, err
 		}
 		w.snapshotRows, w.snapshotAt = rows, time.Now()
+		for _, row := range rows {
+			w.snapshotJSON.Store(row.PURL+"|"+row.Symbol, cachedSnapshotJSON{
+				at:   time.Now(),
+				json: row.SnapshotJSON,
+				ok:   true,
+			})
+		}
 		w.snapshotMu.Unlock()
 		return rows, nil
 	}
@@ -159,6 +166,13 @@ func (w *webStore) refreshSnapshots() {
 		return
 	}
 	w.snapshotRows, w.snapshotAt = rows, time.Now()
+	for _, row := range rows {
+		w.snapshotJSON.Store(row.PURL+"|"+row.Symbol, cachedSnapshotJSON{
+			at:   time.Now(),
+			json: row.SnapshotJSON,
+			ok:   true,
+		})
+	}
 	w.snapshotRetryAt = time.Time{}
 }
 
@@ -256,6 +270,19 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 			return entry.json, entry.ok
 		}
 	}
+	w.snapshotMu.Lock()
+	if !w.snapshotAt.IsZero() {
+		// All snapshots are cached in memory. If not present in snapshotJSON, it does not exist.
+		w.snapshotMu.Unlock()
+		w.snapshotJSON.Store(key, cachedSnapshotJSON{
+			at:   time.Now(),
+			json: "",
+			ok:   false,
+		})
+		return "", false
+	}
+	w.snapshotMu.Unlock()
+
 	js, ok, err := w.s.GetSnapshot(ctx, purl, symbol)
 	w.snapshotJSON.Store(key, cachedSnapshotJSON{
 		at:   time.Now(),
@@ -300,14 +327,9 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	}
 	versions := make([]string, 0, len(rows))
 	for _, r := range rows {
-		// The same two conditions versionPage renders on: a symbol with
-		// evidence, or a package-level snapshot. Anything else is a 404.
-		if !hasPage[r.Version] {
-			if _, ok := w.SnapshotJSON(ctx, r.PURL, ""); !ok {
-				continue
-			}
+		if hasPage[r.Version] {
+			versions = append(versions, r.Version)
 		}
-		versions = append(versions, r.Version)
 	}
 	return versions, nil
 }

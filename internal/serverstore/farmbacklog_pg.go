@@ -64,10 +64,10 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 			  -- The `+"`-`"+` cells: a PUBLIC release the network watches people
 			  -- use and has never proven.
 			  (SELECT count(*) FROM (
-			     SELECT DISTINCT pk.purl
+			     SELECT pk.purl
 			     FROM packages pk
-			     JOIN evidence_agg e ON e.purl=pk.purl
 			     WHERE pk.version<>'' AND pk.publicness='PUBLIC'
+			       AND EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=pk.purl)
 			       AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=pk.purl)
 			   ) h),
 			  -- The dependency backlog, whole rather than capped.
@@ -152,13 +152,10 @@ func (p *PG) farmCompletenessNow(ctx context.Context, statementTimeout time.Dura
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		rows, err := tx.Query(ctx, `
-			WITH `+authoringCoverageCTE+`, `+completenessRelationsCTE+`
-			SELECT `+completenessAxesSQL+`,
-			       pk.ecosystem, pk.name,
+		rows, err := tx.Query(ctx, completenessClassifiedSQL+`
+			SELECT state, proven_none, ecosystem, name,
 			       count(*)
-			FROM packages pk
-			WHERE `+completenessSubjectSQL+`
+			FROM classified
 			GROUP BY 1,2,3,4`)
 		if err != nil {
 			return err

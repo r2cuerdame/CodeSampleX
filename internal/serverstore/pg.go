@@ -2974,7 +2974,7 @@ const listWantedSQL = `
 		               THEN '%40' || substring(w.name from 2)
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
-	), answered AS (
+	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
 		  JOIN sample_packages package ON package.coord = wk.coord
@@ -3009,17 +3009,17 @@ const listWantedSQL = `
 		                            THEN '%40' || substring(wk.name from 2)
 		                            ELSE wk.name END || '@' || wk.version)
 		              )))
-	), unanswered AS (
+	), unanswered AS MATERIALIZED (
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
 		       w.asks, w.first_seen, w.last_seen,
 		       TRUE AS has_page
 		  FROM wanted w
+		  LEFT JOIN answered an
+		    ON an.ecosystem = w.ecosystem AND an.name = w.name
+		   AND an.version = w.version AND an.symbol = w.symbol
+		   AND an.target_os = w.target_os
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
-		   AND NOT EXISTS (
-		       SELECT 1 FROM answered an
-		        WHERE an.ecosystem = w.ecosystem AND an.name = w.name
-		          AND an.version = w.version AND an.symbol = w.symbol
-		          AND an.target_os = w.target_os)
+		   AND an.ecosystem IS NULL
 		   AND NOT EXISTS (
 		       SELECT 1 FROM unnest($5::text[]) AS wanted_words(word)
 		        WHERE strpos(lower(concat_ws(' ', w.ecosystem, w.name, w.version, w.symbol)), word) = 0

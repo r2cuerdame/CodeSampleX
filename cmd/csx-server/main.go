@@ -182,11 +182,14 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// safely backfilled into dependency_resolution (DependsOnNone) or
 	// dependency_edge. This unblocks dependency closure work and closes the
 	// gap where over 1,000 coordinates were classified as dependencyUnknown.
-	if reconciled, err := httpapi.ReconcileDependencyAtlas(ctx, pg, 2000); err != nil {
-		fmt.Fprintf(stderr, "csx-server: dependency atlas reconcile failed: %v\n", err)
-	} else if reconciled > 0 {
-		fmt.Fprintf(stdout, "csx-server: reconciled %d dependency observations into atlas\n", reconciled)
-	}
+	// Run in background so server boot, /healthz and deployment smoke tests are immediate.
+	go func() {
+		if reconciled, err := httpapi.ReconcileDependencyAtlas(ctx, pg, 2000); err != nil {
+			fmt.Fprintf(stderr, "csx-server: dependency atlas reconcile failed: %v\n", err)
+		} else if reconciled > 0 {
+			fmt.Fprintf(stdout, "csx-server: reconciled %d dependency observations into atlas\n", reconciled)
+		}
+	}()
 
 	// Apply the dedup retention window.
 	//
