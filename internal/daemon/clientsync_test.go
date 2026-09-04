@@ -62,6 +62,24 @@ func TestSyncOutlivesTheOrdinaryRequestTimeoutButStatusDoesNot(t *testing.T) {
 	}
 }
 
+func TestSyncUploadsSelectsTheUploadOnlyEndpoint(t *testing.T) {
+	seen := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"schemaVersion":1,"uploadedBatches":2}`))
+	}))
+	defer srv.Close()
+
+	res, err := clientForTest(srv.URL).SyncUploads(context.Background())
+	if err != nil || res.UploadedBatches != 2 {
+		t.Fatalf("SyncUploads = (%+v, %v)", res, err)
+	}
+	if query := <-seen; query != "uploadsOnly=1" {
+		t.Fatalf("SyncUploads query = %q, want uploadsOnly=1", query)
+	}
+}
+
 // clientForTest is a Client over an httptest server, with no transport of
 // its own so http() builds one bound by requestTimeout.
 func clientForTest(base string) *Client { return &Client{BaseURL: base} }

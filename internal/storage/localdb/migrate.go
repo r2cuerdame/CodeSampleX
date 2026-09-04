@@ -59,6 +59,18 @@ var ddl = []string{
 	`CREATE TABLE IF NOT EXISTS upload_queue(
 	  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
 	  payload TEXT NOT NULL, created_at TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
+	// Status is sampled frequently by the Farm. Its old queue-depth query
+	// materialized up to 1,000 complete observation rows (including long
+	// diagnostic strings) and up to 1,000 queued payloads every time. These
+	// narrow indexes let the diagnostic count keys instead of revisiting the
+	// payload-bearing tables (CodeSampleX-Farm#18).
+	`CREATE INDEX IF NOT EXISTS observations_pending
+	  ON observations(uploaded) WHERE uploaded = 0`,
+	`CREATE INDEX IF NOT EXISTS observations_legacy_windows
+	  ON observations(exit_code)
+	  WHERE exit_code > 2147483647 AND exit_code <= 4294967295`,
+	`CREATE INDEX IF NOT EXISTS upload_queue_pending
+	  ON upload_queue(attempts, kind, id)`,
 	`CREATE TABLE IF NOT EXISTS receipts(receipt_id TEXT PRIMARY KEY, sample_id TEXT, json TEXT, created_at TEXT)`,
 	// Every candidate a search scores has its receipts read, and there were
 	// 2,788 candidates on the machine where this was measured. Without this

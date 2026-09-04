@@ -18,20 +18,31 @@ import (
 
 // StatusInfo is the GET /local/v1/status body.
 type StatusInfo struct {
-	SchemaVersion     int    `json:"schemaVersion"`
-	Version           string `json:"version"`
-	Mode              string `json:"mode"`
-	Home              string `json:"home"`
-	PeerID            string `json:"peerId"`
-	Uptime            string `json:"uptime"`
-	QueueDepth        int    `json:"queueDepth"`
-	LastUpload        string `json:"lastUpload,omitempty"`
-	LastUploadAttempt string `json:"lastUploadAttempt,omitempty"`
-	LastUploadError   string `json:"lastUploadError,omitempty"`
+	SchemaVersion     int         `json:"schemaVersion"`
+	Version           string      `json:"version"`
+	Mode              string      `json:"mode"`
+	Home              string      `json:"home"`
+	PeerID            string      `json:"peerId"`
+	Uptime            string      `json:"uptime"`
+	QueueDepth        int         `json:"queueDepth"`
+	Queue             QueueCounts `json:"queue"`
+	LastUpload        string      `json:"lastUpload,omitempty"`
+	LastUploadAttempt string      `json:"lastUploadAttempt,omitempty"`
+	LastUploadError   string      `json:"lastUploadError,omitempty"`
 	// Sync is present only while a sync is running: which stage, how far
 	// through it, and when it began. A client waiting on POST /local/v1/sync
 	// polls this to say something during the minutes it takes.
 	Sync *SyncProgress `json:"sync,omitempty"`
+}
+
+// QueueCounts separates the two durable upload sources behind QueueDepth.
+// EvidenceBatches are pending observation aggregates. Uploads are the typed
+// upload_queue rows (adoption, wanted, search-hit, ...). Shard warming and its
+// retries are deliberately absent: they are reads, never queued uploads.
+type QueueCounts struct {
+	EvidenceBatches int            `json:"evidenceBatches"`
+	Uploads         int            `json:"uploads"`
+	UploadsByKind   map[string]int `json:"uploadsByKind,omitempty"`
 }
 
 // SyncProgress is where a running sync is.
@@ -144,7 +155,10 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		PeerID:        d.Ident.PeerID(),
 		Uptime:        d.uptime(),
 	}
-	st.QueueDepth, _ = d.queueDepth(ctx)
+	if q, err := d.queueCounts(ctx); err == nil {
+		st.Queue = q
+		st.QueueDepth = q.EvidenceBatches + q.Uploads
+	}
 	st.Sync = d.syncProgress()
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
 		st.LastUpload = v
@@ -165,17 +179,29 @@ func (d *Daemon) uptime() string {
 	return time.Since(d.start).Round(time.Second).String()
 }
 
-// queueDepth counts pending observation aggregates plus queued uploads.
+// queueCounts counts pending observation aggregates plus typed queued uploads
+// through narrow indexes. It preserves the former 1,000-per-source cap while
+// avoiding materialization of wide observation and JSON payload rows.
+func (d *Daemon) queueCounts(ctx context.Context) (QueueCounts, error) {
+	var out QueueCounts
+	n, err := d.DB.PendingObservationCount(ctx, 1000)
+	if err != nil {
+		return out, err
+	}
+	queued, err := d.DB.QueuePendingCounts(ctx, 1000)
+	if err != nil {
+		out.EvidenceBatches = n
+		return out, err
+	}
+	out.EvidenceBatches = n
+	out.Uploads = queued.Total
+	out.UploadsByKind = queued.ByKind
+	return out, nil
+}
+
 func (d *Daemon) queueDepth(ctx context.Context) (int, error) {
-	rows, err := d.DB.PendingObservations(ctx, 1000)
-	if err != nil {
-		return 0, err
-	}
-	items, err := d.DB.QueuePending(ctx, 1000)
-	if err != nil {
-		return len(rows), err
-	}
-	return len(rows) + len(items), nil
+	q, err := d.queueCounts(ctx)
+	return q.EvidenceBatches + q.Uploads, err
 }
 
 func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +406,12 @@ func (d *Daemon) queuePreview(ctx context.Context) (*QueuePreview, error) {
 }
 
 func (d *Daemon) handleSync(w http.ResponseWriter, r *http.Request) {
-	res := d.SyncNow(r.Context())
+	var res SyncResult
+	if r.URL.Query().Get("uploadsOnly") == "1" {
+		res = d.FlushNow(r.Context())
+	} else {
+		res = d.SyncNow(r.Context())
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 

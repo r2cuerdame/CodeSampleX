@@ -82,6 +82,23 @@ func (d *DB) LegacyWindowsObservations(ctx context.Context) ([]ObsRow, error) {
 	return out, rows.Err()
 }
 
+// LegacyWindowsObservationCount is the cheap eligibility probe used before
+// the full rolling-upgrade reconciliation. Most homes never wrote an unsigned
+// Windows exit status, so their empty upload path should stop at this partial
+// index instead of scanning historical observations.
+func (d *DB) LegacyWindowsObservationCount(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	var n int
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+		  SELECT 1 FROM observations INDEXED BY observations_legacy_windows
+		  WHERE exit_code > 2147483647 AND exit_code <= 4294967295 LIMIT ?
+		)`, limit).Scan(&n)
+	return n, err
+}
+
 // RequeueLegacyWindowsObservation marks one raw row pending only while its
 // latest combined total has not been acknowledged by an upgraded client.
 // The predicate makes concurrent upgraded callers idempotent; an old client
@@ -202,6 +219,23 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// PendingObservationCount counts pending aggregates without materializing
+// their payload-bearing rows. limit bounds the diagnostic just as the old
+// PendingObservations(ctx, 1000) call did; the partial observations_pending
+// index makes an empty queue an index probe rather than a database scan.
+func (d *DB) PendingObservationCount(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	var n int
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+		  SELECT 1 FROM observations INDEXED BY observations_pending
+		  WHERE uploaded = 0 LIMIT ?
+		)`, limit).Scan(&n)
+	return n, err
 }
 
 // ObservationCount returns the durable full-epoch count for one aggregate

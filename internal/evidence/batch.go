@@ -83,6 +83,26 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 	if b.Cfg == nil || b.Cfg.Mode != config.ModeCommunity {
 		return 0, nil
 	}
+	// The Farm invokes an upload-only sync as a liveness/flush operation. An
+	// empty queue used to enter the legacy reconciliation pass anyway, which
+	// revisits historical observations and may consume its whole 30-second
+	// budget before discovering there is nothing to send. Use the narrow
+	// pending index first: an empty queue is now a constant-work probe and
+	// performs no historical scan (CodeSampleX-Farm#18).
+	pending, err := b.DB.PendingObservationCount(ctx, 1)
+	if err != nil {
+		return 0, err
+	}
+	if pending == 0 {
+		legacy, err := b.DB.LegacyWindowsObservationCount(ctx, 1)
+		if err != nil {
+			return 0, err
+		}
+		if legacy == 0 {
+			b.noteReconcile(nil)
+			return 0, nil
+		}
+	}
 	// Housekeeping, and housekeeping never stops the delivery.
 	//
 	// This used to return the reconciliation's error straight out of Upload.

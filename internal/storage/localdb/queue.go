@@ -17,6 +17,13 @@ type QueueItem struct {
 	LastError string
 }
 
+// QueueCounts is a bounded diagnostic view of the retryable upload queue.
+// ByKind identifies what is waiting; shard warming never enters this table.
+type QueueCounts struct {
+	Total  int
+	ByKind map[string]int
+}
+
 // Enqueue appends a payload to the upload queue and returns its id.
 func (d *DB) Enqueue(ctx context.Context, kind, payload string) (int64, error) {
 	res, err := d.sql.ExecContext(ctx, `
@@ -65,6 +72,34 @@ func (d *DB) QueuePending(ctx context.Context, limit int) ([]QueueItem, error) {
 		it.CreatedAt = parseTimeText(created)
 		it.LastError = lastErr.String
 		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// QueuePendingCounts counts retryable upload rows without reading their JSON
+// payloads. limit preserves the status API's historical 1,000-row cap.
+func (d *DB) QueuePendingCounts(ctx context.Context, limit int) (QueueCounts, error) {
+	out := QueueCounts{ByKind: map[string]int{}}
+	if limit <= 0 {
+		return out, nil
+	}
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT kind, COUNT(*) FROM (
+		  SELECT kind FROM upload_queue INDEXED BY upload_queue_pending
+		  WHERE attempts < ? ORDER BY id LIMIT ?
+		) GROUP BY kind ORDER BY kind`, MaxQueueAttempts, limit)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			return out, err
+		}
+		out.ByKind[kind] = n
+		out.Total += n
 	}
 	return out, rows.Err()
 }
