@@ -192,6 +192,18 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 			t.Errorf("CMD agent prompt missing %q", want)
 		}
 	}
+	// CodeSampleX-Farm#14: the token reached agy's argv because it was in this
+	// prompt. It is carried in the environment now, so the prompt is clean and
+	// the script never puts it on a command line.
+	if strings.Contains(prompt, grant.Token) {
+		t.Error("session token leaked into the Windows agent prompt")
+	}
+	if !strings.Contains(script, `set "CSX_SESSION_TOKEN=`+grant.Token+`"`) {
+		t.Error("Windows CMD does not set CSX_SESSION_TOKEN")
+	}
+	if strings.Contains(script, "--token") {
+		t.Error("Windows CMD still passes --token on a command line")
+	}
 	if got := authoringWindowsCMD("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
 		t.Fatalf("non-AGY CMD = %q", got)
 	}
@@ -226,6 +238,17 @@ func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(script[start : start+end])
 	if err != nil || !strings.Contains(string(decoded), "Linux shell supervisor") {
 		t.Fatalf("Linux SH prompt = %q err=%v", decoded, err)
+	}
+	// CodeSampleX-Farm#14: token in the environment, never in the prompt or on
+	// a command line.
+	if strings.Contains(string(decoded), grant.Token) {
+		t.Error("session token leaked into the Linux agent prompt")
+	}
+	if !strings.Contains(script, `export CSX_SESSION_TOKEN='`+grant.Token+`'`) {
+		t.Error("Linux SH does not export CSX_SESSION_TOKEN")
+	}
+	if strings.Contains(script, "--token") {
+		t.Error("Linux SH still passes --token on a command line")
 	}
 	if got := authoringLinuxSH("https://codesamplex.dev", authoringGrant{Model: "codex"}); got != "" {
 		t.Fatalf("non-AGY Linux SH = %q", got)
@@ -333,6 +356,99 @@ func TestAuthoringPromptTellsAWriterHowToHandBackHopelessWork(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// decodeLinuxPrompt extracts and base64-decodes the agent prompt a generated
+// Linux worker script hands to `agy --print`.
+func decodeLinuxPrompt(t *testing.T, script string) string {
+	t.Helper()
+	const prefix = "CSX_PROMPT_B64='"
+	start := strings.Index(script, prefix)
+	if start < 0 {
+		t.Fatal("Linux SH prompt missing")
+	}
+	start += len(prefix)
+	end := strings.Index(script[start:], "'\n")
+	if end < 0 {
+		t.Fatal("Linux SH prompt terminator missing")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(script[start : start+end])
+	if err != nil {
+		t.Fatalf("decode Linux prompt: %v", err)
+	}
+	return string(decoded)
+}
+
+// decodeWindowsPrompt reassembles and base64-decodes the chunked agent prompt
+// a generated Windows worker script hands to `agy --print`.
+func decodeWindowsPrompt(t *testing.T, script string) string {
+	t.Helper()
+	var encoded strings.Builder
+	for _, line := range strings.Split(script, "\r\n") {
+		if !strings.HasPrefix(line, `set "CSX_PROMPT_B64_`) {
+			continue
+		}
+		sep := strings.IndexByte(line, '=')
+		if sep < 0 || !strings.HasSuffix(line, `"`) {
+			t.Fatalf("malformed prompt chunk %q", line)
+		}
+		encoded.WriteString(line[sep+1 : len(line)-1])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded.String())
+	if err != nil {
+		t.Fatalf("decode Windows prompt: %v", err)
+	}
+	return string(decoded)
+}
+
+// TestAuthoringScriptsKeepTheSessionTokenOutOfArgv is the CodeSampleX-Farm#14
+// regression: a generated worker script must carry the session bearer only in
+// an environment assignment, never on a --token argument and never inside the
+// base64 agent prompt that becomes `agy --print`'s world-readable argv. On
+// csx-farm-linux-1 that prompt put the token three times into
+// /proc/<agy-pid>/cmdline and into the systemd journal, where csxver could
+// read it. It fails before the fix and passes after.
+func TestAuthoringScriptsKeepTheSessionTokenOutOfArgv(t *testing.T) {
+	const token = "csx_author_v1_SECRETargvVALUE"
+	grant := authoringGrant{ID: "session-argv", Token: token, Label: "worker-argv", Model: "agy", Reasoning: "auto"}
+	scripts := map[string]string{
+		"linux":   authoringLinuxSH("https://codesamplex.dev", grant),
+		"windows": authoringWindowsCMD("https://codesamplex.dev", grant),
+	}
+	for name, script := range scripts {
+		// Exactly one plaintext occurrence: the environment assignment. The
+		// agent prompt is base64, so a token hidden there would not be counted
+		// here; the decode below is what catches that.
+		if got := strings.Count(script, token); got != 1 {
+			t.Errorf("%s: token appears %d plaintext time(s) in the script, want exactly 1 (the env assignment)", name, got)
+		}
+		if strings.Contains(script, "--token") {
+			t.Errorf("%s: a --token argument survived; the bearer must not reach argv", name)
+		}
+	}
+	if !strings.Contains(scripts["linux"], `export CSX_SESSION_TOKEN='`+token+`'`) {
+		t.Error("linux script does not export CSX_SESSION_TOKEN")
+	}
+	if !strings.Contains(scripts["windows"], `set "CSX_SESSION_TOKEN=`+token+`"`) {
+		t.Error("windows script does not set CSX_SESSION_TOKEN")
+	}
+	prompts := map[string]string{
+		"linux":   decodeLinuxPrompt(t, scripts["linux"]),
+		"windows": decodeWindowsPrompt(t, scripts["windows"]),
+	}
+	for name, prompt := range prompts {
+		if strings.Contains(prompt, token) {
+			t.Errorf("%s agent prompt still contains the session token", name)
+		}
+		// The agent is still told to do the same work; the commands simply
+		// carry no token because it inherits CSX_SESSION_TOKEN from the
+		// environment.
+		for _, want := range []string{"sample-worker refresh", "sample-worker next", "sample-worker submit <sampleId>"} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s agent prompt no longer instructs %q", name, want)
+			}
 		}
 	}
 }

@@ -151,3 +151,55 @@ func TestSampleWorkerSubmitUploadsLocalDraftWithoutPublishing(t *testing.T) {
 		t.Fatalf("stdout = %q", out.String())
 	}
 }
+
+// TestSampleWorkerReadsTokenFromEnvironment is the client half of
+// CodeSampleX-Farm#14: with no --token on the command line, the session bearer
+// is taken from CSX_SESSION_TOKEN, so a worker script never has to place it in
+// argv. The flag still wins when both are present.
+func TestSampleWorkerReadsTokenFromEnvironment(t *testing.T) {
+	const envToken = "csx_author_v1_env_only"
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"idleExpiresAt":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	defer srv.Close()
+
+	oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
+	t.Cleanup(func() { sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr = oldClient, oldOut, oldErr })
+	sampleWorkerClient = srv.Client()
+	var out, stderr bytes.Buffer
+	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+
+	// No --token argument at all.
+	t.Setenv("CSX_SESSION_TOKEN", envToken)
+	if code := sampleWorkerMain(context.Background(), []string{"refresh", "--server", srv.URL}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+	}
+	if gotAuth != "Bearer "+envToken {
+		t.Fatalf("authorization = %q, want the token from the environment", gotAuth)
+	}
+
+	// An explicit --token still overrides the environment.
+	if code := sampleWorkerMain(context.Background(), []string{"refresh", "--server", srv.URL, "--token", "csx_author_v1_flag_wins"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+	}
+	if gotAuth != "Bearer csx_author_v1_flag_wins" {
+		t.Fatalf("authorization = %q, want the flag to win over the environment", gotAuth)
+	}
+}
+
+// TestSampleWorkerNoTokenAnywhereFailsClosed keeps the missing-token guard: no
+// flag and no environment variable is still a usage error, not a request with
+// an empty bearer.
+func TestSampleWorkerNoTokenAnywhereFailsClosed(t *testing.T) {
+	oldOut, oldErr := sampleWorkerStdout, sampleWorkerStderr
+	t.Cleanup(func() { sampleWorkerStdout, sampleWorkerStderr = oldOut, oldErr })
+	var out, stderr bytes.Buffer
+	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+	t.Setenv("CSX_SESSION_TOKEN", "")
+	if code := sampleWorkerMain(context.Background(), []string{"refresh", "--server", "https://codesamplex.dev"}); code != 2 {
+		t.Fatalf("exit = %d, want 2 for a missing token", code)
+	}
+}
