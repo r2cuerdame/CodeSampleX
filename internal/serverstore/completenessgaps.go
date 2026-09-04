@@ -75,18 +75,14 @@ const (
 	// using hash joins instead of nested scalar subqueries.
 	completenessClassifiedSQL = `
 			WITH ` + completenessCoverageCTE + `, ` + completenessRelationsCTE + `,
-			evidence_purls AS MATERIALIZED (
-				SELECT DISTINCT purl FROM evidence_agg
-			),
 			classified AS MATERIALIZED (
 				SELECT (CASE WHEN v.purl IS NOT NULL THEN 'S' ELSE '-' END)
-				    || (CASE WHEN v.purl IS NOT NULL OR e.purl IS NOT NULL THEN 'E' ELSE '-' END)
+				    || (CASE WHEN v.purl IS NOT NULL OR EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl = pk.purl) THEN 'E' ELSE '-' END)
 				    || (CASE WHEN dep.purl IS NOT NULL OR rn.purl IS NOT NULL THEN 'D' ELSE '-' END) AS state,
 				       (rn.purl IS NOT NULL AND dep.purl IS NULL) AS proven_none,
 				       pk.ecosystem, pk.name, pk.version
 				  FROM packages pk
 				  LEFT JOIN verified_packages v ON v.purl = pk.purl
-				  LEFT JOIN evidence_purls e ON e.purl = pk.purl
 				  LEFT JOIN dependency_edge_parents dep ON dep.purl = pk.purl
 				  LEFT JOIN resolved_none rn ON rn.purl = pk.purl
 				 WHERE ` + completenessSubjectSQL + `
