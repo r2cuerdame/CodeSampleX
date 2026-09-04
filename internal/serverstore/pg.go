@@ -3015,7 +3015,7 @@ const listWantedSQL = `
 		       r.receipt->>'schemaVersion' AS schema_version,
 		       r.receipt->'stages'->>'resolve' AS resolve_stage,
 		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
-		  FROM candidate_samples cs
+		  FROM (SELECT DISTINCT sample_id FROM candidate_samples) cs
 		  CROSS JOIN LATERAL (
 		      SELECT r.receipt
 		        FROM receipts r
@@ -3042,6 +3042,18 @@ const listWantedSQL = `
 		                CASE WHEN left(wk.name, 1) = '@'
 		                     THEN '%40' || substring(wk.name from 2)
 		                     ELSE wk.name END || '@' || wk.version)
+		       )
+		       OR (
+		           cr.schema_version <> '2'
+		           AND EXISTS (
+		               SELECT 1
+		                 FROM sample_packages sp
+		                WHERE sp.sample_id = cs.sample_id
+		                  AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
+		                                 CASE WHEN left(wk.name, 1) = '@'
+		                                      THEN '%40' || substring(wk.name from 2)
+		                                      ELSE wk.name END || '@' || wk.version)
+		           )
 		       ))
 	), unanswered AS MATERIALIZED (
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,

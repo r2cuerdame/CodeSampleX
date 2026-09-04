@@ -957,14 +957,18 @@ fail=0
 check() {
     path="$1"; want_type="$2"; marker="$3"
     hdr=$(mktemp); body=$(mktemp)
-    # No `|| echo 000` here. curl already writes 000 to %{http_code} when it
-    # never got a response, so the fallback appended a SECOND 000 and the
-    # failure line read "HTTP 000000" — a status that does not exist, on the
-    # one line someone reads when a deploy has just broken the site.
-    code=$(curl --noproxy '*' --connect-timeout 5 --max-time 25 \
-        --resolve "$DOMAIN:443:127.0.0.1" \
-        -sS -D "$hdr" -o "$body" -w '%{http_code}' "https://$DOMAIN$path")
-    [ -n "$code" ] || code=000
+    code=000
+    for attempt in 1 2 3 4 5; do
+        code=$(curl --noproxy '*' --connect-timeout 5 --max-time 25 \
+            --resolve "$DOMAIN:443:127.0.0.1" \
+            -sS -D "$hdr" -o "$body" -w '%{http_code}' "https://$DOMAIN$path")
+        [ -n "$code" ] || code=000
+        if [ "$code" = "503" ] && [ "$attempt" -lt 5 ]; then
+            sleep 2
+            continue
+        fi
+        break
+    done
     if [ "$code" != "200" ]; then
         echo "FAIL $path: HTTP $code"; fail=1
     elif ! grep -qi "^content-type: *$want_type" "$hdr"; then
