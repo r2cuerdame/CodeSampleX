@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -100,8 +101,8 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 
 	coverage, err := h.farmStats.FarmCoverage(ctx)
 	if err != nil {
-		http.Error(w, "커버리지를 불러오지 못했습니다", http.StatusServiceUnavailable)
-		return
+		log.Printf("admin: farm coverage calculation failed (%v); continuing with empty coverage", err)
+		coverage = nil
 	}
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up

@@ -535,13 +535,9 @@ var authoringExpansionCandidatesSQL = `
 				SELECT c.* FROM fresh c
 				WHERE NOT EXISTS (
 				  SELECT 1 FROM authoring_assignments a
-				  LEFT JOIN samples s ON s.sample_id=a.sample_id
 				  WHERE a.ecosystem=c.ecosystem AND a.name=c.name
 				    AND a.version=c.version AND a.symbol=c.symbol
-				    AND (
-				      (a.sample_id IS NULL AND a.lease_expires_at > now())
-				      OR (s.sample_id IS NOT NULL AND NOT s.quarantined AND s.status IN ('VERIFIED','CROSS_PASS'))
-				    ))
+				    AND a.sample_id IS NOT NULL)
 			), spread AS (
 				-- How many jobs this version has already been offered higher up the
 				-- merit order. Ordering by it first means every version earns its
@@ -705,20 +701,7 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
 				ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-				ON CONFLICT(ecosystem,name,version,symbol) DO UPDATE SET
-					session_id=EXCLUDED.session_id,
-					claimed_at=EXCLUDED.claimed_at,
-					lease_expires_at=EXCLUDED.lease_expires_at,
-					asks=EXCLUDED.asks,
-					kind=EXCLUDED.kind,
-					score=EXCLUDED.score,
-					sample_id=NULL
-				WHERE authoring_assignments.sample_id IS NULL
-				   OR EXISTS (
-				     SELECT 1 FROM samples s
-				     WHERE s.sample_id=authoring_assignments.sample_id
-				       AND s.quarantined
-				   )
+				ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
 				RETURNING ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at,sample_id`,
 				candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
 				kind, candidate.Score, sessionID, now, leaseExpiresAt))
