@@ -175,6 +175,18 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Reconcile dependency atlas from verified sample receipts (#185).
+	//
+	// When samples are verified and receipts are recorded, coordinates that were
+	// proven in single-package recipes or explicit recipe dependencies can be
+	// safely backfilled into dependency_resolution (DependsOnNone) or
+	// dependency_edge. This unblocks dependency closure work and closes the
+	// gap where over 1,000 coordinates were classified as dependencyUnknown.
+	if reconciled, err := httpapi.ReconcileDependencyAtlas(ctx, pg, 2000); err != nil {
+		fmt.Fprintf(stderr, "csx-server: dependency atlas reconcile failed: %v\n", err)
+	} else if reconciled > 0 {
+		fmt.Fprintf(stdout, "csx-server: reconciled %d dependency observations into atlas\n", reconciled)
+	}
 
 	// Apply the dedup retention window.
 	//

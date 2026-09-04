@@ -163,3 +163,35 @@ func TestReceiptObservationsPassTheStoresOwnValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestReceiptObservationsReconstructDependencyAtlas(t *testing.T) {
+	// 1. Single-package receipt is a leaf dependency.
+	single := passReceipt(t, []string{"pkg:npm/is-number@7.0.0"},
+		map[string]string{"resolve": "PASS", "contract": "PASS"})
+	singleBatches := ObservationsFromReceipt(single)
+	var sawLeaf bool
+	for _, b := range singleBatches {
+		if b.Stage == domain.StageUsed && b.DependsOnNone {
+			sawLeaf = true
+		}
+	}
+	if !sawLeaf {
+		t.Fatal("single-package receipt did not produce DependsOnNone=true on StageUsed")
+	}
+
+	// 2. Multi-package receipt records edges from primary package.
+	multi := passReceipt(t, []string{"pkg:npm/express@4.18.2", "pkg:npm/body-parser@1.20.1", "pkg:npm/cookie@0.5.0"},
+		map[string]string{"resolve": "PASS", "contract": "PASS"})
+	multiBatches := ObservationsFromReceipt(multi)
+	var sawEdge bool
+	for _, b := range multiBatches {
+		if b.Package == "pkg:npm/express@4.18.2" && b.Stage == domain.StageUsed {
+			if len(b.DependsOn) == 2 && b.DependsOn[0] == "pkg:npm/body-parser@1.20.1" && b.DependsOn[1] == "pkg:npm/cookie@0.5.0" {
+				sawEdge = true
+			}
+		}
+	}
+	if !sawEdge {
+		t.Fatal("multi-package receipt did not record children under primary package DependsOn")
+	}
+}

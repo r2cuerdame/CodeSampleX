@@ -354,6 +354,57 @@ func ReconcileStrandedDrafts(ctx context.Context, store serverstore.Store, limit
 	return woken, nil
 }
 
+// ReconcileDependencyAtlas reconciles dependency edges and leaf states from verified samples.
+// It scans passing receipts of verified samples, producing DependsOn and DependsOnNone batches,
+// which in turn populate dependency_resolution and dependency_edge so the atlas is restored
+// and the scheduler has fresh work.
+func ReconcileDependencyAtlas(ctx context.Context, store serverstore.Store, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	ingestedTotal := 0
+	batchSize := 200
+	for offset := 0; offset < limit; offset += batchSize {
+		nFetch := batchSize
+		if offset+nFetch > limit {
+			nFetch = limit - offset
+		}
+		samples, err := store.ListSamplesPage(ctx, nFetch, offset)
+		if err != nil {
+			return ingestedTotal, err
+		}
+		if len(samples) == 0 {
+			break
+		}
+		for _, s := range samples {
+			if s.Quarantined {
+				continue
+			}
+			receipts, err := store.ReceiptsForSample(ctx, s.SampleID)
+			if err != nil || len(receipts) == 0 {
+				continue
+			}
+			for _, r := range receipts {
+				if r.ContractResult != "PASS" {
+					continue
+				}
+				batches := ObservationsFromReceipt(r)
+				if len(batches) == 0 {
+					continue
+				}
+				n, _, err := store.IngestBatches(ctx, batches)
+				if err == nil && n > 0 {
+					ingestedTotal += n
+				}
+			}
+		}
+		if len(samples) < nFetch {
+			break
+		}
+	}
+	return ingestedTotal, nil
+}
+
 // ReconcileCrossJobLanes re-derives what every reachable cross job may ask
 // for and reports how many it repaired and how many no lane can run.
 //

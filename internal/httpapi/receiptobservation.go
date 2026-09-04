@@ -71,7 +71,7 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 	epoch := r.CreatedAt.UTC().Format("2006-01-02")
 
 	var out []domain.ObservationBatch
-	for _, raw := range body.ResolvedPackages {
+	for idx, raw := range body.ResolvedPackages {
 		purl, err := domain.ParsePURL(raw)
 		if err != nil || !domain.ConcreteResolvedVersion(purl.Version) {
 			continue
@@ -81,7 +81,7 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 			if !ran {
 				continue
 			}
-			out = append(out, domain.ObservationBatch{
+			batch := domain.ObservationBatch{
 				SchemaVersion: 1,
 				Epoch:         epoch,
 				AnonID:        r.PeerID,
@@ -103,7 +103,24 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 				// The sample declares these packages; they are not something
 				// it received through somebody else's tree.
 				Direct: true,
-			})
+			}
+			if stage == domain.StageUsed {
+				if len(body.ResolvedPackages) == 1 {
+					batch.DependsOnNone = true
+				} else if idx == 0 {
+					kids := make([]string, 0, len(body.ResolvedPackages)-1)
+					for _, k := range body.ResolvedPackages[1:] {
+						if kp, err := domain.ParsePURL(k); err == nil && domain.ConcreteResolvedVersion(kp.Version) {
+							kids = append(kids, kp.String())
+						}
+					}
+					if len(kids) > domain.MaxDependsOnPerBatch {
+						kids = kids[:domain.MaxDependsOnPerBatch]
+					}
+					batch.DependsOn = kids
+				}
+			}
+			out = append(out, batch)
 		}
 	}
 	return out
