@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -333,5 +334,76 @@ func TestDefaultExactVersionURLs(t *testing.T) {
 		if got := c.versionURL(tc.purl); got != tc.want {
 			t.Errorf("versionURL(%s) = %q, want %q", tc.purl.String(), got, tc.want)
 		}
+	}
+}
+
+// TestCratesIOCrawlerPolicyProbeIsIdentified pins #176's root cause. crates.io
+// answers 403 to a request whose User-Agent does not identify the caller, and
+// 403 is neither PUBLIC's 200 nor PRIVATE's 404, so the verdict was UNKNOWN —
+// uncached, re-probed forever, and refused at ingest. This server enforces the
+// same policy, so an anonymous probe fails it exactly as the real one did.
+func TestCratesIOCrawlerPolicyProbeIsIdentified(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("User-Agent")
+		if seen == "" || strings.HasPrefix(seen, "Go-http-client/") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &Checker{BaseURLs: map[string]string{"cargo": srv.URL}}
+	p := domain.PURL{Ecosystem: "cargo", Name: "tokio", Version: "1.43.0"}
+	if got := c.Check(context.Background(), p); got != scanner.PublicnessPublic {
+		t.Fatalf("Check = %q, want PUBLIC (User-Agent %q was refused)", got, seen)
+	}
+}
+
+// TestEveryRegistryProbeSendsUserAgent covers the probe paths that build their
+// own request. The composer path decodes a body and the archive paths use HEAD,
+// so a User-Agent set on only one of them would leave the others anonymous.
+func TestEveryRegistryProbeSendsUserAgent(t *testing.T) {
+	for _, tc := range []struct {
+		ecosystem string
+		name      string
+		version   string
+	}{
+		{"npm", "react", "19.0.0"},
+		{"pypi", "requests", "2.32.3"},
+		{"cargo", "tokio", "1.43.0"},
+		{"golang", "github.com/gin-gonic/gin", "v1.10.0"},
+		{"gem", "rack", "3.2.4"},
+		{"composer", "guzzlehttp/guzzle", "7.10.0"},
+		{"hex", "req", "0.5.15"},
+		{"pub", "http", "1.5.0"},
+		{"maven", "com.google.guava/guava", "33.4.0-jre"},
+		{"cargo", "tokio", ""}, // name-only probe
+	} {
+		t.Run(tc.ecosystem+"/"+tc.version, func(t *testing.T) {
+			var agents []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				agents = append(agents, r.Header.Get("User-Agent"))
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"packages":{"guzzlehttp/guzzle":[{"version":"7.10.0"}]}}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			c := &Checker{BaseURLs: map[string]string{tc.ecosystem: srv.URL}}
+			c.Check(context.Background(), domain.PURL{
+				Ecosystem: tc.ecosystem,
+				Name:      tc.name,
+				Version:   tc.version,
+			})
+			if len(agents) == 0 {
+				t.Fatal("no request reached the registry")
+			}
+			for _, agent := range agents {
+				if agent != userAgent {
+					t.Fatalf("User-Agent = %q, want %q", agent, userAgent)
+				}
+			}
+		})
 	}
 }
