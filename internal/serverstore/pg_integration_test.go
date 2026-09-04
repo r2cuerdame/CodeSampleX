@@ -190,6 +190,51 @@ func TestIntegrationAuthoringSessionsPersistRefreshAndRevoke(t *testing.T) {
 	}
 }
 
+func TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	firstSeen := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	lastSeen := firstSeen.Add(time.Hour)
+	rows := []ClusterRow{
+		{Ecosystem: "npm", PackageName: "batch-boundary", Symbol: "parse", Stage: "PROJECT_TEST", ErrorFingerprint: "fp-a", ObservationCount: 7, FirstSeen: firstSeen, LastSeen: lastSeen},
+		{Ecosystem: "npm", PackageName: "batch-boundary", Symbol: "render", Stage: "PROJECT_TEST", ErrorFingerprint: "fp-b", ObservationCount: 9, FirstSeen: firstSeen, LastSeen: lastSeen},
+	}
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	xmin := func(symbol string) string {
+		t.Helper()
+		var got string
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			return c.QueryRow(ctx, `SELECT xmin::text FROM failure_clusters
+				WHERE ecosystem='npm' AND package_name='batch-boundary' AND symbol=$1`, symbol).Scan(&got)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	before := xmin("parse")
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if after := xmin("parse"); after != before {
+		t.Fatalf("unchanged cluster was rewritten: xmin %s -> %s", before, after)
+	}
+
+	rows[0].ObservationCount = 8
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if after := xmin("parse"); after == before {
+		t.Fatalf("changed cluster was not rewritten: xmin stayed %s", before)
+	}
+	got, err := pg.ListFailureClusters(ctx, "batch-boundary")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("clusters = %d, err=%v", len(got), err)
+	}
+}
+
 func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()

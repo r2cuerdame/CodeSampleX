@@ -2355,7 +2355,63 @@ func (p *PG) IdentityByAPIToken(ctx context.Context, apiTokenHash string) (Ident
 
 // --------------------------------------------------------------- clusters --
 
-func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
+const upsertFailureClusterSQL = `
+	INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
+		error_code, observation_count, env_summary, hypotheses,
+		regression_candidate, versions, termination_kind, exit_code, signal,
+		timeout_millis, error_summary, evidence_quality, env_variants,
+		evidence_breakdown, diagnostic_candidate, outer_commands, actual_toolchain,
+		stage_evidence, failure_evidence_gap, first_seen, last_seen)
+	VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+	       $21,$22,$23,$24,COALESCE($25, now()),COALESCE($26, now()))
+	ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
+		error_code = EXCLUDED.error_code,
+		observation_count = EXCLUDED.observation_count,
+		env_summary = EXCLUDED.env_summary,
+		hypotheses = EXCLUDED.hypotheses,
+		regression_candidate = EXCLUDED.regression_candidate,
+		versions = EXCLUDED.versions,
+		termination_kind = EXCLUDED.termination_kind,
+		exit_code = EXCLUDED.exit_code,
+		signal = EXCLUDED.signal,
+		timeout_millis = EXCLUDED.timeout_millis,
+		error_summary = EXCLUDED.error_summary,
+		evidence_quality = EXCLUDED.evidence_quality,
+		env_variants = EXCLUDED.env_variants,
+		evidence_breakdown = EXCLUDED.evidence_breakdown,
+		diagnostic_candidate = EXCLUDED.diagnostic_candidate,
+		outer_commands = EXCLUDED.outer_commands,
+		actual_toolchain = EXCLUDED.actual_toolchain,
+		stage_evidence = EXCLUDED.stage_evidence,
+		failure_evidence_gap = EXCLUDED.failure_evidence_gap,
+		first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+		last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)
+	WHERE (failure_clusters.error_code, failure_clusters.observation_count,
+		failure_clusters.env_summary, failure_clusters.hypotheses,
+		failure_clusters.regression_candidate, failure_clusters.versions,
+		failure_clusters.termination_kind, failure_clusters.exit_code,
+		failure_clusters.signal, failure_clusters.timeout_millis,
+		failure_clusters.error_summary, failure_clusters.evidence_quality,
+		failure_clusters.env_variants, failure_clusters.evidence_breakdown,
+		failure_clusters.diagnostic_candidate, failure_clusters.outer_commands,
+		failure_clusters.actual_toolchain, failure_clusters.stage_evidence,
+		failure_clusters.failure_evidence_gap, failure_clusters.first_seen,
+		failure_clusters.last_seen)
+	IS DISTINCT FROM
+		(EXCLUDED.error_code, EXCLUDED.observation_count,
+		 EXCLUDED.env_summary, EXCLUDED.hypotheses,
+		 EXCLUDED.regression_candidate, EXCLUDED.versions,
+		 EXCLUDED.termination_kind, EXCLUDED.exit_code,
+		 EXCLUDED.signal, EXCLUDED.timeout_millis,
+		 EXCLUDED.error_summary, EXCLUDED.evidence_quality,
+		 EXCLUDED.env_variants, EXCLUDED.evidence_breakdown,
+		 EXCLUDED.diagnostic_candidate, EXCLUDED.outer_commands,
+		 EXCLUDED.actual_toolchain, EXCLUDED.stage_evidence,
+		 EXCLUDED.failure_evidence_gap,
+		 LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+		 GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen))`
+
+func failureClusterArgs(cl ClusterRow) []any {
 	var envSummary, hypotheses, versions []byte
 	envVariants := []byte("[]")
 	evidenceBreakdown := []byte("{}")
@@ -2378,46 +2434,47 @@ func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	if len(cl.OuterCommands) > 0 {
 		outerCommands, _ = json.Marshal(cl.OuterCommands)
 	}
+	return []any{
+		cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
+		cl.ErrorCode, cl.ObservationCount, envSummary, hypotheses,
+		cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
+		cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
+		envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
+		outerCommands, cl.ActualToolchain, cl.StageEvidence, cl.FailureEvidenceGap,
+		nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen),
+	}
+}
+
+func (p *PG) UpsertFailureCluster(ctx context.Context, cl ClusterRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
-			INSERT INTO failure_clusters(ecosystem, package_name, symbol, stage, error_fp,
-				error_code, observation_count, env_summary, hypotheses,
-				regression_candidate, versions, termination_kind, exit_code, signal,
-				timeout_millis, error_summary, evidence_quality, env_variants,
-				evidence_breakdown, diagnostic_candidate, outer_commands, actual_toolchain,
-				stage_evidence, failure_evidence_gap, first_seen, last_seen)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-			       $21,$22,$23,$24,COALESCE($25, now()),COALESCE($26, now()))
-			ON CONFLICT (ecosystem, package_name, symbol, stage, error_fp) DO UPDATE SET
-				error_code = EXCLUDED.error_code,
-				observation_count = EXCLUDED.observation_count,
-				env_summary = EXCLUDED.env_summary,
-				hypotheses = EXCLUDED.hypotheses,
-				regression_candidate = EXCLUDED.regression_candidate,
-				versions = EXCLUDED.versions,
-				termination_kind = EXCLUDED.termination_kind,
-				exit_code = EXCLUDED.exit_code,
-				signal = EXCLUDED.signal,
-				timeout_millis = EXCLUDED.timeout_millis,
-				error_summary = EXCLUDED.error_summary,
-				evidence_quality = EXCLUDED.evidence_quality,
-				env_variants = EXCLUDED.env_variants,
-				evidence_breakdown = EXCLUDED.evidence_breakdown,
-				diagnostic_candidate = EXCLUDED.diagnostic_candidate,
-				outer_commands = EXCLUDED.outer_commands,
-				actual_toolchain = EXCLUDED.actual_toolchain,
-				stage_evidence = EXCLUDED.stage_evidence,
-				failure_evidence_gap = EXCLUDED.failure_evidence_gap,
-				first_seen = LEAST(COALESCE(failure_clusters.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
-				last_seen = GREATEST(COALESCE(failure_clusters.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen)`,
-			cl.Ecosystem, cl.PackageName, cl.Symbol, cl.Stage, cl.ErrorFingerprint,
-			cl.ErrorCode, cl.ObservationCount, envSummary, hypotheses,
-			cl.RegressionCandidate, versions, cl.TerminationKind, cl.ExitCode,
-			cl.Signal, cl.TimeoutMillis, cl.ErrorSummary, cl.EvidenceQuality,
-			envVariants, evidenceBreakdown, cl.DiagnosticCandidate,
-			outerCommands, cl.ActualToolchain, cl.StageEvidence, cl.FailureEvidenceGap,
-			nullableTime(cl.FirstSeen), nullableTime(cl.LastSeen))
+		_, err := c.Exec(ctx, upsertFailureClusterSQL, failureClusterArgs(cl)...)
 		return err
+	})
+}
+
+// UpsertFailureClusters writes one rebuilt package's clusters in one
+// transaction. The builder used to pay one durable commit and one pool
+// checkout per row. A production package with 1,161 clusters consequently
+// spent minutes in this loop even though its indexed evidence read took
+// 232ms. One package is the correctness boundary and the transaction
+// boundary: readers continue to see the prior complete package aggregate
+// until its replacement is durable.
+func (p *PG) UpsertFailureClusters(ctx context.Context, clusters []ClusterRow) error {
+	if len(clusters) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		for _, cl := range clusters {
+			if _, err := tx.Exec(ctx, upsertFailureClusterSQL, failureClusterArgs(cl)...); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
 	})
 }
 
