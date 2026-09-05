@@ -87,7 +87,7 @@ func ConfigFromEnv() ServerConfig {
 //	CSX_DB_MAX_CONNS     total connections (default 8)
 //	CSX_DB_PROBE_RESERVE connections only /healthz may take (default 1)
 //	CSX_DB_READ_CONNS    ceiling on user-facing reads (default 6)
-//	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 5)
+//	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 4)
 //	CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none (default 8s)
 //	CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (3s)
 //	CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz (default 2s)
