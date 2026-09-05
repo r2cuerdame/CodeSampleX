@@ -1158,6 +1158,71 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   padding-left: 0.8rem;
   border-left: 3px solid var(--line-strong);
 }
+.feature-page__overview {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+.feature-page__overview-heading { display: grid; gap: 0.2rem; }
+.feature-page__overview-heading > * { margin: 0; }
+.feature-page__overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  min-width: 0;
+}
+.feature-page__capability {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem 1rem;
+  min-width: 0;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+.feature-page__capability:hover {
+  border-color: var(--line-strong);
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+.feature-page__capability-copy { display: grid; gap: 0.3rem; min-width: 0; }
+.feature-page__capability-copy strong { font-size: 1rem; }
+.feature-page__capability-copy > span { color: var(--dim); font-size: 0.84rem; }
+.feature-page__capability-code {
+  grid-column: 1;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.22rem 0.42rem;
+  border-radius: 0.45rem;
+  background: var(--bg);
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.feature-page__capability-arrow {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--accent);
+  font: 800 1.2rem var(--mono);
+}
+.feature-page__reference-intro {
+  scroll-margin-top: 5.5rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--line);
+}
+.feature-page__reference-intro > * { margin: 0; }
+.feature-page__reference-intro h2 {
+  max-width: 72ch;
+  margin-top: 0.35rem;
+  color: var(--dim);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
 .feature-page__summary {
   padding: clamp(1rem, 3vw, 1.4rem);
   border: 1px solid var(--line);
@@ -1346,6 +1411,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .feature-page :where(code, pre, p, dd, a, span) { min-width: 0; }
 
 @media (max-width: 40rem) {
+  .feature-page__overview-grid,
   .feature-page__summary ul,
   .feature-page__group-heading,
   .feature-page__explain-grid,
