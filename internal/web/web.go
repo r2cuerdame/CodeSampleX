@@ -728,6 +728,54 @@ type basePage struct {
 	Related []relatedLink
 	path    string
 	query   url.Values // current query without lang
+	// canonLang is the locale THE REQUESTED URL names, which is not always
+	// the locale being served. See canonicalLangOf.
+	canonLang string
+}
+
+// canonicalLangOf is the locale the request URL itself identifies.
+//
+// It is deliberately not the negotiated language. negotiate resolves
+// ?lang= → cookie → Accept-Language, and building rel=canonical from that
+// made one address declare different canonicals to different callers:
+// measured on production, `GET /npm/nanoid` with `Accept-Language: ko`
+// answered `<link rel="canonical" href="/npm/nanoid?lang=ko">`, telling
+// every locale-adaptive crawl that the canonical package page is a
+// duplicate of its Korean query variant. That is the ?lang= cannibalization
+// Search Console reports against the package and version routes.
+//
+// A canonical has to be a function of the address and of nothing else, so
+// only an explicit ?lang= in the URL may put one in it. The page still
+// renders in the negotiated language and still advertises the whole
+// hreflang cluster, so no translation is hidden — the ?lang= URLs remain
+// indexable in their own right, each self-canonical.
+func canonicalLangOf(r *http.Request) string {
+	lang, _ := requestedLang(r)
+	return lang
+}
+
+// requestedLang reports the locale the URL's own query names, and whether it
+// named one at all. The landing needs the difference: its cluster is
+// path-prefixed, so "no ?lang=" means "read the locale off the path" while
+// an explicit ?lang= overrides the path.
+func requestedLang(r *http.Request) (lang string, explicit bool) {
+	if q := r.URL.Query().Get("lang"); q != "" {
+		if l, ok := i18n.Canonical(q); ok {
+			return l, true
+		}
+	}
+	return i18n.Default, false
+}
+
+// canonicalURL decorates base+path with the locale the request URL named.
+// Handlers that override the canonical (a collection dropping its filters,
+// a sample naming its readable address) go through here so every canonical
+// on the site is built the same way.
+func (b basePage) canonicalURL(base, path string) string {
+	if b.canonLang == "" || b.canonLang == i18n.Default {
+		return base + path
+	}
+	return base + path + "?lang=" + url.QueryEscape(b.canonLang)
 }
 
 // buildLine is the server-identity line in the footer: which build of this
@@ -903,19 +951,19 @@ func (s *site) page(r *http.Request, lang, title, desc string) basePage {
 	// single indexed page, which is the opposite of what translating them
 	// was for. It matches the hreflang set below now, so each language is
 	// self-canonical.
-	canonical := base + path
-	if lang != i18n.Default {
-		canonical += "?lang=" + url.QueryEscape(lang)
-	}
+	//
+	// The language it carries is the one the URL names, never the one
+	// negotiated from a header or a cookie: canonicalLangOf says why.
 	b := basePage{
 		Lang:        lang,
 		Title:       title,
 		Description: desc,
-		Canonical:   canonical,
 		Build:       buildLineFor(s.d.Build, lang),
 		path:        path,
 		query:       q,
+		canonLang:   canonicalLangOf(r),
 	}
+	b.Canonical = b.canonicalURL(base, path)
 	b.Alternates = queryAlternates(base, path)
 	// Derived from the path rather than set by each handler: the five
 	// collections were reachable from one another only through the header,

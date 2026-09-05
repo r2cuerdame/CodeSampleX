@@ -1076,12 +1076,26 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Translated: the <html lang> said one language while the title was
 	// always English, which is the first thing a search result shows.
 	title := i18n.T(lang, "title.compatibility", name, eco) + " — CodeSampleX"
-	b := s.page(r, lang, title, i18n.T(lang, "meta.explorer", name+" ("+eco+")"))
+	// Facts first, for the reason packageEvidenceFacts records: this page's
+	// description was the one sentence every package page in the corpus
+	// shared, and a result that looks like every other result is not clicked
+	// from position seven either.
+	desc := metaDescription(packageEvidenceFacts(lang, versions, samples),
+		i18n.T(lang, "meta.explorer", name+" ("+eco+")"))
+	b := s.page(r, lang, title, desc)
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
 		{eco, base + compatibilityHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
 		{name, base + pkgHref(eco, name)},
 	})}
+	// What this page is and what is on it: the releases of one package, in
+	// the order it lists them. Without it the only structured statement the
+	// package page made was its breadcrumb, which says where the page sits
+	// and nothing about the release pages it is the hub for.
+	if entries := releaseCollectionEntries(base, eco, name, versions); len(entries) > 0 {
+		b.JSONLD = append(b.JSONLD, collectionJSONLD(b.Canonical,
+			i18n.T(lang, "title.compatibility", name, eco), desc, entries))
+	}
 	s.render(w, "package", http.StatusOK, packagePage{
 		basePage: b, Ecosystem: eco, Name: name,
 		Versions: versionRows(b, eco, name, versions, samples),
@@ -1181,12 +1195,11 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// of every package, which is a description a search engine is free to
 	// ignore and rewrite. What makes THIS release's page worth opening is
 	// what was actually recorded against it, so the environments and the
-	// verified answers are named. Both come from data already on the page;
+	// published answers lead, and the generic sentence follows in whatever
+	// budget is left. Both facts come from data already on the page;
 	// neither is claimed when it is empty.
-	desc := i18n.T(lang, "meta.explorer", name+"@"+version)
-	if facts := releaseEvidenceFacts(lang, matrix, samples); facts != "" {
-		desc += " " + facts
-	}
+	desc := metaDescription(releaseEvidenceFacts(lang, matrix, samples),
+		i18n.T(lang, "meta.explorer", name+"@"+version))
 	b := s.page(r, lang, title, desc)
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
@@ -1462,13 +1475,20 @@ const metaContextLimit = 4
 
 // releaseEvidenceFacts is the release-specific half of a version page's
 // meta description: the environments this release was actually recorded in,
-// and how many verified answers were written against it.
+// and how many published samples were written against it.
 //
 // The searches that reach these pages are release lookups ("eslint 9.39.5",
 // "nanoid 3.3.17") and environment questions ("<package> node 22",
 // "<package> windows"). Those are answerable here — but only from what was
 // measured, so a dimension with nothing behind it contributes nothing
 // rather than a plausible-sounding blank.
+//
+// The count is of PUBLISHED samples, not verified ones. It used to say
+// "verified", counting every row versionSamples returns — and levelBadge,
+// twenty lines up, exists precisely because publication does not imply a
+// contract pass: `csx sample publish` requires no `csx sample verify` and a
+// POST to /v1/samples needs no receipt. The badge on the page refuses that
+// claim, so the snippet that brings a reader to the page may not make it.
 func releaseEvidenceFacts(lang string, matrix []matrixRow, samples []SampleListItem) string {
 	seen := map[string]bool{}
 	contexts := make([]string, 0, metaContextLimit)
@@ -1488,9 +1508,80 @@ func releaseEvidenceFacts(lang string, matrix []matrixRow, samples []SampleListI
 		parts = append(parts, i18n.T(lang, "meta.recorded_in", strings.Join(contexts, " · ")))
 	}
 	if n := len(samples); n > 0 {
-		parts = append(parts, i18n.T(lang, "meta.verified_answers", i18n.FormatInt(lang, int64(n))))
+		parts = append(parts, i18n.T(lang, "meta.published_answers", i18n.FormatInt(lang, int64(n))))
 	}
 	return strings.Join(parts, " ")
+}
+
+// packageEvidenceFacts is the package-specific half of a package page's meta
+// description: which releases this page actually carries evidence for, and
+// how many published samples stand behind them.
+//
+// It exists for the same measured reason releaseEvidenceFacts does, one
+// route family up. In the 2026-08-06..09-02 Search Console window the query
+// "nanoid npm" put /npm/nanoid in front of 54 people at position 7.31 and
+// nobody clicked, and the snippet is why: every package page in the corpus
+// carried one sentence with only the package name substituted into it, so
+// thousands of results looked like one result repeated. The release list and
+// the sample count are what differ between them.
+func packageEvidenceFacts(lang string, versions []string, samples []SampleListItem) string {
+	var parts []string
+	if len(versions) > 0 {
+		shown := versions
+		if len(shown) > metaVersionLimit {
+			shown = shown[:metaVersionLimit]
+		}
+		parts = append(parts, i18n.T(lang, "meta.releases_listed", strings.Join(shown, " · ")))
+	}
+	// Saturated reads say nothing. PackageSamples is capped at
+	// packageSampleLimit, so at the cap the true total is unknown and a
+	// number printed here would be the limit rather than the corpus.
+	if n := len(samples); n > 0 && n < packageSampleLimit {
+		parts = append(parts, i18n.T(lang, "meta.published_samples", i18n.FormatInt(lang, int64(n))))
+	}
+	return strings.Join(parts, " ")
+}
+
+// releaseCollectionEntries names the release pages a package page links to,
+// in the order the page lists them.
+//
+// Only releases the router can serve: versionHref is what the rows link to,
+// so an entry here resolves to the same address a reader would click. An
+// ItemList that named a URL the site does not serve would be a structured
+// claim about pages that do not exist.
+func releaseCollectionEntries(base, eco, name string, versions []string) []collectionEntry {
+	entries := make([]collectionEntry, 0, len(versions))
+	for _, v := range versions {
+		if v == "" {
+			continue
+		}
+		entries = append(entries, collectionEntry{
+			Name: name + " " + v,
+			URL:  base + versionHref(eco, name, v),
+		})
+	}
+	return entries
+}
+
+// metaVersionLimit bounds how many releases a package description names.
+// Four is what fits beside the rest of the sentence inside Google's
+// description budget; the page itself lists them all.
+const metaVersionLimit = 4
+
+// metaDescription assembles a meta description facts-first and cuts it to
+// the budget a search engine actually renders.
+//
+// Order is the whole point. The generic sentence used to come first and the
+// measured facts after it, which put the identical half of every page in
+// the visible ~160 characters and the distinguishing half past the cut:
+// /npm/axios/1.19.0 shipped a 223-character description whose first 130
+// characters were the same as every other release page on the site. Leading
+// with the facts makes each snippet its own, and truncateOnBoundary — the
+// same budget serpcopy.go holds sample pages to — stops the crawler from
+// choosing the cut.
+func metaDescription(facts, generic string) string {
+	out := strings.TrimSpace(facts + " " + generic)
+	return truncateOnBoundary(out, descriptionBudget)
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,10 +1822,7 @@ func (s *site) records(w http.ResponseWriter, r *http.Request) {
 	// slice separately would just split the page's signal — but the language
 	// is not a slice of the same page, it is a different page, and dropping
 	// it here made every translation point at the English one.
-	b.Canonical = s.base(r) + "/compatibility"
-	if lang != i18n.Default {
-		b.Canonical += "?lang=" + url.QueryEscape(lang)
-	}
+	b.Canonical = b.canonicalURL(s.base(r), "/compatibility")
 	view.basePage = b
 	for _, h := range hits {
 		key := h.Ecosystem + "/" + h.Name
@@ -2081,10 +2169,7 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	if semantic != "" {
 		pageURL = base + semantic
 		if r.URL.Path != semantic {
-			b.Canonical = pageURL
-			if lang != i18n.Default {
-				b.Canonical += "?lang=" + url.QueryEscape(lang)
-			}
+			b.Canonical = b.canonicalURL(base, semantic)
 			// hreflang describes the locale cluster of the CANONICAL page.
 			// Emitting this address's own cluster while the canonical points
 			// elsewhere is a contradiction, and a crawler resolves a
