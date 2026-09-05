@@ -21,6 +21,8 @@ type DependencyEdge struct {
 	ChildName     string
 	ChildVersion  string
 	Projects      int
+	SameReceipt   bool
+	Outcome       string
 }
 
 // edgeClaims turns one batch into the edges it witnesses, as (parent, child)

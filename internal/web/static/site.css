@@ -2323,6 +2323,7 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 
 .shipswith .dep-row.dep-health-fail { background: rgba(220, 38, 38, 0.04); }
 .shipswith .dep-row.dep-health-mixed { background: rgba(217, 119, 6, 0.04); }
+.shipswith .dep-row.dep-health-candidate { background: rgba(217, 119, 6, 0.02); }
 .shipswith .depbadge {
   display: inline-block;
   padding: 0.15rem 0.45rem;

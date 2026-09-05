@@ -715,7 +715,9 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 		out = append(out, web.DependencyEdge{
 			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
 			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
-			Projects: int64(r.Projects),
+			Projects:    int64(r.Projects),
+			SameReceipt: r.SameReceipt,
+			Outcome:     r.Outcome,
 		})
 	}
 	return out, nil
@@ -1551,7 +1553,9 @@ func (w *webStore) DependencyParents(ctx context.Context, ecosystem, name, versi
 		out = append(out, web.DependencyEdge{
 			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
 			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
-			Projects: int64(r.Projects),
+			Projects:    int64(r.Projects),
+			SameReceipt: r.SameReceipt,
+			Outcome:     r.Outcome,
 		})
 	}
 	return out, nil
