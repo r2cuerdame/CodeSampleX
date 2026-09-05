@@ -1,7 +1,7 @@
 // Package cli is the csx command dispatcher (contract C9). It is
-// deliberately extensible: each command lives in its own file and
-// registers itself from init(), so later waves add commands without
-// editing any shared file.
+// deliberately extensible: each shipped command lives in its own file and
+// registers itself from init(), so the command surface can grow without
+// editing a central dispatcher.
 package cli
 
 import (

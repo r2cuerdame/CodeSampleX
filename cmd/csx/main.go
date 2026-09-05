@@ -1,5 +1,5 @@
-// Command csx is the CodeSampleX local client: evidence-recording command
-// wrapper today; daemon, MCP server, and sample tooling in later waves.
+// Command csx is the CodeSampleX local client: CLI dispatcher, evidence wrapper,
+// daemon controller, MCP server, sample workflow, updater, and verifier worker.
 package main
 
 import (

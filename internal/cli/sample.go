@@ -56,7 +56,7 @@ var (
 func init() {
 	Register(Command{
 		Name:    "sample",
-		Summary: "clean-room public sample workflow: propose|create|preview|verify|publish|remove|list",
+		Summary: "clean-room public sample workflow: propose|create|preview|verify|publish|remove|list|pending",
 		Run:     sampleMain,
 	})
 }
