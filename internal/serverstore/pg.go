@@ -1339,11 +1339,11 @@ func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRo
 // field here — a query that looked like a hash would match one row and teach
 // the reader nothing.
 //
-// ILIKE over the manifest text rather than a tsvector: the corpus is
-// thousands of rows, the query runs behind a page of 24, and a full-text index
-// on a JSON column would be a schema commitment made before anybody has typed
-// into this box. When that stops being true the query changes and this comment
-// is the reason why.
+// The pg_trgm expression index keeps the literal substring contract: unlike a
+// tsvector it still matches partial package coordinates, symbols and prose.
+// R2C-190 measured this path at 4.92s p50 over 7,012 public samples because it
+// scanned lower(manifest::text) twice, once for count and once for the page.
+// count(*) OVER() gives the common in-range page its total in that same scan.
 func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset int) ([]SampleRow, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -1355,41 +1355,49 @@ func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset 
 	var out []SampleRow
 	total := 0
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		// Probe limit + 1 rows first. When the total result set fits within
-		// limit and offset == 0, total == len(out) is exact and avoids running
-		// the expensive unindexed table scan count(*) over JSONB manifests.
-		fetchLimit := limit + 1
 		rows, err := c.Query(ctx, `
-			SELECT `+sampleCols+` FROM samples
+			SELECT `+sampleCols+`, count(*) OVER() FROM samples
 			WHERE NOT quarantined AND lower(manifest::text) LIKE $1
-			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, pattern, fetchLimit, offset)
+			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, pattern, limit, offset)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			s, err := scanSample(rows)
+			s, count, err := scanSampleWithTotal(rows)
 			if err != nil {
 				return err
 			}
+			total = count
 			out = append(out, s)
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
-
-		if offset == 0 && len(out) <= limit {
-			total = len(out)
-			return nil
+		// A request beyond the last page has no window row carrying the total.
+		// Preserve the old pagination semantics with a count only for that rare
+		// stale/out-of-range link; normal and empty first pages stay one query.
+		if len(out) == 0 && offset > 0 {
+			return c.QueryRow(ctx, `
+				SELECT count(*) FROM samples
+				WHERE NOT quarantined AND lower(manifest::text) LIKE $1`, pattern).Scan(&total)
 		}
-		if len(out) > limit {
-			out = out[:limit]
-		}
-		return c.QueryRow(ctx, `
-			SELECT count(*) FROM samples
-			WHERE NOT quarantined AND lower(manifest::text) LIKE $1`, pattern).Scan(&total)
+		return nil
 	})
 	return out, total, err
+}
+
+func scanSampleWithTotal(row pgx.Row) (SampleRow, int, error) {
+	var s SampleRow
+	var created *time.Time
+	var total int
+	err := row.Scan(&s.SampleID, &s.CaseID, &s.ManifestJSON, &s.Status,
+		&s.OriginSeeder, &s.License, &s.SizeBytes, &s.HotScore, &created,
+		&s.Quarantined, &s.QuarantineReason, &total)
+	if created != nil {
+		s.CreatedAt = *created
+	}
+	return s, total, err
 }
 
 // DependencyProvenNone reports whether a resolver read this release's own

@@ -49,11 +49,14 @@ const (
 	// cached before its first search, not that it mirrors the network.
 	hotShardLimit = 50
 	// hotShardRequestWait is the only time GET /v1/stats spends on the hint.
-	// It is about five times the healthy measured cost of the read and about
-	// five times below the ceiling the production deploy smoke puts on this
-	// endpoint, so a healthy server always carries the key and a saturated
-	// one still answers.
-	hotShardRequestWait = 2 * time.Second
+	// Production-scale measurement for R2C-190 found the four-read refresh no
+	// longer finishes inside the former two-second wait: /healthz (the same
+	// stats-row read) had a 0.69s median while /v1/stats had a 2.85s median.
+	// The optional hint therefore consumed its entire budget on every poll.
+	// Give an already-finishing refresh a small scheduling window, then serve
+	// the stats row; the detached single-flight still fills the cache for a
+	// later poll without changing any evidence in the document.
+	hotShardRequestWait = 25 * time.Millisecond
 	// hotShardLoadTimeout bounds the shared read, which deliberately outlives
 	// the caller that started it. Each statement inside it is still capped by
 	// the interactive class's own eight-second ceiling; this bounds the

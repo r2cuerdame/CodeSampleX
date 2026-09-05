@@ -90,7 +90,6 @@ func TestStatsAnswersWithoutWaitingForASlowHotShardHint(t *testing.T) {
 	store := newBlockingHotShards()
 	srv, _, _ := newTestServer(t, func(d *Deps) {
 		d.Store = store
-		d.hotShardWait = 50 * time.Millisecond
 	})
 	// A built shard exists, so a missing key can only be the budget.
 	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
@@ -107,7 +106,7 @@ func TestStatsAnswersWithoutWaitingForASlowHotShardHint(t *testing.T) {
 	if _, ok := doc["packages"]; !ok {
 		t.Errorf("the stats document itself was dropped along with the hint: %v", doc)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 500*time.Millisecond {
 		t.Errorf("GET /v1/stats took %s with the hint blocked; the request was not bounded", elapsed)
 	}
 

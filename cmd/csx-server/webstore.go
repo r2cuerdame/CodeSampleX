@@ -65,6 +65,7 @@ type webStore struct {
 	targetsRetryAt    time.Time
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
+	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
 	pkgSamples         sync.Map // key: "eco|name", value: cachedPackageSamples
 	pkgCounts          sync.Map // key: "eco|name", value: cachedPackageCounts
 	pkgFailureClusters sync.Map // key: "eco|name", value: cachedFailureClusters
@@ -116,6 +117,11 @@ type cachedDependencySubjects struct {
 type cachedPackageSamples struct {
 	at    time.Time
 	items []web.SampleListItem
+}
+
+type cachedPackageVersions struct {
+	at       time.Time
+	versions []string
 }
 
 type cachedPackageCounts struct {
@@ -436,6 +442,14 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 }
 
 func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
+	key := ecosystem + "|" + name
+	now := time.Now()
+	if val, ok := w.pkgVersions.Load(key); ok {
+		entry := val.(cachedPackageVersions)
+		if now.Sub(entry.at) < packageDetailCacheTTL {
+			return append([]string(nil), entry.versions...), nil
+		}
+	}
 	rows, err := w.s.ListPackageVersions(ctx, ecosystem, name)
 	if err != nil {
 		return nil, err
@@ -468,6 +482,7 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 			versions = append(versions, r.Version)
 		}
 	}
+	w.pkgVersions.Store(key, cachedPackageVersions{at: now, versions: append([]string(nil), versions...)})
 	return versions, nil
 }
 
@@ -1428,10 +1443,11 @@ func (w *webStore) refreshHotPackages() {
 
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
 	cacheKey := ecosystem + "|" + name
+	now := time.Now()
 	if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
 		entry := val.(cachedFailureClusters)
-		if time.Since(entry.at) < packageDetailCacheTTL {
-			return entry.docs, entry.matched, nil
+		if now.Sub(entry.at) < packageDetailCacheTTL {
+			return append([]string(nil), entry.docs...), entry.matched, nil
 		}
 	}
 	rows, err := w.s.ListFailureClusters(ctx, name)
@@ -1493,8 +1509,8 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		out = append(out, string(b))
 	}
 	w.pkgFailureClusters.Store(cacheKey, cachedFailureClusters{
-		at:      time.Now(),
-		docs:    out,
+		at:      now,
+		docs:    append([]string(nil), out...),
 		matched: matched,
 	})
 	return out, matched, nil
@@ -1554,7 +1570,6 @@ func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error
 }
 
 // CompletenessGaps carries the census's own rows to the page.
-//
 const (
 	gapsCacheTTL       = 5 * time.Minute
 	gapsRefreshTimeout = 2 * time.Minute
