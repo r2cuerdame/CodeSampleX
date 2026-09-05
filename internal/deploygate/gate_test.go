@@ -130,6 +130,36 @@ func TestEvidenceAggDirectIdxMigrationIsAutomaticAdditive(t *testing.T) {
 	}
 }
 
+func TestSamplesManifestTrgmIdxMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0034_samples_manifest_trgm_idx.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read samples manifest trgm index migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("samples manifest trgm index migration rejected: %v", err)
+	}
+}
+
+func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0035_authoring_work_axis.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read authoring work axis migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("authoring work axis migration rejected: %v", err)
+	}
+}
+
 func TestSamplePackageProjectionExceptionRemainsFailClosed(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {

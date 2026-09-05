@@ -77,6 +77,11 @@ var evidenceAggDirectIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS evidence_agg_direct_purl_idx ON evidence_agg (purl) WHERE direct`,
 }
 
+var samplesManifestTrgmIdxStatements = []string{
+	`CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public`,
+	`CREATE INDEX IF NOT EXISTS samples_manifest_lower_trgm_idx ON samples USING gin ((lower(manifest::text)) public.gin_trgm_ops) WHERE NOT quarantined`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -121,6 +126,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact evidence agg direct index allowlist", name)
+	}
+	if name == "0034_samples_manifest_trgm_idx.sql" {
+		if exactStatements(statements, samplesManifestTrgmIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact samples manifest trgm index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

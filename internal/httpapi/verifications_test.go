@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -428,3 +429,39 @@ func TestRecomputeStatusCanDowngrade(t *testing.T) {
 		t.Fatalf("status = %q, want MATRIX_PASS once two described environments differ", got)
 	}
 }
+
+func TestVerificationExecutionPopulatesSymbolObservationLedger(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	sampleID := saveSampleForVerification(t, store, "2b")
+
+	origin, _ := newPeer(t)
+	env := nodeEnv("esm")
+
+	receipt := signedReceipt(t, origin, sampleID, env, "PASS")
+	receipt.SchemaVersion = 2
+	receipt.ResolvedPackages = []string{"pkg:npm/axios@1.12.0"}
+	receipt.PeerSignature = base64.StdEncoding.EncodeToString(ed25519.Sign(origin, receipt.SigningBytes()))
+
+	var out verifyResponse
+	resp := postJSON(t, srv.URL+"/v1/verifications", receipt, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The sample manifest declares "axios.post". Verification execution must
+	// populate evidence_agg for that exact symbol at StageProjectTest.
+	rows, err := store.EvidenceForTarget(context.Background(), "pkg:npm/axios@1.12.0", "axios.post")
+	if err != nil {
+		t.Fatalf("EvidenceForTarget: %v", err)
+	}
+	var sawTestPass bool
+	for _, row := range rows {
+		if row.Symbol == "axios.post" && row.Stage == string(domain.StageProjectTest) && row.Result == string(domain.ResultPass) {
+			sawTestPass = true
+		}
+	}
+	if !sawTestPass {
+		t.Fatalf("expected StageProjectTest observation for symbol 'axios.post', got rows: %+v", rows)
+	}
+}
+

@@ -212,7 +212,7 @@ func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSes
 	if err != nil {
 		return authoringCandidateSnapshot{}, err
 	}
-	rows, eerr := expansion(ctx, 200)
+	rows, eerr := expansion(ctx, 400)
 	switch {
 	case eerr == nil:
 		snap.expansion = rows

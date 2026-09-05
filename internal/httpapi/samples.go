@@ -384,11 +384,13 @@ func ReconcileDependencyAtlas(ctx context.Context, store serverstore.Store, limi
 			if err != nil || len(receipts) == 0 {
 				continue
 			}
+			var manifest domain.SampleManifest
+			_ = json.Unmarshal([]byte(s.ManifestJSON), &manifest)
 			for _, r := range receipts {
 				if r.ContractResult != "PASS" {
 					continue
 				}
-				batches := ObservationsFromReceipt(r)
+				batches := ObservationsFromReceipt(r, manifest.Symbols...)
 				if len(batches) == 0 {
 					continue
 				}

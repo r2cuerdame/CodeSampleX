@@ -611,7 +611,7 @@ var authoringExpansionCandidatesSQL = `
 				  SELECT 1 FROM authoring_assignments a
 				  WHERE a.ecosystem=c.ecosystem AND a.name=c.name
 				    AND a.version=c.version AND a.symbol=c.symbol AND a.axis=c.axis
-				    AND a.sample_id IS NOT NULL)
+				    AND (a.sample_id IS NOT NULL OR a.lease_expires_at > now()))
 			), spread AS (
 				-- How many jobs this version has already been offered higher up the
 				-- merit order. Ordering by it first means every version earns its

@@ -540,7 +540,7 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	// Best-effort and after the receipt is safely stored: the receipt is the
 	// artifact, and losing an observation must never lose one. Ingest is
 	// idempotent by (peer, coordinate, day), so a retry adds nothing.
-	if batches := ObservationsFromReceipt(receiptRow); len(batches) > 0 {
+	if batches := ObservationsFromReceipt(receiptRow, manifest.Symbols...); len(batches) > 0 {
 		_, _, _ = a.d.Store.IngestBatches(ctx, batches)
 	}
 

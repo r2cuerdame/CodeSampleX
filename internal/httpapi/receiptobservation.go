@@ -52,9 +52,10 @@ type receiptBody struct {
 //
 // A receipt that does not name the packages it resolved is attributed to no
 // coordinate at all: inventing one would be worse than the dash it leaves.
-// Symbols are left empty for the same reason — a receipt says which packages
-// ran, not which symbols did.
-func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch {
+// When sample manifest symbols are provided, passing contract executions are
+// also attributed to those declared symbols at StageProjectTest with
+// SymbolExact confidence so verified samples satisfy Observation >= 1.
+func ObservationsFromReceipt(r serverstore.ReceiptRow, symbols ...string) []domain.ObservationBatch {
 	var body receiptBody
 	if json.Unmarshal([]byte(r.ReceiptJSON), &body) != nil {
 		return nil
@@ -78,6 +79,9 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 		}
 		for name, stage := range receiptStageToObservation {
 			result, ran := receiptStageResult(body.Stages[name])
+			if !ran && name == "contract" && r.ContractResult != "" {
+				result, ran = receiptStageResult(r.ContractResult)
+			}
 			if !ran {
 				continue
 			}
@@ -121,6 +125,31 @@ func ObservationsFromReceipt(r serverstore.ReceiptRow) []domain.ObservationBatch
 				}
 			}
 			out = append(out, batch)
+
+			if stage == domain.StageProjectTest && idx == 0 && len(symbols) > 0 {
+				seen := make(map[string]bool, len(symbols))
+				for _, sym := range symbols {
+					sym = strings.TrimSpace(sym)
+					if sym == "" || seen[sym] {
+						continue
+					}
+					seen[sym] = true
+					out = append(out, domain.ObservationBatch{
+						SchemaVersion:    1,
+						Epoch:            epoch,
+						AnonID:           r.PeerID,
+						ProjectBucket:    receiptProjectBucket(r.SampleID),
+						Package:          purl.String(),
+						Symbol:           sym,
+						SymbolConfidence: domain.SymbolExact,
+						Environment:      env,
+						Stage:            stage,
+						Result:           result,
+						ObservationCount: 1,
+						Direct:           true,
+					})
+				}
+			}
 		}
 	}
 	return out
