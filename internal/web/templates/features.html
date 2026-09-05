@@ -9,7 +9,7 @@
   <section class="feature-page__overview" aria-labelledby="product-capabilities-heading">
     <header class="feature-page__overview-heading">
       <p class="eyebrow mono">CodeSampleX</p>
-      <h2 id="product-capabilities-heading">{{.T "features.summary"}}</h2>
+      <h2 id="product-capabilities-heading">{{.T "features.overview"}}</h2>
     </header>
     <div class="feature-page__overview-grid">
       {{range .Overview}}
@@ -40,21 +40,6 @@
     <p class="eyebrow mono">MCP · API</p>
     <h2 id="developer-reference-heading">{{.T "features.scope"}}</h2>
   </section>
-
-  <nav class="feature-page__summary" aria-labelledby="feature-summary-heading">
-    <h2 id="feature-summary-heading">{{.T "features.summary"}}</h2>
-    <ul>
-      {{range .Groups}}
-      <li>
-        <a href="#feature-group-{{.ID}}">
-          <strong>{{.Title}}</strong>
-          <span>{{.Summary}}</span>
-          <span class="feature-page__tool-count mono">{{$.P "features.n_tools" (len .Tools)}}</span>
-        </a>
-      </li>
-      {{end}}
-    </ul>
-  </nav>
 
   {{range .Groups}}
   <section class="feature-page__group" id="feature-group-{{.ID}}" aria-labelledby="feature-group-{{.ID}}-heading">
