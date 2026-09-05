@@ -58,6 +58,121 @@ func openTestPG(t *testing.T) *PG {
 	return openTestPGWithPolicy(t, DefaultPoolPolicy())
 }
 
+func TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	for i, goal := range []string{"connect pgx pool", "close pgx pool", "unrelated axios request"} {
+		manifest := fmt.Sprintf(`{"goal":%q,"packages":["pkg:golang/github.com/jackc/pgx/v5@v5.10.0"],"symbols":[]}`, goal)
+		if i == 2 {
+			manifest = fmt.Sprintf(`{"goal":%q,"packages":["pkg:npm/axios@1.0.0"],"symbols":[]}`, goal)
+		}
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: fmt.Sprintf("sha256:search-%d", i), ManifestJSON: manifest}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, total, err := pg.SearchSamplesPage(ctx, "PGX", 1, 0)
+	if err != nil || len(rows) != 1 || total != 2 {
+		t.Fatalf("first search page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	rows, total, err = pg.SearchSamplesPage(ctx, "pgx", 1, 99)
+	if err != nil || len(rows) != 0 || total != 2 {
+		t.Fatalf("past-last search page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+}
+
+// This is the safe production-scale reproduction for R2C-190. Production had
+// 7,012 public samples when /samples?q=pgx measured 4.92s p50. The production
+// query was not EXPLAIN ANALYZE'd because it was already slow and contending
+// with the builder; this disposable schema uses the same cardinality,
+// predicate, ordering and representative multi-kilobyte manifests instead.
+func TestIntegrationProductionScaleSampleSearchPlan(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		if _, err := c.Exec(ctx, `
+			INSERT INTO samples(sample_id, manifest, size_bytes, created_at)
+			SELECT 'sha256:scale-' || n,
+			       jsonb_build_object(
+			         'goal', CASE WHEN n % 70 = 0 THEN 'connect pgx pool ' ELSE 'ordinary sample ' END || repeat('x', 2048),
+			         'packages', jsonb_build_array(CASE WHEN n % 70 = 0
+			           THEN 'pkg:golang/github.com/jackc/pgx/v5@v5.10.0'
+			           ELSE 'pkg:npm/example@1.0.0' END),
+			         'symbols', jsonb_build_array('example.call')),
+			       2048, now() - make_interval(secs => n)
+			FROM generate_series(1, 7012) AS n`); err != nil {
+			return err
+		}
+		if _, err := c.Exec(ctx, `ANALYZE samples`); err != nil {
+			return err
+		}
+		if _, err := c.Exec(ctx, `DROP INDEX samples_manifest_lower_trgm_idx`); err != nil {
+			return err
+		}
+		beforeCount, err := explainLines(ctx, c, `
+			EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+			SELECT count(*) FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE '%pgx%'`)
+		if err != nil {
+			return err
+		}
+		beforePage, err := explainLines(ctx, c, `
+			EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+			SELECT `+sampleCols+` FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE '%pgx%'
+			ORDER BY created_at DESC, sample_id LIMIT 24 OFFSET 0`)
+		if err != nil {
+			return err
+		}
+		t.Logf("production-scale old count plan:\n%s", strings.Join(beforeCount, "\n"))
+		t.Logf("production-scale old page plan:\n%s", strings.Join(beforePage, "\n"))
+
+		if _, err := c.Exec(ctx, `
+			CREATE INDEX samples_manifest_lower_trgm_idx
+			ON samples USING gin ((lower(manifest::text)) public.gin_trgm_ops)
+			WHERE NOT quarantined`); err != nil {
+			return err
+		}
+		if _, err := c.Exec(ctx, `ANALYZE samples`); err != nil {
+			return err
+		}
+		after, err := explainLines(ctx, c, `
+			EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+			SELECT `+sampleCols+`, count(*) OVER() FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE '%pgx%'
+			ORDER BY created_at DESC, sample_id LIMIT 24 OFFSET 0`)
+		if err != nil {
+			return err
+		}
+		afterText := strings.Join(after, "\n")
+		t.Logf("production-scale indexed one-query plan:\n%s", afterText)
+		if !strings.Contains(afterText, "samples_manifest_lower_trgm_idx") {
+			return fmt.Errorf("indexed plan did not use samples_manifest_lower_trgm_idx:\n%s", afterText)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func explainLines(ctx context.Context, c *pgx.Conn, query string) ([]string, error) {
+	rows, err := c.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return nil, err
+		}
+		out = append(out, line)
+	}
+	return out, rows.Err()
+}
+
 // openTestPGWithPolicy is openTestPG with the pool policy named, so a
 // test about timeouts and admission can use budgets small enough to run
 // in seconds instead of waiting out the shipped ones.
