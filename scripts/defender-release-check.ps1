@@ -86,7 +86,8 @@ function Get-Scanner {
     # Defender updates itself into a versioned platform directory and leaves
     # the Program Files copy behind as an older stub, so the newest platform
     # build is the one whose verdict real-time protection would give.
-    $root = Join-Path $env:ProgramData 'Microsoft\Windows Defender\Platform'
+    $progData = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
+    $root = Join-Path $progData 'Microsoft\Windows Defender\Platform'
     if (Test-Path -LiteralPath $root) {
         $candidate = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
             Sort-Object Name -Descending |
@@ -95,7 +96,8 @@ function Get-Scanner {
             Select-Object -First 1
         if ($candidate) { return $candidate }
     }
-    $fallback = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+    $progFiles = if ($env:ProgramFiles) { $env:ProgramFiles } else { 'C:\Program Files' }
+    $fallback = Join-Path $progFiles 'Windows Defender\MpCmdRun.exe'
     if (Test-Path -LiteralPath $fallback) { return $fallback }
     Fail-Unmeasured 'MpCmdRun.exe was not found; this machine has no Defender scanner to ask'
 }
@@ -113,6 +115,9 @@ function Get-DefinitionVersion {
 # file with the same exit code it uses for "threats found", so the caller must
 # have confirmed the file exists first -- otherwise a typo reads as malware.
 function Invoke-Scan([string] $Scanner, [string] $File) {
+    if (-not $env:SystemDrive) { $env:SystemDrive = 'C:' }
+    if (-not $env:ProgramData) { $env:ProgramData = 'C:\ProgramData' }
+    if (-not $env:ProgramFiles) { $env:ProgramFiles = 'C:\Program Files' }
     $raw = & $Scanner -Scan -ScanType 3 -File $File -DisableRemediation 2>&1 | Out-String
     if ($raw -match 'found no threats') { return 'CLEAN' }
     if (($raw -match 'found\s+\d+\s+threats?') -or ($raw -match 'LIST OF DETECTED THREATS')) {
@@ -168,7 +173,7 @@ function Get-ReleaseTargets([string] $ReleaseTag, [string[]] $Architectures, [st
 
 # ---------------------------------------------------------------- main ------
 
-if ($env:OS -ne 'Windows_NT') { Fail-Unmeasured 'this check only exists where Defender does' }
+if ($env:OS -ne 'Windows_NT' -and [System.Environment]::OSVersion.Platform -ne 'Win32NT') { Fail-Unmeasured 'this check only exists where Defender does' }
 
 $scanner = Get-Scanner
 $definitions = Get-DefinitionVersion
