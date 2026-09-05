@@ -157,7 +157,7 @@ func DefaultPoolPolicy() PoolPolicy {
 		MaxConns:         defaultMaxConns,
 		ProbeReserve:     1,
 		InteractiveConns: 6,
-		BackgroundConns:  5,
+		BackgroundConns:  4,
 		ReadTimeout:      8 * time.Second,
 		ReadWait:         3 * time.Second,
 		// The probe's two budgets add up to the 3s deadline handleHealthz

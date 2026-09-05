@@ -350,6 +350,55 @@ func TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates(t *testing.T)
 	}
 }
 
+func TestIntegrationFailureClusterBatchPipelining(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	firstSeen := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	lastSeen := firstSeen.Add(time.Hour)
+
+	const n = 100
+	rows := make([]ClusterRow, n)
+	for i := 0; i < n; i++ {
+		rows[i] = ClusterRow{
+			Ecosystem:        "npm",
+			PackageName:      "pipelined-batch",
+			Symbol:           fmt.Sprintf("sym-%d", i),
+			Stage:            "PROJECT_TEST",
+			ErrorFingerprint: fmt.Sprintf("fp-%d", i),
+			ObservationCount: int64(i + 1),
+			FirstSeen:        firstSeen,
+			LastSeen:         lastSeen,
+		}
+	}
+
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatalf("upsert batch of %d: %v", n, err)
+	}
+
+	got, err := pg.ListFailureClusters(ctx, "pipelined-batch")
+	if err != nil || len(got) != n {
+		t.Fatalf("ListFailureClusters = %d rows (err=%v), want %d", len(got), err, n)
+	}
+
+	// Re-upsert with no changes should succeed cleanly as no-ops.
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatalf("re-upsert unchanged batch: %v", err)
+	}
+
+	// Update half of the rows and re-upsert.
+	for i := 0; i < n/2; i++ {
+		rows[i].ObservationCount += 10
+	}
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatalf("re-upsert partially updated batch: %v", err)
+	}
+
+	gotAfter, err := pg.ListFailureClusters(ctx, "pipelined-batch")
+	if err != nil || len(gotAfter) != n {
+		t.Fatalf("ListFailureClusters after partial update = %d, want %d", len(gotAfter), n)
+	}
+}
+
 func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
