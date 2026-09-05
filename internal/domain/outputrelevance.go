@@ -174,18 +174,24 @@ func (r SearchResult) RelevanceSignals(req SearchRequest, argv []string) []strin
 		add(RelevanceSameTool)
 	}
 
+	// The caller's own words, never the coordinate lines we wrote about
+	// their run. See SearchRequest.CallerQuestion: the three signals below
+	// are the three this gate promotes on from free text, and all three
+	// could be earned by our own sanitized-failure header alone.
+	question := req.CallerQuestion()
+
 	text := r.subjectText()
-	for _, code := range requestDiagnostics(req) {
+	for _, code := range requestDiagnostics(question, req.ErrorCode) {
 		if searchrelevance.ContainsIdentifier(text, code) {
 			add(RelevanceSharedDiagnostic)
 			break
 		}
 	}
 
-	if searchrelevance.NamesSubject(req.Query, r.packageNames(), declared) {
+	if searchrelevance.NamesSubject(question, r.packageNames(), declared) {
 		add(RelevanceNamedSubject)
 	}
-	if sameGoalSemantics(req.Query, r.Case.Goal) {
+	if sameGoalSemantics(question, r.Case.Goal) {
 		add(RelevanceGoalSemantics)
 	}
 	return out
@@ -372,12 +378,15 @@ func (r SearchResult) subjectText() string {
 // requestDiagnostics is every error identifier the request carries. A code
 // the caller declared is taken at its word; one lifted out of free text has
 // to look like a code, because most words do not.
-func requestDiagnostics(req SearchRequest) []string {
+//
+// question is the caller's words rather than the whole query: our own stage
+// names, PROJECT_TEST and PROJECT_COMPILE, satisfy diagnosticToken exactly.
+func requestDiagnostics(question, declaredCode string) []string {
 	var out []string
-	if code := strings.TrimSpace(req.ErrorCode); code != "" {
+	if code := strings.TrimSpace(declaredCode); code != "" {
 		out = append(out, code)
 	}
-	for _, field := range strings.FieldsFunc(req.Query, func(r rune) bool {
+	for _, field := range strings.FieldsFunc(question, func(r rune) bool {
 		return !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_')
 	}) {
 		if isDiagnosticToken(field) {

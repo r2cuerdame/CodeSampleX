@@ -1697,7 +1697,13 @@ func failureQuestion(sanitized []string) (query, errorCode string) {
 		}
 		lines = append(lines, line)
 	}
-	return strings.TrimSpace(strings.Join(lines, " ")), errorCode
+	// Joined as lines, not as one run-on string. The sanitized failure IS
+	// lines, and the gate downstream has to tell our own coordinate lines
+	// apart from what the toolchain printed — see
+	// domain.SearchRequest.CallerQuestion. Flattened to spaces they are one
+	// paragraph and the boundary is gone. Tokenization is unchanged either
+	// way: every reader of this text splits on non-alphanumerics.
+	return strings.TrimSpace(strings.Join(lines, "\n")), errorCode
 }
 
 // renderDemotedCandidate is everything a gated hit is allowed to say after a

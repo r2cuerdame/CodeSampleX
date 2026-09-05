@@ -35,6 +35,18 @@ var genericWords = map[string]bool{
 	"package": true, "packages": true, "module": true, "modules": true,
 	"helper": true, "helpers": true,
 
+	// Build scaffolding. These name a LOCATION inside a project, never a
+	// library: every ecosystem puts sources under src, entry points under
+	// cmd or bin, and helpers under internal, test or examples. As
+	// identifier tokens they are also the words every build failure prints,
+	// which is how google.golang.org/grpc/test/bufconn came to be "named"
+	// by a Go test failure that said nothing but "test".
+	"test": true, "tests": true, "testing": true, "spec": true,
+	"specs": true, "internal": true, "cmd": true, "src": true, "bin": true,
+	"build": true, "builds": true, "dist": true, "example": true,
+	"examples": true, "sample": true, "samples": true, "demo": true,
+	"demos": true,
+
 	// These are especially common protocol/runtime nouns. Treating symbol
 	// subtokens as identifiers made JSON-RPC/process.stdin questions match
 	// unrelated model, JSON, server, and process APIs.
