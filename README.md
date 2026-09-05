@@ -28,24 +28,59 @@ Which is why a miss is not empty. When nothing has been proven for your case the
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
 - The answer it gives: *here is what happened, and here is where it ran.* Never who: reporters are anonymous peer buckets, and no identity is collected to show.
 
+## What ships today
+
+CodeSampleX is no longer just a search command. The shipped product now exposes several surfaces, all backed by the same evidence model:
+
+| Surface | Current role |
+|---|---|
+| [Compatibility](https://codesamplex.dev/compatibility) | browse recorded compatibility by package, version, symbol and environment |
+| [Dependencies](https://codesamplex.dev/dependencies) | reverse dependency atlas: which recorded parent releases pulled a dependency release; an edge is **not** a compatibility verdict |
+| [Gaps](https://codesamplex.dev/gaps) | completeness census across Sample / Evidence / Dependency, replacing the old website Wanted ranking |
+| [Findings](https://codesamplex.dev/findings) | measured contradictions and version/environment boundaries backed by reproducible samples |
+| [Features](https://codesamplex.dev/features) | current MCP tool contracts and public read API |
+| [Samples](https://codesamplex.dev/samples) · [Adapters](https://codesamplex.dev/adapters) · [Stats](https://codesamplex.dev/stats) | verified artifacts, ecosystem capability matrix, and public network rollups |
+
+The CLI is the canonical local interface. `csx help` is generated from the commands in the binary; this table is pinned to it by a test so a new command cannot silently outgrow the README.
+
+<!-- BEGIN:CSX-CLI-SURFACE -->
+| Command | What it does |
+|---|---|
+| `config` | read or change local settings |
+| `daemon` | run, start, stop, or inspect the background sync daemon |
+| `hook` | enable, disable, inspect, or self-test the automatic build-failure lookup installed into supported coding agents |
+| `init` | choose community/local-only mode, configure agents, warm the first cache, and start background sync |
+| `login` | sign in with GitHub when you want attributed sample publishing |
+| `mcp` | run the stdio MCP server used by agent clients |
+| `mcp-config` | print JSON/TOML/path configuration for MCP clients |
+| `run` | run a command and record sanitized evidence for public dependencies |
+| `sample` | propose, create, preview, verify, publish, remove, list, or review pending clean-room samples |
+| `sample-worker` | operate the private authoring work/session handoff lane |
+| `scan` | detect public dependencies without running a build |
+| `search` | search verified samples graded against the target environment |
+| `stats` | show local cache, queue, hit, and adoption counters |
+| `sync` | warm compatibility shards and flush queued community uploads (`--uploads-only` when needed) |
+| `ui` | open the local dashboard and privacy preview |
+| `update` | securely check, install, inspect, or roll back signed updates |
+| `version` | print the installed csx version |
+| `worker` | contribute Docker-isolated cross/matrix verification work |
+<!-- END:CSX-CLI-SURFACE -->
+
+The network also installs an optional **build-failure hook** into supported coding agents. When an agent's shell build fails, the hook classifies the failing build step, sanitizes the error locally, searches CodeSampleX, and stays silent on a miss or unrelated command. `csx hook status` shows what is installed; `csx hook check` proves the registered hook path with a throwaway failing build.
+
 ## Does it run there?
 
-Every result is a recorded execution with its environment attached, so the data pivots into compatibility matrices — version × symbol, OS × runtime, version × architecture. A real slice, copied from the live network on 2026-08-23:
+Every result is tied to the environment that produced it, so the same data can be pivoted into version × symbol, OS × runtime, version × architecture, browser/runtime, libc, and other recorded dimensions. Use the [live compatibility explorer](https://codesamplex.dev/compatibility) or a package page such as [pgx/v5](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5) for current counts; the README deliberately does not freeze live network numbers into a dated screenshot. The shape below is illustrative only:
 
 ```text
-                                         v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ▤ 82% 1209  ▤ 100% 2  ▤ —
-Batch                                    ▤ 80% 689   —         —
-ParseConfig                              ▤ 82% 1188  —         —
+                                         v5.10.0     v5.9.2
+github.com/jackc/pgx/v5                  ▤ —         —
+Batch                                    ▤ —         —
 ```
 
-That grid is not an illustration — it is [the live page](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5), so the numbers above have moved on since they were copied.
+A matrix cell carries **observations** and, when available, a sample document. Observation counts say what recorded builds reached — compile, typecheck, test — and are counts of neither users nor machines. The sample document says that a reproducible contract exists at that coordinate; its state reflects those sample verification runs. Those two evidence classes are deliberately never added together.
 
-**A cell carries a rate and one mark, and never a verdict.** The percentage and the number beside it are observations: 82% of 1,209 recorded observations got through. An observation is one stage a build reached — compile, typecheck, test — so a single build files several, and the count is a count of neither builds nor machines nor people. The `▤` mark is a document, and a document says one thing only: there is a sample at this coordinate. Its COLOUR says how our own run of it went here — grey nobody has run it here, green it passed, red it failed, split down the middle both outcomes are on record. A README cannot print colour, so read every `▤` above as a green one. A cell with no sample carries no document at all, because an affordance onto code that is not there is worse than an empty cell. There is no `PASS`, because "PASS" read as the general claim *this works here* when what was measured is *four runs, four passed*.
-
-The two are kept apart on purpose. Our runs are one pinned container repeated; a thousand reported observations come from a thousand different situations, so adding them would let three of ours pose as evidence of the same kind. A green `▤ —` says exactly that: our own contract ran here and came back clean, and no build has been reported at this coordinate. That fact used to have a second mark of its own — a diamond beside the document — and two marks in one cell is two internal models handed to the reader as vocabulary; both facts ride the one document now.
-
-Colour carries how the runs came out, so a mostly-failing cell reddens without another glyph to learn. `—` stays unknown — never "works", never "broken". Nothing is inferred from the package's ecosystem or its docs.
+A project compiling is therefore never presented as an individual symbol working. `—` remains unknown, and a missing sample remains a missing sample. The map records what happened at the coordinate instead of promoting a small set of runs into a universal `PASS` verdict.
 
 ## Why testing matters
 
@@ -87,11 +122,11 @@ apk add --no-cache curl ca-certificates            # alpine
 wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
 ```
 
-The binary lands in `~/.local/bin`, which is on nobody's `PATH` by default:
+On Windows the installer keeps the stable launcher at `%LOCALAPPDATA%\csx\csx.exe` and adds `%LOCALAPPDATA%\csx` to the user PATH. On macOS/Linux the default is `${CSX_INSTALL_DIR:-$HOME/.local/bin}/csx`; if that directory is not already on PATH, add it:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-csx version    # the install check — `csx --version` is not a spelling csx accepts
+csx version    # install check — the supported spelling is `csx version`
 ```
 
 One binary, one question. `csx init` shows the contract below and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Piped into `sh`, stdin is consumed by the download pipe, so `init` takes the advertised default: JOIN COMMUNITY. Opt out any time with `csx init --local-only`; both mode flags are re-runnable and non-interactive. For scripted or CI setups: `csx init --community --yes --no-agents`.
@@ -99,18 +134,28 @@ One binary, one question. `csx init` shows the contract below and asks a single 
 ## Test and check
 
 ```bash
-csx run -- pnpm build              # wrap any build/test — its result becomes evidence
-csx search "axios multipart upload"  # a verified answer, graded for YOUR environment
+csx run -- pnpm build                 # wrap a build/test; its result becomes sanitized evidence
+csx search "axios multipart upload"   # verified answers graded for YOUR environment
 csx --debug search "axios multipart upload" # same answer plus local decision trace
-csx scan                           # record which public packages a project uses, no build
-csx stats                          # local dashboard: hits, adoptions, queue
-csx ui                             # browser dashboard + privacy preview
-csx sync                           # warm the shard cache — once, right after install
+csx hook status                       # see which supported coding-agent hooks are installed
+csx hook check                        # prove the failure-hook path with a throwaway failing build
+csx scan                              # record public dependency usage without running a build
+csx stats                             # local dashboard: cache, hits, adoption, queues
+csx ui                                # browser dashboard + privacy preview
+csx sync                              # manually refresh shards / flush queues when needed
+csx mcp-config                        # print MCP client configuration
+csx update check                      # verify whether a signed update is available
 ```
 
-`csx sync` is not optional garnish: a fresh install has zero shards cached, so every search returns `NO_SAFE_MATCH` until it syncs. The daemon re-warms in the background afterwards.
+In **community mode**, `csx init` already performs a bounded first cache warm and starts the background sync daemon. A healthy new install should not need a ritual `csx sync` before its first question. If the installer says the warm was partial or unavailable, `csx sync` is the explicit recovery path; `csx sync --uploads-only` flushes queued uploads without doing a shard rescan.
 
-`csx search` grades every result against your recorded environment — `EXACT`, `COMPATIBLE`, `ADAPTATION_REQUIRED`, `REFERENCE_ONLY`, or `NO_SAFE_MATCH` — and lists the exact delta (`different`, `adaptationNeeded`) between where the answer was proven and where you are.
+`local-only` is intentionally different: automatic network access is disabled, so it may have a cold compatibility cache by design. Re-running `csx init --community` is the explicit way to join the network later.
+
+`csx search` grades every result against the recorded target environment — `EXACT`, `COMPATIBLE`, `ADAPTATION_REQUIRED`, `REFERENCE_ONLY`, or `NO_SAFE_MATCH` — and lists the concrete environment delta rather than pretending a nearby run is identical.
+
+### Automatic failure lookup
+
+The `hook` path is the part an agent should not have to remember. For supported coding agents, a failed shell build can be routed through CodeSampleX automatically. The hook only intervenes for recognized build/test commands, sends no raw log, and says nothing when there is no safe match. Use `csx hook off` to disable it, and `csx hook check` whenever you want measured proof that the registered hook still fires.
 
 ## Verified samples
 
@@ -119,17 +164,28 @@ A sample is not a snippet. It is a minimal, content-addressed project (`sha256:<
 ```bash
 csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
 csx sample create <dir>      # ingest the clean-room project
+csx sample preview <id>      # show EVERYTHING that would be published
 csx sample verify <id>       # resolve → compile → contract, sandboxed
 csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
+csx sample pending           # list agent-prepared drafts waiting for human review
 ```
 
-Publishing scans for secrets, paths, project names and private URLs — findings **block** publication with no override flag. Uploading sample source is deliberately not an MCP capability; only a human at the CLI can publish.
+Use `csx login github` if you want sample publication attributed to your GitHub identity; anonymous publishing remains an explicit CLI choice. Publishing scans for secrets, paths, project names and private URLs — findings **block** publication with no override flag. Uploading sample source is deliberately not an MCP capability; only a human at the CLI can publish.
 
 ## Findings
 
 Where does it break? [Findings](https://codesamplex.dev/findings) is the measured contradiction list: what the documentation (or common belief) says, next to what the contract measured — documentation mismatches, environment-specific failures, version boundaries. Every line links to the published sample whose contract proves it, so you can re-run the measurement and disagree.
 
 Machine-derived findings grow from published samples whose authors recorded the belief they correct; nobody edits a page to add them.
+
+
+## Dependency atlas
+
+[Dependencies](https://codesamplex.dev/dependencies) reads the recorded dependency graph from the child side: **which parent releases pulled this exact dependency release?** That is useful for blast-radius and upgrade questions that a package page cannot answer by itself. An edge means a resolver placed those releases together in an observed project; it is deliberately **not** presented as proof that the pair is compatible.
+
+## Coverage gaps
+
+[Gaps](https://codesamplex.dev/gaps) is the corpus-completeness view. It lists what each coordinate is still missing across three independent assets — **Sample, Evidence, Dependency** — rather than ranking only what somebody happened to search for. The demand queue still exists as `GET /v1/wanted` for automation and scheduling, but the public website uses `/gaps` because demand and completeness are different questions.
 
 ## Evidence and grading
 
@@ -189,7 +245,7 @@ The same data the website renders, as JSON, without an account:
 | `GET /v1/shards/{eco}/{package}/{major}` | the pre-materialized compatibility shard (ETag-cached) |
 | `GET /v1/samples/{id}`, `…/artifact` | sample metadata, receipts, and the tar.gz source |
 | `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
-| `GET /v1/wanted` | the demand queue: what was asked for and not answered |
+| `GET /v1/wanted` | demand queue API: what was asked for and not answered (the website completeness view is `/gaps`) |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
 | `GET /version` | which build of the server answered, and in which environment |
 
@@ -205,7 +261,7 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init` configures Claude Code, Codex, Gemini CLI, Antigravity (agy), and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
+`csx init` configures Claude Code, Codex, Gemini CLI, Antigravity (agy), and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The live contract is also rendered at [Features](https://codesamplex.dev/features). The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.
 
 `report_anomaly` is the one that points the other way. When a CSX answer and the agent's own machine **concretely** disagree — the network served a passing conclusion for a coordinate that failed here, a returned symbol signature is not what the package exports — the agent can file that as a verification request. It is not a bug report: a report queues an independent re-run on the same fleet that produces every other receipt, and only that receipt can confirm it. A submission with nothing measured behind it is refused, the same mismatch reported twice is one report and one re-run, and nothing a report says reaches any public page before a verifier agrees with it. The reporter's guess at the cause travels in its own field and never decides the verdict.
 

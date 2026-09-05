@@ -28,24 +28,59 @@ CodeSampleX는 개발자 라이브러리·런타임·툴체인을 위한 **열�
 - 이 네트워크가 답하는 질문: *거기서 돌아가나요?* — 이 API가, 이 버전에서, 이 OS 위, 이 런타임에서.
 - 이 네트워크가 주는 답: *이런 일이 있었고, 어디서 돌았는지는 이렇습니다.* 누가인지는 결코 아닙니다 — 보고자는 익명 피어 버킷이고, 보여줄 신원 자체를 수집하지 않습니다.
 
+## 지금 제공되는 기능
+
+CodeSampleX는 이제 검색 명령 하나가 아닙니다. 현재 배포된 제품은 같은 증거 모델 위에서 여러 표면으로 동작합니다.
+
+| 표면 | 현재 역할 |
+|---|---|
+| [Compatibility](https://codesamplex.dev/compatibility) | 패키지·버전·심볼·환경별 실제 호환성 기록 탐색 |
+| [Dependencies](https://codesamplex.dev/dependencies) | 이 의존성 릴리스를 어떤 상위 릴리스가 끌어왔는지 보는 역방향 의존성 지도. **의존성 엣지는 호환 판정이 아님** |
+| [Gaps](https://codesamplex.dev/gaps) | Sample / Evidence / Dependency 세 축의 완성도 공백. 예전 웹 Wanted 순위를 대체 |
+| [Findings](https://codesamplex.dev/findings) | 재현 가능한 샘플로 뒷받침된 문서·통념과 실측의 모순, 버전/환경 경계 |
+| [Features](https://codesamplex.dev/features) | 현재 MCP 도구 계약과 공개 read API |
+| [Samples](https://codesamplex.dev/samples) · [Adapters](https://codesamplex.dev/adapters) · [Stats](https://codesamplex.dev/stats) | 검증 샘플, 생태계 기능 매트릭스, 네트워크 집계 |
+
+로컬의 기준 인터페이스는 CLI입니다. `csx help`는 실제 바이너리에 등록된 명령에서 생성되며, 아래 표는 테스트로 고정되어 새 명령이 README보다 먼저 자라나는 것을 막습니다.
+
+<!-- BEGIN:CSX-CLI-SURFACE -->
+| 명령 | 역할 |
+|---|---|
+| `config` | 로컬 설정 조회/변경 |
+| `daemon` | 백그라운드 동기화 데몬 실행·시작·중지·상태 확인 |
+| `hook` | 지원 코딩 에이전트에 설치되는 자동 빌드 실패 조회 기능 켜기·끄기·상태·자가검증 |
+| `init` | community/local-only 선택, 에이전트 설정, 첫 캐시 warm, 백그라운드 sync 시작 |
+| `login` | 샘플을 GitHub 계정으로 게시하고 싶을 때 로그인 |
+| `mcp` | 에이전트 클라이언트가 사용하는 stdio MCP 서버 실행 |
+| `mcp-config` | MCP 클라이언트용 JSON/TOML/실행 경로 출력 |
+| `run` | 명령을 실행하면서 공개 의존성의 정제된 증거 기록 |
+| `sample` | 클린룸 샘플 제안·생성·미리보기·검증·게시·삭제·목록·pending 검토 |
+| `sample-worker` | 비공개 작성 세션과 작업 인계 레인 운영 |
+| `scan` | 빌드 없이 공개 의존성 탐지 |
+| `search` | 목표 환경에 맞춰 등급 매긴 검증 샘플 검색 |
+| `stats` | 로컬 캐시·큐·검색 적중·채택 통계 확인 |
+| `sync` | 호환성 shard 갱신 및 community 업로드 큐 전송 (`--uploads-only` 지원) |
+| `ui` | 로컬 대시보드와 프라이버시 미리보기 열기 |
+| `update` | 서명된 업데이트 확인·설치·상태·롤백 |
+| `version` | 설치된 csx 버전 출력 |
+| `worker` | Docker로 격리된 cross/matrix 검증 작업 기여 |
+<!-- END:CSX-CLI-SURFACE -->
+
+지원되는 코딩 에이전트에는 선택적으로 **빌드 실패 hook**도 설치됩니다. 에이전트의 셸 빌드가 실패하면 실제 빌드 단계인지 분류하고, 오류를 로컬에서 정제한 뒤 CodeSampleX를 검색합니다. 안전한 답이 없거나 빌드와 무관하면 조용히 지나갑니다. `csx hook status`로 설치 상태를 보고, `csx hook check`로 임시 실패 빌드를 만들어 경로가 실제로 동작하는지 검증할 수 있습니다.
+
 ## 거기서 돌아가나요?
 
-모든 결과는 환경 정보가 붙어 있는 실제 실행 기록이므로, 데이터는 호환성 매트릭스로 피벗됩니다 — OS × 런타임, 버전 × 아키텍처, 심볼 × OS. 2026-08-23에 라이브 네트워크에서 그대로 옮겨 온 단면:
+모든 결과는 그것을 만들어낸 환경과 묶여 있으므로 같은 데이터가 버전 × 심볼, OS × 런타임, 버전 × 아키텍처, 브라우저/런타임, libc 같은 축으로 피벗됩니다. 현재 숫자는 [라이브 호환성 탐색기](https://codesamplex.dev/compatibility)나 [pgx/v5 실제 페이지](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5)에서 보십시오. README에는 움직이는 네트워크 수치를 날짜가 박힌 스크린샷처럼 고정하지 않습니다. 아래는 형태만 보여주는 예시입니다:
 
 ```text
-                                         v5.10.0     v5.9.2    v5.7.3
-github.com/jackc/pgx/v5                  ▤ 82% 1209  ▤ 100% 2  ▤ —
-Batch                                    ▤ 80% 689   —         —
-ParseConfig                              ▤ 82% 1188  —         —
+                                         v5.10.0     v5.9.2
+github.com/jackc/pgx/v5                  ▤ —         —
+Batch                                    ▤ —         —
 ```
 
-이 격자는 그린 그림이 아니라 [실제 라이브 페이지](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5)입니다. 그래서 위 숫자는 옮겨 적은 뒤로 이미 움직였습니다.
+매트릭스 셀에는 **관측**과, 존재하는 경우 샘플 문서가 있습니다. 관측 수는 기록된 빌드가 컴파일·타입체크·테스트 같은 어느 단계까지 갔는지를 말할 뿐 사용자 수나 기계 수가 아닙니다. 샘플 문서는 그 좌표에 재현 가능한 계약이 있다는 뜻이고, 그 상태는 샘플 검증 실행 결과를 나타냅니다. 성격이 다른 두 증거를 의도적으로 합산하지 않습니다.
 
-**셀은 비율과 표시 하나를 담을 뿐 판정을 내리지 않습니다.** 백분율과 그 옆의 숫자는 관측입니다 — 기록된 1,209건의 관측 중 82%가 통과했습니다. 관측은 한 빌드가 도달한 단계 하나(컴파일·타입체크·테스트)이므로, 빌드 하나가 여러 건을 남깁니다. 빌드 수도, 기계 수도, 사람 수도 아닙니다. `▤` 표시는 문서이고, 문서가 있다는 것은 그 좌표에 샘플이 있다는 뜻 하나뿐입니다. 그 **색**이 그 샘플을 우리가 여기서 돌린 결과입니다 — 회색은 여기서는 아직 아무도 돌리지 않음, 녹색은 통과, 빨간색은 실패, 반으로 갈린 문서는 통과와 실패가 모두 기록됨. README는 색을 인쇄할 수 없으니 위의 `▤`는 모두 녹색으로 읽으십시오. 샘플이 없는 셀에는 문서를 아예 그리지 않습니다. 열 것이 없는 좌표에 코드가 있는 것처럼 보이게 하는 편이 빈 칸보다 나쁘기 때문입니다. `PASS`는 없습니다. "PASS"는 *여기서는 된다*는 일반적 주장으로 읽히는데, 실제로 측정한 건 *네 번 돌려 네 번 통과*이기 때문입니다.
-
-둘을 갈라둔 건 의도적입니다. 우리 실행은 고정된 컨테이너 하나의 반복이고, 보고된 천 건의 관측은 천 개의 서로 다른 상황에서 옵니다. 더하면 우리 세 번이 같은 종류의 증거인 척하게 됩니다. 녹색 `▤ —` 셀은 정확히 이걸 말합니다 — 우리 컨트랙트가 여기서 돌아 깨끗하게 끝났고, 이 좌표에서 보고된 빌드는 아직 없다. 예전에는 이 사실을 문서 옆의 마름모가 따로 말했지만, 한 셀에 표시가 둘이면 내부 모델 두 개를 독자의 어휘로 떠넘기는 셈이라 지금은 두 사실 모두 문서 하나가 담습니다.
-
-색은 실행이 어떻게 나왔는지를 나릅니다. 대부분 실패한 셀은 글리프를 하나 더 배우지 않고도 붉게 보입니다. `—`는 알 수 없음으로 남습니다 — "된다"도 "안 된다"도 아닙니다. 패키지가 속한 생태계나 문서로부터 아무것도 추론하지 않습니다.
+따라서 프로젝트가 컴파일됐다는 사실을 개별 심볼의 성공으로 바꾸지 않습니다. `—`는 모름으로 남고, 샘플이 없으면 없는 그대로입니다. 소수의 실행을 보편적인 `PASS` 판정으로 승격하지 않고 그 좌표에서 실제로 일어난 일을 기록합니다.
 
 ## 왜 테스트가 중요한가
 
@@ -87,11 +122,11 @@ apk add --no-cache curl ca-certificates            # alpine
 wget -qO- https://codesamplex.dev/install.sh | sh  # needs neither
 ```
 
-바이너리는 `~/.local/bin`에 설치되는데, 이 경로는 기본적으로 어느 시스템의 `PATH`에도 들어 있지 않습니다:
+Windows에서는 안정 런처가 `%LOCALAPPDATA%\csx\csx.exe`에 설치되고 `%LOCALAPPDATA%\csx`가 사용자 PATH에 추가됩니다. macOS/Linux의 기본 경로는 `${CSX_INSTALL_DIR:-$HOME/.local/bin}/csx`입니다. 그 디렉터리가 PATH에 없다면 추가하세요:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-csx version    # the install check — `csx --version` is not a spelling csx accepts
+csx version    # 설치 확인에 지원되는 명령은 `csx version`
 ```
 
 바이너리 하나, 질문 하나. `csx init`은 아래의 계약을 보여주고 단 하나의 선택만 묻습니다 — **JOIN COMMUNITY** 또는 **LOCAL ONLY**. `sh`로 파이프해 설치하면 stdin이 다운로드 파이프에 소비되므로, `init`은 안내된 기본값인 JOIN COMMUNITY를 택합니다. 언제든 `csx init --local-only`로 빠져나올 수 있으며, 두 모드 플래그 모두 재실행 가능하고 비대화형입니다. 스크립트나 CI 설정에서는: `csx init --community --yes --no-agents`.
@@ -99,36 +134,56 @@ csx version    # the install check — `csx --version` is not a spelling csx acc
 ## 테스트하고 확인하기
 
 ```bash
-csx run -- pnpm build              # wrap any build/test — its result becomes evidence
-csx search "axios multipart upload"  # a verified answer, graded for YOUR environment
-csx scan                           # record which public packages a project uses, no build
-csx stats                          # local dashboard: hits, adoptions, queue
-csx ui                             # browser dashboard + privacy preview
-csx sync                           # warm the shard cache — once, right after install
+csx run -- pnpm build                 # 빌드/테스트를 감싸 정제된 증거 기록
+csx search "axios multipart upload"   # 현재 환경에 맞춰 등급 매긴 검증 답 검색
+csx --debug search "axios multipart upload" # 같은 답 + 로컬 판단 trace
+csx hook status                       # 지원 코딩 에이전트 hook 설치 상태
+csx hook check                        # 임시 실패 빌드로 hook 경로 실측 검증
+csx scan                              # 빌드 없이 공개 의존성 기록
+csx stats                             # 로컬 캐시·적중·채택·큐 통계
+csx ui                                # 로컬 대시보드 + 프라이버시 미리보기
+csx sync                              # 필요할 때 shard 갱신 / 큐 flush
+csx mcp-config                        # MCP 클라이언트 설정 출력
+csx update check                      # 서명된 업데이트 확인
 ```
 
-`csx sync`는 있어도 그만인 장식이 아닙니다. 갓 설치한 상태에는 캐시된 shard가 하나도 없어서, 동기화 전까지 모든 검색이 `NO_SAFE_MATCH`를 반환합니다. 그 이후에는 데몬이 백그라운드에서 캐시를 다시 데워 둡니다.
+**community 모드**에서는 `csx init`이 첫 호환성 캐시를 제한 시간 안에서 자동으로 warm하고 백그라운드 sync 데몬까지 시작합니다. 정상적인 새 설치라면 첫 질문 전에 의식처럼 `csx sync`를 실행할 필요가 없습니다. init이 warm 실패/부분 성공을 알렸을 때 `csx sync`가 명시적인 복구 경로이고, `csx sync --uploads-only`는 shard 재스캔 없이 대기 업로드만 전송합니다.
 
-`csx search`는 모든 결과를 기록된 여러분의 환경에 대해 등급 매깁니다 — `EXACT`, `COMPATIBLE`, `ADAPTATION_REQUIRED`, `REFERENCE_ONLY`, `NO_SAFE_MATCH` — 그리고 답이 증명된 환경과 지금 여러분이 있는 환경 사이의 정확한 델타(`different`, `adaptationNeeded`)를 나열합니다.
+`local-only`는 의도적으로 다릅니다. 자동 네트워크 접근이 꺼져 있으므로 호환성 캐시가 차가운 상태일 수 있습니다. 나중에 네트워크에 참여하려면 `csx init --community`를 명시적으로 다시 실행합니다.
+
+### 자동 실패 조회
+
+`hook`은 에이전트가 기억할 필요가 없는 경로입니다. 지원되는 코딩 에이전트에서 셸 빌드가 실패하면 CodeSampleX 조회가 자동으로 붙을 수 있습니다. 인식된 빌드/테스트만 대상으로 하고 원본 로그는 보내지 않으며 안전한 답이 없으면 조용히 끝납니다. 끄려면 `csx hook off`, 실제 연결을 다시 측정하려면 `csx hook check`를 사용합니다.
 
 ## 검증된 샘플
 
 샘플은 스니펫이 아닙니다. 정규 아티팩트의 `sha256:<hex>`로 콘텐츠 주소가 부여된 최소 프로젝트이며, **계약** — 고정된 컨테이너에서 오프라인으로 실행되어 통과한 단언(assertion)들 — 을 갖습니다. 태그가 아니라 이미지 digest로 고정합니다 — 태그는 읽는 사람을 위한 별칭이고, 실제로 실행되는 것은 digest입니다 — 그리고 서명된 receipt가 실행된 이미지 참조를 그대로 기록하므로, 말을 믿는 대신 누구든 같은 바이트를 다시 실행해 볼 수 있습니다([docs/adapters.md](../adapters.md#verifier-images)). 클린룸 작성 루프는 CLI 전용입니다:
 
 ```bash
-csx sample propose --goal "upload a file with axios"   # sanitized brief + scaffolded workspace
-csx sample create <dir>      # ingest the clean-room project
+csx sample propose --goal "upload a file with axios"   # 정제된 brief + scaffold 작업공간
+csx sample create <dir>      # 클린룸 프로젝트를 로컬 샘플로 수집
+csx sample preview <id>      # 게시될 내용을 전부 미리보기
 csx sample verify <id>       # resolve → compile → contract, sandboxed
-csx sample publish <id>      # requires typing exactly "yes"; leakage findings hard-refuse
+csx sample publish <id>      # 정확히 "yes" 입력 필요, leakage 발견 시 차단
+csx sample pending           # 에이전트가 준비하고 사람 검토를 기다리는 draft 목록
 ```
 
-게시 시에는 시크릿, 경로, 프로젝트 이름, 비공개 URL을 스캔하며 — 발견 사항이 있으면 게시가 **차단**되고, 이를 무시할 플래그는 없습니다. 샘플 소스 업로드는 의도적으로 MCP 기능에 넣지 않았습니다. 게시는 CLI 앞에 앉은 사람만 할 수 있습니다.
+GitHub 신원으로 샘플을 게시하고 싶다면 `csx login github`를 사용합니다. 익명 게시 역시 CLI에서 명시적으로 선택합니다. 게시 전 시크릿, 경로, 프로젝트 이름, 비공개 URL을 다시 검사하며 발견 사항은 **게시를 차단**하고 우회 플래그는 없습니다. 샘플 소스 게시 기능은 MCP에 넣지 않았으며 사람만 CLI에서 게시할 수 있습니다.
 
 ## 발견 사항
 
 어디서 깨질까요? [Findings](https://codesamplex.dev/findings)는 측정으로 확인된 모순의 목록입니다. 문서(또는 통념)가 말하는 것과 계약이 측정한 것을 나란히 놓습니다 — 문서 불일치, 환경별 실패, 버전 경계. 모든 항목은 그것을 증명하는 계약이 담긴 게시 샘플로 연결되므로, 직접 측정을 재실행해 반박할 수도 있습니다.
 
 기계가 도출한 발견 사항은, 작성자가 바로잡으려는 통념을 함께 기록해 둔 게시 샘플에서 자라납니다. 누군가 페이지를 편집해서 추가하는 것이 아닙니다.
+
+
+## 의존성 지도
+
+[Dependencies](https://codesamplex.dev/dependencies)는 의존성 그래프를 자식 쪽에서 읽습니다. 즉 **이 정확한 의존성 릴리스를 어떤 상위 릴리스가 끌어왔는가?**를 답합니다. 영향 범위와 업그레이드 질문에 유용하지만, 엣지는 resolver가 두 릴리스를 함께 배치했다는 관측일 뿐 **둘이 호환된다는 증명은 아닙니다.**
+
+## 커버리지 공백
+
+[Gaps](https://codesamplex.dev/gaps)는 corpus 완성도 화면입니다. 좌표마다 서로 독립적인 세 자산 — **Sample, Evidence, Dependency** — 중 무엇이 비어 있는지를 보여줍니다. 누군가 검색한 횟수만으로 공백을 순위 매기지 않습니다. 자동화와 스케줄링을 위한 수요 큐 `GET /v1/wanted`는 API로 계속 존재하지만, 공개 웹은 수요와 완성도를 구분하기 위해 `/gaps`를 사용합니다.
 
 ## 증거와 등급
 
@@ -188,7 +243,7 @@ csx worker start --parallel 4 --budget 15m
 | `GET /v1/shards/{eco}/{package}/{major}` | 사전 생성된 호환성 shard (ETag 캐시) |
 | `GET /v1/samples/{id}`, `…/artifact` | 샘플 메타데이터, 영수증, tar.gz 소스 |
 | `GET /v1/peers/for-sample/{sampleId}` | 중앙 서버 없이 샘플을 받기 위한 해당 샘플 보유 피어 목록 |
-| `GET /v1/wanted` | 수요 큐: 요청되었지만 답을 얻지 못한 것 |
+| `GET /v1/wanted` | 수요 큐 API: 요청되었지만 답을 얻지 못한 것 (웹의 완성도 화면은 `/gaps`) |
 | `GET /v1/adapters` | 생태계별 기능 매트릭스 |
 | `GET /version` | 응답한 서버의 빌드 및 환경 정보 |
 
@@ -204,7 +259,7 @@ CodeSampleX
 └─ MCP   ← agent adapter
 ```
 
-`csx init`은 Claude Code, Codex, Gemini CLI, Antigravity (agy), OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 서버 자체는 `csx mcp`입니다. 도구는 열 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다. `report_csx_issue`는 같은 발상을 패키지가 아니라 **우리 자신**에게 겨눈 것입니다. 정작 사용자가 보고 있던 실패를 밀어낸 답, 질문이 언급한 적 없는 생태계의 추천, 모델을 잘못 행동하게 만든 도구 계약이 대상입니다. opt-in이며 의도적으로 조용합니다 — 실패할 때마다 호출하라고 지시하는 것은 없고, 티켓도 만들지 않으며, 신고가 하나도 없는 주가 정상입니다. 백 개의 에이전트가 만난 결함은 발생 횟수만 올라가는 **한 줄**이고, 그 줄이 한 번 버그에 연결되면 이후의 신고는 그 연결을 답으로 돌려줍니다. 두 채널은 ingest·redaction·dedupe를 공유하고 그 뒤로는 아무것도 공유하지 않습니다. 이 제품의 결함이 호환성 evidence가 되는 일은 없습니다.
+`csx init`은 Claude Code, Codex, Gemini CLI, Antigravity (agy), OpenCode를 자동으로 설정합니다. 그 외의 stdio MCP 클라이언트(Cursor, Windsurf, Cline, Zed, VS Code)는 `csx mcp-config`가 출력하는 내용(Codex는 `--toml`)으로 동작합니다 — 이 명령은 바이너리의 절대 경로를 내보내는데, 편집기가 시작한 클라이언트에는 바로 그것이 필요합니다. 현재 계약은 [Features](https://codesamplex.dev/features)에도 그대로 렌더링됩니다. 서버 자체는 `csx mcp`입니다. 도구는 열 개: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — 그리고 게시 도구는 의도적으로 없습니다. `report_csx_issue`는 같은 발상을 패키지가 아니라 **우리 자신**에게 겨눈 것입니다. 정작 사용자가 보고 있던 실패를 밀어낸 답, 질문이 언급한 적 없는 생태계의 추천, 모델을 잘못 행동하게 만든 도구 계약이 대상입니다. opt-in이며 의도적으로 조용합니다 — 실패할 때마다 호출하라고 지시하는 것은 없고, 티켓도 만들지 않으며, 신고가 하나도 없는 주가 정상입니다. 백 개의 에이전트가 만난 결함은 발생 횟수만 올라가는 **한 줄**이고, 그 줄이 한 번 버그에 연결되면 이후의 신고는 그 연결을 답으로 돌려줍니다. 두 채널은 ingest·redaction·dedupe를 공유하고 그 뒤로는 아무것도 공유하지 않습니다. 이 제품의 결함이 호환성 evidence가 되는 일은 없습니다.
 
 `report_anomaly`는 반대 방향을 가리키는 도구입니다. CSX가 준 답과 에이전트 자신의 로컬 실행이 **구체적으로** 충돌할 때 — 네트워크는 통과했다고 말한 좌표가 여기서는 실패했다, 반환된 심볼 시그니처가 공개 패키지가 실제로 내보내는 것과 다르다 — 에이전트는 그것을 검증 요청으로 제출할 수 있습니다. 버그 리포트가 아닙니다. 제출은 다른 모든 receipt를 만들어내는 바로 그 검증 fleet에 독립적인 재실행을 넣고, 확정할 수 있는 것은 그 receipt뿐입니다. 측정된 로컬 결과가 없는 제출은 거부되고, 같은 불일치를 두 번 신고해도 리포트 하나와 재실행 한 번이며, 검증자가 동의하기 전에는 리포트의 내용이 공개 페이지에 반영되지 않습니다. 신고자의 원인 추측은 별도 필드로 이동하며 판정을 결정하지 않습니다.
 
