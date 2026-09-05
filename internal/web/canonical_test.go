@@ -147,6 +147,13 @@ func TestLandingCanonicalFollowsTheAddress(t *testing.T) {
 		{"/ko/", "ja", base + "/ko/"},
 		{"/?lang=ko", "", base + "/ko/"},
 		{"/?lang=en", "ko", base + "/"},
+		// /en/ serves English so a browser asking for another language can
+		// still reach it, but the hreflang cluster and the sitemap both name
+		// "/" for English. A self-canonical /en/ would be a second address
+		// for the page they point at.
+		{"/en/", "", base + "/"},
+		{"/en/", "ko", base + "/"},
+		{"/en/?lang=ja", "", base + "/ja/"},
 	}
 	for _, tc := range cases {
 		var hdr []string

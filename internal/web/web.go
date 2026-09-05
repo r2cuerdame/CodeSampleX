@@ -750,12 +750,21 @@ type basePage struct {
 // hreflang cluster, so no translation is hidden — the ?lang= URLs remain
 // indexable in their own right, each self-canonical.
 func canonicalLangOf(r *http.Request) string {
+	lang, _ := requestedLang(r)
+	return lang
+}
+
+// requestedLang reports the locale the URL's own query names, and whether it
+// named one at all. The landing needs the difference: its cluster is
+// path-prefixed, so "no ?lang=" means "read the locale off the path" while
+// an explicit ?lang= overrides the path.
+func requestedLang(r *http.Request) (lang string, explicit bool) {
 	if q := r.URL.Query().Get("lang"); q != "" {
 		if l, ok := i18n.Canonical(q); ok {
-			return l
+			return l, true
 		}
 	}
-	return i18n.Default
+	return i18n.Default, false
 }
 
 // canonicalURL decorates base+path with the locale the request URL named.

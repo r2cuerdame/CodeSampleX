@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
@@ -598,12 +599,28 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	// disavowed itself on every locale-adaptive crawl, and the homepage's
 	// signal was handed to a translation nobody had asked for by name.
 	//
-	// The landing's locale cluster is path-prefixed (/ko/, not /?lang=ko),
-	// so an explicit ?lang= resolves to that locale's own path: the one
-	// address the hreflang cluster, the switcher and the sitemap all name.
-	b.Canonical = base + r.URL.Path
-	if q := canonicalLangOf(r); q != i18n.Default {
-		b.Canonical = base + "/" + q + "/"
+	// The landing's locale cluster is path-prefixed (/ko/, not /?lang=ko), so
+	// the address names its locale in one of two ways — the path prefix the
+	// cluster advertises, or an explicit ?lang= that overrides it — and both
+	// resolve to that locale's own cluster address.
+	//
+	// English's cluster address is "/", never "/en/". /en/ serves English so
+	// that a browser asking for another language can still reach it (the
+	// root re-negotiates Accept-Language and would send it straight back),
+	// but the hreflang cluster and the sitemap both name "/", and a
+	// self-canonical /en/ would be a second address for the page they point
+	// at — the duplicate this whole change exists to remove.
+	code, explicit := requestedLang(r)
+	if !explicit {
+		if seg, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/"); seg != "" {
+			if c, ok := i18n.Canonical(seg); ok {
+				code = c
+			}
+		}
+	}
+	b.Canonical = base + "/"
+	if code != i18n.Default {
+		b.Canonical = base + "/" + code + "/"
 	}
 	b.JSONLD = landingJSONLD(base, lang)
 
