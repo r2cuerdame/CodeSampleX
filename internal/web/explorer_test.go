@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -342,5 +343,30 @@ func TestAdaptersPathRedirects(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/" {
 		t.Errorf("Location = %q, want /", loc)
+	}
+}
+
+type countingClusterStore struct {
+	Store
+	calls int
+}
+
+func (c *countingClusterStore) FailureClusters(ctx context.Context, eco, name string) ([]string, int, error) {
+	c.calls++
+	return c.Store.FailureClusters(ctx, eco, name)
+}
+
+func TestPackagePageQueriesFailureClustersAtMostOnce(t *testing.T) {
+	var counter countingClusterStore
+	mux, _ := newTestMux(t, func(d *Deps) {
+		counter.Store = d.Store
+		d.Store = &counter
+	})
+	rec := get(t, mux, "/npm/axios")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if counter.calls > 1 {
+		t.Errorf("expected at most 1 call to Store.FailureClusters on package page, got %d", counter.calls)
 	}
 }

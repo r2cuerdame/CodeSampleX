@@ -888,18 +888,7 @@ func (s *site) hasAnyClusters(r *http.Request, eco, name string) bool {
 	return err == nil && total > 0
 }
 
-func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int) {
-	raw, total, err := s.d.Store.FailureClusters(r.Context(), eco, name)
-	if err != nil {
-		return nil, 0
-	}
-	clusters := make([]failureCluster, 0, len(raw))
-	for _, doc := range raw {
-		var c failureCluster
-		if json.Unmarshal([]byte(doc), &c) == nil {
-			clusters = append(clusters, c)
-		}
-	}
+func (s *site) loadClustersFrom(clusters []failureCluster, coord map[string]string) ([]clusterView, int) {
 	if len(coord) > 0 {
 		clusters = filterClustersToPins(clusters, coord)
 	}
@@ -912,11 +901,26 @@ func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]
 	// twelve times, so the cap spent itself on duplicates and the count beside
 	// them described the raw rows rather than the failures.
 	views := buildClusters(clusters)
-	total = len(views)
+	total := len(views)
 	if len(views) > renderedClusterLimit {
 		views = views[:renderedClusterLimit]
 	}
 	return views, total
+}
+
+func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int) {
+	raw, _, err := s.d.Store.FailureClusters(r.Context(), eco, name)
+	if err != nil {
+		return nil, 0
+	}
+	clusters := make([]failureCluster, 0, len(raw))
+	for _, doc := range raw {
+		var c failureCluster
+		if json.Unmarshal([]byte(doc), &c) == nil {
+			clusters = append(clusters, c)
+		}
+	}
+	return s.loadClustersFrom(clusters, coord)
 }
 
 // versionRow is one row of the package's version list: what the network
@@ -1046,7 +1050,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A failure cluster belongs to the whole coordinate — this release, this
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
-		clusters, clusterTotal = s.loadClusters(r, eco, name, cube.Coord)
+		clusters, clusterTotal = s.loadClustersFrom(allClusters, cube.Coord)
 	}
 	// The last two evidence actions, added here because only the page knows
 	// whether the sections behind them have anything in them. An action is
@@ -1064,7 +1068,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// aggregate read is unknown and must not turn a transient store error into
 	// a permanent 404 for a package whose older code fell outside the display
 	// window.
-	if len(versions) == 0 && len(samples) == 0 && code.known && code.total == 0 && len(wanted) == 0 && !s.hasAnyClusters(r, eco, name) {
+	if len(versions) == 0 && len(samples) == 0 && code.known && code.total == 0 && len(wanted) == 0 && len(allClusters) == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
