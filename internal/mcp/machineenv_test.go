@@ -64,3 +64,66 @@ func TestHostShapedDimensionsNeedTheOSToAgree(t *testing.T) {
 		t.Errorf("arch = %q, want the machine's", got.Arch)
 	}
 }
+
+func TestMachineFrameworksPopulateWhenUnspecified(t *testing.T) {
+	machine := domain.EnvironmentFingerprint{
+		OS:         "windows",
+		Arch:       "amd64",
+		Frameworks: []string{"unreal@5.5"},
+	}
+	asked := domain.EnvironmentFingerprint{
+		OS: "windows",
+	}
+	got := fillFromMachine(asked, machine)
+	if len(got.Frameworks) != 1 || got.Frameworks[0] != "unreal@5.5" {
+		t.Errorf("frameworks = %v, want [unreal@5.5]", got.Frameworks)
+	}
+}
+
+func TestMachineFrameworksNotOverwritingStatedFrameworks(t *testing.T) {
+	machine := domain.EnvironmentFingerprint{
+		OS:         "windows",
+		Arch:       "amd64",
+		Frameworks: []string{"unreal@5.5"},
+	}
+	asked := domain.EnvironmentFingerprint{
+		OS:         "windows",
+		Frameworks: []string{"unity@6000.0.24f1"},
+	}
+	got := fillFromMachine(asked, machine)
+	if len(got.Frameworks) != 1 || got.Frameworks[0] != "unity@6000.0.24f1" {
+		t.Errorf("frameworks = %v, want [unity@6000.0.24f1]", got.Frameworks)
+	}
+}
+
+func TestMachineFrameworksNotAppliedToNonGenericEcosystem(t *testing.T) {
+	machine := domain.EnvironmentFingerprint{
+		OS:         "windows",
+		Arch:       "amd64",
+		Frameworks: []string{"unreal@5.5"},
+	}
+	asked := domain.EnvironmentFingerprint{
+		OS:        "windows",
+		Ecosystem: "npm",
+	}
+	got := fillFromMachine(asked, machine)
+	if len(got.Frameworks) != 0 {
+		t.Errorf("frameworks = %v, want empty for npm ecosystem", got.Frameworks)
+	}
+}
+
+func TestMachineFrameworksNeedOSToAgree(t *testing.T) {
+	machine := domain.EnvironmentFingerprint{
+		OS:         "windows",
+		Arch:       "amd64",
+		Frameworks: []string{"unreal@5.5"},
+	}
+	asked := domain.EnvironmentFingerprint{
+		OS: "linux",
+	}
+	got := fillFromMachine(asked, machine)
+	if len(got.Frameworks) != 0 {
+		t.Errorf("frameworks = %v, want empty for different OS", got.Frameworks)
+	}
+}
+

@@ -246,6 +246,10 @@ func fillFromMachine(req, machine domain.EnvironmentFingerprint) domain.Environm
 	if req.ContainerRuntime == "" {
 		req.ContainerRuntime = machine.ContainerRuntime
 	}
+	if len(req.Frameworks) == 0 && len(machine.Frameworks) > 0 &&
+		(req.Ecosystem == "" || req.Ecosystem == "generic") {
+		req.Frameworks = append([]string(nil), machine.Frameworks...)
+	}
 	return req
 }
 
@@ -585,6 +589,15 @@ type searchArgs struct {
 	Debug       bool                          `json:"debug"`
 }
 
+func hasNonGenericPackage(packages []string) bool {
+	for _, ps := range packages {
+		if p, err := domain.ParsePURL(ps); err == nil && p.Ecosystem != "generic" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResult {
 	var a searchArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -608,6 +621,9 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 		req.Environment.SchemaVersion = 1
 	}
 	req.Environment = fillFromMachine(req.Environment, s.machineEnv(ctx))
+	if len(a.Environment.Frameworks) == 0 && hasNonGenericPackage(a.Packages) {
+		req.Environment.Frameworks = nil
+	}
 
 	// errorText is sanitized HERE, before anything reaches the search
 	// request: only the derived fingerprint, error code, and public-symbol
@@ -1549,9 +1565,17 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	if s.Deps.MachineEnv != nil {
 		req.Environment = s.Deps.MachineEnv(ctx)
 	}
+	if len(req.Environment.Frameworks) == 0 && cwd != "" && cwd != "." {
+		if hints := projectEnvironmentHints(cwd); len(hints) > 0 && hints["frameworks"] != "" {
+			req.Environment.Frameworks = strings.Split(hints["frameworks"], ",")
+		}
+	}
 	if ecosystem := domain.CommandEcosystem(argv); ecosystem != "" {
 		req.Environment.Ecosystem = ecosystem
 		req.EnvironmentProvenance = domain.SearchProvenanceContext
+		if ecosystem != "generic" {
+			req.Environment.Frameworks = nil
+		}
 	} else if commandIsPowerShell(argv) {
 		req.Environment.Ecosystem = "generic"
 		req.Environment.Runtime = "powershell"
@@ -1561,7 +1585,6 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	// No project packages: the scan that would name them belongs to the run
 	// that just happened, and reaching for it again here would make a failed
 	// build wait on a second scan. The error is the question.
-	_ = cwd
 	lookupCtx, cancel := context.WithTimeout(ctx, failureLookupBudget)
 	defer cancel()
 	resp, _ := s.Deps.Search(lookupCtx, req)

@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
@@ -286,3 +289,363 @@ func TestLocalOnlyRecordsNoWant(t *testing.T) {
 		}
 	}
 }
+
+func TestUnrealDemandRecordedViaMCPSearchTool(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.SearchRaw = func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		return domain.SearchResponse{SchemaVersion: 2, Miss: true}
+	}
+	deps.RecordSearchOutcome = func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query": "nanite material blending in c++",
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("search_known_solution error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.Kind != evidence.WantedCandidateQueueKind {
+			continue
+		}
+		found = true
+		var report struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+		}
+		if err := json.Unmarshal([]byte(it.Payload), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Packages) != 1 || report.Packages[0] != "pkg:generic/engine/unreal@5.5" {
+			t.Fatalf("queued packages = %v, want exactly [pkg:generic/engine/unreal@5.5]", report.Packages)
+		}
+	}
+	if !found {
+		t.Fatal("expected Unreal wanted candidate to be queued from MCP search")
+	}
+}
+
+func TestUnrealDemandWithSymbolAttributionViaMCPSearch(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.SearchRaw = func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		return domain.SearchResponse{SchemaVersion: 2, Miss: true}
+	}
+	deps.RecordSearchOutcome = func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query":   "attach mesh component",
+		"symbols": []string{"UStaticMeshComponent.SetStaticMesh"},
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("search_known_solution error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.Kind != evidence.WantedCandidateQueueKind {
+			continue
+		}
+		found = true
+		var report struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+		}
+		if err := json.Unmarshal([]byte(it.Payload), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Packages) != 1 || report.Packages[0] != "pkg:generic/engine/unreal@5.5" {
+			t.Fatalf("queued packages = %v, want [pkg:generic/engine/unreal@5.5]", report.Packages)
+		}
+		if len(report.Symbols) != 1 || report.Symbols[0] != "UStaticMeshComponent.SetStaticMesh" {
+			t.Fatalf("queued symbols = %v, want [UStaticMeshComponent.SetStaticMesh]", report.Symbols)
+		}
+	}
+	if !found {
+		t.Fatal("expected Unreal wanted candidate with symbols to be queued")
+	}
+}
+
+func TestUnrelatedPackageSearchDoesNotFabricateFrameworkDemandViaMCP(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.SearchRaw = func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		return domain.SearchResponse{SchemaVersion: 2, Miss: true}
+	}
+	deps.RecordSearchOutcome = func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query":    "axios post request",
+		"packages": []string{"pkg:npm/axios@1.12.0"},
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("search_known_solution error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundAxios bool
+	for _, it := range items {
+		if it.Kind != evidence.WantedCandidateQueueKind {
+			continue
+		}
+		if strings.Contains(it.Payload, "unreal") {
+			t.Fatalf("Unreal framework demand fabricated in axios package search: %s", it.Payload)
+		}
+		if strings.Contains(it.Payload, "pkg:npm/axios@1.12.0") {
+			foundAxios = true
+		}
+	}
+	if !foundAxios {
+		t.Fatal("expected axios to be queued in package search")
+	}
+}
+
+func TestUnrelatedEcosystemSearchDoesNotFabricateFrameworkDemandViaMCP(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.SearchRaw = func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		return domain.SearchResponse{SchemaVersion: 2, Miss: true}
+	}
+	deps.RecordSearchOutcome = func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query": "express route handling",
+		"environment": map[string]any{
+			"ecosystem": "npm",
+		},
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("search_known_solution error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Kind == evidence.WantedCandidateQueueKind {
+			t.Fatalf("wanted report queued for ecosystem search with no packages: %s", it.Payload)
+		}
+	}
+}
+
+func TestUnrealCommandFailureLookupQueuesWantViaMCP(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.RunObserved = func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
+		return 1, "PROJECT_COMPILE", "FAIL", []string{"errorCode: UE-1001", "unreal compilation failed"}, evidence.CommandOutput{Stderr: "error"}, nil
+	}
+	deps.Search = func(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
+		resp := domain.SearchResponse{SchemaVersion: 2, Miss: true}
+		return resp, recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "run_observed_command", map[string]any{
+		"command": []string{"cmd", "/c", "Build.bat"},
+		"cwd":     unrealDir,
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("run_observed_command error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundUnreal bool
+	for _, it := range items {
+		if it.Kind != evidence.WantedCandidateQueueKind {
+			continue
+		}
+		if strings.Contains(it.Payload, "pkg:generic/engine/unreal@5.5") {
+			foundUnreal = true
+		}
+	}
+	if !foundUnreal {
+		t.Fatal("expected Unreal wanted candidate to be queued from failure auto-lookup")
+	}
+}
+
+func TestUnrelatedCommandFailureDoesNotFabricateFrameworkDemandViaMCP(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.RunObserved = func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
+		return 1, "PROJECT_TEST", "FAIL", []string{"errorCode: TS1000", "npm test failed"}, evidence.CommandOutput{Stderr: "error"}, nil
+	}
+	deps.Search = func(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
+		resp := domain.SearchResponse{SchemaVersion: 2, Miss: true}
+		return resp, recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "run_observed_command", map[string]any{
+		"command": []string{"npm", "test"},
+		"cwd":     unrealDir,
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("run_observed_command error: %v", toolText(t, res))
+	}
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Kind == evidence.WantedCandidateQueueKind && strings.Contains(it.Payload, "unreal") {
+			t.Fatalf("npm test failure fabricated Unreal framework demand: %s", it.Payload)
+		}
+	}
+}
+

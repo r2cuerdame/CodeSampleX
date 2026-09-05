@@ -121,10 +121,12 @@ func QueueWanted(ctx context.Context, db *localdb.DB, ident *identity.Identity,
 	// A request can be about the engine or SDK itself and name no registry
 	// package. Only the fixed public vocabulary is converted; arbitrary
 	// framework strings remain local.
-	for _, framework := range req.Environment.Frameworks {
-		if p, ok := domain.WantedTargetFromFramework(framework); ok {
-			derivedTargetCount++
-			appendPackage(p)
+	if len(req.Packages) == 0 && (req.Environment.Ecosystem == "" || req.Environment.Ecosystem == "generic") {
+		for _, framework := range req.Environment.Frameworks {
+			if p, ok := domain.WantedTargetFromFramework(framework); ok {
+				derivedTargetCount++
+				appendPackage(p)
+			}
 		}
 	}
 	if len(pkgs) == 0 {
