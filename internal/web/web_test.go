@@ -511,6 +511,8 @@ func TestInstallScripts(t *testing.T) {
 	mustContain(t, ps, "SHA256SUMS.txt")
 	mustContain(t, ps, "update adopt")
 	mustContain(t, ps, "Move-Item -Path $aside -Destination $exe -Force")
+	mustContain(t, ps, "installation blocked by security software")
+	mustContain(t, ps, "issue #70")
 	if strings.Contains(ps, "__CSX_BASE_URL__") {
 		t.Error("install.ps1 placeholder not substituted")
 	}

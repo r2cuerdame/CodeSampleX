@@ -205,3 +205,69 @@ func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
 		t.Errorf("the held aside was disturbed: %v", err)
 	}
 }
+
+// When the launcher is absent from disk -- which happens when security software
+// quarantines csx.exe -- installLauncher installs the staged launcher directly
+// without attempting to move a nonexistent file aside.
+func TestTheLauncherSwapRestoresAMissingLauncher(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "csx.exe")
+	// Ensure exe does not exist.
+	if _, err := os.Stat(exe); !os.IsNotExist(err) {
+		t.Fatalf("csx.exe unexpectedly exists: %v", err)
+	}
+
+	staged := filepath.Join(root, "staged.exe")
+	if err := os.WriteFile(staged, []byte("restored launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Client{}
+	if err := c.installLauncher(exe, staged); err != nil {
+		t.Fatalf("failed to install missing launcher: %v", err)
+	}
+
+	got, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatalf("installed launcher is missing: %v", err)
+	}
+	if string(got) != "restored launcher" {
+		t.Errorf("installed launcher is %q, want restored launcher", got)
+	}
+	// And staged was renamed into place, not left behind.
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf("staged binary was not consumed: %v", err)
+	}
+}
+
+// When csx.exe is missing on disk, replaceLauncherIfStale does not fail
+// reading the missing file; it proceeds to fetch and stage the new launcher.
+func TestTheLauncherSwapProceedsWhenLauncherIsMissing(t *testing.T) {
+	root := t.TempDir()
+	// csx.exe is not present in root.
+
+	body := []byte("MZ not a runnable launcher")
+	sum := sha256.Sum256(body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: srv.Client()}
+	replaced, err := c.replaceLauncherIfStale(context.Background(), root, Asset{
+		OS: "windows", Arch: "amd64",
+		LauncherURL: srv.URL, LauncherSize: int64(len(body)),
+		LauncherSHA256: hex.EncodeToString(sum[:]),
+	})
+	if replaced {
+		t.Error("an unrunnable launcher was accepted")
+	}
+	if err == nil {
+		t.Fatal("expected self-test failure, got nil")
+	}
+	// The key assertion: the failure must be the self-test, PROVING it did
+	// not fail early on "update: read installed launcher".
+	if !strings.Contains(err.Error(), "self-test") {
+		t.Errorf("expected self-test error, got %v", err)
+	}
+}

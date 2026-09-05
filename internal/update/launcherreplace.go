@@ -34,10 +34,10 @@ func (c *Client) replaceLauncherIfStale(ctx context.Context, root string, asset 
 	}
 	exe := filepath.Join(root, "csx.exe")
 	current, err := fileSHA256(exe)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, fmt.Errorf("update: read installed launcher: %w", err)
 	}
-	if strings.EqualFold(current, asset.LauncherSHA256) {
+	if err == nil && strings.EqualFold(current, asset.LauncherSHA256) {
 		return false, nil
 	}
 
@@ -81,23 +81,36 @@ func (c *Client) replaceLauncherIfStale(ctx context.Context, root string, asset 
 // overwrite that either. On a machine with long-lived MCP servers that is not
 // an edge case, it is every update after the first until all of them exit.
 // install.ps1 has always used a unique name for exactly this reason.
+//
+// If exe does not exist on disk -- which happens when security software
+// quarantines the launcher -- staged is installed directly without moving
+// a nonexistent binary aside.
 func (c *Client) installLauncher(exe, staged string) error {
-	aside := fmt.Sprintf("%s.previous-%d", exe, time.Now().UnixNano())
-	if err := retryRename(exe, aside); err != nil {
-		return fmt.Errorf("update: move the installed launcher aside: %w", err)
-	}
-	if err := retryRename(staged, exe); err != nil {
-		// Put back exactly what was there. A machine with no launcher at all
-		// is worse than one with an old launcher.
-		if back := retryRename(aside, exe); back != nil {
-			return fmt.Errorf("update: launcher swap failed (%v) and the previous launcher could not be restored: %w", err, back)
+	if _, err := os.Stat(exe); err == nil {
+		aside := fmt.Sprintf("%s.previous-%d", exe, time.Now().UnixNano())
+		if err := retryRename(exe, aside); err != nil {
+			return fmt.Errorf("update: move the installed launcher aside: %w", err)
 		}
+		if err := retryRename(staged, exe); err != nil {
+			// Put back exactly what was there. A machine with no launcher at all
+			// is worse than one with an old launcher.
+			if back := retryRename(aside, exe); back != nil {
+				return fmt.Errorf("update: launcher swap failed (%v) and the previous launcher could not be restored: %w", err, back)
+			}
+			return fmt.Errorf("update: install the new launcher: %w", err)
+		}
+		// Sweep the ones nothing is running any more. Best effort by
+		// construction: a file still held is a launcher still in use, and
+		// failing an update over housekeeping would be absurd.
+		removeUnusedAsides(filepath.Dir(exe), filepath.Base(exe), aside)
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("update: inspect installed launcher: %w", err)
+	}
+
+	if err := retryRename(staged, exe); err != nil {
 		return fmt.Errorf("update: install the new launcher: %w", err)
 	}
-	// Sweep the ones nothing is running any more. Best effort by
-	// construction: a file still held is a launcher still in use, and
-	// failing an update over housekeeping would be absurd.
-	removeUnusedAsides(filepath.Dir(exe), filepath.Base(exe), aside)
 	return nil
 }
 

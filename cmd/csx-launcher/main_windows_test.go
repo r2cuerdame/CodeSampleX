@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -633,3 +634,74 @@ func TestLauncherRepairCanBeTurnedOff(t *testing.T) {
 		t.Fatalf("a disabled repair still wrote a record: ok=%v err=%v", ok, err)
 	}
 }
+
+// When a payload cannot be read (e.g. locked or quarantined by security software),
+// the launcher must NOT skip automatic repair; it must attempt rehydration just like
+// for a missing payload.
+func TestLauncherAttemptsRepairWhenPayloadIsUnreadable(t *testing.T) {
+	root := installRoot(t)
+	d := copyPayload(t, root, "v999.999.999", 1)
+	if err := launcher.Write(root, launcher.Active{Schema: 1, Current: d}); err != nil {
+		t.Fatal(err)
+	}
+
+	payloadPath := mustPayloadPath(t, root, d.Version)
+	pathPtr, err := windows.UTF16PtrFromString(payloadPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open with dwShareMode=0 (no sharing) so any subsequent open by the launcher
+	// fails with sharing violation (unreadable).
+	h, err := windows.CreateFile(pathPtr, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatalf("failed to lock payload exclusively: %v", err)
+	}
+	defer windows.CloseHandle(h)
+
+	code, stdout, stderr := runLauncherWithEnv(t, root, []string{"LAUNCHER_TEST_HELPER=1"}, "version")
+	if code != 126 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("failed repair wrote %q to stdout", stdout)
+	}
+	if !strings.Contains(stderr, launcher.ReasonPayloadUnreadable) {
+		t.Fatalf("the repair attempt lost the payload-unreadable reason: %q", stderr)
+	}
+	if !strings.Contains(stderr, "automatic repair from the official release failed") {
+		t.Fatalf("no evidence repair was attempted for unreadable payload: %q", stderr)
+	}
+	rec, ok, err := launcher.ReadRehydrateRecord(root)
+	if err != nil || !ok {
+		t.Fatalf("failed repair left no durable evidence: ok=%v err=%v", ok, err)
+	}
+	if rec.Outcome != launcher.RehydrateOutcomeFailed || rec.ExhaustedVersion != d.Version {
+		t.Fatalf("record=%+v", rec)
+	}
+}
+
+// TestIsAntivirusInterventionClassifiesDefenderErrors ensures Defender threat
+// detections and Win32 virus errors are accurately recognized.
+func TestIsAntivirusInterventionClassifiesDefenderErrors(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{os.ErrNotExist, false},
+		{errors.New("generic I/O error"), false},
+		{windows.ERROR_VIRUS_INFECTED, true},
+		{windows.ERROR_VIRUS_DELETED, true},
+		{syscall.Errno(225), true},
+		{syscall.Errno(226), true},
+		{errors.New("Operation did not complete successfully because the file contains a virus or potentially unwanted software."), true},
+		{fmt.Errorf("open C:\\csx-payload.exe: %w", windows.ERROR_VIRUS_INFECTED), true},
+	}
+	for _, tc := range cases {
+		if got := isAntivirusIntervention(tc.err); got != tc.want {
+			t.Errorf("isAntivirusIntervention(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+

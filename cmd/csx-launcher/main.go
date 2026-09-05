@@ -136,6 +136,11 @@ func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor,
 // leads the line so that message stays greppable across platforms.
 func fail(reason string, err error) {
 	fmt.Fprintf(os.Stderr, "csx launcher: %s: %v\n", reason, err)
+	if isAntivirusIntervention(err) {
+		fmt.Fprintln(os.Stderr, "csx launcher: note: security software (such as Microsoft Defender) blocked this payload.")
+		fmt.Fprintln(os.Stderr, "csx launcher: note: this may be a known false positive under official vendor review (issue #70).")
+		fmt.Fprintln(os.Stderr, "csx launcher: note: do not disable your antivirus; run 'csx --repair-payload' or see docs/operations.md.")
+	}
 	os.Exit(126)
 }
 
@@ -179,8 +184,11 @@ func repairAndResolve(root string, resolveErr error) (launcher.Resolution, error
 	// A payload that failed to START hashes correctly, so the repair has to be
 	// told that is what happened; otherwise it looks at the bytes, finds them
 	// fine, and declines the repair the launcher just classified as possible.
+	// Similarly, an unreadable payload (e.g. Defender quarantined or locked mid-access)
+	// must force replacing the payload bytes.
+	reason := launcher.Reason(resolveErr)
 	report, err := update.RehydrateInstall(ctx, root, update.RehydrateOptions{
-		StartFailed: launcher.Reason(resolveErr) == launcher.ReasonPayloadStartFailed,
+		StartFailed: reason == launcher.ReasonPayloadStartFailed || reason == launcher.ReasonPayloadUnreadable,
 	})
 	if err != nil {
 		return launcher.Resolution{}, fmt.Errorf("%w; automatic repair from the official release failed: %v", resolveErr, err)
@@ -200,9 +208,9 @@ func repairAndResolve(root string, resolveErr error) (launcher.Resolution, error
 }
 
 // repairable decides whether refetching can address this failure at all. Only
-// a payload whose bytes are wrong or gone is repairable from the release: a
-// pointer that will not parse has no recorded digest to hold a download to, and
-// a filesystem that refused to answer is not something a download fixes.
+// a payload whose bytes are wrong, unreadable, or gone is repairable from the
+// release: a pointer that will not parse has no recorded digest to hold a
+// download to, and an invalid descriptor is not something a download fixes.
 func repairable(resolveErr error) error {
 	if repairAttempted {
 		return errors.New("already attempted once in this process")
@@ -212,7 +220,8 @@ func repairable(resolveErr error) error {
 	}
 	switch launcher.Reason(resolveErr) {
 	case launcher.ReasonPayloadMissing, launcher.ReasonPayloadCorrupt,
-		launcher.ReasonPayloadNotRegular, launcher.ReasonPayloadStartFailed:
+		launcher.ReasonPayloadNotRegular, launcher.ReasonPayloadStartFailed,
+		launcher.ReasonPayloadUnreadable:
 		return nil
 	default:
 		return fmt.Errorf("%s is not a refetchable failure", launcher.Reason(resolveErr))
@@ -231,6 +240,10 @@ func repairMain(root string) int {
 		// not be run, and this is a repair that could not be completed. Naming
 		// one of them would put a fact on stderr that was never measured.
 		fmt.Fprintf(os.Stderr, "csx launcher: payload repair failed: %v\n", err)
+		if isAntivirusIntervention(err) {
+			fmt.Fprintln(os.Stderr, "csx launcher: note: security software (such as Microsoft Defender) blocked the payload during repair.")
+			fmt.Fprintln(os.Stderr, "csx launcher: note: see docs/operations.md and issue #70 for vendor false-positive status.")
+		}
 		return 1
 	}
 	if report.ExhaustedVersion == "" {
