@@ -92,3 +92,28 @@ func TestNewestPlatformScannerUsesConfiguredProgramData(t *testing.T) {
 		t.Fatalf("newestPlatformScanner = %q, want %q", got, newScanner)
 	}
 }
+
+func TestEnsureWindowsEnvSuppliesDefaults(t *testing.T) {
+	empty := ensureWindowsEnv(nil)
+	hasDrive, hasData, hasFiles := false, false, false
+	for _, e := range empty {
+		if e == "SystemDrive=C:" {
+			hasDrive = true
+		}
+		if e == `ProgramData=C:\ProgramData` {
+			hasData = true
+		}
+		if e == `ProgramFiles=C:\Program Files` {
+			hasFiles = true
+		}
+	}
+	if !hasDrive || !hasData || !hasFiles {
+		t.Fatalf("ensureWindowsEnv failed to supply defaults: %v", empty)
+	}
+
+	custom := []string{"SystemDrive=D:", `ProgramData=D:\Data`, `ProgramFiles=D:\Files`}
+	preserved := ensureWindowsEnv(custom)
+	if len(preserved) != len(custom) {
+		t.Fatalf("ensureWindowsEnv duplicated custom entries: %v", preserved)
+	}
+}

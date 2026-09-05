@@ -83,6 +83,7 @@ func scanOne(ctx context.Context, scanner, path, definitions string) (Verdict, e
 	}
 
 	cmd := exec.CommandContext(ctx, scanner, "-Scan", "-ScanType", "3", "-File", abs, "-DisableRemediation")
+	cmd.Env = ensureWindowsEnv(os.Environ())
 	raw, runErr := cmd.CombinedOutput()
 	text := string(raw)
 
@@ -143,7 +144,11 @@ func locateScanner() (string, error) {
 	if p, ok := newestPlatformScanner(); ok {
 		return p, nil
 	}
-	for _, base := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramW6432")} {
+	bases := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramW6432")}
+	if os.Getenv("ProgramFiles") == "" && os.Getenv("ProgramW6432") == "" {
+		bases = append(bases, `C:\Program Files`)
+	}
+	for _, base := range bases {
 		if base == "" {
 			continue
 		}
@@ -158,7 +163,7 @@ func locateScanner() (string, error) {
 func newestPlatformScanner() (string, bool) {
 	programData := strings.TrimSpace(os.Getenv("ProgramData"))
 	if programData == "" {
-		return "", false
+		programData = `C:\ProgramData`
 	}
 	platformRoot := filepath.Join(programData, "Microsoft", "Windows Defender", "Platform")
 	entries, err := os.ReadDir(platformRoot)
@@ -199,4 +204,33 @@ func definitionVersion() string {
 		return ""
 	}
 	return v
+}
+
+func ensureWindowsEnv(env []string) []string {
+	hasDrive := false
+	hasData := false
+	hasFiles := false
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		if strings.EqualFold(k, "SystemDrive") {
+			hasDrive = true
+		}
+		if strings.EqualFold(k, "ProgramData") {
+			hasData = true
+		}
+		if strings.EqualFold(k, "ProgramFiles") {
+			hasFiles = true
+		}
+	}
+	out := append([]string(nil), env...)
+	if !hasDrive {
+		out = append(out, "SystemDrive=C:")
+	}
+	if !hasData {
+		out = append(out, `ProgramData=C:\ProgramData`)
+	}
+	if !hasFiles {
+		out = append(out, `ProgramFiles=C:\Program Files`)
+	}
+	return out
 }

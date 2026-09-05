@@ -38,30 +38,48 @@ Get-ChildItem -Path $dir -Filter 'csx.exe.old-*' -ErrorAction SilentlyContinue |
 Write-Host "Downloading csx payload and stable launcher (windows/$arch) from $base ..."
 $staged = Join-Path $dir 'csx-payload.new.exe'
 $launcherStaged = Join-Path $dir 'csx-launcher.new.exe'
-Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
-Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
-$flush = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-try { $flush.Flush($true) } finally { $flush.Dispose() }
-$flush = [IO.File]::Open($launcherStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-try { $flush.Flush($true) } finally { $flush.Dispose() }
 $checksums = "$exe.checksums"
-Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/SHA256SUMS.txt" -OutFile $checksums
-$asset = "csx-windows-$arch.exe"
-$line = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))$" } | Select-Object -First 1
-$launcherAsset = "csx-launcher-windows-$arch.exe"
-$launcherLine = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($launcherAsset))$" } | Select-Object -First 1
-Remove-Item -LiteralPath $checksums -Force -ErrorAction SilentlyContinue
-if (-not $line -or -not $launcherLine) { throw 'release checksum does not name the Windows payload and launcher' }
-$expected = ($line -split '\s+', 2)[0].ToLowerInvariant()
-$actual = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($actual -ne $expected) { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'downloaded csx checksum mismatch' }
-$launcherExpected = ($launcherLine -split '\s+', 2)[0].ToLowerInvariant()
-$launcherActual = (Get-FileHash -LiteralPath $launcherStaged -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($launcherActual -ne $launcherExpected) { throw 'downloaded launcher checksum mismatch' }
-$stagedVersion = & $staged version
-if ($LASTEXITCODE -ne 0 -or $stagedVersion -notmatch '^csx v\d+\.\d+\.\d+$') { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'staged csx self-test failed' }
-$launcherVersion = & $launcherStaged --launcher-version
-if ($LASTEXITCODE -ne 0 -or $launcherVersion -ne 'csx-launcher v1.0.0') { throw 'staged launcher self-test failed' }
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
+    $flush = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    try { $flush.Flush($true) } finally { $flush.Dispose() }
+    $flush = [IO.File]::Open($launcherStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    try { $flush.Flush($true) } finally { $flush.Dispose() }
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/SHA256SUMS.txt" -OutFile $checksums
+    $asset = "csx-windows-$arch.exe"
+    $line = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))$" } | Select-Object -First 1
+    $launcherAsset = "csx-launcher-windows-$arch.exe"
+    $launcherLine = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($launcherAsset))$" } | Select-Object -First 1
+    Remove-Item -LiteralPath $checksums -Force -ErrorAction SilentlyContinue
+    if (-not $line -or -not $launcherLine) { throw 'release checksum does not name the Windows payload and launcher' }
+    $expected = ($line -split '\s+', 2)[0].ToLowerInvariant()
+    $actual = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'downloaded csx checksum mismatch' }
+    $launcherExpected = ($launcherLine -split '\s+', 2)[0].ToLowerInvariant()
+    $launcherActual = (Get-FileHash -LiteralPath $launcherStaged -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($launcherActual -ne $launcherExpected) { throw 'downloaded launcher checksum mismatch' }
+    $stagedVersion = & $staged version
+    if ($LASTEXITCODE -ne 0 -or $stagedVersion -notmatch '^csx v\d+\.\d+\.\d+$') { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'staged csx self-test failed' }
+    $launcherVersion = & $launcherStaged --launcher-version
+    if ($LASTEXITCODE -ne 0 -or $launcherVersion -ne 'csx-launcher v1.0.0') { throw 'staged launcher self-test failed' }
+} catch {
+    $msg = $_.Exception.Message
+    $hresult = $_.Exception.HResult
+    $isAv = ($hresult -eq -2147024671) -or ($msg -match 'virus|potentially unwanted software|operation did not complete successfully')
+    Remove-Item $staged -Force -ErrorAction SilentlyContinue
+    Remove-Item $launcherStaged -Force -ErrorAction SilentlyContinue
+    Remove-Item $checksums -Force -ErrorAction SilentlyContinue
+    if ($isAv) {
+        Write-Host ""
+        Write-Host "Security software (such as Microsoft Defender) quarantined or blocked the downloaded binary." -ForegroundColor Red
+        Write-Host "This is a known false positive under official vendor review (issue #70)."
+        Write-Host "Do NOT disable your antivirus or add unsafe global exclusions."
+        Write-Host "See https://github.com/r2cuerdame/CodeSampleX/issues/70 for status and resolution."
+        throw "installation blocked by security software: $msg"
+    }
+    throw
+}
 
 $version = ($stagedVersion -split ' ', 2)[1]
 $alreadyLauncher = $false

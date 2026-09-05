@@ -3,12 +3,30 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+// isAntivirusIntervention reports whether err indicates that security software
+// (such as Microsoft Defender) quarantined or blocked the payload file.
+func isAntivirusIntervention(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, windows.ERROR_VIRUS_INFECTED) || errors.Is(err, windows.ERROR_VIRUS_DELETED) ||
+		errors.Is(err, syscall.Errno(225)) || errors.Is(err, syscall.Errno(226)) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "virus") || strings.Contains(msg, "potentially unwanted software")
+}
 
 const jobObjectExtendedLimitInformation = 9
 const jobObjectLimitKillOnJobClose = 0x00002000

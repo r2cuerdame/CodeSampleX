@@ -1570,6 +1570,28 @@ is the defect being reported, so it was fetched and hashed on the Linux
 production host and carried in a password-protected archive -- the convention
 the portal itself asks for, and one Defender does not scan inside.
 
+**External vendor reporting remains strictly a manual human gate.** Automated
+processes must never file false-positive reports to Microsoft WDSI or submit
+unreviewed artifacts to third parties. Any follow-up submission (such as for
+subsequent definition regressions or new variants like `Bearfoos.B!ml`) must be
+submitted manually by an authorized operator through the WDSI portal, and the
+submission ID recorded on GitHub issue #70.
+
+**Launcher recovery and updater resilience enhancements (2026-09-05):**
+1. **Quarantined launcher restoration**: `replaceLauncherIfStale` and
+   `installLauncher` handle an absent `csx.exe` on disk (quarantined or deleted),
+   allowing updates to cleanly restore the launcher without failing on missing
+   file errors.
+2. **Rehydrate repairability for `payload-unreadable`**: When Windows Defender
+   blocks access to a payload file via real-time protection (`ERROR_VIRUS_INFECTED`),
+   the launcher classifies the failure as `payload-unreadable`. `repairable` now
+   routes `payload-unreadable` to `update.RehydrateInstall`, enabling automatic
+   restoration from official release assets instead of skipping repair.
+3. **Safe installer & launcher UX**: When security software blocks downloads in
+   `install.ps1` or execution in `csx-launcher`, the user is explicitly informed
+   that security software intervened, referenced to GitHub issue #70, and cautioned
+   never to disable antivirus or add unsafe exclusions.
+
 Two rows deserve their reasoning written down.
 
 **Build-characteristic tuning was not implemented, deliberately.** The obvious
@@ -1609,3 +1631,4 @@ not the product's to make.
 Do not disable Defender, do not add an exclusion, and do not treat a green
 release pipeline as evidence that Windows users can run the artifact: the
 pipeline never executed the payload on a machine with real-time protection on.
+
