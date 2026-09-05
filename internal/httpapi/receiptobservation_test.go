@@ -195,3 +195,25 @@ func TestReceiptObservationsReconstructDependencyAtlas(t *testing.T) {
 		t.Fatal("multi-package receipt did not record children under primary package DependsOn")
 	}
 }
+
+func TestReceiptObservationsRecordDeclaredSymbols(t *testing.T) {
+	r := passReceipt(t, []string{"pkg:npm/axios@1.12.0", "pkg:npm/follow-redirects@1.15.6"},
+		map[string]string{"resolve": "PASS", "contract": "PASS"})
+
+	batches := ObservationsFromReceipt(r, "axios.post", "axios.get")
+	var postSeen, getSeen bool
+	for _, b := range batches {
+		if b.Package == "pkg:npm/axios@1.12.0" && b.Stage == domain.StageProjectTest {
+			if b.Symbol == "axios.post" && b.SymbolConfidence == domain.SymbolExact && b.Result == domain.ResultPass {
+				postSeen = true
+			}
+			if b.Symbol == "axios.get" && b.SymbolConfidence == domain.SymbolExact && b.Result == domain.ResultPass {
+				getSeen = true
+			}
+		}
+	}
+	if !postSeen || !getSeen {
+		t.Fatalf("expected observation batches for declared symbols: postSeen=%v getSeen=%v", postSeen, getSeen)
+	}
+}
+

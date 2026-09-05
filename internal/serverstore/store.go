@@ -695,6 +695,7 @@ type Store interface {
 	// edges recorded", which is also what an ecosystem with no scanner and a
 	// scan that never found a lockfile both look like.
 	DependencyProvenNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	DependencyAxisStore
 	// StrandedDrafts lists quarantined authoring drafts with no verification
 	// left to wait for: no passing receipt, no open or claimed job, and fewer
 	// than maxAttempts cross jobs already spent. They are what a verifier

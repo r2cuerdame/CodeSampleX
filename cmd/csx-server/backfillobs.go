@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -66,9 +67,11 @@ func backfillObservations(ctx context.Context, store backfillSource, apply bool,
 			if err != nil {
 				return stats, fmt.Errorf("receipts for %s: %w", sample.SampleID, err)
 			}
+			var manifest domain.SampleManifest
+			_ = json.Unmarshal([]byte(sample.ManifestJSON), &manifest)
 			for _, receipt := range receipts {
 				stats.Receipts++
-				batches := httpapi.ObservationsFromReceipt(receipt)
+				batches := httpapi.ObservationsFromReceipt(receipt, manifest.Symbols...)
 				if len(batches) == 0 {
 					continue
 				}

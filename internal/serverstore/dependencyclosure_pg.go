@@ -29,19 +29,11 @@ const authoringCoverageCTE = `verified_samples AS MATERIALIZED (
 				JOIN receipts r ON r.sample_id=s.sample_id AND r.contract_result='PASS'
 				JOIN sample_packages sp ON sp.sample_id=s.sample_id
 				WHERE LOWER(COALESCE(r.receipt->'environment'->>'os',''))<>''
-			), proven_names AS MATERIALIZED (
-				-- Package names the network already proves at SOME version.
-				-- Their unproven releases are the sibling branch's business;
-				-- see dependencyclosure.go for why they are not the
-				-- dependency branch's.
-				SELECT DISTINCT pk.ecosystem,pk.name
-				FROM verified_package_targets t
-				JOIN packages pk ON pk.purl=t.purl
 			), dependency_open AS MATERIALIZED (
 				-- Every edge whose child exists only because somebody's
-				-- lockfile resolved onto it: unobserved, unproven, and not a
-				-- release of a package we already prove elsewhere. This is the
-				-- whole backlog, before any bound is applied to it.
+				-- lockfile resolved onto it: unobserved and unproven at this
+				-- resolved version. This is the whole backlog, before any
+				-- bound is applied to it.
 				SELECT e.ecosystem,e.child_name,e.child_version,e.bucket,e.epoch
 				FROM dependency_edge e
 				CROSS JOIN LATERAL (SELECT
@@ -61,7 +53,5 @@ const authoringCoverageCTE = `verified_samples AS MATERIALIZED (
 				  -- Already observed means every other branch can already
 				  -- reach it; already proven means there is nothing to ask.
 				  AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=k.child_purl)
-				  AND NOT EXISTS (SELECT 1 FROM proven_names n
-				                  WHERE n.ecosystem=e.ecosystem AND n.name=e.child_name)
 				  AND NOT EXISTS (SELECT 1 FROM evidence_agg a WHERE a.purl=k.child_purl)
 			)`

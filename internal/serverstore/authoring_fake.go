@@ -171,8 +171,8 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	if limit < 1 {
 		return nil, nil
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 400 {
+		limit = 400
 	}
 	type candidateKey struct{ ecosystem, name, version, symbol, targetOS, axis string }
 	candidates := make(map[candidateKey]WantedRow)
@@ -501,7 +501,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	for key, candidate := range candidates {
 		work, held := f.authoringWork[authoringWorkKey(candidate.Ecosystem,
 			candidate.Name, candidate.Version, candidate.Symbol)]
-		if held && work.SampleID != "" && normalizeAuthoringAxis(work.Axis) == normalizeAuthoringAxis(candidate.Axis) {
+		if held && (work.SampleID != "" || work.LeaseExpiresAt.After(f.now())) && normalizeAuthoringAxis(work.Axis) == normalizeAuthoringAxis(candidate.Axis) {
 			delete(candidates, key)
 			delete(ranks, key)
 		}

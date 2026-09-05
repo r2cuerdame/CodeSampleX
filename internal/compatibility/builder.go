@@ -409,6 +409,11 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		return err
 	}
 
+	// Verification work for coordinates whose DEPENDENCY axis is open (#87, #69).
+	if err := b.createDependencyAxisJobs(ctx); err != nil {
+		return err
+	}
+
 	if err := b.refreshStats(ctx, now); err != nil {
 		return err
 	}

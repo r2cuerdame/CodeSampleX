@@ -120,8 +120,8 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	}
 	remaining, err := store.ListAuthoringExpansionCandidates(ctx, 10)
 	remaining = sampleAxisRows(remaining)
-	if err != nil || len(remaining) != 2 {
-		t.Fatalf("remaining = %+v err=%v", remaining, err)
+	if err != nil || len(remaining) != 1 || remaining[0].Symbol != "axios.get" {
+		t.Fatalf("remaining = %+v err=%v, want 1 unleased candidate (axios.get)", remaining, err)
 	}
 	next, ok, err := store.ClaimAuthoringWork(ctx, "writer-expansion", remaining, now, now.Add(24*time.Hour))
 	if err != nil || !ok || next.Kind != "EXPANSION" || next.Symbol != "axios.get" {

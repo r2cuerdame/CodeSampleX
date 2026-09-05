@@ -59,10 +59,9 @@ import (
 // resolved it. Two parents wanting the same child is one question, and
 // handing it out twice bills the network twice for one answer.
 //
-// A package the network already proves at SOME version is deliberately not
-// dependency work. That is version breadth, the sibling branch already
-// produces it, and counting it here would make the dependency backlog read
-// high for a reason that has nothing to do with dependencies.
+// An unproven child version resolved by an edge is dependency work even if the
+// package is proven at another version: lockfiles resolve onto exact versions,
+// and dropping unproven child versions would leave them as unscheduled gaps.
 
 // authoringDependencyClosureCap bounds how many dependency coordinates one
 // scheduling pass will consider.
@@ -151,9 +150,6 @@ func (f *Fake) dependencyOpen(observed, chosen, verified map[string]bool,
 		child := domain.PURL{Ecosystem: edge.ecosystem, Name: edge.childName,
 			Version: edge.childVersion}.String()
 		if observed[child] || verified[child] {
-			continue
-		}
-		if len(nameTargets[[2]string{edge.ecosystem, edge.childName}]) > 0 {
 			continue
 		}
 		key := dependencyCandidate{ecosystem: edge.ecosystem, name: edge.childName,

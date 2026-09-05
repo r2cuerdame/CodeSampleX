@@ -193,11 +193,10 @@ func TestDependencyClosureCapsVersionsOfOnePackage(t *testing.T) {
 	}
 }
 
-// A package the network already proves at some version is version-breadth
-// work, not dependency-closure work. Emitting it as both would rank one
-// coordinate twice and make the dependency backlog read high for a reason
-// that has nothing to do with dependencies.
-func TestAProvenPackageNameIsVersionBreadthNotDependencyWork(t *testing.T) {
+// An unproven child version resolved by an edge is dependency work even if the
+// package is proven at another version: lockfiles resolve onto exact versions,
+// and dropping unproven child versions would leave them as unscheduled gaps.
+func TestUnprovenChildVersionResolvedByEdgeIsDependencyWorkEvenIfAnotherVersionIsProven(t *testing.T) {
 	f := NewFake()
 	ctx := t.Context()
 	now := time.Now().UTC()
@@ -211,8 +210,9 @@ func TestAProvenPackageNameIsVersionBreadthNotDependencyWork(t *testing.T) {
 	}
 	seedVerifiedSample(t, f, ctx, "pkg:npm/body-parser@1.20.0", "linux", now)
 
-	if rows := dependencyWork(t, f); len(rows) != 0 {
-		t.Errorf("dependency work = %+v, want none: this package is already proven at another version", rows)
+	rows := dependencyWork(t, f)
+	if len(rows) != 1 || rows[0].Name != "body-parser" || rows[0].Version != "2.2.0" {
+		t.Fatalf("dependency work = %+v, want body-parser@2.2.0 scheduled", rows)
 	}
 }
 
