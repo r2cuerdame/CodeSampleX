@@ -2,10 +2,15 @@ package evidence
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 func TestKnownPublicTargetUploadsWithoutRegistryLookup(t *testing.T) {
@@ -85,3 +90,142 @@ func TestArbitraryGenericTargetCannotLeaveMachine(t *testing.T) {
 		t.Fatal("arbitrary generic target crossed the upload boundary")
 	}
 }
+
+func TestQueueWantedDerivesEngineTargetWhenNoPackagesNamed(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Environment: domain.EnvironmentFingerprint{
+			Frameworks: []string{"unreal@5.5"},
+		},
+	}
+	QueueWanted(t.Context(), db, ident, cfg, req)
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %+v err=%v, want 1 item", items, err)
+	}
+	var report struct {
+		Packages []string `json:"packages"`
+	}
+	if err := json.Unmarshal([]byte(items[0].Payload), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Packages) != 1 || report.Packages[0] != "pkg:generic/engine/unreal@5.5" {
+		t.Fatalf("queued packages = %v, want [pkg:generic/engine/unreal@5.5]", report.Packages)
+	}
+}
+
+func TestQueueWantedIgnoresFrameworksWhenPackagesNamed(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Packages:      []string{"pkg:npm/axios@1.12.0"},
+		Environment: domain.EnvironmentFingerprint{
+			Frameworks: []string{"unreal@5.5"},
+		},
+	}
+	QueueWanted(t.Context(), db, ident, cfg, req)
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %+v err=%v, want 1 item", items, err)
+	}
+	var report struct {
+		Packages []string `json:"packages"`
+	}
+	if err := json.Unmarshal([]byte(items[0].Payload), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Packages) != 1 || report.Packages[0] != "pkg:npm/axios@1.12.0" {
+		t.Fatalf("queued packages = %v, want only [pkg:npm/axios@1.12.0]", report.Packages)
+	}
+}
+
+func TestQueueWantedIgnoresFrameworksWhenEcosystemNonGeneric(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Environment: domain.EnvironmentFingerprint{
+			Ecosystem:  "npm",
+			Frameworks: []string{"unreal@5.5"},
+		},
+	}
+	QueueWanted(t.Context(), db, ident, cfg, req)
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items queued for npm ecosystem search without packages, got: %v", items)
+	}
+}
+
+func TestQueueWantedIgnoresArbitraryFrameworks(t *testing.T) {
+	dir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(dir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	req := domain.SearchRequest{
+		SchemaVersion: 2,
+		Environment: domain.EnvironmentFingerprint{
+			Frameworks: []string{"express@4.18.2", "company-secret-sdk@1.0.0"},
+		},
+	}
+	QueueWanted(t.Context(), db, ident, cfg, req)
+
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items queued for arbitrary framework search, got: %v", items)
+	}
+}
+
