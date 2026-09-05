@@ -427,7 +427,11 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	// Linux, and the ecosystem check waved it through because npm runs there
 	// — and the measurement below made it a rule about authorability, which
 	// covers the installable ones too.
-	if candidate.Ecosystem == "npm" {
+	axis := candidate.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
+	if axis == serverstore.AuthoringAxisSample && candidate.Ecosystem == "npm" {
 		if _, locked := npmPackagePlatform(candidate.Name); locked {
 			// Not "wrong platform" — no platform. npm publishes one of these
 			// per target for a native addon, and its main is the .node
@@ -462,7 +466,7 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	// The name is the proof rather than a guess. Gradle's marker convention
 	// is structural: the artifactId is the plugin id with ".gradle.plugin"
 	// appended, and such an artifact is always pom-only.
-	if candidate.Ecosystem == "maven" && mavenPomOnlyByName(candidate.Name) {
+	if axis == serverstore.AuthoringAxisSample && candidate.Ecosystem == "maven" && mavenPomOnlyByName(candidate.Name) {
 		return false
 	}
 	// A WANTED row that names an OS is an ask about that platform, and a proof
@@ -616,6 +620,28 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	funnel.Expansion = len(snapshot.expansion)
 	funnel.ExpansionEligible = len(fresh)
 	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
+	// The expansion snapshot is deliberately long-lived. Recheck only the
+	// axis predicates against live tables so completed Sample/Evidence/
+	// Dependency work disappears immediately instead of being re-leased for thirty
+	// minutes. Stores without this contract may serve legacy Sample work only.
+	if completeness, ok := store.(serverstore.AuthoringCompletenessStore); ok {
+		eligible, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, eligible)
+		if err != nil {
+			if writeAuthoringWorkBusy(w, err) {
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "refreshing authoring completeness failed")
+			return
+		}
+	} else {
+		legacy := eligible[:0]
+		for _, candidate := range eligible {
+			if candidate.Axis == "" || candidate.Axis == serverstore.AuthoringAxisSample {
+				legacy = append(legacy, candidate)
+			}
+		}
+		eligible = legacy
+	}
 	// A dependency coordinate is the one kind of work whose release no
 	// publicness gate has necessarily seen: it exists because a lockfile
 	// resolved onto it, not because anybody reported using it. Confirm it
@@ -658,7 +684,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		"status": "ASSIGNED",
 		"work": map[string]any{
 			"ecosystem": work.Ecosystem, "name": work.Name, "version": work.Version,
-			"symbol": work.Symbol, "asks": work.Asks, "kind": work.Kind, "score": work.Score, "package": purl,
+			"symbol": work.Symbol, "asks": work.Asks, "kind": work.Kind, "axis": work.Axis, "score": work.Score, "package": purl,
 			"leaseExpiresAt": work.LeaseExpiresAt.UTC(),
 		},
 	})
@@ -727,6 +753,17 @@ func (a *api) handleAuthoringWorkOutcome(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
 		return
+	}
+	if outcome == serverstore.AuthoringNoCallableSymbol {
+		held, found, lookupErr := store.AuthoringWorkForSubmission(r.Context(), session.SessionID, "", now)
+		if lookupErr != nil {
+			writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
+			return
+		}
+		if found && held.Axis != "" && held.Axis != serverstore.AuthoringAxisSample {
+			writeErr(w, http.StatusBadRequest, "no-callable-symbol applies only to Sample work")
+			return
+		}
 	}
 	work, released, err := store.ReportAuthoringOutcome(r.Context(), session.SessionID, outcome, request.Detail, now)
 	if err != nil {

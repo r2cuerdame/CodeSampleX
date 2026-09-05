@@ -164,6 +164,7 @@ const (
 type AuthoringAttempt struct {
 	At        time.Time        `json:"at"`
 	Kind      string           `json:"kind"`
+	Axis      string           `json:"axis,omitempty"`
 	SessionID string           `json:"sessionId"`
 	Outcome   AuthoringOutcome `json:"outcome"`
 	Detail    string           `json:"detail,omitempty"`
@@ -176,13 +177,15 @@ type AuthoringAttemptState struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	Symbol    string `json:"symbol"`
-	// Kind is the work kind of the most recent handout. Withholding is keyed
-	// on the coordinate rather than on the kind because a package with no
-	// callable symbol has none whichever queue picked it, and splitting the
-	// key would let the same hopeless coordinate restart its count under
-	// another kind. The kind stays on every history entry, so the record
-	// still distinguishes them.
-	Kind     string `json:"kind"`
+	// Kind is the source/ranking lane of the most recent handout. Different
+	// kinds on the same Axis share gates, because relabeling the same Sample
+	// gap must not restart a hopeless coordinate. Axis below is the boundary
+	// between independently completable deliverables.
+	Kind string `json:"kind"`
+	// Axis scopes withholding to the deliverable that was attempted. A
+	// coordinate with an impossible Sample can still need independently
+	// collectable Evidence or a Dependency answer.
+	Axis     string `json:"axis,omitempty"`
 	Attempts int    `json:"attempts"`
 	// NoOutput counts attempts that produced nothing publishable and were not
 	// excused, since the last attempt that did produce something.
@@ -254,7 +257,10 @@ func (l *authoringLedger) ensure() {
 // coordinate and applies to everybody; the handout count is about this writer
 // and applies only to it, because a writer that cannot author something is not
 // evidence that nobody can.
-func (l *authoringLedger) barred(sessionID string, now time.Time) bool {
+func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
+	if normalizeAuthoringAxis(l.Axis) != normalizeAuthoringAxis(axis) {
+		return false
+	}
 	if l.Withheld(now) {
 		return true
 	}
@@ -263,8 +269,15 @@ func (l *authoringLedger) barred(sessionID string, now time.Time) bool {
 }
 
 // handout opens an attempt.
-func (l *authoringLedger) handout(kind, sessionID string, now time.Time) {
+func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
 	l.ensure()
+	axis = normalizeAuthoringAxis(axis)
+	if normalizeAuthoringAxis(l.Axis) != axis {
+		// The audit history belongs to the coordinate, but retry limits belong
+		// to one missing deliverable. Crossing axes starts fresh gates.
+		l.clearGates()
+	}
+	l.Axis = axis
 	// A lapsed withholding is a second chance, not a suspended sentence: the
 	// counters that produced it start again from zero.
 	if !l.QuarantinedAt.IsZero() && !l.Withheld(now) {
@@ -282,14 +295,14 @@ func (l *authoringLedger) handout(kind, sessionID string, now time.Time) {
 	if kind != "" {
 		l.Kind = kind
 	}
-	l.push(AuthoringAttempt{At: now, Kind: l.Kind, SessionID: sessionID, Outcome: AuthoringHandedOut})
+	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, Outcome: AuthoringHandedOut})
 	l.evaluate(now)
 }
 
 // report closes an attempt with the writer's own classification.
 func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, detail string, now time.Time) {
 	l.ensure()
-	l.push(AuthoringAttempt{At: now, Kind: l.Kind, SessionID: sessionID,
+	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID,
 		Outcome: outcome, Detail: clampAuthoringDetail(detail)})
 	switch outcome {
 	case AuthoringInfrastructure, AuthoringTransient:
@@ -320,7 +333,7 @@ func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, det
 func (l *authoringLedger) authored(sessionID string, now time.Time) {
 	l.ensure()
 	l.Authored++
-	l.push(AuthoringAttempt{At: now, Kind: l.Kind, SessionID: sessionID, Outcome: AuthoringAuthored})
+	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, Outcome: AuthoringAuthored})
 	l.clearGates()
 }
 

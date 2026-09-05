@@ -135,7 +135,7 @@ func noteAuthoringHandout(ctx context.Context, q authoringExec, ledger *authorin
 	if ledger == nil {
 		ledger = newAuthoringLedger(work.Ecosystem, work.Name, work.Version, work.Symbol)
 	}
-	ledger.handout(work.Kind, sessionID, now)
+	ledger.handout(work.Kind, work.Axis, sessionID, now)
 	return saveAuthoringLedger(ctx, q, ledger, now)
 }
 
@@ -148,7 +148,7 @@ func (p *PG) ReportAuthoringOutcome(ctx context.Context, sessionID string, outco
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		work, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
+		work, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,axis,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
 		if errors.Is(err, pgx.ErrNoRows) {

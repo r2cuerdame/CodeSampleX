@@ -284,6 +284,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 	// fixture's sample already proves undici@8.10.0 on linux, and re-offering
 	// a proven coordinate is what made 37% of the production corpus redundant.
 	candidates, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	candidates = sampleAxisRows(candidates)
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
@@ -304,6 +305,7 @@ func TestIntegrationAuthoringExpansionCandidates(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", claimed, ok, err)
 	}
 	remaining, err := pg.ListAuthoringExpansionCandidates(ctx, 10)
+	remaining = sampleAxisRows(remaining)
 	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
@@ -516,7 +518,7 @@ func TestIntegrationSymbolDraftHoldsThePackageCoordinate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range after {
-		if c.Name == "three" {
+		if c.Name == "three" && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 			t.Fatalf("a purl with a draft in flight was re-offered: %+v", c)
 		}
 	}
@@ -1511,7 +1513,7 @@ func TestIntegrationAuthoringExpansionSpreadsAcrossVersions(t *testing.T) {
 	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
 	seen := map[string]int{}
 	for i, c := range candidates {
-		if c.Name != "spreadpkg" {
+		if c.Name != "spreadpkg" || normalizeAuthoringAxis(c.Axis) != AuthoringAxisSample {
 			continue
 		}
 		seen[c.Version]++
@@ -1590,10 +1592,10 @@ func TestIntegrationAuthoringExpansionCapsSiblingFlood(t *testing.T) {
 	}
 	siblings, smallReachable := 0, false
 	for _, c := range candidates {
-		if c.Name == "bigpkg" && c.Version != "1.0.0" {
+		if c.Name == "bigpkg" && c.Version != "1.0.0" && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 			siblings++
 		}
-		if c.Name == "smallpkg" {
+		if c.Name == "smallpkg" && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 			smallReachable = true
 		}
 	}

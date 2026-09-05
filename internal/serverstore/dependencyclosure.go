@@ -117,7 +117,7 @@ func rankDependencyCandidates(in []dependencyCandidate) []WantedRow {
 		perPackage[key]++
 		out = append(out, WantedRow{
 			Ecosystem: c.ecosystem, Name: c.name, Version: c.version,
-			Kind: "DEPENDENCY", Score: c.projects,
+			Kind: "DEPENDENCY", Axis: AuthoringAxisSample, Score: c.projects,
 		})
 		if len(out) >= authoringDependencyClosureCap {
 			break

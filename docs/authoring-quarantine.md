@@ -74,6 +74,12 @@ those three as one is how a bad afternoon at a registry becomes a permanent
 exclusion. So the classification comes from the writer, over
 `POST /v1/authoring/work/outcome` (`csx sample-worker report --outcome`).
 
+Withholding is scoped to the assignment's completeness axis. The coordinate's
+bounded history is shared for audit, but retry counts, writer handout limits,
+and quarantine gates reset when work moves between Sample, Evidence, and
+Dependency. Otherwise two writers proving a Sample impossible could silently
+starve a dependency graph that a resolver can still measure.
+
 | Outcome | What it says | Effect |
 | --- | --- | --- |
 | `HANDED_OUT` | server bookkeeping: an attempt opened | `attempts++`, `noOutput++` |

@@ -97,9 +97,13 @@ func TestEveryClaimableCoordinateIsHandedOutInFinitePolls(t *testing.T) {
 	handed := map[string]bool{}
 	for poll := 0; poll < 200; poll++ {
 		session := fmt.Sprintf("s%03d", poll)
-		candidates, err := f.ListAuthoringExpansionCandidates(ctx, window)
+		candidates, err := f.ListAuthoringExpansionCandidates(ctx, 200)
 		if err != nil {
 			t.Fatal(err)
+		}
+		candidates = sampleAxisRows(candidates)
+		if len(candidates) > window {
+			candidates = candidates[:window]
 		}
 		if len(candidates) == 0 {
 			break
@@ -158,8 +162,18 @@ func candidateNames(t *testing.T, f *Fake) []string {
 		t.Fatal(err)
 	}
 	out := make([]string, 0, len(rows))
-	for _, r := range rows {
+	for _, r := range sampleAxisRows(rows) {
 		out = append(out, r.Name)
+	}
+	return out
+}
+
+func sampleAxisRows(rows []WantedRow) []WantedRow {
+	out := make([]WantedRow, 0, len(rows))
+	for _, row := range rows {
+		if normalizeAuthoringAxis(row.Axis) == AuthoringAxisSample {
+			out = append(out, row)
+		}
 	}
 	return out
 }
@@ -189,7 +203,7 @@ func claimAndAnswerAs(t *testing.T, f *Fake, session, name, version string, now 
 	}
 	picked := make([]WantedRow, 0, 1)
 	for _, c := range candidates {
-		if c.Name == name && c.Version == version {
+		if c.Name == name && c.Version == version && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 			picked = append(picked, c)
 		}
 	}
@@ -301,6 +315,9 @@ func TestIntegrationAnsweredFindingLeavesTheWindowInBothStores(t *testing.T) {
 		}
 		out := make([]string, 0, len(after))
 		for _, r := range after {
+			if normalizeAuthoringAxis(r.Axis) != AuthoringAxisSample {
+				continue
+			}
 			out = append(out, candidateLine(r))
 		}
 		return out

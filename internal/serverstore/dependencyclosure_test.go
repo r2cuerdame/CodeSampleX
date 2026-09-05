@@ -64,7 +64,7 @@ func dependencyWork(t *testing.T, store expansionStore) []WantedRow {
 	}
 	out := make([]WantedRow, 0, len(rows))
 	for _, r := range rows {
-		if r.Kind == "DEPENDENCY" {
+		if r.Kind == "DEPENDENCY" && r.Axis == AuthoringAxisSample {
 			out = append(out, r)
 		}
 	}
@@ -240,10 +240,10 @@ func TestDependencyClosureOutranksVersionBreadth(t *testing.T) {
 	}
 	dependencyAt, siblingAt := -1, -1
 	for i, r := range rows {
-		if r.Kind == "DEPENDENCY" && r.Name == "body-parser" && dependencyAt < 0 {
+		if r.Kind == "DEPENDENCY" && r.Axis == AuthoringAxisSample && r.Name == "body-parser" && dependencyAt < 0 {
 			dependencyAt = i
 		}
-		if r.Kind == "EXPANSION" && r.Name == "left-pad" && r.Version == "1.2.0" && siblingAt < 0 {
+		if r.Kind == "EXPANSION" && r.Axis == AuthoringAxisSample && r.Name == "left-pad" && r.Version == "1.2.0" && siblingAt < 0 {
 			siblingAt = i
 		}
 	}

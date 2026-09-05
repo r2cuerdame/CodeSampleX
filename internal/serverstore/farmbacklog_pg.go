@@ -51,7 +51,7 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 }
 
 func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statementTimeout time.Duration) (FarmBacklog, error) {
-	backlog := FarmBacklog{ClaimedByKind: map[string]int{}}
+	backlog := FarmBacklog{ClaimedByKind: map[string]int{}, ClaimedByAxis: map[string]int{}}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
 		if err != nil {
@@ -89,20 +89,21 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		// by queue source. Read from claimed_at rather than from a counter,
 		// so a restart does not reset it.
 		claimed, err := tx.Query(ctx, `
-			SELECT kind,count(*) FROM authoring_assignments
+			SELECT kind,axis,count(*) FROM authoring_assignments
 			 WHERE claimed_at >= $1 AND claimed_at <= $2
-			 GROUP BY 1`, since, now)
+			 GROUP BY 1,2`, since, now)
 		if err != nil {
 			return err
 		}
 		for claimed.Next() {
-			var kind string
+			var kind, axis string
 			var n int
-			if err := claimed.Scan(&kind, &n); err != nil {
+			if err := claimed.Scan(&kind, &axis, &n); err != nil {
 				claimed.Close()
 				return err
 			}
 			backlog.ClaimedByKind[kind] = n
+			backlog.ClaimedByAxis[normalizeAuthoringAxis(axis)] += n
 		}
 		if err := claimed.Err(); err != nil {
 			claimed.Close()

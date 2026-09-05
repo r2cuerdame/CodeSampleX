@@ -113,6 +113,9 @@ type FarmBacklog struct {
 	// This is the generation rate: what the scheduler actually produced,
 	// rather than what it could have.
 	ClaimedByKind map[string]int
+	// ClaimedByAxis is the same flow by deliverable. Kind answers why the
+	// scheduler chose work; Axis answers which completeness gap it produced.
+	ClaimedByAxis map[string]int
 	// FirstProven is how many coordinates earned their first passing receipt
 	// inside the window -- the resolution rate.
 	//

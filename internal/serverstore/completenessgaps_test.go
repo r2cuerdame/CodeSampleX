@@ -39,8 +39,9 @@ func TestCompletenessGapsFoldBackIntoTheCensus(t *testing.T) {
 	// The two shapes the census treats specially, without which this test
 	// passes whatever the admission rule says.
 	//
-	// A coordinate unaskable on BOTH axes leaves States entirely, so it must
-	// leave the listing too; one unaskable on a single axis stays in both.
+	// A coordinate unaskable on BOTH of those axes still remains until its
+	// third axis, Evidence, is present; one unaskable on a single axis also
+	// stays in both.
 	// Seeded here because the shared helper only writes npm coordinates, and
 	// npm is the one ecosystem that can be scanned.
 	seedForeignCoordinate(t, f, "maven", "org.example/plugin.gradle.plugin")

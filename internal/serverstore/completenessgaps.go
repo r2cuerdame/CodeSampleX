@@ -186,7 +186,9 @@ func (r completenessRow) gap() (CompletenessGap, bool) {
 	if reason, na := domain.DependencyNotApplicable(r.ecosystem); na {
 		g.DependencyNAReason = reason
 	}
-	if g.SampleNAReason != "" && g.DependencyNAReason != "" {
+	// Two N/A axes justify those two absences, never a missing Evidence
+	// record. Keep the coordinate until something has actually run.
+	if g.SampleNAReason != "" && g.DependencyNAReason != "" && g.HasEvidence {
 		return CompletenessGap{}, false
 	}
 	if g.State() == "SED" {

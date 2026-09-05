@@ -46,7 +46,7 @@ const maxDependencyProbesPerRequest = 4
 func (a *api) confirmDependencyWork(ctx context.Context, candidates []serverstore.WantedRow) []serverstore.WantedRow {
 	hasDependency := false
 	for _, c := range candidates {
-		if c.Kind == "DEPENDENCY" {
+		if c.Kind == "DEPENDENCY" && (c.Axis == "" || c.Axis == serverstore.AuthoringAxisSample) {
 			hasDependency = true
 			break
 		}
@@ -62,7 +62,7 @@ func (a *api) confirmDependencyWork(ctx context.Context, candidates []serverstor
 	out := make([]serverstore.WantedRow, 0, len(candidates))
 	probes := 0
 	for _, c := range candidates {
-		if c.Kind != "DEPENDENCY" {
+		if c.Kind != "DEPENDENCY" || c.Axis == serverstore.AuthoringAxisDependency {
 			out = append(out, c)
 			continue
 		}

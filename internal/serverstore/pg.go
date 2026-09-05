@@ -2913,6 +2913,9 @@ type WantedRow struct {
 	// responses keep using Asks and never serialize these fields directly.
 	Kind  string
 	Score int64
+	// Axis is the missing completeness asset this work produces. Empty is the
+	// legacy spelling of SAMPLE so old callers remain source compatible.
+	Axis string
 	// TargetOS is the OS recorded by the evidence that produced a private
 	// authoring candidate. Public Wanted rows leave it empty because their
 	// reports do not currently carry an execution environment.

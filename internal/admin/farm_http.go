@@ -142,10 +142,14 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 // kind of number that gets read as a total.
 func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	claimed := make(map[string]int, len(backlog.ClaimedByKind))
+	claimedAxes := make(map[string]int, len(backlog.ClaimedByAxis))
 	handedOut := 0
 	for kind, n := range backlog.ClaimedByKind {
 		claimed[clampAdminLabel(kind)] = n
 		handedOut += n
+	}
+	for axis, n := range backlog.ClaimedByAxis {
+		claimedAxes[clampAdminLabel(axis)] = n
 	}
 	return map[string]any{
 		"coverageHoles":       backlog.CoverageHoles,
@@ -154,6 +158,7 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 		"windowSeconds":       int(farmWindow / time.Second),
 		"handedOutInWindow":   handedOut,
 		"handedOutByKind":     claimed,
+		"handedOutByAxis":     claimedAxes,
 		"firstProvenInWindow": backlog.FirstProven,
 	}
 }

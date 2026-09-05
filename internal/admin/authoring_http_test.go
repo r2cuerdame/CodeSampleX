@@ -55,7 +55,7 @@ func TestAdminIssuesListsRefreshesAndRevokesMultipleSampleWorkers(t *testing.T) 
 	if !strings.Contains(response.Workers[0].LinuxSH, "#!/usr/bin/env bash") || !strings.Contains(response.Workers[0].LinuxSH, "--dangerously-skip-permissions") {
 		t.Fatalf("worker Linux SH was not returned: %q", response.Workers[0].LinuxSH)
 	}
-	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh", "csx sample-worker next", "Wanted 일감", "spec.json을 csx.json으로 복사", "csx sample-worker submit <sampleId>"} {
+	for _, want := range []string{"SAMPLE WORKER 1/2", "SAMPLE WORKER 2/2", "agy", "csx sample-worker refresh", "csx sample-worker next", "SAMPLE", "EVIDENCE", "DEPENDENCY", "csx sample-worker submit <sampleId>"} {
 		if !strings.Contains(response.Prompt, want) {
 			t.Errorf("combined prompt missing %q", want)
 		}

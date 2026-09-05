@@ -17,6 +17,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 const sampleWorkerResponseLimit = 32 << 10
@@ -319,6 +320,7 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 			Symbol         string    `json:"symbol"`
 			Asks           int64     `json:"asks"`
 			Kind           string    `json:"kind"`
+			Axis           string    `json:"axis"`
 			Score          int64     `json:"score"`
 			LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
 		} `json:"work"`
@@ -328,18 +330,26 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		return 1
 	}
 	if result.Status == "NO_WORK" {
-		fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no uncovered Wanted or evidence-driven expansion work is available for this worker.")
+		fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, or Dependency gap is available for this worker.")
 		return 0
 	}
 	if result.Status != "ASSIGNED" || result.Work.Package == "" || result.Work.LeaseExpiresAt.IsZero() {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid assigned work")
 		return 1
 	}
+	axis := result.Work.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
 	goal := "verify " + result.Work.Package
 	if result.Work.Symbol != "" {
 		goal = "verify " + result.Work.Symbol + " in " + result.Work.Package
 	}
-	if result.Work.Kind == "FINDING" {
+	if axis == serverstore.AuthoringAxisEvidence {
+		fmt.Fprintf(sampleWorkerStdout, "Assigned Evidence completeness work (priority score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else if axis == serverstore.AuthoringAxisDependency {
+		fmt.Fprintf(sampleWorkerStdout, "Assigned Dependency completeness work (priority score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else if result.Work.Kind == "FINDING" {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Finding-miner work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	} else if result.Work.Kind == "EXPANSION" {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned coverage-expansion work (evidence score %d, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
@@ -354,18 +364,33 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	} else {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	}
-	fmt.Fprintf(sampleWorkerStdout, "Package: %s\nSymbol: %s\n", result.Work.Package, result.Work.Symbol)
-	fmt.Fprintf(sampleWorkerStdout, "Start exactly here:\n  csx sample propose --goal %q --package %q", goal, result.Work.Package)
-	if result.Work.Symbol != "" {
-		fmt.Fprintf(sampleWorkerStdout, " --symbol %q", result.Work.Symbol)
+	fmt.Fprintf(sampleWorkerStdout, "Package: %s\nSymbol: %s\nAxis: %s\n", result.Work.Package, result.Work.Symbol, axis)
+	switch axis {
+	case serverstore.AuthoringAxisEvidence:
+		fmt.Fprintln(sampleWorkerStdout,
+			"Produce this axis, not a sample: in a fresh isolated project pin the exact package, run its ordinary resolve/build through `csx run`, then `csx sync`. The server will observe the uploaded run and advance this coordinate on the next poll.")
+	case serverstore.AuthoringAxisDependency:
+		fmt.Fprintln(sampleWorkerStdout,
+			"Produce this axis, not a sample: in a fresh isolated project pin and resolve the exact package so its lockfile exists, run a safe package-manager check through `csx run`, then `csx sync`. The reported graph or explicit no-dependencies fact advances this coordinate on the next poll.")
+	default:
+		fmt.Fprintf(sampleWorkerStdout, "Start exactly here:\n  csx sample propose --goal %q --package %q", goal, result.Work.Package)
+		if result.Work.Symbol != "" {
+			fmt.Fprintf(sampleWorkerStdout, " --symbol %q", result.Work.Symbol)
+		}
+		fmt.Fprintln(sampleWorkerStdout)
 	}
-	fmt.Fprintln(sampleWorkerStdout)
 	// The way out, printed beside the way in. A writer that cannot author this
 	// coordinate had exactly one option before this line existed — stop asking
 	// — and the claim then held the slot for the rest of its 24-hour lease.
-	fmt.Fprintln(sampleWorkerStdout,
-		"If nothing here can be written against, hand it back with a reason instead of asking again:\n"+
-			"  csx sample-worker report --outcome no-callable-symbol|transient|infrastructure --detail \"one line\"")
+	if axis == serverstore.AuthoringAxisSample {
+		fmt.Fprintln(sampleWorkerStdout,
+			"If nothing here can be written against, hand it back with a reason instead of asking again:\n"+
+				"  csx sample-worker report --outcome no-callable-symbol|transient|infrastructure --detail \"one line\"")
+	} else {
+		fmt.Fprintln(sampleWorkerStdout,
+			"If the resolve/run cannot be completed, hand it back without making a package claim:\n"+
+				"  csx sample-worker report --outcome transient|infrastructure --detail \"one line\"")
+	}
 	return 0
 }
 

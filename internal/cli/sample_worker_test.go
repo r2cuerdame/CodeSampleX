@@ -104,6 +104,47 @@ func TestSampleWorkerNextPrintsExactProposeCommand(t *testing.T) {
 	}
 }
 
+func TestSampleWorkerNextPrintsAxisSpecificCompletionInstructions(t *testing.T) {
+	const token = "csx_author_v1_axis-test"
+	lease := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	oldClient, oldOut, oldErr, oldCapability := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability
+	oldContainerOS := sampleWorkerContainerOS
+	t.Cleanup(func() {
+		sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability = oldClient, oldOut, oldErr, oldCapability
+		sampleWorkerContainerOS = oldContainerOS
+	})
+	sampleWorkerCapability = func(context.Context) domain.SandboxCapability { return domain.CapContainerRun }
+	sampleWorkerContainerOS = func(context.Context) string { return "linux" }
+
+	for _, tc := range []struct {
+		axis, heading, instruction string
+	}{
+		{"EVIDENCE", "Assigned Evidence completeness work", "ordinary resolve/build"},
+		{"DEPENDENCY", "Assigned Dependency completeness work", "lockfile exists"},
+	} {
+		t.Run(tc.axis, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":"pkg:npm/axios@1.12.0","kind":"EXPANSION","axis":%q,"score":99,"leaseExpiresAt":%q}}`, tc.axis, lease.Format(time.RFC3339))
+			}))
+			defer srv.Close()
+			sampleWorkerClient = srv.Client()
+			var out, stderr bytes.Buffer
+			sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+			if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {
+				t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+			}
+			for _, want := range []string{tc.heading, "Axis: " + tc.axis, "Produce this axis, not a sample", tc.instruction} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output missing %q: %s", want, out.String())
+				}
+			}
+			if strings.Contains(out.String(), "csx sample propose") || strings.Contains(out.String(), "no-callable-symbol") {
+				t.Errorf("non-Sample work printed Sample-only actions: %s", out.String())
+			}
+		})
+	}
+}
+
 func TestSampleWorkerSubmitUploadsLocalDraftWithoutPublishing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
