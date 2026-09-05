@@ -316,7 +316,9 @@ type DependencyEdge struct {
 	// int64 so the template's number formatter takes it directly. A mismatch
 	// here does not fail loudly: html/template aborts mid-render and the page
 	// simply stops, which looks like a missing item rather than an error.
-	Projects int64
+	Projects    int64
+	SameReceipt bool
+	Outcome     string
 }
 
 // The dependency axis's three answers, mirroring serverstore's constants.

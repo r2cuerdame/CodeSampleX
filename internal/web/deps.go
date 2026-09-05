@@ -59,11 +59,13 @@ type PackageDep struct {
 	StateText string
 
 	// Health diagnostics (#178)
-	Health      string // "fail", "mixed", "changed", "pass", "unknown"
-	HealthBadge string // "FAIL", "MIXED", "CHANGED", "PASS", "UNKNOWN"
+	Health      string // "fail", "mixed", "candidate", "changed", "pass", "unknown"
+	HealthBadge string // "FAIL", "MIXED", "CANDIDATE", "CHANGED", "PASS", "UNKNOWN"
 	HealthTone  string // "red", "yellow", "blue", "green", "dim"
 	HealthNote  string
 	IsMover     bool
+	SameReceipt bool
+	Outcome     string
 }
 
 // buildPackageDeps lists what one pinned release pulled.
@@ -82,20 +84,35 @@ func buildPackageDeps(ecosystem string, edges []DependencyEdge) []PackageDep {
 	// set of structs cannot do.
 	type coord struct{ library, version string }
 	projects := map[coord]int64{}
+	sameReceipt := map[coord]bool{}
+	outcome := map[coord]string{}
 	for _, e := range edges {
 		if e.ChildName == "" || e.ChildVersion == "" {
 			continue
 		}
-		projects[coord{e.ChildName, e.ChildVersion}] += e.Projects
+		c := coord{e.ChildName, e.ChildVersion}
+		projects[c] += e.Projects
+		if e.SameReceipt {
+			sameReceipt[c] = true
+			if e.Outcome != "" {
+				if prev := outcome[c]; prev != "" && prev != e.Outcome {
+					outcome[c] = "mixed"
+				} else {
+					outcome[c] = e.Outcome
+				}
+			}
+		}
 	}
 	out := make([]PackageDep, 0, len(projects))
 	for c, n := range projects {
 		out = append(out, PackageDep{
-			Library:   c.library,
-			Version:   c.version,
-			Href:      depHref(ecosystem, c.library, c.version),
-			AtlasHref: dependencyAtlasHref(ecosystem, c.library, c.version),
-			Projects:  n,
+			Library:     c.library,
+			Version:     c.version,
+			Href:        depHref(ecosystem, c.library, c.version),
+			AtlasHref:   dependencyAtlasHref(ecosystem, c.library, c.version),
+			Projects:    n,
+			SameReceipt: sameReceipt[c],
+			Outcome:     outcome[c],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -169,6 +186,58 @@ func formatClusterEnv(env map[string]string) string {
 	return strings.Join(parts, " · ")
 }
 
+// exactConditionsHref builds the deep link restoring the exact coordinate of a break
+// including version and all relevant environment coordinates (os, runtime, context, etc.).
+func exactConditionsHref(eco, name, parentVersion string, fc failureCluster) string {
+	q := url.Values{}
+	if parentVersion != "" {
+		q.Set("f_version", parentVersion)
+	}
+	if fc.Symbol != "" {
+		q.Set("f_symbol", fc.Symbol)
+	}
+	if len(fc.EnvSummary) > 0 {
+		if v := fc.EnvSummary["os"]; v != "" {
+			q.Set("f_os", v)
+		}
+		if v := fc.EnvSummary["runtime"]; v != "" {
+			q.Set("f_runtime", v)
+		}
+		if v := fc.EnvSummary["executionContext"]; v != "" {
+			q.Set("f_context", v)
+		} else if v := fc.EnvSummary["context"]; v != "" {
+			q.Set("f_context", v)
+		}
+		if v := fc.EnvSummary["arch"]; v != "" {
+			q.Set("f_arch", v)
+		}
+		if v := fc.EnvSummary["libc"]; v != "" {
+			q.Set("f_libc", v)
+		}
+		if v := fc.EnvSummary["packageManager"]; v != "" {
+			q.Set("f_tool", v)
+		} else if v := fc.EnvSummary["tool"]; v != "" {
+			q.Set("f_tool", v)
+		}
+		var otherKeys []string
+		for k := range fc.EnvSummary {
+			switch k {
+			case "os", "runtime", "executionContext", "context", "arch", "libc", "packageManager", "tool":
+				// already mapped
+			default:
+				otherKeys = append(otherKeys, k)
+			}
+		}
+		sort.Strings(otherKeys)
+		for _, k := range otherKeys {
+			if v := fc.EnvSummary[k]; v != "" {
+				q.Set("f_"+k, v)
+			}
+		}
+	}
+	return pkgHref(eco, name) + "?" + q.Encode() + cubeAnchor
+}
+
 // evaluateDependencyHealth computes combination and regression health for the
 // dependencies of parentVersion (#178).
 func evaluateDependencyHealth(
@@ -221,37 +290,70 @@ func evaluateDependencyHealth(
 		d := &deps[i]
 		d.IsMover = moverMap[d.Library]
 
+		// 1. Same-receipt proof on this exact parent+child combination.
+		// Parent-level failure must NOT be attributed unless the same receipt/execution
+		// proves that exact parent+child combination (#178).
+		if d.SameReceipt && d.Outcome != "" {
+			switch d.Outcome {
+			case "fail":
+				d.Health = "fail"
+				d.HealthBadge = i18n.T(lang, "pkg.dh_badge_fail")
+				d.HealthTone = "red"
+				if d.IsMover {
+					d.HealthNote = i18n.T(lang, "pkg.dh_note_fail")
+				} else {
+					d.HealthNote = i18n.T(lang, "pkg.dh_note_fail_unmoved")
+				}
+				summary.ProblemsCount++
+			case "mixed":
+				d.Health = "mixed"
+				d.HealthBadge = i18n.T(lang, "pkg.dh_badge_mixed")
+				d.HealthTone = "yellow"
+				d.HealthNote = i18n.T(lang, "pkg.dh_note_mixed")
+				summary.MixedCount++
+			case "pass":
+				d.Health = "pass"
+				d.HealthBadge = i18n.T(lang, "pkg.dh_badge_pass")
+				d.HealthTone = "green"
+				d.HealthNote = i18n.T(lang, "pkg.dh_note_pass")
+				summary.SteadyCount++
+			default:
+				d.Health = "unknown"
+				d.HealthBadge = i18n.T(lang, "pkg.dh_badge_unknown")
+				d.HealthTone = "dim"
+				d.HealthNote = i18n.T(lang, "pkg.dh_note_unknown")
+				summary.UnknownCount++
+			}
+			continue
+		}
+
+		// 2. Cross-receipt / no same-receipt proof.
+		// Parent-level failure is not attributed to dependencies without same-receipt proof.
+		// Preserves honest UNKNOWN / CANDIDATE semantics.
 		if hasParentFailure && d.IsMover {
-			d.Health = "fail"
-			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_fail")
-			d.HealthTone = "red"
-			d.HealthNote = i18n.T(lang, "pkg.dh_note_fail")
-			summary.ProblemsCount++
-		} else if hasParentFailure && totalObsCount > totalFailCount {
-			d.Health = "mixed"
-			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_mixed")
+			// Version changed under parent failure without same-receipt proof:
+			// Correlated candidate, NOT confirmed failure.
+			d.Health = "candidate"
+			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_candidate")
 			d.HealthTone = "yellow"
-			d.HealthNote = i18n.T(lang, "pkg.dh_note_mixed")
-			summary.MixedCount++
-		} else if hasParentFailure {
-			d.Health = "fail"
-			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_fail")
-			d.HealthTone = "red"
-			d.HealthNote = i18n.T(lang, "pkg.dh_note_fail_unmoved")
-			summary.ProblemsCount++
+			d.HealthNote = i18n.T(lang, "pkg.dh_note_candidate")
+			summary.ChangedCount++
 		} else if d.IsMover {
+			// Version changed across releases without parent failure.
 			d.Health = "changed"
 			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_changed")
 			d.HealthTone = "blue"
 			d.HealthNote = i18n.T(lang, "pkg.dh_note_changed")
 			summary.ChangedCount++
 		} else if d.State == "verified" || d.State == "observed" {
+			// Unmoved dependency with passing / observed child measurements.
 			d.Health = "pass"
 			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_pass")
 			d.HealthTone = "green"
 			d.HealthNote = i18n.T(lang, "pkg.dh_note_pass")
 			summary.SteadyCount++
 		} else {
+			// Unmoved dependency without measurements.
 			d.Health = "unknown"
 			d.HealthBadge = i18n.T(lang, "pkg.dh_badge_unknown")
 			d.HealthTone = "dim"
@@ -263,6 +365,9 @@ func evaluateDependencyHealth(
 	if hasParentFailure {
 		fc := parentFailures[0]
 		summary.HasBreak = true
+		if summary.ProblemsCount == 0 {
+			summary.ProblemsCount = 1
+		}
 		b := &DependencyBreakDetail{
 			ParentVersion: parentVersion,
 			Env:           formatClusterEnv(fc.EnvSummary),
@@ -270,14 +375,14 @@ func evaluateDependencyHealth(
 			PassCount:     fc.ObservationCount - fc.Count,
 			Stage:         fc.Stage,
 			Fingerprint:   fc.Fingerprint,
-			CubeHref:      depHref(eco, name, parentVersion),
+			CubeHref:      exactConditionsHref(eco, name, parentVersion, fc),
 			FailureHref:   "#failures",
 		}
 		if b.PassCount < 0 {
 			b.PassCount = 0
 		}
 		for _, d := range deps {
-			if d.Health == "fail" && d.IsMover {
+			if d.Health == "fail" && d.SameReceipt {
 				b.ChildLibrary = d.Library
 				b.ChildVersion = d.Version
 				break
@@ -293,14 +398,16 @@ func evaluateDependencyHealth(
 				return 1
 			case "mixed":
 				return 2
-			case "changed":
+			case "candidate":
 				return 3
-			case "unknown":
+			case "changed":
 				return 4
-			case "pass":
+			case "unknown":
 				return 5
-			default:
+			case "pass":
 				return 6
+			default:
+				return 7
 			}
 		}
 		ri, rj := rank(deps[i].Health), rank(deps[j].Health)
@@ -349,25 +456,11 @@ func evaluateCrossReleaseHealth(
 			PassCount:     fc.ObservationCount - fc.Count,
 			Stage:         fc.Stage,
 			Fingerprint:   fc.Fingerprint,
-			CubeHref:      depHref(ecosystem, name, pVer),
+			CubeHref:      exactConditionsHref(ecosystem, name, pVer, fc),
 			FailureHref:   "#failures",
 		}
 		if b.PassCount < 0 {
 			b.PassCount = 0
-		}
-		for _, row := range matrix.Rows {
-			if row.Moves {
-				for col, cell := range row.Cells {
-					if col < len(matrix.Versions) && matrix.Versions[col] == pVer && cell.State == "version" {
-						b.ChildLibrary = row.Child
-						b.ChildVersion = cell.Version
-						break
-					}
-				}
-				if b.ChildLibrary != "" {
-					break
-				}
-			}
 		}
 		summary.FirstBreak = b
 	}
