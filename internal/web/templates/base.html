@@ -352,6 +352,14 @@ document.addEventListener('keydown',event=>{
   {{- if .DiagnosticCandidate}}
   <div class="row"><span class="chip unknown mono">{{$.T "symbol.diagnostic_candidate"}}</span></div>
   {{- end}}
+  {{- /* The step from a fingerprint to the issue it belongs to. A cluster
+         answers "it broke here"; the issue is the same normalized cause read
+         across every release and environment, which is where the reader finds
+         out whether it also breaks in the release they were about to move
+         to. */}}
+  {{- if .IssueHref}}
+  <div class="row"><a class="evaction small" href="{{$.WithLang .IssueHref}}">{{$.T "pkg.cluster_issue"}}</a></div>
+  {{- end}}
 </li>
 {{- end}}
 </ul>
@@ -563,4 +571,32 @@ document.addEventListener('keydown',event=>{
        cannot infer from the icon. */}}
   <p class="small dim">{{.T "sample.scope"}}</p>
 </div>
+{{end}}
+
+{{/* depmatrix is what each release of one package resolved its children to,
+     side by side. It is rendered from the package page and from a Failure
+     Issue, which needs the same grid narrowed to the releases around a
+     boundary: one copy of a table is one copy of its bugs. */}}
+{{define "depmatrix"}}
+{{- if .DepsMatrix}}
+<h3 id="depmatrix" class="eyebrow mono small" style="margin-top: 1.5rem;">{{.T "pkg.depmatrix"}}</h3>
+<p class="note dim small">{{.T "pkg.depmatrix_note"}}</p>
+<div class="tablewrap">
+<table class="depmatrix">
+<thead><tr><th>{{.T "pkg.shipswith_col"}}</th>
+  {{- range .DepsMatrix.Versions}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range .DepsMatrix.Rows}}
+<tr{{if .Moves}} class="is-moved"{{end}}><th class="rowlabel mono"><a href="{{$.WithLang .Href}}">{{.Child}}</a></th>
+  {{- range .Cells}}
+  <td class="mono cell-{{.State}}">{{if eq .State "version"}}{{if .Href}}<a href="{{$.WithLang .Href}}">{{.Version}}</a>{{else}}{{.Version}}{{end}}{{else}}<span class="dim {{.State}}" title="{{.Title}}">—</span>{{end}}</td>
+  {{- end}}
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+<p class="note dim small">{{.T "pkg.depmatrix_summary" (printf "%d" .DepsMatrix.Moved) (printf "%d" .DepsMatrix.Steady)}}{{if .DepsMatrix.Truncated}} {{.T "pkg.depmatrix_truncated"}}{{end}}</p>
+<p class="note dim small">{{.T "dependencies.caveat"}}</p>
+{{- end}}
 {{end}}

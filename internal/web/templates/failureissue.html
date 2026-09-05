@@ -1,0 +1,148 @@
+{{define "content"}}
+{{template "crumbtitle" .Crumbs}}
+
+{{/* The signature first, because the reader arrived holding an error and the
+     only question they can answer immediately is "is this the same one".
+     Stage, how the process ended, the code and the normalized text — the same
+     material the fingerprint is computed from, spelled out. */}}
+<section id="issue-signature" class="issue-signature panel">
+  <h2 class="eyebrow mono">{{.T "issue.signature"}}</h2>
+  <p class="row mono">
+    <span class="mono">{{.Issue.Stage}}</span>
+    {{- if .Issue.Termination}} <span class="code mono">{{.Issue.Termination}}</span>{{end}}
+    {{- if .Issue.ErrorCode}} <span class="code mono">{{.Issue.ErrorCode}}</span>{{end}}
+    {{- if .Issue.EvidenceGap}} <span class="chip unknown mono">{{.T "symbol.evidence_gap"}}</span>{{end}}
+    <span class="dim mono">×{{.N .Issue.Count}}</span>
+  </p>
+  {{- if .Issue.ErrorSummary}}
+  <p class="mono small"{{if .Issue.ErrorSummaryFull}} title="{{.Issue.ErrorSummaryFull}}"{{end}}>{{.Issue.ErrorSummary}}</p>
+  {{- end}}
+  <p class="dim mono small">
+    {{.T "symbol.evidence_quality"}}: {{.Issue.EvidenceQuality}}
+    {{- if .Issue.ActualToolchain}} · {{.Issue.ActualToolchain}}{{end}}
+    {{- if .Issue.StageEvidence}} · {{.Issue.StageEvidence}}{{end}}
+    {{- if .Issue.OuterCommands}} · outer {{.Issue.OuterCommands}}{{end}}
+    {{- if .Issue.EvidenceGapKind}} · gap {{.Issue.EvidenceGapKind}}{{end}}
+    {{- if .Issue.FirstSeen}} · {{.T "symbol.first_seen"}}: {{.Issue.FirstSeen}}{{end}}
+    {{- if .Issue.LastSeen}} · {{.T "symbol.last_seen_col"}}: {{.Issue.LastSeen}}{{end}}
+  </p>
+  {{- if .Issue.FingerprintShort}}
+  <p class="dim mono small">{{.Issue.FingerprintShort}}</p>
+  {{- end}}
+  {{- if .Issue.Symbols}}
+  <p class="dim mono small">{{range .Issue.Symbols}}<span class="chip sym mono small">{{.}}</span> {{end}}</p>
+  {{- end}}
+  {{- if .Issue.Hypotheses}}
+  <p class="row hyprow"><span class="k mono dim">{{.T "symbol.hypotheses"}}</span>
+    {{range .Issue.Hypotheses}}<span class="chip hyp mono">{{.Domain}} {{.Pct}}</span> {{end}}
+    <span class="dim mono small">{{.T "symbol.hypotheses_note"}}</span>
+  </p>
+  {{- end}}
+</section>
+
+{{/* Where it was measured. A verdict here is about THIS failure at THIS
+     stage: a release nothing measured stays unmeasured rather than becoming
+     the pass the eye wants to read into a blank. */}}
+{{- if .Releases}}
+<section id="issue-releases">
+<h2 class="eyebrow mono">{{.T "issue.releases"}}</h2>
+<p class="note dim small">{{.T "issue.releases_note" .Issue.Stage}}</p>
+<ul class="issue-releases mono">
+{{- range .Releases}}
+  <li class="issue-release" data-version="{{.Version}}" data-verdict="{{.Key}}">
+    <a href="{{.Href}}">{{.Version}}</a>
+    <span class="chip {{.Tone}} mono">{{.Label}}</span>
+    {{- if .PassObservations}} <span class="dim small">{{$.T "issue.pass_observations" (printf "%d" .PassObservations)}}</span>{{end}}
+  </li>
+{{- end}}
+</ul>
+{{- if .Issue.Environments}}
+<h3 class="eyebrow mono small">{{.T "issue.environments"}}</h3>
+<ul class="issue-envs mono small">
+{{- range .Issue.Environments}}
+  <li><span class="dim">{{.Summary}}</span> <span class="dim">×{{$.N .Count}}</span>
+    {{- if .FirstSeen}} <span class="dim">{{.FirstSeen}}{{if .LastSeen}} → {{.LastSeen}}{{end}}</span>{{end}}</li>
+{{- end}}
+</ul>
+{{- end}}
+</section>
+{{- end}}
+
+{{/* The boundary. It is the nearest KNOWN one and says so: releases nothing
+     measured do not close the gap, and the count of them is what keeps a
+     five-release jump from reading as two adjacent releases. */}}
+{{- if .Releases}}
+<section id="issue-boundaries">
+<h2 class="eyebrow mono">{{.T "issue.boundaries"}}</h2>
+{{- if .Boundaries}}
+<p class="note dim small">{{.T "issue.boundaries_note"}}</p>
+<ul class="boundaries">
+{{- range .Boundaries}}
+<li class="boundary" data-kind="{{.Kind}}" data-pass="{{.PassVersion}}" data-fail="{{.FailVersion}}">
+  <p class="mono">
+    {{- if eq .Kind "starts"}}{{$.T "issue.boundary_starts" .PassVersion .FailVersion}}
+    {{- else}}{{$.T "issue.boundary_stops" .FailVersion .PassVersion}}{{end}}
+  </p>
+  {{- if .UnmeasuredBetween}}
+  <p class="note dim small">{{$.T "issue.boundary_unmeasured" (printf "%d" .UnmeasuredBetween)}}</p>
+  {{- end}}
+  {{- if .TreeUnread}}
+  <p class="note dim small">{{$.T "issue.tree_unread"}}</p>
+  {{- else if .Changed}}
+  <h3 class="eyebrow mono small">{{$.T "issue.changed"}}</h3>
+  <ul class="causals mono small">
+  {{- range .Changed}}
+    <li class="causal" data-basis="{{.Basis}}" data-library="{{.Library}}">
+      {{if .Href}}<a href="{{.Href}}">{{.Library}}</a>{{else}}{{.Library}}{{end}}
+      <span class="dim">{{if .PassVersion}}{{.PassVersion}}{{else}}—{{end}} → {{if .FailVersion}}{{.FailVersion}}{{else}}—{{end}}</span>
+      {{- if eq .Basis "evidence"}}
+      <span class="chip elevated mono">{{$.T "issue.basis_evidence"}}</span>
+      {{- else}}
+      <span class="chip unknown mono">{{$.T "issue.basis_hypothesis"}}</span>
+      {{- end}}
+    </li>
+  {{- end}}
+  </ul>
+  <p class="note dim small">{{$.T "issue.basis_note"}}</p>
+  {{- else}}
+  <p class="note dim small">{{$.T "issue.changed_none"}}</p>
+  {{- end}}
+</li>
+{{- end}}
+</ul>
+{{- else}}
+<p class="note dim small">{{.T "issue.no_boundary"}}</p>
+{{- end}}
+</section>
+{{- end}}
+
+{{/* The same grid the package page draws, narrowed to the releases around the
+     boundary above: what each of them resolved its children to. */}}
+{{- if .DepsMatrix}}
+<section id="issue-depmatrix">
+{{template "depmatrix" .}}
+</section>
+{{- end}}
+
+{{/* What this page could NOT establish. It is not an apology; it is the part
+     that makes the rest of the page readable as evidence. */}}
+{{- if .Gaps}}
+<section id="issue-gaps">
+<h2 class="eyebrow mono">{{.T "issue.gaps"}}</h2>
+<ul class="issue-gaps small">
+{{- range .Gaps}}<li>{{.}}</li>{{end}}
+</ul>
+</section>
+{{- end}}
+
+<section id="issue-samples">
+<h2 class="eyebrow mono">{{.T "issue.samples"}}</h2>
+{{- if .Samples}}
+{{template "samplelist" .}}
+{{- else}}
+<p class="note dim small">{{.T "issue.no_samples"}}</p>
+{{- end}}
+</section>
+
+<p class="small"><a href="{{.PackageHref}}">{{.T "issue.back"}}</a></p>
+{{end}}

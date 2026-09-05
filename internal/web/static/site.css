@@ -2370,3 +2370,29 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .related ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
 .related li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
 .related a { font-weight: 600; }
+
+
+/* The Failure Issue: one normalized cause read across every release and
+   environment it reproduced in. Its lists are records rather than prose, so
+   they lose the browser bullet and keep the baseline the rest of the site
+   sets for a row of facts. */
+.issue-signature { margin-bottom: 1.6rem; }
+.issue-signature p { margin: 0 0 0.4rem; }
+.issue-signature p:last-child { margin-bottom: 0; }
+.issue-releases, .issue-envs, .boundaries, .causals, .issue-gaps {
+  list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.4rem;
+}
+.issue-release, .issue-envs li, .causals li {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline;
+}
+.issue-release a { font-weight: 600; }
+/* A boundary is the page's claim, so it is drawn as one panel rather than as
+   a bullet: the pair of releases, then what differs under it. */
+.boundaries .boundary {
+  border: 1px solid var(--line); border-radius: 1rem; background: var(--panel);
+  padding: 0.9rem 1.1rem; box-shadow: var(--shadow-soft);
+}
+.boundaries .boundary > p:first-child { margin: 0; font-weight: 600; }
+.causals li a { font-weight: 600; }
+.issue-gaps li { margin-bottom: 0.2rem; }
+#issue-releases h3, .boundaries .boundary h3 { margin: 1.1rem 0 0.3rem; }

@@ -650,7 +650,7 @@ func staticCache(version string, next http.Handler) http.Handler {
 
 func parseTemplates() map[string]*template.Template {
 	pages := []string{"landing", "compatibility", "findings", "samples", "gaps", "dependencies", "features", "package", "version",
-		"symbol", "sample", "seeder", "error"}
+		"symbol", "sample", "seeder", "failureissue", "error"}
 	out := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
 		out[p] = template.Must(template.ParseFS(templateFS,
