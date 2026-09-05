@@ -163,10 +163,7 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 	// collection sliced, not a different page; the language is a different
 	// page, and dropping it here would point every translation at the English
 	// one.
-	b.Canonical = s.base(r) + "/samples"
-	if lang != i18n.Default {
-		b.Canonical += "?lang=" + url.QueryEscape(lang)
-	}
+	b.Canonical = b.canonicalURL(s.base(r), "/samples")
 	view.basePage = b
 	// Only on the canonical view: the canonical drops the query and the page
 	// number, so an ItemList emitted from a search or a later page would

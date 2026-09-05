@@ -1,0 +1,46 @@
+{
+  "label": "2026-08-06..2026-09-02 Google Search Console, whole property — pre-change baseline for #192",
+  "source": "Transcribed from the finalized Search Console snapshot recorded on issue #192. NOT parsed from the CSV: the export file is on the operator's machine, not in this repository. Regenerate this file from the export itself with: go run ./cmd/csx-seo-report -pages Pages.csv -queries Queries.csv -label \"2026-08-06..2026-09-02 export\" -out docs/seo/serp-baseline-2026-09-02.json",
+  "partial": true,
+  "note": "Established here: the whole-property totals (5,153 impressions, 9 clicks, CTR 0.1747%, average position 15.19) and the five zero-click query rows written down on #192. NOT established: the page count behind those totals, the sample/package cohort split, the position bands, and any per-page row. Those fields are zero because nothing measured them, not because they were measured as zero — regenerate from the CSV before comparing anything but the site row and the query rows.",
+  "cohorts": {
+    "sample": {
+      "class": "sample",
+      "all": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      }
+    },
+    "package": {
+      "class": "package",
+      "all": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      }
+    },
+    "site": {
+      "class": "site",
+      "all": { "pages": 0, "clicks": 9, "impressions": 5153, "ctr": 0.001747, "meanPosition": 15.19 },
+      "bands": {
+        "1-3": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "4-10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "11-20": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 },
+        "21+": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+      }
+    }
+  },
+  "queries": [
+    { "key": "nanoid npm", "clicks": 0, "impressions": 54, "position": 7.31 },
+    { "key": "fastapi httpx2", "clicks": 0, "impressions": 15, "position": 5.8 },
+    { "key": "eslint 9.39.5", "clicks": 0, "impressions": 9, "position": 5.33 },
+    { "key": "express 4.21.2 npm", "clicks": 0, "impressions": 8, "position": 8.88 },
+    { "key": "axios 1.19.0", "clicks": 0, "impressions": 6, "position": 6.33 }
+  ],
+  "sampleTop10": { "pages": 0, "clicks": 0, "impressions": 0, "ctr": 0, "meanPosition": 0 }
+}

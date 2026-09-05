@@ -443,18 +443,23 @@ func TestExplorerTitlesNameTheCoordinateThatWasSearched(t *testing.T) {
 // A description repeated word for word on every release of every package is
 // one a search engine rewrites or ignores. This one names what was recorded
 // against THIS release — and names nothing when nothing was.
+//
+// "Published", not "verified": levelBadge refuses to call a PUBLISHED sample
+// contract-passed without a receipt that says so, and the snippet that
+// brings a reader to the page may not out-claim the badge on it.
 func TestReleaseDescriptionNamesWhatWasRecordedThere(t *testing.T) {
 	mux, store := newTestMux(t, nil)
 	machineGoalSample(t, store)
 
 	desc := descriptionOf(get(t, mux, "/npm/axios/1.12.0").Body.String())
 	mustContain(t, desc, "axios@1.12.0")
-	mustContain(t, desc, "Verified samples written against this release: 1.")
+	mustContain(t, desc, "Published samples written against this release: 1.")
+	mustNotContain(t, desc, "Verified samples")
 
 	// browserslist has a sample and no snapshot, so it may claim the sample
 	// and must not invent an environment row.
 	bare := descriptionOf(get(t, mux, "/npm/browserslist/4.28.7").Body.String())
-	mustContain(t, bare, "Verified samples written against this release: 1.")
+	mustContain(t, bare, "Published samples written against this release: 1.")
 	mustNotContain(t, bare, "Recorded environments:")
 }
 
@@ -687,4 +692,65 @@ func descriptionOf(body string) string {
 		return rest[:j]
 	}
 	return ""
+}
+
+// The package page had one description with only the package name
+// substituted into it, so every package result on the site read the same.
+// "nanoid npm" — 54 impressions at position 7.31, zero clicks in the
+// 2026-08-06..09-02 Search Console window — is what that looks like from
+// the results page. What differs between these pages is which releases they
+// carry evidence for and how many published samples stand behind them, so
+// that is what leads the snippet.
+func TestPackageDescriptionLeadsWithWhatDiffersBetweenPackages(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	desc := descriptionOf(get(t, mux, "/npm/axios").Body.String())
+	if !strings.HasPrefix(desc, "Releases with recorded evidence: 1.12.0 · 1.11.0.") {
+		t.Errorf("description does not lead with the release list: %q", desc)
+	}
+	// The generic sentence still follows — it is what the page is — but it
+	// no longer occupies the whole rendered snippet.
+	mustContain(t, desc, "axios (npm)")
+	if n := len([]rune(desc)); n > descriptionBudget {
+		t.Errorf("description is %d runes, budget is %d: %q", n, descriptionBudget, desc)
+	}
+}
+
+// The release list is bounded and the sample count is only claimed when the
+// read that produced it was not saturated: at the cap, len(samples) is the
+// limit rather than the corpus, and printing it would state a number nothing
+// measured.
+func TestPackageEvidenceFactsClaimsNothingItWasNotGiven(t *testing.T) {
+	if got := packageEvidenceFacts("en", nil, nil); got != "" {
+		t.Errorf("empty package produced %q", got)
+	}
+	many := []string{"5", "4", "3", "2", "1"}
+	got := packageEvidenceFacts("en", many, nil)
+	if strings.Contains(got, "· 1.") || strings.Count(got, "·") != metaVersionLimit-1 {
+		t.Errorf("release list is not bounded to %d: %q", metaVersionLimit, got)
+	}
+	saturated := make([]SampleListItem, packageSampleLimit)
+	if s := packageEvidenceFacts("en", nil, saturated); s != "" {
+		t.Errorf("a saturated sample read produced a count: %q", s)
+	}
+	if s := packageEvidenceFacts("en", nil, saturated[:3]); !strings.Contains(s, "Published samples: 3.") {
+		t.Errorf("an unsaturated sample read lost its count: %q", s)
+	}
+}
+
+// A package page is the hub for its release pages, and its only structured
+// statement was a breadcrumb saying where it sits. The ItemList names the
+// releases it links to, at the addresses the rows themselves link to.
+func TestPackagePageNamesItsReleasesInStructuredData(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	body := get(t, mux, "/npm/axios").Body.String()
+	mustContain(t, body, `"@type":"CollectionPage"`)
+	mustContain(t, body, `"url":"https://codesamplex.dev/npm/axios/1.12.0"`)
+	mustContain(t, body, `"name":"axios 1.12.0"`)
+	// A release page describes one coordinate and keeps the Dataset; the
+	// package page spans releases and must not claim to be one.
+	mustNotContain(t, body, `"@type":"Dataset"`)
 }

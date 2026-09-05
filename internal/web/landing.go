@@ -592,10 +592,18 @@ func (s *site) landing(w http.ResponseWriter, r *http.Request, lang string) {
 	b.IsLanding = true
 	b.OGImage = base + "/static/inspector-hero-v1.webp"
 	b.Alternates = landingAlternates(base)
-	if lang == i18n.Default {
-		b.Canonical = base + "/"
-	} else {
-		b.Canonical = base + "/" + lang + "/"
+	// The canonical is a function of the ADDRESS, never of the negotiated
+	// language. Built from lang, `GET /` with `Accept-Language: ko` answered
+	// canonical=/ko/ — measured on production — so the site's strongest URL
+	// disavowed itself on every locale-adaptive crawl, and the homepage's
+	// signal was handed to a translation nobody had asked for by name.
+	//
+	// The landing's locale cluster is path-prefixed (/ko/, not /?lang=ko),
+	// so an explicit ?lang= resolves to that locale's own path: the one
+	// address the hreflang cluster, the switcher and the sitemap all name.
+	b.Canonical = base + r.URL.Path
+	if q := canonicalLangOf(r); q != i18n.Default {
+		b.Canonical = base + "/" + q + "/"
 	}
 	b.JSONLD = landingJSONLD(base, lang)
 

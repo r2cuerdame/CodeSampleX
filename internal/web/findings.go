@@ -873,10 +873,7 @@ func (s *site) findings(w http.ResponseWriter, r *http.Request) {
 	// One canonical URL per language. Paged and searched views are the same
 	// collection sliced differently; indexing each slice separately splits
 	// the page's signal, and a translation is not a slice.
-	b.Canonical = s.base(r) + "/findings"
-	if lang != i18n.Default {
-		b.Canonical += "?lang=" + url.QueryEscape(lang)
-	}
+	b.Canonical = b.canonicalURL(s.base(r), "/findings")
 
 	view := findingsPage{
 		basePage:         b,
