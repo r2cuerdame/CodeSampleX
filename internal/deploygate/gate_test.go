@@ -150,7 +150,7 @@ func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	if !ok {
 		t.Fatal("locate deploygate test file")
 	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0035_authoring_work_axis.sql")
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0034_authoring_work_axis.sql")
 	sql, err := os.ReadFile(migrationPath)
 	if err != nil {
 		t.Fatalf("read authoring work axis migration: %v", err)
