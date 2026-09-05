@@ -444,6 +444,55 @@ var authoringExpansionCandidatesSQL = `
 				) sibling ON sibling.ecosystem=p.ecosystem AND sibling.name=p.name
 				WHERE p.sibling_rank <= $2
 				UNION ALL
+				-- The EVIDENCE axis (#87). A PUBLIC release nothing has ever
+				-- observed and nobody has proven, whose package is not proven
+				-- at any other version either -- so the sibling branch above
+				-- cannot reach it -- and which no lockfile resolved onto, so
+				-- the dependency closure below cannot either.
+				--
+				-- Every other branch here reaches a version THROUGH an
+				-- evidence_agg row keyed by that exact purl. These have none,
+				-- which is precisely what is missing about them, so they were
+				-- unreachable by construction: the census counted them and no
+				-- queue could hand them out.
+				--
+				-- The deliverable is still a sample, and that is not a rename
+				-- of EXPANSION. A sample's verification records a run in the
+				-- environment that ran it (receiptobservation.go) and reports
+				-- the tree its resolver wrote, so writing one closes all three
+				-- axes for a coordinate that had none. What the kind carries
+				-- is which axis was empty, which is the only thing a reader --
+				-- or the panel counting by kind -- can act on.
+				--
+				-- Score 0 and the last source_rank: nobody has asked for this,
+				-- so it must never outrank work somebody did. It ties with the
+				-- sibling branch on score and loses to it on rank, so nothing
+				-- that could already be reached is displaced. target_os is
+				-- empty because no observation pins one.
+				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
+				       0::bigint AS score,'EVIDENCE'::text AS kind,5 AS source_rank,p.last_seen,
+				       ''::text AS target_os
+				FROM (
+				  SELECT purl,ecosystem,name,version,last_seen,
+				         ROW_NUMBER() OVER (PARTITION BY ecosystem,name
+				                            ORDER BY last_seen DESC,version DESC) AS evidence_rank
+				  FROM packages
+				  WHERE version<>'' AND publicness='PUBLIC'
+				    AND NOT EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=packages.purl)
+				    AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=packages.purl)
+				    -- A package proven at SOME version belongs to the sibling
+				    -- branch, which reaches it with a target_os a verifier can
+				    -- act on. Offering it here as well would put one
+				    -- coordinate in one window twice under two names.
+				    AND NOT EXISTS (SELECT 1 FROM proven_names n
+				                    WHERE n.ecosystem=packages.ecosystem AND n.name=packages.name)
+				) p
+				-- The same cap the sibling branch takes, for the same reason:
+				-- one package with a long release history would otherwise fill
+				-- the window with score-0 rows and push every other package's
+				-- real work past the LIMIT.
+				WHERE p.evidence_rank <= $2
+				UNION ALL
 				-- The dependency closure, ranked between the exact holes
 				-- evidence points at and the version breadth nobody has asked
 				-- for. target_os is empty on purpose: a resolved edge records
@@ -515,7 +564,7 @@ var authoringExpansionCandidatesSQL = `
 				WHERE (CASE
 				    WHEN c.symbol<>'' THEN NOT EXISTS (
 				      SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol)
-				    WHEN c.kind IN ('EXPANSION','DEPENDENCY') THEN NOT EXISTS (
+				    WHEN c.kind IN ('EXPANSION','DEPENDENCY','EVIDENCE') THEN NOT EXISTS (
 				      SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
 				    ELSE true END)
 				  AND NOT EXISTS (
@@ -755,8 +804,9 @@ func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, wo
 		// symbol the writer ended up choosing, so leaving the row behind with a
 		// sample id would take that coordinate off the board permanently. A
 		// DEPENDENCY claim has the same shape and the same reason: it asks about
-		// the release, not about one symbol in it.
-		if (work.Kind == "EXPANSION" || work.Kind == "DEPENDENCY") && work.Symbol == "" {
+		// the release, not about one symbol in it. So does EVIDENCE, which asks
+		// whether anything has ever been recorded running the release at all.
+		if isPackageLevelAuthoringKind(work.Kind) && work.Symbol == "" {
 			tag, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
 				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=''
 				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5`,

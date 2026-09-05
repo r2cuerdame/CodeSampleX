@@ -154,6 +154,10 @@ const (
 	authoringRankSymbol       = 2
 	authoringRankDependency   = 3
 	authoringRankSibling      = 4
+	// The EVIDENCE axis is last on purpose: nobody has asked for these
+	// coordinates at all, so a release the network can already reach through
+	// any other branch must be handed out first.
+	authoringRankEvidence = 5
 )
 
 // ListAuthoringExpansionCandidatesUnhurried is the same read; the fake has
@@ -355,6 +359,46 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		if _, exists := candidates[key]; !exists {
 			candidates[key] = row
 			ranks[key] = authoringRankDependency
+		}
+	}
+	// The EVIDENCE axis (#87): a PUBLIC release nothing has observed and
+	// nobody has proven. Every branch above reaches a version through an
+	// evidence row keyed by that exact purl, or through a proven sibling, so
+	// a coordinate with neither was unreachable by construction -- counted by
+	// the census and offerable by nothing. Capped per package by the same
+	// rule as siblings, ranked last, scored zero.
+	evidenceByName := make(map[[2]string][]PackageRow)
+	for _, pkg := range f.packages {
+		if observedPURLs[pkg.PURL] || verifiedPURLs[pkg.PURL] || !eligible(pkg, "") {
+			continue
+		}
+		name := [2]string{pkg.Ecosystem, pkg.Name}
+		// A package the network already proves at SOME version belongs to the
+		// sibling branch, which reaches it with a target_os a verifier can
+		// act on. Counting it here too would offer one coordinate twice in
+		// one window under two names.
+		if len(nameTargets[name]) > 0 {
+			continue
+		}
+		evidenceByName[name] = append(evidenceByName[name], pkg)
+	}
+	for _, pkgs := range evidenceByName {
+		sort.Slice(pkgs, func(i, j int) bool {
+			if !pkgs[i].LastSeen.Equal(pkgs[j].LastSeen) {
+				return pkgs[i].LastSeen.After(pkgs[j].LastSeen)
+			}
+			return pkgs[i].Version > pkgs[j].Version
+		})
+		if len(pkgs) > authoringSiblingVersionsPerPackage {
+			pkgs = pkgs[:authoringSiblingVersionsPerPackage]
+		}
+		for _, pkg := range pkgs {
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", ""}
+			if _, exists := candidates[key]; !exists {
+				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+					Version: pkg.Version, Kind: "EVIDENCE", Score: 0, LastSeen: pkg.LastSeen}
+				ranks[key] = authoringRankEvidence
+			}
 		}
 	}
 	for _, pkg := range f.packages {
@@ -758,8 +802,9 @@ func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, wo
 	// symbol the writer ended up choosing, so leaving the row behind with a
 	// sample id would take that coordinate off the board permanently. A
 	// DEPENDENCY claim has the same shape and the same reason: it asks about
-	// the release, not about one symbol in it.
-	if (current.Kind == "EXPANSION" || current.Kind == "DEPENDENCY") && current.Symbol == "" {
+	// the release, not about one symbol in it. So does EVIDENCE, which asks
+	// whether anything has ever been recorded running the release at all.
+	if isPackageLevelAuthoringKind(current.Kind) && current.Symbol == "" {
 		delete(f.authoringWork, key)
 		return true, nil
 	}

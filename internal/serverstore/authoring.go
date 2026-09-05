@@ -20,6 +20,37 @@ func isAuthoringPoll(ctx context.Context) bool {
 	return marked
 }
 
+// AuthoringWorkKinds is every kind the scheduler may hand out, named once.
+//
+// The vocabulary also lives in an inline CHECK on authoring_assignments, and
+// the two have drifted before: 0013 wrote three kinds, the dependency closure
+// began producing a fourth, and every DEPENDENCY claim failed its INSERT in
+// production while every unit test passed -- the Fake has no constraint to
+// violate. TestIntegrationEveryOfferedWorkKindCanBeClaimed reads this list and
+// claims one of each against PostgreSQL, so a kind added here without its
+// migration fails in the test rather than in the fleet.
+var AuthoringWorkKinds = []string{"WANTED", "FINDING", "EXPANSION", "DEPENDENCY", "EVIDENCE"}
+
+// isPackageLevelAuthoringKind reports whether a claim of this kind asks about
+// the RELEASE rather than about one symbol in it.
+//
+// Such a claim is keyed (ecosystem,name,version,”) whichever symbol the
+// writer ended up choosing, so the assignment row is deleted on submission
+// instead of being stamped with the sample id -- leaving it behind would take
+// the coordinate off the board permanently, including from the branch that
+// would re-offer it if the verification never passed.
+//
+// Written once because the two stores each implement it and had to agree, and
+// because every new missing-axis kind belongs on exactly one side of this
+// question.
+func isPackageLevelAuthoringKind(kind string) bool {
+	switch kind {
+	case "EXPANSION", "DEPENDENCY", "EVIDENCE":
+		return true
+	}
+	return false
+}
+
 const MaxAuthoringSessions = 64
 
 var (

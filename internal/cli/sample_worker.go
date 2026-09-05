@@ -351,6 +351,14 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		// writer should expect less prior art than usual and not read that as
 		// a sign the coordinate is wrong.
 		fmt.Fprintf(sampleWorkerStdout, "Assigned dependency-closure work (%d projects resolved it, lease until %s)\n", result.Work.Score, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
+	} else if result.Work.Kind == "EVIDENCE" {
+		// The evidence axis (#87). Nothing has ever been recorded running
+		// this release -- not a sighting, not a resolution, not a sample --
+		// so there is no prior art here at all and no score to read. Writing
+		// the sample is what puts the first measurement on the coordinate:
+		// its verification records a run in the environment that ran it, and
+		// reports the tree the resolver wrote on the way past.
+		fmt.Fprintf(sampleWorkerStdout, "Assigned evidence-axis work (nothing has been recorded running this release, lease until %s)\n", result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	} else {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	}

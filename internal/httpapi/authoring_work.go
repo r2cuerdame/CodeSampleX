@@ -56,7 +56,8 @@ const (
 
 	// authoringGapEvery is the poll on which the matrix gaps are offered
 	// before WANTED. WANTED is somebody's explicit ask and ranks first on
-	// every other poll; on this one, EXPANSION and DEPENDENCY candidates --
+	// every other poll; on this one the missing-axis candidates --
+	// EXPANSION, DEPENDENCY and EVIDENCE --
 	// the blank cells of the matrix -- come first, in the order they already
 	// carry. Measured 2026-09-02: the farm completed 157 WANTED coordinates
 	// in 24 hours and zero of either other kind, while the snapshot held 198
@@ -482,7 +483,8 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 		}
 		return false
 	}
-	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" && candidate.Kind != "DEPENDENCY" {
+	if candidate.Kind != "FINDING" && candidate.Kind != "EXPANSION" &&
+		candidate.Kind != "DEPENDENCY" && candidate.Kind != "EVIDENCE" {
 		return false
 	}
 	// TargetOS on a FINDING or an EXPANSION says where the coordinate was

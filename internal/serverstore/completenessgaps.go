@@ -43,9 +43,13 @@ const (
 				  AND EXISTS (SELECT 1 FROM receipts r WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS')
 			)`
 
-	// completenessRelationsCTE names the two ways a release's dependencies
-	// can have been answered.
-	completenessRelationsCTE = `dependency_edge_parents AS MATERIALIZED (
+	// completenessDependencyCTE names the two ways a release's dependencies
+	// can have been answered. It is split out from completenessRelationsCTE
+	// because the dependency-axis scheduler needs exactly this pair and
+	// nothing else: MATERIALIZED means an unused CTE beside it is still
+	// evaluated, and observed_packages is a scan of packages against
+	// evidence_agg that the scheduler has no question for.
+	completenessDependencyCTE = `dependency_edge_parents AS MATERIALIZED (
 				-- The PARENT end, deliberately. Being pulled BY somebody says
 				-- nothing about what this release pulls, and the dependency
 				-- axis is the second question.
@@ -64,7 +68,11 @@ const (
 				              THEN '%40'||substring(name from 2)
 				              ELSE name END||'@'||version AS purl
 				FROM dependency_resolution
-			), observed_packages AS MATERIALIZED (
+			)`
+
+	// completenessRelationsCTE is the dependency pair plus the evidence axis,
+	// which is what the census and the /gaps listing classify by.
+	completenessRelationsCTE = completenessDependencyCTE + `, observed_packages AS MATERIALIZED (
 				SELECT pk.purl
 				  FROM packages pk
 				 WHERE ` + completenessSubjectSQL + `
