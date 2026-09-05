@@ -1,11 +1,29 @@
 {{define "content"}}
 <article class="feature-page">
   <header class="feature-page__hero">
-    <p class="eyebrow mono">CLI · MCP</p>
+    <p class="eyebrow mono">WEB · CLI · MCP · API</p>
     <h1>{{.T "features.title"}}</h1>
-    <p class="lead">{{.T "features.lead"}}</p>
-    <p class="feature-page__scope dim small">{{.T "features.scope"}}</p>
+    <p class="lead">{{.T "site.meta_description"}}</p>
   </header>
+
+  <section class="feature-page__overview" aria-labelledby="product-capabilities-heading">
+    <header class="feature-page__overview-heading">
+      <p class="eyebrow mono">CodeSampleX</p>
+      <h2 id="product-capabilities-heading">{{.T "features.summary"}}</h2>
+    </header>
+    <div class="feature-page__overview-grid">
+      {{range .Overview}}
+      <a class="feature-page__capability feature-page__capability--{{.ID}}" href="{{.Href}}">
+        <span class="feature-page__capability-copy">
+          <strong>{{.Title}}</strong>
+          <span>{{.Summary}}</span>
+        </span>
+        {{if .Command}}<code class="feature-page__capability-code">{{.Command}}</code>{{end}}
+        <span class="feature-page__capability-arrow" aria-hidden="true">→</span>
+      </a>
+      {{end}}
+    </div>
+  </section>
 
   {{/* The CLI is the product; these tools are how an agent reaches
        the same network. Say where the CLI's own help is before the list. */}}
@@ -16,6 +34,11 @@
       <li><code>csx help</code><span class="dim">{{.T "features.cli_help"}}</span></li>
       <li><code>csx worker --help</code><span class="dim">{{.T "features.cli_sub"}}</span></li>
     </ul>
+  </section>
+
+  <section class="feature-page__reference-intro" id="developer-reference" aria-labelledby="developer-reference-heading">
+    <p class="eyebrow mono">MCP · API</p>
+    <h2 id="developer-reference-heading">{{.T "features.scope"}}</h2>
   </section>
 
   <nav class="feature-page__summary" aria-labelledby="feature-summary-heading">

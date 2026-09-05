@@ -35,9 +35,18 @@ type featureGroup struct {
 	Tools   []featureTool
 }
 
+type productFeature struct {
+	ID      string
+	Href    string
+	Title   string
+	Summary string
+	Command string
+}
+
 type featuresPage struct {
 	basePage
-	Groups []featureGroup
+	Overview []productFeature
+	Groups   []featureGroup
 	// API is the read half of the HTTP surface. The page described the CLI
 	// and the MCP tools and never mentioned that the network answers HTTP
 	// directly, so a reader who wanted the evidence without either had no
@@ -51,9 +60,24 @@ func (s *site) features(w http.ResponseWriter, r *http.Request) {
 		i18n.T(lang, "meta.features"))
 	s.render(w, "features", http.StatusOK, featuresPage{
 		basePage: b,
+		Overview: productFeatures(b),
 		Groups:   localizedMCPFeatureGroups(lang),
 		API:      publicReadAPI(),
 	})
+}
+
+func productFeatures(b basePage) []productFeature {
+	link := b.WithLang
+	return []productFeature{
+		{ID: "compatibility", Href: link("/compatibility"), Title: b.T("compatibility.title"), Summary: b.T("compatibility.intro")},
+		{ID: "dependencies", Href: link("/dependencies"), Title: b.T("dependencies.title"), Summary: b.T("meta.dependencies")},
+		{ID: "gaps", Href: link("/gaps"), Title: b.T("gaps.title"), Summary: b.T("meta.gaps")},
+		{ID: "findings", Href: link("/findings"), Title: b.T("findings.title"), Summary: b.T("meta.findings")},
+		{ID: "cli", Href: "#feature-cli-heading", Title: b.T("features.cli_heading"), Summary: b.T("features.cli_body"), Command: "csx hook check"},
+		{ID: "samples", Href: link("/samples"), Title: b.T("samples.title"), Summary: b.T("samples.sub"), Command: "csx sample pending"},
+		{ID: "local", Href: link("/stats"), Title: b.T("stats.title"), Summary: b.T("meta.stats"), Command: "csx ui"},
+		{ID: "integrations", Href: "#developer-reference", Title: "MCP · API", Summary: b.T("features.scope"), Command: "csx mcp-config"},
+	}
 }
 
 func localizedMCPFeatureGroups(lang string) []featureGroup {

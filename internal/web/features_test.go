@@ -24,6 +24,22 @@ func TestFeaturesPageDocumentsThePublicMCPTools(t *testing.T) {
 	mustContain(t, body, `<link rel="canonical" href="https://codesamplex.dev/features">`)
 	mustContain(t, body, `href="/features">Features</a>`)
 	mustContain(t, body, `id="feature-summary-heading"`)
+	mustContain(t, body, `id="product-capabilities-heading"`)
+	mustContain(t, body, `id="developer-reference"`)
+	for _, want := range []string{
+		`href="/compatibility"`,
+		`href="/dependencies"`,
+		`href="/gaps"`,
+		`href="/findings"`,
+		`href="/samples"`,
+		`href="/stats"`,
+		`csx hook check`,
+		`csx sample pending`,
+		`csx ui`,
+		`csx mcp-config`,
+	} {
+		mustContain(t, body, want)
+	}
 	if want := len(mcp.ToolNames()); strings.Count(body, `<details class="feature-page__tool"`) != want {
 		t.Fatalf("public MCP tool details = %d, want %d — the page claims to be complete",
 			strings.Count(body, `<details class="feature-page__tool"`), want)
@@ -83,6 +99,10 @@ func TestFeaturesPageChromeIsLocalizedForEveryLocale(t *testing.T) {
 		mustContain(t, body, `>`+i18n.T(lang, "features.title")+`</h1>`)
 		mustContain(t, body, `href="/features`)
 		mustContain(t, body, i18n.T(lang, "features.privacy"))
+		mustContain(t, body, i18n.T(lang, "compatibility.title"))
+		if lang != i18n.Default {
+			mustContain(t, body, `href="/dependencies?lang=`+lang+`"`)
+		}
 		if strings.Contains(body, ">features.") || strings.Contains(body, `"features.`) {
 			t.Errorf("%s rendered a translation key", lang)
 		}
@@ -140,9 +160,12 @@ func TestFeaturesRouteSEOAndResponsiveLayout(t *testing.T) {
 	css := get(t, mux, "/static/site.css").Body.String()
 	for _, want := range []string{
 		`.feature-page {`,
+		`.feature-page__overview-grid {`,
+		`.feature-page__capability {`,
 		`.feature-page__json-grid pre {`,
 		`white-space: pre-wrap;`,
 		`overflow-wrap: anywhere;`,
+		`.feature-page__overview-grid,`,
 		`.feature-page__json-grid { grid-template-columns: 1fr;`,
 	} {
 		mustContain(t, css, want)
