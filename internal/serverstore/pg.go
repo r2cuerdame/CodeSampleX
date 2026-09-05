@@ -971,14 +971,34 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 	}
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			SELECT `+sampleCols+` FROM samples s
-			WHERE s.sample_id IN (
-				SELECT package.sample_id FROM sample_packages package
-				WHERE package.purl LIKE ANY($1)
-			)
-			  AND NOT s.quarantined
-			ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
+		exact := true
+		for _, n := range names {
+			if strings.ContainsAny(n, "%_") {
+				exact = false
+				break
+			}
+		}
+		var rows pgx.Rows
+		var err error
+		if exact {
+			rows, err = c.Query(ctx, `
+				SELECT `+sampleCols+` FROM samples s
+				WHERE s.sample_id IN (
+					SELECT package.sample_id FROM sample_packages package
+					WHERE package.purl = ANY($1)
+				)
+				  AND NOT s.quarantined
+				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
+		} else {
+			rows, err = c.Query(ctx, `
+				SELECT `+sampleCols+` FROM samples s
+				WHERE s.sample_id IN (
+					SELECT package.sample_id FROM sample_packages package
+					WHERE package.purl LIKE ANY($1)
+				)
+				  AND NOT s.quarantined
+				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
+		}
 		if err != nil {
 			return err
 		}
@@ -1006,19 +1026,43 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 	}
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-			SELECT `+sampleCols+` FROM samples s
-			WHERE s.sample_id IN (
-				SELECT package.sample_id FROM sample_packages package
-				WHERE package.purl LIKE ANY($1)
-			)
-			  AND NOT s.quarantined
-			  AND EXISTS (
-				SELECT 1 FROM receipts verified_receipt
-				WHERE verified_receipt.sample_id = s.sample_id
-				  AND verified_receipt.contract_result = 'PASS'
-			  )
-			ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
+		coords := make([]string, 0, len(names))
+		for _, n := range names {
+			if strings.HasSuffix(n, "@%") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") && !strings.Contains(strings.TrimSuffix(n, "%"), "_") {
+				coords = append(coords, strings.TrimSuffix(n, "%"))
+			}
+		}
+		var rows pgx.Rows
+		var err error
+		if len(coords) == len(names) {
+			rows, err = c.Query(ctx, `
+				SELECT `+sampleCols+` FROM samples s
+				WHERE s.sample_id IN (
+					SELECT package.sample_id FROM sample_packages package
+					WHERE package.coord = ANY($1)
+				)
+				  AND NOT s.quarantined
+				  AND EXISTS (
+					SELECT 1 FROM receipts verified_receipt
+					WHERE verified_receipt.sample_id = s.sample_id
+					  AND verified_receipt.contract_result = 'PASS'
+				  )
+				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, coords, limit)
+		} else {
+			rows, err = c.Query(ctx, `
+				SELECT `+sampleCols+` FROM samples s
+				WHERE s.sample_id IN (
+					SELECT package.sample_id FROM sample_packages package
+					WHERE package.purl LIKE ANY($1)
+				)
+				  AND NOT s.quarantined
+				  AND EXISTS (
+					SELECT 1 FROM receipts verified_receipt
+					WHERE verified_receipt.sample_id = s.sample_id
+					  AND verified_receipt.contract_result = 'PASS'
+				  )
+				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
+		}
 		if err != nil {
 			return err
 		}
@@ -1311,15 +1355,14 @@ func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset 
 	var out []SampleRow
 	total := 0
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		if err := c.QueryRow(ctx, `
-			SELECT count(*) FROM samples
-			WHERE NOT quarantined AND lower(manifest::text) LIKE $1`, pattern).Scan(&total); err != nil {
-			return err
-		}
+		// Probe limit + 1 rows first. When the total result set fits within
+		// limit and offset == 0, total == len(out) is exact and avoids running
+		// the expensive unindexed table scan count(*) over JSONB manifests.
+		fetchLimit := limit + 1
 		rows, err := c.Query(ctx, `
 			SELECT `+sampleCols+` FROM samples
 			WHERE NOT quarantined AND lower(manifest::text) LIKE $1
-			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, pattern, limit, offset)
+			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, pattern, fetchLimit, offset)
 		if err != nil {
 			return err
 		}
@@ -1331,7 +1374,20 @@ func (p *PG) SearchSamplesPage(ctx context.Context, query string, limit, offset 
 			}
 			out = append(out, s)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		if offset == 0 && len(out) <= limit {
+			total = len(out)
+			return nil
+		}
+		if len(out) > limit {
+			out = out[:limit]
+		}
+		return c.QueryRow(ctx, `
+			SELECT count(*) FROM samples
+			WHERE NOT quarantined AND lower(manifest::text) LIKE $1`, pattern).Scan(&total)
 	})
 	return out, total, err
 }

@@ -60,17 +60,28 @@ type webStore struct {
 	targetsMu         sync.Mutex
 	targetsAt         time.Time
 	targetsRows       []serverstore.SnapshotTarget
+	targetsIndex      *snapshotTargetIndex
 	targetsRefreshing bool
 	targetsRetryAt    time.Time
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
-	pkgSamples       sync.Map // key: "eco|name", value: cachedPackageSamples
-	pkgCounts        sync.Map // key: "eco|name", value: cachedPackageCounts
-	snapshotJSON     sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
-	purlsLoaded      sync.Map // key: purl, value: time.Time
-	completenessGaps   sync.Map // key: "query|offset|limit", value: cachedCompletenessGaps
+	pkgSamples         sync.Map // key: "eco|name", value: cachedPackageSamples
+	pkgCounts          sync.Map // key: "eco|name", value: cachedPackageCounts
+	pkgFailureClusters sync.Map // key: "eco|name", value: cachedFailureClusters
+	pkgDependencies    sync.Map // key: "eco|name", value: cachedPackageDependencies
+	searchSamples      sync.Map // key: "query|offset|limit", value: cachedSearchSamples
+	snapshotJSON       sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+	purlsLoaded        sync.Map // key: purl, value: time.Time
 	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
 	dependencySubjects sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
+
+	// Gaps whole-corpus cache with background refresh so visitors to /gaps
+	// never stall on the multi-axis PostgreSQL classification.
+	gapsMu         sync.Mutex
+	gapsAt         time.Time
+	gapsAll        []web.CompletenessGap
+	gapsRefreshing bool
+	gapsRetryAt    time.Time
 }
 
 type cachedSnapshotJSON struct {
@@ -79,9 +90,15 @@ type cachedSnapshotJSON struct {
 	ok   bool
 }
 
-type cachedCompletenessGaps struct {
+type cachedFailureClusters struct {
+	at      time.Time
+	docs    []string
+	matched int
+}
+
+type cachedSearchSamples struct {
 	at    time.Time
-	rows  []web.CompletenessGap
+	items []web.SampleListItem
 	total int
 }
 
@@ -104,6 +121,70 @@ type cachedPackageSamples struct {
 type cachedPackageCounts struct {
 	at    time.Time
 	items []web.PackageCodeCount
+}
+
+type cachedPackageDependencies struct {
+	at    time.Time
+	edges []web.DependencyEdge
+}
+
+type snapshotTargetIndex struct {
+	rows         []serverstore.SnapshotTarget
+	pkgVersions  map[string]map[string]bool // "eco|name" -> set of versions
+	pkgSymbols   map[string][]string        // "eco|name|version" -> sorted symbols
+	symbolSpread map[string]map[string]int  // eco -> symbol -> package count
+}
+
+func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
+	idx := &snapshotTargetIndex{
+		rows:         rows,
+		pkgVersions:  make(map[string]map[string]bool),
+		pkgSymbols:   make(map[string][]string),
+		symbolSpread: make(map[string]map[string]int),
+	}
+	pkgSymbolsSet := make(map[string]map[string]bool)
+	symbolPkgs := make(map[string]map[string]map[string]bool)
+
+	for _, t := range rows {
+		p, err := domain.ParsePURL(t.PURL)
+		if err != nil {
+			continue
+		}
+		pkgKey := p.Ecosystem + "|" + p.Name
+		if idx.pkgVersions[pkgKey] == nil {
+			idx.pkgVersions[pkgKey] = make(map[string]bool)
+		}
+		if p.Version != "" {
+			idx.pkgVersions[pkgKey][p.Version] = true
+		}
+		if t.Symbol != "" {
+			verKey := pkgKey + "|" + p.Version
+			if pkgSymbolsSet[verKey] == nil {
+				pkgSymbolsSet[verKey] = make(map[string]bool)
+			}
+			if !pkgSymbolsSet[verKey][t.Symbol] {
+				pkgSymbolsSet[verKey][t.Symbol] = true
+				idx.pkgSymbols[verKey] = append(idx.pkgSymbols[verKey], t.Symbol)
+			}
+			if symbolPkgs[p.Ecosystem] == nil {
+				symbolPkgs[p.Ecosystem] = make(map[string]map[string]bool)
+			}
+			if symbolPkgs[p.Ecosystem][t.Symbol] == nil {
+				symbolPkgs[p.Ecosystem][t.Symbol] = make(map[string]bool)
+			}
+			symbolPkgs[p.Ecosystem][t.Symbol][p.Name] = true
+		}
+	}
+	for _, syms := range idx.pkgSymbols {
+		sort.Strings(syms)
+	}
+	for eco, symMap := range symbolPkgs {
+		idx.symbolSpread[eco] = make(map[string]int, len(symMap))
+		for sym, pkgs := range symMap {
+			idx.symbolSpread[eco][sym] = len(pkgs)
+		}
+	}
+	return idx
 }
 
 const packageDetailCacheTTL = 5 * time.Minute
@@ -236,32 +317,45 @@ func (w *webStore) refreshSnapshotUpdatedAt() {
 	w.updatedRetryAt = time.Time{}
 }
 
-func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
+func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex, error) {
 	w.targetsMu.Lock()
 	if !w.targetsAt.IsZero() {
 		now := time.Now()
-		rows := w.targetsRows
+		idx := w.targetsIndex
 		if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
 			!w.targetsRefreshing && !now.Before(w.targetsRetryAt) {
 			w.targetsRefreshing = true
 			go w.refreshSnapshotTargets()
 		}
 		w.targetsMu.Unlock()
-		return rows, nil
+		return idx, nil
 	}
 	// Cold: only an interactive visitor loads synchronously under the lock.
 	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
 		w.targetsMu.Unlock()
-		return w.s.SnapshotKeys(ctx)
+		rows, err := w.s.SnapshotKeys(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return buildTargetIndex(rows), nil
 	}
 	rows, err := w.s.SnapshotKeys(ctx)
 	if err != nil {
 		w.targetsMu.Unlock()
 		return nil, err
 	}
-	w.targetsRows, w.targetsAt = rows, time.Now()
+	idx := buildTargetIndex(rows)
+	w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
 	w.targetsMu.Unlock()
-	return rows, nil
+	return idx, nil
+}
+
+func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
+	idx, err := w.cachedTargetIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return idx.rows, nil
 }
 
 func (w *webStore) refreshSnapshotTargets() {
@@ -275,7 +369,7 @@ func (w *webStore) refreshSnapshotTargets() {
 		w.targetsRetryAt = time.Now().Add(recordSnapshotRetryDelay)
 		return
 	}
-	w.targetsRows, w.targetsAt = rows, time.Now()
+	w.targetsRows, w.targetsIndex, w.targetsAt = rows, buildTargetIndex(rows), time.Now()
 	w.targetsRetryAt = time.Time{}
 }
 
@@ -361,22 +455,16 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 	// with evidence yet", and every one of those links was a 404.
 	//
 	// A link into a 404 is worse than a slow page. This read is shared with
-	// PackageSymbols through cachedSnapshotTargets, so the whole cube assembly
+	// PackageSymbols through cachedTargetIndex, so the whole cube assembly
 	// pays for it once rather than once per version.
-	targets, terr := w.cachedSnapshotTargets(ctx)
+	idx, terr := w.cachedTargetIndex(ctx)
 	if terr != nil {
 		return nil, terr
 	}
-	hasPage := map[string]bool{}
-	for _, t := range targets {
-		if p, err := domain.ParsePURL(t.PURL); err == nil &&
-			p.Ecosystem == ecosystem && p.Name == name {
-			hasPage[p.Version] = true
-		}
-	}
+	hasPage := idx.pkgVersions[ecosystem+"|"+name]
 	versions := make([]string, 0, len(rows))
 	for _, r := range rows {
-		if hasPage[r.Version] {
+		if hasPage != nil && hasPage[r.Version] {
 			versions = append(versions, r.Version)
 		}
 	}
@@ -390,54 +478,27 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 	if len(symbols) == 0 {
 		return nil, nil
 	}
-	targets, err := w.cachedSnapshotTargets(ctx)
+	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
-	want := make(map[string]bool, len(symbols))
+	out := make(map[string]int, len(symbols))
+	ecoSpread := idx.symbolSpread[ecosystem]
 	for _, sym := range symbols {
-		want[sym] = true
-	}
-	pkgs := map[string]map[string]bool{}
-	for _, t := range targets {
-		if t.Symbol == "" || !want[t.Symbol] {
-			continue
+		if ecoSpread != nil {
+			out[sym] = ecoSpread[sym]
 		}
-		p, err := domain.ParsePURL(t.PURL)
-		if err != nil || p.Ecosystem != ecosystem {
-			continue
-		}
-		if pkgs[t.Symbol] == nil {
-			pkgs[t.Symbol] = map[string]bool{}
-		}
-		pkgs[t.Symbol][p.Name] = true
-	}
-	out := make(map[string]int, len(pkgs))
-	for sym, names := range pkgs {
-		out[sym] = len(names)
 	}
 	return out, nil
 }
 
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
-	targets, err := w.cachedSnapshotTargets(ctx)
+	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, t := range targets {
-		if t.Symbol == "" || seen[t.Symbol] {
-			continue
-		}
-		p, err := domain.ParsePURL(t.PURL)
-		if err != nil || p.Ecosystem != ecosystem || p.Name != name || p.Version != version {
-			continue
-		}
-		seen[t.Symbol] = true
-		out = append(out, t.Symbol)
-	}
-	sort.Strings(out)
+	syms := idx.pkgSymbols[ecosystem+"|"+name+"|"+version]
+	out := append([]string(nil), syms...)
 	return out, nil
 }
 
@@ -560,6 +621,14 @@ func (w *webStore) SearchSamples(ctx context.Context, query string, offset, limi
 	if limit <= 0 {
 		limit = 24
 	}
+	qClean := strings.ToLower(strings.TrimSpace(query))
+	cacheKey := fmt.Sprintf("%s|%d|%d", qClean, offset, limit)
+	if val, ok := w.searchSamples.Load(cacheKey); ok {
+		entry := val.(cachedSearchSamples)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.items, entry.total, nil
+		}
+	}
 	rows, total, err := w.s.SearchSamplesPage(ctx, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -568,6 +637,11 @@ func (w *webStore) SearchSamples(ctx context.Context, query string, offset, limi
 	for _, r := range rows {
 		out = append(out, sampleListItem(r))
 	}
+	w.searchSamples.Store(cacheKey, cachedSearchSamples{
+		at:    time.Now(),
+		items: out,
+		total: total,
+	})
 	return out, total, nil
 }
 
@@ -706,6 +780,13 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 
 // Dependencies adapts the parent-side view of the same edges.
 func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
+	cacheKey := ecosystem + "|" + name
+	if val, ok := w.pkgDependencies.Load(cacheKey); ok {
+		entry := val.(cachedPackageDependencies)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.edges, nil
+		}
+	}
 	rows, err := w.s.Dependencies(ctx, ecosystem, name)
 	if err != nil {
 		return nil, err
@@ -720,6 +801,10 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 			Outcome:     r.Outcome,
 		})
 	}
+	w.pkgDependencies.Store(cacheKey, cachedPackageDependencies{
+		at:    time.Now(),
+		edges: out,
+	})
 	return out, nil
 }
 
@@ -1342,6 +1427,13 @@ func (w *webStore) refreshHotPackages() {
 }
 
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
+	cacheKey := ecosystem + "|" + name
+	if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
+		entry := val.(cachedFailureClusters)
+		if time.Since(entry.at) < packageDetailCacheTTL {
+			return entry.docs, entry.matched, nil
+		}
+	}
 	rows, err := w.s.ListFailureClusters(ctx, name)
 	if err != nil {
 		return nil, 0, err
@@ -1400,6 +1492,11 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		}
 		out = append(out, string(b))
 	}
+	w.pkgFailureClusters.Store(cacheKey, cachedFailureClusters{
+		at:      time.Now(),
+		docs:    out,
+		matched: matched,
+	})
 	return out, matched, nil
 }
 
@@ -1458,23 +1555,58 @@ func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error
 
 // CompletenessGaps carries the census's own rows to the page.
 //
-// The judgement -- which coordinates are backlog, in what order, and which
-// axes nothing here can close -- was already made in serverstore, beside the
-// matrix it has to agree with. This only changes the type.
-func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]web.CompletenessGap, int, error) {
-	cacheKey := fmt.Sprintf("%s|%d|%d", query, offset, limit)
-	if val, ok := w.completenessGaps.Load(cacheKey); ok {
-		entry := val.(cachedCompletenessGaps)
-		if time.Since(entry.at) < 60*time.Second {
-			return entry.rows, entry.total, nil
+const (
+	gapsCacheTTL       = 5 * time.Minute
+	gapsRefreshTimeout = 2 * time.Minute
+	gapsRetryDelay     = 30 * time.Second
+)
+
+func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error) {
+	w.gapsMu.Lock()
+	if w.gapsAt.IsZero() {
+		rows, err := w.loadAllGaps(ctx)
+		if err != nil {
+			w.gapsMu.Unlock()
+			return nil, err
 		}
+		w.gapsAll, w.gapsAt = rows, time.Now()
+		w.gapsMu.Unlock()
+		return rows, nil
 	}
-	rows, total, err := w.s.CompletenessGaps(ctx, query, offset, limit)
+	now := time.Now()
+	rows := w.gapsAll
+	if !w.gapsAt.After(now.Add(-gapsCacheTTL)) &&
+		!w.gapsRefreshing && !now.Before(w.gapsRetryAt) {
+		w.gapsRefreshing = true
+		go w.refreshGaps()
+	}
+	w.gapsMu.Unlock()
+	return rows, nil
+}
+
+func (w *webStore) refreshGaps() {
+	ctx, cancel := backgroundRefreshCtx()
+	defer cancel()
+	rows, err := w.loadAllGaps(ctx)
+
+	w.gapsMu.Lock()
+	defer w.gapsMu.Unlock()
+	w.gapsRefreshing = false
 	if err != nil {
-		return nil, 0, err
+		w.gapsRetryAt = time.Now().Add(gapsRetryDelay)
+		return
 	}
-	out := make([]web.CompletenessGap, 0, len(rows))
-	for _, r := range rows {
+	w.gapsAll, w.gapsAt = rows, time.Now()
+	w.gapsRetryAt = time.Time{}
+}
+
+func (w *webStore) loadAllGaps(ctx context.Context) ([]web.CompletenessGap, error) {
+	raw, _, err := w.s.CompletenessGaps(ctx, "", 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.CompletenessGap, 0, len(raw))
+	for _, r := range raw {
 		out = append(out, web.CompletenessGap{
 			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version,
 			HasSample: r.HasSample, HasEvidence: r.HasEvidence,
@@ -1482,12 +1614,45 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 			SampleNAReason: r.SampleNAReason, DependencyNAReason: r.DependencyNAReason,
 		})
 	}
-	w.completenessGaps.Store(cacheKey, cachedCompletenessGaps{
-		at:    time.Now(),
-		rows:  out,
-		total: total,
-	})
-	return out, total, nil
+	return out, nil
+}
+
+func filterAndPageGaps(all []web.CompletenessGap, query string, offset, limit int) ([]web.CompletenessGap, int) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	var out []web.CompletenessGap
+	for _, r := range all {
+		if q != "" && !strings.Contains(strings.ToLower(r.Name), q) {
+			continue
+		}
+		out = append(out, r)
+	}
+	total := len(out)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= total {
+		return nil, total
+	}
+	out = out[offset:]
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total
+}
+
+// CompletenessGaps carries the census's own rows to the page.
+//
+// The judgement -- which coordinates are backlog, in what order, and which
+// axes nothing here can close -- was already made in serverstore, beside the
+// matrix it has to agree with. The whole-corpus classified set is cached with
+// background refresh so page queries and pagination slice instantly in memory.
+func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]web.CompletenessGap, int, error) {
+	all, err := w.cachedGaps(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, total := filterAndPageGaps(all, query, offset, limit)
+	return rows, total, nil
 }
 
 func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
@@ -1517,10 +1682,11 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 }
 
 func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {
-	cacheKey := fmt.Sprintf("%s|%d|%d", query, offset, limit)
+	qClean := strings.ToLower(strings.TrimSpace(query))
+	cacheKey := fmt.Sprintf("%s|%d|%d", qClean, offset, limit)
 	if val, ok := w.dependencySubjects.Load(cacheKey); ok {
 		entry := val.(cachedDependencySubjects)
-		if time.Since(entry.at) < 60*time.Second {
+		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.rows, entry.total, nil
 		}
 	}
