@@ -79,8 +79,7 @@ type failureIssue struct {
 	// ID addresses the issue inside its package. It is derived from the
 	// identity below, so a link survives re-materialization of the snapshot
 	// that produced the clusters.
-	ID   string
-	Href string
+	ID string
 
 	// Signature.
 	Fingerprint      string // full identity, "" when none was established
@@ -157,7 +156,6 @@ func buildFailureIssues(clusters []failureCluster) []failureIssue {
 	type bucket struct{ env, versions string }
 	type agg struct {
 		issue   failureIssue
-		key     string
 		buckets map[bucket]int64
 		envSeen map[string][2]string // env → first, last
 		envOrd  []string
@@ -172,7 +170,6 @@ func buildFailureIssues(clusters []failureCluster) []failureIssue {
 		a := byKey[key]
 		if a == nil {
 			a = &agg{
-				key:     key,
 				buckets: map[bucket]int64{},
 				envSeen: map[string][2]string{},
 				symbols: map[string]bool{},

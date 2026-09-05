@@ -57,8 +57,6 @@ type failureIssueRelease struct {
 
 type failureIssuePageData struct {
 	basePage
-	Ecosystem   string
-	Name        string
 	Crumbs      []crumb
 	Issue       failureIssue
 	Releases    []failureIssueRelease
@@ -94,8 +92,6 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		s.notFound(w, r, lang)
 		return
 	}
-	issue.Href = failureIssueHref(eco, name, issue.ID)
-
 	versions, err := s.d.Store.PackageVersions(r.Context(), eco, name)
 	if err != nil {
 		versions = nil
@@ -153,7 +149,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	}
 
 	s.render(w, "failureissue", http.StatusOK, failureIssuePageData{
-		basePage: b, Ecosystem: eco, Name: name, Crumbs: crumbs,
+		basePage: b, Crumbs: crumbs,
 		Issue:      issue,
 		Releases:   releases,
 		Boundaries: boundaries,
