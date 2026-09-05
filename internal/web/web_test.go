@@ -697,7 +697,7 @@ func TestFeaturesShowsCLIHelpAboveMCP(t *testing.T) {
 		mustContain(t, body, s)
 	}
 	cli := strings.Index(body, "Start from the CLI")
-	tools := strings.Index(body, "feature-summary-heading")
+	tools := strings.Index(body, "developer-reference-heading")
 	if cli < 0 || tools < 0 || cli > tools {
 		t.Fatalf("CLI help must precede the MCP tool list: cli=%d tools=%d", cli, tools)
 	}

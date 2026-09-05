@@ -23,9 +23,13 @@ func TestFeaturesPageDocumentsThePublicMCPTools(t *testing.T) {
 
 	mustContain(t, body, `<link rel="canonical" href="https://codesamplex.dev/features">`)
 	mustContain(t, body, `href="/features">Features</a>`)
-	mustContain(t, body, `id="feature-summary-heading"`)
 	mustContain(t, body, `id="product-capabilities-heading"`)
 	mustContain(t, body, `id="developer-reference"`)
+	// The capability overview above is the page's only browse block. The
+	// purpose-based tool index that used to sit here repeated it heading and
+	// all, so a second one must not come back.
+	mustNotContain(t, body, `id="feature-summary-heading"`)
+	mustNotContain(t, body, `feature-page__summary`)
 	for _, want := range []string{
 		`href="/compatibility"`,
 		`href="/dependencies"`,
@@ -126,7 +130,6 @@ func TestFeaturesPageKoreanLocalizesToolDocumentation(t *testing.T) {
 		"증거 순환 완성하기",
 		"이 설치 상태 확인하기",
 		"설명한 환경을 기준으로 등급이 매겨진 검증 해법을 찾습니다.",
-		"3개 도구",
 	} {
 		mustContain(t, body, want)
 	}
@@ -136,7 +139,6 @@ func TestFeaturesPageKoreanLocalizesToolDocumentation(t *testing.T) {
 		"Close the evidence loop",
 		"Inspect this installation",
 		"What you are trying to do or fix, in plain words.",
-		"8 tools",
 	} {
 		if strings.Contains(body, englishLeak) {
 			t.Errorf("Korean feature page leaked English copy %q", englishLeak)
@@ -176,7 +178,7 @@ func TestLandingOnlyAddsTheFeaturesNavigationLink(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	body := get(t, mux, "/").Body.String()
 	mustContain(t, body, `href="/features">Features</a>`)
-	if strings.Contains(body, `id="feature-summary-heading"`) || strings.Contains(body, `id="tool-search_known_solution"`) {
+	if strings.Contains(body, `id="product-capabilities-heading"`) || strings.Contains(body, `id="tool-search_known_solution"`) {
 		t.Error("feature page content leaked into the homepage")
 	}
 }
