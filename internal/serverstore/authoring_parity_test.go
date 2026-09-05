@@ -75,7 +75,8 @@ func candidateLine(r WantedRow) string {
 	if symbol == "" {
 		symbol = "(package)"
 	}
-	return fmt.Sprintf("%s@%s/%s %s score=%d os=%s", r.Name, r.Version, symbol, r.Kind, r.Score, r.TargetOS)
+	return fmt.Sprintf("%s@%s/%s %s/%s score=%d os=%s", r.Name, r.Version, symbol, r.Kind,
+		normalizeAuthoringAxis(r.Axis), r.Score, r.TargetOS)
 }
 
 // The Fake exists so httpapi tests can assert what production would do. When

@@ -99,17 +99,35 @@ type AuthoringDraftRow struct {
 }
 
 type AuthoringWorkRow struct {
-	Ecosystem      string
-	Name           string
-	Version        string
-	Symbol         string
-	Asks           int64
-	Kind           string
+	Ecosystem string
+	Name      string
+	Version   string
+	Symbol    string
+	Asks      int64
+	Kind      string
+	// Axis is the asset this assignment must produce. Kind remains where the
+	// work came from, so demand/finding/expansion reporting stays compatible.
+	Axis           string
 	Score          int64
 	SessionID      string
 	ClaimedAt      time.Time
 	LeaseExpiresAt time.Time
 	SampleID       string
+}
+
+const (
+	AuthoringAxisSample     = "SAMPLE"
+	AuthoringAxisEvidence   = "EVIDENCE"
+	AuthoringAxisDependency = "DEPENDENCY"
+)
+
+func normalizeAuthoringAxis(axis string) string {
+	switch axis {
+	case AuthoringAxisEvidence, AuthoringAxisDependency:
+		return axis
+	default:
+		return AuthoringAxisSample
+	}
 }
 
 // AuthoringSessionStore keeps internal authoring sessions alive across server
@@ -152,4 +170,13 @@ type AuthoringSessionStore interface {
 	// and resets the counters that took it off. It returns false when nothing
 	// was withheld, which is not an error.
 	ReopenAuthoringQuarantine(ctx context.Context, ecosystem, name, version, symbol string, now time.Time) (bool, error)
+}
+
+// AuthoringCompletenessStore rechecks cached axis candidates against the
+// live tables just before a claim. Candidate discovery is intentionally
+// cached for thirty minutes; without this cheap read, completed Sample,
+// Evidence, or Dependency work would be handed out again until the next full
+// refresh.
+type AuthoringCompletenessStore interface {
+	FilterIncompleteAuthoringCandidates(ctx context.Context, candidates []WantedRow) ([]WantedRow, error)
 }

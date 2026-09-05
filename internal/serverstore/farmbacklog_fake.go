@@ -95,7 +95,7 @@ func (f *Fake) sightedCoordinates() (observed, chosen map[string]bool) {
 func (f *Fake) FarmBacklogNow(_ context.Context, since, now time.Time) (FarmBacklog, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	backlog := FarmBacklog{ClaimedByKind: map[string]int{}}
+	backlog := FarmBacklog{ClaimedByKind: map[string]int{}, ClaimedByAxis: map[string]int{}}
 
 	observed, chosen := f.sightedCoordinates()
 	verified, packageTargets := f.provenCoordinates()
@@ -124,6 +124,7 @@ func (f *Fake) FarmBacklogNow(_ context.Context, since, now time.Time) (FarmBack
 			kind = "WANTED"
 		}
 		backlog.ClaimedByKind[kind]++
+		backlog.ClaimedByAxis[normalizeAuthoringAxis(work.Axis)]++
 	}
 
 	// The first pass, not any pass. Re-proving a coordinate on another

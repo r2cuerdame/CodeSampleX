@@ -161,7 +161,7 @@ func TestIntegrationFarmBacklogFakeMatchesPostgres(t *testing.T) {
 		}
 		offered := 0
 		for _, r := range rows {
-			if r.Kind == "DEPENDENCY" {
+			if r.Kind == "DEPENDENCY" && normalizeAuthoringAxis(r.Axis) == AuthoringAxisSample {
 				offered++
 			}
 		}
@@ -202,6 +202,9 @@ func TestFarmBacklogCountsWorkHandedOutByKind(t *testing.T) {
 	if backlog.ClaimedByKind["DEPENDENCY"] != 1 {
 		t.Errorf("claimed by kind = %v, want one DEPENDENCY", backlog.ClaimedByKind)
 	}
+	if backlog.ClaimedByAxis[AuthoringAxisSample] != 1 {
+		t.Errorf("claimed by axis = %v, want one SAMPLE", backlog.ClaimedByAxis)
+	}
 
 	// Outside the window it is not this hour's rate any more.
 	later, err := f.FarmBacklogNow(ctx, now.Add(time.Hour), now.Add(2*time.Hour))
@@ -210,5 +213,8 @@ func TestFarmBacklogCountsWorkHandedOutByKind(t *testing.T) {
 	}
 	if len(later.ClaimedByKind) != 0 {
 		t.Errorf("claimed by kind outside the window = %v, want none", later.ClaimedByKind)
+	}
+	if len(later.ClaimedByAxis) != 0 {
+		t.Errorf("claimed by axis outside the window = %v, want none", later.ClaimedByAxis)
 	}
 }

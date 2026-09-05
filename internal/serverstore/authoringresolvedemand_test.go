@@ -154,7 +154,7 @@ func TestIntegrationResolveDemandScoresMatchInBothStores(t *testing.T) {
 		}
 	}
 	// 3 carried sightings + 20 resolved project-days at authoringResolveWeight.
-	want := "widely-resolved@1.0.0/(package) EXPANSION score=2003 os=windows"
+	want := "widely-resolved@1.0.0/(package) EXPANSION/SAMPLE score=2003 os=windows"
 	for _, row := range pgRows {
 		if row == want {
 			return

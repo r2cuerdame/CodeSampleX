@@ -90,6 +90,10 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
 		return
 	}
+	if work.Axis != "" && work.Axis != serverstore.AuthoringAxisSample {
+		writeErr(w, http.StatusConflict, "this assignment requires evidence or dependency output, not a sample")
+		return
+	}
 	if !assigned || !manifestAnswersAuthoringWork(manifest, work) {
 		writeErr(w, http.StatusConflict, "sample does not match this worker's assigned Wanted item")
 		return

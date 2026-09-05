@@ -38,7 +38,8 @@ func dropUnauthorableMaven(ctx context.Context, prober MavenJarProber,
 	}
 	out := candidates[:0:0]
 	for _, c := range candidates {
-		if !strings.EqualFold(c.Ecosystem, "maven") {
+		if !strings.EqualFold(c.Ecosystem, "maven") ||
+			(c.Axis != "" && c.Axis != serverstore.AuthoringAxisSample) {
 			out = append(out, c)
 			continue
 		}

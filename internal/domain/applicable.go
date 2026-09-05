@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // Some coordinates cannot hold some assets, and counting those as backlog is
 // what made the backlog wrong.
@@ -132,6 +135,19 @@ func SampleNotApplicable(ecosystem, name string) (string, bool) {
 // scanner behind it.
 var dependencyScannable = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
+}
+
+// DependencyScannableEcosystems returns the ecosystems whose registered
+// adapter can produce the dependency axis. Scheduler SQL receives this list
+// as data instead of carrying a second hard-coded taxonomy that can drift
+// from DependencyNotApplicable.
+func DependencyScannableEcosystems() []string {
+	out := make([]string, 0, len(dependencyScannable))
+	for ecosystem := range dependencyScannable {
+		out = append(out, ecosystem)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DependencyNotApplicable reports whether no dependency graph can be produced

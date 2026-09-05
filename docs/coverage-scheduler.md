@@ -7,8 +7,12 @@
 
 `ListAuthoringExpansionCandidates` is one query in two implementations — a Go
 walk over the in-memory store and a CTE chain over PostgreSQL — that decides
-what the authoring fleet is handed next. It has five sources, and the order
-they rank in is the contract:
+what the authoring fleet is handed next. `kind` records the source/ranking
+lane; `axis` records the asset the worker must produce. Keeping those separate
+is what lets dependency-only and evidence-only holes be real work instead of
+disguised sample proposals.
+
+The five Sample sources, in rank order, are:
 
 | Rank | Source | The question it asks |
 | --- | --- | --- |
@@ -22,6 +26,21 @@ they rank in is the contract:
 Real demand first, then the holes evidence points at, then the dependency
 closure, then version breadth. Within one rank the most-used coordinate wins,
 because authoring should follow what people actually run.
+
+Alongside them the completeness scheduler emits one release-grain row for
+each missing asset:
+
+| Axis | Completion condition |
+| --- | --- |
+| `SAMPLE` | independently verified sample, or a documented Sample N/A rule |
+| `EVIDENCE` | an observation in `evidence_agg` for the exact release |
+| `DEPENDENCY` | parent edges, explicit `dependsOnNone`, or a documented scanner N/A rule |
+
+All currently missing axes enter the same cached snapshot. They are
+interleaved after each axis's existing merit order, so a bounded 200-row
+window cannot be filled by Sample work while Evidence or Dependency work is
+waiting. Explicit Wanted demand, resolved-project demand, observation weight,
+and release recency remain the priority signals inside that spread.
 
 The ordering term that leads all of them is `version_depth`: how many jobs this
 exact release has already been offered. Every version earns its first job
@@ -37,6 +56,15 @@ A coordinate is finished when it holds all three assets, not one:
 | **Sample** | a reusable, independently verified piece of running code |
 | **Evidence** | an observation or a receipt that somebody actually ran it |
 | **Dependency** | a resolved graph, or a measured absence of one |
+
+Before every lease, a small indexed query rechecks those predicates against
+live tables. A completed axis disappears immediately even while the expensive
+candidate snapshot remains cached; the same-coordinate lease is released if
+its axis changed. Retry/quarantine gates are axis-scoped, so a measured
+impossibility on Sample cannot suppress independently actionable Evidence or
+Dependency work. `NO_WORK` therefore means every remaining row is complete,
+N/A, unsupported by this worker, leased elsewhere, or withheld with recorded
+evidence.
 
 `GET /admin/api/farm` → `completeness` counts every PUBLIC release by which of
 the three it has. Measured against production:
@@ -372,7 +400,9 @@ Two things that parity check cannot cover, and why:
 
 ## Cost
 
-The candidate query is recomputed on every `/work/next` poll. Measured on
+The candidate query is cached for 30 minutes and refreshed by one coalesced,
+single-core background read; each `/work/next` poll performs only the live
+axis predicate check before claiming. Measured on
 `postgres:17-alpine` with a synthetic corpus 120× production's edge count
 (180,003 edges, 56,002 evidence rows, 9,002 open dependency coordinates):
 

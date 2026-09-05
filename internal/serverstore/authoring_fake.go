@@ -174,7 +174,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	if limit > 200 {
 		limit = 200
 	}
-	type candidateKey struct{ ecosystem, name, version, symbol, targetOS string }
+	type candidateKey struct{ ecosystem, name, version, symbol, targetOS, axis string }
 	candidates := make(map[candidateKey]WantedRow)
 	// ranks mirror the PG query's branch order (source_rank there):
 	// FINDING 0, package-level expansion 1, symbol expansion 2, sibling 3.
@@ -234,7 +234,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 				if targetOS == "" {
 					targetOS = f.authoringObservationOS(pkg.PURL, cluster.Symbol, cluster.ErrorFingerprint)
 				}
-				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol, targetOS}
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, cluster.Symbol, targetOS, AuthoringAxisSample}
 				candidate := WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Symbol: cluster.Symbol, Kind: "FINDING", Score: cluster.ObservationCount, TargetOS: targetOS,
 					LastSeen: pkg.LastSeen}
@@ -295,7 +295,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 				verifiedPURLs[pkg.PURL] || !eligible(pkg, "") {
 				continue
 			}
-			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS, AuthoringAxisSample}
 			if _, exists := candidates[key]; !exists {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Kind: "EXPANSION", Score: score + resolveDemand[pkg.PURL]*authoringResolveWeight,
@@ -340,7 +340,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 		for _, pkg := range pkgs {
 			for targetOS := range nameTargets[name] {
-				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS}
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", targetOS, AuthoringAxisSample}
 				if _, exists := candidates[key]; !exists {
 					candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
 						Version: pkg.Version, Kind: "EXPANSION", Score: 0, TargetOS: targetOS,
@@ -351,7 +351,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 	}
 	for _, row := range f.dependencyClosure(observedPURLs, chosenPURLs, verifiedPURLs, nameTargets) {
-		key := candidateKey{row.Ecosystem, row.Name, row.Version, "", ""}
+		key := candidateKey{row.Ecosystem, row.Name, row.Version, "", "", AuthoringAxisSample}
 		if _, exists := candidates[key]; !exists {
 			candidates[key] = row
 			ranks[key] = authoringRankDependency
@@ -375,13 +375,75 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 			if observed[1] == "" && verifiedPURLs[pkg.PURL] {
 				continue
 			}
-			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1], observed[2]}
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, observed[1], observed[2], AuthoringAxisSample}
 			if existing, ok := candidates[key]; !ok || (existing.Kind != "FINDING" && score > existing.Score) {
 				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version,
 					Symbol: observed[1], Kind: "EXPANSION", Score: score, TargetOS: observed[2],
 					LastSeen: pkg.LastSeen}
 				ranks[key] = authoringRankSymbol
 			}
+		}
+	}
+	// The branches above are evidence-driven sample-production lanes.
+	// Completeness adds release-grain gaps, without inventing API/version
+	// cross-products: exact observed symbols stay in the existing branches.
+	for key, candidate := range candidates {
+		candidate.Axis = AuthoringAxisSample
+		candidates[key] = candidate
+	}
+	resolvedParents := f.resolvedParents()
+	wantedDemand := make(map[[3]string]int64)
+	for _, wanted := range f.wanted {
+		if wanted.Version == "" {
+			continue
+		}
+		key := [3]string{wanted.Ecosystem, wanted.Name, wanted.Version}
+		wantedDemand[key] += wanted.Asks
+	}
+	for _, pkg := range f.packages {
+		if pkg.Version == "" || pkg.Publicness != "PUBLIC" {
+			continue
+		}
+		score := packageScores[pkg.PURL] + resolveDemand[pkg.PURL]*authoringResolveWeight +
+			wantedDemand[[3]string{pkg.Ecosystem, pkg.Name, pkg.Version}]*authoringDirectWeight
+		if !observedPURLs[pkg.PURL] {
+			// All missing deliverables enter the snapshot together. Staging this
+			// as Evidence-first made the next poll say NO_WORK until the
+			// thirty-minute snapshot refreshed, even though Sample/Dependency
+			// had just become actionable.
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", "", AuthoringAxisEvidence}
+			candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+				Version: pkg.Version, Kind: "EXPANSION", Axis: AuthoringAxisEvidence,
+				Score: score, LastSeen: pkg.LastSeen}
+			ranks[key] = authoringRankPackageLevel
+		}
+		if !observedPURLs[pkg.PURL] && !verifiedPURLs[pkg.PURL] {
+			hasSampleCandidate := false
+			for existing := range candidates {
+				if existing.ecosystem == pkg.Ecosystem && existing.name == pkg.Name &&
+					existing.version == pkg.Version && existing.axis == AuthoringAxisSample {
+					hasSampleCandidate = true
+					break
+				}
+			}
+			if !hasSampleCandidate {
+				key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", "", AuthoringAxisSample}
+				candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+					Version: pkg.Version, Kind: "EXPANSION", Axis: AuthoringAxisSample,
+					Score: score, LastSeen: pkg.LastSeen}
+				ranks[key] = authoringRankPackageLevel
+			}
+		}
+		_, dependencyNA := domain.DependencyNotApplicable(pkg.Ecosystem)
+		canonicalPURL := domain.PURL{Ecosystem: pkg.Ecosystem, Name: pkg.Name, Version: pkg.Version}.String()
+		dependencyAnswered := resolvedParents[pkg.PURL] || resolvedParents[canonicalPURL] ||
+			f.resolvedNone[[3]string{pkg.Ecosystem, pkg.Name, pkg.Version}]
+		if !dependencyNA && !dependencyAnswered {
+			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", "", AuthoringAxisDependency}
+			candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
+				Version: pkg.Version, Kind: "DEPENDENCY", Axis: AuthoringAxisDependency,
+				Score: score, LastSeen: pkg.LastSeen}
+			ranks[key] = authoringRankDependency
 		}
 	}
 	// Mirror the PG query exactly. Two orders matter and they are different:
@@ -419,7 +481,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	}
 	for key, candidate := range candidates {
 		purl := domain.PURL{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version}.String()
-		if inFlight[[2]string{purl, candidate.Symbol}] {
+		if normalizeAuthoringAxis(candidate.Axis) == AuthoringAxisSample && inFlight[[2]string{purl, candidate.Symbol}] {
 			delete(candidates, key)
 			delete(ranks, key)
 		}
@@ -439,7 +501,7 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 	for key, candidate := range candidates {
 		work, held := f.authoringWork[authoringWorkKey(candidate.Ecosystem,
 			candidate.Name, candidate.Version, candidate.Symbol)]
-		if held && work.SampleID != "" {
+		if held && work.SampleID != "" && normalizeAuthoringAxis(work.Axis) == normalizeAuthoringAxis(candidate.Axis) {
 			delete(candidates, key)
 			delete(ranks, key)
 		}
@@ -471,11 +533,15 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		if a.row.Version != b.row.Version {
 			return a.row.Version < b.row.Version
 		}
-		return a.row.Symbol < b.row.Symbol
+		if a.row.Symbol != b.row.Symbol {
+			return a.row.Symbol < b.row.Symbol
+		}
+		return normalizeAuthoringAxis(a.row.Axis) < normalizeAuthoringAxis(b.row.Axis)
 	})
-	depths := make(map[[3]string]int, len(ranked))
+	depths := make(map[[4]string]int, len(ranked))
 	for i := range ranked {
-		key := [3]string{ranked[i].row.Ecosystem, ranked[i].row.Name, ranked[i].row.Version}
+		axis := normalizeAuthoringAxis(ranked[i].row.Axis)
+		key := [4]string{axis, ranked[i].row.Ecosystem, ranked[i].row.Name, ranked[i].row.Version}
 		depths[key]++
 		ranked[i].depth = depths[key]
 	}
@@ -497,12 +563,114 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 		return a.row.Score > b.row.Score
 	})
+	// Interleave the three deliverables after preserving each axis's existing
+	// merit/version order. With one axis this is a no-op; with several, the
+	// first Evidence and Dependency gaps enter the bounded window before a
+	// second Sample row can hide either one.
+	axisDepth := make(map[string]int, 3)
+	type axisRanked struct {
+		rankedRow
+		axisDepth int
+	}
+	interleaved := make([]axisRanked, 0, len(ranked))
+	for _, row := range ranked {
+		axis := normalizeAuthoringAxis(row.row.Axis)
+		row.row.Axis = axis
+		axisDepth[axis]++
+		interleaved = append(interleaved, axisRanked{rankedRow: row, axisDepth: axisDepth[axis]})
+	}
+	sort.SliceStable(interleaved, func(i, j int) bool {
+		a, b := interleaved[i], interleaved[j]
+		if a.axisDepth != b.axisDepth {
+			return a.axisDepth < b.axisDepth
+		}
+		if a.depth != b.depth {
+			return a.depth < b.depth
+		}
+		if a.row.Score != b.row.Score {
+			return a.row.Score > b.row.Score
+		}
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
+		if !a.row.LastSeen.Equal(b.row.LastSeen) {
+			return a.row.LastSeen.After(b.row.LastSeen)
+		}
+		if a.row.Ecosystem != b.row.Ecosystem {
+			return a.row.Ecosystem < b.row.Ecosystem
+		}
+		if a.row.Name != b.row.Name {
+			return a.row.Name < b.row.Name
+		}
+		if a.row.Version != b.row.Version {
+			return a.row.Version < b.row.Version
+		}
+		if a.row.Symbol != b.row.Symbol {
+			return a.row.Symbol < b.row.Symbol
+		}
+		return normalizeAuthoringAxis(a.row.Axis) < normalizeAuthoringAxis(b.row.Axis)
+	})
 	out := make([]WantedRow, 0, len(ranked))
-	for _, r := range ranked {
+	for _, r := range interleaved {
 		out = append(out, r.row)
 	}
 	if len(out) > limit {
 		out = out[:limit]
+	}
+	return out, nil
+}
+
+// FilterIncompleteAuthoringCandidates is the live, cheap half of the cached
+// completeness scheduler. It prevents a successful evidence upload or tree
+// report from waiting for the candidate snapshot TTL before the lease moves
+// on to another coordinate.
+func (f *Fake) FilterIncompleteAuthoringCandidates(_ context.Context, candidates []WantedRow) ([]WantedRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	observed, _ := f.sightedCoordinates()
+	verified, _ := f.provenCoordinates()
+	resolved := f.resolvedParents()
+	inFlight := make(map[[2]string]bool)
+	for _, draft := range f.authoringDrafts {
+		sample, ok := f.samples[draft.SampleID]
+		if !ok || sample.Status != "DRAFT" {
+			continue
+		}
+		var manifest struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+		}
+		if json.Unmarshal([]byte(sample.ManifestJSON), &manifest) != nil {
+			continue
+		}
+		for _, purl := range manifest.Packages {
+			inFlight[[2]string{purl, ""}] = true
+			for _, symbol := range manifest.Symbols {
+				inFlight[[2]string{purl, symbol}] = true
+			}
+		}
+	}
+	out := make([]WantedRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate.Axis = normalizeAuthoringAxis(candidate.Axis)
+		purl := domain.PURL{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version}.String()
+		switch candidate.Axis {
+		case AuthoringAxisSample:
+			if inFlight[[2]string{purl, candidate.Symbol}] ||
+				(candidate.Symbol == "" && (candidate.Kind == "EXPANSION" || candidate.Kind == "DEPENDENCY") && verified[purl]) {
+				continue
+			}
+		case AuthoringAxisEvidence:
+			if observed[purl] {
+				continue
+			}
+		case AuthoringAxisDependency:
+			if _, na := domain.DependencyNotApplicable(candidate.Ecosystem); na || resolved[purl] ||
+				f.resolvedNone[[3]string{candidate.Ecosystem, candidate.Name, candidate.Version}] {
+				continue
+			}
+		}
+		out = append(out, candidate)
 	}
 	return out, nil
 }
@@ -587,12 +755,16 @@ func authoringWorkKey(ecosystem, name, version, symbol string) [4]string {
 	return [4]string{ecosystem, name, version, symbol}
 }
 
+func authoringAxisWorkKey(ecosystem, name, version, symbol, axis string) [5]string {
+	return [5]string{ecosystem, name, version, symbol, normalizeAuthoringAxis(axis)}
+}
+
 func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	eligible := make(map[[4]string]struct{}, len(candidates))
+	eligible := make(map[[5]string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		eligible[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)] = struct{}{}
+		eligible[authoringAxisWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Axis)] = struct{}{}
 	}
 	sessionLive := func(id string) bool {
 		for _, row := range f.authoring {
@@ -617,17 +789,17 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 			continue
 		}
 		if work.SessionID == sessionID && work.SampleID == "" && now.Before(work.LeaseExpiresAt) {
-			if _, stillEligible := eligible[key]; stillEligible {
+			if _, stillEligible := eligible[authoringAxisWorkKey(work.Ecosystem, work.Name, work.Version, work.Symbol, work.Axis)]; stillEligible {
 				// A live worker refreshing a hopeless claim used to hold the
 				// slot until its 24-hour lease ran out. Reclaim released only
 				// claims whose SESSION had died, and this one had not.
-				if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(sessionID, now) {
+				if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(work.Axis, sessionID, now) {
 					delete(f.authoringWork, key)
 					break
 				}
 				if ledger := f.authoringAttempts[key]; ledger == nil ||
 					!now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
-					f.noteAuthoringHandout(key, work.Kind, sessionID, now)
+					f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
 				}
 				return work, true, nil
 			}
@@ -639,33 +811,42 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 	}
 	for _, candidate := range candidates {
 		key := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
-		if _, exists := f.authoringWork[key]; exists {
-			continue
+		if existing, exists := f.authoringWork[key]; exists {
+			if existing.SampleID != "" && normalizeAuthoringAxis(existing.Axis) != normalizeAuthoringAxis(candidate.Axis) {
+				// The pre-axis primary key is still coordinate-grain. A completed
+				// Sample assignment is only duplicate protection for Sample; its
+				// durable draft/sample remains after this lease row makes room for
+				// another deliverable.
+				delete(f.authoringWork, key)
+			} else {
+				continue
+			}
 		}
-		if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(sessionID, now) {
+		if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
 			continue
 		}
 		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
 			Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
+			Axis:      normalizeAuthoringAxis(candidate.Axis),
 			SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
 		if work.Kind == "" {
 			work.Kind = "WANTED"
 		}
 		f.authoringWork[key] = work
-		f.noteAuthoringHandout(key, work.Kind, sessionID, now)
+		f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
 		return work, true, nil
 	}
 	return AuthoringWorkRow{}, false, nil
 }
 
 // noteAuthoringHandout opens an attempt against a coordinate. Caller holds f.mu.
-func (f *Fake) noteAuthoringHandout(key [4]string, kind, sessionID string, now time.Time) {
+func (f *Fake) noteAuthoringHandout(key [4]string, kind, axis, sessionID string, now time.Time) {
 	ledger := f.authoringAttempts[key]
 	if ledger == nil {
 		ledger = newAuthoringLedger(key[0], key[1], key[2], key[3])
 		f.authoringAttempts[key] = ledger
 	}
-	ledger.handout(kind, sessionID, now)
+	ledger.handout(kind, axis, sessionID, now)
 }
 
 func (f *Fake) ReportAuthoringOutcome(_ context.Context, sessionID string, outcome AuthoringOutcome, detail string, now time.Time) (AuthoringWorkRow, bool, error) {
@@ -746,9 +927,15 @@ func (f *Fake) AuthoringWorkForSubmission(_ context.Context, sessionID, sampleID
 func (f *Fake) AttachAuthoringWorkSample(_ context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if normalizeAuthoringAxis(work.Axis) != AuthoringAxisSample {
+		return false, nil
+	}
 	key := authoringWorkKey(work.Ecosystem, work.Name, work.Version, work.Symbol)
 	current, ok := f.authoringWork[key]
 	if !ok || current.SessionID != sessionID || current.SampleID != "" || !now.Before(current.LeaseExpiresAt) {
+		return false, nil
+	}
+	if normalizeAuthoringAxis(current.Axis) != AuthoringAxisSample {
 		return false, nil
 	}
 	if ledger := f.authoringAttempts[key]; ledger != nil {

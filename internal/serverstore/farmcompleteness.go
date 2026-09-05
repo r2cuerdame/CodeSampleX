@@ -159,7 +159,7 @@ func (f *FarmCompleteness) addResolved(sample, evidence bool, dep dependencyStat
 		if depNA {
 			f.DependencyNotApplicable += n
 		}
-		if sampleNA && depNA {
+		if sampleNA && depNA && evidence {
 			return
 		}
 		f.States[key] += n
@@ -182,8 +182,9 @@ func (f *FarmCompleteness) add(state, ecosystem, name string, n int) {
 	if depNA {
 		f.DependencyNotApplicable += n
 	}
-	// A coordinate unaskable on BOTH axes is not in the backlog at all.
-	if sampleNA && depNA {
+	// Two N/A axes justify those two absences, but they cannot justify a
+	// missing Evidence axis. Keep it as backlog until something really ran.
+	if sampleNA && depNA && state[1] == 'E' {
 		return
 	}
 	f.States[state] += n

@@ -433,26 +433,27 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 %s
 
 목표:
-- 서버가 배정한 일감 하나만 집중 공략한다. 일감은 사용자 Wanted, 반복 실패가 관측된 Finding 후보, 많이 쓰이지만 검증 샘플이 없는 커버리지 확장 중 하나다.
+- 서버가 배정한 일감 하나만 집중 공략한다. Axis는 SAMPLE(검증 샘플), EVIDENCE(실행 관측), DEPENDENCY(의존 그래프 또는 검증된 무의존성) 중 하나이며, 출력된 Axis만 완성한다.
 - 이 환경에서 실제로 준비·실행 가능한 일만 선택한다.
 - 문서상 기대와 실측이 다르거나, 런타임/JDK/버전을 바꾸면 결과가 달라지는 Finding 후보를 우선한다.
 - 커버리지 확장 일감에 심벌이 비어 있으면 해당 정확한 패키지·버전의 많이 쓰는 핵심 API 하나를 골라 구체적인 계약을 만든다. 배정되지 않은 다른 패키지로 바꾸지는 않는다.
 
 필수 절차:
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
-2. 아래 명령으로 가장 우선순위가 높은 일감 하나를 받는다. 서버는 미해결 Wanted를 먼저 주고, 없으면 실패 관측과 사용량으로 새 Finding·커버리지 일감을 만든다. NO_WORK면 임의 샘플을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
+2. 아래 명령으로 가장 우선순위가 높은 일감 하나를 받는다. 서버는 사용자 수요·최신 릴리스·관측 가치를 우선하면서 세 Axis의 빈칸이 굶지 않게 배정한다. NO_WORK면 임의 작업을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
 %s
-2-1. 배정된 좌표에 호출할 수 있는 심벌·프로젝트가 실제로 없다고 판단했거나(예: jar 없는 pom, Gradle plugin marker, 부모가 내부에서 고르는 플랫폼별 .node 바이너리), 레지스트리·툴체인이 응답하지 않았거나, 이 기계 자체가 실패했다면 아래 명령으로 사유를 붙여 즉시 반납한다. 같은 좌표를 계속 다시 받아 시간을 태우지 말라 — 반납은 그 좌표에 대한 네트워크의 유일한 기록이고, 이 분류가 "일시적 장애"와 "작성 불가능"을 가르는 근거가 된다.
+2-1. SAMPLE 일감에 호출할 수 있는 심벌·프로젝트가 실제로 없다고 판단했거나, 레지스트리·툴체인이 응답하지 않았거나, 이 기계 자체가 실패했다면 아래 명령으로 사유를 붙여 즉시 반납한다. EVIDENCE/DEPENDENCY에서는 no-callable-symbol을 쓰지 말고 transient 또는 infrastructure만 사용한다. 같은 좌표를 계속 다시 받아 시간을 태우지 말라.
 %s
    --outcome 값: no-callable-symbol(호출 가능한 심벌이 없다고 측정) | transient(레지스트리·툴체인 무응답) | infrastructure(내 기계·Docker 실패) | no-output(이유를 특정할 수 없음). --detail에는 운영자가 읽을 한 줄을 남긴다.
 3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
 4. 빌드·테스트는 CSX run_observed_command로 실행한다.
-5. MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
-6. 출력된 csx sample propose 명령으로 시작한다. 이 명령이 spec.json, PROMPT.md와 올바른 csx.json 스캐폴드를 함께 만든다. spec.json을 csx.json으로 복사하거나 csx.json을 기억으로 새로 만들지 않는다.
-7. 생성된 csx.json의 빈 contract와 환경·명령·verifierAdapter를 실제 파일에 맞게 완성한 뒤 csx sample create → csx sample verify → csx sample preview까지 수행하고 sample ID, 환경, PASS/FAIL, Finding을 보고한다.
-8. preview까지 확인한 로컬 샘플은 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한 뒤 2번으로 돌아가 다음 일감을 확인한다.
+5. SAMPLE Axis에서 MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
+6. SAMPLE Axis에서만 출력된 csx sample propose 명령으로 시작한다. 생성된 csx.json을 완성한 뒤 csx sample create → csx sample verify → csx sample preview를 수행한다.
+7. EVIDENCE Axis에서는 새 격리 프로젝트에 정확한 버전을 고정하고 일반 resolve/build를 csx run으로 실행한 뒤 csx sync한다. 샘플을 만들지 않는다.
+8. DEPENDENCY Axis에서는 정확한 버전을 고정·resolve하여 lockfile을 만들고 안전한 패키지 매니저 검사를 csx run으로 실행한 뒤 csx sync한다. 그래프 또는 명시적 무의존성만 완성하고 샘플을 만들지 않는다.
+9. SAMPLE preview까지 확인한 로컬 샘플만 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한 뒤 2번으로 돌아간다.
 %s
-9. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
+10. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
 이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand,
 		authoringReportCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token))
@@ -657,7 +658,7 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 }
 
 func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
-	return fmt.Sprintf(`CodeSampleX CMD supervisor가 배정한 샘플 일감 하나를 처리한다.
+	return fmt.Sprintf(`CodeSampleX CMD supervisor가 배정한 completeness 일감 하나를 처리한다.
 
 작업 식별: %s
 지정 모델: agy
@@ -667,14 +668,15 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 1. 현재 CSX_HOME만 사용하고 다른 프로필·토큰·자격·워크트리는 읽지 않는다.
 2. supervisor가 이미 세션을 갱신하고 일감을 임대했다. 아래 명령을 다시 실행해 같은 현재 임대를 확인한다.
 %s
-3. 배정 종류는 사용자 Wanted, 반복 실패 기반 Finding, 사용량 기반 커버리지 확장 중 하나다. 커버리지 확장에서 심벌이 비어 있으면 정확히 배정된 패키지·버전의 기존 공개 샘플과 겹치지 않는 다음 핵심 API 하나를 골라 구체적인 계약을 만들며, 다른 패키지로 바꾸지 않는다.
+3. 출력된 Axis는 SAMPLE, EVIDENCE, DEPENDENCY 중 하나다. 다른 Axis나 패키지로 바꾸지 않고 출력된 완료 절차를 따른다.
 4. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
-5. 진짜 MISS를 해결해 PASS한 경우에만 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고, 생성된 csx.json 스캐폴드를 완성한다. spec.json을 csx.json으로 복사하거나 매니페스트를 기억으로 만들지 않는다.
-6. csx sample create, verify, preview를 순서대로 통과시키고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
+5. SAMPLE에서만 진짜 MISS를 해결해 PASS한 경우 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고 csx sample create, verify, preview를 통과시킨다.
+6. EVIDENCE에서는 정확한 버전의 일반 resolve/build를 csx run으로 실행하고 csx sync한다. DEPENDENCY에서는 정확한 버전을 resolve해 lockfile을 만든 뒤 안전한 패키지 매니저 검사를 csx run으로 실행하고 csx sync한다. 두 경우 모두 샘플을 만들지 않는다.
+7. SAMPLE에서 preview를 통과하고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
 %s
-7. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
-8. 한 샘플을 제출하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
-9. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
+8. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
+9. 배정된 Axis를 완성하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
+10. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
 %s`, grant.Label, grant.Reasoning, authoringNextCommandEnv(baseURL), authoringSubmitCommandEnv(baseURL), authoringCommandEnv(baseURL))
 }
 

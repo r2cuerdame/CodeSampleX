@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 const authoringAdvisoryLock int64 = 0x43535841555448 // "CSXAUTH"
@@ -265,8 +266,9 @@ func (p *PG) ListAuthoringDrafts(ctx context.Context, limit int) ([]AuthoringDra
 func scanAuthoringWork(row pgx.Row) (AuthoringWorkRow, error) {
 	var work AuthoringWorkRow
 	var sampleID *string
-	err := row.Scan(&work.Ecosystem, &work.Name, &work.Version, &work.Symbol, &work.Asks, &work.Kind, &work.Score,
+	err := row.Scan(&work.Ecosystem, &work.Name, &work.Version, &work.Symbol, &work.Asks, &work.Kind, &work.Axis, &work.Score,
 		&work.SessionID, &work.ClaimedAt, &work.LeaseExpiresAt, &sampleID)
+	work.Axis = normalizeAuthoringAxis(work.Axis)
 	if sampleID != nil {
 		work.SampleID = *sampleID
 	}
@@ -291,7 +293,7 @@ func (p *PG) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limi
 // authoringExpansionCandidatesSQL is the candidate query on its own, so a
 // test can EXPLAIN the statement the store actually runs rather than a
 // copy of it. $1 limit, $2 sibling versions per package, $3 dependency
-// closure cap, $4 resolve weight.
+// closure cap, $4 resolve weight, $5 dependency-scannable ecosystems.
 var authoringExpansionCandidatesSQL = `
 			WITH ` + authoringCoverageCTE + `, verified_symbols AS MATERIALIZED (
 				SELECT DISTINCT sp.purl,symbol.value AS symbol
@@ -340,6 +342,26 @@ var authoringExpansionCandidatesSQL = `
 				       COUNT(DISTINCT bucket||epoch) AS projects
 				FROM dependency_edge
 				GROUP BY 1
+			), evidence_demand AS MATERIALIZED (
+				SELECT purl,
+				       SUM(observation_count * CASE WHEN direct THEN 1000 ELSE 1 END) AS score
+				FROM evidence_agg
+				GROUP BY purl
+			), wanted_demand AS MATERIALIZED (
+				SELECT 'pkg:'||ecosystem||'/'||
+				         CASE WHEN left(name,1)='@'
+				              THEN '%40'||substring(name from 2)
+				              ELSE name END||'@'||version AS purl,
+				       SUM(asks) AS asks
+				FROM wanted
+				WHERE version<>''
+				GROUP BY 1
+			), dependency_answered AS MATERIALIZED (
+				SELECT DISTINCT ecosystem,parent_name AS name,parent_version AS version
+				FROM dependency_edge
+				UNION
+				SELECT DISTINCT ecosystem,name,version
+				FROM dependency_resolution
 			), finding_versions AS MATERIALIZED (
 				-- Every current cluster, expanded to one row per version it
 				-- names, BEFORE the join to packages. Written inline, the
@@ -360,7 +382,7 @@ var authoringExpansionCandidatesSQL = `
 				WHERE ` + CurrentFailureClusterPredicateSQL + `
 			), candidates AS (
 				SELECT p.purl,p.ecosystem,p.name,p.version,fv.symbol,
-				       fv.observation_count AS score,'FINDING'::text AS kind,0 AS source_rank,p.last_seen,
+				       fv.observation_count AS score,'FINDING'::text AS kind,'SAMPLE'::text AS axis,0 AS source_rank,p.last_seen,
 				       COALESCE(NULLIF(fv.env_os,''),(
 				         SELECT e2.env_json->>'os' FROM evidence_agg e2
 				         WHERE e2.purl=p.purl AND e2.symbol=fv.symbol AND e2.error_fp=fv.error_fp
@@ -373,7 +395,7 @@ var authoringExpansionCandidatesSQL = `
 				UNION ALL
 				SELECT p.purl,p.ecosystem,p.name,p.version,e.symbol,
 				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END) AS score,
-				       'EXPANSION'::text AS kind,2 AS source_rank,p.last_seen,
+				       'EXPANSION'::text AS kind,'SAMPLE'::text AS axis,2 AS source_rank,p.last_seen,
 				       COALESCE(e.env_json->>'os','') AS target_os
 				FROM packages p
 				JOIN evidence_agg e ON e.purl=p.purl
@@ -386,7 +408,7 @@ var authoringExpansionCandidatesSQL = `
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
 				       SUM(e.observation_count * CASE WHEN e.direct THEN 1000 ELSE 1 END)
 				         + COALESCE(MAX(rd.projects),0) * $4 AS score,
-				       'EXPANSION'::text AS kind,1 AS source_rank,p.last_seen,
+				       'EXPANSION'::text AS kind,'SAMPLE'::text AS axis,1 AS source_rank,p.last_seen,
 				       LOWER(COALESCE(e.env_json->>'os','')) AS target_os
 				-- Package-level work is for an environment that has evidence but no
 				-- proof yet. It used to be generated FROM verified_package_targets --
@@ -418,7 +440,7 @@ var authoringExpansionCandidatesSQL = `
 				-- reach. target_os comes from where the package was already proven, so
 				-- the row is claimable by a verifier that can actually execute it.
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
-				       0::bigint AS score,'EXPANSION'::text AS kind,4 AS source_rank,p.last_seen,
+				       0::bigint AS score,'EXPANSION'::text AS kind,'SAMPLE'::text AS axis,4 AS source_rank,p.last_seen,
 				       sibling.target_os
 				-- Newest few per package only. Every sibling is a first job and so
 				-- lands at version_depth 1; uncapped, one long release history fills
@@ -460,15 +482,62 @@ var authoringExpansionCandidatesSQL = `
 				              THEN '%40'||substring(d.name from 2)
 				              ELSE d.name END||'@'||d.version AS purl,
 				       d.ecosystem,d.name,d.version,''::text AS symbol,
-				       d.projects AS score,'DEPENDENCY'::text AS kind,3 AS source_rank,
+				       d.projects AS score,'DEPENDENCY'::text AS kind,'SAMPLE'::text AS axis,3 AS source_rank,
 				       '0001-01-01 00:00:00+00'::timestamptz AS last_seen,
 				       ''::text AS target_os
 				FROM dependency_closure d
+				UNION ALL
+				-- Sample completeness for an exact public release that no run has
+				-- named yet. Evidence and Dependency enter beside it below: all
+				-- three must be present in the cached snapshot so completing one
+				-- cannot hide the newly actionable remainder until the next scan.
+				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
+				       COALESCE(wd.asks,0) * 1000 AS score,
+				       'EXPANSION'::text AS kind,'SAMPLE'::text AS axis,
+				       1 AS source_rank,p.last_seen,''::text AS target_os
+				FROM packages p
+				LEFT JOIN wanted_demand wd ON wd.purl=p.purl
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND NOT EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=p.purl)
+				  AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=p.purl)
+				  AND NOT EXISTS (
+				    SELECT 1 FROM verified_packages v
+				    JOIN packages vp ON vp.purl=v.purl
+				    WHERE vp.ecosystem=p.ecosystem AND vp.name=p.name)
+				UNION ALL
+				-- Evidence completeness for the same exact release. This remains
+				-- work even when Sample and Dependency are independently N/A.
+				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
+				       COALESCE(wd.asks,0) * 1000 AS score,
+				       'EXPANSION'::text AS kind,'EVIDENCE'::text AS axis,
+				       1 AS source_rank,p.last_seen,''::text AS target_os
+				FROM packages p
+				LEFT JOIN wanted_demand wd ON wd.purl=p.purl
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND NOT EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=p.purl)
+				UNION ALL
+				-- Dependency is an independent deliverable. It can be resolved
+				-- directly from the exact public coordinate even before Evidence
+				-- or Sample completes.
+				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
+				       COALESCE(ed.score,0) + COALESCE(rd.projects,0) * $4
+				         + COALESCE(wd.asks,0) * 1000 AS score,
+				       'DEPENDENCY'::text AS kind,'DEPENDENCY'::text AS axis,
+				       3 AS source_rank,p.last_seen,''::text AS target_os
+				FROM packages p
+				LEFT JOIN evidence_demand ed ON ed.purl=p.purl
+				LEFT JOIN resolve_demand rd ON rd.purl=p.purl
+				LEFT JOIN wanted_demand wd ON wd.purl=p.purl
+				LEFT JOIN dependency_answered da ON da.ecosystem=p.ecosystem
+				 AND da.name=p.name AND da.version=p.version
+				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND p.ecosystem=ANY($5::text[])
+				  AND da.ecosystem IS NULL
 			), ranked AS (
-				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os)
-				       purl,ecosystem,name,version,symbol,score,kind,source_rank,last_seen,target_os
+				SELECT DISTINCT ON(ecosystem,name,version,symbol,target_os,axis)
+				       purl,ecosystem,name,version,symbol,score,kind,axis,source_rank,last_seen,target_os
 				FROM candidates
-				ORDER BY ecosystem,name,version,symbol,target_os,source_rank,score DESC
+				ORDER BY ecosystem,name,version,symbol,target_os,axis,source_rank,score DESC
 			), in_flight AS MATERIALIZED (
 				-- Coordinates a worker has already answered and is waiting on an
 				-- independent verification for. Nothing about "proven" changes until
@@ -513,13 +582,14 @@ var authoringExpansionCandidatesSQL = `
 				-- the work rather than the loop.
 				SELECT * FROM ranked c
 				WHERE (CASE
-				    WHEN c.symbol<>'' THEN NOT EXISTS (
+				    WHEN c.axis='SAMPLE' AND c.symbol<>'' THEN NOT EXISTS (
 				      SELECT 1 FROM verified_symbols v WHERE v.purl=c.purl AND v.symbol=c.symbol)
-				    WHEN c.kind IN ('EXPANSION','DEPENDENCY') THEN NOT EXISTS (
+				    WHEN c.axis='SAMPLE' AND c.kind IN ('EXPANSION','DEPENDENCY') THEN NOT EXISTS (
 				      SELECT 1 FROM verified_packages v WHERE v.purl=c.purl)
 				    ELSE true END)
-				  AND NOT EXISTS (
+				  AND (c.axis<>'SAMPLE' OR NOT EXISTS (
 					SELECT 1 FROM in_flight f WHERE f.purl=c.purl AND f.symbol=c.symbol)
+				  )
 			), claimable AS (
 				-- Coordinates an assignment already answered. The claim
 				-- inserts ON CONFLICT DO NOTHING against a key nothing
@@ -540,19 +610,25 @@ var authoringExpansionCandidatesSQL = `
 				WHERE NOT EXISTS (
 				  SELECT 1 FROM authoring_assignments a
 				  WHERE a.ecosystem=c.ecosystem AND a.name=c.name
-				    AND a.version=c.version AND a.symbol=c.symbol
+				    AND a.version=c.version AND a.symbol=c.symbol AND a.axis=c.axis
 				    AND a.sample_id IS NOT NULL)
 			), spread AS (
 				-- How many jobs this version has already been offered higher up the
 				-- merit order. Ordering by it first means every version earns its
 				-- first job before any version earns its second.
 				SELECT *, ROW_NUMBER() OVER (
-				         PARTITION BY ecosystem,name,version
+				         PARTITION BY axis,ecosystem,name,version
 				         ORDER BY source_rank,score DESC,last_seen DESC,symbol) AS version_depth
 				FROM claimable
+			), axis_spread AS (
+				SELECT *, ROW_NUMBER() OVER (
+				         PARTITION BY axis
+				         ORDER BY version_depth,score DESC,source_rank,last_seen DESC,
+				                  ecosystem,name,version,symbol) AS axis_depth
+				FROM spread
 			)
-			SELECT ecosystem,name,version,symbol,score,kind,target_os
-			FROM spread
+			SELECT ecosystem,name,version,symbol,score,kind,axis,target_os
+			FROM axis_spread
 			-- Depth first: it is what stops one package with a long release
 			-- history filling the window. Then USAGE -- authoring follows
 			-- what people actually run.
@@ -569,8 +645,8 @@ var authoringExpansionCandidatesSQL = `
 			-- written and became actively wrong: every observation this
 			-- network holds is recorded on Windows, so preferring Linux
 			-- pushed the entire measured demand behind work nobody asked for.
-			ORDER BY version_depth,
-			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol
+			ORDER BY axis_depth,version_depth,
+			         score DESC,source_rank,last_seen DESC,ecosystem,name,version,symbol,axis
 			LIMIT $1`
 
 func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, statementTimeout time.Duration, oneCore bool) ([]WantedRow, error) {
@@ -606,14 +682,14 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 			}
 		}
 		rows, err := tx.Query(ctx, authoringExpansionCandidatesSQL, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
-			authoringResolveWeight)
+			authoringResolveWeight, domain.DependencyScannableEcosystems())
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var row WantedRow
-			if err := rows.Scan(&row.Ecosystem, &row.Name, &row.Version, &row.Symbol, &row.Score, &row.Kind, &row.TargetOS); err != nil {
+			if err := rows.Scan(&row.Ecosystem, &row.Name, &row.Version, &row.Symbol, &row.Score, &row.Kind, &row.Axis, &row.TargetOS); err != nil {
 				return err
 			}
 			out = append(out, row)
@@ -627,12 +703,93 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 	return out, err
 }
 
+// FilterIncompleteAuthoringCandidates rechecks each deliverable against live
+// rows. The expensive discovery/ranking query remains cached; this small
+// indexed read is what makes completed work leave that window immediately.
+func (p *PG) FilterIncompleteAuthoringCandidates(ctx context.Context, candidates []WantedRow) ([]WantedRow, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	ordinals := make([]int64, len(candidates))
+	purls := make([]string, len(candidates))
+	ecosystems := make([]string, len(candidates))
+	names := make([]string, len(candidates))
+	versions := make([]string, len(candidates))
+	axes := make([]string, len(candidates))
+	kinds := make([]string, len(candidates))
+	symbols := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		ordinals[i] = int64(i + 1)
+		purls[i] = domain.PURL{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version}.String()
+		ecosystems[i], names[i], versions[i] = candidate.Ecosystem, candidate.Name, candidate.Version
+		axes[i] = normalizeAuthoringAxis(candidate.Axis)
+		kinds[i], symbols[i] = candidate.Kind, candidate.Symbol
+	}
+	open := make(map[int64]bool, len(candidates))
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH candidate AS (
+			  SELECT * FROM unnest($1::bigint[],$2::text[],$3::text[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[])
+			    AS c(ordinal,purl,ecosystem,name,version,axis,kind,symbol)
+			)
+			SELECT ordinal FROM candidate c
+			WHERE (c.axis='SAMPLE'
+			       AND NOT EXISTS (
+			         SELECT 1 FROM authoring_drafts d
+			         JOIN samples s ON s.sample_id=d.sample_id AND s.status='DRAFT'
+			         CROSS JOIN LATERAL jsonb_array_elements_text(
+			           CASE WHEN jsonb_typeof(s.manifest->'packages')='array' THEN s.manifest->'packages' ELSE '[]'::jsonb END
+			         ) AS package(value)
+			         CROSS JOIN LATERAL jsonb_array_elements_text(
+			           (CASE WHEN jsonb_typeof(s.manifest->'symbols')='array' THEN s.manifest->'symbols' ELSE '[]'::jsonb END) || '[""]'::jsonb
+			         ) AS sample_symbol(value)
+			         WHERE package.value=c.purl AND sample_symbol.value=c.symbol)
+			       AND NOT (c.symbol='' AND c.kind IN ('EXPANSION','DEPENDENCY') AND EXISTS (
+			         SELECT 1 FROM sample_packages sp
+			         JOIN samples s ON s.sample_id=sp.sample_id AND NOT s.quarantined
+			         WHERE sp.purl=c.purl AND EXISTS (
+			           SELECT 1 FROM receipts r WHERE r.sample_id=s.sample_id AND r.contract_result='PASS'))))
+			   OR (c.axis='EVIDENCE'
+			       AND NOT EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=c.purl))
+			   OR (c.axis='DEPENDENCY'
+			       AND NOT EXISTS (SELECT 1 FROM dependency_edge d
+			         WHERE d.ecosystem=c.ecosystem AND d.parent_name=c.name AND d.parent_version=c.version)
+			       AND NOT EXISTS (SELECT 1 FROM dependency_resolution d
+			         WHERE d.ecosystem=c.ecosystem AND d.name=c.name AND d.version=c.version))
+			ORDER BY ordinal`, ordinals, purls, ecosystems, names, versions, axes, kinds, symbols)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ordinal int64
+			if err := rows.Scan(&ordinal); err != nil {
+				return err
+			}
+			open[ordinal] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WantedRow, 0, len(candidates))
+	for i, candidate := range candidates {
+		if !open[int64(i+1)] {
+			continue
+		}
+		candidate.Axis = axes[i]
+		out = append(out, candidate)
+	}
+	return out, nil
+}
+
 func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
 	var claimed AuthoringWorkRow
 	found := false
-	eligible := make(map[[4]string]struct{}, len(candidates))
+	eligible := make(map[[5]string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		eligible[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)] = struct{}{}
+		eligible[authoringAxisWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Axis)] = struct{}{}
 	}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tx, err := c.Begin(ctx)
@@ -663,17 +820,17 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 		if err != nil {
 			return err
 		}
-		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
+		claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,axis,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
 		if err == nil {
 			key := authoringWorkKey(claimed.Ecosystem, claimed.Name, claimed.Version, claimed.Symbol)
-			_, stillEligible := eligible[key]
+			_, stillEligible := eligible[authoringAxisWorkKey(claimed.Ecosystem, claimed.Name, claimed.Version, claimed.Symbol, claimed.Axis)]
 			// A live worker refreshing a hopeless claim used to hold the slot
 			// until its 24-hour lease ran out: reclaim released only claims
 			// whose SESSION had died, and this one had not.
 			ledger := ledgers[key]
-			if stillEligible && (ledger == nil || !ledger.barred(sessionID, now)) {
+			if stillEligible && (ledger == nil || !ledger.barred(claimed.Axis, sessionID, now)) {
 				if ledger == nil || !now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
 					if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
 						return err
@@ -694,21 +851,42 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			return err
 		}
 		for _, candidate := range candidates {
-			ledger := ledgers[authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)]
-			if ledger != nil && ledger.barred(sessionID, now) {
+			candidateKey := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
+			ledger := ledgers[candidateKey]
+			if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
 				continue
 			}
 			kind := candidate.Kind
 			if kind == "" {
 				kind = "WANTED"
 			}
-			claimed, err = scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
-				ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at)
-				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-				ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
-				RETURNING ecosystem,name,version,symbol,asks,kind,score,session_id,claimed_at,lease_expires_at,sample_id`,
-				candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
-				kind, candidate.Score, sessionID, now, leaseExpiresAt))
+			axis := normalizeAuthoringAxis(candidate.Axis)
+			insert := func() (AuthoringWorkRow, error) {
+				return scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
+					ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at)
+					VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+					ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
+					RETURNING ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at,sample_id`,
+					candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
+					kind, axis, candidate.Score, sessionID, now, leaseExpiresAt))
+			}
+			claimed, err = insert()
+			if errors.Is(err, pgx.ErrNoRows) {
+				// authoring_assignments predates Axis and keeps its coordinate-only
+				// primary key. Only on an actual conflict, make room when the row
+				// completed a different deliverable; the durable sample/draft is
+				// the audit record.
+				tag, deleteErr := tx.Exec(ctx, `DELETE FROM authoring_assignments
+					WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
+					  AND sample_id IS NOT NULL AND axis<>$5`, candidate.Ecosystem,
+					candidate.Name, candidate.Version, candidate.Symbol, axis)
+				if deleteErr != nil {
+					return deleteErr
+				}
+				if tag.RowsAffected() == 1 {
+					claimed, err = insert()
+				}
+			}
 			if err == nil {
 				if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
 					return err
@@ -730,7 +908,7 @@ func (p *PG) AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID
 	found := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		var err error
-		work, err = scanAuthoringWork(c.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,score,
+		work, err = scanAuthoringWork(c.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,axis,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND ((sample_id IS NULL AND lease_expires_at>$2) OR sample_id=$3)
 			ORDER BY CASE WHEN sample_id=$3 THEN 0 ELSE 1 END LIMIT 1`, sessionID, now, sampleID))
@@ -744,6 +922,9 @@ func (p *PG) AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID
 }
 
 func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error) {
+	if normalizeAuthoringAxis(work.Axis) != AuthoringAxisSample {
+		return false, nil
+	}
 	attached := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tx, err := c.Begin(ctx)
@@ -759,7 +940,7 @@ func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, wo
 		if (work.Kind == "EXPANSION" || work.Kind == "DEPENDENCY") && work.Symbol == "" {
 			tag, err := tx.Exec(ctx, `DELETE FROM authoring_assignments
 				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=''
-				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5`,
+				  AND session_id=$4 AND sample_id IS NULL AND lease_expires_at>$5 AND axis='SAMPLE'`,
 				work.Ecosystem, work.Name, work.Version, sessionID, now)
 			if err != nil {
 				return err
@@ -768,7 +949,7 @@ func (p *PG) AttachAuthoringWorkSample(ctx context.Context, sessionID string, wo
 		} else {
 			tag, err := tx.Exec(ctx, `UPDATE authoring_assignments SET sample_id=$7,completed_at=$8
 				WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
-				  AND session_id=$5 AND sample_id IS NULL AND lease_expires_at>$6`,
+				  AND session_id=$5 AND sample_id IS NULL AND lease_expires_at>$6 AND axis='SAMPLE'`,
 				work.Ecosystem, work.Name, work.Version, work.Symbol, sessionID, now, sampleID, now)
 			if err != nil {
 				return err

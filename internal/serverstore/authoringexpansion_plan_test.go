@@ -35,6 +35,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // planNode is the slice of EXPLAIN (FORMAT JSON) this test reads.
@@ -114,6 +116,7 @@ func TestIntegrationExpansionQueryDoesNotScanPackagesPerCluster(t *testing.T) {
 		return c.QueryRow(ctx,
 			`EXPLAIN (ANALYZE, FORMAT JSON) `+authoringExpansionCandidatesSQL,
 			200, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap, authoringResolveWeight,
+			domain.DependencyScannableEcosystems(),
 		).Scan(&raw)
 	})
 	if err != nil {

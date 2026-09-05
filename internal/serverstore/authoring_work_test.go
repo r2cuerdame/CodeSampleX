@@ -98,6 +98,7 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 	// production. Asserting it here is what kept the bug alive, so the
 	// assertion is inverted rather than relaxed.
 	candidates, err := store.ListAuthoringExpansionCandidates(ctx, 10)
+	candidates = sampleAxisRows(candidates)
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates = %+v err=%v", candidates, err)
 	}
@@ -118,6 +119,7 @@ func TestAuthoringExpansionRanksFailureThenObservedCoverage(t *testing.T) {
 		t.Fatalf("claim = %+v ok=%v err=%v", work, ok, err)
 	}
 	remaining, err := store.ListAuthoringExpansionCandidates(ctx, 10)
+	remaining = sampleAxisRows(remaining)
 	if err != nil || len(remaining) != 2 {
 		t.Fatalf("remaining = %+v err=%v", remaining, err)
 	}
@@ -213,7 +215,7 @@ func TestAuthoringExpansionOffersUnmeasuredSiblingVersions(t *testing.T) {
 	for _, want := range []string{"1.0.0", "2.0.0"} {
 		found := false
 		for _, c := range candidates {
-			if c.Version == want && c.Symbol == "" {
+			if c.Version == want && c.Symbol == "" && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 				found = true
 				if c.Kind != "EXPANSION" {
 					t.Errorf("sibling %s kind = %q, want EXPANSION", want, c.Kind)
@@ -287,7 +289,7 @@ func TestAuthoringExpansionSpreadsAcrossVersionsBeforeDeepening(t *testing.T) {
 	}
 	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
 	seen := map[string]int{}
-	for i, c := range candidates {
+	for i, c := range sampleAxisRows(candidates) {
 		seen[c.Version]++
 		if seen[c.Version] < 2 {
 			continue
@@ -381,7 +383,7 @@ func TestAuthoringExpansionCapsSiblingsPerPackage(t *testing.T) {
 	bigSiblings := 0
 	smallReachable := false
 	for _, c := range candidates {
-		if c.Name == "bigpkg" && c.Version != "1.0.0" {
+		if c.Name == "bigpkg" && c.Version != "1.0.0" && normalizeAuthoringAxis(c.Axis) == AuthoringAxisSample {
 			bigSiblings++
 		}
 		if c.Name == "smallpkg" {

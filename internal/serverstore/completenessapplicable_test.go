@@ -50,13 +50,14 @@ func TestTheCensusDoesNotCountWorkNobodyCanDo(t *testing.T) {
 		t.Errorf("DependencyNotApplicable = %d, want 2 (the maven marker and the gem release)", got.DependencyNotApplicable)
 	}
 
-	// The marker is unaskable on both axes, so it is not backlog at all.
+	// The marker is unaskable on Sample and Dependency, but nobody has run it:
+	// N/A on two axes cannot erase the independently missing Evidence axis.
 	total := 0
 	for _, n := range got.States {
 		total += n
 	}
-	if total != 3 {
-		t.Errorf("States holds %d coordinates, want 3: the one unaskable on both axes is not backlog", total)
+	if total != 4 {
+		t.Errorf("States holds %d coordinates, want 4: the marker still needs Evidence", total)
 	}
 
 	// And an ecosystem nobody can scan must not be reported as a dependency
