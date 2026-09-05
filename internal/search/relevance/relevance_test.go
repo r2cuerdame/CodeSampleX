@@ -189,6 +189,37 @@ func TestNamingThePackageStillNamesTheSubject(t *testing.T) {
 	}
 }
 
+// Build scaffolding names a place in a project, not a library.
+//
+// Every ecosystem puts sources under src, entry points under cmd, and helpers
+// under internal, test or examples — and those are also the words every build
+// failure prints. As identifier tokens they let a `go test` failure "name"
+// google.golang.org/grpc/test/bufconn, which is how a gRPC interceptor sample
+// was promoted for a test that asserted an integer.
+func TestBuildScaffoldingSegmentsDoNotNameALibrary(t *testing.T) {
+	for _, token := range []string{
+		"test", "tests", "testing", "spec", "internal", "cmd", "src", "bin",
+		"build", "dist", "example", "examples", "sample", "demo",
+	} {
+		if !IsGeneric(token) {
+			t.Errorf("%q still identifies a subject", token)
+		}
+	}
+	for _, c := range []struct {
+		query, pkg string
+		want       bool
+	}{
+		{"a failing test asserts an integer", "google.golang.org/grpc/test/bufconn", false},
+		{"the build broke in src", "github.com/some/build/src", false},
+		{"bufconn.Listen never accepts", "google.golang.org/grpc/test/bufconn", true},
+		{"grpc drops my metadata", "google.golang.org/grpc/test/bufconn", true},
+	} {
+		if got := NamesSubject(c.query, []string{c.pkg}, nil); got != c.want {
+			t.Errorf("NamesSubject(%q, %q) = %v, want %v", c.query, c.pkg, got, c.want)
+		}
+	}
+}
+
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {

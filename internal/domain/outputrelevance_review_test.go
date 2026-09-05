@@ -4,7 +4,7 @@ import "testing"
 
 func TestRequestDiagnosticsRecognizesLetterOnlyErrnos(t *testing.T) {
 	for _, code := range []string{"ENOENT", "EACCES", "EPERM"} {
-		got := requestDiagnostics(SearchRequest{Query: "operation failed with " + code})
+		got := requestDiagnostics("operation failed with "+code, "")
 		found := false
 		for _, v := range got {
 			if v == code {
@@ -19,7 +19,7 @@ func TestRequestDiagnosticsRecognizesLetterOnlyErrnos(t *testing.T) {
 
 func TestRequestDiagnosticsRejectsGenericAllCapsWords(t *testing.T) {
 	for _, word := range []string{"ERROR", "EXACT", "SHA"} {
-		got := requestDiagnostics(SearchRequest{Query: "ordinary prose " + word})
+		got := requestDiagnostics("ordinary prose "+word, "")
 		for _, v := range got {
 			if v == word {
 				t.Fatalf("generic word %s promoted: %#v", word, got)
