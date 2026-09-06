@@ -66,12 +66,18 @@ type dependencyMatrix struct {
 // the store again: Dependencies returns every release's edges and the table
 // throws away all but the pinned one.
 //
-// A single release returns nil. Every row would repeat the table above it, and
-// a one-column grid dressed as a comparison invites a reader to see a trend in
-// one point.
-func buildDependencyMatrix(ecosystem string, edges []DependencyEdge) *dependencyMatrix {
+// emptyVersions explicitly supplies releases whose dependency tree was measured
+// and proven empty (e.g. via DependencyResolvedNone). Because an empty tree
+// contributes no edge rows, these releases must be passed explicitly so they
+// are not omitted from the version axis.
+func buildDependencyMatrix(ecosystem string, edges []DependencyEdge, emptyVersions ...string) *dependencyMatrix {
 	byChild := map[string]map[string]string{}
 	versions := map[string]bool{}
+	for _, v := range emptyVersions {
+		if v != "" {
+			versions[v] = true
+		}
+	}
 	for _, e := range edges {
 		if e.ParentVersion == "" || e.ChildName == "" {
 			continue
@@ -82,7 +88,7 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge) *dependency
 		}
 		byChild[e.ChildName][e.ParentVersion] = e.ChildVersion
 	}
-	if len(versions) < 2 {
+	if len(byChild) == 0 || len(versions) < 2 {
 		return nil
 	}
 	order := make([]string, 0, len(versions))

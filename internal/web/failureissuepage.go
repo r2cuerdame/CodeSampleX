@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	// failureIssueVersionSpan is how far either side of an affected release
-	// the page looks for a boundary. A boundary can only sit next to a
-	// failure, so reading the whole release history buys nothing and costs a
-	// snapshot read per release.
+	// failureIssueVersionSpan is how much local release context the page keeps
+	// around each affected release. Known boundary releases are discovered by
+	// one complete package-scoped stage read and survive even beyond this span.
 	failureIssueVersionSpan = 3
 	// failureIssueMaxVersions bounds the snapshot reads one issue makes.
 	failureIssueMaxVersions = 9
@@ -82,7 +81,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		s.notFound(w, r, lang)
 		return
 	}
-	raw, _, err := s.d.Store.FailureClusters(r.Context(), eco, name)
+	raw, err := s.d.Store.FailureIssueClusters(r.Context(), eco, name)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
@@ -101,12 +100,30 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	// unmeasured with the failure nowhere on it — the opposite of what is
 	// known — so the axis is withheld and the gap section says why.
 	var window []string
+	var boundaries []failureBoundary
+	var boundariesComputed bool
+	stagePass := map[string]int64{}
 	if len(issue.Versions) > 0 {
-		window = failureIssueVersionWindow(versions, issue.Versions,
-			failureIssueVersionSpan, failureIssueMaxVersions)
+		if allPass, err := s.d.Store.FailureIssueStagePasses(r.Context(), eco, name, issue.Stage); err == nil {
+			stagePass = allPass
+			allVersions := sortedVersionsDesc(appendMissing(append([]string(nil), versions...), issue.Versions...))
+			allVerdicts := failureIssueVerdicts(issue, allVersions, stagePass)
+			boundaries = failureIssueBoundaries(allVersions, allVerdicts)
+			boundariesComputed = true
+			window = failureIssueVersionWindow(versions, issue.Versions,
+				failureIssueBoundaryPasses(boundaries),
+				failureIssueVersionSpan, failureIssueMaxVersions)
+		} else {
+			window = failureIssueVersionWindow(versions, issue.Versions, nil,
+				failureIssueVersionSpan, failureIssueMaxVersions)
+			stagePass = s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
+		}
 	}
-	stagePass := s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
-	verdicts := failureIssueVerdicts(issue, window, stagePass)
+	// "Where it was measured" is an inventory, not the bounded comparison
+	// window. Keep every affected release visible even when the dependency
+	// matrix must omit interior failures to preserve a boundary under its cap.
+	releaseVersions := sortedVersionsDesc(appendMissing(append([]string(nil), window...), issue.Versions...))
+	verdicts := failureIssueVerdicts(issue, releaseVersions, stagePass)
 
 	b := s.page(r, lang, i18n.T(lang, "issue.title", name, eco)+" — CodeSampleX",
 		failureIssueDescription(lang, name, issue))
@@ -115,8 +132,8 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	crumbs := leaf(append(recordCrumbs(b, eco, name, "", ""),
 		crumb{Label: i18n.T(lang, "issue.crumb")}))
 
-	releases := make([]failureIssueRelease, 0, len(window))
-	for _, v := range window {
+	releases := make([]failureIssueRelease, 0, len(releaseVersions))
+	for _, v := range releaseVersions {
 		row := failureIssueRelease{
 			Version: v,
 			Href:    b.WithLang(versionHref(eco, name, v)),
@@ -131,20 +148,50 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		releases = append(releases, row)
 	}
 
-	boundaries := failureIssueBoundaries(window, verdicts)
+	if !boundariesComputed {
+		boundaries = failureIssueBoundaries(releaseVersions, verdicts)
+	}
 	var edges []DependencyEdge
-	if rows, err := s.d.Store.Dependencies(r.Context(), eco, name); err == nil {
+	if rows, err := s.d.Store.FailureIssueDependencies(r.Context(), eco, name, issue.Fingerprint); err == nil {
 		edges = rows
+	}
+	treeKnown := map[string]bool{}
+	knownTree := func(version string) bool {
+		if known, ok := treeKnown[version]; ok {
+			return known
+		}
+		known := len(resolvedChildren(edges, version)) > 0
+		if !known {
+			resolvedNone, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
+			known = err == nil && resolvedNone
+		}
+		treeKnown[version] = known
+		return known
 	}
 	for i := range boundaries {
 		bd := &boundaries[i]
 		bd.LowerHref = b.WithLang(versionHref(eco, name, bd.LowerVersion))
 		bd.HigherHref = b.WithLang(versionHref(eco, name, bd.HigherVersion))
-		bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion)
-		bd.TreeUnread = len(resolvedChildren(edges, bd.PassVersion)) == 0 ||
-			len(resolvedChildren(edges, bd.FailVersion)) == 0
+		passTreeKnown, failTreeKnown := knownTree(bd.PassVersion), knownTree(bd.FailVersion)
+		bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion,
+			passTreeKnown, failTreeKnown)
+		bd.TreeUnread = !passTreeKnown || !failTreeKnown
 		for j := range bd.Changed {
 			bd.Changed[j].Href = b.WithLang(bd.Changed[j].Href)
+		}
+	}
+
+	var emptyBoundaryReleases []string
+	for _, bd := range boundaries {
+		for _, v := range []string{bd.PassVersion, bd.FailVersion} {
+			if v != "" && contains(window, v) && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+				emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
+			}
+		}
+	}
+	for _, v := range window {
+		if v != "" && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+			emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
 		}
 	}
 
@@ -156,7 +203,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		// The matrix is built from the edges of the releases in the window —
 		// the dependency versions AROUND the PASS/FAIL observations, which is
 		// the comparison the boundary above points at.
-		DepsMatrix:  buildDependencyMatrix(eco, edgesForVersions(edges, window)),
+		DepsMatrix:  buildDependencyMatrix(eco, edgesForVersions(edges, window), emptyBoundaryReleases...),
 		Gaps:        failureIssueGaps(lang, issue, verdicts, boundaries),
 		Samples:     s.failureIssueSamples(r.Context(), eco, name, issue),
 		PackageHref: b.WithLang(pkgHref(eco, name)),

@@ -117,3 +117,29 @@ func TestTheMatrixDoesNotWaitForAPinnedRelease(t *testing.T) {
 		t.Error("the matrix does not say what an edge records")
 	}
 }
+
+// A release proven to declare no dependencies at all is still a release.
+// Supplying it explicitly includes it on the version axis so a boundary
+// endpoint with an empty tree does not cause the matrix to disappear or
+// compare against a distant neighbor instead.
+func TestTheMatrixIncludesExplicitEmptyReleases(t *testing.T) {
+	m := buildDependencyMatrix("npm", []DependencyEdge{
+		{ParentName: "app", ParentVersion: "1.1.0", ChildName: "debug", ChildVersion: "4.4.1"},
+	}, "1.0.0")
+	if m == nil {
+		t.Fatal("no matrix built with one populated release and one proven empty release")
+	}
+	if len(m.Versions) != 2 || m.Versions[0] != "1.1.0" || m.Versions[1] != "1.0.0" {
+		t.Fatalf("versions = %v, want both releases newest first", m.Versions)
+	}
+	if len(m.Rows) != 1 || m.Rows[0].Child != "debug" {
+		t.Fatalf("rows = %+v, want row for debug", m.Rows)
+	}
+	if m.Rows[0].Cells[0].State != "version" || m.Rows[0].Cells[0].Version != "4.4.1" {
+		t.Errorf("cell 0 = %+v, want resolved version 4.4.1", m.Rows[0].Cells[0])
+	}
+	if m.Rows[0].Cells[1].State != "not_in_tree" {
+		t.Errorf("cell 1 = %+v, want not_in_tree for empty release", m.Rows[0].Cells[1])
+	}
+}
+

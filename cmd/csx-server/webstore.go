@@ -823,6 +823,29 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 	return out, nil
 }
 
+// FailureIssueDependencies bypasses the package-page cache because the
+// same-receipt annotation is specific to one exact failure fingerprint.
+// Ordinary dependency rows remain useful for the matrix; only a project/epoch
+// correlation supplied by the server store may promote a changed row from
+// hypothesis to evidence.
+func (w *webStore) FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]web.DependencyEdge, error) {
+	rows, err := w.s.FailureIssueDependencies(ctx, ecosystem, name, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DependencyEdge, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, web.DependencyEdge{
+			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
+			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
+			Projects:    int64(r.Projects),
+			SameReceipt: r.SameReceipt,
+			Outcome:     r.Outcome,
+		})
+	}
+	return out, nil
+}
+
 // derivedFindingPage is how many belief-declaring samples one database read
 // returns.
 //
@@ -1472,41 +1495,9 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			continue
 		}
 		kept++
-		doc := map[string]any{
-			// The symbol the cluster is ABOUT. It was never serialized, so
-			// the template's {{if .Symbol}} was false on every package page
-			// and a failure cluster rendered with no indication of which
-			// call it concerned.
-			"symbol":              c.Symbol,
-			"stage":               c.Stage,
-			"errorCode":           c.ErrorCode,
-			"fingerprint":         c.ErrorFingerprint,
-			"terminationKind":     c.TerminationKind,
-			"exitCode":            c.ExitCode,
-			"signal":              c.Signal,
-			"timeoutMillis":       c.TimeoutMillis,
-			"errorSummary":        c.ErrorSummary,
-			"evidenceQuality":     c.EvidenceQuality,
-			"outerCommands":       c.OuterCommands,
-			"actualToolchain":     c.ActualToolchain,
-			"stageEvidence":       c.StageEvidence,
-			"evidenceGap":         c.FailureEvidenceGap,
-			"count":               c.ObservationCount,
-			"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
-			"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
-			"evidenceBreakdown":   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
-			"hypotheses":          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
-			"regressionCandidate": c.RegressionCandidate,
-			"diagnosticCandidate": c.DiagnosticCandidate,
-			"versions":            json.RawMessage(orEmptyArr(c.VersionsJSON)),
-			"firstSeen":           c.FirstSeen.UTC().Format(time.RFC3339),
-			"lastSeen":            c.LastSeen.UTC().Format(time.RFC3339),
+		if doc, ok := failureClusterJSON(c); ok {
+			out = append(out, doc)
 		}
-		b, err := json.Marshal(doc)
-		if err != nil {
-			continue
-		}
-		out = append(out, string(b))
 	}
 	w.pkgFailureClusters.Store(cacheKey, cachedFailureClusters{
 		at:      now,
@@ -1514,6 +1505,66 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		matched: matched,
 	})
 	return out, matched, nil
+}
+
+// FailureIssueClusters reads the complete current ledger for an explicit
+// issue URL. It deliberately does not reuse the display-oriented 500-row
+// cache above: doing so made old shared issue URLs disappear as a package's
+// cluster count grew. The route subsequently narrows this complete set to one
+// 64-bit issue address before doing any release or dependency reads.
+func (w *webStore) FailureIssueClusters(ctx context.Context, ecosystem, name string) ([]string, error) {
+	rows, err := w.s.ListFailureClusters(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, c := range rows {
+		if c.Ecosystem != ecosystem {
+			continue
+		}
+		if doc, ok := failureClusterJSON(c); ok {
+			out = append(out, doc)
+		}
+	}
+	return out, nil
+}
+
+func (w *webStore) FailureIssueStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	return w.s.PackageStagePasses(ctx, ecosystem, name, stage)
+}
+
+func failureClusterJSON(c serverstore.ClusterRow) (string, bool) {
+	doc := map[string]any{
+		// The symbol the cluster is ABOUT. It was never serialized, so the
+		// template's {{if .Symbol}} was false on every package page and a
+		// failure cluster rendered with no indication of which call it concerned.
+		"symbol":              c.Symbol,
+		"stage":               c.Stage,
+		"errorCode":           c.ErrorCode,
+		"fingerprint":         c.ErrorFingerprint,
+		"terminationKind":     c.TerminationKind,
+		"exitCode":            c.ExitCode,
+		"signal":              c.Signal,
+		"timeoutMillis":       c.TimeoutMillis,
+		"errorSummary":        c.ErrorSummary,
+		"evidenceQuality":     c.EvidenceQuality,
+		"outerCommands":       c.OuterCommands,
+		"actualToolchain":     c.ActualToolchain,
+		"stageEvidence":       c.StageEvidence,
+		"evidenceGap":         c.FailureEvidenceGap,
+		"count":               c.ObservationCount,
+		"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
+		"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
+		"evidenceBreakdown":   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
+		"hypotheses":          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
+		"regressionCandidate": c.RegressionCandidate,
+		"diagnosticCandidate": c.DiagnosticCandidate,
+		"versions":            json.RawMessage(orEmptyArr(c.VersionsJSON)),
+		"firstSeen":           c.FirstSeen.UTC().Format(time.RFC3339),
+		"lastSeen":            c.LastSeen.UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(doc)
+	return string(b), err == nil
 }
 
 // maxClustersToPage bounds what one package hands the page. It is a guard

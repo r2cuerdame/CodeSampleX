@@ -91,6 +91,54 @@ func TestTheIssuePageNamesTheLastPassAndTheFirstFail(t *testing.T) {
 	mustNotContain(t, body, "cannot find package left")
 }
 
+func TestTheIssuePageFindsAKnownPassBeyondUnmeasuredNeighbours(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	clusters[0].Versions = []string{"1.5.0"}
+	var docs []string
+	for _, cluster := range clusters {
+		raw, err := json.Marshal(cluster)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, string(raw))
+	}
+	f.clusters["npm|libx"] = docs
+	f.versions["npm|libx"] = []string{"1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0"}
+	delete(f.snapshots, snapKey("pkg:npm/libx@1.2.0", ""))
+	f.snapshots[snapKey("pkg:npm/libx@1.1.0", "")] = `{"schemaVersion":1,"purl":"pkg:npm/libx@1.1.0",
+	  "rows":[{"contextLabel":"node 22","byStage":{"PROJECT_TEST":{"pass":7,"fail":0}}}]}`
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	body := get(t, mux, "/npm/libx?issue="+id).Body.String()
+	mustContain(t, body, `data-kind="starts" data-pass="1.1.0" data-fail="1.5.0"`)
+}
+
+func TestTheIssuePageListsEveryAffectedReleaseBeyondTheComparisonCap(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	affected := []string{"2.10.0", "2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0",
+		"2.4.0", "2.3.0", "2.2.0", "2.1.0"}
+	cluster := failureCluster{
+		Stage: "PROJECT_TEST", Fingerprint: "sha256:aaa11122233344455566677788899900",
+		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
+		EvidenceQuality: string(domain.EvidenceComplete), Count: 10, Versions: affected,
+	}
+	raw, err := json.Marshal(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clusters["npm|wide"] = []string{string(raw)}
+	f.versions["npm|wide"] = append(append([]string(nil), affected...), "1.9.0")
+	f.snapshots[snapKey("pkg:npm/wide@1.9.0", "")] = `{"schemaVersion":1,"purl":"pkg:npm/wide@1.9.0",
+	  "rows":[{"byStage":{"PROJECT_TEST":{"pass":2,"fail":0}}}]}`
+	id := issueIDFor(t, []failureCluster{cluster}, cluster.Fingerprint)
+
+	body := get(t, mux, "/npm/wide?issue="+id).Body.String()
+	for _, version := range affected {
+		mustContain(t, body, `data-version="`+version+`" data-verdict="fail"`)
+	}
+}
+
 // A dependency that moved across the boundary is a candidate and nothing
 // more. Saying so is the difference between this page and a guess.
 func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {
@@ -103,6 +151,70 @@ func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {
 	// "right" resolved identically on both sides and is not a candidate.
 	mustNotContain(t, body, `data-library="right"`)
 }
+
+// An empty edge list can mean either unread or measured-empty. The resolver's
+// explicit empty marker makes an added dependency a real comparison rather
+// than an evidence gap, and supplies the empty release to the dependency matrix.
+func TestTheIssuePageUsesAProvenEmptyBoundaryTree(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	f.dependencies = f.dependencies[2:] // only the failing release's tree remains
+	f.resolvedNone["libx@1.2.0"] = true
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	body := get(t, mux, "/npm/libx?issue="+id).Body.String()
+	mustContain(t, body, `data-library="left"`)
+	mustContain(t, body, `data-library="right"`)
+	mustNotContain(t, body, "One side of this boundary has no resolved dependency tree")
+	mustContain(t, body, `id="depmatrix"`)
+	mustContain(t, body, `<th class="mono">1.2.0</th>`)
+	mustContain(t, body, `cell-not_in_tree`)
+}
+
+// When an issue recurs often enough to exceed the comparison window cap,
+// boundaries must be computed from the complete release history. Recomputing
+// from the truncated window would pair a middle PASS with an edge failure
+// across omitted decided releases.
+func TestTheIssuePagePreservesBoundariesFromFullHistoryWhenWindowIsCapped(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	// 10 alternating FAIL releases and 9 PASS releases (19 releases total).
+	all := []string{
+		"2.18.0", "2.17.0", "2.16.0", "2.15.0", "2.14.0", "2.13.0", "2.12.0", "2.11.0", "2.10.0",
+		"2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0", "2.4.0", "2.3.0", "2.2.0", "2.1.0", "2.0.0",
+	}
+	var affected []string
+	passCounts := map[string]int64{}
+	for i, v := range all {
+		if i%2 == 0 {
+			affected = append(affected, v)
+		} else {
+			passCounts[v] = 3
+			f.snapshots[snapKey("pkg:npm/alt@"+v, "")] = `{"schemaVersion":1,"purl":"pkg:npm/alt@` + v + `",
+			  "rows":[{"byStage":{"PROJECT_TEST":{"pass":3,"fail":0}}}]}`
+		}
+	}
+	cluster := failureCluster{
+		Stage: "PROJECT_TEST", Fingerprint: "sha256:aaa11122233344455566677788899900",
+		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
+		EvidenceQuality: string(domain.EvidenceComplete), Count: 10, Versions: affected,
+	}
+	raw, err := json.Marshal(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clusters["npm|alt"] = []string{string(raw)}
+	f.versions["npm|alt"] = all
+	id := issueIDFor(t, []failureCluster{cluster}, cluster.Fingerprint)
+
+	body := get(t, mux, "/npm/alt?issue="+id).Body.String()
+	// True adjacent boundaries must be preserved.
+	mustContain(t, body, `data-pass="2.1.0" data-fail="2.0.0"`)
+	// A false boundary pairing the oldest FAIL directly with a non-adjacent PASS must not exist.
+	mustNotContain(t, body, `data-pass="2.7.0" data-fail="2.0.0"`)
+	mustNotContain(t, body, `data-pass="2.9.0" data-fail="2.0.0"`)
+	mustNotContain(t, body, `data-pass="2.17.0" data-fail="2.0.0"`)
+}
+
 
 // A release nothing measured must not be presented as a passing one.
 func TestTheIssuePageKeepsAnUnmeasuredReleaseUnmeasured(t *testing.T) {
@@ -124,6 +236,27 @@ func TestAnUnknownIssueIsNotFound(t *testing.T) {
 	if rec := get(t, mux, "/npm/libx?issue=deadbeefdeadbeef"); rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
+}
+
+// The package page is intentionally capped, but an issue address is durable.
+// Resolving it through the display page made a valid URL turn into a 404 as
+// higher-ranked clusters pushed its row past the cap.
+func TestIssueLookupUsesTheCompleteClusterLedger(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	key := "npm|libx"
+	complete := append([]string(nil), f.clusters[key]...)
+	// Simulate the display page returning only the other failure while the
+	// explicit issue read still has the complete package ledger.
+	f.clusters[key] = complete[1:]
+	f.issueClusters[key] = complete
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	rec := get(t, mux, "/npm/libx?issue="+id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the issue beyond the display cap to resolve", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "expected 2 arguments, got 1")
 }
 
 // The issue view is a view OF the package page, so it declares the package

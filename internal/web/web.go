@@ -122,6 +122,15 @@ type Store interface {
 	// package actually has. pgx/v5 carries 133; rendering all of them was a
 	// wall, and truncating without the total would read as "this is all".
 	FailureClusters(ctx context.Context, ecosystem, name string) (clusters []string, total int, err error)
+	// FailureIssueClusters returns the complete current cluster ledger for the
+	// explicit issue route. Unlike FailureClusters it must not use the
+	// display-oriented page cap: an existing issue address has to remain
+	// resolvable even when a package grows beyond that cap.
+	FailureIssueClusters(ctx context.Context, ecosystem, name string) ([]string, error)
+	// FailureIssueStagePasses finds every decided PASS for one stage in a
+	// single package-scoped read. Boundary discovery uses this complete map so
+	// unmeasured releases do not hide a more distant known boundary.
+	FailureIssueStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error)
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)
@@ -133,6 +142,10 @@ type Store interface {
 	// its first-level children, which is all anyone needs: the version that
 	// moved under an upgrade is the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// FailureIssueDependencies is the same parent-side graph annotated only
+	// where one project/epoch receipt recorded the exact failure fingerprint
+	// and the resolved child together.
+	FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error)
 	// DependencySubjects browses the graph from the CHILD's side -- one ranked,
 	// searchable page of releases other packages resolved onto, and how many
 	// match in total. Dependencies needs a parent named up front, so "who pulls

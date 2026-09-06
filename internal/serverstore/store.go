@@ -517,6 +517,11 @@ type Store interface {
 	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	// PackageStagePasses returns package-level PASS observations for one stage,
+	// keyed by release. It is a targeted, batched read for Failure Issue
+	// boundary discovery: unmeasured releases must be skipped even when the
+	// nearest decided release lies outside the rendered release window.
+	PackageStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error)
 	GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error)
 	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
@@ -663,6 +668,10 @@ type Store interface {
 	// upgrade a library and its dependencies move under you, and the one that
 	// moved is usually the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// FailureIssueDependencies keeps the ordinary dependency graph but marks
+	// an edge SameReceipt only when its project/epoch ledger also contributed
+	// the exact failing fingerprint named by the issue.
+	FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error)
 	// DependencySubjects browses the graph from the CHILD's side: one ranked,
 	// searchable page of releases other packages resolved onto, plus how many
 	// match in total. Dependencies answers "what did this pull", which requires

@@ -148,18 +148,20 @@ type failureCausalEdge struct {
 //
 // The count rule is the one buildClusters established for the same reason:
 // the recorder files one observation against the package AND one against every
-// symbol it detected, so the package-level count already contains the
-// symbol's. Within one (environment, release) bucket the largest is kept and
-// never the sum; the buckets themselves add up, because a failure reproducing
-// somewhere else is a separate event.
+// symbol it detected, so the package-level exact-environment variant already
+// contains the symbol's. Matching variants therefore keep the largest count
+// and never sum copies whose version lists happen to differ.
 func buildFailureIssues(clusters []failureCluster) []failureIssue {
-	type bucket struct{ env, versions string }
+	type envAggregate struct {
+		summary, first, last string
+		count                int64
+	}
 	type agg struct {
-		issue   failureIssue
-		buckets map[bucket]int64
-		envSeen map[string][2]string // env → first, last
-		envOrd  []string
-		symbols map[string]bool
+		issue         failureIssue
+		environments  map[string]*envAggregate // exact EnvironmentFingerprint hash
+		envOrd        []string
+		symbols       map[string]bool
+		largestRecord int64
 	}
 	byKey := map[string]*agg{}
 	var order []string
@@ -170,9 +172,8 @@ func buildFailureIssues(clusters []failureCluster) []failureIssue {
 		a := byKey[key]
 		if a == nil {
 			a = &agg{
-				buckets: map[bucket]int64{},
-				envSeen: map[string][2]string{},
-				symbols: map[string]bool{},
+				environments: map[string]*envAggregate{},
+				symbols:      map[string]bool{},
 			}
 			a.issue.ID = failureIssueID(key)
 			a.issue.EvidenceGap = unfingerprinted
@@ -224,17 +225,30 @@ func buildFailureIssues(clusters []failureCluster) []failureIssue {
 			a.symbols[c.Symbol] = true
 		}
 		issue.Versions = appendMissing(issue.Versions, c.Versions...)
-
-		env := joinEnvSummary(c.EnvSummary)
-		b := bucket{env: env, versions: strings.Join(c.Versions, ",")}
-		if n := clusterCount(c); n > a.buckets[b] {
-			a.buckets[b] = n
+		if n := clusterCount(c); n > a.largestRecord {
+			a.largestRecord = n
 		}
-		seen, had := a.envSeen[env]
-		if !had {
-			a.envOrd = append(a.envOrd, env)
+		for _, variant := range c.EnvVariants {
+			exact := variant.Environment.Normalize()
+			key := exact.Hash()
+			env := a.environments[key]
+			if env == nil {
+				env = &envAggregate{summary: joinEnvSummary(variant.Summary)}
+				if env.summary == "" {
+					env.summary = RecordEnvironmentSummary(exact)
+				}
+				a.environments[key] = env
+				a.envOrd = append(a.envOrd, key)
+			}
+			// Package- and symbol-level rows can carry the same exact bucket.
+			// Their version arrays are presentation metadata, not distinct
+			// observations, so the largest aggregate is the conservative one.
+			if variant.Count > env.count {
+				env.count = variant.Count
+			}
+			env.first = earliest(env.first, variant.FirstSeen)
+			env.last = latest(env.last, variant.LastSeen)
 		}
-		a.envSeen[env] = [2]string{earliest(seen[0], c.FirstSeen), latest(seen[1], c.LastSeen)}
 		issue.FirstSeen = earliest(issue.FirstSeen, c.FirstSeen)
 		issue.LastSeen = latest(issue.LastSeen, c.LastSeen)
 	}
@@ -243,17 +257,18 @@ func buildFailureIssues(clusters []failureCluster) []failureIssue {
 	for _, key := range order {
 		a := byKey[key]
 		issue := a.issue
-		perEnv := map[string]int64{}
-		for b, n := range a.buckets {
-			issue.Count += n
-			perEnv[b.env] += n
-		}
-		for _, env := range a.envOrd {
-			seen := a.envSeen[env]
+		issue.Count = a.largestRecord
+		var exactCount int64
+		for _, key := range a.envOrd {
+			env := a.environments[key]
+			exactCount += env.count
 			issue.Environments = append(issue.Environments, failureIssueEnv{
-				Summary: env, Count: perEnv[env],
-				FirstSeen: datePart(seen[0]), LastSeen: datePart(seen[1]),
+				Summary: env.summary, Count: env.count,
+				FirstSeen: datePart(env.first), LastSeen: datePart(env.last),
 			})
+		}
+		if exactCount > issue.Count {
+			issue.Count = exactCount
 		}
 		sort.Slice(issue.Environments, func(i, j int) bool {
 			if issue.Environments[i].Count != issue.Environments[j].Count {
@@ -399,19 +414,22 @@ func failureIssueBoundaries(versions []string, verdicts map[string]failureIssueV
 // and the tree it resolved, which is the same-receipt rule #178 established for
 // the dependency-health column; nothing else may be spelled as evidence.
 //
-// A side with no resolved tree returns nothing rather than a list of
-// removals: an unread tree and an empty tree are opposite facts, and the
-// caller renders the difference.
-func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, failVersion string) []failureCausalEdge {
+// A side with an unread tree returns nothing rather than a list of removals:
+// unread and explicitly resolved-empty are opposite facts. The caller supplies
+// that distinction after consulting dependency_resolution.
+func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, failVersion string, passTreeKnown, failTreeKnown bool) []failureCausalEdge {
 	pass := resolvedChildren(edges, passVersion)
 	fail := resolvedChildren(edges, failVersion)
-	if len(pass) == 0 || len(fail) == 0 {
+	if !passTreeKnown || !failTreeKnown {
 		return nil
 	}
-	proven := map[string]bool{}
+	proven := map[string]map[string]bool{}
 	for _, e := range edges {
 		if e.ParentVersion == failVersion && e.SameReceipt && e.Outcome == "fail" && e.ChildName != "" {
-			proven[e.ChildName] = true
+			if proven[e.ChildName] == nil {
+				proven[e.ChildName] = map[string]bool{}
+			}
+			proven[e.ChildName][e.ChildVersion] = true
 		}
 	}
 	names := map[string]bool{}
@@ -431,8 +449,14 @@ func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, fa
 			Library: name, PassVersion: before, FailVersion: after,
 			Basis: causalHypothesis,
 		}
-		if proven[name] {
-			edge.Basis = causalEvidence
+		// Proof follows the changed failing-side coordinate, not merely the
+		// library name. A receipt containing foo@1 cannot prove that an
+		// unrelated project's added foo@2 caused the failure.
+		for _, version := range fail[name] {
+			if !contains(pass[name], version) && proven[name][version] {
+				edge.Basis = causalEvidence
+				break
+			}
 		}
 		if after != "" {
 			edge.Href = depHref(eco, name, fail[name][0])
@@ -478,11 +502,10 @@ func resolvedChildren(edges []DependencyEdge, version string) map[string][]strin
 // everything further away.
 //
 // An affected release absent from the version list is added rather than
-// dropped. A golang module is published as both "1.6.0" and "v1.6.0" and only
-// one spelling carries a version row, so the release a failure was RECORDED
-// on can be missing from the list — and taking it out of the window would
-// take the FAIL off a page whose entire subject is that failure.
-func failureIssueVersionWindow(versions, affected []string, span, max int) []string {
+// dropped. If affected releases alone exceed the cap, the two edge failures
+// and nearby non-failures take precedence over interior failures: those are
+// the releases that can preserve a known start/stop boundary.
+func failureIssueVersionWindow(versions, affected, boundaryPasses []string, span, max int) []string {
 	ordered := sortedVersionsDesc(appendMissing(append([]string(nil), versions...), affected...))
 	if len(ordered) == 0 || max <= 0 {
 		return nil
@@ -503,6 +526,23 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 		}
 		return ordered
 	}
+	affectedAt := map[int]bool{}
+	boundaryPassAt := map[int]bool{}
+	loAnchor, hiAnchor := anchors[0], anchors[0]
+	for _, i := range anchors {
+		affectedAt[i] = true
+		if i < loAnchor {
+			loAnchor = i
+		}
+		if i > hiAnchor {
+			hiAnchor = i
+		}
+	}
+	for _, v := range boundaryPasses {
+		if i, ok := at[v]; ok {
+			boundaryPassAt[i] = true
+		}
+	}
 	type scored struct{ idx, dist int }
 	var picked []scored
 	for i := range ordered {
@@ -516,11 +556,31 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 				best = d
 			}
 		}
-		if best <= span {
+		if best <= span || boundaryPassAt[i] {
 			picked = append(picked, scored{i, best})
 		}
 	}
+	retainAllAffected := len(affectedAt) < max
+	priority := func(p scored) int {
+		switch {
+		case retainAllAffected && affectedAt[p.idx]:
+			return 0 // every recorded recurrence fits; none may disappear
+		case p.idx == loAnchor || p.idx == hiAnchor:
+			return 0 // edge failures anchor the possible start/stop
+		case boundaryPassAt[p.idx]:
+			return 1 // the nearest decided PASS exposes a real boundary
+		case !affectedAt[p.idx]:
+			return 2 // nearby unmeasured releases are useful context
+		case affectedAt[p.idx]:
+			return 3 // interior failures add detail after boundaries survive
+		default:
+			return 4
+		}
+	}
 	sort.Slice(picked, func(i, j int) bool {
+		if pi, pj := priority(picked[i]), priority(picked[j]); pi != pj {
+			return pi < pj
+		}
 		if picked[i].dist != picked[j].dist {
 			return picked[i].dist < picked[j].dist
 		}
@@ -533,6 +593,14 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 	out := make([]string, 0, len(picked))
 	for _, p := range picked {
 		out = append(out, ordered[p.idx])
+	}
+	return out
+}
+
+func failureIssueBoundaryPasses(boundaries []failureBoundary) []string {
+	var out []string
+	for _, b := range boundaries {
+		out = appendMissing(out, b.PassVersion)
 	}
 	return out
 }
