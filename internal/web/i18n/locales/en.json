@@ -280,7 +280,7 @@
   "landing.value_1_t": "Frequent lightweight recall, not guesses",
   "landing.value_2_b": "CSX does not preach opinions or recommend solutions. It provides two objective notebooks: real failures where approaches broke in practice, and real successes where contracts passed under specific coordinates.",
   "landing.value_2_t": "Real failures and successes, side by side",
-  "landing.value_3_b": "Pinpoint breaking boundaries across package versions, runtimes, and OS platforms before you run. Essential evidence arrives instantly; deep logs and pinned contract receipts open only when you ask.",
+  "landing.value_3_b": "Pinpoint breaking boundaries across package versions, runtimes, and OS platforms before you run. Essential evidence arrives instantly; sanitized failure details and pinned contract receipts open only when you ask.",
   "landing.value_3_t": "Version differences, deep receipts on demand",
   "landing.value_heading": "Real execution experience for your AI",
   "landing.what_a": "Official docs can't answer that. Recorded observations from real environments can.",

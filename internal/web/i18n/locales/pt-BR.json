@@ -280,7 +280,7 @@
   "landing.value_1_t": "Resgate frequente e leve, sem adivinhações",
   "landing.value_2_b": "O CSX não dita opiniões nem recomenda soluções. Ele fornece dois cadernos objetivos: falhas reais onde abordagens quebraram na prática e sucessos reais onde contratos passaram sob coordenadas específicas.",
   "landing.value_2_t": "Falhas e sucessos reais, lado a lado",
-  "landing.value_3_b": "Identifique limites de quebra entre versões de pacotes, runtimes e sistemas operacionais antes de executar. As evidências essenciais chegam instantaneamente; logs detalhados e recibos de contratos só se abrem quando solicitados.",
+  "landing.value_3_b": "Identifique limites de quebra entre versões de pacotes, runtimes e sistemas operacionais antes de executar. As evidências essenciais chegam instantaneamente; detalhes de falha sanitizados e recibos de contratos só se abrem quando solicitados.",
   "landing.value_3_t": "Diferenças de versão, recibos detalhados sob demanda",
   "landing.value_heading": "Experiência de execução real para sua IA",
   "landing.what_a": "A documentação oficial não responde isso. Observações registradas em ambientes reais respondem.",

@@ -280,7 +280,7 @@
   "landing.value_1_t": "Rappel fréquent et léger, pas de suppositions",
   "landing.value_2_b": "CSX n'impose pas d'opinions et ne recommande pas de solutions toutes faites. Il fournit deux carnets objectifs : les échecs réels où les approches ont échoué en pratique, et les succès réels où les contrats ont réussi sous des coordonnées spécifiques.",
   "landing.value_2_t": "Échecs et succès réels, côte à côte",
-  "landing.value_3_b": "Repérez les limites de rupture entre versions de paquets, environnements d'exécution et systèmes d'exploitation avant l'exécution. Les preuves essentielles arrivent instantanément ; les journaux détaillés et reçus de contrats isolés ne s'ouvrent qu'à la demande.",
+  "landing.value_3_b": "Repérez les limites de rupture entre versions de paquets, environnements d'exécution et systèmes d'exploitation avant l'exécution. Les preuves essentielles arrivent instantanément ; les détails d'échec nettoyés et reçus de contrats isolés ne s'ouvrent qu'à la demande.",
   "landing.value_3_t": "Différences de versions, reçus détaillés à la demande",
   "landing.value_heading": "Véritable expérience d'exécution pour votre IA",
   "landing.what_a": "La documentation officielle ne peut pas répondre à ça. Les observations enregistrées dans de vrais environnements, si.",
