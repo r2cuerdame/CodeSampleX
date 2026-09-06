@@ -150,7 +150,36 @@ func normalizedEvidenceQuality(b domain.ObservationBatch) string {
 }
 
 func validFailureEvidence(b domain.ObservationBatch) error {
+	isCLI := strings.HasPrefix(b.Package, "pkg:generic/cli/")
 	if b.Result == domain.ResultPass {
+		if isCLI {
+			if b.ErrorFingerprint != "" || b.ErrorCode != "" || b.ErrorSummary != "" || b.FailureEvidenceGap != "" {
+				return fmt.Errorf("PASS must not carry error details")
+			}
+			if b.TerminationKind != "" {
+				if b.TerminationKind != domain.TerminationExit || b.ExitCode == nil || *b.ExitCode != 0 || b.Signal != "" || b.TimeoutMillis != 0 {
+					return fmt.Errorf("PASS termination must be clean exit:0")
+				}
+			} else if b.ExitCode != nil && *b.ExitCode != 0 {
+				return fmt.Errorf("PASS exitCode must be 0")
+			}
+			if b.OuterCommand != "" {
+				if len(b.OuterCommand) > 128 {
+					return fmt.Errorf("outerCommand longer than 128 bytes")
+				}
+				if !validOuterCommand(b.OuterCommand) {
+					return fmt.Errorf("outerCommand is not a known public tool/subcommand")
+				}
+			}
+			if b.OuterStage != "" && !observationStages[b.OuterStage] {
+				return fmt.Errorf("outerStage %q is not an observation stage", b.OuterStage)
+			}
+			if len(b.ActualToolchain) > 64 || !safeCoordinate(b.ActualToolchain) {
+				return fmt.Errorf("actualToolchain is not a safe public coordinate")
+			}
+			return nil
+		}
+
 		if b.TerminationKind != "" || b.ExitCode != nil || b.Signal != "" || b.TimeoutMillis != 0 ||
 			b.ErrorSummary != "" || b.EvidenceQuality != "" || b.ErrorFingerprint != "" || b.ErrorCode != "" ||
 			b.OuterCommand != "" || b.OuterStage != "" || b.ActualToolchain != "" || b.StageEvidence != "" || b.FailureEvidenceGap != "" {
@@ -242,8 +271,8 @@ func validFailureLineage(b domain.ObservationBatch) error {
 // signature authenticates a string; it does not make arbitrary text safe to
 // retain or publish.
 func ValidateFailureLineage(f domain.FailureEvidence) error {
-	if len(f.OuterCommand) > 32 {
-		return fmt.Errorf("outerCommand longer than 32 bytes")
+	if len(f.OuterCommand) > 128 {
+		return fmt.Errorf("outerCommand longer than 128 bytes")
 	}
 	if !validOuterCommand(f.OuterCommand) {
 		return fmt.Errorf("outerCommand is not a known public tool/subcommand")
@@ -274,21 +303,59 @@ func validOuterCommand(command string) bool {
 		return true
 	}
 	parts := strings.Fields(command)
-	if len(parts) < 1 || len(parts) > 2 {
+	if len(parts) == 0 {
 		return false
 	}
 	if command != strings.Join(parts, " ") {
 		return false
 	}
 	tools := map[string]bool{"go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "dotnet": true, "gradle": true, "gradlew": true, "pytest": true, "python": true, "python3": true, "node": true, "tsc": true}
-	if !tools[parts[0]] {
+	if !tools[parts[0]] && !domain.IsRecognizedCLITool(parts[0]) {
 		return false
 	}
 	if len(parts) == 1 {
 		return true
 	}
-	subcommands := map[string]bool{"test": true, "build": true, "check": true, "run": true, "restore": true, "list": true, "mod": true, "get": true, "install": true}
-	return subcommands[parts[1]]
+	if len(parts) <= 2 && tools[parts[0]] {
+		subcommands := map[string]bool{"test": true, "build": true, "check": true, "run": true, "restore": true, "list": true, "mod": true, "get": true, "install": true}
+		if subcommands[parts[1]] {
+			return true
+		}
+	}
+	// For recognized CLI tools, allow subcommands and sanitized argument tokens
+	if domain.IsRecognizedCLITool(parts[0]) {
+		for _, part := range parts[1:] {
+			if !isSafeOuterCommandToken(part) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func isSafeOuterCommandToken(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	switch tok {
+	case "<redacted-secret>", "<path>", "<url>", "<hash>", "<email>", "<user>", "<str>", "<token>":
+		return true
+	}
+	if eqIdx := strings.Index(tok, "="); eqIdx > 0 {
+		k := tok[:eqIdx]
+		v := tok[eqIdx+1:]
+		return isSafeOuterCommandToken(k) && isSafeOuterCommandToken(v)
+	}
+	for i, r := range tok {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			(i == 0 && (r == '-' || r == '+' || r == '.' || r == '_')) ||
+			(i > 0 && (r == '-' || r == '+' || r == '.' || r == '_' || r == ':')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func safeCoordinate(s string) bool {

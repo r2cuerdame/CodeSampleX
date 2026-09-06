@@ -250,6 +250,10 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "No sample or evidence fits this environment safely.")
 		fmt.Fprintln(w, "A wrong HIT is worse than a MISS (goal §3.8).")
+		if resp.CLIExperience != nil {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, resp.CLIExperience.TextSummary())
+		}
 		domain.RenderDiagnosticText(w, resp.Diagnostic)
 		return
 	}
@@ -306,6 +310,12 @@ func renderSearchText(w io.Writer, resp domain.SearchResponse) {
 			}
 			fmt.Fprintf(w, "- Known failure: %s (%d observations)\n", label, kf.Count)
 		}
+	}
+	if resp.CLIExperience != nil {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "----")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, resp.CLIExperience.TextSummary())
 	}
 	domain.RenderDiagnosticText(w, resp.Diagnostic)
 }
