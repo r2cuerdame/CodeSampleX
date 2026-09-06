@@ -23,24 +23,16 @@ func TestFeaturesPageDocumentsThePublicMCPTools(t *testing.T) {
 
 	mustContain(t, body, `<link rel="canonical" href="https://codesamplex.dev/features">`)
 	mustContain(t, body, `href="/features">Features</a>`)
-	mustContain(t, body, `id="product-capabilities-heading"`)
+	mustContain(t, body, `id="feature-cli-heading"`)
 	mustContain(t, body, `id="developer-reference"`)
-	// The capability overview above is the page's only browse block. The
-	// purpose-based tool index that used to sit here repeated it heading and
-	// all, so a second one must not come back.
+	// The redundant 8-card capability overview was dropped per #204 item 1.
+	mustNotContain(t, body, `id="product-capabilities-heading"`)
+	mustNotContain(t, body, `feature-page__overview`)
 	mustNotContain(t, body, `id="feature-summary-heading"`)
 	mustNotContain(t, body, `feature-page__summary`)
 	for _, want := range []string{
-		`href="/compatibility"`,
-		`href="/dependencies"`,
-		`href="/gaps"`,
-		`href="/findings"`,
-		`href="/samples"`,
-		`href="/stats"`,
-		`csx hook check`,
-		`csx sample pending`,
-		`csx ui`,
-		`csx mcp-config`,
+		`csx help`,
+		`csx worker --help`,
 	} {
 		mustContain(t, body, want)
 	}
@@ -103,10 +95,8 @@ func TestFeaturesPageChromeIsLocalizedForEveryLocale(t *testing.T) {
 		mustContain(t, body, `>`+i18n.T(lang, "features.title")+`</h1>`)
 		mustContain(t, body, `href="/features`)
 		mustContain(t, body, i18n.T(lang, "features.privacy"))
-		mustContain(t, body, i18n.T(lang, "compatibility.title"))
-		if lang != i18n.Default {
-			mustContain(t, body, `href="/dependencies?lang=`+lang+`"`)
-		}
+		mustContain(t, body, i18n.T(lang, "features.cli_heading"))
+		mustContain(t, body, i18n.T(lang, "features.scope"))
 		if strings.Contains(body, ">features.") || strings.Contains(body, `"features.`) {
 			t.Errorf("%s rendered a translation key", lang)
 		}
