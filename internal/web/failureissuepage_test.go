@@ -154,7 +154,7 @@ func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {
 
 // An empty edge list can mean either unread or measured-empty. The resolver's
 // explicit empty marker makes an added dependency a real comparison rather
-// than an evidence gap.
+// than an evidence gap, and supplies the empty release to the dependency matrix.
 func TestTheIssuePageUsesAProvenEmptyBoundaryTree(t *testing.T) {
 	mux, f := newTestMux(t, nil)
 	clusters := seedFailureIssueFixture(t, f)
@@ -166,7 +166,55 @@ func TestTheIssuePageUsesAProvenEmptyBoundaryTree(t *testing.T) {
 	mustContain(t, body, `data-library="left"`)
 	mustContain(t, body, `data-library="right"`)
 	mustNotContain(t, body, "One side of this boundary has no resolved dependency tree")
+	mustContain(t, body, `id="depmatrix"`)
+	mustContain(t, body, `<th class="mono">1.2.0</th>`)
+	mustContain(t, body, `cell-not_in_tree`)
 }
+
+// When an issue recurs often enough to exceed the comparison window cap,
+// boundaries must be computed from the complete release history. Recomputing
+// from the truncated window would pair a middle PASS with an edge failure
+// across omitted decided releases.
+func TestTheIssuePagePreservesBoundariesFromFullHistoryWhenWindowIsCapped(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	// 10 alternating FAIL releases and 9 PASS releases (19 releases total).
+	all := []string{
+		"2.18.0", "2.17.0", "2.16.0", "2.15.0", "2.14.0", "2.13.0", "2.12.0", "2.11.0", "2.10.0",
+		"2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0", "2.4.0", "2.3.0", "2.2.0", "2.1.0", "2.0.0",
+	}
+	var affected []string
+	passCounts := map[string]int64{}
+	for i, v := range all {
+		if i%2 == 0 {
+			affected = append(affected, v)
+		} else {
+			passCounts[v] = 3
+			f.snapshots[snapKey("pkg:npm/alt@"+v, "")] = `{"schemaVersion":1,"purl":"pkg:npm/alt@` + v + `",
+			  "rows":[{"byStage":{"PROJECT_TEST":{"pass":3,"fail":0}}}]}`
+		}
+	}
+	cluster := failureCluster{
+		Stage: "PROJECT_TEST", Fingerprint: "sha256:aaa11122233344455566677788899900",
+		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
+		EvidenceQuality: string(domain.EvidenceComplete), Count: 10, Versions: affected,
+	}
+	raw, err := json.Marshal(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clusters["npm|alt"] = []string{string(raw)}
+	f.versions["npm|alt"] = all
+	id := issueIDFor(t, []failureCluster{cluster}, cluster.Fingerprint)
+
+	body := get(t, mux, "/npm/alt?issue="+id).Body.String()
+	// True adjacent boundaries must be preserved.
+	mustContain(t, body, `data-pass="2.1.0" data-fail="2.0.0"`)
+	// A false boundary pairing the oldest FAIL directly with a non-adjacent PASS must not exist.
+	mustNotContain(t, body, `data-pass="2.7.0" data-fail="2.0.0"`)
+	mustNotContain(t, body, `data-pass="2.9.0" data-fail="2.0.0"`)
+	mustNotContain(t, body, `data-pass="2.17.0" data-fail="2.0.0"`)
+}
+
 
 // A release nothing measured must not be presented as a passing one.
 func TestTheIssuePageKeepsAnUnmeasuredReleaseUnmeasured(t *testing.T) {

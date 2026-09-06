@@ -100,14 +100,18 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	// unmeasured with the failure nowhere on it — the opposite of what is
 	// known — so the axis is withheld and the gap section says why.
 	var window []string
+	var boundaries []failureBoundary
+	var boundariesComputed bool
 	stagePass := map[string]int64{}
 	if len(issue.Versions) > 0 {
 		if allPass, err := s.d.Store.FailureIssueStagePasses(r.Context(), eco, name, issue.Stage); err == nil {
 			stagePass = allPass
 			allVersions := sortedVersionsDesc(appendMissing(append([]string(nil), versions...), issue.Versions...))
 			allVerdicts := failureIssueVerdicts(issue, allVersions, stagePass)
+			boundaries = failureIssueBoundaries(allVersions, allVerdicts)
+			boundariesComputed = true
 			window = failureIssueVersionWindow(versions, issue.Versions,
-				failureIssueBoundaryPasses(failureIssueBoundaries(allVersions, allVerdicts)),
+				failureIssueBoundaryPasses(boundaries),
 				failureIssueVersionSpan, failureIssueMaxVersions)
 		} else {
 			window = failureIssueVersionWindow(versions, issue.Versions, nil,
@@ -144,7 +148,9 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		releases = append(releases, row)
 	}
 
-	boundaries := failureIssueBoundaries(window, verdicts)
+	if !boundariesComputed {
+		boundaries = failureIssueBoundaries(releaseVersions, verdicts)
+	}
 	var edges []DependencyEdge
 	if rows, err := s.d.Store.FailureIssueDependencies(r.Context(), eco, name, issue.Fingerprint); err == nil {
 		edges = rows
@@ -175,6 +181,20 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		}
 	}
 
+	var emptyBoundaryReleases []string
+	for _, bd := range boundaries {
+		for _, v := range []string{bd.PassVersion, bd.FailVersion} {
+			if v != "" && contains(window, v) && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+				emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
+			}
+		}
+	}
+	for _, v := range window {
+		if v != "" && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+			emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
+		}
+	}
+
 	s.render(w, "failureissue", http.StatusOK, failureIssuePageData{
 		basePage: b, Crumbs: crumbs,
 		Issue:      issue,
@@ -183,7 +203,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		// The matrix is built from the edges of the releases in the window —
 		// the dependency versions AROUND the PASS/FAIL observations, which is
 		// the comparison the boundary above points at.
-		DepsMatrix:  buildDependencyMatrix(eco, edgesForVersions(edges, window)),
+		DepsMatrix:  buildDependencyMatrix(eco, edgesForVersions(edges, window), emptyBoundaryReleases...),
 		Gaps:        failureIssueGaps(lang, issue, verdicts, boundaries),
 		Samples:     s.failureIssueSamples(r.Context(), eco, name, issue),
 		PackageHref: b.WithLang(pkgHref(eco, name)),
