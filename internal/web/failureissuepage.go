@@ -136,13 +136,27 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	if rows, err := s.d.Store.FailureIssueDependencies(r.Context(), eco, name, issue.Fingerprint); err == nil {
 		edges = rows
 	}
+	treeKnown := map[string]bool{}
+	knownTree := func(version string) bool {
+		if known, ok := treeKnown[version]; ok {
+			return known
+		}
+		known := len(resolvedChildren(edges, version)) > 0
+		if !known {
+			resolvedNone, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
+			known = err == nil && resolvedNone
+		}
+		treeKnown[version] = known
+		return known
+	}
 	for i := range boundaries {
 		bd := &boundaries[i]
 		bd.LowerHref = b.WithLang(versionHref(eco, name, bd.LowerVersion))
 		bd.HigherHref = b.WithLang(versionHref(eco, name, bd.HigherVersion))
-		bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion)
-		bd.TreeUnread = len(resolvedChildren(edges, bd.PassVersion)) == 0 ||
-			len(resolvedChildren(edges, bd.FailVersion)) == 0
+		passTreeKnown, failTreeKnown := knownTree(bd.PassVersion), knownTree(bd.FailVersion)
+		bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion,
+			passTreeKnown, failTreeKnown)
+		bd.TreeUnread = !passTreeKnown || !failTreeKnown
 		for j := range bd.Changed {
 			bd.Changed[j].Href = b.WithLang(bd.Changed[j].Href)
 		}

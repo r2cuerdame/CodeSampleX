@@ -225,7 +225,7 @@ func TestAMovedDependencyIsOnlyAHypothesis(t *testing.T) {
 		{ParentVersion: "1.11.0", ChildName: "form-data", ChildVersion: "4.0.0"},
 		{ParentVersion: "1.12.0", ChildName: "form-data", ChildVersion: "4.0.0"},
 	}
-	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0")
+	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", true, true)
 	if len(got) != 1 {
 		t.Fatalf("edges = %+v, want only the child that moved", got)
 	}
@@ -243,9 +243,39 @@ func TestASameReceiptFailureIsEvidence(t *testing.T) {
 		{ParentVersion: "1.12.0", ChildName: "follow-redirects", ChildVersion: "1.16.0",
 			SameReceipt: true, Outcome: "fail"},
 	}
-	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0")
+	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", true, true)
 	if len(got) != 1 || got[0].Basis != causalEvidence {
 		t.Fatalf("edges = %+v, want the same-receipt proof marked as evidence", got)
+	}
+}
+
+// Same-receipt proof belongs to an exact child version. If the proven version
+// is steady and a different project contributes the newly added version, the
+// displayed change is still only a hypothesis.
+func TestCausalEvidenceStaysTiedToTheChangedChildVersion(t *testing.T) {
+	edges := []DependencyEdge{
+		{ParentVersion: "1.11.0", ChildName: "foo", ChildVersion: "1.0.0"},
+		{ParentVersion: "1.12.0", ChildName: "foo", ChildVersion: "1.0.0",
+			SameReceipt: true, Outcome: "fail"},
+		{ParentVersion: "1.12.0", ChildName: "foo", ChildVersion: "2.0.0"},
+	}
+	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", true, true)
+	if len(got) != 1 || got[0].Basis != causalHypothesis {
+		t.Fatalf("edges = %+v, want the unrelated added version left as a hypothesis", got)
+	}
+}
+
+func TestAProvenEmptyTreeCanBoundAnAddedDependency(t *testing.T) {
+	edges := []DependencyEdge{{
+		ParentVersion: "1.12.0", ChildName: "new-child", ChildVersion: "1.0.0",
+		SameReceipt: true, Outcome: "fail",
+	}}
+	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", true, true)
+	if len(got) != 1 || got[0].Library != "new-child" || got[0].Basis != causalEvidence {
+		t.Fatalf("edges = %+v, want the measured addition from the proven-empty PASS tree", got)
+	}
+	if unread := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", false, true); unread != nil {
+		t.Fatalf("unread tree produced changes %+v", unread)
 	}
 }
 
@@ -257,7 +287,7 @@ func TestASameReceiptPassIsNotCausalEvidence(t *testing.T) {
 		{ParentVersion: "1.12.0", ChildName: "follow-redirects", ChildVersion: "1.16.0",
 			SameReceipt: true, Outcome: "pass"},
 	}
-	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0")
+	got := failureIssueCausalEdges("npm", edges, "1.11.0", "1.12.0", true, true)
 	if len(got) != 1 || got[0].Basis != causalHypothesis {
 		t.Fatalf("edges = %+v, want a passing combination left as a hypothesis", got)
 	}
@@ -300,6 +330,18 @@ func TestTheCappedWindowPreservesBoundaryNeighbours(t *testing.T) {
 	if boundaries := failureIssueBoundaries(got, verdicts); len(boundaries) != 1 ||
 		boundaries[0].PassVersion != "1.9.0" || boundaries[0].FailVersion != "2.1.0" {
 		t.Errorf("boundaries = %+v, want preserved 1.9.0 → 2.1.0 start", boundaries)
+	}
+}
+
+func TestTheCappedWindowRetainsEveryAffectedRecurrenceThatFits(t *testing.T) {
+	all := []string{"3.13.0", "3.12.0", "3.11.0", "3.10.0", "3.9.0", "3.8.0", "3.7.0",
+		"3.6.0", "3.5.0", "3.4.0", "3.3.0", "3.2.0", "3.1.0"}
+	affected := []string{"3.13.0", "3.7.0", "3.1.0"}
+	got := failureIssueVersionWindow(all, affected, 3, 9)
+	for _, version := range affected {
+		if !contains(got, version) {
+			t.Errorf("window = %v, omitted affected recurrence %s even though all anchors fit", got, version)
+		}
 	}
 }
 

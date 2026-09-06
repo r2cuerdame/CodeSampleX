@@ -414,19 +414,22 @@ func failureIssueBoundaries(versions []string, verdicts map[string]failureIssueV
 // and the tree it resolved, which is the same-receipt rule #178 established for
 // the dependency-health column; nothing else may be spelled as evidence.
 //
-// A side with no resolved tree returns nothing rather than a list of
-// removals: an unread tree and an empty tree are opposite facts, and the
-// caller renders the difference.
-func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, failVersion string) []failureCausalEdge {
+// A side with an unread tree returns nothing rather than a list of removals:
+// unread and explicitly resolved-empty are opposite facts. The caller supplies
+// that distinction after consulting dependency_resolution.
+func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, failVersion string, passTreeKnown, failTreeKnown bool) []failureCausalEdge {
 	pass := resolvedChildren(edges, passVersion)
 	fail := resolvedChildren(edges, failVersion)
-	if len(pass) == 0 || len(fail) == 0 {
+	if !passTreeKnown || !failTreeKnown {
 		return nil
 	}
-	proven := map[string]bool{}
+	proven := map[string]map[string]bool{}
 	for _, e := range edges {
 		if e.ParentVersion == failVersion && e.SameReceipt && e.Outcome == "fail" && e.ChildName != "" {
-			proven[e.ChildName] = true
+			if proven[e.ChildName] == nil {
+				proven[e.ChildName] = map[string]bool{}
+			}
+			proven[e.ChildName][e.ChildVersion] = true
 		}
 	}
 	names := map[string]bool{}
@@ -446,8 +449,14 @@ func failureIssueCausalEdges(eco string, edges []DependencyEdge, passVersion, fa
 			Library: name, PassVersion: before, FailVersion: after,
 			Basis: causalHypothesis,
 		}
-		if proven[name] {
-			edge.Basis = causalEvidence
+		// Proof follows the changed failing-side coordinate, not merely the
+		// library name. A receipt containing foo@1 cannot prove that an
+		// unrelated project's added foo@2 caused the failure.
+		for _, version := range fail[name] {
+			if !contains(pass[name], version) && proven[name][version] {
+				edge.Basis = causalEvidence
+				break
+			}
 		}
 		if after != "" {
 			edge.Href = depHref(eco, name, fail[name][0])
@@ -545,8 +554,11 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 			picked = append(picked, scored{i, best})
 		}
 	}
+	retainAllAffected := len(affectedAt) <= max
 	priority := func(p scored) int {
 		switch {
+		case retainAllAffected && affectedAt[p.idx]:
+			return 0 // every recorded recurrence fits; none may disappear
 		case p.idx == loAnchor || p.idx == hiAnchor:
 			return 0 // edge failures anchor the possible start/stop
 		case !affectedAt[p.idx]:

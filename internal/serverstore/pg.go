@@ -1872,6 +1872,12 @@ func (p *PG) Dependencies(ctx context.Context, ecosystem, name string) ([]Depend
 // resolved edge. The retained dedup ledger is the receipt correlation; a
 // package-level failure in some other project is deliberately insufficient.
 func (p *PG) FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error) {
+	// An evidence-gap issue has no established identity. In SQL, `= ''`
+	// would instead match every unattributed failure and manufacture causal
+	// evidence from the very absence the page is warning about.
+	if fingerprint == "" {
+		return p.Dependencies(ctx, ecosystem, name)
+	}
 	var out []DependencyEdge
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		rows, err := c.Query(ctx, `

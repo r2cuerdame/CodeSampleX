@@ -104,6 +104,22 @@ func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {
 	mustNotContain(t, body, `data-library="right"`)
 }
 
+// An empty edge list can mean either unread or measured-empty. The resolver's
+// explicit empty marker makes an added dependency a real comparison rather
+// than an evidence gap.
+func TestTheIssuePageUsesAProvenEmptyBoundaryTree(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	f.dependencies = f.dependencies[2:] // only the failing release's tree remains
+	f.resolvedNone["libx@1.2.0"] = true
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	body := get(t, mux, "/npm/libx?issue="+id).Body.String()
+	mustContain(t, body, `data-library="left"`)
+	mustContain(t, body, `data-library="right"`)
+	mustNotContain(t, body, "One side of this boundary has no resolved dependency tree")
+}
+
 // A release nothing measured must not be presented as a passing one.
 func TestTheIssuePageKeepsAnUnmeasuredReleaseUnmeasured(t *testing.T) {
 	mux, f := newTestMux(t, nil)

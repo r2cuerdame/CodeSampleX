@@ -358,6 +358,7 @@ func newFakeStore() *fakeStore {
 		},
 		clusters:      map[string][]string{},
 		issueClusters: map[string][]string{},
+		resolvedNone:  map[string]bool{},
 	}
 
 	symbolSnapshot := `{

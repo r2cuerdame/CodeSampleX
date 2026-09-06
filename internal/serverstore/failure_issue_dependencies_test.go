@@ -61,6 +61,15 @@ func assertFailureIssueDependencyEvidence(t *testing.T, store failureIssueDepend
 			t.Errorf("unexpected edge %+v", edge)
 		}
 	}
+	gapEdges, err := store.FailureIssueDependencies(t.Context(), "npm", "issue-parent", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range gapEdges {
+		if edge.SameReceipt || edge.Outcome != "" {
+			t.Errorf("empty-fingerprint edge = %+v, must carry no causal evidence", edge)
+		}
+	}
 }
 
 func TestFailureIssueDependenciesUseExactSameReceiptInFake(t *testing.T) {
