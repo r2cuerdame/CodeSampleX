@@ -114,6 +114,31 @@ func TestTheIssuePageFindsAKnownPassBeyondUnmeasuredNeighbours(t *testing.T) {
 	mustContain(t, body, `data-kind="starts" data-pass="1.1.0" data-fail="1.5.0"`)
 }
 
+func TestTheIssuePageListsEveryAffectedReleaseBeyondTheComparisonCap(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	affected := []string{"2.10.0", "2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0",
+		"2.4.0", "2.3.0", "2.2.0", "2.1.0"}
+	cluster := failureCluster{
+		Stage: "PROJECT_TEST", Fingerprint: "sha256:aaa11122233344455566677788899900",
+		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
+		EvidenceQuality: string(domain.EvidenceComplete), Count: 10, Versions: affected,
+	}
+	raw, err := json.Marshal(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clusters["npm|wide"] = []string{string(raw)}
+	f.versions["npm|wide"] = append(append([]string(nil), affected...), "1.9.0")
+	f.snapshots[snapKey("pkg:npm/wide@1.9.0", "")] = `{"schemaVersion":1,"purl":"pkg:npm/wide@1.9.0",
+	  "rows":[{"byStage":{"PROJECT_TEST":{"pass":2,"fail":0}}}]}`
+	id := issueIDFor(t, []failureCluster{cluster}, cluster.Fingerprint)
+
+	body := get(t, mux, "/npm/wide?issue="+id).Body.String()
+	for _, version := range affected {
+		mustContain(t, body, `data-version="`+version+`" data-verdict="fail"`)
+	}
+}
+
 // A dependency that moved across the boundary is a candidate and nothing
 // more. Saying so is the difference between this page and a guess.
 func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {

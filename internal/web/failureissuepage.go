@@ -115,7 +115,11 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 			stagePass = s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
 		}
 	}
-	verdicts := failureIssueVerdicts(issue, window, stagePass)
+	// "Where it was measured" is an inventory, not the bounded comparison
+	// window. Keep every affected release visible even when the dependency
+	// matrix must omit interior failures to preserve a boundary under its cap.
+	releaseVersions := sortedVersionsDesc(appendMissing(append([]string(nil), window...), issue.Versions...))
+	verdicts := failureIssueVerdicts(issue, releaseVersions, stagePass)
 
 	b := s.page(r, lang, i18n.T(lang, "issue.title", name, eco)+" — CodeSampleX",
 		failureIssueDescription(lang, name, issue))
@@ -124,8 +128,8 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	crumbs := leaf(append(recordCrumbs(b, eco, name, "", ""),
 		crumb{Label: i18n.T(lang, "issue.crumb")}))
 
-	releases := make([]failureIssueRelease, 0, len(window))
-	for _, v := range window {
+	releases := make([]failureIssueRelease, 0, len(releaseVersions))
+	for _, v := range releaseVersions {
 		row := failureIssueRelease{
 			Version: v,
 			Href:    b.WithLang(versionHref(eco, name, v)),
