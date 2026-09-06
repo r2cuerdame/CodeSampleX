@@ -44,6 +44,29 @@ var ddl = []string{
 	  legacy_reconciled_count INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
 	`CREATE TABLE IF NOT EXISTS environments(hash TEXT PRIMARY KEY, json TEXT NOT NULL)`,
+	// Structured CLI executions retain the exact, secret-safe evidence shape
+	// that the daily observations aggregate cannot represent. Identical
+	// coordinate/outcome/stream signatures are compressed by evidence_id while
+	// first/last timestamps preserve the measured window. Raw stdout/stderr,
+	// paths, project names, and arbitrary environment variables never enter.
+	`CREATE TABLE IF NOT EXISTS cli_execution_evidence(
+	  evidence_id TEXT PRIMARY KEY, coordinate_id TEXT NOT NULL,
+	  tool TEXT NOT NULL, tool_version TEXT NOT NULL DEFAULT '',
+	  subcommand TEXT NOT NULL DEFAULT '', args_pattern TEXT NOT NULL DEFAULT '',
+	  shell TEXT NOT NULL DEFAULT '', env_hash TEXT NOT NULL,
+	  provenance TEXT NOT NULL, result TEXT NOT NULL,
+	  termination_kind TEXT NOT NULL DEFAULT '', exit_code INTEGER,
+	  signal TEXT NOT NULL DEFAULT '', timeout_millis INTEGER NOT NULL DEFAULT 0,
+	  error_fp TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
+	  error_summary TEXT NOT NULL DEFAULT '', evidence_quality TEXT NOT NULL,
+	  stdout_fp TEXT NOT NULL DEFAULT '', stdout_excerpt TEXT NOT NULL DEFAULT '',
+	  stdout_truncated INTEGER NOT NULL DEFAULT 0,
+	  stderr_fp TEXT NOT NULL DEFAULT '', stderr_excerpt TEXT NOT NULL DEFAULT '',
+	  stderr_truncated INTEGER NOT NULL DEFAULT 0,
+	  started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '',
+	  count INTEGER NOT NULL DEFAULT 1)`,
+	`CREATE INDEX IF NOT EXISTS cli_execution_evidence_coordinate
+	  ON cli_execution_evidence(coordinate_id, finished_at DESC)`,
 	`CREATE TABLE IF NOT EXISTS cases(case_id TEXT PRIMARY KEY, kind TEXT, goal TEXT, json TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS samples(
 	  sample_id TEXT PRIMARY KEY, case_id TEXT, manifest_json TEXT NOT NULL,

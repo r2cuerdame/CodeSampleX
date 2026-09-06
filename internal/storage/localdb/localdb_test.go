@@ -791,6 +791,63 @@ func TestRecordAndQueryCLIExperience(t *testing.T) {
 	}
 }
 
+func TestStructuredCLIExecutionEvidenceAccumulatesComparableRunsWithoutCollapsingSignatures(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	exit := 1
+	coord := domain.CLIExperienceCoordinate{
+		Tool: "git", ToolVersion: "2.55.0", Subcommand: "status", ArgsPattern: "--short", Shell: "direct",
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64", Runtime: "go", RuntimeVersion: "1.26"},
+	}
+	base := domain.CLIExperienceObservation{
+		Coordinate: coord, Provenance: domain.ProvenanceField, Result: domain.ResultFail,
+		Termination:      domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit},
+		ErrorFingerprint: "sha256:error-a", EvidenceQuality: domain.EvidenceComplete,
+		Stdout:    domain.CLIStreamEvidence{Fingerprint: "sha256:stdout-a", Excerpt: "ordinary output"},
+		Stderr:    domain.CLIStreamEvidence{Fingerprint: "sha256:stderr-a", Excerpt: "failure <path>"},
+		StartedAt: "2026-09-07T01:00:00Z", FinishedAt: "2026-09-07T01:00:01Z", ObservedAt: "2026-09-07T01:00:01Z", Count: 1,
+	}
+	if err := db.RecordCLIExperienceObservation(ctx, base); err != nil {
+		t.Fatalf("record first evidence: %v", err)
+	}
+	later := base
+	later.StartedAt = "2026-09-07T02:00:00Z"
+	later.FinishedAt = "2026-09-07T02:00:01Z"
+	later.ObservedAt = later.FinishedAt
+	if err := db.RecordCLIExperienceObservation(ctx, later); err != nil {
+		t.Fatalf("record repeated evidence: %v", err)
+	}
+	different := later
+	different.Stderr = domain.CLIStreamEvidence{Fingerprint: "sha256:stderr-b", Excerpt: "different failure"}
+	if err := db.RecordCLIExperienceObservation(ctx, different); err != nil {
+		t.Fatalf("record distinct evidence: %v", err)
+	}
+	clipped := later
+	clipped.Stdout.Truncated = true
+	if err := db.RecordCLIExperienceObservation(ctx, clipped); err != nil {
+		t.Fatalf("record clipped evidence: %v", err)
+	}
+
+	rows, err := db.ListCLIExecutionEvidence(ctx, coord, 10)
+	if err != nil {
+		t.Fatalf("ListCLIExecutionEvidence: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("evidence rows = %d, want 3", len(rows))
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		key := row.Stderr.Fingerprint
+		if row.Stdout.Truncated {
+			key += ":truncated"
+		}
+		counts[key] = row.Count
+	}
+	if counts["sha256:stderr-a"] != 2 || counts["sha256:stderr-a:truncated"] != 1 || counts["sha256:stderr-b"] != 1 {
+		t.Fatalf("signature counts = %#v", counts)
+	}
+}
+
 func TestCLIExperienceAggregateKeyCollisionPrevention(t *testing.T) {
 	db := openTemp(t)
 	ctx := context.Background()

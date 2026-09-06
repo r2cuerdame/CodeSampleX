@@ -311,3 +311,59 @@ func TestRecordCommandOutputWiresCLIPassAndFailExperience(t *testing.T) {
 		t.Errorf("FieldPassCount = %d, want 1", summary.FieldPassCount)
 	}
 }
+
+func TestRecordCommandOutputStoresOnlyStructuredSecretSafeCLIEvidence(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+
+	env := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64", Runtime: "go", RuntimeVersion: "1.26"}
+	started := time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)
+	finished := started.Add(2 * time.Second)
+	exit := 7
+	output := CommandOutput{
+		Stdout:      "AcmeRoadmap secret-roadmap.txt at https://private.example/token ghp_12345678901234567890\nline two\nline three\nline four\nline five\n",
+		Stderr:      "open C:\\Users\\Alice\\secret.txt failed\nAuthorization: Bearer shortsecret\npassword: correct horse battery staple\n",
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit},
+		ToolVersion: "2.55.0",
+		Shell:       "direct",
+		StartedAt:   started,
+		FinishedAt:  finished,
+	}
+	if err := rec.RecordCommandOutput(context.Background(), t.TempDir(), &scanner.ScanResult{Env: env},
+		scanner.CommandProfile{}, []string{"git", "status", "--short"}, exit, output); err != nil {
+		t.Fatalf("RecordCommandOutput: %v", err)
+	}
+
+	coord := domain.ParseCLICommand([]string{"git", "status", "--short"}, env)
+	coord.ToolVersion = "2.55.0"
+	coord.Shell = "direct"
+	rows, err := db.ListCLIExecutionEvidence(context.Background(), coord, 10)
+	if err != nil {
+		t.Fatalf("ListCLIExecutionEvidence: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("structured evidence rows = %d, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.EvidenceQuality != domain.EvidenceComplete || got.EnvironmentID != env.Hash() {
+		t.Fatalf("quality/environment = %q/%q", got.EvidenceQuality, got.EnvironmentID)
+	}
+	if got.StartedAt != started.Format(time.RFC3339Nano) || got.FinishedAt != finished.Format(time.RFC3339Nano) {
+		t.Fatalf("execution window = %q .. %q", got.StartedAt, got.FinishedAt)
+	}
+	combined := got.Stdout.Excerpt + " " + got.Stderr.Excerpt
+	for _, secret := range []string{"AcmeRoadmap", "secret-roadmap.txt", "private.example", "Alice", "ghp_", "secret.txt", "shortsecret", "horse battery staple"} {
+		if strings.Contains(combined, secret) {
+			t.Fatalf("secret %q survived in structured excerpts: %q", secret, combined)
+		}
+	}
+	if got.Stdout.Fingerprint == "" || got.Stderr.Fingerprint == "" {
+		t.Fatalf("stream fingerprints missing: stdout=%q stderr=%q", got.Stdout.Fingerprint, got.Stderr.Fingerprint)
+	}
+	if !got.Stdout.Truncated {
+		t.Fatal("five-line stdout excerpt was not marked truncated at the four-line evidence bound")
+	}
+}

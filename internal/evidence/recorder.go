@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -118,7 +119,19 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				env = res.Env
 			}
 			coord := domain.ParseCLICommand(argv, env)
-			now := time.Now().UTC().Format(time.RFC3339)
+			coord.ToolVersion = output.ToolVersion
+			coord.Shell = output.Shell
+			startedAt := output.StartedAt.UTC().Format(time.RFC3339Nano)
+			finishedAt := output.FinishedAt.UTC().Format(time.RFC3339Nano)
+			if output.StartedAt.IsZero() {
+				startedAt = ""
+			}
+			if output.FinishedAt.IsZero() {
+				finishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			}
+			stdout := sanitizedStreamEvidence(output.Stdout, output.StdoutTruncated)
+			stderr := sanitizedStreamEvidence(output.Stderr, output.StderrTruncated)
+			quality := cliEvidenceQuality(coord, startedAt, finishedAt, output.Termination, exitCode)
 			if exitCode == 0 && output.Termination.Kind == "" {
 				code := 0
 				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
@@ -129,8 +142,14 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 						Kind:     domain.TerminationExit,
 						ExitCode: &code,
 					},
-					ObservedAt: now,
-					Count:      1,
+					EvidenceQuality: quality,
+					ObservedAt:      finishedAt,
+					StartedAt:       startedAt,
+					FinishedAt:      finishedAt,
+					EnvironmentID:   coord.Environment.Hash(),
+					Stdout:          stdout,
+					Stderr:          stderr,
+					Count:           1,
 				})
 			} else if !profile.Known || profile.Stage == domain.StageProjectProcess {
 				term := output.Termination
@@ -165,7 +184,13 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					ErrorFingerprint:  errorFP,
 					ErrorCode:         errorCode,
 					ErrorSummary:      errorSummary,
-					ObservedAt:        now,
+					EvidenceQuality:   quality,
+					ObservedAt:        finishedAt,
+					StartedAt:         startedAt,
+					FinishedAt:        finishedAt,
+					EnvironmentID:     coord.Environment.Hash(),
+					Stdout:            stdout,
+					Stderr:            stderr,
 					Count:             1,
 					IsHighInformation: true,
 				})
@@ -174,6 +199,32 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 	}
 
 	return recordErr
+}
+
+func sanitizedStreamEvidence(raw string, truncated bool) domain.CLIStreamEvidence {
+	if strings.TrimSpace(raw) == "" {
+		return domain.CLIStreamEvidence{Truncated: truncated}
+	}
+	san := sanitizer.Sanitize(raw, domain.StageProjectProcess, nil)
+	excerpt, excerptTruncated := sanitizer.CLIOutputExcerpt(san.Template)
+	return domain.CLIStreamEvidence{
+		Fingerprint: san.Fingerprint,
+		Excerpt:     excerpt,
+		Truncated:   truncated || excerptTruncated,
+	}
+}
+
+func cliEvidenceQuality(coord domain.CLIExperienceCoordinate, startedAt, finishedAt string,
+	term domain.FailureTermination, exitCode int) domain.EvidenceQuality {
+	if term.Kind == "" && exitCode == 0 {
+		code := 0
+		term = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+	}
+	if coord.ToolVersion != "" && coord.Shell != "" && coord.Environment.OS != "" &&
+		coord.Environment.Arch != "" && startedAt != "" && finishedAt != "" && term.Structured() {
+		return domain.EvidenceComplete
+	}
+	return domain.EvidencePartial
 }
 
 func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanResult,

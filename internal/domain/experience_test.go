@@ -31,14 +31,14 @@ func TestParseCLICommandNormalizesMultiWordSubcommandsAndSanitizesSecrets(t *tes
 			argv:            []string{"gh", "workflow", "run", "deploy.yml", "--ref", "main"},
 			wantTool:        "gh",
 			wantSubcommand:  "workflow run",
-			wantArgsPattern: "<path> --ref main",
+			wantArgsPattern: "<path> --ref <arg>",
 		},
 		{
 			name:            "git worktree add with path and branch",
 			argv:            []string{"git.cmd", "worktree", "add", "C:\\temp\\worktree-1", "feature/my-branch"},
 			wantTool:        "git",
 			wantSubcommand:  "worktree add",
-			wantArgsPattern: "<path> feature/my-branch",
+			wantArgsPattern: "<path> <branch>",
 		},
 		{
 			name:            "npm run build",
@@ -53,6 +53,20 @@ func TestParseCLICommandNormalizesMultiWordSubcommandsAndSanitizesSecrets(t *tes
 			wantTool:        "go",
 			wantSubcommand:  "test",
 			wantArgsPattern: "<path> -v -race",
+		},
+		{
+			name:            "ssh host and remote command are values",
+			argv:            []string{"ssh", "private-host", "echo", "AcmeRoadmap"},
+			wantTool:        "ssh",
+			wantSubcommand:  "",
+			wantArgsPattern: "<arg> <arg> <arg>",
+		},
+		{
+			name:            "git clone target is a value",
+			argv:            []string{"git", "clone", "private-project-name"},
+			wantTool:        "git",
+			wantSubcommand:  "clone",
+			wantArgsPattern: "<arg>",
 		},
 	}
 
@@ -319,12 +333,12 @@ func TestSensitiveFlagNameRedaction(t *testing.T) {
 		{
 			name:     "password with equals",
 			argv:     []string{"mycli", "--password=hunter2", "--user", "alice"},
-			wantArgs: "--password=<redacted-secret> --user alice",
+			wantArgs: "--password=<redacted-secret> --user <arg>",
 		},
 		{
 			name:     "api key with space",
 			argv:     []string{"mycli", "--api-key", "abc12345secret", "--port", "8080"},
-			wantArgs: "--api-key <redacted-secret> --port 8080",
+			wantArgs: "--api-key <redacted-secret> --port <arg>",
 		},
 		{
 			name:     "bare token assignment",

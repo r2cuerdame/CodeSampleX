@@ -13,6 +13,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	csxenv "github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 )
 
@@ -38,6 +39,10 @@ type CommandOutput struct {
 	StdoutTruncated bool
 	StderrTruncated bool
 	Termination     domain.FailureTermination
+	ToolVersion     string
+	Shell           string
+	StartedAt       time.Time
+	FinishedAt      time.Time
 }
 
 // FailureDiagnostics is the stream a failed command should be diagnosed and
@@ -102,6 +107,20 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 	if len(argv) == 0 {
 		return -1, CommandOutput{}, errors.New("evidence: empty command")
 	}
+	// The version probe must happen before the observed command. A command may
+	// update the very tool that is running, so probing afterwards can attach a
+	// version that never executed. Probe output remains local and bounded by the
+	// environment package's timeout.
+	tool := domain.CommandTool(argv)
+	toolVersion := ""
+	_, hasDeadline := ctx.Deadline()
+	// Evidence is best effort. Never spend any part of a caller-owned command
+	// deadline on instrumentation; a timed run records explicit partial quality
+	// instead of risking that the observed command receives a shorter budget.
+	if !hasDeadline {
+		toolVersion = csxenv.ProbeExecutable(ctx, argv[0], tool, argv[1:])
+	}
+	startedAt := time.Now().UTC()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var timeoutMillis int64
 	if deadline, ok := ctx.Deadline(); ok {
@@ -153,6 +172,10 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 		Stderr:          stderrRing.Tail(),
 		StdoutTruncated: stdoutRing.Truncated(),
 		StderrTruncated: stderrRing.Truncated(),
+		ToolVersion:     toolVersion,
+		Shell:           executionShell(tool),
+		StartedAt:       startedAt,
+		FinishedAt:      time.Now().UTC(),
 	}
 	if runErr != nil {
 		var ee *exec.ExitError
@@ -176,6 +199,18 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 		return -1, output, runErr
 	}
 	return 0, output, nil
+}
+
+// executionShell describes how the child was launched without guessing the
+// user's parent terminal. os/exec starts ordinary tools directly; when the
+// executable itself is a shell, that shell is the execution boundary.
+func executionShell(tool string) string {
+	switch tool {
+	case "bash", "sh", "zsh", "fish", "pwsh", "powershell", "windows-powershell", "cmd":
+		return tool
+	default:
+		return "direct"
+	}
 }
 
 // openRunLog opens $CSX_HOME/logs/last-run.log truncated for this run.
