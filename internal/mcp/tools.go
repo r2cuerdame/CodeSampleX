@@ -689,11 +689,11 @@ func (s *Server) toolSearch(ctx context.Context, raw json.RawMessage) *toolResul
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		hint, ready := s.readinessHint(ctx)
-		if len(overview) > 0 || hint != "" || resp.Observed != nil || len(suppressed) > 0 {
-			text := appendDiagnosticText(renderMiss(overview, hint, resp.Observed), resp.Diagnostic)
+		if len(overview) > 0 || hint != "" || resp.Observed != nil || len(suppressed) > 0 || resp.CLIExperience != nil {
+			text := appendDiagnosticText(renderMiss(overview, hint, resp.Observed, resp.CLIExperience), resp.Diagnostic)
 			return textResult(text, withSuppressed(map[string]any{
 				"response": resp, "packageOverview": overview, "localReady": ready,
-				"observed": resp.Observed,
+				"observed": resp.Observed, "cliExperience": resp.CLIExperience,
 			}, suppressed))
 		}
 	}
@@ -843,12 +843,15 @@ func (s *Server) readinessHint(ctx context.Context) (string, bool) {
 
 // renderMiss writes NO_SAFE_MATCH, any readiness hint, and the per-package
 // evidence summary.
-func renderMiss(overview []PackageOverview, hint string, observed *domain.ObservedReports) string {
+func renderMiss(overview []PackageOverview, hint string, observed *domain.ObservedReports, exp *domain.CLIExperienceSummary) string {
 	var b strings.Builder
 	b.WriteString("DECISION: UNKNOWN — no safe verified match.\n\n")
 	b.WriteString("MATCH: NO_SAFE_MATCH\n\n")
 	b.WriteString("No sample this network built matches this goal here. Solve it fresh — " +
 		"a wrong HIT is worse than a MISS (goal.md §3.8).\n\n")
+	if exp != nil {
+		b.WriteString(exp.TextSummary() + "\n\n")
+	}
 	if hint != "" {
 		b.WriteString(hint + "\n\n")
 	}
@@ -993,6 +996,9 @@ func renderSearchResponseWithRelevance(resp domain.SearchResponse, relevance []s
 			b.WriteString("Goal: " + r.Case.Goal + "\n")
 		}
 		b.WriteString(contractBlock(r))
+	}
+	if resp.CLIExperience != nil {
+		b.WriteString("\n" + resp.CLIExperience.TextSummary() + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

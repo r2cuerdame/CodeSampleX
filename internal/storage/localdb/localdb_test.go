@@ -700,3 +700,93 @@ func TestStats(t *testing.T) {
 		t.Fatalf("AllStats: %+v", all)
 	}
 }
+
+func TestRecordAndQueryCLIExperience(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+
+	coord := domain.CLIExperienceCoordinate{
+		Tool:        "docker",
+		ToolVersion: "27.1.0",
+		Subcommand:  "compose up",
+		ArgsPattern: "-d",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1,
+			OS:            "linux",
+			Arch:          "amd64",
+		},
+	}
+
+	exit0 := 0
+	exit1 := 1
+
+	// Record 5 field passes
+	err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-01T10:00:00Z",
+		Count:       5,
+	})
+	if err != nil {
+		t.Fatalf("Record field pass: %v", err)
+	}
+
+	// Record 1 field failure
+	err = db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:   coord,
+		Provenance:   domain.ProvenanceField,
+		Result:       domain.ResultFail,
+		Termination:  domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit1},
+		ErrorCode:    "EADDRINUSE",
+		ErrorSummary: "port 8080 already allocated",
+		ObservedAt:   "2026-09-02T10:00:00Z",
+		Count:        1,
+	})
+	if err != nil {
+		t.Fatalf("Record field fail: %v", err)
+	}
+
+	// Record 1 farm verification pass
+	err = db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord,
+		Provenance:  domain.ProvenanceFarm,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-03T10:00:00Z",
+		Count:       1,
+	})
+	if err != nil {
+		t.Fatalf("Record farm pass: %v", err)
+	}
+
+	summary, err := db.QueryCLIExperience(ctx, coord)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience: %v", err)
+	}
+
+	if summary.Status != "COEXISTING_BOUNDARY" {
+		t.Errorf("summary.Status = %q, want COEXISTING_BOUNDARY", summary.Status)
+	}
+	if summary.FieldPassCount != 5 {
+		t.Errorf("summary.FieldPassCount = %d, want 5", summary.FieldPassCount)
+	}
+	if summary.FieldFailCount != 1 {
+		t.Errorf("summary.FieldFailCount = %d, want 1", summary.FieldFailCount)
+	}
+	if summary.FarmPassCount != 1 {
+		t.Errorf("summary.FarmPassCount = %d, want 1", summary.FarmPassCount)
+	}
+	if len(summary.RecentFailures) != 1 {
+		t.Fatalf("RecentFailures count = %d, want 1", len(summary.RecentFailures))
+	}
+	if summary.RecentFailures[0].ErrorCode != "EADDRINUSE" {
+		t.Errorf("Failure error code = %q, want EADDRINUSE", summary.RecentFailures[0].ErrorCode)
+	}
+	text := summary.TextSummary()
+	if strings.Contains(strings.ToLower(text), "memory") {
+		t.Errorf("User-facing text must not contain 'memory':\n%s", text)
+	}
+}
+

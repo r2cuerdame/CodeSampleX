@@ -799,3 +799,80 @@ func TestCandidateAccumulatesPackagesAcrossShards(t *testing.T) {
 		t.Errorf("duplicate purl added: %v", again)
 	}
 }
+
+func TestSearchAttachesCLIExperienceForCLICommands(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+
+	coord := domain.CLIExperienceCoordinate{
+		Tool:        "docker",
+		ToolVersion: "27.1.0",
+		Subcommand:  "compose up",
+		ArgsPattern: "-d",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1,
+			OS:            "linux",
+			Arch:          "amd64",
+		},
+	}
+
+	exit0 := 0
+	exit1 := 1
+
+	// Record field pass
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-01T10:00:00Z",
+		Count:       4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record field failure
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:   coord,
+		Provenance:   domain.ProvenanceField,
+		Result:       domain.ResultFail,
+		Termination:  domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit1},
+		ErrorCode:    "EADDRINUSE",
+		ErrorSummary: "port 8080 allocated",
+		ObservedAt:   "2026-09-02T10:00:00Z",
+		Count:        1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := Engine{DB: db}
+	resp := eng.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 2,
+		Query:         "docker compose up -d",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1,
+			OS:            "linux",
+			Arch:          "amd64",
+		},
+	})
+
+	if resp.CLIExperience == nil {
+		t.Fatalf("resp.CLIExperience expected non-nil for CLI command query")
+	}
+
+	exp := resp.CLIExperience
+	if exp.Status != "COEXISTING_BOUNDARY" {
+		t.Errorf("exp.Status = %q, want COEXISTING_BOUNDARY", exp.Status)
+	}
+	if exp.FieldPassCount != 4 || exp.FieldFailCount != 1 {
+		t.Errorf("counts mismatch: FieldPass=%d (want 4), FieldFail=%d (want 1)", exp.FieldPassCount, exp.FieldFailCount)
+	}
+	text := exp.TextSummary()
+	if strings.Contains(strings.ToLower(text), "memory") {
+		t.Errorf("Summary contains 'memory':\n%s", text)
+	}
+	if !strings.Contains(text, "CLI EXECUTION EXPERIENCE") {
+		t.Errorf("Summary missing header:\n%s", text)
+	}
+}
+
