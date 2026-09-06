@@ -275,6 +275,7 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 		if err != nil {
 			reason = "candidate-lookup-failed"
 		}
+		e.attachCLIExperience(ctx, req, &resp)
 		finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), reason)
 		return resp
 	}
@@ -346,6 +347,7 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 	if all[0].score < missThreshold {
 		resp.Miss = true
 		appendCandidateDiagnostics(resp.Diagnostic, all, nil)
+		e.attachCLIExperience(ctx, req, &resp)
 		finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), "below-score-threshold")
 		return resp
 	}
@@ -378,8 +380,47 @@ func (e Engine) Search(ctx context.Context, req domain.SearchRequest) domain.Sea
 		})
 		appendCandidateDiagnostics(resp.Diagnostic, all, selected)
 	}
+	e.attachCLIExperience(ctx, req, &resp)
 	finalizeSearchDiagnostic(&resp, len(cands), time.Since(searchStarted), "")
 	return resp
+}
+
+func (e Engine) attachCLIExperience(ctx context.Context, req domain.SearchRequest, resp *domain.SearchResponse) {
+	if e.DB == nil {
+		return
+	}
+	var target domain.CLIExperienceCoordinate
+	for _, p := range req.Packages {
+		if strings.HasPrefix(p, "pkg:generic/cli/") {
+			if parsed, err := domain.ParsePURL(p); err == nil {
+				target = domain.CLIExperienceCoordinate{
+					Tool:        strings.TrimPrefix(parsed.Name, "cli/"),
+					ToolVersion: parsed.Version,
+					Environment: req.Environment,
+				}
+				break
+			}
+		}
+	}
+	if target.Tool == "" && req.Query != "" {
+		fields := strings.Fields(req.Query)
+		if len(fields) > 0 {
+			tool := domain.CommandTool(fields)
+			if domain.IsRecognizedCLITool(tool) {
+				parsed := domain.ParseCLICommand(fields, req.Environment)
+				if parsed.Tool != "" {
+					target = parsed
+				}
+			}
+		}
+	}
+	if target.Tool == "" {
+		return
+	}
+	summary, err := e.DB.QueryCLIExperience(ctx, target)
+	if err == nil && (summary.FieldPassCount+summary.FieldFailCount+summary.FarmPassCount+summary.FarmFailCount > 0 || len(summary.Boundaries) > 0) {
+		resp.CLIExperience = &summary
+	}
 }
 
 const maxDiagnosticCandidates = 50

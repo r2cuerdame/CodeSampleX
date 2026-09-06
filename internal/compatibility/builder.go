@@ -350,10 +350,23 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	var clusterRead, clusterCalculate, clusterWrite time.Duration
 	var clusterCount int
 	var slowest packageTiming
+	targetsByPkg := map[pkgKey][]parsedTarget{}
+	for _, t := range allTargets {
+		p, perr := domain.ParsePURL(t.PURL)
+		if perr != nil {
+			continue
+		}
+		pk := pkgKey{p.Ecosystem, p.Name}
+		targetsByPkg[pk] = append(targetsByPkg[pk], parsedTarget{target: t, version: p.Version})
+	}
+
 	for _, k := range pkgKeys {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		pkgTiming := packageTiming{key: k}
 		phaseStart := time.Now()
-		evidenceByVersion, err := b.evidenceForPackage(ctx, k, allTargets, byPkg)
+		evidenceByVersion, err := b.evidenceForPackage(ctx, k, targetsByPkg[k], byPkg)
 		pkgTiming.read = time.Since(phaseStart)
 		clusterRead += pkgTiming.read
 		if err != nil {
@@ -1325,8 +1338,13 @@ func keyOf(row serverstore.EvidenceRow) evidenceKey {
 // Production carried a failure cluster of 520 for 260 observed failures
 // because of it. Identity, not arrival, decides what is counted -- and the
 // dedup index is now one package's worth rather than the corpus's.
+type parsedTarget struct {
+	target  serverstore.SnapshotTarget
+	version string
+}
+
 func (b *Builder) evidenceForPackage(ctx context.Context, k pkgKey,
-	allTargets []serverstore.SnapshotTarget, byPkg map[pkgKey]symVer,
+	pkgTargets []parsedTarget, byPkg map[pkgKey]symVer,
 ) (map[string][]serverstore.EvidenceRow, error) {
 	out := map[string][]serverstore.EvidenceRow{}
 	seen := map[evidenceKey]bool{}
@@ -1344,22 +1362,15 @@ func (b *Builder) evidenceForPackage(ctx context.Context, k pkgKey,
 			add(version, rows)
 		}
 	}
-	for _, t := range allTargets {
-		p, err := domain.ParsePURL(t.PURL)
-		if err != nil {
-			continue
-		}
-		if (pkgKey{p.Ecosystem, p.Name}) != k {
-			continue
-		}
-		if _, loaded := byPkg[k][t.Symbol][p.Version]; loaded {
+	for _, pt := range pkgTargets {
+		if _, loaded := byPkg[k][pt.target.Symbol][pt.version]; loaded {
 			continue // this pass already read it
 		}
-		rows, err := b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
+		rows, err := b.Store.EvidenceForTarget(ctx, pt.target.PURL, pt.target.Symbol)
 		if err != nil {
-			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", t.PURL, t.Symbol, err)
+			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", pt.target.PURL, pt.target.Symbol, err)
 		}
-		add(p.Version, rows)
+		add(pt.version, rows)
 	}
 	return out, nil
 }

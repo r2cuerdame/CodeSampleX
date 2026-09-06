@@ -279,3 +279,35 @@ func TestRecordRunStoresProjectBucketSightings(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordCommandOutputWiresCLIPassAndFailExperience(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+
+	exit0 := 0
+	outputPass := CommandOutput{
+		Stdout:      "Container started\n",
+		Termination: domain.FailureTermination{Kind: "", ExitCode: &exit0},
+	}
+	err := rec.RecordCommandOutput(context.Background(), t.TempDir(), nil, scanner.CommandProfile{},
+		[]string{"docker", "compose", "up", "-d"}, 0, outputPass)
+	if err != nil {
+		t.Fatalf("RecordCommandOutput pass: %v", err)
+	}
+
+	coord := domain.CLIExperienceCoordinate{
+		Tool:        "docker",
+		Subcommand:  "compose up",
+		ArgsPattern: "-d",
+	}
+	summary, err := db.QueryCLIExperience(context.Background(), coord)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience: %v", err)
+	}
+	if summary.FieldPassCount != 1 {
+		t.Errorf("FieldPassCount = %d, want 1", summary.FieldPassCount)
+	}
+}

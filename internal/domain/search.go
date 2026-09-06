@@ -397,6 +397,9 @@ type SearchResponse struct {
 	// rather than off a result so it can never be read as a property of a
 	// sample, and so the grade path never has it in scope.
 	Observed *ObservedReports `json:"observed,omitempty"`
+	// CLIExperience carries the compact execution experience when a query
+	// addresses a CLI command coordinate.
+	CLIExperience *CLIExperienceSummary `json:"cliExperience,omitempty"`
 	// Diagnostic is present only when SearchRequest.Debug was true. It is
 	// generated from the same pipeline result and never changes the answer.
 	Diagnostic *DiagnosticTrace `json:"diagnostic,omitempty"`
