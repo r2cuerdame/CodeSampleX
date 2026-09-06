@@ -130,3 +130,51 @@ func TestValidateBatchRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateBatchAcceptsCLIPass(t *testing.T) {
+	exit0 := 0
+	b := obsBatch("anonaaaa", "projaaaa", 1)
+	b.SchemaVersion = 2
+	b.Package = "pkg:generic/cli/docker@27.1.0"
+	b.Symbol = "field:compose up -d"
+	b.SymbolConfidence = ""
+	b.Stage = domain.StageProjectProcess
+	b.Result = domain.ResultPass
+	b.OuterCommand = "docker compose up -d"
+	b.ActualToolchain = "docker"
+	b.TerminationKind = domain.TerminationExit
+	b.ExitCode = &exit0
+
+	if err := ValidateBatch(b); err != nil {
+		t.Fatalf("ValidateBatch rejected valid CLI PASS batch: %v", err)
+	}
+}
+
+func TestValidateBatchRejectsCLIPassWithErrors(t *testing.T) {
+	exit0 := 0
+	b := obsBatch("anonaaaa", "projaaaa", 1)
+	b.Package = "pkg:generic/cli/docker@27.1.0"
+	b.Symbol = "field:compose up -d"
+	b.Stage = domain.StageProjectProcess
+	b.Result = domain.ResultPass
+	b.OuterCommand = "docker compose up -d"
+	b.ActualToolchain = "docker"
+	b.TerminationKind = domain.TerminationExit
+	b.ExitCode = &exit0
+	b.ErrorCode = "EADDRINUSE"
+
+	if err := ValidateBatch(b); err == nil {
+		t.Fatalf("ValidateBatch expected error for CLI PASS with error code")
+	}
+}
+
+func TestValidateBatchRejectsNonCLIPassWithOuterCommand(t *testing.T) {
+	b := obsBatch("anonaaaa", "projaaaa", 1)
+	b.Package = "pkg:npm/axios@1.12.0"
+	b.Result = domain.ResultPass
+	b.OuterCommand = "npm test"
+
+	if err := ValidateBatch(b); err == nil {
+		t.Fatalf("ValidateBatch expected error for non-CLI PASS with outer command")
+	}
+}

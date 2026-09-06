@@ -359,3 +359,179 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// QueryCLIExperience retrieves execution observations matching a canonical CLI
+// coordinate and compiles them into a compact CLIExperienceSummary.
+func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperienceCoordinate) (domain.CLIExperienceSummary, error) {
+	canon := target.Canonical()
+	if canon.Tool == "" {
+		return domain.CLIExperienceSummary{Coordinate: canon, Status: "UNOBSERVED", Quality: "UNOBSERVED"}, nil
+	}
+
+	purlPattern := "pkg:generic/cli/" + canon.Tool + "@%"
+
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT epoch, purl, symbol, env_hash, stage, result, count,
+		       error_fp, error_code, termination_kind, exit_code, signal,
+		       timeout_millis, error_summary, evidence_quality, outer_command,
+		       actual_toolchain
+		FROM observations
+		WHERE purl LIKE ?`, purlPattern)
+	if err != nil {
+		return domain.CLIExperienceSummary{}, err
+	}
+	defer rows.Close()
+
+	var observations []domain.CLIExperienceObservation
+	for rows.Next() {
+		var (
+			epoch           string
+			purl            string
+			symbol          string
+			envHash         string
+			stage           string
+			result          string
+			count           int64
+			errorFP         string
+			errorCode       string
+			termKind        string
+			exitCode        sql.NullInt64
+			signal          string
+			timeoutMillis   int64
+			errorSummary    string
+			evidenceQuality string
+			outerCommand    string
+			actualToolchain string
+		)
+		if err := rows.Scan(&epoch, &purl, &symbol, &envHash, &stage, &result, &count,
+			&errorFP, &errorCode, &termKind, &exitCode, &signal, &timeoutMillis,
+			&errorSummary, &evidenceQuality, &outerCommand, &actualToolchain); err != nil {
+			return domain.CLIExperienceSummary{}, err
+		}
+
+		obsEnv, _, _ := d.GetEnvironment(ctx, envHash)
+
+		// Determine coordinate for this row
+		obsCoord := canon
+		if strings.HasPrefix(purl, "pkg:generic/cli/") {
+			if parsed, err := domain.ParsePURL(purl); err == nil {
+				obsCoord.Tool = strings.TrimPrefix(parsed.Name, "cli/")
+				obsCoord.ToolVersion = parsed.Version
+			}
+		}
+
+		subcmd, argsPat, prov := domain.DecodeCLISymbol(symbol, obsCoord.Tool, obsEnv)
+		if subcmd != "" {
+			obsCoord.Subcommand = subcmd
+		}
+		if argsPat != "" {
+			obsCoord.ArgsPattern = argsPat
+		}
+		if outerCommand != "" && obsCoord.Subcommand == "" && obsCoord.ArgsPattern == "" {
+			parsed := domain.ParseCLICommand(strings.Fields(outerCommand), obsEnv)
+			if parsed.Subcommand != "" {
+				obsCoord.Subcommand = parsed.Subcommand
+			}
+			if parsed.ArgsPattern != "" {
+				obsCoord.ArgsPattern = parsed.ArgsPattern
+			}
+		}
+		if obsEnv.OS != "" {
+			obsCoord.Environment = obsEnv
+		}
+
+		var ec *int
+		if exitCode.Valid {
+			v := int(exitCode.Int64)
+			ec = &v
+		}
+
+		provenance := prov
+		if strings.EqualFold(actualToolchain, "farm") || strings.Contains(strings.ToLower(outerCommand), "farm") {
+			provenance = domain.ProvenanceFarm
+		}
+
+		obs := domain.CLIExperienceObservation{
+			Coordinate: obsCoord,
+			Provenance: provenance,
+			Result:     domain.Result(result),
+			Termination: domain.FailureTermination{
+				Kind:          domain.TerminationKind(termKind),
+				ExitCode:      ec,
+				Signal:        signal,
+				TimeoutMillis: timeoutMillis,
+			},
+			ErrorFingerprint: errorFP,
+			ErrorCode:        errorCode,
+			ErrorSummary:     errorSummary,
+			EvidenceQuality:  domain.EvidenceQuality(evidenceQuality),
+			ObservedAt:       epoch + "T00:00:00Z",
+			Count:            count,
+		}
+		observations = append(observations, obs)
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.CLIExperienceSummary{}, err
+	}
+
+	return domain.BuildExperienceSummary(canon, observations), nil
+}
+
+// RecordCLIExperienceObservation stores an execution observation for a CLI coordinate.
+func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIExperienceObservation) error {
+	canon := obs.Coordinate.Canonical()
+	purl := ""
+	if p, ok := canon.PURL(); ok {
+		purl = p.String()
+	} else if canon.Tool != "" {
+		version := canon.ToolVersion
+		if version == "" {
+			version = "0.0.0"
+		}
+		purl = "pkg:generic/cli/" + canon.Tool + "@" + version
+	}
+
+	envHash := canon.Environment.Hash()
+	if err := d.SaveEnvironment(ctx, canon.Environment); err != nil {
+		return err
+	}
+
+	epoch := obs.ObservedAt
+	if len(epoch) >= 10 {
+		epoch = epoch[:10]
+	} else {
+		epoch = time.Now().UTC().Format("2006-01-02")
+	}
+
+	actualToolchain := ""
+	if obs.Provenance == domain.ProvenanceFarm {
+		actualToolchain = "farm"
+	}
+
+	count := int(obs.Count)
+	if count <= 0 {
+		count = 1
+	}
+
+	symbol := domain.EncodeCLISymbol(canon.Subcommand, canon.ArgsPattern, obs.Provenance)
+
+	return d.RecordObservation(ctx, ObsKey{
+		Epoch:           epoch,
+		PURL:            purl,
+		Symbol:          symbol,
+		EnvHash:         envHash,
+		Stage:           domain.StageProjectProcess,
+		Result:          obs.Result,
+		ErrorFP:         obs.ErrorFingerprint,
+		ErrorCode:       obs.ErrorCode,
+		TerminationKind: obs.Termination.Kind,
+		ExitCode:        obs.Termination.ExitCode,
+		Signal:          obs.Termination.Signal,
+		TimeoutMillis:   obs.Termination.TimeoutMillis,
+		ErrorSummary:    obs.ErrorSummary,
+		EvidenceQuality: obs.EvidenceQuality,
+		OuterCommand:    canon.DisplayCommand(),
+		ActualToolchain: actualToolchain,
+	}, count)
+}

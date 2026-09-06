@@ -96,17 +96,84 @@ type classifiedFailure struct {
 // One outer execution may therefore append multiple independent failure rows.
 func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *scanner.ScanResult,
 	profile scanner.CommandProfile, argv []string, exitCode int, output CommandOutput) error {
+	var recordErr error
 	if exitCode == 0 && output.Termination.Kind == "" {
-		return r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, "", nil)
+		recordErr = r.recordRun(ctx, dir, res, profile, false, domain.FailureTermination{}, "", nil)
+	} else {
+		analysis := AnalyzeFailure(profile, argv, output)
+		failures := make([]classifiedFailure, 0, len(analysis.Events))
+		for _, event := range analysis.Events {
+			failure := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage, output.Termination, nil,
+				analysis.OuterCommand, analysis.OuterStage, event.Toolchain, event.StageEvidence, event.EvidenceGap)
+			failures = append(failures, classifiedFailure{stage: event.Stage, evidence: failure})
+		}
+		recordErr = r.recordRun(ctx, dir, res, profile, true, output.Termination, "", failures)
 	}
-	analysis := AnalyzeFailure(profile, argv, output)
-	failures := make([]classifiedFailure, 0, len(analysis.Events))
-	for _, event := range analysis.Events {
-		failure := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage, output.Termination, nil,
-			analysis.OuterCommand, analysis.OuterStage, event.Toolchain, event.StageEvidence, event.EvidenceGap)
-		failures = append(failures, classifiedFailure{stage: event.Stage, evidence: failure})
+
+	if r.DB != nil && r.Cfg != nil && r.Cfg.Mode == config.ModeCommunity && len(argv) > 0 {
+		tool := domain.CommandTool(argv)
+		if domain.IsRecognizedCLITool(tool) {
+			var env domain.EnvironmentFingerprint
+			if res != nil {
+				env = res.Env
+			}
+			coord := domain.ParseCLICommand(argv, env)
+			now := time.Now().UTC().Format(time.RFC3339)
+			if exitCode == 0 && output.Termination.Kind == "" {
+				code := 0
+				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+					Coordinate: coord,
+					Provenance: domain.ProvenanceField,
+					Result:     domain.ResultPass,
+					Termination: domain.FailureTermination{
+						Kind:     domain.TerminationExit,
+						ExitCode: &code,
+					},
+					ObservedAt: now,
+					Count:      1,
+				})
+			} else if !profile.Known || profile.Stage == domain.StageProjectProcess {
+				term := output.Termination
+				if term.Kind == "" {
+					code := exitCode
+					term = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &code}
+				}
+				analysis := AnalyzeFailure(profile, argv, output)
+				var errorFP, errorCode, errorSummary string
+				if len(analysis.Events) > 0 {
+					ev := sanitizer.SanitizeClassifiedFailure(analysis.Events[0].Diagnostic, analysis.Events[0].Stage,
+						output.Termination, nil, analysis.OuterCommand, analysis.OuterStage,
+						analysis.Events[0].Toolchain, analysis.Events[0].StageEvidence, analysis.Events[0].EvidenceGap)
+					errorFP = ev.Fingerprint
+					errorCode = ev.ErrorCode
+					errorSummary = ev.ErrorSummary
+				} else {
+					diag := output.FailureDiagnostics()
+					if diag == "" {
+						diag = output.Stderr
+					}
+					ev := sanitizer.SanitizeFailure(diag, domain.StageProjectProcess, term, nil)
+					errorFP = ev.Fingerprint
+					errorCode = ev.ErrorCode
+					errorSummary = ev.ErrorSummary
+				}
+				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+					Coordinate:        coord,
+					Provenance:        domain.ProvenanceField,
+					Result:            domain.ResultFail,
+					Termination:       term,
+					ErrorFingerprint:  errorFP,
+					ErrorCode:         errorCode,
+					ErrorSummary:      errorSummary,
+					ObservedAt:        now,
+					Count:             1,
+					IsHighInformation: true,
+				})
+			}
+		}
 	}
-	return r.recordRun(ctx, dir, res, profile, true, output.Termination, "", failures)
+
+	return recordErr
 }
 
 func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanResult,

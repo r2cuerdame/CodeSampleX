@@ -2533,10 +2533,19 @@ func (p *PG) UpsertFailureClusters(ctx context.Context, clusters []ClusterRow) e
 			return err
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		var batch pgx.Batch
 		for _, cl := range clusters {
-			if _, err := tx.Exec(ctx, upsertFailureClusterSQL, failureClusterArgs(cl)...); err != nil {
+			batch.Queue(upsertFailureClusterSQL, failureClusterArgs(cl)...)
+		}
+		results := tx.SendBatch(ctx, &batch)
+		for range clusters {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
 				return err
 			}
+		}
+		if err := results.Close(); err != nil {
+			return err
 		}
 		return tx.Commit(ctx)
 	})
