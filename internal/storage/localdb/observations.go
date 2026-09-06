@@ -369,7 +369,6 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 	}
 
 	purlPattern := "pkg:generic/cli/" + canon.Tool + "@%"
-	cmdPattern := canon.Tool + "%"
 
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT epoch, purl, symbol, env_hash, stage, result, count,
@@ -377,7 +376,7 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 		       timeout_millis, error_summary, evidence_quality, outer_command,
 		       actual_toolchain
 		FROM observations
-		WHERE purl LIKE ? OR outer_command LIKE ?`, purlPattern, cmdPattern)
+		WHERE purl LIKE ?`, purlPattern)
 	if err != nil {
 		return domain.CLIExperienceSummary{}, err
 	}
@@ -420,10 +419,15 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 				obsCoord.ToolVersion = parsed.Version
 			}
 		}
-		if symbol != "" && obsCoord.Subcommand == "" {
-			obsCoord.Subcommand = symbol
+
+		subcmd, argsPat, prov := domain.DecodeCLISymbol(symbol, obsCoord.Tool, obsEnv)
+		if subcmd != "" {
+			obsCoord.Subcommand = subcmd
 		}
-		if outerCommand != "" {
+		if argsPat != "" {
+			obsCoord.ArgsPattern = argsPat
+		}
+		if outerCommand != "" && obsCoord.Subcommand == "" && obsCoord.ArgsPattern == "" {
 			parsed := domain.ParseCLICommand(strings.Fields(outerCommand), obsEnv)
 			if parsed.Subcommand != "" {
 				obsCoord.Subcommand = parsed.Subcommand
@@ -442,7 +446,7 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 			ec = &v
 		}
 
-		provenance := domain.ProvenanceField
+		provenance := prov
 		if strings.EqualFold(actualToolchain, "farm") || strings.Contains(strings.ToLower(outerCommand), "farm") {
 			provenance = domain.ProvenanceFarm
 		}
@@ -510,12 +514,14 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 		count = 1
 	}
 
+	symbol := domain.EncodeCLISymbol(canon.Subcommand, canon.ArgsPattern, obs.Provenance)
+
 	return d.RecordObservation(ctx, ObsKey{
 		Epoch:           epoch,
 		PURL:            purl,
-		Symbol:          canon.Subcommand,
+		Symbol:          symbol,
 		EnvHash:         envHash,
-		Stage:           domain.StageExecute,
+		Stage:           domain.StageProjectProcess,
 		Result:          obs.Result,
 		ErrorFP:         obs.ErrorFingerprint,
 		ErrorCode:       obs.ErrorCode,
@@ -529,4 +535,3 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 		ActualToolchain: actualToolchain,
 	}, count)
 }
-

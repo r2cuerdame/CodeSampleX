@@ -876,3 +876,33 @@ func TestSearchAttachesCLIExperienceForCLICommands(t *testing.T) {
 	}
 }
 
+func TestSearchIgnoresCLIExperienceForProseQuery(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+
+	coord := domain.CLIExperienceCoordinate{
+		Tool:        "how",
+		ToolVersion: "1.0.0",
+		Subcommand:  "to",
+	}
+	exit0 := 0
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-01T10:00:00Z",
+		Count:       1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := Engine{DB: db}
+	resp := eng.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 2,
+		Query:         "how to render a component",
+	})
+	if resp.CLIExperience != nil {
+		t.Fatalf("expected nil CLIExperience for prose query, got %+v", resp.CLIExperience)
+	}
+}

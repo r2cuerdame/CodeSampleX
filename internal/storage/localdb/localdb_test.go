@@ -3,6 +3,7 @@ package localdb
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -790,3 +791,136 @@ func TestRecordAndQueryCLIExperience(t *testing.T) {
 	}
 }
 
+func TestCLIExperienceAggregateKeyCollisionPrevention(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+
+	coord1 := domain.CLIExperienceCoordinate{
+		Tool:        "docker",
+		ToolVersion: "27.1.0",
+		Subcommand:  "compose up",
+		ArgsPattern: "-d",
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1,
+			OS:            "linux",
+			Arch:          "amd64",
+		},
+	}
+	coord2 := coord1
+	coord2.ArgsPattern = "--build"
+
+	exit0 := 0
+	sameDay := "2026-09-01T10:00:00Z"
+
+	// 1. Field PASS for coord1 (-d) on sameDay
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord1,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  sameDay,
+		Count:       3,
+	}); err != nil {
+		t.Fatalf("Record field pass: %v", err)
+	}
+
+	// 2. Farm PASS for coord1 (-d) on the EXACT sameDay
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord1,
+		Provenance:  domain.ProvenanceFarm,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  sameDay,
+		Count:       2,
+	}); err != nil {
+		t.Fatalf("Record farm pass: %v", err)
+	}
+
+	// 3. Field PASS for coord2 (--build) on the EXACT sameDay
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord2,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  sameDay,
+		Count:       4,
+	}); err != nil {
+		t.Fatalf("Record field pass coord2: %v", err)
+	}
+
+	summary1, err := db.QueryCLIExperience(ctx, coord1)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience coord1: %v", err)
+	}
+	if summary1.FieldPassCount != 3 {
+		t.Errorf("summary1.FieldPassCount = %d, want 3", summary1.FieldPassCount)
+	}
+	if summary1.FarmPassCount != 2 {
+		t.Errorf("summary1.FarmPassCount = %d, want 2", summary1.FarmPassCount)
+	}
+
+	summary2, err := db.QueryCLIExperience(ctx, coord2)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience coord2: %v", err)
+	}
+	if summary2.FieldPassCount != 4 {
+		t.Errorf("summary2.FieldPassCount = %d, want 4", summary2.FieldPassCount)
+	}
+	if summary2.FarmPassCount != 0 {
+		t.Errorf("summary2.FarmPassCount = %d, want 0", summary2.FarmPassCount)
+	}
+}
+
+func TestCLIExperienceExcludesDependencyEvidenceRows(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+
+	coord := domain.CLIExperienceCoordinate{
+		Tool:        "docker",
+		ToolVersion: "27.1.0",
+		Subcommand:  "compose up",
+	}
+
+	exit0 := 0
+	// Record 1 real CLI experience observation
+	if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate:  coord,
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-01T10:00:00Z",
+		Count:       1,
+	}); err != nil {
+		t.Fatalf("RecordCLIExperienceObservation: %v", err)
+	}
+
+	// Insert ordinary dependency package observations where outer_command is "docker compose up"
+	envHash := coord.Environment.Hash()
+	for i := 0; i < 10; i++ {
+		err := db.RecordObservation(ctx, ObsKey{
+			Epoch:        "2026-09-01",
+			PURL:         fmt.Sprintf("pkg:golang/github.com/example/dep%d@v1.0.0", i),
+			Symbol:       "SomeFunc",
+			EnvHash:      envHash,
+			Stage:        domain.StageProjectProcess,
+			Result:       domain.ResultFail,
+			OuterCommand: "docker compose up",
+		}, 1)
+		if err != nil {
+			t.Fatalf("RecordObservation dep: %v", err)
+		}
+	}
+
+	summary, err := db.QueryCLIExperience(ctx, coord)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience: %v", err)
+	}
+
+	// Must NOT count dependency failure rows as CLI executions!
+	if summary.FieldPassCount != 1 {
+		t.Errorf("FieldPassCount = %d, want 1", summary.FieldPassCount)
+	}
+	if summary.FieldFailCount != 0 {
+		t.Errorf("FieldFailCount = %d, want 0 (dependency rows must not be counted)", summary.FieldFailCount)
+	}
+}

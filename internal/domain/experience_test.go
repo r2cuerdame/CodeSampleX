@@ -175,18 +175,18 @@ func TestFieldEvidencePrimaryAndFarmSupportingDistinction(t *testing.T) {
 
 	obs := []CLIExperienceObservation{
 		{
-			Coordinate:  coord,
-			Provenance:  ProvenanceField,
-			Result:      ResultPass,
-			ObservedAt:  "2026-08-10T10:00:00Z",
-			Count:       5,
+			Coordinate: coord,
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			ObservedAt: "2026-08-10T10:00:00Z",
+			Count:      5,
 		},
 		{
-			Coordinate:  coord,
-			Provenance:  ProvenanceFarm,
-			Result:      ResultPass,
-			ObservedAt:  "2026-08-12T10:00:00Z",
-			Count:       1,
+			Coordinate: coord,
+			Provenance: ProvenanceFarm,
+			Result:     ResultPass,
+			ObservedAt: "2026-08-12T10:00:00Z",
+			Count:      1,
 		},
 	}
 
@@ -219,11 +219,11 @@ func TestTemporalEvidencePolicyPreservesOldObservationsAndDetectsBoundaries(t *t
 	failCode := 128
 	obs := []CLIExperienceObservation{
 		{
-			Coordinate:  coordV1,
-			Provenance:  ProvenanceField,
-			Result:      ResultPass,
-			ObservedAt:  "2024-05-01T00:00:00Z", // old observation from 2024
-			Count:       10,
+			Coordinate: coordV1,
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			ObservedAt: "2024-05-01T00:00:00Z", // old observation from 2024
+			Count:      10,
 		},
 		{
 			Coordinate:   coordV2,
@@ -272,11 +272,11 @@ func TestTextSummaryUsesExperienceAndNeverMemory(t *testing.T) {
 	exitCode := 1
 	obs := []CLIExperienceObservation{
 		{
-			Coordinate:  coord,
-			Provenance:  ProvenanceField,
-			Result:      ResultPass,
-			Count:       12,
-			ObservedAt:  "2026-09-01T10:00:00Z",
+			Coordinate: coord,
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			Count:      12,
+			ObservedAt: "2026-09-01T10:00:00Z",
 		},
 		{
 			Coordinate:   coord,
@@ -306,4 +306,206 @@ func TestTextSummaryUsesExperienceAndNeverMemory(t *testing.T) {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func TestSensitiveFlagNameRedaction(t *testing.T) {
+	env := EnvironmentFingerprint{OS: "linux", Arch: "amd64"}
+
+	tests := []struct {
+		name     string
+		argv     []string
+		wantArgs string
+	}{
+		{
+			name:     "password with equals",
+			argv:     []string{"mycli", "--password=hunter2", "--user", "alice"},
+			wantArgs: "--password=<redacted-secret> --user alice",
+		},
+		{
+			name:     "api key with space",
+			argv:     []string{"mycli", "--api-key", "abc12345secret", "--port", "8080"},
+			wantArgs: "--api-key <redacted-secret> --port 8080",
+		},
+		{
+			name:     "bare token assignment",
+			argv:     []string{"mycli", "TOKEN=plainvalue", "--flag"},
+			wantArgs: "TOKEN=<redacted-secret> --flag",
+		},
+		{
+			name:     "env flag with token assignment",
+			argv:     []string{"mycli", "-e", "TOKEN=plainvalue"},
+			wantArgs: "-e TOKEN=<redacted-secret>",
+		},
+		{
+			name:     "secret-key with equals",
+			argv:     []string{"mycli", "--secret-key=supersecret"},
+			wantArgs: "--secret-key=<redacted-secret>",
+		},
+		{
+			name:     "auth-token with space",
+			argv:     []string{"mycli", "--auth-token", "some-raw-token"},
+			wantArgs: "--auth-token <redacted-secret>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			coord := ParseCLICommand(tt.argv, env)
+			if coord.ArgsPattern != tt.wantArgs {
+				t.Errorf("ArgsPattern = %q, want %q", coord.ArgsPattern, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestExactCommandCoordinateRecall(t *testing.T) {
+	target := CLIExperienceCoordinate{
+		Tool:        "docker",
+		ToolVersion: "27.1.0",
+		Subcommand:  "compose up",
+		Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+	}
+
+	exitCode := 1
+	obs := []CLIExperienceObservation{
+		// Target command: PASS
+		{
+			Coordinate: target,
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			ObservedAt: "2026-09-01T10:00:00Z",
+			Count:      5,
+		},
+		// Unrelated subcommand: compose down FAIL
+		{
+			Coordinate: CLIExperienceCoordinate{
+				Tool:        "docker",
+				ToolVersion: "27.1.0",
+				Subcommand:  "compose down",
+				Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+			},
+			Provenance:   ProvenanceField,
+			Result:       ResultFail,
+			Termination:  FailureTermination{Kind: TerminationExit, ExitCode: &exitCode},
+			ErrorCode:    "ECONNREFUSED",
+			ErrorSummary: "connection refused",
+			ObservedAt:   "2026-09-01T11:00:00Z",
+			Count:        1,
+		},
+		// Unrelated subcommand: image build FAIL
+		{
+			Coordinate: CLIExperienceCoordinate{
+				Tool:        "docker",
+				ToolVersion: "27.1.0",
+				Subcommand:  "image build",
+				Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+			},
+			Provenance:   ProvenanceField,
+			Result:       ResultFail,
+			Termination:  FailureTermination{Kind: TerminationExit, ExitCode: &exitCode},
+			ErrorCode:    "EBUILD",
+			ErrorSummary: "build failed",
+			ObservedAt:   "2026-09-01T12:00:00Z",
+			Count:        1,
+		},
+		// Unrelated argument pattern: compose up -d FAIL
+		{
+			Coordinate: CLIExperienceCoordinate{
+				Tool:        "docker",
+				ToolVersion: "27.1.0",
+				Subcommand:  "compose up",
+				ArgsPattern: "-d",
+				Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+			},
+			Provenance:   ProvenanceField,
+			Result:       ResultFail,
+			Termination:  FailureTermination{Kind: TerminationExit, ExitCode: &exitCode},
+			ErrorCode:    "EADDRINUSE",
+			ErrorSummary: "port 8080 already allocated",
+			ObservedAt:   "2026-09-01T13:00:00Z",
+			Count:        1,
+		},
+	}
+
+	summary := BuildExperienceSummary(target, obs)
+
+	// Summary for "docker compose up" must exclude unrelated subcommands and argument patterns
+	if summary.FieldPassCount != 5 {
+		t.Errorf("FieldPassCount = %d, want 5", summary.FieldPassCount)
+	}
+	if summary.FieldFailCount != 0 {
+		t.Errorf("FieldFailCount = %d, want 0 (unrelated failures must be excluded)", summary.FieldFailCount)
+	}
+	if summary.Status != "OBSERVED_PASS" {
+		t.Errorf("Status = %q, want OBSERVED_PASS (unrelated failures must not cause COEXISTING_BOUNDARY)", summary.Status)
+	}
+	if len(summary.RecentFailures) != 0 {
+		t.Errorf("RecentFailures count = %d, want 0", len(summary.RecentFailures))
+	}
+}
+
+func TestDeterministicSameVersionOutcomeAggregation(t *testing.T) {
+	coordV1 := CLIExperienceCoordinate{
+		Tool:        "tool",
+		ToolVersion: "1.0.0",
+		Subcommand:  "run",
+		Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+	}
+	coordV2 := CLIExperienceCoordinate{
+		Tool:        "tool",
+		ToolVersion: "2.0.0",
+		Subcommand:  "run",
+		Environment: EnvironmentFingerprint{OS: "linux", Arch: "amd64"},
+	}
+
+	failCode := 1
+	passObs := CLIExperienceObservation{
+		Coordinate: coordV1,
+		Provenance: ProvenanceField,
+		Result:     ResultPass,
+		ObservedAt: "2026-09-01T10:00:00Z",
+		Count:      1,
+	}
+	failObs := CLIExperienceObservation{
+		Coordinate:   coordV1,
+		Provenance:   ProvenanceField,
+		Result:       ResultFail,
+		Termination:  FailureTermination{Kind: TerminationExit, ExitCode: &failCode},
+		ErrorCode:    "EFAIL",
+		ErrorSummary: "v1 failed",
+		ObservedAt:   "2026-09-01T11:00:00Z",
+		Count:        1,
+	}
+	v2PassObs := CLIExperienceObservation{
+		Coordinate: coordV2,
+		Provenance: ProvenanceField,
+		Result:     ResultPass,
+		ObservedAt: "2026-09-02T10:00:00Z",
+		Count:      1,
+	}
+
+	// Mixed outcomes at v1.0.0 (both PASS and FAIL) followed by v2.0.0 PASS.
+	// Order 1: PASS then FAIL
+	corpus1 := []CLIExperienceObservation{passObs, failObs, v2PassObs}
+	b1 := DetectExperienceBoundaries(corpus1)
+	if len(b1) != 0 {
+		t.Errorf("Order 1: expected 0 boundaries for mixed v1, got %d: %+v", len(b1), b1)
+	}
+
+	// Order 2: FAIL then PASS
+	corpus2 := []CLIExperienceObservation{failObs, passObs, v2PassObs}
+	b2 := DetectExperienceBoundaries(corpus2)
+	if len(b2) != 0 {
+		t.Errorf("Order 2: expected 0 boundaries for mixed v1, got %d: %+v", len(b2), b2)
+	}
+
+	// Pure FAIL at v1.0.0 followed by pure PASS at v2.0.0
+	pureCorpus := []CLIExperienceObservation{failObs, v2PassObs}
+	pureBoundaries := DetectExperienceBoundaries(pureCorpus)
+	if len(pureBoundaries) != 1 {
+		t.Fatalf("Pure transition: expected 1 boundary, got %d", len(pureBoundaries))
+	}
+	if pureBoundaries[0].FromVerdict != ResultFail || pureBoundaries[0].ToVerdict != ResultPass {
+		t.Errorf("Unexpected transition: %s -> %s", pureBoundaries[0].FromVerdict, pureBoundaries[0].ToVerdict)
+	}
 }

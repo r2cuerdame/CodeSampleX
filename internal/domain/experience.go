@@ -108,18 +108,18 @@ func (c CLIExperienceCoordinate) DisplayCommand() string {
 // and FAIL observations coexist: a single verified failure is not erased by
 // multiple passing runs.
 type CLIExperienceObservation struct {
-	ID                 string                  `json:"id,omitempty"`
-	Coordinate         CLIExperienceCoordinate `json:"coordinate"`
-	Provenance         ExperienceProvenance    `json:"provenance"`
-	Result             Result                  `json:"result"` // PASS | FAIL
-	Termination        FailureTermination      `json:"termination,omitempty"`
-	ErrorFingerprint   string                  `json:"errorFingerprint,omitempty"`
-	ErrorCode          string                  `json:"errorCode,omitempty"`
-	ErrorSummary       string                  `json:"errorSummary,omitempty"`
-	EvidenceQuality    EvidenceQuality         `json:"evidenceQuality,omitempty"`
-	ObservedAt         string                  `json:"observedAt,omitempty"` // RFC3339
-	Count              int64                   `json:"count"`
-	IsHighInformation  bool                    `json:"isHighInformation"`
+	ID                string                  `json:"id,omitempty"`
+	Coordinate        CLIExperienceCoordinate `json:"coordinate"`
+	Provenance        ExperienceProvenance    `json:"provenance"`
+	Result            Result                  `json:"result"` // PASS | FAIL
+	Termination       FailureTermination      `json:"termination,omitempty"`
+	ErrorFingerprint  string                  `json:"errorFingerprint,omitempty"`
+	ErrorCode         string                  `json:"errorCode,omitempty"`
+	ErrorSummary      string                  `json:"errorSummary,omitempty"`
+	EvidenceQuality   EvidenceQuality         `json:"evidenceQuality,omitempty"`
+	ObservedAt        string                  `json:"observedAt,omitempty"` // RFC3339
+	Count             int64                   `json:"count"`
+	IsHighInformation bool                    `json:"isHighInformation"`
 }
 
 // ComputeID derives the content-addressed observation ID.
@@ -294,6 +294,33 @@ var multiWordSubcommands = map[string][]string{
 	},
 }
 
+// IsRecognizedCLITool reports whether name is a recognized command-line tool.
+func IsRecognizedCLITool(name string) bool {
+	tool := CommandTool([]string{name})
+	if tool == "" {
+		return false
+	}
+	if coord, ok := wantedTargetNames[tool]; ok && strings.HasPrefix(coord, "cli/") {
+		return true
+	}
+	if _, ok := buildToolEcosystems[tool]; ok {
+		return true
+	}
+	if _, ok := multiWordSubcommands[tool]; ok {
+		return true
+	}
+	switch tool {
+	case "docker", "docker-compose", "gh", "git", "kubectl", "helm", "terraform", "opentofu",
+		"ffmpeg", "ripgrep", "bash", "busybox", "coreutils", "powershell", "windows-powershell", "cmd", "pwsh",
+		"npm", "pnpm", "yarn", "bun", "deno", "maven", "mvn", "mvnw", "gradle", "gradlew", "pip", "pip3", "uv",
+		"cargo", "gem", "bundle", "bundler", "composer", "mix", "dart", "flutter", "curl", "jq",
+		"openssl", "tar", "grep", "sed", "findutils", "go", "python", "python3", "pytest", "node",
+		"tsc", "npx", "rustc", "dotnet", "java", "javac", "php", "ruby", "elixir":
+		return true
+	}
+	return false
+}
+
 func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPattern string) {
 	if len(args) == 0 {
 		return "", ""
@@ -312,8 +339,8 @@ func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPatt
 		}
 	}
 
-	// Single-word subcommand check (if first arg is not a flag)
-	if !strings.HasPrefix(args[0], "-") {
+	// Single-word subcommand check (if first arg is not a flag or assignment)
+	if !strings.HasPrefix(args[0], "-") && !strings.Contains(args[0], "=") {
 		subcommand = strings.ToLower(args[0])
 		argsPattern = sanitizeAndNormalizeArgs(args[1:])
 		return subcommand, argsPattern
@@ -322,6 +349,24 @@ func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPatt
 	// Only flags
 	argsPattern = sanitizeAndNormalizeArgs(args)
 	return "", argsPattern
+}
+
+func isSensitiveName(name string) bool {
+	clean := strings.ToLower(strings.TrimLeft(name, "-_"))
+	clean = strings.ReplaceAll(clean, "-", "")
+	clean = strings.ReplaceAll(clean, "_", "")
+	if clean == "key" || strings.HasSuffix(clean, "key") {
+		return true
+	}
+	for _, s := range []string{
+		"password", "passwd", "pass", "secret", "token", "apikey",
+		"credential", "auth", "privkey", "privatekey", "bearer",
+	} {
+		if strings.Contains(clean, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeAndNormalizeArgs(tokens []string) string {
@@ -340,12 +385,19 @@ func sanitizeAndNormalizeArgs(tokens []string) string {
 			if eqIdx > 0 {
 				flagName := tok[:eqIdx]
 				flagVal := tok[eqIdx+1:]
-				normalized = append(normalized, flagName+"="+sanitizeArgValue(flagVal))
+				if isSensitiveName(flagName) {
+					normalized = append(normalized, flagName+"=<redacted-secret>")
+				} else {
+					normalized = append(normalized, flagName+"="+sanitizeArgValue(flagVal))
+				}
 			} else {
 				normalized = append(normalized, tok)
 				// Check if this flag expects a parameter
 				if i+1 < len(tokens) && !strings.HasPrefix(tokens[i+1], "-") {
-					if isValueConsumingFlag(tok) {
+					if isSensitiveName(tok) {
+						normalized = append(normalized, "<redacted-secret>")
+						skipNext = true
+					} else if isValueConsumingFlag(tok) {
 						normalized = append(normalized, sanitizeArgValue(tokens[i+1]))
 						skipNext = true
 					}
@@ -370,9 +422,12 @@ func isValueConsumingFlag(flag string) bool {
 }
 
 func sanitizeArgValue(val string) string {
-	// Key-value pair like -e TOKEN=ghp_... or FOO=bar
+	// Key-value pair like -e TOKEN=ghp_... or TOKEN=plainvalue or FOO=bar
 	if eqIdx := strings.Index(val, "="); eqIdx > 0 {
 		k := val[:eqIdx]
+		if isSensitiveName(k) {
+			return k + "=<redacted-secret>"
+		}
 		v := sanitizeArgValue(val[eqIdx+1:])
 		return k + "=" + v
 	}
@@ -500,25 +555,95 @@ func CompressExperienceObservations(observations []CLIExperienceObservation) []C
 	return out
 }
 
+// EncodeCLISymbol encodes the CLI subcommand, arguments pattern, and provenance into the symbol column.
+// Format: "<provenance>:<subcommand>[ <argsPattern>]"
+func EncodeCLISymbol(subcommand, argsPattern string, prov ExperienceProvenance) string {
+	if prov == "" {
+		prov = ProvenanceField
+	}
+	var b strings.Builder
+	b.WriteString(string(prov))
+	b.WriteString(":")
+	subcommand = strings.TrimSpace(subcommand)
+	argsPattern = strings.TrimSpace(argsPattern)
+	if subcommand != "" {
+		b.WriteString(subcommand)
+		if argsPattern != "" {
+			b.WriteString(" ")
+			b.WriteString(argsPattern)
+		}
+	} else if argsPattern != "" {
+		b.WriteString(argsPattern)
+	}
+	return b.String()
+}
+
+// DecodeCLISymbol parses a symbol recorded for a CLI experience observation back into
+// subcommand, argsPattern, and provenance.
+func DecodeCLISymbol(symbol string, tool string, env EnvironmentFingerprint) (subcommand, argsPattern string, prov ExperienceProvenance) {
+	prov = ProvenanceField
+	raw := strings.TrimSpace(symbol)
+	if strings.HasPrefix(raw, "farm:") {
+		prov = ProvenanceFarm
+		raw = strings.TrimPrefix(raw, "farm:")
+	} else if strings.HasPrefix(raw, "field:") {
+		prov = ProvenanceField
+		raw = strings.TrimPrefix(raw, "field:")
+	} else if strings.HasPrefix(raw, "[farm]") {
+		prov = ProvenanceFarm
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "[farm]"))
+	} else if strings.HasPrefix(raw, "[field]") {
+		prov = ProvenanceField
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "[field]"))
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", prov
+	}
+	fields := strings.Fields(raw)
+	argv := append([]string{tool}, fields...)
+	parsed := ParseCLICommand(argv, env)
+	return parsed.Subcommand, parsed.ArgsPattern, prov
+}
+
+// MatchesExactCoordinate reports whether candidate observation matches the target coordinate's
+// tool, subcommand and argument pattern.
+func MatchesExactCoordinate(target, candidate CLIExperienceCoordinate) bool {
+	t := target.Canonical()
+	c := candidate.Canonical()
+	if t.Tool != "" && c.Tool != t.Tool {
+		return false
+	}
+	if t.Subcommand != c.Subcommand {
+		return false
+	}
+	if t.ArgsPattern != c.ArgsPattern {
+		return false
+	}
+	return true
+}
+
 // DetectExperienceBoundaries detects behavioral divergence across version or OS
 // dimensions where a command transitions between PASS and FAIL.
 func DetectExperienceBoundaries(observations []CLIExperienceObservation) []ExperienceBoundary {
 	var boundaries []ExperienceBoundary
 
-	// Group by Tool + Subcommand + OS to find version boundaries
+	// Group by Tool + Subcommand + ArgsPattern + OS to find version boundaries
 	type versionGroupKey struct {
-		Tool       string
-		Subcommand string
-		OS         string
+		Tool        string
+		Subcommand  string
+		ArgsPattern string
+		OS          string
 	}
 	versionBuckets := map[versionGroupKey][]CLIExperienceObservation{}
 
 	for _, o := range observations {
 		if o.Coordinate.ToolVersion != "" {
 			k := versionGroupKey{
-				Tool:       o.Coordinate.Tool,
-				Subcommand: o.Coordinate.Subcommand,
-				OS:         o.Coordinate.Environment.OS,
+				Tool:        o.Coordinate.Tool,
+				Subcommand:  o.Coordinate.Subcommand,
+				ArgsPattern: o.Coordinate.ArgsPattern,
+				OS:          o.Coordinate.Environment.OS,
 			}
 			versionBuckets[k] = append(versionBuckets[k], o)
 		}
@@ -528,27 +653,77 @@ func DetectExperienceBoundaries(observations []CLIExperienceObservation) []Exper
 		if len(bucket) < 2 {
 			continue
 		}
-		// Sort observations by version
-		sort.Slice(bucket, func(i, j int) bool {
-			return CompareVersions(bucket[i].Coordinate.ToolVersion, bucket[j].Coordinate.ToolVersion) < 0
+
+		// 1. Group observations by exact ToolVersion
+		type versionOutcome struct {
+			version     string
+			hasPass     bool
+			hasFail     bool
+			failSummary string
+		}
+		byVersion := map[string]*versionOutcome{}
+		for _, o := range bucket {
+			ver := o.Coordinate.ToolVersion
+			vo, exists := byVersion[ver]
+			if !exists {
+				vo = &versionOutcome{version: ver}
+				byVersion[ver] = vo
+			}
+			if o.Result == ResultPass {
+				vo.hasPass = true
+			} else if o.Result == ResultFail {
+				vo.hasFail = true
+				if vo.failSummary == "" && o.ErrorSummary != "" {
+					vo.failSummary = o.ErrorSummary
+				}
+			}
+		}
+
+		if len(byVersion) < 2 {
+			continue
+		}
+
+		// 2. Sort distinct versions in ascending version order
+		distinctVersions := make([]*versionOutcome, 0, len(byVersion))
+		for _, vo := range byVersion {
+			distinctVersions = append(distinctVersions, vo)
+		}
+		sort.Slice(distinctVersions, func(i, j int) bool {
+			return CompareVersions(distinctVersions[i].version, distinctVersions[j].version) < 0
 		})
 
-		for i := 0; i < len(bucket)-1; i++ {
-			curr := bucket[i]
-			next := bucket[i+1]
-			if curr.Result != next.Result && curr.Coordinate.ToolVersion != next.Coordinate.ToolVersion {
+		// 3. Compare adjacent distinct versions
+		for i := 0; i < len(distinctVersions)-1; i++ {
+			curr := distinctVersions[i]
+			next := distinctVersions[i+1]
+
+			currVerdict := ""
+			if curr.hasPass && !curr.hasFail {
+				currVerdict = string(ResultPass)
+			} else if curr.hasFail && !curr.hasPass {
+				currVerdict = string(ResultFail)
+			}
+
+			nextVerdict := ""
+			if next.hasPass && !next.hasFail {
+				nextVerdict = string(ResultPass)
+			} else if next.hasFail && !next.hasPass {
+				nextVerdict = string(ResultFail)
+			}
+
+			if currVerdict != "" && nextVerdict != "" && currVerdict != nextVerdict {
 				expl := fmt.Sprintf("%s was %s at %s, changed to %s at %s",
-					curr.Coordinate.Tool, curr.Result, curr.Coordinate.ToolVersion,
-					next.Result, next.Coordinate.ToolVersion)
-				if next.Result == ResultFail && next.ErrorSummary != "" {
-					expl += fmt.Sprintf(" (%s)", next.ErrorSummary)
+					bucket[0].Coordinate.Tool, currVerdict, curr.version,
+					nextVerdict, next.version)
+				if nextVerdict == string(ResultFail) && next.failSummary != "" {
+					expl += fmt.Sprintf(" (%s)", next.failSummary)
 				}
 				boundaries = append(boundaries, ExperienceBoundary{
 					Axis:           "version",
-					TransitionFrom: curr.Coordinate.ToolVersion,
-					TransitionTo:   next.Coordinate.ToolVersion,
-					FromVerdict:    curr.Result,
-					ToVerdict:      next.Result,
+					TransitionFrom: curr.version,
+					TransitionTo:   next.version,
+					FromVerdict:    Result(currVerdict),
+					ToVerdict:      Result(nextVerdict),
 					Explanation:    expl,
 				})
 			}
@@ -629,9 +804,18 @@ func RankExperienceObservations(target CLIExperienceCoordinate, observations []C
 // - Surfaces detected version/environment boundaries
 func BuildExperienceSummary(target CLIExperienceCoordinate, observations []CLIExperienceObservation) CLIExperienceSummary {
 	canon := target.Canonical()
-	compressed := CompressExperienceObservations(observations)
-	ranked := RankExperienceObservations(canon, compressed)
-	boundaries := DetectExperienceBoundaries(compressed)
+
+	// 1. Detect boundaries on command-coordinate matches (tool, subcommand, args) across versions
+	var boundaryCandidates []CLIExperienceObservation
+	for _, o := range observations {
+		if o.Coordinate.Tool == canon.Tool &&
+			o.Coordinate.Subcommand == canon.Subcommand &&
+			o.Coordinate.ArgsPattern == canon.ArgsPattern {
+			boundaryCandidates = append(boundaryCandidates, o)
+		}
+	}
+	compressedForBoundaries := CompressExperienceObservations(boundaryCandidates)
+	boundaries := DetectExperienceBoundaries(compressedForBoundaries)
 
 	summary := CLIExperienceSummary{
 		Coordinate: canon,
@@ -639,6 +823,17 @@ func BuildExperienceSummary(target CLIExperienceCoordinate, observations []CLIEx
 		Quality:    "UNOBSERVED",
 		Boundaries: boundaries,
 	}
+
+	// 2. Restrict recall to the exact requested coordinate (unrelated subcommands and args excluded)
+	var relevant []CLIExperienceObservation
+	for _, o := range observations {
+		if MatchesExactCoordinate(canon, o.Coordinate) {
+			relevant = append(relevant, o)
+		}
+	}
+
+	compressed := CompressExperienceObservations(relevant)
+	ranked := RankExperienceObservations(canon, compressed)
 
 	if len(ranked) == 0 {
 		return summary
