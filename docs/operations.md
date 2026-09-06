@@ -51,7 +51,8 @@ production eligibility job reads that same-target evidence before it can reach
 the production Environment. Auditor `MergeVerdict=pass`,
 `requires_human_decision=no`, and a `safe` or `additive-migration` side effect
 class are still required. The dispatch also names the currently served
-known-good SHA. The workflow rejects drift between that SHA and the host before
+known-good SHA and the target-specific GitHub tracking issue (such as #213)
+receiving the run evidence. The workflow rejects drift between that SHA and the host before
 changing anything, and `codesamplex-production` concurrency serializes all
 rollouts.
 
@@ -126,7 +127,7 @@ promoted to a modern fingerprint. Read a zero there as "no modern producer has
 failed yet", and raise it by shipping a producer, not by rebuilding.
 
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
-target and previous SHA, image digest, migration version, health/smoke result,
+tracking issue, target and previous SHA, image digest, migration version, health/smoke result,
 the served `/version` revision, before/after invariants, and rollback outcome.
 `servedRevision` reads `unavailable` for a build older than `/version`, which
 is what the pre-deploy read of the outgoing server reports; the post-deploy

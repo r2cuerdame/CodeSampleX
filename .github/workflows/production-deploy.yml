@@ -27,8 +27,8 @@ on:
         required: true
         type: choice
         options: [safe, additive-migration, manual]
-      linear_issue:
-        description: Linear issue receiving the run evidence
+      tracking_issue:
+        description: Canonical GitHub tracking issue receiving the run evidence (e.g. #213 or 213)
         required: true
         type: string
 
@@ -36,6 +36,7 @@ permissions:
   contents: read
   checks: read
   actions: read
+  issues: read
 
 concurrency:
   group: codesamplex-production
@@ -110,6 +111,33 @@ jobs:
           fi
           echo "Release/farm evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${release_run}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Require target-specific GitHub tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
+        run: |
+          set -euo pipefail
+          issue_number=$(echo "$TRACKING_ISSUE" | sed -E 's/.*\/issues\/([0-9]+)/\1/; s/^#//')
+          if ! [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::tracking issue '$TRACKING_ISSUE' must be a valid GitHub issue reference (e.g. #213 or 213)"
+            exit 1
+          fi
+          issue_content=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}" \
+            --jq '(.title // "") + "\n" + (.body // "")')
+          issue_comments=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}/comments" \
+            --jq '.[].body' 2>/dev/null || true)
+          all_content="$issue_content"$'\n'"$issue_comments"
+          if ! echo "$all_content" | grep -F -q "$TARGET_SHA"; then
+            echo "::error::tracking issue #${issue_number} does not reference target commit $TARGET_SHA"
+            exit 1
+          fi
+          echo "Tracking issue evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${issue_number}" >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Roll out production
     needs: eligibility
@@ -136,13 +164,14 @@ jobs:
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
-          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
         run: |
           @{
             schemaVersion = 1
             workflowRunId = "${{ github.run_id }}"
             workflowRunUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            linearIssue = $env:LINEAR_ISSUE
+            trackingIssue = $env:TRACKING_ISSUE
+            linearIssue = $env:TRACKING_ISSUE
             targetSha = $env:TARGET_SHA
             previousProductionSha = $env:PREVIOUS_SHA
             conclusion = "failure"
@@ -178,7 +207,7 @@ jobs:
           PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
-          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
           ./deploy/lightsail/deploy-production.ps1 `
@@ -188,7 +217,7 @@ jobs:
             -KnownHostsPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/known_hosts") `
             -ExpectedRevision $env:TARGET_SHA `
             -ExpectedPreviousRevision $env:PREVIOUS_SHA `
-            -LinearIssue $env:LINEAR_ISSUE `
+            -TrackingIssue $env:TRACKING_ISSUE `
             -EvidencePath (Join-Path $env:GITHUB_WORKSPACE "production-deploy-evidence.json")
 
       - name: Remove production SSH material

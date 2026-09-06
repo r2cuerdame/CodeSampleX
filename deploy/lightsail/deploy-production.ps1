@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string]$KnownHostsPath,
     [Parameter(Mandatory)][string]$ExpectedRevision,
     [Parameter(Mandatory)][string]$ExpectedPreviousRevision,
-    [Parameter(Mandatory)][string]$LinearIssue,
+    [Alias("LinearIssue")]
+    [Parameter(Mandatory)][string]$TrackingIssue,
     [Parameter(Mandatory)][string]$EvidencePath,
     [string]$User = "ubuntu"
 )
@@ -17,7 +18,9 @@ $ssh = (Get-Command ssh -ErrorAction Stop).Source
 foreach ($sha in @($ExpectedRevision, $ExpectedPreviousRevision)) {
     if ($sha -notmatch '^[0-9a-f]{40}$') { throw "production revisions must be lowercase immutable SHAs" }
 }
-if ($LinearIssue -notmatch '^[A-Z][A-Z0-9]+-[0-9]+$') { throw "invalid Linear issue identifier" }
+if ($TrackingIssue -notmatch '^(?:#?[1-9][0-9]*|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*|[A-Z][A-Z0-9]+-[0-9]+)$') {
+    throw "invalid tracking issue identifier"
+}
 foreach ($path in @($KeyPath, $KnownHostsPath, $collector)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required production deploy file is missing" }
 }
@@ -88,7 +91,8 @@ $evidence = @{
     workflowRunUrl = if ($env:GITHUB_SERVER_URL -and $env:GITHUB_REPOSITORY -and $env:GITHUB_RUN_ID) {
         "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions/runs/$($env:GITHUB_RUN_ID)"
     } else { "" }
-    linearIssue = $LinearIssue
+    trackingIssue = $TrackingIssue
+    linearIssue = $TrackingIssue
     targetSha = $ExpectedRevision
     previousProductionSha = $ExpectedPreviousRevision
     conclusion = "failure"
