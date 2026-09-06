@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -215,7 +216,6 @@ func TestTheIssuePagePreservesBoundariesFromFullHistoryWhenWindowIsCapped(t *tes
 	mustNotContain(t, body, `data-pass="2.17.0" data-fail="2.0.0"`)
 }
 
-
 // A release nothing measured must not be presented as a passing one.
 func TestTheIssuePageKeepsAnUnmeasuredReleaseUnmeasured(t *testing.T) {
 	mux, f := newTestMux(t, nil)
@@ -294,4 +294,75 @@ func TestAnIssueWithNoReleaseDrawsNoReleaseAxis(t *testing.T) {
 	body := get(t, mux, "/npm/liby?issue="+id).Body.String()
 	mustNotContain(t, body, `class="issue-release"`)
 	mustContain(t, body, `id="issue-gaps"`)
+}
+
+// A FailureIssueDependencies read error must remain unread/unavailable evidence
+// and must never be converted into a known-empty tree through DependencyResolvedNone.
+func TestTheIssuePageKeepsDependencyReadErrorAsUnreadTree(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	f.failureIssueDepsErr = errors.New("simulated failure reading issue dependencies")
+	// Both releases have empty-resolution markers. An error must NOT allow these
+	// markers to turn into evidence of empty trees or "nothing moved".
+	f.resolvedNone["libx@1.2.0"] = true
+	f.resolvedNone["libx@1.3.0"] = true
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	body := get(t, mux, "/npm/libx?issue="+id).Body.String()
+	// Boundary tree must be marked unread.
+	mustContain(t, body, "One side of this boundary has no resolved dependency tree")
+	// Must NOT report "no dependency differences" as if the data were verified.
+	mustNotContain(t, body, "No dependency differences identified across this boundary")
+	// The dependency matrix must not render from failed read data.
+	mustNotContain(t, body, `id="depmatrix"`)
+}
+
+// When boundaries are computed from full history across many alternating releases,
+// resolved-empty checks must be batched in a single operation rather than issuing
+// serial queries for each boundary endpoint.
+func TestTheIssuePageBatchesDependencyResolvedNoneAcrossBoundaries(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	// 10 alternating FAIL releases and 9 PASS releases (19 releases total, producing 18 boundaries).
+	all := []string{
+		"2.18.0", "2.17.0", "2.16.0", "2.15.0", "2.14.0", "2.13.0", "2.12.0", "2.11.0", "2.10.0",
+		"2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0", "2.4.0", "2.3.0", "2.2.0", "2.1.0", "2.0.0",
+	}
+	var affected []string
+	for i, v := range all {
+		if i%2 == 0 {
+			affected = append(affected, v)
+		} else {
+			f.snapshots[snapKey("pkg:npm/alt@"+v, "")] = `{"schemaVersion":1,"purl":"pkg:npm/alt@` + v + `",
+			  "rows":[{"byStage":{"PROJECT_TEST":{"pass":3,"fail":0}}}]}`
+		}
+	}
+	cluster := failureCluster{
+		Stage: "PROJECT_TEST", Fingerprint: "sha256:aaa11122233344455566677788899900",
+		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
+		EvidenceQuality: string(domain.EvidenceComplete), Count: 10, Versions: affected,
+	}
+	raw, err := json.Marshal(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clusters["npm|alt"] = []string{string(raw)}
+	f.versions["npm|alt"] = all
+	id := issueIDFor(t, []failureCluster{cluster}, cluster.Fingerprint)
+
+	// Reset counters before request.
+	f.dependencyResolvedNoneSingleCalls = 0
+	f.dependencyResolvedNoneBatchCalls = 0
+
+	rec := get(t, mux, "/npm/alt?issue="+id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	// Must perform exactly 1 batched lookup for all candidate releases and 0 serial single lookups.
+	if f.dependencyResolvedNoneBatchCalls != 1 {
+		t.Errorf("dependencyResolvedNoneBatchCalls = %d, want 1", f.dependencyResolvedNoneBatchCalls)
+	}
+	if f.dependencyResolvedNoneSingleCalls != 0 {
+		t.Errorf("dependencyResolvedNoneSingleCalls = %d, want 0", f.dependencyResolvedNoneSingleCalls)
+	}
 }

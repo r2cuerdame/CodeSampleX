@@ -32,8 +32,8 @@ type dependencyMatrixRow struct {
 	Href  string
 	Cells []dependencyMatrixCell
 	// Moves is true when this child resolved to more than one version across
-	// the releases below. It is the only thing on the page that points at a
-	// boundary, so it leads the table.
+	// the releases below, or transitioned between not_in_tree and a concrete version.
+	// It is the only thing on the page that points at a boundary, so it leads the table.
 	Moves bool
 }
 
@@ -50,9 +50,9 @@ type dependencyMatrix struct {
 	// Versions are the parent's releases, newest first.
 	Versions []string
 	Rows     []dependencyMatrixRow
-	// Moved is how many children resolved to more than one version, and
-	// Steady how many did not. Both are stated because a table of movers
-	// alone would read as though the whole tree changed.
+	// Moved is how many children resolved to more than one version (or moved into/out
+	// of an observed tree), and Steady how many did not. Both are stated because a
+	// table of movers alone would read as though the whole tree changed.
 	Moved  int
 	Steady int
 	// Truncated says rows were dropped at the cap. Steady still counts them:
@@ -105,6 +105,7 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge, emptyVersio
 		row := dependencyMatrixRow{Child: child, Href: pkgHref(ecosystem, child),
 			Cells: make([]dependencyMatrixCell, len(order))}
 		seen := map[string]bool{}
+		hasNotInTree := false
 		for i, v := range order {
 			cv := at[v]
 			if cv != "" {
@@ -119,6 +120,7 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge, emptyVersio
 					State: "not_in_tree",
 					Title: "Not declared in this release's observed tree",
 				}
+				hasNotInTree = true
 			} else {
 				row.Cells[i] = dependencyMatrixCell{
 					State: "unmeasured",
@@ -126,7 +128,7 @@ func buildDependencyMatrix(ecosystem string, edges []DependencyEdge, emptyVersio
 				}
 			}
 		}
-		row.Moves = len(seen) > 1
+		row.Moves = len(seen) > 1 || (len(seen) > 0 && hasNotInTree)
 		if row.Moves {
 			m.Moved++
 		} else {

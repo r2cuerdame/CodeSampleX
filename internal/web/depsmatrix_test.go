@@ -135,10 +135,49 @@ func TestTheMatrixIncludesExplicitEmptyReleases(t *testing.T) {
 	if len(m.Rows) != 1 || m.Rows[0].Child != "debug" {
 		t.Fatalf("rows = %+v, want row for debug", m.Rows)
 	}
+	if !m.Rows[0].Moves {
+		t.Errorf("row.Moves = false, want true for addition from empty tree")
+	}
+	if m.Moved != 1 || m.Steady != 0 {
+		t.Errorf("Moved = %d, Steady = %d, want 1 moved and 0 steady", m.Moved, m.Steady)
+	}
 	if m.Rows[0].Cells[0].State != "version" || m.Rows[0].Cells[0].Version != "4.4.1" {
 		t.Errorf("cell 0 = %+v, want resolved version 4.4.1", m.Rows[0].Cells[0])
 	}
 	if m.Rows[0].Cells[1].State != "not_in_tree" {
 		t.Errorf("cell 1 = %+v, want not_in_tree for empty release", m.Rows[0].Cells[1])
+	}
+}
+
+// A transition between an explicitly proven empty tree (not_in_tree) and a
+// concrete version is an addition or removal across releases and must be
+// counted and prioritized as a move.
+func TestTheMatrixCountsAdditionAndRemovalFromProvenEmptyTreeAsMove(t *testing.T) {
+	// Addition: 1.0.0 was proven empty, 1.1.0 added debug@4.4.1.
+	mAdd := buildDependencyMatrix("npm", []DependencyEdge{
+		{ParentName: "app", ParentVersion: "1.1.0", ChildName: "debug", ChildVersion: "4.4.1"},
+	}, "1.0.0")
+	if mAdd == nil {
+		t.Fatal("no matrix built for addition from empty tree")
+	}
+	if len(mAdd.Rows) != 1 || !mAdd.Rows[0].Moves {
+		t.Fatalf("addition row = %+v, want Moves=true", mAdd.Rows)
+	}
+	if mAdd.Moved != 1 || mAdd.Steady != 0 {
+		t.Errorf("mAdd: Moved=%d Steady=%d, want 1 moved and 0 steady", mAdd.Moved, mAdd.Steady)
+	}
+
+	// Removal: 1.0.0 had debug@4.4.1, 1.1.0 was proven empty.
+	mRem := buildDependencyMatrix("npm", []DependencyEdge{
+		{ParentName: "app", ParentVersion: "1.0.0", ChildName: "debug", ChildVersion: "4.4.1"},
+	}, "1.1.0")
+	if mRem == nil {
+		t.Fatal("no matrix built for removal to empty tree")
+	}
+	if len(mRem.Rows) != 1 || !mRem.Rows[0].Moves {
+		t.Fatalf("removal row = %+v, want Moves=true", mRem.Rows)
+	}
+	if mRem.Moved != 1 || mRem.Steady != 0 {
+		t.Errorf("mRem: Moved=%d Steady=%d, want 1 moved and 0 steady", mRem.Moved, mRem.Steady)
 	}
 }

@@ -40,14 +40,16 @@ type fakeStore struct {
 	issueClusters map[string][]string
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
-	dependencies   []DependencyEdge
-	sampleList     []SampleListItem
-	samplePackages map[string][]string
-	packageCodeErr error
-	derived        []DerivedFinding
-	// listSamplesCalls counts corpus reads, so a test can pin that the
-	// sitemap rebuilds once per freshness window rather than per request.
-	listSamplesCalls int
+	dependencies        []DependencyEdge
+	sampleList          []SampleListItem
+	samplePackages      map[string][]string
+	packageCodeErr      error
+	failureIssueDepsErr error
+	derived             []DerivedFinding
+	listSamplesCalls    int
+
+	dependencyResolvedNoneSingleCalls int
+	dependencyResolvedNoneBatchCalls  int
 }
 
 func snapKey(purl, symbol string) string { return purl + "\x00" + symbol }
@@ -537,6 +539,9 @@ func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyE
 }
 
 func (f *fakeStore) FailureIssueDependencies(context.Context, string, string, string) ([]DependencyEdge, error) {
+	if f.failureIssueDepsErr != nil {
+		return nil, f.failureIssueDepsErr
+	}
 	return f.dependencies, nil
 }
 
@@ -593,7 +598,19 @@ func (f *fakeStore) SampleSource(_ context.Context, id string) ([]SampleFile, er
 }
 
 func (f *fakeStore) DependencyResolvedNone(_ context.Context, _, name, version string) (bool, error) {
+	f.dependencyResolvedNoneSingleCalls++
 	return f.resolvedNone[name+"@"+version], nil
+}
+
+func (f *fakeStore) DependencyResolvedNoneBatch(_ context.Context, _, name string, versions []string) (map[string]bool, error) {
+	f.dependencyResolvedNoneBatchCalls++
+	out := make(map[string]bool, len(versions))
+	for _, v := range versions {
+		if f.resolvedNone[name+"@"+v] {
+			out[v] = true
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) DependencyParents(_ context.Context, _, name, version string) ([]DependencyEdge, error) {

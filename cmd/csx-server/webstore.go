@@ -1797,6 +1797,10 @@ func (w *webStore) DependencyResolvedNone(ctx context.Context, ecosystem, name, 
 	return w.s.DependencyResolvedNone(ctx, ecosystem, name, version)
 }
 
+func (w *webStore) DependencyResolvedNoneBatch(ctx context.Context, ecosystem, name string, versions []string) (map[string]bool, error) {
+	return w.s.DependencyResolvedNoneBatch(ctx, ecosystem, name, versions)
+}
+
 // SampleSource reads the artifact and returns its readable files.
 //
 // The blob is the same one /v1/samples/{id}/artifact serves, and the same

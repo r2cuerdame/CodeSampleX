@@ -699,6 +699,9 @@ type Store interface {
 	// release to declare nothing -- an answer, as opposed to a release nothing
 	// has read, which is a gap.
 	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	// DependencyResolvedNoneBatch reports, for a batch of versions of one package,
+	// which releases were measured to declare no dependencies at all.
+	DependencyResolvedNoneBatch(ctx context.Context, ecosystem, name string, versions []string) (map[string]bool, error)
 	// DependencyProvenNone reports whether a resolver read this release's own
 	// entry and found that it declares no dependencies. Distinct from "no
 	// edges recorded", which is also what an ecosystem with no scanner and a

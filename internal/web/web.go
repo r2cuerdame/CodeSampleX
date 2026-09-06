@@ -158,6 +158,9 @@ type Store interface {
 	// release to declare nothing. An answer, as opposed to a release nothing
 	// has read -- which is a gap, and must not render as the same blank.
 	DependencyResolvedNone(ctx context.Context, ecosystem, name, version string) (bool, error)
+	// DependencyResolvedNoneBatch reports which releases of one package were measured
+	// to declare no dependencies at all, checking all requested releases in one batch.
+	DependencyResolvedNoneBatch(ctx context.Context, ecosystem, name string, versions []string) (map[string]bool, error)
 	// PackageAssets reports, per package, how many of its releases this
 	// network has proven and how many have an answered dependency question.
 	//

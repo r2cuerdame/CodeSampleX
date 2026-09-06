@@ -237,6 +237,34 @@ func TestIntegrationDependencyAtlasParity(t *testing.T) {
 	}
 }
 
+func TestFakeDependencyResolvedNoneBatch(t *testing.T) {
+	f := NewFake()
+	ctx := context.Background()
+	leaf := domain.ObservationBatch{
+		SchemaVersion: 1, Epoch: "2026-08-31", AnonID: "anon-leaf", ProjectBucket: "p1",
+		Package: "pkg:npm/left-pad@1.3.0", Direct: true, DependsOnNone: true,
+		Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 1,
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64",
+			Runtime: "node", RuntimeVersion: "22", ModuleSystem: "esm",
+		},
+	}
+	if accepted, rejected, err := f.IngestBatches(ctx, []domain.ObservationBatch{leaf}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("ingest: accepted=%d rejected=%v err=%v", accepted, rejected, err)
+	}
+	batchVersions := []string{"1.3.0", "9.9.9", "0.0.1"}
+	got, err := f.DependencyResolvedNoneBatch(ctx, "npm", "left-pad", batchVersions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range batchVersions {
+		want := v == "1.3.0"
+		if got[v] != want {
+			t.Errorf("batch %s: got=%v want=%v", v, got[v], want)
+		}
+	}
+}
+
 // "Read and found empty" must answer the same in both stores.
 //
 // It is the one dependency fact that is an ANSWER rather than a count, and the
@@ -283,6 +311,23 @@ func TestIntegrationResolvedNoneParity(t *testing.T) {
 		}
 		if got != c.want || fake != c.want {
 			t.Errorf("%s@%s: pg=%v fake=%v want=%v", c.name, c.version, got, fake, c.want)
+		}
+	}
+
+	// Batch lookup parity across existing and missing versions.
+	batchVersions := []string{"1.3.0", "9.9.9", "0.0.1"}
+	pgBatch, err := pg.DependencyResolvedNoneBatch(ctx, "npm", "left-pad", batchVersions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeBatch, err := f.DependencyResolvedNoneBatch(ctx, "npm", "left-pad", batchVersions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range batchVersions {
+		want := v == "1.3.0"
+		if pgBatch[v] != want || fakeBatch[v] != want {
+			t.Errorf("batch %s: pg=%v fake=%v want=%v", v, pgBatch[v], fakeBatch[v], want)
 		}
 	}
 }

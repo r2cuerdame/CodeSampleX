@@ -270,3 +270,49 @@ func (f *Fake) DependencyResolvedNone(_ context.Context, ecosystem, name, versio
 	defer f.mu.Unlock()
 	return f.resolvedNone[[3]string{ecosystem, name, version}], nil
 }
+
+// DependencyResolvedNoneBatch reports, for a batch of versions of one package,
+// which releases were measured to declare no dependencies at all.
+//
+// Like DependencyResolvedNone, presence in dependency_resolution is a positive
+// measurement that a resolver read the tree and found no dependencies. Batching
+// allows full-history boundary discovery to check dozens of boundary endpoints
+// in a single pool acquisition instead of serial round-trips.
+func (p *PG) DependencyResolvedNoneBatch(ctx context.Context, ecosystem, name string, versions []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(versions))
+	if len(versions) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT version FROM dependency_resolution
+			 WHERE ecosystem = $1 AND name = $2 AND version = ANY($3)`,
+			ecosystem, name, versions)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				return err
+			}
+			out[v] = true
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// DependencyResolvedNoneBatch is the Fake's half.
+func (f *Fake) DependencyResolvedNoneBatch(_ context.Context, ecosystem, name string, versions []string) (map[string]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]bool, len(versions))
+	for _, v := range versions {
+		if f.resolvedNone[[3]string{ecosystem, name, v}] {
+			out[v] = true
+		}
+	}
+	return out, nil
+}

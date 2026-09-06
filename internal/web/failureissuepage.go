@@ -152,47 +152,92 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		boundaries = failureIssueBoundaries(releaseVersions, verdicts)
 	}
 	var edges []DependencyEdge
+	var depsErr error
 	if rows, err := s.d.Store.FailureIssueDependencies(r.Context(), eco, name, issue.Fingerprint); err == nil {
 		edges = rows
+	} else {
+		depsErr = err
 	}
 	treeKnown := map[string]bool{}
+	if depsErr == nil {
+		// Batch query resolved-empty status across boundaries and comparison window for
+		// any endpoint lacking concrete edges. This preserves full-history boundary discovery
+		// without performing serial database round-trips or holding connection pool slots.
+		candidateVersions := map[string]bool{}
+		for _, bd := range boundaries {
+			for _, v := range []string{bd.PassVersion, bd.FailVersion} {
+				if v != "" && len(resolvedChildren(edges, v)) == 0 {
+					candidateVersions[v] = true
+				}
+			}
+		}
+		for _, v := range window {
+			if v != "" && len(resolvedChildren(edges, v)) == 0 {
+				candidateVersions[v] = true
+			}
+		}
+		if len(candidateVersions) > 0 {
+			toQuery := make([]string, 0, len(candidateVersions))
+			for v := range candidateVersions {
+				toQuery = append(toQuery, v)
+			}
+			if batchMap, err := s.d.Store.DependencyResolvedNoneBatch(r.Context(), eco, name, toQuery); err == nil {
+				for v, resolvedNone := range batchMap {
+					if resolvedNone {
+						treeKnown[v] = true
+					}
+				}
+			}
+		}
+	}
 	knownTree := func(version string) bool {
-		if known, ok := treeKnown[version]; ok {
-			return known
+		// A FailureIssueDependencies read error must remain unread/unavailable evidence
+		// and must never be converted into a known-empty tree through DependencyResolvedNone.
+		if depsErr != nil || version == "" {
+			return false
 		}
-		known := len(resolvedChildren(edges, version)) > 0
-		if !known {
-			resolvedNone, err := s.d.Store.DependencyResolvedNone(r.Context(), eco, name, version)
-			known = err == nil && resolvedNone
+		if len(resolvedChildren(edges, version)) > 0 {
+			return true
 		}
-		treeKnown[version] = known
-		return known
+		return treeKnown[version]
 	}
 	for i := range boundaries {
 		bd := &boundaries[i]
 		bd.LowerHref = b.WithLang(versionHref(eco, name, bd.LowerVersion))
 		bd.HigherHref = b.WithLang(versionHref(eco, name, bd.HigherVersion))
 		passTreeKnown, failTreeKnown := knownTree(bd.PassVersion), knownTree(bd.FailVersion)
-		bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion,
-			passTreeKnown, failTreeKnown)
-		bd.TreeUnread = !passTreeKnown || !failTreeKnown
-		for j := range bd.Changed {
-			bd.Changed[j].Href = b.WithLang(bd.Changed[j].Href)
+		if depsErr != nil {
+			bd.TreeUnread = true
+			bd.Changed = nil
+		} else {
+			bd.Changed = failureIssueCausalEdges(eco, edges, bd.PassVersion, bd.FailVersion,
+				passTreeKnown, failTreeKnown)
+			bd.TreeUnread = !passTreeKnown || !failTreeKnown
+			for j := range bd.Changed {
+				bd.Changed[j].Href = b.WithLang(bd.Changed[j].Href)
+			}
 		}
 	}
 
 	var emptyBoundaryReleases []string
-	for _, bd := range boundaries {
-		for _, v := range []string{bd.PassVersion, bd.FailVersion} {
-			if v != "" && contains(window, v) && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+	if depsErr == nil {
+		for _, bd := range boundaries {
+			for _, v := range []string{bd.PassVersion, bd.FailVersion} {
+				if v != "" && contains(window, v) && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
+					emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
+				}
+			}
+		}
+		for _, v := range window {
+			if v != "" && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
 				emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
 			}
 		}
 	}
-	for _, v := range window {
-		if v != "" && knownTree(v) && len(resolvedChildren(edges, v)) == 0 {
-			emptyBoundaryReleases = appendMissing(emptyBoundaryReleases, v)
-		}
+
+	var depsMatrix *dependencyMatrix
+	if depsErr == nil {
+		depsMatrix = buildDependencyMatrix(eco, edgesForVersions(edges, window), emptyBoundaryReleases...)
 	}
 
 	s.render(w, "failureissue", http.StatusOK, failureIssuePageData{
@@ -203,7 +248,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		// The matrix is built from the edges of the releases in the window —
 		// the dependency versions AROUND the PASS/FAIL observations, which is
 		// the comparison the boundary above points at.
-		DepsMatrix:  buildDependencyMatrix(eco, edgesForVersions(edges, window), emptyBoundaryReleases...),
+		DepsMatrix:  depsMatrix,
 		Gaps:        failureIssueGaps(lang, issue, verdicts, boundaries),
 		Samples:     s.failureIssueSamples(r.Context(), eco, name, issue),
 		PackageHref: b.WithLang(pkgHref(eco, name)),
