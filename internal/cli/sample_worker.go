@@ -504,6 +504,12 @@ func sampleWorkerSubmit(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker submit: invalid server response")
 		return 1
 	}
+	acked, ackErr := recordWorkspaceSubmitAck(env.home, row.SampleID, base, result.Status, time.Now().UTC())
+	if ackErr != nil {
+		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker submit: warning: central draft accepted but workspace ack could not be recorded: %v\n", ackErr)
+	} else if acked == 0 {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker submit: warning: central draft accepted but no matching canonical workspace identity was found")
+	}
 	fmt.Fprintf(sampleWorkerStdout, "Private sample draft submitted: %s (%s, %s)\n", row.SampleID, row.Status, result.Status)
 	return 0
 }

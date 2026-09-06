@@ -9,11 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/samples"
 )
 
 func TestSampleWorkerRefreshUsesCompleteCLICommand(t *testing.T) {
@@ -197,6 +200,111 @@ func TestSampleWorkerSubmitUploadsLocalDraftWithoutPublishing(t *testing.T) {
 // CodeSampleX-Farm#14: with no --token on the command line, the session bearer
 // is taken from CSX_SESSION_TOKEN, so a worker script never has to place it in
 // argv. The flag still wins when both are present.
+
+func createCanonicalWorkerSample(t *testing.T, home string) (string, string) {
+	t.Helper()
+	source := sampleFixtureDir(t, nil)
+	base := samples.WorkspaceBase(home)
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "sample-worker-submit-test")
+	if err := os.Rename(source, dir); err != nil {
+		t.Fatal(err)
+	}
+	out, errBuf := captureSampleIO(t, "")
+	if code := Main([]string{"sample", "create", dir}); code != 0 {
+		t.Fatalf("sample create exited %d\nstdout: %s\nstderr: %s", code, out, errBuf)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, workspaceIdentityFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity workspaceIdentity
+	if err := json.Unmarshal(raw, &identity); err != nil {
+		t.Fatal(err)
+	}
+	return identity.SampleID, dir
+}
+
+func readWorkspaceIdentityForTest(t *testing.T, dir string) workspaceIdentity {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, workspaceIdentityFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity workspaceIdentity
+	if err := json.Unmarshal(raw, &identity); err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+func TestSampleWorkerSubmitRecordsCentralAckOnlyAfterValidatedAcceptance(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+	sampleID, dir := createCanonicalWorkerSample(t, home)
+	const token = "csx_author_v1_ack-test-only"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"sampleId":%q,"status":"PRIVATE_DRAFT"}`, sampleID)
+	}))
+	defer srv.Close()
+
+	oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
+	t.Cleanup(func() { sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr = oldClient, oldOut, oldErr })
+	sampleWorkerClient = srv.Client()
+	var out, stderr bytes.Buffer
+	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+	if code := sampleWorkerMain(context.Background(), []string{"submit", sampleID, "--server", srv.URL, "--token", token}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+	}
+
+	identity := readWorkspaceIdentityForTest(t, dir)
+	if identity.SubmitAck == nil {
+		t.Fatal("central draft was accepted but workspace has no submitAck")
+	}
+	if identity.SubmitAck.Server != srv.URL || identity.SubmitAck.Status != "PRIVATE_DRAFT" || identity.SubmitAck.AcceptedAt == "" {
+		t.Fatalf("submitAck = %+v", identity.SubmitAck)
+	}
+}
+
+func TestSampleWorkerSubmitDoesNotAckRejectedOrMismatchedResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   func(string) string
+	}{
+		{name: "server rejection", status: http.StatusInternalServerError, body: func(id string) string { return `{"error":"no"}` }},
+		{name: "sample id mismatch", status: http.StatusOK, body: func(id string) string { return `{"sampleId":"sha256:someone-else","status":"PRIVATE_DRAFT"}` }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CSX_HOME", home)
+			sampleID, dir := createCanonicalWorkerSample(t, home)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body(sampleID))
+			}))
+			defer srv.Close()
+
+			oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
+			t.Cleanup(func() { sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr = oldClient, oldOut, oldErr })
+			sampleWorkerClient = srv.Client()
+			var out, stderr bytes.Buffer
+			sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+			if code := sampleWorkerMain(context.Background(), []string{"submit", sampleID, "--server", srv.URL, "--token", "csx_author_v1_reject-test"}); code == 0 {
+				t.Fatalf("submit unexpectedly succeeded: stdout=%s stderr=%s", out.String(), stderr.String())
+			}
+			if identity := readWorkspaceIdentityForTest(t, dir); identity.SubmitAck != nil {
+				t.Fatalf("failed submit wrote ack: %+v", identity.SubmitAck)
+			}
+		})
+	}
+}
+
 func TestSampleWorkerReadsTokenFromEnvironment(t *testing.T) {
 	const envToken = "csx_author_v1_env_only"
 	var gotAuth string
