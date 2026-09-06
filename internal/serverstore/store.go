@@ -663,6 +663,10 @@ type Store interface {
 	// upgrade a library and its dependencies move under you, and the one that
 	// moved is usually the one that broke the build.
 	Dependencies(ctx context.Context, ecosystem, name string) ([]DependencyEdge, error)
+	// FailureIssueDependencies keeps the ordinary dependency graph but marks
+	// an edge SameReceipt only when its project/epoch ledger also contributed
+	// the exact failing fingerprint named by the issue.
+	FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error)
 	// DependencySubjects browses the graph from the CHILD's side: one ranked,
 	// searchable page of releases other packages resolved onto, plus how many
 	// match in total. Dependencies answers "what did this pull", which requires

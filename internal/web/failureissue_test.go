@@ -12,12 +12,16 @@ func exitStatus(n int) *int { return &n }
 // issueCluster is the shape the aggregator reads: a modern, fingerprinted
 // failure recorded against one release in one environment.
 func issueCluster(fp, version, env string, count int64) failureCluster {
+	exact := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: env, Arch: "x64"}
 	return failureCluster{
 		Stage: "PROJECT_TEST", Fingerprint: fp,
 		TerminationKind: string(domain.TerminationExit), ExitCode: exitStatus(1),
 		EvidenceQuality: string(domain.EvidenceComplete),
 		Count:           count, Versions: []string{version},
 		EnvSummary: map[string]string{"os": env},
+		EnvVariants: []domain.FailureEnvironmentVariant{{
+			Environment: exact, Summary: map[string]string{"os": env}, Count: count,
+		}},
 	}
 }
 
@@ -61,6 +65,41 @@ func TestOneIssueSpansItsReleasesAndEnvironments(t *testing.T) {
 	}
 	if issue.Count != 13 {
 		t.Errorf("count = %d, want the two environments added", issue.Count)
+	}
+}
+
+// EnvSummary is only the intersection shared by every environment in a
+// cluster. The issue must use the exact variants or Linux and Windows collapse
+// into one blank row; a symbol copy with a narrower version list must not add
+// the same Linux observations a second time.
+func TestIssueEnvironmentsUseExactVariantsAndDeduplicateGrains(t *testing.T) {
+	linux := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "x64"}
+	windows := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"}
+	pkg := issueCluster("sha256:aaa", "1.12.0", "", 12)
+	pkg.Versions = []string{"1.12.0", "1.11.0"}
+	pkg.EnvSummary = map[string]string{}
+	pkg.EnvVariants = []domain.FailureEnvironmentVariant{
+		{Environment: linux, Summary: map[string]string{"os": "linux", "arch": "x64"}, Count: 5,
+			FirstSeen: "2026-08-01T00:00:00Z", LastSeen: "2026-08-03T00:00:00Z"},
+		{Environment: windows, Summary: map[string]string{"os": "windows", "arch": "x64"}, Count: 7,
+			FirstSeen: "2026-08-02T00:00:00Z", LastSeen: "2026-08-04T00:00:00Z"},
+	}
+	symbol := pkg
+	symbol.Symbol = "axios.post"
+	symbol.Versions = []string{"1.12.0"}
+	symbol.Count = 5
+	symbol.EnvVariants = pkg.EnvVariants[:1]
+
+	issue := buildFailureIssues([]failureCluster{pkg, symbol})[0]
+	if issue.Count != 12 {
+		t.Errorf("count = %d, want exact buckets 5+7 without the symbol copy", issue.Count)
+	}
+	if len(issue.Environments) != 2 {
+		t.Fatalf("environments = %+v, want the two exact variants", issue.Environments)
+	}
+	if issue.Environments[0].Summary != "arch=x64 · os=windows" || issue.Environments[0].Count != 7 ||
+		issue.Environments[0].FirstSeen != "2026-08-02" || issue.Environments[0].LastSeen != "2026-08-04" {
+		t.Errorf("windows environment = %+v, want its exact count and dates", issue.Environments[0])
 	}
 }
 
@@ -239,6 +278,28 @@ func TestTheVersionWindowIsBounded(t *testing.T) {
 	all := []string{"1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0"}
 	if got := failureIssueVersionWindow(all, []string{"1.4.0"}, 4, 3); len(got) != 3 {
 		t.Errorf("window = %v, want it capped at 3", got)
+	}
+}
+
+// When failures alone exceed the cap, filling the window with the newest
+// failures hides an immediately adjacent PASS at the oldest edge and erases a
+// real start boundary. Edge failures and their neighbours win that tie.
+func TestTheCappedWindowPreservesBoundaryNeighbours(t *testing.T) {
+	all := []string{"2.10.0", "2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0",
+		"2.4.0", "2.3.0", "2.2.0", "2.1.0", "1.9.0"}
+	affected := append([]string(nil), all[:10]...)
+	got := failureIssueVersionWindow(all, affected, 3, 9)
+	if len(got) != 9 {
+		t.Fatalf("window = %v, want the nine-read cap", got)
+	}
+	if !contains(got, "2.1.0") || !contains(got, "1.9.0") {
+		t.Fatalf("window = %v, want the oldest failure and its adjacent PASS", got)
+	}
+	verdicts := failureIssueVerdicts(failureIssue{Versions: affected}, got,
+		map[string]int64{"1.9.0": 1})
+	if boundaries := failureIssueBoundaries(got, verdicts); len(boundaries) != 1 ||
+		boundaries[0].PassVersion != "1.9.0" || boundaries[0].FailVersion != "2.1.0" {
+		t.Errorf("boundaries = %+v, want preserved 1.9.0 → 2.1.0 start", boundaries)
 	}
 }
 

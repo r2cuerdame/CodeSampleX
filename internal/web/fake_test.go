@@ -34,6 +34,9 @@ type fakeStore struct {
 	seeders      map[string][]SampleListItem
 	packages     []PackageHit
 	clusters     map[string][]string // eco+"|"+name → cluster JSON
+	// issueClusters can expose the complete issue ledger separately from a
+	// deliberately capped package-page fixture.
+	issueClusters map[string][]string
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
 	dependencies   []DependencyEdge
@@ -314,6 +317,14 @@ func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) (
 	return rows, len(rows), nil
 }
 
+func (f *fakeStore) FailureIssueClusters(_ context.Context, ecosystem, name string) ([]string, error) {
+	key := ecosystem + "|" + name
+	if rows, ok := f.issueClusters[key]; ok {
+		return rows, nil
+	}
+	return f.clusters[key], nil
+}
+
 // newFakeStore builds the shared fixture: axios with a context-first
 // snapshot (HIGH / ELEVATED FAILURE / UNKNOWN no-evidence rows), a golang
 // multi-segment package, one sample with a receipt, and one seeder.
@@ -345,7 +356,8 @@ func newFakeStore() *fakeStore {
 			{Ecosystem: "golang", Name: "github.com/a/b", LatestVersion: "v1.2.0", Symbols: 1, EvidenceCount: 12,
 				OperatingSystems: []string{"linux"}, Runtimes: []string{"go"}, EvidenceBases: []string{"observed"}},
 		},
-		clusters: map[string][]string{},
+		clusters:      map[string][]string{},
+		issueClusters: map[string][]string{},
 	}
 
 	symbolSnapshot := `{
@@ -493,6 +505,10 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
+	return f.dependencies, nil
+}
+
+func (f *fakeStore) FailureIssueDependencies(context.Context, string, string, string) ([]DependencyEdge, error) {
 	return f.dependencies, nil
 }
 

@@ -1750,6 +1750,51 @@ func (f *Fake) Dependencies(_ context.Context, ecosystem, name string) ([]Depend
 	return out, nil
 }
 
+// FailureIssueDependencies mirrors PostgreSQL's project/epoch join against
+// the retained dedup ledger. Keeping this derivation in the Fake makes the
+// evidence label test the ingest contract rather than a hand-set boolean.
+func (f *Fake) FailureIssueDependencies(_ context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	failingProjectDays := map[string]bool{}
+	if fingerprint != "" {
+		for agg, epochs := range f.merge.projectBuckets {
+			p, err := domain.ParsePURL(agg.PURL)
+			if err != nil || p.Ecosystem != ecosystem || p.Name != name ||
+				agg.Result != string(domain.ResultFail) || agg.ErrorFP != fingerprint {
+				continue
+			}
+			for epoch, buckets := range epochs {
+				for bucket := range buckets {
+					if bucket != "" {
+						failingProjectDays[bucket+"\x1f"+epoch] = true
+					}
+				}
+			}
+		}
+	}
+	var out []DependencyEdge
+	for k, projectDays := range f.edges {
+		if k.ecosystem != ecosystem || k.parentName != name {
+			continue
+		}
+		e := DependencyEdge{
+			ParentName: k.parentName, ParentVersion: k.parentVersion,
+			ChildName: k.childName, ChildVersion: k.childVersion,
+			Projects: len(projectDays),
+		}
+		for projectDay := range projectDays {
+			if failingProjectDays[projectDay] {
+				e.SameReceipt, e.Outcome = true, "fail"
+				break
+			}
+		}
+		out = append(out, e)
+	}
+	sortShippedWith(out)
+	return out, nil
+}
+
 // isRunStage reports whether a stage records something being exercised, as
 // opposed to merely being present. It is the same split the compatibility
 // grid draws between a pass rate and a usage count.

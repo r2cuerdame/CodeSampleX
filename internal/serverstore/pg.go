@@ -1866,6 +1866,55 @@ func (p *PG) Dependencies(ctx context.Context, ecosystem, name string) ([]Depend
 	return out, nil
 }
 
+// FailureIssueDependencies annotates the parent-side graph with the only
+// causal evidence the Failure Issue is allowed to claim: the same anonymous
+// project and epoch contributed both this exact failure fingerprint and this
+// resolved edge. The retained dedup ledger is the receipt correlation; a
+// package-level failure in some other project is deliberately insufficient.
+func (p *PG) FailureIssueDependencies(ctx context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error) {
+	var out []DependencyEdge
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			WITH exact_failures AS (
+				SELECT DISTINCT p.ecosystem, p.name, p.version, d.bucket, d.epoch
+				  FROM packages p
+				  JOIN evidence_agg e ON e.purl = p.purl
+				  JOIN evidence_dedup d ON d.agg_id = e.id AND d.bucket_kind = 'project'
+				 WHERE p.ecosystem = $1 AND p.name = $2
+				   AND e.result = 'FAIL' AND e.error_fp = $3
+			)
+			SELECT de.parent_name, de.parent_version, de.child_name, de.child_version,
+			       count(*) AS projects, bool_or(f.bucket IS NOT NULL) AS same_receipt
+			  FROM dependency_edge de
+			  LEFT JOIN exact_failures f
+			    ON f.ecosystem = de.ecosystem AND f.name = de.parent_name
+			   AND f.version = de.parent_version AND f.bucket = de.bucket AND f.epoch = de.epoch
+			 WHERE de.ecosystem = $1 AND de.parent_name = $2
+			 GROUP BY 1, 2, 3, 4`, ecosystem, name, fingerprint)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e DependencyEdge
+			if err := rows.Scan(&e.ParentName, &e.ParentVersion, &e.ChildName, &e.ChildVersion,
+				&e.Projects, &e.SameReceipt); err != nil {
+				return err
+			}
+			if e.SameReceipt {
+				e.Outcome = "fail"
+			}
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	sortShippedWith(out)
+	return out, nil
+}
+
 // StrandedDrafts lists quarantined authoring drafts that have no verification
 // left to wait for.
 //

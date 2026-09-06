@@ -82,7 +82,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		s.notFound(w, r, lang)
 		return
 	}
-	raw, _, err := s.d.Store.FailureClusters(r.Context(), eco, name)
+	raw, err := s.d.Store.FailureIssueClusters(r.Context(), eco, name)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
@@ -133,7 +133,7 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 
 	boundaries := failureIssueBoundaries(window, verdicts)
 	var edges []DependencyEdge
-	if rows, err := s.d.Store.Dependencies(r.Context(), eco, name); err == nil {
+	if rows, err := s.d.Store.FailureIssueDependencies(r.Context(), eco, name, issue.Fingerprint); err == nil {
 		edges = rows
 	}
 	for i := range boundaries {

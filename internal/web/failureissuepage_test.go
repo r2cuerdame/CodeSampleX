@@ -126,6 +126,27 @@ func TestAnUnknownIssueIsNotFound(t *testing.T) {
 	}
 }
 
+// The package page is intentionally capped, but an issue address is durable.
+// Resolving it through the display page made a valid URL turn into a 404 as
+// higher-ranked clusters pushed its row past the cap.
+func TestIssueLookupUsesTheCompleteClusterLedger(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	key := "npm|libx"
+	complete := append([]string(nil), f.clusters[key]...)
+	// Simulate the display page returning only the other failure while the
+	// explicit issue read still has the complete package ledger.
+	f.clusters[key] = complete[1:]
+	f.issueClusters[key] = complete
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	rec := get(t, mux, "/npm/libx?issue="+id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the issue beyond the display cap to resolve", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), "expected 2 arguments, got 1")
+}
+
 // The issue view is a view OF the package page, so it declares the package
 // page as its canonical rather than adding a second indexable address for the
 // same coordinate.
