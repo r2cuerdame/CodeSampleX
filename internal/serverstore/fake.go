@@ -379,6 +379,42 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 	return js, ok, nil
 }
 
+func (f *Fake) PackageStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]int64{}
+	if stage == "" {
+		return out, nil
+	}
+	for key, raw := range f.snapshots {
+		if key[1] != "" {
+			continue
+		}
+		p, err := domain.ParsePURL(key[0])
+		if err != nil || p.Ecosystem != ecosystem || p.Name != name {
+			continue
+		}
+		var doc struct {
+			Rows []struct {
+				ByStage map[string]struct {
+					Pass int64 `json:"pass"`
+				} `json:"byStage"`
+			} `json:"rows"`
+		}
+		if json.Unmarshal([]byte(raw), &doc) != nil {
+			continue
+		}
+		var pass int64
+		for _, row := range doc.Rows {
+			pass += row.ByStage[stage].Pass
+		}
+		if pass > 0 {
+			out[p.Version] = pass
+		}
+	}
+	return out, nil
+}
+
 func (f *Fake) GetSnapshotsForPURL(_ context.Context, purl string) ([]SnapshotRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

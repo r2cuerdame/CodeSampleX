@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	// failureIssueVersionSpan is how far either side of an affected release
-	// the page looks for a boundary. A boundary can only sit next to a
-	// failure, so reading the whole release history buys nothing and costs a
-	// snapshot read per release.
+	// failureIssueVersionSpan is how much local release context the page keeps
+	// around each affected release. Known boundary releases are discovered by
+	// one complete package-scoped stage read and survive even beyond this span.
 	failureIssueVersionSpan = 3
 	// failureIssueMaxVersions bounds the snapshot reads one issue makes.
 	failureIssueMaxVersions = 9
@@ -101,11 +100,21 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 	// unmeasured with the failure nowhere on it — the opposite of what is
 	// known — so the axis is withheld and the gap section says why.
 	var window []string
+	stagePass := map[string]int64{}
 	if len(issue.Versions) > 0 {
-		window = failureIssueVersionWindow(versions, issue.Versions,
-			failureIssueVersionSpan, failureIssueMaxVersions)
+		if allPass, err := s.d.Store.FailureIssueStagePasses(r.Context(), eco, name, issue.Stage); err == nil {
+			stagePass = allPass
+			allVersions := sortedVersionsDesc(appendMissing(append([]string(nil), versions...), issue.Versions...))
+			allVerdicts := failureIssueVerdicts(issue, allVersions, stagePass)
+			window = failureIssueVersionWindow(versions, issue.Versions,
+				failureIssueBoundaryPasses(failureIssueBoundaries(allVersions, allVerdicts)),
+				failureIssueVersionSpan, failureIssueMaxVersions)
+		} else {
+			window = failureIssueVersionWindow(versions, issue.Versions, nil,
+				failureIssueVersionSpan, failureIssueMaxVersions)
+			stagePass = s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
+		}
 	}
-	stagePass := s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
 	verdicts := failureIssueVerdicts(issue, window, stagePass)
 
 	b := s.page(r, lang, i18n.T(lang, "issue.title", name, eco)+" — CodeSampleX",

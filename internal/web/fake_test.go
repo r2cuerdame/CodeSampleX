@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -62,6 +63,32 @@ func (f *fakeStore) SnapshotJSON(_ context.Context, purl, symbol string) (string
 
 func (f *fakeStore) PackageVersions(_ context.Context, ecosystem, name string) ([]string, error) {
 	return f.versions[ecosystem+"|"+name], nil
+}
+
+func (f *fakeStore) FailureIssueStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	out := map[string]int64{}
+	for key, raw := range f.snapshots {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) != 2 || parts[1] != "" {
+			continue
+		}
+		p, err := domain.ParsePURL(parts[0])
+		if err != nil || p.Ecosystem != ecosystem || p.Name != name {
+			continue
+		}
+		var doc snapshotDoc
+		if json.Unmarshal([]byte(raw), &doc) != nil {
+			continue
+		}
+		var pass int64
+		for _, row := range doc.Rows {
+			pass += row.ByStage[stage].Pass
+		}
+		if pass > 0 {
+			out[p.Version] = pass
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SymbolPackageSpread(_ context.Context, _ string, symbols []string) (map[string]int, error) {

@@ -298,7 +298,7 @@ func TestASameReceiptPassIsNotCausalEvidence(t *testing.T) {
 // releases and their neighbours, which is where a boundary can be.
 func TestTheVersionWindowKeepsTheNeighboursOfTheAffectedReleases(t *testing.T) {
 	all := []string{"2.0.0", "1.9.0", "1.8.0", "1.7.0", "1.6.0", "1.5.0"}
-	got := failureIssueVersionWindow(all, []string{"1.7.0"}, 1, 6)
+	got := failureIssueVersionWindow(all, []string{"1.7.0"}, nil, 1, 6)
 	if strings.Join(got, ",") != "1.8.0,1.7.0,1.6.0" {
 		t.Errorf("window = %v, want the affected release and one neighbour each side", got)
 	}
@@ -306,7 +306,7 @@ func TestTheVersionWindowKeepsTheNeighboursOfTheAffectedReleases(t *testing.T) {
 
 func TestTheVersionWindowIsBounded(t *testing.T) {
 	all := []string{"1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0"}
-	if got := failureIssueVersionWindow(all, []string{"1.4.0"}, 4, 3); len(got) != 3 {
+	if got := failureIssueVersionWindow(all, []string{"1.4.0"}, nil, 4, 3); len(got) != 3 {
 		t.Errorf("window = %v, want it capped at 3", got)
 	}
 }
@@ -318,7 +318,7 @@ func TestTheCappedWindowPreservesBoundaryNeighbours(t *testing.T) {
 	all := []string{"2.10.0", "2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0",
 		"2.4.0", "2.3.0", "2.2.0", "2.1.0", "1.9.0"}
 	affected := append([]string(nil), all[:10]...)
-	got := failureIssueVersionWindow(all, affected, 3, 9)
+	got := failureIssueVersionWindow(all, affected, []string{"1.9.0"}, 3, 9)
 	if len(got) != 9 {
 		t.Fatalf("window = %v, want the nine-read cap", got)
 	}
@@ -337,11 +337,29 @@ func TestTheCappedWindowRetainsEveryAffectedRecurrenceThatFits(t *testing.T) {
 	all := []string{"3.13.0", "3.12.0", "3.11.0", "3.10.0", "3.9.0", "3.8.0", "3.7.0",
 		"3.6.0", "3.5.0", "3.4.0", "3.3.0", "3.2.0", "3.1.0"}
 	affected := []string{"3.13.0", "3.7.0", "3.1.0"}
-	got := failureIssueVersionWindow(all, affected, 3, 9)
+	got := failureIssueVersionWindow(all, affected, nil, 3, 9)
 	for _, version := range affected {
 		if !contains(got, version) {
 			t.Errorf("window = %v, omitted affected recurrence %s even though all anchors fit", got, version)
 		}
+	}
+}
+
+func TestTheExactCapStillReservesAKnownBoundaryPass(t *testing.T) {
+	all := []string{"2.9.0", "2.8.0", "2.7.0", "2.6.0", "2.5.0", "2.4.0",
+		"2.3.0", "2.2.0", "2.1.0", "1.9.0"}
+	affected := append([]string(nil), all[:9]...)
+	got := failureIssueVersionWindow(all, affected, []string{"1.9.0"}, 3, 9)
+	if len(got) != 9 || !contains(got, "2.1.0") || !contains(got, "1.9.0") {
+		t.Fatalf("window = %v, want the nine-release cap to retain the edge failure and adjacent PASS", got)
+	}
+}
+
+func TestAKnownBoundaryPassSurvivesBeyondTheLocalSpan(t *testing.T) {
+	all := []string{"1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0"}
+	got := failureIssueVersionWindow(all, []string{"1.5.0"}, []string{"1.1.0"}, 3, 9)
+	if !contains(got, "1.1.0") {
+		t.Fatalf("window = %v, want the nearest known PASS even beyond the local span", got)
 	}
 }
 
@@ -350,7 +368,7 @@ func TestTheCappedWindowRetainsEveryAffectedRecurrenceThatFits(t *testing.T) {
 // be absent from the package's version list. Dropping it would take the FAIL
 // out of a page whose whole subject is that failure.
 func TestTheWindowKeepsAnAffectedReleaseTheVersionListLacks(t *testing.T) {
-	got := failureIssueVersionWindow([]string{"1.9.0", "1.8.0"}, []string{"1.7.0"}, 1, 6)
+	got := failureIssueVersionWindow([]string{"1.9.0", "1.8.0"}, []string{"1.7.0"}, nil, 1, 6)
 	if !contains(got, "1.7.0") {
 		t.Errorf("window = %v, want the release the failure was recorded on", got)
 	}

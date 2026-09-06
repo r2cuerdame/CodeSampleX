@@ -127,6 +127,10 @@ type Store interface {
 	// display-oriented page cap: an existing issue address has to remain
 	// resolvable even when a package grows beyond that cap.
 	FailureIssueClusters(ctx context.Context, ecosystem, name string) ([]string, error)
+	// FailureIssueStagePasses finds every decided PASS for one stage in a
+	// single package-scoped read. Boundary discovery uses this complete map so
+	// unmeasured releases do not hide a more distant known boundary.
+	FailureIssueStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error)
 	// TopWanted lists the most-asked packages the network still has no
 	// sample for, most wanted first.
 	TopWanted(ctx context.Context, limit int) ([]WantedRow, error)

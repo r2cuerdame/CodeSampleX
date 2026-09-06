@@ -505,7 +505,7 @@ func resolvedChildren(edges []DependencyEdge, version string) map[string][]strin
 // dropped. If affected releases alone exceed the cap, the two edge failures
 // and nearby non-failures take precedence over interior failures: those are
 // the releases that can preserve a known start/stop boundary.
-func failureIssueVersionWindow(versions, affected []string, span, max int) []string {
+func failureIssueVersionWindow(versions, affected, boundaryPasses []string, span, max int) []string {
 	ordered := sortedVersionsDesc(appendMissing(append([]string(nil), versions...), affected...))
 	if len(ordered) == 0 || max <= 0 {
 		return nil
@@ -527,6 +527,7 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 		return ordered
 	}
 	affectedAt := map[int]bool{}
+	boundaryPassAt := map[int]bool{}
 	loAnchor, hiAnchor := anchors[0], anchors[0]
 	for _, i := range anchors {
 		affectedAt[i] = true
@@ -535,6 +536,11 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 		}
 		if i > hiAnchor {
 			hiAnchor = i
+		}
+	}
+	for _, v := range boundaryPasses {
+		if i, ok := at[v]; ok {
+			boundaryPassAt[i] = true
 		}
 	}
 	type scored struct{ idx, dist int }
@@ -550,23 +556,25 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 				best = d
 			}
 		}
-		if best <= span {
+		if best <= span || boundaryPassAt[i] {
 			picked = append(picked, scored{i, best})
 		}
 	}
-	retainAllAffected := len(affectedAt) <= max
+	retainAllAffected := len(affectedAt) < max
 	priority := func(p scored) int {
 		switch {
 		case retainAllAffected && affectedAt[p.idx]:
 			return 0 // every recorded recurrence fits; none may disappear
 		case p.idx == loAnchor || p.idx == hiAnchor:
 			return 0 // edge failures anchor the possible start/stop
+		case boundaryPassAt[p.idx]:
+			return 1 // the nearest decided PASS exposes a real boundary
 		case !affectedAt[p.idx]:
-			return 1 // only a non-failure can expose that boundary
+			return 2 // nearby unmeasured releases are useful context
 		case affectedAt[p.idx]:
-			return 2 // interior failures add detail after boundaries survive
+			return 3 // interior failures add detail after boundaries survive
 		default:
-			return 3
+			return 4
 		}
 	}
 	sort.Slice(picked, func(i, j int) bool {
@@ -585,6 +593,14 @@ func failureIssueVersionWindow(versions, affected []string, span, max int) []str
 	out := make([]string, 0, len(picked))
 	for _, p := range picked {
 		out = append(out, ordered[p.idx])
+	}
+	return out
+}
+
+func failureIssueBoundaryPasses(boundaries []failureBoundary) []string {
+	var out []string
+	for _, b := range boundaries {
+		out = appendMissing(out, b.PassVersion)
 	}
 	return out
 }

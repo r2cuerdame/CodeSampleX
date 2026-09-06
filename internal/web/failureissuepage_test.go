@@ -91,6 +91,29 @@ func TestTheIssuePageNamesTheLastPassAndTheFirstFail(t *testing.T) {
 	mustNotContain(t, body, "cannot find package left")
 }
 
+func TestTheIssuePageFindsAKnownPassBeyondUnmeasuredNeighbours(t *testing.T) {
+	mux, f := newTestMux(t, nil)
+	clusters := seedFailureIssueFixture(t, f)
+	clusters[0].Versions = []string{"1.5.0"}
+	var docs []string
+	for _, cluster := range clusters {
+		raw, err := json.Marshal(cluster)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, string(raw))
+	}
+	f.clusters["npm|libx"] = docs
+	f.versions["npm|libx"] = []string{"1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0"}
+	delete(f.snapshots, snapKey("pkg:npm/libx@1.2.0", ""))
+	f.snapshots[snapKey("pkg:npm/libx@1.1.0", "")] = `{"schemaVersion":1,"purl":"pkg:npm/libx@1.1.0",
+	  "rows":[{"contextLabel":"node 22","byStage":{"PROJECT_TEST":{"pass":7,"fail":0}}}]}`
+	id := issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900")
+
+	body := get(t, mux, "/npm/libx?issue="+id).Body.String()
+	mustContain(t, body, `data-kind="starts" data-pass="1.1.0" data-fail="1.5.0"`)
+}
+
 // A dependency that moved across the boundary is a candidate and nothing
 // more. Saying so is the difference between this page and a guess.
 func TestTheIssuePageMarksAMovedDependencyAsAHypothesis(t *testing.T) {

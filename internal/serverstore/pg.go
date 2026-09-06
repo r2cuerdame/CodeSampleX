@@ -471,6 +471,42 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 	return js, found, err
 }
 
+// PackageStagePasses reads every package-level snapshot for one package in a
+// single targeted query. The dynamic JSON key is the requested stage; absent
+// rows and stages contribute zero and therefore remain unmeasured to callers.
+func (p *PG) PackageStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	out := map[string]int64{}
+	if stage == "" {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT p.version,
+			       COALESCE(SUM(COALESCE((bucket.row->'byStage'->$3->>'pass')::bigint, 0)), 0)
+			  FROM compatibility_snapshots cs
+			  JOIN packages p ON p.purl = cs.purl
+			  LEFT JOIN LATERAL jsonb_array_elements(cs.snapshot->'rows') AS bucket(row) ON true
+			 WHERE cs.symbol = '' AND p.ecosystem = $1 AND p.name = $2
+			 GROUP BY p.version`, ecosystem, name, stage)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var version string
+			var pass int64
+			if err := rows.Scan(&version, &pass); err != nil {
+				return err
+			}
+			if pass > 0 {
+				out[version] = pass
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error) {
 	var out []SnapshotRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

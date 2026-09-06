@@ -517,6 +517,11 @@ type Store interface {
 	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	// PackageStagePasses returns package-level PASS observations for one stage,
+	// keyed by release. It is a targeted, batched read for Failure Issue
+	// boundary discovery: unmeasured releases must be skipped even when the
+	// nearest decided release lies outside the rendered release window.
+	PackageStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error)
 	GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error)
 	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error

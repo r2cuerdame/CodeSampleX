@@ -1529,6 +1529,10 @@ func (w *webStore) FailureIssueClusters(ctx context.Context, ecosystem, name str
 	return out, nil
 }
 
+func (w *webStore) FailureIssueStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	return w.s.PackageStagePasses(ctx, ecosystem, name, stage)
+}
+
 func failureClusterJSON(c serverstore.ClusterRow) (string, bool) {
 	doc := map[string]any{
 		// The symbol the cluster is ABOUT. It was never serialized, so the
