@@ -15,6 +15,15 @@ type countingPackageDetailStore struct {
 	clusterReads atomic.Int64
 }
 
+type completeFailureClusterStore struct {
+	*serverstore.Fake
+	rows []serverstore.ClusterRow
+}
+
+func (s *completeFailureClusterStore) ListFailureClusters(context.Context, string) ([]serverstore.ClusterRow, error) {
+	return s.rows, nil
+}
+
 func (s *countingPackageDetailStore) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]serverstore.PackageRow, error) {
 	s.versionReads.Add(1)
 	return s.Fake.ListPackageVersions(ctx, ecosystem, name)
@@ -63,5 +72,24 @@ func TestPackageDetailReadsAreReusedForTheBuilderInterval(t *testing.T) {
 	}
 	if got := store.clusterReads.Load(); got != 1 {
 		t.Errorf("failure cluster reads = %d, want 1", got)
+	}
+}
+
+func TestFailureIssueClustersBypassThePackageDisplayCap(t *testing.T) {
+	rows := make([]serverstore.ClusterRow, maxClustersToPage+1)
+	for i := range rows {
+		rows[i] = serverstore.ClusterRow{
+			Ecosystem: "npm", PackageName: "many", Stage: "PROJECT_TEST",
+			ErrorFingerprint: "sha256:failure", ObservationCount: int64(i + 1),
+		}
+	}
+	w := &webStore{s: &completeFailureClusterStore{Fake: serverstore.NewFake(), rows: rows}}
+	page, matched, err := w.FailureClusters(t.Context(), "npm", "many")
+	if err != nil || len(page) != maxClustersToPage || matched != len(rows) {
+		t.Fatalf("display clusters = %d/%d, matched=%d, err=%v", len(page), maxClustersToPage, matched, err)
+	}
+	complete, err := w.FailureIssueClusters(t.Context(), "npm", "many")
+	if err != nil || len(complete) != len(rows) {
+		t.Fatalf("issue clusters = %d, want %d, err=%v", len(complete), len(rows), err)
 	}
 }

@@ -170,6 +170,13 @@ type clusterView struct {
 	Versions            string
 	FirstSeen           string
 	LastSeen            string
+	// IssueID is the address of the Failure Issue this row belongs to.
+	IssueID string
+	// IssueHref opens the Failure Issue this cluster belongs to: the same
+	// normalized identity read across every release and environment it
+	// reproduced in. A cluster answers "it broke here"; the issue is where
+	// the reader goes for "and where does it stop".
+	IssueHref string
 }
 
 func chipFor(row snapshotRow, obs, ver int64) (chip, class, glyph string, noEvidence bool) {
@@ -345,7 +352,7 @@ func buildClusters(clusters []failureCluster) []clusterView {
 			count = c.ObservationCount
 		}
 		env := joinEnvSummary(c.EnvSummary)
-		unfingerprintedGap := c.EvidenceQuality == string(domain.EvidenceMissing) || c.EvidenceQuality == string(domain.EvidenceLegacyIncomplete)
+		unfingerprintedGap := clusterUnfingerprinted(c)
 		evidenceGap := unfingerprintedGap || c.EvidenceGapKind != ""
 		fingerprint := c.Fingerprint
 		if unfingerprintedGap {
@@ -387,6 +394,7 @@ func buildClusters(clusters []failureCluster) []clusterView {
 		out = append(out, clusterView{
 			Symbol: c.Symbol, Stage: c.Stage, ErrorCode: c.ErrorCode,
 			Fingerprint: shortHash(fingerprint), Count: count,
+			IssueID:      failureIssueID(failureIssueKey(c, unfingerprintedGap)),
 			Termination:  terminationLabel(c),
 			ErrorSummary: summary, ErrorSummaryFull: withheld,
 			EvidenceQuality:     c.EvidenceQuality,
@@ -888,7 +896,7 @@ func (s *site) hasAnyClusters(r *http.Request, eco, name string) bool {
 	return err == nil && total > 0
 }
 
-func (s *site) loadClustersFrom(clusters []failureCluster, coord map[string]string) ([]clusterView, int) {
+func (s *site) loadClustersFrom(eco, name string, clusters []failureCluster, coord map[string]string) ([]clusterView, int) {
 	if len(coord) > 0 {
 		clusters = filterClustersToPins(clusters, coord)
 	}
@@ -905,6 +913,9 @@ func (s *site) loadClustersFrom(clusters []failureCluster, coord map[string]stri
 	if len(views) > renderedClusterLimit {
 		views = views[:renderedClusterLimit]
 	}
+	for i := range views {
+		views[i].IssueHref = failureIssueHref(eco, name, views[i].IssueID)
+	}
 	return views, total
 }
 
@@ -913,14 +924,22 @@ func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]
 	if err != nil {
 		return nil, 0
 	}
-	clusters := make([]failureCluster, 0, len(raw))
+	return s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+}
+
+// decodeFailureClusters reads the materialized cluster documents. A document
+// that does not decode is dropped rather than rendered half-read: the page
+// says how many the package has from the store's own total, so a skipped row
+// cannot pass as the whole list.
+func decodeFailureClusters(raw []string) []failureCluster {
+	out := make([]failureCluster, 0, len(raw))
 	for _, doc := range raw {
 		var c failureCluster
 		if json.Unmarshal([]byte(doc), &c) == nil {
-			clusters = append(clusters, c)
+			out = append(out, c)
 		}
 	}
-	return s.loadClustersFrom(clusters, coord)
+	return out
 }
 
 // versionRow is one row of the package's version list: what the network
@@ -990,6 +1009,13 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 }
 
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
+	// ?issue= is a VIEW of this page rather than a second address for it: the
+	// canonical below is built from the path alone, so the Failure Issue does
+	// not add an indexable duplicate of the package coordinate.
+	if id := r.URL.Query().Get("issue"); id != "" {
+		s.failureIssuePage(w, r, lang, eco, name, id)
+		return
+	}
 	versions, err := s.d.Store.PackageVersions(r.Context(), eco, name)
 	if err != nil {
 		s.unavailable(w, r, lang)
@@ -1025,13 +1051,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var deps []PackageDep
 	var allClusters []failureCluster
 	if rawClusters, _, err := s.d.Store.FailureClusters(r.Context(), eco, name); err == nil && len(rawClusters) > 0 {
-		allClusters = make([]failureCluster, 0, len(rawClusters))
-		for _, doc := range rawClusters {
-			var c failureCluster
-			if json.Unmarshal([]byte(doc), &c) == nil {
-				allClusters = append(allClusters, c)
-			}
-		}
+		allClusters = decodeFailureClusters(rawClusters)
 	}
 
 	// A dependency list belongs to the RELEASE and to nothing else: the same
@@ -1050,7 +1070,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A failure cluster belongs to the whole coordinate — this release, this
 	// runtime, this OS — so it waits until nothing is left to choose.
 	if cube != nil && cube.Decided {
-		clusters, clusterTotal = s.loadClustersFrom(allClusters, cube.Coord)
+		clusters, clusterTotal = s.loadClustersFrom(eco, name, allClusters, cube.Coord)
 	}
 	// The last two evidence actions, added here because only the page knows
 	// whether the sections behind them have anything in them. An action is

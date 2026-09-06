@@ -379,6 +379,42 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 	return js, ok, nil
 }
 
+func (f *Fake) PackageStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]int64{}
+	if stage == "" {
+		return out, nil
+	}
+	for key, raw := range f.snapshots {
+		if key[1] != "" {
+			continue
+		}
+		p, err := domain.ParsePURL(key[0])
+		if err != nil || p.Ecosystem != ecosystem || p.Name != name {
+			continue
+		}
+		var doc struct {
+			Rows []struct {
+				ByStage map[string]struct {
+					Pass int64 `json:"pass"`
+				} `json:"byStage"`
+			} `json:"rows"`
+		}
+		if json.Unmarshal([]byte(raw), &doc) != nil {
+			continue
+		}
+		var pass int64
+		for _, row := range doc.Rows {
+			pass += row.ByStage[stage].Pass
+		}
+		if pass > 0 {
+			out[p.Version] = pass
+		}
+	}
+	return out, nil
+}
+
 func (f *Fake) GetSnapshotsForPURL(_ context.Context, purl string) ([]SnapshotRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1745,6 +1781,51 @@ func (f *Fake) Dependencies(_ context.Context, ecosystem, name string) ([]Depend
 			ChildName: k.childName, ChildVersion: k.childVersion,
 			Projects: len(projectDays),
 		})
+	}
+	sortShippedWith(out)
+	return out, nil
+}
+
+// FailureIssueDependencies mirrors PostgreSQL's project/epoch join against
+// the retained dedup ledger. Keeping this derivation in the Fake makes the
+// evidence label test the ingest contract rather than a hand-set boolean.
+func (f *Fake) FailureIssueDependencies(_ context.Context, ecosystem, name, fingerprint string) ([]DependencyEdge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	failingProjectDays := map[string]bool{}
+	if fingerprint != "" {
+		for agg, epochs := range f.merge.projectBuckets {
+			p, err := domain.ParsePURL(agg.PURL)
+			if err != nil || p.Ecosystem != ecosystem || p.Name != name ||
+				agg.Result != string(domain.ResultFail) || agg.ErrorFP != fingerprint {
+				continue
+			}
+			for epoch, buckets := range epochs {
+				for bucket := range buckets {
+					if bucket != "" {
+						failingProjectDays[bucket+"\x1f"+epoch] = true
+					}
+				}
+			}
+		}
+	}
+	var out []DependencyEdge
+	for k, projectDays := range f.edges {
+		if k.ecosystem != ecosystem || k.parentName != name {
+			continue
+		}
+		e := DependencyEdge{
+			ParentName: k.parentName, ParentVersion: k.parentVersion,
+			ChildName: k.childName, ChildVersion: k.childVersion,
+			Projects: len(projectDays),
+		}
+		for projectDay := range projectDays {
+			if failingProjectDays[projectDay] {
+				e.SameReceipt, e.Outcome = true, "fail"
+				break
+			}
+		}
+		out = append(out, e)
 	}
 	sortShippedWith(out)
 	return out, nil

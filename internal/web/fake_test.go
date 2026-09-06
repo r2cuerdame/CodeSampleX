@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -34,6 +35,9 @@ type fakeStore struct {
 	seeders      map[string][]SampleListItem
 	packages     []PackageHit
 	clusters     map[string][]string // eco+"|"+name → cluster JSON
+	// issueClusters can expose the complete issue ledger separately from a
+	// deliberately capped package-page fixture.
+	issueClusters map[string][]string
 	// sampleList is every published sample, newest first (sitemap +
 	// package pages); samplePackages is the purl list of each one.
 	dependencies   []DependencyEdge
@@ -59,6 +63,32 @@ func (f *fakeStore) SnapshotJSON(_ context.Context, purl, symbol string) (string
 
 func (f *fakeStore) PackageVersions(_ context.Context, ecosystem, name string) ([]string, error) {
 	return f.versions[ecosystem+"|"+name], nil
+}
+
+func (f *fakeStore) FailureIssueStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {
+	out := map[string]int64{}
+	for key, raw := range f.snapshots {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) != 2 || parts[1] != "" {
+			continue
+		}
+		p, err := domain.ParsePURL(parts[0])
+		if err != nil || p.Ecosystem != ecosystem || p.Name != name {
+			continue
+		}
+		var doc snapshotDoc
+		if json.Unmarshal([]byte(raw), &doc) != nil {
+			continue
+		}
+		var pass int64
+		for _, row := range doc.Rows {
+			pass += row.ByStage[stage].Pass
+		}
+		if pass > 0 {
+			out[p.Version] = pass
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SymbolPackageSpread(_ context.Context, _ string, symbols []string) (map[string]int, error) {
@@ -314,6 +344,14 @@ func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) (
 	return rows, len(rows), nil
 }
 
+func (f *fakeStore) FailureIssueClusters(_ context.Context, ecosystem, name string) ([]string, error) {
+	key := ecosystem + "|" + name
+	if rows, ok := f.issueClusters[key]; ok {
+		return rows, nil
+	}
+	return f.clusters[key], nil
+}
+
 // newFakeStore builds the shared fixture: axios with a context-first
 // snapshot (HIGH / ELEVATED FAILURE / UNKNOWN no-evidence rows), a golang
 // multi-segment package, one sample with a receipt, and one seeder.
@@ -345,7 +383,9 @@ func newFakeStore() *fakeStore {
 			{Ecosystem: "golang", Name: "github.com/a/b", LatestVersion: "v1.2.0", Symbols: 1, EvidenceCount: 12,
 				OperatingSystems: []string{"linux"}, Runtimes: []string{"go"}, EvidenceBases: []string{"observed"}},
 		},
-		clusters: map[string][]string{},
+		clusters:      map[string][]string{},
+		issueClusters: map[string][]string{},
+		resolvedNone:  map[string]bool{},
 	}
 
 	symbolSnapshot := `{
@@ -493,6 +533,10 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Dependencies(context.Context, string, string) ([]DependencyEdge, error) {
+	return f.dependencies, nil
+}
+
+func (f *fakeStore) FailureIssueDependencies(context.Context, string, string, string) ([]DependencyEdge, error) {
 	return f.dependencies, nil
 }
 

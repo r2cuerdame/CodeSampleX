@@ -36,6 +36,15 @@ func TestDevServe(t *testing.T) {
 		// compared side by side in a browser.
 		store = newFakeStore()
 		machineGoalSample(t, store)
+	case "failureissue":
+		// A package whose failure has a boundary: recorded on one release,
+		// passing on the one before it, with a dependency that moved across
+		// the line. It is the only fixture that reaches ?issue=, and the
+		// address is printed below so it can be opened directly.
+		store = newFakeStore()
+		clusters := seedFailureIssueFixture(t, store)
+		t.Logf("failure issue: /npm/libx?issue=%s",
+			issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900"))
 	case "navleaf":
 		// The coordinate R2C-127 was reported from: a release with published
 		// samples, one environment this network verified and one it only
