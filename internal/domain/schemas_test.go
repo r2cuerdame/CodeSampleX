@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 )
 
 // schemaDir walks up from the package dir to the repo root schemas/v1.
@@ -53,6 +55,9 @@ func TestSchemaFixtures(t *testing.T) {
 		"search-request.json": SearchRequest{SchemaVersion: 1, Query: "q",
 			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"}},
 		"search-response.json": SearchResponse{SchemaVersion: 1, Results: []SearchResult{}, Miss: true},
+		"measurement-report.json": measurement.NewTwoLayerReport("community",
+			measurement.RetrievalQuality{},
+			measurement.OutcomeValue{}),
 	}
 
 	entries, err := os.ReadDir(dir)

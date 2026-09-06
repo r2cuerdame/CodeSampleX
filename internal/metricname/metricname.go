@@ -25,6 +25,7 @@ const (
 	RuleForbiddenActor     = "forbidden-actor-noun"
 	RuleUndeclaredBucket   = "undeclared-bucket-noun"
 	RuleUnlabelledEstimate = "unlabelled-estimate"
+	RuleInventedUplift     = "invented-uplift"
 )
 
 // Violation is one field that breaks the rule.
@@ -55,6 +56,15 @@ var forbiddenActors = map[string]string{
 	"visitor": "", "visitors": "",
 	"session": "", "sessions": "",
 	"developer": "", "developers": "",
+}
+
+// forbiddenUpliftTokens are tokens asserting invented capability gains or
+// uplift percentages. Field-first guardrails (docs/measurement-layers.md §4)
+// forbid publishing unverified uplift assertions without controlled
+// counterfactual measurement design and evidence.
+var forbiddenUpliftTokens = map[string]string{
+	"uplift":  "",
+	"speedup": "",
 }
 
 // bucketTokens name things that are counted in rotating anonymous buckets.
@@ -122,6 +132,15 @@ func checkName(name, path string, out *[]Violation) {
 				Rule:  RuleForbiddenActor,
 				Why: "names an actor (" + tok + "); this document counts records and " +
 					"rotating anonymous buckets, and no method behind that noun exists here",
+			})
+			return
+		}
+		if _, uplift := forbiddenUpliftTokens[tok]; uplift {
+			*out = append(*out, Violation{
+				Field: path,
+				Rule:  RuleInventedUplift,
+				Why: "claims invented uplift (" + tok + "); uplift claims require controlled " +
+					"counterfactual measurement and must not be published as unverified summary statistics (docs/measurement-layers.md §4)",
 			})
 			return
 		}

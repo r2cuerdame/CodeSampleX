@@ -464,6 +464,8 @@ though they were.
 
 * [PRIVACY.md](../PRIVACY.md) — §2 modes, §4 exactly what community mode
   transmits, §5 identifiers and what they can and cannot link.
+* [docs/measurement-layers.md](measurement-layers.md) — the two-layer measurement model
+  separating internal retrieval/memory quality from user/agent outcome value.
 * [docs/operations.md](operations.md) — the flow KPIs, the windowing rule,
   and `표본 없음` for an empty window.
 * [docs/schema.md](schema.md) — evidence quality, and the rule that a legacy

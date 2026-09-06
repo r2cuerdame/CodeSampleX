@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -74,6 +75,10 @@ type Stats struct {
 	// anything, which is why it can exist at all: the fleet version of the
 	// same question has no honest answer (docs/activation-funnel.md §3).
 	Readiness Readiness `json:"readiness"`
+	// Two-layer measurement model (issue #206, docs/measurement-layers.md):
+	// cleanly separates retrieval/memory quality (Layer 1) from user/agent outcome value (Layer 2).
+	RetrievalQuality measurement.RetrievalQuality `json:"retrievalQuality"`
+	OutcomeValue     measurement.OutcomeValue     `json:"outcomeValue"`
 }
 
 // Readiness is the local activation ledger rendered for a reader
@@ -200,7 +205,42 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		st.QueueDepth = q.EvidenceBatches + q.Uploads
 	}
 	st.EvidenceRefusedTerminal, _ = d.DB.RefusedEvidenceCount(ctx)
+
+	hitRate := 0.0
+	if st.Hits+st.Misses > 0 {
+		hitRate = float64(st.Hits) / float64(st.Hits+st.Misses)
+	}
+	st.RetrievalQuality = measurement.RetrievalQuality{
+		Hits:                   st.Hits,
+		Misses:                 st.Misses,
+		HitRate:                hitRate,
+		ExactFailureMatches:    st.ExactFailureMatches,
+		VerifiedDetoursOffered: st.VerifiedDetoursOffered,
+		KnownPackages:          st.Packages,
+		CacheBytes:             st.CacheBytes,
+		EvidenceBatchesSent:    st.EvidenceBatchesSent,
+		OriginSeeds:            st.OriginSeeds,
+		CrossVerifications:     st.CrossVerifications,
+	}
+	st.OutcomeValue = measurement.OutcomeValue{
+		Adoptions:                 st.Adoptions,
+		PostHitBuildReports:       st.PostHitBuildReports,
+		PostHitBuildPassRate:      st.PostHitBuildPassRate,
+		VerifiedDetoursApplied:    st.VerifiedDetoursApplied,
+		DetourPostHitPass:         st.DetourPostHitPass,
+		DetourPostHitFail:         st.DetourPostHitFail,
+		DetourPostHitUnknown:      st.DetourPostHitUnknown,
+		ReportedFailuresAvoided:   st.ReportedFailuresAvoided,
+		EstimatedReasoningAvoided: st.EstimatedReasoningAvoided,
+		Estimated:                 true,
+	}
+
 	return st, nil
+}
+
+// TwoLayerReport returns the concrete two-layer report (docs/measurement-layers.md).
+func (s Stats) TwoLayerReport() measurement.TwoLayerReport {
+	return measurement.NewTwoLayerReport(s.Mode, s.RetrievalQuality, s.OutcomeValue)
 }
 
 // readinessFrom renders the ledger. An unreached stage stays the empty
