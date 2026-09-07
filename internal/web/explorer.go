@@ -1653,7 +1653,11 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	// second is what the symbol list now links.
 	samples := s.symbolSamples(r, eco, name, version, symbol)
 	var doc snapshotDoc
-	raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, symbol)
+	raw, ok, err := cubeSnapshotJSON(r.Context(), s.d.Store, purl, symbol)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	switch {
 	case ok:
 		if err := json.Unmarshal([]byte(raw), &doc); err != nil {

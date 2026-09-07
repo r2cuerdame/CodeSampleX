@@ -141,7 +141,10 @@ const maxDependencyRows = 40
 // and saying so plainly is the point: the alternative is a blank cell a reader
 // fills in with an assumption.
 func dependencyEvidenceState(r *http.Request, store Store, purl string) string {
-	raw, ok := store.SnapshotJSON(r.Context(), purl, "")
+	raw, ok, err := cubeSnapshotJSON(r.Context(), store, purl, "")
+	if err != nil {
+		return "unknown"
+	}
 	if !ok || raw == "" {
 		return "none"
 	}
@@ -467,4 +470,3 @@ func evaluateCrossReleaseHealth(
 
 	return summary
 }
-

@@ -66,6 +66,79 @@ type blockingBulkSnapshotStore struct {
 	release     chan struct{}
 }
 
+type cancelDetachedBulkSnapshotStore struct {
+	*serverstore.Fake
+	startedOnce sync.Once
+	started     chan struct{}
+	release     chan struct{}
+	bulkCalls   atomic.Int64
+}
+
+func (s *cancelDetachedBulkSnapshotStore) GetSnapshotsForPURL(
+	ctx context.Context, purl string,
+) ([]serverstore.SnapshotRow, error) {
+	s.bulkCalls.Add(1)
+	s.startedOnce.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.Fake.GetSnapshotsForPURL(ctx, purl)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestSnapshotLeaderCancellationDoesNotFailWaiterOrBackoffLane(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+	if err := fake.PutSnapshot(t.Context(), purl, "Batch", `{"rows":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	store := &cancelDetachedBulkSnapshotStore{
+		Fake:    fake,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	w := &webStore{s: store}
+	leaderCtx, cancelLeader := context.WithCancel(
+		serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive),
+	)
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, _, err := w.SnapshotJSONWithError(leaderCtx, purl, "")
+		leaderDone <- err
+	}()
+	<-store.started
+
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, ok, err := w.SnapshotJSONWithError(
+			serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive),
+			purl,
+			"Batch",
+		)
+		if err == nil && !ok {
+			err = errors.New("waiter did not receive the loaded snapshot")
+		}
+		waiterDone <- err
+	}()
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader error = %v, want context cancellation", err)
+	}
+	select {
+	case err := <-waiterDone:
+		t.Fatalf("waiter inherited leader cancellation/backoff before load completed: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(store.release)
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("waiter error after shared load completed: %v", err)
+	}
+	if got := store.bulkCalls.Load(); got != 1 {
+		t.Fatalf("bulk calls = %d, want one detached shared load", got)
+	}
+}
+
 func (s *blockingBulkSnapshotStore) GetSnapshotsForPURL(ctx context.Context, _ string) ([]serverstore.SnapshotRow, error) {
 	s.bulkCalls.Add(1)
 	s.startedOnce.Do(func() { close(s.started) })

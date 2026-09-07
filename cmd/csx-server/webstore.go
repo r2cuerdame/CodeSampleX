@@ -425,6 +425,15 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 	return js, ok
 }
 
+func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	deadline := time.Now().Add(recordSnapshotRefreshTimeout)
+	if incoming, ok := ctx.Deadline(); ok && incoming.Before(deadline) {
+		deadline = incoming
+	}
+	return context.WithDeadline(detached, deadline)
+}
+
 // SnapshotJSONWithError lets bounded fan-out readers stop on pressure rather
 // than treating it as dozens of independent cache misses.
 func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol string) (string, bool, error) {
@@ -489,34 +498,53 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		call := &snapshotLoadCall{done: make(chan struct{})}
 		lane.loading = call
 		state.mu.Unlock()
+		go w.loadSnapshotsForPURL(ctx, state, lane, call, purl)
 
-		rows, err := w.s.GetSnapshotsForPURL(ctx, purl)
-		loadedAt := time.Now()
-		if err == nil {
-			for _, r := range rows {
-				w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
-					at:   loadedAt,
-					json: r.SnapshotJSON,
-					ok:   true,
-				})
+		select {
+		case <-call.done:
+			if call.err != nil {
+				return "", false, call.err
 			}
-			w.purlsLoaded.Store(purl, loadedAt)
-		}
-
-		state.mu.Lock()
-		call.err = err
-		lane.loading = nil
-		if err != nil {
-			backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, packageDetailCacheTTL)
-		} else {
-			backgroundRetrySucceeded(&lane.retry, &lane.retryAt)
-		}
-		close(call.done)
-		state.mu.Unlock()
-		if err != nil {
-			return "", false, err
+		case <-ctx.Done():
+			return "", false, ctx.Err()
 		}
 	}
+}
+
+func (w *webStore) loadSnapshotsForPURL(
+	ctx context.Context,
+	state *snapshotLoadState,
+	lane *snapshotLoadLane,
+	call *snapshotLoadCall,
+	purl string,
+) {
+	loadCtx, cancel := snapshotLoadContext(ctx)
+	rows, err := w.s.GetSnapshotsForPURL(loadCtx, purl)
+	cancel()
+	loadedAt := time.Now()
+	if err == nil {
+		for _, r := range rows {
+			w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
+				at:   loadedAt,
+				json: r.SnapshotJSON,
+				ok:   true,
+			})
+		}
+		w.purlsLoaded.Store(purl, loadedAt)
+	}
+
+	state.mu.Lock()
+	call.err = err
+	if lane.loading == call {
+		lane.loading = nil
+	}
+	if err != nil {
+		backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, packageDetailCacheTTL)
+	} else {
+		backgroundRetrySucceeded(&lane.retry, &lane.retryAt)
+	}
+	close(call.done)
+	state.mu.Unlock()
 }
 
 func (s *snapshotLoadState) lane(class serverstore.QueryClass) *snapshotLoadLane {

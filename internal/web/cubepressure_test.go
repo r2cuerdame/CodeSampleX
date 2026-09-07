@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -61,5 +62,42 @@ func TestPinnedRepairPressureIsUnavailableNotFalseNoMatch(t *testing.T) {
 	}
 	if strings.Contains(res.Body.String(), "No recorded evidence matches these filters") {
 		t.Fatal("pool refusal was rendered as an authoritative empty coordinate")
+	}
+}
+
+func TestSymbolRouteTreatsSnapshotPressureAsUnavailable(t *testing.T) {
+	store := &pressureAwareSnapshotStore{
+		fakeStore: newCubeStore(),
+		failPURL:  "pkg:npm/reactish@19.1.0",
+	}
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = store })
+
+	res := get(t, mux, "/npm/reactish/19.1.0/createRoot")
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want unavailable; body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestDependencyEvidencePressureIsUnknown(t *testing.T) {
+	store := &pressureAwareSnapshotStore{
+		fakeStore: newCubeStore(),
+		failPURL:  "pkg:npm/reactish@19.1.0",
+	}
+	r := httptest.NewRequest(http.MethodGet, "https://codesamplex.test/npm/reactish", nil)
+	if got := dependencyEvidenceState(r, store, store.failPURL); got != "unknown" {
+		t.Fatalf("dependency state = %q, want unknown", got)
+	}
+}
+
+func TestFailureIssueStageFallbackPropagatesSnapshotPressure(t *testing.T) {
+	store := &pressureAwareSnapshotStore{
+		fakeStore: newCubeStore(),
+		failPURL:  "pkg:npm/reactish@19.1.0",
+	}
+	s := &site{d: Deps{Store: store}}
+	if _, err := s.stagePassByRelease(
+		context.Background(), "npm", "reactish", "CONTRACT", []string{"19.1.0"},
+	); err == nil {
+		t.Fatal("snapshot pressure was converted to an empty stage-pass result")
 	}
 }
