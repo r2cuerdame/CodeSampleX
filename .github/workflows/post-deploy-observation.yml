@@ -17,8 +17,10 @@ permissions:
   actions: read
   issues: write
 
+# Keep the observed deployment stable while this separate workflow polls it.
+# The deploy workflow uses the same repository-wide group.
 concurrency:
-  group: codesamplex-post-deploy-${{ github.event.workflow_run.id || inputs.deploy_run_id }}
+  group: codesamplex-production
   cancel-in-progress: false
 
 jobs:

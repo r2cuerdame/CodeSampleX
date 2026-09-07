@@ -46,7 +46,6 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 		"github.event.workflow_run.conclusion == 'success'",
 		"github.event.workflow_run.event == 'workflow_dispatch'",
 		"github.event.workflow_run.head_repository.full_name == github.repository",
-		"group: codesamplex-post-deploy-",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("post-deploy trigger contract is missing %q", required)
@@ -55,6 +54,18 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 	for _, forbidden := range []string{"  push:", "pull_request:", "schedule:", "repository_dispatch:"} {
 		if strings.Contains(head, forbidden) {
 			t.Errorf("post-deploy observation has unintended trigger %q", forbidden)
+		}
+	}
+}
+
+func TestPostDeployObservationSharesProductionSerialization(t *testing.T) {
+	const productionConcurrency = "concurrency:\n  group: codesamplex-production\n  cancel-in-progress: false"
+	for name, workflow := range map[string]string{
+		"production deploy":       productionWorkflow(t),
+		"post-deploy observation": postDeployObservationWorkflow(t),
+	} {
+		if !strings.Contains(workflow, productionConcurrency) {
+			t.Errorf("%s does not hold the shared production concurrency lock", name)
 		}
 	}
 }
