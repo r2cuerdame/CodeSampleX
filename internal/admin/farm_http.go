@@ -154,6 +154,10 @@ func farmBacklogView(backlog serverstore.FarmBacklog) map[string]any {
 	return map[string]any{
 		"coverageHoles":       backlog.CoverageHoles,
 		"dependencies":        backlog.Dependencies,
+		"requestBacklog":      backlog.RequestBacklog,
+		"repeatedMisses":      backlog.RepeatedMisses,
+		"resolvedRequests":    backlog.ResolvedRequests,
+		"totalRequests":       backlog.TotalRequests,
 		"matrixCells":         farmMatrixCellsView(backlog.Matrix),
 		"windowSeconds":       int(farmWindow / time.Second),
 		"handedOutInWindow":   handedOut,

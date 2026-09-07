@@ -81,44 +81,35 @@ func seedWanted(t *testing.T, store *snapshotStore, n int) {
 	}
 }
 
-func TestEveryFourthPollOffersTheGapsFirst(t *testing.T) {
-	if authoringGapEvery < 2 {
-		t.Fatalf("authoringGapEvery = %d; below 2 the rotation is either always or never", authoringGapEvery)
-	}
+func TestRequestFirstConsumesWantedBeforeGenericFallback(t *testing.T) {
+	// Seed 4 WANTED rows and 1 EXPANSION gap candidate.
+	// With request-first priority (#217), polls 1..4 receive WANTED work.
+	// Once the WANTED queue is exhausted, poll 5 falls back to EXPANSION work.
 	store := newSnapshotStore(expansionRow("gap-package"))
 	srv, _, _ := newTestServer(t, func(d *Deps) { d.Store = store })
 	s := srv.URL
-	seedWanted(t, store, 3*authoringGapEvery)
+	seedWanted(t, store, 4)
 
 	var kinds []string
-	for n := 1; n <= 2*authoringGapEvery; n++ {
+	for n := 1; n <= 5; n++ {
 		kinds = append(kinds, pollOnce(t, s, store, n))
 	}
+	want := []string{"WANTED", "WANTED", "WANTED", "WANTED", "EXPANSION"}
 	for i, kind := range kinds {
-		poll := i + 1
-		want := "WANTED"
-		if poll%authoringGapEvery == 0 {
-			want = "EXPANSION"
-		}
-		if poll == 2*authoringGapEvery {
-			// The one gap candidate was handed out on the first gap turn; the
-			// second gap turn has nothing but WANTED left and hands that out.
-			want = "WANTED"
-		}
-		if kind != want {
-			t.Errorf("poll %d handed out %q, want %q (sequence so far %v)", poll, kind, want, kinds[:i+1])
+		if kind != want[i] {
+			t.Errorf("poll %d handed out %q, want %q (sequence so far %v)", i+1, kind, want[i], kinds)
 		}
 	}
 }
 
-// A gap turn with no gap candidates is an ordinary poll.
-func TestAGapTurnWithNoGapCandidatesHandsOutWanted(t *testing.T) {
+// When no gap candidates exist, every poll hands out WANTED work.
+func TestPollsWithNoGapCandidatesHandsOutWanted(t *testing.T) {
 	store := newSnapshotStore() // no expansion rows at all
 	srv, _, _ := newTestServer(t, func(d *Deps) { d.Store = store })
 	s := srv.URL
-	seedWanted(t, store, 2*authoringGapEvery)
+	seedWanted(t, store, 4)
 
-	for n := 1; n <= authoringGapEvery; n++ {
+	for n := 1; n <= 4; n++ {
 		if kind := pollOnce(t, s, store, n); kind != "WANTED" {
 			t.Fatalf("poll %d handed out %q; with no gap candidates every poll is WANTED", n, kind)
 		}
