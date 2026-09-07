@@ -266,10 +266,27 @@ jobs:
               ' <<<"$candidate_run" >/dev/null; then
                 continue
               fi
-              candidate_run_started=$(jq -er '.run_started_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$candidate_run")
-              candidate_run_completed=$(jq -er '.updated_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$candidate_run")
-              candidate_run_started_epoch=$(date -u -d "$candidate_run_started" +%s)
-              candidate_run_completed_epoch=$(date -u -d "$candidate_run_completed" +%s)
+              candidate_jobs=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/jobs?filter=latest&per_page=100")
+              deploy_job_count=$(jq '[.jobs[] | select(.name == "Roll out production")] | length' <<<"$candidate_jobs")
+              if [[ "$deploy_job_count" != "1" ]]; then
+                continue
+              fi
+              candidate_deploy_job=$(jq -c '.jobs[] | select(.name == "Roll out production")' <<<"$candidate_jobs")
+              if ! jq -e --arg id "$candidate_id" '
+                (.run_id | tostring) == $id and
+                .status == "completed" and
+                .conclusion == "success" and
+                (.started_at | type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$")) and
+                (.completed_at | type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))
+              ' <<<"$candidate_deploy_job" >/dev/null; then
+                continue
+              fi
+              candidate_deploy_started=$(jq -r '.started_at' <<<"$candidate_deploy_job")
+              candidate_deploy_completed=$(jq -r '.completed_at' <<<"$candidate_deploy_job")
+              candidate_deploy_started_epoch=$(date -u -d "$candidate_deploy_started" +%s)
+              candidate_deploy_completed_epoch=$(date -u -d "$candidate_deploy_completed" +%s)
 
               artifact_name="production-evidence-${candidate_id}"
               artifacts=$(gh api \
@@ -308,15 +325,15 @@ jobs:
               fi
               candidate_started_epoch=$(date -u -d "$candidate_started" +%s)
               if [[ "$candidate_started_epoch" -le "$original_started_epoch" ||
-                    "$candidate_started_epoch" -lt "$candidate_run_started_epoch" ||
-                    "$candidate_started_epoch" -gt "$candidate_run_completed_epoch" ]]; then
+                    "$candidate_started_epoch" -lt "$candidate_deploy_started_epoch" ||
+                    "$candidate_started_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
                 continue
               fi
 
               observation_completed=$(jq -er '.completedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' "$observation")
               observation_completed_epoch=$(date -u -d "$observation_completed" +%s)
-              if [[ "$observation_completed_epoch" -lt "$candidate_run_started_epoch" ||
-                    "$observation_completed_epoch" -gt "$candidate_run_completed_epoch" ]]; then
+              if [[ "$observation_completed_epoch" -lt "$candidate_deploy_started_epoch" ||
+                    "$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
                 continue
               fi
 
@@ -328,7 +345,7 @@ jobs:
                 --arg original_digest "$ORIGINAL_IMAGE_DIGEST" \
                 --arg original_started "$ORIGINAL_SERVER_STARTED_AT" \
                 --arg original_migration "$ORIGINAL_MIGRATION_VERSION" \
-                --argjson deploy_started "$candidate_run_started_epoch" '
+                --argjson deploy_started "$candidate_deploy_started_epoch" '
                 (.samples | type == "array") and
                 (.anomalies | type == "array" and length > 0) and
                 ([.anomalies[] | select(
@@ -397,8 +414,8 @@ jobs:
                 --arg digest "$candidate_digest" \
                 --arg started "$candidate_started" \
                 --arg migration "$candidate_migration" \
-                --argjson deploy_started "$candidate_run_started_epoch" \
-                --argjson deploy_completed "$candidate_run_completed_epoch" \
+                --argjson deploy_started "$candidate_deploy_started_epoch" \
+                --argjson deploy_completed "$candidate_deploy_completed_epoch" \
                 --argjson server_started "$candidate_started_epoch" '
                 .revision == $sha and
                 .image_revision == $sha and

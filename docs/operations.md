@@ -128,9 +128,11 @@ workflow; it does not retroactively enter the deploy rollback path. The
 observer never logs raw requests or query strings. If its replacement-only
 drift is followed by a fresh production sample that exactly matches the
 authenticated artifact from a later successful Production deploy, the older
-observation is recorded as superseded instead of as a false failure; every
-other anomaly still fails closed. The deploy evidence keeps `builderFresh` as
-an informational initial sample only.
+observation is recorded as superseded instead of as a false failure. The
+replacement window begins at the authenticated `Roll out production` job,
+not at the earlier eligibility job; every other anomaly still fails closed.
+The deploy evidence keeps `builderFresh` as an informational initial sample
+only.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client
