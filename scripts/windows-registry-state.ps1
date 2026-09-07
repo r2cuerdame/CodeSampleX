@@ -16,10 +16,9 @@ function Get-CSXRegistryValueState {
 function Test-CSXRegistryValueStateEqual {
     param($Before, $After)
     if ($Before.Exists -ne $After.Exists -or $Before.Kind -ne $After.Kind) { return $false }
-    # Serialization compares scalar and array registry value types by content.
-    $beforeRaw = ConvertTo-Json -InputObject $Before.RawValue -Compress
-    $afterRaw = ConvertTo-Json -InputObject $After.RawValue -Compress
-    return [string]::Equals($beforeRaw, $afterRaw, [StringComparison]::Ordinal)
+    # Registry values are .NET primitives or arrays. Compare their contents
+    # directly, with ordinal strings, without importing modules after isolation.
+    return [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals($Before.RawValue, $After.RawValue)
 }
 
 function Get-CSXUserPathState {
