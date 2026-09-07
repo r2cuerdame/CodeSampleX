@@ -126,6 +126,10 @@ func TestFarmPanelReportsWhatIsLeftAndHowFastItMoves(t *testing.T) {
 		Backlog struct {
 			CoverageHoles       int            `json:"coverageHoles"`
 			Dependencies        int            `json:"dependencies"`
+			RequestBacklog      int            `json:"requestBacklog"`
+			RepeatedMisses      int            `json:"repeatedMisses"`
+			ResolvedRequests    int            `json:"resolvedRequests"`
+			TotalRequests       int            `json:"totalRequests"`
 			WindowSeconds       int            `json:"windowSeconds"`
 			HandedOutInWindow   int            `json:"handedOutInWindow"`
 			HandedOutByKind     map[string]int `json:"handedOutByKind"`
@@ -140,6 +144,15 @@ func TestFarmPanelReportsWhatIsLeftAndHowFastItMoves(t *testing.T) {
 	}
 	if payload.Backlog.Dependencies != 1 {
 		t.Errorf("dependency backlog = %d, want 1 (body-parser)", payload.Backlog.Dependencies)
+	}
+	if payload.Backlog.RequestBacklog != 0 {
+		t.Errorf("request backlog = %d, want 0", payload.Backlog.RequestBacklog)
+	}
+	if payload.Backlog.RepeatedMisses != 0 {
+		t.Errorf("repeated misses = %d, want 0", payload.Backlog.RepeatedMisses)
+	}
+	if payload.Backlog.ResolvedRequests != 0 {
+		t.Errorf("resolved requests = %d, want 0", payload.Backlog.ResolvedRequests)
 	}
 	// A rate without its period reads as a total. The window is on the wire.
 	if payload.Backlog.WindowSeconds != int(farmWindow/time.Second) {

@@ -66,6 +66,10 @@ const (
 	// are never reached. One poll in four costs WANTED a quarter of its
 	// throughput and starts filling the gaps the same day.
 	authoringGapEvery = 4
+
+	// maxOfferedCandidates caps the bounded window of eligible candidates
+	// offered to a worker during ClaimAuthoringWork.
+	maxOfferedCandidates = 400
 )
 
 type authoringCandidateSnapshot struct {
@@ -252,6 +256,281 @@ func gapsFirst(eligible []serverstore.WantedRow) []serverstore.WantedRow {
 	}
 	return out
 }
+
+// candidateCoordKey uniquely identifies a work coordinate across candidate sources.
+type candidateCoordKey struct {
+	ecosystem string
+	name      string
+	version   string
+	symbol    string
+	targetOS  string
+	axis      string
+}
+
+func makeCandidateCoordKey(c serverstore.WantedRow) candidateCoordKey {
+	axis := c.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
+	return candidateCoordKey{
+		ecosystem: c.Ecosystem,
+		name:      c.Name,
+		version:   c.Version,
+		symbol:    c.Symbol,
+		targetOS:  strings.ToLower(strings.TrimSpace(c.TargetOS)),
+		axis:      axis,
+	}
+}
+
+func mergeCandidateRows(existing, incoming serverstore.WantedRow) serverstore.WantedRow {
+	out := existing
+	if incoming.Asks > out.Asks {
+		out.Asks = incoming.Asks
+	}
+	if incoming.Score > out.Score {
+		out.Score = incoming.Score
+	}
+	if incoming.LastSeen.After(out.LastSeen) {
+		out.LastSeen = incoming.LastSeen
+	}
+	if out.FirstSeen.IsZero() || (!incoming.FirstSeen.IsZero() && incoming.FirstSeen.Before(out.FirstSeen)) {
+		out.FirstSeen = incoming.FirstSeen
+	}
+	// An explicit ask (WANTED) takes precedence over generic discovery kinds.
+	if out.Kind != "WANTED" && incoming.Kind == "WANTED" {
+		out.Kind = "WANTED"
+	} else if out.Kind != "WANTED" && out.Kind != "FINDING" && incoming.Kind == "FINDING" {
+		out.Kind = "FINDING"
+	}
+	if out.TargetOS == "" && incoming.TargetOS != "" {
+		out.TargetOS = incoming.TargetOS
+	}
+	return out
+}
+
+func deduplicateAuthoringCandidates(slices ...[]serverstore.WantedRow) []serverstore.WantedRow {
+	var total int
+	for _, s := range slices {
+		total += len(s)
+	}
+	out := make([]serverstore.WantedRow, 0, total)
+	seen := make(map[candidateCoordKey]int, total)
+	for _, s := range slices {
+		for _, c := range s {
+			if c.Axis == "" {
+				c.Axis = serverstore.AuthoringAxisSample
+			}
+			key := makeCandidateCoordKey(c)
+			if idx, ok := seen[key]; ok {
+				out[idx] = mergeCandidateRows(out[idx], c)
+			} else {
+				seen[key] = len(out)
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+const (
+	tier0RepeatedAndFindings = 0 // Direct Wanted/MISS with Asks > 1, or FINDING on requested packages
+	tier1DirectAndBoundary   = 1 // Direct Wanted/MISS with Asks == 1, or Sample boundary on requested packages
+	tier2OtherFindings       = 2 // Other failure clusters (FINDING with observations on unrequested packages)
+	tier3RequestedHoles      = 3 // Coverage holes around requested packages (Evidence/Dependency completeness)
+	tier4ObservedDemand      = 4 // Other observed demand (Score > 0)
+	tier5GenericExpansion    = 5 // Generic empty coordinates (Score == 0, unasked siblings, empty packages)
+)
+
+func candidateTier(c serverstore.WantedRow, requestedPkgs map[[2]string]bool) int {
+	pkgKey := [2]string{c.Ecosystem, c.Name}
+	isReqPkg := requestedPkgs[pkgKey]
+	axis := c.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
+
+	if c.Kind == "WANTED" || c.Asks > 0 {
+		if c.Asks > 1 {
+			return tier0RepeatedAndFindings
+		}
+		return tier1DirectAndBoundary
+	}
+
+	if c.Kind == "FINDING" {
+		if isReqPkg {
+			return tier0RepeatedAndFindings
+		}
+		return tier2OtherFindings
+	}
+
+	if isReqPkg {
+		if axis == serverstore.AuthoringAxisSample {
+			return tier1DirectAndBoundary
+		}
+		return tier3RequestedHoles
+	}
+
+	if c.Score > 0 {
+		return tier4ObservedDemand
+	}
+
+	return tier5GenericExpansion
+}
+
+// buildAuthoringCandidates prioritizes candidates using the request-first queue:
+// Tier 0: Direct Wanted / MISS with Asks > 1 and failure fingerprints on requested packages.
+// Tier 1: Direct Wanted / MISS with Asks == 1 and boundary coverage on requested packages.
+// Tier 2: Other failure clusters (FINDING with observations).
+// Tier 3: Coverage holes around requested packages (Sample/Evidence/Dependency completeness).
+// Tier 4: Other observed demand (Score > 0).
+// Tier 5: Generic empty coordinates (Score == 0, unasked siblings, empty packages).
+//
+// Within each tier, candidates are interleaved across packages via pkgDepth
+// to prevent starvation, and ordered by demand, recency, and version recency.
+func buildAuthoringCandidates(
+	candidates []serverstore.WantedRow,
+	requested []serverstore.WantedRow,
+	req authoringWorkRequest,
+) []serverstore.WantedRow {
+	deduped := deduplicateAuthoringCandidates(candidates)
+	if len(deduped) == 0 {
+		return nil
+	}
+
+	requestedPkgs := make(map[[2]string]bool, len(requested))
+	for _, w := range requested {
+		if w.Name != "" {
+			requestedPkgs[[2]string{w.Ecosystem, w.Name}] = true
+		}
+	}
+
+	effectiveScore := func(c serverstore.WantedRow) int64 {
+		score := c.Score
+		if c.Asks > score {
+			score = c.Asks
+		}
+		return score
+	}
+
+	osMatches := func(c serverstore.WantedRow) bool {
+		if len(req.VerifierOS) == 0 || c.TargetOS == "" {
+			return false
+		}
+		return strings.EqualFold(c.TargetOS, req.VerifierOS[0])
+	}
+
+	compareWithinPackage := func(a, b serverstore.WantedRow) bool {
+		sa, sb := effectiveScore(a), effectiveScore(b)
+		if sa != sb {
+			return sa > sb
+		}
+		if !a.LastSeen.Equal(b.LastSeen) {
+			if a.LastSeen.IsZero() {
+				return false
+			}
+			if b.LastSeen.IsZero() {
+				return true
+			}
+			return a.LastSeen.After(b.LastSeen)
+		}
+		cmp := domain.CompareVersions(a.Version, b.Version)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		ma, mb := osMatches(a), osMatches(b)
+		if ma != mb {
+			return ma && !mb
+		}
+		if a.Symbol != b.Symbol {
+			return a.Symbol < b.Symbol
+		}
+		return a.Axis < b.Axis
+	}
+
+	tiers := make([][]serverstore.WantedRow, 6)
+	for _, c := range deduped {
+		t := candidateTier(c, requestedPkgs)
+		tiers[t] = append(tiers[t], c)
+	}
+
+	type depthItem struct {
+		row   serverstore.WantedRow
+		depth int
+	}
+
+	var out []serverstore.WantedRow
+	for _, tierList := range tiers {
+		if len(tierList) == 0 {
+			continue
+		}
+		byPkg := make(map[[2]string][]serverstore.WantedRow)
+		for _, c := range tierList {
+			pkg := [2]string{c.Ecosystem, c.Name}
+			byPkg[pkg] = append(byPkg[pkg], c)
+		}
+
+		var items []depthItem
+		for _, pkgRows := range byPkg {
+			sort.SliceStable(pkgRows, func(i, j int) bool {
+				return compareWithinPackage(pkgRows[i], pkgRows[j])
+			})
+			for depth, row := range pkgRows {
+				items = append(items, depthItem{row: row, depth: depth + 1})
+			}
+		}
+
+		sort.SliceStable(items, func(i, j int) bool {
+			a, b := items[i], items[j]
+			if a.depth != b.depth {
+				return a.depth < b.depth
+			}
+			sa, sb := effectiveScore(a.row), effectiveScore(b.row)
+			if sa != sb {
+				return sa > sb
+			}
+			if !a.row.LastSeen.Equal(b.row.LastSeen) {
+				if a.row.LastSeen.IsZero() {
+					return false
+				}
+				if b.row.LastSeen.IsZero() {
+					return true
+				}
+				return a.row.LastSeen.After(b.row.LastSeen)
+			}
+			cmp := domain.CompareVersions(a.row.Version, b.row.Version)
+			if cmp != 0 {
+				return cmp > 0
+			}
+			ma, mb := osMatches(a.row), osMatches(b.row)
+			if ma != mb {
+				return ma && !mb
+			}
+			if a.row.Ecosystem != b.row.Ecosystem {
+				return a.row.Ecosystem < b.row.Ecosystem
+			}
+			if a.row.Name != b.row.Name {
+				return a.row.Name < b.row.Name
+			}
+			if a.row.Version != b.row.Version {
+				return a.row.Version < b.row.Version
+			}
+			if a.row.Symbol != b.row.Symbol {
+				return a.row.Symbol < b.row.Symbol
+			}
+			return a.row.Axis < b.row.Axis
+		})
+
+		for _, item := range items {
+			out = append(out, item.row)
+		}
+	}
+
+	if len(out) > maxOfferedCandidates {
+		out = out[:maxOfferedCandidates]
+	}
+	return out
+}
+
 
 // authoringWorkBusyErr reports whether err is the database saying "not now"
 // rather than "this is broken": a deadline, a cancellation, a statement
@@ -599,33 +878,34 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	}
 	var funnel authoringFunnel
 	funnel.Wanted = len(snapshot.wanted)
-	eligible := make([]serverstore.WantedRow, 0, 400)
+	wantedEligible := make([]serverstore.WantedRow, 0, len(snapshot.wanted))
 	for _, candidate := range snapshot.wanted {
 		candidate.Kind = "WANTED"
 		candidate.Score = candidate.Asks
 		if authoringCandidateEligible(candidate, request) {
-			eligible = append(eligible, candidate)
+			wantedEligible = append(wantedEligible, candidate)
 		}
 	}
-	funnel.WantedEligible = len(eligible)
-	// WANTED keeps its own order: it is somebody's explicit ask, and demand is
-	// the ranking. Expansion is the network choosing its own next move, so it
-	// is steered at the releases the site renders.
+	funnel.WantedEligible = len(wantedEligible)
+
+	funnel.Expansion = len(snapshot.expansion)
 	fresh := make([]serverstore.WantedRow, 0, len(snapshot.expansion))
 	for _, candidate := range snapshot.expansion {
 		if authoringCandidateEligible(candidate, request) {
 			fresh = append(fresh, candidate)
 		}
 	}
-	funnel.Expansion = len(snapshot.expansion)
 	funnel.ExpansionEligible = len(fresh)
-	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
+
+	combined := deduplicateAuthoringCandidates(wantedEligible, fresh)
+
 	// The expansion snapshot is deliberately long-lived. Recheck only the
 	// axis predicates against live tables so completed Sample/Evidence/
 	// Dependency work disappears immediately instead of being re-leased for thirty
 	// minutes. Stores without this contract may serve legacy Sample work only.
 	if completeness, ok := store.(serverstore.AuthoringCompletenessStore); ok {
-		eligible, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, eligible)
+		var err error
+		combined, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, combined)
 		if err != nil {
 			if writeAuthoringWorkBusy(w, err) {
 				return
@@ -634,30 +914,29 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		legacy := eligible[:0]
-		for _, candidate := range eligible {
+		legacy := combined[:0]
+		for _, candidate := range combined {
 			if candidate.Axis == "" || candidate.Axis == serverstore.AuthoringAxisSample {
 				legacy = append(legacy, candidate)
 			}
 		}
-		eligible = legacy
+		combined = legacy
 	}
 	// A dependency coordinate is the one kind of work whose release no
 	// publicness gate has necessarily seen: it exists because a lockfile
 	// resolved onto it, not because anybody reported using it. Confirm it
 	// against the registry before a worker is sent, and register it while we
 	// are there.
-	eligible = a.confirmDependencyWork(pollCtx, eligible)
-	funnel.AfterDependency = len(eligible)
+	combined = a.confirmDependencyWork(pollCtx, combined)
+	funnel.AfterDependency = len(combined)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a
 	// fact about the artifact and not about this worker.
-	eligible = dropUnauthorableMaven(pollCtx, a.mavenJar, eligible)
-	funnel.AfterUnauthorable = len(eligible)
-	if a.authoringPolls.Add(1)%authoringGapEvery == 0 {
-		eligible = gapsFirst(eligible)
-	}
+	combined = dropUnauthorableMaven(pollCtx, a.mavenJar, combined)
+	funnel.AfterUnauthorable = len(combined)
+
+	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
 	funnel.Offered = len(eligible)
 	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {

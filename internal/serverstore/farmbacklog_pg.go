@@ -59,7 +59,76 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		if err := tx.QueryRow(ctx, `
-			WITH `+authoringCoverageCTE+`
+			WITH `+authoringCoverageCTE+`,
+			wanted_key AS MATERIALIZED (
+				SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, w.asks, k.coord
+				  FROM wanted w
+				  CROSS JOIN LATERAL (VALUES
+				      ('pkg:' || w.ecosystem || '/' || w.name || '@'),
+				      ('pkg:' || w.ecosystem || '/' ||
+				          CASE WHEN left(w.name, 1) = '@'
+				               THEN '%40' || substring(w.name from 2)
+				               ELSE w.name END || '@')) AS k(coord)
+			), candidate_samples AS MATERIALIZED (
+				SELECT DISTINCT sp.sample_id, sp.coord
+				  FROM wanted_key wk
+				  JOIN sample_packages sp ON sp.coord = wk.coord
+				  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
+			), candidate_receipts AS MATERIALIZED (
+				SELECT cs.sample_id,
+				       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
+				       r.receipt->>'schemaVersion' AS schema_version,
+				       r.receipt->'stages'->>'resolve' AS resolve_stage,
+				       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
+				  FROM (SELECT DISTINCT sample_id FROM candidate_samples) cs
+				  CROSS JOIN LATERAL (
+				      SELECT r.receipt
+				        FROM receipts r
+				       WHERE r.sample_id = cs.sample_id
+				         AND r.contract_result = 'PASS'
+				       ORDER BY r.created_at DESC
+				       LIMIT 10
+				  ) r
+			), answered_wanted AS MATERIALIZED (
+				SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
+				  FROM wanted_key wk
+				  JOIN candidate_samples cs ON cs.coord = wk.coord
+				  JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
+				  JOIN candidate_receipts cr ON cr.sample_id = cs.sample_id
+				 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+				   AND (wk.target_os = '' OR cr.os = wk.target_os)
+				   AND (
+				       wk.version = ''
+				       OR (
+				           cr.schema_version = '2'
+				           AND cr.resolve_stage = 'PASS'
+				           AND cr.resolved_packages ?
+				               ('pkg:' || wk.ecosystem || '/' ||
+				                CASE WHEN left(wk.name, 1) = '@'
+				                     THEN '%40' || substring(wk.name from 2)
+				                     ELSE wk.name END || '@' || wk.version)
+				       )
+				       OR (
+				           cr.schema_version <> '2'
+				           AND EXISTS (
+				               SELECT 1
+				                 FROM sample_packages sp
+				                WHERE sp.sample_id = cs.sample_id
+				                  AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
+				                                 CASE WHEN left(wk.name, 1) = '@'
+				                                      THEN '%40' || substring(wk.name from 2)
+				                                      ELSE wk.name END || '@' || wk.version)
+				           )
+				       ))
+			), unanswered_wanted AS (
+				SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, w.asks
+				  FROM wanted w
+				  LEFT JOIN answered_wanted an
+				    ON an.ecosystem = w.ecosystem AND an.name = w.name
+				   AND an.version = w.version AND an.symbol = w.symbol
+				   AND an.target_os = w.target_os
+				 WHERE an.ecosystem IS NULL
+			)
 			SELECT
 			  -- The `+"`-`"+` cells: a PUBLIC release the network watches people
 			  -- use and has never proven.
@@ -73,9 +142,24 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 			  -- The dependency backlog, whole rather than capped.
 			  (SELECT count(*) FROM (
 			     SELECT DISTINCT ecosystem,child_name,child_version FROM dependency_open
-			   ) d)`).Scan(&backlog.CoverageHoles, &backlog.Dependencies); err != nil {
-			return err
-		}
+			   ) d),
+			  -- RequestBacklog: unresolved wanted requests
+			  (SELECT count(*) FROM unanswered_wanted),
+			  -- RepeatedMisses: unresolved wanted requests with asks > 1
+			  (SELECT count(*) FROM unanswered_wanted WHERE asks > 1),
+			  -- ResolvedRequests: answered wanted requests
+			  (SELECT count(*) FROM answered_wanted),
+			  -- TotalRequests: total distinct wanted requests
+			  (SELECT count(*) FROM wanted)`).Scan(
+				&backlog.CoverageHoles,
+				&backlog.Dependencies,
+				&backlog.RequestBacklog,
+				&backlog.RepeatedMisses,
+				&backlog.ResolvedRequests,
+				&backlog.TotalRequests,
+			); err != nil {
+				return err
+			}
 		// The same absence at the grain a reader sees it: symbol × version
 		// cells rather than releases. Counted from the stored snapshots the
 		// package pages render, so the panel and the page cannot disagree

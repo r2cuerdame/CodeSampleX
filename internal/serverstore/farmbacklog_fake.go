@@ -115,6 +115,18 @@ func (f *Fake) FarmBacklogNow(_ context.Context, since, now time.Time) (FarmBack
 		f.provenNameTargets(packageTargets)))
 	backlog.Matrix = f.matrixCells()
 
+	for _, w := range f.wanted {
+		backlog.TotalRequests++
+		if f.isWantedAnsweredLocked(w) {
+			backlog.ResolvedRequests++
+		} else {
+			backlog.RequestBacklog++
+			if w.Asks > 1 {
+				backlog.RepeatedMisses++
+			}
+		}
+	}
+
 	for _, work := range f.authoringWork {
 		if work.ClaimedAt.Before(since) || work.ClaimedAt.After(now) {
 			continue

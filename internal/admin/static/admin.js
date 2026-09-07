@@ -434,6 +434,9 @@
           .sort((x, y) => y[1] - x[1])
           .map(([kind, n]) => `${kind} ${num(n)}`).join(" · ") || "—";
         backlog.append(
+          stat("요청 백로그", num(b.requestBacklog || 0), (b.requestBacklog || 0) > 0),
+          stat("반복 미스", num(b.repeatedMisses || 0), (b.repeatedMisses || 0) > 0),
+          stat("해결된 요청", num(b.resolvedRequests || 0)),
           stat("미검증 좌표", num(b.coverageHoles || 0)),
           stat("미관측 의존성", num(b.dependencies || 0)),
           stat("배포", `${num(b.handedOutInWindow || 0)} · ${perHour(b.handedOutInWindow || 0)}`),
