@@ -6,13 +6,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'windows-registry-state.ps1')
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('csx-bootstrap-smoke-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $saved = @{}
 foreach ($name in @('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'CSX_HOME', 'CSX_INSTALL_ONLY', 'PATH')) {
     $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
-$userPathBefore = [Environment]::GetEnvironmentVariable('PATH', 'User')
+$userPathBefore = Get-CSXUserPathState
 try {
     $env:LOCALAPPDATA = Join-Path $scratch 'local'
     $env:APPDATA = Join-Path $scratch 'roaming'
@@ -61,7 +62,7 @@ try {
     $payload = Join-Path $root "payloads/$($active.current.version)/csx-payload.exe"
     $payloadHash = (Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($payloadHash -cne $asset.sha256 -or $active.current.sha256 -cne $asset.sha256) { throw 'installed payload signed hash mismatch' }
-    if ([Environment]::GetEnvironmentVariable('PATH', 'User') -cne $userPathBefore) { throw 'installer modified real user PATH during isolated smoke' }
+    if (-not (Test-CSXRegistryValueStateEqual $userPathBefore (Get-CSXUserPathState))) { throw 'installer modified real user PATH during isolated smoke' }
     [pscustomobject]@{
         version = $active.current.version
         sequence = $active.current.sequence
