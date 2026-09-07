@@ -119,6 +119,17 @@ func TestTheMergeGateStillCoversPullRequestsAndMain(t *testing.T) {
 	}
 }
 
+func TestWindowsRegistryGateRunsBeforeTheConcurrentSuite(t *testing.T) {
+	windows := releaseJobs(t, ciWorkflow(t))["windows"]
+	want := "      - name: Native Windows registry isolation\n" +
+		"        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts\n" +
+		"      - name: Native Windows tests\n" +
+		"        run: go test -skip '^TestWindowsBootstrapRegistryIsolation$' ./..."
+	if !strings.Contains(windows, want) {
+		t.Fatal("Windows CI must run the forced, bounded registry test in its own step before the concurrent suite skips that already-passed test")
+	}
+}
+
 // The half of the gate that lives in GitHub settings cannot be asserted from
 // here, so what is asserted is that an operator renaming the job is told where
 // the other half is and how to read it back.
