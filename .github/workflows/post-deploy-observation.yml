@@ -1,0 +1,257 @@
+name: Post-deploy observation
+run-name: Post-deploy observation for production run ${{ github.event.workflow_run.id || inputs.deploy_run_id }}
+
+on:
+  workflow_run:
+    workflows: [Production deploy]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      deploy_run_id:
+        description: Successful Production deploy workflow run to observe again
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: codesamplex-post-deploy-${{ github.event.workflow_run.id || inputs.deploy_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    name: Observe production convergence
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'workflow_dispatch' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    environment: codesamplex-production
+    steps:
+      - name: Validate deployment provenance and download its evidence
+        id: deployment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTOMATIC_DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_DEPLOY_RUN_ID: ${{ inputs.deploy_run_id }}
+        run: |
+          set -euo pipefail
+          DEPLOY_RUN_ID="${AUTOMATIC_DEPLOY_RUN_ID:-}"
+          if [[ -z "$DEPLOY_RUN_ID" ]]; then
+            DEPLOY_RUN_ID="${MANUAL_DEPLOY_RUN_ID:-}"
+          fi
+          if ! [[ "$DEPLOY_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::deploy_run_id must identify a Production deploy workflow run"
+            exit 1
+          fi
+
+          run_json=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}")
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .name == "Production deploy" and
+            .path == ".github/workflows/production-deploy.yml" and
+            .event == "workflow_dispatch" and
+            .conclusion == "success" and
+            .repository.full_name == $repo
+          ' <<<"$run_json" >/dev/null
+
+          artifact_name="production-evidence-${DEPLOY_RUN_ID}"
+          artifacts_json=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/artifacts?per_page=100")
+          artifact_count=$(jq --arg name "$artifact_name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            <<<"$artifacts_json")
+          if [[ "$artifact_count" != "1" ]]; then
+            echo "::error::expected exactly one unexpired ${artifact_name} artifact; found ${artifact_count}"
+            exit 1
+          fi
+          artifact_id=$(jq -er --arg name "$artifact_name" \
+            '.artifacts[] | select(.name == $name and .expired == false) | .id' \
+            <<<"$artifacts_json")
+          mkdir -p "$RUNNER_TEMP/csx-production-deploy-evidence"
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            > "$RUNNER_TEMP/csx-production-deploy-evidence.zip"
+          unzip -q "$RUNNER_TEMP/csx-production-deploy-evidence.zip" \
+            -d "$RUNNER_TEMP/csx-production-deploy-evidence"
+          deploy_evidence="$RUNNER_TEMP/csx-production-deploy-evidence/production-deploy-evidence.json"
+          test -s "$deploy_evidence"
+
+          test "$(jq -er '.workflowRunId | tostring' "$deploy_evidence")" = "$DEPLOY_RUN_ID"
+          test "$(jq -er '.conclusion' "$deploy_evidence")" = "success"
+          target_sha=$(jq -er '.targetSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          previous_sha=$(jq -er '.previousProductionSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          deployed_sha=$(jq -er '.deployedSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          test "$deployed_sha" = "$target_sha"
+          image_digest=$(jq -er '.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$deploy_evidence")
+          server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and length > 0)' "$deploy_evidence")
+          tracking_issue=$(jq -er '.trackingIssue | select(type == "string" and length > 0)' "$deploy_evidence")
+
+          issue_prefix="https://github.com/${GITHUB_REPOSITORY}/issues/"
+          issue_number="${tracking_issue#"$issue_prefix"}"
+          issue_number="${issue_number#\#}"
+          if ! [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::deployment evidence has a non-canonical tracking issue"
+            exit 1
+          fi
+          issue_json=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}")
+          jq -e '.pull_request | not' <<<"$issue_json" >/dev/null
+          issue_content=$(jq -r '(.title // "") + "\n" + (.body // "")' <<<"$issue_json")
+          issue_comments=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}/comments?per_page=100" \
+            --jq '.[].body' 2>/dev/null || true)
+          if ! grep -F -q "$target_sha" <<<"${issue_content}"$'\n'"${issue_comments}"; then
+            echo "::error::tracking issue #${issue_number} does not reference deployed commit ${target_sha}"
+            exit 1
+          fi
+
+          {
+            echo "deploy_run_id=${DEPLOY_RUN_ID}"
+            echo "target_sha=${target_sha}"
+            echo "previous_sha=${previous_sha}"
+            echo "image_digest=${image_digest}"
+            echo "server_started_at=${server_started_at}"
+            echo "tracking_issue=${tracking_issue}"
+            echo "tracking_issue_number=${issue_number}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Initialize fail-closed observation evidence
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          PREVIOUS_SHA: ${{ steps.deployment.outputs.previous_sha }}
+          DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
+          TRACKING_ISSUE: ${{ steps.deployment.outputs.tracking_issue }}
+        run: |
+          @{
+            schemaVersion = 1
+            conclusion = "failure"
+            deploymentRunId = $env:DEPLOY_RUN_ID
+            observationRunId = "${{ github.run_id }}"
+            targetSha = $env:TARGET_SHA
+            previousProductionSha = $env:PREVIOUS_SHA
+            trackingIssue = $env:TRACKING_ISSUE
+            failure = "observer did not complete"
+          } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8NoBOM (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json")
+          @"
+          ## Post-deploy observation: FAIL
+
+          The observer did not complete. See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          "@ | Set-Content -Encoding utf8NoBOM (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ steps.deployment.outputs.target_sha }}
+          fetch-depth: 0
+
+      - name: Prove observer source is the deployed canonical commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          test -f deploy/lightsail/observe-production.ps1
+
+      - name: Install the dedicated SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-production-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-production-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-production-ssh/id"
+          test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+
+      - name: Observe builder convergence and production pressure
+        id: observer
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          PREVIOUS_SHA: ${{ steps.deployment.outputs.previous_sha }}
+          IMAGE_DIGEST: ${{ steps.deployment.outputs.image_digest }}
+          SERVER_STARTED_AT: ${{ steps.deployment.outputs.server_started_at }}
+          TRACKING_ISSUE: ${{ steps.deployment.outputs.tracking_issue }}
+          DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
+        run: |
+          $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
+          ./deploy/lightsail/observe-production.ps1 `
+            -Ip $env:PRODUCTION_HOST `
+            -User $user `
+            -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `
+            -KnownHostsPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/known_hosts") `
+            -ExpectedRevision $env:TARGET_SHA `
+            -ExpectedPreviousRevision $env:PREVIOUS_SHA `
+            -ExpectedImageDigest $env:IMAGE_DIGEST `
+            -ExpectedServerStartedAt $env:SERVER_STARTED_AT `
+            -TrackingIssue $env:TRACKING_ISSUE `
+            -DeploymentRunId $env:DEPLOY_RUN_ID `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json") `
+            -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
+
+      - name: Remove production SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
+
+      - name: Comment observation on the validated tracking issue
+        if: always() && steps.deployment.outputs.tracking_issue_number != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRACKING_ISSUE_NUMBER: ${{ steps.deployment.outputs.tracking_issue_number }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/post-deploy-observation.md"
+          cat "$RUNNER_TEMP/post-deploy-observation.md" >> "$GITHUB_STEP_SUMMARY"
+          jq -Rs '{body: .}' "$RUNNER_TEMP/post-deploy-observation.md" > "$RUNNER_TEMP/post-deploy-observation-comment.json"
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${TRACKING_ISSUE_NUMBER}/comments" \
+            --input "$RUNNER_TEMP/post-deploy-observation-comment.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: post-deploy-observation-${{ steps.deployment.outputs.deploy_run_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/post-deploy-observation.json
+            ${{ runner.temp }}/post-deploy-observation.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail when production did not converge safely
+        if: always()
+        shell: bash
+        env:
+          OBSERVER_OUTCOME: ${{ steps.observer.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=$(jq -r '.conclusion // "failure"' "$RUNNER_TEMP/post-deploy-observation.json")
+          if [[ "$OBSERVER_OUTCOME" != "success" || "$conclusion" != "success" ]]; then
+            echo "::error title=Post-deploy observation failed::Builder convergence or production pressure checks failed; see the tracking-issue comment and observation artifact."
+            exit 1
+          fi

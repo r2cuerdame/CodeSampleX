@@ -49,8 +49,6 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 		`foreach ($i in $sourceInvariantIndexes)`,
 		`$afterValues[1] -gt 0 -and $afterValues[3] -le 0`,
 		`$afterValues[6] -ne 0`,
-		`$builderFresh -eq 1`,
-		`the new server did not complete a fresh full builder pass`,
 		`failure-cluster observation delta: $failureClusterObservationDelta`,
 		`failure-cluster ledger is internally inconsistent`,
 	} {
@@ -67,12 +65,6 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 	if strings.Contains(deploy, `$beforeValues[6] -ne 0`) {
 		t.Error("deploy blocks the fresh full builder from repairing a pre-existing derived-ledger imbalance")
 	}
-	markerPos := strings.Index(deploy, `builder_fresh=1`)
-	valuePos := strings.Index(deploy, `values=$(docker compose exec -T db psql`)
-	if markerPos < 0 || valuePos <= markerPos {
-		t.Error("deploy samples derived values before proving the full builder completion marker")
-	}
-
 	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
 		for _, required := range []string{
 			`jsonb_each(fc.evidence_breakdown)`,
@@ -101,7 +93,7 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 	wrapper := readDeployFixture(t, "deploy-production.ps1")
 	for _, required := range []string{
 		`'server_started_at','builder_generated_at','builder_fresh'`,
-		`$after.builder_fresh -ne "true"`,
+		`$evidence.builderFresh = $after.builder_fresh -eq "true"`,
 		`$evidence.failureClusterObservationDelta = [int64]$after.invariants.failureClusterObservations - [int64]$before.invariants.failureClusterObservations`,
 	} {
 		if !strings.Contains(wrapper, required) {
@@ -110,49 +102,15 @@ func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testi
 	}
 }
 
-// The fresh-builder gate used to run the complete evidence/materialization
-// invariant query on every two-second poll. On the production corpus those
-// 90 reads took nineteen minutes and competed with the very full builder pass
-// the gate was waiting for. Freshness is one cheap timestamp comparison; the
-// full invariant tuple belongs after that marker and is read exactly once.
-// The ceiling follows the measurement and has moved once. It was thirty
-// minutes, set at more than twice an observed fourteen-minute first full
-// pass. On 2026-09-01 the pass took forty-nine minutes -- server up 19:39:12Z,
-// builder generatedAt 20:28:42Z -- because evidence_agg had gone from roughly
-// 72k rows to 216k that day, and the gate rolled a healthy v0.1.97 server back
-// to v0.1.96. Eighty minutes is the same rule applied to the newer number.
-func TestDeployPollsFreshnessBeforeReadingFullPostDeployInvariants(t *testing.T) {
+// The deploy still reads the safety invariants once before and once after the
+// cutover, but no longer polls the heavyweight builder completion marker.
+func TestDeployReadsSafetyInvariantsWithoutBuilderPolling(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
-	for _, required := range []string{
-		`$builderFreshPollAttempts = 2400`,
-		`$builderFreshPollSeconds = 2`,
-		`Start-Sleep -Seconds $builderFreshPollSeconds`,
-	} {
-		if !strings.Contains(deploy, required) {
-			t.Errorf("fresh-builder wait does not preserve the measured production budget: missing %q", required)
-		}
-	}
-	loopStart := strings.Index(deploy, `for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++)`)
-	loopEndMarker := `if ($builderFresh -ne 1) {`
-	loopEnd := strings.Index(deploy, loopEndMarker)
-	if loopStart < 0 || loopEnd <= loopStart {
-		t.Fatal("post-deploy fresh-builder polling loop is missing or malformed")
-	}
-	loop := deploy[loopStart:loopEnd]
-	if !strings.Contains(loop, `Invoke-RemoteScript $collectBuilderFreshScript`) {
-		t.Error("fresh-builder loop does not use the cheap timestamp-only probe")
-	}
-	if strings.Contains(loop, `Invoke-RemoteScript $collectInvariantScript`) {
-		t.Error("fresh-builder loop still repeats the whole-corpus invariant query")
-	}
-
-	fullRead := strings.Index(deploy[loopEnd+len(loopEndMarker):],
-		`$invariantsAfter = (Invoke-RemoteScript $collectInvariantScript`)
-	if fullRead < 0 {
-		t.Error("deploy does not read the full invariant tuple after builder freshness")
-	}
 	if got := strings.Count(deploy, `Invoke-RemoteScript $collectInvariantScript`); got != 2 {
 		t.Errorf("full invariant query invocation count = %d, want pre-deploy + one post-deploy", got)
+	}
+	if strings.Contains(deploy, "builderFreshPoll") || strings.Contains(deploy, "collectBuilderFreshScript") {
+		t.Error("deploy still polls builder freshness inside the rollback transaction")
 	}
 }
 
@@ -178,7 +136,7 @@ func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
 	}
 
 	allows := func(before, after []int64) bool {
-		if len(before) != 8 || len(after) != 8 || after[6] != 0 || after[7] != 1 {
+		if len(before) != 7 || len(after) != 7 || after[6] != 0 {
 			return false
 		}
 		for _, index := range sourceIndexes {
@@ -189,12 +147,12 @@ func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
 		return after[1] == 0 || after[3] > 0
 	}
 
-	liveBefore := []int64{167173, 19262, 108, 20098, 0, 0, 0, 1}
-	liveAfter := []int64{167173, 19262, 108, 20096, 0, 0, 0, 1}
+	liveBefore := []int64{167173, 19262, 108, 20098, 0, 0, 0}
+	liveAfter := []int64{167173, 19262, 108, 20096, 0, 0, 0}
 	if !allows(liveBefore, liveAfter) {
 		t.Error("the exact production reconciliation 20098 -> 20096 is still rejected")
 	}
-	repairBefore := []int64{167173, 19262, 108, 20098, 0, 0, 1, 1}
+	repairBefore := []int64{167173, 19262, 108, 20098, 0, 0, 1}
 	if !allows(repairBefore, liveAfter) {
 		t.Error("a fresh full builder cannot repair a pre-existing derived-ledger imbalance")
 	}
@@ -203,11 +161,10 @@ func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
 		name  string
 		after []int64
 	}{
-		{"raw FAIL loss", []int64{167173, 19261, 108, 20096, 0, 0, 0, 1}},
-		{"published sample loss", []int64{167173, 19262, 107, 20096, 0, 0, 0, 1}},
-		{"derived ledger disappeared", []int64{167173, 19262, 108, 0, 0, 0, 0, 1}},
-		{"derived ledger unbalanced", []int64{167173, 19262, 108, 20096, 0, 0, 1, 1}},
-		{"builder not fresh", []int64{167173, 19262, 108, 20096, 0, 0, 0, 0}},
+		{"raw FAIL loss", []int64{167173, 19261, 108, 20096, 0, 0, 0}},
+		{"published sample loss", []int64{167173, 19262, 107, 20096, 0, 0, 0}},
+		{"derived ledger disappeared", []int64{167173, 19262, 108, 0, 0, 0, 0}},
+		{"derived ledger unbalanced", []int64{167173, 19262, 108, 20096, 0, 0, 1}},
 		{"malformed legacy tuple", []int64{167173, 19262, 108, 20096, 0, 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

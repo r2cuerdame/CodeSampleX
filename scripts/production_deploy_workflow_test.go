@@ -188,7 +188,7 @@ func TestProductionEvidenceIsAlwaysRetained(t *testing.T) {
 	}
 }
 
-func TestProductionJobOutlivesTheFreshBuilderAndRollbackBudget(t *testing.T) {
+func TestProductionJobBudgetExcludesTheFullBuilderWait(t *testing.T) {
 	workflow := productionWorkflow(t)
 	deployJob, ok := releaseJobs(t, workflow)["deploy"]
 	if !ok {
@@ -209,28 +209,16 @@ func TestProductionJobOutlivesTheFreshBuilderAndRollbackBudget(t *testing.T) {
 		t.Fatalf("read production deploy script: %v", err)
 	}
 	script := string(raw)
-	attemptsMatch := regexp.MustCompile(`\$builderFreshPollAttempts = ([0-9]+)`).FindStringSubmatch(script)
-	secondsMatch := regexp.MustCompile(`\$builderFreshPollSeconds = ([0-9]+)`).FindStringSubmatch(script)
-	if attemptsMatch == nil || secondsMatch == nil {
-		t.Fatal("production deploy script has no numeric fresh-builder budget")
+	for _, forbidden := range []string{"builderFreshPollAttempts", "builderFreshPollSeconds", "collectBuilderFreshScript"} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("production deploy still owns full-builder wait %q", forbidden)
+		}
 	}
-	attempts, err := strconv.Atoi(attemptsMatch[1])
-	if err != nil {
-		t.Fatalf("parse fresh-builder attempts: %v", err)
+	if jobMinutes < 15 {
+		t.Fatalf("production job budget = %dm, too short for image transfer and exact rollback", jobMinutes)
 	}
-	pollSeconds, err := strconv.Atoi(secondsMatch[1])
-	if err != nil {
-		t.Fatalf("parse fresh-builder poll seconds: %v", err)
-	}
-
-	// The outer timeout includes checkout, image preparation, transfer,
-	// cutover, final invariants/smoke, evidence upload and a possible rollback.
-	// If it merely equals the inner builder wait, GitHub cancels the job before
-	// deploy-production.ps1 can record success or run its rollback catch path.
-	const rolloutAndRollbackReserveSeconds = 15 * 60
-	wantSeconds := attempts*pollSeconds + rolloutAndRollbackReserveSeconds
-	if gotSeconds := jobMinutes * 60; gotSeconds < wantSeconds {
-		t.Fatalf("production job budget = %ds, want at least %ds (fresh builder + rollout/rollback reserve)", gotSeconds, wantSeconds)
+	if jobMinutes > 45 {
+		t.Fatalf("production job budget = %dm; a lightweight deploy must not retain the old 80-minute builder reserve", jobMinutes)
 	}
 }
 

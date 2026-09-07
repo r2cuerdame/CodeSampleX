@@ -150,7 +150,10 @@ try {
         throw "served SHA does not match the requested immutable commit"
     }
     if ($after.health -ne "ok") { throw "post-deploy health is not ok" }
-    if ($after.builder_fresh -ne "true") { throw "post-deploy full builder completion is not fresh" }
+    # builderFresh is retained in the deploy artifact as the initial
+    # observation only. The independent post-deploy workflow owns the bounded
+    # convergence wait and alert; it must not keep this rollback transaction
+    # open after health, identity, migration, privacy and invariants pass.
     $evidence.conclusion = "success"
     $evidence.smoke = "pass"
     $evidence.rollback = "not-needed"

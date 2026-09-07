@@ -1,89 +1,61 @@
 package lightsail
 
 import (
-	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// The builder-freshness gate must allow the time a full pass actually takes.
-//
-// The gate is right to exist: a server that cannot complete an aggregation
-// pass is broken in a way no smoke test catches. But its budget was a fixed
-// 900 polls x 2s = 30 minutes, and on 2026-09-01 that stopped being enough.
-//
-// Measured on production the same day. The server restarted at 19:39:12Z and
-// the builder wrote its generatedAt at 20:28:42Z -- 49 minutes -- with
-// CSX_SNAPSHOT_INTERVAL at 5m and RunOnce called immediately at startup, so
-// that is the pass, not schedule latency. The deploy waited 30 minutes,
-// threw, and rolled a perfectly healthy v0.1.97 server back to v0.1.96.
-//
-// What made the pass slow is capacity, not code: evidence_agg went from
-// roughly 72k rows to 216k that day, on a host whose server container sits at
-// 97% of its 768MiB limit with a load average of 3.69 on 2 vCPU.
-//
-// So the budget follows the measurement. The gate still demands a COMPLETE
-// pass -- nothing is weakened -- it simply stops calling a slow host a broken
-// one. If a pass ever exceeds this too, the number is wrong again and the
-// answer is the same: measure, then set it.
-func TestTheBuilderFreshnessBudgetCoversAMeasuredPass(t *testing.T) {
-	raw, err := os.ReadFile("deploy.ps1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(raw)
+// Builder convergence is operationally important, but it is not a smoke
+// test. A healthy, correctly identified deployment must not sit inside the
+// rollback transaction for the duration of a full corpus rebuild.
+func TestDeploySuccessDoesNotWaitForBuilderFreshness(t *testing.T) {
+	deploy := readDeployFixture(t, "deploy.ps1")
+	wrapper := readDeployFixture(t, "deploy-production.ps1")
 
-	attempts := intAssignment(t, body, "builderFreshPollAttempts")
-	seconds := intAssignment(t, body, "builderFreshPollSeconds")
-	budget := attempts * seconds
-
-	// The longest pass measured was 49 minutes. A budget at or under that
-	// cannot pass on the corpus that produced it.
-	const measuredPassSeconds = 49 * 60
-	if budget <= measuredPassSeconds {
-		t.Errorf("builder freshness budget is %ds (%d x %ds); the longest measured pass was %ds, "+
-			"so every deploy fails and rolls back a healthy server",
-			budget, attempts, seconds, measuredPassSeconds)
+	for _, forbidden := range []string{
+		"builderFreshPollAttempts",
+		"builderFreshPollSeconds",
+		"collectBuilderFreshScript",
+		"did not complete a fresh full builder pass",
+	} {
+		if strings.Contains(deploy, forbidden) {
+			t.Errorf("deploy critical path still contains builder wait %q", forbidden)
+		}
 	}
-	// And not unbounded: a deploy that can hang for hours is its own outage.
-	if budget > 2*60*60 {
-		t.Errorf("builder freshness budget is %ds; a deploy that waits over two hours is an outage of its own", budget)
+	if strings.Contains(wrapper, `$after.builder_fresh -ne "true"`) {
+		t.Fatal("production wrapper still rejects a safe deployment while builderFresh is false")
+	}
+	for _, required := range []string{
+		`$evidence.builderFresh = $after.builder_fresh -eq "true"`,
+		`$evidence.conclusion = "success"`,
+		`$evidence.smoke = "pass"`,
+	} {
+		if !strings.Contains(wrapper, required) {
+			t.Errorf("deploy evidence no longer records the lightweight success boundary: missing %q", required)
+		}
 	}
 }
 
-// When it does give up, it has to say what it waited for. The failure that
-// rolled back v0.1.97 said only "the new server did not complete a fresh full
-// builder pass" -- no duration, no builder timestamp -- so from the output
-// alone a slow host and a broken builder look identical.
-func TestTheBuilderFreshnessFailureSaysWhatItMeasured(t *testing.T) {
-	raw, err := os.ReadFile("deploy.ps1")
-	if err != nil {
-		t.Fatal(err)
+// The wait moved rather than disappeared. The observer has its own bounded
+// budget and a hard failure path, so a builder that never converges is visible
+// on the tracking issue without rolling back an otherwise safe deployment.
+func TestPostDeployObserverAlertsWhenBuilderNeverConverges(t *testing.T) {
+	observer := readDeployFixture(t, "observe-production.ps1")
+	for _, required := range []string{
+		`$BuilderPollAttempts = 240`,
+		`$BuilderPollSeconds = 20`,
+		`Start-Sleep -Seconds $BuilderPollSeconds`,
+		`builder did not converge`,
+		`conclusion = "failure"`,
+		`Write-ObservationEvidence`,
+		`server restart or exit detected during observation`,
+		`server OOM detected during observation`,
+		`rollback detected: configured revision returned to the previous production SHA`,
+		`Representative latency after convergence`,
+		`Settled unbalanced cluster rows`,
+	} {
+		if !strings.Contains(observer, required) {
+			t.Errorf("post-deploy observer does not fail closed on convergence: missing %q", required)
+		}
 	}
-	body := string(raw)
-	at := strings.Index(body, "did not complete a fresh full builder pass")
-	if at < 0 {
-		t.Fatal("the builder freshness gate is gone")
-	}
-	line := body[max(0, at-400):at]
-	if !strings.Contains(body[at:min(len(body), at+300)], "waited") &&
-		!strings.Contains(line, "waited") {
-		t.Error("the refusal does not say how long it waited")
-	}
-}
-
-func intAssignment(t *testing.T, body, name string) int {
-	t.Helper()
-	re := regexp.MustCompile(`\$` + name + `\s*=\s*(\d+)`)
-	m := re.FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("%s is not assigned in deploy.ps1", name)
-	}
-	n, err := strconv.Atoi(m[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n
 }
