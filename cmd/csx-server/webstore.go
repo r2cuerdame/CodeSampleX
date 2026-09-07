@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
@@ -35,6 +36,7 @@ type webStore struct {
 	snapshotRows       []serverstore.SnapshotRow
 	snapshotRefreshing bool
 	snapshotRetryAt    time.Time
+	snapshotRetry      retrypolicy.Series
 
 	// The landing and sitemap rank packages from the materialized page
 	// inventory. A process restart used to put even that full read back on the
@@ -45,6 +47,7 @@ type webStore struct {
 	hotRows       []web.PackageHit
 	hotRefreshing bool
 	hotRetryAt    time.Time
+	hotRetry      retrypolicy.Series
 
 	// The set of (purl) whose snapshots were last seen, cached for the same
 	// reason.
@@ -53,6 +56,7 @@ type webStore struct {
 	updatedAt         map[string]time.Time
 	updatedRefreshing bool
 	updatedRetryAt    time.Time
+	updatedRetry      retrypolicy.Series
 
 	// The materialized (purl, symbol) page inventory, cached for the same
 	// reason again. This one matters most: assembling a package's cube asks
@@ -63,6 +67,7 @@ type webStore struct {
 	targetsIndex      *snapshotTargetIndex
 	targetsRefreshing bool
 	targetsRetryAt    time.Time
+	targetsRetry      retrypolicy.Series
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
 	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
@@ -73,6 +78,7 @@ type webStore struct {
 	searchSamples      sync.Map // key: "query|offset|limit", value: cachedSearchSamples
 	snapshotJSON       sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
 	purlsLoaded        sync.Map // key: purl, value: time.Time
+	purlSnapshotLoads  sync.Map // key: purl, value: *snapshotLoadState
 	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
 	dependencySubjects sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
 
@@ -83,6 +89,24 @@ type webStore struct {
 	gapsAll        []web.CompletenessGap
 	gapsRefreshing bool
 	gapsRetryAt    time.Time
+	gapsRetry      retrypolicy.Series
+}
+
+type snapshotLoadState struct {
+	mu          sync.Mutex
+	interactive snapshotLoadLane
+	background  snapshotLoadLane
+}
+
+type snapshotLoadLane struct {
+	loading *snapshotLoadCall
+	retry   retrypolicy.Series
+	retryAt time.Time
+}
+
+type snapshotLoadCall struct {
+	done chan struct{}
+	err  error
 }
 
 type cachedSnapshotJSON struct {
@@ -219,7 +243,6 @@ const packageDetailCacheTTL = 5 * time.Minute
 const (
 	recordSnapshotCacheTTL       = 5 * time.Minute
 	recordSnapshotRefreshTimeout = 2 * time.Minute
-	recordSnapshotRetryDelay     = 30 * time.Second
 )
 
 func backgroundRefreshCtx() (context.Context, context.CancelFunc) {
@@ -232,12 +255,18 @@ func backgroundRefreshCtx() (context.Context, context.CancelFunc) {
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
 	w.snapshotMu.Lock()
 	if w.snapshotAt.IsZero() {
+		now := time.Now()
+		if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
+			w.snapshotMu.Unlock()
+			return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
+		}
 		// Cold: nothing to serve, so this request loads on its own clock --
 		// and holds the lock while it does, so sixteen cold readers issue
 		// one read and fifteen wait for it. The pool is eight connections;
 		// a stampede is what turns a slow page into a stalled server.
 		rows, err := w.s.ListSnapshots(ctx)
 		if err != nil {
+			backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
 			w.snapshotMu.Unlock()
 			return nil, err
 		}
@@ -249,13 +278,14 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 				ok:   true,
 			})
 		}
+		backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
 		w.snapshotMu.Unlock()
 		return rows, nil
 	}
 	now := time.Now()
 	rows := w.snapshotRows
 	if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
-		!w.snapshotRefreshing && !now.Before(w.snapshotRetryAt) {
+		!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
 		w.snapshotRefreshing = true
 		go w.refreshSnapshots()
 	}
@@ -271,7 +301,7 @@ func (w *webStore) refreshSnapshots() {
 	defer w.snapshotMu.Unlock()
 	w.snapshotRefreshing = false
 	if err != nil {
-		w.snapshotRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
 		return
 	}
 	w.snapshotRows, w.snapshotAt = rows, time.Now()
@@ -282,14 +312,14 @@ func (w *webStore) refreshSnapshots() {
 			ok:   true,
 		})
 	}
-	w.snapshotRetryAt = time.Time{}
+	backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
 }
 
 func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.Time {
 	w.updatedMu.Lock()
 	if w.updatedAtRead.IsZero() {
 		// Cold: trigger background refresh without blocking visitors on a 10-30s JSON corpus scan.
-		if !w.updatedRefreshing && !time.Now().Before(w.updatedRetryAt) {
+		if !w.updatedRefreshing && backgroundRetryReady(&w.updatedRetry, &w.updatedRetryAt, time.Now()) {
 			w.updatedRefreshing = true
 			go w.refreshSnapshotUpdatedAt()
 		}
@@ -300,7 +330,7 @@ func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.
 	now := time.Now()
 	updated := w.updatedAt
 	if !w.updatedAtRead.After(now.Add(-recordSnapshotCacheTTL)) &&
-		!w.updatedRefreshing && !now.Before(w.updatedRetryAt) {
+		!w.updatedRefreshing && backgroundRetryReady(&w.updatedRetry, &w.updatedRetryAt, now) {
 		w.updatedRefreshing = true
 		go w.refreshSnapshotUpdatedAt()
 	}
@@ -316,11 +346,11 @@ func (w *webStore) refreshSnapshotUpdatedAt() {
 	defer w.updatedMu.Unlock()
 	w.updatedRefreshing = false
 	if err != nil {
-		w.updatedRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		backgroundRetryFailed(&w.updatedRetry, &w.updatedRetryAt, time.Now(), recordSnapshotCacheTTL)
 		return
 	}
 	w.updatedAt, w.updatedAtRead = updated, time.Now()
-	w.updatedRetryAt = time.Time{}
+	backgroundRetrySucceeded(&w.updatedRetry, &w.updatedRetryAt)
 }
 
 func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex, error) {
@@ -329,7 +359,7 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		now := time.Now()
 		idx := w.targetsIndex
 		if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
-			!w.targetsRefreshing && !now.Before(w.targetsRetryAt) {
+			!w.targetsRefreshing && backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, now) {
 			w.targetsRefreshing = true
 			go w.refreshSnapshotTargets()
 		}
@@ -345,13 +375,19 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		}
 		return buildTargetIndex(rows), nil
 	}
+	if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
+		w.targetsMu.Unlock()
+		return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
+	}
 	rows, err := w.s.SnapshotKeys(ctx)
 	if err != nil {
+		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
 		w.targetsMu.Unlock()
 		return nil, err
 	}
 	idx := buildTargetIndex(rows)
 	w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
+	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
 	w.targetsMu.Unlock()
 	return idx, nil
 }
@@ -372,11 +408,11 @@ func (w *webStore) refreshSnapshotTargets() {
 	defer w.targetsMu.Unlock()
 	w.targetsRefreshing = false
 	if err != nil {
-		w.targetsRetryAt = time.Now().Add(recordSnapshotRetryDelay)
+		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
 		return
 	}
 	w.targetsRows, w.targetsIndex, w.targetsAt = rows, buildTargetIndex(rows), time.Now()
-	w.targetsRetryAt = time.Time{}
+	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
 }
 
 func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
@@ -385,11 +421,28 @@ func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
 }
 
 func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
+	js, ok, _ := w.SnapshotJSONWithError(ctx, purl, symbol)
+	return js, ok
+}
+
+func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	deadline := time.Now().Add(recordSnapshotRefreshTimeout)
+	if incoming, ok := ctx.Deadline(); ok && incoming.Before(deadline) {
+		deadline = incoming
+	}
+	return context.WithDeadline(detached, deadline)
+}
+
+// SnapshotJSONWithError lets bounded fan-out readers stop on pressure rather
+// than treating it as dozens of independent cache misses.
+func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol string) (string, bool, error) {
 	key := purl + "|" + symbol
+	now := time.Now()
 	if val, ok := w.snapshotJSON.Load(key); ok {
 		entry := val.(cachedSnapshotJSON)
-		if time.Since(entry.at) < packageDetailCacheTTL {
-			return entry.json, entry.ok
+		if now.Sub(entry.at) < packageDetailCacheTTL {
+			return entry.json, entry.ok, nil
 		}
 	}
 	w.snapshotMu.Lock()
@@ -401,44 +454,128 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 			json: "",
 			ok:   false,
 		})
-		return "", false
+		return "", false, nil
 	}
 	w.snapshotMu.Unlock()
 
-	// If this PURL's snapshots have not been loaded recently, bulk-fetch all symbols for this PURL in one roundtrip.
-	if loadedAt, loaded := w.purlsLoaded.Load(purl); !loaded || time.Since(loadedAt.(time.Time)) >= packageDetailCacheTTL {
-		rows, err := w.s.GetSnapshotsForPURL(ctx, purl)
-		if err == nil {
-			now := time.Now()
-			for _, r := range rows {
-				w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
-					at:   now,
-					json: r.SnapshotJSON,
-					ok:   true,
-				})
+	// One authoritative bulk load per PURL and traffic class. Background hero
+	// warming must not become the leader an interactive version page waits on;
+	// within either lane, concurrent readers share one load and may stop waiting
+	// when their own context ends.
+	stateAny, _ := w.purlSnapshotLoads.LoadOrStore(purl, &snapshotLoadState{})
+	state := stateAny.(*snapshotLoadState)
+	for {
+		now = time.Now()
+		if js, ok, found := w.snapshotFromLoadedPURL(purl, key, now); found {
+			return js, ok, nil
+		}
+
+		state.mu.Lock()
+		// Recheck after taking the coordination lock: a load may have completed
+		// between the optimistic read above and this point.
+		now = time.Now()
+		if js, ok, found := w.snapshotFromLoadedPURL(purl, key, now); found {
+			state.mu.Unlock()
+			return js, ok, nil
+		}
+		lane := state.lane(serverstore.QueryClassOf(ctx))
+		if call := lane.loading; call != nil {
+			state.mu.Unlock()
+			select {
+			case <-call.done:
+				if call.err != nil {
+					return "", false, call.err
+				}
+				continue
+			case <-ctx.Done():
+				return "", false, ctx.Err()
 			}
-			w.purlsLoaded.Store(purl, now)
-			if val, ok := w.snapshotJSON.Load(key); ok {
-				entry := val.(cachedSnapshotJSON)
-				return entry.json, entry.ok
+		}
+		if !backgroundRetryReady(&lane.retry, &lane.retryAt, now) {
+			state.mu.Unlock()
+			return "", false, fmt.Errorf("%w (snapshot load for %s deferred)", serverstore.ErrPoolBusy, purl)
+		}
+		call := &snapshotLoadCall{done: make(chan struct{})}
+		lane.loading = call
+		state.mu.Unlock()
+		go w.loadSnapshotsForPURL(ctx, state, lane, call, purl)
+
+		select {
+		case <-call.done:
+			if call.err != nil {
+				return "", false, call.err
 			}
-			// Symbol not found in this PURL: negative cache entry.
-			w.snapshotJSON.Store(key, cachedSnapshotJSON{
-				at:   now,
-				json: "",
-				ok:   false,
-			})
-			return "", false
+		case <-ctx.Done():
+			return "", false, ctx.Err()
 		}
 	}
+}
 
-	js, ok, err := w.s.GetSnapshot(ctx, purl, symbol)
-	w.snapshotJSON.Store(key, cachedSnapshotJSON{
-		at:   time.Now(),
-		json: js,
-		ok:   err == nil && ok,
-	})
-	return js, err == nil && ok
+func (w *webStore) loadSnapshotsForPURL(
+	ctx context.Context,
+	state *snapshotLoadState,
+	lane *snapshotLoadLane,
+	call *snapshotLoadCall,
+	purl string,
+) {
+	loadCtx, cancel := snapshotLoadContext(ctx)
+	rows, err := w.s.GetSnapshotsForPURL(loadCtx, purl)
+	cancel()
+	loadedAt := time.Now()
+	if err == nil {
+		for _, r := range rows {
+			w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
+				at:   loadedAt,
+				json: r.SnapshotJSON,
+				ok:   true,
+			})
+		}
+		w.purlsLoaded.Store(purl, loadedAt)
+	}
+
+	state.mu.Lock()
+	call.err = err
+	if lane.loading == call {
+		lane.loading = nil
+	}
+	if err != nil {
+		backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, packageDetailCacheTTL)
+	} else {
+		backgroundRetrySucceeded(&lane.retry, &lane.retryAt)
+	}
+	close(call.done)
+	state.mu.Unlock()
+}
+
+func (s *snapshotLoadState) lane(class serverstore.QueryClass) *snapshotLoadLane {
+	if class == serverstore.ClassInteractive || class == serverstore.ClassProbe {
+		return &s.interactive
+	}
+	return &s.background
+}
+
+// snapshotFromLoadedPURL distinguishes "not loaded yet" from an authoritative
+// negative result. An entry older than the PURL's latest bulk load cannot be
+// returned: the latest rows may have removed that symbol.
+func (w *webStore) snapshotFromLoadedPURL(purl, key string, now time.Time) (js string, ok, found bool) {
+	loadedAny, loaded := w.purlsLoaded.Load(purl)
+	if !loaded {
+		return "", false, false
+	}
+	loadedAt := loadedAny.(time.Time)
+	if now.Sub(loadedAt) >= packageDetailCacheTTL {
+		return "", false, false
+	}
+	if val, exists := w.snapshotJSON.Load(key); exists {
+		entry := val.(cachedSnapshotJSON)
+		if !entry.at.Before(loadedAt) {
+			return entry.json, entry.ok, true
+		}
+	}
+	// The successful bulk load is authoritative. Cache its absence so the
+	// normal fast path also sees a fresh negative result.
+	w.snapshotJSON.Store(key, cachedSnapshotJSON{at: loadedAt})
+	return "", false, true
 }
 
 func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
@@ -1418,7 +1555,6 @@ func (w *webStore) SearchPackages(ctx context.Context, q string, limit int) ([]w
 const (
 	hotPackagesTTL            = time.Minute
 	hotPackagesRefreshTimeout = 30 * time.Second
-	hotPackagesRetryDelay     = 30 * time.Second
 )
 
 func (w *webStore) HotPackages(_ context.Context, limit int) ([]web.PackageHit, error) {
@@ -1426,7 +1562,7 @@ func (w *webStore) HotPackages(_ context.Context, limit int) ([]web.PackageHit, 
 	now := time.Now()
 	rows := w.hotRows
 	if !w.hotAt.After(now.Add(-hotPackagesTTL)) &&
-		!w.hotRefreshing && !now.Before(w.hotRetryAt) {
+		!w.hotRefreshing && backgroundRetryReady(&w.hotRetry, &w.hotRetryAt, now) {
 		w.hotRefreshing = true
 		go w.refreshHotPackages()
 	}
@@ -1457,11 +1593,11 @@ func (w *webStore) refreshHotPackages() {
 	defer w.hotMu.Unlock()
 	w.hotRefreshing = false
 	if err != nil {
-		w.hotRetryAt = time.Now().Add(hotPackagesRetryDelay)
+		backgroundRetryFailed(&w.hotRetry, &w.hotRetryAt, time.Now(), hotPackagesTTL)
 		return
 	}
 	w.hotRows, w.hotAt = rows, time.Now()
-	w.hotRetryAt = time.Time{}
+	backgroundRetrySucceeded(&w.hotRetry, &w.hotRetryAt)
 }
 
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
@@ -1624,25 +1760,30 @@ func (w *webStore) PackageAssets(ctx context.Context) ([]web.PackageAsset, error
 const (
 	gapsCacheTTL       = 5 * time.Minute
 	gapsRefreshTimeout = 2 * time.Minute
-	gapsRetryDelay     = 30 * time.Second
 )
 
 func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error) {
 	w.gapsMu.Lock()
 	if w.gapsAt.IsZero() {
+		if !backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, time.Now()) {
+			w.gapsMu.Unlock()
+			return nil, fmt.Errorf("%w (gaps cache load deferred)", serverstore.ErrPoolBusy)
+		}
 		rows, err := w.loadAllGaps(ctx)
 		if err != nil {
+			backgroundRetryFailed(&w.gapsRetry, &w.gapsRetryAt, time.Now(), gapsCacheTTL)
 			w.gapsMu.Unlock()
 			return nil, err
 		}
 		w.gapsAll, w.gapsAt = rows, time.Now()
+		backgroundRetrySucceeded(&w.gapsRetry, &w.gapsRetryAt)
 		w.gapsMu.Unlock()
 		return rows, nil
 	}
 	now := time.Now()
 	rows := w.gapsAll
 	if !w.gapsAt.After(now.Add(-gapsCacheTTL)) &&
-		!w.gapsRefreshing && !now.Before(w.gapsRetryAt) {
+		!w.gapsRefreshing && backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, now) {
 		w.gapsRefreshing = true
 		go w.refreshGaps()
 	}
@@ -1659,11 +1800,11 @@ func (w *webStore) refreshGaps() {
 	defer w.gapsMu.Unlock()
 	w.gapsRefreshing = false
 	if err != nil {
-		w.gapsRetryAt = time.Now().Add(gapsRetryDelay)
+		backgroundRetryFailed(&w.gapsRetry, &w.gapsRetryAt, time.Now(), gapsCacheTTL)
 		return
 	}
 	w.gapsAll, w.gapsAt = rows, time.Now()
-	w.gapsRetryAt = time.Time{}
+	backgroundRetrySucceeded(&w.gapsRetry, &w.gapsRetryAt)
 }
 
 func (w *webStore) loadAllGaps(ctx context.Context) ([]web.CompletenessGap, error) {

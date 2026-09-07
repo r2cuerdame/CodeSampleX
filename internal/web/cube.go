@@ -139,14 +139,17 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 		purl := domain.PURL{Ecosystem: eco, Name: name, Version: v}.String()
 		symbols, err := store.PackageSymbols(ctx, eco, name, v)
 		if err != nil {
-			symbols = nil
+			return nil, windowed, err
 		}
 		if len(symbols) > cubeMaxSymbolsPerVersion {
 			symbols = symbols[:cubeMaxSymbolsPerVersion]
 			windowed = true
 		}
 		for _, sym := range append([]string{""}, symbols...) {
-			raw, ok := store.SnapshotJSON(ctx, purl, sym)
+			raw, ok, err := cubeSnapshotJSON(ctx, store, purl, sym)
+			if err != nil {
+				return nil, windowed, err
+			}
 			if !ok {
 				continue
 			}
@@ -162,6 +165,53 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 		}
 	}
 	return facts, windowed, nil
+}
+
+// cubeSnapshotJSON uses an adapter's pressure-aware read when available. A
+// failed acquisition is terminal for the route instead of becoming another
+// missing cell followed by more acquisitions.
+func cubeSnapshotJSON(ctx context.Context, store Store, purl, symbol string) (string, bool, error) {
+	if pressureAware, ok := store.(interface {
+		SnapshotJSONWithError(context.Context, string, string) (string, bool, error)
+	}); ok {
+		return pressureAware.SnapshotJSONWithError(ctx, purl, symbol)
+	}
+	raw, ok := store.SnapshotJSON(ctx, purl, symbol)
+	return raw, ok, nil
+}
+
+// loadVersionCubeFacts assembles only the release named by a version route.
+// Older code assembled up to six releases and discarded all sibling facts
+// before rendering, multiplying cold snapshot and pool acquisitions.
+func loadVersionCubeFacts(ctx context.Context, store Store, eco, name, version string,
+	symbols []string) (facts []cubeFact, packageSnapshot string, packageOK bool, err error) {
+
+	if len(symbols) > cubeMaxSymbolsPerVersion {
+		symbols = symbols[:cubeMaxSymbolsPerVersion]
+	}
+	purl := domain.PURL{Ecosystem: eco, Name: name, Version: version}.String()
+	for _, sym := range append([]string{""}, symbols...) {
+		raw, ok, readErr := cubeSnapshotJSON(ctx, store, purl, sym)
+		if readErr != nil {
+			return nil, "", false, readErr
+		}
+		if sym == "" {
+			packageSnapshot, packageOK = raw, ok
+		}
+		if !ok {
+			continue
+		}
+		var doc snapshotDoc
+		if json.Unmarshal([]byte(raw), &doc) != nil {
+			continue
+		}
+		for _, row := range doc.Rows {
+			if fact, ok := cubeFactFromRow(row, version, sym); ok {
+				facts = append(facts, fact)
+			}
+		}
+	}
+	return facts, packageSnapshot, packageOK, nil
 }
 
 // loadPinnedCubeFacts repairs the browse window for a coordinate the reader
@@ -181,9 +231,18 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 // store, and what it reads otherwise is the pinned coordinate alone.
 func loadPinnedCubeFacts(ctx context.Context, store Store, eco, name string,
 	have []cubeFact, filters map[string]string) []cubeFact {
+	facts, _ := loadPinnedCubeFactsWithError(ctx, store, eco, name, have, filters)
+	return facts
+}
+
+// loadPinnedCubeFactsWithError preserves pressure failures for page handlers.
+// Treating a refused acquisition as an absent pinned coordinate turns a
+// transient database incident into a convincing but false "no match" page.
+func loadPinnedCubeFactsWithError(ctx context.Context, store Store, eco, name string,
+	have []cubeFact, filters map[string]string) ([]cubeFact, error) {
 
 	if !cubePinNeedsLoad(have, filters) {
-		return nil
+		return nil, nil
 	}
 	wantVersion, wantSymbol := filters["version"], filters["symbol"]
 
@@ -196,7 +255,7 @@ func loadPinnedCubeFacts(ctx context.Context, store Store, eco, name string,
 		if len(versions) == 0 {
 			all, err := store.PackageVersions(ctx, eco, name)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			if len(all) > cubeMaxVersions {
 				all = all[:cubeMaxVersions]
@@ -217,7 +276,7 @@ func loadPinnedCubeFacts(ctx context.Context, store Store, eco, name string,
 			// browse assembly would have given it, had it reached that far.
 			syms, err := store.PackageSymbols(ctx, eco, name, v)
 			if err != nil {
-				syms = nil
+				return nil, err
 			}
 			if len(syms) > cubeMaxSymbolsPerVersion {
 				syms = syms[:cubeMaxSymbolsPerVersion]
@@ -225,7 +284,10 @@ func loadPinnedCubeFacts(ctx context.Context, store Store, eco, name string,
 			symbols = append([]string{""}, syms...)
 		}
 		for _, sym := range symbols {
-			raw, ok := store.SnapshotJSON(ctx, purl, sym)
+			raw, ok, err := cubeSnapshotJSON(ctx, store, purl, sym)
+			if err != nil {
+				return nil, err
+			}
 			if !ok {
 				continue
 			}
@@ -240,7 +302,7 @@ func loadPinnedCubeFacts(ctx context.Context, store Store, eco, name string,
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // cubePinNeedsLoad reports whether the reader named a coordinate the browse
@@ -278,10 +340,10 @@ type pinnedCubeEntry struct {
 // holds. Only the read is cached, and only after the probe has said a read is
 // needed — so a warm assembly that covers the pin still costs nothing.
 func (s *site) pinnedCubeFactsCached(ctx context.Context, eco, name string,
-	have []cubeFact, filters map[string]string) []cubeFact {
+	have []cubeFact, filters map[string]string) ([]cubeFact, error) {
 
 	if !cubePinNeedsLoad(have, filters) {
-		return nil
+		return nil, nil
 	}
 	key := eco + "|" + name + "|" + filters["version"] + "|" + filters["symbol"]
 	now := time.Now()
@@ -290,10 +352,13 @@ func (s *site) pinnedCubeFactsCached(ctx context.Context, eco, name string,
 	e, ok := s.pinnedCube[key]
 	s.cubeMu.Unlock()
 	if ok && now.Sub(e.at) < cubeTTL {
-		return e.facts
+		return e.facts, nil
 	}
 
-	facts := loadPinnedCubeFacts(ctx, s.d.Store, eco, name, have, filters)
+	facts, err := loadPinnedCubeFactsWithError(ctx, s.d.Store, eco, name, have, filters)
+	if err != nil {
+		return nil, err
+	}
 
 	s.cubeMu.Lock()
 	defer s.cubeMu.Unlock()
@@ -317,7 +382,7 @@ func (s *site) pinnedCubeFactsCached(ctx context.Context, eco, name string,
 		}
 	}
 	s.pinnedCube[key] = pinnedCubeEntry{facts: facts, at: now}
-	return facts
+	return facts, nil
 }
 
 // snapshotSymbol maps a cube dimension value back to the symbol a snapshot is
@@ -1023,13 +1088,18 @@ func (s *site) cubeFactsCached(eco, name string) ([]cubeFact, bool) {
 }
 
 func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, bool) {
+	facts, windowed, _ := s.cubeFactsWithError(ctx, eco, name)
+	return facts, windowed
+}
+
+func (s *site) cubeFactsWithError(ctx context.Context, eco, name string) ([]cubeFact, bool, error) {
 	key := eco + "|" + name
 	for {
 		now := time.Now()
 		s.cubeMu.Lock()
 		if e, ok := s.cubeCache[key]; ok && now.Sub(e.at) < cubeTTL {
 			s.cubeMu.Unlock()
-			return e.facts, e.windowed
+			return e.facts, e.windowed, nil
 		}
 		// Someone is already assembling this package. Wait for them instead of
 		// repeating dozens of round trips: the production pool is eight
@@ -1040,7 +1110,7 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 			select {
 			case <-wait:
 			case <-ctx.Done():
-				return nil, false
+				return nil, false, ctx.Err()
 			}
 			// Re-read: normally the loader has just filled the cache. If it
 			// failed it left nothing, and this waiter takes its turn loading.
@@ -1087,9 +1157,9 @@ func (s *site) cubeFacts(ctx context.Context, eco, name string) ([]cubeFact, boo
 			return facts, windowed, err
 		}()
 		if err != nil {
-			return nil, false
+			return nil, false, err
 		}
-		return facts, windowed
+		return facts, windowed, nil
 	}
 }
 

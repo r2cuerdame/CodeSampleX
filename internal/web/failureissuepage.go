@@ -116,7 +116,11 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		} else {
 			window = failureIssueVersionWindow(versions, issue.Versions, nil,
 				failureIssueVersionSpan, failureIssueMaxVersions)
-			stagePass = s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
+			stagePass, err = s.stagePassByRelease(r.Context(), eco, name, issue.Stage, window)
+			if err != nil {
+				s.unavailable(w, r, lang)
+				return
+			}
 		}
 	}
 	// "Where it was measured" is an inventory, not the bounded comparison
@@ -218,14 +222,17 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 // symbols happened to be materialized would move as the corpus grows; a
 // release with no package-level snapshot stays unmeasured instead, which is
 // the honest answer and the one the verdict is built to carry.
-func (s *site) stagePassByRelease(ctx context.Context, eco, name, stage string, versions []string) map[string]int64 {
+func (s *site) stagePassByRelease(ctx context.Context, eco, name, stage string, versions []string) (map[string]int64, error) {
 	out := make(map[string]int64, len(versions))
 	if stage == "" {
-		return out
+		return out, nil
 	}
 	for _, v := range versions {
 		purl := domain.PURL{Ecosystem: eco, Name: name, Version: v}.String()
-		raw, ok := s.d.Store.SnapshotJSON(ctx, purl, "")
+		raw, ok, err := cubeSnapshotJSON(ctx, s.d.Store, purl, "")
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -237,7 +244,7 @@ func (s *site) stagePassByRelease(ctx context.Context, eco, name, stage string, 
 			out[v] += row.ByStage[stage].Pass
 		}
 	}
-	return out
+	return out, nil
 }
 
 // failureIssueSamples offers a way into the published answers written against

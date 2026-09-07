@@ -41,6 +41,9 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 const (
@@ -76,6 +79,8 @@ type hotShardHint struct {
 	keys    []string
 	at      time.Time
 	loading chan struct{}
+	retry   retrypolicy.Series
+	retryAt time.Time
 }
 
 // hotShardKeys reports the keys to advertise, or nil when this process has
@@ -87,7 +92,17 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 		wait = hotShardRequestWait
 	}
 	a.hotShards.mu.Lock()
+	now := a.now()
 	if a.hotShards.keys != nil && a.now().Sub(a.hotShards.at) < a.hotShardTTL() {
+		keys := a.hotShards.keys
+		a.hotShards.mu.Unlock()
+		return keys
+	}
+	if a.hotShards.retry.State() == retrypolicy.FailedDeferred && !now.Before(a.hotShards.retryAt) {
+		a.hotShards.retry.Reset()
+		a.hotShards.retryAt = time.Time{}
+	}
+	if now.Before(a.hotShards.retryAt) {
 		keys := a.hotShards.keys
 		a.hotShards.mu.Unlock()
 		return keys
@@ -127,9 +142,10 @@ func (a *api) hotShardTTL() time.Duration {
 func (a *api) loadHotShards(ctx context.Context, done chan struct{}) {
 	// Detached from the caller on purpose: the read is shared, so a client
 	// that hung up must neither abandon the callers waiting with it nor make
-	// the next poll pay for the same four whole-corpus reads. The caller's
-	// class travels with the context; only its cancellation is dropped.
-	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hotShardLoadTimeout)
+	// the next poll pay for the same four whole-corpus reads. Detached work is
+	// background work; it must not retain the request's interactive pool class.
+	baseCtx := serverstore.WithQueryClass(context.WithoutCancel(ctx), serverstore.ClassBackground)
+	loadCtx, cancel := context.WithTimeout(baseCtx, hotShardLoadTimeout)
 	defer cancel()
 	keys, err := a.d.Store.HotShardKeys(loadCtx, hotShardLimit)
 
@@ -138,6 +154,18 @@ func (a *api) loadHotShards(ctx context.Context, done chan struct{}) {
 	if err == nil && len(keys) > 0 {
 		a.hotShards.keys = keys
 		a.hotShards.at = a.now()
+		a.hotShards.retry.Reset()
+		a.hotShards.retryAt = time.Time{}
+	} else if err != nil {
+		retry, state := a.hotShards.retry.Failure()
+		if state == retrypolicy.Waiting {
+			delay, _ := retrypolicy.Delay(retry, nil)
+			a.hotShards.retryAt = a.now().Add(delay)
+		} else {
+			// Terminal for this retry series. A normal cache lifetime is the
+			// deferred window; no request can immediately reinsert the work.
+			a.hotShards.retryAt = a.now().Add(a.hotShardTTL())
+		}
 	}
 	a.hotShards.loading = nil
 	close(done)

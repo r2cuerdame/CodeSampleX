@@ -97,6 +97,10 @@ type api struct {
 	// recomputed for each caller on the request's own clock.
 	hotShards hotShardHint
 
+	// Concurrent container and monitor probes share one bounded DB read.
+	healthMu sync.Mutex
+	health   *healthCall
+
 	// authoringPolls counts work polls for the gap rotation; see
 	// authoringGapEvery.
 	authoringPolls atomic.Uint64
@@ -104,6 +108,11 @@ type api struct {
 	wantedMu    sync.Mutex
 	wantedAt    time.Time
 	wantedItems []wantedListItem
+}
+
+type healthCall struct {
+	done chan struct{}
+	err  error
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.
@@ -217,11 +226,39 @@ func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
 	defer cancel()
 	// Any trivial read proves the pool can hand out a live connection.
-	if _, _, err := a.d.Store.GetLatestStats(ctx); err != nil {
+	if err := a.databaseHealth(ctx); err != nil {
 		unhealthy("database unavailable")
 		return
 	}
 	_, _ = io.WriteString(w, "ok")
+}
+
+func (a *api) databaseHealth(ctx context.Context) error {
+	a.healthMu.Lock()
+	if call := a.health; call != nil {
+		a.healthMu.Unlock()
+		select {
+		case <-call.done:
+			return call.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	call := &healthCall{done: make(chan struct{})}
+	a.health = call
+	a.healthMu.Unlock()
+
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), healthzTimeout)
+	_, _, call.err = a.d.Store.GetLatestStats(loadCtx)
+	cancel()
+	close(call.done)
+
+	a.healthMu.Lock()
+	if a.health == call {
+		a.health = nil
+	}
+	a.healthMu.Unlock()
+	return call.err
 }
 
 // route registers h with a recover guard: a handler panic becomes a JSON

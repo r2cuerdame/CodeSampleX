@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -18,6 +19,31 @@ import (
 const noSafeMatchThreshold = 0.25
 
 const maxSearchCandidates = 500
+
+type searchReadCacheKey struct{}
+
+type searchReadCache struct {
+	clusters  map[string]searchClusterRead
+	snapshots map[string]searchSnapshotRead
+}
+
+type searchClusterRead struct {
+	rows []serverstore.ClusterRow
+	err  error
+}
+
+type searchSnapshotRead struct {
+	json string
+	ok   bool
+	err  error
+}
+
+func withSearchReadCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, searchReadCacheKey{}, &searchReadCache{
+		clusters:  map[string]searchClusterRead{},
+		snapshots: map[string]searchSnapshotRead{},
+	})
+}
 
 // maxTreePatterns bounds how many lockfile packages widen a search. A
 // dependency tree runs to hundreds of entries; letting all of them into the
@@ -37,6 +63,7 @@ func (a *api) handleSearchV2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, responseVersion int) {
+	r = r.WithContext(withSearchReadCache(r.Context()))
 	var req domain.SearchRequest
 	if !readJSON(w, r, 1<<20, &req) {
 		return
@@ -680,12 +707,12 @@ func (a *api) snapshotEvidence(r *http.Request, p domain.PURL, symbol string,
 	if p.Name == "" {
 		return summary, false, nil
 	}
-	js, ok, err := a.d.Store.GetSnapshot(r.Context(), p.String(), symbol)
+	js, ok, err := a.searchSnapshot(r.Context(), p.String(), symbol)
 	if err != nil {
 		return summary, false, err
 	}
 	if !ok && symbol != "" {
-		js, ok, err = a.d.Store.GetSnapshot(r.Context(), p.String(), "")
+		js, ok, err = a.searchSnapshot(r.Context(), p.String(), "")
 	}
 	if err != nil {
 		return summary, false, err
@@ -766,7 +793,7 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 	var fingerprintPackages []domain.PURL
 	matchedPackage := map[string]bool{}
 	for _, p := range uniquePackageIdentities(packages) {
-		clusters, err := a.d.Store.ListFailureClustersIncludingPreserved(r.Context(), p.Name)
+		clusters, err := a.searchFailureClusters(r.Context(), p.Name)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -819,6 +846,36 @@ func (a *api) matchingClusters(r *http.Request, packages []domain.PURL,
 		}
 	}
 	return out, fingerprintPackages, nil
+}
+
+func (a *api) searchFailureClusters(ctx context.Context, packageName string) ([]serverstore.ClusterRow, error) {
+	cache, _ := ctx.Value(searchReadCacheKey{}).(*searchReadCache)
+	key := strings.ToLower(packageName)
+	if cache != nil {
+		if read, ok := cache.clusters[key]; ok {
+			return read.rows, read.err
+		}
+	}
+	rows, err := a.d.Store.ListFailureClustersIncludingPreserved(ctx, packageName)
+	if cache != nil {
+		cache.clusters[key] = searchClusterRead{rows: rows, err: err}
+	}
+	return rows, err
+}
+
+func (a *api) searchSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {
+	cache, _ := ctx.Value(searchReadCacheKey{}).(*searchReadCache)
+	key := purl + "\x00" + symbol
+	if cache != nil {
+		if read, ok := cache.snapshots[key]; ok {
+			return read.json, read.ok, read.err
+		}
+	}
+	js, ok, err := a.d.Store.GetSnapshot(ctx, purl, symbol)
+	if cache != nil {
+		cache.snapshots[key] = searchSnapshotRead{json: js, ok: ok, err: err}
+	}
+	return js, ok, err
 }
 
 func declaredFailureSymbol(clusterSymbol string, declared []string) bool {
