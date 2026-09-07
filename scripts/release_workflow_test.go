@@ -190,6 +190,16 @@ func TestOnlyAVersionTagRefCanStartTheRelease(t *testing.T) {
 	}
 }
 
+func TestReleaseRunsWindowsRegistryGateBeforeTheConcurrentSuite(t *testing.T) {
+	windows := releaseJobs(t, releaseWorkflow(t))["windows-test"]
+	want := "      - name: Native Windows registry isolation\n" +
+		"        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts\n" +
+		"      - name: Native Windows launcher and updater tests\n"
+	if !strings.Contains(windows, want) || !strings.Contains(windows, "        run: go test -timeout 30m -skip '^TestWindowsBootstrapRegistryIsolation$' ./...") {
+		t.Fatal("release must run the forced, bounded registry test in its own step before the concurrent suite skips that already-passed test")
+	}
+}
+
 // Nothing signs until the seed in the protected environment, the pinned
 // environment variable and the key the build job actually stamped into the
 // six client binaries are the same key. An unnoticed trust-root rotation
@@ -324,7 +334,7 @@ func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
 		}
 	}
 	publish := jobs["publish"]
-	ordered := []string{"--generate-notes --latest", "Verify exact published release asset set", "Verify published signed release", "Publish to the MCP Registry"}
+	ordered := []string{"--generate-notes --latest", "Verify exact uploaded release asset set", "Verify published signed release", "Publish to the MCP Registry"}
 	previous := -1
 	for _, marker := range ordered {
 		at := strings.Index(publish, marker)
@@ -582,9 +592,13 @@ func TestWindowsTestsCarryATimeoutOnlyAHangCanReach(t *testing.T) {
 	if !ok {
 		t.Fatal("release workflow has no windows-test job")
 	}
-	m := regexp.MustCompile(`go test\s+(?:\S+\s+)*?-timeout[= ](\d+)m\b`).FindStringSubmatch(job)
+	fullSuite := regexp.MustCompile(`(?m)^\s*run:\s+go test\s+(.+?)\s+\./\.\.\.\s*$`).FindStringSubmatch(job)
+	if fullSuite == nil {
+		t.Fatal("windows-test does not run the full Go test suite")
+	}
+	m := regexp.MustCompile(`(?:^|\s)-timeout[= ](\d+)m\b`).FindStringSubmatch(fullSuite[1])
 	if m == nil {
-		t.Fatal("windows-test runs `go test` with no explicit -timeout; the 10m default " +
+		t.Fatal("windows-test runs its full suite with no explicit -timeout; the 10m default " +
 			"was already at 78% on a passing run (internal/sandbox 471s) and has failed a release")
 	}
 	const floorMinutes = 20
