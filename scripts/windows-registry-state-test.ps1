@@ -1,9 +1,10 @@
 # Exercise the same comparator as the installer smoke in an owned test key.
 # Never write to HKCU\Environment or its real Path value.
 $ErrorActionPreference = 'Stop'
+$PSModuleAutoloadingPreference = 'None'
 $timer = [Diagnostics.Stopwatch]::StartNew()
 function Write-TestPhase([string]$Name) {
-    [Console]::Out.WriteLine(('registry test: {0} ({1}ms)' -f $Name, $timer.ElapsedMilliseconds))
+    [Console]::Out.WriteLine(('registry test: {0} ({1}ms, {2:o})' -f $Name, $timer.ElapsedMilliseconds, [DateTime]::UtcNow))
     [Console]::Out.Flush()
 }
 function Assert-RegistryValueStateEqual($Before, $After, [bool]$Expected, [string]$Case) {
@@ -15,7 +16,7 @@ function Assert-RegistryValueStateEqual($Before, $After, [bool]$Expected, [strin
     } finally { $script:PSModuleAutoloadingPreference = $autoloadBefore }
 }
 Write-TestPhase 'script entered'
-. (Join-Path $PSScriptRoot 'windows-registry-state.ps1')
+. ([IO.Path]::Combine($PSScriptRoot, 'windows-registry-state.ps1'))
 Write-TestPhase 'helper loaded'
 $realPathBefore = Get-CSXUserPathState
 Write-TestPhase 'real PATH captured'
