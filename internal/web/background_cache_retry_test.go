@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 type retryTestClock struct{ nanos atomic.Int64 }
@@ -27,6 +29,7 @@ type retrySnapshot struct {
 	refreshing bool
 	retryAt    time.Time
 	state      retrypolicy.State
+	budget     *serverstore.QueryBudget
 }
 
 func awaitRetrySnapshot(t *testing.T, wantCalls int64, snapshot func() retrySnapshot) retrySnapshot {
@@ -51,9 +54,18 @@ func assertBoundedCacheRetry(t *testing.T, clock *retryTestClock, ttl time.Durat
 	trigger func(), snapshot func() retrySnapshot) {
 	t.Helper()
 	waits := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, ttl}
+	var previousBudget *serverstore.QueryBudget
 	for attempt, wantWait := range waits {
 		trigger()
 		got := awaitRetrySnapshot(t, int64(attempt+1), snapshot)
+		wantBudget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+		if attempt > 0 {
+			wantBudget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+		}
+		if got.budget == previousBudget || !reflect.DeepEqual(got.budget, wantBudget) {
+			t.Fatalf("attempt %d lacks a fresh background %s budget", attempt+1, map[bool]string{false: "initial", true: "retry"}[attempt > 0])
+		}
+		previousBudget = got.budget
 		if delay := got.retryAt.Sub(clock.now()); delay != wantWait {
 			t.Fatalf("failure %d delay = %s, want %s", attempt+1, delay, wantWait)
 		}
@@ -84,6 +96,9 @@ func assertBoundedCacheRetry(t *testing.T, clock *retryTestClock, ttl time.Durat
 	clock.set(deferred.retryAt.Add(time.Nanosecond))
 	trigger()
 	reset := awaitRetrySnapshot(t, 7, snapshot)
+	if reset.budget == previousBudget || !reflect.DeepEqual(reset.budget, serverstore.NewQueryBudget(serverstore.ClassBackground)) {
+		t.Fatal("post-deferral initial scan did not receive a fresh non-retry background budget")
+	}
 	if reset.state != retrypolicy.Waiting || reset.retryAt.Sub(clock.now()) != time.Second {
 		t.Fatalf("fresh series after deferred TTL = %+v, now=%s", reset, clock.now())
 	}
@@ -91,10 +106,12 @@ func assertBoundedCacheRetry(t *testing.T, clock *retryTestClock, ttl time.Durat
 
 type failingAssetRetryStore struct {
 	*fakeStore
-	calls atomic.Int64
+	calls  atomic.Int64
+	budget atomic.Pointer[serverstore.QueryBudget]
 }
 
-func (s *failingAssetRetryStore) PackageAssets(context.Context) ([]PackageAsset, error) {
+func (s *failingAssetRetryStore) PackageAssets(ctx context.Context) ([]PackageAsset, error) {
+	s.budget.Store(serverstore.BudgetOf(ctx))
 	s.calls.Add(1)
 	return nil, errors.New("scripted asset refresh failure")
 }
@@ -107,16 +124,18 @@ func TestPackageAssetRefreshRetriesFiveTimesThenDefersForTTL(t *testing.T) {
 	assertBoundedCacheRetry(t, clock, assetTTL, func() { s.packageAssets() }, func() retrySnapshot {
 		s.assets.mu.Lock()
 		defer s.assets.mu.Unlock()
-		return retrySnapshot{store.calls.Load(), s.assets.refreshing, s.assets.retryAt, s.assets.retry.State()}
+		return retrySnapshot{store.calls.Load(), s.assets.refreshing, s.assets.retryAt, s.assets.retry.State(), store.budget.Load()}
 	})
 }
 
 type failingDerivedRetryStore struct {
 	*fakeStore
-	calls atomic.Int64
+	calls  atomic.Int64
+	budget atomic.Pointer[serverstore.QueryBudget]
 }
 
-func (s *failingDerivedRetryStore) DerivedFindings(context.Context) ([]DerivedFinding, error) {
+func (s *failingDerivedRetryStore) DerivedFindings(ctx context.Context) ([]DerivedFinding, error) {
+	s.budget.Store(serverstore.BudgetOf(ctx))
 	s.calls.Add(1)
 	return nil, errors.New("scripted findings refresh failure")
 }
@@ -130,29 +149,31 @@ func TestDerivedFindingsRefreshRetriesFiveTimesThenDefersForTTL(t *testing.T) {
 	assertBoundedCacheRetry(t, clock, derivedTTL, func() { s.derivedFindings(r) }, func() retrySnapshot {
 		s.derivedMu.Lock()
 		defer s.derivedMu.Unlock()
-		return retrySnapshot{store.calls.Load(), s.derivedRefreshing, s.derivedRetryAt, s.derivedRetry.State()}
+		return retrySnapshot{store.calls.Load(), s.derivedRefreshing, s.derivedRetryAt, s.derivedRetry.State(), store.budget.Load()}
 	})
 }
 
 func TestHandFindingsRefreshRetriesFiveTimesThenDefersForTTL(t *testing.T) {
 	clock := newRetryTestClock()
-	store := &panickingFindingsStore{fakeStore: newFakeStore()}
+	store := &panickingHandRetryStore{fakeStore: newFakeStore()}
 	s := &site{d: Deps{Store: store}, backgroundNow: clock.now,
 		backgroundJitter: func(time.Duration) time.Duration { return 0 }}
 	r := httptest.NewRequest("GET", "/findings", nil)
 	assertBoundedCacheRetry(t, clock, derivedTTL, func() { s.handFindings(r) }, func() retrySnapshot {
 		s.handMu.Lock()
 		defer s.handMu.Unlock()
-		return retrySnapshot{store.manifestCalls.Load(), s.handRefreshing, s.handRetryAt, s.handRetry.State()}
+		return retrySnapshot{store.manifestCalls.Load(), s.handRefreshing, s.handRetryAt, s.handRetry.State(), store.budget.Load()}
 	})
 }
 
 type failingHeroRetryStore struct {
 	*fakeStore
-	calls atomic.Int64
+	calls  atomic.Int64
+	budget atomic.Pointer[serverstore.QueryBudget]
 }
 
-func (s *failingHeroRetryStore) PackageVersions(context.Context, string, string) ([]string, error) {
+func (s *failingHeroRetryStore) PackageVersions(ctx context.Context, _, _ string) ([]string, error) {
+	s.budget.Store(serverstore.BudgetOf(ctx))
 	s.calls.Add(1)
 	return nil, errors.New("scripted hero refresh failure")
 }
@@ -169,6 +190,18 @@ func TestHeroWarmRetriesFiveTimesThenDefersForMatrixTTL(t *testing.T) {
 		s.heroMu.Lock()
 		defer s.heroMu.Unlock()
 		series := s.heroRetry[key]
-		return retrySnapshot{store.calls.Load(), s.heroLoading[key], s.heroRetryAt[key], series.State()}
+		return retrySnapshot{store.calls.Load(), s.heroLoading[key], s.heroRetryAt[key], series.State(), store.budget.Load()}
 	})
+}
+
+type panickingHandRetryStore struct {
+	*fakeStore
+	manifestCalls atomic.Int64
+	budget        atomic.Pointer[serverstore.QueryBudget]
+}
+
+func (s *panickingHandRetryStore) SampleManifest(ctx context.Context, _ string) (string, bool) {
+	s.budget.Store(serverstore.BudgetOf(ctx))
+	s.manifestCalls.Add(1)
+	panic("scripted hand findings refresh failure")
 }

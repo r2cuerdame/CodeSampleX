@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -645,10 +647,16 @@ func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
 			s.failDerivedFindingsRefresh()
 		}
 	}()
-	// An unclassified context is deliberately a background DB class in the
-	// production adapter. It cannot consume an interactive lane and the
-	// deadline also covers waiting to acquire its own lane.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Every refresh owns a fresh background work budget. Explicit retries
+	// are counted separately from the first scan and its follow-up reads;
+	// the deadline also covers waiting to acquire the background lane.
+	s.derivedMu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.derivedRetry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.derivedMu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	rows, err := s.d.Store.DerivedFindings(ctx)
 	if err == nil {
@@ -751,7 +759,13 @@ func (s *site) refreshHandFindingsWithin(timeout time.Duration) {
 			s.failHandFindingsRefresh()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	s.handMu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.handRetry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.handMu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	documented := s.decorateFindings(ctx, documentedFindings, "docs", "findings.basis_docs")
 	believed := s.decorateFindings(ctx, believedFindings, "belief", "findings.basis_belief")

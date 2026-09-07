@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,11 +28,15 @@ type failingHotShards struct {
 	*serverstore.Fake
 	calls   atomic.Int64
 	classes chan serverstore.QueryClass
+	budgets chan *serverstore.QueryBudget
 }
 
 func (s *failingHotShards) HotShardKeys(ctx context.Context, _ int) ([]string, error) {
 	s.calls.Add(1)
 	s.classes <- serverstore.QueryClassOf(ctx)
+	if s.budgets != nil {
+		s.budgets <- serverstore.BudgetOf(ctx)
+	}
 	return nil, errors.New("database unavailable")
 }
 
@@ -254,6 +259,7 @@ func TestFailedHotShardRefreshIsBackgroundBoundedAndDeferred(t *testing.T) {
 	store := &failingHotShards{
 		Fake:    serverstore.NewFake(),
 		classes: make(chan serverstore.QueryClass, 1+retrypolicy.MaxRetries),
+		budgets: make(chan *serverstore.QueryBudget, 1+retrypolicy.MaxRetries),
 	}
 	ck := &clock{t: testNow}
 	a := &api{d: Deps{Store: store, Now: ck.now, hotShardWait: time.Second}}
@@ -265,6 +271,13 @@ func TestFailedHotShardRefreshIsBackgroundBoundedAndDeferred(t *testing.T) {
 		}
 		if got := <-store.classes; got != serverstore.ClassBackground {
 			t.Fatalf("detached refresh class = %s, want background", got)
+		}
+		wantBudget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+		if attempt > 0 {
+			wantBudget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+		}
+		if got := <-store.budgets; !reflect.DeepEqual(got, wantBudget) {
+			t.Fatalf("attempt %d did not carry its initial/retry database accounting budget", attempt+1)
 		}
 		if attempt < retrypolicy.MaxRetries {
 			a.hotShards.mu.Lock()
@@ -320,5 +333,25 @@ func TestACanceledStatsCallerDoesNotAbandonTheSharedHotShardRead(t *testing.T) {
 	}
 	if got := store.calls.Load(); got != 1 {
 		t.Errorf("hint reads = %d, want the canceled caller's read reused", got)
+	}
+}
+
+func TestSuccessfulEmptyHotShardRefreshResetsRetryAndClearsRetiredHints(t *testing.T) {
+	store := &countingHotShards{Fake: serverstore.NewFake()}
+	ck := &clock{t: testNow}
+	a := &api{d: Deps{Store: store, Now: ck.now, hotShardWait: time.Second}}
+	// A previous successful hint went stale, then one refresh failed.
+	a.hotShards.keys = []string{testShardKey}
+	a.hotShards.at = testNow.Add(-2 * defaultHotShardTTL)
+	a.hotShards.retry.Failure()
+	a.hotShards.retryAt = testNow.Add(-time.Second)
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 0 {
+		t.Fatalf("empty successful refresh retained retired shard hint: %v", keys)
+	}
+	a.hotShards.mu.Lock()
+	state, next := a.hotShards.retry.State(), a.hotShards.retryAt
+	a.hotShards.mu.Unlock()
+	if state != retrypolicy.Ready || !next.IsZero() {
+		t.Fatalf("empty success left retry state=%d next=%s", state, next)
 	}
 }

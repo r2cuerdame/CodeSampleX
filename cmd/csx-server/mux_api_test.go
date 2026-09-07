@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,29 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
+
+type startupWantedStore struct {
+	serverstore.Store
+	entered chan struct{}
+	release chan struct{}
+	err     error
+}
+
+func (s *startupWantedStore) TopWanted(ctx context.Context, _ int) ([]serverstore.WantedRow, error) {
+	close(s.entered)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return []serverstore.WantedRow{{Ecosystem: "npm", Name: "primed", Version: "1.0.0"}}, nil
+}
 
 // TestBuildMuxMountsV1API proves BuildMux serves the real /v1 API over a
 // Store: adapters matrix, evidence ingest (trust mode), and stats.
@@ -109,4 +131,64 @@ func TestStartBuilderRunsPipeline(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("builder did not materialize snapshot/shard in time")
+}
+
+func TestWantedSnapshotIsPrimedBeforeBuilderStarts(t *testing.T) {
+	store := &startupWantedStore{
+		Store:   serverstore.NewFake(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	started := make(chan struct{})
+	type result struct {
+		snapshot *httpapi.WantedSnapshot
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snapshot, err := primeWantedBeforeBuilder(context.Background(), serverstore.ServerConfig{}, store,
+			func(context.Context, serverstore.ServerConfig, serverstore.Store) { close(started) })
+		done <- result{snapshot: snapshot, err: err}
+	}()
+
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("wanted preload did not start")
+	}
+	select {
+	case <-started:
+		t.Fatal("builder started before wanted preload completed")
+	default:
+	}
+	close(store.release)
+	got := <-done
+	if got.err != nil || got.snapshot == nil || len(got.snapshot.Rows) != 1 {
+		t.Fatalf("prime result snapshot=%+v err=%v", got.snapshot, got.err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("builder did not start after wanted preload")
+	}
+}
+
+func TestWantedSnapshotFailurePreventsBuilderStart(t *testing.T) {
+	wantErr := errors.New("wanted unavailable")
+	store := &startupWantedStore{
+		Store:   serverstore.NewFake(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		err:     wantErr,
+	}
+	close(store.release)
+	started := false
+	snapshot, err := primeWantedBeforeBuilder(context.Background(), serverstore.ServerConfig{}, store,
+		func(context.Context, serverstore.ServerConfig, serverstore.Store) { started = true })
+	if !errors.Is(err, wantErr) || snapshot != nil {
+		t.Fatalf("prime result snapshot=%+v err=%v, want %v", snapshot, err, wantErr)
+	}
+	if started {
+		t.Fatal("builder started after wanted preload failed")
+	}
 }

@@ -3248,7 +3248,7 @@ const listWantedSQL = `
 		-- set comes first because most package pages have no wanted row at all;
 		-- answer can then skip the corpus rather than expanding every manifest
 		-- just to discover that there was no question to answer.
-		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
+		SELECT DISTINCT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
 		  FROM wanted w
 		  CROSS JOIN LATERAL (VALUES
 		      ('pkg:' || w.ecosystem || '/' || w.name || '@'),
@@ -3258,62 +3258,57 @@ const listWantedSQL = `
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
 	), candidate_samples AS MATERIALIZED (
-		-- Only samples whose manifest carries a coordinate matching a requested wanted_key.
-		-- This bounds the subsequent receipt index scan to just the candidate samples (~5 rows)
-		-- instead of evaluating hundreds of thousands of receipts across all samples.
+		-- Deduplicate requested coordinates before joining the indexed package
+		-- projection. Repeated versions and symbols must not multiply sample
+		-- candidates; receipt searches below remain scoped to these samples.
 		SELECT DISTINCT sp.sample_id, sp.coord
-		  FROM wanted_key wk
+		  FROM (SELECT DISTINCT coord FROM wanted_key) wk
 		  JOIN sample_packages sp ON sp.coord = wk.coord
 		  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
-	), candidate_receipts AS MATERIALIZED (
-		-- Index-scan receipts using receipts_sample_idx for candidate samples.
-		-- A sample can have accumulated thousands of automated re-runs; we only
-		-- need the most recent passing receipt for each distinct environment hash.
-		SELECT cs.sample_id,
-		       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
-		       r.receipt->>'schemaVersion' AS schema_version,
-		       r.receipt->'stages'->>'resolve' AS resolve_stage,
-		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
-		  FROM (SELECT DISTINCT sample_id FROM candidate_samples) cs
-		  CROSS JOIN LATERAL (
-		      SELECT r.receipt
-		        FROM receipts r
-		       WHERE r.sample_id = cs.sample_id
-		         AND r.contract_result = 'PASS'
-		       ORDER BY r.created_at DESC
-		       LIMIT 10
-		  ) r
 	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
-		  JOIN candidate_samples cs ON cs.coord = wk.coord
-		  JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
-		  JOIN candidate_receipts cr ON cr.sample_id = cs.sample_id
-		 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
-		   AND (wk.target_os = '' OR cr.os = wk.target_os)
-		   AND (
-		       wk.version = ''
-		       OR (
-		           cr.schema_version = '2'
-		           AND cr.resolve_stage = 'PASS'
-		           AND cr.resolved_packages ?
-		               ('pkg:' || wk.ecosystem || '/' ||
-		                CASE WHEN left(wk.name, 1) = '@'
-		                     THEN '%40' || substring(wk.name from 2)
-		                     ELSE wk.name END || '@' || wk.version)
-		       )
-		       OR (
-		           cr.schema_version <> '2'
-		           AND EXISTS (
-		               SELECT 1
-		                 FROM sample_packages sp
-		                WHERE sp.sample_id = cs.sample_id
-		                  AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
-		                                 CASE WHEN left(wk.name, 1) = '@'
-		                                      THEN '%40' || substring(wk.name from 2)
-		                                      ELSE wk.name END || '@' || wk.version)
-		           )
-		       ))
+		 WHERE EXISTS (
+		       SELECT 1
+		         FROM candidate_samples cs
+		         JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
+		        WHERE cs.coord = wk.coord
+		          AND (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+		          AND EXISTS (
+		              -- Stop only after an exact answer. A newest-N or
+		              -- newest-per-environment window can hide older platform
+		              -- and resolved-version proof after unrelated reruns.
+		              -- receipts_sample_idx bounds this search to one sample.
+		              SELECT 1
+		                FROM receipts r
+		               WHERE r.sample_id = cs.sample_id
+		                 AND r.contract_result = 'PASS'
+		                 AND (wk.target_os = '' OR LOWER(COALESCE(r.receipt->'environment'->>'os','')) = wk.target_os)
+		                 AND (
+		                     wk.version = ''
+		                     OR (
+		                         r.receipt->>'schemaVersion' = '2'
+		                         AND r.receipt->'stages'->>'resolve' = 'PASS'
+		                         AND COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) ?
+		                             ('pkg:' || wk.ecosystem || '/' ||
+		                              CASE WHEN left(wk.name, 1) = '@'
+		                                   THEN '%40' || substring(wk.name from 2)
+		                                   ELSE wk.name END || '@' || wk.version)
+		                     )
+		                     OR (
+		                         r.receipt->>'schemaVersion' <> '2'
+		                         AND EXISTS (
+		                             SELECT 1
+		                               FROM sample_packages sp
+		                              WHERE sp.sample_id = cs.sample_id
+		                                AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
+		                                               CASE WHEN left(wk.name, 1) = '@'
+		                                                    THEN '%40' || substring(wk.name from 2)
+		                                                    ELSE wk.name END || '@' || wk.version)
+		                         )
+		                     ))
+		          )
+		 )
 	), unanswered AS MATERIALIZED (
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
 		       w.asks, w.first_seen, w.last_seen,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -60,7 +61,13 @@ func (s *site) refreshPackageAssets(timeout time.Duration) {
 			s.failPackageAssetRefresh()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	s.assets.mu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.assets.retry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.assets.mu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	rows, err := s.d.Store.PackageAssets(ctx)
 	if err != nil {

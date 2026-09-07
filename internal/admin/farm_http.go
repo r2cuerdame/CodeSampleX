@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
@@ -99,11 +101,7 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		total += instance.MonthlyUSD
 	}
 
-	coverage, err := h.farmStats.FarmCoverage(ctx)
-	if err != nil {
-		log.Printf("admin: farm coverage calculation failed (%v); continuing with empty coverage", err)
-		coverage = nil
-	}
+	coverage, coverageAt := h.coverage(ctx, now)
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
@@ -120,11 +118,16 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeAdminJSON(w, http.StatusOK, map[string]any{
-		"workers":         views,
-		"health":          farmHealthView(health),
-		"backlog":         farmBacklogView(backlog),
-		"completeness":    farmCompletenessView(completeness),
-		"coverage":        farmCoverageView(coverage),
+		"workers":      views,
+		"health":       farmHealthView(health),
+		"backlog":      farmBacklogView(backlog),
+		"completeness": farmCompletenessView(completeness),
+		"coverage":     farmCoverageView(coverage),
+		// When that coverage was actually computed. It can be minutes
+		// old -- the aggregate is memoized and, when it cannot finish,
+		// held. A stale number that says its age is a different claim
+		// from a stale number that does not.
+		"coverageAt":      adminTimeOrEmpty(coverageAt),
 		"instances":       instances,
 		"monthlyTotalUsd": total,
 	})
@@ -331,3 +334,85 @@ const (
 	maxQuarantineReasons     = 12
 	maxQuarantineReasonBytes = 96
 )
+
+// farmCoverageMemo holds the last coverage answer and when it is worth asking
+// for another one.
+//
+// FarmCoverage reads the whole corpus -- every evidence_agg row joined to
+// packages, plus every receipt's resolved package list expanded -- under a
+// 25s ceiling, and the panel it feeds refreshes on a 60s browser timer.
+// Measured on production 2026-09-04 (v0.1.129): every poll for the whole
+// half-hour in the log hit the ceiling and logged "continuing with empty
+// coverage", so the server spent 25 of every 60 seconds computing a number it
+// then discarded. This avoidable work shares PostgreSQL CPU and connections
+// with public reads. The observation does not establish CPU-credit exhaustion
+// or identify the cause of host throttling.
+//
+// Two rules, because there are two ways to waste this query. A coverage
+// figure moves as the farm proves new (os, ecosystem) pairs, which is hours
+// of work, so it does not need recomputing once a minute. And an aggregate
+// that could not finish inside its ceiling will not finish inside the same
+// ceiling sixty seconds later either, so a failure buys a longer pause than a
+// success does.
+type farmCoverageMemo struct {
+	mu      sync.Mutex
+	value   []serverstore.FarmAxisCoverage
+	at      time.Time
+	retryAt time.Time
+}
+
+const (
+	// farmCoverageTTL is how long a computed coverage keeps answering.
+	farmCoverageTTL = 10 * time.Minute
+	// farmCoverageBackoff is how long a coverage that hit its ceiling stops
+	// being retried. Deliberately longer than the TTL: the panel is not owed
+	// a fresh number more than it is owed a responsive site.
+	farmCoverageBackoff = 15 * time.Minute
+)
+
+// coverage answers with a memoized farm coverage, computing a new one only
+// when the last is stale and the last failure is far enough behind.
+func (h *handler) coverage(ctx context.Context, now time.Time) ([]serverstore.FarmAxisCoverage, time.Time) {
+	h.farmCoverage.mu.Lock()
+	if (!h.farmCoverage.at.IsZero() && now.Sub(h.farmCoverage.at) < farmCoverageTTL) ||
+		now.Before(h.farmCoverage.retryAt) {
+		value, at := h.farmCoverage.value, h.farmCoverage.at
+		h.farmCoverage.mu.Unlock()
+		return value, at
+	}
+	h.farmCoverage.mu.Unlock()
+
+	value, err := h.farmStats.FarmCoverage(ctx)
+	completedAt := h.now().UTC()
+
+	h.farmCoverage.mu.Lock()
+	defer h.farmCoverage.mu.Unlock()
+	if err != nil {
+		// A disconnected or expired caller is not a shared database failure.
+		// Its partial request budget must not defer other operators' refreshes.
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return h.farmCoverage.value, h.farmCoverage.at
+		}
+		// Not "empty coverage": the panel showing nothing and the panel
+		// showing what was last measured are different claims, and only the
+		// second one is true here.
+		log.Printf("admin: farm coverage calculation failed (%v); serving the last computed coverage and not recomputing for %s",
+			err, farmCoverageBackoff)
+		h.farmCoverage.retryAt = completedAt.Add(farmCoverageBackoff)
+		return h.farmCoverage.value, h.farmCoverage.at
+	}
+	h.farmCoverage.value = value
+	h.farmCoverage.at = completedAt
+	h.farmCoverage.retryAt = time.Time{}
+	return value, completedAt
+}
+
+// adminTimeOrEmpty renders a timestamp the panel may not have. A zero time is
+// "never computed", which is not the same as a time and must not render as
+// one.
+func adminTimeOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}

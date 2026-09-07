@@ -111,7 +111,7 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 	if done == nil {
 		done = make(chan struct{})
 		a.hotShards.loading = done
-		go a.loadHotShards(ctx, done)
+		go a.loadHotShards(ctx, done, a.hotShards.retry.State() == retrypolicy.Waiting)
 	}
 	a.hotShards.mu.Unlock()
 
@@ -139,20 +139,30 @@ func (a *api) hotShardTTL() time.Duration {
 }
 
 // loadHotShards performs the one shared whole-corpus read and publishes it.
-func (a *api) loadHotShards(ctx context.Context, done chan struct{}) {
+func (a *api) loadHotShards(ctx context.Context, done chan struct{}, retry bool) {
 	// Detached from the caller on purpose: the read is shared, so a client
 	// that hung up must neither abandon the callers waiting with it nor make
 	// the next poll pay for the same four whole-corpus reads. Detached work is
 	// background work; it must not retain the request's interactive pool class.
-	baseCtx := serverstore.WithQueryClass(context.WithoutCancel(ctx), serverstore.ClassBackground)
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	baseCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
 	loadCtx, cancel := context.WithTimeout(baseCtx, hotShardLoadTimeout)
 	defer cancel()
 	keys, err := a.d.Store.HotShardKeys(loadCtx, hotShardLimit)
 
 	a.hotShards.mu.Lock()
 	defer a.hotShards.mu.Unlock()
-	if err == nil && len(keys) > 0 {
-		a.hotShards.keys = keys
+	if err == nil {
+		// Empty is also a successful read: clear retired hints and reset any
+		// failed series. Keep nil so a fresh install can discover the first
+		// shards as soon as the builder publishes them.
+		a.hotShards.keys = nil
+		if len(keys) > 0 {
+			a.hotShards.keys = keys
+		}
 		a.hotShards.at = a.now()
 		a.hotShards.retry.Reset()
 		a.hotShards.retryAt = time.Time{}

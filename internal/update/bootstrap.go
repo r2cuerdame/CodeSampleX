@@ -3,6 +3,8 @@ package update
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,17 +42,19 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 	if err != nil {
 		return launcher.Active{}, err
 	}
-	c := &Client{}
-	raw, err := c.get(ctx, DefaultManifestURL, maxManifestBytes)
+	// Use the installer's one server-pinned snapshot. Reading GitHub latest
+	// here races publication and fails whenever the server has rolled back.
+	raw, err := readBootstrapEnvelope(filepath.Join(rootAbs, "csx-manifest.new.json"))
 	if err != nil {
 		return launcher.Active{}, err
 	}
-	m, err := VerifyEnvelope(raw, pub, time.Now().UTC(), DefaultChannel)
+	bootstrapRaw, err := readBootstrapEnvelope(filepath.Join(rootAbs, "csx-bootstrap.new.json"))
 	if err != nil {
 		return launcher.Active{}, err
 	}
-	if m.Version != currentVersion {
-		return launcher.Active{}, errors.New("update: installer payload does not match the signed stable release")
+	m, err := VerifyBootstrapRelease(raw, bootstrapRaw, pub, time.Now().UTC(), currentVersion)
+	if err != nil {
+		return launcher.Active{}, err
 	}
 	a, err := m.AssetFor("windows", runtime.GOARCH)
 	if err != nil {
@@ -67,6 +71,18 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 	if fi.Size() != a.Size || digest != a.SHA256 {
 		return launcher.Active{}, errors.New("update: installer payload does not match the signed manifest")
 	}
+	launcherPath := filepath.Join(rootAbs, "csx-launcher.new.exe")
+	launcherInfo, err := os.Stat(launcherPath)
+	if err != nil {
+		return launcher.Active{}, err
+	}
+	launcherDigest, err := fileSHA256(launcherPath)
+	if err != nil {
+		return launcher.Active{}, err
+	}
+	if launcherInfo.Size() != a.LauncherSize || launcherDigest != a.LauncherSHA256 {
+		return launcher.Active{}, errors.New("update: installer launcher does not match the signed manifest")
+	}
 	if a.MinLauncherVersion != "" {
 		cmp, err := CompareVersions(launcher.ProtocolVersion, a.MinLauncherVersion)
 		if err != nil || cmp < 0 {
@@ -78,6 +94,26 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 		return launcher.Active{}, err
 	}
 	defer unlock()
+	// A server rollback may advertise an older, still valid signed snapshot.
+	// That is installable on a clean machine, but must not downgrade an
+	// already installed launcher or erase its observed sequence floor.
+	if installed, readErr := launcher.Read(root); readErr == nil {
+		cmp, cmpErr := CompareVersions(m.Version, installed.Current.Version)
+		if cmpErr != nil || cmp < 0 || m.Sequence < installed.Current.Sequence {
+			return launcher.Active{}, errors.New("update: installer refused to downgrade the installed release")
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return launcher.Active{}, fmt.Errorf("update: existing launcher state is unreadable: %w", readErr)
+	}
+	// Signature/hash checks above must precede execution, and the self-test
+	// must precede the durable active pointer change. A correctly signed but
+	// unstartable launcher is still an unsuccessful installation.
+	selfTestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(selfTestCtx, launcherPath, "--launcher-version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "csx-launcher "+launcher.ProtocolVersion {
+		return launcher.Active{}, errors.New("update: signed installer launcher self-test failed")
+	}
 	active, err := launcher.CommitPayload(root, staged, launcher.Descriptor{Version: m.Version, SHA256: a.SHA256, Sequence: m.Sequence})
 	if err != nil {
 		return launcher.Active{}, err
@@ -102,4 +138,20 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 		return launcher.ImportPrevious(root, legacy, launcher.Descriptor{Version: legacyVersion, SHA256: legacyHash, Sequence: m.Sequence - 1})
 	}
 	return active, nil
+}
+
+func readBootstrapEnvelope(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxManifestBytes {
+		return nil, errors.New("update: bootstrap manifest envelope exceeds size limit")
+	}
+	return raw, nil
 }

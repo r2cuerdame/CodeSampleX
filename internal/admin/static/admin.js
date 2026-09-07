@@ -524,11 +524,19 @@
 
     if (coverage) {
       coverage.replaceChildren();
+      if (data.coverageAt) {
+        const age = document.createElement("p");
+        age.className = "note";
+        age.textContent = `커버리지 집계 ${since(data.coverageAt)} · ${new Date(data.coverageAt).toLocaleString("ko-KR")}`;
+        coverage.appendChild(age);
+      }
       const rows = data.coverage || [];
       if (!rows.length) {
         const empty = document.createElement("p");
         empty.className = "empty";
-        empty.textContent = "커버리지 자료가 아직 없습니다";
+        empty.textContent = data.coverageAt
+          ? "커버리지 자료가 아직 없습니다"
+          : "커버리지 집계가 아직 완료되지 않았습니다";
         coverage.appendChild(empty);
       }
       for (const c of rows) {

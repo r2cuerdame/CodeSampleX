@@ -199,6 +199,9 @@ if [ "$include_latency" = 1 ]; then
   # request bodies, or credentials can enter either request or evidence.
   probe_latency healthz /healthz 'ok'
   probe_latency landing / '<link rel="canonical" href="https://codesamplex.dev/">'
+  probe_latency wanted /v1/wanted '"schemaVersion":1'
+  probe_latency otel /golang/go.opentelemetry.io/otel/v1.45.0 \
+    '<link rel="canonical" href="https://codesamplex.dev/golang/go.opentelemetry.io/otel/v1.45.0">'
   probe_latency package /golang/github.com/jackc/pgx/v5/v5.10.0 \
     '<link rel="canonical" href="https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0">'
   probe_latency sample /samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a \

@@ -61,6 +61,7 @@ func TestPostDeployObserverAlertsWhenBuilderNeverConverges(t *testing.T) {
 		`pool-busy refusals were observed during builder convergence`,
 		`maximum DB-pressure wait exceeded`,
 		`/golang/github.com/jackc/pgx/v5/v5.10.0`,
+		`/v1/wanted`,
 		`/samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a`,
 		`Settled unbalanced cluster rows`,
 	} {
@@ -108,6 +109,7 @@ func TestPostDeployObserverMeasuresTTFBDuringActiveBuilderWork(t *testing.T) {
 	for _, required := range []string{
 		`%{time_starttransfer}`,
 		`probe_latency landing /`,
+		`probe_latency wanted /v1/wanted '"schemaVersion":1'`,
 		`probe_latency package /golang/github.com/jackc/pgx/v5/v5.10.0`,
 		`probe_latency sample /samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a`,
 		`latency_%s_content_valid=%s`,

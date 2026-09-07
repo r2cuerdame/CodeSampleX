@@ -26,6 +26,8 @@ $ssh = (Get-Command ssh -ErrorAction Stop).Source
 $latencyPaths = [ordered]@{
     healthz = '/healthz'
     landing = '/'
+    wanted = '/v1/wanted'
+    otel = '/golang/go.opentelemetry.io/otel/v1.45.0'
     package = '/golang/github.com/jackc/pgx/v5/v5.10.0'
     sample = '/samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a'
 }
@@ -63,7 +65,7 @@ $sshArgs = @(
     "-o", "UserKnownHostsFile=$KnownHostsPath",
     "-o", "ConnectTimeout=20",
     $remote,
-    "{ printf '#'; cat; } | sh"
+    "{ printf '#'; cat; printf '\n}\n'; } | sh"
 )
 $collectorBytes = [IO.File]::ReadAllBytes($collector)
 
@@ -71,9 +73,12 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
     $mode = if ($IncludeLatency) { "1" } else { "0" }
     $detailMode = if ($IncludeDetail) { "1" } else { "0" }
     # The leading marker is intentionally consumed by the remote '#'. It also
-    # neutralizes the UTF-8 preamble Windows PowerShell may put on stdin. The
-    # validated timestamp contains no shell metacharacters.
-    $prefix = "CSX-OBSERVE-V1`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`n"
+    # neutralizes the UTF-8 preamble Windows PowerShell may put on stdin.
+    # Frame the full collector as one compound command before execution:
+    # docker exec must not consume unparsed shell source from this stdin.
+    # The remote transport supplies the fixed closing brace. The validated
+    # timestamp contains no shell metacharacters.
+    $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`n"
     $prefixBytes = [Text.UTF8Encoding]::new($false).GetBytes($prefix)
     $payload = [byte[]]::new($prefixBytes.Length + $collectorBytes.Length)
     [Array]::Copy($prefixBytes, 0, $payload, 0, $prefixBytes.Length)
@@ -431,7 +436,7 @@ try {
         }
 
         if ($evidence.anomalies.Count -ne 0) { break }
-        if ($sample.builder_fresh -and $sample.builder_lifecycle_state -eq 'complete' -and $evidence.activeBuilder.observed) {
+        if ($sample.builder_fresh -and $sample.builder_lifecycle_state -eq 'complete' -and $evidence.activeBuilder.rounds -ge $ActiveBuilderLatencyRounds) {
             $evidence.converged = $true
             $evidence.builderGeneratedAt = $sample.builder_generated_at
             try {
@@ -451,6 +456,9 @@ try {
         if ($attempt -lt $BuilderPollAttempts) { Start-Sleep -Seconds $BuilderPollSeconds }
     }
 
+    if ($evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds) {
+        $evidence.anomalies.Add("insufficient active-builder latency rounds: observed $($evidence.activeBuilder.rounds), required $ActiveBuilderLatencyRounds within the bounded 80-minute observation window")
+    }
     if (-not $evidence.converged -and $evidence.anomalies.Count -eq 0) {
         $evidence.anomalies.Add("builder did not converge within the bounded 80-minute observation window")
     }
