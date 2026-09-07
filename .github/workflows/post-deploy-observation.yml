@@ -17,10 +17,8 @@ permissions:
   actions: read
   issues: write
 
-# Keep the observed deployment stable while this separate workflow polls it.
-# The deploy workflow uses the same repository-wide group.
 concurrency:
-  group: codesamplex-production
+  group: codesamplex-post-deploy-${{ github.event.workflow_run.id || inputs.deploy_run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +30,7 @@ jobs:
        github.event.workflow_run.event == 'workflow_dispatch' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 135
     environment: codesamplex-production
     steps:
       - name: Validate deployment provenance and download its evidence
@@ -63,6 +61,7 @@ jobs:
             .conclusion == "success" and
             .repository.full_name == $repo
           ' <<<"$run_json" >/dev/null
+          deploy_run_number=$(jq -er '.run_number | select(type == "number" and . > 0)' <<<"$run_json")
 
           artifact_name="production-evidence-${DEPLOY_RUN_ID}"
           artifacts_json=$(gh api \
@@ -95,7 +94,7 @@ jobs:
           deployed_sha=$(jq -er '.deployedSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           test "$deployed_sha" = "$target_sha"
           image_digest=$(jq -er '.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$deploy_evidence")
-          server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and length > 0)' "$deploy_evidence")
+          server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"))' "$deploy_evidence")
           tracking_issue=$(jq -er '.trackingIssue | select(type == "string" and length > 0)' "$deploy_evidence")
 
           issue_prefix="https://github.com/${GITHUB_REPOSITORY}/issues/"
@@ -121,6 +120,7 @@ jobs:
 
           {
             echo "deploy_run_id=${DEPLOY_RUN_ID}"
+            echo "deploy_run_number=${deploy_run_number}"
             echo "target_sha=${target_sha}"
             echo "previous_sha=${previous_sha}"
             echo "image_digest=${image_digest}"
@@ -219,6 +219,173 @@ jobs:
           rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
           rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
 
+      - name: Treat a validated newer deployment as superseding this observation
+        id: supersession
+        if: always() && steps.deployment.outputs.deploy_run_number != '' && steps.observer.outcome != 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
+          ORIGINAL_DEPLOY_RUN_NUMBER: ${{ steps.deployment.outputs.deploy_run_number }}
+          ORIGINAL_TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          ORIGINAL_SERVER_STARTED_AT: ${{ steps.deployment.outputs.server_started_at }}
+        run: |
+          set -euo pipefail
+          observation="$RUNNER_TEMP/post-deploy-observation.json"
+          summary="$RUNNER_TEMP/post-deploy-observation.md"
+          test -s "$observation"
+          original_started_epoch=$(date -u -d "$ORIGINAL_SERVER_STARTED_AT" +%s)
+
+          # A replacement can be observed before its deploy workflow has
+          # uploaded success evidence. Wait only while a later deploy is
+          # active; the Production deploy workflow has its own 40-minute
+          # eligibility + rollout bound, and this wait remains off its path.
+          deadline=$((SECONDS + 35 * 60))
+          while true; do
+            runs_json=$(gh api --paginate --slurp \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/production-deploy.yml/runs?event=workflow_dispatch&per_page=100")
+
+            mapfile -t candidates < <(jq -r --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
+              .[].workflow_runs[] |
+              select(.run_number > $original and .status == "completed" and .conclusion == "success") |
+              .id
+            ' <<<"$runs_json")
+
+            for candidate_id in "${candidates[@]}"; do
+              candidate_run=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}")
+              if ! jq -e --arg repo "$GITHUB_REPOSITORY" --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
+                .name == "Production deploy" and
+                .path == ".github/workflows/production-deploy.yml" and
+                .event == "workflow_dispatch" and
+                .status == "completed" and
+                .conclusion == "success" and
+                .repository.full_name == $repo and
+                .run_number > $original
+              ' <<<"$candidate_run" >/dev/null; then
+                continue
+              fi
+
+              artifact_name="production-evidence-${candidate_id}"
+              artifacts=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/artifacts?per_page=100")
+              artifact_count=$(jq --arg name "$artifact_name" \
+                '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<<"$artifacts")
+              if [[ "$artifact_count" != "1" ]]; then
+                continue
+              fi
+              artifact_id=$(jq -er --arg name "$artifact_name" \
+                '.artifacts[] | select(.name == $name and .expired == false) | .id' <<<"$artifacts")
+              candidate_dir="$RUNNER_TEMP/csx-superseding-deploy-${candidate_id}"
+              mkdir -p "$candidate_dir"
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+                > "${candidate_dir}.zip"
+              unzip -qo "${candidate_dir}.zip" -d "$candidate_dir"
+              candidate_evidence="$candidate_dir/production-deploy-evidence.json"
+              if [[ ! -s "$candidate_evidence" ]]; then
+                continue
+              fi
+
+              candidate_sha=$(jq -er '.targetSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$candidate_evidence")
+              candidate_digest=$(jq -er '.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$candidate_evidence")
+              candidate_started=$(jq -er '.serverStartedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"))' "$candidate_evidence")
+              candidate_migration=$(jq -er '.migrationVersion | select(type == "string" and test("^[0-9]{4}_[a-z0-9_]+\\.sql$"))' "$candidate_evidence")
+              if ! jq -e --arg id "$candidate_id" --arg sha "$candidate_sha" '
+                (.workflowRunId | tostring) == $id and
+                .conclusion == "success" and
+                .targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha and
+                .health == "ok" and .smoke == "pass" and .rollback == "not-needed"
+              ' "$candidate_evidence" >/dev/null; then
+                continue
+              fi
+              candidate_started_epoch=$(date -u -d "$candidate_started" +%s)
+              if [[ "$candidate_started_epoch" -le "$original_started_epoch" ]]; then
+                continue
+              fi
+
+              # Do not hide a health, OOM, container, or builder failure. The
+              # old observation is superseded only when its terminal sample
+              # exactly names the authenticated newer deployment and every
+              # anomaly is explained by that replacement.
+              if ! jq -e \
+                --arg sha "$candidate_sha" \
+                --arg digest "$candidate_digest" \
+                --arg started "$candidate_started" \
+                --arg migration "$candidate_migration" '
+                (.samples | type == "array" and length > 0) and
+                (.anomalies | type == "array" and length > 0) and
+                ([.anomalies[] | select(
+                  . != "rollback detected: configured revision returned to the previous production SHA" and
+                  . != "configured revision drifted from the deployed SHA" and
+                  . != "OCI image revision does not match the deployed SHA" and
+                  . != "served /version revision does not match the deployed SHA" and
+                  . != "live image digest changed during observation" and
+                  . != "latest migration does not match the checked-out server" and
+                  . != "server start timestamp changed during observation" and
+                  . != "server restart or exit detected during observation"
+                )] | length == 0) and
+                (.samples[-1] as $sample |
+                  $sample.revision == $sha and
+                  $sample.image_revision == $sha and
+                  $sample.served_revision == $sha and
+                  $sample.image_digest == $digest and
+                  $sample.server_started_at == $started and
+                  $sample.migration_version == $migration and
+                  $sample.health == "ok" and
+                  $sample.container_status == "running" and
+                  $sample.restart_count == 0 and
+                  $sample.oom_killed == false and
+                  $sample.oom_events == 0)
+              ' "$observation" >/dev/null; then
+                continue
+              fi
+
+              updated="$RUNNER_TEMP/post-deploy-observation-superseded.json"
+              candidate_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}"
+              jq \
+                --arg run_id "$candidate_id" \
+                --arg run_url "$candidate_url" \
+                --arg target_sha "$candidate_sha" \
+                --arg image_digest "$candidate_digest" \
+                --arg server_started_at "$candidate_started" '
+                .conclusion = "superseded" |
+                .supersededBy = {
+                  deploymentRunId: $run_id,
+                  workflowRunUrl: $run_url,
+                  targetSha: $target_sha,
+                  imageDigest: $image_digest,
+                  serverStartedAt: $server_started_at
+                }
+              ' "$observation" > "$updated"
+              mv "$updated" "$observation"
+              cat > "$summary" <<EOF
+          ## Post-deploy observation: SUPERSEDED
+
+          - Original deployment run: ${ORIGINAL_DEPLOY_RUN_ID}
+          - Original target SHA: ${ORIGINAL_TARGET_SHA}
+          - Superseding deployment run: [${candidate_id}](${candidate_url})
+          - Superseding target SHA: ${candidate_sha}
+
+          The terminal production identity exactly matched the authenticated evidence from the newer successful Production deploy. Replacement-only drift was retained in the JSON artifact and did not create a false FAIL for the older deployment.
+          EOF
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            done
+
+            active_later=$(jq --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" \
+              '[.[].workflow_runs[] | select(.run_number > $original and .status != "completed")] | length' \
+              <<<"$runs_json")
+            if [[ "$active_later" == "0" || "$SECONDS" -ge "$deadline" ]]; then
+              exit 0
+            fi
+            sleep 15
+          done
+
       - name: Comment observation on the validated tracking issue
         if: always() && steps.deployment.outputs.tracking_issue_number != ''
         shell: bash
@@ -250,9 +417,13 @@ jobs:
         shell: bash
         env:
           OBSERVER_OUTCOME: ${{ steps.observer.outcome }}
+          SUPERSEDED: ${{ steps.supersession.outputs.superseded }}
         run: |
           set -euo pipefail
           conclusion=$(jq -r '.conclusion // "failure"' "$RUNNER_TEMP/post-deploy-observation.json")
+          if [[ "$SUPERSEDED" == "true" && "$conclusion" == "superseded" ]]; then
+            exit 0
+          fi
           if [[ "$OBSERVER_OUTCOME" != "success" || "$conclusion" != "success" ]]; then
             echo "::error title=Post-deploy observation failed::Builder convergence or production pressure checks failed; see the tracking-issue comment and observation artifact."
             exit 1

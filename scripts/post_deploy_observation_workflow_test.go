@@ -58,15 +58,18 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 	}
 }
 
-func TestPostDeployObservationSharesProductionSerialization(t *testing.T) {
-	const productionConcurrency = "concurrency:\n  group: codesamplex-production\n  cancel-in-progress: false"
-	for name, workflow := range map[string]string{
-		"production deploy":       productionWorkflow(t),
-		"post-deploy observation": postDeployObservationWorkflow(t),
+func TestPostDeployObservationKeepsRunSpecificConcurrency(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	for _, required := range []string{
+		"group: codesamplex-post-deploy-${{ github.event.workflow_run.id || inputs.deploy_run_id }}",
+		"cancel-in-progress: false",
 	} {
-		if !strings.Contains(workflow, productionConcurrency) {
-			t.Errorf("%s does not hold the shared production concurrency lock", name)
+		if !strings.Contains(workflow, required) {
+			t.Errorf("post-deploy concurrency contract is missing %q", required)
 		}
+	}
+	if strings.Contains(workflow, "\n  group: codesamplex-production\n") {
+		t.Fatal("observer must not rely on the non-FIFO production concurrency group")
 	}
 }
 
@@ -79,6 +82,8 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 		`.event == "workflow_dispatch"`,
 		`.conclusion == "success"`,
 		`.repository.full_name == $repo`,
+		`.run_number | select(type == "number" and . > 0)`,
+		`deploy_run_number=${deploy_run_number}`,
 		`artifact_name="production-evidence-${DEPLOY_RUN_ID}"`,
 		`artifact_count`,
 		`actions/artifacts/${artifact_id}/zip`,
@@ -97,6 +102,54 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 	}
 	if strings.Contains(step, "actions/download-artifact") {
 		t.Fatal("cross-workflow deploy evidence must be selected by authenticated run and artifact IDs")
+	}
+}
+
+func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *testing.T) {
+	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Treat a validated newer deployment as superseding this observation")
+	for _, required := range []string{
+		"if: always() && steps.deployment.outputs.deploy_run_number != '' && steps.observer.outcome != 'success'",
+		`.run_number > $original`,
+		`gh api --paginate --slurp`,
+		`.[].workflow_runs[]`,
+		`.status == "completed" and .conclusion == "success"`,
+		`.name == "Production deploy"`,
+		`.path == ".github/workflows/production-deploy.yml"`,
+		`.repository.full_name == $repo`,
+		`artifact_name="production-evidence-${candidate_id}"`,
+		`actions/artifacts/${artifact_id}/zip`,
+		`(.workflowRunId | tostring) == $id`,
+		`.targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha`,
+		`.health == "ok" and .smoke == "pass" and .rollback == "not-needed"`,
+		`candidate_started_epoch=$(date -u -d "$candidate_started" +%s)`,
+		`[[ "$candidate_started_epoch" -le "$original_started_epoch" ]]`,
+		`.samples[-1] as $sample`,
+		`$sample.revision == $sha`,
+		`$sample.image_digest == $digest`,
+		`$sample.server_started_at == $started`,
+		`$sample.health == "ok"`,
+		`$sample.oom_killed == false`,
+		`.conclusion = "superseded"`,
+		`.supersededBy = {`,
+		`workflowRunUrl: $run_url`,
+		"## Post-deploy observation: SUPERSEDED",
+		`echo "superseded=true" >> "$GITHUB_OUTPUT"`,
+		`.status != "completed"`,
+		`sleep 15`,
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("validated supersession contract is missing %q", required)
+		}
+	}
+	for _, unsafe := range []string{
+		`server OOM detected during observation`,
+		`health is not ok`,
+		`server container is not running`,
+		`builder did not converge within the bounded 80-minute observation window`,
+	} {
+		if strings.Contains(step, `. != "`+unsafe+`"`) {
+			t.Errorf("supersession allowlist can hide safety anomaly %q", unsafe)
+		}
 	}
 }
 
@@ -189,6 +242,8 @@ func TestPostDeployObservationAlwaysRetainsEvidenceAndFailsClosed(t *testing.T) 
 		"retention-days: 30",
 		"Fail when production did not converge safely",
 		`OBSERVER_OUTCOME: ${{ steps.observer.outcome }}`,
+		`SUPERSEDED: ${{ steps.supersession.outputs.superseded }}`,
+		`if [[ "$SUPERSEDED" == "true" && "$conclusion" == "superseded" ]]`,
 		`conclusion=$(jq -r '.conclusion // "failure"' "$RUNNER_TEMP/post-deploy-observation.json")`,
 		"::error title=Post-deploy observation failed::",
 	} {
