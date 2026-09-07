@@ -82,6 +82,10 @@ var samplesManifestTrgmIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS samples_manifest_lower_trgm_idx ON samples USING gin ((lower(manifest::text)) public.gin_trgm_ops) WHERE NOT quarantined`,
 }
 
+var wantedDedupEpochCoordinateIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS wanted_dedup_epoch_coordinate_idx ON wanted_dedup(epoch DESC, ecosystem, name, version, symbol, target_os)`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -132,6 +136,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact samples manifest trgm index allowlist", name)
+	}
+	if name == "0035_recent_wanted_demand.sql" {
+		if exactStatements(statements, wantedDedupEpochCoordinateIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact wanted demand index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)
