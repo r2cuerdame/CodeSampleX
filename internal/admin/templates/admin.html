@@ -122,9 +122,29 @@
     details.metrics > summary { color:var(--muted); font-size:14px; font-weight:700; padding:12px 0 }
     details.metrics[open] > summary { margin-bottom:4px }
     details.metrics > .panel, details.metrics > details.panel { margin-top:14px }
+    .coverage-panel { border-color:rgba(251,191,36,.48) }
+    .coverage-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px }
+    .coverage-map { position:relative; width:100%; min-height:320px; aspect-ratio:16/7; margin-top:10px; overflow:hidden; border:1px solid rgba(158,179,212,.28); border-radius:13px; background:rgba(3,14,34,.42) }
+    .coverage-package-filters { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px }
+    .coverage-package-filter,.coverage-node,.coverage-reset { appearance:none; color:inherit; font:inherit; cursor:pointer }
+    .coverage-package-filter { display:flex; justify-content:space-between; gap:10px; padding:7px 9px; border:1px solid rgba(158,179,212,.28); border-radius:8px; background:rgba(3,14,34,.42); text-align:left; font-weight:800 }
+    .coverage-package-filter:hover,.coverage-package-filter[aria-pressed="true"] { background:rgba(98,217,255,.13) }
+    .coverage-package-outline,.coverage-version-outline { position:absolute; pointer-events:none; z-index:3; border:1px solid rgba(223,232,255,.5) }
+    .coverage-package-outline { top:0; height:100%; border-width:2px }
+    .coverage-package-label,.coverage-version-label { position:absolute; z-index:4; pointer-events:none; max-width:100%; padding:3px 5px; color:#fff; background:rgba(3,14,34,.78); font:10px ui-monospace,SFMono-Regular,Consolas,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+    .coverage-package-label { top:0 }.coverage-version-label { top:19px }
+    .coverage-node { position:absolute; z-index:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:flex-start; gap:2px; padding:6px; border:1px solid rgba(3,14,34,.65); border-radius:0; text-align:left; overflow:hidden }
+    .coverage-node strong,.coverage-node small { max-width:100%; overflow-wrap:anywhere }.coverage-node small { opacity:.82 }
+    .coverage-node.hit { background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.48) }.coverage-node.partial { background:rgba(251,191,36,.18); border-color:rgba(251,191,36,.52) }.coverage-node.miss { background:rgba(251,113,133,.2); border-color:rgba(251,113,133,.56) }
+    .coverage-node:hover,.coverage-node[aria-pressed="true"] { outline:2px solid var(--cyan); outline-offset:1px }
+    .coverage-node.omitted { cursor:default; background:rgba(158,179,212,.11); border-style:dashed }
+    .coverage-legend { display:flex; flex-wrap:wrap; gap:12px; color:var(--muted); font-size:12px }.coverage-legend span::before { content:""; display:inline-block; width:9px; height:9px; margin-right:5px; border-radius:2px }.coverage-legend .hit::before { background:var(--ok) }.coverage-legend .partial::before { background:var(--warn) }.coverage-legend .miss::before { background:var(--bad) }
+    .coverage-tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-top:16px }.coverage-reset { border:1px solid rgba(98,217,255,.5); border-radius:8px; padding:7px 10px; background:#123568 }
+    .coverage-gap-graph { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:12px; padding:11px; border:1px solid rgba(98,217,255,.28); border-radius:10px; background:rgba(3,14,34,.38) }.coverage-gap-graph[hidden] { display:none }.coverage-gap-node { min-width:100px; flex:var(--weight) 1 110px; padding:8px; border:1px solid rgba(98,217,255,.28); border-radius:8px }.coverage-gap-node span { display:block; color:var(--muted); font-size:10px }.coverage-gap-node strong { display:block; overflow-wrap:anywhere }.coverage-gap-arrow { color:var(--cyan) }
+    .coverage-state { white-space:nowrap }.coverage-state.hit { color:var(--ok) }.coverage-state.partial { color:var(--warn) }.coverage-state.miss { color:var(--bad) }
     @media(max-width:1100px) { .priority-grid,.quality-grid { grid-template-columns:repeat(3,minmax(0,1fr)) } }
     @media(max-width:960px) { .trend-grid { grid-template-columns:1fr }.growth-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }.wide,.side,.half { grid-column:span 12 } }
-    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server,.health-strip,.growth-grid,.sample-worker-form { grid-template-columns:1fr }.priority-grid,.quality-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }.chart-pair { grid-template-columns:1fr }.chart { height:110px }.sample-worker-row { align-items:flex-start; flex-direction:column }.danger-button { width:100% } }
+    @media(max-width:700px) { .target { grid-template-columns:1fr }.eta { border-left:0; border-top:1px solid rgba(98,217,255,.25); padding:13px 0 0 }.stats,.server,.health-strip,.growth-grid,.sample-worker-form { grid-template-columns:1fr }.priority-grid,.quality-grid,.coverage-summary { grid-template-columns:repeat(2,minmax(0,1fr)) }.chart-pair { grid-template-columns:1fr }.chart { height:110px }.sample-worker-row { align-items:flex-start; flex-direction:column }.danger-button { width:100% }.coverage-map { min-height:440px; aspect-ratio:4/5 }.coverage-node { padding:4px;font-size:11px } }
   </style>
 </head>
 <body>
@@ -160,6 +180,41 @@
         {{if .CountsAvailable}}<div class="priority-metric"><span class="label">검증된 샘플</span><span class="value">{{number .Counts.VerifiedSamples}}</span></div>{{end}}
       </div>
     </section>
+    {{if .InsightsAvailable}}<section class="panel coverage-panel" id="request-coverage" aria-labelledby="request-coverage-title">
+      <div class="section-head"><div><div class="section-kicker">최근 실제 수요</div><h2 id="request-coverage-title">Request Coverage Map</h2><p class="note">{{.RequestCoverage.WindowLabel}} · 면적은 최근 MISS가 남긴 <strong>익명 일별 좌표 요청 영향</strong>입니다. 색은 그때의 결과가 아니라 지금의 evidence 경계입니다.</p></div><span class="stamp">상위 패키지 10 · 패키지당 좌표 8</span></div>
+      <div class="coverage-summary">
+        <div class="metric"><span class="label">전체 좌표 요청 영향</span><span class="value">{{number .RequestCoverage.TotalImpact}}</span></div>
+        <div class="metric"><span class="label">지도에 포함된 영향</span><span class="value">{{number .RequestCoverage.MappedImpact}}</span></div>
+        <div class="metric needs-attention"><span class="label">전역 Top Missing 20 영향</span><span class="value">{{number .RequestCoverage.MissingImpact}}</span></div>
+        <div class="metric"><span class="label">전체 검색 HIT rate · 최근 7일</span>{{if .RequestCoverage.SearchAvailable}}<span class="value">{{.RequestCoverage.HitRate}}</span><span class="note">HIT {{number .RequestCoverage.Hits}} / 관측 검색 {{number .RequestCoverage.Searches}}</span>{{else}}<span class="value">—</span><span class="note">서버가 결과를 본 검색 표본 없음</span>{{end}}</div>
+      </div>
+      <div class="coverage-legend" aria-label="커버리지 상태 범례"><span class="hit">현재 정확 PASS</span><span class="partial">부분/약한 근거</span><span class="miss">패키지 근거 없음</span></div>
+      {{if .RequestCoverage.Available}}
+      <div class="coverage-package-filters" aria-label="패키지별 Top Missing 필터">{{range .RequestCoverage.Packages}}<button type="button" class="coverage-package-filter" data-package="{{.Key}}" data-package-label="{{.Label}}" aria-pressed="false"><span>{{.Label}}</span><span>{{number .Impact}}</span></button>{{end}}</div>
+      <div class="coverage-map" aria-label="패키지, 버전, API별 최근 요청 영향 면적 지도">
+        {{range .RequestCoverage.Packages}}
+          <div class="coverage-package-outline" style="left:{{.X}}%;width:{{.Width}}%" aria-hidden="true"></div><span class="coverage-package-label" style="left:{{.X}}%;width:{{.Width}}%">{{.Label}} · {{number .Impact}}</span>
+          {{range .Versions}}<div class="coverage-version-outline" style="left:{{.X}}%;top:{{.Y}}%;width:{{.Width}}%;height:{{.Height}}%" aria-hidden="true"></div><span class="coverage-version-label" style="left:{{.X}}%;top:calc({{.Y}}% + 19px);width:{{.Width}}%">{{.Label}} · {{number .Impact}}</span>
+            {{range .Nodes}}<button type="button" class="coverage-node {{.State}}" style="left:{{.X}}%;top:{{.Y}}%;width:{{.Width}}%;height:{{.Height}}%" aria-pressed="false" data-coordinate="{{.Key}}" data-package="{{.PackageKey}}" data-package-label="{{.PackageLabel}}" data-version-label="{{.VersionLabel}}" data-symbol-label="{{.SymbolLabel}}" data-environment-label="{{.EnvironmentLabel}}" data-boundary-label="{{.BoundaryLabel}}" data-failure-label="{{.FailureLabel}}" data-impact="{{.Impact}}"><strong>{{.SymbolLabel}}</strong><small>{{.EnvironmentLabel}}</small><span>{{number .Impact}}</span></button>{{end}}
+          {{end}}
+          {{if .OmittedImpact}}<div class="coverage-node omitted" style="left:{{.X}}%;top:{{.OmittedY}}%;width:{{.Width}}%;height:{{.OmittedHeight}}%"><strong>그 밖의 {{number .OmittedChildren}}개 좌표</strong><span>{{number .OmittedImpact}}</span></div>{{end}}
+        {{end}}
+      </div>
+      <p class="note">한 MISS 질문이 여러 공개 패키지 좌표를 포함할 수 있어 지도 영향 합계는 아래의 질문 단위 MISS 수보다 클 수 있습니다. 좌표별 HIT telemetry는 수집하지 않으므로 패키지/API별 hit rate를 만들어내지 않습니다.</p>
+      <div class="coverage-tools"><h3>Top Missing Areas · 전역 최근 영향 순</h3><div><span id="coverage-filter-status" class="note" role="status" aria-live="polite">전체 최근 수요 · Top Missing Areas {{len .RequestCoverage.Missing}}개 표시</span> <button type="button" class="coverage-reset" id="coverage-filter-reset" hidden>필터 해제</button></div></div>
+      <div id="coverage-gap-graph" class="coverage-gap-graph" hidden aria-label="선택한 좌표의 Coverage Gap Graph">
+        <div class="coverage-gap-node"><span>패키지</span><strong data-graph-value="package"></strong></div><span class="coverage-gap-arrow">→</span>
+        <div class="coverage-gap-node"><span>버전</span><strong data-graph-value="version"></strong></div><span class="coverage-gap-arrow">→</span>
+        <div class="coverage-gap-node"><span>심벌/API</span><strong data-graph-value="symbol"></strong></div><span class="coverage-gap-arrow">→</span>
+        <div class="coverage-gap-node"><span>환경</span><strong data-graph-value="environment"></strong></div><span class="coverage-gap-arrow">→</span>
+        <div class="coverage-gap-node"><span>가까운 evidence 경계</span><strong data-graph-value="boundary"></strong></div>
+        <div class="coverage-gap-node" style="--weight:1"><span>MISS 영향</span><strong data-graph-value="impact"></strong></div>
+        <div class="coverage-gap-node"><span>failure fingerprint</span><strong data-graph-value="failure"></strong></div>
+      </div>
+      {{if .RequestCoverage.Missing}}<div class="table-wrap" style="margin-top:12px"><table><caption class="sr-only">최근 요청 영향 순 Top Missing Areas</caption><thead><tr><th scope="col">패키지</th><th scope="col">버전</th><th scope="col">심벌/API</th><th scope="col">환경</th><th scope="col">최근 요청 영향</th><th scope="col">좌표 hit rate</th><th scope="col">현재 상태</th><th scope="col">가까운 evidence 경계</th><th scope="col">failure fingerprint</th><th scope="col">최근 day</th></tr></thead><tbody>{{range .RequestCoverage.Missing}}<tr class="coverage-missing-row" data-package="{{.PackageKey}}" data-coordinate="{{.Key}}"><td><code>{{.PackageLabel}}</code></td><td><code>{{.VersionLabel}}</code></td><td><code>{{.SymbolLabel}}</code></td><td>{{.EnvironmentLabel}}</td><td>{{number .Impact}}</td><td>측정 불가</td><td class="coverage-state {{.State}}">{{.StateLabel}}</td><td>{{.BoundaryLabel}}</td><td><code>{{.FailureLabel}}</code></td><td>{{.LastDay}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty">상위 최근 수요 좌표가 모두 현재 정확 PASS로 덮였습니다.</p>{{end}}
+      {{else}}<p class="empty">최근 7 UTC일 동안 좌표로 보존된 MISS 수요가 없습니다. 0은 커버리지 완성이 아니라 이 창에 지도화할 좌표가 없다는 뜻입니다.</p>{{end}}
+      <p class="note">개인 수가 아니라 매일 회전하는 익명 bucket의 좌표별 dedup 집계입니다. 원문 query, IP, User-Agent, 안정 사용자 ID는 저장하거나 표시하지 않습니다.</p>
+    </section>{{end}}
     <section class="panel" aria-labelledby="health-title"><div class="section-head"><div><div class="section-kicker">서비스 상태</div><h2 id="health-title">서버 {{if .DBHealthy}}정상{{else}}확인 필요{{end}}</h2></div></div><div class="health-strip"><div class="metric"><span class="label">버전</span><span class="value small">{{.Version}}</span></div><div class="metric"><span class="label">프로세스 가동 시간</span><span class="value small">{{.Uptime}}</span></div><div class="metric"><span class="label">데이터베이스 읽기</span>{{if .DBHealthy}}<span class="value small ok">정상 · {{.DBProbe}}</span>{{else}}<span class="value small bad">사용 불가{{if .DBProbe}} · {{.DBProbe}}{{end}}</span>{{end}}</div></div></section>
 
     {{if .DBPool.Available}}<details class="panel"{{if .DBPool.Strained}} open{{end}}><summary>데이터베이스 커넥션 풀 · 사용 {{.DBPool.InUse}} / {{.DBPool.MaxConns}}{{if .DBPool.Strained}} · 압박 있음{{end}}</summary><p class="note">느린 쿼리 하나가 풀 전체를 점유해 사이트 전체가 멈추는 것을 막는 방어선입니다. 작업 종류마다 잡을 수 있는 몫이 정해져 있고, 사용자가 기다리는 읽기에는 statement_timeout이 걸려 있습니다. 아래 값은 프로세스 시작 후 누적이며 DB에 질의하지 않고 풀이 직접 센 수입니다 — 풀이 포화된 순간에도 이 화면은 뜹니다.</p>{{if .DBPool.GuardOff}}<p class="empty">CSX_DB_POOL_GUARD=off — 클래스별 상한과 읽기 timeout이 꺼져 있습니다. 아래의 취소 0은 “없었다”가 아니라 “잴 수 없다”는 뜻입니다.</p>{{end}}<div class="table-wrap" style="margin-top:12px"><table><caption class="sr-only">작업 종류별 커넥션 풀 사용과 압박</caption><thead><tr><th scope="col">작업 종류</th><th scope="col">사용 / 상한</th><th scope="col">획득</th><th scope="col">대기 발생</th><th scope="col">최대 대기</th><th scope="col">거절</th><th scope="col">취소</th></tr></thead><tbody>{{range .DBPool.Classes}}<tr><td>{{.Label}}</td><td>{{.InUse}}</td><td>{{numberu .Acquired}}</td><td>{{numberu .Waited}}</td><td>{{.WaitMax}}</td><td{{if .Busy}} class="bad"{{end}}>{{numberu .Busy}}</td><td{{if .Timeouts}} class="bad"{{end}}>{{numberu .Timeouts}}</td></tr>{{end}}</tbody></table></div><p class="note">거절은 대기 예산 안에 커넥션을 받지 못해 503으로 돌려보낸 요청 수, 취소는 statement_timeout으로 PostgreSQL이 중단시킨 문장 수입니다. 헬스 체크는 다른 종류가 들어올 수 없는 예약분을 갖고 있으므로 대기 발생은 0이어야 정상입니다. 되돌리는 방법과 환경 변수는 docs/operations.md에 있습니다.</p></details>{{end}}
@@ -310,5 +365,6 @@
   </div>
 </main>
 <script src="/admin/admin.js" defer></script>
+<script src="/admin/request-coverage.js" defer></script>
 </body>
 </html>

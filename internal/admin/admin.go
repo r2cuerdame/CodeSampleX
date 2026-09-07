@@ -168,6 +168,8 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	}
 	mux.HandleFunc("GET /admin/admin.js", h.adminScript)
 	mux.HandleFunc("HEAD /admin/admin.js", h.adminScript)
+	mux.HandleFunc("GET /admin/request-coverage.js", h.requestCoverageScript)
+	mux.HandleFunc("HEAD /admin/request-coverage.js", h.requestCoverageScript)
 	mux.HandleFunc("GET /admin/api/authoring-sessions", h.authoringSessions)
 	mux.HandleFunc("POST /admin/api/authoring-sessions", h.authoringSessions)
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
@@ -349,6 +351,7 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 		data.Insights = buildInsightView(insights, data.Counts, data.CountsAvailable, now)
 		data.SearchQuality = buildSearchQualityView(insights.Search)
 		data.Flow = buildFlowView(insights.Flow, insights.Jobs, now)
+		data.RequestCoverage = buildRequestCoverageView(insights.Coverage, insights.Flow.Week)
 		data.InsightsAvailable = true
 	}
 
@@ -437,7 +440,8 @@ type dashboardData struct {
 	ActivityAvailable bool
 	ActivityError     string
 
-	SearchQuality searchQualityView
+	SearchQuality   searchQualityView
+	RequestCoverage requestCoverageView
 
 	// Anomaly is the consumption side answering back: what agents reported,
 	// how much of it was the same thing twice, and how much of it turned out

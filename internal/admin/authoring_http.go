@@ -70,7 +70,7 @@ func (l *authoringRateLimiter) allow(key string, now time.Time, limit int) bool 
 	return true
 }
 
-//go:embed static/admin.js
+//go:embed static/*.js
 var adminStaticFS embed.FS
 
 type issueAuthoringRequest struct {
