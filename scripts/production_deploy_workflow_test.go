@@ -47,7 +47,7 @@ func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 		"merge_verdict:",
 		"requires_human_decision:",
 		"side_effect_class:",
-		"linear_issue:",
+		"tracking_issue:",
 		"group: codesamplex-production",
 		"cancel-in-progress: false",
 	} {
@@ -284,5 +284,19 @@ func TestProductionProbeToleratesWindowsPowerShellStdinBOM(t *testing.T) {
 	script := string(raw)
 	if !strings.Contains(script, `"{ printf '#'; cat; } | sh"`) {
 		t.Fatal("production probe lacks the stdin envelope that neutralizes a Windows PowerShell BOM")
+	}
+}
+
+func TestProductionRequiresTargetSpecificTrackingIssue(t *testing.T) {
+	step := productionWorkflowStep(t, productionWorkflow(t), "Require target-specific GitHub tracking issue")
+	for _, required := range []string{
+		"TRACKING_ISSUE: ${{ inputs.tracking_issue }}",
+		"repos/${GITHUB_REPOSITORY}/issues/${issue_number}",
+		"TARGET_SHA",
+		"Tracking issue evidence:",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("target-specific tracking issue gate is missing %q", required)
+		}
 	}
 }
