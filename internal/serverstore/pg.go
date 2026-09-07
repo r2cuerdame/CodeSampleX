@@ -554,15 +554,50 @@ func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	return out, err
 }
 
+const putSnapshotSQL = `
+	INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
+	VALUES($1,$2,$3,now())
+	ON CONFLICT (purl, symbol) DO UPDATE SET
+		snapshot = EXCLUDED.snapshot, generated_at = now()`
+
 func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
-			INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
-			VALUES($1,$2,$3,now())
-			ON CONFLICT (purl, symbol) DO UPDATE SET
-				snapshot = EXCLUDED.snapshot, generated_at = now()`,
+		_, err := c.Exec(ctx, putSnapshotSQL,
 			purl, symbol, []byte(snapshotJSON))
 		return err
+	})
+}
+
+// PutSnapshots pipelines one bounded builder chunk in one transaction. The
+// builder owns the bound so this method stays a narrow optimization rather
+// than a second public Store contract. All rows in a chunk become visible
+// together, and an error rolls the chunk back; later chunks and the pass's
+// generatedAt marker are not written.
+func (p *PG) PutSnapshots(ctx context.Context, snapshots []SnapshotRow) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		var batch pgx.Batch
+		for _, row := range snapshots {
+			batch.Queue(putSnapshotSQL, row.PURL, row.Symbol, []byte(row.SnapshotJSON))
+		}
+		results := tx.SendBatch(ctx, &batch)
+		for range snapshots {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return err
+			}
+		}
+		if err := results.Close(); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	})
 }
 
