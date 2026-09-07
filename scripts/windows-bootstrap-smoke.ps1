@@ -6,13 +6,38 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+# Read the registry value without expanding entries such as %USERPROFILE%.
+# The smoke deliberately changes USERPROFILE below; comparing the value via
+# GetEnvironmentVariable would therefore report a mutation even when the
+# registry bytes never changed.
+function Get-RawUserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+    if ($null -eq $key) {
+        return [pscustomobject]@{ exists = $false; value = ''; kind = '' }
+    }
+    try {
+        $name = @($key.GetValueNames() | Where-Object { $_ -ieq 'Path' } | Select-Object -First 1)
+        if ($name.Count -eq 0) {
+            return [pscustomobject]@{ exists = $false; value = ''; kind = '' }
+        }
+        return [pscustomobject]@{
+            exists = $true
+            value = [string]$key.GetValue($name[0], '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            kind = [string]$key.GetValueKind($name[0])
+        }
+    } finally {
+        $key.Close()
+    }
+}
+
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('csx-bootstrap-smoke-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $saved = @{}
 foreach ($name in @('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'CSX_HOME', 'CSX_INSTALL_ONLY', 'PATH')) {
     $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
-$userPathBefore = [Environment]::GetEnvironmentVariable('PATH', 'User')
+$userPathBefore = Get-RawUserPath
 try {
     $env:LOCALAPPDATA = Join-Path $scratch 'local'
     $env:APPDATA = Join-Path $scratch 'roaming'
@@ -61,7 +86,12 @@ try {
     $payload = Join-Path $root "payloads/$($active.current.version)/csx-payload.exe"
     $payloadHash = (Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($payloadHash -cne $asset.sha256 -or $active.current.sha256 -cne $asset.sha256) { throw 'installed payload signed hash mismatch' }
-    if ([Environment]::GetEnvironmentVariable('PATH', 'User') -cne $userPathBefore) { throw 'installer modified real user PATH during isolated smoke' }
+    $userPathAfter = Get-RawUserPath
+    if ($userPathAfter.exists -ne $userPathBefore.exists -or
+        $userPathAfter.value -cne $userPathBefore.value -or
+        $userPathAfter.kind -cne $userPathBefore.kind) {
+        throw 'installer modified real user PATH during isolated smoke'
+    }
     [pscustomobject]@{
         version = $active.current.version
         sequence = $active.current.sequence

@@ -343,6 +343,33 @@ func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
 	}
 }
 
+// The Windows release smoke changes USERPROFILE to keep every install file in
+// an isolated directory. Environment.GetEnvironmentVariable expands a user's
+// REG_EXPAND_SZ Path against that temporary profile, making an unchanged
+// registry value look changed and fail the release after signing. Compare the
+// raw registry value and its kind instead.
+func TestWindowsBootstrapSmokeComparesTheUnexpandedUserPath(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("windows-bootstrap-smoke.ps1"))
+	if err != nil {
+		t.Fatalf("read Windows bootstrap smoke: %v", err)
+	}
+	script := string(raw)
+	for _, required := range []string{
+		"Get-RawUserPath",
+		"RegistryValueOptions]::DoNotExpandEnvironmentNames",
+		"$userPathAfter.exists -ne $userPathBefore.exists",
+		"$userPathAfter.value -cne $userPathBefore.value",
+		"$userPathAfter.kind -cne $userPathBefore.kind",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("Windows bootstrap smoke is missing raw user PATH guard %q", required)
+		}
+	}
+	if strings.Contains(script, "GetEnvironmentVariable('PATH', 'User')") {
+		t.Fatal("Windows bootstrap smoke still compares an expanded user PATH")
+	}
+}
+
 // Publishing the client and observing the fleet run it are one release
 // contract. Self-convergence may repair a failed rollout later, but it cannot
 // make the Release run green: production uses that conclusion as its proof
