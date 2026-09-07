@@ -1,8 +1,16 @@
 # Exercise the same comparator as the installer smoke in an owned test key.
 # Never write to HKCU\Environment or its real Path value.
 $ErrorActionPreference = 'Stop'
+$timer = [Diagnostics.Stopwatch]::StartNew()
+function Write-TestPhase([string]$Name) {
+    [Console]::Out.WriteLine(('registry test: {0} ({1}ms)' -f $Name, $timer.ElapsedMilliseconds))
+    [Console]::Out.Flush()
+}
+Write-TestPhase 'script entered'
 . (Join-Path $PSScriptRoot 'windows-registry-state.ps1')
+Write-TestPhase 'helper loaded'
 $realPathBefore = Get-CSXUserPathState
+Write-TestPhase 'real PATH captured'
 $profileBefore = $env:USERPROFILE
 $localBefore = $env:LOCALAPPDATA
 $testName = 'Software\CSXBootstrapSmokeTest-' + [Guid]::NewGuid().ToString('N')
@@ -13,6 +21,7 @@ try {
     if ($null -ne $existing) { $existing.Dispose(); throw 'test registry key already exists' }
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($testName)
     $created = $true
+    Write-TestPhase 'owned registry fixture created'
     $raw = '%USERPROFILE%\tools;%LOCALAPPDATA%\bin'
     $key.SetValue('Path', $raw, [Microsoft.Win32.RegistryValueKind]::ExpandString)
     $env:USERPROFILE = 'C:\csx-test-original-profile'
@@ -25,7 +34,9 @@ try {
     $expandedAfter = [string]$key.GetValue('Path')
     if ($expandedBefore -ceq $expandedAfter) { throw 'fixture did not reproduce the expanded-value false positive' }
     if ($before.RawValue -cne $raw -or $after.RawValue -cne $raw) { throw 'snapshot expanded the stored registry value' }
+    Write-TestPhase 'profile expansion reproduced; comparing raw values'
     if (-not (Test-CSXRegistryValueStateEqual $before $after)) { throw 'expansion-only profile change rejected despite unchanged registry' }
+    Write-TestPhase 'raw comparison completed'
 
     $key.SetValue('Path', $raw + ';C:\unexpected', [Microsoft.Win32.RegistryValueKind]::ExpandString)
     if (Test-CSXRegistryValueStateEqual $before (Get-CSXRegistryValueState $key 'Path')) { throw 'raw PATH mutation was accepted' }
@@ -39,6 +50,7 @@ try {
     if (Test-CSXRegistryValueStateEqual $missing (Get-CSXRegistryValueState $key 'Path')) { throw 'absent and empty PATH values were treated as equal' }
     Write-Output 'PASS: expansion-only change preserves raw state; raw, kind, deletion, and insertion mutations are rejected.'
 } finally {
+    Write-TestPhase 'cleanup entered'
     $env:USERPROFILE = $profileBefore
     $env:LOCALAPPDATA = $localBefore
     if ($null -ne $key) { $key.Dispose() }
@@ -47,4 +59,5 @@ try {
         [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testName)
     }
     if (-not (Test-CSXRegistryValueStateEqual $realPathBefore (Get-CSXUserPathState))) { throw 'test changed the real user PATH' }
+    Write-TestPhase 'cleanup completed; real PATH preserved'
 }
