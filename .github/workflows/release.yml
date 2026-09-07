@@ -418,10 +418,11 @@ jobs:
               --title "$TAG" --generate-notes --draft
           fi
 
-      - name: Verify exact published release asset set
+      - name: Verify exact uploaded release asset set
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           printf '%s\n' \
             csx-darwin-amd64 csx-darwin-arm64 csx-linux-amd64 csx-linux-arm64 \
@@ -429,8 +430,10 @@ jobs:
             csx-launcher-windows-amd64.exe csx-launcher-windows-arm64.exe \
             csx-server-linux-amd64 SHA256SUMS.txt csx-update-stable.json csx-bootstrap-stable.json \
             codesamplex-mcp.mcpb codesamplex-mcp.mcpb.sha256 | sort > /tmp/expected-assets
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            --jq '.assets[].name' | sort > /tmp/actual-assets
+          # REST lookup by tag only finds published releases. The CLI also
+          # resolves drafts, whose uploaded bytes must pass before promotion.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort > /tmp/actual-assets
           diff -u /tmp/expected-assets /tmp/actual-assets
 
       - name: Verify uploaded signed release before promotion

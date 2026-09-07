@@ -334,7 +334,7 @@ func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
 		}
 	}
 	publish := jobs["publish"]
-	ordered := []string{"--generate-notes --draft", "Verify exact published release asset set", "Verify uploaded signed release before promotion", "Atomically publish the verified draft", "--draft=false --latest"}
+	ordered := []string{"--generate-notes --draft", "Verify exact uploaded release asset set", "Verify uploaded signed release before promotion", "Atomically publish the verified draft", "--draft=false --latest"}
 	previous := -1
 	for _, marker := range ordered {
 		at := strings.Index(publish, marker)
