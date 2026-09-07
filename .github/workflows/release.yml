@@ -400,15 +400,14 @@ jobs:
             dist/csx-launcher-windows-amd64.exe dist/csx-launcher-windows-arm64.exe \
             dist/csx-server-linux-amd64 dist/SHA256SUMS.txt dist/csx-update-stable.json dist/csx-bootstrap-stable.json \
             dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256)
-          # Public releases are immutable. A retry may repair an unpublished
-          # draft, but must never clobber a payload already named by a signature.
+          # Public releases and failed drafts are immutable evidence. A replay
+          # may continue after a later registry/Farm failure, but it must never
+          # replace assets or promote a draft left by an incomplete publish.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then
-              gh release upload "$TAG" "${ASSETS[@]}" --clobber
-            fi
+            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
           else
             gh release create "$TAG" "${ASSETS[@]}" \
-              --title "$TAG" --generate-notes --draft
+              --title "$TAG" --generate-notes --latest
           fi
 
       - name: Verify exact published release asset set
@@ -426,7 +425,7 @@ jobs:
             --jq '.assets[].name' | sort > /tmp/actual-assets
           diff -u /tmp/expected-assets /tmp/actual-assets
 
-      - name: Verify uploaded signed release before promotion
+      - name: Verify published signed release
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_CHECKSUMS_SHA256: ${{ needs.build.outputs.checksums_sha256 }}
@@ -440,15 +439,6 @@ jobs:
           go run ./scripts/update_manifest.go verify-release \
             '${{ needs.build.outputs.public_key }}' /tmp/published-release "$TAG"
           echo '${{ needs.build.outputs.mcpb_sha256 }}  /tmp/published-release/codesamplex-mcp.mcpb' | sha256sum -c -
-
-      - name: Atomically publish the verified draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then
-            gh release edit "$TAG" --draft=false --latest
-          fi
 
       - name: Install mcp-publisher
         run: |

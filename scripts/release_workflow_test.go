@@ -324,7 +324,7 @@ func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
 		}
 	}
 	publish := jobs["publish"]
-	ordered := []string{"--generate-notes --draft", "Verify exact published release asset set", "Verify uploaded signed release before promotion", "Atomically publish the verified draft", "--draft=false --latest"}
+	ordered := []string{"--generate-notes --latest", "Verify exact published release asset set", "Verify published signed release", "Publish to the MCP Registry"}
 	previous := -1
 	for _, marker := range ordered {
 		at := strings.Index(publish, marker)
@@ -333,13 +333,13 @@ func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
 		}
 		previous = at
 	}
-	clobber := strings.Index(publish, "--clobber")
-	draftGuard := strings.Index(publish, `if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then`)
-	if clobber < 0 || draftGuard < 0 || draftGuard > clobber || clobber > previous {
-		t.Fatal("release replacement is no longer restricted to unpublished drafts")
+	for _, forbidden := range []string{"--clobber", "--generate-notes --draft", "Atomically publish the verified draft"} {
+		if strings.Contains(publish, forbidden) {
+			t.Fatalf("release publication can mutate or promote failed evidence through %q", forbidden)
+		}
 	}
-	if strings.Contains(publish[previous:], "--clobber") {
-		t.Fatal("published release assets can be overwritten")
+	if !strings.Contains(publish, `test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false`) {
+		t.Fatal("release replay does not reject an unpublished draft")
 	}
 }
 
