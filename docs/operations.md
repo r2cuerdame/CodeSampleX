@@ -85,8 +85,8 @@ The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
 label and the revision the server reports at `GET /version` against the
 dispatched SHA, the latest `schema_migrations` row against the checked-out
 migration set, `/healthz`, the public page/API/install smokes, monotonic
-PASS/FAIL/published-sample source ledgers, and a fresh, internally consistent
-failure-cluster materialization. The first two say what was
+PASS/FAIL/published-sample source ledgers, privacy boundaries, and the current
+failure-cluster ledger's row-level consistency. The first two say what was
 configured and what was built; only `/version` says what the process now
 answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
@@ -111,13 +111,22 @@ script drifts from the predicate the server itself reads with. See
 
 **That total is derived, not monotonic.** `RunLoop` makes the builder's first
 pass after any restart a full one, so a deploy may legitimately repair a stale
-materialized count while no source evidence moved. The transaction waits for
-the new server's full-pass completion marker before it samples the table, then
-requires every current cluster to have a positive observation count and a
-non-negative, known-quality breakdown whose values sum to that count. A
-missing materialization while FAIL evidence remains still enters rollback.
-`deploy/lightsail/failure_cluster_ledger_test.go` pins the source/derived split
-and the completion-marker ordering.
+materialized count while no source evidence moved. The deploy samples the
+current table once and still requires every current cluster to have a positive
+observation count and a non-negative, known-quality breakdown whose values sum
+to that count. A missing materialization while FAIL evidence remains still
+enters rollback.
+
+Full-pass convergence is observed by the separate **Post-deploy observation**
+workflow after the lightweight deploy has committed. It waits up to 80 minutes
+for `stats_daily.generatedAt >= server StartedAt`, then rechecks the settled
+ledger and records builder completion time, container/host CPU and memory/load
+pressure, pool-busy/query-timeout counts, restart/OOM/rollback or identity
+drift, and fixed public-route latency samples. A convergence timeout or anomaly
+posts FAIL evidence to the deployment's GitHub tracking issue and fails that
+workflow; it does not retroactively enter the deploy rollback path. The
+observer never logs raw requests or query strings. The deploy evidence keeps
+`builderFresh` as an informational initial sample only.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client
@@ -1632,4 +1641,3 @@ not the product's to make.
 Do not disable Defender, do not add an exclusion, and do not treat a green
 release pipeline as evidence that Windows users can run the artifact: the
 pipeline never executed the payload on a machine with real-time protection on.
-

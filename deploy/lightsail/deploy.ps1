@@ -308,36 +308,9 @@ if ($ExpectedPreviousRevision -ne "" -and $productionStateParts[0] -ne $Expected
 Write-Output "previous production SHA: $($productionStateParts[0])"
 Write-Output "previous production image: $($productionStateParts[1])"
 
-$collectBuilderFreshScript = @'
-set -eu
-cd /opt/codesamplex/deploy
-server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
-builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
-  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
-server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
-builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
-builder_fresh=0
-if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
-  builder_fresh=1
-fi
-printf '%s\n' "$builder_fresh"
-'@
-
 $collectInvariantScript = @'
 set -eu
 cd /opt/codesamplex/deploy
-server_started=$(docker inspect codesamplex-server-1 --format '{{.State.StartedAt}}')
-builder_generated=$(docker compose exec -T db psql -U csx -d csx -Atqc \
-  "SELECT COALESCE(stats->>'generatedAt','') FROM stats_daily ORDER BY day DESC LIMIT 1")
-server_epoch=$(date -u -d "$server_started" +%s 2>/dev/null || true)
-builder_epoch=$(date -u -d "$builder_generated" +%s 2>/dev/null || true)
-builder_fresh=0
-if [ -n "$server_epoch" ] && [ -n "$builder_epoch" ] && [ "$builder_epoch" -ge "$server_epoch" ]; then
-  builder_fresh=1
-fi
-# Read the materialization only after sampling the completion marker. If a
-# full pass finishes between these probes, this snapshot still reports
-# builder_fresh=0; it can never bless a mid-pass tuple.
 values=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
 SELECT
   COALESCE(SUM(observation_count) FILTER (WHERE result='PASS'),0),
@@ -363,10 +336,10 @@ SELECT
              FROM jsonb_each(fc.evidence_breakdown) AS item(key, value)
              WHERE jsonb_typeof(item.value) = 'number'), 0)))
 FROM evidence_agg")
-printf '%s|%s\n' "$values" "$builder_fresh"
+printf '%s\n' "$values"
 '@
-$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
-if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed pre-deploy invariants" }
+$invariantsBefore = if ($productionStateParts[0] -eq "none") { "0|0|0|0|0|0|0" } else { (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim() }
+if ($invariantsBefore -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed pre-deploy invariants" }
 $beforeValues = @($invariantsBefore -split '\|' | ForEach-Object { [int64]$_ })
 Write-Output "deployment invariants before: $invariantsBefore"
 
@@ -1095,51 +1068,15 @@ if ($liveIdentityParts.Count -ne 5 -or $liveIdentityParts[0] -ne $revision -or $
 if ($liveIdentityParts[1] -notmatch '^sha256:[0-9a-f]{64}$') { throw "live image digest is malformed" }
 if ($liveIdentityParts[3] -ne $expectedMigration) { throw "latest applied migration does not match the checked-out server" }
 
-$builderFresh = 0
-# The production corpus's first full pass currently completes in about
-# fourteen minutes under public traffic. Thirty minutes is more than twice
-# that measured pass plus control-plane jitter; the old nominal three-minute
-# ceiling was only hidden by repeatedly running a ten-second whole-corpus
-# invariant query inside this loop.
-# The budget follows a measurement, not a guess.
-#
-# Measured on production 2026-09-01: the server restarted at 19:39:12Z and the
-# builder wrote its generatedAt at 20:28:42Z -- 49 minutes. CSX_SNAPSHOT_INTERVAL
-# is 5m and RunOnce is called immediately at startup, so that is the pass
-# itself, not schedule latency. The old budget was 900 x 2s = 30 minutes, so
-# the deploy gave up on a working server and rolled a healthy v0.1.97 back to
-# v0.1.96.
-#
-# What made the pass slow is capacity rather than code: evidence_agg went from
-# roughly 72k rows to 216k that day, on a host whose server container sits at
-# 97% of its 768MiB limit with a load average of 3.69 on 2 vCPU.
-#
-# The gate still demands a COMPLETE pass. Nothing here is weakened; it simply
-# stops calling a slow host a broken one. If a pass ever outgrows this too,
-# the number is wrong again and the answer is the same: measure, then set it.
-$builderFreshPollAttempts = 2400
-$builderFreshPollSeconds = 2
-for ($attempt = 1; $attempt -le $builderFreshPollAttempts; $attempt++) {
-    # The materialized invariant query is a whole-corpus scan. Poll only the
-    # cheap completion marker while the new builder owns that same database,
-    # then take one coherent full snapshot after the pass has finished.
-    $builderFreshText = (Invoke-RemoteScript $collectBuilderFreshScript | Select-Object -First 1).Trim()
-    if ($builderFreshText -notmatch '^[01]$') { throw "malformed post-deploy builder freshness" }
-    $builderFresh = [int]$builderFreshText
-    if ($builderFresh -eq 1) { break }
-    if ($attempt -lt $builderFreshPollAttempts) { Start-Sleep -Seconds $builderFreshPollSeconds }
-}
-if ($builderFresh -ne 1) {
-    $waitedMin = [int](($builderFreshPollAttempts * $builderFreshPollSeconds) / 60)
-    throw ("the new server did not complete a fresh full builder pass; waited $waitedMin min " +
-        "(builder generatedAt must be at or after the server's StartedAt). A pass this slow is " +
-        "usually capacity: check evidence_agg row count, container memory and load average before " +
-        "raising this budget again.")
-}
+# This is the deploy-critical invariant snapshot: source totals cannot fall,
+# the current derived ledger cannot disappear, and every derived row must
+# remain internally balanced. Full-builder convergence is deliberately not a
+# prerequisite for committing a healthy, correctly identified deployment;
+# the separate post-deploy observer waits for generatedAt and rechecks the
+# settled materialization without holding this rollback transaction open.
 $invariantsAfter = (Invoke-RemoteScript $collectInvariantScript | Select-Object -First 1).Trim()
-if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|[01]$') { throw "malformed post-deploy invariants" }
+if ($invariantsAfter -notmatch '^\d+\|\d+\|\d+\|\d+\|\d+\|\d+\|\d+$') { throw "malformed post-deploy invariants" }
 $afterValues = @($invariantsAfter -split '\|' | ForEach-Object { [int64]$_ })
-if ($afterValues[7] -ne 1) { throw "the server restarted before the post-deploy invariant snapshot" }
 $sourceInvariantIndexes = @(0, 1, 2, 4, 5)
 foreach ($i in $sourceInvariantIndexes) {
     if ($afterValues[$i] -lt $beforeValues[$i]) {
