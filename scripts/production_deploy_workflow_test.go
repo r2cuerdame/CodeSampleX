@@ -280,6 +280,7 @@ func TestProductionRequiresTargetSpecificTrackingIssue(t *testing.T) {
 	for _, required := range []string{
 		"TRACKING_ISSUE: ${{ inputs.tracking_issue }}",
 		"repos/${GITHUB_REPOSITORY}/issues/${issue_number}",
+		"--paginate",
 		"TARGET_SHA",
 		"Tracking issue evidence:",
 	} {
