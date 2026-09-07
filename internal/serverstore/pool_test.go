@@ -259,6 +259,76 @@ func TestPoolCountsOnlyStatementTimeoutsAsTimeoutPressure(t *testing.T) {
 	}
 }
 
+func TestInteractiveBudgetStopsAfterOnePoolRefusal(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	pol.ReadWait = 15 * time.Millisecond
+	p := newConnPool(nil, pol)
+	for i := 0; i < cap(p.inter); i++ {
+		p.inter <- struct{}{}
+	}
+	budget := NewQueryBudget(ClassInteractive)
+	ctx := WithQueryBudget(context.Background(), budget)
+
+	started := time.Now()
+	for i := 0; i < 20; i++ {
+		if _, err := p.acquire(ctx); !IsPoolBusy(err) {
+			t.Fatalf("acquire %d error = %v, want ErrPoolBusy", i+1, err)
+		}
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("twenty attempts spent %v, want only one bounded pool wait", elapsed)
+	}
+
+	stats := p.stat().Classes[0]
+	if stats.Attempts != 20 || stats.First != 1 || stats.Followups != 19 {
+		t.Fatalf("attempt split = total %d first %d followups %d, want 20/1/19",
+			stats.Attempts, stats.First, stats.Followups)
+	}
+	if stats.Busy != 1 || stats.Suppressed != 19 || stats.Acquired != 0 {
+		t.Fatalf("outcomes = acquired %d busy %d suppressed %d, want 0/1/19",
+			stats.Acquired, stats.Busy, stats.Suppressed)
+	}
+	if stats.Attempts != stats.Acquired+stats.Busy+stats.Suppressed+stats.Canceled+stats.Failed {
+		t.Fatalf("attempt outcomes do not close: %+v", stats)
+	}
+	if got := budget.Suppressed(); got != 19 {
+		t.Fatalf("request suppressed count = %d, want 19", got)
+	}
+}
+
+func TestPoolSeparatesFirstFollowupAndRetryAttempts(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	pol.ProbeWait = time.Nanosecond
+	p := newConnPool(nil, pol)
+	for i := 0; i < cap(p.probe); i++ {
+		p.probe <- struct{}{}
+	}
+
+	first := WithQueryBudget(context.Background(), NewQueryBudget(ClassProbe))
+	if _, err := p.acquire(first); !IsPoolBusy(err) {
+		t.Fatalf("first attempt = %v, want ErrPoolBusy", err)
+	}
+	retry := WithQueryBudget(context.Background(), NewRetryQueryBudget(ClassProbe))
+	if _, err := p.acquire(retry); !IsPoolBusy(err) {
+		t.Fatalf("retry attempt = %v, want ErrPoolBusy", err)
+	}
+	stats := p.stat().Classes[2]
+	if stats.Attempts != 2 || stats.First != 1 || stats.Retries != 1 || stats.Followups != 0 {
+		t.Fatalf("attempt accounting = %+v, want attempts=2 first=1 retries=1 followups=0", stats)
+	}
+}
+
+func TestProbeAdmissionIsBoundedToItsReserve(t *testing.T) {
+	p := newConnPool(nil, DefaultPoolPolicy())
+	if got, want := cap(p.probe), p.pol.ProbeReserve; got != want {
+		t.Fatalf("probe gate = %d, want reserve %d", got, want)
+	}
+	stats := p.stat().Classes[2]
+	if stats.Limit != p.pol.ProbeReserve {
+		t.Fatalf("reported probe limit = %d, want %d", stats.Limit, p.pol.ProbeReserve)
+	}
+}
+
 func TestPoolPolicyFromEnvChangesOnlyWhatIsNamed(t *testing.T) {
 	def := DefaultPoolPolicy().normalize()
 	if got := PoolPolicyFromEnv(func(string) string { return "" }); got != def {

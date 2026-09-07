@@ -35,6 +35,8 @@ type failingSearchCandidateReadStore struct {
 	serverstore.Store
 	fail                 string
 	genericSnapshotReads int
+	clusterReads         int
+	snapshotReads        int
 }
 
 func (s *failingSearchCandidateReadStore) ReceiptsForSample(ctx context.Context, sampleID string) ([]serverstore.ReceiptRow, error) {
@@ -45,6 +47,7 @@ func (s *failingSearchCandidateReadStore) ReceiptsForSample(ctx context.Context,
 }
 
 func (s *failingSearchCandidateReadStore) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {
+	s.snapshotReads++
 	if s.fail == "snapshot" {
 		return "", false, serverstore.ErrPoolBusy
 	}
@@ -58,10 +61,29 @@ func (s *failingSearchCandidateReadStore) GetSnapshot(ctx context.Context, purl,
 }
 
 func (s *failingSearchCandidateReadStore) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]serverstore.ClusterRow, error) {
+	s.clusterReads++
 	if s.fail == "failure-clusters" {
 		return nil, serverstore.ErrPoolBusy
 	}
 	return s.Store.ListFailureClustersIncludingPreserved(ctx, packageName)
+}
+
+func TestSearchRequestDeduplicatesRepeatedMaterializedReads(t *testing.T) {
+	store := &failingSearchCandidateReadStore{Store: serverstore.NewFake()}
+	a := &api{d: Deps{Store: store}}
+	ctx := withSearchReadCache(t.Context())
+
+	for range 20 {
+		if _, err := a.searchFailureClusters(ctx, "axios"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := a.searchSnapshot(ctx, "pkg:npm/axios@1.12.0", "post"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.clusterReads != 1 || store.snapshotReads != 1 {
+		t.Fatalf("store reads = clusters %d snapshots %d, want 1/1", store.clusterReads, store.snapshotReads)
+	}
 }
 
 func (s *failingSearchCandidateReadStore) SamplesForPackages(ctx context.Context, patterns []string, limit int) ([]serverstore.SampleRow, error) {

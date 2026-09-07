@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -452,6 +453,7 @@ type site struct {
 	// while a fresh production builder is using the background DB lanes.
 	derivedRefreshing bool
 	derivedRetryAt    time.Time
+	derivedRetry      retrypolicy.Series
 
 	// assets caches the per-package three-axis rollup behind /compatibility.
 	// It classifies every public release, which is a timer job and not a
@@ -468,6 +470,7 @@ type site struct {
 	handAt         time.Time
 	handRefreshing bool
 	handRetryAt    time.Time
+	handRetry      retrypolicy.Series
 
 	// cube* caches assembled compatibility cubes per package (cube.go):
 	// one assembly reads dozens of snapshots, which is fine on a timer and
@@ -510,6 +513,12 @@ type site struct {
 	// cannot multiply the database fan-out for the same cold cube.
 	heroLoading map[string]bool
 	heroRetryAt map[string]time.Time
+	heroRetry   map[string]retrypolicy.Series
+
+	// backgroundNow/backgroundJitter are deterministic seams for the cache
+	// retry state machines. Production leaves both nil.
+	backgroundNow    func() time.Time
+	backgroundJitter func(time.Duration) time.Duration
 }
 
 type heroCacheEntry struct {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -60,27 +61,76 @@ func (b *Builder) now() time.Time {
 	return time.Now().UTC()
 }
 
-// RunLoop runs RunOnce immediately, then on every interval tick until ctx is
-// canceled. Failures are logged and retried on the next tick — an outage
-// never kills the loop (goal.md §3.9 resilience posture).
+// RunLoop runs RunOnce immediately and spaces every later pass from the
+// previous pass's completion. A failed pass gets at most five background
+// retries at 1s/2s/4s/8s/16s plus jitter. Exhaustion is terminal for that
+// retry series: the builder defers until its normal interval before opening a
+// fresh series.
 func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	if err := b.RunOnce(ctx); err != nil && ctx.Err() == nil {
-		log.Printf("compatibility: builder run: %v", err)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	runBuilderLoop(ctx, interval, b.RunOnce)
+}
+
+func runBuilderLoop(ctx context.Context, interval time.Duration, run func(context.Context) error) {
+	runBuilderLoopWith(ctx, interval, run, waitBuilderDelay, nil)
+}
+
+func runBuilderLoopWith(
+	ctx context.Context,
+	interval time.Duration,
+	run func(context.Context) error,
+	wait func(context.Context, time.Duration) bool,
+	draw func(time.Duration) time.Duration,
+) {
+	var series retrypolicy.Series
+	retrying := false
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := b.RunOnce(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("compatibility: builder run: %v", err)
-			}
+		budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+		if retrying {
+			budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
 		}
+		err := run(serverstore.WithQueryBudget(ctx, budget))
+		if ctx.Err() != nil {
+			return
+		}
+
+		delay := interval
+		if err == nil {
+			series.Reset()
+			retrying = false
+		} else if retry, state := series.Failure(); state == retrypolicy.Waiting {
+			delay, _ = retrypolicy.Delay(retry, draw)
+			retrying = true
+			log.Printf("compatibility: builder run failed: %v; background retry %d/%d in %s",
+				err, retry, retrypolicy.MaxRetries, delay.Round(time.Millisecond))
+		} else {
+			log.Printf("compatibility: builder run failed after %d retries: %v; state=failed/deferred for %s",
+				retrypolicy.MaxRetries, err, interval)
+			retrying = false
+		}
+		if !wait(ctx, delay) {
+			return
+		}
+		// Keep exhaustion terminal for the whole deferred window. Resetting in
+		// the failure branch made the log claim failed/deferred while the state
+		// was already Ready, allowing future loop changes to reinsert work
+		// before the normal interval elapsed.
+		if series.State() == retrypolicy.FailedDeferred {
+			series.Reset()
+		}
+	}
+}
+
+func waitBuilderDelay(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

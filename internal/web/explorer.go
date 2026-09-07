@@ -1045,7 +1045,11 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// an undecided slice there is no release whose dependencies these are and
 	// no environment whose failures these are, and the page showed both
 	// anyway. That pile is what a reader had to read past to find the grid.
-	cube := buildCubeView(s, r, lang, eco, name, code)
+	cube, err := buildCubeView(s, r, lang, eco, name, code)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var clusters []clusterView
 	var clusterTotal int
 	var deps []PackageDep
@@ -1187,14 +1191,19 @@ type symbolLink struct {
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
-	purl := domain.PURL{Ecosystem: eco, Name: name, Version: version}.String()
 	symbols, err := s.d.Store.PackageSymbols(r.Context(), eco, name, version)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
+	versionFacts, packageSnapshot, packageOK, err := loadVersionCubeFacts(
+		r.Context(), s.d.Store, eco, name, version, symbols)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var matrix []matrixRow
-	if raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, ""); ok {
+	if raw, ok := packageSnapshot, packageOK; ok {
 		var doc snapshotDoc
 		if json.Unmarshal([]byte(raw), &doc) == nil {
 			matrix = buildMatrix(lang, doc)
@@ -1240,7 +1249,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Costs no query: it reads the same cached target list the symbol list is
 	// built from.
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
-	runs := s.symbolRunCounts(r, eco, name, version)
+	runs := symbolRunCounts(versionFacts, version)
 	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread, runs)
 	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
@@ -1248,7 +1257,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
 		Samples:    residue,
-		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
+		SymbolGrid: versionSymbolGrid(lang, eco, name, version, versionFacts),
 		// A cluster names its own versions, so this release's failures can be
 		// picked out exactly and the rest left to the package page.
 		Clusters:     clusters,
@@ -1262,9 +1271,8 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 // no query. Verification only: an observation is recorded against the
 // package, not the API, and counting it here would put a package's builds
 // behind every symbol name it happens to mention.
-func (s *site) symbolRunCounts(r *http.Request, eco, name, version string) map[string][2]int64 {
-	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
-	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+func symbolRunCounts(facts []cubeFact, version string) map[string][2]int64 {
+	facts = filterCubeFacts(facts, map[string]string{"version": version})
 	out := map[string][2]int64{}
 	for _, f := range facts {
 		sym := f.Dims["symbol"]
@@ -1352,9 +1360,8 @@ func symbolLinks(b basePage, eco, name, version string, observed []string, sampl
 // version, symbol and OS pinned. Empty when the version is outside the
 // cube's newest-versions window or a 1×1 grid would only repeat the
 // detail table.
-func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version string) pivotGrid {
-	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
-	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+func versionSymbolGrid(lang, eco, name, version string, facts []cubeFact) pivotGrid {
+	facts = filterCubeFacts(facts, map[string]string{"version": version})
 	if len(facts) == 0 {
 		return pivotGrid{}
 	}

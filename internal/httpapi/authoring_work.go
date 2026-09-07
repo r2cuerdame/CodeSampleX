@@ -16,6 +16,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -94,6 +95,22 @@ type authoringCandidateGate struct {
 	snapshot authoringCandidateSnapshot
 	takenAt  time.Time
 	refresh  *authoringCandidateCall // the background refresh, coalesced
+
+	// A failed first scan or refresh owns one bounded retry series. Keeping the
+	// schedule in the gate is what prevents every poll during backoff from
+	// opening another whole-corpus read. After the fifth retry, deferredUntil
+	// holds the terminal state for one normal candidate TTL before a caller may
+	// begin a fresh series.
+	retries       retrypolicy.Series
+	retryWaiting  bool
+	lastErr       error
+	deferredUntil time.Time
+
+	// Test seams. Production uses retrypolicy's random positive jitter and a
+	// real timer; tests can make the schedule deterministic without shortening
+	// the production contract.
+	retryDraw func(time.Duration) time.Duration
+	retryWait func(time.Duration)
 }
 
 // loadAuthoringCandidates answers a poll from the last completed candidate
@@ -123,46 +140,32 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	now := a.now()
 	g := &a.authoringCandidates
 	g.mu.Lock()
+	if g.retries.State() == retrypolicy.FailedDeferred && !now.Before(g.deferredUntil) {
+		g.retries.Reset()
+		g.deferredUntil = time.Time{}
+		g.lastErr = nil
+	}
 	if g.have {
 		snap := g.snapshot
-		if now.Sub(g.takenAt) >= authoringCandidateTTL && g.refresh == nil {
-			g.refresh = a.startCandidateRefresh(ctx, store)
+		if now.Sub(g.takenAt) >= authoringCandidateTTL && g.refresh == nil &&
+			!g.retryWaiting && g.retries.State() == retrypolicy.Ready {
+			g.refresh = a.startCandidateRefresh(store, false)
 		}
 		g.mu.Unlock()
 		return snap, nil
 	}
 	call := g.call
 	if call == nil {
-		call = &authoringCandidateCall{done: make(chan struct{})}
-		g.call = call
-		baseCtx := context.WithoutCancel(ctx)
-		var callCtx context.Context
-		var cancel context.CancelFunc
-		if deadline, ok := ctx.Deadline(); ok {
-			// WithoutCancel intentionally ignores a disconnected first caller so
-			// joined workers can still receive the result. Put the poll's absolute
-			// deadline back: candidate discovery gets only the time that remains,
-			// never a fresh full timeout after session refresh was slow.
-			callCtx, cancel = context.WithDeadline(baseCtx, deadline)
-		} else {
-			callCtx, cancel = context.WithTimeout(baseCtx, a.d.authoringWorkTimeout)
-		}
-		callCtx = serverstore.WithAuthoringPoll(callCtx)
-		go func() {
-			defer cancel()
-			call.snapshot, call.err = a.readCandidates(callCtx, store, store.ListAuthoringExpansionCandidates)
-			g.mu.Lock()
-			if call.err == nil {
-				now := a.now()
-				call.snapshot.takenAt = now
-				g.have, g.snapshot, g.takenAt = true, call.snapshot, now
-			}
-			close(call.done)
-			if g.call == call {
-				g.call = nil
-			}
+		if g.retryWaiting || g.retries.State() != retrypolicy.Ready {
+			err := g.lastErr
 			g.mu.Unlock()
-		}()
+			if err == nil {
+				err = errors.New("authoring candidate scan deferred")
+			}
+			return authoringCandidateSnapshot{}, err
+		}
+		call = a.startCandidateFirstScan(ctx, store, false)
+		g.call = call
 	}
 	g.mu.Unlock()
 
@@ -174,34 +177,144 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	}
 }
 
-// startCandidateRefresh begins one background re-read of the corpus under
-// the refresh budget, detached from the poll that noticed the snapshot was
-// stale. The caller holds the gate lock.
-func (a *api) startCandidateRefresh(ctx context.Context, store serverstore.AuthoringSessionStore) *authoringCandidateCall {
+// startCandidateFirstScan starts either the request-bounded first attempt or
+// a detached retry. The caller holds the gate lock. A retry is background
+// work: it uses the unhurried scan and a fresh retry-marked query budget
+// instead of inheriting the request's interactive budget.
+func (a *api) startCandidateFirstScan(ctx context.Context, store serverstore.AuthoringSessionStore, retry bool) *authoringCandidateCall {
 	g := &a.authoringCandidates
 	call := &authoringCandidateCall{done: make(chan struct{})}
-	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authoringCandidateRefreshBudget)
+	var callCtx context.Context
+	var cancel context.CancelFunc
+	var expansion func(context.Context, int) ([]serverstore.WantedRow, error)
+	if retry {
+		callCtx, cancel = context.WithTimeout(context.Background(), authoringCandidateRefreshBudget)
+		callCtx = serverstore.WithQueryBudget(callCtx,
+			serverstore.NewRetryQueryBudget(serverstore.ClassBackground))
+		expansion = store.ListAuthoringExpansionCandidatesUnhurried
+	} else {
+		baseCtx := context.WithoutCancel(ctx)
+		if deadline, ok := ctx.Deadline(); ok {
+			// WithoutCancel intentionally ignores a disconnected first caller so
+			// joined workers can still receive the result. Put the poll's absolute
+			// deadline back: candidate discovery gets only the time that remains,
+			// never a fresh full timeout after session refresh was slow.
+			callCtx, cancel = context.WithDeadline(baseCtx, deadline)
+		} else {
+			callCtx, cancel = context.WithTimeout(baseCtx, a.d.authoringWorkTimeout)
+		}
+		callCtx = serverstore.WithAuthoringPoll(callCtx)
+		expansion = store.ListAuthoringExpansionCandidates
+	}
 	go func() {
 		defer cancel()
-		snap, err := a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
+		call.snapshot, call.err = a.readCandidates(callCtx, store, expansion)
 		g.mu.Lock()
-		if err == nil {
-			now := a.now()
-			snap.takenAt = now
-			g.have, g.snapshot, g.takenAt = true, snap, now
-		} else {
-			// The old snapshot stays. The next stale poll starts another try;
-			// nothing is served that was not once true.
-			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", err)
-		}
-		call.snapshot, call.err = snap, err
-		close(call.done)
-		if g.refresh == call {
-			g.refresh = nil
-		}
+		a.finishCandidateAttemptLocked(call, store, false)
 		g.mu.Unlock()
 	}()
 	return call
+}
+
+// startCandidateRefresh begins one background re-read of the corpus under
+// the refresh budget, detached from the poll that noticed the snapshot was
+// stale. The caller holds the gate lock.
+func (a *api) startCandidateRefresh(store serverstore.AuthoringSessionStore, retry bool) *authoringCandidateCall {
+	g := &a.authoringCandidates
+	call := &authoringCandidateCall{done: make(chan struct{})}
+	refreshCtx, cancel := context.WithTimeout(context.Background(), authoringCandidateRefreshBudget)
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	refreshCtx = serverstore.WithQueryBudget(refreshCtx, budget)
+	go func() {
+		defer cancel()
+		call.snapshot, call.err = a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
+		g.mu.Lock()
+		a.finishCandidateAttemptLocked(call, store, true)
+		g.mu.Unlock()
+	}()
+	return call
+}
+
+// finishCandidateAttemptLocked publishes a successful snapshot or advances
+// the one shared retry series. The caller holds the gate lock.
+func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
+	store serverstore.AuthoringSessionStore, refresh bool) {
+	g := &a.authoringCandidates
+	if call.err == nil {
+		now := a.now()
+		call.snapshot.takenAt = now
+		g.have, g.snapshot, g.takenAt = true, call.snapshot, now
+		g.retries.Reset()
+		g.retryWaiting = false
+		g.lastErr = nil
+		g.deferredUntil = time.Time{}
+	} else {
+		g.lastErr = call.err
+		if refresh {
+			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", call.err)
+		} else {
+			log.Printf("csx-server: authoring candidate scan failed (%v)", call.err)
+		}
+	}
+	close(call.done)
+	if refresh {
+		if g.refresh == call {
+			g.refresh = nil
+		}
+	} else if g.call == call {
+		g.call = nil
+	}
+	if call.err != nil {
+		a.scheduleCandidateRetryLocked(store)
+	}
+}
+
+// scheduleCandidateRetryLocked waits without occupying a query or pool slot,
+// then starts one detached retry. Polls during the wait either receive the
+// stale snapshot or the last failure; none can restart the series. The caller
+// holds the gate lock.
+func (a *api) scheduleCandidateRetryLocked(store serverstore.AuthoringSessionStore) {
+	g := &a.authoringCandidates
+	retry, state := g.retries.Failure()
+	if state == retrypolicy.FailedDeferred {
+		g.retryWaiting = false
+		g.deferredUntil = a.now().Add(authoringCandidateTTL)
+		log.Printf("csx-server: authoring candidate scan failed after %d retries; state=failed/deferred for %s",
+			retrypolicy.MaxRetries, authoringCandidateTTL)
+		return
+	}
+	delay, _ := retrypolicy.Delay(retry, g.retryDraw)
+	g.retryWaiting = true
+	wait := g.retryWait
+	go func() {
+		if wait == nil {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			<-timer.C
+		} else {
+			wait(delay)
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if !g.retryWaiting || g.retries.State() != retrypolicy.Waiting {
+			return
+		}
+		g.retryWaiting = false
+		if g.have {
+			if g.refresh == nil {
+				g.refresh = a.startCandidateRefresh(store, true)
+			}
+			return
+		}
+		if g.call == nil {
+			g.call = a.startCandidateFirstScan(context.Background(), store, true)
+		}
+	}()
+	log.Printf("csx-server: authoring candidate background retry %d/%d in %s",
+		retry, retrypolicy.MaxRetries, delay.Round(time.Millisecond))
 }
 
 // readCandidates performs the pair of reads behind one snapshot. expansion
@@ -530,7 +643,6 @@ func buildAuthoringCandidates(
 	}
 	return out
 }
-
 
 // authoringWorkBusyErr reports whether err is the database saying "not now"
 // rather than "this is broken": a deadline, a cancellation, a statement
