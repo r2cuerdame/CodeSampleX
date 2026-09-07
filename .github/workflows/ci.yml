@@ -228,5 +228,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The scripts package starts PowerShell. Run it before the CPU-heavy
+      # packages so hosted-runner starvation cannot hide a real registry
+      # failure behind the child-process deadline. Force that isolated gate
+      # to execute, then exclude only that already-passed test from the
+      # concurrent full suite.
+      - name: Native Windows registry isolation
+        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts
       - name: Native Windows tests
-        run: go test ./...
+        run: go test -skip '^TestWindowsBootstrapRegistryIsolation$' ./...

@@ -71,6 +71,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The scripts package starts PowerShell. Run it before the CPU-heavy
+      # packages so hosted-runner starvation cannot hide a real registry
+      # failure behind the child-process deadline. Force that isolated gate
+      # to execute, then exclude only that already-passed test from the
+      # concurrent full suite.
+      - name: Native Windows registry isolation
+        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts
       - name: Native Windows launcher and updater tests
         # An explicit ceiling, because the default one was already being
         # grazed. `go test` gives each package binary ten minutes, and on a
@@ -85,7 +92,7 @@ jobs:
         # That failed a release for a reason that had nothing to do with the
         # code in it. The ceiling is for a hung test, not a slow runner; set
         # it where only a hang can reach it.
-        run: go test -timeout 30m ./...
+        run: go test -timeout 30m -skip '^TestWindowsBootstrapRegistryIsolation$' ./...
 
   # Everything that needs no credential. This job executes the repository's
   # own test code and bundles the built binaries; it is deliberately the one
