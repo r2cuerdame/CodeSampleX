@@ -179,6 +179,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	b.resumeFromLastCompletedPass(ctx, now)
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
 	changeSince := b.lastRun.Add(-changeOverlap)
+	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.

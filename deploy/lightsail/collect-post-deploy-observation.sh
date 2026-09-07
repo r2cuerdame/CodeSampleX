@@ -3,7 +3,8 @@ set -eu
 
 # One bounded, privacy-safe production observation sample. The caller supplies
 # the observation start through a strictly validated environment value and may
-# opt into the fixed-path latency probes only after builder convergence.
+# opt into fixed public-route TTFB probes while builder work is active or after
+# convergence.
 # Nothing here changes container, database, or deployment state.
 
 cd /opt/codesamplex/deploy
@@ -37,6 +38,9 @@ if [ -n "$server_started_epoch" ] && [ -n "$builder_generated_epoch" ] && \
    [ "$builder_generated_epoch" -ge "$server_started_epoch" ]; then
   builder_fresh=true
 fi
+builder_log_before=$(docker logs --since "$observe_since" --timestamps "$container" 2>&1 || true)
+builder_lifecycle_before=$(printf '%s\n' "$builder_log_before" |
+  grep -E 'compatibility: builder (pass start|pass complete|run:)' | tail -n 1 || true)
 
 resource_sample=$(docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' "$container")
 cpu_percent=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 1 | tr -d '%')
@@ -48,6 +52,7 @@ detail_collected=false
 pressure_lines=0
 pool_busy_events=0
 query_timeout_events=0
+max_pressure_wait_seconds=0.000000
 oom_events=0
 restart_events=0
 die_events=0
@@ -59,12 +64,37 @@ if [ "$include_detail" = 1 ]; then
   # Only counts leave the host. The existing pressure line contains a fixed
   # path and bounded counters, never a query string; returning the log itself
   # would unnecessarily widen that already privacy-reviewed boundary.
-  pressure_lines=$(docker logs --since "$observe_since" "$container" 2>&1 |
-    grep -c 'csx-server: db pressure ' || true)
-  pool_busy_events=$(docker logs --since "$observe_since" "$container" 2>&1 |
-    grep 'csx-server: db pressure ' | grep -Ec 'pool_busy=[1-9][0-9]*' || true)
-  query_timeout_events=$(docker logs --since "$observe_since" "$container" 2>&1 |
-    grep 'csx-server: db pressure ' | grep -Ec 'query_timeout=[1-9][0-9]*' || true)
+  pressure_log=$(docker logs --since "$observe_since" "$container" 2>&1 |
+    grep 'csx-server: db pressure ' || true)
+  pressure_lines=$(printf '%s\n' "$pressure_log" | grep -c . || true)
+  pool_busy_events=$(printf '%s\n' "$pressure_log" | grep -Ec 'pool_busy=[1-9][0-9]*' || true)
+  query_timeout_events=$(printf '%s\n' "$pressure_log" | grep -Ec 'query_timeout=[1-9][0-9]*' || true)
+  # Go durations may contain more than one unit (for example 1m2.5s). Convert
+  # every fixed-format `waited=` value to seconds without returning log text.
+  max_pressure_wait_seconds=$(printf '%s\n' "$pressure_log" |
+    sed -n 's/.* waited=\([^ ]*\).*/\1/p' |
+    awk '
+      function seconds(duration, token, unit, number, total) {
+        total = 0
+        while (match(duration, /^[0-9]+([.][0-9]+)?(ms|us|ns|h|m|s)/)) {
+          token = substr(duration, 1, RLENGTH)
+          unit = token
+          sub(/^[0-9]+([.][0-9]+)?/, "", unit)
+          number = token
+          sub(/(ms|us|ns|h|m|s)$/, "", number)
+          if (unit == "h") total += number * 3600
+          else if (unit == "m") total += number * 60
+          else if (unit == "s") total += number
+          else if (unit == "ms") total += number / 1000
+          else if (unit == "us") total += number / 1000000
+          else total += number / 1000000000
+          duration = substr(duration, RLENGTH + 1)
+        }
+        return total
+      }
+      { value = seconds($0); if (value > maximum) maximum = value }
+      END { printf "%.6f\n", maximum + 0 }
+    ')
 
   events_until=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   oom_events=$(docker events --since "$observe_since" --until "$events_until" \
@@ -103,7 +133,6 @@ FROM evidence_agg")
   settled_unbalanced_failure_cluster_rows=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 3)
 fi
 
-printf 'observed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'revision=%s\n' "$revision"
 printf 'image_digest=%s\n' "$image_digest"
 printf 'image_revision=%s\n' "$image_revision"
@@ -124,6 +153,7 @@ printf 'detail_collected=%s\n' "$detail_collected"
 printf 'pressure_lines=%s\n' "$pressure_lines"
 printf 'pool_busy_events=%s\n' "$pool_busy_events"
 printf 'query_timeout_events=%s\n' "$query_timeout_events"
+printf 'max_pressure_wait_seconds=%s\n' "$max_pressure_wait_seconds"
 printf 'oom_events=%s\n' "$oom_events"
 printf 'restart_events=%s\n' "$restart_events"
 printf 'die_events=%s\n' "$die_events"
@@ -134,23 +164,57 @@ printf 'settled_unbalanced_failure_cluster_rows=%s\n' "$settled_unbalanced_failu
 probe_latency() {
   key=$1
   path=$2
+  marker=$3
+  body=$(mktemp)
   result=000\|unavailable
-  if measured=$(curl --noproxy '*' --connect-timeout 5 --max-time 25 \
-      --resolve 'codesamplex.dev:443:127.0.0.1' -sS -o /dev/null \
-      -w '%{http_code}|%{time_total}' "https://codesamplex.dev$path"); then
+  content_valid=false
+  if measured=$(curl --noproxy '*' --connect-timeout 5 --max-time 10 \
+      --resolve 'codesamplex.dev:443:127.0.0.1' -sS -o "$body" \
+      -w '%{http_code}|%{time_starttransfer}' "https://codesamplex.dev$path"); then
     result=$measured
   fi
   status=${result%%|*}
   seconds=${result#*|}
+  if [ "$status" = 200 ] && grep -qF "$marker" "$body"; then
+    content_valid=true
+  fi
+  rm -f "$body"
   printf 'latency_%s_status=%s\n' "$key" "$status"
-  printf 'latency_%s_seconds=%s\n' "$key" "$seconds"
+  printf 'latency_%s_ttfb_seconds=%s\n' "$key" "$seconds"
+  printf 'latency_%s_content_valid=%s\n' "$key" "$content_valid"
 }
 
 if [ "$include_latency" = 1 ]; then
-  # Fixed public paths only: no identifiers, queries, request bodies, or
-  # credentials can enter either the request or the evidence.
-  probe_latency healthz /healthz
-  probe_latency landing /
-  probe_latency stats /v1/stats
-  probe_latency wanted /v1/wanted
+  # Fixed, already-public corpus paths only: no user identifiers, queries,
+  # request bodies, or credentials can enter either request or evidence.
+  probe_latency healthz /healthz 'ok'
+  probe_latency landing / '<link rel="canonical" href="https://codesamplex.dev/">'
+  probe_latency package /golang/github.com/jackc/pgx/v5/v5.10.0 \
+    '<link rel="canonical" href="https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0">'
+  probe_latency sample /samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a \
+    '<p class="dim mono small sample-id">sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a</p>'
 fi
+
+# A latency round counts as active-builder evidence only when the same start
+# marker is still the latest lifecycle marker after every request. This avoids
+# labeling requests that raced with pass completion as active work.
+builder_log_after=$(docker logs --since "$observe_since" --timestamps "$container" 2>&1 || true)
+builder_lifecycle_after=$(printf '%s\n' "$builder_log_after" |
+  grep -E 'compatibility: builder (pass start|pass complete|run:)' | tail -n 1 || true)
+builder_error_events=$(printf '%s\n' "$builder_log_after" |
+  grep -c 'compatibility: builder run:' || true)
+builder_active=false
+builder_lifecycle_state=race
+if [ -n "$builder_lifecycle_before" ] && [ "$builder_lifecycle_before" = "$builder_lifecycle_after" ]; then
+  case "$builder_lifecycle_after" in
+    *'compatibility: builder pass start '*) builder_active=true; builder_lifecycle_state=start ;;
+    *'compatibility: builder pass complete '*) builder_lifecycle_state=complete ;;
+    *'compatibility: builder run:'*) builder_lifecycle_state=error ;;
+  esac
+elif [ -z "$builder_lifecycle_before" ] && [ -z "$builder_lifecycle_after" ]; then
+  builder_lifecycle_state=none
+fi
+printf 'observed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf 'builder_active=%s\n' "$builder_active"
+printf 'builder_lifecycle_state=%s\n' "$builder_lifecycle_state"
+printf 'builder_error_events=%s\n' "$builder_error_events"

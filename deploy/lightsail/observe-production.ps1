@@ -16,10 +16,19 @@ param(
 $ErrorActionPreference = "Stop"
 $BuilderPollAttempts = 240
 $BuilderPollSeconds = 20
+$ActiveBuilderLatencyRounds = 5
+$MaxActiveBuilderTTFBSeconds = 10.0
+$MaxPressureWaitSeconds = 3.0
 $observationWindowMinutes = [int](($BuilderPollAttempts * $BuilderPollSeconds) / 60)
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $collector = Join-Path $PSScriptRoot "collect-post-deploy-observation.sh"
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
+$latencyPaths = [ordered]@{
+    healthz = '/healthz'
+    landing = '/'
+    package = '/golang/github.com/jackc/pgx/v5/v5.10.0'
+    sample = '/samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a'
+}
 
 foreach ($sha in @($ExpectedRevision, $ExpectedPreviousRevision)) {
     if ($sha -notmatch '^[0-9a-f]{40}$') { throw "production revisions must be lowercase immutable SHAs" }
@@ -100,37 +109,49 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
         }
         $required = @(
             'observed_at','revision','image_digest','image_revision','migration_version','health','served_revision',
-            'server_started_at','restart_count','oom_killed','container_status','builder_generated_at','builder_fresh',
+            'server_started_at','restart_count','oom_killed','container_status','builder_generated_at','builder_fresh','builder_active',
+            'builder_lifecycle_state','builder_error_events',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
-            'query_timeout_events','oom_events','restart_events','die_events','settled_fail_observations',
+            'query_timeout_events','max_pressure_wait_seconds','oom_events','restart_events','die_events','settled_fail_observations',
             'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows'
         )
         if ($IncludeLatency) {
-            foreach ($name in @('healthz','landing','stats','wanted')) {
-                $required += "latency_${name}_status", "latency_${name}_seconds"
+            foreach ($name in $latencyPaths.Keys) {
+                $required += "latency_${name}_status", "latency_${name}_ttfb_seconds", "latency_${name}_content_valid"
             }
         }
         foreach ($name in $required) {
             if (-not $state.Contains($name)) { throw "production observation evidence is missing $name" }
         }
-        foreach ($name in @('restart_count','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
+        foreach ($name in @('restart_count','builder_error_events','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
                 'settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
         }
-        foreach ($name in @('builder_fresh','oom_killed','detail_collected')) {
+        foreach ($name in @('builder_fresh','builder_active','oom_killed','detail_collected')) {
             if ($state[$name] -notin @('true','false')) { throw "production observation evidence has malformed $name" }
             $state[$name] = $state[$name] -eq 'true'
         }
+        if ($state.builder_lifecycle_state -notin @('none','start','complete','error','race')) {
+            throw "production observation evidence has malformed builder_lifecycle_state"
+        }
+        if ($state.max_pressure_wait_seconds -notmatch '^\d+(?:\.\d+)?$') {
+            throw "production observation evidence has malformed max_pressure_wait_seconds"
+        }
+        $state.max_pressure_wait_seconds = Convert-Percent $state.max_pressure_wait_seconds
         if ($IncludeLatency) {
-            foreach ($name in @('healthz','landing','stats','wanted')) {
+            foreach ($name in $latencyPaths.Keys) {
                 if ($state["latency_${name}_status"] -notmatch '^\d{3}$') {
                     throw "production observation evidence has malformed $name latency status"
                 }
-                if ($state["latency_${name}_seconds"] -ne 'unavailable' -and
-                    $state["latency_${name}_seconds"] -notmatch '^\d+(?:\.\d+)?$') {
-                    throw "production observation evidence has malformed $name latency"
+                if ($state["latency_${name}_ttfb_seconds"] -ne 'unavailable' -and
+                    $state["latency_${name}_ttfb_seconds"] -notmatch '^\d+(?:\.\d+)?$') {
+                    throw "production observation evidence has malformed $name TTFB"
                 }
+                if ($state["latency_${name}_content_valid"] -notin @('true','false')) {
+                    throw "production observation evidence has malformed $name content validity"
+                }
+                $state["latency_${name}_content_valid"] = $state["latency_${name}_content_valid"] -eq 'true'
             }
         }
         return $state
@@ -165,6 +186,7 @@ function Get-StateAnomalies([Collections.IDictionary]$Sample, [string]$ExpectedI
         $found.Add("server restart or exit detected during observation")
     }
     if ($Sample.oom_killed -or $Sample.oom_events -ne 0) { $found.Add("server OOM detected during observation") }
+    if ($Sample.builder_error_events -ne 0) { $found.Add("builder error detected during observation") }
     return $found
 }
 
@@ -194,9 +216,61 @@ function Update-PressureEvidence([Collections.IDictionary]$Evidence, [Collection
         }
         if ($Sample[$source] -gt $Evidence.pressure[$name]) { $Evidence.pressure[$name] = $Sample[$source] }
     }
+    if ($null -ne $Sample.max_pressure_wait_seconds -and $Sample.max_pressure_wait_seconds -gt $Evidence.pressure.maxWaitSeconds) {
+        $Evidence.pressure.maxWaitSeconds = $Sample.max_pressure_wait_seconds
+    }
     foreach ($pair in @(@('restart_events','restart'), @('oom_events','oom'), @('die_events','die'))) {
         if ($Sample[$pair[0]] -gt $Evidence.events[$pair[1]]) {
             $Evidence.events[$pair[1]] = $Sample[$pair[0]]
+        }
+    }
+    if ($Sample.builder_error_events -gt $Evidence.events.builderError) {
+        $Evidence.events.builderError = $Sample.builder_error_events
+    }
+}
+
+function Add-RouteLatencyEvidence(
+    [Collections.IDictionary]$Evidence,
+    [Collections.IDictionary]$Sample,
+    [ValidateSet('active-builder','settled')][string]$Phase
+) {
+    if ($Phase -eq 'active-builder') {
+        $Evidence.activeBuilder.observed = $true
+        $Evidence.activeBuilder.rounds++
+    }
+    foreach ($name in $latencyPaths.Keys) {
+        $status = $Sample["latency_${name}_status"]
+        $rawTTFB = $Sample["latency_${name}_ttfb_seconds"]
+        $ttfb = if ($rawTTFB -eq 'unavailable') { $null } else { Convert-Percent $rawTTFB }
+        $entry = [ordered]@{
+            observedAt = $Sample.observed_at
+            phase = $Phase
+            name = $name
+            path = $latencyPaths[$name]
+            status = $status
+            ttfbSeconds = $ttfb
+            contentValid = $Sample["latency_${name}_content_valid"]
+        }
+        if ($Phase -eq 'active-builder') {
+            $Evidence.activeBuilder.requests++
+            $Evidence.activeBuilder.samples.Add($entry)
+            if ($status -eq '503') { $Evidence.activeBuilder.http503Count++ }
+            if ($null -ne $ttfb -and ($null -eq $Evidence.activeBuilder.maxTTFBSeconds -or $ttfb -gt $Evidence.activeBuilder.maxTTFBSeconds)) {
+                $Evidence.activeBuilder.maxTTFBSeconds = $ttfb
+            }
+        } else {
+            $Evidence.latencies[$name] = $entry
+        }
+        if ($status -ne '200') {
+            $Evidence.anomalies.Add("$Phase $($latencyPaths[$name]) returned HTTP $status")
+        }
+        if (-not $entry.contentValid) {
+            $Evidence.anomalies.Add("$Phase $($latencyPaths[$name]) did not return its canonical page content")
+        }
+        if ($null -eq $ttfb) {
+            $Evidence.anomalies.Add("$Phase $($latencyPaths[$name]) did not return a bounded TTFB")
+        } elseif ($Phase -eq 'active-builder' -and $ttfb -gt $MaxActiveBuilderTTFBSeconds) {
+            $Evidence.anomalies.Add("active-builder $($latencyPaths[$name]) TTFB ${ttfb}s exceeded ${MaxActiveBuilderTTFBSeconds}s")
         }
     }
 }
@@ -225,10 +299,13 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
     [IO.File]::WriteAllText($EvidencePath, $json + "`n", [Text.UTF8Encoding]::new($false))
 
     $latencyLines = [Collections.Generic.List[string]]::new()
-    $latencyPaths = [ordered]@{ healthz = '/healthz'; landing = '/'; stats = '/v1/stats'; wanted = '/v1/wanted' }
     foreach ($name in $latencyPaths.Keys) {
         $latency = $Evidence.latencies[$name]
-        if ($null -ne $latency) { $latencyLines.Add("| $($latencyPaths[$name]) | $($latency.status) | $($latency.seconds) |") }
+        if ($null -ne $latency) { $latencyLines.Add("| $($latencyPaths[$name]) | $($latency.status) | $($latency.ttfbSeconds) |") }
+    }
+    $activeLatencyLines = [Collections.Generic.List[string]]::new()
+    foreach ($latency in $Evidence.activeBuilder.samples) {
+        $activeLatencyLines.Add("| $($latency.observedAt) | $($latency.path) | $($latency.status) | $($latency.contentValid) | $($latency.ttfbSeconds) |")
     }
     $anomalyText = if ($Evidence.anomalies.Count -eq 0) { "None" } else { ($Evidence.anomalies | ForEach-Object { "- $_" }) -join "`n" }
     $summary = @"
@@ -243,12 +320,18 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Builder generatedAt: $($Evidence.builderGeneratedAt)
 - Builder completion: $($Evidence.builderCompletionSeconds) seconds
 - Observation samples: $($Evidence.samples.Count)
+- Active-builder latency observed: $($Evidence.activeBuilder.observed)
+- Active-builder latency rounds: $($Evidence.activeBuilder.rounds)
+- Active-builder HTTP 503s: $($Evidence.activeBuilder.http503Count)
+- Active-builder max TTFB: $($Evidence.activeBuilder.maxTTFBSeconds) seconds (limit $MaxActiveBuilderTTFBSeconds)
 - Peak server CPU: $($Evidence.pressure.peakCpuPercent)%
 - Peak server memory: $($Evidence.pressure.peakMemoryPercent)%
 - Peak host load (1m): $($Evidence.pressure.peakLoad1)
 - Pool-pressure log lines: $($Evidence.pressure.pressureLines)
 - Pool-busy observations: $($Evidence.pressure.poolBusyEvents)
 - Query-timeout observations: $($Evidence.pressure.queryTimeoutEvents)
+- Maximum DB-pressure wait: $($Evidence.pressure.maxWaitSeconds) seconds (limit $MaxPressureWaitSeconds)
+- Builder errors: $($Evidence.events.builderError)
 - Restart events: $($Evidence.events.restart)
 - OOM events: $($Evidence.events.oom)
 - Container exit events: $($Evidence.events.die)
@@ -256,9 +339,15 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Settled failure-cluster observations: $($Evidence.settledInvariant.failureClusterObservations)
 - Settled unbalanced cluster rows: $($Evidence.settledInvariant.unbalancedRows)
 
+### Latency while builder work was active
+
+| Observed at | Fixed path | HTTP | Canonical content | TTFB seconds |
+| --- | --- | ---: | ---: | ---: |
+$($activeLatencyLines -join "`n")
+
 ### Representative latency after convergence
 
-| Fixed path | HTTP | Seconds |
+| Fixed path | HTTP | TTFB seconds |
 | --- | ---: | ---: |
 $($latencyLines -join "`n")
 
@@ -290,6 +379,15 @@ $evidence = [ordered]@{
     builderCompletionSeconds = $null
     samples = [Collections.Generic.List[object]]::new()
     latencies = [ordered]@{}
+    activeBuilder = [ordered]@{
+        observed = $false
+        rounds = 0
+        requests = 0
+        http503Count = 0
+        maxTTFBSeconds = $null
+        ttfbLimitSeconds = $MaxActiveBuilderTTFBSeconds
+        samples = [Collections.Generic.List[object]]::new()
+    }
     settledInvariant = [ordered]@{
         failObservations = $null
         failureClusterObservations = $null
@@ -302,27 +400,44 @@ $evidence = [ordered]@{
         pressureLines = 0
         poolBusyEvents = 0
         queryTimeoutEvents = 0
+        maxWaitSeconds = 0.0
     }
-    events = [ordered]@{ restart = 0; oom = 0; die = 0 }
+    events = [ordered]@{ builderError = 0; restart = 0; oom = 0; die = 0 }
     anomalies = [Collections.Generic.List[string]]::new()
 }
 
 $observationFailure = $null
 try {
     for ($attempt = 1; $attempt -le $BuilderPollAttempts; $attempt++) {
+        # Poll lifecycle cheaply. Only a pass that is active now earns a
+        # latency round; the collector then rechecks the same start marker
+        # after all four requests before it labels that round active.
         $sample = Read-ObservationSample $false $false
         $evidence.samples.Add($sample)
         $evidence.builderGeneratedAt = $sample.builder_generated_at
         foreach ($anomaly in (Get-StateAnomalies $sample $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
         Update-PressureEvidence $evidence $sample
 
+        if ($sample.builder_active -and $evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds) {
+            $latencySample = Read-ObservationSample $true $false
+            $evidence.samples.Add($latencySample)
+            foreach ($anomaly in (Get-StateAnomalies $latencySample $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
+            Update-PressureEvidence $evidence $latencySample
+            if ($latencySample.builder_active) {
+                Add-RouteLatencyEvidence $evidence $latencySample 'active-builder'
+            }
+        }
+
         if ($evidence.anomalies.Count -ne 0) { break }
-        if ($sample.builder_fresh) {
+        if ($sample.builder_fresh -and $sample.builder_lifecycle_state -eq 'complete' -and $evidence.activeBuilder.observed) {
             $evidence.converged = $true
             $evidence.builderGeneratedAt = $sample.builder_generated_at
             try {
                 $serverStart = [DateTimeOffset]::Parse($ExpectedServerStartedAt, [Globalization.CultureInfo]::InvariantCulture)
-                $builderCompleted = [DateTimeOffset]::Parse($sample.builder_generated_at, [Globalization.CultureInfo]::InvariantCulture)
+                # The stats timestamp is the pass start written at completion.
+                # The first idle sample after an observed active pass bounds the
+                # actual completion to within one polling interval.
+                $builderCompleted = [DateTimeOffset]::Parse($sample.observed_at, [Globalization.CultureInfo]::InvariantCulture)
                 $completionSeconds = [int64][Math]::Floor(($builderCompleted - $serverStart).TotalSeconds)
                 if ($completionSeconds -lt 0) { throw "negative builder completion interval" }
                 $evidence.builderCompletionSeconds = $completionSeconds
@@ -346,9 +461,10 @@ try {
         foreach ($anomaly in (Get-StateAnomalies $final $ExpectedImageDigest)) {
             if (-not $evidence.anomalies.Contains($anomaly)) { $evidence.anomalies.Add($anomaly) }
         }
-    } elseif ($evidence.anomalies.Count -eq 0) {
-        # Latency is deliberately sampled only after convergence so these
-        # representative requests do not compete with the first full pass.
+    } else {
+        if (-not $evidence.activeBuilder.observed) {
+            $evidence.anomalies.Add("no latency sample was captured while builder work was active")
+        }
         $final = Read-ObservationSample $true $true
         $evidence.samples.Add($final)
         Update-PressureEvidence $evidence $final
@@ -357,12 +473,16 @@ try {
         $evidence.settledInvariant.failureClusterObservations = $final.settled_failure_cluster_observations
         $evidence.settledInvariant.unbalancedRows = $final.settled_unbalanced_failure_cluster_rows
         foreach ($anomaly in (Get-SettledInvariantAnomalies $final)) { $evidence.anomalies.Add($anomaly) }
-        foreach ($name in @('healthz','landing','stats','wanted')) {
-            $status = $final["latency_${name}_status"]
-            $seconds = $final["latency_${name}_seconds"]
-            $evidence.latencies[$name] = [ordered]@{ status = $status; seconds = $seconds }
-            if ($status -ne '200') { $evidence.anomalies.Add("representative /$name latency probe returned HTTP $status") }
-        }
+        Add-RouteLatencyEvidence $evidence $final 'settled'
+    }
+    if ($evidence.pressure.queryTimeoutEvents -ne 0) {
+        $evidence.anomalies.Add("query timeouts were observed during builder convergence")
+    }
+    if ($evidence.pressure.poolBusyEvents -ne 0) {
+        $evidence.anomalies.Add("pool-busy refusals were observed during builder convergence")
+    }
+    if ($evidence.pressure.maxWaitSeconds -gt $MaxPressureWaitSeconds) {
+        $evidence.anomalies.Add("maximum DB-pressure wait exceeded the ${MaxPressureWaitSeconds}s bound")
     }
     if ($evidence.anomalies.Count -eq 0) {
         $evidence.conclusion = "success"

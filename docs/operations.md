@@ -118,11 +118,19 @@ to that count. A missing materialization while FAIL evidence remains still
 enters rollback.
 
 Full-pass convergence is observed by the separate **Post-deploy observation**
-workflow after the lightweight deploy has committed. It waits up to 80 minutes
-for `stats_daily.generatedAt >= server StartedAt`, then rechecks the settled
-ledger and records builder completion time, container/host CPU and memory/load
-pressure, pool-busy/query-timeout counts, restart/OOM/rollback or identity
-drift, and fixed public-route latency samples. A convergence timeout or anomaly
+workflow after the lightweight deploy has committed. While the builder is
+active, it takes up to five bounded rounds of TTFB samples from `/healthz`, the
+homepage, the real `github.com/jackc/pgx/v5@v5.10.0` package page, and its fixed
+`pgconn.ParseConfig` sample detail page. A builder start marker and the matching
+terminal log distinguish active work from retry sleep or an already-fresh
+process. The probes require HTTP 200, canonical page-specific content, zero
+503s, and at most ten seconds to first byte. It then waits up to 80 minutes for
+`stats_daily.generatedAt >= server StartedAt`, rechecks the settled ledger, and
+records builder completion time, container/host CPU and memory/load pressure,
+pool-busy/query-timeout counts (both must remain zero), the maximum logged
+DB-pressure wait (bounded at three seconds), restart/OOM/rollback or identity
+drift, and post-settle TTFB.
+A convergence timeout or anomaly
 posts FAIL evidence to the deployment's GitHub tracking issue and fails that
 workflow; it does not retroactively enter the deploy rollback path. The
 observer never logs raw requests or query strings. The deploy evidence keeps
