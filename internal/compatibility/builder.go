@@ -43,6 +43,14 @@ const (
 	// gap between "last_seen <= passStart" and "> passStart", and be
 	// picked up by neither pass.
 	changeOverlap = time.Minute
+
+	// snapshotWriteBatch bounds how many materialized documents share one
+	// database checkout and transaction. Production 2026-09-07 rebuilt 4,255
+	// targets one autocommit at a time while interactive reads were refused.
+	// Sixty-four removes 98% of those checkouts/autocommit transactions without
+	// replacing them with a whole-pass transaction that could hold a connection
+	// for minutes.
+	snapshotWriteBatch = 64
 )
 
 func (b *Builder) now() time.Time {
@@ -171,6 +179,7 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	b.resumeFromLastCompletedPass(ctx, now)
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
 	changeSince := b.lastRun.Add(-changeOverlap)
+	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.
@@ -268,6 +277,29 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	regressionsByPkg := map[pkgKey][]RegressionCandidate{}
 
 	// Snapshots per target, with §10.3 regression detection against V-1.
+	// PostgreSQL can pipeline one bounded chunk; fakes and alternate stores
+	// keep the row-at-a-time contract through the fallback below.
+	snapshotRows := make([]serverstore.SnapshotRow, 0, snapshotWriteBatch)
+	flushSnapshots := func() error {
+		if len(snapshotRows) == 0 {
+			return nil
+		}
+		if batchStore, ok := b.Store.(interface {
+			PutSnapshots(context.Context, []serverstore.SnapshotRow) error
+		}); ok {
+			if err := batchStore.PutSnapshots(ctx, snapshotRows); err != nil {
+				return err
+			}
+		} else {
+			for _, row := range snapshotRows {
+				if err := b.Store.PutSnapshot(ctx, row.PURL, row.Symbol, row.SnapshotJSON); err != nil {
+					return err
+				}
+			}
+		}
+		snapshotRows = snapshotRows[:0]
+		return nil
+	}
 	for _, t := range targets {
 		p, perr := domain.ParsePURL(t.PURL)
 		if perr != nil {
@@ -310,9 +342,17 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if jerr != nil {
 			return fmt.Errorf("compatibility: marshal snapshot %s: %w", t.PURL, jerr)
 		}
-		if err := b.Store.PutSnapshot(ctx, t.PURL, t.Symbol, string(js)); err != nil {
-			return fmt.Errorf("compatibility: put snapshot %s: %w", t.PURL, err)
+		snapshotRows = append(snapshotRows, serverstore.SnapshotRow{
+			PURL: t.PURL, Symbol: t.Symbol, SnapshotJSON: string(js),
+		})
+		if len(snapshotRows) == snapshotWriteBatch {
+			if err := flushSnapshots(); err != nil {
+				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
+			}
 		}
+	}
+	if err := flushSnapshots(); err != nil {
+		return fmt.Errorf("compatibility: put final snapshot batch: %w", err)
 	}
 	if err := b.retireSnapshots(ctx, allTargets, affected); err != nil {
 		return err
