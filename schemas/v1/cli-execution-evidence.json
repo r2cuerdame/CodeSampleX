@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/cli-execution-evidence.json",
+  "title": "CLIExecutionEvidence",
+  "description": "Comparable, local-only, secret-safe evidence for an observed CLI execution. Raw output, credentials, and arbitrary environment variables are prohibited; this document is never part of the public observation upload.",
+  "type": "object",
+  "required": ["coordinate", "provenance", "result", "termination", "evidenceQuality", "count", "isHighInformation"],
+  "properties": {
+    "id": {"type": "string"},
+    "coordinate": {
+      "type": "object",
+      "required": ["tool", "environment"],
+      "properties": {
+        "tool": {"type": "string", "minLength": 1},
+        "toolVersion": {"type": "string", "minLength": 1},
+        "subcommand": {"type": "string"},
+        "argsPattern": {"type": "string"},
+        "shell": {"type": "string", "minLength": 1},
+        "environment": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {"enum": ["field", "farm"]},
+    "result": {"enum": ["PASS", "FAIL"]},
+    "termination": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["exit", "signal", "timeout", "process-start-failed"]},
+        "exitCode": {"type": "integer"},
+        "signal": {"type": "string"},
+        "timeoutMillis": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "errorFingerprint": {"type": "string"},
+    "errorCode": {"type": "string", "maxLength": 64},
+    "errorSummary": {"type": "string", "maxLength": 512},
+    "stdout": {"$ref": "#/$defs/streamEvidence"},
+    "stderr": {"$ref": "#/$defs/streamEvidence"},
+    "observedAt": {"type": "string", "format": "date-time"},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "finishedAt": {"type": "string", "format": "date-time"},
+    "environmentId": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "evidenceQuality": {"enum": ["complete", "partial", "missing"]},
+    "count": {"type": "integer", "minimum": 1},
+    "isHighInformation": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"evidenceQuality": {"const": "complete"}}},
+      "then": {
+        "required": ["startedAt", "finishedAt", "environmentId"],
+        "properties": {
+          "coordinate": {
+            "required": ["toolVersion", "shell"],
+            "properties": {
+              "environment": {"required": ["schemaVersion", "os", "arch"]}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "streamEvidence": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "excerpt": {"type": "string", "maxLength": 512},
+        "truncated": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

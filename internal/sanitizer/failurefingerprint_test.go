@@ -7,6 +7,25 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
+func TestCLIOutputExcerptKeepsDiagnosticShapeButDropsArbitraryIdentifiers(t *testing.T) {
+	raw := "AcmeRoadmap 비밀계획 secret-roadmap.txt failed with TS2352 at C:\\Users\\alice\\work.go\n"
+	san := Sanitize(raw, domain.StageProjectProcess, nil)
+	excerpt, truncated := CLIOutputExcerpt(san.Template)
+	if truncated {
+		t.Fatal("one short line reported truncated")
+	}
+	for _, private := range []string{"AcmeRoadmap", "비밀계획", "secret-roadmap.txt", "alice", "work.go"} {
+		if strings.Contains(excerpt, private) {
+			t.Fatalf("private identifier %q survived in %q", private, excerpt)
+		}
+	}
+	for _, kept := range []string{"failed", "TS2352", "<path>"} {
+		if !strings.Contains(excerpt, kept) {
+			t.Fatalf("diagnostic shape %q missing from %q", kept, excerpt)
+		}
+	}
+}
+
 func TestFailureFingerprintNormalizesVolatileAndSecretMaterial(t *testing.T) {
 	a := SanitizeFailure(
 		`C:\Users\alice\AppData\Local\Temp\csx-123\main.go:41: pid 8123 token abcdef0123456789abcdef0123456789: connection refused 127.0.0.1:5432`,

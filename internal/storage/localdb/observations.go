@@ -139,11 +139,15 @@ func (d *DB) MarkLegacyWindowsObservationReconciled(ctx context.Context, key Obs
 // flush-then-mark, since a row uploaded and then incremented again
 // carries its full count, not a delta.
 func (d *DB) RecordObservation(ctx context.Context, key ObsKey, incr int) error {
+	return recordObservation(ctx, d.sql, key, incr)
+}
+
+func recordObservation(ctx context.Context, exec migrationExecutor, key ObsKey, incr int) error {
 	conf := key.SymbolConfidence
 	if conf == "" {
 		conf = domain.SymbolUnknown
 	}
-	_, err := d.sql.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code,
 		  termination_kind, exit_code, signal, timeout_millis, error_summary, evidence_quality,
 		  outer_command, outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap,
@@ -496,6 +500,7 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 	if err := d.SaveEnvironment(ctx, canon.Environment); err != nil {
 		return err
 	}
+	obs.Coordinate = canon
 
 	epoch := obs.ObservedAt
 	if len(epoch) >= 10 {
@@ -516,7 +521,7 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 
 	symbol := domain.EncodeCLISymbol(canon.Subcommand, canon.ArgsPattern, obs.Provenance)
 
-	return d.RecordObservation(ctx, ObsKey{
+	key := ObsKey{
 		Epoch:           epoch,
 		PURL:            purl,
 		Symbol:          symbol,
@@ -533,5 +538,17 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 		EvidenceQuality: obs.EvidenceQuality,
 		OuterCommand:    canon.DisplayCommand(),
 		ActualToolchain: actualToolchain,
-	}, count)
+	}
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // no-op after Commit
+	if err := recordCLIExecutionEvidence(ctx, tx, obs); err != nil {
+		return err
+	}
+	if err := recordObservation(ctx, tx, key, count); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

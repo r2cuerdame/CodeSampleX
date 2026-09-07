@@ -53,6 +53,20 @@ func TestSchemaFixtures(t *testing.T) {
 		"search-request.json": SearchRequest{SchemaVersion: 1, Query: "q",
 			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"}},
 		"search-response.json": SearchResponse{SchemaVersion: 1, Results: []SearchResult{}, Miss: true},
+		"cli-execution-evidence.json": CLIExperienceObservation{
+			Coordinate: CLIExperienceCoordinate{
+				Tool: "git", ToolVersion: "2.55.0", Subcommand: "status", ArgsPattern: "--short", Shell: "direct",
+				Environment: EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"},
+			},
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			Termination: FailureTermination{
+				Kind: TerminationExit,
+			},
+			EvidenceQuality:   EvidenceComplete,
+			Count:             1,
+			IsHighInformation: false,
+		},
 	}
 
 	entries, err := os.ReadDir(dir)

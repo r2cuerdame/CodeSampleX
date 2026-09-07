@@ -16,6 +16,8 @@ import (
 
 var versionRe = regexp.MustCompile(`v?(\d+\.\d+(?:\.\d+)?)`)
 
+const executableProbeTimeout = 500 * time.Millisecond
+
 // probeable maps tools we are willing to shell out to for a version.
 type probeSpec struct {
 	command string
@@ -42,6 +44,8 @@ var probeable = map[string]probeSpec{
 	"busybox":            probe("busybox"),
 	"coreutils":          probe("ls", "--version"),
 	"git":                probe("git", "--version"),
+	"ssh":                probe("ssh", "-V"),
+	"scp":                probe("ssh", "-V"),
 	"curl":               probe("curl", "--version"),
 	"jq":                 probe("jq", "--version"),
 	"openssl":            probe("openssl", "version"),
@@ -85,6 +89,44 @@ func Probe(ctx context.Context, tool string) string {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, spec.command, spec.args...).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	m := versionRe.FindStringSubmatch(string(out))
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// ProbeExecutable returns the version of the exact executable that is about
+// to run. It intentionally accepts only the same allowlisted, side-effect-free
+// probes as Probe. argv is used solely to distinguish `docker compose` from
+// the Docker engine command; arbitrary caller arguments are never executed by
+// the probe.
+func ProbeExecutable(ctx context.Context, executable, tool string, argv []string) string {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	lookup := tool
+	if tool == "docker" && len(argv) > 0 && strings.EqualFold(argv[0], "compose") {
+		lookup = "docker-compose"
+	}
+	spec, ok := probeable[lookup]
+	if !ok {
+		return ""
+	}
+	// Use the exact resolved command the caller supplied when the probe targets
+	// that tool. Alias probes (maven -> mvn, bundler -> bundle, and similar)
+	// retain their canonical executable.
+	command := spec.command
+	if domain.CommandTool([]string{spec.command}) == tool ||
+		(tool == "docker" && lookup == "docker-compose") {
+		command = executable
+	}
+	cctx, cancel := context.WithTimeout(ctx, executableProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, command, spec.args...)
+	cmd.WaitDelay = 100 * time.Millisecond
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}

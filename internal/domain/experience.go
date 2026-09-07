@@ -39,6 +39,7 @@ type CLIExperienceCoordinate struct {
 	ToolVersion string                 `json:"toolVersion,omitempty"`
 	Subcommand  string                 `json:"subcommand,omitempty"`
 	ArgsPattern string                 `json:"argsPattern,omitempty"`
+	Shell       string                 `json:"shell,omitempty"`
 	Environment EnvironmentFingerprint `json:"environment"`
 }
 
@@ -55,6 +56,7 @@ func (c CLIExperienceCoordinate) Canonical() CLIExperienceCoordinate {
 	subcommand := strings.ToLower(strings.Join(strings.Fields(c.Subcommand), " "))
 	version := strings.TrimSpace(c.ToolVersion)
 	args := canonicalizeArgsPattern(c.ArgsPattern)
+	shell := strings.ToLower(strings.TrimSpace(c.Shell))
 
 	env := c.Environment.Normalize()
 	if env.SchemaVersion == 0 {
@@ -66,8 +68,18 @@ func (c CLIExperienceCoordinate) Canonical() CLIExperienceCoordinate {
 		ToolVersion: version,
 		Subcommand:  subcommand,
 		ArgsPattern: args,
+		Shell:       shell,
 		Environment: env,
 	}
+}
+
+// CLIStreamEvidence is the secret-safe local description of one captured
+// stream. Excerpt is normalized and bounded; raw command output is never
+// stored here or copied into the public upload aggregate.
+type CLIStreamEvidence struct {
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Excerpt     string `json:"excerpt,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
 }
 
 // CoordinateID derives the content-addressed identifier for this CLI coordinate.
@@ -118,6 +130,11 @@ type CLIExperienceObservation struct {
 	ErrorSummary      string                  `json:"errorSummary,omitempty"`
 	EvidenceQuality   EvidenceQuality         `json:"evidenceQuality,omitempty"`
 	ObservedAt        string                  `json:"observedAt,omitempty"` // RFC3339
+	StartedAt         string                  `json:"startedAt,omitempty"`  // RFC3339
+	FinishedAt        string                  `json:"finishedAt,omitempty"` // RFC3339
+	EnvironmentID     string                  `json:"environmentId,omitempty"`
+	Stdout            CLIStreamEvidence       `json:"stdout,omitempty"`
+	Stderr            CLIStreamEvidence       `json:"stderr,omitempty"`
 	Count             int64                   `json:"count"`
 	IsHighInformation bool                    `json:"isHighInformation"`
 }
@@ -144,6 +161,38 @@ func (o CLIExperienceObservation) ComputeID() string {
 	}
 	sum := sha256.Sum256(MustCanonicalJSON(payload))
 	return "cliobs:sha256:" + hex.EncodeToString(sum[:])
+}
+
+// EvidenceID identifies a comparable execution outcome independently of when
+// it was observed. Repeated identical executions therefore accumulate while a
+// different termination or stdout/stderr signature remains a separate row.
+func (o CLIExperienceObservation) EvidenceID() string {
+	type evidencePayload struct {
+		CoordinateID string               `json:"coordinateId"`
+		Provenance   ExperienceProvenance `json:"provenance"`
+		Result       Result               `json:"result"`
+		Termination  FailureTermination   `json:"termination,omitempty"`
+		ErrorFP      string               `json:"errorFingerprint,omitempty"`
+		StdoutFP     string               `json:"stdoutFingerprint,omitempty"`
+		StderrFP     string               `json:"stderrFingerprint,omitempty"`
+		StdoutCut    bool                 `json:"stdoutTruncated,omitempty"`
+		StderrCut    bool                 `json:"stderrTruncated,omitempty"`
+		Quality      EvidenceQuality      `json:"evidenceQuality,omitempty"`
+	}
+	payload := evidencePayload{
+		CoordinateID: o.Coordinate.CoordinateID(),
+		Provenance:   o.Provenance,
+		Result:       o.Result,
+		Termination:  o.Termination.Canonical(),
+		ErrorFP:      o.ErrorFingerprint,
+		StdoutFP:     o.Stdout.Fingerprint,
+		StderrFP:     o.Stderr.Fingerprint,
+		StdoutCut:    o.Stdout.Truncated,
+		StderrCut:    o.Stderr.Truncated,
+		Quality:      o.EvidenceQuality,
+	}
+	sum := sha256.Sum256(MustCanonicalJSON(payload))
+	return "clievidence:sha256:" + hex.EncodeToString(sum[:])
 }
 
 // ExperienceBoundary documents a transition where command behavior changed across
@@ -310,7 +359,7 @@ func IsRecognizedCLITool(name string) bool {
 		return true
 	}
 	switch tool {
-	case "docker", "docker-compose", "gh", "git", "kubectl", "helm", "terraform", "opentofu",
+	case "docker", "docker-compose", "gh", "git", "ssh", "scp", "kubectl", "helm", "terraform", "opentofu",
 		"ffmpeg", "ripgrep", "bash", "busybox", "coreutils", "powershell", "windows-powershell", "cmd", "pwsh",
 		"npm", "pnpm", "yarn", "bun", "deno", "maven", "mvn", "mvnw", "gradle", "gradlew", "pip", "pip3", "uv",
 		"cargo", "gem", "bundle", "bundler", "composer", "mix", "dart", "flutter", "curl", "jq",
@@ -339,8 +388,10 @@ func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPatt
 		}
 	}
 
-	// Single-word subcommand check (if first arg is not a flag or assignment)
-	if !strings.HasPrefix(args[0], "-") && !strings.Contains(args[0], "=") {
+	// Only tools with a command vocabulary get a subcommand. Treating the
+	// first positional of ssh/scp/curl/bash as a subcommand persisted hosts,
+	// repository names, and scripts as if they were public command structure.
+	if toolHasSubcommands(tool) && !strings.HasPrefix(args[0], "-") && !strings.Contains(args[0], "=") {
 		subcommand = strings.ToLower(args[0])
 		argsPattern = sanitizeAndNormalizeArgs(args[1:])
 		return subcommand, argsPattern
@@ -349,6 +400,18 @@ func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPatt
 	// Only flags
 	argsPattern = sanitizeAndNormalizeArgs(args)
 	return "", argsPattern
+}
+
+func toolHasSubcommands(tool string) bool {
+	switch tool {
+	case "gh", "git", "docker", "docker-compose", "kubectl", "helm", "terraform", "opentofu",
+		"npm", "pnpm", "yarn", "bun", "deno", "maven", "mvn", "mvnw", "gradle", "gradlew",
+		"pip", "pip3", "uv", "cargo", "gem", "bundle", "bundler", "composer", "mix", "dart",
+		"flutter", "go", "dotnet", "openssl":
+		return true
+	default:
+		return false
+	}
 }
 
 func isSensitiveName(name string) bool {
@@ -428,8 +491,7 @@ func sanitizeArgValue(val string) string {
 		if isSensitiveName(k) {
 			return k + "=<redacted-secret>"
 		}
-		v := sanitizeArgValue(val[eqIdx+1:])
-		return k + "=" + v
+		return "<assignment>"
 	}
 
 	// Secret/token pattern
@@ -446,7 +508,7 @@ func sanitizeArgValue(val string) string {
 	if strings.HasPrefix(lower, "feature/") || strings.HasPrefix(lower, "bugfix/") ||
 		strings.HasPrefix(lower, "fix/") || strings.HasPrefix(lower, "hotfix/") ||
 		strings.HasPrefix(lower, "release/") {
-		return val
+		return "<branch>"
 	}
 	// File path pattern or known file extension
 	if strings.ContainsAny(val, `/\`) || strings.HasPrefix(val, ".") ||
@@ -460,7 +522,7 @@ func sanitizeArgValue(val string) string {
 	if len(val) >= 20 && isHex(val) {
 		return "<hash>"
 	}
-	return val
+	return "<arg>"
 }
 
 func isHex(s string) bool {

@@ -78,6 +78,31 @@ must sum to its total FAIL count.
 Legacy rows are never backfilled with guessed causes. Re-verification produces
 a separate modern observation or receipt.
 
+## CLI execution evidence
+
+`cli_execution_evidence` is the local structured record behind global CLI
+experience observations. The daily `observations` row remains the bounded,
+anonymous upload aggregate; the structured row retains the facts that aggregate
+cannot express without ever retaining raw command output:
+
+- the tool version probed before the command starts;
+- canonical tool, subcommand and sanitized argument pattern, plus whether the
+  executable ran directly or was itself a shell;
+- OS, architecture and runtime in the environment fingerprint, with its stable
+  `environmentId` hash;
+- explicit exit, signal, timeout, or process-start-failed termination;
+- independently normalized stdout/stderr fingerprints, 512-byte maximum
+  excerpts, and truncation flags;
+- start/finish instants, field/Farm provenance, and evidence quality.
+
+The evidence identity excludes timestamps but includes the coordinate,
+provenance, outcome, termination and both stream fingerprints. Repeated
+identical executions therefore increment one count and widen its first/last
+window, while a different stderr signature or termination remains a separate
+row. Raw stdout/stderr, paths, project names, credentials, and arbitrary
+environment variables are prohibited. The machine-readable contract is
+`schemas/v1/cli-execution-evidence.json`.
+
 ## Diagnostic trace
 
 `csx.debug.v1` is a local response representation, not a persisted evidence
