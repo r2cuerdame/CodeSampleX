@@ -40,10 +40,47 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 	if err != nil {
 		return launcher.Active{}, err
 	}
-	c := &Client{}
-	raw, err := c.get(ctx, DefaultManifestURL, maxManifestBytes)
-	if err != nil {
-		return launcher.Active{}, err
+	var raw []byte
+	manifestFile := os.Getenv("CSX_UPDATE_MANIFEST_FILE")
+	if manifestFile == "" && os.Getenv("CSX_UPDATE_MANIFEST_URL") == "" {
+		candidate := filepath.Join(filepath.Clean(rootAbs), "csx-manifest.new.json")
+		if fi, err := os.Stat(candidate); err == nil && fi.Size() <= maxManifestBytes {
+			manifestFile = candidate
+		}
+	}
+	if manifestFile != "" {
+		manifestFileAbs, err := filepath.Abs(manifestFile)
+		if err != nil {
+			return launcher.Active{}, err
+		}
+		wantManifest := filepath.Join(filepath.Clean(rootAbs), "csx-manifest.new.json")
+		if !strings.EqualFold(filepath.Clean(manifestFileAbs), wantManifest) {
+			return launcher.Active{}, errors.New("update: launcher bootstrap manifest path is outside the first-party install root")
+		}
+		fi, err := os.Stat(manifestFileAbs)
+		if err != nil {
+			return launcher.Active{}, err
+		}
+		if fi.Size() > maxManifestBytes {
+			return launcher.Active{}, errors.New("update: manifest file exceeds size ceiling")
+		}
+		raw, err = os.ReadFile(manifestFileAbs)
+		if err != nil {
+			return launcher.Active{}, err
+		}
+	} else {
+		manifestURL := os.Getenv("CSX_UPDATE_MANIFEST_URL")
+		if manifestURL == "" {
+			manifestURL = DefaultManifestURL
+		}
+		if err := validateManifestURL(manifestURL, DefaultChannel); err != nil {
+			return launcher.Active{}, err
+		}
+		c := &Client{}
+		raw, err = c.get(ctx, manifestURL, maxManifestBytes)
+		if err != nil {
+			return launcher.Active{}, err
+		}
 	}
 	m, err := VerifyEnvelope(raw, pub, time.Now().UTC(), DefaultChannel)
 	if err != nil {

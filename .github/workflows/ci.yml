@@ -137,6 +137,10 @@ jobs:
             echo "::error::the /wanted complexity guard (R2C-55) did not run"
             exit 1
           fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBackgroundWorkLeavesInteractiveCapacity'; then
+            echo "::error::the background-to-interactive reservation guard (#174) did not run"
+            exit 1
+          fi
 
           {
             echo "### PostgreSQL integration: $(printf '%s\n' "$ran" | wc -l) tests ran, 0 skipped"
@@ -181,6 +185,10 @@ jobs:
           # one page is stuck.
           if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationOneStuckPageDoesNotTakeTheSiteDown'; then
             echo "::error::the pool starvation guard (R2C-58) did not run"
+            exit 1
+          fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass'; then
+            echo "::error::the cold-restart wanted guard (#174) did not run"
             exit 1
           fi
 

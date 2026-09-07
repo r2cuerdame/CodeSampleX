@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -185,13 +186,25 @@ func updateMain(ctx context.Context, args []string) int {
 
 	switch sub {
 	case "bootstrap-launcher":
-		if len(args) < 3 || len(args) > 4 {
+		if len(args) < 3 || len(args) > 5 {
 			fmt.Fprintln(os.Stderr, "csx update: invalid installer bootstrap arguments")
 			return 2
 		}
 		legacy := ""
 		if len(args) == 4 {
-			legacy = args[3]
+			arg := args[3]
+			if strings.HasSuffix(strings.ToLower(arg), ".json") || strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
+				_ = os.Setenv("CSX_UPDATE_MANIFEST_FILE", arg)
+			} else if arg != "" && arg != "-" {
+				legacy = arg
+			}
+		} else if len(args) == 5 {
+			if args[3] != "" && args[3] != "-" {
+				legacy = args[3]
+			}
+			if args[4] != "" {
+				_ = os.Setenv("CSX_UPDATE_MANIFEST_FILE", args[4])
+			}
 		}
 		if _, err := csxupdate.BootstrapLauncher(ctx, args[1], args[2], legacy, Version); err != nil {
 			fmt.Fprintf(os.Stderr, "csx update: bootstrap launcher: %v\n", err)

@@ -3202,8 +3202,21 @@ func (p *PG) RecordWantedBatch(ctx context.Context, reports []WantedSubmission) 
 // canonical PURL and, when requested, the exact symbol. A different release
 // or a different API is still an unanswered request.
 func (p *PG) TopWanted(ctx context.Context, limit int) ([]WantedRow, error) {
-	rows, _, err := p.listWanted(ctx, "", 0, limit, "", "")
-	return rows, err
+	if limit <= 0 {
+		limit = 50
+	}
+	candidateLimit := limit + 100
+	if candidateLimit < limit*2 {
+		candidateLimit = limit * 2
+	}
+	rows, candidateTotal, err := p.topWanted(ctx, candidateLimit, limit)
+	if err == nil {
+		if len(rows) >= limit || candidateTotal < int64(candidateLimit) {
+			return rows, nil
+		}
+	}
+	fallbackRows, _, fallbackErr := p.listWanted(ctx, "", 0, limit, "", "")
+	return fallbackRows, fallbackErr
 }
 
 func (p *PG) ListWanted(ctx context.Context, query string, offset, limit int) ([]WantedRow, int, error) {
@@ -3402,6 +3415,142 @@ func (p *PG) listWanted(ctx context.Context, query string, offset, limit int, ec
 		return rows.Err()
 	})
 	return out, int(total), err
+}
+
+// topWantedSQL bounds the search for answered requests to the top $1 candidate
+// requests ranked by (asks DESC, last_seen DESC). Instead of evaluating the
+// full corpus of wanted requests and computing count(*) across the whole table,
+// it uses wanted_rank_idx to scan only the top $1 candidates.
+const topWantedSQL = `
+	WITH candidate_wanted AS MATERIALIZED (
+		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
+		       w.asks, w.first_seen, w.last_seen
+		  FROM wanted w
+		 ORDER BY w.asks DESC, w.last_seen DESC
+		 LIMIT $1
+	), candidate_count AS (
+		SELECT count(*) AS total FROM candidate_wanted
+	), wanted_key AS MATERIALIZED (
+		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
+		  FROM candidate_wanted w
+		  CROSS JOIN LATERAL (VALUES
+		      ('pkg:' || w.ecosystem || '/' || w.name || '@'),
+		      ('pkg:' || w.ecosystem || '/' ||
+		          CASE WHEN left(w.name, 1) = '@'
+		               THEN '%40' || substring(w.name from 2)
+		               ELSE w.name END || '@')) AS k(coord)
+	), candidate_samples AS MATERIALIZED (
+		SELECT DISTINCT sp.sample_id, sp.coord
+		  FROM wanted_key wk
+		  JOIN sample_packages sp ON sp.coord = wk.coord
+		  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
+	), candidate_receipts AS MATERIALIZED (
+		SELECT cs.sample_id,
+		       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
+		       r.receipt->>'schemaVersion' AS schema_version,
+		       r.receipt->'stages'->>'resolve' AS resolve_stage,
+		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
+		  FROM (SELECT DISTINCT sample_id FROM candidate_samples) cs
+		  CROSS JOIN LATERAL (
+		      SELECT r.receipt
+		        FROM receipts r
+		       WHERE r.sample_id = cs.sample_id
+		         AND r.contract_result = 'PASS'
+		       ORDER BY r.created_at DESC
+		       LIMIT 10
+		  ) r
+	), answered AS MATERIALIZED (
+		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
+		  FROM wanted_key wk
+		  JOIN candidate_samples cs ON cs.coord = wk.coord
+		  JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
+		  JOIN candidate_receipts cr ON cr.sample_id = cs.sample_id
+		 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+		   AND (wk.target_os = '' OR cr.os = wk.target_os)
+		   AND (
+		       wk.version = ''
+		       OR (
+		           cr.schema_version = '2'
+		           AND cr.resolve_stage = 'PASS'
+		           AND cr.resolved_packages ?
+		               ('pkg:' || wk.ecosystem || '/' ||
+		                CASE WHEN left(wk.name, 1) = '@'
+		                     THEN '%40' || substring(wk.name from 2)
+		                     ELSE wk.name END || '@' || wk.version)
+		       )
+		       OR (
+		           cr.schema_version <> '2'
+		           AND EXISTS (
+		               SELECT 1
+		                 FROM sample_packages sp
+		                WHERE sp.sample_id = cs.sample_id
+		                  AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
+		                                 CASE WHEN left(wk.name, 1) = '@'
+		                                      THEN '%40' || substring(wk.name from 2)
+		                                      ELSE wk.name END || '@' || wk.version)
+		           )
+		       ))
+	), unanswered AS (
+		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
+		       w.asks, w.first_seen, w.last_seen,
+		       TRUE AS has_page
+		  FROM candidate_wanted w
+		  LEFT JOIN answered an
+		    ON an.ecosystem = w.ecosystem AND an.name = w.name
+		   AND an.version = w.version AND an.symbol = w.symbol
+		   AND an.target_os = w.target_os
+		 WHERE an.ecosystem IS NULL
+		 ORDER BY w.asks DESC, w.last_seen DESC, w.ecosystem, w.name, w.version, w.symbol
+		 LIMIT $2
+	)
+	SELECT COALESCE(u.ecosystem, ''), COALESCE(u.name, ''),
+	       COALESCE(u.version, ''), COALESCE(u.symbol, ''),
+	       COALESCE(u.target_os, ''), COALESCE(u.asks, 0),
+	       COALESCE(u.first_seen, 'epoch'::timestamptz),
+	       COALESCE(u.last_seen, 'epoch'::timestamptz),
+	       COALESCE(u.has_page, FALSE), cc.total,
+	       u.ecosystem IS NOT NULL AS present
+	  FROM candidate_count cc
+	  LEFT JOIN unanswered u ON TRUE
+	 ORDER BY u.asks DESC NULLS LAST, u.last_seen DESC NULLS LAST,
+	          u.ecosystem, u.name, u.version, u.symbol`
+
+func (p *PG) topWanted(ctx context.Context, candidateLimit, limit int) ([]WantedRow, int64, error) {
+	var out []WantedRow
+	var candidateTotal int64
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // read-only rollback is the normal exit
+		if _, err := tx.Exec(ctx, "SET LOCAL jit = off"); err != nil {
+			return err
+		}
+		if statementTimeout := authoringPollStatementTimeout(ctx); statementTimeout > 0 {
+			if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true)`, pgStatementTimeout(statementTimeout)); err != nil {
+				return err
+			}
+		}
+		rows, err := tx.Query(ctx, topWantedSQL, candidateLimit, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r WantedRow
+			var present bool
+			if err := rows.Scan(&r.Ecosystem, &r.Name, &r.Version, &r.Symbol, &r.TargetOS, &r.Asks,
+				&r.FirstSeen, &r.LastSeen, &r.HasPage, &candidateTotal, &present); err != nil {
+				return err
+			}
+			if present {
+				out = append(out, r)
+			}
+		}
+		return rows.Err()
+	})
+	return out, candidateTotal, err
 }
 
 // ---------------------------------------------------------- adoptions --

@@ -11,7 +11,7 @@ import (
 )
 
 func TestWantedPreservesVersionAndClosesOnlyOnAnExactAnswer(t *testing.T) {
-	srv, store, _ := newTestServer(t, nil)
+	srv, store, ck := newTestServer(t, nil)
 	report := map[string]any{
 		"schemaVersion": 1,
 		"epoch":         "2026-08-13",
@@ -56,7 +56,8 @@ func TestWantedPreservesVersionAndClosesOnlyOnAnExactAnswer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := wantedItems(t, srv.URL); len(got) != 1 || got[0].Symbol != "CanvasTexture" {
+	ck.t = ck.t.Add(wantedCacheTTL + time.Second)
+	if got := waitWantedCount(t, srv.URL, 1); got[0].Symbol != "CanvasTexture" {
 		t.Fatalf("answer should close only its exact symbol: %+v", got)
 	}
 
@@ -73,7 +74,8 @@ func TestWantedPreservesVersionAndClosesOnlyOnAnExactAnswer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := wantedItems(t, srv.URL); len(got) != 0 {
+	ck.t = ck.t.Add(wantedCacheTTL + time.Second)
+	if got := waitWantedCount(t, srv.URL, 0); len(got) != 0 {
 		t.Fatalf("all exactly answered requests should be closed: %+v", got)
 	}
 }
@@ -234,4 +236,19 @@ func wantedItems(t *testing.T, base string) []wantedListItem {
 		t.Fatalf("GET wanted status=%d body=%+v", resp.StatusCode, out)
 	}
 	return out.Items
+}
+
+func waitWantedCount(t *testing.T, base string, want int) []wantedListItem {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		items := wantedItems(t, base)
+		if len(items) == want {
+			return items
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wanted item count = %d, want %d: %+v", len(items), want, items)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

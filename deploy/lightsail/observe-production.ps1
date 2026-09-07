@@ -26,6 +26,7 @@ $ssh = (Get-Command ssh -ErrorAction Stop).Source
 $latencyPaths = [ordered]@{
     healthz = '/healthz'
     landing = '/'
+    wanted = '/v1/wanted'
     package = '/golang/github.com/jackc/pgx/v5/v5.10.0'
     sample = '/samples/sha256:13f4bcf31db6296c4d9325831f69e508e320520ab70dd6b2d237a11557c9fe9a'
 }

@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -41,7 +43,7 @@ func testServerPoolPolicy() serverstore.PoolPolicy {
 // openTestServer brings up the whole csx-server handler on a throwaway
 // schema of CSX_TEST_DSN, and returns it plus a second connection outside
 // the pool for the lock the fixture needs.
-func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server, *pgx.Conn) {
+func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server, *pgx.Conn, *serverstore.PG) {
 	t.Helper()
 	dsn := os.Getenv("CSX_TEST_DSN")
 	if dsn == "" {
@@ -91,7 +93,7 @@ func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server,
 	}
 	srv := httptest.NewServer(buildMux(ctx, cfg, pg))
 	t.Cleanup(srv.Close)
-	return srv, outside
+	return srv, outside, pg
 }
 
 // blockWanted holds the lock that makes every read of the request board
@@ -142,7 +144,7 @@ func get(client *http.Client, url string) result {
 // page that does not touch the blocked table.
 func TestIntegrationOneStuckPageDoesNotTakeTheSiteDown(t *testing.T) {
 	pol := testServerPoolPolicy()
-	srv, outside := openTestServer(t, pol)
+	srv, outside, _ := openTestServer(t, pol)
 	release := blockWanted(t, outside)
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -205,7 +207,7 @@ func TestIntegrationOneStuckPageDoesNotTakeTheSiteDown(t *testing.T) {
 // client that reads 500 has been told this server is broken.
 func TestIntegrationBlockedAPIReadIsRetryableNotABug(t *testing.T) {
 	pol := testServerPoolPolicy()
-	srv, outside := openTestServer(t, pol)
+	srv, outside, _ := openTestServer(t, pol)
 	blockWanted(t, outside)
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -226,7 +228,7 @@ func TestIntegrationBlockedAPIReadIsRetryableNotABug(t *testing.T) {
 // waits on a lock longer than a page read would tolerate still completes.
 func TestIntegrationIngestIsNotCutShortByTheReadCeiling(t *testing.T) {
 	pol := testServerPoolPolicy()
-	srv, outside := openTestServer(t, pol)
+	srv, outside, _ := openTestServer(t, pol)
 
 	// Hold the table for longer than a read would ever be allowed to wait,
 	// then let go while the request is still in flight.
@@ -246,4 +248,111 @@ func TestIntegrationIngestIsNotCutShortByTheReadCeiling(t *testing.T) {
 	if resp.StatusCode >= 500 {
 		t.Fatalf("ingest answered %d; it outlived a lock it was never given a ceiling for", resp.StatusCode)
 	}
+}
+
+// TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass reproduces
+// the activation boundary from #174. The wanted snapshot is loaded before
+// StartBuilder, the real first builder pass is then held on its first corpus
+// read, and concurrent public requests must remain memory-only.
+func TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass(t *testing.T) {
+	pol := testServerPoolPolicy()
+	bootstrap, outside, pg := openTestServer(t, pol)
+	bootstrap.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := pg.RecordWanted(ctx, "2026-09-07", "coldstart0000001", []serverstore.WantedRow{{
+		Ecosystem: "npm", Name: "cold-start-test", Version: "1.0.0",
+	}}); err != nil {
+		t.Fatalf("seed wanted: %v", err)
+	}
+
+	if _, err := outside.Exec(ctx, "BEGIN"); err != nil {
+		t.Fatalf("begin builder lock: %v", err)
+	}
+	if _, err := outside.Exec(ctx, "LOCK TABLE evidence_agg IN ACCESS EXCLUSIVE MODE"); err != nil {
+		_, _ = outside.Exec(context.Background(), "ROLLBACK")
+		t.Fatalf("lock builder corpus: %v", err)
+	}
+	release := func() { _, _ = outside.Exec(context.Background(), "ROLLBACK") }
+	defer release()
+
+	cfg := serverstore.ServerConfig{
+		PublicCheck:      "trust",
+		PublicURL:        "http://example.invalid",
+		DBPool:           pol,
+		SnapshotInterval: time.Minute,
+	}
+	snapshot, err := primeWantedBeforeBuilder(ctx, cfg, pg, StartBuilder)
+	if err != nil {
+		t.Fatalf("prime wanted before builder: %v", err)
+	}
+	if len(snapshot.Rows) != 1 || snapshot.Rows[0].Name != "cold-start-test" {
+		t.Fatalf("primed wanted snapshot = %+v", snapshot.Rows)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if stat := classPoolStat(pg.PoolStats(), "background"); stat.InUse > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if stat := classPoolStat(pg.PoolStats(), "background"); stat.InUse == 0 {
+		t.Fatal("first builder pass never became active on the locked corpus read")
+	}
+	before := classPoolStat(pg.PoolStats(), "interactive")
+
+	srv := httptest.NewServer(buildMuxWithWanted(ctx, cfg, pg, snapshot))
+	defer srv.Close()
+	client := &http.Client{Timeout: 2 * time.Second}
+	const readers = 12
+	results := make(chan result, readers)
+	var wg sync.WaitGroup
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			resp, err := client.Get(srv.URL + "/v1/wanted")
+			if err != nil {
+				results <- result{elapsed: time.Since(start), err: err}
+				return
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr == nil && !strings.Contains(string(body), `"name":"cold-start-test"`) {
+				readErr = fmt.Errorf("wanted response omitted the primed row: %s", body)
+			}
+			results <- result{status: resp.StatusCode, elapsed: time.Since(start), err: readErr}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for r := range results {
+		if r.err != nil || r.status != http.StatusOK {
+			t.Errorf("wanted during first builder pass status=%d elapsed=%v err=%v", r.status, r.elapsed, r.err)
+		}
+		if r.elapsed > 500*time.Millisecond {
+			t.Errorf("wanted during first builder pass took %v, want <=500ms", r.elapsed)
+		}
+	}
+	after := classPoolStat(pg.PoolStats(), "interactive")
+	if after.Acquired != before.Acquired || after.Busy != before.Busy || after.Timeouts != before.Timeouts {
+		t.Fatalf("wanted snapshot touched the interactive pool during builder work: before=%+v after=%+v", before, after)
+	}
+}
+
+func buildMuxWithWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, snapshot *httpapi.WantedSnapshot) http.Handler {
+	mux, _ := buildMuxWithTrackerAndWanted(ctx, cfg, store, snapshot)
+	return mux
+}
+
+func classPoolStat(stats serverstore.PoolStats, class string) serverstore.ClassPoolStats {
+	for _, stat := range stats.Classes {
+		if stat.Class == class {
+			return stat
+		}
+	}
+	return serverstore.ClassPoolStats{}
 }

@@ -38,13 +38,17 @@ Get-ChildItem -Path $dir -Filter 'csx.exe.old-*' -ErrorAction SilentlyContinue |
 Write-Host "Downloading csx payload and stable launcher (windows/$arch) from $base ..."
 $staged = Join-Path $dir 'csx-payload.new.exe'
 $launcherStaged = Join-Path $dir 'csx-launcher.new.exe'
+$manifestStaged = Join-Path $dir 'csx-manifest.new.json'
 $checksums = "$exe.checksums"
 try {
     Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
     Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-update-stable.json" -OutFile $manifestStaged
     $flush = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try { $flush.Flush($true) } finally { $flush.Dispose() }
     $flush = [IO.File]::Open($launcherStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    try { $flush.Flush($true) } finally { $flush.Dispose() }
+    $flush = [IO.File]::Open($manifestStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try { $flush.Flush($true) } finally { $flush.Dispose() }
     Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/SHA256SUMS.txt" -OutFile $checksums
     $asset = "csx-windows-$arch.exe"
@@ -69,6 +73,7 @@ try {
     $isAv = ($hresult -eq -2147024671) -or ($msg -match 'virus|potentially unwanted software|operation did not complete successfully')
     Remove-Item $staged -Force -ErrorAction SilentlyContinue
     Remove-Item $launcherStaged -Force -ErrorAction SilentlyContinue
+    Remove-Item $manifestStaged -Force -ErrorAction SilentlyContinue
     Remove-Item $checksums -Force -ErrorAction SilentlyContinue
     if ($isAv) {
         Write-Host ""
@@ -91,9 +96,17 @@ if (Test-Path $exe) {
 	} catch { $alreadyLauncher = $false }
 }
 if ($alreadyLauncher -and $installedLauncherVersion -ne $launcherVersion) { throw 'launcher protocol transition requires a newer migration installer; no pointer was changed' }
-if ((Test-Path $exe) -and -not $alreadyLauncher) { & $staged update bootstrap-launcher $dir $staged $exe }
-else { & $staged update bootstrap-launcher $dir $staged }
-if ($LASTEXITCODE -ne 0) { throw 'signed launcher payload bootstrap failed' }
+$env:CSX_UPDATE_MANIFEST_FILE = $manifestStaged
+$env:CSX_UPDATE_MANIFEST_URL = "$base/dl/csx-update-stable.json"
+try {
+    if ((Test-Path $exe) -and -not $alreadyLauncher) { & $staged update bootstrap-launcher $dir $staged $exe }
+    else { & $staged update bootstrap-launcher $dir $staged }
+    if ($LASTEXITCODE -ne 0) { throw 'signed launcher payload bootstrap failed' }
+} finally {
+    Remove-Item env:CSX_UPDATE_MANIFEST_FILE -ErrorAction SilentlyContinue
+    Remove-Item env:CSX_UPDATE_MANIFEST_URL -ErrorAction SilentlyContinue
+    Remove-Item $manifestStaged -Force -ErrorAction SilentlyContinue
+}
 Remove-Item $staged -Force -ErrorAction SilentlyContinue
 $replaceLauncher = -not $alreadyLauncher
 if ($alreadyLauncher) { $replaceLauncher = ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $launcherActual) }

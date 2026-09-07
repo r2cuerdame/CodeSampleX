@@ -77,6 +77,12 @@ type Deps struct {
 	// hotShardWait is a test seam for how long GET /v1/stats waits for the
 	// warming hint. Production always uses hotShardRequestWait.
 	hotShardWait time.Duration
+
+	// WantedSnapshot is loaded before the aggregation builder starts. A
+	// process must never make its first public wanted request compete with the
+	// restart builder for PostgreSQL; NewMux takes its own copy and serves it
+	// while one bounded background refresh keeps it current.
+	WantedSnapshot *WantedSnapshot
 }
 
 type api struct {
@@ -105,9 +111,14 @@ type api struct {
 	// authoringGapEvery.
 	authoringPolls atomic.Uint64
 
-	wantedMu    sync.Mutex
-	wantedAt    time.Time
-	wantedItems []wantedListItem
+	wantedMu           sync.Mutex
+	wantedFromSnapshot bool
+	wantedStale        bool
+	wantedAt           time.Time
+	wantedItems        []wantedListItem
+	wantedRefresh      *wantedRefreshCall
+	wantedAttempt      time.Time
+	wantedErr          error
 }
 
 type healthCall struct {
@@ -133,6 +144,14 @@ func NewMux(d Deps) *http.ServeMux {
 		d.authoringWorkTimeout = authoringWorkPollTimeout
 	}
 	a := &api{d: d}
+	if d.WantedSnapshot != nil {
+		a.wantedFromSnapshot = true
+		a.wantedAt = d.WantedSnapshot.GeneratedAt
+		if a.wantedAt.IsZero() {
+			a.wantedAt = a.now().UTC()
+		}
+		a.wantedItems = wantedListItems(d.WantedSnapshot.Rows)
+	}
 	// The publicness checker already talks to Maven Central; asking it one
 	// more question needs no new wiring, and a checker that cannot answer
 	// simply leaves the prober nil.
