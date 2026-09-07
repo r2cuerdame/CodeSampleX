@@ -469,6 +469,7 @@ $requiredReleaseAssets = @(
     "csx-launcher-windows-arm64.exe",
     "SHA256SUMS.txt",
 	"csx-update-stable.json",
+    "csx-bootstrap-stable.json",
     "codesamplex-mcp.mcpb",
     "codesamplex-mcp.mcpb.sha256"
 )
@@ -603,7 +604,7 @@ Copy-Remote (Join-Path $repo "deploy\restore-check.sh") "/opt/codesamplex/deploy
 Invoke-Remote "chmod 755 /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh" | Out-Null
 Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schemas/v1/adapters.json"
 
-# The download endpoint is fed from the LATEST GITHUB RELEASE, never from
+# The download endpoint is fed from the exact release of this revision, never from
 # whatever happens to be sitting in dist/.
 #
 # It used to ship the local folder, and the local folder was last built by
@@ -613,13 +614,27 @@ Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schem
 # EOF, which meant `curl ... | sh` enrolled people in evidence sharing
 # without anyone answering the question. Two sources of truth, and the
 # hand-fed one was the one users actually got.
-$tag = (& gh release view --repo r2cuerdame/CodeSampleX --json tagName --jq .tagName)
-if ($LASTEXITCODE -ne 0 -or -not $tag) { throw "could not read the latest release tag" }
-if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "unsafe release tag: $tag" }
+$releaseTags = @(& git -C $repo tag --points-at $revision --list 'v*')
+if ($LASTEXITCODE -ne 0) { throw "could not resolve the release tag for the deployment revision" }
+$releaseTags = @($releaseTags | Where-Object { $_ -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' })
+if ($releaseTags.Count -ne 1) { throw "deployment revision must have exactly one canonical release tag" }
+$tag = [string]$releaseTags[0]
+$publishedTag = (& gh release view $tag --repo r2cuerdame/CodeSampleX --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName')
+if ($LASTEXITCODE -ne 0 -or $publishedTag -cne $tag) { throw "deployment release is not published" }
+# A directory bind mount pins the old installer's release across host rename.
+# The replacement server opens the promoted directory as a new generation.
+$mountedReleaseBefore = (Invoke-RemoteScript @'
+set -eu
+test ! -L /opt/codesamplex/dist
+if [ "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}' 2>/dev/null || true)" = true ]; then
+  docker exec codesamplex-server-1 cat /data/dist/.release-tag
+fi
+'@ | Select-Object -First 1)
+if ($mountedReleaseBefore -and $mountedReleaseBefore -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw "running server has an invalid mounted release generation" }
 $remoteTagLine = Invoke-Remote "cat /opt/codesamplex/dist/.release-tag 2>/dev/null || true" | Select-Object -First 1
 $remoteTag = if ($null -eq $remoteTagLine) { "" } else { ([string]$remoteTagLine).Trim() }
 $remoteFiles = ($requiredReleaseAssets | ForEach-Object { "test -f /opt/codesamplex/dist/$_" }) -join " && "
-$remoteValidation = ('set -eu; {0}; cd /opt/codesamplex/dist; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $remoteFiles, $requiredReleaseAssets.Count)
+$remoteValidation = ('set -eu; {0}; cd /opt/codesamplex/dist; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; chmod +x csx-linux-amd64; ./csx-linux-amd64 update verify-release . {2} >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $remoteFiles, $requiredReleaseAssets.Count, $tag)
 $releaseReady = $false
 if ($remoteTag -eq $tag) {
     try {
@@ -637,7 +652,7 @@ if ($releaseReady) {
 } else {
     # The host fetches its own artifacts. This workstation is not in the path.
     #
-    # It used to download all thirteen assets here, verify them, and copy them
+    # It used to download the complete asset set here, verify it, and copy it
     # up. Measured 2026-09-01: Windows Defender quarantined
     # dist/csx-windows-amd64.exe out of that staging directory mid-verification
     # -- Get-FileHash returned null on a file Test-Path had just confirmed --
@@ -672,10 +687,14 @@ done
     Set-Content -Path $tagTmp -Value $tag -Encoding ascii -NoNewline
     Copy-Remote $tagTmp "$stage/.release-tag"
     $stageFiles = ($requiredReleaseAssets | ForEach-Object { "test -f $stage/$_" }) -join " && "
-    $stageValidation = ('set -eu; {0}; cd /opt/codesamplex/dist.stage; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $stageFiles, $requiredReleaseAssets.Count)
+    $stageValidation = ('set -eu; {0}; cd /opt/codesamplex/dist.stage; sha256sum -c SHA256SUMS.txt >/dev/null; sha256sum -c codesamplex-mcp.mcpb.sha256 >/dev/null; chmod +x csx-linux-amd64; ./csx-linux-amd64 update verify-release . {2} >/dev/null; test "$(find . -maxdepth 1 -type f ! -name .release-tag | wc -l)" -eq {1}' -f $stageFiles, $requiredReleaseAssets.Count, $tag)
     Invoke-Remote $stageValidation | Out-Null
     Invoke-Remote "set -eu; rm -rf /opt/codesamplex/dist.previous; mv /opt/codesamplex/dist /opt/codesamplex/dist.previous; if mv /opt/codesamplex/dist.stage /opt/codesamplex/dist; then :; else mv /opt/codesamplex/dist.previous /opt/codesamplex/dist; exit 1; fi" | Out-Null
     $distPromoted = $true
+    if ($mountedReleaseBefore) {
+        $stillMounted = (Invoke-Remote "docker exec codesamplex-server-1 cat /data/dist/.release-tag" | Select-Object -First 1)
+        if ($stillMounted -cne $mountedReleaseBefore) { throw "running installer and release assets changed generations before server activation" }
+    }
     Write-Output "host fetched and verified $($requiredReleaseAssets.Count) artifacts from $tag; promoted atomically"
 }
 
@@ -844,6 +863,9 @@ if (-not $ok) {
     throw "healthz never returned ok"
 }
 Write-Output "healthz: ok"
+$mountedReleaseAfter = (Invoke-Remote "docker exec codesamplex-server-1 cat /data/dist/.release-tag" | Select-Object -First 1)
+if ($mountedReleaseAfter -cne $tag) { throw "activated server installer and release assets have different identities" }
+Write-Output "installer generation: $tag (server and directory bind mount agree)"
 
 # Start the privacy-safe log's collection epoch once, then prove the live
 # encoder strips queries and path IDs before disk. The application container

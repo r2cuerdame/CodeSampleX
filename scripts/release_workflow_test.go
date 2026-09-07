@@ -294,7 +294,7 @@ func TestReleaseStagesStayInOrder(t *testing.T) {
 	for job, needs := range map[string]string{
 		"build":   "needs: windows-test",
 		"sign":    "needs: build",
-		"publish": "needs: [build, sign]",
+		"publish": "needs: [build, sign, windows-bootstrap]",
 		"farm":    "needs: publish",
 	} {
 		body, ok := jobs[job]
@@ -310,6 +310,36 @@ func TestReleaseStagesStayInOrder(t *testing.T) {
 	compile := strings.Index(build, "name: Cross-compile")
 	if guard < 0 || compile < 0 || guard > compile {
 		t.Fatalf("the monotonic release guard must run before the cross-compile: guard=%d compile=%d", guard, compile)
+	}
+}
+
+func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
+	jobs := releaseJobs(t, releaseWorkflow(t))
+	if !strings.Contains(jobs["windows-bootstrap"], "needs: [build, sign]") || !strings.Contains(jobs["windows-bootstrap"], "windows-bootstrap-smoke.ps1 -DistDir dist") {
+		t.Fatal("release lacks native installation of the signed unpublished artifacts")
+	}
+	for _, job := range []string{"sign", "publish"} {
+		if !strings.Contains(jobs[job], "update_manifest.go verify-release") || !strings.Contains(jobs[job], "csx-bootstrap-stable.json") {
+			t.Fatalf("%s does not bind signed stable payloads and bootstrap launchers", job)
+		}
+	}
+	publish := jobs["publish"]
+	ordered := []string{"--generate-notes --draft", "Verify exact published release asset set", "Verify uploaded signed release before promotion", "Atomically publish the verified draft", "--draft=false --latest"}
+	previous := -1
+	for _, marker := range ordered {
+		at := strings.Index(publish, marker)
+		if at <= previous {
+			t.Fatalf("publication no longer ordered at %q", marker)
+		}
+		previous = at
+	}
+	clobber := strings.Index(publish, "--clobber")
+	draftGuard := strings.Index(publish, `if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then`)
+	if clobber < 0 || draftGuard < 0 || draftGuard > clobber || clobber > previous {
+		t.Fatal("release replacement is no longer restricted to unpublished drafts")
+	}
+	if strings.Contains(publish[previous:], "--clobber") {
+		t.Fatal("published release assets can be overwritten")
 	}
 }
 

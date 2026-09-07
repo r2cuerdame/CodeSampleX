@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -22,6 +24,12 @@ import (
 const maxWantedPerReport = 10
 const maxWantedBatchReports = 20
 const maxWantedEpochAgeDays = 30
+
+const (
+	wantedCacheTTL       = 30 * time.Second
+	wantedRefreshTimeout = 15 * time.Second
+	wantedRefreshDefer   = 5 * time.Minute
+)
 
 var wantedEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
@@ -79,31 +87,40 @@ type wantedListItem struct {
 	Asks      int64  `json:"asks"`
 }
 
-// handleWantedList exposes the actionable, privacy-safe request queue.  It
-// contains only public package coordinates and symbols; the caller's prose,
-// project and identity never entered the wanted table in the first place.
-func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
-	a.wantedMu.Lock()
-	if !a.wantedAt.IsZero() && time.Since(a.wantedAt) < 30*time.Second {
-		items := a.wantedItems
-		a.wantedMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"schemaVersion": 1,
-			"generatedAt":   a.now().UTC(),
-			"items":         items,
-		})
-		return
-	}
-	a.wantedMu.Unlock()
+// WantedSnapshot is the exact public wanted feed loaded before background
+// aggregation starts. Rows may be empty: an empty successful read is still a
+// valid snapshot and must be distinguished from a process that was never
+// primed.
+type WantedSnapshot struct {
+	GeneratedAt time.Time
+	Rows        []serverstore.WantedRow
+}
 
-	// The contributor producer asks for this feed directly.  Keep enough
-	// headroom for a useful batch while the human /wanted page stays at its
-	// deliberately shorter presentation limit.
-	rows, err := a.d.Store.TopWanted(r.Context(), 200)
+// LoadWantedSnapshot performs the one database read readiness depends on.
+// Calling it before StartBuilder gives the public endpoint a last-good value
+// that is independent of builder CPU, I/O and connection pressure.
+func LoadWantedSnapshot(ctx context.Context, store serverstore.Store) (*WantedSnapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, wantedRefreshTimeout)
+	defer cancel()
+	ctx = serverstore.WithQueryClass(ctx, serverstore.ClassInteractive)
+	rows, err := store.TopWanted(ctx, 200)
 	if err != nil {
-		writeStoreErr(w, err, http.StatusInternalServerError, "listing wanted requests failed")
-		return
+		return nil, err
 	}
+	return &WantedSnapshot{
+		GeneratedAt: time.Now().UTC(),
+		Rows:        append([]serverstore.WantedRow(nil), rows...),
+	}, nil
+}
+
+type wantedRefreshCall struct {
+	done       chan struct{}
+	err        error
+	generation uint64
+	retry      bool
+}
+
+func wantedListItems(rows []serverstore.WantedRow) []wantedListItem {
 	items := make([]wantedListItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, wantedListItem{
@@ -114,16 +131,133 @@ func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
 			Asks:      row.Asks,
 		})
 	}
-	a.wantedMu.Lock()
-	a.wantedAt = a.now()
-	a.wantedItems = items
-	a.wantedMu.Unlock()
+	return items
+}
 
+func writeWantedList(w http.ResponseWriter, at time.Time, items []wantedListItem) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schemaVersion": 1,
-		"generatedAt":   a.now().UTC(),
+		"generatedAt":   at.UTC(),
 		"items":         items,
 	})
+}
+
+// handleWantedList exposes the actionable, privacy-safe request queue.  It
+// contains only public package coordinates and symbols; the caller's prose,
+// project and identity never entered the wanted table in the first place.
+func (a *api) handleWantedList(w http.ResponseWriter, r *http.Request) {
+	for {
+		a.wantedMu.Lock()
+		now := a.now()
+		built := !a.wantedAt.IsZero()
+		ready := !now.Before(a.wantedRetryAt)
+		if ready && a.wantedRetry.State() == retrypolicy.FailedDeferred {
+			a.wantedRetry.Reset()
+		}
+		if built {
+			// Once loaded, the feed never returns to an interactive aggregation,
+			// including after the second and subsequent TTL expirations.
+			if (a.wantedStale || now.Sub(a.wantedAt) >= wantedCacheTTL) && a.wantedRefresh == nil && ready {
+				call := &wantedRefreshCall{done: make(chan struct{}), generation: a.wantedGeneration, retry: a.wantedRetry.State() == retrypolicy.Waiting}
+				a.wantedRefresh = call
+				go a.refreshWantedInBackground(call)
+			}
+			items, at := a.wantedItems, a.wantedAt
+			a.wantedMu.Unlock()
+			writeWantedList(w, at, items)
+			return
+		}
+		call := a.wantedRefresh
+		if call == nil {
+			if a.wantedErr != nil && !ready {
+				err := a.wantedErr
+				a.wantedMu.Unlock()
+				writeStoreErr(w, err, http.StatusInternalServerError, "listing wanted requests failed")
+				return
+			}
+			call = &wantedRefreshCall{done: make(chan struct{}), generation: a.wantedGeneration}
+			a.wantedRefresh = call
+			a.wantedMu.Unlock()
+			a.refreshWanted(r.Context(), call)
+		} else {
+			a.wantedMu.Unlock()
+			select {
+			case <-call.done:
+				// A canceled cold-load leader cannot poison independent waiters.
+				if (errors.Is(call.err, context.Canceled) || errors.Is(call.err, context.DeadlineExceeded)) && r.Context().Err() == nil {
+					continue
+				}
+			case <-r.Context().Done():
+				writeStoreErr(w, r.Context().Err(), http.StatusInternalServerError, "listing wanted requests failed")
+				return
+			}
+		}
+		if call.err != nil {
+			a.wantedMu.Lock()
+			built := !a.wantedAt.IsZero()
+			items, at := a.wantedItems, a.wantedAt
+			a.wantedMu.Unlock()
+			if built {
+				writeWantedList(w, at, items)
+				return
+			}
+			writeStoreErr(w, call.err, http.StatusInternalServerError, "listing wanted requests failed")
+			return
+		}
+		a.wantedMu.Lock()
+		items := a.wantedItems
+		at := a.wantedAt
+		a.wantedMu.Unlock()
+		writeWantedList(w, at, items)
+		return
+	}
+}
+
+func (a *api) refreshWantedInBackground(call *wantedRefreshCall) {
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if call.retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	ctx, cancel := context.WithTimeout(
+		serverstore.WithQueryBudget(context.Background(), budget),
+		wantedRefreshTimeout,
+	)
+	defer cancel()
+	a.refreshWanted(ctx, call)
+}
+
+func (a *api) refreshWanted(ctx context.Context, call *wantedRefreshCall) {
+	// The contributor producer asks for this feed directly. Keep enough
+	// headroom for a useful batch while the human /wanted page stays at its
+	// deliberately shorter presentation limit.
+	rows, err := a.d.Store.TopWanted(ctx, 200)
+	var items []wantedListItem
+	if err == nil {
+		items = wantedListItems(rows)
+	}
+	a.wantedMu.Lock()
+	call.err = err
+	if err == nil {
+		a.wantedErr = nil
+		a.wantedRetry.Reset()
+		a.wantedRetryAt = time.Time{}
+		a.wantedStale = call.generation != a.wantedGeneration
+		a.wantedAt = a.now()
+		a.wantedItems = items
+	} else if ctx.Err() == nil || (serverstore.QueryClassOf(ctx) == serverstore.ClassBackground && !errors.Is(ctx.Err(), context.Canceled)) {
+		a.wantedErr = err
+		retry, state := a.wantedRetry.Failure()
+		delay := wantedRefreshDefer
+		if state != retrypolicy.FailedDeferred {
+			delay, _ = retrypolicy.Delay(retry, nil)
+		}
+		a.wantedRetryAt = a.now().Add(delay)
+	}
+	if a.wantedRefresh == call {
+		a.wantedRefresh = nil
+	}
+	close(call.done)
+	a.wantedMu.Unlock()
 }
 
 // handleWanted implements POST /v1/wanted: count one anonymous report that
@@ -156,7 +290,8 @@ func (a *api) handleWanted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.wantedMu.Lock()
-	a.wantedAt = time.Time{}
+	a.wantedStale = true
+	a.wantedGeneration++
 	a.wantedMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "accepted", "counted": len(rows)})
 }
@@ -208,7 +343,8 @@ func (a *api) handleWantedBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.wantedMu.Lock()
-	a.wantedAt = time.Time{}
+	a.wantedStale = true
+	a.wantedGeneration++
 	a.wantedMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "accepted", "reports": len(batch.Reports), "counted": total,

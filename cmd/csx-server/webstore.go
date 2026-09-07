@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -245,11 +246,22 @@ const (
 	recordSnapshotRefreshTimeout = 2 * time.Minute
 )
 
-func backgroundRefreshCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(
-		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
-		recordSnapshotRefreshTimeout,
-	)
+func backgroundRefreshCtx(retry bool) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(backgroundRefreshBudget(retry), recordSnapshotRefreshTimeout)
+}
+
+func backgroundRefreshBudget(retry bool) context.Context {
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	return serverstore.WithQueryBudget(context.Background(), budget)
+}
+
+// A visitor ending its own wait is not evidence that the shared cache or
+// database is unhealthy. Real pool/statement failures still advance backoff.
+func cacheRequestCanceled(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
@@ -266,7 +278,9 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 		// a stampede is what turns a slow page into a stalled server.
 		rows, err := w.s.ListSnapshots(ctx)
 		if err != nil {
-			backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
+			if !cacheRequestCanceled(ctx, err) {
+				backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
+			}
 			w.snapshotMu.Unlock()
 			return nil, err
 		}
@@ -287,14 +301,14 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 	if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
 		!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
 		w.snapshotRefreshing = true
-		go w.refreshSnapshots()
+		go w.refreshSnapshots(w.snapshotRetry.State() == retrypolicy.Waiting)
 	}
 	w.snapshotMu.Unlock()
 	return rows, nil
 }
 
-func (w *webStore) refreshSnapshots() {
-	ctx, cancel := backgroundRefreshCtx()
+func (w *webStore) refreshSnapshots(retry bool) {
+	ctx, cancel := backgroundRefreshCtx(retry)
 	defer cancel()
 	rows, err := w.s.ListSnapshots(ctx)
 	w.snapshotMu.Lock()
@@ -321,7 +335,7 @@ func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.
 		// Cold: trigger background refresh without blocking visitors on a 10-30s JSON corpus scan.
 		if !w.updatedRefreshing && backgroundRetryReady(&w.updatedRetry, &w.updatedRetryAt, time.Now()) {
 			w.updatedRefreshing = true
-			go w.refreshSnapshotUpdatedAt()
+			go w.refreshSnapshotUpdatedAt(w.updatedRetry.State() == retrypolicy.Waiting)
 		}
 		updated := w.updatedAt
 		w.updatedMu.Unlock()
@@ -332,14 +346,14 @@ func (w *webStore) cachedSnapshotUpdatedAt(ctx context.Context) map[string]time.
 	if !w.updatedAtRead.After(now.Add(-recordSnapshotCacheTTL)) &&
 		!w.updatedRefreshing && backgroundRetryReady(&w.updatedRetry, &w.updatedRetryAt, now) {
 		w.updatedRefreshing = true
-		go w.refreshSnapshotUpdatedAt()
+		go w.refreshSnapshotUpdatedAt(w.updatedRetry.State() == retrypolicy.Waiting)
 	}
 	w.updatedMu.Unlock()
 	return updated
 }
 
-func (w *webStore) refreshSnapshotUpdatedAt() {
-	ctx, cancel := backgroundRefreshCtx()
+func (w *webStore) refreshSnapshotUpdatedAt(retry bool) {
+	ctx, cancel := backgroundRefreshCtx(retry)
 	defer cancel()
 	updated, err := w.s.SnapshotUpdatedAt(ctx)
 	w.updatedMu.Lock()
@@ -361,7 +375,7 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		if !w.targetsAt.After(now.Add(-recordSnapshotCacheTTL)) &&
 			!w.targetsRefreshing && backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, now) {
 			w.targetsRefreshing = true
-			go w.refreshSnapshotTargets()
+			go w.refreshSnapshotTargets(w.targetsRetry.State() == retrypolicy.Waiting)
 		}
 		w.targetsMu.Unlock()
 		return idx, nil
@@ -381,7 +395,9 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 	}
 	rows, err := w.s.SnapshotKeys(ctx)
 	if err != nil {
-		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+		if !cacheRequestCanceled(ctx, err) {
+			backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+		}
 		w.targetsMu.Unlock()
 		return nil, err
 	}
@@ -400,8 +416,8 @@ func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.Sna
 	return idx.rows, nil
 }
 
-func (w *webStore) refreshSnapshotTargets() {
-	ctx, cancel := backgroundRefreshCtx()
+func (w *webStore) refreshSnapshotTargets(retry bool) {
+	ctx, cancel := backgroundRefreshCtx(retry)
 	defer cancel()
 	rows, err := w.s.SnapshotKeys(ctx)
 	w.targetsMu.Lock()
@@ -426,12 +442,10 @@ func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (strin
 }
 
 func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	detached := context.WithoutCancel(ctx)
-	deadline := time.Now().Add(recordSnapshotRefreshTimeout)
-	if incoming, ok := ctx.Deadline(); ok && incoming.Before(deadline) {
-		deadline = incoming
-	}
-	return context.WithDeadline(detached, deadline)
+	// The shared read owns its bounded lifetime. Each visitor independently
+	// selects on its context below; the first visitor's shorter deadline must
+	// not cancel everyone else's read or poison the shared retry series.
+	return context.WithTimeout(context.WithoutCancel(ctx), recordSnapshotRefreshTimeout)
 }
 
 // SnapshotJSONWithError lets bounded fan-out readers stop on pressure rather
@@ -447,13 +461,17 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 	}
 	w.snapshotMu.Lock()
 	if !w.snapshotAt.IsZero() {
-		// All snapshots are cached in memory. If not present in snapshotJSON, it does not exist.
+		// Expiry means stale, not absent. Keep a positive row from the latest
+		// complete corpus until its normal refresh replaces it. An entry older
+		// than that corpus was retired and must not be resurrected.
+		if val, ok := w.snapshotJSON.Load(key); ok {
+			entry := val.(cachedSnapshotJSON)
+			if !entry.at.Before(w.snapshotAt) {
+				w.snapshotMu.Unlock()
+				return entry.json, entry.ok, nil
+			}
+		}
 		w.snapshotMu.Unlock()
-		w.snapshotJSON.Store(key, cachedSnapshotJSON{
-			at:   time.Now(),
-			json: "",
-			ok:   false,
-		})
 		return "", false, nil
 	}
 	w.snapshotMu.Unlock()
@@ -497,8 +515,12 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		}
 		call := &snapshotLoadCall{done: make(chan struct{})}
 		lane.loading = call
+		loadCtx := ctx
+		if serverstore.QueryClassOf(ctx) == serverstore.ClassBackground && lane.retry.State() == retrypolicy.Waiting {
+			loadCtx = serverstore.WithQueryBudget(ctx, serverstore.NewRetryQueryBudget(serverstore.ClassBackground))
+		}
 		state.mu.Unlock()
-		go w.loadSnapshotsForPURL(ctx, state, lane, call, purl)
+		go w.loadSnapshotsForPURL(loadCtx, state, lane, call, purl)
 
 		select {
 		case <-call.done:
@@ -1564,7 +1586,7 @@ func (w *webStore) HotPackages(_ context.Context, limit int) ([]web.PackageHit, 
 	if !w.hotAt.After(now.Add(-hotPackagesTTL)) &&
 		!w.hotRefreshing && backgroundRetryReady(&w.hotRetry, &w.hotRetryAt, now) {
 		w.hotRefreshing = true
-		go w.refreshHotPackages()
+		go w.refreshHotPackages(w.hotRetry.State() == retrypolicy.Waiting)
 	}
 	w.hotMu.Unlock()
 
@@ -1574,9 +1596,9 @@ func (w *webStore) HotPackages(_ context.Context, limit int) ([]web.PackageHit, 
 	return rows, nil
 }
 
-func (w *webStore) refreshHotPackages() {
+func (w *webStore) refreshHotPackages(retry bool) {
 	ctx, cancel := context.WithTimeout(
-		serverstore.WithQueryClass(context.Background(), serverstore.ClassBackground),
+		backgroundRefreshBudget(retry),
 		hotPackagesRefreshTimeout,
 	)
 	defer cancel()
@@ -1771,7 +1793,9 @@ func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error
 		}
 		rows, err := w.loadAllGaps(ctx)
 		if err != nil {
-			backgroundRetryFailed(&w.gapsRetry, &w.gapsRetryAt, time.Now(), gapsCacheTTL)
+			if !cacheRequestCanceled(ctx, err) {
+				backgroundRetryFailed(&w.gapsRetry, &w.gapsRetryAt, time.Now(), gapsCacheTTL)
+			}
 			w.gapsMu.Unlock()
 			return nil, err
 		}
@@ -1785,14 +1809,14 @@ func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error
 	if !w.gapsAt.After(now.Add(-gapsCacheTTL)) &&
 		!w.gapsRefreshing && backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, now) {
 		w.gapsRefreshing = true
-		go w.refreshGaps()
+		go w.refreshGaps(w.gapsRetry.State() == retrypolicy.Waiting)
 	}
 	w.gapsMu.Unlock()
 	return rows, nil
 }
 
-func (w *webStore) refreshGaps() {
-	ctx, cancel := backgroundRefreshCtx()
+func (w *webStore) refreshGaps(retry bool) {
+	ctx, cancel := backgroundRefreshCtx(retry)
 	defer cancel()
 	rows, err := w.loadAllGaps(ctx)
 

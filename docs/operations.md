@@ -31,7 +31,30 @@ The deploy also installs `backup.sh` and `restore-check.sh`, restores executable
 permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
 user.
 Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
-The exact release set also includes `csx-update-stable.json`.
+The exact release set also includes `csx-update-stable.json` and the signed
+`csx-bootstrap-stable.json` launcher descriptor. Deployment selects the one
+canonical release tag at the target revision and verifies both signatures and
+every signed payload/launcher hash before promoting the complete directory.
+Rollback restores the previous directory along with the server state.
+The read-only directory bind mount pins the running container's previous
+generation during the host directory swap. Deployment checks that pin before
+activation and checks the new container's mounted release tag before smoke.
+
+Windows installation captures the deployment's stable manifest once and fetches
+the corresponding immutable GitHub release assets. It verifies the stable and
+bootstrap envelopes have the same version, sequence, timestamps and payloads,
+then verifies the launcher before executing it. The separate bootstrap envelope
+keeps old updater clients' strict stable schema compatible. Release publication
+tests the signed artifacts with the real Windows installer, uploads a draft,
+verifies the uploaded set, then publishes it atomically. Published assets are
+never overwritten by a workflow retry.
+An old cached installer from before this protocol fails closed when the new
+payload has no captured signed envelopes; refetch the public `install.ps1`.
+
+After deployment, run `./scripts/windows-bootstrap-smoke.ps1` on Windows for a
+clean production install in an isolated temporary profile. It runs the public
+installer with `CSX_INSTALL_ONLY=1`, checks the installed identity and hashes,
+and leaves the actual user PATH, agent configuration and daemon untouched.
 
 The SSH host key is pinned. `deploy.ps1` uses `StrictHostKeyChecking=yes` and
 never learns a first-seen key during a deployment. Populate `known_hosts` from

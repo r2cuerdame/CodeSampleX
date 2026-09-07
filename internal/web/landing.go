@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -367,7 +368,11 @@ func (s *site) warmHeroMatrix(r *http.Request, lang, key string, hits, ordered [
 
 	// The handler owns its request and slices. Clone them before it returns so
 	// the background worker never observes caller-owned state changing.
-	warmRequest := r.Clone(context.Background())
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if series.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	warmRequest := r.Clone(serverstore.WithQueryBudget(context.Background(), budget))
 	warmHits := append([]PackageHit(nil), hits...)
 	warmOrdered := append([]PackageHit(nil), ordered...)
 	go func() {

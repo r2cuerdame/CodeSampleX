@@ -131,8 +131,14 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}
 	defer pg.Close()
 
-	// Aggregation pipeline: snapshots/shards/stats on CSX_SNAPSHOT_INTERVAL.
-	StartBuilder(ctx, cfg, pg)
+	// Capture the public wanted feed before the aggregation pipeline starts.
+	// The first live request after a restart must not run its whole aggregate
+	// while the builder is consuming the same PostgreSQL CPU, I/O and pool.
+	wantedSnapshot, err := primeWantedBeforeBuilder(ctx, cfg, pg, StartBuilder)
+	if err != nil {
+		fmt.Fprintf(stderr, "csx-server: preload wanted snapshot: %v\n", err)
+		return 1
+	}
 
 	// Wake authoring drafts that have nothing left to wait for.
 	//
@@ -220,7 +226,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// is the whole server. WriteTimeout sits above the slowest legitimate
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
-	handler, activityTracker := buildMuxWithTracker(context.Background(), cfg, pg)
+	handler, activityTracker := buildMuxWithTrackerAndWanted(context.Background(), cfg, pg, wantedSnapshot)
 	listenAddr, narrowed := resolveListenAddr(cfg.Listen, runtime.GOOS)
 	if narrowed {
 		fmt.Fprintln(stdout, narrowedListenNotice(cfg.Listen, listenAddr))
@@ -253,7 +259,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}()
 
 	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
-	err := srv.ListenAndServe()
+	err = srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = activityTracker.Close(trackerCtx)

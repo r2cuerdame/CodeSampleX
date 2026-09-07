@@ -43,6 +43,7 @@ func testPoolPolicy() PoolPolicy {
 type occupation struct {
 	errs    chan error
 	elapsed chan time.Duration
+	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 }
 
@@ -52,12 +53,14 @@ func occupy(t *testing.T, pg *PG, class QueryClass, n int) *occupation {
 		errs:    make(chan error, n),
 		elapsed: make(chan time.Duration, n),
 	}
+	rootCtx, cancel := context.WithCancel(context.Background())
+	o.cancel = cancel
 	holding := make(chan struct{}, n)
 	for i := 0; i < n; i++ {
 		o.wg.Add(1)
 		go func() {
 			defer o.wg.Done()
-			ctx := WithQueryClass(context.Background(), class)
+			ctx := WithQueryClass(rootCtx, class)
 			c, err := pg.pool.acquire(ctx)
 			if err != nil {
 				holding <- struct{}{}
@@ -76,7 +79,10 @@ func occupy(t *testing.T, pg *PG, class QueryClass, n int) *occupation {
 	for i := 0; i < n; i++ {
 		<-holding
 	}
-	t.Cleanup(o.wg.Wait)
+	t.Cleanup(func() {
+		o.cancel()
+		o.wg.Wait()
+	})
 	return o
 }
 
@@ -149,6 +155,38 @@ func TestIntegrationSlowReadsLeaveBackgroundWorkAConnection(t *testing.T) {
 		return c.QueryRow(ctx, "SELECT 1").Scan(&one)
 	}); err != nil {
 		t.Fatalf("background work could not reach the database while reads were slow: %v", err)
+	}
+}
+
+// The reserve must work in the production direction too: the restart builder
+// is background work, and filling its whole allowance cannot consume the
+// interactive connection a public request needs. This isolates in-process
+// checkout starvation from PostgreSQL CPU/I/O contention, which admission
+// tokens cannot reserve.
+func TestIntegrationBackgroundWorkLeavesInteractiveCapacity(t *testing.T) {
+	pol := testPoolPolicy()
+	pg := openTestPGWithPolicy(t, pol)
+	occupation := occupy(t, pg, ClassBackground, pol.BackgroundConns)
+	defer occupation.cancel()
+
+	budget := NewQueryBudget(ClassInteractive)
+	ctx, cancel := context.WithTimeout(WithQueryBudget(context.Background(), budget), time.Second)
+	defer cancel()
+	start := time.Now()
+	var one int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, "SELECT 1").Scan(&one)
+	}); err != nil {
+		t.Fatalf("interactive query could not reach PostgreSQL while background allowance was full: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("interactive query read %d, want 1", one)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("interactive query waited %v behind background work", elapsed)
+	}
+	if busy, timeouts, _ := budget.Pressure(); busy != 0 || timeouts != 0 {
+		t.Fatalf("interactive reserve reported busy=%d timeouts=%d", busy, timeouts)
 	}
 }
 
