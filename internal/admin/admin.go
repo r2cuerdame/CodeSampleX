@@ -112,11 +112,12 @@ type handler struct {
 	// farmGate admits one whole-corpus farm snapshot at a time. The browser
 	// refreshes this panel on a timer; without a gate, a slow snapshot lets
 	// every tick add another copy of the same PostgreSQL work.
-	farmGate  chan struct{}
-	anomalies serverstore.AnomalyStore
-	csxIssues serverstore.CSXIssueStore
-	poolStats PoolStatsReader
-	instances []Instance
+	farmGate     chan struct{}
+	farmCoverage farmCoverageMemo
+	anomalies    serverstore.AnomalyStore
+	csxIssues    serverstore.CSXIssueStore
+	poolStats    PoolStatsReader
+	instances    []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
