@@ -145,6 +145,48 @@ func TestSamplesManifestTrgmIdxMigrationIsAutomaticAdditive(t *testing.T) {
 	}
 }
 
+func TestRecentWantedDemandMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0035_recent_wanted_demand.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read recent wanted demand migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("recent wanted demand migration rejected: %v", err)
+	}
+}
+
+func TestRecentWantedDemandIndexExceptionRemainsFailClosed(t *testing.T) {
+	valid := wantedDedupEpochCoordinateIdxStatements[0] + ";"
+	for name, sql := range map[string]string{
+		"wrong filename":       valid,
+		"wrong index name":     strings.Replace(valid, "wanted_dedup_epoch_coordinate_idx", "wanted_dedup_recent_idx", 1),
+		"wrong table":          strings.Replace(valid, "ON wanted_dedup", "ON wanted", 1),
+		"missing idempotence":  strings.Replace(valid, " IF NOT EXISTS", "", 1),
+		"missing descending":   strings.Replace(valid, "epoch DESC", "epoch", 1),
+		"reordered coordinate": strings.Replace(valid, "ecosystem, name", "name, ecosystem", 1),
+		"missing coordinate":   strings.Replace(valid, ", target_os", "", 1),
+		"identity column":      strings.Replace(valid, ", target_os", ", target_os, anon_id", 1),
+		"duplicate statement":  valid + "\n" + valid,
+		"drop suffix":          valid + "\nDROP TABLE wanted_dedup;",
+		"add-column suffix":    valid + "\nALTER TABLE wanted_dedup ADD COLUMN unsafe TEXT;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			migrationName := "0035_recent_wanted_demand.sql"
+			if name == "wrong filename" {
+				migrationName = "0099_recent_wanted_demand.sql"
+			}
+			if err := ValidateMigrationSQL(migrationName, sql); err == nil {
+				t.Fatalf("changed wanted demand index migration accepted: %s", sql)
+			}
+		})
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
