@@ -113,6 +113,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
             'builder_lifecycle_state','builder_error_events',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
             'query_timeout_events','max_pressure_wait_seconds','oom_events','restart_events','die_events','settled_fail_observations',
+            'die_event_first_epoch','die_event_last_epoch',
             'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows'
         )
         if ($IncludeLatency) {
@@ -124,6 +125,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
             if (-not $state.Contains($name)) { throw "production observation evidence is missing $name" }
         }
         foreach ($name in @('restart_count','builder_error_events','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
+                'die_event_first_epoch','die_event_last_epoch',
                 'settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]

@@ -46,7 +46,6 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 		"github.event.workflow_run.conclusion == 'success'",
 		"github.event.workflow_run.event == 'workflow_dispatch'",
 		"github.event.workflow_run.head_repository.full_name == github.repository",
-		"group: codesamplex-post-deploy-",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("post-deploy trigger contract is missing %q", required)
@@ -59,6 +58,21 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 	}
 }
 
+func TestPostDeployObservationKeepsRunSpecificConcurrency(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	for _, required := range []string{
+		"group: codesamplex-post-deploy-${{ github.event.workflow_run.id || inputs.deploy_run_id }}",
+		"cancel-in-progress: false",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("post-deploy concurrency contract is missing %q", required)
+		}
+	}
+	if strings.Contains(workflow, "\n  group: codesamplex-production\n") {
+		t.Fatal("observer must not rely on the non-FIFO production concurrency group")
+	}
+}
+
 func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Validate deployment provenance and download its evidence")
 	for _, required := range []string{
@@ -68,6 +82,8 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 		`.event == "workflow_dispatch"`,
 		`.conclusion == "success"`,
 		`.repository.full_name == $repo`,
+		`.run_number | select(type == "number" and . > 0)`,
+		`deploy_run_number=${deploy_run_number}`,
 		`artifact_name="production-evidence-${DEPLOY_RUN_ID}"`,
 		`artifact_count`,
 		`actions/artifacts/${artifact_id}/zip`,
@@ -77,6 +93,8 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 		`.imageDigest`,
 		`image_digest=${image_digest}`,
 		`.serverStartedAt`,
+		`.migrationVersion`,
+		`migration_version=${migration_version}`,
 		`.trackingIssue`,
 		`test "$deployed_sha" = "$target_sha"`,
 	} {
@@ -86,6 +104,103 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 	}
 	if strings.Contains(step, "actions/download-artifact") {
 		t.Fatal("cross-workflow deploy evidence must be selected by authenticated run and artifact IDs")
+	}
+}
+
+func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *testing.T) {
+	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Treat a validated newer deployment as superseding this observation")
+	for _, required := range []string{
+		"if: always() && steps.deployment.outputs.deploy_run_number != '' && steps.observer.outcome != 'success'",
+		`.run_number > $original`,
+		`gh api --paginate --slurp`,
+		`.[].workflow_runs[]`,
+		`.status == "completed" and .conclusion == "success"`,
+		`.name == "Production deploy"`,
+		`.path == ".github/workflows/production-deploy.yml"`,
+		`.repository.full_name == $repo`,
+		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
+		`git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main`,
+		`git show "${WORKFLOW_SHA}:deploy/lightsail/collect-post-deploy-observation.sh"`,
+		`collector="$RUNNER_TEMP/csx-supersession-collector.sh"`,
+		`actions/runs/${candidate_id}/jobs?filter=latest&per_page=100`,
+		`.name == "Roll out production"`,
+		`"$deploy_job_count" != "1"`,
+		`(.run_id | tostring) == $id`,
+		`.started_at`,
+		`.completed_at`,
+		`artifact_name="production-evidence-${candidate_id}"`,
+		`actions/artifacts/${artifact_id}/zip`,
+		`(.workflowRunId | tostring) == $id`,
+		`.targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha`,
+		`.health == "ok" and .smoke == "pass" and .rollback == "not-needed"`,
+		`candidate_started_epoch=$(date -u -d "$candidate_started" +%s)`,
+		`"$candidate_started_epoch" -le "$original_started_epoch"`,
+		`"$candidate_started_epoch" -lt "$candidate_deploy_started_epoch"`,
+		`"$candidate_started_epoch" -gt "$candidate_deploy_completed_epoch"`,
+		`candidate_cutover_epoch=$(jq -er '.die_event_first_epoch | tonumber' "$fresh_json")`,
+		`"$observation_completed_epoch" -lt "$candidate_cutover_epoch"`,
+		`"$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch"`,
+		`all(.samples[];`,
+		`(.observed_at | fromdateiso8601) >= $cutover_started`,
+		`.revision == $original_sha`,
+		`.health == "ok"`,
+		`.restart_count == 0`,
+		`CSX_OBSERVE_DETAIL=1`,
+		`CSX_OBSERVE_SINCE=%s`,
+		`StrictHostKeyChecking=yes`,
+		`UserKnownHostsFile=$RUNNER_TEMP/csx-production-ssh/known_hosts`,
+		`post-deploy-supersession-sample.json`,
+		`reduce inputs as $line`,
+		`.revision == $sha`,
+		`.image_revision == $sha`,
+		`.served_revision == $sha`,
+		`.image_digest == $digest`,
+		`.server_started_at == $started`,
+		`.migration_version == $migration`,
+		`.health == "ok"`,
+		`.detail_collected == "true"`,
+		`.restart_events == "0"`,
+		`.oom_killed == "false"`,
+		`.die_events == "1"`,
+		`(.die_event_first_epoch | tonumber) == (.die_event_last_epoch | tonumber)`,
+		`(.die_event_first_epoch | tonumber) >= $deploy_started`,
+		`(.die_event_last_epoch | tonumber) <= $server_started`,
+		`($server_started - (.die_event_first_epoch | tonumber)) <= 120`,
+		`.conclusion = "superseded"`,
+		`.supersessionSample = $fresh[0]`,
+		`.supersededBy = {`,
+		`workflowRunUrl: $run_url`,
+		`cutoverEpoch: $cutover_epoch`,
+		"## Post-deploy observation: SUPERSEDED",
+		`echo "superseded=true" >> "$GITHUB_OUTPUT"`,
+		`.status != "completed"`,
+		`sleep 15`,
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("validated supersession contract is missing %q", required)
+		}
+	}
+	for _, unsafe := range []string{
+		`server OOM detected during observation`,
+		`builder did not converge within the bounded 80-minute observation window`,
+		`builder completion timestamps are malformed`,
+	} {
+		if strings.Contains(step, `. != "`+unsafe+`"`) {
+			t.Errorf("supersession allowlist can hide safety anomaly %q", unsafe)
+		}
+	}
+	workflow := postDeployObservationWorkflow(t)
+	if strings.Index(workflow, "Remove production SSH material") < strings.Index(workflow, "Treat a validated newer deployment as superseding this observation") {
+		t.Fatal("production SSH material is removed before the authenticated supersession re-sample")
+	}
+	if strings.Contains(step, `collector="$GITHUB_WORKSPACE/deploy/lightsail/collect-post-deploy-observation.sh"`) {
+		t.Fatal("supersession parser can use the deployed target's older collector schema")
+	}
+	if strings.Contains(step, `.die_events == "0"`) {
+		t.Fatal("supersession can proceed without an authenticated replacement cutover event")
+	}
+	if strings.Index(step, `candidate_cutover_epoch=$(jq -er`) < strings.Index(step, `.die_events == "1"`) {
+		t.Fatal("replacement cutover is read before the fresh sample is authenticated")
 	}
 }
 
@@ -178,6 +293,8 @@ func TestPostDeployObservationAlwaysRetainsEvidenceAndFailsClosed(t *testing.T) 
 		"retention-days: 30",
 		"Fail when production did not converge safely",
 		`OBSERVER_OUTCOME: ${{ steps.observer.outcome }}`,
+		`SUPERSEDED: ${{ steps.supersession.outputs.superseded }}`,
+		`if [[ "$SUPERSEDED" == "true" && "$conclusion" == "superseded" ]]`,
 		`conclusion=$(jq -r '.conclusion // "failure"' "$RUNNER_TEMP/post-deploy-observation.json")`,
 		"::error title=Post-deploy observation failed::",
 	} {

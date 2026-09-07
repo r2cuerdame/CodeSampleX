@@ -70,6 +70,23 @@ func TestPostDeployObserverAlertsWhenBuilderNeverConverges(t *testing.T) {
 	}
 }
 
+func TestPostDeployObserverBoundsReplacementExitEvents(t *testing.T) {
+	collector := readDeployFixture(t, "collect-post-deploy-observation.sh")
+	observer := readDeployFixture(t, "observe-production.ps1")
+	for _, required := range []string{
+		`--filter event=die --format '{{.Time}}'`,
+		`die_event_first_epoch`,
+		`die_event_last_epoch`,
+	} {
+		if !strings.Contains(collector, required) {
+			t.Errorf("post-deploy collector cannot attribute replacement exits: missing %q", required)
+		}
+		if !strings.Contains(observer, `'`+required+`'`) && required != `--filter event=die --format '{{.Time}}'` {
+			t.Errorf("post-deploy evidence parser omits replacement exit bound %q", required)
+		}
+	}
+}
+
 func TestPostDeployObserverMeasuresTTFBDuringActiveBuilderWork(t *testing.T) {
 	observer := readDeployFixture(t, "observe-production.ps1")
 	collector := readDeployFixture(t, "collect-post-deploy-observation.sh")

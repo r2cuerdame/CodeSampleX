@@ -30,7 +30,7 @@ jobs:
        github.event.workflow_run.event == 'workflow_dispatch' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 135
     environment: codesamplex-production
     steps:
       - name: Validate deployment provenance and download its evidence
@@ -61,6 +61,7 @@ jobs:
             .conclusion == "success" and
             .repository.full_name == $repo
           ' <<<"$run_json" >/dev/null
+          deploy_run_number=$(jq -er '.run_number | select(type == "number" and . > 0)' <<<"$run_json")
 
           artifact_name="production-evidence-${DEPLOY_RUN_ID}"
           artifacts_json=$(gh api \
@@ -93,7 +94,8 @@ jobs:
           deployed_sha=$(jq -er '.deployedSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           test "$deployed_sha" = "$target_sha"
           image_digest=$(jq -er '.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$deploy_evidence")
-          server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and length > 0)' "$deploy_evidence")
+          server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"))' "$deploy_evidence")
+          migration_version=$(jq -er '.migrationVersion | select(type == "string" and test("^[0-9]{4}_[a-z0-9_]+\\.sql$"))' "$deploy_evidence")
           tracking_issue=$(jq -er '.trackingIssue | select(type == "string" and length > 0)' "$deploy_evidence")
 
           issue_prefix="https://github.com/${GITHUB_REPOSITORY}/issues/"
@@ -119,10 +121,12 @@ jobs:
 
           {
             echo "deploy_run_id=${DEPLOY_RUN_ID}"
+            echo "deploy_run_number=${deploy_run_number}"
             echo "target_sha=${target_sha}"
             echo "previous_sha=${previous_sha}"
             echo "image_digest=${image_digest}"
             echo "server_started_at=${server_started_at}"
+            echo "migration_version=${migration_version}"
             echo "tracking_issue=${tracking_issue}"
             echo "tracking_issue_number=${issue_number}"
           } >> "$GITHUB_OUTPUT"
@@ -210,6 +214,290 @@ jobs:
             -EvidencePath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json") `
             -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
 
+      - name: Treat a validated newer deployment as superseding this observation
+        id: supersession
+        if: always() && steps.deployment.outputs.deploy_run_number != '' && steps.observer.outcome != 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
+          ORIGINAL_DEPLOY_RUN_NUMBER: ${{ steps.deployment.outputs.deploy_run_number }}
+          ORIGINAL_TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          ORIGINAL_IMAGE_DIGEST: ${{ steps.deployment.outputs.image_digest }}
+          ORIGINAL_SERVER_STARTED_AT: ${{ steps.deployment.outputs.server_started_at }}
+          ORIGINAL_MIGRATION_VERSION: ${{ steps.deployment.outputs.migration_version }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+        run: |
+          set -euo pipefail
+          observation="$RUNNER_TEMP/post-deploy-observation.json"
+          summary="$RUNNER_TEMP/post-deploy-observation.md"
+          test -s "$observation"
+          original_started_epoch=$(date -u -d "$ORIGINAL_SERVER_STARTED_AT" +%s)
+          if ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          git cat-file -e "${WORKFLOW_SHA}^{commit}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
+          collector="$RUNNER_TEMP/csx-supersession-collector.sh"
+          git show "${WORKFLOW_SHA}:deploy/lightsail/collect-post-deploy-observation.sh" > "$collector"
+          test -s "$collector"
+
+          # A replacement can be observed before its deploy workflow has
+          # uploaded success evidence. Wait only while a later deploy is
+          # active; the Production deploy workflow has its own 40-minute
+          # eligibility + rollout bound, and this wait remains off its path.
+          deadline=$((SECONDS + 35 * 60))
+          while true; do
+            runs_json=$(gh api --paginate --slurp \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/production-deploy.yml/runs?event=workflow_dispatch&per_page=100")
+
+            mapfile -t candidates < <(jq -r --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
+              .[].workflow_runs[] |
+              select(.run_number > $original and .status == "completed" and .conclusion == "success") |
+              .id
+            ' <<<"$runs_json")
+
+            for candidate_id in "${candidates[@]}"; do
+              candidate_run=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}")
+              if ! jq -e --arg repo "$GITHUB_REPOSITORY" --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
+                .name == "Production deploy" and
+                .path == ".github/workflows/production-deploy.yml" and
+                .event == "workflow_dispatch" and
+                .status == "completed" and
+                .conclusion == "success" and
+                .repository.full_name == $repo and
+                .run_number > $original
+              ' <<<"$candidate_run" >/dev/null; then
+                continue
+              fi
+              candidate_jobs=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/jobs?filter=latest&per_page=100")
+              deploy_job_count=$(jq '[.jobs[] | select(.name == "Roll out production")] | length' <<<"$candidate_jobs")
+              if [[ "$deploy_job_count" != "1" ]]; then
+                continue
+              fi
+              candidate_deploy_job=$(jq -c '.jobs[] | select(.name == "Roll out production")' <<<"$candidate_jobs")
+              if ! jq -e --arg id "$candidate_id" '
+                (.run_id | tostring) == $id and
+                .status == "completed" and
+                .conclusion == "success" and
+                (.started_at | type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$")) and
+                (.completed_at | type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))
+              ' <<<"$candidate_deploy_job" >/dev/null; then
+                continue
+              fi
+              candidate_deploy_started=$(jq -r '.started_at' <<<"$candidate_deploy_job")
+              candidate_deploy_completed=$(jq -r '.completed_at' <<<"$candidate_deploy_job")
+              candidate_deploy_started_epoch=$(date -u -d "$candidate_deploy_started" +%s)
+              candidate_deploy_completed_epoch=$(date -u -d "$candidate_deploy_completed" +%s)
+
+              artifact_name="production-evidence-${candidate_id}"
+              artifacts=$(gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/artifacts?per_page=100")
+              artifact_count=$(jq --arg name "$artifact_name" \
+                '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<<"$artifacts")
+              if [[ "$artifact_count" != "1" ]]; then
+                continue
+              fi
+              artifact_id=$(jq -er --arg name "$artifact_name" \
+                '.artifacts[] | select(.name == $name and .expired == false) | .id' <<<"$artifacts")
+              candidate_dir="$RUNNER_TEMP/csx-superseding-deploy-${candidate_id}"
+              mkdir -p "$candidate_dir"
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+                > "${candidate_dir}.zip"
+              unzip -qo "${candidate_dir}.zip" -d "$candidate_dir"
+              candidate_evidence="$candidate_dir/production-deploy-evidence.json"
+              if [[ ! -s "$candidate_evidence" ]]; then
+                continue
+              fi
+
+              candidate_sha=$(jq -er '.targetSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$candidate_evidence")
+              candidate_digest=$(jq -er '.imageDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$candidate_evidence")
+              candidate_started=$(jq -er '.serverStartedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"))' "$candidate_evidence")
+              candidate_migration=$(jq -er '.migrationVersion | select(type == "string" and test("^[0-9]{4}_[a-z0-9_]+\\.sql$"))' "$candidate_evidence")
+              if ! jq -e --arg id "$candidate_id" --arg sha "$candidate_sha" '
+                (.workflowRunId | tostring) == $id and
+                .conclusion == "success" and
+                .targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha and
+                .health == "ok" and .smoke == "pass" and .rollback == "not-needed"
+              ' "$candidate_evidence" >/dev/null; then
+                continue
+              fi
+              candidate_started_epoch=$(date -u -d "$candidate_started" +%s)
+              if [[ "$candidate_started_epoch" -le "$original_started_epoch" ||
+                    "$candidate_started_epoch" -lt "$candidate_deploy_started_epoch" ||
+                    "$candidate_started_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
+                continue
+              fi
+
+              # The failed poll may have sampled during force-recreate. Once
+              # the candidate is a validated success, take a new detail sample
+              # using the collector schema from this exact workflow revision.
+              observer_user="${PRODUCTION_USER:-ubuntu}"
+              if ! [[ "$observer_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+                exit 1
+              fi
+              fresh_raw="$RUNNER_TEMP/post-deploy-supersession-sample.txt"
+              {
+                printf 'CSX-OBSERVE-V1\n'
+                printf 'CSX_OBSERVE_LATENCY=0\n'
+                printf 'CSX_OBSERVE_DETAIL=1\n'
+                printf 'CSX_OBSERVE_SINCE=%s\n' "$ORIGINAL_SERVER_STARTED_AT"
+                cat "$collector"
+              } | ssh \
+                -i "$RUNNER_TEMP/csx-production-ssh/id" \
+                -o StrictHostKeyChecking=yes \
+                -o "UserKnownHostsFile=$RUNNER_TEMP/csx-production-ssh/known_hosts" \
+                -o ConnectTimeout=20 \
+                "${observer_user}@${PRODUCTION_HOST}" \
+                "{ printf '#'; cat; } | sh" > "$fresh_raw"
+
+              fresh_json="$RUNNER_TEMP/post-deploy-supersession-sample.json"
+              jq -Rn '
+                reduce inputs as $line ({};
+                  ($line | capture("^(?<key>[a-z_]+)=(?<value>.*)$")) as $pair |
+                  if has($pair.key) then error("duplicate observation key")
+                  else . + {($pair.key): $pair.value} end)
+              ' < "$fresh_raw" > "$fresh_json"
+              if ! jq -e \
+                --arg sha "$candidate_sha" \
+                --arg digest "$candidate_digest" \
+                --arg started "$candidate_started" \
+                --arg migration "$candidate_migration" \
+                --argjson deploy_started "$candidate_deploy_started_epoch" \
+                --argjson deploy_completed "$candidate_deploy_completed_epoch" \
+                --argjson server_started "$candidate_started_epoch" '
+                .revision == $sha and
+                .image_revision == $sha and
+                .served_revision == $sha and
+                .image_digest == $digest and
+                .server_started_at == $started and
+                .migration_version == $migration and
+                .health == "ok" and
+                .container_status == "running" and
+                .detail_collected == "true" and
+                .restart_count == "0" and
+                .restart_events == "0" and
+                .oom_killed == "false" and
+                .oom_events == "0" and
+                .die_events == "1" and
+                (.die_event_first_epoch | test("^[0-9]+$")) and
+                (.die_event_last_epoch | test("^[0-9]+$")) and
+                (.die_event_first_epoch | tonumber) == (.die_event_last_epoch | tonumber) and
+                (.die_event_first_epoch | tonumber) >= $deploy_started and
+                (.die_event_last_epoch | tonumber) <= $deploy_completed and
+                (.die_event_last_epoch | tonumber) <= $server_started and
+                ($server_started - (.die_event_first_epoch | tonumber)) <= 120
+              ' "$fresh_json" >/dev/null; then
+                continue
+              fi
+
+              # The authenticated replacement's single die event is the
+              # actual production cutover boundary. Failures before it cannot
+              # be explained by the replacement and remain fail-closed.
+              candidate_cutover_epoch=$(jq -er '.die_event_first_epoch | tonumber' "$fresh_json")
+              observation_completed=$(jq -er '.completedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' "$observation")
+              observation_completed_epoch=$(date -u -d "$observation_completed" +%s)
+              if [[ "$observation_completed_epoch" -lt "$candidate_cutover_epoch" ||
+                    "$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
+                continue
+              fi
+
+              # Only replacement-shaped failures at or after cutover are
+              # eligible. Every earlier sample must prove the original
+              # deployment was healthy and unchanged.
+              if ! jq -e \
+                --arg original_sha "$ORIGINAL_TARGET_SHA" \
+                --arg original_digest "$ORIGINAL_IMAGE_DIGEST" \
+                --arg original_started "$ORIGINAL_SERVER_STARTED_AT" \
+                --arg original_migration "$ORIGINAL_MIGRATION_VERSION" \
+                --argjson cutover_started "$candidate_cutover_epoch" '
+                (.samples | type == "array") and
+                (.anomalies | type == "array" and length > 0) and
+                ([.anomalies[] | select(
+                  . != "rollback detected: configured revision returned to the previous production SHA" and
+                  . != "configured revision drifted from the deployed SHA" and
+                  . != "OCI image revision does not match the deployed SHA" and
+                  . != "served /version revision does not match the deployed SHA" and
+                  . != "live image digest is malformed" and
+                  . != "live image digest changed during observation" and
+                  . != "latest migration does not match the checked-out server" and
+                  . != "health is not ok" and
+                  . != "server container is not running" and
+                  . != "server start timestamp changed during observation" and
+                  . != "server restart or exit detected during observation" and
+                  . != "observation probe failed before completion"
+                )] | length == 0) and
+                (all(.samples[];
+                  .oom_killed == false and
+                  ((.observed_at | fromdateiso8601) >= $cutover_started or
+                   (.revision == $original_sha and
+                    .image_revision == $original_sha and
+                    .served_revision == $original_sha and
+                    .image_digest == $original_digest and
+                    .server_started_at == $original_started and
+                    .migration_version == $original_migration and
+                    .health == "ok" and
+                    .container_status == "running" and
+                    .restart_count == 0))))
+              ' "$observation" >/dev/null; then
+                continue
+              fi
+
+              updated="$RUNNER_TEMP/post-deploy-observation-superseded.json"
+              candidate_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}"
+              jq \
+                --arg run_id "$candidate_id" \
+                --arg run_url "$candidate_url" \
+                --arg target_sha "$candidate_sha" \
+                --arg image_digest "$candidate_digest" \
+                --arg server_started_at "$candidate_started" \
+                --argjson cutover_epoch "$candidate_cutover_epoch" \
+                --slurpfile fresh "$fresh_json" '
+                .conclusion = "superseded" |
+                .supersessionSample = $fresh[0] |
+                .supersededBy = {
+                  deploymentRunId: $run_id,
+                  workflowRunUrl: $run_url,
+                  targetSha: $target_sha,
+                  imageDigest: $image_digest,
+                  serverStartedAt: $server_started_at,
+                  cutoverEpoch: $cutover_epoch
+                }
+              ' "$observation" > "$updated"
+              mv "$updated" "$observation"
+              cat > "$summary" <<EOF
+          ## Post-deploy observation: SUPERSEDED
+
+          - Original deployment run: ${ORIGINAL_DEPLOY_RUN_ID}
+          - Original target SHA: ${ORIGINAL_TARGET_SHA}
+          - Superseding deployment run: [${candidate_id}](${candidate_url})
+          - Superseding target SHA: ${candidate_sha}
+
+          A fresh post-completion production sample exactly matched the authenticated evidence from the newer successful Production deploy. Replacement-only drift was retained in the JSON artifact and did not create a false FAIL for the older deployment.
+          EOF
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            done
+
+            active_later=$(jq --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" \
+              '[.[].workflow_runs[] | select(.run_number > $original and .status != "completed")] | length' \
+              <<<"$runs_json")
+            if [[ "$active_later" == "0" || "$SECONDS" -ge "$deadline" ]]; then
+              exit 0
+            fi
+            sleep 15
+          done
+
       - name: Remove production SSH material
         if: always()
         shell: bash
@@ -248,9 +536,13 @@ jobs:
         shell: bash
         env:
           OBSERVER_OUTCOME: ${{ steps.observer.outcome }}
+          SUPERSEDED: ${{ steps.supersession.outputs.superseded }}
         run: |
           set -euo pipefail
           conclusion=$(jq -r '.conclusion // "failure"' "$RUNNER_TEMP/post-deploy-observation.json")
+          if [[ "$SUPERSEDED" == "true" && "$conclusion" == "superseded" ]]; then
+            exit 0
+          fi
           if [[ "$OBSERVER_OUTCOME" != "success" || "$conclusion" != "success" ]]; then
             echo "::error title=Post-deploy observation failed::Builder convergence or production pressure checks failed; see the tracking-issue comment and observation artifact."
             exit 1
