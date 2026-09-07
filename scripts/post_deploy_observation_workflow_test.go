@@ -93,6 +93,8 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 		`.imageDigest`,
 		`image_digest=${image_digest}`,
 		`.serverStartedAt`,
+		`.migrationVersion`,
+		`migration_version=${migration_version}`,
 		`.trackingIssue`,
 		`test "$deployed_sha" = "$target_sha"`,
 	} {
@@ -127,22 +129,36 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 		`"$candidate_started_epoch" -le "$original_started_epoch"`,
 		`"$candidate_started_epoch" -lt "$candidate_run_started_epoch"`,
 		`"$candidate_started_epoch" -gt "$candidate_run_completed_epoch"`,
-		`.samples[-1] as $sample`,
-		`all(.samples[]; .restart_count == 0 and .oom_killed == false)`,
-		`$sample.revision == $sha`,
-		`$sample.image_digest == $digest`,
-		`$sample.server_started_at == $started`,
-		`$sample.health == "ok"`,
-		`$sample.detail_collected == true`,
-		`$sample.restart_events == 0`,
-		`$sample.oom_killed == false`,
-		`$sample.die_events == 1`,
-		`$sample.die_event_first_epoch == $sample.die_event_last_epoch`,
-		`$sample.die_event_first_epoch >= $deploy_started`,
-		`$sample.die_event_last_epoch <= $deploy_completed`,
-		`$sample.die_event_last_epoch <= $server_started`,
-		`($server_started - $sample.die_event_first_epoch) <= 120`,
+		`"$observation_completed_epoch" -lt "$candidate_run_started_epoch"`,
+		`"$observation_completed_epoch" -gt "$candidate_run_completed_epoch"`,
+		`all(.samples[];`,
+		`(.observed_at | fromdateiso8601) >= $deploy_started`,
+		`.revision == $original_sha`,
+		`.health == "ok"`,
+		`.restart_count == 0`,
+		`CSX_OBSERVE_DETAIL=1`,
+		`CSX_OBSERVE_SINCE=%s`,
+		`StrictHostKeyChecking=yes`,
+		`UserKnownHostsFile=$RUNNER_TEMP/csx-production-ssh/known_hosts`,
+		`post-deploy-supersession-sample.json`,
+		`reduce inputs as $line`,
+		`.revision == $sha`,
+		`.image_revision == $sha`,
+		`.served_revision == $sha`,
+		`.image_digest == $digest`,
+		`.server_started_at == $started`,
+		`.migration_version == $migration`,
+		`.health == "ok"`,
+		`.detail_collected == "true"`,
+		`.restart_events == "0"`,
+		`.oom_killed == "false"`,
+		`.die_events == "1"`,
+		`(.die_event_first_epoch | tonumber) == (.die_event_last_epoch | tonumber)`,
+		`(.die_event_first_epoch | tonumber) >= $deploy_started`,
+		`(.die_event_last_epoch | tonumber) <= $server_started`,
+		`($server_started - (.die_event_first_epoch | tonumber)) <= 120`,
 		`.conclusion = "superseded"`,
+		`.supersessionSample = $fresh[0]`,
 		`.supersededBy = {`,
 		`workflowRunUrl: $run_url`,
 		"## Post-deploy observation: SUPERSEDED",
@@ -156,13 +172,16 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 	}
 	for _, unsafe := range []string{
 		`server OOM detected during observation`,
-		`health is not ok`,
-		`server container is not running`,
 		`builder did not converge within the bounded 80-minute observation window`,
+		`builder completion timestamps are malformed`,
 	} {
 		if strings.Contains(step, `. != "`+unsafe+`"`) {
 			t.Errorf("supersession allowlist can hide safety anomaly %q", unsafe)
 		}
+	}
+	workflow := postDeployObservationWorkflow(t)
+	if strings.Index(workflow, "Remove production SSH material") < strings.Index(workflow, "Treat a validated newer deployment as superseding this observation") {
+		t.Fatal("production SSH material is removed before the authenticated supersession re-sample")
 	}
 }
 
