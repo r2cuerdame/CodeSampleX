@@ -137,10 +137,12 @@ observer never logs raw requests or query strings. If its replacement-only
 drift is followed by a fresh production sample that exactly matches the
 authenticated artifact from a later successful Production deploy, the older
 observation is recorded as superseded instead of as a false failure. The
-replacement window begins at the authenticated `Roll out production` job,
-not at the earlier eligibility job; every other anomaly still fails closed.
-The deploy evidence keeps `builderFresh` as an informational initial sample
-only.
+replacement window begins at the single container exit event immediately
+before the authenticated replacement server start, not at the earlier
+eligibility or rollout-job start. The re-sample uses the collector from the
+canonical workflow revision so its evidence schema remains stable even when
+retrying an older deployment. Every other anomaly still fails closed. The
+deploy evidence keeps `builderFresh` as an informational initial sample only.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client

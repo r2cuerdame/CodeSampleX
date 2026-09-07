@@ -226,6 +226,7 @@ jobs:
           ORIGINAL_IMAGE_DIGEST: ${{ steps.deployment.outputs.image_digest }}
           ORIGINAL_SERVER_STARTED_AT: ${{ steps.deployment.outputs.server_started_at }}
           ORIGINAL_MIGRATION_VERSION: ${{ steps.deployment.outputs.migration_version }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
           PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
         run: |
@@ -234,6 +235,14 @@ jobs:
           summary="$RUNNER_TEMP/post-deploy-observation.md"
           test -s "$observation"
           original_started_epoch=$(date -u -d "$ORIGINAL_SERVER_STARTED_AT" +%s)
+          if ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          git cat-file -e "${WORKFLOW_SHA}^{commit}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
+          collector="$RUNNER_TEMP/csx-supersession-collector.sh"
+          git show "${WORKFLOW_SHA}:deploy/lightsail/collect-post-deploy-observation.sh" > "$collector"
+          test -s "$collector"
 
           # A replacement can be observed before its deploy workflow has
           # uploaded success evidence. Wait only while a later deploy is
@@ -330,63 +339,13 @@ jobs:
                 continue
               fi
 
-              observation_completed=$(jq -er '.completedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' "$observation")
-              observation_completed_epoch=$(date -u -d "$observation_completed" +%s)
-              if [[ "$observation_completed_epoch" -lt "$candidate_deploy_started_epoch" ||
-                    "$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
-                continue
-              fi
-
-              # Only replacement-shaped failures that happened during the
-              # authenticated newer run are eligible. Every sample taken
-              # before that run must still prove the original healthy state.
-              if ! jq -e \
-                --arg original_sha "$ORIGINAL_TARGET_SHA" \
-                --arg original_digest "$ORIGINAL_IMAGE_DIGEST" \
-                --arg original_started "$ORIGINAL_SERVER_STARTED_AT" \
-                --arg original_migration "$ORIGINAL_MIGRATION_VERSION" \
-                --argjson deploy_started "$candidate_deploy_started_epoch" '
-                (.samples | type == "array") and
-                (.anomalies | type == "array" and length > 0) and
-                ([.anomalies[] | select(
-                  . != "rollback detected: configured revision returned to the previous production SHA" and
-                  . != "configured revision drifted from the deployed SHA" and
-                  . != "OCI image revision does not match the deployed SHA" and
-                  . != "served /version revision does not match the deployed SHA" and
-                  . != "live image digest is malformed" and
-                  . != "live image digest changed during observation" and
-                  . != "latest migration does not match the checked-out server" and
-                  . != "health is not ok" and
-                  . != "server container is not running" and
-                  . != "server start timestamp changed during observation" and
-                  . != "server restart or exit detected during observation" and
-                  . != "observation probe failed before completion"
-                )] | length == 0) and
-                (all(.samples[];
-                  .oom_killed == false and
-                  ((.observed_at | fromdateiso8601) >= $deploy_started or
-                   (.revision == $original_sha and
-                    .image_revision == $original_sha and
-                    .served_revision == $original_sha and
-                    .image_digest == $original_digest and
-                    .server_started_at == $original_started and
-                    .migration_version == $original_migration and
-                    .health == "ok" and
-                    .container_status == "running" and
-                    .restart_count == 0))))
-              ' "$observation" >/dev/null; then
-                continue
-              fi
-
               # The failed poll may have sampled during force-recreate. Once
               # the candidate is a validated success, take a new detail sample
-              # and bind its only permitted die event to that cutover.
+              # using the collector schema from this exact workflow revision.
               observer_user="${PRODUCTION_USER:-ubuntu}"
               if ! [[ "$observer_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
                 exit 1
               fi
-              collector="$GITHUB_WORKSPACE/deploy/lightsail/collect-post-deploy-observation.sh"
-              test -s "$collector"
               fresh_raw="$RUNNER_TEMP/post-deploy-supersession-sample.txt"
               {
                 printf 'CSX-OBSERVE-V1\n'
@@ -430,18 +389,67 @@ jobs:
                 .restart_events == "0" and
                 .oom_killed == "false" and
                 .oom_events == "0" and
-                ((.die_events == "0" and
-                  .die_event_first_epoch == "0" and
-                  .die_event_last_epoch == "0") or
-                 (.die_events == "1" and
-                  (.die_event_first_epoch | test("^[0-9]+$")) and
-                  (.die_event_last_epoch | test("^[0-9]+$")) and
-                  (.die_event_first_epoch | tonumber) == (.die_event_last_epoch | tonumber) and
-                  (.die_event_first_epoch | tonumber) >= $deploy_started and
-                  (.die_event_last_epoch | tonumber) <= $deploy_completed and
-                  (.die_event_last_epoch | tonumber) <= $server_started and
-                  ($server_started - (.die_event_first_epoch | tonumber)) <= 120))
+                .die_events == "1" and
+                (.die_event_first_epoch | test("^[0-9]+$")) and
+                (.die_event_last_epoch | test("^[0-9]+$")) and
+                (.die_event_first_epoch | tonumber) == (.die_event_last_epoch | tonumber) and
+                (.die_event_first_epoch | tonumber) >= $deploy_started and
+                (.die_event_last_epoch | tonumber) <= $deploy_completed and
+                (.die_event_last_epoch | tonumber) <= $server_started and
+                ($server_started - (.die_event_first_epoch | tonumber)) <= 120
               ' "$fresh_json" >/dev/null; then
+                continue
+              fi
+
+              # The authenticated replacement's single die event is the
+              # actual production cutover boundary. Failures before it cannot
+              # be explained by the replacement and remain fail-closed.
+              candidate_cutover_epoch=$(jq -er '.die_event_first_epoch | tonumber' "$fresh_json")
+              observation_completed=$(jq -er '.completedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' "$observation")
+              observation_completed_epoch=$(date -u -d "$observation_completed" +%s)
+              if [[ "$observation_completed_epoch" -lt "$candidate_cutover_epoch" ||
+                    "$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch" ]]; then
+                continue
+              fi
+
+              # Only replacement-shaped failures at or after cutover are
+              # eligible. Every earlier sample must prove the original
+              # deployment was healthy and unchanged.
+              if ! jq -e \
+                --arg original_sha "$ORIGINAL_TARGET_SHA" \
+                --arg original_digest "$ORIGINAL_IMAGE_DIGEST" \
+                --arg original_started "$ORIGINAL_SERVER_STARTED_AT" \
+                --arg original_migration "$ORIGINAL_MIGRATION_VERSION" \
+                --argjson cutover_started "$candidate_cutover_epoch" '
+                (.samples | type == "array") and
+                (.anomalies | type == "array" and length > 0) and
+                ([.anomalies[] | select(
+                  . != "rollback detected: configured revision returned to the previous production SHA" and
+                  . != "configured revision drifted from the deployed SHA" and
+                  . != "OCI image revision does not match the deployed SHA" and
+                  . != "served /version revision does not match the deployed SHA" and
+                  . != "live image digest is malformed" and
+                  . != "live image digest changed during observation" and
+                  . != "latest migration does not match the checked-out server" and
+                  . != "health is not ok" and
+                  . != "server container is not running" and
+                  . != "server start timestamp changed during observation" and
+                  . != "server restart or exit detected during observation" and
+                  . != "observation probe failed before completion"
+                )] | length == 0) and
+                (all(.samples[];
+                  .oom_killed == false and
+                  ((.observed_at | fromdateiso8601) >= $cutover_started or
+                   (.revision == $original_sha and
+                    .image_revision == $original_sha and
+                    .served_revision == $original_sha and
+                    .image_digest == $original_digest and
+                    .server_started_at == $original_started and
+                    .migration_version == $original_migration and
+                    .health == "ok" and
+                    .container_status == "running" and
+                    .restart_count == 0))))
+              ' "$observation" >/dev/null; then
                 continue
               fi
 
@@ -453,6 +461,7 @@ jobs:
                 --arg target_sha "$candidate_sha" \
                 --arg image_digest "$candidate_digest" \
                 --arg server_started_at "$candidate_started" \
+                --argjson cutover_epoch "$candidate_cutover_epoch" \
                 --slurpfile fresh "$fresh_json" '
                 .conclusion = "superseded" |
                 .supersessionSample = $fresh[0] |
@@ -461,7 +470,8 @@ jobs:
                   workflowRunUrl: $run_url,
                   targetSha: $target_sha,
                   imageDigest: $image_digest,
-                  serverStartedAt: $server_started_at
+                  serverStartedAt: $server_started_at,
+                  cutoverEpoch: $cutover_epoch
                 }
               ' "$observation" > "$updated"
               mv "$updated" "$observation"

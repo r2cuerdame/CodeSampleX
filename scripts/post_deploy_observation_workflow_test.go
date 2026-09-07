@@ -118,6 +118,10 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 		`.name == "Production deploy"`,
 		`.path == ".github/workflows/production-deploy.yml"`,
 		`.repository.full_name == $repo`,
+		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
+		`git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main`,
+		`git show "${WORKFLOW_SHA}:deploy/lightsail/collect-post-deploy-observation.sh"`,
+		`collector="$RUNNER_TEMP/csx-supersession-collector.sh"`,
 		`actions/runs/${candidate_id}/jobs?filter=latest&per_page=100`,
 		`.name == "Roll out production"`,
 		`"$deploy_job_count" != "1"`,
@@ -133,10 +137,11 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 		`"$candidate_started_epoch" -le "$original_started_epoch"`,
 		`"$candidate_started_epoch" -lt "$candidate_deploy_started_epoch"`,
 		`"$candidate_started_epoch" -gt "$candidate_deploy_completed_epoch"`,
-		`"$observation_completed_epoch" -lt "$candidate_deploy_started_epoch"`,
+		`candidate_cutover_epoch=$(jq -er '.die_event_first_epoch | tonumber' "$fresh_json")`,
+		`"$observation_completed_epoch" -lt "$candidate_cutover_epoch"`,
 		`"$observation_completed_epoch" -gt "$candidate_deploy_completed_epoch"`,
 		`all(.samples[];`,
-		`(.observed_at | fromdateiso8601) >= $deploy_started`,
+		`(.observed_at | fromdateiso8601) >= $cutover_started`,
 		`.revision == $original_sha`,
 		`.health == "ok"`,
 		`.restart_count == 0`,
@@ -165,6 +170,7 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 		`.supersessionSample = $fresh[0]`,
 		`.supersededBy = {`,
 		`workflowRunUrl: $run_url`,
+		`cutoverEpoch: $cutover_epoch`,
 		"## Post-deploy observation: SUPERSEDED",
 		`echo "superseded=true" >> "$GITHUB_OUTPUT"`,
 		`.status != "completed"`,
@@ -186,6 +192,15 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 	workflow := postDeployObservationWorkflow(t)
 	if strings.Index(workflow, "Remove production SSH material") < strings.Index(workflow, "Treat a validated newer deployment as superseding this observation") {
 		t.Fatal("production SSH material is removed before the authenticated supersession re-sample")
+	}
+	if strings.Contains(step, `collector="$GITHUB_WORKSPACE/deploy/lightsail/collect-post-deploy-observation.sh"`) {
+		t.Fatal("supersession parser can use the deployed target's older collector schema")
+	}
+	if strings.Contains(step, `.die_events == "0"`) {
+		t.Fatal("supersession can proceed without an authenticated replacement cutover event")
+	}
+	if strings.Index(step, `candidate_cutover_epoch=$(jq -er`) < strings.Index(step, `.die_events == "1"`) {
+		t.Fatal("replacement cutover is read before the fresh sample is authenticated")
 	}
 }
 
