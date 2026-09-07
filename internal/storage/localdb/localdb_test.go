@@ -837,6 +837,12 @@ func TestStructuredCLIExecutionEvidenceAccumulatesComparableRunsWithoutCollapsin
 	}
 	counts := map[string]int64{}
 	for _, row := range rows {
+		if row.ID == "" {
+			t.Fatal("ListCLIExecutionEvidence row has empty ID")
+		}
+		if !row.IsHighInformation {
+			t.Fatal("failure execution evidence must be marked isHighInformation")
+		}
 		key := row.Stderr.Fingerprint
 		if row.Stdout.Truncated {
 			key += ":truncated"

@@ -348,6 +348,12 @@ func TestRecordCommandOutputStoresOnlyStructuredSecretSafeCLIEvidence(t *testing
 		t.Fatalf("structured evidence rows = %d, want 1", len(rows))
 	}
 	got := rows[0]
+	if got.ID == "" {
+		t.Fatal("evidence ID was not returned")
+	}
+	if !got.IsHighInformation {
+		t.Fatal("failure evidence was not marked isHighInformation")
+	}
 	if got.EvidenceQuality != domain.EvidenceComplete || got.EnvironmentID != env.Hash() {
 		t.Fatalf("quality/environment = %q/%q", got.EvidenceQuality, got.EnvironmentID)
 	}

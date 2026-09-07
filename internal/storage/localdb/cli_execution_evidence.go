@@ -64,7 +64,7 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 		limit = 100
 	}
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT tool, tool_version, subcommand, args_pattern, shell, env_hash,
+		SELECT evidence_id, tool, tool_version, subcommand, args_pattern, shell, env_hash,
 		       provenance, result, termination_kind, exit_code, signal, timeout_millis,
 		       error_fp, error_code, error_summary, evidence_quality,
 		       stdout_fp, stdout_excerpt, stdout_truncated,
@@ -82,6 +82,7 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 	var out []domain.CLIExperienceObservation
 	for rows.Next() {
 		var (
+			evidenceID                                             string
 			tool, version, subcommand, argsPattern, shell, envHash string
 			provenance, result, termKind                           string
 			exitCode                                               sql.NullInt64
@@ -94,7 +95,7 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 			startedAt, finishedAt                                  string
 			count                                                  int64
 		)
-		if err := rows.Scan(&tool, &version, &subcommand, &argsPattern, &shell, &envHash,
+		if err := rows.Scan(&evidenceID, &tool, &version, &subcommand, &argsPattern, &shell, &envHash,
 			&provenance, &result, &termKind, &exitCode, &signal, &timeoutMillis,
 			&errorFP, &errorCode, &errorSummary, &quality,
 			&stdoutFP, &stdoutExcerpt, &stdoutTruncated,
@@ -112,6 +113,7 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 			ec = &v
 		}
 		out = append(out, domain.CLIExperienceObservation{
+			ID: evidenceID,
 			Coordinate: domain.CLIExperienceCoordinate{
 				Tool: tool, ToolVersion: version, Subcommand: subcommand,
 				ArgsPattern: argsPattern, Shell: shell, Environment: env,
@@ -122,21 +124,22 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 				Kind: domain.TerminationKind(termKind), ExitCode: ec,
 				Signal: signal, TimeoutMillis: timeoutMillis,
 			},
-			ErrorFingerprint: errorFP,
-			ErrorCode:        errorCode,
-			ErrorSummary:     errorSummary,
-			EvidenceQuality:  domain.EvidenceQuality(quality),
-			ObservedAt:       finishedAt,
-			StartedAt:        startedAt,
-			FinishedAt:       finishedAt,
-			EnvironmentID:    envHash,
+			ErrorFingerprint:  errorFP,
+			ErrorCode:         errorCode,
+			ErrorSummary:      errorSummary,
+			EvidenceQuality:   domain.EvidenceQuality(quality),
+			ObservedAt:        finishedAt,
+			StartedAt:         startedAt,
+			FinishedAt:        finishedAt,
+			EnvironmentID:     envHash,
 			Stdout: domain.CLIStreamEvidence{
 				Fingerprint: stdoutFP, Excerpt: stdoutExcerpt, Truncated: stdoutTruncated,
 			},
 			Stderr: domain.CLIStreamEvidence{
 				Fingerprint: stderrFP, Excerpt: stderrExcerpt, Truncated: stderrTruncated,
 			},
-			Count: count,
+			Count:             count,
+			IsHighInformation: domain.Result(result) == domain.ResultFail,
 		})
 	}
 	return out, rows.Err()
