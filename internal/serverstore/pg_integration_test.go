@@ -58,6 +58,82 @@ func openTestPG(t *testing.T) *PG {
 	return openTestPGWithPolicy(t, DefaultPoolPolicy())
 }
 
+// The production 2026-09-07 builder pass wrote 4,255 snapshots through
+// 4,255 separate checkouts and autocommits while interactive requests were
+// refused. The builder now supplies bounded chunks of 64: prove that the PG
+// path preserves every document while reducing 129 writes from 129
+// checkouts to three.
+func TestIntegrationSnapshotBatchPipelining(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const total = 129
+	sameJSON := func(got, want string) bool {
+		var gotDoc, wantDoc any
+		return json.Unmarshal([]byte(got), &gotDoc) == nil &&
+			json.Unmarshal([]byte(want), &wantDoc) == nil &&
+			reflect.DeepEqual(gotDoc, wantDoc)
+	}
+
+	beforeSingles := classStat(t, pg.PoolStats(), "background").Acquired
+	singleStarted := time.Now()
+	for i := 0; i < total; i++ {
+		purl := fmt.Sprintf("pkg:npm/snapshot-single-%03d@1.0.0", i)
+		if err := pg.PutSnapshot(ctx, purl, "run", fmt.Sprintf(`{"value":%d}`, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	singleElapsed := time.Since(singleStarted)
+	afterSingles := classStat(t, pg.PoolStats(), "background").Acquired
+	if got := afterSingles - beforeSingles; got != total {
+		t.Fatalf("single-write checkouts = %d, want %d", got, total)
+	}
+
+	rows := make([]SnapshotRow, 0, total)
+	for i := 0; i < total; i++ {
+		rows = append(rows, SnapshotRow{
+			PURL:   fmt.Sprintf("pkg:npm/snapshot-batch-%03d@1.0.0", i),
+			Symbol: "run", SnapshotJSON: fmt.Sprintf(`{"value":%d}`, i),
+		})
+	}
+	beforeBatches := classStat(t, pg.PoolStats(), "background").Acquired
+	batchStarted := time.Now()
+	for start := 0; start < len(rows); start += 64 {
+		end := start + 64
+		if end > len(rows) {
+			end = len(rows)
+		}
+		if err := pg.PutSnapshots(ctx, rows[start:end]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batchElapsed := time.Since(batchStarted)
+	afterBatches := classStat(t, pg.PoolStats(), "background").Acquired
+	if got := afterBatches - beforeBatches; got != 3 {
+		t.Fatalf("batch-write checkouts = %d, want 3", got)
+	}
+	t.Logf("129 snapshots: singles=%s/129 checkouts, bounded batches=%s/3 checkouts",
+		singleElapsed, batchElapsed)
+
+	for _, i := range []int{0, 63, 64, 128} {
+		got, ok, err := pg.GetSnapshot(ctx, rows[i].PURL, rows[i].Symbol)
+		if err != nil || !ok || !sameJSON(got, rows[i].SnapshotJSON) {
+			t.Fatalf("snapshot %d = %q ok=%v err=%v, want %q", i, got, ok, err, rows[i].SnapshotJSON)
+		}
+	}
+
+	updated := []SnapshotRow{
+		{PURL: rows[0].PURL, Symbol: "run", SnapshotJSON: `{"value":"updated"}`},
+		{PURL: rows[1].PURL, Symbol: "run", SnapshotJSON: `not-json`},
+	}
+	if err := pg.PutSnapshots(ctx, updated); err == nil {
+		t.Fatal("invalid JSON batch succeeded")
+	}
+	got, ok, err := pg.GetSnapshot(ctx, rows[0].PURL, rows[0].Symbol)
+	if err != nil || !ok || !sameJSON(got, rows[0].SnapshotJSON) {
+		t.Fatalf("failed batch partially updated first row: got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
