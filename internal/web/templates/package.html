@@ -227,7 +227,7 @@
     <p class="break-evidence small mono">
       <span class="t-red font-bold">{{.FailCount}} FAIL</span>{{if .PassCount}} / <span class="t-green">{{.PassCount}} PASS</span>{{end}}
       {{if .Stage}} · <span class="dim">stage:</span> {{.Stage}}{{end}}
-      {{if .Fingerprint}} · <span class="dim">fingerprint:</span> <code class="mono">{{.Fingerprint}}</code>{{end}}
+      {{if .Fingerprint}} · <span class="dim">fingerprint:</span> <code class="mono break-fingerprint">{{.Fingerprint}}</code>{{end}}
     </p>
     <div class="break-actions small mono">
       {{if .CubeHref}}<a class="evaction" href="{{$.WithLang .CubeHref}}">{{$.T "pkg.dh_view_cube"}}</a>{{end}}

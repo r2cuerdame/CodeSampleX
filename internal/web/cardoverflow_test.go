@@ -28,8 +28,9 @@ import (
 
 // cardViewports are the phone widths R2C-196 asks for. 320 is the narrowest
 // phone still in use, 360 the most common, 390 and 430 the two current
-// iPhone classes — the widths at which the reporter saw it.
-var cardViewports = []int{320, 360, 390, 430}
+// iPhone classes — the widths at which the reporter saw it. 1280 keeps a
+// desktop smoke in the same real-browser path.
+var cardViewports = []int{320, 360, 390, 430, 1280}
 
 // longSessionToken is 96 characters with no break opportunity in them: no
 // space, no hyphen, no dot. A UUID would be weaker as a fixture because CSS
@@ -41,6 +42,12 @@ const longSessionToken = "9c1f7a3e5b2d8046" +
 	"0d5837e1b6ac492f" +
 	"a2f94c60e3b17d58" +
 	"6e0b23d84f75a91c"
+
+const longSHA256Fingerprint = "sha256:" +
+	"9c1f7a3e5b2d8046" +
+	"e7a4c0b95d31f862" +
+	"4b8e6d20fa937c15" +
+	"0d5837e1b6ac492f"
 
 type cardBox struct {
 	Sel string `json:"sel"`
@@ -57,6 +64,7 @@ type cardBox struct {
 	// its own list is a card that pushed its container open.
 	Host      float64 `json:"host"`
 	FullToken bool    `json:"fullToken"`
+	Lines     int     `json:"lines"`
 	Text      string  `json:"text"`
 }
 
@@ -86,20 +94,25 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 		// wantToken is true when the fixture put longSessionToken on this
 		// page, so the token's own wrapping can be asserted too.
 		wantToken bool
+		token     string
 		seed      func(*fakeStore)
 	}{
 		// The reported page. The bottom line of a finding card is prose that
 		// quotes what the contract measured, and a measurement quotes
 		// identifiers: Plug.Session.init/1, CanvasRenderingContext2D.getImageData,
 		// a session id. The fixture is the worst of those shapes.
-		{"findings", "/findings", "li.finding", true, seedSessionFinding},
+		{"findings", "/findings", "li.finding", true, longSessionToken, seedSessionFinding},
 		// The landing page used to lay the same card out in a three-track
 		// grid, which had its own floor and its own failure mode. That strip
 		// and its .finding-card styles are gone, so the row measured a
 		// selector no page renders.
 		// Not a card, the same defect: a Go pseudo-version is 36 unbroken
 		// characters inside a pill that may not wrap.
-		{"records", "/compatibility", ".pkglist li", true, seedSessionRecord},
+		{"records", "/compatibility", ".pkglist li", true, longSessionToken, seedSessionRecord},
+		// A dependency-health summary is an ordinary card, not a horizontal
+		// scroller. Its full sha256 evidence fingerprint must wrap in place,
+		// while the adjacent dependency tables keep their own local scroll.
+		{"dependency health", "/npm/axios?f_version=2.0.0", ".dephealth-summary", true, longSHA256Fingerprint, seedLongFingerprintDependencyHealth},
 	} {
 		t.Run(page.name, func(t *testing.T) {
 			mux, store := newTestMux(t, func(d *Deps) {
@@ -114,11 +127,19 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 			if page.name == "findings" {
 				getEventually(t, mux, page.path, longSessionToken)
 			}
-			srv := httptest.NewServer(cardHarness(mux, page.path, page.cardSel))
+			srv := httptest.NewServer(cardHarness(mux, page.path, page.cardSel, page.token))
 			defer srv.Close()
 
 			for _, r := range measureCards(t, chrome, srv.URL+cardMeasurePath) {
 				st := r.State
+				if page.name == "dependency health" {
+					lines := 0
+					if len(st.Tokens) > 0 {
+						lines = st.Tokens[0].Lines
+					}
+					t.Logf("viewport %dpx: document %.0f/%.0fpx, fingerprint lines=%d",
+						r.Width, st.ScrollWidth, st.ClientWidth, lines)
+				}
 
 				// 1. No body-level horizontal scroll. body carries
 				// overflow-x:hidden, which hides the scrollbar without
@@ -171,6 +192,10 @@ func TestCardsFitNarrowViewports(t *testing.T) {
 						t.Errorf("viewport %dpx: %s no longer carries the whole token — it was truncated away, not wrapped",
 							r.Width, tok.Sel)
 					}
+					if r.Width <= 430 && tok.Lines < 2 {
+						t.Errorf("viewport %dpx: %s keeps the long token on one line — it is not readably wrapped",
+							r.Width, tok.Sel)
+					}
 					if tok.Content > tok.Inner+1 {
 						t.Errorf("viewport %dpx: %s wants %.0fpx inside a %.0fpx box — the token is not wrapping",
 							r.Width, tok.Sel, tok.Content, tok.Inner)
@@ -213,13 +238,23 @@ func seedSessionRecord(f *fakeStore) {
 	}}
 }
 
+func seedLongFingerprintDependencyHealth(f *fakeStore) {
+	f.dependencies = []DependencyEdge{
+		{ParentVersion: "2.0.0", ChildName: "alpha", ChildVersion: "2.0.0", SameReceipt: true, Outcome: "fail"},
+		{ParentVersion: "1.0.0", ChildName: "alpha", ChildVersion: "1.0.0"},
+	}
+	f.clusters["npm|axios"] = []string{
+		`{"stage":"test","fingerprint":"` + longSHA256Fingerprint + `","count":5,"versions":["2.0.0"],"envSummary":{"os":"windows","runtime":"node@22"}}`,
+	}
+}
+
 const cardMeasurePath = "/__card-overflow-measure"
 
 // cardHarness serves the site under test plus one page that loads `target`
 // in a fixed-width iframe per viewport and reports the geometry. The iframe
 // is what makes the narrow widths measurable at all: a headless Chrome
 // window will not size itself below ~500 CSS px, and an iframe has no floor.
-func cardHarness(mux *http.ServeMux, target, cardSel string) http.Handler {
+func cardHarness(mux *http.ServeMux, target, cardSel, token string) http.Handler {
 	widths := make([]string, 0, len(cardViewports))
 	frames := make([]string, 0, len(cardViewports))
 	for _, w := range cardViewports {
@@ -231,7 +266,7 @@ func cardHarness(mux *http.ServeMux, target, cardSel string) http.Handler {
 		"__WIDTHS__", strings.Join(widths, ","),
 		"__FRAMES__", strings.Join(frames, "\n"),
 		"__CARDSEL__", cardSel,
-		"__TOKEN__", longSessionToken,
+		"__TOKEN__", token,
 	).Replace(cardHarnessHTML)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,9 +302,11 @@ function label(el){
 function box(el, win){
   var r = el.getBoundingClientRect(), text = (el.textContent || '').trim();
   var host = el.parentElement ? el.parentElement.clientWidth : 0;
+  var range = el.ownerDocument.createRange();
+  range.selectNodeContents(el);
   return {sel: label(el), left: Math.round(r.left + win.scrollX), right: Math.round(r.right + win.scrollX),
           width: Math.round(r.width), inner: el.clientWidth, content: el.scrollWidth, host: host,
-          fullToken: text.indexOf(TOKEN) !== -1, text: text.slice(0, 60)};
+          fullToken: text.indexOf(TOKEN) !== -1, lines: range.getClientRects().length, text: text.slice(0, 60)};
 }
 function clipped(el, doc, win){
   for (var p = el.parentElement; p && p !== doc.documentElement && p !== doc.body; p = p.parentElement) {
@@ -355,6 +392,13 @@ func TestNarrowCardRulesSurviveWithoutABrowser(t *testing.T) {
 		// The landing coverage table needs the scroll container its class
 		// name promised — .tablewrap was the styled one, .table-wrap was not.
 		".table-wrap { overflow-x: auto; }",
+		// Dependency-health cards must be allowed to shrink, while only the
+		// fingerprint/code content receives aggressive word breaking.
+		".dephealth { margin-top: 2rem; min-width: 0; }",
+		".dephealth > * { min-width: 0; }",
+		".dephealth-break .break-fingerprint {",
+		"overflow-wrap: anywhere;",
+		"word-break: break-word;",
 		// A release pill holding a Go pseudo-version has to be allowed to
 		// wrap once the row is narrower than the version is long.
 		".record-version { white-space: normal; overflow-wrap: anywhere; }",

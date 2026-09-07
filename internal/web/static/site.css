@@ -2296,8 +2296,10 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .depmatrix td a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* Dependency Health styles (#178) */
-.dephealth { margin-top: 2rem; }
+.dephealth { margin-top: 2rem; min-width: 0; }
+.dephealth > * { min-width: 0; }
 .dephealth-summary {
+  min-width: 0;
   margin: 0.8rem 0 1.2rem;
   padding: 1rem 1.2rem;
   border-radius: 0.75rem;
@@ -2314,6 +2316,7 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .dephealth-counts .dh-steady { color: var(--fg); opacity: 0.85; }
 
 .dephealth-break {
+  min-width: 0;
   margin-top: 0.8rem;
   padding-top: 0.8rem;
   border-top: 1px solid var(--line);
@@ -2327,11 +2330,18 @@ table.shipswith th.rowlabel { color: var(--text); font-weight: 600; white-space:
 .dephealth-break .break-coord {
   font-size: 0.95rem;
   margin: 0 0 0.35rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .dephealth-break .break-coord strong { color: var(--fg); }
 .dephealth-break .break-arrow { color: var(--dim); padding: 0 0.3rem; }
 .dephealth-break .break-env { margin: 0 0 0.35rem; }
-.dephealth-break .break-evidence { margin: 0 0 0.6rem; }
+.dephealth-break .break-evidence { min-width: 0; margin: 0 0 0.6rem; }
+.dephealth-break .break-fingerprint {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .dephealth-break .break-actions {
   display: flex;
   gap: 0.6rem;
