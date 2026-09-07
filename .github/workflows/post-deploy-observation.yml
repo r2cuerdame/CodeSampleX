@@ -267,6 +267,10 @@ jobs:
               ' <<<"$candidate_run" >/dev/null; then
                 continue
               fi
+              candidate_run_started=$(jq -er '.run_started_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$candidate_run")
+              candidate_run_completed=$(jq -er '.updated_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$candidate_run")
+              candidate_run_started_epoch=$(date -u -d "$candidate_run_started" +%s)
+              candidate_run_completed_epoch=$(date -u -d "$candidate_run_completed" +%s)
 
               artifact_name="production-evidence-${candidate_id}"
               artifacts=$(gh api \
@@ -304,7 +308,9 @@ jobs:
                 continue
               fi
               candidate_started_epoch=$(date -u -d "$candidate_started" +%s)
-              if [[ "$candidate_started_epoch" -le "$original_started_epoch" ]]; then
+              if [[ "$candidate_started_epoch" -le "$original_started_epoch" ||
+                    "$candidate_started_epoch" -lt "$candidate_run_started_epoch" ||
+                    "$candidate_started_epoch" -gt "$candidate_run_completed_epoch" ]]; then
                 continue
               fi
 
@@ -316,7 +322,10 @@ jobs:
                 --arg sha "$candidate_sha" \
                 --arg digest "$candidate_digest" \
                 --arg started "$candidate_started" \
-                --arg migration "$candidate_migration" '
+                --arg migration "$candidate_migration" \
+                --argjson deploy_started "$candidate_run_started_epoch" \
+                --argjson deploy_completed "$candidate_run_completed_epoch" \
+                --argjson server_started "$candidate_started_epoch" '
                 (.samples | type == "array" and length > 0) and
                 (.anomalies | type == "array" and length > 0) and
                 ([.anomalies[] | select(
@@ -329,6 +338,7 @@ jobs:
                   . != "server start timestamp changed during observation" and
                   . != "server restart or exit detected during observation"
                 )] | length == 0) and
+                (all(.samples[]; .restart_count == 0 and .oom_killed == false)) and
                 (.samples[-1] as $sample |
                   $sample.revision == $sha and
                   $sample.image_revision == $sha and
@@ -338,9 +348,21 @@ jobs:
                   $sample.migration_version == $migration and
                   $sample.health == "ok" and
                   $sample.container_status == "running" and
+                  $sample.detail_collected == true and
                   $sample.restart_count == 0 and
+                  $sample.restart_events == 0 and
                   $sample.oom_killed == false and
-                  $sample.oom_events == 0)
+                  $sample.oom_events == 0 and
+                  # force-recreate may emit one die immediately before the
+                  # replacement container starts; no earlier or extra exit is
+                  # attributable to this validated cutover.
+                  ($sample.die_events == 0 or
+                    ($sample.die_events == 1 and
+                     $sample.die_event_first_epoch == $sample.die_event_last_epoch and
+                     $sample.die_event_first_epoch >= $deploy_started and
+                     $sample.die_event_last_epoch <= $deploy_completed and
+                     $sample.die_event_last_epoch <= $server_started and
+                     ($server_started - $sample.die_event_first_epoch) <= 120)))
               ' "$observation" >/dev/null; then
                 continue
               fi

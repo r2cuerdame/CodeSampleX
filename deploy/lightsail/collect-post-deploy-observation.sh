@@ -51,6 +51,8 @@ query_timeout_events=0
 oom_events=0
 restart_events=0
 die_events=0
+die_event_first_epoch=0
+die_event_last_epoch=0
 settled_fail_observations=0
 settled_failure_cluster_observations=0
 settled_unbalanced_failure_cluster_rows=0
@@ -71,8 +73,14 @@ if [ "$include_detail" = 1 ]; then
     --filter "container=$container" --filter event=oom --format '{{.Action}}' | wc -l | tr -d ' ')
   restart_events=$(docker events --since "$observe_since" --until "$events_until" \
     --filter "container=$container" --filter event=restart --format '{{.Action}}' | wc -l | tr -d ' ')
-  die_events=$(docker events --since "$observe_since" --until "$events_until" \
-    --filter "container=$container" --filter event=die --format '{{.Action}}' | wc -l | tr -d ' ')
+  die_event_epochs=$(docker events --since "$observe_since" --until "$events_until" \
+    --filter "container=$container" --filter event=die --format '{{.Time}}' |
+    grep -E '^[0-9]+$' | sort -n || true)
+  die_events=$(printf '%s\n' "$die_event_epochs" | grep -c '^[0-9][0-9]*$' || true)
+  if [ "$die_events" -gt 0 ]; then
+    die_event_first_epoch=$(printf '%s\n' "$die_event_epochs" | head -n 1)
+    die_event_last_epoch=$(printf '%s\n' "$die_event_epochs" | tail -n 1)
+  fi
 
   # This is read only once the observation reaches a terminal state. On a
   # converged pass it proves the settled derived ledger is neither absent nor
@@ -127,6 +135,8 @@ printf 'query_timeout_events=%s\n' "$query_timeout_events"
 printf 'oom_events=%s\n' "$oom_events"
 printf 'restart_events=%s\n' "$restart_events"
 printf 'die_events=%s\n' "$die_events"
+printf 'die_event_first_epoch=%s\n' "$die_event_first_epoch"
+printf 'die_event_last_epoch=%s\n' "$die_event_last_epoch"
 printf 'settled_fail_observations=%s\n' "$settled_fail_observations"
 printf 'settled_failure_cluster_observations=%s\n' "$settled_failure_cluster_observations"
 printf 'settled_unbalanced_failure_cluster_rows=%s\n' "$settled_unbalanced_failure_cluster_rows"

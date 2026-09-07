@@ -103,7 +103,8 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
             'server_started_at','restart_count','oom_killed','container_status','builder_generated_at','builder_fresh',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
             'query_timeout_events','oom_events','restart_events','die_events','settled_fail_observations',
-            'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows'
+            'die_event_first_epoch','die_event_last_epoch','settled_failure_cluster_observations',
+            'settled_unbalanced_failure_cluster_rows'
         )
         if ($IncludeLatency) {
             foreach ($name in @('healthz','landing','stats','wanted')) {
@@ -114,7 +115,8 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
             if (-not $state.Contains($name)) { throw "production observation evidence is missing $name" }
         }
         foreach ($name in @('restart_count','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
-                'settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
+                'die_event_first_epoch','die_event_last_epoch','settled_fail_observations',
+                'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
         }
