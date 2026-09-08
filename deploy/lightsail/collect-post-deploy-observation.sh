@@ -13,6 +13,8 @@ container=codesamplex-server-1
 observe_since=${CSX_OBSERVE_SINCE:?CSX_OBSERVE_SINCE is required}
 include_latency=${CSX_OBSERVE_LATENCY:-0}
 include_detail=${CSX_OBSERVE_DETAIL:-0}
+builder_lifecycle_pattern='compatibility: builder (pass start|pass complete|run failed(:| after [0-9]+ retries:)|run:)'
+builder_error_pattern='compatibility: builder (run failed(:| after [0-9]+ retries:)|run:)'
 
 revision=$(docker inspect "$container" --format '{{range .Config.Env}}{{println .}}{{end}}' |
   sed -n 's/^CSX_VERSION=//p' | head -n 1)
@@ -40,7 +42,7 @@ if [ -n "$server_started_epoch" ] && [ -n "$builder_generated_epoch" ] && \
 fi
 builder_log_before=$(docker logs --since "$observe_since" --timestamps "$container" 2>&1 || true)
 builder_lifecycle_before=$(printf '%s\n' "$builder_log_before" |
-  grep -E 'compatibility: builder (pass start|pass complete|run:)' | tail -n 1 || true)
+  grep -E "$builder_lifecycle_pattern" | tail -n 1 || true)
 
 resource_sample=$(docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' "$container")
 cpu_percent=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 1 | tr -d '%')
@@ -213,16 +215,16 @@ fi
 # labeling requests that raced with pass completion as active work.
 builder_log_after=$(docker logs --since "$observe_since" --timestamps "$container" 2>&1 || true)
 builder_lifecycle_after=$(printf '%s\n' "$builder_log_after" |
-  grep -E 'compatibility: builder (pass start|pass complete|run:)' | tail -n 1 || true)
+  grep -E "$builder_lifecycle_pattern" | tail -n 1 || true)
 builder_error_events=$(printf '%s\n' "$builder_log_after" |
-  grep -c 'compatibility: builder run:' || true)
+  grep -Ec "$builder_error_pattern" || true)
 builder_active=false
 builder_lifecycle_state=race
 if [ -n "$builder_lifecycle_before" ] && [ "$builder_lifecycle_before" = "$builder_lifecycle_after" ]; then
   case "$builder_lifecycle_after" in
     *'compatibility: builder pass start '*) builder_active=true; builder_lifecycle_state=start ;;
     *'compatibility: builder pass complete '*) builder_lifecycle_state=complete ;;
-    *'compatibility: builder run:'*) builder_lifecycle_state=error ;;
+    *'compatibility: builder run failed:'*|*'compatibility: builder run failed after '*|*'compatibility: builder run:'*) builder_lifecycle_state=error ;;
   esac
 elif [ -z "$builder_lifecycle_before" ] && [ -z "$builder_lifecycle_after" ]; then
   builder_lifecycle_state=none
