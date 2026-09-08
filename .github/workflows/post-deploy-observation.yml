@@ -55,7 +55,6 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}")
           jq -e --arg repo "$GITHUB_REPOSITORY" '
-            .name == "Production deploy" and
             .path == ".github/workflows/production-deploy.yml" and
             .event == "workflow_dispatch" and
             .conclusion == "success" and
@@ -265,7 +264,6 @@ jobs:
                 -H 'Accept: application/vnd.github+json' \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}")
               if ! jq -e --arg repo "$GITHUB_REPOSITORY" --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
-                .name == "Production deploy" and
                 .path == ".github/workflows/production-deploy.yml" and
                 .event == "workflow_dispatch" and
                 .status == "completed" and
