@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
@@ -34,7 +35,7 @@ func openBuilderTestPG(t *testing.T) (*serverstore.PG, *pgx.Conn) {
 		t.Fatal(err)
 	}
 	var version int
-	if err := conn.QueryRow(ctx, "SHOW server_version_num").Scan(&version); err != nil {
+	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	if version/10000 != 17 {
@@ -51,12 +52,20 @@ func openBuilderTestPG(t *testing.T) (*serverstore.PG, *pgx.Conn) {
 	if _, err := conn.Exec(ctx, "SET search_path TO "+pgx.Identifier{schema}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
+	// pgx.Config.ConnString returns the original input string; it does not
+	// serialize mutations to RuntimeParams. Set the actual Open DSN instead.
+	scopedDSN := dsn + " search_path=" + schema
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		q.Set("search_path", schema)
+		u.RawQuery = q.Encode()
+		scopedDSN = u.String()
 	}
-	cfg.RuntimeParams["search_path"] = schema
-	pg, err := serverstore.Open(ctx, cfg.ConnString())
+	pg, err := serverstore.Open(ctx, scopedDSN)
 	if err != nil {
 		t.Fatal(err)
 	}

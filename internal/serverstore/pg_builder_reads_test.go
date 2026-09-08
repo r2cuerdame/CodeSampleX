@@ -23,7 +23,7 @@ func openBuilderReadPG(t *testing.T) *PG {
 	pg := openTestPG(t)
 	builderSQL(t, pg, func(c *pgx.Conn) error {
 		var version int
-		if err := c.QueryRow(context.Background(), "SHOW server_version_num").Scan(&version); err != nil {
+		if err := c.QueryRow(context.Background(), "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
 			return err
 		}
 		if version/10000 != 17 {
@@ -427,7 +427,8 @@ func explainBuilderRead(t *testing.T, pg *PG, sql string, args ...any) builderPl
 	t.Helper()
 	var raw []byte
 	builderSQL(t, pg, func(c *pgx.Conn) error {
-		return c.QueryRow(context.Background(), "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql, args...).Scan(&raw)
+		return c.QueryRow(context.Background(), "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql,
+			append([]any{pgx.QueryExecModeExec}, args...)...).Scan(&raw)
 	})
 	var plans []struct{ Plan builderPlan }
 	if err := json.Unmarshal(raw, &plans); err != nil || len(plans) != 1 {
@@ -455,46 +456,48 @@ func explainBuilderRead(t *testing.T, pg *PG, sql string, args ...any) builderPl
 func builderSeedIrrelevantCorpus(t *testing.T, pg *PG, first, last int) {
 	t.Helper()
 	ctx := context.Background()
-	// Raw old-writer inserts deliberately exercise the real Go backfill. The
-	// payload is large enough that a raw receipt/manifest corpus read is visible.
+	// Exercise normal transactional writers. A NULL source hash inserted and
+	// repaired in a second statement can leave corpus-sized dead index history
+	// even though both statements commit atomically. Cold plans must catch it.
+	for i := first; i <= last; i++ {
+		id := fmt.Sprintf("noise-%d", i)
+		purl := fmt.Sprintf("pkg:npm/noise-%d@1.0.0", i)
+		manifest, err := json.Marshal(map[string]any{
+			"packages": []string{purl}, "symbols": []string{fmt.Sprintf("noise.symbol.%d", i)},
+			"goal": strings.Repeat("irrelevant payload ", 128),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: id, ManifestJSON: string(manifest), SizeBytes: 4096}); err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := json.Marshal(map[string]any{
+			"schemaVersion": 2, "stages": map[string]string{"resolve": "PASS", "contract": "PASS"},
+			"resolvedPackages": []string{purl}, "detail": strings.Repeat("irrelevant receipt ", 128),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "noise-r-" + id, SampleID: id,
+			PeerID: "peer", EnvHash: "env", ReceiptJSON: string(receipt), ContractResult: "PASS"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	builderSQL(t, pg, func(c *pgx.Conn) error {
-		if _, err := c.Exec(ctx, `INSERT INTO samples(sample_id,manifest,size_bytes,created_at,updated_at)
-			SELECT 'noise-'||i, jsonb_build_object(
-				'packages',jsonb_build_array('pkg:npm/noise-'||i||'@1.0.0'),
-				'symbols',jsonb_build_array('noise.symbol.'||i),
-				'goal',repeat('irrelevant payload ',128)),4096,'2000-01-01','2000-01-01'
-			FROM generate_series($1::int,$2::int) i`, first, last); err != nil {
-			return err
-		}
-		if _, err := c.Exec(ctx, `INSERT INTO receipts(receipt_id,sample_id,peer_id,env_hash,receipt,contract_result,created_at)
-			SELECT 'noise-r-'||i,'noise-'||i,'peer','env',jsonb_build_object(
-				'schemaVersion',2,'stages',jsonb_build_object('resolve','PASS','contract','PASS'),
-				'resolvedPackages',jsonb_build_array('pkg:npm/noise-'||i||'@1.0.0'),
-				'detail',repeat('irrelevant receipt ',128)),'PASS','2000-01-01'
-			FROM generate_series($1::int,$2::int) i`, first, last); err != nil {
-			return err
-		}
 		if _, err := c.Exec(ctx, `INSERT INTO evidence_agg(purl,symbol,env_hash,env_json,stage,result,first_seen,last_seen)
 			SELECT 'pkg:npm/noise-'||i||'@1.0.0','noise.symbol.'||i,'env','{}','run','PASS','2000-01-01','2000-01-01'
 			FROM generate_series($1::int,$2::int) i`, first, last); err != nil {
 			return err
 		}
-		_, err := c.Exec(ctx, `INSERT INTO compatibility_snapshots(purl,symbol,snapshot)
+		if _, err := c.Exec(ctx, `INSERT INTO compatibility_snapshots(purl,symbol,snapshot)
 			SELECT 'pkg:npm/noise-'||i||'@1.0.0','noise.symbol.'||i,jsonb_build_object('payload',repeat('snapshot ',256))
-			FROM generate_series($1::int,$2::int) i`, first, last)
-		return err
-	})
-	if err := pg.Migrate(ctx); err != nil {
-		t.Fatalf("bulk legacy backfill %d..%d: %v", first, last, err)
-	}
-	builderSQL(t, pg, func(c *pgx.Conn) error {
-		if _, err := c.Exec(ctx, "UPDATE samples SET updated_at='2000-01-01' WHERE sample_id LIKE 'noise-%'"); err != nil {
+			FROM generate_series($1::int,$2::int) i`, first, last); err != nil {
 			return err
 		}
-		// Flush GIN pending lists and update planner statistics at both scales;
-		// compare steady-state indexed IO without changing planner enable flags.
+		// Preserve pending/dead index entries. No vacuum and no read warmup.
 		for _, table := range []string{"samples", "receipts", "evidence_agg", "compatibility_snapshots"} {
-			if _, err := c.Exec(ctx, "VACUUM ANALYZE "+table); err != nil {
+			if _, err := c.Exec(ctx, "ANALYZE "+table); err != nil {
 				return err
 			}
 		}
@@ -513,7 +516,21 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 	builderSQL(t, pg, func(c *pgx.Conn) error {
 		_, err := c.Exec(ctx, `INSERT INTO evidence_agg(purl,symbol,env_hash,env_json,stage,result)
 			VALUES('pkg:npm/selected@1.0.0','selected.call','env','{}','run','PASS')`)
-		return err
+		if err != nil {
+			return err
+		}
+		// An explicit future cutoff keeps ordinary noise writes irrelevant
+		// without rewriting their indexed clocks or vacuuming their history.
+		for _, sql := range []string{
+			"UPDATE samples SET created_at='2101-01-01',updated_at='2101-01-01' WHERE sample_id='selected'",
+			"UPDATE receipts SET created_at='2101-01-01' WHERE sample_id='selected'",
+			"UPDATE evidence_agg SET last_seen='2101-01-01' WHERE purl='pkg:npm/selected@1.0.0'",
+		} {
+			if _, err := c.Exec(ctx, sql); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	type result struct {
 		Samples       []SampleRow
@@ -540,7 +557,7 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 		if out.Keys, err = pg.BuilderSnapshotKeys(ctx, packages); err != nil {
 			t.Fatal(err)
 		}
-		if out.Changes, err = pg.BuilderChangesSince(ctx, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		if out.Changes, err = pg.BuilderChangesSince(ctx, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 			t.Fatal(err)
 		}
 		out.Checkouts = classStat(t, pg.PoolStats(), "background").Acquired - before
@@ -560,16 +577,17 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 		{"sample selection", builderSelectedSamplesSQL, "samples_builder_coords_idx", []any{builderCoords(packages)}},
 		{"complete sample page", builderSamplesPageSQL, "samples_builder_coords_idx", []any{builderCoords(packages), 1000, 0}},
 		{"complete target claims", builderTargetClaimsSQL, "receipts_sample_idx", []any{builderCoords(packages)}},
-		{"complete changed samples", builderChangesSamplesSQL, "samples_updated_at_idx", []any{time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{"complete changed samples", builderChangesSamplesSQL, "samples_updated_at_idx", []any{time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}},
 		{"complete changed contenders", builderChangesContendersSQL, "samples_builder_symbols_idx", []any{[]string{"selected.call"}}},
 		{"complete changed receipts", builderChangesReceiptsSQL, "receipts_sample_idx", []any{[]string{"selected"}}},
-		{"complete changed evidence", builderChangesEvidenceSQL, "evidence_agg_builder_changed_idx", []any{time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{"complete changed evidence", builderChangesEvidenceSQL, "evidence_agg_builder_changed_idx", []any{time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}},
 		{"receipt selection", "SELECT sample_id FROM receipts WHERE builder_coords && $1::text[]", "receipts_builder_coords_idx", []any{builderCoords(packages)}},
 		{"symbol contenders", "SELECT sample_id FROM samples WHERE builder_symbols && $1::text[]", "samples_builder_symbols_idx", []any{[]string{"selected.call"}}},
 		{"evidence targets", builderTargetEvidenceSQL, "evidence_agg_builder_coord_idx", []any{builderCoords(packages)}},
 		{"retirement keys", builderSnapshotKeysSQL, "snapshots_builder_coord_idx", []any{builderCoords(packages)}},
-		{"sample readiness", "SELECT 1 FROM samples WHERE builder_source_hash IS DISTINCT FROM md5(manifest::text)", "samples_builder_stale_idx", nil},
-		{"receipt readiness", "SELECT 1 FROM receipts WHERE builder_source_hash IS DISTINCT FROM md5(receipt::text)", "receipts_builder_stale_idx", nil},
+		{"complete readiness", builderProjectionReadinessSQL, "samples_builder_stale_idx", nil},
+		{"sample readiness", builderSampleStaleSQL, "samples_builder_stale_idx", nil},
+		{"receipt readiness", builderReceiptStaleSQL, "receipts_builder_stale_idx", nil},
 	}
 	var baseline result
 	plans := map[string]builderPlanEvidence{}
@@ -579,7 +597,31 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 			first = 1001
 		}
 		builderSeedIrrelevantCorpus(t, pg, first, scale)
+		// Before any readiness probe/API warms dead index entries, measure the
+		// actual first execution after normal source+projection writer growth.
+		for _, q := range queries {
+			plan := explainBuilderRead(t, pg, q.sql, q.args...)
+			if !strings.Contains(strings.Join(plan.Indexes, ","), q.index) {
+				t.Fatalf("cold %s did not use %s: %+v", q.name, q.index, plan)
+			}
+			key := "cold/" + q.name
+			if scale == 1000 {
+				plans[key] = plan
+			} else if before := plans[key]; plan.Rows > before.Rows+4 || plan.Buffers > before.Buffers+24 {
+				t.Fatalf("cold first-probe %s IO scaled with ordinary unrelated inserts: before=%+v after=%+v", q.name, before, plan)
+			}
+			t.Logf("cold irrelevant=%d query=%s actual_plan_rows=%.0f buffers=%d indexes=%v", scale, q.name, plan.Rows, plan.Buffers, plan.Indexes)
+		}
+		// Cross PostgreSQL's five-execution custom/generic decision boundary on
+		// reused pool connections before measuring the production execution path.
 		got := read()
+		for repeat := 0; repeat < 6; repeat++ {
+			next := read()
+			if !reflect.DeepEqual(next, got) {
+				t.Fatalf("reused production query changed output/metrics at repeat %d: first=%+v next=%+v", repeat, got, next)
+			}
+			got = next
+		}
 		if len(got.Samples) != 1 || len(got.Receipts["selected"]) != 1 || len(got.Targets) != 2 || got.Checkouts != 5 {
 			t.Fatalf("unexpected bounded read result at %d: %+v", scale, got)
 		}
@@ -605,5 +647,49 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 			}
 			t.Logf("irrelevant=%d query=%s actual_plan_rows=%.0f buffers=%d indexes=%v", scale, q.name, plan.Rows, plan.Buffers, plan.Indexes)
 		}
+	}
+}
+
+func TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution(t *testing.T) {
+	cases := []struct {
+		name, kind, raw string
+	}{
+		{"sample-exact-and-alias", "sample", `{"packages":["pkg:npm/selected@1.0.0"],"Packages":["pkg:npm/other@1.0.0"]}`},
+		{"sample-uppercase-only", "sample", `{"Packages":["pkg:npm/selected@1.0.0"],"Symbols":["call"]}`},
+		{"receipt-exact-and-alias", "receipt", `{"schemaVersion":2,"SchemaVersion":1,"stages":{"resolve":"PASS"},"resolvedPackages":["pkg:npm/selected@1.0.0"]}`},
+		{"receipt-uppercase-only", "receipt", `{"SchemaVersion":2,"Stages":{"resolve":"PASS"},"resolvedPackages":["pkg:npm/selected@1.0.0"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pg, ctx := openBuilderReadPG(t), context.Background()
+			builderFixtureSample(t, pg, "valid", []string{"pkg:npm/selected@1.0.0"}, []string{"call"}, "")
+			query := "SELECT builder_source_hash FROM samples WHERE sample_id='ambiguous'"
+			if tc.kind == "sample" {
+				if err := pg.SaveSample(ctx, SampleRow{SampleID: "ambiguous", ManifestJSON: tc.raw}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := pg.SaveReceipt(ctx, ReceiptRow{ReceiptID: "ambiguous", SampleID: "valid", ReceiptJSON: tc.raw}); err != nil {
+					t.Fatal(err)
+				}
+				query = "SELECT builder_source_hash FROM receipts WHERE receipt_id='ambiguous'"
+			}
+			// Go's case-insensitive decoder and JSONB's key ordering must not
+			// accidentally bless different interpretations of this same source.
+			builderSQL(t, pg, func(c *pgx.Conn) error {
+				var hash *string
+				if err := c.QueryRow(ctx, query).Scan(&hash); err != nil {
+					return err
+				}
+				if hash != nil {
+					t.Fatalf("ambiguous key aliases received a trusted source hash: %s", *hash)
+				}
+				return nil
+			})
+			assertBuilderReadsClosed(t, pg)
+			if err := pg.Migrate(ctx); err == nil || !strings.Contains(err.Error(), "ambiguous builder") {
+				t.Fatalf("key alias ambiguity silently backfilled: %v", err)
+			}
+		})
 	}
 }

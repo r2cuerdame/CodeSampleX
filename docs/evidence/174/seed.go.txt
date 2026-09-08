@@ -1,0 +1,77 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+func main() {
+	ctx := context.Background()
+	pg, err := serverstore.Open(ctx, os.Getenv("CSX_DSN"))
+	must(err)
+	defer pg.Close()
+	must(pg.Migrate(ctx))
+	env := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "amd64", Runtime: "node", RuntimeVersion: "22.18.1", ModuleSystem: "esm"}
+	purl := "pkg:npm/axios@1.12.0"
+	manifest := domain.SampleManifest{SchemaVersion: 1, Case: domain.Case{SchemaVersion: 1, Kind: "HOW", Goal: "post JSON with axios", Packages: []string{purl}, Contract: []string{"posts JSON"}}, Packages: []string{purl}, Symbols: []string{"axios.post"}, Subject: purl, Environment: env, License: "MIT-0", ContractCommand: []string{"node", "contract.mjs"}, VerifierAdapter: "node-typescript@1"}
+	var artifact bytes.Buffer
+	gz := gzip.NewWriter(&artifact)
+	tw := tar.NewWriter(gz)
+	for _, file := range []struct{ name, body string }{{"csx.json", string(domain.MustCanonicalJSON(manifest))}, {"contract.mjs", "// DevHotel acceptance fixture\nexport async function postJSON(client, url, data) { return client.post(url, data); }\n"}} {
+		must(tw.WriteHeader(&tar.Header{Name: file.name, Mode: 0644, Size: int64(len(file.body))}))
+		_, err = tw.Write([]byte(file.body))
+		must(err)
+	}
+	must(tw.Close())
+	must(gz.Close())
+	blobRoot := os.Getenv("CSX_BLOB_DIR")
+	if blobRoot == "" {
+		blobRoot = "/workspace/blobs"
+	}
+	blobs, err := blob.NewFS(blobRoot)
+	must(err)
+	sampleID, err := blobs.Put(ctx, bytes.NewReader(artifact.Bytes()))
+	must(err)
+	must(pg.SaveSample(ctx, serverstore.SampleRow{SampleID: sampleID, ManifestJSON: string(domain.MustCanonicalJSON(manifest)), Status: "CROSS_PASS", License: "MIT-0", SizeBytes: int64(artifact.Len())}))
+	for i, version := range []string{"1.12.0", "2.0.0"} {
+		resolved := "pkg:npm/axios@" + version
+		for peer := 0; peer < 2; peer++ {
+			receipt := domain.VerificationReceipt{SchemaVersion: 2, SampleID: sampleID, CaseID: "case:acceptance", EnvironmentHash: env.Normalize().Hash(), Environment: env, Stages: map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "PASS"}, ResolvedPackages: []string{resolved}, VerifierAdapter: "node-typescript@1", SandboxCapability: domain.CapContainerRun, LogsDigest: "sha256:" + strings.Repeat("ab", 32), CreatedAt: time.Now().Add(time.Duration(i+peer) * time.Second).UTC().Format(time.RFC3339), PeerID: fmt.Sprintf("ed25519:acceptance-%d", peer)}
+			must(pg.SaveReceipt(ctx, serverstore.ReceiptRow{ReceiptID: receipt.ReceiptID(), SampleID: sampleID, PeerID: receipt.PeerID, EnvHash: receipt.EnvironmentHash, ReceiptJSON: string(domain.MustCanonicalJSON(receipt)), ContractResult: "PASS"}))
+		}
+		accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{{SchemaVersion: 1, Epoch: time.Now().UTC().Format("2006-01-02"), AnonID: "acceptance-peer", ProjectBucket: fmt.Sprintf("acceptance-%d", i), Package: resolved, Symbol: "axios.post", SymbolConfidence: domain.SymbolProbable, Environment: env, Stage: domain.StageProjectCompile, Result: domain.ResultPass, ObservationCount: 3}})
+		must(err)
+		if accepted != 1 || len(rejected) != 0 {
+			panic(fmt.Sprintf("seed rejected: %d %v", accepted, rejected))
+		}
+	}
+	builder := &compatibility.Builder{Store: pg}
+	must(builder.RunOnce(ctx))
+	identity := map[string]any{"sampleID": sampleID, "package": "/npm/axios", "symbol": "/npm/axios/1.12.0/axios.post", "sample": "/samples/" + sampleID, "fixture": "synthetic exact source fixture; no production data"}
+	payload, err := json.MarshalIndent(identity, "", "  ")
+	must(err)
+	outputRoot := os.Getenv("CSX_ACCEPTANCE_ROOT")
+	if outputRoot == "" {
+		outputRoot = "/workspace/acceptance"
+	}
+	must(os.MkdirAll(outputRoot, 0755))
+	must(os.WriteFile(filepath.Join(outputRoot, "fixture.json"), payload, 0644))
+	fmt.Println(string(payload))
+}

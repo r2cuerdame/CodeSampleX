@@ -8,10 +8,32 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 const builderProjectionBatch = 256
+
+type builderSQLExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// Set projection and source in the INSERT itself. INSERT-then-UPDATE would
+// leave a dead stale-index entry for every unrelated new receipt, making the
+// first readiness probe pay for corpus growth until vacuum cleaned that index.
+func insertReceiptWithBuilderProjection(ctx context.Context, exec builderSQLExecutor, r ReceiptRow) (pgconn.CommandTag, error) {
+	projection, err := deriveReceiptBuilderProjection(r.ReceiptJSON)
+	if err != nil {
+		projection = receiptBuilderProjection{packages: []string{}, coords: []string{}}
+	}
+	return exec.Exec(ctx, `INSERT INTO receipts(
+		receipt_id, sample_id, peer_id, env_hash, receipt, contract_result,
+		builder_packages, builder_coords, builder_claim, builder_source_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10 THEN md5($5::jsonb::text) END)
+		ON CONFLICT (receipt_id) DO NOTHING`, r.ReceiptID, r.SampleID, r.PeerID,
+		r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult,
+		projection.packages, projection.coords, projection.claim, err == nil)
+}
 
 type sampleBuilderProjection struct {
 	coords, purls, symbols []string
@@ -23,7 +45,9 @@ type receiptBuilderProjection struct {
 }
 
 func builderCoord(p domain.PURL) string {
-	return (domain.PURL{Ecosystem: p.Ecosystem, Name: strings.ToLower(p.Name)}).String()
+	// Internal keys are decoded identities, not reparsable PURLs. Escaping a
+	// leading @ would collide with a literal percent-40 package name.
+	return "pkg:" + strings.ToLower(p.Ecosystem) + "/" + strings.ToLower(p.Name) + "@"
 }
 
 func sortedBuilderStrings(values map[string]bool) []string {
@@ -35,9 +59,32 @@ func sortedBuilderStrings(values map[string]bool) []string {
 	return out
 }
 
+// PostgreSQL JSONB sorts object keys before readers decode them. Go accepts
+// case-insensitive aliases, so parsing caller JSON with both packages/Packages
+// can produce a different winner than decoding the stored document. Refuse
+// aliases of projection inputs instead of trusting a hash of different meaning.
+// Other metadata is read from the stored document and does not select rows.
+func builderProjectionDocument(raw string, canonicalKeys ...string) (map[string]json.RawMessage, error) {
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return nil, err
+	}
+	for key := range document {
+		for _, canonical := range canonicalKeys {
+			if key != canonical && strings.EqualFold(key, canonical) {
+				return nil, fmt.Errorf("ambiguous field alias %q for %q", key, canonical)
+			}
+		}
+	}
+	return document, nil
+}
+
 // Derive from the same typed manifests and whole-list receipt validation as
 // aggregation. In particular a CLI receipt may resolve an undeclared package.
 func deriveSampleBuilderProjection(raw string) (sampleBuilderProjection, error) {
+	if _, err := builderProjectionDocument(raw, "packages", "symbols", "subject"); err != nil {
+		return sampleBuilderProjection{}, err
+	}
 	var manifest domain.SampleManifest
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
 		return sampleBuilderProjection{}, err
@@ -45,7 +92,9 @@ func deriveSampleBuilderProjection(raw string) (sampleBuilderProjection, error) 
 	coords, purls, symbols := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, raw := range append(append([]string(nil), manifest.Packages...), manifest.Subject) {
 		if p, err := domain.ParsePURL(raw); err == nil {
-			coords[builderCoord(p)], purls[p.String()] = true, true
+			// PURL.String does not re-escape literal percent bytes. Retain the
+			// original validated spelling for later keyFor/ParsePURL consumers.
+			coords[builderCoord(p)], purls[raw] = true, true
 		}
 	}
 	for _, symbol := range manifest.Symbols {
@@ -59,6 +108,10 @@ func deriveSampleBuilderProjection(raw string) (sampleBuilderProjection, error) 
 }
 
 func deriveReceiptBuilderProjection(raw string) (receiptBuilderProjection, error) {
+	document, err := builderProjectionDocument(raw, "schemaVersion", "stages", "resolvedPackages")
+	if err != nil {
+		return receiptBuilderProjection{}, err
+	}
 	var receipt domain.VerificationReceipt
 	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
 		return receiptBuilderProjection{}, err
@@ -72,8 +125,14 @@ func deriveReceiptBuilderProjection(raw string) (receiptBuilderProjection, error
 		p, _ := domain.ParsePURL(raw) // validated as one complete list above
 		coords[builderCoord(p)] = true
 	}
-	return receiptBuilderProjection{packages: packages, coords: sortedBuilderStrings(coords),
-		claim: receiptEstablishesClaim(raw)}, nil
+	// Match the exact SQL keys used by ListSnapshotTargets. A differently cased header
+	// must never establish a target the exhaustive PostgreSQL path omits.
+	var version int
+	var stages map[string]string
+	versionErr := json.Unmarshal(document["schemaVersion"], &version)
+	stagesErr := json.Unmarshal(document["stages"], &stages)
+	claim := versionErr == nil && stagesErr == nil && version == 2 && stages["resolve"] == "PASS"
+	return receiptBuilderProjection{packages: packages, coords: sortedBuilderStrings(coords), claim: claim}, nil
 }
 
 // Preserve SaveSample's ability to retain legacy rows. An ambiguous row has
@@ -110,19 +169,29 @@ func maintainReceiptBuilderProjection(ctx context.Context, tx pgx.Tx, id, raw st
 	return err
 }
 
+// Preserve one ordered indexed probe per source table. A bare EXISTS over
+// an inequality against md5(source) is estimated to match almost every row;
+// its assumed early exit can otherwise choose a cold whole-table scan.
+const builderSampleStaleSQL = `SELECT sample_id FROM samples
+	WHERE builder_source_hash IS DISTINCT FROM md5(manifest::text)
+	ORDER BY sample_id LIMIT 1`
+const builderReceiptStaleSQL = `SELECT receipt_id FROM receipts
+	WHERE builder_source_hash IS DISTINCT FROM md5(receipt::text)
+	ORDER BY receipt_id LIMIT 1`
+const builderProjectionReadinessSQL = `SELECT EXISTS((` + builderSampleStaleSQL +
+	`) UNION ALL (` + builderReceiptStaleSQL + `)) OR COALESCE((
+		SELECT stats->>'builderRepairRequired' = 'true' FROM stats_daily ORDER BY day DESC LIMIT 1
+	), false)`
+
 // Each caller invokes this inside the same repeatable-read transaction as its
 // scoped reads. Old binaries and direct SQL cannot silently create omissions.
 func checkBuilderProjections(ctx context.Context, tx pgx.Tx) error {
 	var stale bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(
-		SELECT 1 FROM samples WHERE builder_source_hash IS DISTINCT FROM md5(manifest::text)
-		UNION ALL
-		SELECT 1 FROM receipts WHERE builder_source_hash IS DISTINCT FROM md5(receipt::text)
-	)`).Scan(&stale); err != nil {
+	if err := tx.QueryRow(ctx, builderProjectionReadinessSQL).Scan(&stale); err != nil {
 		return err
 	}
 	if stale {
-		return fmt.Errorf("serverstore: builder projection is stale or ambiguous; run migrations to repair before incremental aggregation")
+		return fmt.Errorf("serverstore: builder projection is stale, ambiguous, or requires full repair; repair sources with migrations and complete a full builder pass before incremental aggregation")
 	}
 	return nil
 }
@@ -131,6 +200,10 @@ func checkBuilderProjections(ctx context.Context, tx pgx.Tx) error {
 // successful pages are safe to resume. There is no whole-corpus fallback in
 // incremental execution, and source/projection changes commit together.
 func backfillBuilderProjections(ctx context.Context, conn *pgx.Conn) error {
+	return backfillBuilderProjectionsWithRepair(ctx, conn, nil)
+}
+
+func backfillBuilderProjectionsWithRepair(ctx context.Context, conn *pgx.Conn, repaired func()) error {
 	for _, sample := range []bool{true, false} {
 		for {
 			if err := ctx.Err(); err != nil {
@@ -139,6 +212,9 @@ func backfillBuilderProjections(ctx context.Context, conn *pgx.Conn) error {
 			count, err := backfillBuilderProjectionPage(ctx, conn, sample)
 			if err != nil {
 				return err
+			}
+			if count > 0 && repaired != nil {
+				repaired() // only after the complete source/projection page commits
 			}
 			if count < builderProjectionBatch {
 				break
@@ -212,8 +288,62 @@ func backfillBuilderProjectionPage(ctx context.Context, conn *pgx.Conn, sample b
 			}
 		}
 	}
+	if len(sources) > 0 {
+		// Backfill cannot reconstruct every overwritten legacy attribution.
+		// Commit a durable full-repair barrier with each repaired page so a
+		// standalone migrate followed by serve cannot resume an old watermark.
+		if err := markBuilderRepairRequired(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
 	return len(sources), nil
+}
+
+// Called only after INSERT ON CONFLICT DO NOTHING. Lock the conflicting row
+// before inspecting it: a read-before-upsert could miss a concurrent legacy
+// insert and overwrite its unrecorded attribution. New rows still commit source
+// and projection in one INSERT, without creating a dead stale-index entry.
+func updateSampleWithBuilderProjection(ctx context.Context, tx pgx.Tx, s SampleRow, projection sampleBuilderProjection, trusted bool) error {
+	var sourceTrusted bool
+	if err := tx.QueryRow(ctx, `SELECT builder_source_hash IS NOT DISTINCT FROM md5(manifest::text)
+		FROM samples WHERE sample_id=$1 FOR UPDATE`, s.SampleID).Scan(&sourceTrusted); err != nil {
+		return err
+	}
+	if !sourceTrusted {
+		// Earlier legacy overwrites may have erased attribution already
+		// published by a full pass. Never replace unknown history online.
+		return fmt.Errorf("serverstore: refusing to overwrite untrusted builder sample %s; reconcile sources offline, run migrations, and restart for a full builder repair", s.SampleID)
+	}
+	// Preserve earned status and all other non-source metadata on duplicate
+	// publication. SetSampleStatus, not SaveSample, moves receipt-derived status.
+	_, err := tx.Exec(ctx, `UPDATE samples SET
+		manifest=$2, hot_score=$3,
+		builder_previous_purls=CASE WHEN manifest IS DISTINCT FROM $2::jsonb
+			OR builder_source_hash IS DISTINCT FROM CASE WHEN $8 THEN md5($2::jsonb::text) END
+			THEN ARRAY(SELECT DISTINCT x FROM unnest(builder_previous_purls || builder_purls) x ORDER BY x)
+			ELSE builder_previous_purls END,
+		builder_previous_symbols=CASE WHEN manifest IS DISTINCT FROM $2::jsonb
+			OR builder_source_hash IS DISTINCT FROM CASE WHEN $8 THEN md5($2::jsonb::text) END
+			THEN ARRAY(SELECT DISTINCT x FROM unnest(builder_previous_symbols || builder_symbols) x ORDER BY x)
+			ELSE builder_previous_symbols END,
+		builder_coords=$4, builder_purls=$5, builder_symbols=$6, builder_subject=$7,
+		builder_source_hash=CASE WHEN $8 THEN md5($2::jsonb::text) END,
+		updated_at=CASE WHEN manifest IS DISTINCT FROM $2::jsonb
+			OR hot_score IS DISTINCT FROM $3
+			OR builder_source_hash IS DISTINCT FROM CASE WHEN $8 THEN md5($2::jsonb::text) END
+			THEN now() ELSE updated_at END
+		WHERE sample_id=$1`, s.SampleID, []byte(s.ManifestJSON), s.HotScore,
+		projection.coords, projection.purls, projection.symbols, projection.subject,
+		trusted)
+	return err
+}
+
+func markBuilderRepairRequired(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `UPDATE stats_daily
+		SET stats=jsonb_set(stats,'{builderRepairRequired}','true'::jsonb,true)
+		WHERE day=(SELECT max(day) FROM stats_daily)`)
+	return err
 }

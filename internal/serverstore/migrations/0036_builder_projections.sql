@@ -12,17 +12,20 @@ ALTER TABLE receipts ADD COLUMN IF NOT EXISTS builder_packages text[] NOT NULL D
 ALTER TABLE receipts ADD COLUMN IF NOT EXISTS builder_coords text[] NOT NULL DEFAULT '{}';
 ALTER TABLE receipts ADD COLUMN IF NOT EXISTS builder_claim boolean NOT NULL DEFAULT false;
 ALTER TABLE receipts ADD COLUMN IF NOT EXISTS builder_source_hash text;
-CREATE INDEX IF NOT EXISTS samples_builder_coords_idx ON samples USING gin(builder_coords);
-CREATE INDEX IF NOT EXISTS samples_builder_symbols_idx ON samples USING gin(builder_symbols);
-CREATE INDEX IF NOT EXISTS receipts_builder_coords_idx ON receipts USING gin(builder_coords);
-CREATE INDEX IF NOT EXISTS receipts_builder_packages_idx ON receipts USING gin(builder_packages);
+-- Every GIN read also scans its pending list. Insert unrelated source keys
+-- directly into the index so bounded reads do not depend on a later vacuum.
+CREATE INDEX IF NOT EXISTS samples_builder_coords_idx ON samples USING gin(builder_coords) WITH (fastupdate=off);
+CREATE INDEX IF NOT EXISTS samples_builder_symbols_idx ON samples USING gin(builder_symbols) WITH (fastupdate=off);
+CREATE INDEX IF NOT EXISTS receipts_builder_coords_idx ON receipts USING gin(builder_coords) WITH (fastupdate=off);
 CREATE INDEX IF NOT EXISTS samples_builder_stale_idx ON samples(sample_id)
     WHERE builder_source_hash IS DISTINCT FROM md5(manifest::text);
 CREATE INDEX IF NOT EXISTS receipts_builder_stale_idx ON receipts(receipt_id)
     WHERE builder_source_hash IS DISTINCT FROM md5(receipt::text);
 
--- Package identity for indexed target/retirement reads. Match ParsePURL's
--- last-@ split and percent-decoded name, including raw scoped npm names.
+-- Internal package identity for indexed target/retirement reads. Decode once,
+-- keep the raw name (escaping a leading @ would collide with literal %40),
+-- and use PG17's builtin Unicode simple mapping to match Go strings.ToLower.
+-- The default libc locale on Alpine lowercases only ASCII.
 -- Invalid spellings yield NULL and remain subject to the full repair parser.
 -- SQL-language single statement: compatible with the small migration runner.
 CREATE FUNCTION builder_purl_coord(raw TEXT) RETURNS TEXT
@@ -40,9 +43,8 @@ LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE AS $$
     WHERE m IS NOT NULL AND right(m[2],1) <> '/'
       AND m[2] !~ '%([^0-9A-Fa-f]|[0-9A-Fa-f]([^0-9A-Fa-f]|$)|$)'
   )
-  SELECT 'pkg:' || lower(m[1]) || '/' ||
-    CASE WHEN left(name,1)='@' THEN '%40' || lower(substring(name from 2))
-         ELSE lower(name) END || '@' FROM decoded
+  SELECT 'pkg:' || lower(m[1] COLLATE pg_catalog."pg_c_utf8") || '/' ||
+    lower(name COLLATE pg_catalog."pg_c_utf8") || '@' FROM decoded
 $$;
 
 CREATE INDEX evidence_agg_builder_coord_idx

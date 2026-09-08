@@ -33,6 +33,12 @@ type Builder struct {
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
 	passes  int
+	// A deterministic scoped-read failure must not prevent the scheduled
+	// exhaustive repair merely because successful passes stop accumulating.
+	fullRepairAt time.Time
+	// A committed projection backfill invalidates a running builder's scope.
+	// Advance this only after its required exhaustive repair succeeds.
+	completedRepairGeneration uint64
 }
 
 // Incremental rebuild bounds.
@@ -182,9 +188,10 @@ func (b *Builder) resumeFromLastCompletedPass(ctx context.Context, now time.Time
 		return
 	}
 	var doc struct {
-		GeneratedAt string `json:"generatedAt"`
+		GeneratedAt           string `json:"generatedAt"`
+		BuilderRepairRequired bool   `json:"builderRepairRequired"`
 	}
-	if json.Unmarshal([]byte(js), &doc) != nil || doc.GeneratedAt == "" {
+	if json.Unmarshal([]byte(js), &doc) != nil || doc.GeneratedAt == "" || doc.BuilderRepairRequired {
 		return
 	}
 	stamp, perr := time.Parse(time.RFC3339, doc.GeneratedAt)
@@ -219,6 +226,10 @@ type sampleData struct {
 // PostgreSQL supplies an indexed incremental source path. Alternate stores
 // retain the exhaustive implementation, which also remains the full/hourly
 // repair path and the independent parity oracle in tests.
+type builderRepairGenerationStore interface {
+	BuilderRepairGeneration() uint64
+}
+
 type incrementalSourceStore interface {
 	BuilderChangesSince(context.Context, time.Time) (serverstore.Changes, error)
 	ListBuilderSnapshotTargets(context.Context, []serverstore.BuilderPackage) ([]serverstore.SnapshotTarget, serverstore.BuilderReadMetrics, error)
@@ -270,7 +281,15 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	b.resumeFromLastCompletedPass(ctx, now)
 	phase.end(nil, knownCalls(resumeReads))
 	phases.close(phaseResume)
-	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
+	if b.fullRepairAt.IsZero() {
+		b.fullRepairAt = now.Add(time.Hour)
+	}
+	var repairGeneration uint64
+	if store, ok := b.Store.(builderRepairGenerationStore); ok {
+		repairGeneration = store.BuilderRepairGeneration()
+	}
+	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 || !now.Before(b.fullRepairAt) ||
+		repairGeneration != b.completedRepairGeneration
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 
@@ -683,6 +702,12 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 	b.passes++
 	b.lastRun = passStart
+	if full {
+		// Schedule from completion: a slow repair must not make the next
+		// ordinary tick immediately repeat the whole corpus again.
+		b.fullRepairAt = b.now().Add(time.Hour)
+		b.completedRepairGeneration = repairGeneration
+	}
 	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d total=%s",
 		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
 		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,

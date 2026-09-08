@@ -149,6 +149,10 @@ jobs:
             echo "::error::the incremental builder failure/cancellation guard (#174) did not run"
             exit 1
           fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus'; then
+            echo "::error::the cold PostgreSQL whole-query read bound guard (#174) did not run"
+            exit 1
+          fi
 
           {
             echo "### PostgreSQL integration: $(printf '%s\n' "$ran" | wc -l) tests ran, 0 skipped"

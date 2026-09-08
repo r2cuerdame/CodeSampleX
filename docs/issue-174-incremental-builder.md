@@ -21,6 +21,18 @@ a fingerprint of PostgreSQL's JSON serialization. Every current sample/receipt
 writer updates source and projection in the same transaction. A receipt-ID
 conflict never replaces the saved receipt's projection with the retry's input.
 Sample replacements retain previous package/symbol invalidations.
+`SaveSample` refuses to replace an existing row whose projection is untrusted or
+stale, returning its sample ID and preserving the source. Legacy writers may
+have overwritten intermediate identities that no projection can recover.
+Reconcile such rows with all builders stopped, run migration/backfill, then
+restart for the required full repair. Scoped reads refuse a pending repair
+barrier until that pass reconciles all materialized outputs. Ordinary trusted
+replacements remain scoped.
+Validated sample PURLs retain their original spelling: reserializing a literal
+percent name and parsing it again could change its identity. Internal coordinate
+keys use the decoded raw name, so `@scope` and the literal name `%40scope` differ.
+New rows insert source and projection in one statement, so ordinary corpus
+growth does not leave dead entries in the sparse readiness indexes.
 
 The projection stores each receipt's complete validated package set. Target
 selection reads compact claims sharing symbols with the selected packages,
@@ -39,7 +51,11 @@ retired majors are included when rebuilding/retiring affected shards.
 There is one additive migration: `0036_builder_projections.sql` (37 recorded
 migrations including the existing two differently named `0034` migrations).
 It adds source projections and their lookup/staleness indexes, target-coordinate
-expression indexes, and timestamp indexes for changed-source selection.
+expression indexes, and timestamp indexes for changed-source selection. GIN
+fast updates are disabled on these three indexes: otherwise every selective
+read also scans unrelated keys in the pending list until vacuum. Scoped queries
+use unnamed extended execution so each pass is planned with its own package
+arrays/time window instead of eventually reusing a broad generic plan.
 
 After SQL migrations, Go backfills stale projections in transactions of at most
 256 source rows. Partial staleness indexes find only the unfinished subset on
@@ -47,6 +63,16 @@ restart. Successfully committed pages are reusable after cancellation; a failed
 page rolls back. Initial backfill deliberately invalidates source samples, so
 the first pass after this migration may have a large legitimate change set.
 Index creation and this one-time backfill require a measured migration window.
+Migration/backfill is an offline startup operation: stop all builder processes,
+run migration, and restart them so their first pass is exhaustive. Online
+backfill alongside builders in other processes is unsupported. Each committed
+backfill page marks the latest stats document `builderRepairRequired: true`,
+preserving its completion timestamp and other values, and changes the local
+store's repair generation. Existing builders and restarted processes must finish
+a full pass before resuming incremental work. Only successful full completion
+clears that marker. A no-op migration preserves ordinary restart/resume behavior.
+This reconciles intermediate outputs when legacy writers replaced a source
+more than once without retaining its old package history.
 
 Each scoped read checks projection readiness in the same repeatable-read
 transaction as its selection. Direct SQL or a rolled-back old binary can write
@@ -54,17 +80,29 @@ unprojected rows, but cannot silently hide them from that reader. Such rows bloc
 incremental aggregation until migration/backfill repairs them. Typed JSON that
 cannot be safely projected blocks backfill with a row ID and error. A modified
 previously projected immutable receipt also blocks repair: its removed evidence
-must be reconciled explicitly. A v2 receipt whose package list fails the existing
+must be reconciled explicitly. Projection-relevant case-fold JSON key aliases
+also fail closed; caller JSON and PostgreSQL JSONB key order must not select
+different field values. Receipt claim eligibility keeps the full query's exact
+`schemaVersion`/`stages.resolve` key semantics. A v2 receipt whose package list fails the existing
 whole-list validator deterministically establishes no packages, exactly as before.
+Readiness uses ordered, limited probes of both sparse indexes; its production
+query plan is tested before warming the index or running a builder read.
 
 The exhaustive full/hourly path retains its existing parser semantics; it is
 also the reference implementation used for output parity. No source read error
 is converted into an empty result or an implicit exhaustive incremental fallback.
 Failed/cancelled passes do not advance `lastRun`, pass count, or the persisted
 completion clock. Earlier committed output chunks can be retried idempotently.
+An independent wall-clock repair deadline ensures repeated scoped failures do
+not prevent the hourly full pass. Only a successful full pass moves that
+deadline, measured from completion so a long repair does not immediately repeat.
 
 The SQL target coordinate function follows the last-`@` split, escaped/raw
-scoped names and percent decoding used by `ParsePURL`. Non-UTF8 decoded text
+scoped names and percent decoding used by `ParsePURL`. Its lowercasing explicitly
+uses PostgreSQL 17's builtin [`pg_c_utf8` Unicode simple mapping](https://www.postgresql.org/docs/17/collation.html); the default Alpine
+libc locale does not match Go for non-ASCII names. The real database test compares
+all Go case-changing Unicode runes and escaped coordinate edge cases.
+Non-UTF8 decoded text
 cannot be indexed as PostgreSQL text and fails closed during migration/write;
 operators must reconcile such invalid legacy coordinates, not skip their rows.
 
@@ -76,14 +114,18 @@ Working-tree runs are labeled separately from exact-commit acceptance.
 
 Required PostgreSQL 17 checks include:
 
-- Full/incremental snapshot, shard, cluster, package and job content equality.
-  Only untouched-document generation clocks are normalized for comparison.
+- Full/incremental snapshot, shard, cluster, package and job content equality,
+  including nonempty receipt/observation regressions, JDK boundaries and matrix
+  jobs. Untouched-document generation clocks are normalized; database row IDs
+  and insertion timestamps are omitted from semantic output comparison.
 - Undeclared resolved packages, multiple versions/majors, global competing
   symbols, subjects, malformed lists, quarantine and source replacement.
 - Stale legacy/backfill behavior, transactional writer rollback, cancellation,
   completion-clock preservation and successful retry.
 - 1,000 to 10,000 irrelevant samples/receipts/targets with fixed selected rows,
   payload bytes and checkouts, plus `EXPLAIN (ANALYZE, BUFFERS)` of actual queries.
+  This includes cold plans after ordinary writers, without a preceding vacuum,
+  and repeated API calls beyond the prepared-plan cache threshold.
 - Whole-builder phase measurements at 10x irrelevant sample growth. Existing
   `sample_page_read`, `receipt_page_read`, and `snapshot_retire` units stay intact;
   `target_projection_read` records compact projection rows and constructed JSON

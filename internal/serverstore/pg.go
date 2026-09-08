@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,7 +26,8 @@ import (
 // with max_connections 40 — which is exactly why what a caller is allowed to
 // do with a connection is bounded per class; see PoolPolicy.
 type PG struct {
-	pool *connPool
+	pool                    *connPool
+	builderRepairGeneration atomic.Uint64
 }
 
 var _ Store = (*PG)(nil)
@@ -77,9 +79,14 @@ func (p *PG) PoolStats() PoolStats { return p.pool.stat() }
 // than protect one.
 func (p *PG) Migrate(ctx context.Context) error {
 	return p.withConn(WithQueryClass(ctx, ClassBackground), func(c *pgx.Conn) error {
-		return Migrate(ctx, c)
+		return migrateWithBuilderRepair(ctx, c, func() { p.builderRepairGeneration.Add(1) })
 	})
 }
+
+// BuilderRepairGeneration changes after each committed projection repair page.
+// Builders sharing this PG instance must complete a full pass before trusting
+// their old incremental watermark again. The durable stats flag covers restart.
+func (p *PG) BuilderRepairGeneration() uint64 { return p.builderRepairGeneration.Load() }
 
 func (p *PG) withConn(ctx context.Context, fn func(*pgx.Conn) error) error {
 	c, err := p.pool.acquire(ctx)
@@ -807,11 +814,13 @@ func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) 
 // idle network the timestamp predicates return nothing and aggregation does
 // no materialized-view work.
 func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
+	// Timestamp selectivity changes with every watermark. Avoid a cached
+	// generic plan that assumes a third of the corpus changed each pass.
 	var c Changes
 	seenPURLs := map[string]bool{}
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		rows, err := conn.Query(ctx,
-			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, since)
+			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -842,7 +851,7 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 				SELECT jsonb_array_elements_text(s.manifest->'packages') AS pkg
 				FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
 				WHERE r.created_at > $1
-			) t`, since)
+			) t`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -866,7 +875,15 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 		rrows, err := conn.Query(ctx, `
 			SELECT r.receipt::text
 			FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
-			WHERE r.created_at > $1 OR s.created_at > $1 OR s.updated_at > $1`, since)
+			WHERE r.receipt_id IN (
+				SELECT receipt_id FROM receipts WHERE created_at > $1
+				UNION
+				SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id=s2.sample_id
+				WHERE s2.created_at > $1
+				UNION
+				SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id=s3.sample_id
+				WHERE s3.updated_at > $1
+			)`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -965,6 +982,10 @@ func (p *PG) SaveCase(ctx context.Context, cse domain.Case) error {
 }
 
 func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
+	projection, projectionErr := deriveSampleBuilderProjection(s.ManifestJSON)
+	if projectionErr != nil {
+		projection = sampleBuilderProjection{coords: []string{}, purls: []string{}, symbols: []string{}}
+	}
 	if s.Status == "" {
 		s.Status = "PUBLISHED"
 	}
@@ -982,38 +1003,28 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-		if _, err := tx.Exec(ctx, `
+		inserted, err := tx.Exec(ctx, `
 			INSERT INTO samples(sample_id, case_id, manifest, status, origin_seeder,
-				license, size_bytes, hot_score, quarantined, quarantine_reason)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			ON CONFLICT (sample_id) DO UPDATE SET
-				manifest = EXCLUDED.manifest,
-				-- NOT the status. A sample id is the sha256 of its content,
-				-- so a conflict means this exact sample is already here --
-				-- and the ingest path always sends "PUBLISHED". Overwriting
-				-- with it threw away CROSS_PASS, MATRIX_PASS or STABLE that
-				-- independent peers had actually earned, on nothing more
-				-- than the author re-running their publish. The receipts
-				-- survived, so the status was recoverable only by an
-				-- operator running recompute-status by hand; until then the
-				-- sample ranked lower everywhere and could be cut from its
-				-- own shard by the sample cap.
-				--
-				-- Status is derived from receipts. SetSampleStatus is how it
-				-- moves; this is not.
-				hot_score = EXCLUDED.hot_score,
-				updated_at = CASE WHEN samples.manifest IS DISTINCT FROM EXCLUDED.manifest
-					OR samples.hot_score IS DISTINCT FROM EXCLUDED.hot_score
-					THEN now() ELSE samples.updated_at END`,
+				license, size_bytes, hot_score, quarantined, quarantine_reason,
+				builder_coords, builder_purls, builder_symbols, builder_subject, builder_source_hash)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+				CASE WHEN $15 THEN md5($3::jsonb::text) END)
+			ON CONFLICT (sample_id) DO NOTHING`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
-			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason); err != nil {
+			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason,
+			projection.coords, projection.purls, projection.symbols, projection.subject, projectionErr == nil)
+		if err != nil {
 			return err
+		}
+		if inserted.RowsAffected() == 0 {
+			if err := updateSampleWithBuilderProjection(ctx, tx, s, projection, projectionErr == nil); err != nil {
+				return err
+			}
 		}
 
 		// A sample id is content-addressed, but rebuild the projection on a
-		// duplicate save as well. That keeps the relational index exactly in
-		// step with the manifest even if an operator repairs legacy data by
-		// replaying the sample.
+		// trusted duplicate save as well. Untrusted existing sources require
+		// offline reconciliation before normal publication can resume.
 		if _, err := tx.Exec(ctx, `DELETE FROM sample_packages WHERE sample_id=$1`, s.SampleID); err != nil {
 			return err
 		}
@@ -1028,9 +1039,6 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 			  ) AS package(value)
 			 WHERE strpos(reverse(package.value), '@') > 0
 			ON CONFLICT DO NOTHING`, s.SampleID, []byte(s.ManifestJSON)); err != nil {
-			return err
-		}
-		if err := maintainSampleBuilderProjection(ctx, tx, s.SampleID, s.ManifestJSON); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -1552,25 +1560,8 @@ func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error
 
 func (p *PG) SaveReceipt(ctx context.Context, r ReceiptRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		tx, err := c.Begin(ctx)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback(ctx)
-		inserted, err := tx.Exec(ctx, `
-			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
-			VALUES($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (receipt_id) DO NOTHING`,
-			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
-		if err != nil {
-			return err
-		}
-		if inserted.RowsAffected() == 1 {
-			if err := maintainReceiptBuilderProjection(ctx, tx, r.ReceiptID, r.ReceiptJSON); err != nil {
-				return err
-			}
-		}
-		return tx.Commit(ctx)
+		_, err := insertReceiptWithBuilderProjection(ctx, c, r)
+		return err
 	})
 }
 
@@ -1592,19 +1583,12 @@ func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (
 		if tag.RowsAffected() != 1 {
 			return nil
 		}
-		inserted, err := tx.Exec(ctx, `
-			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
-			VALUES($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (receipt_id) DO NOTHING`,
-			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
+		inserted, err := insertReceiptWithBuilderProjection(ctx, tx, r)
 		if err != nil {
 			return err
 		}
 		if inserted.RowsAffected() != 1 {
 			return nil // rollback the job update; this receipt answered another job already
-		}
-		if err := maintainReceiptBuilderProjection(ctx, tx, r.ReceiptID, r.ReceiptJSON); err != nil {
-			return err
 		}
 		// A designated sample author already proved LOCAL_PASS before upload.
 		// The claimed verifier is the independent confirmation. Promote the

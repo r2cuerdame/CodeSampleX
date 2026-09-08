@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +22,7 @@ type BuilderReadMetrics struct{ Rows, Bytes int64 }
 func builderCoords(packages []BuilderPackage) []string {
 	seen := map[string]bool{}
 	for _, p := range packages {
-		seen[(domain.PURL{Ecosystem: strings.ToLower(p.Ecosystem), Name: strings.ToLower(p.Name)}).String()] = true
+		seen[builderCoord(domain.PURL{Ecosystem: p.Ecosystem, Name: p.Name})] = true
 	}
 	out := make([]string, 0, len(seen))
 	for coord := range seen {
@@ -61,7 +60,10 @@ func (p *PG) BuilderChangesSince(ctx context.Context, since time.Time) (Changes,
 	var out Changes
 	seen := map[string]bool{}
 	err := p.withBuilderRead(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, builderChangesEvidenceSQL, since)
+		// Array/window selectivity varies sharply by pass. An unnamed extended
+		// query is planned with this pass's values, avoiding a cached generic
+		// plan that can turn a one-package lookup into a corpus hash/seq scan.
+		rows, err := tx.Query(ctx, builderChangesEvidenceSQL, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -77,7 +79,7 @@ func (p *PG) BuilderChangesSince(ctx context.Context, since time.Time) (Changes,
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, builderChangesSamplesSQL, since)
+		rows, err = tx.Query(ctx, builderChangesSamplesSQL, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -109,7 +111,7 @@ func (p *PG) BuilderChangesSince(ctx context.Context, since time.Time) (Changes,
 		}
 		// A receipt can establish packages absent from its sample declaration.
 		// Read complete validated sets, never a manifest-name approximation.
-		rows, err = tx.Query(ctx, builderChangesReceiptsSQL, ids)
+		rows, err = tx.Query(ctx, builderChangesReceiptsSQL, pgx.QueryExecModeExec, ids)
 		if err != nil {
 			return err
 		}
@@ -130,7 +132,7 @@ func (p *PG) BuilderChangesSince(ctx context.Context, since time.Time) (Changes,
 		if len(symbols) == 0 {
 			return nil
 		}
-		rows, err = tx.Query(ctx, builderChangesContendersSQL, symbols)
+		rows, err = tx.Query(ctx, builderChangesContendersSQL, pgx.QueryExecModeExec, symbols)
 		if err != nil {
 			return err
 		}
@@ -178,7 +180,7 @@ func (p *PG) ListBuilderSamplesPage(ctx context.Context, packages []BuilderPacka
 	}
 	var out []SampleRow
 	err := p.withBuilderRead(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, builderSamplesPageSQL, builderCoords(packages), limit, offset)
+		rows, err := tx.Query(ctx, builderSamplesPageSQL, pgx.QueryExecModeExec, builderCoords(packages), limit, offset)
 		if err != nil {
 			return err
 		}
@@ -213,7 +215,7 @@ func (p *PG) ListBuilderSnapshotTargets(ctx context.Context, packages []BuilderP
 	}
 	seen := map[SnapshotTarget]bool{}
 	err := p.withBuilderRead(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, builderTargetEvidenceSQL, coords)
+		rows, err := tx.Query(ctx, builderTargetEvidenceSQL, pgx.QueryExecModeExec, coords)
 		if err != nil {
 			return err
 		}
@@ -232,7 +234,7 @@ func (p *PG) ListBuilderSnapshotTargets(ctx context.Context, packages []BuilderP
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, builderTargetClaimsSQL, coords)
+		rows, err = tx.Query(ctx, builderTargetClaimsSQL, pgx.QueryExecModeExec, coords)
 		if err != nil {
 			return err
 		}
@@ -257,7 +259,7 @@ func (p *PG) ListBuilderSnapshotTargets(ctx context.Context, packages []BuilderP
 			if err != nil {
 				continue
 			}
-			coord := (domain.PURL{Ecosystem: p.Ecosystem, Name: strings.ToLower(p.Name)}).String()
+			coord := builderCoord(p)
 			if want[coord] {
 				seen[t] = true
 			}
@@ -286,7 +288,7 @@ func (p *PG) BuilderSnapshotKeys(ctx context.Context, packages []BuilderPackage)
 	}
 	var out []SnapshotTarget
 	err := p.withBuilderRead(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, builderSnapshotKeysSQL, builderCoords(packages))
+		rows, err := tx.Query(ctx, builderSnapshotKeysSQL, pgx.QueryExecModeExec, builderCoords(packages))
 		if err != nil {
 			return err
 		}
@@ -312,6 +314,9 @@ const builderSamplesPageSQL = `SELECT ` + sampleCols + ` FROM samples
 			WHERE sample_id IN (` + builderSelectedSamplesSQL + `) AND NOT quarantined
 			ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`
 
+// Keep source and receipt lookups parameterized by a selected sample.
+// OFFSET 0 preserves each lateral boundary without truncating any history;
+// otherwise a cold planner can hash-join either whole corpus to a few claims.
 const builderTargetClaimsSQL = `
 			WITH selected AS MATERIALIZED (` + builderSelectedSamplesSQL + `),
 			selected_symbols AS MATERIALIZED (
@@ -323,8 +328,15 @@ const builderTargetClaimsSQL = `
 				WHERE s.builder_symbols && ARRAY(SELECT symbol FROM selected_symbols)
 			)
 			SELECT DISTINCT r.builder_packages,s.builder_symbols,s.builder_subject
-			FROM contenders JOIN samples s USING(sample_id) JOIN receipts r USING(sample_id)
-			WHERE NOT s.quarantined AND r.builder_claim`
+			FROM contenders
+			CROSS JOIN LATERAL (
+				SELECT sample_id,builder_symbols,builder_subject FROM samples
+				WHERE sample_id=contenders.sample_id AND NOT quarantined OFFSET 0
+			) s
+			CROSS JOIN LATERAL (
+				SELECT builder_packages FROM receipts
+				WHERE sample_id=s.sample_id AND builder_claim OFFSET 0
+			) r`
 
 const builderChangesSamplesSQL = `
 			WITH changed AS MATERIALIZED (

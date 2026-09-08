@@ -75,6 +75,10 @@ func splitStatements(sqlText string) []string {
 // schema_migrations, each inside its own transaction. It is idempotent and
 // safe to run on every server start.
 func Migrate(ctx context.Context, conn *pgx.Conn) error {
+	return migrateWithBuilderRepair(ctx, conn, nil)
+}
+
+func migrateWithBuilderRepair(ctx context.Context, conn *pgx.Conn, repaired func()) error {
 	migs, err := LoadMigrations()
 	if err != nil {
 		return err
@@ -126,7 +130,7 @@ func Migrate(ctx context.Context, conn *pgx.Conn) error {
 		ON CONFLICT DO NOTHING`); err != nil {
 		return fmt.Errorf("serverstore: reconcile sample package projection: %w", err)
 	}
-	return backfillBuilderProjections(ctx, conn)
+	return backfillBuilderProjectionsWithRepair(ctx, conn, repaired)
 }
 
 func applyMigration(ctx context.Context, conn *pgx.Conn, m Migration) error {
