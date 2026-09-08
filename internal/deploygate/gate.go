@@ -97,7 +97,7 @@ func ValidateMigrationSQL(name, sql string) error {
 	// The general grammar must never learn arbitrary functions or expression
 	// indexes from this exception. A changed body requires a fresh review.
 	if name == "0036_builder_projections.sql" {
-		const reviewedSHA256 = "b88317b8bf969b67fc1c2dc5378a2fe003db28adca8fd2c71d0d8bf0270811dd"
+		const reviewedSHA256 = "3499206df74ee5cbf2ec8644de7e9028899061440107782a4e21f6faf3e89133"
 		digest := sha256.Sum256([]byte(strings.ReplaceAll(sql, "\r\n", "\n")))
 		if fmt.Sprintf("%x", digest) != reviewedSHA256 {
 			return fmt.Errorf("migration %s does not match the reviewed builder projection SHA256", name)

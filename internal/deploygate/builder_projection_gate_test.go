@@ -41,7 +41,7 @@ func TestBuilderProjectionMigrationDigestExceptionFailsClosed(t *testing.T) {
 	}
 	for name, body := range map[string]string{
 		"wrong filename":        sql,
-		"function renamed":      mutate("CREATE FUNCTION builder_purl_coord", "CREATE FUNCTION unsafe_coord"),
+		"function renamed":      mutate("CREATE OR REPLACE FUNCTION builder_purl_coord", "CREATE OR REPLACE FUNCTION unsafe_coord"),
 		"source table":          mutate("ALTER TABLE samples", "ALTER TABLE receipts"),
 		"source JSON":           mutate("md5(manifest::text)", "md5(receipt::text)"),
 		"index setting":         mutate("fastupdate=off", "fastupdate=on"),
@@ -52,7 +52,7 @@ func TestBuilderProjectionMigrationDigestExceptionFailsClosed(t *testing.T) {
 		"function body":         mutate("SELECT 'pkg:'", "SELECT 'unsafe:'"),
 		"collation downgraded":  mutate(`pg_catalog."pg_c_utf8"`, `pg_catalog."C"`),
 		"collation removed":     mutate(` COLLATE pg_catalog."pg_c_utf8"`, ""),
-		"statement removed":     mutate("CREATE INDEX samples_builder_created_idx ON samples(created_at, sample_id);", ""),
+		"statement removed":     mutate("CREATE INDEX IF NOT EXISTS samples_builder_created_idx ON samples(created_at, sample_id);", ""),
 		"destructive appended":  sql + "\nDROP TABLE receipts;",
 		"additive appended":     sql + "\nALTER TABLE samples ADD COLUMN innocent TEXT;",
 		"comment changed":       sql + "\n-- changed release artifact\n",

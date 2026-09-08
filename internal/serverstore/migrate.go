@@ -98,6 +98,11 @@ func migrateWithBuilderRepair(ctx context.Context, conn *pgx.Conn, repaired func
 		if applied {
 			continue
 		}
+		if m.Version == "0036_builder_projections.sql" {
+			if err := validatePrebuiltBuilderObjects(ctx, conn); err != nil {
+				return err
+			}
+		}
 		if err := applyMigration(ctx, conn, m); err != nil {
 			return err
 		}
