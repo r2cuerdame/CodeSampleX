@@ -528,7 +528,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		phaseStart := time.Now()
 		phase = phases.begin(phaseClusterRead)
 		evidenceByVersion, err := b.evidenceForPackage(ctx, k, targetsByPkg[k], byPkg)
-		phase.end(err, builderPhaseCounters{callsKnown: true, items: int64(len(evidenceByVersion))})
+		phase.end(err, builderPhaseCounters{callsKnown: true})
 		pkgTiming.read = time.Since(phaseStart)
 		clusterRead += pkgTiming.read
 		if err != nil {
@@ -662,7 +662,7 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 		stale = append(stale, target)
 	}
 	err = b.Store.DeleteSnapshots(ctx, stale)
-	phases.add(phaseSnapshotRetire, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(stale))})
+	phases.add(phaseSnapshotRetire, knownCalls(1))
 	if err != nil {
 		return fmt.Errorf("compatibility: delete retired snapshots: %w", err)
 	}
@@ -760,7 +760,7 @@ func (b *Builder) knownPackages(ctx context.Context, resolved []domain.PURL) (ma
 			purls = append(purls, p.String())
 		}
 		page, err := probe.ExistingPackagePURLs(ctx, purls)
-		phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: int64(len(page))})
+		phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1})
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: existing packages: %w", err)
 		}
@@ -886,7 +886,7 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 			items: int64(len(page)), bytes: sampleRowsBytes(page),
 		}
 		readPhase.end(perr, pageCounters)
-		phases.add(phaseLoadSamples, pageCounters)
+		phases.add(phaseLoadSamples, pageCounters.withoutItems())
 		if perr != nil {
 			return nil, fmt.Errorf("compatibility: list samples: %w", perr)
 		}
@@ -923,7 +923,7 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 				logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes,
 			}
 			receiptPhase.end(err, receiptCounters)
-			phases.add(phaseLoadSamples, receiptCounters)
+			phases.add(phaseLoadSamples, receiptCounters.withoutItems())
 			if err != nil {
 				return nil, fmt.Errorf("compatibility: receipts for sample page: %w", err)
 			}
@@ -939,7 +939,7 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 					logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes,
 				}
 				receiptPhase.end(err, receiptCounters)
-				phases.add(phaseLoadSamples, receiptCounters)
+				phases.add(phaseLoadSamples, receiptCounters.withoutItems())
 				if err != nil {
 					return nil, fmt.Errorf("compatibility: receipts for %s: %w", parsed[i].row.SampleID, err)
 				}
@@ -1417,7 +1417,7 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 				WantEnvJSON: wantJSON,
 				Status:      "open",
 			})
-			phases.add(phaseMatrixJobs, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(wantJSON))})
+			phases.add(phaseMatrixJobs, builderPhaseCounters{logicalCalls: 1, callsKnown: true, bytes: int64(len(wantJSON))})
 			if err != nil {
 				return fmt.Errorf("compatibility: create matrix job for %s: %w", sd.row.SampleID, err)
 			}
@@ -1453,7 +1453,7 @@ func (b *Builder) jobsForSamples(ctx context.Context, eligible []*sampleData) (m
 			items, bytes := jobRowsMetrics(rows)
 			counters := builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes}
 			readPhase.end(err, counters)
-			phases.add(phaseMatrixJobs, counters)
+			phases.add(phaseMatrixJobs, counters.withoutItems())
 			if err != nil {
 				return nil, fmt.Errorf("compatibility: jobs for %s: %w", sd.row.SampleID, err)
 			}
@@ -1473,8 +1473,9 @@ func (b *Builder) jobsForSamples(ctx context.Context, eligible []*sampleData) (m
 		readPhase := phases.begin(phaseMatrixJobHistoryRead)
 		rows, err := page.JobsForSamples(ctx, ids)
 		items, bytes := jobPagesMetrics(rows)
-		readPhase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes})
-		phases.add(phaseMatrixJobs, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes})
+		counters := builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes}
+		readPhase.end(err, counters)
+		phases.add(phaseMatrixJobs, counters.withoutItems())
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: jobs for sample page: %w", err)
 		}

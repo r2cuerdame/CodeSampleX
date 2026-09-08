@@ -77,9 +77,13 @@ func (b *Builder) newPhaseRecorder(ctx context.Context) *builderPhaseRecorder {
 type builderPhaseCounters struct {
 	logicalCalls int64
 	pages        int64
-	items        int64
-	bytes        int64
-	callsKnown   bool
+	// items always uses itemUnit(name) for a phase. It is cumulative across
+	// repeated entries, but never combines that unit with a child phase's unit.
+	items int64
+	// bytes is cumulative selected JSON volume examined or constructed by the
+	// instrumented boundaries. It is not live memory, allocation, RSS, or DB IO.
+	bytes      int64
+	callsKnown bool
 }
 
 type builderPressure struct {
@@ -219,9 +223,9 @@ func (r *builderPhaseRecorder) close(name string) {
 	if state.failed {
 		outcome = "error"
 	}
-	r.logf("compatibility: phase attempt=%d event=exit phase=%s outcome=%s elapsed_ms=%d logical_calls=%s pages=%d items=%d bytes_in_memory=%d pool_busy=%s query_timeouts=%s pool_wait_ms=%s db_acquisitions=unknown db_bytes=unknown",
+	r.logf("compatibility: phase attempt=%d event=exit phase=%s outcome=%s elapsed_ms_inclusive=%d duration_scope=inclusive_nested_not_additive logical_calls=%s pages=%d items=%d item_unit=%s json_bytes_examined_or_constructed_cumulative=%d json_bytes_coverage=selected_in_memory_values_may_overlap_nested_phases pool_busy_inclusive=%s query_timeouts_inclusive=%s pool_wait_ms_inclusive=%s pressure_scope=accumulated_budget_deltas_inclusive_nested_not_additive db_acquisitions=unknown db_bytes=unknown",
 		r.attempt, name, outcome, durationMillis(state.elapsed), callsValue(state.counters),
-		state.counters.pages, state.counters.items, state.counters.bytes,
+		state.counters.pages, state.counters.items, itemUnit(name), state.counters.bytes,
 		pressureValue(state.pressure, state.pressure.busy),
 		pressureValue(state.pressure, state.pressure.timeouts),
 		pressureDurationValue(state.pressure))
@@ -241,9 +245,9 @@ func (r *builderPhaseRecorder) progress(name string) {
 	if state.inFlight > 0 {
 		elapsed += now.Sub(state.openStarted)
 	}
-	r.logf("compatibility: phase attempt=%d event=progress phase=%s elapsed_ms=%d logical_calls=%s pages=%d items=%d bytes_in_memory=%d",
+	r.logf("compatibility: phase attempt=%d event=progress phase=%s elapsed_ms_inclusive=%d duration_scope=inclusive_nested_not_additive logical_calls=%s pages=%d items=%d item_unit=%s json_bytes_examined_or_constructed_cumulative=%d json_bytes_coverage=selected_in_memory_values_may_overlap_nested_phases",
 		r.attempt, name, durationMillis(elapsed), callsValue(state.counters), state.counters.pages,
-		state.counters.items, state.counters.bytes)
+		state.counters.items, itemUnit(name), state.counters.bytes)
 }
 
 func (r *builderPhaseRecorder) finish(runErr error) {
@@ -264,8 +268,52 @@ func (r *builderPhaseRecorder) finish(runErr error) {
 	if failed == "" {
 		failed = "none"
 	}
-	r.logf("compatibility: phase attempt=%d event=final outcome=%s error_class=%s active_phase=%s failed_phase=%s elapsed_ms=%d phase_elapsed_ms=%s",
+	r.logf("compatibility: phase attempt=%d event=final outcome=%s error_class=%s active_phase=%s failed_phase=%s attempt_elapsed_ms=%d phase_elapsed_ms_inclusive=%s duration_scope=inclusive_nested_not_additive",
 		r.attempt, outcome, class, active, failed, durationMillis(r.now().Sub(r.started)), r.durationSummary())
+}
+
+// itemUnit is deliberately fixed by phase. Parent phases use only their own
+// unit; child row counts stay on the child phase so an operator never has to
+// interpret a sum of samples, receipt rows, version buckets, and jobs.
+func itemUnit(name string) string {
+	switch name {
+	case phaseChanges:
+		return "change_references"
+	case phaseListTargets:
+		return "snapshot_targets_returned"
+	case phaseSamplePageRead:
+		return "sample_rows_returned"
+	case phaseReceiptPageRead:
+		return "receipt_rows_returned"
+	case phaseDecode:
+		return "json_records_decoded"
+	case phaseEnsureReceiptPackages:
+		return "receipt_packages_requested"
+	case phaseReceiptDerivedCalculation:
+		return "samples_examined"
+	case phaseTargetEvidence, phaseClusterRead:
+		return "evidence_rows_returned"
+	case phaseSnapshotCalculate:
+		return "snapshots_constructed"
+	case phaseSnapshotWrite:
+		return "snapshot_rows_written"
+	case phaseSnapshotRetire:
+		return "snapshot_keys_returned"
+	case phaseClusterCalculate:
+		return "clusters_constructed"
+	case phaseClusterWrite:
+		return "cluster_rows_written"
+	case phaseShards:
+		return "shard_records_touched"
+	case phaseMatrixJobs:
+		return "sample_inputs"
+	case phaseMatrixJobHistoryRead:
+		return "job_rows_returned"
+	case phaseRefreshStats:
+		return "stats_rows_written"
+	default:
+		return "none"
+	}
 }
 
 func (r *builderPhaseRecorder) durationSummary() string {
@@ -340,6 +388,11 @@ func pressureDurationValue(pressure builderPressure) string {
 
 func knownCalls(n int64) builderPhaseCounters {
 	return builderPhaseCounters{logicalCalls: n, callsKnown: true}
+}
+
+func (c builderPhaseCounters) withoutItems() builderPhaseCounters {
+	c.items = 0
+	return c
 }
 
 func snapshotRowsBytes(rows []serverstore.SnapshotRow) int64 {

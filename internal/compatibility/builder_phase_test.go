@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -397,9 +398,206 @@ func TestBuilderPhaseRepeatedWorkIsAggregatedAndProgressIsRateLimited(t *testing
 		t.Fatalf("progress count = %d, want 3 at >=30s boundaries: %v", len(progress), progress)
 	}
 	exit := sink.matching("event=exit", "phase="+phaseSamplePageRead)
-	for _, want := range []string{"logical_calls=4", "pages=4", "items=40", "bytes_in_memory=400", "pool_busy=0", "db_acquisitions=unknown", "db_bytes=unknown"} {
+	for _, want := range []string{
+		"elapsed_ms_inclusive=4000", "duration_scope=inclusive_nested_not_additive", "logical_calls=4", "pages=4",
+		"items=40", "item_unit=sample_rows_returned",
+		"json_bytes_examined_or_constructed_cumulative=400", "json_bytes_coverage=selected_in_memory_values_may_overlap_nested_phases",
+		"pool_busy_inclusive=0", "query_timeouts_inclusive=0", "pool_wait_ms_inclusive=0",
+		"pressure_scope=accumulated_budget_deltas_inclusive_nested_not_additive", "db_acquisitions=unknown", "db_bytes=unknown",
+	} {
 		if !strings.Contains(exit[0], want) {
 			t.Errorf("exit log missing %q: %s", want, exit[0])
+		}
+	}
+}
+
+func TestBuilderPhaseNestedDurationsAreExplicitlyInclusive(t *testing.T) {
+	clock := &manualPhaseClock{now: testNow}
+	sink := &phaseLogSink{}
+	recorder := newBuilderPhaseRecorder(context.Background(), clock.Now, sink.logf)
+
+	parent := recorder.begin(phaseLoadSamples)
+	clock.Advance(time.Second)
+	child := recorder.begin(phaseSamplePageRead)
+	clock.Advance(2 * time.Second)
+	child.end(nil, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: 3, bytes: 90})
+	clock.Advance(3 * time.Second)
+	parent.end(nil, builderPhaseCounters{callsKnown: true})
+	recorder.close(phaseSamplePageRead)
+	recorder.close(phaseLoadSamples)
+	recorder.finish(nil)
+
+	childExit := sink.matching("event=exit", "phase="+phaseSamplePageRead)[0]
+	parentExit := sink.matching("event=exit", "phase="+phaseLoadSamples)[0]
+	for line, wants := range map[string][]string{
+		childExit:  {"elapsed_ms_inclusive=2000", "duration_scope=inclusive_nested_not_additive"},
+		parentExit: {"elapsed_ms_inclusive=6000", "duration_scope=inclusive_nested_not_additive", "items=0", "item_unit=none"},
+	} {
+		for _, want := range wants {
+			if !strings.Contains(line, want) {
+				t.Errorf("phase exit missing %q: %s", want, line)
+			}
+		}
+	}
+	final := sink.matching("event=final")[0]
+	for _, want := range []string{"attempt_elapsed_ms=6000", "phase_elapsed_ms_inclusive=", "duration_scope=inclusive_nested_not_additive"} {
+		if !strings.Contains(final, want) {
+			t.Errorf("final log missing %q: %s", want, final)
+		}
+	}
+}
+
+func TestBuilderPhaseLoadSamplesKeepsRecordUnitsSeparate(t *testing.T) {
+	fake := serverstore.NewFake()
+	seedBuilderFixture(t, fake)
+	sink := &phaseLogSink{}
+	recorder := newBuilderPhaseRecorder(context.Background(), time.Now, sink.logf)
+	ctx := withBuilderPhaseRecorder(context.Background(), recorder)
+	token := recorder.begin(phaseLoadSamples)
+	_, err := (&Builder{Store: fake}).loadSamples(ctx)
+	token.end(err, builderPhaseCounters{callsKnown: true})
+	for _, name := range []string{phaseSamplePageRead, phaseReceiptPageRead, phaseDecode, phaseLoadSamples} {
+		recorder.close(name)
+	}
+	if err != nil {
+		t.Fatalf("loadSamples: %v", err)
+	}
+	checks := map[string][]string{
+		phaseSamplePageRead:  {"items=1 ", "item_unit=sample_rows_returned"},
+		phaseReceiptPageRead: {"items=2 ", "item_unit=receipt_rows_returned"},
+		phaseDecode:          {"items=3 ", "item_unit=json_records_decoded"},
+		phaseLoadSamples:     {"items=0 ", "item_unit=none"},
+	}
+	for name, wants := range checks {
+		exit := sink.matching("event=exit", "phase="+name)[0]
+		for _, want := range wants {
+			if !strings.Contains(exit, want) {
+				t.Errorf("%s exit missing %q: %s", name, want, exit)
+			}
+		}
+	}
+}
+
+func TestBuilderPhaseClusterReadCountsReturnedEvidenceRowsOnly(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl, _ := seedBuilderFixture(t, fake)
+	sink := &phaseLogSink{}
+	recorder := newBuilderPhaseRecorder(context.Background(), time.Now, sink.logf)
+	ctx := withBuilderPhaseRecorder(context.Background(), recorder)
+	token := recorder.begin(phaseClusterRead)
+	rowsByVersion, err := (&Builder{Store: fake}).evidenceForPackage(ctx,
+		pkgKey{ecosystem: "npm", name: "axios"},
+		[]parsedTarget{{target: serverstore.SnapshotTarget{PURL: purl, Symbol: "axios.post"}, version: "1.12.0"}},
+		map[pkgKey]symVer{},
+	)
+	token.end(err, builderPhaseCounters{callsKnown: true})
+	recorder.close(phaseClusterRead)
+	if err != nil {
+		t.Fatalf("evidenceForPackage: %v", err)
+	}
+	rowCount := 0
+	for _, rows := range rowsByVersion {
+		rowCount += len(rows)
+	}
+	exit := sink.matching("event=exit", "phase="+phaseClusterRead)[0]
+	for _, want := range []string{fmt.Sprintf("items=%d", rowCount), "item_unit=evidence_rows_returned"} {
+		if !strings.Contains(exit, want) {
+			t.Errorf("cluster_read exit missing %q: %s", want, exit)
+		}
+	}
+	if strings.Contains(exit, fmt.Sprintf("items=%d ", rowCount+len(rowsByVersion))) {
+		t.Fatalf("cluster_read combined evidence rows with version buckets: %s", exit)
+	}
+}
+
+func TestBuilderPhaseReceiptPackageItemsMatchBulkAndFallback(t *testing.T) {
+	purls := []domain.PURL{
+		{Ecosystem: "npm", Name: "one", Version: "1.0.0"},
+		{Ecosystem: "npm", Name: "two", Version: "2.0.0"},
+	}
+	samples := []sampleData{{receipts: []ReceiptInfo{{ResolvedPackages: purls}}}}
+
+	for _, tc := range []struct {
+		name  string
+		store func(*serverstore.Fake) serverstore.Store
+	}{
+		{name: "fallback", store: func(fake *serverstore.Fake) serverstore.Store {
+			return &rowAtATimeStore{newReadCounter(fake)}
+		}},
+		{name: "bulk", store: func(fake *serverstore.Fake) serverstore.Store {
+			return &bulkReadStore{newReadCounter(fake)}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := serverstore.NewFake()
+			for _, purl := range purls {
+				if err := fake.UpsertPackage(context.Background(), serverstore.PackageRow{
+					PURL: purl.String(), Ecosystem: purl.Ecosystem, Name: purl.Name, Version: purl.Version,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sink := &phaseLogSink{}
+			recorder := newBuilderPhaseRecorder(context.Background(), time.Now, sink.logf)
+			ctx := withBuilderPhaseRecorder(context.Background(), recorder)
+			token := recorder.begin(phaseEnsureReceiptPackages)
+			err := (&Builder{Store: tc.store(fake)}).ensureReceiptPackages(ctx, samples)
+			token.end(err, builderPhaseCounters{callsKnown: true})
+			recorder.close(phaseEnsureReceiptPackages)
+			if err != nil {
+				t.Fatalf("ensureReceiptPackages: %v", err)
+			}
+			exit := sink.matching("event=exit", "phase="+phaseEnsureReceiptPackages)[0]
+			for _, want := range []string{"items=2", "item_unit=receipt_packages_requested"} {
+				if !strings.Contains(exit, want) {
+					t.Errorf("receipt package exit missing %q: %s", want, exit)
+				}
+			}
+		})
+	}
+}
+
+func TestBuilderPhaseMatrixParentCountsSampleInputsNotJobs(t *testing.T) {
+	const sampleID = "sha256:phase-matrix"
+	fake := serverstore.NewFake()
+	if _, err := fake.CreateJob(context.Background(), serverstore.JobRow{
+		SampleID: sampleID, Reason: "other", WantEnvJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	env := bulkMavenEnv()
+	env.LanguageVersion = "8"
+	samples := []sampleData{{
+		row: serverstore.SampleRow{SampleID: sampleID, Status: "CROSS_PASS"},
+		manifest: domain.SampleManifest{
+			Environment: env, VerifierAdapter: "maven-java@1",
+		},
+		receipts: []ReceiptInfo{{
+			Env: env, ContractResult: "PASS", VerifierAdapter: "maven-java@1",
+			SandboxCapability: domain.CapContainerRun,
+		}},
+	}}
+	sink := &phaseLogSink{}
+	recorder := newBuilderPhaseRecorder(context.Background(), time.Now, sink.logf)
+	ctx := withBuilderPhaseRecorder(context.Background(), recorder)
+	token := recorder.begin(phaseMatrixJobs)
+	err := (&Builder{Store: &rowAtATimeStore{newReadCounter(fake)}}).createMatrixJobs(ctx, samples)
+	token.end(err, builderPhaseCounters{callsKnown: true, items: int64(len(samples))})
+	recorder.close(phaseMatrixJobHistoryRead)
+	recorder.close(phaseMatrixJobs)
+	if err != nil {
+		t.Fatalf("createMatrixJobs: %v", err)
+	}
+	parent := sink.matching("event=exit", "phase="+phaseMatrixJobs)[0]
+	for _, want := range []string{"items=1", "item_unit=sample_inputs"} {
+		if !strings.Contains(parent, want) {
+			t.Errorf("matrix parent exit missing %q: %s", want, parent)
+		}
+	}
+	history := sink.matching("event=exit", "phase="+phaseMatrixJobHistoryRead)[0]
+	for _, want := range []string{"items=1", "item_unit=job_rows_returned"} {
+		if !strings.Contains(history, want) {
+			t.Errorf("matrix history exit missing %q: %s", want, history)
 		}
 	}
 }
@@ -433,7 +631,7 @@ func assertPositivePartialDuration(t *testing.T, sink *phaseLogSink, name string
 	if len(lines) != 1 {
 		t.Fatalf("failed phase exit count = %d, want 1\n%s", len(lines), sink.joined())
 	}
-	match := regexp.MustCompile(`elapsed_ms=([0-9]+)`).FindStringSubmatch(lines[0])
+	match := regexp.MustCompile(`elapsed_ms_inclusive=([0-9]+)`).FindStringSubmatch(lines[0])
 	if len(match) != 2 {
 		t.Fatalf("elapsed missing: %s", lines[0])
 	}
