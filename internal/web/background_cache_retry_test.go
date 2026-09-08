@@ -200,7 +200,7 @@ type panickingHandRetryStore struct {
 	budget        atomic.Pointer[serverstore.QueryBudget]
 }
 
-func (s *panickingHandRetryStore) SampleManifest(ctx context.Context, _ string) (string, bool) {
+func (s *panickingHandRetryStore) SampleManifest(ctx context.Context, _ string) (string, bool, error) {
 	s.budget.Store(serverstore.BudgetOf(ctx))
 	s.manifestCalls.Add(1)
 	panic("scripted hand findings refresh failure")

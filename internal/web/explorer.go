@@ -1024,8 +1024,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
-	samples, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
-	if err != nil {
+	samples, samplesErr := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	if samplesErr != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
 	codeCounts, codeErr := s.d.Store.PackageCodeCounts(r.Context(), eco, name)
@@ -1092,9 +1092,15 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// aggregate read is unknown and must not turn a transient store error into
 	// a permanent 404 for a package whose older code fell outside the display
 	// window.
-	if len(versions) == 0 && len(samples) == 0 && code.known && code.total == 0 && len(wanted) == 0 && len(allClusters) == 0 {
-		s.notFound(w, r, lang)
-		return
+	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && len(allClusters) == 0 {
+		if !code.known || samplesErr != nil {
+			s.unavailable(w, r, lang)
+			return
+		}
+		if code.total == 0 {
+			s.notFound(w, r, lang)
+			return
+		}
 	}
 	base := s.base(r)
 	// Translated: the <html lang> said one language while the title was
@@ -1213,7 +1219,11 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// golang module is published as both "1.6.0" and "v1.6.0" and only one
 	// spelling carries snapshot evidence, so requiring evidence here left
 	// the samples filed under the other spelling with nowhere to be read.
-	samples := s.versionSamples(r, eco, name, version)
+	samples, err := s.versionSamples(r, eco, name, version)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 {
 		s.notFound(w, r, lang)
 		return
@@ -1420,14 +1430,18 @@ func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
 // symbolSamples lists the published samples that answer one exact symbol of
 // one exact version. A sample names the APIs it was written against, so this
 // is a filter over the version's list rather than a separate read.
-func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) []SampleListItem {
+func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) ([]SampleListItem, error) {
+	items, err := s.versionSamples(r, eco, name, version)
+	if err != nil {
+		return nil, err
+	}
 	var out []SampleListItem
-	for _, item := range s.versionSamples(r, eco, name, version) {
+	for _, item := range items {
 		if sampleNamesSymbol(item.Symbols, symbol) {
 			out = append(out, item)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // sampleNamesSymbol reports whether a sample answers for one symbol.
@@ -1469,10 +1483,10 @@ func symbolMember(s string) string {
 
 // versionSamples lists the published samples written against one exact
 // version, sorted so the APIs they answer for group together.
-func (s *site) versionSamples(r *http.Request, eco, name, version string) []SampleListItem {
+func (s *site) versionSamples(r *http.Request, eco, name, version string) ([]SampleListItem, error) {
 	all, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []SampleListItem
 	for _, item := range all {
@@ -1493,7 +1507,7 @@ func (s *site) versionSamples(r *http.Request, eco, name, version string) []Samp
 		}
 		return out[i].CreatedAt > out[j].CreatedAt
 	})
-	return out
+	return out, nil
 }
 
 // metaContextLimit bounds how many recorded environments a description
@@ -1651,7 +1665,11 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	// snapshot was filed as: /v5.10.0/pgx.CollectRows answered while
 	// /v5.10.0/CollectRows did not, though both name the same API and the
 	// second is what the symbol list now links.
-	samples := s.symbolSamples(r, eco, name, version, symbol)
+	samples, err := s.symbolSamples(r, eco, name, version, symbol)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var doc snapshotDoc
 	raw, ok, err := cubeSnapshotJSON(r.Context(), s.d.Store, purl, symbol)
 	if err != nil {
@@ -2108,7 +2126,11 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id string) {
-	meta, ok := s.d.Store.SampleMeta(r.Context(), id)
+	meta, ok, err := s.d.Store.SampleMeta(r.Context(), id)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if !ok {
 		s.notFound(w, r, lang)
 		return
@@ -2120,34 +2142,37 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	}
 
 	var receipts []receiptView
-	if docs, err := s.d.Store.SampleReceipts(r.Context(), id); err == nil {
-		for _, doc := range docs {
-			var rec domain.VerificationReceipt
-			if json.Unmarshal([]byte(doc), &rec) != nil {
-				continue
-			}
-			stages := make([]string, 0, len(rec.Stages))
-			for k := range rec.Stages {
-				stages = append(stages, k)
-			}
-			sort.Strings(stages)
-			parts := make([]string, 0, len(stages))
-			for _, st := range stages {
-				parts = append(parts, st+":"+rec.Stages[st])
-			}
-			receipts = append(receipts, receiptView{
-				Context:     rec.Environment.ContextLabel(),
-				Environment: makeEnvironmentView(lang, rec.Environment),
-				Capability:  string(rec.SandboxCapability),
-				Contract:    rec.Stages["contract"],
-				Stages:      strings.Join(parts, " · "),
-				Verifier:    rec.VerifierAdapter,
-				CreatedAt:   datePart(rec.CreatedAt),
-				PeerID:      rec.PeerID,
-				Image:       imageRefOf(rec),
-				ImageShort:  shortImageRef(imageRefOf(rec)),
-			})
+	docs, err := s.d.Store.SampleReceipts(r.Context(), id)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
+	for _, doc := range docs {
+		var rec domain.VerificationReceipt
+		if json.Unmarshal([]byte(doc), &rec) != nil {
+			continue
 		}
+		stages := make([]string, 0, len(rec.Stages))
+		for k := range rec.Stages {
+			stages = append(stages, k)
+		}
+		sort.Strings(stages)
+		parts := make([]string, 0, len(stages))
+		for _, st := range stages {
+			parts = append(parts, st+":"+rec.Stages[st])
+		}
+		receipts = append(receipts, receiptView{
+			Context:     rec.Environment.ContextLabel(),
+			Environment: makeEnvironmentView(lang, rec.Environment),
+			Capability:  string(rec.SandboxCapability),
+			Contract:    rec.Stages["contract"],
+			Stages:      strings.Join(parts, " · "),
+			Verifier:    rec.VerifierAdapter,
+			CreatedAt:   datePart(rec.CreatedAt),
+			PeerID:      rec.PeerID,
+			Image:       imageRefOf(rec),
+			ImageShort:  shortImageRef(imageRefOf(rec)),
+		})
 	}
 
 	var (

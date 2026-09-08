@@ -38,7 +38,7 @@ func (s *panickingFindingsStore) DerivedFindings(context.Context) ([]DerivedFind
 	panic("derived store panic")
 }
 
-func (s *panickingFindingsStore) SampleManifest(context.Context, string) (string, bool) {
+func (s *panickingFindingsStore) SampleManifest(context.Context, string) (string, bool, error) {
 	s.manifestCalls.Add(1)
 	panic("manifest store panic")
 }
@@ -85,7 +85,7 @@ func (s *blockingFindingsStore) DerivedFindings(ctx context.Context) ([]DerivedF
 	}
 }
 
-func (s *blockingFindingsStore) SampleManifest(ctx context.Context, id string) (string, bool) {
+func (s *blockingFindingsStore) SampleManifest(ctx context.Context, id string) (string, bool, error) {
 	s.manifestCalls.Add(1)
 	select {
 	case s.handStarted <- refreshDeadline(ctx):
@@ -99,7 +99,7 @@ func (s *blockingFindingsStore) SampleManifest(ctx context.Context, id string) (
 	case <-s.release:
 		return s.fakeStore.SampleManifest(ctx, id)
 	case <-ctx.Done():
-		return "", false
+		return "", false, ctx.Err()
 	}
 }
 
