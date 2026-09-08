@@ -24,6 +24,10 @@ type Builder struct {
 	Store serverstore.Store
 	// Now is a test seam; nil means time.Now.
 	Now func() time.Time
+	// phaseNow and phaseLogf are private observability seams. They keep the
+	// business clock above independent from monotonic elapsed-time tests.
+	phaseNow  func() time.Time
+	phaseLogf func(string, ...any)
 
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
@@ -222,11 +226,22 @@ type sampleData struct {
 //
 // Every fullPassEvery-th pass rebuilds everything anyway, so a missed
 // change repairs itself rather than leaving a shard permanently stale.
-func (b *Builder) RunOnce(ctx context.Context) error {
+func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
+	phases := b.newPhaseRecorder(ctx)
+	ctx = withBuilderPhaseRecorder(ctx, phases)
+	defer func() { phases.finish(runErr) }()
+
 	started := time.Now()
 	now := b.now()
 	passStart := now
+	resumeReads := int64(0)
+	if b.lastRun.IsZero() {
+		resumeReads = 1
+	}
+	phase := phases.begin(phaseResume)
 	b.resumeFromLastCompletedPass(ctx, now)
+	phase.end(nil, knownCalls(resumeReads))
+	phases.close(phaseResume)
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
@@ -235,14 +250,24 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 	// pass; nil means "everything", which is what a full pass wants.
 	var affected map[shardKey]bool
 	if !full {
+		phase = phases.begin(phaseChanges)
 		changes, cerr := b.Store.ChangedSince(ctx, changeSince)
+		phase.end(cerr, builderPhaseCounters{
+			logicalCalls: 1, callsKnown: true,
+			items: int64(len(changes.Targets) + len(changes.SamplePURLs)),
+		})
+		phases.close(phaseChanges)
 		if cerr != nil {
 			return fmt.Errorf("compatibility: changes since %s: %w", b.lastRun, cerr)
 		}
 		if changes.Empty() {
 			// Nothing moved. Stats still refresh — they are one query and
 			// they carry the clock the website displays.
-			if err := b.refreshStats(ctx, now); err != nil {
+			phase = phases.begin(phaseRefreshStats)
+			err := b.refreshStats(ctx, now)
+			phase.end(err, builderPhaseCounters{callsKnown: true})
+			phases.close(phaseRefreshStats)
+			if err != nil {
 				return err
 			}
 			b.passes++
@@ -254,7 +279,10 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		affected = affectedKeys(changes)
 	}
 
+	phase = phases.begin(phaseListTargets)
 	allTargets, err := b.Store.ListSnapshotTargets(ctx)
+	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(allTargets))})
+	phases.close(phaseListTargets)
 	if err != nil {
 		return fmt.Errorf("compatibility: list targets: %w", err)
 	}
@@ -266,15 +294,28 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		affected = expandAffectedPackageMajors(affected, allTargets)
 		targets = keepTargets(allTargets, affected)
 	}
+	phase = phases.begin(phaseLoadSamples)
 	samples, err := b.loadSamples(ctx)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseSamplePageRead)
+	phases.close(phaseReceiptPageRead)
+	phases.close(phaseDecode)
+	phases.close(phaseLoadSamples)
 	if err != nil {
 		return err
 	}
-	if err := b.ensureReceiptPackages(ctx, samples); err != nil {
+	phase = phases.begin(phaseEnsureReceiptPackages)
+	err = b.ensureReceiptPackages(ctx, samples)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseEnsureReceiptPackages)
+	if err != nil {
 		return err
 	}
+	phase = phases.begin(phaseReceiptDerivedCalculation)
 	receiptRegressions := regressionsFromReceipts(samples)
 	jdkBoundaries := jdkBoundariesFromReceipts(samples)
+	phase.end(nil, builderPhaseCounters{items: int64(len(samples)), callsKnown: true})
+	phases.close(phaseReceiptDerivedCalculation)
 
 	// Evidence indexed by package → symbol → version → rows.
 	byPkg := map[pkgKey]symVer{}
@@ -284,7 +325,9 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if perr != nil {
 			continue
 		}
+		phase = phases.begin(phaseTargetEvidence)
 		rows, eerr := b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
+		phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
 		if eerr != nil {
 			return fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
 		}
@@ -337,12 +380,23 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if batchStore, ok := b.Store.(interface {
 			PutSnapshots(context.Context, []serverstore.SnapshotRow) error
 		}); ok {
-			if err := batchStore.PutSnapshots(ctx, snapshotRows); err != nil {
+			phase := phases.begin(phaseSnapshotWrite)
+			err := batchStore.PutSnapshots(ctx, snapshotRows)
+			phase.end(err, builderPhaseCounters{
+				logicalCalls: 1, callsKnown: true, items: int64(len(snapshotRows)),
+				bytes: snapshotRowsBytes(snapshotRows),
+			})
+			if err != nil {
 				return err
 			}
 		} else {
 			for _, row := range snapshotRows {
-				if err := b.Store.PutSnapshot(ctx, row.PURL, row.Symbol, row.SnapshotJSON); err != nil {
+				phase := phases.begin(phaseSnapshotWrite)
+				err := b.Store.PutSnapshot(ctx, row.PURL, row.Symbol, row.SnapshotJSON)
+				phase.end(err, builderPhaseCounters{
+					logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(row.SnapshotJSON)),
+				})
+				if err != nil {
 					return err
 				}
 			}
@@ -365,7 +419,9 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 			prevRows := byPkg[k][t.Symbol][prevVer]
 			if prevRows == nil {
 				var eerr error
+				phase = phases.begin(phaseTargetEvidence)
 				prevRows, eerr = b.Store.EvidenceForTarget(ctx, prevPURL, t.Symbol)
+				phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(prevRows))})
 				if eerr != nil {
 					return fmt.Errorf("compatibility: evidence for %s %q: %w", prevPURL, t.Symbol, eerr)
 				}
@@ -385,10 +441,12 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		}
 		regs = append(regs, receiptRegressions[receiptTarget{purl: p.String(), symbol: t.Symbol}]...)
 
+		phase = phases.begin(phaseSnapshotCalculate)
 		receipts := receiptsForTarget(samples, p, t.Symbol)
 		snap := BuildSnapshot(t.PURL, t.Symbol, rows, receipts, regs, now)
 		snap.JDKBoundaryCandidates = jdkBoundaries[receiptTarget{purl: p.String(), symbol: t.Symbol}]
 		js, jerr := json.Marshal(snap)
+		phase.end(jerr, builderPhaseCounters{items: 1, bytes: int64(len(js)), callsKnown: true})
 		if jerr != nil {
 			return fmt.Errorf("compatibility: marshal snapshot %s: %w", t.PURL, jerr)
 		}
@@ -401,10 +459,20 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 			}
 		}
 	}
+	phases.completeEmpty(phaseTargetEvidence)
+	phases.completeEmpty(phaseSnapshotCalculate)
+	phases.close(phaseTargetEvidence)
+	phases.close(phaseSnapshotCalculate)
 	if err := flushSnapshots(); err != nil {
 		return fmt.Errorf("compatibility: put final snapshot batch: %w", err)
 	}
-	if err := b.retireSnapshots(ctx, allTargets, affected); err != nil {
+	phases.completeEmpty(phaseSnapshotWrite)
+	phases.close(phaseSnapshotWrite)
+	phase = phases.begin(phaseSnapshotRetire)
+	err = b.retireSnapshots(ctx, allTargets, affected)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseSnapshotRetire)
+	if err != nil {
 		return err
 	}
 
@@ -452,11 +520,15 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 
 	for _, k := range pkgKeys {
 		if ctx.Err() != nil {
+			phase = phases.begin(phaseClusterRead)
+			phase.end(ctx.Err(), knownCalls(0))
 			return ctx.Err()
 		}
 		pkgTiming := packageTiming{key: k}
 		phaseStart := time.Now()
+		phase = phases.begin(phaseClusterRead)
 		evidenceByVersion, err := b.evidenceForPackage(ctx, k, targetsByPkg[k], byPkg)
+		phase.end(err, builderPhaseCounters{callsKnown: true})
 		pkgTiming.read = time.Since(phaseStart)
 		clusterRead += pkgTiming.read
 		if err != nil {
@@ -474,8 +546,10 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		// flickers with the aggregation schedule is not a finding anyone
 		// can act on, and this is the axis the bug/fix work is built on.
 		phaseStart = time.Now()
+		phase = phases.begin(phaseClusterCalculate)
 		regs := regressionsForPackage(k, evidenceByVersion)
 		clusters := BuildClusters(k.ecosystem, k.name, evidenceByVersion, regs, now)
+		phase.end(nil, builderPhaseCounters{items: int64(len(clusters)), callsKnown: true})
 		pkgTiming.calculate = time.Since(phaseStart)
 		clusterCalculate += pkgTiming.calculate
 		pkgTiming.clusters = len(clusters)
@@ -485,12 +559,18 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if batchStore, ok := b.Store.(interface {
 			UpsertFailureClusters(context.Context, []serverstore.ClusterRow) error
 		}); ok {
-			if err := batchStore.UpsertFailureClusters(ctx, clusters); err != nil {
+			phase = phases.begin(phaseClusterWrite)
+			err := batchStore.UpsertFailureClusters(ctx, clusters)
+			phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(clusters))})
+			if err != nil {
 				return fmt.Errorf("compatibility: upsert clusters %s/%s: %w", k.ecosystem, k.name, err)
 			}
 		} else {
 			for _, cluster := range clusters {
-				if err := b.Store.UpsertFailureCluster(ctx, cluster); err != nil {
+				phase = phases.begin(phaseClusterWrite)
+				err := b.Store.UpsertFailureCluster(ctx, cluster)
+				phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1})
+				if err != nil {
 					return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
 				}
 			}
@@ -500,24 +580,49 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > slowest.read+slowest.calculate+slowest.write {
 			slowest = pkgTiming
 		}
+		phases.progress(phaseClusterRead)
 	}
+	phases.completeEmpty(phaseClusterRead)
+	phases.completeEmpty(phaseClusterCalculate)
+	phases.completeEmpty(phaseClusterWrite)
+	phases.close(phaseClusterRead)
+	phases.close(phaseClusterCalculate)
+	phases.close(phaseClusterWrite)
 
 	// C6 shards per (ecosystem, name, major).
-	if err := b.regenerateShards(ctx, byPkg, purlOf, samples, affected, now); err != nil {
+	phase = phases.begin(phaseShards)
+	err = b.regenerateShards(ctx, byPkg, purlOf, samples, affected, now)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseShards)
+	if err != nil {
 		return err
 	}
 
 	// Matrix jobs for CROSS_PASS+ samples (§10.2 one-variable-changed).
-	if err := b.createMatrixJobs(ctx, samples); err != nil {
+	phase = phases.begin(phaseMatrixJobs)
+	err = b.createMatrixJobs(ctx, samples)
+	phase.end(err, builderPhaseCounters{callsKnown: true, items: int64(len(samples))})
+	phases.completeEmpty(phaseMatrixJobHistoryRead)
+	phases.close(phaseMatrixJobHistoryRead)
+	phases.close(phaseMatrixJobs)
+	if err != nil {
 		return err
 	}
 
 	// Verification work for coordinates whose DEPENDENCY axis is open (#87, #69).
-	if err := b.createDependencyAxisJobs(ctx); err != nil {
+	phase = phases.begin(phaseDependencyAxis)
+	err = b.createDependencyAxisJobs(ctx)
+	phase.end(err, builderPhaseCounters{})
+	phases.close(phaseDependencyAxis)
+	if err != nil {
 		return err
 	}
 
-	if err := b.refreshStats(ctx, now); err != nil {
+	phase = phases.begin(phaseRefreshStats)
+	err = b.refreshStats(ctx, now)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseRefreshStats)
+	if err != nil {
 		return err
 	}
 	b.passes++
@@ -533,11 +638,13 @@ func (b *Builder) RunOnce(ctx context.Context) error {
 // removed. Receipt-only targets disappear on quarantine; without retirement
 // their old PASS/regression JSON remained directly servable forever.
 func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.SnapshotTarget, affected map[shardKey]bool) error {
+	phases := builderPhases(ctx)
 	want := make(map[serverstore.SnapshotTarget]bool, len(live))
 	for _, target := range live {
 		want[target] = true
 	}
 	stored, err := b.Store.SnapshotKeys(ctx)
+	phases.add(phaseSnapshotRetire, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(stored))})
 	if err != nil {
 		return fmt.Errorf("compatibility: list snapshot keys: %w", err)
 	}
@@ -554,7 +661,9 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 		}
 		stale = append(stale, target)
 	}
-	if err := b.Store.DeleteSnapshots(ctx, stale); err != nil {
+	err = b.Store.DeleteSnapshots(ctx, stale)
+	phases.add(phaseSnapshotRetire, knownCalls(1))
+	if err != nil {
 		return fmt.Errorf("compatibility: delete retired snapshots: %w", err)
 	}
 	return nil
@@ -600,6 +709,8 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 	if len(resolved) == 0 {
 		return nil
 	}
+	phases := builderPhases(ctx)
+	phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{items: int64(len(resolved)), callsKnown: true})
 	known, err := b.knownPackages(ctx, resolved)
 	if err != nil {
 		return err
@@ -608,10 +719,12 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 		if known[p.String()] {
 			continue
 		}
-		if err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
+		err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
 			PURL: p.String(), Ecosystem: p.Ecosystem, Name: p.Name,
 			Version: p.Version, Major: p.Major(), Publicness: "UNKNOWN",
-		}); err != nil {
+		})
+		phases.add(phaseEnsureReceiptPackages, knownCalls(1))
+		if err != nil {
 			return fmt.Errorf("compatibility: register receipt package %s: %w", p.String(), err)
 		}
 	}
@@ -623,10 +736,13 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 // original read-per-package contract through the fallback below.
 func (b *Builder) knownPackages(ctx context.Context, resolved []domain.PURL) (map[string]bool, error) {
 	known := make(map[string]bool, len(resolved))
+	phases := builderPhases(ctx)
 	probe, ok := b.Store.(packageProbeStore)
 	if !ok {
 		for _, p := range resolved {
-			if _, found, err := b.Store.GetPackage(ctx, p.String()); err != nil {
+			_, found, err := b.Store.GetPackage(ctx, p.String())
+			phases.add(phaseEnsureReceiptPackages, knownCalls(1))
+			if err != nil {
 				return nil, fmt.Errorf("compatibility: get package %s: %w", p.String(), err)
 			} else if found {
 				known[p.String()] = true
@@ -644,6 +760,7 @@ func (b *Builder) knownPackages(ctx context.Context, resolved []domain.PURL) (ma
 			purls = append(purls, p.String())
 		}
 		page, err := probe.ExistingPackagePURLs(ctx, purls)
+		phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1})
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: existing packages: %w", err)
 		}
@@ -660,7 +777,9 @@ func (b *Builder) knownPackages(ctx context.Context, resolved []domain.PURL) (ma
 // passes with nothing else to do: it is a single query, and it is what the
 // website's counters and generatedAt timestamp come from.
 func (b *Builder) refreshStats(ctx context.Context, now time.Time) error {
+	phases := builderPhases(ctx)
 	counts, err := b.Store.NetworkCounts(ctx, now)
+	phases.add(phaseRefreshStats, knownCalls(1))
 	if err != nil {
 		return fmt.Errorf("compatibility: network counts: %w", err)
 	}
@@ -669,6 +788,7 @@ func (b *Builder) refreshStats(ctx context.Context, now time.Time) error {
 	// drained the client queue and no route existed to receive one; both
 	// are connected now, so the number is read rather than assumed.
 	adopt, err := b.Store.AdoptionSummary(ctx)
+	phases.add(phaseRefreshStats, knownCalls(1))
 	if err != nil {
 		return fmt.Errorf("compatibility: adoption summary: %w", err)
 	}
@@ -676,7 +796,9 @@ func (b *Builder) refreshStats(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if err := b.Store.SetStatsDaily(ctx, now.Format("2006-01-02"), string(statsJSON)); err != nil {
+	err = b.Store.SetStatsDaily(ctx, now.Format("2006-01-02"), string(statsJSON))
+	phases.add(phaseRefreshStats, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(statsJSON))})
+	if err != nil {
 		return fmt.Errorf("compatibility: set stats: %w", err)
 	}
 	return nil
@@ -755,12 +877,21 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 	// original per-sample contract through the fallback below.
 	var out []sampleData
 	bulk, hasBulkReceipts := b.Store.(receiptPageStore)
+	phases := builderPhases(ctx)
 	for offset := 0; ; offset += loadSampleBatch {
+		readPhase := phases.begin(phaseSamplePageRead)
 		page, perr := b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		pageCounters := builderPhaseCounters{
+			logicalCalls: 1, callsKnown: true, pages: 1,
+			items: int64(len(page)), bytes: sampleRowsBytes(page),
+		}
+		readPhase.end(perr, pageCounters)
+		phases.add(phaseLoadSamples, pageCounters.withoutItems())
 		if perr != nil {
 			return nil, fmt.Errorf("compatibility: list samples: %w", perr)
 		}
 
+		decodePhase := phases.begin(phaseDecode)
 		parsed := make([]sampleData, 0, len(page))
 		sampleIDs := make([]string, 0, len(page))
 		for _, row := range page {
@@ -777,11 +908,22 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 			parsed = append(parsed, sd)
 			sampleIDs = append(sampleIDs, row.SampleID)
 		}
+		decodeCounters := builderPhaseCounters{
+			logicalCalls: 0, callsKnown: true, items: int64(len(parsed)), bytes: sampleRowsBytes(page),
+		}
+		decodePhase.end(nil, decodeCounters)
 
 		var receiptPages map[string][]serverstore.ReceiptRow
 		if hasBulkReceipts && len(sampleIDs) > 0 {
 			var err error
+			receiptPhase := phases.begin(phaseReceiptPageRead)
 			receiptPages, err = bulk.ReceiptsForSamples(ctx, sampleIDs)
+			items, bytes := receiptPagesMetrics(receiptPages)
+			receiptCounters := builderPhaseCounters{
+				logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes,
+			}
+			receiptPhase.end(err, receiptCounters)
+			phases.add(phaseLoadSamples, receiptCounters.withoutItems())
 			if err != nil {
 				return nil, fmt.Errorf("compatibility: receipts for sample page: %w", err)
 			}
@@ -790,22 +932,40 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 			receiptRows := receiptPages[parsed[i].row.SampleID]
 			if !hasBulkReceipts {
 				var err error
+				receiptPhase := phases.begin(phaseReceiptPageRead)
 				receiptRows, err = b.Store.ReceiptsForSample(ctx, parsed[i].row.SampleID)
+				items, bytes := receiptRowsMetrics(receiptRows)
+				receiptCounters := builderPhaseCounters{
+					logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes,
+				}
+				receiptPhase.end(err, receiptCounters)
+				phases.add(phaseLoadSamples, receiptCounters.withoutItems())
 				if err != nil {
 					return nil, fmt.Errorf("compatibility: receipts for %s: %w", parsed[i].row.SampleID, err)
 				}
 			}
+			decodePhase = phases.begin(phaseDecode)
+			var decodedReceipts int64
+			var decodedReceiptBytes int64
 			for _, rr := range receiptRows {
+				decodedReceiptBytes += int64(len(rr.ReceiptJSON))
 				if info, ok := ParseReceiptRow(rr); ok {
 					parsed[i].receipts = append(parsed[i].receipts, info)
+					decodedReceipts++
 				}
 			}
+			decodePhase.end(nil, builderPhaseCounters{callsKnown: true, items: decodedReceipts, bytes: decodedReceiptBytes})
 		}
 		out = append(out, parsed...)
+		phases.progress(phaseLoadSamples)
 		if len(page) < loadSampleBatch {
 			break
 		}
 	}
+	phases.completeEmpty(phaseReceiptPageRead)
+	phases.close(phaseSamplePageRead)
+	phases.close(phaseReceiptPageRead)
+	phases.close(phaseDecode)
 	return out, nil
 }
 
@@ -931,6 +1091,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 	purlOf map[pkgKey]map[string]string,
 	samples []sampleData, affected map[shardKey]bool, now time.Time) error {
 
+	phases := builderPhases(ctx)
 	shardPkgs := map[shardKey]map[string]*ShardPackage{} // purl → package entry
 
 	for k, symbols := range byPkg {
@@ -1021,7 +1182,9 @@ func (b *Builder) regenerateShards(ctx context.Context,
 		key := sk.ecosystem + "/" + sk.name + "/" + sk.major
 		built[key] = true
 		shardJSON, etag := BuildShard(key, pkgs, now)
-		if err := b.Store.PutShard(ctx, key, etag, shardJSON); err != nil {
+		err := b.Store.PutShard(ctx, key, etag, shardJSON)
+		phases.add(phaseShards, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(shardJSON))})
+		if err != nil {
 			return fmt.Errorf("compatibility: put shard %s: %w", key, err)
 		}
 	}
@@ -1061,6 +1224,7 @@ func (b *Builder) regenerateShards(ctx context.Context,
 // partial, and every untouched key would look retired.
 func (b *Builder) retireEmptyShards(ctx context.Context, built map[string]bool, now time.Time) error {
 	keys, err := b.Store.ShardKeys(ctx)
+	builderPhases(ctx).add(phaseShards, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(keys))})
 	if err != nil {
 		return fmt.Errorf("compatibility: list shard keys: %w", err)
 	}
@@ -1076,8 +1240,10 @@ func (b *Builder) retireEmptyShards(ctx context.Context, built map[string]bool, 
 // retireShardKeys empties the named shards, skipping any that are already
 // empty so an ETag is not churned for nothing.
 func (b *Builder) retireShardKeys(ctx context.Context, keys map[string]bool, now time.Time) error {
+	phases := builderPhases(ctx)
 	for key := range keys {
 		_, prev, ok, gerr := b.Store.GetShard(ctx, key)
+		phases.add(phaseShards, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(prev))})
 		if gerr != nil {
 			return fmt.Errorf("compatibility: get shard %s: %w", key, gerr)
 		}
@@ -1085,7 +1251,9 @@ func (b *Builder) retireShardKeys(ctx context.Context, keys map[string]bool, now
 			continue // already empty: rewriting it would only churn ETags
 		}
 		shardJSON, etag := BuildShard(key, nil, now)
-		if err := b.Store.PutShard(ctx, key, etag, shardJSON); err != nil {
+		err := b.Store.PutShard(ctx, key, etag, shardJSON)
+		phases.add(phaseShards, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1, bytes: int64(len(shardJSON))})
+		if err != nil {
 			return fmt.Errorf("compatibility: retire shard %s: %w", key, err)
 		}
 	}
@@ -1186,6 +1354,7 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) shardS
 // wishes for environments no worker could prove; those rows are retired by
 // migration 0010 and must not be recreated.
 func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) error {
+	phases := builderPhases(ctx)
 	// Decide eligibility first, so the job history is asked for once for the
 	// samples that can actually open matrix work rather than once per sample.
 	eligible := make([]*sampleData, 0, len(samples))
@@ -1241,12 +1410,15 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 				RuntimeVersion:   runtimeVersion,
 				ExecutionContext: "java",
 			}
-			if _, err := b.Store.CreateJob(ctx, serverstore.JobRow{
+			wantJSON := string(domain.MustCanonicalJSON(want))
+			_, err := b.Store.CreateJob(ctx, serverstore.JobRow{
 				SampleID:    sd.row.SampleID,
 				Reason:      "matrix",
-				WantEnvJSON: string(domain.MustCanonicalJSON(want)),
+				WantEnvJSON: wantJSON,
 				Status:      "open",
-			}); err != nil {
+			})
+			phases.add(phaseMatrixJobs, builderPhaseCounters{logicalCalls: 1, callsKnown: true, bytes: int64(len(wantJSON))})
+			if err != nil {
 				return fmt.Errorf("compatibility: create matrix job for %s: %w", sd.row.SampleID, err)
 			}
 		}
@@ -1272,10 +1444,16 @@ type jobPageStore interface {
 // because jobs are keyed by sample and each sample is visited once.
 func (b *Builder) jobsForSamples(ctx context.Context, eligible []*sampleData) (map[string][]serverstore.JobRow, error) {
 	out := make(map[string][]serverstore.JobRow, len(eligible))
+	phases := builderPhases(ctx)
 	page, ok := b.Store.(jobPageStore)
 	if !ok {
 		for _, sd := range eligible {
+			readPhase := phases.begin(phaseMatrixJobHistoryRead)
 			rows, err := b.Store.JobsForSample(ctx, sd.row.SampleID)
+			items, bytes := jobRowsMetrics(rows)
+			counters := builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes}
+			readPhase.end(err, counters)
+			phases.add(phaseMatrixJobs, counters.withoutItems())
 			if err != nil {
 				return nil, fmt.Errorf("compatibility: jobs for %s: %w", sd.row.SampleID, err)
 			}
@@ -1292,7 +1470,12 @@ func (b *Builder) jobsForSamples(ctx context.Context, eligible []*sampleData) (m
 		for _, sd := range eligible[start:end] {
 			ids = append(ids, sd.row.SampleID)
 		}
+		readPhase := phases.begin(phaseMatrixJobHistoryRead)
 		rows, err := page.JobsForSamples(ctx, ids)
+		items, bytes := jobPagesMetrics(rows)
+		counters := builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1, items: items, bytes: bytes}
+		readPhase.end(err, counters)
+		phases.add(phaseMatrixJobs, counters.withoutItems())
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: jobs for sample page: %w", err)
 		}
@@ -1604,6 +1787,7 @@ func (b *Builder) evidenceForPackage(ctx context.Context, k pkgKey,
 			continue // this pass already read it
 		}
 		rows, err := b.Store.EvidenceForTarget(ctx, pt.target.PURL, pt.target.Symbol)
+		builderPhases(ctx).add(phaseClusterRead, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
 		if err != nil {
 			return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: %w", pt.target.PURL, pt.target.Symbol, err)
 		}
