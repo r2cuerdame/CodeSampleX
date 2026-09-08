@@ -249,18 +249,25 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.
 	var affected map[shardKey]bool
+	var scope []string
+	scoped, hasScopedReads := b.Store.(serverstore.IncrementalBuilderStore)
 	if !full {
 		phase = phases.begin(phaseChanges)
 		changes, cerr := b.Store.ChangedSince(ctx, changeSince)
+		changeCalls := int64(1)
+		if cerr == nil && hasScopedReads {
+			scope, cerr = scoped.BuilderPackageScope(ctx, changeSince, changes)
+			changeCalls++
+		}
 		phase.end(cerr, builderPhaseCounters{
-			logicalCalls: 1, callsKnown: true,
+			logicalCalls: changeCalls, callsKnown: true,
 			items: int64(len(changes.Targets) + len(changes.SamplePURLs)),
 		})
 		phases.close(phaseChanges)
 		if cerr != nil {
 			return fmt.Errorf("compatibility: changes since %s: %w", b.lastRun, cerr)
 		}
-		if changes.Empty() {
+		if changes.Empty() && len(scope) == 0 {
 			// Nothing moved. Stats still refresh — they are one query and
 			// they carry the clock the website displays.
 			phase = phases.begin(phaseRefreshStats)
@@ -280,7 +287,13 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 
 	phase = phases.begin(phaseListTargets)
-	allTargets, err := b.Store.ListSnapshotTargets(ctx)
+	var allTargets []serverstore.SnapshotTarget
+	var err error
+	if scope != nil {
+		allTargets, err = scoped.ListSnapshotTargetsForPackages(ctx, scope)
+	} else {
+		allTargets, err = b.Store.ListSnapshotTargets(ctx)
+	}
 	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(allTargets))})
 	phases.close(phaseListTargets)
 	if err != nil {
@@ -291,11 +304,19 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		// Receipt regressions compare adjacent measured versions, including
 		// cross-major boundaries. A change to the old endpoint therefore also
 		// invalidates snapshots of newer majors for the same package.
+		if scope != nil {
+			// Symbol ownership changes can invalidate other packages too.
+			for _, target := range allTargets {
+				if key, ok := keyFor(target.PURL); ok {
+					affected[key] = true
+				}
+			}
+		}
 		affected = expandAffectedPackageMajors(affected, allTargets)
 		targets = keepTargets(allTargets, affected)
 	}
 	phase = phases.begin(phaseLoadSamples)
-	samples, err := b.loadSamples(ctx)
+	samples, err := b.loadSamplesScoped(ctx, scope)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseSamplePageRead)
 	phases.close(phaseReceiptPageRead)
@@ -303,6 +324,21 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases.close(phaseLoadSamples)
 	if err != nil {
 		return err
+	}
+	if scope != nil {
+		dirtyCoords := map[string]bool{}
+		for _, coord := range scope {
+			dirtyCoords[coord] = true
+		}
+		for _, sample := range samples {
+			for _, p := range sampleShardPURLs(sample) {
+				key := shardKey{p.Ecosystem, p.Name, p.Major()}
+				p.Version = ""
+				if dirtyCoords[strings.ToLower(p.String())] {
+					affected[key] = true
+				}
+			}
+		}
 	}
 	phase = phases.begin(phaseEnsureReceiptPackages)
 	err = b.ensureReceiptPackages(ctx, samples)
@@ -469,7 +505,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases.completeEmpty(phaseSnapshotWrite)
 	phases.close(phaseSnapshotWrite)
 	phase = phases.begin(phaseSnapshotRetire)
-	err = b.retireSnapshots(ctx, allTargets, affected)
+	err = b.retireSnapshotsScoped(ctx, allTargets, affected, scope)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseSnapshotRetire)
 	if err != nil {
@@ -638,22 +674,37 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 // removed. Receipt-only targets disappear on quarantine; without retirement
 // their old PASS/regression JSON remained directly servable forever.
 func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.SnapshotTarget, affected map[shardKey]bool) error {
+	return b.retireSnapshotsScoped(ctx, live, affected, nil)
+}
+
+func (b *Builder) retireSnapshotsScoped(ctx context.Context, live []serverstore.SnapshotTarget, affected map[shardKey]bool, scope []string) error {
 	phases := builderPhases(ctx)
 	want := make(map[serverstore.SnapshotTarget]bool, len(live))
 	for _, target := range live {
 		want[target] = true
 	}
-	stored, err := b.Store.SnapshotKeys(ctx)
+	var stored []serverstore.SnapshotTarget
+	var err error
+	if scope != nil {
+		stored, err = b.Store.(serverstore.IncrementalBuilderStore).SnapshotKeysForPackages(ctx, scope)
+	} else {
+		stored, err = b.Store.SnapshotKeys(ctx)
+	}
 	phases.add(phaseSnapshotRetire, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(stored))})
 	if err != nil {
 		return fmt.Errorf("compatibility: list snapshot keys: %w", err)
 	}
 	var stale []serverstore.SnapshotTarget
 	for _, target := range stored {
+		if scope != nil {
+			if key, ok := keyFor(target.PURL); ok {
+				affected[key] = true
+			}
+		}
 		if want[target] {
 			continue
 		}
-		if affected != nil {
+		if affected != nil && scope == nil {
 			key, ok := keyFor(target.PURL)
 			if !ok || !affected[key] {
 				continue
@@ -872,6 +923,10 @@ type receiptPageStore interface {
 }
 
 func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
+	return b.loadSamplesScoped(ctx, nil)
+}
+
+func (b *Builder) loadSamplesScoped(ctx context.Context, scope []string) ([]sampleData, error) {
 	// Process the corpus one sample page at a time. PostgreSQL can fetch the
 	// receipt history for that page in one checkout; alternate stores keep the
 	// original per-sample contract through the fallback below.
@@ -880,7 +935,13 @@ func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
 	phases := builderPhases(ctx)
 	for offset := 0; ; offset += loadSampleBatch {
 		readPhase := phases.begin(phaseSamplePageRead)
-		page, perr := b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		var page []serverstore.SampleRow
+		var perr error
+		if scope != nil {
+			page, perr = b.Store.(serverstore.IncrementalBuilderStore).ListBuilderSamplesPage(ctx, scope, loadSampleBatch, offset)
+		} else {
+			page, perr = b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		}
 		pageCounters := builderPhaseCounters{
 			logicalCalls: 1, callsKnown: true, pages: 1,
 			items: int64(len(page)), bytes: sampleRowsBytes(page),

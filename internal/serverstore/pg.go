@@ -866,7 +866,15 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 		rrows, err := conn.Query(ctx, `
 			SELECT r.receipt::text
 			FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
-			WHERE r.created_at > $1 OR s.created_at > $1 OR s.updated_at > $1`, since)
+			WHERE r.receipt_id IN (
+                SELECT receipt_id FROM receipts WHERE created_at > $1
+                UNION
+                SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id=s2.sample_id
+                WHERE s2.created_at > $1
+                UNION
+                SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id=s3.sample_id
+                WHERE s3.updated_at > $1
+            )`, since)
 		if err != nil {
 			return err
 		}
