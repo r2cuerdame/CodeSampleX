@@ -275,6 +275,8 @@ func (r *builderPhaseRecorder) finish(runErr error) {
 // itemUnit is deliberately fixed by phase. Parent phases use only their own
 // unit; child row counts stay on the child phase so an operator never has to
 // interpret a sum of samples, receipt rows, version buckets, and jobs.
+// Write units count submitted rows even when the call fails; they do not
+// establish how many rows were committed.
 func itemUnit(name string) string {
 	switch name {
 	case phaseChanges:
@@ -296,21 +298,23 @@ func itemUnit(name string) string {
 	case phaseSnapshotCalculate:
 		return "snapshots_constructed"
 	case phaseSnapshotWrite:
-		return "snapshot_rows_written"
+		return "snapshot_rows_submitted"
 	case phaseSnapshotRetire:
 		return "snapshot_keys_returned"
 	case phaseClusterCalculate:
 		return "clusters_constructed"
 	case phaseClusterWrite:
-		return "cluster_rows_written"
+		return "cluster_rows_submitted"
 	case phaseShards:
+		// Includes each enumerated key and attempted record read/write, even
+		// failed or not-found attempts and repeated visits; not unique shards.
 		return "shard_records_touched"
 	case phaseMatrixJobs:
 		return "sample_inputs"
 	case phaseMatrixJobHistoryRead:
 		return "job_rows_returned"
 	case phaseRefreshStats:
-		return "stats_rows_written"
+		return "stats_rows_submitted"
 	default:
 		return "none"
 	}

@@ -313,11 +313,35 @@ func TestBuilderPhaseFailedClusterWriteRetainsPartialElapsed(t *testing.T) {
 	}
 	assertPhaseFinal(t, sink, "error_class=error", "active_phase="+phaseClusterWrite, "failed_phase="+phaseClusterWrite)
 	assertPositivePartialDuration(t, sink, phaseClusterWrite)
+	exit := sink.matching("event=exit", "phase="+phaseClusterWrite, "outcome=error")[0]
+	if !strings.Contains(exit, "logical_calls=1 ") || !regexp.MustCompile(`\bitems=[1-9][0-9]*\b`).MatchString(exit) {
+		t.Fatalf("failed cluster write did not record submitted rows: %s", exit)
+	}
+	if !strings.Contains(exit, "item_unit=cluster_rows_submitted ") || strings.Contains(exit, "rows_written") {
+		t.Fatalf("failed cluster write must describe submission, not persistence: %s", exit)
+	}
 	if strings.Contains(sink.joined(), "PRIVATE") {
 		t.Fatalf("phase log leaked cluster fixture: %s", sink.joined())
 	}
 	if builder.passes != 0 || !builder.lastRun.IsZero() {
 		t.Fatalf("failed cluster write changed bookkeeping: %d/%s", builder.passes, builder.lastRun)
+	}
+}
+
+func TestBuilderPhaseWriteItemUnitsDescribeSubmittedRows(t *testing.T) {
+	for _, tc := range []struct {
+		phase string
+		unit  string
+	}{
+		{phaseSnapshotWrite, "snapshot_rows_submitted"},
+		{phaseClusterWrite, "cluster_rows_submitted"},
+		{phaseRefreshStats, "stats_rows_submitted"},
+	} {
+		t.Run(tc.phase, func(t *testing.T) {
+			if got := itemUnit(tc.phase); got != tc.unit {
+				t.Fatalf("item unit = %q, want %q", got, tc.unit)
+			}
+		})
 	}
 }
 
