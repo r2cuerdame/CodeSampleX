@@ -104,7 +104,7 @@ jobs:
           # The renderer below is the only readable form of a -json run, so the
           # failing case must reach it rather than abort the step at `go test`.
           status=0
-          go test ./internal/serverstore/ -count=1 -json > "$RUNNER_TEMP/pg-tests.json" || status=$?
+          go test ./internal/serverstore/ ./internal/compatibility/ -count=1 -json > "$RUNNER_TEMP/pg-tests.json" || status=$?
           # -json implies verbose, so this is the whole run in order: which
           # test, which assertion, which migration or query it died on.
           jq -j 'select(.Action == "output") | .Output' "$RUNNER_TEMP/pg-tests.json"
@@ -139,6 +139,18 @@ jobs:
           fi
           if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBackgroundWorkLeavesInteractiveCapacity'; then
             echo "::error::the background-to-interactive reservation guard (#174) did not run"
+            exit 1
+          fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBuilderScopedOutputParityAndBoundedPhases'; then
+            echo "::error::the incremental builder output/10x corpus guard (#174) did not run"
+            exit 1
+          fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBuilderScopedFailureDoesNotAdvanceCompletion'; then
+            echo "::error::the incremental builder failure/cancellation guard (#174) did not run"
+            exit 1
+          fi
+          if ! printf '%s\n' "$ran" | grep -qx 'TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus'; then
+            echo "::error::the cold PostgreSQL whole-query read bound guard (#174) did not run"
             exit 1
           fi
 

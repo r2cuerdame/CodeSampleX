@@ -16,6 +16,7 @@ const (
 	phaseResume                    = "resume"
 	phaseChanges                   = "changes"
 	phaseListTargets               = "list_targets"
+	phaseTargetProjectionRead      = "target_projection_read"
 	phaseLoadSamples               = "load_samples"
 	phaseSamplePageRead            = "sample_page_read"
 	phaseReceiptPageRead           = "receipt_page_read"
@@ -40,6 +41,7 @@ var builderPhaseNames = []string{
 	phaseResume,
 	phaseChanges,
 	phaseListTargets,
+	phaseTargetProjectionRead,
 	phaseLoadSamples,
 	phaseSamplePageRead,
 	phaseReceiptPageRead,
@@ -283,6 +285,8 @@ func itemUnit(name string) string {
 		return "change_references"
 	case phaseListTargets:
 		return "snapshot_targets_returned"
+	case phaseTargetProjectionRead:
+		return "projection_rows_returned"
 	case phaseSamplePageRead:
 		return "sample_rows_returned"
 	case phaseReceiptPageRead:

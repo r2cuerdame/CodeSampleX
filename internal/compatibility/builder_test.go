@@ -312,7 +312,7 @@ func TestShardEtagStability(t *testing.T) {
 
 // --- builder end-to-end over the fake store ----------------------------------
 
-func seedBuilderFixture(t *testing.T, store *serverstore.Fake) (samplePURL, sampleID string) {
+func seedBuilderFixture(t *testing.T, store serverstore.Store) (samplePURL, sampleID string) {
 	t.Helper()
 	ctx := context.Background()
 	samplePURL = "pkg:npm/axios@1.12.0"

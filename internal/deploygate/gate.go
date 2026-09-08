@@ -1,6 +1,7 @@
 package deploygate
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strings"
@@ -89,6 +90,19 @@ var wantedDedupEpochCoordinateIdxStatements = []string{
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
+	}
+
+	// Pin this reviewed additive migration as a whole, including its SQL
+	// function and index settings. Only platform line endings may differ.
+	// The general grammar must never learn arbitrary functions or expression
+	// indexes from this exception. A changed body requires a fresh review.
+	if name == "0036_builder_projections.sql" {
+		const reviewedSHA256 = "b88317b8bf969b67fc1c2dc5378a2fe003db28adca8fd2c71d0d8bf0270811dd"
+		digest := sha256.Sum256([]byte(strings.ReplaceAll(sql, "\r\n", "\n")))
+		if fmt.Sprintf("%x", digest) != reviewedSHA256 {
+			return fmt.Errorf("migration %s does not match the reviewed builder projection SHA256", name)
+		}
+		return nil
 	}
 
 	// Automatic production migration is an allowlist, not a blacklist. This
