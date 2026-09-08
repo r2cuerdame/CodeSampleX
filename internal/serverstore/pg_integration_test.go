@@ -58,6 +58,176 @@ func openTestPG(t *testing.T) *PG {
 	return openTestPGWithPolicy(t, DefaultPoolPolicy())
 }
 
+// Receipt-derived package registration asks whether each resolved package is
+// already known. Asking one purl at a time was one background checkout per
+// package in the whole corpus on every aggregation pass, incremental ones
+// included -- production v0.1.147 reported active-builder pool_busy=143 and a
+// 16.357s maximum wait for a connection while it did exactly that.
+//
+// The bulk form must answer the identical question (membership, and only for
+// purls that really exist), keep a full builder page to one checkout, and
+// leave the rows completely alone: a probe that refreshed last_seen would
+// turn aggregation into a write on every pass and make "when did the network
+// last see this package" mean "when did the builder last run".
+func TestIntegrationExistingPackagePURLsMatchesGetPackageWithoutTouchingRows(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	var known []string
+	for i := 0; i < 5; i++ {
+		purl := fmt.Sprintf("pkg:npm/probe%03d@1.0.0", i)
+		known = append(known, purl)
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: purl, Ecosystem: "npm", Name: fmt.Sprintf("probe%03d", i),
+			Version: "1.0.0", Major: "1", Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatalf("UpsertPackage %s: %v", purl, err)
+		}
+	}
+	absent := []string{"pkg:npm/probe-absent@9.9.9", "pkg:npm/probe999@1.0.0"}
+
+	before := map[string]PackageRow{}
+	for _, purl := range known {
+		row, ok, err := pg.GetPackage(ctx, purl)
+		if err != nil || !ok {
+			t.Fatalf("GetPackage %s: ok=%t err=%v", purl, ok, err)
+		}
+		before[purl] = row
+	}
+
+	page := append(append([]string(nil), known...), absent...)
+	got, err := pg.ExistingPackagePURLs(ctx, page)
+	if err != nil {
+		t.Fatalf("ExistingPackagePURLs: %v", err)
+	}
+	want := map[string]bool{}
+	for _, purl := range page {
+		if _, ok, err := pg.GetPackage(ctx, purl); err != nil {
+			t.Fatalf("GetPackage %s: %v", purl, err)
+		} else if ok {
+			want[purl] = true
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExistingPackagePURLs = %v, want %v", got, want)
+	}
+	for _, purl := range absent {
+		if _, present := got[purl]; present {
+			t.Fatalf("absent purl %s appeared in the answer", purl)
+		}
+	}
+	for _, purl := range known {
+		row, ok, err := pg.GetPackage(ctx, purl)
+		if err != nil || !ok {
+			t.Fatalf("GetPackage after probe %s: ok=%t err=%v", purl, ok, err)
+		}
+		if !row.LastSeen.Equal(before[purl].LastSeen) || !row.FirstSeen.Equal(before[purl].FirstSeen) ||
+			row.Publicness != before[purl].Publicness {
+			t.Fatalf("probing %s changed the row: before=%+v after=%+v", purl, before[purl], row)
+		}
+	}
+
+	// A full builder page is one checkout, and an empty one is none.
+	ids := make([]string, packageProbePageForTest)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("pkg:npm/probe-page%05d@1.0.0", i)
+	}
+	acquired := classStat(t, pg.PoolStats(), "background").Acquired
+	if _, err := pg.ExistingPackagePURLs(ctx, ids); err != nil {
+		t.Fatalf("full package page: %v", err)
+	}
+	if got, want := classStat(t, pg.PoolStats(), "background").Acquired-acquired, uint64(1); got != want {
+		t.Fatalf("package page checkouts = %d, want %d", got, want)
+	}
+	acquired = classStat(t, pg.PoolStats(), "background").Acquired
+	if rows, err := pg.ExistingPackagePURLs(ctx, nil); err != nil || len(rows) != 0 {
+		t.Fatalf("empty package page = %v, err=%v", rows, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired; got != acquired {
+		t.Fatalf("empty package page acquired a connection: before=%d after=%d", acquired, got)
+	}
+}
+
+// packageProbePageForTest mirrors the builder's page bound. It is repeated
+// rather than imported because internal/serverstore must not depend on the
+// package that reads it.
+const packageProbePageForTest = 1000
+
+// Matrix generation reads the job history of every verified Java sample in
+// the corpus on every pass. The bulk form must return the same rows in the
+// same per-sample order as JobsForSample, so which matrix cells already exist
+// is decided from identical evidence -- a batched read that dropped or
+// reordered a row would reopen a cell that already ran.
+func TestIntegrationJobsForSamplesMatchesJobsForSample(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	var samples []string
+	for i := 0; i < 3; i++ {
+		sampleID := "sha256:" + fmt.Sprintf("%064x", 900000+i)
+		samples = append(samples, sampleID)
+		if err := pg.SaveSample(ctx, SampleRow{
+			SampleID: sampleID, ManifestJSON: `{"schemaVersion":1}`,
+		}); err != nil {
+			t.Fatalf("SaveSample %s: %v", sampleID, err)
+		}
+	}
+	// The first sample carries two jobs of different reasons; the second one;
+	// the third none, so an absent sample is covered too.
+	for _, j := range []JobRow{
+		{SampleID: samples[0], Reason: "matrix", WantEnvJSON: `{"runtimeVersion":"17"}`, Status: "open"},
+		{SampleID: samples[0], Reason: "cross", WantEnvJSON: `{"os":"linux"}`, Status: "open"},
+		{SampleID: samples[1], Reason: "matrix", WantEnvJSON: `{"runtimeVersion":"21"}`, Status: "open"},
+	} {
+		if _, err := pg.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob %s/%s: %v", j.SampleID, j.Reason, err)
+		}
+	}
+	// Equal timestamps force id to be the ordering tie-breaker, which is the
+	// only part of the order a batched query could silently change.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `UPDATE verification_jobs SET created_at=$1`, time.Unix(100, 0).UTC())
+		return err
+	}); err != nil {
+		t.Fatalf("align job timestamps: %v", err)
+	}
+
+	acquired := classStat(t, pg.PoolStats(), "background").Acquired
+	batch, err := pg.JobsForSamples(ctx, append(append([]string(nil), samples...), "sha256:absent"))
+	if err != nil {
+		t.Fatalf("JobsForSamples: %v", err)
+	}
+	if got, want := classStat(t, pg.PoolStats(), "background").Acquired-acquired, uint64(1); got != want {
+		t.Fatalf("job page checkouts = %d, want %d", got, want)
+	}
+	for _, sampleID := range samples {
+		want, err := pg.JobsForSample(ctx, sampleID)
+		if err != nil {
+			t.Fatalf("JobsForSample %s: %v", sampleID, err)
+		}
+		if len(want) == 0 {
+			if _, present := batch[sampleID]; present {
+				t.Fatalf("sample %s has no jobs but appeared in the batch", sampleID)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(batch[sampleID], want) {
+			t.Fatalf("jobs for %s: batch=%+v single=%+v", sampleID, batch[sampleID], want)
+		}
+	}
+	if _, present := batch["sha256:absent"]; present {
+		t.Fatal("an unknown sample appeared in the batch")
+	}
+
+	acquired = classStat(t, pg.PoolStats(), "background").Acquired
+	if rows, err := pg.JobsForSamples(ctx, nil); err != nil || len(rows) != 0 {
+		t.Fatalf("empty job page = %v, err=%v", rows, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired; got != acquired {
+		t.Fatalf("empty job page acquired a connection: before=%d after=%d", acquired, got)
+	}
+}
+
 // The production 2026-09-07 builder pass wrote 4,255 snapshots through
 // 4,255 separate checkouts and autocommits while interactive requests were
 // refused. The builder now supplies bounded chunks of 64: prove that the PG
