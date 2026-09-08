@@ -126,7 +126,7 @@ func Migrate(ctx context.Context, conn *pgx.Conn) error {
 		ON CONFLICT DO NOTHING`); err != nil {
 		return fmt.Errorf("serverstore: reconcile sample package projection: %w", err)
 	}
-	return nil
+	return backfillBuilderProjections(ctx, conn)
 }
 
 func applyMigration(ctx context.Context, conn *pgx.Conn, m Migration) error {

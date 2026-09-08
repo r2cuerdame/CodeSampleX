@@ -216,6 +216,34 @@ type sampleData struct {
 	receipts []ReceiptInfo
 }
 
+// PostgreSQL supplies an indexed incremental source path. Alternate stores
+// retain the exhaustive implementation, which also remains the full/hourly
+// repair path and the independent parity oracle in tests.
+type incrementalSourceStore interface {
+	BuilderChangesSince(context.Context, time.Time) (serverstore.Changes, error)
+	ListBuilderSnapshotTargets(context.Context, []serverstore.BuilderPackage) ([]serverstore.SnapshotTarget, serverstore.BuilderReadMetrics, error)
+	ListBuilderSamplesPage(context.Context, []serverstore.BuilderPackage, int, int) ([]serverstore.SampleRow, error)
+	BuilderSnapshotKeys(context.Context, []serverstore.BuilderPackage) ([]serverstore.SnapshotTarget, error)
+}
+
+func affectedPackages(affected map[shardKey]bool) []serverstore.BuilderPackage {
+	seen := map[serverstore.BuilderPackage]bool{}
+	for k := range affected {
+		seen[serverstore.BuilderPackage{Ecosystem: k.ecosystem, Name: strings.ToLower(k.name)}] = true
+	}
+	out := make([]serverstore.BuilderPackage, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ecosystem != out[j].Ecosystem {
+			return out[i].Ecosystem < out[j].Ecosystem
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
 // RunOnce executes one aggregation pass.
 //
 // The pass is INCREMENTAL by default. Rebuilding everything on every tick
@@ -249,9 +277,16 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.
 	var affected map[shardKey]bool
+	scoped, hasScoped := b.Store.(incrementalSourceStore)
 	if !full {
 		phase = phases.begin(phaseChanges)
-		changes, cerr := b.Store.ChangedSince(ctx, changeSince)
+		var changes serverstore.Changes
+		var cerr error
+		if hasScoped {
+			changes, cerr = scoped.BuilderChangesSince(ctx, changeSince)
+		} else {
+			changes, cerr = b.Store.ChangedSince(ctx, changeSince)
+		}
 		phase.end(cerr, builderPhaseCounters{
 			logicalCalls: 1, callsKnown: true,
 			items: int64(len(changes.Targets) + len(changes.SamplePURLs)),
@@ -280,7 +315,17 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 
 	phase = phases.begin(phaseListTargets)
-	allTargets, err := b.Store.ListSnapshotTargets(ctx)
+	var allTargets []serverstore.SnapshotTarget
+	var err error
+	if affected != nil && hasScoped {
+		projectionPhase := phases.begin(phaseTargetProjectionRead)
+		var read serverstore.BuilderReadMetrics
+		allTargets, read, err = scoped.ListBuilderSnapshotTargets(ctx, affectedPackages(affected))
+		projectionPhase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: read.Rows, bytes: read.Bytes})
+		phases.close(phaseTargetProjectionRead)
+	} else {
+		allTargets, err = b.Store.ListSnapshotTargets(ctx)
+	}
 	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(allTargets))})
 	phases.close(phaseListTargets)
 	if err != nil {
@@ -295,7 +340,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		targets = keepTargets(allTargets, affected)
 	}
 	phase = phases.begin(phaseLoadSamples)
-	samples, err := b.loadSamples(ctx)
+	samples, err := b.loadSamplesForPackages(ctx, affected)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseSamplePageRead)
 	phases.close(phaseReceiptPageRead)
@@ -303,6 +348,17 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases.close(phaseLoadSamples)
 	if err != nil {
 		return err
+	}
+	if affected != nil && hasScoped {
+		// A declaration can create a source-only shard with no target. Include
+		// all its majors too when rebuilding the selected package histories.
+		var sampleTargets []serverstore.SnapshotTarget
+		for _, sd := range samples {
+			for _, p := range sampleShardPURLs(sd) {
+				sampleTargets = append(sampleTargets, serverstore.SnapshotTarget{PURL: p.String()})
+			}
+		}
+		affected = expandAffectedPackageMajors(affected, sampleTargets)
 	}
 	phase = phases.begin(phaseEnsureReceiptPackages)
 	err = b.ensureReceiptPackages(ctx, samples)
@@ -643,7 +699,17 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 	for _, target := range live {
 		want[target] = true
 	}
-	stored, err := b.Store.SnapshotKeys(ctx)
+	var stored []serverstore.SnapshotTarget
+	var err error
+	scoped, hasScoped := b.Store.(incrementalSourceStore)
+	if affected != nil && hasScoped {
+		stored, err = scoped.BuilderSnapshotKeys(ctx, affectedPackages(affected))
+		// Retired majors are absent from live targets but must also have their
+		// stale snapshots and shards withdrawn in this incremental pass.
+		affected = expandAffectedPackageMajors(affected, stored)
+	} else {
+		stored, err = b.Store.SnapshotKeys(ctx)
+	}
 	phases.add(phaseSnapshotRetire, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(stored))})
 	if err != nil {
 		return fmt.Errorf("compatibility: list snapshot keys: %w", err)
@@ -872,15 +938,26 @@ type receiptPageStore interface {
 }
 
 func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
+	return b.loadSamplesForPackages(ctx, nil)
+}
+
+func (b *Builder) loadSamplesForPackages(ctx context.Context, affected map[shardKey]bool) ([]sampleData, error) {
 	// Process the corpus one sample page at a time. PostgreSQL can fetch the
 	// receipt history for that page in one checkout; alternate stores keep the
 	// original per-sample contract through the fallback below.
 	var out []sampleData
 	bulk, hasBulkReceipts := b.Store.(receiptPageStore)
 	phases := builderPhases(ctx)
+	scoped, hasScoped := b.Store.(incrementalSourceStore)
 	for offset := 0; ; offset += loadSampleBatch {
 		readPhase := phases.begin(phaseSamplePageRead)
-		page, perr := b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		var page []serverstore.SampleRow
+		var perr error
+		if affected != nil && hasScoped {
+			page, perr = scoped.ListBuilderSamplesPage(ctx, affectedPackages(affected), loadSampleBatch, offset)
+		} else {
+			page, perr = b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
+		}
 		pageCounters := builderPhaseCounters{
 			logicalCalls: 1, callsKnown: true, pages: 1,
 			items: int64(len(page)), bytes: sampleRowsBytes(page),

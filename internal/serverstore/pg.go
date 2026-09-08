@@ -1001,7 +1001,10 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 				--
 				-- Status is derived from receipts. SetSampleStatus is how it
 				-- moves; this is not.
-				hot_score = EXCLUDED.hot_score`,
+				hot_score = EXCLUDED.hot_score,
+				updated_at = CASE WHEN samples.manifest IS DISTINCT FROM EXCLUDED.manifest
+					OR samples.hot_score IS DISTINCT FROM EXCLUDED.hot_score
+					THEN now() ELSE samples.updated_at END`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
 			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason); err != nil {
 			return err
@@ -1025,6 +1028,9 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 			  ) AS package(value)
 			 WHERE strpos(reverse(package.value), '@') > 0
 			ON CONFLICT DO NOTHING`, s.SampleID, []byte(s.ManifestJSON)); err != nil {
+			return err
+		}
+		if err := maintainSampleBuilderProjection(ctx, tx, s.SampleID, s.ManifestJSON); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -1546,12 +1552,25 @@ func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error
 
 func (p *PG) SaveReceipt(ctx context.Context, r ReceiptRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		inserted, err := tx.Exec(ctx, `
 			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
 			VALUES($1,$2,$3,$4,$5,$6)
 			ON CONFLICT (receipt_id) DO NOTHING`,
 			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
-		return err
+		if err != nil {
+			return err
+		}
+		if inserted.RowsAffected() == 1 {
+			if err := maintainReceiptBuilderProjection(ctx, tx, r.ReceiptID, r.ReceiptJSON); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
 	})
 }
 
@@ -1583,6 +1602,9 @@ func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (
 		}
 		if inserted.RowsAffected() != 1 {
 			return nil // rollback the job update; this receipt answered another job already
+		}
+		if err := maintainReceiptBuilderProjection(ctx, tx, r.ReceiptID, r.ReceiptJSON); err != nil {
+			return err
 		}
 		// A designated sample author already proved LOCAL_PASS before upload.
 		// The claimed verifier is the independent confirmation. Promote the
