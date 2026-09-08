@@ -1609,6 +1609,44 @@ func (p *PG) ReceiptsForSample(ctx context.Context, sampleID string) ([]ReceiptR
 	return out, err
 }
 
+// ReceiptsForSamples returns receipt history for a bounded sample page in one
+// database checkout. The compatibility builder walks the whole live sample
+// corpus; doing one ReceiptsForSample checkout per sample turns an incremental
+// pass into thousands of background acquisitions and competes with readers.
+// Per-sample ordering matches ReceiptsForSample exactly.
+func (p *PG) ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]ReceiptRow, error) {
+	out := make(map[string][]ReceiptRow, len(sampleIDs))
+	if len(sampleIDs) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT receipt_id, sample_id, peer_id, env_hash, receipt::text,
+			       COALESCE(contract_result,''), created_at
+			FROM receipts
+			WHERE sample_id = ANY($1::text[])
+			ORDER BY sample_id, created_at, receipt_id`, sampleIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r ReceiptRow
+			var created *time.Time
+			if err := rows.Scan(&r.ReceiptID, &r.SampleID, &r.PeerID, &r.EnvHash,
+				&r.ReceiptJSON, &r.ContractResult, &created); err != nil {
+				return err
+			}
+			if created != nil {
+				r.CreatedAt = *created
+			}
+			out[r.SampleID] = append(out[r.SampleID], r)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // ------------------------------------------------------------------- jobs --
 
 func (p *PG) CreateJob(ctx context.Context, j JobRow) (int64, error) {

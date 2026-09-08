@@ -1342,6 +1342,13 @@ func TestIntegrationCRUD(t *testing.T) {
 		if err != nil || len(rs) != 1 || rs[0].ContractResult != "PASS" {
 			t.Fatalf("ReceiptsForSample: %v err=%v", rs, err)
 		}
+		batch, err := pg.ReceiptsForSamples(ctx, []string{sampleID, "sha256:absent"})
+		if err != nil || len(batch[sampleID]) != 1 || batch[sampleID][0].ContractResult != "PASS" {
+			t.Fatalf("ReceiptsForSamples: %v err=%v", batch, err)
+		}
+		if len(batch["sha256:absent"]) != 0 {
+			t.Fatalf("ReceiptsForSamples returned absent sample: %v", batch["sha256:absent"])
+		}
 	})
 
 	t.Run("jobs", func(t *testing.T) {
