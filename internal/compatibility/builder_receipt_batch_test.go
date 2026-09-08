@@ -3,6 +3,7 @@ package compatibility
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -10,20 +11,40 @@ import (
 
 type receiptPageRecordingStore struct {
 	*serverstore.Fake
-	batches [][]string
+	batches     [][]string
+	singleCalls int
 }
 
-func (s *receiptPageRecordingStore) ReceiptsForSamples(_ context.Context, sampleIDs []string) (map[string][]serverstore.ReceiptRow, error) {
+func (s *receiptPageRecordingStore) ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]serverstore.ReceiptRow, error) {
 	s.batches = append(s.batches, append([]string(nil), sampleIDs...))
-	return map[string][]serverstore.ReceiptRow{}, nil
+	out := make(map[string][]serverstore.ReceiptRow, len(sampleIDs))
+	for _, sampleID := range sampleIDs {
+		rows, err := s.Fake.ReceiptsForSample(ctx, sampleID)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) > 0 {
+			out[sampleID] = rows
+		}
+	}
+	return out, nil
 }
 
-func TestBuilderLoadsReceiptsOncePerSamplePage(t *testing.T) {
+func (s *receiptPageRecordingStore) ReceiptsForSample(context.Context, string) ([]serverstore.ReceiptRow, error) {
+	s.singleCalls++
+	return nil, fmt.Errorf("unexpected single-sample receipt read")
+}
+
+func TestBuilderLoadsReceiptsOncePerSamplePageWithoutChangingEvidenceInputs(t *testing.T) {
 	fake := serverstore.NewFake()
 	store := &receiptPageRecordingStore{Fake: fake}
 	ctx := context.Background()
 
-	for i := 0; i < loadSampleBatch+1; i++ {
+	// This fixture carries real receipt-derived evidence. The remaining rows
+	// take the corpus over a page boundary so the same test pins both parity
+	// and scale: one bounded receipt read per page, never one per sample.
+	seedBuilderFixture(t, fake)
+	for i := 0; i < loadSampleBatch; i++ {
 		row := serverstore.SampleRow{
 			SampleID:     fmt.Sprintf("sha256:%064x", i+1),
 			ManifestJSON: `{}`,
@@ -33,12 +54,18 @@ func TestBuilderLoadsReceiptsOncePerSamplePage(t *testing.T) {
 		}
 	}
 
-	builder := &Builder{Store: store}
-	rows, err := builder.loadSamples(ctx)
+	want, err := (&Builder{Store: fake}).loadSamples(ctx)
 	if err != nil {
-		t.Fatalf("loadSamples: %v", err)
+		t.Fatalf("fallback loadSamples: %v", err)
 	}
-	if got, want := len(rows), loadSampleBatch+1; got != want {
+	got, err := (&Builder{Store: store}).loadSamples(ctx)
+	if err != nil {
+		t.Fatalf("bulk loadSamples: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("bulk receipt pages changed the sample/receipt evidence supplied to snapshots, regressions, clusters, or shards")
+	}
+	if got, want := len(got), loadSampleBatch+1; got != want {
 		t.Fatalf("loaded samples = %d, want %d", got, want)
 	}
 	if got, want := len(store.batches), 2; got != want {
@@ -49,5 +76,8 @@ func TestBuilderLoadsReceiptsOncePerSamplePage(t *testing.T) {
 	}
 	if got, want := len(store.batches[1]), 1; got != want {
 		t.Fatalf("second receipt batch size = %d, want %d", got, want)
+	}
+	if store.singleCalls != 0 {
+		t.Fatalf("single-sample receipt calls = %d, want 0", store.singleCalls)
 	}
 }

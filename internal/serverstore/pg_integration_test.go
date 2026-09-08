@@ -58,6 +58,40 @@ func openTestPG(t *testing.T) *PG {
 	return openTestPGWithPolicy(t, DefaultPoolPolicy())
 }
 
+// One compatibility-builder sample page may contain 1,000 IDs. The bulk
+// receipt API must keep that whole read to one checkout; otherwise replacing
+// the old per-sample loop merely moves the same pool pressure behind a new
+// method name.
+func TestIntegrationReceiptPagesUseOneCheckoutEach(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	ids := make([]string, 1000)
+	for i := range ids {
+		ids[i] = "sha256:" + fmt.Sprintf("%064x", i+1)
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	if _, err := pg.ReceiptsForSamples(ctx, ids); err != nil {
+		t.Fatalf("full receipt page: %v", err)
+	}
+	if _, err := pg.ReceiptsForSamples(ctx, ids[:1]); err != nil {
+		t.Fatalf("short receipt page: %v", err)
+	}
+	after := classStat(t, pg.PoolStats(), "background").Acquired
+	if got, want := after-before, uint64(2); got != want {
+		t.Fatalf("receipt page checkouts = %d, want %d", got, want)
+	}
+
+	before = after
+	if got, err := pg.ReceiptsForSamples(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty receipt page = %v, err=%v", got, err)
+	}
+	after = classStat(t, pg.PoolStats(), "background").Acquired
+	if after != before {
+		t.Fatalf("empty receipt page acquired a connection: before=%d after=%d", before, after)
+	}
+}
+
 // Receipt-derived package registration asks whether each resolved package is
 // already known. Asking one purl at a time was one background checkout per
 // package in the whole corpus on every aggregation pass, incremental ones
@@ -1508,12 +1542,43 @@ func TestIntegrationCRUD(t *testing.T) {
 		if err := pg.SaveReceipt(ctx, r); err != nil { // idempotent
 			t.Fatalf("SaveReceipt duplicate: %v", err)
 		}
+		r2 := r
+		r2.ReceiptID = "sha256:" + fmt.Sprintf("%064d", 4)
+		r2.ContractResult = "FAIL"
+		if err := pg.SaveReceipt(ctx, r2); err != nil {
+			t.Fatalf("SaveReceipt second: %v", err)
+		}
+		// Equal timestamps force receipt_id to be the ordering tie-breaker.
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			_, err := c.Exec(ctx, `UPDATE receipts SET created_at=$1
+				WHERE receipt_id = ANY($2::text[])`, time.Unix(100, 0).UTC(), []string{r.ReceiptID, r2.ReceiptID})
+			return err
+		}); err != nil {
+			t.Fatalf("align receipt timestamps: %v", err)
+		}
 		rs, err := pg.ReceiptsForSample(ctx, sampleID)
-		if err != nil || len(rs) != 1 || rs[0].ContractResult != "PASS" {
+		if err != nil || len(rs) != 2 || rs[0].ReceiptID != r.ReceiptID || rs[1].ReceiptID != r2.ReceiptID {
 			t.Fatalf("ReceiptsForSample: %v err=%v", rs, err)
 		}
-		batch, err := pg.ReceiptsForSamples(ctx, []string{sampleID, "sha256:absent"})
-		if err != nil || len(batch[sampleID]) != 1 || batch[sampleID][0].ContractResult != "PASS" {
+
+		otherSampleID := "sha256:" + fmt.Sprintf("%064d", 5)
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: otherSampleID, ManifestJSON: `{"schemaVersion":1}`}); err != nil {
+			t.Fatalf("SaveSample other receipt owner: %v", err)
+		}
+		other := r
+		other.ReceiptID = "sha256:" + fmt.Sprintf("%064d", 6)
+		other.SampleID = otherSampleID
+		other.ContractResult = "SKIPPED"
+		if err := pg.SaveReceipt(ctx, other); err != nil {
+			t.Fatalf("SaveReceipt other sample: %v", err)
+		}
+		otherRows, err := pg.ReceiptsForSample(ctx, otherSampleID)
+		if err != nil {
+			t.Fatalf("ReceiptsForSample other: %v", err)
+		}
+
+		batch, err := pg.ReceiptsForSamples(ctx, []string{otherSampleID, sampleID, "sha256:absent"})
+		if err != nil || !reflect.DeepEqual(batch[sampleID], rs) || !reflect.DeepEqual(batch[otherSampleID], otherRows) {
 			t.Fatalf("ReceiptsForSamples: %v err=%v", batch, err)
 		}
 		if len(batch["sha256:absent"]) != 0 {
