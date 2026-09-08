@@ -8,9 +8,10 @@
 -- ASCII case folding is shared by PostgreSQL and Go. Non-ASCII identities use
 -- the same sentinel instead of depending on the database locale.
 --
--- Rollback: first restore a binary without scoped builder reads, then DROP the
--- nine builder_* indexes below and csx_builder_unsafe_keys(jsonb), csx_builder_coords(jsonb),
--- csx_builder_coord(text). No source or materialized data is rewritten.
+-- Binary rollback leaves these additive indexes/functions installed. Optional
+-- schema cleanup requires dropping the nine named indexes, then unsafe_keys,
+-- coords and coord functions, and only this migration's filename marker.
+-- No source or materialized data is rewritten.
 
 CREATE FUNCTION csx_builder_coord(raw text) RETURNS text
 LANGUAGE SQL IMMUTABLE PARALLEL SAFE
@@ -60,14 +61,16 @@ FROM (
 ) AS coordinates
 );
 
+-- Keep unrelated inserts out of a GIN pending list that every scoped read
+-- would otherwise scan until vacuum merges it into the main index.
 CREATE INDEX builder_samples_packages_idx
-  ON samples USING gin (csx_builder_coords(manifest->'packages'));
+  ON samples USING gin (csx_builder_coords(manifest->'packages')) WITH (fastupdate=off);
 CREATE INDEX builder_receipts_packages_idx
-  ON receipts USING gin (csx_builder_coords(receipt->'resolvedPackages'));
+  ON receipts USING gin (csx_builder_coords(receipt->'resolvedPackages')) WITH (fastupdate=off);
 CREATE INDEX builder_samples_subject_idx
   ON samples (csx_builder_coord(manifest->>'subject'));
 CREATE INDEX builder_samples_symbols_idx
-  ON samples USING gin ((manifest->'symbols'));
+  ON samples USING gin ((manifest->'symbols')) WITH (fastupdate=off);
 CREATE INDEX builder_evidence_coord_idx
   ON evidence_agg (csx_builder_coord(purl), purl, symbol);
 CREATE INDEX builder_snapshots_coord_idx

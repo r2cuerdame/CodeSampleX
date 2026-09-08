@@ -105,7 +105,7 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Hour)
 	seedBuilderFixture(t, pg)
 	save := func(id string, packages []string, symbol string) {
-		manifest := domain.SampleManifest{SchemaVersion: 1, Packages: packages, Symbols: []string{symbol}, Environment: envNode("esm"), License: "MIT-0"}
+		manifest := domain.SampleManifest{SchemaVersion: 1, Case: domain.Case{SchemaVersion: 1, CaseID: id}, ContractCommand: []string{"node", "test.mjs"}, VerifierAdapter: "node-typescript@1", Packages: packages, Symbols: []string{symbol}, Environment: envNode("esm"), License: "MIT-0"}
 		if err := pg.SaveSample(ctx, serverstore.SampleRow{SampleID: id, ManifestJSON: string(domain.MustCanonicalJSON(manifest)), Status: "CROSS_PASS"}); err != nil {
 			t.Fatal(err)
 		}
@@ -116,6 +116,18 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	javaManifest := jdkTestManifest("gradle-java@1", "8")
+	if err := pg.SaveSample(ctx, serverstore.SampleRow{SampleID: "jdk", ManifestJSON: string(domain.MustCanonicalJSON(javaManifest)), Status: "CROSS_PASS"}); err != nil {
+		t.Fatal(err)
+	}
+	javaReceipt := func(id, runtime, verdict string) {
+		info := jdkTestReceipt(runtime, "PASS", verdict)
+		rec := domain.VerificationReceipt{SchemaVersion: 2, SampleID: "jdk", CaseID: jdkTestCase, PeerID: "java-" + id, Environment: info.Env, Stages: info.Stages, ResolvedPackages: []string{jdkTestPURL}, VerifierAdapter: info.VerifierAdapter, SandboxCapability: info.SandboxCapability}
+		if err := pg.SaveReceipt(ctx, serverstore.ReceiptRow{ReceiptID: id, SampleID: "jdk", PeerID: rec.PeerID, EnvHash: rec.Environment.Hash(), ContractResult: verdict, ReceiptJSON: string(domain.MustCanonicalJSON(rec))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	javaReceipt("java-old", "8", "PASS")
 	save("undeclared", []string{"pkg:npm/declared@1.0.0"}, "actual.call")
 	receipt("actual-old", "undeclared", []string{"pkg:npm/actual@1.0.0"}, "PASS")
 	save("wide", []string{"pkg:npm/owner@1.0.0", "pkg:npm/side@1.0.0"}, "shared")
@@ -165,6 +177,11 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 	receipt("actual-new", "undeclared", []string{"pkg:npm/actual@2.0.0"}, "FAIL")
 	builderSQL(t, conn, "UPDATE receipts SET created_at=$1 WHERE receipt_id='actual-new'", now.Add(-time.Minute))
 	assertParity("undeclared resolved cross-major")
+	var matrixJobs int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM verification_jobs WHERE sample_id='jdk' AND reason='matrix'").Scan(&matrixJobs); err != nil || matrixJobs == 0 {
+		t.Fatalf("matrix jobs=%d, err=%v", matrixJobs, err)
+	}
+
 	js, ok, err := pg.GetSnapshot(ctx, "pkg:npm/actual@2.0.0", "actual.call")
 	if err != nil || !ok {
 		t.Fatalf("exact receipt snapshot absent: %v", err)
@@ -179,6 +196,21 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 	}
 	if failures != 1 {
 		t.Fatalf("exact receipt FAIL count=%d, snapshot=%s", failures, js)
+	}
+	now = now.Add(10 * time.Minute)
+	javaReceipt("java-new", "11", "FAIL")
+	builderSQL(t, conn, "UPDATE receipts SET created_at=$1 WHERE receipt_id='java-new'", now.Add(-time.Minute))
+	assertParity("Maven JDK boundary and matrix history")
+	javaJSON, ok, err := pg.GetSnapshot(ctx, jdkTestPURL, "Library.call")
+	if err != nil || !ok {
+		t.Fatalf("JDK snapshot absent: %v", err)
+	}
+	var javaSnapshot Snapshot
+	if err := json.Unmarshal([]byte(javaJSON), &javaSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(javaSnapshot.JDKBoundaryCandidates) != 1 {
+		t.Fatalf("JDK boundary not retained: %s", javaJSON)
 	}
 	now = now.Add(10 * time.Minute)
 	builderSQL(t, conn, "UPDATE samples SET quarantined=true, updated_at=$1 WHERE sample_id='narrow'", now.Add(-time.Minute))

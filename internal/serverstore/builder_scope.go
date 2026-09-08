@@ -330,26 +330,40 @@ func (p *PG) SnapshotKeysForPackages(ctx context.Context, coords []string) ([]Sn
 	return out, err
 }
 
+// MATERIALIZED candidate IDs plus parameterized LATERAL point reads keep
+// cached generic plans from joining a small candidate set to a whole-corpus
+// hash/sequence scan. OFFSET 0 preserves those point-read boundaries.
 const builderClaimsSQL = `
-   SELECT r.receipt::text, jsonb_build_object('symbols', s.manifest->'symbols', 'subject', s.manifest->'subject')
-   FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
-   WHERE ($3 OR NOT s.quarantined)
-    AND r.receipt->>'schemaVersion' = '2'
-    AND r.receipt->'stages'->>'resolve' = 'PASS'
-    AND r.receipt_id IN (
-     SELECT receipt_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
-     UNION
-     SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id = s2.sample_id
-       WHERE csx_builder_coord(s2.manifest->>'subject') = ANY($1)
-     UNION
-     SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id = s3.sample_id
-       WHERE s3.manifest->'symbols' ?| $2
-    )
-   ORDER BY r.receipt_id`
+ WITH selected(rid) AS MATERIALIZED (
+  SELECT receipt_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
+  UNION
+  SELECT r.receipt_id FROM (
+   SELECT sample_id FROM samples WHERE csx_builder_coord(manifest->>'subject') = ANY($1)
+   UNION
+   SELECT sample_id FROM samples WHERE manifest->'symbols' ?| $2
+  ) candidates
+  CROSS JOIN LATERAL (
+   SELECT receipt_id FROM receipts WHERE sample_id=candidates.sample_id OFFSET 0
+  ) r
+ )
+ SELECT r.receipt::text, jsonb_build_object('symbols',s.manifest->'symbols','subject',s.manifest->'subject')
+ FROM selected
+ CROSS JOIN LATERAL (
+  SELECT receipt_id, sample_id, receipt FROM receipts WHERE receipt_id=selected.rid OFFSET 0
+ ) r
+ CROSS JOIN LATERAL (
+  SELECT manifest FROM samples WHERE sample_id=r.sample_id AND ($3 OR NOT quarantined) OFFSET 0
+ ) s
+ WHERE r.receipt->>'schemaVersion' = '2' AND r.receipt->'stages'->>'resolve' = 'PASS'
+ ORDER BY r.receipt_id`
 
-const builderSamplesSQL = `SELECT ` + sampleCols + ` FROM samples
-   WHERE NOT quarantined AND sample_id IN (
-    SELECT sample_id FROM samples WHERE csx_builder_coords(manifest->'packages') && $1
-    UNION SELECT sample_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
-    UNION SELECT sample_id FROM samples WHERE csx_builder_coord(manifest->>'subject') = ANY($1)
-   ) ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`
+const builderSamplesSQL = `WITH selected(id) AS MATERIALIZED (
+ SELECT sample_id FROM samples WHERE csx_builder_coords(manifest->'packages') && $1
+ UNION SELECT sample_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
+ UNION SELECT sample_id FROM samples WHERE csx_builder_coord(manifest->>'subject') = ANY($1)
+)
+SELECT ` + sampleCols + ` FROM selected
+CROSS JOIN LATERAL (
+ SELECT * FROM samples WHERE sample_id=selected.id AND NOT quarantined OFFSET 0
+) s
+ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`

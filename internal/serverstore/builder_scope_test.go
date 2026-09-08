@@ -203,12 +203,19 @@ func containsScopeTarget(values []SnapshotTarget, want SnapshotTarget) bool {
 
 type builderScopeReadMetrics struct {
 	Targets, Samples, Receipts, Snapshots, JSONBytes int
+	ClaimRows, ClaimBytes                            int64
 	Checkouts                                        uint64
 }
 
 func measureBuilderScopeReads(t *testing.T, pg *PG) builderScopeReadMetrics {
 	t.Helper()
-	ctx := context.Background()
+	var metric builderScopeReadMetrics
+	ctx := WithBuilderClaimReadObserver(context.Background(), func() func(int64, int64, error) {
+		return func(rows, jsonBytes int64, err error) {
+			metric.ClaimRows += rows
+			metric.ClaimBytes += jsonBytes
+		}
+	})
 	before := classStat(t, pg.PoolStats(), "background").Acquired
 	coords, err := pg.BuilderPackageScope(ctx, time.Now().Add(-time.Minute),
 		Changes{SamplePURLs: []string{"pkg:npm/relevant@1"}})
@@ -224,7 +231,6 @@ func measureBuilderScopeReads(t *testing.T, pg *PG) builderScopeReadMetrics {
 		t.Fatal(err)
 	}
 	ids := make([]string, 0, len(samples))
-	var metric builderScopeReadMetrics
 	for _, sample := range samples {
 		ids = append(ids, sample.SampleID)
 		metric.JSONBytes += len(sample.ManifestJSON)
@@ -319,12 +325,17 @@ func TestIntegrationBuilderScopeReadsStayBoundedAtTenfoldCorpus(t *testing.T) {
 	seedBuilderIrrelevantCorpus(t, pg, 1, 1000)
 	before := measureBuilderScopeReads(t, pg)
 	beforePlans := measureBuilderOuterQueryPlans(t, pg, 1000)
+	beforeIdle := measureBuilderIdleChanges(t, pg, 1000)
 	seedBuilderIrrelevantCorpus(t, pg, 1001, 10000)
 	after := measureBuilderScopeReads(t, pg)
 	afterPlans := measureBuilderOuterQueryPlans(t, pg, 10000)
+	afterIdle := measureBuilderIdleChanges(t, pg, 10000)
+	if beforeIdle != afterIdle {
+		t.Errorf("idle ChangedSince rows/checkouts grew: before=%+v after=%+v", beforeIdle, afterIdle)
+	}
 	compareBuilderOuterQueryGrowth(t, beforePlans, afterPlans)
 	t.Logf("irrelevant corpus 1000 -> 10000; before=%+v after=%+v", before, after)
-	if before != after || before.Samples != 1 || before.Receipts != 2 {
+	if before != after || before.Samples != 1 || before.Receipts != 2 || before.ClaimRows == 0 || before.ClaimBytes == 0 {
 		t.Fatalf("incremental read rows/JSON bytes/checkouts grew with irrelevant corpus: before=%+v after=%+v", before, after)
 	}
 
@@ -446,6 +457,8 @@ func TestIntegrationBuilderScopeRejectsCaseInsensitiveLegacyAliases(t *testing.T
 	}{
 		{"manifest-Packages", `{"Packages":["pkg:npm/hidden@1"],"symbols":[]}`, scopeReceipt(1)},
 		{"manifest-Symbols", `{"packages":["pkg:npm/ordinary@1"],"Symbols":["shared"]}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
+		{"manifest-Kelvin-alias", `{"pac\u212Aages":["pkg:npm/hidden@1"],"symbols":[]}`, scopeReceipt(1)},
+		{"manifest-long-s-alias", `{"packages":["pkg:npm/ordinary@1"],"\u017Fymbols":["shared"]}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
 		{"manifest-Subject", `{"packages":["pkg:npm/ordinary@1"],"symbols":["shared"],"Subject":"pkg:npm/hidden@1"}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
 		{"manifest-mixed", `{"pAcKaGeS":["pkg:npm/hidden@1"],"sYmBoLs":["shared"],"sUbJeCt":"pkg:npm/hidden@1"}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
 		{"manifest-duplicate-case", `{"packages":["pkg:npm/ordinary@1"],"Packages":["pkg:npm/hidden@1"],"symbols":["shared"],"Symbols":["hidden.symbol"]}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
@@ -586,4 +599,62 @@ func compareBuilderOuterQueryGrowth(t *testing.T, before, after map[string]build
 			t.Errorf("actual outer query %s scales with 10x irrelevant corpus: before=%+v after=%+v", key, first, last)
 		}
 	}
+}
+
+type builderIdleChangeMetrics struct {
+	Calls, Targets, Packages int
+	Checkouts                uint64
+}
+
+func measureBuilderIdleChanges(t *testing.T, pg *PG, corpus int) builderIdleChangeMetrics {
+	t.Helper()
+	ctx := context.Background()
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	var metric builderIdleChangeMetrics
+	// More than five calls exposes a pgx/PostgreSQL cached-plan transition.
+	for i := 0; i < 8; i++ {
+		changes, err := pg.ChangedSince(ctx, time.Now().Add(-time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		metric.Calls++
+		metric.Targets += len(changes.Targets)
+		metric.Packages += len(changes.SamplePURLs)
+		if !changes.Empty() {
+			t.Fatalf("old irrelevant corpus dirtied idle pass: %+v", changes)
+		}
+	}
+	metric.Checkouts = classStat(t, pg.PoolStats(), "background").Acquired - before
+	var raw string
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+			SELECT DISTINCT purl,symbol FROM evidence_agg WHERE last_seen > $1`,
+			pgx.QueryExecModeExec, time.Now().Add(-time.Minute)).Scan(&raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var top []struct{ Plan builderScopePlan }
+	if err := json.Unmarshal([]byte(raw), &top); err != nil || len(top) != 1 {
+		t.Fatalf("invalid idle evidence plan: %v %s", err, raw)
+	}
+	found := false
+	var visit func(builderScopePlan)
+	visit = func(node builderScopePlan) {
+		if node.Relation == "evidence_agg" && strings.Contains(node.NodeType, "Seq Scan") {
+			t.Errorf("idle ChangedSince evidence lookup reads the corpus: %s", raw)
+		}
+		if node.Index == "builder_evidence_changed_idx" {
+			found = true
+		}
+		for _, child := range node.Plans {
+			visit(child)
+		}
+	}
+	visit(top[0].Plan)
+	if !found {
+		t.Errorf("idle evidence watermark missed changed index: %s", raw)
+	}
+	t.Logf("idle ChangedSince corpus=%d metrics=%+v evidence_rows=%g shared_blocks=%d",
+		corpus, metric, top[0].Plan.Rows, top[0].Plan.HitBlocks+top[0].Plan.ReadBlocks)
+	return metric
 }
