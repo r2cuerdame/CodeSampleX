@@ -9,7 +9,7 @@
 -- the same sentinel instead of depending on the database locale.
 --
 -- Rollback: first restore a binary without scoped builder reads, then DROP the
--- eight builder_* indexes below and csx_builder_unsafe_keys(jsonb), csx_builder_coords(jsonb),
+-- nine builder_* indexes below and csx_builder_unsafe_keys(jsonb), csx_builder_coords(jsonb),
 -- csx_builder_coord(text). No source or materialized data is rewritten.
 
 CREATE FUNCTION csx_builder_coord(raw text) RETURNS text
@@ -93,3 +93,6 @@ CREATE INDEX builder_samples_unsafe_keys_idx ON samples(sample_id)
   WHERE csx_builder_unsafe_keys(manifest);
 CREATE INDEX builder_receipts_unsafe_keys_idx ON receipts(receipt_id)
   WHERE csx_builder_unsafe_keys(receipt);
+
+-- ChangedSince must seek the time window instead of reading old evidence.
+CREATE INDEX builder_evidence_changed_idx ON evidence_agg(last_seen, purl, symbol);

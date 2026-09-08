@@ -108,7 +108,7 @@ func (p *PG) BuilderPackageScope(ctx context.Context, since time.Time, changes C
     SELECT sample_id FROM samples WHERE created_at > $1
     UNION SELECT sample_id FROM samples WHERE updated_at > $1
     UNION SELECT sample_id FROM receipts WHERE created_at > $1
-   )`, since)
+   )`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}

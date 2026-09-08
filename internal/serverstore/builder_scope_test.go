@@ -295,14 +295,17 @@ func seedBuilderIrrelevantCorpus(t *testing.T, pg *PG, start, end int) {
 }
 
 type builderScopePlan struct {
-	NodeType   string             `json:"Node Type"`
-	Relation   string             `json:"Relation Name"`
-	Index      string             `json:"Index Name"`
-	Rows       float64            `json:"Actual Rows"`
-	Loops      float64            `json:"Actual Loops"`
-	HitBlocks  int                `json:"Shared Hit Blocks"`
-	ReadBlocks int                `json:"Shared Read Blocks"`
-	Plans      []builderScopePlan `json:"Plans"`
+	NodeType     string             `json:"Node Type"`
+	Relation     string             `json:"Relation Name"`
+	Index        string             `json:"Index Name"`
+	Rows         float64            `json:"Actual Rows"`
+	Loops        float64            `json:"Actual Loops"`
+	Filtered     float64            `json:"Rows Removed by Filter"`
+	JoinFiltered float64            `json:"Rows Removed by Join Filter"`
+	Rechecked    float64            `json:"Rows Removed by Index Recheck"`
+	HitBlocks    int                `json:"Shared Hit Blocks"`
+	ReadBlocks   int                `json:"Shared Read Blocks"`
+	Plans        []builderScopePlan `json:"Plans"`
 }
 
 func TestIntegrationBuilderScopeReadsStayBoundedAtTenfoldCorpus(t *testing.T) {
@@ -315,8 +318,11 @@ func TestIntegrationBuilderScopeReadsStayBoundedAtTenfoldCorpus(t *testing.T) {
 	}
 	seedBuilderIrrelevantCorpus(t, pg, 1, 1000)
 	before := measureBuilderScopeReads(t, pg)
+	beforePlans := measureBuilderOuterQueryPlans(t, pg, 1000)
 	seedBuilderIrrelevantCorpus(t, pg, 1001, 10000)
 	after := measureBuilderScopeReads(t, pg)
+	afterPlans := measureBuilderOuterQueryPlans(t, pg, 10000)
+	compareBuilderOuterQueryGrowth(t, beforePlans, afterPlans)
 	t.Logf("irrelevant corpus 1000 -> 10000; before=%+v after=%+v", before, after)
 	if before != after || before.Samples != 1 || before.Receipts != 2 {
 		t.Fatalf("incremental read rows/JSON bytes/checkouts grew with irrelevant corpus: before=%+v after=%+v", before, after)
@@ -431,5 +437,153 @@ func TestIntegrationBuilderScopeQueryFailureDoesNotBecomeEmptySuccess(t *testing
 				t.Fatal("missing required helper returned empty success")
 			}
 		})
+	}
+}
+
+func TestIntegrationBuilderScopeRejectsCaseInsensitiveLegacyAliases(t *testing.T) {
+	cases := []struct {
+		name, manifest, receipt string
+	}{
+		{"manifest-Packages", `{"Packages":["pkg:npm/hidden@1"],"symbols":[]}`, scopeReceipt(1)},
+		{"manifest-Symbols", `{"packages":["pkg:npm/ordinary@1"],"Symbols":["shared"]}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
+		{"manifest-Subject", `{"packages":["pkg:npm/ordinary@1"],"symbols":["shared"],"Subject":"pkg:npm/hidden@1"}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
+		{"manifest-mixed", `{"pAcKaGeS":["pkg:npm/hidden@1"],"sYmBoLs":["shared"],"sUbJeCt":"pkg:npm/hidden@1"}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
+		{"manifest-duplicate-case", `{"packages":["pkg:npm/ordinary@1"],"Packages":["pkg:npm/hidden@1"],"symbols":["shared"],"Symbols":["hidden.symbol"]}`, scopeReceipt(2, "pkg:npm/ordinary@1")},
+		{"receipt-ResolvedPackages", `{"packages":["pkg:npm/ordinary@1"],"symbols":[]}`,
+			`{"schemaVersion":2,"stages":{"resolve":"PASS"},"ResolvedPackages":["pkg:npm/hidden@1"]}`},
+		{"receipt-mixed", `{"packages":["pkg:npm/ordinary@1"],"symbols":[]}`,
+			`{"schemaVersion":2,"stages":{"resolve":"PASS"},"rEsOlVeDpAcKaGeS":["pkg:npm/hidden@1"]}`},
+		{"receipt-duplicate-case", `{"packages":["pkg:npm/ordinary@1"],"symbols":[]}`,
+			`{"schemaVersion":2,"stages":{"resolve":"PASS"},"resolvedPackages":["pkg:npm/ordinary@1"],"ResolvedPackages":["pkg:npm/hidden@1"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pg := openTestPG(t)
+			id := "alias-" + tc.name
+			saveBuilderScopeFixture(t, pg, id, tc.manifest, tc.receipt)
+			scope, err := pg.BuilderPackageScope(context.Background(), time.Now(), Changes{SamplePURLs: []string{"pkg:npm/unrelated@1"}})
+			if err == nil || len(scope) != 0 || !strings.Contains(err.Error(), id) {
+				t.Fatalf("Go-readable case alias was silently omitted: scope=%v err=%v", scope, err)
+			}
+		})
+	}
+}
+
+type builderOuterPlanMetrics struct {
+	OutputRows   float64
+	VisitedRows  float64
+	FilteredRows float64
+	SharedBlocks int
+}
+
+// Use PREPARE + EXPLAIN EXECUTE to exercise the generic inner SELECT plan.
+// A parameterized EXPLAIN statement alone does not establish that its inner
+// query used a generic plan. These are the exact production outer queries.
+func measureBuilderOuterQueryPlans(t *testing.T, pg *PG, corpus int) map[string]builderOuterPlanMetrics {
+	t.Helper()
+	type queryCase struct {
+		name, sql, types, args string
+		indexes                []string
+	}
+	cases := []queryCase{
+		{"claims-packages", builderClaimsSQL, "text[],text[],boolean",
+			"ARRAY['pkg:npm/relevant@']::text[],ARRAY[]::text[],false",
+			[]string{"builder_receipts_packages_idx"}},
+		{"claims-symbols", builderClaimsSQL, "text[],text[],boolean",
+			"ARRAY[]::text[],ARRAY['relevant.symbol']::text[],false",
+			[]string{"builder_samples_symbols_idx"}},
+		{"claims-quarantined", builderClaimsSQL, "text[],text[],boolean",
+			"ARRAY['pkg:npm/relevant@']::text[],ARRAY[]::text[],true",
+			[]string{"builder_receipts_packages_idx"}},
+		{"samples", builderSamplesSQL, "text[],integer,integer",
+			"ARRAY['pkg:npm/relevant@']::text[],1000,0",
+			[]string{"builder_receipts_packages_idx"}},
+	}
+	out := map[string]builderOuterPlanMetrics{}
+	for _, mode := range []string{"auto", "force_generic_plan"} {
+		for _, query := range cases {
+			key := mode + "/" + query.name
+			var raw string
+			ctx := context.Background()
+			err := pg.withConn(ctx, func(c *pgx.Conn) error {
+				tx, err := c.Begin(ctx)
+				if err != nil {
+					return err
+				}
+				const prepared = "csx_builder_outer_plan"
+				defer func() {
+					_ = tx.Rollback(ctx)
+					_, _ = c.Exec(ctx, "DEALLOCATE "+prepared)
+				}()
+				if _, err := tx.Exec(ctx, "SET LOCAL plan_cache_mode = "+mode); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, "PREPARE "+prepared+"("+query.types+") AS "+query.sql); err != nil {
+					return err
+				}
+				return tx.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE "+prepared+"("+query.args+")").Scan(&raw)
+			})
+			if err != nil {
+				t.Fatalf("%s corpus=%d outer explain: %v", key, corpus, err)
+			}
+			var top []struct{ Plan builderScopePlan }
+			if err := json.Unmarshal([]byte(raw), &top); err != nil || len(top) != 1 {
+				t.Fatalf("%s invalid outer explain %s: %v", key, raw, err)
+			}
+			metric := builderOuterPlanMetrics{OutputRows: top[0].Plan.Rows,
+				SharedBlocks: top[0].Plan.HitBlocks + top[0].Plan.ReadBlocks}
+			indexes := map[string]bool{}
+			var visit func(builderScopePlan)
+			visit = func(node builderScopePlan) {
+				if node.Index != "" {
+					indexes[node.Index] = true
+				}
+				if containsScopeString([]string{"samples", "receipts", "evidence_agg", "compatibility_snapshots"}, node.Relation) {
+					if strings.Contains(node.NodeType, "Seq Scan") {
+						t.Errorf("%s corpus=%d whole relation Seq Scan in actual outer query: %s", key, corpus, raw)
+					}
+					metric.VisitedRows += (node.Rows + node.Filtered + node.Rechecked) * node.Loops
+					metric.FilteredRows += (node.Filtered + node.Rechecked) * node.Loops
+				}
+				metric.FilteredRows += node.JoinFiltered * node.Loops
+				for _, child := range node.Plans {
+					visit(child)
+				}
+			}
+			visit(top[0].Plan)
+			for _, index := range query.indexes {
+				if !indexes[index] {
+					t.Errorf("%s corpus=%d missing scoped index %s: %s", key, corpus, index, raw)
+				}
+			}
+			out[key] = metric
+			names := make([]string, 0, len(indexes))
+			for name := range indexes {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			t.Logf("outer query %s corpus=%d output_rows=%g visited_rows=%g filtered_rows=%g shared_blocks=%d indexes=%v",
+				key, corpus, metric.OutputRows, metric.VisitedRows, metric.FilteredRows, metric.SharedBlocks, names)
+		}
+	}
+	return out
+}
+
+func compareBuilderOuterQueryGrowth(t *testing.T, before, after map[string]builderOuterPlanMetrics) {
+	t.Helper()
+	for key, first := range before {
+		last, ok := after[key]
+		if !ok {
+			t.Errorf("outer query metric missing after growth: %s", key)
+			continue
+		}
+		// A tree gaining one level or a small change in heap-page placement is
+		// harmless. Tenfold irrelevant row/filter/heap work is not.
+		rowSlack := 8.0 + first.VisitedRows/4
+		filterSlack := 8.0 + first.FilteredRows/4
+		if last.OutputRows != first.OutputRows || last.VisitedRows > first.VisitedRows+rowSlack ||
+			last.FilteredRows > first.FilteredRows+filterSlack || last.SharedBlocks > first.SharedBlocks*2+64 {
+			t.Errorf("actual outer query %s scales with 10x irrelevant corpus: before=%+v after=%+v", key, first, last)
+		}
 	}
 }

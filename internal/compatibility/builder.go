@@ -253,7 +253,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// hourly full repair by preventing the successful-pass counter advancing.
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 ||
 		(!b.fullRepairAt.IsZero() && !now.Before(b.fullRepairAt))
-	if full || b.fullRepairAt.IsZero() {
+	if b.fullRepairAt.IsZero() {
 		b.fullRepairAt = now.Add(time.Hour)
 	}
 	changeSince := b.lastRun.Add(-changeOverlap)
@@ -676,6 +676,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 	b.passes++
 	b.lastRun = passStart
+	if full {
+		b.fullRepairAt = b.now().Add(time.Hour)
+	}
 	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d total=%s",
 		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
 		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,

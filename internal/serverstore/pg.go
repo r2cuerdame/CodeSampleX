@@ -807,11 +807,13 @@ func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) 
 // idle network the timestamp predicates return nothing and aggregation does
 // no materialized-view work.
 func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
+	// Timestamp selectivity changes with every watermark. Avoid a cached
+	// generic plan that assumes a third of the corpus changed each pass.
 	var c Changes
 	seenPURLs := map[string]bool{}
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		rows, err := conn.Query(ctx,
-			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, since)
+			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -842,7 +844,7 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 				SELECT jsonb_array_elements_text(s.manifest->'packages') AS pkg
 				FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
 				WHERE r.created_at > $1
-			) t`, since)
+			) t`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -874,7 +876,7 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
                 UNION
                 SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id=s3.sample_id
                 WHERE s3.updated_at > $1
-            )`, since)
+            )`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}

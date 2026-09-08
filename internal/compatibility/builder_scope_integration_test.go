@@ -2,6 +2,7 @@ package compatibility
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -164,8 +165,20 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 	receipt("actual-new", "undeclared", []string{"pkg:npm/actual@2.0.0"}, "FAIL")
 	builderSQL(t, conn, "UPDATE receipts SET created_at=$1 WHERE receipt_id='actual-new'", now.Add(-time.Minute))
 	assertParity("undeclared resolved cross-major")
-	if js, ok, err := pg.GetSnapshot(ctx, "pkg:npm/actual@2.0.0", "actual.call"); err != nil || !ok || !strings.Contains(js, "FAIL") {
-		t.Fatalf("exact receipt evidence absent: %s %v", js, err)
+	js, ok, err := pg.GetSnapshot(ctx, "pkg:npm/actual@2.0.0", "actual.call")
+	if err != nil || !ok {
+		t.Fatalf("exact receipt snapshot absent: %v", err)
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal([]byte(js), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	failures := int64(0)
+	for _, row := range snapshot.Rows {
+		failures += row.ByStage["CONTRACT"].Fail
+	}
+	if failures != 1 {
+		t.Fatalf("exact receipt FAIL count=%d, snapshot=%s", failures, js)
 	}
 	now = now.Add(10 * time.Minute)
 	builderSQL(t, conn, "UPDATE samples SET quarantined=true, updated_at=$1 WHERE sample_id='narrow'", now.Add(-time.Minute))
@@ -202,5 +215,18 @@ func TestIntegrationBuilderScopedOutputParityAndFailure(t *testing.T) {
 	}
 	if after := builderDocumentState(t, conn); !reflect.DeepEqual(before, after) {
 		t.Fatal("failed scope changed materializations")
+	}
+	b.fullRepairAt = now
+	if err := b.RunOnce(cancelled); err == nil {
+		t.Fatal("cancelled due full repair succeeded")
+	}
+	if b.fullRepairAt != now {
+		t.Fatal("failed full repair lost its pending deadline")
+	}
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("hourly full repair after fail-closed increments: %v", err)
+	}
+	if b.lastRun != now || !b.fullRepairAt.After(now) {
+		t.Fatal("full repair did not complete and reschedule")
 	}
 }
