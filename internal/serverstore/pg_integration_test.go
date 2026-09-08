@@ -1557,7 +1557,9 @@ func TestIntegrationCRUD(t *testing.T) {
 			t.Fatalf("align receipt timestamps: %v", err)
 		}
 		rs, err := pg.ReceiptsForSample(ctx, sampleID)
-		if err != nil || len(rs) != 2 || rs[0].ReceiptID != r.ReceiptID || rs[1].ReceiptID != r2.ReceiptID {
+		if err != nil || len(rs) != 2 ||
+			rs[0].ReceiptID != r.ReceiptID || rs[0].ContractResult != "PASS" ||
+			rs[1].ReceiptID != r2.ReceiptID || rs[1].ContractResult != "FAIL" {
 			t.Fatalf("ReceiptsForSample: %v err=%v", rs, err)
 		}
 
@@ -1573,8 +1575,10 @@ func TestIntegrationCRUD(t *testing.T) {
 			t.Fatalf("SaveReceipt other sample: %v", err)
 		}
 		otherRows, err := pg.ReceiptsForSample(ctx, otherSampleID)
-		if err != nil {
-			t.Fatalf("ReceiptsForSample other: %v", err)
+		if err != nil || len(otherRows) != 1 ||
+			otherRows[0].SampleID != otherSampleID || otherRows[0].ReceiptID != other.ReceiptID ||
+			otherRows[0].ContractResult != "SKIPPED" {
+			t.Fatalf("ReceiptsForSample other: %v err=%v", otherRows, err)
 		}
 
 		batch, err := pg.ReceiptsForSamples(ctx, []string{otherSampleID, sampleID, "sha256:absent"})
