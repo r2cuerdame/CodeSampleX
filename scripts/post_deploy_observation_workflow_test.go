@@ -77,7 +77,6 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Validate deployment provenance and download its evidence")
 	for _, required := range []string{
 		`actions/runs/${DEPLOY_RUN_ID}`,
-		`.name == "Production deploy"`,
 		`.path == ".github/workflows/production-deploy.yml"`,
 		`.event == "workflow_dispatch"`,
 		`.conclusion == "success"`,
@@ -107,6 +106,22 @@ func TestPostDeployObservationAuthenticatesDeploymentArtifact(t *testing.T) {
 	}
 }
 
+func TestPostDeployObservationDoesNotAuthenticateByDynamicRunName(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	for _, stepName := range []string{
+		"Validate deployment provenance and download its evidence",
+		"Treat a validated newer deployment as superseding this observation",
+	} {
+		step := postDeployObservationStep(t, workflow, stepName)
+		if strings.Contains(step, `.name == "Production deploy"`) {
+			t.Errorf("%s must authenticate by immutable workflow path/repository evidence, not dynamic run-name", stepName)
+		}
+		if !strings.Contains(step, `.path == ".github/workflows/production-deploy.yml"`) {
+			t.Errorf("%s lost the exact production workflow path check", stepName)
+		}
+	}
+}
+
 func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *testing.T) {
 	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Treat a validated newer deployment as superseding this observation")
 	for _, required := range []string{
@@ -115,7 +130,6 @@ func TestPostDeployObservationOnlySupersedesFromAuthenticatedReplacement(t *test
 		`gh api --paginate --slurp`,
 		`.[].workflow_runs[]`,
 		`.status == "completed" and .conclusion == "success"`,
-		`.name == "Production deploy"`,
 		`.path == ".github/workflows/production-deploy.yml"`,
 		`.repository.full_name == $repo`,
 		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
