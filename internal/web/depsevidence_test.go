@@ -1,8 +1,13 @@
 package web
 
 import (
+	"context"
+	"fmt"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // depsFixture pins one release of one package and gives it three dependencies
@@ -111,5 +116,67 @@ func TestAReleaseNobodyHasReadClaimsNothing(t *testing.T) {
 	body := get(t, mux, "/npm/silent?f_version=1.0.0").Body.String()
 	if strings.Contains(body, "found no dependencies") {
 		t.Error("a release nothing read was reported as having none")
+	}
+}
+
+type concurrencyTrackingStore struct {
+	*fakeStore
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (c *concurrencyTrackingStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
+	cur := c.active.Add(1)
+	for {
+		old := c.maxActive.Load()
+		if cur <= old || c.maxActive.CompareAndSwap(old, cur) {
+			break
+		}
+	}
+	time.Sleep(15 * time.Millisecond)
+	defer c.active.Add(-1)
+	return c.fakeStore.SnapshotJSON(ctx, purl, symbol)
+}
+
+func TestPackageDepsBoundsChildSnapshotWorkerConcurrency(t *testing.T) {
+	f := newFakeStore()
+	f.dependencyEcosystem = "npm"
+	f.versions["npm|app"] = []string{"1.0.0"}
+	deps := make([]DependencyEdge, 10)
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("dep%d", i)
+		deps[i] = DependencyEdge{
+			ParentName: "app", ParentVersion: "1.0.0",
+			ChildName: name, ChildVersion: "1.0.0", Projects: 1,
+		}
+		f.snapshots[snapKey(fmt.Sprintf("pkg:npm/%s@1.0.0", name), "")] = cubeSnap(
+			fmt.Sprintf("pkg:npm/%s@1.0.0", name), "",
+			"linux", "x64", "node", "22", "npm", "CONTRACT", 1, 0,
+		)
+	}
+	f.dependencies = deps
+	track := &concurrencyTrackingStore{fakeStore: f}
+	s := &site{d: Deps{Store: track}}
+	req := httptest.NewRequest("GET", "/npm/app?f_version=1.0.0", nil)
+
+	resolved, none, matrix, health := s.packageDeps(req, "en", "npm", "app", "1.0.0", nil)
+	_ = matrix
+	if none || health == nil {
+		t.Fatalf("unexpected nil result from packageDeps: none=%v health=%v", none, health)
+	}
+	if len(resolved) != 10 {
+		t.Fatalf("resolved %d deps, want 10", len(resolved))
+	}
+	for i, d := range resolved {
+		if d.State != "verified" {
+			t.Errorf("dep %d state = %q, want verified", i, d.State)
+		}
+	}
+	max := track.maxActive.Load()
+	if max > 3 {
+		t.Errorf("max concurrent child snapshot queries = %d, want <= 3", max)
+	}
+	if max == 0 {
+		t.Errorf("no concurrent child snapshot queries recorded")
 	}
 }

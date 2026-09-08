@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -83,6 +84,19 @@ type webStore struct {
 	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
 	dependencySubjects sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
 
+	// Singleflight coalescing groups for cold package/sample detail reads to prevent pool exhaustion.
+	pkgVersionsGroup     singleflightGroup[[]string]
+	pkgSamplesGroup      singleflightGroup[[]web.SampleListItem]
+	pkgCountsGroup       singleflightGroup[[]web.PackageCodeCount]
+	wantedPkgGroup       singleflightGroup[[]web.WantedRow]
+	failureClustersGroup singleflightGroup[cachedFailureClusters]
+	dependenciesGroup    singleflightGroup[[]web.DependencyEdge]
+	sampleMetaGroup      singleflightGroup[getSampleResult]
+	sampleReceiptsGroup  singleflightGroup[[]string]
+	sampleArtifactGroup  singleflightGroup[decodedArtifact]
+
+	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
+
 	// Gaps whole-corpus cache with background refresh so visitors to /gaps
 	// never stall on the multi-axis PostgreSQL classification.
 	gapsMu         sync.Mutex
@@ -91,6 +105,69 @@ type webStore struct {
 	gapsRefreshing bool
 	gapsRetryAt    time.Time
 	gapsRetry      retrypolicy.Series
+}
+
+type singleflightGroup[T any] struct {
+	loads sync.Map
+}
+
+type singleflightCall[T any] struct {
+	done chan struct{}
+	val  T
+	err  error
+}
+
+func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
+	for {
+		call := &singleflightCall[T]{done: make(chan struct{})}
+		actual, loaded := g.loads.LoadOrStore(key, call)
+		if loaded {
+			existing := actual.(*singleflightCall[T])
+			select {
+			case <-existing.done:
+				if existing.err != nil {
+					return existing.val, existing.err
+				}
+				return existing.val, nil
+			case <-ctx.Done():
+				var zero T
+				return zero, ctx.Err()
+			}
+		}
+
+		go func() {
+			defer func() {
+				g.loads.Delete(key)
+				close(call.done)
+			}()
+			loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			call.val, call.err = fn(loadCtx)
+		}()
+
+		select {
+		case <-call.done:
+			return call.val, call.err
+		case <-ctx.Done():
+			var zero T
+			return zero, ctx.Err()
+		}
+	}
+}
+
+type getSampleResult struct {
+	row serverstore.SampleRow
+	ok  bool
+}
+
+type decodedArtifact struct {
+	files  []string
+	source []web.SampleFile
+}
+
+type cachedDecodedArtifact struct {
+	at       time.Time
+	artifact decodedArtifact
 }
 
 type snapshotLoadState struct {
@@ -609,40 +686,49 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 			return append([]string(nil), entry.versions...), nil
 		}
 	}
-	rows, err := w.s.ListPackageVersions(ctx, ecosystem, name)
-	if err != nil {
-		return nil, err
-	}
-	// This list labels its first item "latest", so version precedence must
-	// decide the order. last_seen is evidence recency, not release recency:
-	// an old release observed today must not become newer than a later release.
-	// The SQL string sort is also insufficient (it puts 7.0.3 above 14.0.1).
-	sort.SliceStable(rows, func(i, j int) bool {
-		return domain.CompareVersions(rows[i].Version, rows[j].Version) > 0
-	})
-	// Only versions that HAVE a page. The list came from the packages
-	// table, which the publicness gate also writes to -- including purls
-	// whose evidence batch was then refused -- while the version page 404s
-	// unless that exact version has a snapshot target. So a package page
-	// listed versions under a heading whose empty state reads "No versions
-	// with evidence yet", and every one of those links was a 404.
-	//
-	// A link into a 404 is worse than a slow page. This read is shared with
-	// PackageSymbols through cachedTargetIndex, so the whole cube assembly
-	// pays for it once rather than once per version.
-	idx, terr := w.cachedTargetIndex(ctx)
-	if terr != nil {
-		return nil, terr
-	}
-	hasPage := idx.pkgVersions[ecosystem+"|"+name]
-	versions := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if hasPage != nil && hasPage[r.Version] {
-			versions = append(versions, r.Version)
+	return w.pkgVersionsGroup.Do(ctx, key, func(loadCtx context.Context) ([]string, error) {
+		now := time.Now()
+		if val, ok := w.pkgVersions.Load(key); ok {
+			entry := val.(cachedPackageVersions)
+			if now.Sub(entry.at) < packageDetailCacheTTL {
+				return append([]string(nil), entry.versions...), nil
+			}
 		}
-	}
-	w.pkgVersions.Store(key, cachedPackageVersions{at: now, versions: append([]string(nil), versions...)})
-	return versions, nil
+		rows, err := w.s.ListPackageVersions(loadCtx, ecosystem, name)
+		if err != nil {
+			return nil, err
+		}
+		// This list labels its first item "latest", so version precedence must
+		// decide the order. last_seen is evidence recency, not release recency:
+		// an old release observed today must not become newer than a later release.
+		// The SQL string sort is also insufficient (it puts 7.0.3 above 14.0.1).
+		sort.SliceStable(rows, func(i, j int) bool {
+			return domain.CompareVersions(rows[i].Version, rows[j].Version) > 0
+		})
+		// Only versions that HAVE a page. The list came from the packages
+		// table, which the publicness gate also writes to -- including purls
+		// whose evidence batch was then refused -- while the version page 404s
+		// unless that exact version has a snapshot target. So a package page
+		// listed versions under a heading whose empty state reads "No versions
+		// with evidence yet", and every one of those links was a 404.
+		//
+		// A link into a 404 is worse than a slow page. This read is shared with
+		// PackageSymbols through cachedTargetIndex, so the whole cube assembly
+		// pays for it once rather than once per version.
+		idx, terr := w.cachedTargetIndex(loadCtx)
+		if terr != nil {
+			return nil, terr
+		}
+		hasPage := idx.pkgVersions[ecosystem+"|"+name]
+		versions := make([]string, 0, len(rows))
+		for _, r := range rows {
+			if hasPage != nil && hasPage[r.Version] {
+				versions = append(versions, r.Version)
+			}
+		}
+		w.pkgVersions.Store(key, cachedPackageVersions{at: now, versions: append([]string(nil), versions...)})
+		return versions, nil
+	})
 }
 
 // SymbolPackageSpread counts the packages of one ecosystem carrying evidence
@@ -676,37 +762,116 @@ func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version 
 	return out, nil
 }
 
+func decodeSampleArtifact(tgz []byte) (decodedArtifact, error) {
+	if len(tgz) > samples.MaxCompressedBytes {
+		return decodedArtifact{}, fmt.Errorf("samples: artifact is %d bytes, limit is %d", len(tgz), samples.MaxCompressedBytes)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return decodedArtifact{}, fmt.Errorf("samples: read: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var files []string
+	for len(files) < 500 {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return decodedArtifact{}, fmt.Errorf("samples: read: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			files = append(files, hdr.Name)
+		}
+	}
+	sort.Strings(files)
+
+	textFiles, err := samples.ReadTextFiles(tgz)
+	if err != nil {
+		return decodedArtifact{files: files}, nil
+	}
+	source := make([]web.SampleFile, 0, len(textFiles))
+	for _, f := range textFiles {
+		source = append(source, web.SampleFile{Name: f.Name, Body: f.Body, Truncated: f.Truncated})
+	}
+	return decodedArtifact{files: files, source: source}, nil
+}
+
+func (w *webStore) loadSampleArtifact(ctx context.Context, id string) (decodedArtifact, error) {
+	now := time.Now()
+	if val, ok := w.sampleArtifacts.Load(id); ok {
+		entry := val.(cachedDecodedArtifact)
+		if now.Sub(entry.at) < packageDetailCacheTTL {
+			return entry.artifact, nil
+		}
+	}
+	if w.blobs == nil {
+		return decodedArtifact{}, nil
+	}
+	return w.sampleArtifactGroup.Do(ctx, id, func(loadCtx context.Context) (decodedArtifact, error) {
+		if val, ok := w.sampleArtifacts.Load(id); ok {
+			entry := val.(cachedDecodedArtifact)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry.artifact, nil
+			}
+		}
+		rc, err := w.blobs.Get(loadCtx, id)
+		if err != nil {
+			return decodedArtifact{}, err
+		}
+		defer rc.Close()
+		tgz, err := io.ReadAll(io.LimitReader(rc, samples.MaxCompressedBytes+1))
+		if err != nil {
+			return decodedArtifact{}, err
+		}
+		decoded, err := decodeSampleArtifact(tgz)
+		if err != nil {
+			return decodedArtifact{}, err
+		}
+		w.sampleArtifacts.Store(id, cachedDecodedArtifact{at: time.Now(), artifact: decoded})
+		return decoded, nil
+	})
+}
+
 func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, bool, error) {
-	row, ok, err := w.s.GetSample(ctx, id)
+	res, err := w.sampleMetaGroup.Do(ctx, id, func(loadCtx context.Context) (getSampleResult, error) {
+		row, ok, err := w.s.GetSample(loadCtx, id)
+		return getSampleResult{row: row, ok: ok}, err
+	})
 	if err != nil {
 		return web.SampleMeta{}, false, err
 	}
 	// Quarantine hides a sample from every serving read. GetSample returns
 	// the raw row so the operator commands still see it; this is a serving
 	// read, so it has to check.
-	if !ok || row.Quarantined {
+	if !res.ok || res.row.Quarantined {
 		return web.SampleMeta{}, false, nil
 	}
 	return web.SampleMeta{
-		SampleID:     row.SampleID,
-		Status:       row.Status,
-		License:      row.License,
-		OriginSeeder: row.OriginSeeder,
-		CreatedAt:    row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		ManifestJSON: row.ManifestJSON,
+		SampleID:     res.row.SampleID,
+		Status:       res.row.Status,
+		License:      res.row.License,
+		OriginSeeder: res.row.OriginSeeder,
+		CreatedAt:    res.row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		ManifestJSON: res.row.ManifestJSON,
 		Files:        w.artifactFiles(ctx, id),
 	}, true, nil
 }
 
 func (w *webStore) SampleManifest(ctx context.Context, id string) (string, bool, error) {
-	row, ok, err := w.s.GetSample(ctx, id)
+	res, err := w.sampleMetaGroup.Do(ctx, id, func(loadCtx context.Context) (getSampleResult, error) {
+		row, ok, err := w.s.GetSample(loadCtx, id)
+		return getSampleResult{row: row, ok: ok}, err
+	})
 	if err != nil {
 		return "", false, err
 	}
-	if !ok || row.Quarantined {
+	if !res.ok || res.row.Quarantined {
 		return "", false, nil
 	}
-	return row.ManifestJSON, true, nil
+	return res.row.ManifestJSON, true, nil
 }
 
 // artifactFiles lists entry names from the sample artifact; best-effort —
@@ -715,41 +880,25 @@ func (w *webStore) artifactFiles(ctx context.Context, id string) []string {
 	if w.blobs == nil {
 		return nil
 	}
-	rc, err := w.blobs.Get(ctx, id)
+	decoded, err := w.loadSampleArtifact(ctx, id)
 	if err != nil {
 		return nil
 	}
-	defer rc.Close()
-	gz, err := gzip.NewReader(io.LimitReader(rc, 1<<20))
-	if err != nil {
-		return nil
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	var files []string
-	for len(files) < 500 {
-		h, err := tr.Next()
-		if err != nil {
-			break
-		}
-		if h.Typeflag == tar.TypeReg {
-			files = append(files, h.Name)
-		}
-	}
-	sort.Strings(files)
-	return files
+	return append([]string(nil), decoded.files...)
 }
 
 func (w *webStore) SampleReceipts(ctx context.Context, id string) ([]string, error) {
-	rows, err := w.s.ReceiptsForSample(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.ReceiptJSON)
-	}
-	return out, nil
+	return w.sampleReceiptsGroup.Do(ctx, id, func(loadCtx context.Context) ([]string, error) {
+		rows, err := w.s.ReceiptsForSample(loadCtx, id)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.ReceiptJSON)
+		}
+		return out, nil
+	})
 }
 
 // seederSampleLimit bounds one seeder page.
@@ -855,30 +1004,42 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 		}
 	}
 
-	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
-	fetchLimit := limit
-	if fetchLimit <= 0 || fetchLimit < 50 {
-		fetchLimit = 50
-	}
-	rows, err := w.s.VerifiedSamplesForPackages(ctx, []string{prefix + "%"}, fetchLimit)
+	items, err := w.pkgSamplesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.SampleListItem, error) {
+		if val, ok := w.pkgSamples.Load(cacheKey); ok {
+			entry := val.(cachedPackageSamples)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry.items, nil
+			}
+		}
+		prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
+		fetchLimit := limit
+		if fetchLimit <= 0 || fetchLimit < 50 {
+			fetchLimit = 50
+		}
+		rows, err := w.s.VerifiedSamplesForPackages(loadCtx, []string{prefix + "%"}, fetchLimit)
+		if err != nil {
+			return nil, err
+		}
+		var out []web.SampleListItem
+		for _, r := range rows {
+			if !manifestNamesPackage(r.ManifestJSON, prefix) {
+				continue
+			}
+			out = append(out, sampleListItem(r))
+		}
+		w.pkgSamples.Store(cacheKey, cachedPackageSamples{
+			at:    time.Now(),
+			items: out,
+		})
+		return out, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var out []web.SampleListItem
-	for _, r := range rows {
-		if !manifestNamesPackage(r.ManifestJSON, prefix) {
-			continue
-		}
-		out = append(out, sampleListItem(r))
+	if limit > 0 && len(items) > limit {
+		return items[:limit], nil
 	}
-	w.pkgSamples.Store(cacheKey, cachedPackageSamples{
-		at:    time.Now(),
-		items: out,
-	})
-	if limit > 0 && len(out) > limit {
-		return out[:limit], nil
-	}
-	return out, nil
+	return items, nil
 }
 
 // ReleaseSamples returns the samples of ONE release, which is what resolves
@@ -936,26 +1097,34 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 		}
 	}
 
-	prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
-	rows, err := w.s.VerifiedSampleCodeCounts(ctx, prefix)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.PackageCodeCount, 0, len(rows))
-	for _, row := range rows {
-		p, err := domain.ParsePURL(row.PURL)
-		if err != nil || p.Ecosystem != ecosystem || p.Name != name || p.Version == "" {
-			continue
+	return w.pkgCountsGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.PackageCodeCount, error) {
+		if val, ok := w.pkgCounts.Load(cacheKey); ok {
+			entry := val.(cachedPackageCounts)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry.items, nil
+			}
 		}
-		out = append(out, web.PackageCodeCount{
-			Version: p.Version, Symbol: row.Symbol, Samples: row.Samples,
+		prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
+		rows, err := w.s.VerifiedSampleCodeCounts(loadCtx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]web.PackageCodeCount, 0, len(rows))
+		for _, row := range rows {
+			p, err := domain.ParsePURL(row.PURL)
+			if err != nil || p.Ecosystem != ecosystem || p.Name != name || p.Version == "" {
+				continue
+			}
+			out = append(out, web.PackageCodeCount{
+				Version: p.Version, Symbol: row.Symbol, Samples: row.Samples,
+			})
+		}
+		w.pkgCounts.Store(cacheKey, cachedPackageCounts{
+			at:    time.Now(),
+			items: out,
 		})
-	}
-	w.pkgCounts.Store(cacheKey, cachedPackageCounts{
-		at:    time.Now(),
-		items: out,
+		return out, nil
 	})
-	return out, nil
 }
 
 // Dependencies adapts the parent-side view of the same edges.
@@ -967,25 +1136,35 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 			return entry.edges, nil
 		}
 	}
-	rows, err := w.s.Dependencies(ctx, ecosystem, name)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.DependencyEdge, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.DependencyEdge{
-			ParentName: r.ParentName, ParentVersion: r.ParentVersion,
-			ChildName: r.ChildName, ChildVersion: r.ChildVersion,
-			Projects:    int64(r.Projects),
-			SameReceipt: r.SameReceipt,
-			Outcome:     r.Outcome,
+	return w.dependenciesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.DependencyEdge, error) {
+		if val, ok := w.pkgDependencies.Load(cacheKey); ok {
+			entry := val.(cachedPackageDependencies)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry.edges, nil
+			}
+		}
+		rows, err := w.s.Dependencies(loadCtx, ecosystem, name)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]web.DependencyEdge, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, web.DependencyEdge{
+				ParentName:    r.ParentName,
+				ParentVersion: r.ParentVersion,
+				ChildName:     r.ChildName,
+				ChildVersion:  r.ChildVersion,
+				Projects:      int64(r.Projects),
+				SameReceipt:   r.SameReceipt,
+				Outcome:       r.Outcome,
+			})
+		}
+		w.pkgDependencies.Store(cacheKey, cachedPackageDependencies{
+			at:    time.Now(),
+			edges: out,
 		})
-	}
-	w.pkgDependencies.Store(cacheKey, cachedPackageDependencies{
-		at:    time.Now(),
-		edges: out,
+		return out, nil
 	})
-	return out, nil
 }
 
 // FailureIssueDependencies bypasses the package-page cache because the
@@ -1637,38 +1816,51 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			return append([]string(nil), entry.docs...), entry.matched, nil
 		}
 	}
-	rows, err := w.s.ListFailureClusters(ctx, name)
+	res, err := w.failureClustersGroup.Do(ctx, cacheKey, func(loadCtx context.Context) (cachedFailureClusters, error) {
+		if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
+			entry := val.(cachedFailureClusters)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry, nil
+			}
+		}
+		rows, err := w.s.ListFailureClusters(loadCtx, name)
+		if err != nil {
+			return cachedFailureClusters{}, err
+		}
+		// A safety bound, not a display cap. Twelve used to be cut here, before
+		// the page had narrowed to a coordinate — so a reader standing on the
+		// exact environment where a cluster was recorded saw nothing, because
+		// that cluster ranked thirteenth across the whole package. escalade has
+		// sixteen: fifteen on windows and the one on linux that the linux
+		// coordinate needed. The page does its own bounding, after filtering.
+		var out []string
+		kept := 0
+		matched := 0
+		for _, c := range rows {
+			if c.Ecosystem != ecosystem {
+				continue
+			}
+			matched++
+			if kept >= maxClustersToPage {
+				continue
+			}
+			kept++
+			if doc, ok := failureClusterJSON(c); ok {
+				out = append(out, doc)
+			}
+		}
+		cached := cachedFailureClusters{
+			at:      time.Now(),
+			docs:    append([]string(nil), out...),
+			matched: matched,
+		}
+		w.pkgFailureClusters.Store(cacheKey, cached)
+		return cached, nil
+	})
 	if err != nil {
 		return nil, 0, err
 	}
-	// A safety bound, not a display cap. Twelve used to be cut here, before
-	// the page had narrowed to a coordinate — so a reader standing on the
-	// exact environment where a cluster was recorded saw nothing, because
-	// that cluster ranked thirteenth across the whole package. escalade has
-	// sixteen: fifteen on windows and the one on linux that the linux
-	// coordinate needed. The page does its own bounding, after filtering.
-	var out []string
-	kept := 0
-	matched := 0
-	for _, c := range rows {
-		if c.Ecosystem != ecosystem {
-			continue
-		}
-		matched++
-		if kept >= maxClustersToPage {
-			continue
-		}
-		kept++
-		if doc, ok := failureClusterJSON(c); ok {
-			out = append(out, doc)
-		}
-	}
-	w.pkgFailureClusters.Store(cacheKey, cachedFailureClusters{
-		at:      now,
-		docs:    append([]string(nil), out...),
-		matched: matched,
-	})
-	return out, matched, nil
+	return append([]string(nil), res.docs...), res.matched, nil
 }
 
 // FailureIssueClusters reads the complete current ledger for an explicit
@@ -1900,22 +2092,30 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 			return entry.rows, nil
 		}
 	}
-	rows, err := w.s.WantedForPackage(ctx, ecosystem, name)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.WantedRow, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, web.WantedRow{
-			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
-			Asks: r.Asks, HasPage: true,
+	return w.wantedPkgGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.WantedRow, error) {
+		if val, ok := w.wantedPackage.Load(cacheKey); ok {
+			entry := val.(cachedWantedRows)
+			if time.Since(entry.at) < packageDetailCacheTTL {
+				return entry.rows, nil
+			}
+		}
+		rows, err := w.s.WantedForPackage(loadCtx, ecosystem, name)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]web.WantedRow, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, web.WantedRow{
+				Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version, Symbol: r.Symbol,
+				Asks: r.Asks, HasPage: true,
+			})
+		}
+		w.wantedPackage.Store(cacheKey, cachedWantedRows{
+			at:   time.Now(),
+			rows: out,
 		})
-	}
-	w.wantedPackage.Store(cacheKey, cachedWantedRows{
-		at:   time.Now(),
-		rows: out,
+		return out, nil
 	})
-	return out, nil
 }
 
 func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {
@@ -1977,22 +2177,9 @@ func (w *webStore) SampleSource(ctx context.Context, id string) ([]web.SampleFil
 	if w.blobs == nil {
 		return nil, nil
 	}
-	rc, err := w.blobs.Get(ctx, id)
+	decoded, err := w.loadSampleArtifact(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
-	tgz, err := io.ReadAll(io.LimitReader(rc, samples.MaxCompressedBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	files, err := samples.ReadTextFiles(tgz)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.SampleFile, 0, len(files))
-	for _, f := range files {
-		out = append(out, web.SampleFile{Name: f.Name, Body: f.Body, Truncated: f.Truncated})
-	}
-	return out, nil
+	return append([]web.SampleFile(nil), decoded.source...), nil
 }

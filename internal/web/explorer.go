@@ -811,18 +811,35 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, all
 	if len(deps) > maxDependencyRows {
 		deps = deps[:maxDependencyRows]
 	}
-	var wg sync.WaitGroup
-	for i := range deps {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			purl := domain.PURL{Ecosystem: eco, Name: deps[idx].Library, Version: deps[idx].Version}.String()
-			deps[idx].State = dependencyEvidenceState(r, s.d.Store, purl)
-			deps[idx].StateText = i18n.T(lang, "pkg.dep_state_"+deps[idx].State)
-			deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
-		}(i)
+	const maxWorkers = 3
+	workers := maxWorkers
+	if len(deps) < workers {
+		workers = len(deps)
 	}
-	wg.Wait()
+	if workers > 0 {
+		ch := make(chan int, len(deps))
+		for i := range deps {
+			ch <- i
+		}
+		close(ch)
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for idx := range ch {
+					if r.Context().Err() != nil {
+						return
+					}
+					purl := domain.PURL{Ecosystem: eco, Name: deps[idx].Library, Version: deps[idx].Version}.String()
+					deps[idx].State = dependencyEvidenceState(r, s.d.Store, purl)
+					deps[idx].StateText = i18n.T(lang, "pkg.dep_state_"+deps[idx].State)
+					deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
+				}
+			}()
+		}
+		wg.Wait()
+	}
 	if len(deps) > 0 {
 		var healthSummary *DependencyHealthSummary
 		deps, healthSummary = evaluateDependencyHealth(eco, name, version, deps, allClusters, matrix, lang)
