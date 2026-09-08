@@ -133,7 +133,7 @@ jobs:
             --paginate \
             --jq '.[].body' 2>/dev/null || true)
           all_content="$issue_content"$'\n'"$issue_comments"
-          if ! echo "$all_content" | grep -F -q "$TARGET_SHA"; then
+          if ! grep -F -q "$TARGET_SHA" <<< "$all_content"; then
             echo "::error::tracking issue #${issue_number} does not reference target commit $TARGET_SHA"
             exit 1
           fi
