@@ -62,11 +62,11 @@ type Store interface {
 	// above one means this evidence cannot say whose the symbol is.
 	SymbolPackageSpread(ctx context.Context, ecosystem string, symbols []string) (map[string]int, error)
 	// SampleMeta returns published-sample metadata by content id.
-	SampleMeta(ctx context.Context, id string) (SampleMeta, bool)
+	SampleMeta(ctx context.Context, id string) (SampleMeta, bool, error)
 	// SampleManifest returns only the stored manifest. Collection pages use
 	// this instead of SampleMeta so they do not open and decompress the
 	// artifact merely to learn its recorded environment.
-	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool)
+	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool, err error)
 	// SampleReceipts returns the verification-receipt JSON documents of a sample.
 	SampleReceipts(ctx context.Context, id string) ([]string, error)
 	// SampleSource returns the readable files of a sample's artifact.
@@ -1073,6 +1073,7 @@ func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
 }
 
 func (s *site) unavailable(w http.ResponseWriter, r *http.Request, lang string) {
+	w.Header().Set("Retry-After", "2")
 	b := s.page(r, lang, i18n.T(lang, "error.unavailable")+" — CodeSampleX", i18n.T(lang, "error.unavailable"))
 	b.Alternates = nil
 	b.Canonical = ""

@@ -676,13 +676,16 @@ func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version 
 	return out, nil
 }
 
-func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, bool) {
+func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, bool, error) {
 	row, ok, err := w.s.GetSample(ctx, id)
+	if err != nil {
+		return web.SampleMeta{}, false, err
+	}
 	// Quarantine hides a sample from every serving read. GetSample returns
 	// the raw row so the operator commands still see it; this is a serving
 	// read, so it has to check.
-	if err != nil || !ok || row.Quarantined {
-		return web.SampleMeta{}, false
+	if !ok || row.Quarantined {
+		return web.SampleMeta{}, false, nil
 	}
 	return web.SampleMeta{
 		SampleID:     row.SampleID,
@@ -692,15 +695,18 @@ func (w *webStore) SampleMeta(ctx context.Context, id string) (web.SampleMeta, b
 		CreatedAt:    row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		ManifestJSON: row.ManifestJSON,
 		Files:        w.artifactFiles(ctx, id),
-	}, true
+	}, true, nil
 }
 
-func (w *webStore) SampleManifest(ctx context.Context, id string) (string, bool) {
+func (w *webStore) SampleManifest(ctx context.Context, id string) (string, bool, error) {
 	row, ok, err := w.s.GetSample(ctx, id)
-	if err != nil || !ok || row.Quarantined {
-		return "", false
+	if err != nil {
+		return "", false, err
 	}
-	return row.ManifestJSON, true
+	if !ok || row.Quarantined {
+		return "", false, nil
+	}
+	return row.ManifestJSON, true, nil
 }
 
 // artifactFiles lists entry names from the sample artifact; best-effort —

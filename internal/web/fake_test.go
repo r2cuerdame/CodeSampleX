@@ -43,8 +43,12 @@ type fakeStore struct {
 	dependencies   []DependencyEdge
 	sampleList     []SampleListItem
 	samplePackages map[string][]string
-	packageCodeErr error
-	derived        []DerivedFinding
+	packageCodeErr    error
+	sampleMetaErr     error
+	sampleManifestErr error
+	sampleReceiptsErr error
+	packageSamplesErr error
+	derived           []DerivedFinding
 	// listSamplesCalls counts corpus reads, so a test can pin that the
 	// sitemap rebuilds once per freshness window rather than per request.
 	listSamplesCalls int
@@ -108,17 +112,26 @@ func (f *fakeStore) PackageSymbols(_ context.Context, ecosystem, name, version s
 	return f.symbols[ecosystem+"|"+name+"|"+version], nil
 }
 
-func (f *fakeStore) SampleMeta(_ context.Context, id string) (SampleMeta, bool) {
+func (f *fakeStore) SampleMeta(_ context.Context, id string) (SampleMeta, bool, error) {
+	if f.sampleMetaErr != nil {
+		return SampleMeta{}, false, f.sampleMetaErr
+	}
 	m, ok := f.samples[id]
-	return m, ok
+	return m, ok, nil
 }
 
-func (f *fakeStore) SampleManifest(_ context.Context, id string) (string, bool) {
+func (f *fakeStore) SampleManifest(_ context.Context, id string) (string, bool, error) {
+	if f.sampleManifestErr != nil {
+		return "", false, f.sampleManifestErr
+	}
 	m, ok := f.samples[id]
-	return m.ManifestJSON, ok
+	return m.ManifestJSON, ok, nil
 }
 
 func (f *fakeStore) SampleReceipts(_ context.Context, id string) ([]string, error) {
+	if f.sampleReceiptsErr != nil {
+		return nil, f.sampleReceiptsErr
+	}
 	return f.receipts[id], nil
 }
 
@@ -234,6 +247,9 @@ func (f *fakeStore) ReleaseSamples(ctx context.Context, ecosystem, name, version
 }
 
 func (f *fakeStore) PackageSamples(_ context.Context, ecosystem, name string, limit int) ([]SampleListItem, error) {
+	if f.packageSamplesErr != nil {
+		return nil, f.packageSamplesErr
+	}
 	prefix := "pkg:" + ecosystem + "/" + name + "@"
 	var out []SampleListItem
 	for _, it := range f.sampleList {

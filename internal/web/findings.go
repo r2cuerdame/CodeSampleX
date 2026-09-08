@@ -703,8 +703,8 @@ func (s *site) decorateFindings(ctx context.Context, input []finding, basis, bas
 	for i := range out {
 		out[i].BasisKey = basisKey
 		out[i].Basis = basis
-		manifestJSON, ok := s.d.Store.SampleManifest(ctx, out[i].SampleID)
-		if !ok {
+		manifestJSON, ok, err := s.d.Store.SampleManifest(ctx, out[i].SampleID)
+		if err != nil || !ok {
 			continue
 		}
 		var manifest domain.SampleManifest
