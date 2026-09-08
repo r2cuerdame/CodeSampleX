@@ -1,6 +1,7 @@
 package deploygate
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strings"
@@ -86,7 +87,22 @@ var wantedDedupEpochCoordinateIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS wanted_dedup_epoch_coordinate_idx ON wanted_dedup(epoch DESC, ecosystem, name, version, symbol, target_os)`,
 }
 
+// Pin the reviewed SQL function bodies and indexes, including comments and
+// whitespace. Only checkout line endings vary. Any migration edit requires
+// explicit review and a matching digest update; the general SQL allowlist
+// never learns CREATE FUNCTION or indexes on existing tables from this case.
+const builderScopeMigrationSHA256 = "b17ab8ee376725de74d0edf285aad6c541fb84958e32d0c746069d7099a0d86b"
+
 func ValidateMigrationSQL(name, sql string) error {
+	if name == "0036_builder_scope_indexes.sql" {
+		// Do this before regex comment stripping: markers inside SQL strings
+		// and dollar-quoted function bodies are part of the reviewed bytes.
+		digest := sha256.Sum256([]byte(strings.ReplaceAll(sql, "\r\n", "\n")))
+		if fmt.Sprintf("%x", digest) == builderScopeMigrationSHA256 {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact builder scope migration digest", name)
+	}
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
 	}
