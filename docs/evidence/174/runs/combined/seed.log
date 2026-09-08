@@ -1,0 +1,21 @@
+SET
+BEGIN
+INSERT 0 7800
+INSERT 0 7800
+INSERT 0 7800
+INSERT 0 166333
+INSERT 0 19102
+INSERT 0 166333
+INSERT 0 1
+COMMIT
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+CREATE FUNCTION
+                                                                                                                                                                                              synthetic_fixture                                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"schema": "csx_startup_repro_174_combined", "samples": 7800, "receipts": 7800, "snapshots": 19102, "evidenceAgg": 166333, "schemaBytes": 565264384, "samplesBytes": 8495104, "receiptsBytes": 4915200, "migrationCount": 36, "snapshotsBytes": 17448960, "failureClusters": 166333, "evidenceAggBytes": 229949440, "migrationVersion": "0035_recent_wanted_demand.sql", "failureClustersBytes": 301342720}
+(1 row)
+

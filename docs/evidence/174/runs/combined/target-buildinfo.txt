@@ -1,0 +1,18 @@
+/workspace/csx-startup-repro-174/csx-server-target: go1.26.5
+	path	github.com/r2cuerdame/codesamplex/cmd/csx-server
+	mod	github.com/r2cuerdame/codesamplex	v0.1.150	
+	dep	github.com/jackc/pgpassfile	v1.0.0	h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
+	dep	github.com/jackc/pgservicefile	v0.0.0-20240606120523-5a60cdf6a761	h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
+	dep	github.com/jackc/pgx/v5	v5.10.0	h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=
+	dep	golang.org/x/text	v0.29.0	h1:1neNs90w9YzJ9BocxfsQNHKuAT4pkghyXc4nhZ6sJvk=
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-trimpath=true
+	build	CGO_ENABLED=1
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=28e0397fb68e34e0cd1433f51d3027040dfc34a6
+	build	vcs.time=2026-09-08T14:29:13Z
+	build	vcs.modified=false

@@ -1,0 +1,2 @@
+room.id=jdjm0usn
+scenario=combined

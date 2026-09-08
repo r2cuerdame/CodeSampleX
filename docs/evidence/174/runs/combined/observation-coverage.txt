@@ -1,0 +1,7 @@
+duration_ms=240207
+minimum_db_samples=80
+minimum_process_samples=48
+db_json_samples=227
+process_samples=221
+observer_exit=143
+monitor_exit=143

@@ -1,0 +1,1 @@
+seed + ANALYZE + CHECKPOINT; no operating-system cache drop; fixtures are independently recreated

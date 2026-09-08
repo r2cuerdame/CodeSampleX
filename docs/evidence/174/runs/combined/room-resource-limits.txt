@@ -1,0 +1,5 @@
+cgroup=/
+memory.max=805306368
+cpu.max=200000 100000
+cpuset.cpus.effective=0-15
+nproc=16

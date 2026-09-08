@@ -51,3 +51,7 @@ node /workspace/acceptance/acceptance.mjs
 The script waits for the candidate's real `/version` identity, checks home, sample collection, package, exact symbol, and sample artifact code at 1440×1000 and 390×844, exercises sample search, rejects horizontal overflow and browser/network/HTTP errors, records ten screenshots, and performs five rounds of seven HTTP route checks. It writes `result.json` on completed browser runs. Also inspect candidate builder logs for completed incremental passes and failure/pressure records within that exact acceptance window. The accelerated interval exercises the runtime; it does not claim production load equivalence.
 
 Export the result, screenshots, build identity, and builder logs through DevHotel. Sleep the room after the final check and record the resulting sleeping/stopped state. A failed or unavailable required acceptance blocks release/deployment.
+
+## v0.1.150 startup reproduction
+
+The controlled 0035→0036 startup result and its limits are recorded in [`startup-repro-result.md`](startup-repro-result.md). The synthetic fixture and fail-closed runner are `startup-repro-seed.sql` and `startup-repro.sh`; exported raw observations are under `runs/combined`.

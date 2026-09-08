@@ -1,0 +1,8 @@
+timestamp_ns	event	detail
+1788891950468028909	preflight	{"major": 17, "version": "17.11", "workMem": "16MB", "encoding": "UTF8", "collation": "en_US.utf8", "sharedBuffers": "256MB", "maxConnections": "40", "walCompression": "pglz", "collationAvailable": true, "effectiveCacheSize": "768MB", "maintenanceWorkMem": "64MB"}
+1788891950473769218	room_limits	cgroup=/ memory.max=805306368 cpu.max=200000/100000 cpuset=0-15
+1788891950634231482	fixture_schema_created	csx_startup_repro_174_combined
+1788891962703750875	fixture_ready	csx_startup_repro_174_combined
+1788891962706773060	combined_0035_to_0036_start	schema=csx_startup_repro_174_combined mode=serve
+1788892203281277658	combined_0035_to_0036_finish	elapsed_ms=240513 ready_ms=36714 exit=0 timeout=1
+1788892203322354557	complete	/workspace/csx-startup-repro-174/evidence-combined

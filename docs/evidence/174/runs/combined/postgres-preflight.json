@@ -1,0 +1,1 @@
+{"major": 17, "version": "17.11", "workMem": "16MB", "encoding": "UTF8", "collation": "en_US.utf8", "sharedBuffers": "256MB", "maxConnections": "40", "walCompression": "pglz", "collationAvailable": true, "effectiveCacheSize": "768MB", "maintenanceWorkMem": "64MB"}
