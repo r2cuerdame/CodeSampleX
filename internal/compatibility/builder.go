@@ -680,44 +680,66 @@ func keepTargets(targets []serverstore.SnapshotTarget, affected map[shardKey]boo
 // loadSampleBatch bounds one page of the sample scan.
 const loadSampleBatch = 1000
 
+type receiptPageStore interface {
+	ReceiptsForSamples(context.Context, []string) (map[string][]serverstore.ReceiptRow, error)
+}
+
 func (b *Builder) loadSamples(ctx context.Context) ([]sampleData, error) {
-	// Every sample, in pages. One capped read of the newest 1000 meant that
-	// past that many, the oldest samples stopped appearing in any shard at
-	// all -- and shards are the only document clients ever read, so those
-	// answers left the network silently, oldest first.
-	var rows []serverstore.SampleRow
+	// Process the corpus one sample page at a time. PostgreSQL can fetch the
+	// receipt history for that page in one checkout; alternate stores keep the
+	// original per-sample contract through the fallback below.
+	var out []sampleData
+	bulk, hasBulkReceipts := b.Store.(receiptPageStore)
 	for offset := 0; ; offset += loadSampleBatch {
 		page, perr := b.Store.ListSamplesPage(ctx, loadSampleBatch, offset)
 		if perr != nil {
 			return nil, fmt.Errorf("compatibility: list samples: %w", perr)
 		}
-		rows = append(rows, page...)
+
+		parsed := make([]sampleData, 0, len(page))
+		sampleIDs := make([]string, 0, len(page))
+		for _, row := range page {
+			var manifest domain.SampleManifest
+			if json.Unmarshal([]byte(row.ManifestJSON), &manifest) != nil {
+				continue
+			}
+			sd := sampleData{row: row, manifest: manifest}
+			for _, ps := range manifest.Packages {
+				if p, err := domain.ParsePURL(ps); err == nil {
+					sd.purls = append(sd.purls, p)
+				}
+			}
+			parsed = append(parsed, sd)
+			sampleIDs = append(sampleIDs, row.SampleID)
+		}
+
+		var receiptPages map[string][]serverstore.ReceiptRow
+		if hasBulkReceipts && len(sampleIDs) > 0 {
+			var err error
+			receiptPages, err = bulk.ReceiptsForSamples(ctx, sampleIDs)
+			if err != nil {
+				return nil, fmt.Errorf("compatibility: receipts for sample page: %w", err)
+			}
+		}
+		for i := range parsed {
+			receiptRows := receiptPages[parsed[i].row.SampleID]
+			if !hasBulkReceipts {
+				var err error
+				receiptRows, err = b.Store.ReceiptsForSample(ctx, parsed[i].row.SampleID)
+				if err != nil {
+					return nil, fmt.Errorf("compatibility: receipts for %s: %w", parsed[i].row.SampleID, err)
+				}
+			}
+			for _, rr := range receiptRows {
+				if info, ok := ParseReceiptRow(rr); ok {
+					parsed[i].receipts = append(parsed[i].receipts, info)
+				}
+			}
+		}
+		out = append(out, parsed...)
 		if len(page) < loadSampleBatch {
 			break
 		}
-	}
-	out := make([]sampleData, 0, len(rows))
-	for _, row := range rows {
-		var manifest domain.SampleManifest
-		if json.Unmarshal([]byte(row.ManifestJSON), &manifest) != nil {
-			continue
-		}
-		sd := sampleData{row: row, manifest: manifest}
-		for _, ps := range manifest.Packages {
-			if p, perr := domain.ParsePURL(ps); perr == nil {
-				sd.purls = append(sd.purls, p)
-			}
-		}
-		receiptRows, rerr := b.Store.ReceiptsForSample(ctx, row.SampleID)
-		if rerr != nil {
-			return nil, fmt.Errorf("compatibility: receipts for %s: %w", row.SampleID, rerr)
-		}
-		for _, rr := range receiptRows {
-			if info, ok := ParseReceiptRow(rr); ok {
-				sd.receipts = append(sd.receipts, info)
-			}
-		}
-		out = append(out, sd)
 	}
 	return out, nil
 }
