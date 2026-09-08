@@ -16,6 +16,7 @@ const (
 	phaseResume                    = "resume"
 	phaseChanges                   = "changes"
 	phaseListTargets               = "list_targets"
+	phaseScopeClaimRead            = "scope_claim_read"
 	phaseLoadSamples               = "load_samples"
 	phaseSamplePageRead            = "sample_page_read"
 	phaseReceiptPageRead           = "receipt_page_read"
@@ -40,6 +41,7 @@ var builderPhaseNames = []string{
 	phaseResume,
 	phaseChanges,
 	phaseListTargets,
+	phaseScopeClaimRead,
 	phaseLoadSamples,
 	phaseSamplePageRead,
 	phaseReceiptPageRead,
@@ -279,6 +281,8 @@ func (r *builderPhaseRecorder) finish(runErr error) {
 // establish how many rows were committed.
 func itemUnit(name string) string {
 	switch name {
+	case phaseScopeClaimRead:
+		return "selected_receipt_claim_rows"
 	case phaseChanges:
 		return "change_references"
 	case phaseListTargets:

@@ -31,8 +31,9 @@ type Builder struct {
 
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
-	lastRun time.Time
-	passes  int
+	lastRun      time.Time
+	fullRepairAt time.Time
+	passes       int
 }
 
 // Incremental rebuild bounds.
@@ -229,6 +230,12 @@ type sampleData struct {
 func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases := b.newPhaseRecorder(ctx)
 	ctx = withBuilderPhaseRecorder(ctx, phases)
+	ctx = serverstore.WithBuilderClaimReadObserver(ctx, func() func(int64, int64, error) {
+		phase := phases.begin(phaseScopeClaimRead)
+		return func(rows, bytes int64, err error) {
+			phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: rows, bytes: bytes})
+		}
+	})
 	defer func() { phases.finish(runErr) }()
 
 	started := time.Now()
@@ -242,7 +249,13 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	b.resumeFromLastCompletedPass(ctx, now)
 	phase.end(nil, knownCalls(resumeReads))
 	phases.close(phaseResume)
-	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0
+	// A deterministic fail-closed incremental error must not starve the
+	// hourly full repair by preventing the successful-pass counter advancing.
+	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 ||
+		(!b.fullRepairAt.IsZero() && !now.Before(b.fullRepairAt))
+	if full || b.fullRepairAt.IsZero() {
+		b.fullRepairAt = now.Add(time.Hour)
+	}
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 

@@ -9,7 +9,7 @@
 -- the same sentinel instead of depending on the database locale.
 --
 -- Rollback: first restore a binary without scoped builder reads, then DROP the
--- six builder_* indexes below and csx_builder_coords(jsonb),
+-- eight builder_* indexes below and csx_builder_unsafe_keys(jsonb), csx_builder_coords(jsonb),
 -- csx_builder_coord(text). No source or materialized data is rewritten.
 
 CREATE FUNCTION csx_builder_coord(raw text) RETURNS text
@@ -38,16 +38,16 @@ SELECT CASE
   WHEN strpos(CASE WHEN left(package_name, 3) = '%40'
                    THEN substr(package_name, 4) ELSE package_name END, '%') > 0
     THEN '!'
-  ELSE lower('pkg:' || ecosystem || '/' ||
+  ELSE translate('pkg:' || ecosystem || '/' ||
     CASE WHEN left(package_name, 1) = '@'
-         THEN '%40' || substr(package_name, 2) ELSE package_name END || '@')
+         THEN '%40' || substr(package_name, 2) ELSE package_name END || '@', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
 END
 FROM parts
 $coord$;
 
 CREATE FUNCTION csx_builder_coords(packages jsonb) RETURNS text[]
 LANGUAGE SQL IMMUTABLE PARALLEL SAFE
-AS $coords$
+RETURN (
 SELECT COALESCE(array_agg(DISTINCT coord ORDER BY coord)
                   FILTER (WHERE coord <> ''), ARRAY[]::text[])
 FROM (
@@ -58,7 +58,7 @@ FROM (
   ) AS package(value)
   WHERE jsonb_typeof(value) = 'string'
 ) AS coordinates
-$coords$;
+);
 
 CREATE INDEX builder_samples_packages_idx
   ON samples USING gin (csx_builder_coords(manifest->'packages'));
@@ -72,3 +72,24 @@ CREATE INDEX builder_evidence_coord_idx
   ON evidence_agg (csx_builder_coord(purl), purl, symbol);
 CREATE INDEX builder_snapshots_coord_idx
   ON compatibility_snapshots (csx_builder_coord(purl), purl, symbol);
+
+-- encoding/json accepts field-name aliases case-insensitively. A case variant
+-- (or duplicate variant) cannot be ignored by a lowercase SQL prefilter.
+-- Sparse partial indexes make an ambiguous legacy document an explicit,
+-- bounded preflight failure even when its intended package is outside scope.
+CREATE FUNCTION csx_builder_unsafe_keys(doc jsonb) RETURNS boolean
+LANGUAGE SQL IMMUTABLE PARALLEL SAFE
+AS $keys$
+SELECT COALESCE(bool_or(
+  octet_length(key) <> length(key) OR (translate(key, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+    IN ('packages', 'symbols', 'subject', 'resolvedpackages')
+  AND key NOT IN ('packages', 'symbols', 'subject', 'resolvedPackages'))
+), false)
+FROM jsonb_object_keys(CASE WHEN jsonb_typeof(doc) = 'object'
+                          THEN doc ELSE '{}'::jsonb END) AS keys(key)
+$keys$;
+
+CREATE INDEX builder_samples_unsafe_keys_idx ON samples(sample_id)
+  WHERE csx_builder_unsafe_keys(manifest);
+CREATE INDEX builder_receipts_unsafe_keys_idx ON receipts(receipt_id)
+  WHERE csx_builder_unsafe_keys(receipt);

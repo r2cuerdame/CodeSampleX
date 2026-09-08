@@ -12,6 +12,15 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
+// BuilderClaimReadObserver exposes selected claim rows/JSON volume to the
+// builder's phase recorder, including failed/cancelled reads.
+type BuilderClaimReadObserver func() func(rows, jsonBytes int64, err error)
+type builderClaimObserverKey struct{}
+
+func WithBuilderClaimReadObserver(ctx context.Context, observer BuilderClaimReadObserver) context.Context {
+	return context.WithValue(ctx, builderClaimObserverKey{}, observer)
+}
+
 // IncrementalBuilderStore narrows source acquisition, never evidence validation.
 // Stores without this capability retain the full reference implementation.
 type IncrementalBuilderStore interface {
@@ -49,6 +58,12 @@ func (p *PG) checkBuilderCoordinates(ctx context.Context) error {
 		var source, id string
 		err := c.QueryRow(ctx, `
    SELECT source, id FROM (
+    (SELECT 'manifest keys' AS source, sample_id AS id FROM samples
+      WHERE csx_builder_unsafe_keys(manifest) LIMIT 1)
+    UNION ALL
+    (SELECT 'receipt keys', receipt_id FROM receipts
+      WHERE csx_builder_unsafe_keys(receipt) LIMIT 1)
+    UNION ALL
     (SELECT 'sample' AS source, sample_id AS id FROM samples
       WHERE csx_builder_coords(manifest->'packages') @> ARRAY['!'] LIMIT 1)
     UNION ALL
@@ -171,23 +186,13 @@ func (p *PG) builderClaims(ctx context.Context, coords, symbols []string, includ
 		return nil, nil
 	}
 	var out []receiptClaim
+	var readRows, readBytes int64
+	var finish func(int64, int64, error)
+	if observer, ok := ctx.Value(builderClaimObserverKey{}).(BuilderClaimReadObserver); ok {
+		finish = observer()
+	}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
-   SELECT r.receipt::text, jsonb_build_object('symbols', s.manifest->'symbols', 'subject', s.manifest->'subject')
-   FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
-   WHERE ($3 OR NOT s.quarantined)
-    AND r.receipt->>'schemaVersion' = '2'
-    AND r.receipt->'stages'->>'resolve' = 'PASS'
-    AND r.receipt_id IN (
-     SELECT receipt_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
-     UNION
-     SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id = s2.sample_id
-       WHERE csx_builder_coord(s2.manifest->>'subject') = ANY($1)
-     UNION
-     SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id = s3.sample_id
-       WHERE s3.manifest->'symbols' ?| $2
-    )
-   ORDER BY r.receipt_id`, nonNilStrings(coords), nonNilStrings(symbols), includeQuarantined)
+		rows, err := c.Query(ctx, builderClaimsSQL, nonNilStrings(coords), nonNilStrings(symbols), includeQuarantined)
 		if err != nil {
 			return err
 		}
@@ -198,6 +203,8 @@ func (p *PG) builderClaims(ctx context.Context, coords, symbols []string, includ
 			if err := rows.Scan(&raw, &manifest); err != nil {
 				return err
 			}
+			readRows++
+			readBytes += int64(len(raw) + len(manifest))
 			var claim receiptClaim
 			if json.Unmarshal(manifest, &claim) != nil {
 				continue
@@ -207,6 +214,9 @@ func (p *PG) builderClaims(ctx context.Context, coords, symbols []string, includ
 		}
 		return rows.Err()
 	})
+	if finish != nil {
+		finish(readRows, readBytes, err)
+	}
 	return out, err
 }
 
@@ -282,12 +292,7 @@ func (p *PG) ListSnapshotTargetsForPackages(ctx context.Context, coords []string
 func (p *PG) ListBuilderSamplesPage(ctx context.Context, coords []string, limit, offset int) ([]SampleRow, error) {
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `SELECT `+sampleCols+` FROM samples
-   WHERE NOT quarantined AND sample_id IN (
-    SELECT sample_id FROM samples WHERE csx_builder_coords(manifest->'packages') && $1
-    UNION SELECT sample_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
-    UNION SELECT sample_id FROM samples WHERE csx_builder_coord(manifest->>'subject') = ANY($1)
-   ) ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`, nonNilStrings(coords), limit, offset)
+		rows, err := c.Query(ctx, builderSamplesSQL, nonNilStrings(coords), limit, offset)
 		if err != nil {
 			return err
 		}
@@ -324,3 +329,27 @@ func (p *PG) SnapshotKeysForPackages(ctx context.Context, coords []string) ([]Sn
 	})
 	return out, err
 }
+
+const builderClaimsSQL = `
+   SELECT r.receipt::text, jsonb_build_object('symbols', s.manifest->'symbols', 'subject', s.manifest->'subject')
+   FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
+   WHERE ($3 OR NOT s.quarantined)
+    AND r.receipt->>'schemaVersion' = '2'
+    AND r.receipt->'stages'->>'resolve' = 'PASS'
+    AND r.receipt_id IN (
+     SELECT receipt_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
+     UNION
+     SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id = s2.sample_id
+       WHERE csx_builder_coord(s2.manifest->>'subject') = ANY($1)
+     UNION
+     SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id = s3.sample_id
+       WHERE s3.manifest->'symbols' ?| $2
+    )
+   ORDER BY r.receipt_id`
+
+const builderSamplesSQL = `SELECT ` + sampleCols + ` FROM samples
+   WHERE NOT quarantined AND sample_id IN (
+    SELECT sample_id FROM samples WHERE csx_builder_coords(manifest->'packages') && $1
+    UNION SELECT sample_id FROM receipts WHERE csx_builder_coords(receipt->'resolvedPackages') && $1
+    UNION SELECT sample_id FROM samples WHERE csx_builder_coord(manifest->>'subject') = ANY($1)
+   ) ORDER BY created_at DESC, sample_id LIMIT $2 OFFSET $3`
