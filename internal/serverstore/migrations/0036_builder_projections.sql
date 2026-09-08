@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS receipts_builder_stale_idx ON receipts(receipt_id)
 -- The default libc locale on Alpine lowercases only ASCII.
 -- Invalid spellings yield NULL and remain subject to the full repair parser.
 -- SQL-language single statement: compatible with the small migration runner.
-CREATE FUNCTION builder_purl_coord(raw TEXT) RETURNS TEXT
+CREATE OR REPLACE FUNCTION builder_purl_coord(raw TEXT) RETURNS TEXT
 LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE AS $$
   WITH parsed AS (
     SELECT regexp_match(raw, '^pkg:([^/]+)/(.+)@([^@]+)$') AS m
@@ -47,9 +47,9 @@ LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE AS $$
     lower(name COLLATE pg_catalog."pg_c_utf8") || '@' FROM decoded
 $$;
 
-CREATE INDEX evidence_agg_builder_coord_idx
+CREATE INDEX IF NOT EXISTS evidence_agg_builder_coord_idx
   ON evidence_agg(builder_purl_coord(purl), purl, symbol);
-CREATE INDEX snapshots_builder_coord_idx
+CREATE INDEX IF NOT EXISTS snapshots_builder_coord_idx
   ON compatibility_snapshots(builder_purl_coord(purl), purl, symbol);
-CREATE INDEX evidence_agg_builder_changed_idx ON evidence_agg(last_seen, purl, symbol);
-CREATE INDEX samples_builder_created_idx ON samples(created_at, sample_id);
+CREATE INDEX IF NOT EXISTS evidence_agg_builder_changed_idx ON evidence_agg(last_seen, purl, symbol);
+CREATE INDEX IF NOT EXISTS samples_builder_created_idx ON samples(created_at, sample_id);

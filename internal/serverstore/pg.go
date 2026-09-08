@@ -1059,7 +1059,7 @@ func scanSample(row pgx.Row) (SampleRow, error) {
 		return SampleRow{}, err
 	}
 	if created != nil {
-		s.CreatedAt = *created
+		s.CreatedAt = created.UTC()
 	}
 	return s, nil
 }
@@ -1523,7 +1523,7 @@ func scanSampleWithTotal(row pgx.Row) (SampleRow, int, error) {
 		&s.OriginSeeder, &s.License, &s.SizeBytes, &s.HotScore, &created,
 		&s.Quarantined, &s.QuarantineReason, &total)
 	if created != nil {
-		s.CreatedAt = *created
+		s.CreatedAt = created.UTC()
 	}
 	return s, total, err
 }
