@@ -560,13 +560,32 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 	return nil
 }
 
+// packageProbeBatch bounds how many purls share one existence query. The
+// whole corpus in a single array parameter would trade a long queue of small
+// reads for one unbounded one.
+const packageProbeBatch = 1000
+
+type packageProbeStore interface {
+	ExistingPackagePURLs(context.Context, []string) (map[string]bool, error)
+}
+
 // ensureReceiptPackages makes receipt-only versions reachable through the
 // registry endpoints as well as through snapshots and shards. Observation
 // ingest already creates package rows; exact v2 receipt targets may be the
 // first time the network sees a release, so insert an UNKNOWN-publicness row
 // once without refreshing the last-seen clock on every aggregation pass.
+//
+// Which of them are already known is asked in bounded batches. Asking one
+// package at a time was a read per package in the WHOLE corpus on every pass,
+// incremental ones included: production v0.1.147 reported pool_busy=143 and a
+// 16.357s maximum wait for a connection while a pass with one dirty package
+// did exactly this. The set registered is unchanged -- membership is all that
+// moved into the store.
 func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleData) error {
 	seen := map[string]bool{}
+	// First-seen order, not map order, so registration writes the same rows
+	// in the same sequence as the read-per-package version did.
+	var resolved []domain.PURL
 	for _, sample := range samples {
 		for _, receipt := range sample.receipts {
 			for _, p := range receipt.ResolvedPackages {
@@ -574,21 +593,67 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 					continue
 				}
 				seen[p.String()] = true
-				if _, ok, err := b.Store.GetPackage(ctx, p.String()); err != nil {
-					return fmt.Errorf("compatibility: get package %s: %w", p.String(), err)
-				} else if ok {
-					continue
-				}
-				if err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
-					PURL: p.String(), Ecosystem: p.Ecosystem, Name: p.Name,
-					Version: p.Version, Major: p.Major(), Publicness: "UNKNOWN",
-				}); err != nil {
-					return fmt.Errorf("compatibility: register receipt package %s: %w", p.String(), err)
-				}
+				resolved = append(resolved, p)
 			}
 		}
 	}
+	if len(resolved) == 0 {
+		return nil
+	}
+	known, err := b.knownPackages(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	for _, p := range resolved {
+		if known[p.String()] {
+			continue
+		}
+		if err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
+			PURL: p.String(), Ecosystem: p.Ecosystem, Name: p.Name,
+			Version: p.Version, Major: p.Major(), Publicness: "UNKNOWN",
+		}); err != nil {
+			return fmt.Errorf("compatibility: register receipt package %s: %w", p.String(), err)
+		}
+	}
 	return nil
+}
+
+// knownPackages reports which of these purls the registry already holds.
+// PostgreSQL answers a bounded page at a time; alternate stores keep the
+// original read-per-package contract through the fallback below.
+func (b *Builder) knownPackages(ctx context.Context, resolved []domain.PURL) (map[string]bool, error) {
+	known := make(map[string]bool, len(resolved))
+	probe, ok := b.Store.(packageProbeStore)
+	if !ok {
+		for _, p := range resolved {
+			if _, found, err := b.Store.GetPackage(ctx, p.String()); err != nil {
+				return nil, fmt.Errorf("compatibility: get package %s: %w", p.String(), err)
+			} else if found {
+				known[p.String()] = true
+			}
+		}
+		return known, nil
+	}
+	for start := 0; start < len(resolved); start += packageProbeBatch {
+		end := start + packageProbeBatch
+		if end > len(resolved) {
+			end = len(resolved)
+		}
+		purls := make([]string, 0, end-start)
+		for _, p := range resolved[start:end] {
+			purls = append(purls, p.String())
+		}
+		page, err := probe.ExistingPackagePURLs(ctx, purls)
+		if err != nil {
+			return nil, fmt.Errorf("compatibility: existing packages: %w", err)
+		}
+		for purl, found := range page {
+			if found {
+				known[purl] = true
+			}
+		}
+	}
+	return known, nil
 }
 
 // refreshStats writes the daily rollup. It runs on every pass, including
@@ -1121,7 +1186,11 @@ func shardSamplesFor(samples []sampleData, ecosystem, name, major string) shardS
 // wishes for environments no worker could prove; those rows are retired by
 // migration 0010 and must not be recreated.
 func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) error {
-	for _, sd := range samples {
+	// Decide eligibility first, so the job history is asked for once for the
+	// samples that can actually open matrix work rather than once per sample.
+	eligible := make([]*sampleData, 0, len(samples))
+	for i := range samples {
+		sd := &samples[i]
 		if !isVerifiedStatus(sd.row.Status) || len(sd.receipts) == 0 {
 			continue
 		}
@@ -1130,10 +1199,17 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 			sd.manifest.Environment.Runtime != "java" {
 			continue
 		}
-		existing, err := b.Store.JobsForSample(ctx, sd.row.SampleID)
-		if err != nil {
-			return fmt.Errorf("compatibility: jobs for %s: %w", sd.row.SampleID, err)
-		}
+		eligible = append(eligible, sd)
+	}
+	if len(eligible) == 0 {
+		return nil
+	}
+	jobs, err := b.jobsForSamples(ctx, eligible)
+	if err != nil {
+		return err
+	}
+	for _, sd := range eligible {
+		existing := jobs[sd.row.SampleID]
 		existingRuntime := map[string]bool{}
 		for _, j := range existing {
 			if j.Reason != "matrix" {
@@ -1176,6 +1252,55 @@ func (b *Builder) createMatrixJobs(ctx context.Context, samples []sampleData) er
 		}
 	}
 	return nil
+}
+
+// jobProbeBatch bounds how many samples share one job-history query, for the
+// same reason packageProbeBatch bounds the package existence query.
+const jobProbeBatch = 1000
+
+type jobPageStore interface {
+	JobsForSamples(context.Context, []string) (map[string][]serverstore.JobRow, error)
+}
+
+// jobsForSamples reads the verification-job history of the eligible samples.
+// PostgreSQL answers a bounded page in one checkout; alternate stores keep
+// the original read-per-sample contract through the fallback below.
+//
+// Every job of every eligible sample is returned either way, in the same
+// per-sample order, so which matrix cells already exist is decided from
+// identical rows. Reading them all before the first CreateJob is safe
+// because jobs are keyed by sample and each sample is visited once.
+func (b *Builder) jobsForSamples(ctx context.Context, eligible []*sampleData) (map[string][]serverstore.JobRow, error) {
+	out := make(map[string][]serverstore.JobRow, len(eligible))
+	page, ok := b.Store.(jobPageStore)
+	if !ok {
+		for _, sd := range eligible {
+			rows, err := b.Store.JobsForSample(ctx, sd.row.SampleID)
+			if err != nil {
+				return nil, fmt.Errorf("compatibility: jobs for %s: %w", sd.row.SampleID, err)
+			}
+			out[sd.row.SampleID] = rows
+		}
+		return out, nil
+	}
+	for start := 0; start < len(eligible); start += jobProbeBatch {
+		end := start + jobProbeBatch
+		if end > len(eligible) {
+			end = len(eligible)
+		}
+		ids := make([]string, 0, end-start)
+		for _, sd := range eligible[start:end] {
+			ids = append(ids, sd.row.SampleID)
+		}
+		rows, err := page.JobsForSamples(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("compatibility: jobs for sample page: %w", err)
+		}
+		for sampleID, jobs := range rows {
+			out[sampleID] = append(out[sampleID], jobs...)
+		}
+	}
+	return out, nil
 }
 
 func strictWorkerRequirements(raw string) (domain.WorkerRequirements, error) {

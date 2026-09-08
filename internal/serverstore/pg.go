@@ -400,6 +400,49 @@ func (p *PG) GetPackage(ctx context.Context, purl string) (PackageRow, bool, err
 	return pkg, found, err
 }
 
+// ExistingPackagePURLs reports which of these purls already have a packages
+// row, in one database checkout.
+//
+// Receipt-derived registration asks that question about every package a live
+// receipt resolved, on every aggregation pass. One GetPackage checkout per
+// purl made an incremental pass with a single dirty package cost one
+// background pool acquisition per package in the whole corpus -- work that
+// scales with the network rather than with what changed, and that competes
+// with interactive readers for the same small pool.
+//
+// Membership only. Registration still writes one row at a time through
+// UpsertPackage, so a package that is already known is still left completely
+// alone rather than having its last_seen clock refreshed by aggregation.
+//
+// The list is a BOUNDED page; the caller chunks. Absent purls are simply
+// absent from the map, never present-and-false.
+func (p *PG) ExistingPackagePURLs(ctx context.Context, purls []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx,
+			`SELECT purl FROM packages WHERE purl = ANY($1::text[])`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl string
+			if err := rows.Scan(&purl); err != nil {
+				return err
+			}
+			out[purl] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (p *PG) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]PackageRow, error) {
 	var out []PackageRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
@@ -2067,6 +2110,46 @@ func (p *PG) StrandedDrafts(ctx context.Context, maxAttempts, limit int) ([]stri
 		return rows.Err()
 	})
 	return out, err
+}
+
+// JobsForSamples returns the verification jobs of a bounded sample page in
+// one database checkout. Matrix generation asks for the job history of every
+// verified Java sample in the live corpus on every aggregation pass; one
+// JobsForSample checkout per sample is the same whole-corpus acquisition
+// storm ExistingPackagePURLs describes.
+//
+// Per-sample ordering matches JobsForSample exactly, so the caller reads the
+// identical rows in the identical order either way. A sample with no jobs is
+// absent from the map, which ranges as the empty slice JobsForSample returns.
+func (p *PG) JobsForSamples(ctx context.Context, sampleIDs []string) (map[string][]JobRow, error) {
+	out := make(map[string][]JobRow, len(sampleIDs))
+	if len(sampleIDs) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs
+			WHERE sample_id = ANY($1::text[])
+			ORDER BY sample_id, created_at, id`, sampleIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out[j.SampleID] = append(out[j.SampleID], j)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (p *PG) JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error) {
