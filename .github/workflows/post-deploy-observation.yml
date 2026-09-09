@@ -115,6 +115,7 @@ jobs:
           issue_comments=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/issues/${issue_number}/comments?per_page=100" \
+            --paginate \
             --jq '.[].body' 2>/dev/null || true)
           if ! grep -F -q "$target_sha" <<<"${issue_content}"$'\n'"${issue_comments}"; then
             echo "::error::tracking issue #${issue_number} does not reference deployed commit ${target_sha}"

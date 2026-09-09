@@ -395,3 +395,19 @@ func TestObserverUsesAuthenticatedControllerAndPayloadMigration(t *testing.T) {
 		t.Fatal("observer must not revive legacy scripts from the released payload")
 	}
 }
+
+func TestPostDeployObservationScansEveryTrackingIssueComment(t *testing.T) {
+	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Validate deployment provenance and download its evidence")
+	commentsPath := "issues/${issue_number}/comments"
+	start := strings.Index(step, commentsPath)
+	if start < 0 {
+		t.Fatalf("provenance step must read tracking issue comments by issue number, got no %q", commentsPath)
+	}
+	call := step[start:]
+	if end := strings.Index(call, "--jq"); end >= 0 {
+		call = call[:end]
+	}
+	if !strings.Contains(call, "--paginate") {
+		t.Fatalf("tracking issue comment scan must paginate like production-deploy.yml; an incident issue outgrows one page and the deployed SHA sits in its newest comments: %q", call)
+	}
+}
