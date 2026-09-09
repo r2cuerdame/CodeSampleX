@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -258,19 +259,22 @@ func TestFailedFindingsRefreshUsesRetryCooldown(t *testing.T) {
 }
 
 func TestFindingsRefreshPanicsPreserveLastGoodAndReleaseSingleflight(t *testing.T) {
+	clock := newRetryTestClock()
 	store := &panickingFindingsStore{fakeStore: newFakeStore()}
 	s := &site{
-		d:    Deps{Store: store, PublicURL: "https://codesamplex.dev", Build: testBuild()},
-		tmpl: parseTemplates(),
+		d:                Deps{Store: store, PublicURL: "https://codesamplex.dev", Build: testBuild()},
+		tmpl:             parseTemplates(),
+		backgroundNow:    clock.now,
+		backgroundJitter: func(time.Duration) time.Duration { return 0 },
 		derivedCache: []finding{{
 			Ecosystem: "npm", Subject: "panic-safe 1.0.0", Believed: "panic safe belief",
 			Measured: "last good remains visible", SampleID: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			Basis: "sample", BasisKey: "findings.basis_sample",
 		}},
-		derivedAt:      time.Now().Add(-2 * derivedTTL),
+		derivedAt:      clock.now().Add(-2 * derivedTTL),
 		handDocumented: baseHandFindings(documentedFindings, "docs", "findings.basis_docs"),
 		handBelieved:   baseHandFindings(believedFindings, "belief", "findings.basis_belief"),
-		handAt:         time.Now().Add(-2 * derivedTTL),
+		handAt:         clock.now().Add(-2 * derivedTTL),
 	}
 	req := httptest.NewRequest(http.MethodGet, "https://codesamplex.dev/findings", nil)
 	rec := httptest.NewRecorder()
@@ -279,14 +283,16 @@ func TestFindingsRefreshPanicsPreserveLastGoodAndReleaseSingleflight(t *testing.
 		t.Fatalf("request did not survive refresh panics with last-good data: status=%d", rec.Code)
 	}
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		s.derivedMu.Lock()
-		derivedDone := !s.derivedRefreshing && s.derivedRetryAt.After(time.Now())
+		derivedDone := !s.derivedRefreshing && s.derivedRetry.State() == retrypolicy.Waiting &&
+			s.derivedRetryAt.Sub(clock.now()) == time.Second
 		derivedCache := append([]finding(nil), s.derivedCache...)
 		s.derivedMu.Unlock()
 		s.handMu.Lock()
-		handDone := !s.handRefreshing && s.handRetryAt.After(time.Now())
+		handDone := !s.handRefreshing && s.handRetry.State() == retrypolicy.Waiting &&
+			s.handRetryAt.Sub(clock.now()) == time.Second
 		handDocumented := append([]finding(nil), s.handDocumented...)
 		s.handMu.Unlock()
 		if derivedDone && handDone {
