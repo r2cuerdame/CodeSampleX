@@ -112,47 +112,87 @@ type singleflightGroup[T any] struct {
 }
 
 type singleflightCall[T any] struct {
-	done chan struct{}
-	val  T
-	err  error
+	mu        sync.Mutex
+	done      chan struct{}
+	waiters   int
+	finished  bool
+	abandoned bool
+	cancel    context.CancelFunc
+	val       T
+	err       error
 }
 
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
 	for {
-		call := &singleflightCall[T]{done: make(chan struct{})}
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		call := &singleflightCall[T]{
+			done:    make(chan struct{}),
+			waiters: 1,
+			cancel:  cancel,
+		}
 		actual, loaded := g.loads.LoadOrStore(key, call)
 		if loaded {
+			cancel()
 			existing := actual.(*singleflightCall[T])
-			select {
-			case <-existing.done:
-				if existing.err != nil {
-					return existing.val, existing.err
-				}
-				return existing.val, nil
-			case <-ctx.Done():
-				var zero T
-				return zero, ctx.Err()
+			if !existing.addWaiter() {
+				g.loads.CompareAndDelete(key, existing)
+				continue
 			}
+			return existing.wait(ctx)
 		}
 
 		go func() {
-			defer func() {
-				g.loads.Delete(key)
-				close(call.done)
-			}()
-			loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-			defer cancel()
-			call.val, call.err = fn(loadCtx)
+			val, err := fn(loadCtx)
+			call.finish(val, err)
+			g.loads.CompareAndDelete(key, call)
 		}()
-
-		select {
-		case <-call.done:
-			return call.val, call.err
-		case <-ctx.Done():
-			var zero T
-			return zero, ctx.Err()
-		}
+		return call.wait(ctx)
 	}
+}
+
+func (c *singleflightCall[T]) addWaiter() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.abandoned {
+		return false
+	}
+	c.waiters++
+	return true
+}
+
+func (c *singleflightCall[T]) wait(ctx context.Context) (T, error) {
+	select {
+	case <-c.done:
+		c.mu.Lock()
+		val, err := c.val, c.err
+		c.releaseWaiterLocked()
+		c.mu.Unlock()
+		return val, err
+	case <-ctx.Done():
+		c.mu.Lock()
+		c.releaseWaiterLocked()
+		c.mu.Unlock()
+		var zero T
+		return zero, ctx.Err()
+	}
+}
+
+func (c *singleflightCall[T]) releaseWaiterLocked() {
+	c.waiters--
+	if c.waiters == 0 && !c.finished {
+		c.abandoned = true
+		c.cancel()
+	}
+}
+
+func (c *singleflightCall[T]) finish(val T, err error) {
+	c.mu.Lock()
+	c.val = val
+	c.err = err
+	c.finished = true
+	c.cancel()
+	close(c.done)
+	c.mu.Unlock()
 }
 
 type getSampleResult struct {
@@ -931,11 +971,21 @@ func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.Sa
 	if limit <= 0 {
 		limit = 24
 	}
-	total, err := w.s.CountSamples(ctx)
-	if err != nil {
-		return nil, 0, err
+	var (
+		rows  []serverstore.SampleRow
+		total int
+		err   error
+	)
+	if combined, ok := w.s.(interface {
+		ListSamplesPageWithTotal(context.Context, int, int) ([]serverstore.SampleRow, int, error)
+	}); ok {
+		rows, total, err = combined.ListSamplesPageWithTotal(ctx, limit, offset)
+	} else {
+		total, err = w.s.CountSamples(ctx)
+		if err == nil {
+			rows, err = w.s.ListSamplesPage(ctx, limit, offset)
+		}
 	}
-	rows, err := w.s.ListSamplesPage(ctx, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

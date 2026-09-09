@@ -62,7 +62,17 @@ const (
 	// replacing them with a whole-pass transaction that could hold a connection
 	// for minutes.
 	snapshotWriteBatch = 64
+
+	// targetEvidenceReadBatch bounds how many indexed target reads share one
+	// background checkout. A post-migration repair can contain tens of
+	// thousands of targets; checking a connection out once per target made
+	// pool admission, rather than PostgreSQL execution, the dominant cost.
+	targetEvidenceReadBatch = 64
 )
+
+type targetEvidenceBatchStore interface {
+	EvidenceForTargets(context.Context, []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error)
+}
 
 func (b *Builder) now() time.Time {
 	if b.Now != nil {
@@ -395,16 +405,48 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// Evidence indexed by package → symbol → version → rows.
 	byPkg := map[pkgKey]symVer{}
 	purlOf := map[pkgKey]map[string]string{} // version → purl string
+	var targetEvidence map[serverstore.SnapshotTarget][]serverstore.EvidenceRow
+	if batchStore, ok := b.Store.(targetEvidenceBatchStore); ok {
+		targetEvidence = make(map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, len(targets))
+		for start := 0; start < len(targets); start += targetEvidenceReadBatch {
+			end := start + targetEvidenceReadBatch
+			if end > len(targets) {
+				end = len(targets)
+			}
+			phase = phases.begin(phaseTargetEvidence)
+			batch, eerr := batchStore.EvidenceForTargets(ctx, targets[start:end])
+			items := int64(0)
+			for _, target := range targets[start:end] {
+				rows, present := batch[target]
+				if !present && eerr == nil {
+					eerr = fmt.Errorf("missing result for %s %q", target.PURL, target.Symbol)
+					break
+				}
+				targetEvidence[target] = rows
+				items += int64(len(rows))
+			}
+			phase.end(eerr, builderPhaseCounters{
+				logicalCalls: int64(end - start), callsKnown: true, items: items,
+			})
+			if eerr != nil {
+				return fmt.Errorf("compatibility: evidence target batch %d-%d: %w", start, end, eerr)
+			}
+		}
+	}
 	for _, t := range targets {
 		p, perr := domain.ParsePURL(t.PURL)
 		if perr != nil {
 			continue
 		}
-		phase = phases.begin(phaseTargetEvidence)
-		rows, eerr := b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
-		phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
-		if eerr != nil {
-			return fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
+		rows := targetEvidence[t]
+		if targetEvidence == nil {
+			var eerr error
+			phase = phases.begin(phaseTargetEvidence)
+			rows, eerr = b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
+			phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+			if eerr != nil {
+				return fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
+			}
 		}
 		k := pkgKey{p.Ecosystem, p.Name}
 		if byPkg[k] == nil {

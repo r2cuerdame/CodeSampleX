@@ -410,6 +410,26 @@ func TestSingleflightLeaderCancellationSafety(t *testing.T) {
 		}{val: val, err: err}
 	}()
 
+	// Wait until the waiter has joined the shared call. Scheduling the goroutine
+	// alone is not proof that it reached LoadOrStore before leader cancellation.
+	deadline := time.Now().Add(time.Second)
+	for {
+		actual, ok := group.loads.Load("testKey")
+		if ok {
+			call := actual.(*singleflightCall[string])
+			call.mu.Lock()
+			waiters := call.waiters
+			call.mu.Unlock()
+			if waiters == 2 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("waiter did not join shared call")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	// Waiter is parked waiting for leader's shared call.
 	// Now cancel leader context.
 	cancelLeader()
@@ -443,6 +463,39 @@ func TestSingleflightLeaderCancellationSafety(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("waiter timed out waiting for shared result")
+	}
+}
+
+func TestSingleflightStopsSharedLoadWhenLastWaiterCancels(t *testing.T) {
+	group := singleflightGroup[string]{}
+	started := make(chan struct{})
+	loadDone := make(chan error, 1)
+
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	callerDone := make(chan error, 1)
+	go func() {
+		_, err := group.Do(callerCtx, "abandoned", func(loadCtx context.Context) (string, error) {
+			close(started)
+			<-loadCtx.Done()
+			loadDone <- loadCtx.Err()
+			return "", loadCtx.Err()
+		})
+		callerDone <- err
+	}()
+
+	<-started
+	cancelCaller()
+	if err := <-callerDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller err = %v, want context.Canceled", err)
+	}
+
+	select {
+	case err := <-loadDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("abandoned load err = %v, want context.Canceled", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("shared load kept running after its last waiter left")
 	}
 }
 

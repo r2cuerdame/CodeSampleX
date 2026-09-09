@@ -932,33 +932,89 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var e EvidenceRow
-			var outerCommandsJSON string
-			var first, last *time.Time
-			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
-				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
-				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
-				&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
-				&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
-				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
-				&first, &last); err != nil {
+			e, err := scanEvidence(rows)
+			if err != nil {
 				return err
-			}
-			if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
-				return fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
-			}
-			if len(e.OuterCommands) > 0 {
-				e.OuterCommand = e.OuterCommands[0]
-			}
-			if first != nil {
-				e.FirstSeen = *first
-			}
-			if last != nil {
-				e.LastSeen = *last
 			}
 			out = append(out, e)
 		}
 		return rows.Err()
+	})
+	return out, err
+}
+
+func scanEvidence(row pgx.Row) (EvidenceRow, error) {
+	var e EvidenceRow
+	var outerCommandsJSON string
+	var first, last *time.Time
+	if err := row.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
+		&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
+		&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
+		&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
+		&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
+		&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
+		&first, &last); err != nil {
+		return EvidenceRow{}, err
+	}
+	if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
+		return EvidenceRow{}, fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
+	}
+	if len(e.OuterCommands) > 0 {
+		e.OuterCommand = e.OuterCommands[0]
+	}
+	if first != nil {
+		e.FirstSeen = *first
+	}
+	if last != nil {
+		e.LastSeen = *last
+	}
+	return e, nil
+}
+
+// EvidenceForTargets preserves EvidenceForTarget's indexed lookup and symbol
+// spelling semantics while sharing one background pool checkout across a
+// bounded builder batch.
+func (p *PG) EvidenceForTargets(ctx context.Context, targets []SnapshotTarget) (map[SnapshotTarget][]EvidenceRow, error) {
+	out := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	if len(targets) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var batch pgx.Batch
+		for _, target := range targets {
+			out[target] = nil
+			batch.Queue(`
+				SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
+				       stage, result, error_fp, error_code, termination_kind, exit_code,
+				       signal, timeout_millis, error_summary, evidence_quality, outer_commands::text,
+				       outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap, observation_count,
+				       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
+				FROM evidence_agg
+				WHERE purl=$1 AND symbol = ANY($2)
+				ORDER BY env_hash, stage, result, error_fp`, target.PURL, symbolSpellings(target.PURL, target.Symbol))
+		}
+		results := c.SendBatch(ctx, &batch)
+		defer results.Close()
+		for _, target := range targets {
+			rows, err := results.Query()
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				e, err := scanEvidence(rows)
+				if err != nil {
+					rows.Close()
+					return err
+				}
+				out[target] = append(out[target], e)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			rows.Close()
+		}
+		return results.Close()
 	})
 	return out, err
 }
@@ -1457,6 +1513,49 @@ func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRo
 		return rows.Err()
 	})
 	return out, err
+}
+
+// ListSamplesPageWithTotal serves the public collection with one pool checkout
+// and one query on the normal path. Keeping the count and page together avoids
+// paying two interactive pool waits while the builder is using its background
+// lane after a cold deployment.
+func (p *PG) ListSamplesPageWithTotal(ctx context.Context, limit, offset int) ([]SampleRow, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var out []SampleRow
+	total := 0
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+`, count(*) OVER() FROM samples
+			WHERE NOT quarantined
+			ORDER BY created_at DESC, sample_id LIMIT $1 OFFSET $2`, limit, offset)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, count, err := scanSampleWithTotal(rows)
+			if err != nil {
+				return err
+			}
+			total = count
+			out = append(out, s)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// An out-of-range page has no window row carrying the total. Use the
+		// same already-acquired connection for this rare fallback.
+		if len(out) == 0 && offset > 0 {
+			return c.QueryRow(ctx, `SELECT count(*) FROM samples WHERE NOT quarantined`).Scan(&total)
+		}
+		return nil
+	})
+	return out, total, err
 }
 
 // SearchSamplesPage is ListSamplesPage narrowed by a reader's words.

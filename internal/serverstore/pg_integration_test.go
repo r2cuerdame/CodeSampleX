@@ -361,6 +361,37 @@ func TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage(t *
 	}
 }
 
+func TestIntegrationSamplePageAndTotalShareOneCheckout(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := pg.SaveSample(ctx, SampleRow{
+			SampleID:     fmt.Sprintf("sha256:page-%d", i),
+			ManifestJSON: `{"goal":"page sample","packages":[],"symbols":[]}`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	rows, total, err := pg.ListSamplesPageWithTotal(ctx, 1, 0)
+	if err != nil || len(rows) != 1 || total != 3 {
+		t.Fatalf("first page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired - before; got != 1 {
+		t.Fatalf("first page checkouts = %d, want 1", got)
+	}
+
+	before = classStat(t, pg.PoolStats(), "background").Acquired
+	rows, total, err = pg.ListSamplesPageWithTotal(ctx, 1, 99)
+	if err != nil || len(rows) != 0 || total != 3 {
+		t.Fatalf("past-last page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired - before; got != 1 {
+		t.Fatalf("past-last page checkouts = %d, want 1", got)
+	}
+}
+
 // This is the safe production-scale reproduction for R2C-190. Production had
 // 7,012 public samples when /samples?q=pgx measured 4.92s p50. The production
 // query was not EXPLAIN ANALYZE'd because it was already slow and contending
@@ -1207,6 +1238,41 @@ func TestIntegrationVerifiedSampleReadsRequireContractPass(t *testing.T) {
 	rows, err = pg.ListVerifiedSamples(ctx, 10)
 	if err != nil || len(rows) != 1 || rows[0].SampleID != "sha256:proved" {
 		t.Fatalf("verified sample rows = %+v, err=%v", rows, err)
+	}
+}
+
+func TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{
+		obsBatch("anonbatch", "projbatch", 3),
+	}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("seed evidence: accepted=%d rejected=%v err=%v", accepted, rejected, err)
+	}
+
+	targets := []SnapshotTarget{
+		{PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post"},
+		{PURL: "pkg:npm/axios@1.12.0", Symbol: "missing.symbol"},
+	}
+	want := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	for _, target := range targets {
+		rows, err := pg.EvidenceForTarget(ctx, target.PURL, target.Symbol)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[target] = rows
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	got, err := pg.EvidenceForTargets(ctx, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("batched evidence differs from singles:\ngot  %#v\nwant %#v", got, want)
+	}
+	if checkouts := classStat(t, pg.PoolStats(), "background").Acquired - before; checkouts != 1 {
+		t.Fatalf("batched evidence checkouts = %d, want 1", checkouts)
 	}
 }
 

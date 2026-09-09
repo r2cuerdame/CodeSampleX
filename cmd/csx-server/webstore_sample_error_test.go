@@ -14,6 +14,42 @@ type errorInjectingStore struct {
 	getSampleErr error
 }
 
+type combinedSamplePageStore struct {
+	*serverstore.Fake
+	calls int
+}
+
+func (s *combinedSamplePageStore) ListSamplesPageWithTotal(ctx context.Context, limit, offset int) ([]serverstore.SampleRow, int, error) {
+	s.calls++
+	rows, err := s.Fake.ListSamplesPage(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.Fake.CountSamples(ctx)
+	return rows, total, err
+}
+
+func TestWebStoreSamplesPagePrefersCombinedRead(t *testing.T) {
+	ctx := context.Background()
+	fake := serverstore.NewFake()
+	for _, id := range []string{"sha256:first", "sha256:second"} {
+		if err := fake.SaveSample(ctx, serverstore.SampleRow{
+			SampleID: id, ManifestJSON: `{"goal":"sample page","packages":[],"symbols":[]}`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &combinedSamplePageStore{Fake: fake}
+	w := &webStore{s: store}
+	rows, total, err := w.SamplesPage(ctx, 0, 1)
+	if err != nil || len(rows) != 1 || total != 2 {
+		t.Fatalf("SamplesPage = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	if store.calls != 1 {
+		t.Fatalf("combined page calls = %d, want 1", store.calls)
+	}
+}
+
 func (e *errorInjectingStore) GetSample(ctx context.Context, sampleID string) (serverstore.SampleRow, bool, error) {
 	if e.getSampleErr != nil {
 		return serverstore.SampleRow{}, false, e.getSampleErr
