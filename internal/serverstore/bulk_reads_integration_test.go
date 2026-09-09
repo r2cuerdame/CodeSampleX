@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,118 +143,131 @@ func mustSnapshotPage(t *testing.T, pg *PG, purls []string, symbol string) map[s
 }
 
 // Receipt-derived registration writes one packages row per release the
-// registry has never seen. The bulk form must leave the table in the state
-// the sequential UpsertPackage calls would have -- same columns, including
-// a NULL and a set checked_at, the same conflict rule on a row that already
-// exists, first_seen untouched by the update -- in one checkout per page,
-// and it must not choke on a purl repeated within the page.
-func TestIntegrationUpsertPackagesMatchesUpsertPackageInOneCheckout(t *testing.T) {
+// registry has never seen, and it must never write anything else. The
+// builder learns "never seen" from a membership probe and writes a page
+// later; in between, the registry check can confirm one of those releases
+// PUBLIC. A conflict rule that replaced publicness and checked_at turned
+// that confirmation back into UNKNOWN (#174 review). RegisterPackages is
+// insert-if-absent: a row that exists, however it came to exist, is left
+// completely alone -- publicness, checked_at, first_seen and last_seen.
+func TestIntegrationRegisterPackagesLeavesEveryExistingRowAlone(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
 	checked := time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC)
 
-	rowFor := func(prefix string, i int) PackageRow {
-		row := PackageRow{
-			PURL: fmt.Sprintf("pkg:npm/%s%03d@2.%d.0", prefix, i, i), Ecosystem: "npm",
-			Name: fmt.Sprintf("%s%03d", prefix, i), Version: fmt.Sprintf("2.%d.0", i), Major: "2",
+	rowFor := func(i int, publicness string, checkedAt time.Time) PackageRow {
+		return PackageRow{
+			PURL: fmt.Sprintf("pkg:npm/reg%03d@3.%d.0", i, i), Ecosystem: "npm",
+			Name: fmt.Sprintf("reg%03d", i), Version: fmt.Sprintf("3.%d.0", i), Major: "3",
+			Publicness: publicness, CheckedAt: checkedAt,
 		}
-		switch i % 3 {
-		case 0:
-			row.Publicness = "UNKNOWN"
-		case 1:
-			row.Publicness, row.CheckedAt = "PUBLIC", checked
-		case 2:
-			row.Publicness = "" // the store's default, UNKNOWN
-		}
-		return row
 	}
-	const n = 9
-	var seq, bulk []PackageRow
-	for i := 0; i < n; i++ {
-		seq = append(seq, rowFor("seq", i))
-		bulk = append(bulk, rowFor("bulk", i))
-	}
-	for _, row := range seq {
+	// Rows 0 and 1 exist before the page: one confirmed PUBLIC, one still
+	// UNKNOWN. Rows 2..5 are new; row 4 is repeated within the page.
+	confirmed, unknown := rowFor(0, "PUBLIC", checked), rowFor(1, "UNKNOWN", time.Time{})
+	for _, row := range []PackageRow{confirmed, unknown} {
 		if err := pg.UpsertPackage(ctx, row); err != nil {
 			t.Fatalf("UpsertPackage %s: %v", row.PURL, err)
 		}
 	}
+	confirmedBefore, _, _ := pg.GetPackage(ctx, confirmed.PURL)
+	unknownBefore, _, _ := pg.GetPackage(ctx, unknown.PURL)
+
+	// The builder registers everything as UNKNOWN with no checked_at,
+	// including the two releases it believed were absent.
+	page := []PackageRow{
+		rowFor(0, "UNKNOWN", time.Time{}), rowFor(1, "", time.Time{}),
+		rowFor(2, "UNKNOWN", time.Time{}), rowFor(3, "", time.Time{}),
+		rowFor(4, "UNKNOWN", time.Time{}), rowFor(4, "UNKNOWN", time.Time{}), rowFor(5, "UNKNOWN", time.Time{}),
+	}
 	before := classStat(t, pg.PoolStats(), "background").Acquired
-	if err := pg.UpsertPackages(ctx, bulk); err != nil {
-		t.Fatalf("UpsertPackages: %v", err)
+	if err := pg.RegisterPackages(ctx, page); err != nil {
+		t.Fatalf("RegisterPackages: %v", err)
 	}
 	after := classStat(t, pg.PoolStats(), "background").Acquired
 	if got, want := after-before, uint64(1); got != want {
-		t.Fatalf("package write checkouts = %d, want %d", got, want)
+		t.Fatalf("registration page checkouts = %d, want %d", got, want)
 	}
 
-	// Same columns, prefix aside. The clocks are the server's, so they are
-	// compared for shape (set, and first_seen == last_seen on a fresh row)
-	// rather than for value.
-	sameShape := func(a, b PackageRow) bool {
-		return a.Ecosystem == b.Ecosystem && a.Version == b.Version && a.Major == b.Major &&
-			a.Publicness == b.Publicness && a.CheckedAt.Equal(b.CheckedAt) &&
-			!a.FirstSeen.IsZero() && !b.FirstSeen.IsZero() &&
-			a.FirstSeen.Equal(a.LastSeen) && b.FirstSeen.Equal(b.LastSeen)
-	}
-	for i := 0; i < n; i++ {
-		s, sOK, err := pg.GetPackage(ctx, seq[i].PURL)
-		if err != nil || !sOK {
-			t.Fatalf("GetPackage %s: ok=%t err=%v", seq[i].PURL, sOK, err)
-		}
-		b, bOK, err := pg.GetPackage(ctx, bulk[i].PURL)
-		if err != nil || !bOK {
-			t.Fatalf("GetPackage %s: ok=%t err=%v", bulk[i].PURL, bOK, err)
-		}
-		if !sameShape(s, b) {
-			t.Fatalf("row %d differs between contracts:\nsequential %+v\nbulk       %+v", i, s, b)
-		}
-	}
-
-	// The conflict rule: publicness and checked_at replaced, last_seen moved,
-	// first_seen kept -- through both contracts.
-	seqBefore, _, _ := pg.GetPackage(ctx, seq[0].PURL)
-	bulkBefore, _, _ := pg.GetPackage(ctx, bulk[0].PURL)
-	later := checked.Add(time.Hour)
-	update := func(row PackageRow) PackageRow {
-		row.Publicness, row.CheckedAt = "PRIVATE", later
-		return row
-	}
-	if err := pg.UpsertPackage(ctx, update(seq[0])); err != nil {
-		t.Fatal(err)
-	}
-	// The repeated purl is the bulk analogue of calling UpsertPackage twice:
-	// the later value is the one that lands.
-	stale := update(bulk[0])
-	stale.Publicness = "PUBLIC"
-	if err := pg.UpsertPackages(ctx, []PackageRow{stale, update(bulk[0])}); err != nil {
-		t.Fatalf("UpsertPackages with a repeated purl: %v", err)
-	}
 	for _, tc := range []struct {
 		name   string
 		purl   string
 		before PackageRow
-	}{{"sequential", seq[0].PURL, seqBefore}, {"bulk", bulk[0].PURL, bulkBefore}} {
-		got, _, err := pg.GetPackage(ctx, tc.purl)
-		if err != nil {
-			t.Fatal(err)
+	}{{"confirmed PUBLIC", confirmed.PURL, confirmedBefore}, {"existing UNKNOWN", unknown.PURL, unknownBefore}} {
+		got, ok, err := pg.GetPackage(ctx, tc.purl)
+		if err != nil || !ok {
+			t.Fatalf("%s: GetPackage ok=%t err=%v", tc.name, ok, err)
 		}
-		if got.Publicness != "PRIVATE" || !got.CheckedAt.Equal(later) {
-			t.Fatalf("%s: conflict did not replace publicness/checked_at: %+v", tc.name, got)
+		if !reflect.DeepEqual(got, tc.before) {
+			t.Fatalf("%s: registration touched an existing row:\nbefore %+v\nafter  %+v", tc.name, tc.before, got)
 		}
-		if !got.FirstSeen.Equal(tc.before.FirstSeen) {
-			t.Fatalf("%s: conflict moved first_seen from %s to %s", tc.name, tc.before.FirstSeen, got.FirstSeen)
+	}
+	for i := 2; i <= 5; i++ {
+		want := rowFor(i, "UNKNOWN", time.Time{})
+		got, ok, err := pg.GetPackage(ctx, want.PURL)
+		if err != nil || !ok {
+			t.Fatalf("%s: not registered: ok=%t err=%v", want.PURL, ok, err)
 		}
-		if got.LastSeen.Before(tc.before.LastSeen) {
-			t.Fatalf("%s: conflict did not refresh last_seen: %s -> %s", tc.name, tc.before.LastSeen, got.LastSeen)
+		if got.Ecosystem != want.Ecosystem || got.Name != want.Name || got.Version != want.Version ||
+			got.Major != want.Major || got.Publicness != "UNKNOWN" || !got.CheckedAt.IsZero() ||
+			got.FirstSeen.IsZero() || !got.FirstSeen.Equal(got.LastSeen) {
+			t.Fatalf("%s: registered row = %+v, want a fresh UNKNOWN row", want.PURL, got)
 		}
 	}
 
 	before = classStat(t, pg.PoolStats(), "background").Acquired
-	if err := pg.UpsertPackages(ctx, nil); err != nil {
-		t.Fatalf("empty package write: %v", err)
+	if err := pg.RegisterPackages(ctx, nil); err != nil {
+		t.Fatalf("empty registration page: %v", err)
 	}
 	if after := classStat(t, pg.PoolStats(), "background").Acquired; after != before {
-		t.Fatalf("empty package write acquired a connection: before=%d after=%d", before, after)
+		t.Fatalf("empty registration page acquired a connection: before=%d after=%d", before, after)
+	}
+}
+
+// The race itself, run for real: registration pages keep landing while the
+// registry check confirms the release PUBLIC. Whatever the interleaving,
+// the confirmation is the last word, because registration never has one.
+func TestIntegrationRegisterPackagesRacingAConfirmationKeepsItPublic(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	checked := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	row := PackageRow{
+		PURL: "pkg:npm/raced@1.0.0", Ecosystem: "npm", Name: "raced", Version: "1.0.0",
+		Major: "1", Publicness: "UNKNOWN",
+	}
+
+	const registrations = 40
+	errs := make(chan error, registrations+1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < registrations; i++ {
+			if err := pg.RegisterPackages(ctx, []PackageRow{row}); err != nil {
+				errs <- fmt.Errorf("registration %d: %w", i, err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		public := row
+		public.Publicness, public.CheckedAt = "PUBLIC", checked
+		if err := pg.UpsertPackage(ctx, public); err != nil {
+			errs <- fmt.Errorf("confirmation: %w", err)
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	got, ok, err := pg.GetPackage(ctx, row.PURL)
+	if err != nil || !ok {
+		t.Fatalf("GetPackage ok=%t err=%v", ok, err)
+	}
+	if got.Publicness != "PUBLIC" || !got.CheckedAt.Equal(checked) {
+		t.Fatalf("a registration page downgraded the confirmed release: %+v", got)
 	}
 }

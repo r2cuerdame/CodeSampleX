@@ -95,9 +95,16 @@ func (s *bulkReadStore) ExistingPackagePURLs(ctx context.Context, purls []string
 	return out, nil
 }
 
-func (s *bulkReadStore) UpsertPackages(ctx context.Context, rows []serverstore.PackageRow) error {
-	s.note("UpsertPackages", len(rows))
+// RegisterPackages is insert-if-absent over the Fake, the contract the
+// production store keeps: a row that exists is left completely alone.
+func (s *bulkReadStore) RegisterPackages(ctx context.Context, rows []serverstore.PackageRow) error {
+	s.note("RegisterPackages", len(rows))
 	for _, row := range rows {
+		if _, exists, err := s.Fake.GetPackage(ctx, row.PURL); err != nil {
+			return err
+		} else if exists {
+			continue
+		}
 		if err := s.Fake.UpsertPackage(ctx, row); err != nil {
 			return err
 		}
@@ -531,11 +538,16 @@ func (s *failingBulkStore) ExistingPackagePURLs(context.Context, []string) (map[
 	return map[string]bool{}, nil
 }
 
-func (s *failingBulkStore) UpsertPackages(ctx context.Context, rows []serverstore.PackageRow) error {
+func (s *failingBulkStore) RegisterPackages(ctx context.Context, rows []serverstore.PackageRow) error {
 	if s.failPackageWrites {
 		return errPoolExhausted
 	}
 	for _, row := range rows {
+		if _, exists, err := s.Fake.GetPackage(ctx, row.PURL); err != nil {
+			return err
+		} else if exists {
+			continue
+		}
 		if err := s.Fake.UpsertPackage(ctx, row); err != nil {
 			return err
 		}

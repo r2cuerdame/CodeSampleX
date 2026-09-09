@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -34,11 +35,28 @@ func searchServer(t *testing.T, bulk bool) (*httptest.Server, *serverstore.Fake,
 // receipts for every candidate the filters let through.
 func seedSearchCandidates(t *testing.T, store *serverstore.Fake, n int) {
 	t.Helper()
+	seedSearchCandidatesWith(t, store, n, nil)
+}
+
+// searchCandidateID is the sample ID of the i-th seeded candidate. The Fake
+// lists same-instant samples by ID, so seed order is candidate order.
+func searchCandidateID(i int) string {
+	return fmt.Sprintf("sha256:%064x", 500000+i)
+}
+
+// seedSearchCandidatesWith is seedSearchCandidates with a hand on each
+// manifest before it is saved, so a test can decide which candidates the
+// filters will let through.
+func seedSearchCandidatesWith(t *testing.T, store *serverstore.Fake, n int, mutate func(i int, m *domain.SampleManifest)) {
+	t.Helper()
 	ctx := context.Background()
 	for i := 0; i < n; i++ {
 		manifest := testManifest()
 		manifest.Case.Goal = fmt.Sprintf("post JSON with axios, variant %d", i)
-		sampleID := fmt.Sprintf("sha256:%064x", 500000+i)
+		if mutate != nil {
+			mutate(i, &manifest)
+		}
+		sampleID := searchCandidateID(i)
 		if err := store.SaveSample(ctx, serverstore.SampleRow{
 			SampleID: sampleID, ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
 			Status: "PUBLISHED", License: "MIT-0", SizeBytes: 512, CreatedAt: testNow,
@@ -171,4 +189,214 @@ func TestSearchReceiptPageFailureIsReportedLikeARowFailure(t *testing.T) {
 	if statuses[0] != statuses[1] {
 		t.Fatalf("the two contracts report the failure differently: %v", statuses)
 	}
+}
+
+// declareRequestSymbolAt makes the candidates at the given seed positions
+// declare a second symbol nobody else declares. A request for that symbol
+// then rejects every other candidate at the symbol filter, before any
+// receipt is needed.
+func declareRequestSymbolAt(positions ...int) func(int, *domain.SampleManifest) {
+	chosen := make(map[int]bool, len(positions))
+	for _, i := range positions {
+		chosen[i] = true
+	}
+	return func(i int, m *domain.SampleManifest) {
+		if chosen[i] {
+			m.Symbols = append(m.Symbols, "axios.request")
+		}
+	}
+}
+
+// The receipt pages were cut from ALL candidates, so one survivor pulled the
+// receipt histories of up to searchReceiptBatch neighbours the filters had
+// already rejected, and kept them for the rest of the request. The pages
+// must be cut from the candidates that survive every pre-receipt filter:
+// one survivor is one row, and the answer is byte-identical to the
+// row-at-a-time contract.
+func TestSearchReadsReceiptsOnlyForTheCandidatesThatSurviveTheFilters(t *testing.T) {
+	const n = 100
+	const survivor = 57
+	rowSrv, rowStore, rowCounter := searchServer(t, false)
+	seedSearchCandidatesWith(t, rowStore, n, declareRequestSymbolAt(survivor))
+	bulkSrv, bulkStore, bulkCounter := searchServer(t, true)
+	seedSearchCandidatesWith(t, bulkStore, n, declareRequestSymbolAt(survivor))
+
+	rowStatus, rowBody := postSearch(t, rowSrv.URL+"/v2/search", searchAxios("axios.request"))
+	bulkStatus, bulkBody := postSearch(t, bulkSrv.URL+"/v2/search", searchAxios("axios.request"))
+	if rowStatus != http.StatusOK || bulkStatus != http.StatusOK {
+		t.Fatalf("status row-at-a-time=%d bulk=%d, want 200", rowStatus, bulkStatus)
+	}
+	if rowBody != bulkBody {
+		t.Fatalf("survivor-only receipt pages changed the answer:\nrow-at-a-time: %s\nbulk:          %s", rowBody, bulkBody)
+	}
+	var resp domain.SearchResponse
+	decodeBody(t, bulkBody, &resp)
+	if resp.Miss || len(resp.Results) != 1 || resp.Results[0].SampleID != searchCandidateID(survivor) ||
+		resp.Results[0].Evidence.ContractPasses != 2 {
+		t.Fatalf("the survivor was not the graded answer: %+v", resp)
+	}
+
+	t.Logf("%d candidates, 1 survivor: row-at-a-time ReceiptsForSample=%d; bulk ReceiptsForSamples=%v",
+		n, rowCounter.count("ReceiptsForSample"), bulkCounter.sizes("ReceiptsForSamples"))
+	if got := rowCounter.count("ReceiptsForSample"); got != 1 {
+		t.Fatalf("row-at-a-time receipt reads = %d, want 1", got)
+	}
+	if got := bulkCounter.count("ReceiptsForSample"); got != 0 {
+		t.Fatalf("bulk store still read %d receipt histories one at a time", got)
+	}
+	if got, want := bulkCounter.pageKeys("ReceiptsForSamples"), []string{searchCandidateID(survivor)}; !equalStringSlices(got, want) {
+		t.Fatalf("receipt pages asked for %v, want only the survivor %v", got, want)
+	}
+}
+
+// The pages are cut from survivors in candidate order and bounded by
+// searchReceiptBatch, whatever the survivors' positions among the
+// candidates: three survivors spread over three candidate pages are one
+// read of three, and half of three hundred is a full page and a half.
+func TestSearchReceiptPagesAreCutFromSurvivorsNotCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		n         int
+		survivors []int
+		wantPages []int
+	}{
+		{name: "one survivor per candidate page", n: 2*searchReceiptBatch + 5, survivors: []int{0, searchReceiptBatch, 2*searchReceiptBatch + 4}, wantPages: []int{3}},
+		{name: "every other candidate", n: 3 * searchReceiptBatch, survivors: everyOther(3 * searchReceiptBatch), wantPages: []int{searchReceiptBatch, searchReceiptBatch / 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store, counter := searchServer(t, true)
+			seedSearchCandidatesWith(t, store, tc.n, declareRequestSymbolAt(tc.survivors...))
+
+			status, body := postSearch(t, srv.URL+"/v2/search", searchAxios("axios.request"))
+			if status != http.StatusOK {
+				t.Fatalf("status = %d %s, want 200", status, body)
+			}
+			var resp domain.SearchResponse
+			decodeBody(t, body, &resp)
+			if resp.Miss || len(resp.Results) == 0 {
+				t.Fatalf("no survivor was graded: %+v", resp)
+			}
+			if got := counter.sizes("ReceiptsForSamples"); !equalIntSlices(got, tc.wantPages) {
+				t.Fatalf("receipt pages = %v, want %v", got, tc.wantPages)
+			}
+			want := make([]string, 0, len(tc.survivors))
+			for _, i := range tc.survivors {
+				want = append(want, searchCandidateID(i))
+			}
+			sort.Strings(want)
+			got := counter.pageKeys("ReceiptsForSamples")
+			sort.Strings(got)
+			if !equalStringSlices(got, want) {
+				t.Fatalf("receipt pages asked for %d ids, want exactly the %d survivors", len(got), len(want))
+			}
+			if got := counter.count("ReceiptsForSample"); got != 0 {
+				t.Fatalf("bulk store still read %d receipt histories one at a time", got)
+			}
+		})
+	}
+}
+
+func everyOther(n int) []int {
+	var out []int
+	for i := 0; i < n; i += 2 {
+		out = append(out, i)
+	}
+	return out
+}
+
+// An exact failure detour is decided from the SELECTED receipt variant of
+// the candidate, after the pre-receipt cluster match. Splitting grading
+// into a pre-receipt and a post-receipt phase must not move that decision:
+// both contracts report the same exact match, with the same evidence.
+func TestSearchExactFailureMatchIsTheSameUnderBothContracts(t *testing.T) {
+	fingerprint := "sha256:" + strings.Repeat("ab", 32)
+	seed := func(store *serverstore.Fake) {
+		seedSearchCandidates(t, store, 12)
+		if err := store.UpsertFailureCluster(context.Background(), serverstore.ClusterRow{
+			Ecosystem: "npm", PackageName: "axios", Symbol: "axios.post", Stage: "PROJECT_COMPILE",
+			ErrorFingerprint: fingerprint, ErrorCode: "ERR_REQUIRE_ESM", ObservationCount: 7,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rowSrv, rowStore, _ := searchServer(t, false)
+	seed(rowStore)
+	bulkSrv, bulkStore, bulkCounter := searchServer(t, true)
+	seed(bulkStore)
+
+	req := searchAxios()
+	req.ErrorFingerprint = fingerprint
+	rowStatus, rowBody := postSearch(t, rowSrv.URL+"/v2/search", req)
+	bulkStatus, bulkBody := postSearch(t, bulkSrv.URL+"/v2/search", req)
+	if rowStatus != http.StatusOK || bulkStatus != http.StatusOK {
+		t.Fatalf("status row-at-a-time=%d bulk=%d, want 200", rowStatus, bulkStatus)
+	}
+	if rowBody != bulkBody {
+		t.Fatalf("the two contracts disagree on the exact failure match:\nrow-at-a-time: %s\nbulk:          %s", rowBody, bulkBody)
+	}
+	var resp domain.SearchResponse
+	decodeBody(t, bulkBody, &resp)
+	if resp.Miss || len(resp.Results) == 0 || !resp.Results[0].ExactFailureMatched {
+		t.Fatalf("the exact fingerprint match was not exposed: %+v", resp)
+	}
+	if got, want := bulkCounter.sizes("ReceiptsForSamples"), []int{12}; !equalIntSlices(got, want) {
+		t.Fatalf("receipt pages = %v, want %v", got, want)
+	}
+}
+
+// One page is resident at a time. Survivors are graded in candidate order,
+// so once grading moves past a page that page's rows are never asked for
+// again; keeping them would hold up to the whole window's receipt history
+// for the rest of the request.
+func TestSearchReceiptReaderKeepsOneResidentPage(t *testing.T) {
+	const n = 2*searchReceiptBatch + 5
+	fake := serverstore.NewFake()
+	seedSearchCandidates(t, fake, n)
+	counter := newStoreCallCounter(fake)
+	a := &api{d: Deps{Store: &bulkAPIStore{counter}}}
+	survivors := make([]searchCandidate, 0, n)
+	for i := 0; i < n; i++ {
+		survivors = append(survivors, searchCandidate{row: serverstore.SampleRow{SampleID: searchCandidateID(i)}})
+	}
+	reader := a.newSearchReceiptReader(survivors)
+	ctx := context.Background()
+
+	for _, i := range []int{0, 1, searchReceiptBatch - 1} {
+		if _, err := reader.rowsFor(ctx, searchCandidateID(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := counter.sizes("ReceiptsForSamples"), []int{searchReceiptBatch}; !equalIntSlices(got, want) {
+		t.Fatalf("first page: receipt pages = %v, want %v", got, want)
+	}
+	if _, err := reader.rowsFor(ctx, searchCandidateID(searchReceiptBatch)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := counter.sizes("ReceiptsForSamples"), []int{searchReceiptBatch, searchReceiptBatch}; !equalIntSlices(got, want) {
+		t.Fatalf("second page: receipt pages = %v, want %v", got, want)
+	}
+	if reader.resident != 1 || len(reader.rows) != searchReceiptBatch {
+		t.Fatalf("after moving to page 1 the reader holds page %d with %d ids resident", reader.resident, len(reader.rows))
+	}
+	if _, err := reader.rowsFor(ctx, searchCandidateID(n-1)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := counter.sizes("ReceiptsForSamples"), []int{searchReceiptBatch, searchReceiptBatch, 5}; !equalIntSlices(got, want) {
+		t.Fatalf("last page: receipt pages = %v, want %v", got, want)
+	}
+	if reader.resident != 2 || len(reader.rows) != 5 {
+		t.Fatalf("after moving to page 2 the reader holds page %d with %d ids resident", reader.resident, len(reader.rows))
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

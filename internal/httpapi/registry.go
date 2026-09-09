@@ -63,8 +63,17 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A read the store refuses is returned, not skipped. Skipping it made a
+	// busy pool answer 200 with a null summary -- the exact document a
+	// package with no evidence yet answers, and one a client would cache.
+	// The symbol endpoint below reports the same refusal the same way.
 	var snapshotSummary json.RawMessage
-	if js, ok, err := a.d.Store.GetSnapshot(r.Context(), canonical, ""); err == nil && ok {
+	js, found, err := a.d.Store.GetSnapshot(r.Context(), canonical, "")
+	if err != nil {
+		writeStoreErr(w, err, http.StatusInternalServerError, "snapshot lookup failed")
+		return
+	}
+	if found {
 		snapshotSummary = json.RawMessage(js)
 	}
 

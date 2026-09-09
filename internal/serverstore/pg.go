@@ -367,20 +367,26 @@ func (p *PG) UpsertPackage(ctx context.Context, pkg PackageRow) error {
 	})
 }
 
-// UpsertPackages is UpsertPackage for a bounded page of rows in one database
-// checkout and one statement, with the same conflict rule: an existing row
-// takes the new publicness and checked_at and has its last_seen refreshed.
+// RegisterPackages inserts a bounded page of package rows the registry has
+// never seen, in one database checkout and one statement, and leaves every
+// row that already exists completely alone.
 //
-// Receipt-derived registration writes one row per release the registry has
-// never seen. One checkout per row made the first pass over a corpus with
-// thousands of receipt-only releases thousands of background checkouts
-// against the same small pool the readers use (#174).
+// It is the compatibility builder's write, and it is deliberately NOT
+// UpsertPackage for a page. The builder learns "never seen" from a
+// membership probe and writes later; between the two, the registry check
+// can confirm one of those releases PUBLIC with a checked_at. A conflict
+// rule that replaced publicness and checked_at -- UpsertPackage's rule --
+// turned that confirmation back into UNKNOWN, and nothing would ever check
+// it again (#174 review). Observation ingest has the same intent for the
+// rows it touches: keep the registry aware of the release, never decide its
+// publicness. Here even last_seen stays put, so aggregation remains a
+// non-write for a known release and "when did the network last see this
+// package" keeps meaning what it says.
 //
-// A purl repeated within one page is written once, with the last value
-// given for it; PostgreSQL refuses to update the same row twice in one
-// statement, and the sequential contract would have ended in that state.
-// The list is a BOUNDED page; the caller chunks.
-func (p *PG) UpsertPackages(ctx context.Context, rows []PackageRow) error {
+// A purl repeated within one page is inserted once; DO NOTHING skips the
+// repeat the way it skips an existing row. The list is a BOUNDED page; the
+// caller chunks.
+func (p *PG) RegisterPackages(ctx context.Context, rows []PackageRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -392,8 +398,12 @@ func (p *PG) UpsertPackages(ctx context.Context, rows []PackageRow) error {
 	majors := make([]string, 0, n)
 	publicness := make([]string, 0, n)
 	checked := make([]*time.Time, 0, n)
-	index := make(map[string]int, n)
+	seen := make(map[string]bool, n)
 	for _, row := range rows {
+		if seen[row.PURL] {
+			continue
+		}
+		seen[row.PURL] = true
 		if row.Publicness == "" {
 			row.Publicness = "UNKNOWN"
 		}
@@ -402,12 +412,6 @@ func (p *PG) UpsertPackages(ctx context.Context, rows []PackageRow) error {
 			at := row.CheckedAt
 			checkedAt = &at
 		}
-		if i, dup := index[row.PURL]; dup {
-			ecosystems[i], names[i], versions[i], majors[i] = row.Ecosystem, row.Name, row.Version, row.Major
-			publicness[i], checked[i] = row.Publicness, checkedAt
-			continue
-		}
-		index[row.PURL] = len(purls)
 		purls = append(purls, row.PURL)
 		ecosystems = append(ecosystems, row.Ecosystem)
 		names = append(names, row.Name)
@@ -420,10 +424,7 @@ func (p *PG) UpsertPackages(ctx context.Context, rows []PackageRow) error {
 		_, err := c.Exec(ctx, `
 			INSERT INTO packages(purl, ecosystem, name, version, major, publicness, checked_at)
 			SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
-			ON CONFLICT (purl) DO UPDATE SET
-				publicness = EXCLUDED.publicness,
-				checked_at = EXCLUDED.checked_at,
-				last_seen = now()`,
+			ON CONFLICT (purl) DO NOTHING`,
 			purls, ecosystems, names, versions, majors, publicness, checked)
 		return err
 	})
@@ -479,9 +480,10 @@ func (p *PG) GetPackage(ctx context.Context, purl string) (PackageRow, bool, err
 // scales with the network rather than with what changed, and that competes
 // with interactive readers for the same small pool.
 //
-// Membership only. Registration still writes one row at a time through
-// UpsertPackage, so a package that is already known is still left completely
-// alone rather than having its last_seen clock refreshed by aggregation.
+// Membership only. Registration writes through RegisterPackages, which
+// inserts absent rows and nothing else, so a package that is already known
+// is left completely alone rather than having its last_seen clock refreshed
+// by aggregation.
 //
 // The list is a BOUNDED page; the caller chunks. Absent purls are simply
 // absent from the map, never present-and-false.

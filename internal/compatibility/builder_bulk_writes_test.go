@@ -98,15 +98,15 @@ func TestReceiptPackageRegistrationWritesUnknownRowsInBoundedPages(t *testing.T)
 		}
 	}
 
-	t.Logf("%d unknown of %d resolved: row-at-a-time UpsertPackage=%d; bulk UpsertPackages=%v UpsertPackage=%d",
-		n, n+known, rowCounter.count("UpsertPackage"), bulkCounter.sizes("UpsertPackages"), bulkCounter.count("UpsertPackage"))
+	t.Logf("%d unknown of %d resolved: row-at-a-time UpsertPackage=%d; bulk RegisterPackages=%v UpsertPackage=%d",
+		n, n+known, rowCounter.count("UpsertPackage"), bulkCounter.sizes("RegisterPackages"), bulkCounter.count("UpsertPackage"))
 	if got, want := rowCounter.count("UpsertPackage"), n; got != want {
 		t.Fatalf("row-at-a-time registrations = %d, want %d", got, want)
 	}
 	if got := bulkCounter.count("UpsertPackage"); got != 0 {
 		t.Fatalf("bulk store still registered %d packages one at a time", got)
 	}
-	if got, want := bulkCounter.sizes("UpsertPackages"), []int{packageRegisterBatch, packageRegisterBatch, 5}; !equalInts(got, want) {
+	if got, want := bulkCounter.sizes("RegisterPackages"), []int{packageRegisterBatch, packageRegisterBatch, 5}; !equalInts(got, want) {
 		t.Fatalf("registration pages = %v, want %v", got, want)
 	}
 }
@@ -121,7 +121,7 @@ func TestReceiptPackageRegistrationWritesNothingWhenEverythingIsKnown(t *testing
 	if err := (&Builder{Store: &bulkReadStore{counter}}).ensureReceiptPackages(context.Background(), samples); err != nil {
 		t.Fatal(err)
 	}
-	if got := counter.count("UpsertPackages") + counter.count("UpsertPackage"); got != 0 {
+	if got := counter.count("RegisterPackages") + counter.count("UpsertPackage"); got != 0 {
 		t.Fatalf("a fully registered corpus opened %d write pages", got)
 	}
 }

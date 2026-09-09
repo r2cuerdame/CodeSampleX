@@ -29,13 +29,16 @@ type storeCallCounter struct {
 	mu    sync.Mutex
 	calls map[string]int
 	pages map[string][]int
+	// keys is what each bounded page asked for, so a test can state not
+	// only how many rows a page covered but which ones.
+	keys map[string][][]string
 	// readErr, when set, is what every counted read answers with. It lets a
 	// test play the same failure through both contracts.
 	readErr error
 }
 
 func newStoreCallCounter(f *serverstore.Fake) *storeCallCounter {
-	return &storeCallCounter{Fake: f, calls: map[string]int{}, pages: map[string][]int{}}
+	return &storeCallCounter{Fake: f, calls: map[string]int{}, pages: map[string][]int{}, keys: map[string][][]string{}}
 }
 
 func (c *storeCallCounter) note(name string, size int) {
@@ -43,6 +46,26 @@ func (c *storeCallCounter) note(name string, size int) {
 	defer c.mu.Unlock()
 	c.calls[name]++
 	c.pages[name] = append(c.pages[name], size)
+}
+
+func (c *storeCallCounter) notePage(name string, keys []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls[name]++
+	c.pages[name] = append(c.pages[name], len(keys))
+	c.keys[name] = append(c.keys[name], append([]string(nil), keys...))
+}
+
+// pageKeys is every key every page of one bulk read asked for, in the order
+// the pages were read.
+func (c *storeCallCounter) pageKeys(name string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, page := range c.keys[name] {
+		out = append(out, page...)
+	}
+	return out
 }
 
 func (c *storeCallCounter) count(name string) int {
@@ -122,7 +145,7 @@ func (s *bulkAPIStore) SnapshotsForPURLs(ctx context.Context, purls []string, sy
 }
 
 func (s *bulkAPIStore) ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]serverstore.ReceiptRow, error) {
-	s.note("ReceiptsForSamples", len(sampleIDs))
+	s.notePage("ReceiptsForSamples", sampleIDs)
 	if s.readErr != nil {
 		return nil, s.readErr
 	}

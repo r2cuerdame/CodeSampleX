@@ -25,34 +25,6 @@ type searchReadCacheKey struct{}
 type searchReadCache struct {
 	clusters  map[string]searchClusterRead
 	snapshots map[string]searchSnapshotRead
-	// receipts is the request's candidate window, read a bounded page at a
-	// time on first need. Nil until the handler knows its candidates.
-	receipts *searchReceiptPages
-}
-
-// searchReceiptPages is the receipt history of one request's candidate
-// window, fetched a bounded page at a time in candidate order and only when
-// a candidate on that page reaches grading.
-type searchReceiptPages struct {
-	ids    []string
-	page   map[string]int
-	loaded map[int]map[string][]serverstore.ReceiptRow
-}
-
-func newSearchReceiptPages(samples []serverstore.SampleRow) *searchReceiptPages {
-	pages := &searchReceiptPages{
-		ids:    make([]string, 0, len(samples)),
-		page:   make(map[string]int, len(samples)),
-		loaded: map[int]map[string][]serverstore.ReceiptRow{},
-	}
-	for _, row := range samples {
-		if _, seen := pages.page[row.SampleID]; seen {
-			continue
-		}
-		pages.page[row.SampleID] = len(pages.ids) / searchReceiptBatch
-		pages.ids = append(pages.ids, row.SampleID)
-	}
-	return pages
 }
 
 // receiptPagesStore is the bounded-page form of ReceiptsForSample.
@@ -61,9 +33,87 @@ type receiptPagesStore interface {
 	ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]serverstore.ReceiptRow, error)
 }
 
-func searchReadCacheOf(ctx context.Context) *searchReadCache {
-	cache, _ := ctx.Value(searchReadCacheKey{}).(*searchReadCache)
-	return cache
+// searchCandidate is one sample that passed every filter grading applies
+// before it needs the sample's receipts -- package, symbol, relevance,
+// topic, ecosystem -- carrying what that pass established so grading does
+// not establish it twice.
+type searchCandidate struct {
+	row                     serverstore.SampleRow
+	manifest                domain.SampleManifest
+	matched                 domain.PURL
+	reqVersion              string
+	matchedSymbol           string
+	score                   float64
+	knownFailures           []domain.KnownFailure
+	fingerprintPackages     []domain.PURL
+	candidateFailureMatched bool
+	environmentContext      bool
+}
+
+// searchReceiptReader serves the receipt history of one request's
+// survivors in the order they are graded. With a store that offers bounded
+// pages the survivors are read a page at a time in candidate order, and one
+// page is resident at a time: grading only moves forward, so a page it has
+// moved past is never asked for again. Other stores keep the row-at-a-time
+// contract. The rows are the same rows in the same per-sample order under
+// both, so the grade cannot differ, and a page the store refuses is the
+// same failure a refused row was.
+//
+// The pages are cut from SURVIVORS, not from the candidate window. Cut from
+// the window, one survivor pulled the receipt histories of up to
+// searchReceiptBatch neighbours the filters had already rejected and held
+// them for the rest of the request (#174 review). A request whose filters
+// reject every candidate builds a reader over nothing and reads nothing.
+type searchReceiptReader struct {
+	store    serverstore.Store
+	bulk     receiptPagesStore // nil when the store has no bounded-page form
+	ids      []string          // survivor sample IDs, candidate order, once each
+	page     map[string]int    // sample ID -> index of its page of ids
+	resident int               // the page held in rows; -1 before the first read
+	rows     map[string][]serverstore.ReceiptRow
+}
+
+func (a *api) newSearchReceiptReader(survivors []searchCandidate) *searchReceiptReader {
+	reader := &searchReceiptReader{store: a.d.Store, resident: -1}
+	bulk, ok := a.d.Store.(receiptPagesStore)
+	if !ok {
+		return reader
+	}
+	reader.bulk = bulk
+	reader.ids = make([]string, 0, len(survivors))
+	reader.page = make(map[string]int, len(survivors))
+	for _, cand := range survivors {
+		id := cand.row.SampleID
+		if _, seen := reader.page[id]; seen {
+			continue
+		}
+		reader.page[id] = len(reader.ids) / searchReceiptBatch
+		reader.ids = append(reader.ids, id)
+	}
+	return reader
+}
+
+// rowsFor is ReceiptsForSample for one survivor.
+func (s *searchReceiptReader) rowsFor(ctx context.Context, sampleID string) ([]serverstore.ReceiptRow, error) {
+	if s.bulk == nil {
+		return s.store.ReceiptsForSample(ctx, sampleID)
+	}
+	idx, known := s.page[sampleID]
+	if !known {
+		// Not a survivor this reader was built over. Grading never asks
+		// this; the row-at-a-time read is the honest answer if it does.
+		return s.store.ReceiptsForSample(ctx, sampleID)
+	}
+	if idx != s.resident {
+		start := idx * searchReceiptBatch
+		end := min(start+searchReceiptBatch, len(s.ids))
+		page, err := s.bulk.ReceiptsForSamples(ctx, s.ids[start:end])
+		if err != nil {
+			return nil, err
+		}
+		s.resident, s.rows = idx, page
+	}
+	return s.rows[sampleID], nil
 }
 
 type searchClusterRead struct {
@@ -84,9 +134,10 @@ func withSearchReadCache(ctx context.Context) context.Context {
 	})
 }
 
-// searchReceiptBatch bounds how many candidates share one receipt-history
-// read. Pages follow candidate order and are fetched on first need, so a
-// request that grades nothing reads nothing.
+// searchReceiptBatch bounds how many survivors share one receipt-history
+// read. Pages are cut from the candidates that survive every pre-receipt
+// filter, in candidate order, so a request that grades nothing reads
+// nothing and a request that grades one sample reads one row.
 const searchReceiptBatch = 100
 
 // maxTreePatterns bounds how many lockfile packages widen a search. A
@@ -157,21 +208,42 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 		return
 	}
 
-	if cache := searchReadCacheOf(r.Context()); cache != nil {
-		cache.receipts = newSearchReceiptPages(samples)
-	}
-
-	now := a.now()
-	var results []domain.SearchResult
+	// Grading is two phases. First every filter that needs no receipt,
+	// over every candidate; then receipts and the grade, over the
+	// survivors only. One pass did both per candidate, which meant the
+	// receipt pages had to be cut from the whole window before anything
+	// was known about it -- and one survivor then read the receipt
+	// histories of up to searchReceiptBatch rejected neighbours (#174
+	// review). The survivors keep candidate order, so results are appended
+	// in the order the single pass appended them and the stable sort below
+	// resolves the same ties the same way.
+	survivors := make([]searchCandidate, 0, len(samples))
 	for _, row := range samples {
-		res, ok, scoreErr := a.scoreSample(r, row, req, reqEnv, reqPURLs, now)
-		if scoreErr != nil {
-			writeStoreErr(w, scoreErr, http.StatusInternalServerError, "sample evidence read failed")
+		cand, ok, err := a.preflightSample(r, row, req, reqEnv, reqPURLs)
+		if err != nil {
+			writeStoreErr(w, err, http.StatusInternalServerError, "sample evidence read failed")
 			return
 		}
 		if ok {
-			results = append(results, res)
+			survivors = append(survivors, cand)
 		}
+	}
+
+	now := a.now()
+	receipts := a.newSearchReceiptReader(survivors)
+	var results []domain.SearchResult
+	for _, cand := range survivors {
+		receiptRows, err := receipts.rowsFor(r.Context(), cand.row.SampleID)
+		if err != nil {
+			writeStoreErr(w, err, http.StatusInternalServerError, "sample evidence read failed")
+			return
+		}
+		res, err := a.gradeSample(r, cand, reqEnv, reqPURLs, receiptRows)
+		if err != nil {
+			writeStoreErr(w, err, http.StatusInternalServerError, "sample evidence read failed")
+			return
+		}
+		results = append(results, res)
 	}
 
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
@@ -248,15 +320,18 @@ func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchR
 	writeJSON(w, http.StatusOK, legacy)
 }
 
-// scoreSample evaluates one candidate sample against the request; ok=false
-// means the exact filters excluded it.
-func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
+// preflightSample runs every filter that can reject a candidate without its
+// receipts -- package, symbol, relevance, topic and ecosystem -- and hands
+// back what gradeSample needs; ok=false means the exact filters excluded it.
+// Nothing here reads a receipt, which is what lets the handler cut receipt
+// pages from the survivors.
+func (a *api) preflightSample(r *http.Request, row serverstore.SampleRow,
 	req domain.SearchRequest, reqEnv domain.EnvironmentFingerprint,
-	reqPURLs []domain.PURL, now time.Time) (domain.SearchResult, bool, error) {
+	reqPURLs []domain.PURL) (searchCandidate, bool, error) {
 
 	var manifest domain.SampleManifest
 	if json.Unmarshal([]byte(row.ManifestJSON), &manifest) != nil {
-		return domain.SearchResult{}, false, nil
+		return searchCandidate{}, false, nil
 	}
 	var samplePURLs []domain.PURL
 	for _, ps := range manifest.Packages {
@@ -290,7 +365,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 			}
 		}
 		if !found {
-			return domain.SearchResult{}, false, nil
+			return searchCandidate{}, false, nil
 		}
 	} else if len(samplePURLs) > 0 {
 		matched = samplePURLs[0]
@@ -303,7 +378,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	matchedSymbol := ""
 	if len(req.Symbols) > 0 {
 		if len(matchedDeclared) == 0 {
-			return domain.SearchResult{}, false, nil
+			return searchCandidate{}, false, nil
 		}
 		matchedSymbol = matchedDeclared[0]
 	}
@@ -319,10 +394,10 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	overlap := tokenOverlap(req.Query+" "+req.ErrorCode, searchText(manifest))
 	score += 0.35 * overlap
 	if score == 0 {
-		return domain.SearchResult{}, false, nil
+		return searchCandidate{}, false, nil
 	}
 	if len(reqPURLs) == 0 && len(req.Symbols) == 0 && len(matchedContext) == 0 && overlap < 0.1 {
-		return domain.SearchResult{}, false, nil
+		return searchCandidate{}, false, nil
 	}
 
 	// A package in the caller's dependency tree says the sample is about
@@ -343,7 +418,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	failureCandidates := eligibleFailurePackages(reqPURLs, samplePURLs)
 	knownFailures, fingerprintPackages, err := a.matchingClusters(r, failureCandidates, reqEnv, req, manifestDeclaredSymbols(manifest))
 	if err != nil {
-		return domain.SearchResult{}, false, err
+		return searchCandidate{}, false, err
 	}
 	candidateFailureMatched := len(fingerprintPackages) > 0
 	codeMatched := req.ErrorCode != "" &&
@@ -362,7 +437,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	packageNames := samplePackageNames(samplePURLs)
 	topicSupported := searchrelevance.AboutSameThing(req.Query, manifest.Case.Goal, packageNames, declaredSymbols)
 	if req.Query != "" && !fingerprintMatched && !codeMatched && matchedSymbol == "" && !topicSupported {
-		return domain.SearchResult{}, false, nil
+		return searchCandidate{}, false, nil
 	}
 	// With no requested package the server is scanning its newest global
 	// window. An explicitly declared ecosystem gates that broad fallback;
@@ -370,25 +445,38 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	environmentContext := req.EnvironmentIsContext()
 	if len(reqPURLs) == 0 && !environmentContext && reqEnv.Ecosystem != "" &&
 		matchedSymbol == "" && !purlsSupportEcosystem(samplePURLs, reqEnv.Ecosystem) {
-		return domain.SearchResult{}, false, nil
+		return searchCandidate{}, false, nil
 	}
 
-	// Verification receipts are execution variants: resolved package set,
-	// environment and stage verdict came from one run and must stay together.
-	// Grading against the manifest while borrowing a PASS from an arbitrary
-	// same-name receipt made axios@1 on Linux look verified by an axios@2 on
-	// Windows receipt. Read the variants before computing the delta so the
-	// grade, evidence and exact-failure decision all use the same run.
-	receiptRows, err := a.searchReceipts(r.Context(), row.SampleID)
-	if err != nil {
-		return domain.SearchResult{}, false, err
-	}
+	return searchCandidate{
+		row: row, manifest: manifest, matched: matched, reqVersion: reqVersion,
+		matchedSymbol: matchedSymbol, score: score, knownFailures: knownFailures,
+		fingerprintPackages: fingerprintPackages, candidateFailureMatched: candidateFailureMatched,
+		environmentContext: environmentContext,
+	}, true, nil
+}
+
+// gradeSample grades one survivor of preflightSample from its receipts and
+// snapshot. Verification receipts are execution variants: resolved package
+// set, environment and stage verdict came from one run and must stay
+// together. Grading against the manifest while borrowing a PASS from an
+// arbitrary same-name receipt made axios@1 on Linux look verified by an
+// axios@2 on Windows receipt. The variants are read before the delta is
+// computed so the grade, evidence and exact-failure decision all use the
+// same run.
+func (a *api) gradeSample(r *http.Request, cand searchCandidate,
+	reqEnv domain.EnvironmentFingerprint, reqPURLs []domain.PURL,
+	receiptRows []serverstore.ReceiptRow) (domain.SearchResult, error) {
+
 	var receipts []compatibility.ReceiptInfo
 	for _, rr := range receiptRows {
 		if info, ok := compatibility.ParseReceiptRow(rr); ok {
 			receipts = append(receipts, info)
 		}
 	}
+	row, manifest := cand.row, cand.manifest
+	matched, reqVersion, score := cand.matched, cand.reqVersion, cand.score
+	environmentContext := cand.environmentContext
 
 	sampleEnv := manifest.Environment.Normalize()
 	namedEco := callerNamedEcosystem(reqPURLs, matched.Ecosystem)
@@ -416,8 +504,8 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	if hasSelected {
 		contractPasses, passPeers, _ = receiptVariantStrength(strengthReceipts)
 	}
-	exactFailureMatched := candidateFailureMatched && hasNonemptyContract(manifest.Case.Contract) &&
-		hasSelected && selectedServerContractPassed(selected, fingerprintPackages, reqPURLs)
+	exactFailureMatched := cand.candidateFailureMatched && hasNonemptyContract(manifest.Case.Contract) &&
+		hasSelected && selectedServerContractPassed(selected, cand.fingerprintPackages, reqPURLs)
 	switch {
 	case passPeers >= 2 || (allowAggregateStatus && verifiedStatus(row.Status)): // L4+: cross-verified
 		score *= 3
@@ -435,9 +523,9 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 
 	// Snapshot lookup: evidence summary + elevated-failure demotion in the
 	// requester's execution context.
-	summary, elevatedInContext, err := a.snapshotEvidence(r, matched, matchedSymbol, reqEnv)
+	summary, elevatedInContext, err := a.snapshotEvidence(r, matched, cand.matchedSymbol, reqEnv)
 	if err != nil {
-		return domain.SearchResult{}, false, err
+		return domain.SearchResult{}, err
 	}
 	summary.ContractPasses = int64(contractPasses)
 	summary.IndependentCrossPeers = int64(passPeers)
@@ -447,7 +535,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 
 	// Known-failure clusters matching the requester environment cap the
 	// grade at REFERENCE_ONLY and ride along as warnings.
-	if len(knownFailures) > 0 {
+	if len(cand.knownFailures) > 0 {
 		grade = worseGrade(grade, domain.GradeReferenceOnly)
 	}
 
@@ -462,14 +550,14 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 		Different:           delta.different,
 		Adaptation:          delta.adaptation,
 		Evidence:            summary,
-		KnownFailures:       knownFailures,
+		KnownFailures:       cand.knownFailures,
 	}
 	c := manifest.Case
 	result.Case = &c
 	if result.Confidence == "" {
 		result.Confidence = "LOW"
 	}
-	return result, true, nil
+	return result, nil
 }
 
 // receiptStrength returns contract-PASS count, distinct passing peers, and
@@ -909,39 +997,6 @@ func (a *api) searchFailureClusters(ctx context.Context, packageName string) ([]
 		cache.clusters[key] = searchClusterRead{rows: rows, err: err}
 	}
 	return rows, err
-}
-
-// searchReceipts is ReceiptsForSample for one candidate of the current
-// request. Scoring read every candidate's receipts one sample at a time, so
-// a search over a well-covered package was up to maxSearchCandidates
-// interactive checkouts for one answer (#174). With a store that offers
-// bounded pages, the candidate's page is read once, on the first candidate
-// of that page to reach grading, and every later candidate on it is served
-// from the request. The rows are the same rows in the same per-sample order,
-// so the grade cannot differ; a page the store refuses is the same failure a
-// refused row was.
-func (a *api) searchReceipts(ctx context.Context, sampleID string) ([]serverstore.ReceiptRow, error) {
-	cache := searchReadCacheOf(ctx)
-	bulk, ok := a.d.Store.(receiptPagesStore)
-	if !ok || cache == nil || cache.receipts == nil {
-		return a.d.Store.ReceiptsForSample(ctx, sampleID)
-	}
-	idx, known := cache.receipts.page[sampleID]
-	if !known {
-		return a.d.Store.ReceiptsForSample(ctx, sampleID)
-	}
-	rows, loaded := cache.receipts.loaded[idx]
-	if !loaded {
-		start := idx * searchReceiptBatch
-		end := min(start+searchReceiptBatch, len(cache.receipts.ids))
-		page, err := bulk.ReceiptsForSamples(ctx, cache.receipts.ids[start:end])
-		if err != nil {
-			return nil, err
-		}
-		cache.receipts.loaded[idx] = page
-		rows = page
-	}
-	return rows[sampleID], nil
 }
 
 func (a *api) searchSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {

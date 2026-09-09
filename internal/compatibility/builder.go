@@ -831,10 +831,17 @@ type packageProbeStore interface {
 	ExistingPackagePURLs(context.Context, []string) (map[string]bool, error)
 }
 
-// packageRegisterStore is the bounded-page form of UpsertPackage. PostgreSQL
-// offers it; other stores keep the row-at-a-time contract.
+// packageRegisterStore is the builder's own bounded-page write: insert the
+// rows the registry has never seen and leave every existing row alone.
+// PostgreSQL offers it; other stores keep the row-at-a-time contract.
+//
+// It is not UpsertPackage for a page. Between the membership probe and this
+// write the registry check can confirm one of the "absent" releases PUBLIC,
+// and UpsertPackage's conflict rule would put it back to UNKNOWN with no
+// checked_at (#174 review). A store that offers this contract promises the
+// conflict is a no-op.
 type packageRegisterStore interface {
-	UpsertPackages(context.Context, []serverstore.PackageRow) error
+	RegisterPackages(context.Context, []serverstore.PackageRow) error
 }
 
 // ensureReceiptPackages makes receipt-only versions reachable through the
@@ -888,10 +895,11 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 }
 
 // registerPackages writes the rows for releases the registry has never seen.
-// PostgreSQL takes a bounded page per write; alternate stores keep the
-// original row-at-a-time contract. Either way the rows are the same rows in
-// the same first-seen order, and a refused write fails the pass rather than
-// leaving a receipt-only release invisible to the registry endpoints.
+// PostgreSQL takes a bounded page per write and never touches a row that
+// exists; alternate stores keep the original row-at-a-time contract. Either
+// way the rows are the same rows in the same first-seen order, and a refused
+// write fails the pass rather than leaving a receipt-only release invisible
+// to the registry endpoints.
 func (b *Builder) registerPackages(ctx context.Context, rows []serverstore.PackageRow) error {
 	phases := builderPhases(ctx)
 	bulk, ok := b.Store.(packageRegisterStore)
@@ -907,7 +915,7 @@ func (b *Builder) registerPackages(ctx context.Context, rows []serverstore.Packa
 	}
 	for start := 0; start < len(rows); start += packageRegisterBatch {
 		end := min(start+packageRegisterBatch, len(rows))
-		err := bulk.UpsertPackages(ctx, rows[start:end])
+		err := bulk.RegisterPackages(ctx, rows[start:end])
 		phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1})
 		if err != nil {
 			return fmt.Errorf("compatibility: register receipt packages %s..%s: %w", rows[start].PURL, rows[end-1].PURL, err)
