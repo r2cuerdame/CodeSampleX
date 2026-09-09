@@ -254,7 +254,22 @@ class Host:
         self.helper_environment = os.environ.copy()
         self.helper_environment["CSX_DSN"] = owned_dsn(dsn, self.application)
         self.helper_environment["PGAPPNAME"] = self.application
+        self.record_ledger_baseline()
         self.save(preflight="pass", backendOwnership="explicit-dsn-application-name")
+
+    def record_ledger_baseline(self):
+        """Remember the ledger head this deployment started from, exactly once.
+
+        verify_migration compares this against the post-migration ledger to
+        tell a real schema move from a no-op retry. A restarted supervisor
+        re-runs preflight after its own migration has already moved the head,
+        so the first observation is the only one that describes the state this
+        deployment inherited; never overwrite it.
+        """
+        if "migrationLedgerBefore" not in self.evidence:
+            self.save(migrationLedgerBefore=self.query("""
+                SELECT json_build_object('version',max(version),'count',count(*))
+                FROM schema_migrations"""))
 
 
     def stop_builders(self):
@@ -383,21 +398,52 @@ class Host:
             definition = " ".join(row["definition"].replace("public.", "").split())
             if not row["valid"] or not row["ready"] or definition != required_indexes[row["name"]]:
                 raise RuntimeError("builder index is not valid, ready and exact")
-        # An interrupted prior backfill can be complete while the restored old
-        # builder has overwritten stats_daily and erased this barrier. Re-arm
-        # it on every quiet deployment, including a no-op migration retry.
-        barrier = self.query("""
-            WITH latest AS (
-                SELECT day FROM stats_daily ORDER BY day DESC LIMIT 1 FOR UPDATE
-            ), marked AS (
-                UPDATE stats_daily SET stats=jsonb_set(stats,
-                    '{builderRepairRequired}','true'::jsonb,true)
-                WHERE day=(SELECT day FROM latest) RETURNING day, stats
-            ) SELECT json_build_object('count',count(*),'day',max(day)::text,
-                'armed',bool_and(stats->>'builderRepairRequired'='true')) FROM marked""")
-        if barrier["count"] != 1 or not barrier["day"] or barrier["armed"] is not True:
-            raise RuntimeError("full repair barrier requires exactly one current stats row")
-        self.save(repairBarrierRearmed=barrier)
+        # Assert the full-repair barrier; only a ledger move may set it.
+        #
+        # A migration can leave source rows this deployment must repair, and an
+        # old binary restored over a complete backfill can have overwritten
+        # stats_daily and erased the barrier -- so a deployment that moved the
+        # ledger, or one that cannot prove it did not, still re-arms.
+        #
+        # A deployment that moved no migration has nothing to arm. The Go side
+        # already arms durably and precisely: a backfill page that repaired
+        # rows marks stats_daily inside the page's own transaction
+        # (internal/serverstore/pg_builder_projection.go), and
+        # checkBuilderProjections fails closed for any stale indexed source row
+        # independently of this flag. Re-arming anyway only makes
+        # internal/compatibility/builder.go discard a resumable watermark and
+        # restart a ~75-minute full pass from zero on every deployment, which
+        # is the #174 regression. Knowingly not covered: an old binary that
+        # overwrote stats_daily after a complete backfill, during a deployment
+        # that applies no migration -- there the erased barrier costs a pass of
+        # legacy-attribution freshness, not correctness, because every stale
+        # indexed row still refuses incremental aggregation.
+        moved = self.evidence.get("migrationLedgerBefore") != schema
+        if moved:
+            barrier = self.query("""
+                WITH latest AS (
+                    SELECT day FROM stats_daily ORDER BY day DESC LIMIT 1 FOR UPDATE
+                ), marked AS (
+                    UPDATE stats_daily SET stats=jsonb_set(stats,
+                        '{builderRepairRequired}','true'::jsonb,true)
+                    WHERE day=(SELECT day FROM latest) RETURNING day, stats
+                ) SELECT json_build_object('count',count(*),'day',max(day)::text,
+                    'armed',bool_and(stats->>'builderRepairRequired'='true')) FROM marked""")
+            if barrier["count"] != 1 or not barrier["day"] or barrier["armed"] is not True:
+                raise RuntimeError("full repair barrier requires exactly one current stats row")
+            self.save(repairBarrierRearmed=barrier)
+        else:
+            barrier = self.query("""
+                WITH latest AS (
+                    SELECT day FROM stats_daily ORDER BY day DESC LIMIT 1
+                ), head AS (
+                    SELECT day, stats FROM stats_daily WHERE day=(SELECT day FROM latest)
+                ) SELECT json_build_object('count',count(*),'day',max(day)::text,
+                    'armed',COALESCE(bool_and(stats->>'builderRepairRequired'='true'),false))
+                FROM head""")
+            if barrier["count"] != 1 or not barrier["day"] or type(barrier["armed"]) is not bool:
+                raise RuntimeError("full repair barrier requires exactly one current stats row")
+            self.save(repairBarrierObserved=barrier)
         # Keep corpus projection/hash/source audits in the independent observer.
         self.save(migrationLedger=schema, indexes=indexes, migrationVerification="pass")
 
