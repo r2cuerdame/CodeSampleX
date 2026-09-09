@@ -361,6 +361,9 @@ func (w *webStore) withPackageLoadSlot(ctx context.Context, fn func() error) err
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
+		// Refused above the pool: nothing was ever acquired, so this must be
+		// counted here or it is counted nowhere (#174).
+		noteAdmissionRefusal(ctx)
 		return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
 	}
 }
@@ -415,6 +418,7 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 		now := time.Now()
 		if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
 			w.snapshotMu.Unlock()
+			noteDeferredRefusal(ctx)
 			return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
 		}
 		// Cold: nothing to serve, so this request loads on its own clock --
@@ -536,6 +540,7 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 	}
 	if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
 		w.targetsMu.Unlock()
+		noteDeferredRefusal(ctx)
 		return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
 	}
 	var rows []serverstore.SnapshotTarget
@@ -661,6 +666,7 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		}
 		if !backgroundRetryReady(&lane.retry, &lane.retryAt, now) {
 			state.mu.Unlock()
+			noteDeferredRefusal(ctx)
 			return "", false, fmt.Errorf("%w (snapshot load for %s deferred)", serverstore.ErrPoolBusy, purl)
 		}
 		call := &snapshotLoadCall{done: make(chan struct{})}
@@ -2100,6 +2106,7 @@ func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error
 	if w.gapsAt.IsZero() {
 		if !backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, time.Now()) {
 			w.gapsMu.Unlock()
+			noteDeferredRefusal(ctx)
 			return nil, fmt.Errorf("%w (gaps cache load deferred)", serverstore.ErrPoolBusy)
 		}
 		rows, err := w.loadAllGaps(ctx)

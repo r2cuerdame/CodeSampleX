@@ -20,10 +20,12 @@ package main
 // ceiling on nothing that mattered.
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -83,29 +85,180 @@ func withDBBudget(next http.Handler) http.Handler {
 	throttle := newPressureLog()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		budget := serverstore.NewQueryBudget(dbClassFor(r))
-		next.ServeHTTP(w, r.WithContext(serverstore.WithQueryBudget(r.Context(), budget)))
+		ctx, refusals := withRequestPressure(serverstore.WithQueryBudget(r.Context(), budget))
+		next.ServeHTTP(w, r.WithContext(ctx))
 		busy, timeouts, waited := budget.Pressure()
-		if busy == 0 && timeouts == 0 {
+		admission, deferred := refusals.admissionRefused.Load(), refusals.deferredRefused.Load()
+		// A request refused above the pool never touches the budget, so
+		// before #174 it left no trace at all: the canonical v0.1.153
+		// observation read "pressure 0" while the site served 503s that the
+		// cache-miss admission gate and the deferred lanes had produced.
+		if busy == 0 && timeouts == 0 && admission == 0 && deferred == 0 {
 			return
 		}
 		// Path only, never the query string: what someone searched for is
 		// theirs, and the route is what identifies the problem anyway.
-		throttle.report(budget.Class(), r.URL.Path, busy, timeouts, waited)
+		throttle.report(budget.Class(), r.URL.Path, busy, timeouts, admission, deferred, waited)
 	})
 }
 
+// pressureTotals is a readable snapshot of the counters below. It is a value,
+// so nothing that reads it can accidentally keep counting.
+type pressureTotals struct {
+	poolBusy         int64
+	queryTimeout     int64
+	admissionRefused int64
+	deferredRefused  int64
+}
+
+func (t pressureTotals) add(o pressureTotals) pressureTotals {
+	return pressureTotals{
+		poolBusy:         t.poolBusy + o.poolBusy,
+		queryTimeout:     t.queryTimeout + o.queryTimeout,
+		admissionRefused: t.admissionRefused + o.admissionRefused,
+		deferredRefused:  t.deferredRefused + o.deferredRefused,
+	}
+}
+
+// pressureCounters are cumulative, process-lifetime counts of every refusal
+// this server produced, one set per query class.
+//
+// They exist because the log line below is capped at one per second per class:
+// during an incident the line count measures how long the incident lasted, not
+// how much traffic it refused, and the post-deploy observation counted lines.
+// Four outcomes are separated on purpose, because the operator response to
+// each is different:
+//
+//   - poolBusy: the pool refused an acquisition. The database is saturated.
+//   - queryTimeout: a statement outlived its ceiling and was killed. One
+//     query is too slow; the pool may be perfectly healthy.
+//   - admissionRefused: the cache-miss admission gate refused a caller before
+//     it ever reached the pool. The pool was never asked.
+//   - deferredRefused: a cache lane is in its post-failure backoff and refused
+//     without asking either.
+//
+// The last two are the ones that were invisible: they synthesise ErrPoolBusy,
+// so a visitor sees a 503 and no counter anywhere moved.
+type pressureCounters struct {
+	poolBusy         [3]atomic.Int64
+	queryTimeout     [3]atomic.Int64
+	admissionRefused [3]atomic.Int64
+	deferredRefused  [3]atomic.Int64
+}
+
+// dbPressure is process-wide on purpose. The refusals that never reach the
+// pool are produced deep inside the web store, far from the request
+// middleware that owns the log line, and some of them are produced by
+// background refreshes that have no request at all.
+var dbPressure pressureCounters
+
+func (c *pressureCounters) observeBudget(class serverstore.QueryClass, busy, timeouts int64) {
+	if busy > 0 {
+		c.poolBusy[class].Add(busy)
+	}
+	if timeouts > 0 {
+		c.queryTimeout[class].Add(timeouts)
+	}
+}
+
+func (c *pressureCounters) observeAdmissionRefusal(class serverstore.QueryClass) {
+	c.admissionRefused[class].Add(1)
+}
+
+func (c *pressureCounters) observeDeferredRefusal(class serverstore.QueryClass) {
+	c.deferredRefused[class].Add(1)
+}
+
+func (c *pressureCounters) classTotals(class serverstore.QueryClass) pressureTotals {
+	return pressureTotals{
+		poolBusy:         c.poolBusy[class].Load(),
+		queryTimeout:     c.queryTimeout[class].Load(),
+		admissionRefused: c.admissionRefused[class].Load(),
+		deferredRefused:  c.deferredRefused[class].Load(),
+	}
+}
+
+// totals sums the classes. Every addend only ever grows, so a reader that
+// races a writer sees a number between the true value before and after -- and
+// the collector reduces with max, which that is safe for.
+func (c *pressureCounters) totals() pressureTotals {
+	var out pressureTotals
+	for _, class := range []serverstore.QueryClass{
+		serverstore.ClassBackground, serverstore.ClassInteractive, serverstore.ClassProbe,
+	} {
+		out = out.add(c.classTotals(class))
+	}
+	return out
+}
+
+// requestPressure is the part of the same accounting that belongs to one
+// request, so the middleware can name the route that was refused. The
+// process-wide counters cannot do that: they are shared.
+type requestPressure struct {
+	admissionRefused atomic.Int64
+	deferredRefused  atomic.Int64
+}
+
+type requestPressureKey struct{}
+
+func withRequestPressure(ctx context.Context) (context.Context, *requestPressure) {
+	refusals := &requestPressure{}
+	return context.WithValue(ctx, requestPressureKey{}, refusals), refusals
+}
+
+func requestPressureOf(ctx context.Context) *requestPressure {
+	refusals, _ := ctx.Value(requestPressureKey{}).(*requestPressure)
+	return refusals
+}
+
+// noteAdmissionRefusal and noteDeferredRefusal are what the web store calls at
+// the moment it synthesises ErrPoolBusy without going near a connection. Both
+// always advance the process counter; the per-request one only exists when
+// there is a request, which a background cache refresh does not have.
+func noteAdmissionRefusal(ctx context.Context) {
+	dbPressure.observeAdmissionRefusal(serverstore.QueryClassOf(ctx))
+	if refusals := requestPressureOf(ctx); refusals != nil {
+		refusals.admissionRefused.Add(1)
+	}
+}
+
+func noteDeferredRefusal(ctx context.Context) {
+	dbPressure.observeDeferredRefusal(serverstore.QueryClassOf(ctx))
+	if refusals := requestPressureOf(ctx); refusals != nil {
+		refusals.deferredRefused.Add(1)
+	}
+}
+
 type pressureLog struct {
-	mu   sync.Mutex
-	now  func() time.Time
-	last [3]time.Time
-	out  func(format string, v ...any)
+	mu       sync.Mutex
+	now      func() time.Time
+	last     [3]time.Time
+	out      func(format string, v ...any)
+	counters *pressureCounters
 }
 
 func newPressureLog() *pressureLog {
-	return &pressureLog{now: time.Now, out: log.Printf}
+	return &pressureLog{now: time.Now, out: log.Printf, counters: &dbPressure}
 }
 
-func (p *pressureLog) report(class serverstore.QueryClass, path string, busy, timeouts int64, waited time.Duration) {
+func (p *pressureLog) counterSet() *pressureCounters {
+	if p.counters != nil {
+		return p.counters
+	}
+	return &dbPressure
+}
+
+func (p *pressureLog) report(
+	class serverstore.QueryClass,
+	path string,
+	busy, timeouts, admission, deferred int64,
+	waited time.Duration,
+) {
+	// Counted before the throttle, never after: the suppressed reports are
+	// exactly the ones a line count loses.
+	counters := p.counterSet()
+	counters.observeBudget(class, busy, timeouts)
+
 	now := p.now()
 	p.mu.Lock()
 	if last := p.last[class]; !last.IsZero() && now.Sub(last) < budgetPressureWindow {
@@ -114,12 +267,40 @@ func (p *pressureLog) report(class serverstore.QueryClass, path string, busy, ti
 	}
 	p.last[class] = now
 	p.mu.Unlock()
-	cause := "pool_busy"
-	if busy == 0 {
-		cause = "query_timeout"
-	} else if timeouts > 0 {
-		cause = "pool_busy+query_timeout"
+
+	// The totals ride along so that one line per second still carries an
+	// exact count of everything the other lines would have said. The names
+	// are suffixed rather than prefixed so that a reader matching the
+	// per-request `pool_busy=` token cannot also match the total.
+	totals := counters.totals()
+	p.out("csx-server: db pressure path=%s class=%s cause=%s pool_busy=%d query_timeout=%d"+
+		" admission_refused=%d deferred_refused=%d waited=%s"+
+		" pool_busy_total=%d query_timeout_total=%d admission_refused_total=%d deferred_refused_total=%d",
+		path, class, pressureCause(busy, timeouts, admission, deferred),
+		busy, timeouts, admission, deferred, waited.Round(time.Millisecond),
+		totals.poolBusy, totals.queryTimeout, totals.admissionRefused, totals.deferredRefused)
+}
+
+// pressureCause names every outcome the request actually hit, in the order an
+// operator triages them: the pool first, then the statement ceiling, then the
+// two refusals that never reached either.
+func pressureCause(busy, timeouts, admission, deferred int64) string {
+	causes := make([]string, 0, 4)
+	for _, c := range []struct {
+		count int64
+		name  string
+	}{
+		{busy, "pool_busy"},
+		{timeouts, "query_timeout"},
+		{admission, "admission_refused"},
+		{deferred, "deferred_refused"},
+	} {
+		if c.count > 0 {
+			causes = append(causes, c.name)
+		}
 	}
-	p.out("csx-server: db pressure path=%s class=%s cause=%s pool_busy=%d query_timeout=%d waited=%s",
-		path, class, cause, busy, timeouts, waited.Round(time.Millisecond))
+	if len(causes) == 0 {
+		return "none"
+	}
+	return strings.Join(causes, "+")
 }

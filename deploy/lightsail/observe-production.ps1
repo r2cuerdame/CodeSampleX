@@ -158,7 +158,9 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             'server_started_at','restart_count','oom_killed','container_status','builder_generated_at','builder_fresh','builder_active',
             'builder_lifecycle_state','builder_error_events',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
-            'query_timeout_events','max_pressure_wait_seconds','oom_events','restart_events','die_events','settled_fail_observations',
+            'query_timeout_events','pool_busy_event_total','query_timeout_event_total',
+            'admission_refused_event_total','deferred_refused_event_total',
+            'max_pressure_wait_seconds','oom_events','restart_events','die_events','settled_fail_observations',
             'die_event_first_epoch','die_event_last_epoch',
             'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows'
         )
@@ -171,6 +173,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             if (-not $state.Contains($name)) { throw "production observation evidence is missing $name" }
         }
         foreach ($name in @('restart_count','builder_error_events','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
+                'pool_busy_event_total','query_timeout_event_total','admission_refused_event_total','deferred_refused_event_total',
                 'die_event_first_epoch','die_event_last_epoch',
                 'settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
@@ -357,11 +360,16 @@ function Update-PressureEvidence([Collections.IDictionary]$Evidence, [Collection
     if ($null -ne $load1 -and ($null -eq $Evidence.pressure.peakLoad1 -or $load1 -gt $Evidence.pressure.peakLoad1)) {
         $Evidence.pressure.peakLoad1 = $load1
     }
-    foreach ($name in @('pressureLines','poolBusyEvents','queryTimeoutEvents')) {
+    foreach ($name in @('pressureLines','poolBusyEvents','queryTimeoutEvents',
+            'poolBusyEventCount','queryTimeoutEventCount','admissionRefusedEventCount','deferredRefusedEventCount')) {
         $source = switch ($name) {
             'pressureLines' { 'pressure_lines' }
             'poolBusyEvents' { 'pool_busy_events' }
             'queryTimeoutEvents' { 'query_timeout_events' }
+            'poolBusyEventCount' { 'pool_busy_event_total' }
+            'queryTimeoutEventCount' { 'query_timeout_event_total' }
+            'admissionRefusedEventCount' { 'admission_refused_event_total' }
+            'deferredRefusedEventCount' { 'deferred_refused_event_total' }
         }
         if ($Sample[$source] -gt $Evidence.pressure[$name]) { $Evidence.pressure[$name] = $Sample[$source] }
     }
@@ -483,6 +491,10 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Pool-pressure log lines: $($Evidence.pressure.pressureLines)
 - Pool-busy observations: $($Evidence.pressure.poolBusyEvents)
 - Query-timeout observations: $($Evidence.pressure.queryTimeoutEvents)
+- Pool-busy events (server counter): $($Evidence.pressure.poolBusyEventCount)
+- Query-timeout events (server counter): $($Evidence.pressure.queryTimeoutEventCount)
+- Admission-refused events (server counter): $($Evidence.pressure.admissionRefusedEventCount)
+- Deferred-lane refusal events (server counter): $($Evidence.pressure.deferredRefusedEventCount)
 - Maximum DB-pressure wait: $($Evidence.pressure.maxWaitSeconds) seconds (limit $MaxPressureWaitSeconds)
 - Builder errors: $($Evidence.events.builderError)
 - Restart events: $($Evidence.events.restart)
@@ -553,6 +565,14 @@ $evidence = [ordered]@{
         pressureLines = 0
         poolBusyEvents = 0
         queryTimeoutEvents = 0
+        # The line counts above are capped at one per second per class. These
+        # are the server's own cumulative counters, so they are the number of
+        # requests that were actually refused -- including the refusals that
+        # never reached the pool and used to leave no trace at all.
+        poolBusyEventCount = 0
+        queryTimeoutEventCount = 0
+        admissionRefusedEventCount = 0
+        deferredRefusedEventCount = 0
         maxWaitSeconds = 0.0
     }
     events = [ordered]@{ builderError = 0; restart = 0; oom = 0; die = 0 }
@@ -658,10 +678,12 @@ try {
         Add-RouteLatencyEvidence $evidence $final 'settled'
     }
     if ($evidence.pressure.queryTimeoutEvents -ne 0) {
-        $evidence.anomalies.Add("query timeouts were observed during builder convergence")
+        $evidence.anomalies.Add("query timeouts were observed during builder convergence" +
+            " ($($evidence.pressure.queryTimeoutEventCount) events across $($evidence.pressure.queryTimeoutEvents) log lines)")
     }
     if ($evidence.pressure.poolBusyEvents -ne 0) {
-        $evidence.anomalies.Add("pool-busy refusals were observed during builder convergence")
+        $evidence.anomalies.Add("pool-busy refusals were observed during builder convergence" +
+            " ($($evidence.pressure.poolBusyEventCount) events across $($evidence.pressure.poolBusyEvents) log lines)")
     }
     if ($evidence.pressure.maxWaitSeconds -gt $MaxPressureWaitSeconds) {
         $evidence.anomalies.Add("maximum DB-pressure wait exceeded the ${MaxPressureWaitSeconds}s bound")
