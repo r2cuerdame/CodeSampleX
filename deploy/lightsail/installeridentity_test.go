@@ -13,7 +13,7 @@ func TestDeploymentPinsAndVerifiesTheInstallerReleaseBeforePromotion(t *testing.
 	}
 	s := string(raw)
 	for _, required := range []string{
-		`git -C $repo tag --points-at $revision --list 'v*'`,
+		`Invoke-DeployProcess git @("-C", $repo, "tag", "--points-at", $revision, "--list", "v*") 10`,
 		`$releaseTags.Count -ne 1`,
 		`"csx-bootstrap-stable.json"`,
 		`./csx-linux-amd64 update verify-release . {2}`,

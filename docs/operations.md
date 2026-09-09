@@ -79,11 +79,6 @@ receiving the run evidence. The workflow rejects drift between that SHA and the 
 changing anything, and `codesamplex-production` concurrency serializes all
 rollouts.
 
-The reviewed [#174 offline migration contract](issue-174-canonical-offline-deploy.md)
-separates immutable operations/payload source, keeps the same-target migration
-inside the host-owned rollback transaction, and requires final acceptance before
-its acknowledgement. It does not introduce a separate production workflow.
-
 The `codesamplex-production` GitHub Environment owns only:
 
 - secret `CSX_PRODUCTION_SSH_KEY` — the dedicated deploy identity;

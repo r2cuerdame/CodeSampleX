@@ -24,6 +24,7 @@ fi
 if [ -f .env.rollback-predeploy ]; then
   test ! -e .env.rollback-absent
 fi
+if [ "$restore_dist" -eq 1 ] && { [ ! -f dist.rollback-promoted ] || [ ! -d /opt/codesamplex/dist.previous ]; }; then restore_dist=0; fi
 if [ "$restore_dist" -eq 1 ]; then test -d /opt/codesamplex/dist.previous; fi
 if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then docker rm -f codesamplex-server-1 >/dev/null; fi
 if [ -f docker-compose.yml.rollback-predeploy ]; then
@@ -41,7 +42,7 @@ rm -f docker-compose.yml.candidate .env.new .env.activity.* .env.admin.* caddy/C
 if [ "$restore_dist" -eq 1 ]; then
   rm -rf /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist.failed-rollback
   cp -a /opt/codesamplex/dist.previous /opt/codesamplex/dist.rollback-stage
-  mv /opt/codesamplex/dist /opt/codesamplex/dist.failed-rollback
+  if [ -d /opt/codesamplex/dist ]; then mv /opt/codesamplex/dist /opt/codesamplex/dist.failed-rollback; fi
   if mv /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist; then
     rm -rf /opt/codesamplex/dist.failed-rollback
   else
@@ -51,22 +52,22 @@ if [ "$restore_dist" -eq 1 ]; then
 fi
 if [ -f server-container.rollback-present ]; then
   docker tag codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:latest
+  docker compose up -d --no-build --no-deps --force-recreate server
+  test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
   if [ -f server-container.rollback-running ]; then
-    docker compose up -d --no-build --no-deps --force-recreate server
-    test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
     i=0
     while [ "$i" -lt 24 ]; do
-      if docker compose exec -T server wget -T 5 -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
+      if docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
       i=$((i + 1))
       sleep 5
     done
     test "$i" -lt 24
     test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true
+    expected=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CSX_VERSION=//p' | head -n 1)
+    served=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version | sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
+    test "$served" = "$expected"
   else
-    # A stopped predeploy service must never briefly execute an old builder
-    # against newly backfilled projections merely to restore its container.
-    docker compose up --no-start --no-build --no-deps --force-recreate server >/dev/null
-    test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
+    docker compose stop server >/dev/null
     test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = false
   fi
 else

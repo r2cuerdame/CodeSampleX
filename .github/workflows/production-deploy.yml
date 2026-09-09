@@ -27,15 +27,15 @@ on:
         required: true
         type: choice
         options: [safe, additive-migration, manual]
-      offline_migration_timeout_seconds:
-        description: Measured offline migration budget (60-1800 seconds); health and smoke limits stay unchanged
-        required: false
-        type: number
-        default: 1200
       tracking_issue:
         description: Canonical GitHub tracking issue receiving the run evidence (e.g. #213 or 213)
         required: true
         type: string
+      offline_migration_timeout_seconds:
+        description: Offline migration deadline only (60-1800 seconds); no observation wait
+        required: false
+        type: number
+        default: 1200
 
 permissions:
   contents: read
@@ -57,23 +57,15 @@ jobs:
         run: test "$GITHUB_REF" = refs/heads/main
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          path: operations
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
-          path: payload
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: operations/go.mod
-          cache-dependency-path: operations/go.sum
+          go-version-file: go.mod
           cache: true
 
       - name: Prove canonical commit and ProjectOps decision
-        working-directory: operations
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
@@ -84,11 +76,10 @@ jobs:
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C ../payload rev-parse HEAD)" = "$TARGET_SHA"
-          git -C ../payload fetch --no-tags origin main
-          git -C ../payload merge-base --is-ancestor "$TARGET_SHA" origin/main
-          go run ./cmd/csx-deploy-gate -repo ../payload \
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          go run ./cmd/csx-deploy-gate \
             -target "$TARGET_SHA" \
             -previous "$PREVIOUS_SHA" \
             -merge-verdict "$MERGE_VERDICT" \
@@ -170,16 +161,13 @@ jobs:
     name: Roll out production
     needs: eligibility
     runs-on: ubuntu-latest
-    # Image preparation, transfer, the lightweight smoke and an exact rollback
-    # all fit here. Full-builder convergence has its own observation workflow
-    # and never extends the deployment success path.
-    timeout-minutes: 60
+    # Maximum 1800s actual migration plus separate finite preparation/startup,
+    # host recovery and artifact reserves. No observation or fixed wait here.
+    timeout-minutes: 73
     environment: codesamplex-production
     permissions:
       contents: read
     steps:
-      # Operational code is the immutable main commit that supplied this workflow.
-      # The payload remains the separately eligible, released target commit.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.sha }}
@@ -199,23 +187,24 @@ jobs:
           TRACKING_ISSUE: ${{ inputs.tracking_issue }}
         run: |
           @{
-            schemaVersion = 1
+            schemaVersion = 2
             workflowRunId = "${{ github.run_id }}"
             workflowRunUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             trackingIssue = $env:TRACKING_ISSUE
-            linearIssue = $env:TRACKING_ISSUE
             targetSha = $env:TARGET_SHA
             operationalSha = "${{ github.sha }}"
             previousProductionSha = $env:PREVIOUS_SHA
             conclusion = "failure"
             deployedSha = ""
+            servedRevision = "unavailable"
             imageDigest = ""
             migrationVersion = ""
             health = "not-started"
             smoke = "not-started"
             rollback = "not-started"
-            invariants = @{ before = $null; after = $null }
-            failureEvidenceQuality = $null
+            failureClass = "pre-activation"
+            phaseTimings = @{}
+            observation = "pending-independent-workflow"
           } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM production-deploy-evidence.json
 
       - name: Install the dedicated SSH identity and pinned host key
@@ -233,6 +222,7 @@ jobs:
           test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
 
       - name: Deploy and verify
+        timeout-minutes: 70
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -271,7 +261,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s production-deploy-evidence.json
-          jq '{operationalSha,deployedSha,imageDigest,migrationVersion,offlineMigration,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          jq '{operationalSha,deployedSha,servedRevision,imageDigest,migrationVersion,offlineMigration,health,smoke,rollback,failureClass,phaseTimings,criticalPathCeilingsSeconds,observation}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

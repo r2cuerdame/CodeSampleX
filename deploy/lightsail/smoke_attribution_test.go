@@ -1,48 +1,81 @@
 package lightsail
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
 
-// R2C-159: three of four unattended production rollouts either failed on, or
-// barely survived, the deploy's very first request through the proxy. The
-// transcript said only `curl: (28) Operation timed out`, and identifying which
-// of the three probes had stalled needed the box's own edge access log after
-// the fact. A rollout that fails closed has to name the request it failed on.
-func TestPrivacySafeLogProbeNamesThePathItFailedOn(t *testing.T) {
-	body := readDeployFixture(t, "safe-log-smoke.sh")
+func observationAttributionFunction(t *testing.T, name string) string {
+	t.Helper()
+	script := readDeployFixture(t, "collect-extended-observation.sh")
+	start := strings.Index(script, name+"() {\n")
+	if start < 0 {
+		t.Fatalf("missing observation function %s", name)
+	}
+	body := script[start:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		t.Fatalf("unterminated observation function %s", name)
+	}
+	return body[:end+3]
+}
 
-	for _, required := range []string{
-		// One helper, so the ceiling and the reporting cannot drift apart
-		// between the three probes.
-		`log_probe() {`,
-		`probe_code=$?`,
-		`echo "FAIL privacy-safe log probe $probe_path: curl exit $probe_code" >&2`,
-		// It stays fail-closed: naming the failure must not swallow it.
-		`exit 1`,
-		`log_probe '/v1/stats?csx_safe_log_smoke=discard-this-query'`,
-		`log_probe '/v1/samples%2Fencoded-marker-must-not-log/path'`,
-		`log_probe '/v1/secret-marker-must-not-log/path'`,
-	} {
-		if !strings.Contains(body, required) {
-			t.Errorf("privacy-safe log probe is missing %q", required)
+// Preserve the production timeout regression's attribution after moving the
+// probes to observation. A failed request names only a fixed logical probe,
+// never the unique marker, arbitrary URL, log line, or response body.
+func TestPrivacyObservationNamesEveryFailedRequestSafely(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
+	}
+	program := `set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+DOMAIN=codesamplex.dev
+curl() { return 28; }
+docker() { printf unavailable; }
+sleep() { :; }
+` + observationAttributionFunction(t, "privacy_live") + "\nprivacy_live\n"
+	out, err := exec.Command(sh, "-c", program).CombinedOutput()
+	if err != nil {
+		t.Fatalf("privacy observation failed: %v: %s", err, out)
+	}
+	for _, want := range []string{"probe_privacy_live_1_curl_exit=28", "probe_privacy_live_2_curl_exit=28", "probe_privacy_live_3_curl_exit=28", "unavailable"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing safe request attribution %q: %s", want, out)
 		}
 	}
-
-	// Every probe goes through the helper. A bare curl here is a request that
-	// can time out anonymously again.
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "curl ") && !strings.Contains(trimmed, `"https://__CSX_DOMAIN__$probe_path"`) {
-			t.Errorf("unattributed probe request in the safe-log smoke: %q", trimmed)
+	for _, unsafe := range []string{"csx-observe-secret-", "https://", "/v1/"} {
+		if strings.Contains(string(out), unsafe) {
+			t.Errorf("privacy diagnostics exposed arbitrary request data %q", out)
 		}
 	}
+}
 
-	// The probe's ceiling is what turned a slow endpoint into a failed
-	// rollout, so it stays visible and in one place.
-	if strings.Count(body, "--max-time 10") != 1 {
-		t.Errorf("safe-log probe ceilings = %d occurrences, want exactly one shared ceiling",
-			strings.Count(body, "--max-time 10"))
+func TestObservationDiagnosticsExposeOnlyFixedNumericProbeFields(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
+	}
+	program := `set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fixture() {
+  printf 'probe_privacy_live_1_curl_exit=28\n'
+  printf 'private-body-do-not-emit\n'
+  printf 'probe_bad_status=private-value\n'
+  printf 'unavailable\n'
+}
+` + observationAttributionFunction(t, "run_check") + "\nrun_check privacy_live fixture\n"
+	out, err := exec.Command(sh, "-c", program).CombinedOutput()
+	if err != nil {
+		t.Fatalf("diagnostic sanitizer failed: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "probe_privacy_live_1_curl_exit=28") || !strings.Contains(string(out), "privacy_live=unavailable") {
+		t.Fatalf("safe diagnostic or classification lost: %s", out)
+	}
+	if strings.Contains(string(out), "private-") {
+		t.Fatalf("arbitrary diagnostic data escaped: %s", out)
 	}
 }

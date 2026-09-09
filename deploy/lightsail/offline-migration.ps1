@@ -64,7 +64,6 @@ chmod 0700 __STATE__
         "config.json" = $config
         "rollback-server.sh" = $rollbackServerTemplate.Replace('__CSX_RESTORE_DIST__', $restoreDist)
         "rollback-caddy.sh" = $rollbackCaddyTemplate
-        "safe-log-smoke.sh" = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "safe-log-smoke.sh")).Replace('__CSX_DOMAIN__', $Domain)
     }
     foreach ($name in $files.Keys) {
         $local = Join-Path ([IO.Path]::GetTempPath()) "csx-migration-$deployLockOwner-$name"
@@ -91,7 +90,7 @@ sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
     $script:migrationSupervisorTerminal = $false
     $script:migrationRecoveryVerified = $false
     Invoke-RemoteScript $launch | Out-Null
-    $deadline = [DateTime]::UtcNow.AddSeconds($MigrationTimeoutSeconds + 480)
+    $deadline = [DateTime]::UtcNow.AddSeconds($MigrationTimeoutSeconds + 240)
     do {
         $observed = Read-CSXMigrationEvidence
         if ($observed.phase -eq "candidate-ready") {

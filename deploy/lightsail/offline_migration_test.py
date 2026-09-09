@@ -36,10 +36,7 @@ class FakeHost(migration.Host):
         self.helper_running = False
         self.helper_exit = 0
         self.stale = 0
-        self.repair_required = False
-        self.barrier_count = 1
         self.server_present = False
-        self.privacy_exit = 0
         self.server_backend_present = False
         self.server_image = IMAGE
         self.helper_environment = {"CSX_DSN": "postgres://db/csx?application_name=" + self.application,
@@ -49,9 +46,6 @@ class FakeHost(migration.Host):
 
     def command(self, args, seconds=30, check=True, environment=None):
         self.calls.append(("command", args))
-        if args[0] == "sh" and Path(args[1]).name == "safe-log-smoke.sh":
-            return subprocess.CompletedProcess(args, self.privacy_exit, "",
-                "FAIL privacy-safe log probe /v1/stats: curl exit 28" if self.privacy_exit else "")
         if args[0] == "sh" and Path(args[1]).name == self.rollback_failure:
             raise RuntimeError("injected rollback failure")
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -67,10 +61,6 @@ class FakeHost(migration.Host):
                 "NetworkSettings": {"Networks": {"default": {"IPAddress": "172.20.0.4"}}}}]), "")
         if args[:2] == ("ps", "-aq"):
             output = "helper-id" if self.helper_present else ""
-        elif args[-1] == "http://127.0.0.1:8080/healthz":
-            output = "ok"
-        elif args[-1] == "http://127.0.0.1:8080/version":
-            output = json.dumps({"revision": TARGET})
         elif args[:1] == ("rm",):
             self.helper_present = False
             output = ""
@@ -116,11 +106,8 @@ class FakeHost(migration.Host):
         if "pg_get_indexdef" in sql:
             return [{"name": name, "valid": True, "ready": True, "definition": value}
                     for name, value in migration.INDEXES.items()]
-        if "WITH latest AS" in sql:
-            self.repair_required = self.barrier_count == 1
-            return {"count": self.barrier_count, "day": "2026-09-09" if self.barrier_count else None}
         if "'repairRequired'" in sql:
-            return {"samples": self.stale, "receipts": 0, "repairRequired": self.repair_required}
+            return {"samples": self.stale, "receipts": 0, "repairRequired": True}
         raise AssertionError("unexpected SQL")
 
     def source_totals(self):
@@ -253,15 +240,14 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "helper failed"):
             self.host.migrate()
 
-    def test_source_totals_and_stale_projections_are_checked(self):
+    def test_only_migration_ledger_is_an_acceptance_query(self):
         self.host.verify_migration()
         self.assertEqual(self.host.evidence["migrationVerification"], "pass")
-        self.host.stale = 1
-        with self.assertRaisesRegex(RuntimeError, "backfill is incomplete"):
-            self.host.verify_migration()
-        self.host.stale = 0
-        self.host.after["receipts"] = 1
-        with self.assertRaisesRegex(RuntimeError, "source totals"):
+        queries = [q for k, q in self.host.calls if k == "sql"]
+        self.assertEqual(len(queries), 1)
+        self.assertIn("schema_migrations", queries[0])
+        self.host.query = lambda _: {"version": "0035_previous.sql", "count": 36}
+        with self.assertRaisesRegex(RuntimeError, "ledger does not match"):
             self.host.verify_migration()
 
     def test_recovery_script_restores_dist_before_old_container_recreation(self):
@@ -278,13 +264,13 @@ class SupervisorTests(unittest.TestCase):
         self.assertNotIn("prestage-builder-indexes", script)
 
 
-    def test_quiescent_baseline_is_captured_after_last_client(self):
+    def test_quiescence_is_proved_without_a_full_table_baseline(self):
         self.host.backend_present = False
         self.host.helper_present = False
         self.host.inspect = lambda _: {"State": {"StartedAt": "2026-09-09T01:00:00Z"}, "NetworkSettings": {"Networks": {}}}
         self.host.after["samples"] = 19
         self.host.stop_builders()
-        self.assertEqual(19, self.host.evidence["sourceBefore"]["samples"])
+        self.assertFalse(any(k == "sql" for k, _ in self.host.calls))
         self.assertEqual("pass", self.host.evidence["quiescence"])
 
     def test_surviving_unowned_client_cannot_pass_empty_owned_cleanup(self):
@@ -333,55 +319,6 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(any(c[0] == "docker" and c[1][:2] == ("compose", "up") for c in self.host.calls))
 
 
-    def test_completed_retry_rearms_erased_full_repair_barrier(self):
-        self.assertFalse(self.host.repair_required)
-        self.assertEqual(0, self.host.stale)
-        self.host.verify_migration()
-        self.assertTrue(self.host.repair_required)
-        self.assertEqual({"count": 1, "day": "2026-09-09"}, self.host.evidence["repairBarrierRearmed"])
-
-    def test_missing_current_stats_row_blocks_activation(self):
-        self.host.barrier_count = 0
-        with self.assertRaisesRegex(RuntimeError, "exactly one current stats row"):
-            self.host.verify_migration()
-
-    def test_stopped_rollback_never_starts_server_or_caddy(self):
-        for service in ("server", "caddy"):
-            script = Path(__file__).with_name("rollback-" + service + ".sh").read_text()
-            self.assertIn("docker compose up --no-start --no-build --no-deps --force-recreate " + service, script)
-            self.assertNotIn("docker compose stop " + service, script)
-
-
-    def test_host_owns_all_activation_and_privacy_mutations_before_smoke_lease(self):
-        self.host.activate()
-        self.assertEqual("candidate-ready", self.host.evidence["phase"])
-        self.assertEqual("pass", self.host.evidence["privacySmoke"])
-        mutations = [c for c in self.host.calls if c[0] == "docker" and c[1][:2] == ("compose", "up")]
-        self.assertEqual(3, len(mutations))
-        self.assertTrue(any(c[0] == "command" and Path(c[1][1]).name == "safe-log-smoke.sh"
-                            for c in self.host.calls))
-        controller = Path(__file__).with_name("deploy.ps1").read_text()
-        self.assertIn('if (-not $OfflineMigration) {\nInvoke-Remote "cd /opt/codesamplex/deploy && docker compose up', controller)
-        self.assertIn("if (-not $OfflineMigration) {\n    Invoke-RemoteScript $safeAccessLogSmoke", controller)
-
-    def test_privacy_failure_never_opens_controller_lease(self):
-        self.host.privacy_exit = 1
-        with self.assertRaisesRegex(RuntimeError, "privacy smoke failed"):
-            self.host.activate()
-        self.assertEqual("activating", self.host.evidence["phase"])
-        self.assertEqual("failed", self.host.evidence["privacySmoke"])
-        self.assertIn("curl exit 28", self.host.evidence["privacySmokeFailure"])
-
-    def test_correct_ack_cannot_commit_after_deadline_during_identity_check(self):
-        ack = {key: self.host.evidence[key] for key in ("owner", "operationalSha", "targetSha", "imageDigest")}
-        (self.state / "commit.json").write_text(json.dumps(ack))
-        values = iter([0, 0, 601])
-        with patch.object(migration.time, "monotonic", lambda: next(values)):
-            with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
-                self.host.await_commit()
-        self.assertNotEqual("committed", self.host.evidence["phase"])
-
-
 class ProcessDeadlineTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "production process groups require POSIX")
     def test_timeout_kills_shell_descendant_before_returning(self):
@@ -415,7 +352,7 @@ class ProcessDeadlineTests(unittest.TestCase):
 
 class SourceIdentityTests(unittest.TestCase):
     def setUp(self):
-        self.shell = shutil.which("pwsh") or shutil.which("powershell")
+        self.shell = os.environ.get("CSX_TEST_PWSH") or shutil.which("pwsh") or shutil.which("powershell")
         if not self.shell:
             self.skipTest("PowerShell unavailable")
         self.tmp = tempfile.TemporaryDirectory()
@@ -470,59 +407,6 @@ Resolve-CSXDeploymentSource $Payload $Target $Control | ConvertTo-Json -Compress
         self.git(self.payload, "checkout", "--", "payload.txt")
         (self.control / "unreviewed.ps1").write_text("unreviewed")
         self.assertNotEqual(self.check().returncode, 0)
-
-
-    def test_final_collector_closure_precedes_ack_and_preserves_outer_inputs(self):
-        wrapper = Path(__file__).with_name("deploy-production.ps1").read_text()
-        start = wrapper.index("    $readFinalProductionState = ")
-        end = wrapper.index('    & (Join-Path $PSScriptRoot "deploy.ps1")', start)
-        closure = wrapper[start:end]
-        inner = Path(__file__).with_name("deploy.ps1").read_text()
-        start = inner.index("    if ($null -ne $FinalAcceptance)")
-        hook = inner[start:inner.index("    $serverActivationStarted = $false", start)]
-        for case in ("success", "bad-health", "bad-revision", "probe-failure"):
-            with self.subTest(case=case):
-                probe_sha = "wrong" if case == "bad-revision" else TARGET
-                health = "bad" if case == "bad-health" else "ok"
-                script = """
-$ErrorActionPreference = 'Stop'
-$ExpectedRevision = '__TARGET__'
-$before = @{ invariants = @{ failureClusterObservations = 1 } }
-$probe = @{
-    revision='__PROBE_SHA__'; image_revision='__PROBE_SHA__'; served_revision='__PROBE_SHA__'
-    image_digest='digest'; migration_version='0036_builder_projections.sql'; migration_count=37
-    health='__HEALTH__'; server_started_at='started'; builder_generated_at='generated'; builder_fresh='false'
-    invariants=@{failureClusterObservations=1}; modern_failure_clusters=0; failure_evidence_quality=@{}
-}
-$probeFails = __FAIL__
-$evidence = @{invariants=@{before=$before.invariants}}
-$recorded = $evidence
-function Read-ProductionState { if ($probeFails) { throw 'probe failed' }; return $probe }
-__CLOSURE__
-$FinalAcceptance = $finalAcceptance
-$OfflineMigration = $true
-$events = New-Object 'System.Collections.Generic.List[string]'
-function Complete-CSXOfflineMigration { $events.Add('ack') }
-& {
-    $ExpectedRevision = 'nested script shadow'
-    $evidence = @{}
-    try {
-__HOOK__
-    } catch { $events.Add('rollback') }
-}
-if ('__CASE__' -eq 'success') {
-    if (($events -join ',') -ne 'ack' -or $recorded.deployedSha -ne '__TARGET__') { throw 'acceptance closure did not retain its original scope' }
-} elseif (($events -join ',') -ne 'rollback') { throw 'a failed final gate reached ACK' }
-"""
-                replacements = {"__TARGET__": TARGET, "__PROBE_SHA__": probe_sha,
-                    "__HEALTH__": health, "__FAIL__": "$true" if case == "probe-failure" else "$false",
-                    "__CLOSURE__": closure, "__HOOK__": hook, "__CASE__": case}
-                for key, value in replacements.items():
-                    script = script.replace(key, value)
-                self.script.write_text(script)
-                result = subprocess.run([self.shell, "-NoProfile", "-File", str(self.script)],
-                                        capture_output=True, text=True)
-                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
