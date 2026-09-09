@@ -124,10 +124,14 @@ class FakeHost(migration.Host):
         if "pg_stat_progress_create_index" in sql:
             return self.progress
         if "max(version)" in sql:
-            return {"version": "0036_builder_projections.sql", "count": 37}
+            exp_mig = self.config.get("expectedMigration", "0036_builder_projections.sql")
+            target_count = migration.REVIEWED_MIGRATIONS[exp_mig]["count"] if exp_mig in migration.REVIEWED_MIGRATIONS else 37
+            return {"version": exp_mig, "count": target_count}
         if "pg_get_indexdef" in sql:
+            exp_mig = self.config.get("expectedMigration", "0036_builder_projections.sql")
+            target_indexes = migration.REVIEWED_MIGRATIONS.get(exp_mig, {}).get("indexes", migration.INDEXES)
             rows = [{"name": name, "valid": True, "ready": True, "definition": value}
-                    for name, value in migration.INDEXES.items()]
+                    for name, value in target_indexes.items()]
             if self.index_fault == "missing": rows.pop()
             if self.index_fault == "wrong": rows[0]["definition"] += " WHERE false"
             if self.index_fault == "invalid": rows[0]["valid"] = False
@@ -305,6 +309,40 @@ class SupervisorTests(unittest.TestCase):
         self.host.query = lambda _: {"version": "0035_previous.sql", "count": 36}
         with self.assertRaisesRegex(RuntimeError, "ledger does not match"):
             self.host.verify_migration()
+
+    def test_migration_0037_acceptance_verifies_all_six_indexes_and_count_38(self):
+        self.host.config["expectedMigration"] = "0037_slow_query_indexes.sql"
+        self.host.verify_migration()
+        self.assertEqual(self.host.evidence["migrationVerification"], "pass")
+        queries = [q for k, q in self.host.calls if k == "sql"]
+        index_query = [q for q in queries if "pg_get_indexdef" in q][0]
+        self.assertIn("failure_clusters_pkg_count_idx", index_query)
+        self.assertIn("samples_live_created_id_idx", index_query)
+
+    def test_migration_0037_rejects_missing_or_invalid_index(self):
+        self.host.config["expectedMigration"] = "0037_slow_query_indexes.sql"
+        self.host.index_fault = "missing"
+        with self.assertRaisesRegex(RuntimeError, "required builder indexes are missing"):
+            self.host.verify_migration()
+        self.host.index_fault = "wrong"
+        with self.assertRaisesRegex(RuntimeError, "builder index is not valid, ready and exact"):
+            self.host.verify_migration()
+
+    def test_migration_0037_rejects_wrong_ledger_count(self):
+        self.host.config["expectedMigration"] = "0037_slow_query_indexes.sql"
+        original_query = self.host.query
+        self.host.query = lambda sql: {"version": "0037_slow_query_indexes.sql", "count": 37} if "max(version)" in sql else original_query(sql)
+        with self.assertRaisesRegex(RuntimeError, "ledger does not match the target"):
+            self.host.verify_migration()
+
+    def test_unreviewed_migration_rejected_at_startup(self):
+        (self.state / "config.json").write_text(json.dumps({
+            "targetSha": TARGET, "previousSha": PREVIOUS, "operationalSha": CONTROL,
+            "imageDigest": IMAGE, "previousImageDigest": "sha256:" + "f" * 64,
+            "expectedMigration": "0038_unknown.sql", "migrationTimeoutSeconds": 60,
+            "expectedReleaseTag": RELEASE}))
+        with self.assertRaisesRegex(ValueError, "offline migration supports only reviewed migrations"):
+            FakeHost(self.root)
 
     def test_recovery_script_restores_dist_before_old_container_recreation(self):
         script = Path(__file__).with_name("rollback-server.sh").read_text()

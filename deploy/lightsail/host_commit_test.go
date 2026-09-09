@@ -61,6 +61,17 @@ foreach ($ledger in @(@{version=$expectedMigration;count=36},@{version='wrong';c
     try { Set-CSXHostDeploymentEvidence ([pscustomobject]$broken) } catch { $rejected=$true }
     if (-not $rejected) { throw 'wrong migration ledger accepted' }
 }
+$expectedMigration='0037_slow_query_indexes.sql'
+$valid37 = $valid.Clone()
+$valid37.migrationLedger = @{version=$expectedMigration;count=38}
+Set-CSXHostDeploymentEvidence ([pscustomobject]$valid37)
+foreach ($ledger in @(@{version=$expectedMigration;count=37},@{version='0036_builder_projections.sql';count=38},@{version='wrong';count=38})) {
+    $broken=$valid37.Clone();$broken.migrationLedger=$ledger
+    $rejected=$false
+    try { Set-CSXHostDeploymentEvidence ([pscustomobject]$broken) } catch { $rejected=$true }
+    if (-not $rejected) { throw 'wrong migration ledger accepted for 0037' }
+}
+$expectedMigration='0036_builder_projections.sql'
 $broken=$valid.Clone();$broken.imageDigest='sha256:'+('e'*64)
 $rejected=$false
 try { Set-CSXHostDeploymentEvidence ([pscustomobject]$broken) } catch { $rejected=$true }

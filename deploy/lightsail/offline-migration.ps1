@@ -64,6 +64,13 @@ chmod 0700 __STATE__
         imageDigest = $image
         previousImageDigest = $productionStateParts[1]
         expectedMigration = $expectedMigration
+        expectedMigrationCount = if ($expectedMigrationCount) { [int]$expectedMigrationCount } else {
+            switch ($expectedMigration) {
+                "0036_builder_projections.sql" { 37 }
+                "0037_slow_query_indexes.sql" { 38 }
+                Default { 38 }
+            }
+        }
         expectedReleaseTag = $tag
         migrationTimeoutSeconds = $MigrationTimeoutSeconds
     } | ConvertTo-Json -Depth 5
@@ -118,12 +125,19 @@ sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
 }
 
 function Set-CSXHostDeploymentEvidence($Result) {
+    $expectedCount = if ($expectedMigrationCount) { [int]$expectedMigrationCount } else {
+        switch ($expectedMigration) {
+            "0036_builder_projections.sql" { 37 }
+            "0037_slow_query_indexes.sql" { 38 }
+            Default { 38 }
+        }
+    }
     if ($Result.phase -ne "committed" -or $Result.conclusion -ne "success" -or
         $Result.acceptanceAuthority -ne "host" -or $Result.controllerSmoke -ne "host-verified" -or
         $Result.owner -ne $deployLockOwner -or $Result.operationalSha -ne $OperationalRevision -or
         $Result.targetSha -ne $revision -or $Result.servedRevision -ne $revision -or
         $Result.releaseTag -cne $tag -or $Result.migrationLedger.version -ne $expectedMigration -or
-        $Result.migrationLedger.count -ne 37 -or $Result.migrationVerification -ne "pass" -or
+        $Result.migrationLedger.count -ne $expectedCount -or $Result.migrationVerification -ne "pass" -or
         $Result.imageDigest -ne $migrationImageDigest -or $Result.imageDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
         $Result.health -ne "ok" -or $Result.smoke -ne "pass" -or $Result.cleanup -ne "pass" -or
         $Result.serverStartedAt -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|\+00:00)$') {
