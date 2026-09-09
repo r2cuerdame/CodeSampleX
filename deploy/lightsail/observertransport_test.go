@@ -16,7 +16,7 @@ import (
 // runs, including when Windows prefixes the wire payload with a UTF-8 BOM.
 func TestObservationTransportCannotConsumeItsOwnScript(t *testing.T) {
 	observer := readDeployFixture(t, "observe-production.ps1")
-	remote := regexp.MustCompile(`(?m)^\s*"(\{ printf '#'; cat;[^\r\n]+\| sh)"`).FindStringSubmatch(observer)
+	remote := regexp.MustCompile(`(?m)^\s*\$remoteCommand = "(\{ printf '#'; cat;[^\r\n]+\| timeout[^\r\n]+ sh)"`).FindStringSubmatch(observer)
 	prefix := regexp.MustCompile(`(?m)^\s*\$prefix = "([^\r\n]+)"`).FindStringSubmatch(observer)
 	if len(remote) != 2 || len(prefix) != 2 {
 		t.Fatal("cannot locate the actual observation transport and payload prefix")
@@ -34,7 +34,10 @@ func TestObservationTransportCannotConsumeItsOwnScript(t *testing.T) {
 		t.Run(map[bool]string{true: "bom", false: "plain"}[bom != ""], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, sh, "-c", remote[1])
+			cmd := exec.CommandContext(ctx, sh, "-c", strings.ReplaceAll(remote[1], "${TimeoutSeconds}", "5"))
+			if runtime.GOOS == "windows" {
+				cmd.Args[len(cmd.Args)-1] = "PATH='/usr/bin':$PATH\n" + cmd.Args[len(cmd.Args)-1]
+			}
 			cmd.Stdin = strings.NewReader(bom + wire)
 			output, err := cmd.CombinedOutput()
 			if err != nil || string(output) != "before\nafter\n" {

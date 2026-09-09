@@ -143,9 +143,10 @@ jobs:
     name: Roll out production
     needs: eligibility
     runs-on: ubuntu-latest
-    # Image preparation, transfer, the lightweight smoke and an exact rollback
-    # all fit here. Full-builder convergence has its own observation workflow
-    # and never extends the deployment success path.
+    # deploy.ps1 phase budgets: 600s preparation + 300s staging + 240s
+    # activation + 60s cleanup = 1200s success; 300s exact rollback reserve.
+    # Wrapper identity probes add at most 30s before + 30s after failure.
+    # Extended verification runs only in post-deploy-observation.yml.
     timeout-minutes: 30
     environment: codesamplex-production
     permissions:
@@ -164,22 +165,23 @@ jobs:
           TRACKING_ISSUE: ${{ inputs.tracking_issue }}
         run: |
           @{
-            schemaVersion = 1
+            schemaVersion = 2
             workflowRunId = "${{ github.run_id }}"
             workflowRunUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             trackingIssue = $env:TRACKING_ISSUE
-            linearIssue = $env:TRACKING_ISSUE
             targetSha = $env:TARGET_SHA
             previousProductionSha = $env:PREVIOUS_SHA
             conclusion = "failure"
             deployedSha = ""
+            servedRevision = "unavailable"
             imageDigest = ""
             migrationVersion = ""
             health = "not-started"
             smoke = "not-started"
             rollback = "not-started"
-            invariants = @{ before = $null; after = $null }
-            failureEvidenceQuality = $null
+            failureClass = "pre-activation"
+            phaseTimings = @{}
+            observation = "pending-independent-workflow"
           } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM production-deploy-evidence.json
 
       - name: Install the dedicated SSH identity and pinned host key
@@ -197,6 +199,7 @@ jobs:
           test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
 
       - name: Deploy and verify
+        timeout-minutes: 27
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +233,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s production-deploy-evidence.json
-          jq '{deployedSha,imageDigest,migrationVersion,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          jq '{deployedSha,servedRevision,imageDigest,migrationVersion,health,smoke,rollback,failureClass,phaseTimings,criticalPathCeilingsSeconds,observation}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

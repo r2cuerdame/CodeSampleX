@@ -19,19 +19,18 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	promote := `mv -f "$candidate" "$live"`
 	recreate := `docker compose up -d --no-build --force-recreate caddy`
 	reload := `docker compose exec -T caddy caddy reload`
-	smoke := `$safeAccessLogSmoke = @'`
+
 	positions := []int{
 		strings.Index(script, copyCandidate),
 		strings.Index(script, promote),
 		strings.Index(script, recreate),
 		strings.Index(script, reload),
-		strings.Index(script, smoke),
 	}
 	lockAcquire := strings.Index(script, "Invoke-RemoteScript $acquireDeployLock")
 	lockRelease := strings.Index(script, "Invoke-RemoteScript $releaseDeployLock")
 	parentInstall := strings.Index(script, `Invoke-Remote "sudo install -d -o $User -g $User /opt/codesamplex"`)
-	imageBuild := strings.Index(script, "& docker build --platform linux/amd64")
-	imageSave := strings.Index(script, "& docker save $localImageTag -o $imageTar")
+	imageBuild := strings.Index(script, `Invoke-DeployProcess docker @("build", "--platform", "linux/amd64",`)
+	imageSave := strings.Index(script, `Invoke-DeployProcess docker @("save", $localImageTag, "-o", $imageTar)`)
 	if parentInstall < 0 || lockAcquire <= parentInstall || imageBuild <= lockAcquire || imageSave <= imageBuild || positions[0] <= imageSave || lockRelease <= positions[len(positions)-1] {
 		t.Fatalf("deploy lock/bootstrap order is unsafe: parent=%d acquire=%d build=%d save=%d stages=%v release=%d", parentInstall, lockAcquire, imageBuild, imageSave, positions, lockRelease)
 	}
@@ -40,40 +39,22 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 			t.Fatalf("deployment invariant %d is missing", i)
 		}
 		if i > 0 && position <= positions[i-1] {
-			t.Fatalf("deployment order = %v, want candidate copy < atomic promote < Caddy recreate < reload < live smoke", positions)
+			t.Fatalf("deployment order = %v, want candidate copy < atomic promote < Caddy recreate < reload", positions)
 		}
 	}
 	for _, required := range []string{
-		`function Invoke-RemoteScript([string]$Script)`,
-		`$process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)`,
-		// The remote runner is a fixed string, not built from anything a
-		// caller supplies — that is what this pin is for. It stopped being
-		// `sh -s` because a program read from stdin shares that stdin with
-		// the `docker compose exec` calls inside it, which on a pipe eat the
-		// rest of the program; and because Windows PowerShell writes the
-		// console encoding's BOM ahead of it, which silently disabled the
-		// `set -eu` on line 1. See the comment above Invoke-RemoteScript.
-		// Fail-closed. The form this replaced continued past a failed mktemp
-		// and a failed redirection and returned 0, so a deploy that staged
-		// nothing would have been recorded as a successful rollout.
-		// TestTheRemoteRunnerIsFailClosed runs it and pins the exit codes;
-		// this pin is the other half — the invocation stays a fixed string
-		// rather than something a caller can shape.
-		`$remoteRunner = 'set -e; f=$(mktemp) || exit 91; case $f in *[!A-Za-z0-9./_-]*) exit 94;; esac; trap ''rm -f $f'' EXIT; { printf ''#''; cat; } > $f || exit 92; head -n 1 $f | grep -q CSX-SCRIPT-V1 || exit 93; sh $f < /dev/null'`,
+		`function Invoke-RemoteScript([string]$Script, [int]$TimeoutSeconds = 300)`,
+		// The executable runner has dedicated staging/timeout tests. Pin
+		// the wrapper and BOM-safe, cancellation-guarded input separately.
 		`$psi.Arguments = '-i "' + $resolvedKeyPath + '" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="' + $resolvedKnownHostsPath + '" -o ConnectTimeout=20 ' + $remote + ' "' + $remoteRunner + '"'`,
-		`(New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1` + "`" + `n" + $Script)`,
-		`Invoke-RemoteScript $caddyConfigPreflight`,
+		`(New-Object Text.UTF8Encoding($false)).GetBytes("CSX-SCRIPT-V1` + "`" + `nset -e` + "`" + `n$guard` + "`" + `n" + $Script)`,
+		`caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`,
 		`Invoke-RemoteScript $promoteCaddy`,
-		`Invoke-RemoteScript $safeAccessLogSmoke`,
 		`Invoke-RemoteScript $rollbackCaddy`,
-		`Invoke-RemoteScript $legacyAccessPurge`,
-		`Invoke-RemoteScript $adminProbe`,
 		`Invoke-RemoteScript $releaseDeployLock`,
-		`-v "$candidate":/etc/caddy/Caddyfile:ro`,
-		`if [ "$passed" -eq 0 ]; then rm -f "$candidate"; fi`,
+		`-v /opt/codesamplex/deploy/caddy/Caddyfile.candidate:/etc/caddy/Caddyfile:ro`,
 		`sudo install -d -o $User -g $User /opt/codesamplex`,
 		`[string]::Equals($Domain, "codesamplex.dev", [StringComparison]::OrdinalIgnoreCase)`,
-		`$safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)`,
 		`Caddyfile.rollback-predeploy`,
 		`docker compose up -d --no-build --no-deps --force-recreate caddy`,
 		`test "$(cat "$lock/owner")" = "$owner"`,
@@ -81,9 +62,6 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		`rmdir "$lock"`,
 		`csx-server-image-$deployLockOwner.tar`,
 		`Remove-Item -LiteralPath $imageTar -Force`,
-		`test "$(readlink -f "$old_dir")" = /var/log/caddy`,
-		`[ ! -L "$old" ] || exit 66`,
-		`"$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz`,
 		`caddy:2.11.4-alpine`,
 	} {
 		if !strings.Contains(script, required) {
@@ -108,10 +86,7 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		t.Fatal("candidate Caddyfile is copied over the live bind path before validation")
 	}
 	if strings.Contains(script, "rm -rf /var/log/caddy") || strings.Contains(script, "rm -rf /opt/codesamplex/.deploy-lock") || strings.Contains(script, "docker volume rm") {
-		t.Fatal("legacy-log cleanup widened beyond exact access-log files")
-	}
-	if purge := strings.Index(script, "$legacyAccessPurge = @'"); purge <= positions[len(positions)-1] {
-		t.Fatal("legacy query-bearing logs are purged before the replacement safe-log smoke succeeds")
+		t.Fatal("deployment contains irreversible legacy-log or lock cleanup")
 	}
 
 	for _, required := range []string{
@@ -192,11 +167,6 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 			t.Errorf("activity key crosses an unsafe boundary: %q", forbidden)
 		}
 	}
-	// The one place the key is read back must consume it inside a quiet
-	// matcher rather than printing it across the SSH channel.
-	if !strings.Contains(script, `printf "%s\n" "$CSX_ACTIVITY_HASH_KEY" | grep -Eq "^[0-9a-f]{64}$"`) {
-		t.Error("activity key smoke check no longer verifies the key without emitting it")
-	}
 	keyInstall := strings.Index(script, "Invoke-RemoteScript $ensureActivityKey")
 	serverStart = strings.Index(script, `docker compose up -d --no-build --force-recreate server`)
 	if keyInstall < 0 || serverStart <= keyInstall {
@@ -204,41 +174,26 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	}
 }
 
-// These programs cross three parsers: PowerShell, the remote host's sh, and
-// a shell inside the Caddy/server container. A single-quoted `sh -c` body is
-// unsafe here because the privacy regex itself contains single quotes; the
-// remote shell then interprets its `|` alternatives as commands. Keep the
-// container program on stdin so regex quoting arrives byte-for-byte.
-func TestPrivacySmokeContainerProgramsCrossTheShellBoundaryOnStdin(t *testing.T) {
-	script := readDeployFixture(t, "deploy.ps1")
-
-	for _, required := range []string{
-		`docker exec -i "$name" sh -s <<'CSX_CADDY_PREFLIGHT_SMOKE'`,
-		`docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'`,
-		`docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_VERIFY'`,
-		`docker compose exec -T server sh -s <<'CSX_SAFE_LOG_SERVER_VERIFY'`,
-		`docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PURGE'`,
-	} {
-		if !strings.Contains(script, required) {
-			t.Errorf("privacy smoke no longer transports the container program on stdin: missing %q", required)
-		}
+// Validate the actual nested shell programs after moving them to observation.
+// Historical inline single-quote regressions must fail before SSH execution.
+func TestPrivacyObservationProgramsParseAcrossShellBoundaries(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
 	}
-	for _, unsafe := range []string{
-		`docker exec "$name" sh -c '`,
-		`docker compose exec -T caddy sh -c '`,
-	} {
-		if strings.Contains(script, unsafe) {
-			t.Errorf("quote-sensitive privacy program still crosses a nested sh -c boundary: %q", unsafe)
-		}
+	observer := readDeployFixture(t, "collect-extended-observation.sh")
+	cmd := exec.Command(sh, "-n")
+	cmd.Stdin = strings.NewReader(observer)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("observation shell does not parse: %v: %s", err, out)
 	}
 }
 
 func TestProductionEvidenceIgnoresPreservedLegacyClusterRows(t *testing.T) {
-	deploy := readDeployFixture(t, "deploy.ps1")
 	collector := readDeployFixture(t, "collect-production-evidence.sh")
 	predicate := `COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')`
 	currentGap := `COALESCE(error_fp,'') = ''`
-	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
+	for name, script := range map[string]string{"collector": collector} {
 		if !strings.Contains(script, predicate) || !strings.Contains(script, currentGap) {
 			t.Errorf("%s counts preserved pre-0024 legacy fingerprints as current failure clusters", name)
 		}
@@ -335,7 +290,7 @@ func TestActivityKeyInstallIsAtomicAcrossFreshUpgradeAndRerun(t *testing.T) {
 	}
 }
 
-func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing.T) {
+func TestServerRolloutKeepsExactIndependentRollbackThroughCriticalChecks(t *testing.T) {
 	script := readDeployFixture(t, "deploy.ps1")
 
 	stages := []string{
@@ -346,13 +301,8 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 		`Invoke-RemoteScript $promoteServerConfig`,
 		`$serverActivationStarted = $true`,
 		`docker compose up -d --no-build --force-recreate server`,
-		`throw "healthz never returned ok"`,
-		`Invoke-RemoteScript $adminProbe`,
-		`Invoke-RemoteScript $activitySmoke`,
+		`healthz never returned ok`,
 		`throw "served SHA does not match the immutable deployment revision"`,
-		`throw "complete + partial + missing + legacy-evidence-incomplete does not equal FAIL"`,
-		`landing sample:`,
-		`Invoke-RemoteScript $legacyAccessPurge`,
 		`Invoke-RemoteScript $commitDeployment`,
 	}
 	last := -1
@@ -391,7 +341,7 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 		`docker tag codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:latest`,
 		`docker image rm codesamplex/csx-server:latest`,
 		`docker compose up -d --no-build --no-deps --force-recreate server`,
-		`docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz`,
+		`docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz`,
 		`test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"`,
 		`cmp -s docker-compose.yml.rollback-predeploy docker-compose.yml`,
 		`cmp -s .env.rollback-predeploy .env`,
@@ -402,13 +352,9 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 		`$credentialRollbackFailure = $_`,
 		`$allFailures.Add($deployFailure.Exception)`,
 		`throw $deployFailure`,
-		`SELECT to_regclass('public.activity_buckets') IS NOT NULL`,
-		`SELECT to_regclass('public.activity_health') IS NOT NULL`,
-		`test "$columns" = kind,epoch,bucket,owner,first_seen,last_seen`,
-		`test "$owner_epochs" = 2`,
 	} {
 		if !strings.Contains(script, required) {
-			t.Errorf("server rollback/activity smoke is missing %q", required)
+			t.Errorf("server exact rollback is missing %q", required)
 		}
 	}
 	if strings.Contains(script, `Write-Warning "server rollout failed`) || strings.Contains(script, `Write-Warning "Caddy activation failed`) {
@@ -419,99 +365,29 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 	}
 }
 
-func TestAutomaticDeployNeverPerformsTheIrreversibleLegacyLogPurge(t *testing.T) {
+func TestDeploymentNeverPerformsObservationOrIrreversibleLogCleanup(t *testing.T) {
 	deploy := readDeployFixture(t, "deploy.ps1")
 	wrapper := readDeployFixture(t, "deploy-production.ps1")
-	preflight := legacyLogPreflight(t, deploy)
-
-	for _, required := range []string{
-		`[switch]$RequireNoLegacyAccessLogs`,
-		`legacy query-bearing access log requires a manual privacy cleanup`,
-		`automatic deploy performed no irreversible legacy-log cleanup`,
+	for _, forbidden := range []string{
+		"$safeAccessLogSmoke", "$activitySmoke", "$adminProbe", "$publicSmoke",
+		"$legacyAccessPurge", "$assertNoLegacyAccessLogs", "CSX_LEGACY_ACCESS_PURGE",
+		"CSX_LEGACY_ACCESS_PREFLIGHT", "privacy-safe log probe", "legacy query-bearing access log requires",
 	} {
-		if !strings.Contains(deploy, required) {
-			t.Errorf("automatic deployment privacy gate is missing %q", required)
+		if strings.Contains(deploy, forbidden) {
+			t.Errorf("deployment still blocks on observation or purges historical logs: %q", forbidden)
 		}
 	}
-	if !strings.Contains(wrapper, `-RequireNoLegacyAccessLogs`) {
-		t.Fatal("the production Actions wrapper can still execute the irreversible legacy-log purge")
+	if !strings.Contains(deploy, "[switch]$RequireNoLegacyAccessLogs") || !strings.Contains(wrapper, "-RequireNoLegacyAccessLogs") {
+		t.Error("the canonical caller's legacy no-purge compatibility switch changed")
 	}
-	for _, required := range []string{
-		`cd /opt/codesamplex/deploy`,
-		`docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'`,
-		`old_dir=/var/log/caddy`,
-		`test "$(readlink -f "$old_dir")" = /var/log/caddy`,
-		`"$old_dir"/access.log "$old_dir"/access-*.log "$old_dir"/access-*.log.gz`,
-	} {
-		if !strings.Contains(preflight, required) {
-			t.Errorf("automatic privacy preflight does not inspect the mounted Caddy log volume: missing %q", required)
+	for _, forbidden := range []string{"rm -rf /var/log/caddy", "docker volume rm", "rm -f \"$old\""} {
+		if strings.Contains(deploy, forbidden) {
+			t.Errorf("deployment contains irreversible legacy-log cleanup %q", forbidden)
 		}
 	}
-	if strings.Contains(preflight, `/opt/codesamplex/caddy-logs.pre-safe`) {
-		t.Fatal("automatic privacy preflight still checks an unrelated host directory instead of the named Caddy volume")
-	}
 }
 
-func TestAutomaticLegacyLogPreflightFailsClosedOnMountedVolumeContents(t *testing.T) {
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("POSIX shell unavailable")
-	}
-	program := legacyLogPreflight(t, readDeployFixture(t, "deploy.ps1"))
-	program = strings.Replace(program, "cd /opt/codesamplex/deploy", `cd "$CSX_TEST_DEPLOY_DIR"`, 1)
-	program = strings.Replace(program,
-		"docker compose exec -T caddy sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'",
-		"sh -s <<'CSX_LEGACY_ACCESS_PREFLIGHT'", 1)
-	program = strings.Replace(program, "old_dir=/var/log/caddy", `old_dir="$CSX_TEST_CADDY_LOG_DIR"`, 1)
-	program = strings.Replace(program,
-		`test "$(readlink -f "$old_dir")" = /var/log/caddy`,
-		`test "$(readlink -f "$old_dir")" = "$(readlink -f "$CSX_TEST_CADDY_LOG_DIR")"`, 1)
-
-	deployDir := t.TempDir()
-	logDir := t.TempDir()
-	run := func() ([]byte, error) {
-		cmd := exec.Command(sh, "-c", program)
-		cmd.Env = append(os.Environ(),
-			"CSX_TEST_DEPLOY_DIR="+filepath.ToSlash(deployDir),
-			"CSX_TEST_CADDY_LOG_DIR="+filepath.ToSlash(logDir))
-		return cmd.CombinedOutput()
-	}
-	if out, err := run(); err != nil {
-		t.Fatalf("empty mounted log volume failed preflight: %v: %s", err, out)
-	}
-	legacy := filepath.Join(logDir, "access-2026-08-25.log.gz")
-	if err := os.WriteFile(legacy, []byte("legacy query data"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := run()
-	if err == nil {
-		t.Fatal("mounted legacy access log passed the automatic privacy preflight")
-	}
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 69 {
-		t.Fatalf("mounted legacy access log exit = %v, want 69; output=%s", err, out)
-	}
-	if !bytes.Contains(out, []byte("legacy query-bearing access log requires a manual privacy cleanup")) {
-		t.Fatalf("mounted legacy access log failure omitted the manual-cleanup instruction: %s", out)
-	}
-}
-
-func legacyLogPreflight(t *testing.T, deploy string) string {
-	t.Helper()
-	const marker = `$assertNoLegacyAccessLogs = @'`
-	start := strings.Index(deploy, marker)
-	if start < 0 {
-		t.Fatal("automatic deployment privacy preflight is missing")
-	}
-	tail := deploy[start+len(marker):]
-	end := strings.Index(tail, "\n'@")
-	if end < 0 {
-		t.Fatal("automatic deployment privacy preflight here-string is unterminated")
-	}
-	return tail[:end]
-}
-
-func TestAdminCredentialCommitFollowsEverySmokeAndRemoteCommit(t *testing.T) {
+func TestManualAdminCredentialCommitFollowsAuthenticatedSmokeAndRemoteCommit(t *testing.T) {
 	script := readDeployFixture(t, "deploy.ps1")
 	commitLocal := strings.Index(script, `Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active`)
 	if commitLocal < 0 {
@@ -519,12 +395,7 @@ func TestAdminCredentialCommitFollowsEverySmokeAndRemoteCommit(t *testing.T) {
 	}
 	for _, prior := range []string{
 		`Write-Output "healthz: ok"`,
-		`Invoke-RemoteScript $safeAccessLogSmoke`,
-		`Invoke-RemoteScript $adminProbe`,
 		`admin authenticated smoke: 200`,
-		`Invoke-RemoteScript $activitySmoke`,
-		`landing sample:`,
-		`Invoke-RemoteScript $legacyAccessPurge`,
 		`Invoke-RemoteScript $commitDeployment`,
 	} {
 		position := strings.Index(script, prior)

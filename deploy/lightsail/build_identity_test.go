@@ -49,12 +49,12 @@ func TestDeployStampsTheBuildIdentityOntoTheImage(t *testing.T) {
 	script := readDeployFixture(t, "deploy.ps1")
 
 	for _, required := range []string{
-		`$buildVersion = (& git -C $repo describe --tags --always).Trim()`,
+		`Invoke-DeployProcess git @("-C", $repo, "describe", "--tags", "--always") 10`,
 		`$builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")`,
-		`--build-arg "CSX_VERSION=$revision"`,
-		`--build-arg "CSX_BUILD_VERSION=$buildVersion"`,
-		`--build-arg "CSX_BUILT_AT=$builtAt"`,
-		`--build-arg "CSX_ENV=production"`,
+		`"--build-arg", "CSX_VERSION=$revision"`,
+		`"--build-arg", "CSX_BUILD_VERSION=$buildVersion"`,
+		`"--build-arg", "CSX_BUILT_AT=$builtAt"`,
+		`"--build-arg", "CSX_ENV=production"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("deploy no longer stamps the image: missing %q", required)
@@ -72,14 +72,14 @@ func TestDeployStampsTheBuildIdentityOntoTheImage(t *testing.T) {
 func TestDeployVerifiesTheServedBuildNotOnlyTheConfiguredOne(t *testing.T) {
 	script := readDeployFixture(t, "deploy.ps1")
 
-	probe := `served=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version |`
+	probe := `served=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version |`
 	if !strings.Contains(script, probe) {
 		t.Fatal("the live identity check never asks the server what it is serving")
 	}
-	if !strings.Contains(script, `printf '%s|%s|%s|%s|%s\n' "$revision" "$image" "$label" "$migration" "$served"`) {
+	if !strings.Contains(script, `printf '%s|%s|%s|%s|%s|%s\n' "$revision" "$image" "$label" "$migration" "$served" "$started"`) {
 		t.Error("the served revision is probed but not reported back")
 	}
-	if !strings.Contains(script, `$liveIdentityParts.Count -ne 5`) ||
+	if !strings.Contains(script, `$liveIdentityParts.Count -ne 6`) ||
 		!strings.Contains(script, `$liveIdentityParts[4] -ne $revision`) {
 		t.Error("the served revision is reported but not compared against the deployed revision")
 	}
@@ -112,21 +112,32 @@ func TestProductionEvidenceToleratesAServerWithoutVersion(t *testing.T) {
 	}
 }
 
-func TestAutomaticRolloutRequiresTheServedRevision(t *testing.T) {
+func TestAutomaticRolloutUsesTheValidatedIdentityInsideRollbackScope(t *testing.T) {
 	wrapper := readDeployFixture(t, "deploy-production.ps1")
-
-	if !strings.Contains(wrapper, "'health','served_revision','invariants'") {
-		t.Error("the rollout wrapper does not require a served revision in the evidence")
+	deploy := readDeployFixture(t, "deploy.ps1")
+	if !strings.Contains(wrapper, "-DeploymentEvidence $evidence") {
+		t.Error("canonical deployment does not consume the transaction's validated identity")
 	}
-	if !strings.Contains(wrapper, "$evidence.servedRevision = $after.served_revision") {
-		t.Error("the served revision is not recorded in the uploaded deploy evidence")
+	for _, required := range []string{
+		`$DeploymentEvidence.servedRevision = $liveIdentityParts[4]`,
+		`$DeploymentEvidence.deployedSha = $liveIdentityParts[0]`,
+		`$DeploymentEvidence.imageDigest = $liveIdentityParts[1]`,
+		`$liveIdentityParts[4] -ne $revision`,
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("deploy omits exact-SHA evidence contract %q", required)
+		}
 	}
-	if !strings.Contains(wrapper, "$after.served_revision -ne $ExpectedRevision") {
-		t.Error("the rollout accepts a server serving a commit other than the dispatched one")
+	validated := strings.Index(deploy, `throw "served SHA does not match the immutable deployment revision"`)
+	evidence := strings.Index(deploy, `$DeploymentEvidence.servedRevision =`)
+	if evidence < 0 {
+		t.Fatal("validated identity evidence missing")
 	}
-	// The pre-deploy read happens against the outgoing build, so the
-	// assertion must be on the post-deploy state only.
-	if strings.Contains(wrapper, "$before.served_revision -ne") {
-		t.Error("the rollout asserts a served revision on the build it is replacing")
+	committed := evidence + strings.Index(deploy[evidence:], `$serverActivationStarted = $false`)
+	if validated < 0 || evidence <= validated || committed <= evidence {
+		t.Fatalf("exact identity evidence escapes rollback scope: validated=%d evidence=%d committed=%d", validated, evidence, committed)
+	}
+	if strings.Contains(wrapper, "$after = Read-ProductionState") {
+		t.Error("fallible postcommit collector can relabel a healthy deployment as failed")
 	}
 }

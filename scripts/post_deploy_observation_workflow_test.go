@@ -298,14 +298,14 @@ func TestPostDeployObservationInvokesTheSeparateObserver(t *testing.T) {
 func TestPostDeployObservationAlwaysRetainsEvidenceAndFailsClosed(t *testing.T) {
 	workflow := postDeployObservationWorkflow(t)
 	for _, required := range []string{
-		"Initialize fail-closed observation evidence",
+		"Initialize incident-only observation evidence",
 		"post-deploy-observation.json",
 		"post-deploy-observation.md",
 		"if: always()",
 		"actions/upload-artifact@",
 		"if-no-files-found: error",
 		"retention-days: 30",
-		"Fail when production did not converge safely",
+		"Report classified observation failure without deploying",
 		`OBSERVER_OUTCOME: ${{ steps.observer.outcome }}`,
 		`SUPERSEDED: ${{ steps.supersession.outputs.superseded }}`,
 		`if [[ "$SUPERSEDED" == "true" && "$conclusion" == "superseded" ]]`,
@@ -335,6 +335,46 @@ func TestEveryPostDeployObservationActionIsPinnedAndReviewed(t *testing.T) {
 		}
 		if !allowed[ref[1]] {
 			t.Fatalf("action %q is outside the reviewed post-deploy set", ref[1])
+		}
+	}
+}
+
+func TestPostDeployObservationDefaultsToIncidentAndNeverAutomatesRollback(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	initial := postDeployObservationStep(t, workflow, "Initialize incident-only observation evidence")
+	for _, required := range []string{`classification = "incident-only"`, `rollbackRequested = $false`, `observer failure is not rollback proof`} {
+		if !strings.Contains(initial, required) {
+			t.Errorf("uncompleted observer does not default to incident-only: missing %q", required)
+		}
+	}
+	for _, required := range []string{"timeout-minutes: 95", "timeout-minutes: 36", "timeout --kill-after=5s 60s gh api", "timeout --kill-after=5s 195s ssh", ".rollbackRequested != true"} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("observation deadline / classification guard missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"actions: write", "gh workflow run", "/dispatches", "rollback.ps1", "docker compose up"} {
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("observer can automatically roll back through %q", forbidden)
+		}
+	}
+}
+
+func TestPostDeployOptionalSourceBaselineIsBoundedAndAuthenticated(t *testing.T) {
+	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Find an optional authenticated previous source baseline")
+	for _, required := range []string{
+		"continue-on-error: true", "timeout-minutes: 3", "deadline=$((SECONDS + 120))", "per_page=20",
+		"timeout --kill-after=5s 15s gh api", `.repository.full_name == $repo`, `.run_number < $current`,
+		`.path == ".github/workflows/production-deploy.yml"`, `.event == "workflow_dispatch"`,
+		`.status == "completed" and .conclusion == "success"`, `(.workflowRunId | tostring) == $id`,
+		`.targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha`,
+		`.health == "ok" and .smoke == "pass" and .rollback == "not-needed"`,
+		`.invariants as $counts`, `type == "number" and . >= 0 and floor == .`,
+		`.path == ".github/workflows/post-deploy-observation.yml"`, `.extended.identity_before == $identity`,
+		`.extended.identity_after == $identity`, `.extended.detail_invariants | fromjson`,
+		`"$RUNNER_TEMP/source-baseline.json"`,
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("optional baseline trust / deadline check missing %q", required)
 		}
 	}
 }

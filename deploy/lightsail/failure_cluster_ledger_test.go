@@ -2,29 +2,21 @@ package lightsail
 
 import (
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-// The deploy transaction refuses to commit when the cluster-observation
-// ledger moves, and it computes that ledger in shell, not in Go. So the
-// server and the gate can disagree silently: after migration 0024 preserved
-// the pre-contract rows, the shell summed every historical row while the
-// server served only the current ones, and the gate read a doubling that the
-// site never showed.
-//
-// There is one predicate, and it lives in Go. Both scripts must spell it the
-// same way, whitespace aside.
-func TestDeployLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T) {
+// Observation must use the server's current cluster predicate so preserved
+// legacy rows cannot be mistaken for a current ledger correctness failure.
+func TestObservationLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T) {
 	want := normalizeSQL(strings.TrimSuffix(strings.TrimPrefix(
 		strings.TrimSpace(serverstore.CurrentFailureClusterPredicateSQL), "("), ")"))
 	if want == "" {
 		t.Fatal("the shared predicate is empty")
 	}
-	for _, name := range []string{"deploy.ps1", "collect-production-evidence.sh"} {
+	for _, name := range []string{"collect-production-evidence.sh"} {
 		script := normalizeSQL(readDeployFixture(t, name))
 		if !strings.Contains(script, want) {
 			t.Errorf("%s does not compute the ledger with the server's predicate\nwant: %s", name, want)
@@ -35,143 +27,42 @@ func TestDeployLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T) {
 	}
 }
 
-// failure_clusters is a rebuildable materialization. A full builder pass can
-// regroup the same source FAIL evidence and legitimately reduce its summed
-// observation count (production did exactly that: 20098 -> 20096). The deploy
-// must still reject source loss, an empty materialization, or a cluster whose
-// quality breakdown no longer adds up to its observation count.
-func TestDeploySeparatesSourceMonotonicityFromDerivedClusterConsistency(t *testing.T) {
-	deploy := readDeployFixture(t, "deploy.ps1")
+// Detailed derived-ledger checks remain available after activation, but cannot
+// hold the rollback transaction open or turn builder convergence into rollback.
+func TestDetailedLedgerChecksBelongToObservation(t *testing.T) {
 	collector := readDeployFixture(t, "collect-production-evidence.sh")
-
 	for _, required := range []string{
-		`$sourceInvariantIndexes = @(0, 1, 2, 4, 5)`,
-		`foreach ($i in $sourceInvariantIndexes)`,
-		`$afterValues[1] -gt 0 -and $afterValues[3] -le 0`,
-		`$afterValues[6] -ne 0`,
-		`failure-cluster observation delta: $failureClusterObservationDelta`,
-		`failure-cluster ledger is internally inconsistent`,
-	} {
-		if !strings.Contains(deploy, required) {
-			t.Errorf("deploy does not enforce the split source/derived invariant: missing %q", required)
-		}
-	}
-	if strings.Contains(deploy, `for ($i = 0; $i -lt $beforeValues.Count; $i++)`) {
-		t.Error("deploy still applies monotonicity to the rebuildable failure-cluster total")
-	}
-	if strings.Contains(deploy, `PASS/FAIL/sample/failure-cluster invariant decreased`) {
-		t.Error("deploy still reports the derived failure-cluster total as a monotonic source invariant")
-	}
-	if strings.Contains(deploy, `$beforeValues[6] -ne 0`) {
-		t.Error("deploy blocks the fresh full builder from repairing a pre-existing derived-ledger imbalance")
-	}
-	for name, script := range map[string]string{"deploy": deploy, "collector": collector} {
-		for _, required := range []string{
-			`jsonb_each(fc.evidence_breakdown)`,
-			`item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')`,
-			`fc.observation_count::numeric <> COALESCE`,
-		} {
-			if !strings.Contains(script, required) {
-				t.Errorf("%s does not fail closed on an inconsistent cluster row: missing %q", name, required)
-			}
-		}
-	}
-	if !strings.Contains(collector, `'unbalancedFailureClusterRows'`) {
-		t.Error("production evidence does not record the derived-ledger consistency result")
-	}
-	for _, required := range []string{
+		`jsonb_each(fc.evidence_breakdown)`,
+		`item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')`,
+		`fc.observation_count::numeric <> COALESCE`,
+		`'unbalancedFailureClusterRows'`,
 		`server_started_at=$(docker inspect codesamplex-server-1`,
 		`builder_generated_at=$(docker compose exec -T db psql`,
 		`builder_fresh=true`,
 		`printf 'builder_fresh=%s\n' "$builder_fresh"`,
 	} {
 		if !strings.Contains(collector, required) {
-			t.Errorf("production evidence does not prove a fresh full builder pass: missing %q", required)
+			t.Errorf("observation evidence omits derived-ledger detail %q", required)
 		}
 	}
-
-	wrapper := readDeployFixture(t, "deploy-production.ps1")
-	for _, required := range []string{
-		`'server_started_at','builder_generated_at','builder_fresh'`,
-		`$evidence.builderFresh = $after.builder_fresh -eq "true"`,
-		`$evidence.failureClusterObservationDelta = [int64]$after.invariants.failureClusterObservations - [int64]$before.invariants.failureClusterObservations`,
-	} {
-		if !strings.Contains(wrapper, required) {
-			t.Errorf("production artifact omits the builder/derived delta proof: missing %q", required)
-		}
+	observer := readDeployFixture(t, "observe-production.ps1")
+	if !strings.Contains(observer, "collect-production-evidence.sh") {
+		t.Error("post-deploy observation no longer collects detailed invariants")
 	}
 }
 
-// The deploy still reads the safety invariants once before and once after the
-// cutover, but no longer polls the heavyweight builder completion marker.
-func TestDeployReadsSafetyInvariantsWithoutBuilderPolling(t *testing.T) {
-	deploy := readDeployFixture(t, "deploy.ps1")
-	if got := strings.Count(deploy, `Invoke-RemoteScript $collectInvariantScript`); got != 2 {
-		t.Errorf("full invariant query invocation count = %d, want pre-deploy + one post-deploy", got)
-	}
-	if strings.Contains(deploy, "builderFreshPoll") || strings.Contains(deploy, "collectBuilderFreshScript") {
-		t.Error("deploy still polls builder freshness inside the rollback transaction")
-	}
-}
-
-func TestDeployInvariantPolicyAcceptsAReconciledDerivedLedger(t *testing.T) {
-	script := readDeployFixture(t, "deploy.ps1")
-	const marker = `$sourceInvariantIndexes = @(`
-	start := strings.Index(script, marker)
-	if start < 0 {
-		t.Fatal("source invariant index declaration is missing")
-	}
-	start += len(marker)
-	end := strings.Index(script[start:], ")")
-	if end < 0 {
-		t.Fatal("source invariant index declaration is malformed")
-	}
-	var sourceIndexes []int
-	for _, raw := range strings.Split(script[start:start+end], ",") {
-		index, err := strconv.Atoi(strings.TrimSpace(raw))
-		if err != nil {
-			t.Fatalf("source invariant index %q is not numeric: %v", raw, err)
-		}
-		sourceIndexes = append(sourceIndexes, index)
-	}
-
-	allows := func(before, after []int64) bool {
-		if len(before) != 7 || len(after) != 7 || after[6] != 0 {
-			return false
-		}
-		for _, index := range sourceIndexes {
-			if after[index] < before[index] {
-				return false
+func TestDeploymentTransactionNeverScansDetailedInvariants(t *testing.T) {
+	for _, name := range []string{"deploy.ps1", "deploy-production.ps1", "collect-deploy-identity.sh"} {
+		script := readDeployFixture(t, name)
+		for _, forbidden := range []string{
+			"collectInvariantScript", "sourceInvariantIndexes", "jsonb_each(fc.evidence_breakdown)",
+			"collect-production-evidence.sh", "builderFreshPoll", "collectBuilderFreshScript",
+			"complete + partial + missing + legacy-evidence-incomplete does not equal FAIL",
+		} {
+			if strings.Contains(script, forbidden) {
+				t.Errorf("%s still performs expensive observation inside deployment: %q", name, forbidden)
 			}
 		}
-		return after[1] == 0 || after[3] > 0
-	}
-
-	liveBefore := []int64{167173, 19262, 108, 20098, 0, 0, 0}
-	liveAfter := []int64{167173, 19262, 108, 20096, 0, 0, 0}
-	if !allows(liveBefore, liveAfter) {
-		t.Error("the exact production reconciliation 20098 -> 20096 is still rejected")
-	}
-	repairBefore := []int64{167173, 19262, 108, 20098, 0, 0, 1}
-	if !allows(repairBefore, liveAfter) {
-		t.Error("a fresh full builder cannot repair a pre-existing derived-ledger imbalance")
-	}
-
-	for _, tc := range []struct {
-		name  string
-		after []int64
-	}{
-		{"raw FAIL loss", []int64{167173, 19261, 108, 20096, 0, 0, 0}},
-		{"published sample loss", []int64{167173, 19262, 107, 20096, 0, 0, 0}},
-		{"derived ledger disappeared", []int64{167173, 19262, 108, 0, 0, 0, 0}},
-		{"derived ledger unbalanced", []int64{167173, 19262, 108, 20096, 0, 0, 1}},
-		{"malformed legacy tuple", []int64{167173, 19262, 108, 20096, 0, 0}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if allows(liveBefore, tc.after) {
-				t.Error("unsafe deployment transition was accepted")
-			}
-		})
 	}
 }
 

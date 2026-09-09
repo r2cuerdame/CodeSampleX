@@ -179,8 +179,9 @@ func TestProductionEvidenceIsAlwaysRetained(t *testing.T) {
 		"migrationVersion",
 		"health",
 		"rollback",
-		"invariants",
-		"failureEvidenceQuality",
+		"servedRevision",
+		"observation",
+		"failureClass",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("production evidence contract is missing %q", required)
@@ -217,8 +218,8 @@ func TestProductionJobBudgetExcludesTheFullBuilderWait(t *testing.T) {
 	if jobMinutes < 15 {
 		t.Fatalf("production job budget = %dm, too short for image transfer and exact rollback", jobMinutes)
 	}
-	if jobMinutes > 45 {
-		t.Fatalf("production job budget = %dm; a lightweight deploy must not retain the old 80-minute builder reserve", jobMinutes)
+	if jobMinutes > 35 {
+		t.Fatalf("production job budget = %dm; a lightweight deploy must not retain the old unbounded deployment work", jobMinutes)
 	}
 }
 
@@ -264,13 +265,13 @@ func TestSSHUsesOnlyThePinnedHostKey(t *testing.T) {
 	}
 }
 
-func TestProductionProbeToleratesWindowsPowerShellStdinBOM(t *testing.T) {
+func TestProductionProbeHasABoundedBOMSafeStdinEnvelope(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy-production.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := string(raw)
-	if !strings.Contains(script, `"{ printf '#'; cat; } | sh"`) {
+	if !strings.Contains(script, `"{ printf '#'; cat; } | timeout --signal=TERM --kill-after=2 20 sh"`) {
 		t.Fatal("production probe lacks the stdin envelope that neutralizes a Windows PowerShell BOM")
 	}
 }
@@ -286,6 +287,35 @@ func TestProductionRequiresTargetSpecificTrackingIssue(t *testing.T) {
 	} {
 		if !strings.Contains(step, required) {
 			t.Errorf("target-specific tracking issue gate is missing %q", required)
+		}
+	}
+}
+
+func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	ceilings := map[string]int{"preparation": 600, "staging": 300, "activation": 240, "rollback": 300, "cleanup": 60}
+	for phase, seconds := range ceilings {
+		expected := "Set-DeployPhase " + phase + " " + strconv.Itoa(seconds)
+		if !strings.Contains(script, expected) {
+			t.Errorf("critical-path ceiling changed: missing %q", expected)
+		}
+	}
+	workflow := productionWorkflow(t)
+	step := productionWorkflowStep(t, workflow, "Deploy and verify")
+	if !strings.Contains(step, "timeout-minutes: 27") {
+		t.Error("deploy step must preserve its bounded 27-minute rollback reserve")
+	}
+	deploy := releaseJobs(t, workflow)["deploy"]
+	if !strings.Contains(deploy, "timeout-minutes: 30") {
+		t.Error("deploy job must bound checkout, activation, rollback and evidence at 30 minutes")
+	}
+	for _, forbidden := range []string{"observe-production.ps1", "collect-extended-observation.sh", "collect-production-evidence.sh"} {
+		if strings.Contains(step, forbidden) {
+			t.Errorf("optional observation holds the deployment step open: %q", forbidden)
 		}
 	}
 }
