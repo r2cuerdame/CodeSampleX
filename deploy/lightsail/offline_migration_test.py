@@ -36,6 +36,10 @@ class FakeHost(migration.Host):
         self.helper_running = False
         self.helper_exit = 0
         self.stale = 0
+        self.repair_required = False
+        self.barrier_count = 1
+        self.barrier_armed = True
+        self.index_fault = None
         self.server_present = False
         self.server_backend_present = False
         self.server_image = IMAGE
@@ -61,6 +65,10 @@ class FakeHost(migration.Host):
                 "NetworkSettings": {"Networks": {"default": {"IPAddress": "172.20.0.4"}}}}]), "")
         if args[:2] == ("ps", "-aq"):
             output = "helper-id" if self.helper_present else ""
+        elif args[-1] == "http://127.0.0.1:8080/healthz":
+            output = "ok"
+        elif args[-1] == "http://127.0.0.1:8080/version":
+            output = json.dumps({"revision": TARGET})
         elif args[:1] == ("rm",):
             self.helper_present = False
             output = ""
@@ -104,8 +112,17 @@ class FakeHost(migration.Host):
         if "max(version)" in sql:
             return {"version": "0036_builder_projections.sql", "count": 37}
         if "pg_get_indexdef" in sql:
-            return [{"name": name, "valid": True, "ready": True, "definition": value}
+            rows = [{"name": name, "valid": True, "ready": True, "definition": value}
                     for name, value in migration.INDEXES.items()]
+            if self.index_fault == "missing": rows.pop()
+            if self.index_fault == "wrong": rows[0]["definition"] += " WHERE false"
+            if self.index_fault == "invalid": rows[0]["valid"] = False
+            if self.index_fault == "not-ready": rows[0]["ready"] = False
+            return rows
+        if "WITH latest AS" in sql:
+            self.repair_required = self.barrier_count == 1 and self.barrier_armed
+            return {"count": self.barrier_count, "day": "2026-09-09" if self.barrier_count else None,
+                    "armed": self.barrier_armed}
         if "'repairRequired'" in sql:
             return {"samples": self.stale, "receipts": 0, "repairRequired": True}
         raise AssertionError("unexpected SQL")
@@ -240,12 +257,16 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "helper failed"):
             self.host.migrate()
 
-    def test_only_migration_ledger_is_an_acceptance_query(self):
+    def test_migration_acceptance_uses_only_ledger_catalog_and_current_stats_row(self):
         self.host.verify_migration()
         self.assertEqual(self.host.evidence["migrationVerification"], "pass")
         queries = [q for k, q in self.host.calls if k == "sql"]
-        self.assertEqual(len(queries), 1)
+        self.assertEqual(len(queries), 3)
         self.assertIn("schema_migrations", queries[0])
+        self.assertIn("pg_get_indexdef", queries[1])
+        self.assertIn("LIMIT 1 FOR UPDATE", queries[2])
+        for table in ("evidence_agg", "compatibility_snapshots", "samples", "receipts"):
+            self.assertNotRegex(" ".join(queries), r"(?i)FROM\s+" + table + r"\b")
         self.host.query = lambda _: {"version": "0035_previous.sql", "count": 36}
         with self.assertRaisesRegex(RuntimeError, "ledger does not match"):
             self.host.verify_migration()
@@ -317,6 +338,99 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "identity override"):
             self.host.migrate()
         self.assertFalse(any(c[0] == "docker" and c[1][:2] == ("compose", "up") for c in self.host.calls))
+
+
+    def test_completed_retry_rearms_marker_without_corpus_scan(self):
+        self.assertFalse(self.host.repair_required)
+        self.host.verify_migration()
+        self.assertTrue(self.host.repair_required)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
+                         self.host.evidence["repairBarrierRearmed"])
+
+    def test_missing_or_unarmed_current_stats_row_blocks_activation(self):
+        for count, armed in ((0, False), (2, True), (1, False)):
+            with self.subTest(count=count, armed=armed):
+                self.host.barrier_count = count
+                self.host.barrier_armed = armed
+                with self.assertRaisesRegex(RuntimeError, "exactly one current stats row"):
+                    self.host.verify_migration()
+
+    def test_missing_wrong_or_not_ready_index_blocks_migration_acceptance(self):
+        for fault in ("missing", "wrong", "invalid", "not-ready"):
+            with self.subTest(fault=fault):
+                self.host.index_fault = fault
+                with self.assertRaisesRegex(RuntimeError, "indexes are missing|valid, ready and exact"):
+                    self.host.verify_migration()
+                self.assertFalse(self.host.repair_required)
+
+    def test_host_owns_stack_mutations_before_candidate_ready(self):
+        self.host.activate()
+        self.assertEqual("candidate-ready", self.host.evidence["phase"])
+        up = [c[1] for c in self.host.calls if c[0] == "docker" and c[1][:2] == ("compose", "up")]
+        self.assertEqual(3, len(up))
+        self.assertEqual(("compose", "up", "-d", "--no-build", "--remove-orphans"), up[1])
+        self.assertEqual(("compose", "up", "-d", "--no-build", "--force-recreate", "caddy"), up[2])
+        controller = Path(__file__).with_name("deploy.ps1").read_text()
+        start = controller.index('if (-not $OfflineMigration) {\nInvoke-Remote "cd /opt/codesamplex/deploy && docker compose up')
+        end = controller.index('\n}\n', start)
+        owned_elsewhere = controller[start:end]
+        self.assertIn("--remove-orphans", owned_elsewhere)
+        self.assertIn("--force-recreate caddy", owned_elsewhere)
+        self.assertIn("caddy reload", owned_elsewhere)
+        self.assertNotIn("safe-log-smoke.sh", Path(__file__).with_name("offline-migration.py").read_text())
+
+    def test_correct_ack_cannot_commit_after_deadline_during_identity_check(self):
+        ack = {key: self.host.evidence[key] for key in ("owner", "operationalSha", "targetSha", "imageDigest")}
+        (self.state / "commit.json").write_text(json.dumps(ack))
+        values = iter([0, 0, 601])
+        with patch.object(migration.time, "monotonic", lambda: next(values)):
+            with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
+                self.host.await_commit()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+
+    def test_expired_ack_is_rejected_before_identity_work(self):
+        ack = {key: self.host.evidence[key] for key in ("owner", "operationalSha", "targetSha", "imageDigest")}
+        (self.state / "commit.json").write_text(json.dumps(ack))
+        values = iter([0, 601])
+        with patch.object(migration.time, "monotonic", lambda: next(values)):
+            with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
+                self.host.await_commit()
+        self.assertFalse(any(kind == "identity" for kind, _ in self.host.calls))
+
+    def test_stopped_service_rollback_does_not_start_or_stop_service(self):
+        for service in ("server", "caddy"):
+            script = Path(__file__).with_name("rollback-" + service + ".sh").read_text()
+            self.assertIn("docker compose up --no-start --no-build --no-deps --force-recreate " + service, script)
+            self.assertNotIn("docker compose stop " + service, script)
+
+
+    def test_dist_restoration_requires_its_marker_and_previous_generation(self):
+        shell = shutil.which("sh")
+        if not shell:
+            self.skipTest("POSIX shell unavailable")
+        source = Path(__file__).with_name("rollback-server.sh").read_text()
+        guard = source[:source.index("if docker container inspect")]
+        guard = guard.replace("cd /opt/codesamplex/deploy", 'cd "$CSX_TEST_DIR"')
+        guard = guard.replace("/opt/codesamplex/dist.previous", '"$CSX_TEST_PREVIOUS"')
+        guard = guard.replace("__CSX_RESTORE_DIST__", "1")
+        for name in ("docker-compose.yml.rollback-absent", ".env.rollback-absent",
+                     "server-container.rollback-absent", "server-latest.rollback-absent"):
+            (self.root / name).touch()
+        previous = self.root.parent / "previous"
+        marker = self.root / "dist.rollback-promoted"
+        env = os.environ.copy()
+        env.update(CSX_TEST_DIR=self.root.as_posix(), CSX_TEST_PREVIOUS=previous.as_posix())
+        for name, has_marker, has_previous in (("missing-marker", False, True),
+                                              ("missing-generation", True, False),
+                                              ("complete", True, True)):
+            with self.subTest(case=name):
+                if has_marker: marker.touch()
+                elif marker.exists(): marker.unlink()
+                if has_previous: previous.mkdir(exist_ok=True)
+                elif previous.exists(): previous.rmdir()
+                result = subprocess.run([shell, "-c", guard], env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, name == "complete", result.stderr)
 
 
 class ProcessDeadlineTests(unittest.TestCase):

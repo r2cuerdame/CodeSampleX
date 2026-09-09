@@ -24,8 +24,12 @@ fi
 if [ -f .env.rollback-predeploy ]; then
   test ! -e .env.rollback-absent
 fi
-if [ "$restore_dist" -eq 1 ] && { [ ! -f dist.rollback-promoted ] || [ ! -d /opt/codesamplex/dist.previous ]; }; then restore_dist=0; fi
-if [ "$restore_dist" -eq 1 ]; then test -d /opt/codesamplex/dist.previous; fi
+if [ "$restore_dist" -eq 1 ]; then
+  # Requested restoration must never silently keep the candidate generation.
+  test -f dist.rollback-promoted
+  test -d /opt/codesamplex/dist.previous
+  test ! -L /opt/codesamplex/dist.previous
+fi
 if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then docker rm -f codesamplex-server-1 >/dev/null; fi
 if [ -f docker-compose.yml.rollback-predeploy ]; then
   cp -p docker-compose.yml.rollback-predeploy docker-compose.yml
@@ -52,9 +56,9 @@ if [ "$restore_dist" -eq 1 ]; then
 fi
 if [ -f server-container.rollback-present ]; then
   docker tag codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:latest
-  docker compose up -d --no-build --no-deps --force-recreate server
-  test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
   if [ -f server-container.rollback-running ]; then
+    docker compose up -d --no-build --no-deps --force-recreate server
+    test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
     i=0
     while [ "$i" -lt 24 ]; do
       if docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
@@ -67,7 +71,8 @@ if [ -f server-container.rollback-present ]; then
     served=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version | sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
     test "$served" = "$expected"
   else
-    docker compose stop server >/dev/null
+    docker compose up --no-start --no-build --no-deps --force-recreate server >/dev/null
+    test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
     test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = false
   fi
 else
