@@ -13,7 +13,12 @@ param(
     [hashtable]$DeploymentEvidence = @{},
     [switch]$SkipImage,
     [switch]$ConfigureAdmin,
-    [switch]$RotateAdmin
+    [switch]$RotateAdmin,
+    [string]$SourceRepoPath = "",
+    [string]$OperationalRevision = "",
+    [switch]$OfflineMigration,
+    [ValidateRange(60,1800)][int]$MigrationTimeoutSeconds = 1200,
+    [string]$MigrationEvidencePath = ""
 )
 $ErrorActionPreference = "Stop"
 # Canonical runners use PowerShell 7 for bounded, exact native argv transport.
@@ -21,7 +26,17 @@ if ($PSVersionTable.PSVersion.Major -lt 7) { throw "deployment requires PowerShe
 . (Join-Path $PSScriptRoot "deploy-budget.ps1")
 Set-DeployPhase preparation 600
 $DeploymentEvidence.phaseTimings = $script:deployPhaseTimings
-$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+. (Join-Path $PSScriptRoot "deployment-source.ps1")
+if ($ExpectedRevision -eq "") { $ExpectedRevision = (& git -C (Join-Path $PSScriptRoot "../..") rev-parse HEAD).Trim() }
+$source = Resolve-CSXDeploymentSource $SourceRepoPath $ExpectedRevision $OperationalRevision
+$repo = $source.Repository
+$OperationalRevision = $source.OperationalRevision
+if ($OfflineMigration -and $ConfigureAdmin) { throw "offline migration cannot combine credential rotation with host recovery" }
+$script:migrationSupervisorStarted = $false
+$script:migrationSupervisorTerminal = $true
+$script:migrationRecoveryVerified = $true
+$script:migrationState = ""
+$script:migrationUnit = ""
 $remote = "${User}@${Ip}"
 $resolvedKeyPath = (Resolve-Path -LiteralPath $KeyPath).Path
 $resolvedKnownHostsPath = (Resolve-Path -LiteralPath $KnownHostsPath).Path
@@ -247,6 +262,11 @@ function Invoke-RemoteInput([string]$Script, [string]$StdinText) {
 function Copy-Remote([string]$Local, [string]$RemotePath) {
     Invoke-DeployProcess $scpExecutable (@("-i", $resolvedKeyPath, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$resolvedKnownHostsPath", "-o", "ConnectTimeout=20", $Local, "${remote}:${RemotePath}")) 300 | Out-Null
 }
+
+# The lock covers local credential state, the fixed Docker tag/tar, every
+. (Join-Path $PSScriptRoot "offline-migration.ps1")
+$rollbackServerTemplate = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "rollback-server.sh")
+$rollbackCaddyTemplate = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "rollback-caddy.sh")
 
 # The lock covers local credential state, the fixed Docker tag/tar, every
 # remote candidate/rollback filename, activation and smoke. Creating the
@@ -757,7 +777,13 @@ Write-Output "== starting stack =="
 # replaced, so `compose up` without recreation can keep serving the previous
 # release forever. Recreate the server explicitly on every deploy: image
 # upgrades need the same guarantee, and its healthcheck bounds the restart.
-Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
+if ($OfflineMigration) {
+    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 300)
+    Start-CSXOfflineMigration
+    Set-DeployPhase activation-smoke 240
+} else {
+    Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
+}
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
 # Caddy documents that file-output option changes require a server restart,
 # not only a config reload. Recreate this single proxy after the healthy app
@@ -887,6 +913,7 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
     Write-Output "local admin credential committed after final remote deployment commit"
 }
+    if ($OfflineMigration) { Complete-CSXOfflineMigration }
     # Publish only the state validated INSIDE the rollback boundary. The wrapper
     # must not run a fallible optional collector after this commit.
     $DeploymentEvidence.deployedSha = $liveIdentityParts[0]
@@ -904,6 +931,24 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     Set-DeployPhase rollback 300
     $DeploymentEvidence.rollback = "attempted"
     $script:deployRecoveryMode = $true
+    if ($migrationSupervisorStarted) {
+        Set-DeployPhase host-recovery 540
+        try {
+            $hostResult = Stop-CSXOfflineMigration
+            if ($hostResult.phase -ne "rolled-back" -or $hostResult.cleanup -ne "pass") {
+                throw "host cleanup and exact rollback were not proved"
+            }
+            $script:migrationRecoveryVerified = $true
+            $DeploymentEvidence.rollback = "succeeded"
+        } catch {
+            $script:retainDeployLock = $true
+            $DeploymentEvidence.rollback = "unverified"
+            throw [AggregateException]::new("host migration recovery unresolved; lock retained", @($deployFailure.Exception, $_.Exception))
+        }
+        # The host owns cleanup and exact restoration after its launch. Never
+        # race a second controller rollback against its finalizer.
+        throw $deployFailure
+    }
     try {
         Invoke-RemoteScript ('umask 077; touch "$HOME/.csx-deploy-aborted-' + $deployLockOwner + '"') 20 | Out-Null
         $script:deployGenerationFenced = $true
@@ -1144,6 +1189,10 @@ Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagat
             try { Remove-Item -LiteralPath $temporaryFile -Force }
             catch { Write-Warning "could not remove a per-deploy local temporary file" }
         }
+    }
+    if ($migrationSupervisorStarted -and (-not $migrationSupervisorTerminal -or -not $migrationRecoveryVerified)) {
+        $script:retainDeployLock = $true
+        Write-Warning "host migration recovery unresolved; deployment lock retained"
     }
     if ($deployLockHeld -and -not $script:retainDeployLock) {
         $releaseDeployLock = @'

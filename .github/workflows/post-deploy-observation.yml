@@ -90,6 +90,8 @@ jobs:
           test "$(jq -er '.workflowRunId | tostring' "$deploy_evidence")" = "$DEPLOY_RUN_ID"
           test "$(jq -er '.conclusion' "$deploy_evidence")" = "success"
           target_sha=$(jq -er '.targetSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          operational_sha=$(jq -er '.operationalSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          test "$(jq -er '.head_sha' <<<"$run_json")" = "$operational_sha"
           previous_sha=$(jq -er '.previousProductionSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           deployed_sha=$(jq -er '.deployedSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           test "$deployed_sha" = "$target_sha"
@@ -127,6 +129,7 @@ jobs:
             echo "image_digest=${image_digest}"
             echo "server_started_at=${server_started_at}"
             echo "migration_version=${migration_version}"
+            echo "operational_sha=${operational_sha}"
             echo "tracking_issue=${tracking_issue}"
             echo "tracking_issue_number=${issue_number}"
           } >> "$GITHUB_OUTPUT"
@@ -161,18 +164,20 @@ jobs:
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ steps.deployment.outputs.target_sha }}
+          ref: ${{ steps.deployment.outputs.operational_sha }}
           fetch-depth: 0
 
-      - name: Prove observer source is the deployed canonical commit
+      - name: Prove observer source is the canonical deployment controller
         shell: bash
         env:
           TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$OPERATIONAL_SHA"
           timeout --kill-after=5s 120s git fetch --no-tags origin main
           git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          git merge-base --is-ancestor "$OPERATIONAL_SHA" origin/main
           test -f deploy/lightsail/observe-production.ps1
 
       - name: Install the dedicated SSH identity and pinned host key
@@ -298,6 +303,7 @@ jobs:
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
           ./deploy/lightsail/observe-production.ps1 `
+            -ExpectedMigrationVersion '${{ steps.deployment.outputs.migration_version }}' `
             -Ip $env:PRODUCTION_HOST `
             -User $user `
             -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `

@@ -11,6 +11,7 @@ param(
     [Parameter(Mandatory)][string]$EvidencePath,
     [Parameter(Mandatory)][string]$SummaryPath,
     [string]$BaselinePath,
+    [string]$ExpectedMigrationVersion = "",
     [string]$User = "ubuntu"
 )
 
@@ -58,8 +59,11 @@ if ([IO.Path]::GetFullPath($EvidencePath) -eq [IO.Path]::GetFullPath($SummaryPat
     throw "JSON evidence and Markdown summary paths must differ"
 }
 
-$expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File |
-    Sort-Object Name | Select-Object -Last 1).Name
+$expectedMigration = $ExpectedMigrationVersion
+if ($expectedMigration -eq "") {
+    $expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File |
+        Sort-Object Name | Select-Object -Last 1).Name
+}
 if ($expectedMigration -notmatch '^[0-9]{4}_[a-z0-9_]+\.sql$') {
     throw "could not determine the expected migration version"
 }

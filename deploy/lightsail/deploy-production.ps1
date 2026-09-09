@@ -7,10 +7,17 @@ param(
     [Alias("LinearIssue")]
     [Parameter(Mandatory)][string]$TrackingIssue,
     [Parameter(Mandatory)][string]$EvidencePath,
+    [string]$SourceRepoPath = "",
+    [string]$OperationalRevision = "",
+    [ValidateRange(60,1800)][int]$MigrationTimeoutSeconds = 1200,
     [string]$User = "ubuntu"
 )
 $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw "deployment requires PowerShell 7" }
+. (Join-Path $PSScriptRoot "deployment-source.ps1")
+$source = Resolve-CSXDeploymentSource $SourceRepoPath $ExpectedRevision $OperationalRevision
+$OperationalRevision = $source.OperationalRevision
+$migrationEvidencePath = $EvidencePath + ".migration.json"
 $collector = Join-Path $PSScriptRoot "collect-deploy-identity.sh"
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
 foreach ($sha in @($ExpectedRevision, $ExpectedPreviousRevision)) {
@@ -79,6 +86,8 @@ $evidence = @{
     } else { "" }
     trackingIssue = $TrackingIssue
     targetSha = $ExpectedRevision
+    operationalSha = $OperationalRevision
+    offlineMigration = $null
     previousProductionSha = $ExpectedPreviousRevision
     conclusion = "failure"
     deployedSha = ""
@@ -91,7 +100,7 @@ $evidence = @{
     serverStartedAt = ""
     observation = "pending-independent-workflow"
     failureClass = "pre-activation"
-    criticalPathCeilingsSeconds = @{ preparation = 600; staging = 300; activation = 240; rollback = 300; cleanup = 60; identityProbe = 30 }
+    criticalPathCeilingsSeconds = @{ preparation = 600; staging = 300; activation = 240; offlineMigration = $MigrationTimeoutSeconds + 300; activationSmoke = 240; rollback = 300; hostRecovery = 540; cleanup = 60; identityProbe = 30 }
 }
 $failure = $null
 $before = $null
@@ -104,6 +113,8 @@ try {
     & (Join-Path $PSScriptRoot "deploy.ps1") `
         -Ip $Ip -User $User -KeyPath $KeyPath -KnownHostsPath $KnownHostsPath `
         -ExpectedRevision $ExpectedRevision -ExpectedPreviousRevision $ExpectedPreviousRevision `
+        -SourceRepoPath $source.Repository -OperationalRevision $OperationalRevision -OfflineMigration `
+        -MigrationTimeoutSeconds $MigrationTimeoutSeconds -MigrationEvidencePath $migrationEvidencePath `
         -DeploymentEvidence $evidence -RequireNoLegacyAccessLogs
 
     # Identity, migration, health and representative requests were checked
@@ -130,6 +141,10 @@ try {
         $evidence.failureClass = "incident-only"
     }
 } finally {
+    if (Test-Path -LiteralPath $migrationEvidencePath) {
+        try { $evidence.offlineMigration = Get-Content -Raw -LiteralPath $migrationEvidencePath | ConvertFrom-Json }
+        catch { $evidence.migrationEvidenceRead = "unavailable" }
+    }
     $parent = Split-Path -Parent $EvidencePath
     if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     [IO.File]::WriteAllText($EvidencePath, ($evidence | ConvertTo-Json -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))

@@ -11,6 +11,29 @@ import (
 
 const productionEnvironment = "codesamplex-production"
 
+func TestProductionSeparatesReleasedPayloadFromReviewedController(t *testing.T) {
+	workflow := productionWorkflow(t)
+	deploy := releaseJobs(t, workflow)["deploy"]
+	for _, required := range []string{
+		"ref: ${{ github.sha }}", "path: operations", "path: payload",
+		"./operations/deploy/lightsail/deploy-production.ps1",
+		`-SourceRepoPath (Join-Path $env:GITHUB_WORKSPACE "payload")`,
+		"-OperationalRevision $env:OPERATIONAL_SHA",
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("payload/controller separation missing %q", required)
+		}
+	}
+	if strings.Contains(deploy, "./payload/deploy/") {
+		t.Fatal("old payload must not select its old deployment scripts")
+	}
+	for _, required := range []string{`test "$GITHUB_REF" = refs/heads/main`, "head_sha=${OPERATIONAL_SHA}&branch=main&status=success"} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("controller provenance missing %q", required)
+		}
+	}
+}
+
 func productionWorkflow(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "production-deploy.yml"))
@@ -218,8 +241,8 @@ func TestProductionJobBudgetExcludesTheFullBuilderWait(t *testing.T) {
 	if jobMinutes < 15 {
 		t.Fatalf("production job budget = %dm, too short for image transfer and exact rollback", jobMinutes)
 	}
-	if jobMinutes > 35 {
-		t.Fatalf("production job budget = %dm; a lightweight deploy must not retain the old unbounded deployment work", jobMinutes)
+	if jobMinutes > 73 {
+		t.Fatalf("production job budget = %dm exceeds bounded migration, activation and recovery reserves", jobMinutes)
 	}
 }
 
@@ -306,12 +329,16 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 	}
 	workflow := productionWorkflow(t)
 	step := productionWorkflowStep(t, workflow, "Deploy and verify")
-	if !strings.Contains(step, "timeout-minutes: 27") {
-		t.Error("deploy step must preserve its bounded 27-minute rollback reserve")
+	// Maximum actual migration 1800s; no observation wait. Preparation600 +
+	// staging300 + activation240 + migration2100 + smoke240 + host recovery540
+	// + cleanup60 + two identity30 = 4140s (69m); step reserves one more minute.
+	const maxScriptSeconds = 600 + 300 + 240 + 2100 + 240 + 540 + 60 + 2*30
+	if maxScriptSeconds >= 70*60 || !strings.Contains(step, "timeout-minutes: 70") {
+		t.Error("deploy step must cover the bounded migration and independent host recovery reserve")
 	}
 	deploy := releaseJobs(t, workflow)["deploy"]
-	if !strings.Contains(deploy, "timeout-minutes: 30") {
-		t.Error("deploy job must bound checkout, activation, rollback and evidence at 30 minutes")
+	if !strings.Contains(deploy, "timeout-minutes: 73") {
+		t.Error("deploy job must bound checkout, activation, recovery and evidence at 73 minutes")
 	}
 	for _, forbidden := range []string{"observe-production.ps1", "collect-extended-observation.sh", "collect-production-evidence.sh"} {
 		if strings.Contains(step, forbidden) {

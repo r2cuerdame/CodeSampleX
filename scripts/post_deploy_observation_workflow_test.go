@@ -378,3 +378,20 @@ func TestPostDeployOptionalSourceBaselineIsBoundedAndAuthenticated(t *testing.T)
 		}
 	}
 }
+
+func TestObserverUsesAuthenticatedControllerAndPayloadMigration(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	for _, required := range []string{
+		`ref: ${{ steps.deployment.outputs.operational_sha }}`,
+		`test "$(jq -er '.head_sha' <<<"$run_json")" = "$operational_sha"`,
+		`git merge-base --is-ancestor "$OPERATIONAL_SHA" origin/main`,
+		`-ExpectedMigrationVersion '${{ steps.deployment.outputs.migration_version }}'`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("observer controller/payload contract missing %q", required)
+		}
+	}
+	if strings.Contains(workflow, `ref: ${{ steps.deployment.outputs.target_sha }}`) {
+		t.Fatal("observer must not revive legacy scripts from the released payload")
+	}
+}
