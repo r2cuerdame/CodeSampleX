@@ -67,7 +67,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage-${GITHUB_RUN_ID}"
+            "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage-next"
 
       - name: Concurrently prestage production indexes
         shell: bash
@@ -89,7 +89,7 @@ jobs:
           network=$(docker inspect codesamplex-server-1 --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}}{{end}}')
           test -n "$dsn"
           test -n "$network"
-          helper="/tmp/csx-server-prestage-${GITHUB_RUN_ID}"
+          helper="/tmp/csx-server-prestage-next"
           chmod 0755 "$helper"
           for i in $(seq 1 90); do
             active=$(docker ps --filter ancestor=alpine:3.22 --format '{{.ID}} {{.Command}}' | grep -c 'prestage-builder-indexes' || true)
