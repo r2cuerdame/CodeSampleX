@@ -1156,6 +1156,60 @@ stay within the 3s deadline `handleHealthz` sets on itself, or the Go side
 cancels first and burns a connection on every slow probe.
 `internal/serverstore/pool_test.go` fails the build if either stops holding.
 
+## Slow-query monitoring and diagnostics (`pg_stat_statements`)
+
+PostgreSQL on `csx-prod-1` runs with persistent slow-query instrumentation
+configured in `deploy/docker-compose.yml`:
+
+- `shared_preload_libraries = pg_stat_statements`
+- `pg_stat_statements.track = top` (tracks top-level statements, minimal overhead)
+- `pg_stat_statements.max = 5000` (capped memory footprint, ~few MB)
+- `track_io_timing = on` (nanosecond hardware TSC timing for read/write I/O wait)
+- `log_min_duration_statement = 2000` (statements taking >= 2000ms are logged to stderr)
+- `log_parameter_max_length = 0` and `log_parameter_max_length_on_error = 0` (suppresses parameter values for privacy)
+
+### Privacy and parameter safety
+`pg_stat_statements` normalizes constants into parameter placeholders (`$1`, `$2`, ...) at query parse time. It never stores raw literals, secrets, tokens, or query parameters in memory or disk. In PostgreSQL server logs, `log_parameter_max_length=0` prevents bind parameters from being logged on slow queries or errors.
+
+### Collecting slow-query evidence
+Run the diagnostic tool from the repository or directly on the host:
+
+```bash
+# On the production host:
+python3 /opt/codesamplex/scripts/pg-slow-queries.py total_exec_time 15
+
+# By mean latency:
+python3 /opt/codesamplex/scripts/pg-slow-queries.py mean_exec_time 15
+
+# Raw SQL query via compose:
+./scripts/collect-pg-slow-queries.sh 15 total_exec_time
+```
+
+### Correlating with CPU, I/O wait, locks, and connection pool
+Slow queries must be analyzed together with system and database pressure:
+1. **CPU & I/O Wait**:
+   - `pg_stat_statements` provides `shared_blk_read_time` and `shared_blk_write_time` (when `track_io_timing=on`).
+   - `hit_pct`: `shared_blks_hit / (shared_blks_hit + shared_blks_read) * 100`. Cache hit below 70% indicates severe disk I/O thrashing.
+   - `temp_blks`: `temp_blks_read + temp_blks_written > 0` indicates the query exceeded `work_mem` (16MB) and spilled sorts/hashes to disk.
+2. **Lock contention & Active queries**:
+   ```bash
+   docker compose exec -T db psql -U csx -d csx -c "
+   SELECT pid, now() - query_start AS duration, state, wait_event_type, wait_event, query
+   FROM pg_stat_activity WHERE state != 'idle' ORDER BY duration DESC;
+   "
+   ```
+   `wait_event_type = 'Lock'` indicates blocking transactions.
+3. **Pool pressure**:
+   Check the `/admin` database pool panel or grep container logs for `csx-server: db pressure`:
+   - `cause=pool_busy`: pool exhausted because slow queries are holding connections.
+   - `cause=query_timeout`: query crossed the 8s (interactive) or 2s (probe) `statement_timeout`.
+
+### Resetting statistics
+To measure a clean observation window (e.g. before/after a deployment or migration):
+```bash
+docker compose exec -T db psql -U csx -d csx -c "SELECT pg_stat_statements_reset();"
+```
+
 ## Environment variables (compose `.env`)
 
 ```text
