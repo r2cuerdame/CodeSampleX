@@ -1,52 +1,53 @@
-# PM_AUTO_REFILL_V1 result
+# OPS_AGY_BLOCKER_RESOLVER_V1 Result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/80
-- Branch: `feat/80-cli-structured-evidence`
-- Implementation commit: `5f95050`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/215
-- Deployment/merge: not performed
+## Summary
+- **Canonical Issue**: https://github.com/r2cuerdame/CodeSampleX/issues/189
+- **Detected Blocker Reason**: manual_precursor_triage
+- **Blocked Parent**: none
+- **Reclassification**: PM_DEPENDENCY_RECLASSIFY=ACCEPTANCE_ONLY parent=none child=r2cuerdame/CodeSampleX#189
+- **Gate Classification**: `AUTO_PRECURSOR_THEN_MANUAL`
 
-## Canonical-source audit
+## Completed Automatable Precursors
+All repository-side and upstream automatable precursors have been completed and verified against live tooling:
+1. **Reconciliation of Main, Release Assets, and Issue #70**:
+   - Release v0.1.134 Windows binaries verified against published `SHA256SUMS.txt`:
+     - `csx-windows-amd64.exe` (SHA-256: `b4d567e9c992973fe41daae137c16d70f7ca2a285eb582563b2b8a310bd559cb`)
+     - `csx-launcher-windows-amd64.exe` (SHA-256: `591237aac9e79ec366d150ea40dd9580871a025550235974f8ea7773f2030c2b`)
+     - `csx-windows-arm64.exe` (SHA-256: `374f7d928831276d6a819c8f9eecb3f9c3d5989760cd7d17501f1295573cabee`)
+     - `csx-launcher-windows-arm64.exe` (SHA-256: `dc0b2f175a41d97584aed7ff61b8ee41d060c3a5fa6f358c3f38385662ffce7b`)
+   - Executed `scripts/defender-release-check.ps1 -Tag v0.1.134` with Windows Defender `MpCmdRun.exe` (Security intelligence: `1.459.121.0`): all 4 release binaries returned `CLEAN` (0 detections).
+   - Local execution test confirmed: `csx-windows-amd64.exe version` executes cleanly without quarantine or payload unreadable condition.
+2. **WinGet Package Manifest Generation & Local Schema Validation**:
+   - Manifest files generated for package identifier `r2cuerdame.CodeSampleX` at version `0.1.134` (`r2cuerdame.CodeSampleX.yaml`, `r2cuerdame.CodeSampleX.installer.yaml`, `r2cuerdame.CodeSampleX.locale.en-US.yaml`).
+   - Validated locally using official Windows Package Manager `v1.29.290` (`winget validate`): passed with `Manifest validation succeeded.`
+3. **Upstream Submission to microsoft/winget-pkgs**:
+   - Manifests committed and pushed to `r2cuerdame/winget-pkgs:csx-0.1.134`.
+   - Upstream PR submitted: https://github.com/microsoft/winget-pkgs/pull/429928.
+   - Upstream Azure/Microsoft validation pipeline: all 10 stages passed (`Azure-Pipeline-Passed`, `Validation-Completed`).
+   - Contributor License Agreement (`license/cla`): signed and passed (`success`).
+   - Auto-merge enabled with squash strategy by `microsoft-github-policy-service`.
+4. **Canonical Issue Tracking Evidence**:
+   - Repaired previous truncated comment on canonical GitHub issue #189: https://github.com/r2cuerdame/CodeSampleX/issues/189#issuecomment-5550040810.
+   - Full evidence, checksums, Defender intelligence version, and upstream PR details recorded.
 
-Issue #80 was open, had no comments, no linked or cross-referenced PR, and no
-`blockedBy`/`blocking` dependency. Adjacent merged PRs #42, #47, and #208 were
-reviewed to avoid repeating their stdout/stderr selection, failure-fingerprint,
-termination, and CLI-coordinate work. The remaining gap was structured
-per-execution evidence and its safe persistence.
+## Evidence & Verification
+- `scripts/defender-release-check.ps1 -Tag v0.1.134` -> PASS (CLEAN across 4 Windows binaries, Security intelligence `1.459.121.0`)
+- `winget validate <manifest-dir>` -> PASS (`Manifest validation succeeded.`)
+- Upstream PR checks: `gh pr checks 429928 --repo microsoft/winget-pkgs` -> 10/10 passed + CLA passed
+- Upstream PR state: `gh pr view 429928 --repo microsoft/winget-pkgs --json state,isDraft,mergeable,labels,reviewDecision` -> `state=OPEN`, `labels=[Azure-Pipeline-Passed, Validation-Completed, New-Package]`, `reviewDecision=REVIEW_REQUIRED`
+- Local catalog search: `winget search r2cuerdame.CodeSampleX` -> `No package found matching input criteria.` (confirms unmerged catalog state)
+- Canonical issue update: https://github.com/r2cuerdame/CodeSampleX/issues/189#issuecomment-5550040810
 
-## Changes
+## Pull Request
+- Upstream WinGet PR: https://github.com/microsoft/winget-pkgs/pull/429928
+- Code changes in CodeSampleX: None required; manifest and release distribution infrastructure fully operational.
 
-- Probe the exact allowlisted CLI executable version before untimed execution;
-  timed caller contexts skip the best-effort probe rather than losing command
-  budget and record partial evidence quality.
-- Record canonical tool/subcommand/flag patterns, direct-or-shell execution,
-  OS/architecture/runtime environment identity, structured termination, and
-  start/finish timestamps.
-- Store local-only stdout/stderr fingerprints, bounded diagnostic-shape
-  excerpts, and explicit capture/excerpt truncation.
-- Replace positional/flag values with structural placeholders. Excerpts keep
-  only error codes, fixed diagnostic keywords, and sanitizer placeholders;
-  arbitrary Unicode identifiers become `<text>`.
-- Add `cli_execution_evidence`, aggregating identical outcomes while separating
-  termination, stream signature, truncation, quality, and field/Farm source.
-  Its write is atomic with the existing anonymous daily observation aggregate.
-- Add `schemas/v1/cli-execution-evidence.json`, documentation, migration,
-  privacy regressions, structured-storage aggregation tests, and runner tests.
+## Remaining Blocker / Manual Gate
+1. **External Microsoft Community Moderator Review**:
+   - Per `microsoft/winget-pkgs` policy for `New-Package` submissions, community volunteer moderator approval is required (`reviewDecision: REVIEW_REQUIRED`, template `msftbot/requiresApproval/moderator`).
+   - Automation cannot approve or bypass Microsoft moderator review.
+2. **Post-Merge WinGet Acceptance**:
+   - After upstream merge into `microsoft/winget-pkgs:master` and publication to the WinGet source index, perform clean `winget install r2cuerdame.CodeSampleX` verification on a real Windows environment.
+   - Document `winget install r2cuerdame.CodeSampleX` in `README.md` and close issue #189.
 
-## Verification
-
-- `go test ./internal/domain ./internal/environment ./internal/sanitizer ./internal/evidence ./internal/storage/localdb -count=1` — PASS
-- `go test ./internal/domain -run TestSchemaFixtures -v` — PASS (includes `schemas/v1/cli-execution-evidence.json` fixture)
-- `go vet ./...` — PASS
-- `go build ./...` — PASS
-- `git diff --check` — PASS
-- PowerShell JSON parse of `schemas/v1/cli-execution-evidence.json` — PASS
-- Independent blocker-only code review — PASS; no remaining P1/blocker
-- `internal/launcher` verification — PASS; all 35 tests passed cleanly via precompiled test binary (`go test -c -o "$env:TEMP\launcher.test.exe" ./internal/launcher && & "$env:TEMP\launcher.test.exe" -test.v`). Windows security block on the temporary `go-build*\b001\launcher.test.exe` path is confirmed to be an external Defender heuristic false positive (`Bearfoos.B!ml`, documented in `docs/operations.md`) with no code regression.
-- Full non-serverstore `go test` suite (48 packages) — all packages passed; `internal/launcher` verified clean separately.
-
-## DevHotel and blockers
-
-DevHotel was not applicable because this change is backend/CLI local evidence
-persistence and does not alter deployable web, Android, or desktop UI behavior.
-No deployment was attempted. No blockers remain for PR #215.
+PM_GATE_CLASS=AUTO_PRECURSOR_THEN_MANUAL
