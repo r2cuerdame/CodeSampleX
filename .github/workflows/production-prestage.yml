@@ -67,7 +67,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage"
+            "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage-${GITHUB_RUN_ID}"
 
       - name: Concurrently prestage production indexes
         shell: bash
@@ -89,15 +89,21 @@ jobs:
           network=$(docker inspect codesamplex-server-1 --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}}{{end}}')
           test -n "$dsn"
           test -n "$network"
-          chmod 0755 /tmp/csx-server-prestage
+          helper="/tmp/csx-server-prestage-${GITHUB_RUN_ID}"
+          chmod 0755 "$helper"
+          for i in $(seq 1 90); do
+            active=$(docker ps --filter ancestor=alpine:3.22 --format '{{.ID}} {{.Command}}' | grep -c 'prestage-builder-indexes' || true)
+            [ "$active" -eq 0 ] && break
+            sleep 10
+          done
           docker run --rm --network "$network" \
-            -v /tmp/csx-server-prestage:/usr/local/bin/csx-server:ro \
+            -v "$helper":/usr/local/bin/csx-server:ro \
             -e CSX_DSN="$dsn" \
             alpine:3.22 /usr/local/bin/csx-server prestage-builder-indexes
           after=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version)
           test "$before" = "$after"
           docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz >/dev/null
-          rm -f /tmp/csx-server-prestage
+          rm -f "$helper"
           REMOTE
 
       - name: Remove production SSH material
