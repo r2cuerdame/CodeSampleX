@@ -71,6 +71,12 @@ type webStore struct {
 	targetsRetryAt    time.Time
 	targetsRetry      retrypolicy.Series
 
+	// Package cache misses share a tiny admission gate. Unlike an HTTP-level
+	// semaphore this is held only while an underlying store read is running,
+	// never while cached HTML is rendered or written to a slow client.
+	packageLoadOnce  sync.Once
+	packageLoadSlots chan struct{}
+
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
 	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
 	pkgSamples         sync.Map // key: "eco|name", value: cachedPackageSamples
@@ -335,7 +341,29 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 	return idx
 }
 
-const packageDetailCacheTTL = 5 * time.Minute
+const (
+	packageDetailCacheTTL    = 30 * time.Minute
+	packageLoadSlotCount     = 2
+	packageLoadAdmissionWait = 250 * time.Millisecond
+	// A failed snapshot load must recover promptly after transient DB pressure.
+	// Freshness can be 30m without turning failure backoff into a 30m blackout.
+	snapshotLoadRetryDefer = 5 * time.Minute
+)
+
+func (w *webStore) withPackageLoadSlot(ctx context.Context, fn func() error) error {
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	timer := time.NewTimer(packageLoadAdmissionWait)
+	defer timer.Stop()
+	select {
+	case w.packageLoadSlots <- struct{}{}:
+		defer func() { <-w.packageLoadSlots }()
+		return fn()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
+	}
+}
 
 // The records page reads the whole snapshot table to rank and filter it.
 // On production that table is 17,255 rows but 149MB of jsonb serialised.
@@ -510,7 +538,12 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		w.targetsMu.Unlock()
 		return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
 	}
-	rows, err := w.s.SnapshotKeys(ctx)
+	var rows []serverstore.SnapshotTarget
+	err := w.withPackageLoadSlot(ctx, func() error {
+		var loadErr error
+		rows, loadErr = w.s.SnapshotKeys(ctx)
+		return loadErr
+	})
 	if err != nil {
 		if !cacheRequestCanceled(ctx, err) {
 			backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
@@ -658,7 +691,12 @@ func (w *webStore) loadSnapshotsForPURL(
 	purl string,
 ) {
 	loadCtx, cancel := snapshotLoadContext(ctx)
-	rows, err := w.s.GetSnapshotsForPURL(loadCtx, purl)
+	var rows []serverstore.SnapshotRow
+	err := w.withPackageLoadSlot(loadCtx, func() error {
+		var loadErr error
+		rows, loadErr = w.s.GetSnapshotsForPURL(loadCtx, purl)
+		return loadErr
+	})
 	cancel()
 	loadedAt := time.Now()
 	if err == nil {
@@ -678,7 +716,7 @@ func (w *webStore) loadSnapshotsForPURL(
 		lane.loading = nil
 	}
 	if err != nil {
-		backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, packageDetailCacheTTL)
+		backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
 	} else {
 		backgroundRetrySucceeded(&lane.retry, &lane.retryAt)
 	}
@@ -734,7 +772,12 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 				return append([]string(nil), entry.versions...), nil
 			}
 		}
-		rows, err := w.s.ListPackageVersions(loadCtx, ecosystem, name)
+		var rows []serverstore.PackageRow
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.ListPackageVersions(loadCtx, ecosystem, name)
+			return loadErr
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1066,7 +1109,12 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 		if fetchLimit <= 0 || fetchLimit < 50 {
 			fetchLimit = 50
 		}
-		rows, err := w.s.VerifiedSamplesForPackages(loadCtx, []string{prefix + "%"}, fetchLimit)
+		var rows []serverstore.SampleRow
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.VerifiedSamplesForPackages(loadCtx, []string{prefix + "%"}, fetchLimit)
+			return loadErr
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1155,7 +1203,12 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 			}
 		}
 		prefix := domain.PURL{Ecosystem: ecosystem, Name: name}.String()
-		rows, err := w.s.VerifiedSampleCodeCounts(loadCtx, prefix)
+		var rows []serverstore.VerifiedSampleCodeCount
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.VerifiedSampleCodeCounts(loadCtx, prefix)
+			return loadErr
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1193,7 +1246,12 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 				return entry.edges, nil
 			}
 		}
-		rows, err := w.s.Dependencies(loadCtx, ecosystem, name)
+		var rows []serverstore.DependencyEdge
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.Dependencies(loadCtx, ecosystem, name)
+			return loadErr
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1873,7 +1931,12 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 				return entry, nil
 			}
 		}
-		rows, err := w.s.ListFailureClusters(loadCtx, name)
+		var rows []serverstore.ClusterRow
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.ListFailureClusters(loadCtx, name)
+			return loadErr
+		})
 		if err != nil {
 			return cachedFailureClusters{}, err
 		}
@@ -2149,7 +2212,12 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 				return entry.rows, nil
 			}
 		}
-		rows, err := w.s.WantedForPackage(loadCtx, ecosystem, name)
+		var rows []serverstore.WantedRow
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.WantedForPackage(loadCtx, ecosystem, name)
+			return loadErr
+		})
 		if err != nil {
 			return nil, err
 		}

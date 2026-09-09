@@ -1098,7 +1098,12 @@ func (s *site) oneSegment(w http.ResponseWriter, r *http.Request) {
 // robots allows everything and advertises the sitemap.
 func (s *site) robots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("User-agent: *\nAllow: /\n\nSitemap: " + s.base(r) + "/sitemap.xml\n"))
+	const blocked = "User-agent: Bytespider\nDisallow: /\n\n" +
+		"User-agent: PetalBot\nDisallow: /\n\n" +
+		"User-agent: SemrushBot\nDisallow: /\n\n" +
+		"User-agent: AhrefsBot\nDisallow: /\n\n" +
+		"User-agent: MJ12bot\nDisallow: /\n\n"
+	_, _ = w.Write([]byte(blocked + "User-agent: *\nAllow: /\n\nSitemap: " + s.base(r) + "/sitemap.xml\n"))
 }
 
 // installScript serves an embedded installer with the deployment's real

@@ -189,3 +189,79 @@ func TestSampleUploadRespectsBlobBudget(t *testing.T) {
 		t.Fatalf("new artifact past budget status = %d, want 507", resp.StatusCode)
 	}
 }
+
+func TestBearerIdentityHardLimitCapsAcrossRoutesAtTwentyPerSecond(t *testing.T) {
+	srv, _, _ := newTestServer(t, nil)
+	client := srv.Client()
+	const token = "csx_test_identity_rate_key"
+
+	request := func(path, bearer string) *http.Response {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	// Spread one logical key over two independently limited read routes. The
+	// route/IP budgets have ample burst, so only the cross-route identity
+	// ceiling can reject request 21.
+	for i := 0; i < 20; i++ {
+		path := "/v1/adapters"
+		if i%2 == 1 {
+			path = "/v1/wanted"
+		}
+		if resp := request(path, token); resp.StatusCode == http.StatusTooManyRequests {
+			t.Fatalf("request %d throttled before the 20/s identity ceiling", i+1)
+		}
+	}
+	resp := request("/v1/adapters", token)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("request 21 status=%d, want 429", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got == "" {
+		t.Fatal("identity throttle omitted Retry-After")
+	}
+
+	// A different key has a different hard-ceiling bucket.
+	if resp := request("/v1/adapters", "csx_other_identity_rate_key"); resp.StatusCode == http.StatusTooManyRequests {
+		t.Fatal("one bearer key exhausted another bearer's bucket")
+	}
+}
+
+func TestBearerIdentityLimiterNeverStoresRawCredential(t *testing.T) {
+	lim := newLimiters()
+	a := &api{d: Deps{Limits: lim}}
+	req, err := http.NewRequest(http.MethodGet, "http://example.test/v1/adapters", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "csx_secret_never_store_raw"
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := &statusRecorder{ResponseWriter: nopResponseWriter{}}
+	if !a.allowIdentityCeiling(rec, req) {
+		t.Fatal("first identity request unexpectedly throttled")
+	}
+	lim.identity.mu.Lock()
+	defer lim.identity.mu.Unlock()
+	for key := range lim.identity.buckets {
+		if key == token || key == "bearer:"+token {
+			t.Fatal("raw bearer credential stored as limiter key")
+		}
+	}
+	if _, ok := lim.identity.buckets["bearer:"+sha256Hex(token)]; !ok {
+		t.Fatal("hashed bearer limiter key was not recorded")
+	}
+}
+
+type nopResponseWriter struct{}
+
+func (nopResponseWriter) Header() http.Header        { return make(http.Header) }
+func (nopResponseWriter) Write([]byte) (int, error)  { return 0, nil }
+func (nopResponseWriter) WriteHeader(statusCode int) {}

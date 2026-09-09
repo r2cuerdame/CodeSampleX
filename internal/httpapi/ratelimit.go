@@ -74,6 +74,11 @@ var (
 	// Keyed by login rather than address, so it follows the identity rather
 	// than the machine.
 	seededPublishLimit = rate{burst: 300, per: time.Hour}
+	// identityHardLimit is an additive ceiling across all limited API routes
+	// when a Bearer credential is presented. Route/IP budgets remain stricter
+	// where configured; this only prevents one logical key from fanning out
+	// across many endpoint buckets at once.
+	identityHardLimit = rate{burst: 20, per: time.Second}
 )
 
 type rate struct {
@@ -179,6 +184,8 @@ func (l *limiter) sweepLocked(now time.Time) {
 // limiters holds one limiter per endpoint class.
 type limiters struct {
 	write, feedback, wantedBatch, read, auth, publish *limiter
+	// identity is the cross-route hard ceiling for presented Bearer keys.
+	identity *limiter
 	// queue is the fleet's own polling: verification jobs and authoring work.
 	queue *limiter
 	// seededPublish is the identified-seeder budget, keyed by login.
@@ -194,7 +201,45 @@ func newLimiters() *limiters {
 		queue:         newLimiter(queueLimit),
 		auth:          newLimiter(authLimit),
 		publish:       newLimiter(publishLimit),
+		identity:      newLimiter(identityHardLimit),
 		seededPublish: newLimiter(seededPublishLimit),
+	}
+}
+
+// allowIdentityCeiling applies the additive per-Bearer hard ceiling without
+// resolving the credential through PostgreSQL. The route/IP limiter always runs
+// first, so inventing or rotating junk bearer strings cannot bypass the existing
+// anonymous budget. Only a SHA-256 digest is retained in memory; raw credentials
+// never become limiter keys or logs.
+func (a *api) allowIdentityCeiling(w http.ResponseWriter, r *http.Request) bool {
+	if a.d.Limits == nil || a.d.Limits.identity == nil {
+		return true
+	}
+	tok := bearerToken(r)
+	if tok == "" {
+		return true
+	}
+	key := "bearer:" + sha256Hex(tok)
+	ok, wait := a.d.Limits.identity.allow(key)
+	if ok {
+		return true
+	}
+	seconds := int(wait.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	writeErr(w, http.StatusTooManyRequests,
+		"rate limit exceeded; retry in "+strconv.Itoa(seconds)+"s")
+	return false
+}
+
+func (a *api) refundIdentityCeiling(r *http.Request) {
+	if a.d.Limits == nil || a.d.Limits.identity == nil {
+		return
+	}
+	if tok := bearerToken(r); tok != "" {
+		a.d.Limits.identity.refund("bearer:" + sha256Hex(tok))
 	}
 }
 
@@ -233,6 +278,10 @@ func (a *api) limitPublish(lim *limiters, h http.HandlerFunc) http.HandlerFunc {
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 			writeErr(w, http.StatusTooManyRequests,
 				"rate limit exceeded; retry in "+strconv.Itoa(seconds)+"s")
+			return
+		}
+		if !a.allowIdentityCeiling(w, r) {
+			l.refund(key)
 			return
 		}
 		h(w, r)
@@ -281,10 +330,15 @@ func (a *api) limit(l *limiter, h http.HandlerFunc) http.HandlerFunc {
 				"rate limit exceeded; retry in "+strconv.Itoa(seconds)+"s")
 			return
 		}
+		if !a.allowIdentityCeiling(w, r) {
+			l.refund(key)
+			return
+		}
 		rec := &statusRecorder{ResponseWriter: w}
 		h(rec, r)
 		if rec.status == http.StatusNotModified {
 			l.refund(key)
+			a.refundIdentityCeiling(r)
 		}
 	}
 }
