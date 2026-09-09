@@ -909,6 +909,18 @@ func (f *Fake) ReopenAuthoringQuarantine(_ context.Context, ecosystem, name, ver
 	return ledger.reopen(now), nil
 }
 
+func (f *Fake) TerminateAuthoringQuarantine(_ context.Context, ecosystem, name, version, symbol, operator, reason string, now time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := authoringWorkKey(ecosystem, name, version, symbol)
+	ledger := f.authoringAttempts[key]
+	if ledger == nil {
+		ledger = newAuthoringLedger(ecosystem, name, version, symbol)
+		f.authoringAttempts[key] = ledger
+	}
+	return ledger.terminate(operator, reason, now), nil
+}
+
 func (f *Fake) AuthoringWorkForSubmission(_ context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

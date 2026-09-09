@@ -264,3 +264,31 @@ func (p *PG) ReopenAuthoringQuarantine(ctx context.Context, ecosystem, name, ver
 	})
 	return reopened, err
 }
+
+func (p *PG) TerminateAuthoringQuarantine(ctx context.Context, ecosystem, name, version, symbol, operator, reason string, now time.Time) (bool, error) {
+	terminated := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		ledger, err := loadAuthoringLedger(ctx, tx, ecosystem, name, version, symbol)
+		if err != nil {
+			return err
+		}
+		if ledger == nil {
+			ledger = newAuthoringLedger(ecosystem, name, version, symbol)
+		}
+		if !ledger.terminate(operator, reason, now) {
+			return tx.Commit(ctx)
+		}
+		if err := saveAuthoringLedger(ctx, tx, ledger, now); err != nil {
+			return err
+		}
+		terminated = true
+		return tx.Commit(ctx)
+	})
+	return terminated, err
+}
+

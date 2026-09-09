@@ -362,6 +362,35 @@ func (h *handler) authorizedByToken(r *http.Request) bool {
 	return err == nil && ok
 }
 
+// operatorIdentity returns the label or username of the authenticated admin.
+func (h *handler) operatorIdentity(r *http.Request) string {
+	if h.adminTokens != nil {
+		raw, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		raw = strings.TrimSpace(raw)
+		if found && raw != "" {
+			sum := sha256.Sum256([]byte(raw))
+			ip := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				ip = host
+			}
+			row, ok, err := h.adminTokens.ResolveAdminToken(r.Context(), hex.EncodeToString(sum[:]), ip, h.now().UTC())
+			if err == nil && ok {
+				if row.Label != "" {
+					return row.Label
+				}
+				if row.TokenID != "" {
+					return "token:" + row.TokenID
+				}
+				return "admin_token"
+			}
+		}
+	}
+	if username, _, ok := r.BasicAuth(); ok && strings.TrimSpace(username) != "" {
+		return strings.TrimSpace(username)
+	}
+	return "operator"
+}
+
 func (h *handler) validAdminMutation(r *http.Request) bool {
 	return h.publicURL != "" && r.Header.Get("Origin") == h.publicURL && r.Header.Get("X-CSX-CSRF") == "1" &&
 		isJSONContentType(r.Header.Get("Content-Type"))

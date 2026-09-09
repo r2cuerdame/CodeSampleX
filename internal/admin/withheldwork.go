@@ -77,6 +77,12 @@ func withheldView(rows []serverstore.AuthoringAttemptState, now time.Time) []map
 		if !row.ReopensAt.IsZero() {
 			view["reopensAt"] = row.ReopensAt.UTC().Format(time.RFC3339)
 		}
+		if row.Terminated() {
+			view["terminated"] = true
+			view["terminatedAt"] = row.TerminatedAt.UTC().Format(time.RFC3339)
+			view["terminatedBy"] = row.TerminatedBy
+			view["terminalReason"] = row.TerminalReason
+		}
 		out = append(out, view)
 	}
 	return out
@@ -155,4 +161,51 @@ func (h *handler) reopenWithheldWork(w http.ResponseWriter, r *http.Request) {
 	// Nothing withheld is not a failure: an operator clicking twice must not
 	// see an error for work that is already back.
 	writeAdminJSON(w, http.StatusOK, map[string]any{"reopened": reopened})
+}
+
+type terminateWithheldRequest struct {
+	Ecosystem string `json:"ecosystem"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Symbol    string `json:"symbol"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// terminateWithheldWork applies audited terminal disposition to a coordinate.
+// It removes the coordinate from the active withheld-work list and farm counters,
+// permanently bars it from the authoring picker, and records the operator,
+// timestamp, and reason in the persistent attempt history.
+func (h *handler) terminateWithheldWork(w http.ResponseWriter, r *http.Request) {
+	setPrivateHeaders(w.Header())
+	byToken, ok := h.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	if !byToken && !h.validAdminMutation(r) {
+		http.Error(w, "허용되지 않은 요청입니다", http.StatusForbidden)
+		return
+	}
+	if h.authoring == nil || h.authoring.store == nil {
+		http.Error(w, "보류된 작업 정보를 사용할 수 없습니다", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, authoringRequestLimit)
+	var input terminateWithheldRequest
+	if err := decodeAdminJSON(r, &input); err != nil {
+		http.Error(w, "좌표를 확인하세요", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(input.Ecosystem) == "" || strings.TrimSpace(input.Name) == "" ||
+		strings.TrimSpace(input.Version) == "" {
+		http.Error(w, "좌표를 확인하세요", http.StatusBadRequest)
+		return
+	}
+	operator := h.operatorIdentity(r)
+	terminated, err := h.authoring.store.TerminateAuthoringQuarantine(r.Context(),
+		input.Ecosystem, input.Name, input.Version, input.Symbol, operator, input.Reason, h.now().UTC())
+	if err != nil {
+		http.Error(w, "종결 처리에 실패했습니다", http.StatusServiceUnavailable)
+		return
+	}
+	writeAdminJSON(w, http.StatusOK, map[string]any{"terminated": terminated})
 }

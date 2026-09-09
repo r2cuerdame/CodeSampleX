@@ -180,6 +180,8 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("POST /admin/api/csx-issues/canonical", h.linkCSXIssueCanonical)
 	mux.HandleFunc("GET /admin/api/withheld-work", h.withheldWork)
 	mux.HandleFunc("POST /admin/api/withheld-work/reopen", h.reopenWithheldWork)
+	mux.HandleFunc("POST /admin/api/withheld-work/terminate", h.terminateWithheldWork)
+	mux.HandleFunc("POST /admin/api/withheld-work/discard", h.terminateWithheldWork)
 	mux.HandleFunc("GET /admin/api/admin-tokens", h.handleAdminTokens)
 	mux.HandleFunc("POST /admin/api/admin-tokens", h.handleAdminTokens)
 	mux.HandleFunc("DELETE /admin/api/admin-tokens/{id}", h.revokeAdminToken)

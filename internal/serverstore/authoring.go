@@ -170,6 +170,10 @@ type AuthoringSessionStore interface {
 	// and resets the counters that took it off. It returns false when nothing
 	// was withheld, which is not an error.
 	ReopenAuthoringQuarantine(ctx context.Context, ecosystem, name, version, symbol string, now time.Time) (bool, error)
+	// TerminateAuthoringQuarantine gives a coordinate operator-authenticated terminal
+	// disposition, removing it from active withholding and permanently barring it from
+	// the authoring picker while preserving its audit history and evidence.
+	TerminateAuthoringQuarantine(ctx context.Context, ecosystem, name, version, symbol, operator, reason string, now time.Time) (bool, error)
 }
 
 // AuthoringCompletenessStore rechecks cached axis candidates against the

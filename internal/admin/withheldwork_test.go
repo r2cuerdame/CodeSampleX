@@ -213,3 +213,101 @@ func TestFarmPanelReportsWithheldCoordinates(t *testing.T) {
 		t.Fatalf("withheldByReason = %+v", got.Health.WithheldByReason)
 	}
 }
+
+func TestOperatorCanTerminateWithheldWorkFromThePanel(t *testing.T) {
+	store := serverstore.NewFake()
+	now := time.Date(2026, 8, 22, 17, 30, 0, 0, time.UTC)
+	withholdOne(t, store, now)
+	mux, secret := withheldMux(t, store, now)
+
+	body := `{"ecosystem":"maven","name":"org.jetbrains.kotlin/kotlin-gradle-plugins-bom","version":"2.2.20","symbol":"","reason":"pom-only bom unauthorable"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/withheld-work/terminate", strings.NewReader(body))
+	req.SetBasicAuth("recuerdame", secret)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://codesamplex.dev")
+	req.Header.Set("X-CSX-CSRF", "1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Terminated bool `json:"terminated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || !res.Terminated {
+		t.Fatalf("terminate = %+v err=%v", res, err)
+	}
+	rows, err := store.ListAuthoringQuarantine(t.Context(), now, 10)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("still in quarantine after terminate: %d rows err=%v", len(rows), err)
+	}
+
+	state, found, err := store.AuthoringAttemptState(t.Context(), "maven", "org.jetbrains.kotlin/kotlin-gradle-plugins-bom", "2.2.20", "")
+	if err != nil || !found {
+		t.Fatalf("AuthoringAttemptState: found=%v err=%v", found, err)
+	}
+	if !state.Terminated() {
+		t.Fatal("state.Terminated() = false, want true")
+	}
+	if state.TerminatedBy != "recuerdame" {
+		t.Errorf("state.TerminatedBy = %q, want 'recuerdame'", state.TerminatedBy)
+	}
+	if state.TerminalReason != "pom-only bom unauthorable" {
+		t.Errorf("state.TerminalReason = %q, want 'pom-only bom unauthorable'", state.TerminalReason)
+	}
+
+	// GET /admin/api/withheld-work should now return empty
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/api/withheld-work", nil)
+	getReq.SetBasicAuth("recuerdame", secret)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d", getRec.Code)
+	}
+	var getRes struct {
+		Withheld []any `json:"withheld"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getRes); err != nil || len(getRes.Withheld) != 0 {
+		t.Fatalf("GET /admin/api/withheld-work returned %d rows, want 0", len(getRes.Withheld))
+	}
+
+	// Alias route /discard also mounts and handles gracefully
+	discardReq := httptest.NewRequest(http.MethodPost, "/admin/api/withheld-work/discard", strings.NewReader(body))
+	discardReq.SetBasicAuth("recuerdame", secret)
+	discardReq.Header.Set("Content-Type", "application/json")
+	discardReq.Header.Set("Origin", "https://codesamplex.dev")
+	discardReq.Header.Set("X-CSX-CSRF", "1")
+	discardRec := httptest.NewRecorder()
+	mux.ServeHTTP(discardRec, discardReq)
+	if discardRec.Code != http.StatusOK {
+		t.Fatalf("discard status = %d", discardRec.Code)
+	}
+}
+
+func TestTerminatingWithheldWorkNeedsAnOperator(t *testing.T) {
+	store := serverstore.NewFake()
+	now := time.Date(2026, 8, 22, 17, 30, 0, 0, time.UTC)
+	withholdOne(t, store, now)
+	mux, _ := withheldMux(t, store, now)
+
+	body := `{"ecosystem":"maven","name":"org.jetbrains.kotlin/kotlin-gradle-plugins-bom","version":"2.2.20","symbol":""}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/api/withheld-work/terminate", strings.NewReader(body)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+
+	crossSite := httptest.NewRequest(http.MethodPost, "/admin/api/withheld-work/terminate", strings.NewReader(body))
+	crossSite.SetBasicAuth("recuerdame", "a-long-random-admin-secret")
+	crossSite.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, crossSite)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site status = %d, want 403", rec.Code)
+	}
+
+	rows, err := store.ListAuthoringQuarantine(t.Context(), now, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("an unauthorized caller changed the board: %d rows err=%v", len(rows), err)
+	}
+}

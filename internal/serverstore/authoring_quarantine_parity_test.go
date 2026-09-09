@@ -24,6 +24,7 @@ type quarantineStore interface {
 	ListAuthoringQuarantine(context.Context, time.Time, int) ([]AuthoringAttemptState, error)
 	AuthoringAttemptState(context.Context, string, string, string, string) (AuthoringAttemptState, bool, error)
 	ReopenAuthoringQuarantine(context.Context, string, string, string, string, time.Time) (bool, error)
+	TerminateAuthoringQuarantine(context.Context, string, string, string, string, string, string, time.Time) (bool, error)
 	IssueAuthoringSessions(context.Context, []AuthoringSessionRow, time.Time) error
 	// The operations panel reads this. It is in the script because the panel
 	// agreeing with the picker is a requirement, not a nicety: an operator

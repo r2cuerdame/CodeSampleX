@@ -463,3 +463,90 @@ func TestAReportWithoutAClaimChangesNothing(t *testing.T) {
 		t.Fatalf("report without a claim = ok=%v err=%v, want false", ok, err)
 	}
 }
+
+func TestAnOperatorCanTerminateWithheldWork(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+	eco, name, version, symbol := "maven", "org.jetbrains.kotlin/kotlin-gradle-plugins-bom", "2.2.20", ""
+
+	// Two workers measure no callable symbol: coordinate becomes withheld.
+	for _, session := range []string{"writer-a", "writer-b"} {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates(), now, now.Add(24*time.Hour)); err != nil || !ok {
+			t.Fatalf("%s handout: ok=%v err=%v", session, ok, err)
+		}
+		if _, _, err := store.ReportAuthoringOutcome(ctx, session, AuthoringNoCallableSymbol, "no jar in pom-only bom", now); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+
+	rows, err := store.ListAuthoringQuarantine(ctx, now, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("quarantine rows = %d, want 1 before termination (err=%v)", len(rows), err)
+	}
+
+	// Operator applies terminal disposition.
+	terminated, err := store.TerminateAuthoringQuarantine(ctx, eco, name, version, symbol, "recuerdame", "pom-only bom verified unauthorable", now)
+	if err != nil || !terminated {
+		t.Fatalf("TerminateAuthoringQuarantine: terminated=%v err=%v", terminated, err)
+	}
+
+	// Excluded from active withheld list.
+	rowsAfter, err := store.ListAuthoringQuarantine(ctx, now, 10)
+	if err != nil || len(rowsAfter) != 0 {
+		t.Fatalf("quarantine rows after termination = %d, want 0", len(rowsAfter))
+	}
+
+	// Excluded from farm health withheld counts.
+	health, err := store.FarmHealthNow(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.WithheldCoordinates != 0 {
+		t.Fatalf("health.WithheldCoordinates = %d, want 0", health.WithheldCoordinates)
+	}
+
+	// Excluded from picker: a fresh worker asking for work must not receive it.
+	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-c", quarantineCandidates(), now, now.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok && work.Name == name {
+		t.Fatalf("picker handed out terminated coordinate %q", work.Name)
+	}
+
+	// Audited state preserved.
+	state, found, err := store.AuthoringAttemptState(ctx, eco, name, version, symbol)
+	if err != nil || !found {
+		t.Fatalf("AuthoringAttemptState: found=%v err=%v", found, err)
+	}
+	if !state.Terminated() {
+		t.Fatal("state.Terminated() = false, want true")
+	}
+	if state.TerminatedBy != "recuerdame" {
+		t.Errorf("state.TerminatedBy = %q, want 'recuerdame'", state.TerminatedBy)
+	}
+	if state.TerminalReason != "pom-only bom verified unauthorable" {
+		t.Errorf("state.TerminalReason = %q, want 'pom-only bom verified unauthorable'", state.TerminalReason)
+	}
+	if len(state.History) == 0 || state.History[len(state.History)-1].Outcome != AuthoringTerminalDisposition {
+		t.Fatalf("last history entry = %+v, want TERMINAL_DISPOSITION", state.History)
+	}
+
+	// A second termination call returns false (already terminated).
+	again, err := store.TerminateAuthoringQuarantine(ctx, eco, name, version, symbol, "recuerdame", "repeat", now)
+	if err != nil || again {
+		t.Fatalf("second TerminateAuthoringQuarantine: again=%v err=%v, want false", again, err)
+	}
+
+	// Reopening clears terminal disposition.
+	reopened, err := store.ReopenAuthoringQuarantine(ctx, eco, name, version, symbol, now)
+	if err != nil || !reopened {
+		t.Fatalf("ReopenAuthoringQuarantine: reopened=%v err=%v", reopened, err)
+	}
+	stateReopened, _, _ := store.AuthoringAttemptState(ctx, eco, name, version, symbol)
+	if stateReopened.Terminated() {
+		t.Fatal("state.Terminated() still true after ReopenAuthoringQuarantine")
+	}
+}

@@ -126,12 +126,21 @@ the per-writer handout counts and the impossible-measurement set, and keeps
 `attempts`, `authored` and the history. A coordinate that genuinely cannot be
 authored simply earns its withholding again; nothing is lost by being wrong.
 
+When an operator verifies that a coordinate cannot or should not be authored
+(e.g., an unauthorable pom-only BOM or duplicate/invalid coordinate), they can
+apply **terminal disposition** (`POST /admin/api/withheld-work/terminate` or
+the **종결 처리** button). Terminal disposition records the operator, timestamp,
+and reason in the persistent attempt audit history, removes the coordinate from
+active withheld counts/lists, and permanently bars it from the authoring picker.
+If ever needed, reopening lifts terminal disposition and clears the gates.
+
 ## Where it shows
 
 * `GET /admin/api/withheld-work` and the **보류된 좌표** list in the farm panel:
   coordinate, reason, age, attempt counts, the last few attempts with the
   writers' own notes, and whether it needs an operator.
 * `POST /admin/api/withheld-work/reopen` and the **다시 배포** button.
+* `POST /admin/api/withheld-work/terminate` (and `/discard`) and the **종결 처리** button.
 * `GET /admin/api/farm` → `health.withheldCoordinates` and
   `health.withheldByReason`, read from the same predicate the picker uses.
   A withdrawn **sample** and a withheld **coordinate** are different acts — one

@@ -57,6 +57,11 @@ const (
 	// already implied by the handout it closes and is accepted so a worker
 	// can hand its slot back immediately instead of sitting on the lease.
 	AuthoringNoOutput AuthoringOutcome = "NO_OUTPUT"
+	// AuthoringTerminalDisposition is an operator-authenticated terminal acknowledge
+	// or discard: an operator verified that this coordinate cannot or should not
+	// be authored, taking it off the active withheld-work list and farm health
+	// counters while permanently barring it from authoring.
+	AuthoringTerminalDisposition AuthoringOutcome = "TERMINAL_DISPOSITION"
 )
 
 // ValidAuthoringOutcome reports whether a worker may report this outcome.
@@ -202,8 +207,18 @@ type AuthoringAttemptState struct {
 	// ReopensAt is when the withholding lapses by itself. Zero means it does
 	// not: a measured impossibility does not heal, so only an operator lifts
 	// that one.
-	ReopensAt time.Time          `json:"reopensAt,omitempty"`
-	History   []AuthoringAttempt `json:"history,omitempty"`
+	ReopensAt      time.Time          `json:"reopensAt,omitempty"`
+	TerminatedAt   time.Time          `json:"terminatedAt,omitempty"`
+	TerminatedBy   string             `json:"terminatedBy,omitempty"`
+	TerminalReason string             `json:"terminalReason,omitempty"`
+	History        []AuthoringAttempt `json:"history,omitempty"`
+}
+
+// Terminated reports whether this coordinate has received operator-authenticated
+// terminal disposition. A terminated coordinate is excluded from active
+// withheld-work views and permanently barred from the authoring picker.
+func (s AuthoringAttemptState) Terminated() bool {
+	return !s.TerminatedAt.IsZero()
 }
 
 // Withheld reports whether this coordinate is being kept off the board right
@@ -211,6 +226,9 @@ type AuthoringAttemptState struct {
 // exactly this question of exactly this state, which is the only way the two
 // can be made to agree.
 func (s AuthoringAttemptState) Withheld(now time.Time) bool {
+	if s.Terminated() {
+		return false
+	}
 	if s.QuarantinedAt.IsZero() {
 		return false
 	}
@@ -258,6 +276,9 @@ func (l *authoringLedger) ensure() {
 // and applies only to it, because a writer that cannot author something is not
 // evidence that nobody can.
 func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
+	if l.Terminated() {
+		return true
+	}
 	if normalizeAuthoringAxis(l.Axis) != normalizeAuthoringAxis(axis) {
 		return false
 	}
@@ -337,14 +358,49 @@ func (l *authoringLedger) authored(sessionID string, now time.Time) {
 	l.clearGates()
 }
 
-// reopen lifts a withholding. It returns false when nothing was withheld so an
-// operator clicking twice sees "nothing to do" rather than a failure.
+// reopen lifts a withholding or terminal disposition. It returns false when
+// nothing was withheld or terminated so an operator clicking twice sees
+// "nothing to do" rather than a failure.
 func (l *authoringLedger) reopen(now time.Time) bool {
-	if !l.Withheld(now) {
+	if !l.Withheld(now) && !l.Terminated() {
 		return false
 	}
 	l.ensure()
 	l.clearGates()
+	return true
+}
+
+// terminate marks a coordinate as having received operator-authenticated
+// terminal disposition. It records who, when, and why into the audit history
+// and state, removes it from active withholding, and permanently bars it from
+// the authoring picker.
+func (l *authoringLedger) terminate(operator, reason string, now time.Time) bool {
+	if l.Terminated() {
+		return false
+	}
+	l.ensure()
+	l.TerminatedAt = now
+	l.TerminatedBy = clampAuthoringDetail(operator)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = l.QuarantineReason
+		if reason == "" {
+			reason = "operator terminal disposition"
+		}
+	}
+	l.TerminalReason = clampAuthoringDetail(reason)
+	// Clear the active quarantine markers so it is excluded from active withheld counts/lists.
+	l.QuarantinedAt = time.Time{}
+	l.QuarantineReason = ""
+	l.ReopensAt = time.Time{}
+	l.push(AuthoringAttempt{
+		At:        now,
+		Kind:      l.Kind,
+		Axis:      l.Axis,
+		SessionID: l.TerminatedBy,
+		Outcome:   AuthoringTerminalDisposition,
+		Detail:    l.TerminalReason,
+	})
 	return true
 }
 
@@ -359,6 +415,9 @@ func (l *authoringLedger) clearGates() {
 	l.QuarantinedAt = time.Time{}
 	l.QuarantineReason = ""
 	l.ReopensAt = time.Time{}
+	l.TerminatedAt = time.Time{}
+	l.TerminatedBy = ""
+	l.TerminalReason = ""
 }
 
 // evaluate applies the thresholds. A coordinate already withheld is left
@@ -370,7 +429,7 @@ func (l *authoringLedger) clearGates() {
 // working on it, and the age an operator reads has to be the age of the
 // decision.
 func (l *authoringLedger) evaluate(now time.Time) {
-	if !l.QuarantinedAt.IsZero() {
+	if l.Terminated() || !l.QuarantinedAt.IsZero() {
 		return
 	}
 	switch {

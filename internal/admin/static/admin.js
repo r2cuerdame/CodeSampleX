@@ -626,6 +626,11 @@
       evidence.textContent = (row.history || []).slice(-4)
         .map((h) => (h.detail ? `${h.outcome}: ${h.detail}` : h.outcome)).join(" · ");
       info.append(name, meta, evidence);
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "8px";
+      actions.style.flexShrink = "0";
+
       const back = document.createElement("button");
       back.type = "button";
       back.textContent = "다시 배포";
@@ -645,7 +650,31 @@
           back.textContent = "해제 실패";
         }
       });
-      item.append(info, back);
+
+      const discard = document.createElement("button");
+      discard.type = "button";
+      discard.className = "danger-button";
+      discard.textContent = "종결 처리";
+      discard.addEventListener("click", async () => {
+        discard.disabled = true;
+        try {
+          await request("/admin/api/withheld-work/terminate", {
+            method: "POST",
+            body: JSON.stringify({
+              ecosystem: row.ecosystem, name: row.name,
+              version: row.version, symbol: row.symbol || "",
+              reason: row.reason || "operator terminal disposition",
+            }),
+          });
+          await load();
+        } catch (_) {
+          discard.disabled = false;
+          discard.textContent = "종결 실패";
+        }
+      });
+
+      actions.append(back, discard);
+      item.append(info, actions);
       list.appendChild(item);
     }
   };
