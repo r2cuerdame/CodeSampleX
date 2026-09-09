@@ -253,3 +253,93 @@ func TestSharedSnapshotLoadRetainsItsOwnBoundAndTrafficClass(t *testing.T) {
 		t.Fatal("shared read's own cancellation was ignored")
 	}
 }
+
+func TestAdmissionRefusalDoesNotPoisonSnapshotRetry(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+	raw := `{"rows":[{"count":1}]}`
+	if err := fake.PutSnapshot(t.Context(), purl, "Connect", raw); err != nil {
+		t.Fatal(err)
+	}
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots so the next request fails admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	// Request should fail with admission refusal ErrPoolBusy.
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	_, _, err := w.SnapshotJSONWithError(ctx, purl, "Connect")
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("expected ErrPoolBusy on saturated admission slots, got %v", err)
+	}
+
+	// Check that lane.retry was NOT advanced.
+	stateAny, ok := w.purlSnapshotLoads.Load(purl)
+	if !ok {
+		t.Fatal("expected purlSnapshotLoads state to be recorded")
+	}
+	state := stateAny.(*snapshotLoadState)
+	state.mu.Lock()
+	retryState := state.interactive.retry.State()
+	retryAt := state.interactive.retryAt
+	state.mu.Unlock()
+
+	if retryState != retrypolicy.Ready || !retryAt.IsZero() {
+		t.Fatalf("admission refusal poisoned snapshot retry: state=%v, retryAt=%v", retryState, retryAt)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// A subsequent request must be able to load immediately without deferral.
+	got, found, err := w.SnapshotJSONWithError(ctx, purl, "Connect")
+	if err != nil || !found || got != raw {
+		t.Fatalf("subsequent load failed after admission slots freed: got=%q, found=%t, err=%v", got, found, err)
+	}
+}
+
+func TestAdmissionRefusalDoesNotDeferTargetIndex(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+	if err := fake.PutSnapshot(t.Context(), purl, "Connect", `{"rows":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots so target index load fails admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	_, err := w.cachedTargetIndex(ctx)
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("expected ErrPoolBusy on saturated admission slots, got %v", err)
+	}
+
+	w.targetsMu.Lock()
+	retryState := w.targetsRetry.State()
+	retryAt := w.targetsRetryAt
+	w.targetsMu.Unlock()
+
+	if retryState != retrypolicy.Ready || !retryAt.IsZero() {
+		t.Fatalf("admission refusal poisoned targetsRetry: state=%v, retryAt=%v", retryState, retryAt)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// A subsequent request must load successfully.
+	idx, err := w.cachedTargetIndex(ctx)
+	if err != nil || idx == nil {
+		t.Fatalf("subsequent target index load failed after slots freed: err=%v", err)
+	}
+}

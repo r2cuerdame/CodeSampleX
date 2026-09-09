@@ -343,12 +343,16 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 
 const (
 	packageDetailCacheTTL    = 30 * time.Minute
-	packageLoadSlotCount     = 2
-	packageLoadAdmissionWait = 250 * time.Millisecond
+	packageLoadSlotCount     = 4
+	packageLoadAdmissionWait = 1500 * time.Millisecond
 	// A failed snapshot load must recover promptly after transient DB pressure.
 	// Freshness can be 30m without turning failure backoff into a 30m blackout.
-	snapshotLoadRetryDefer = 5 * time.Minute
+	snapshotLoadRetryDefer = 15 * time.Second
 )
+
+func isAdmissionRefusal(err error) bool {
+	return errors.Is(err, serverstore.ErrPoolBusy) && strings.Contains(err.Error(), "package cache-miss admission")
+}
 
 func (w *webStore) withPackageLoadSlot(ctx context.Context, fn func() error) error {
 	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
@@ -550,7 +554,7 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		return loadErr
 	})
 	if err != nil {
-		if !cacheRequestCanceled(ctx, err) {
+		if !cacheRequestCanceled(ctx, err) && !isAdmissionRefusal(err) {
 			backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
 		}
 		w.targetsMu.Unlock()
@@ -722,7 +726,9 @@ func (w *webStore) loadSnapshotsForPURL(
 		lane.loading = nil
 	}
 	if err != nil {
-		backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
+		if !isAdmissionRefusal(err) && !cacheRequestCanceled(loadCtx, err) {
+			backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
+		}
 	} else {
 		backgroundRetrySucceeded(&lane.retry, &lane.retryAt)
 	}
