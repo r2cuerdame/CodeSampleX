@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -104,19 +108,19 @@ func TestPressureLogNamesTheCauseAndDoesNotFlood(t *testing.T) {
 		out: func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) },
 	}
 
-	p.report(serverstore.ClassInteractive, "/wanted", 0, 1, 90*time.Millisecond)
-	p.report(serverstore.ClassInteractive, "/records", 3, 0, 3*time.Second)
+	p.report(serverstore.ClassInteractive, "/wanted", 0, 1, 0, 0, 90*time.Millisecond)
+	p.report(serverstore.ClassInteractive, "/records", 3, 0, 0, 0, 3*time.Second)
 	if len(lines) != 1 {
 		t.Fatalf("the second line in the same second was not throttled: %v", lines)
 	}
 	// A different class is a different problem and is never throttled away
 	// by the noisy one.
-	p.report(serverstore.ClassBackground, "/v1/evidence/batches", 1, 0, time.Second)
+	p.report(serverstore.ClassBackground, "/v1/evidence/batches", 1, 0, 0, 0, time.Second)
 	if len(lines) != 2 {
 		t.Fatalf("a second class was throttled by the first: %v", lines)
 	}
 	clock = clock.Add(budgetPressureWindow + time.Millisecond)
-	p.report(serverstore.ClassInteractive, "/records", 3, 0, 3*time.Second)
+	p.report(serverstore.ClassInteractive, "/records", 3, 0, 0, 0, 3*time.Second)
 	if len(lines) != 3 {
 		t.Fatalf("the window never reopened: %v", lines)
 	}
@@ -130,7 +134,7 @@ func TestPressureLogNamesTheCauseAndDoesNotFlood(t *testing.T) {
 	// The query string never reaches the log: what someone searched for is
 	// theirs, and the route is what identifies the problem.
 	p.now = func() time.Time { return clock.Add(time.Minute) }
-	p.report(serverstore.ClassInteractive, "/wanted", 1, 0, time.Second)
+	p.report(serverstore.ClassInteractive, "/wanted", 1, 0, 0, 0, time.Second)
 	if strings.Contains(lines[3], "?") {
 		t.Errorf("the log line carries a query string: %q", lines[3])
 	}
@@ -146,7 +150,7 @@ func TestPressureLogIsSafeForConcurrentRequests(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p.report(serverstore.ClassInteractive, "/wanted", 1, 0, time.Second)
+			p.report(serverstore.ClassInteractive, "/wanted", 1, 0, 0, 0, time.Second)
 		}()
 	}
 	wg.Wait()
@@ -163,5 +167,172 @@ func TestBudgetPressureIsReadableAfterTheHandlerReturns(t *testing.T) {
 	busy, timeouts, waited := budget.Pressure()
 	if busy != 0 || timeouts != 0 || waited != 0 {
 		t.Fatalf("an untouched budget reported %d/%d/%v", busy, timeouts, waited)
+	}
+}
+
+// The pressure line is capped at one per second per class, so during an
+// incident the number of lines is how long the incident lasted, not how many
+// requests it refused. The v0.1.153 canonical observation counted lines and
+// therefore reported zero refusals while the site was serving 503s. Every
+// event must reach a counter even when its line is thrown away, and the line
+// that does get written must carry the running total.
+func TestPressureCountersCountEventsTheRateLimiterSuppresses(t *testing.T) {
+	var lines []string
+	clock := time.Unix(0, 0)
+	counters := &pressureCounters{}
+	p := &pressureLog{
+		now:      func() time.Time { return clock },
+		out:      func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) },
+		counters: counters,
+	}
+
+	for i := 0; i < 10; i++ {
+		p.report(serverstore.ClassInteractive, "/records", 2, 1, 0, 0, time.Second)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("the rate limiter wrote %d lines in one second, want 1: %v", len(lines), lines)
+	}
+	if got := counters.totals(); got.poolBusy != 20 || got.queryTimeout != 10 {
+		t.Fatalf("nine suppressed reports were not counted: %+v", got)
+	}
+
+	clock = clock.Add(budgetPressureWindow + time.Millisecond)
+	p.report(serverstore.ClassInteractive, "/records", 2, 1, 0, 0, time.Second)
+	if len(lines) != 2 {
+		t.Fatalf("the window never reopened: %v", lines)
+	}
+	// This is the whole point: an operator reading one line per second still
+	// reads an exact count of everything the suppressed lines would have said.
+	if !strings.Contains(lines[1], "pool_busy_total=22") || !strings.Contains(lines[1], "query_timeout_total=11") {
+		t.Errorf("the published line does not carry the cumulative totals: %q", lines[1])
+	}
+}
+
+func TestPressureCountersAttributeTimeoutsAndPoolRefusalsSeparately(t *testing.T) {
+	counters := &pressureCounters{}
+	p := &pressureLog{
+		now:      func() time.Time { return time.Unix(0, 0) },
+		out:      func(string, ...any) {},
+		counters: counters,
+	}
+	// A statement killed by statement_timeout is charged to timeouts and to
+	// nothing else; a refusal at the pool door is charged to pool_busy.
+	p.report(serverstore.ClassInteractive, "/wanted", 0, 3, 0, 0, 0)
+	p.report(serverstore.ClassBackground, "/v1/evidence/batches", 5, 0, 0, 0, time.Second)
+
+	if got := counters.classTotals(serverstore.ClassInteractive); got.queryTimeout != 3 || got.poolBusy != 0 {
+		t.Errorf("interactive timeouts were misattributed: %+v", got)
+	}
+	if got := counters.classTotals(serverstore.ClassBackground); got.poolBusy != 5 || got.queryTimeout != 0 {
+		t.Errorf("background pool refusals were misattributed: %+v", got)
+	}
+	if got := counters.classTotals(serverstore.ClassProbe); got != (pressureTotals{}) {
+		t.Errorf("a class that was never reported carries %+v", got)
+	}
+}
+
+// A refusal produced above the pool -- the cache-miss admission gate, or a
+// lane that is deferred after a failure -- is real refused traffic and must
+// be counted, but it is not evidence that the pool itself was saturated.
+func TestPackageLoadAdmissionRefusalIsCountedWithoutTouchingThePool(t *testing.T) {
+	w := &webStore{} // no store: reaching the database would panic.
+	ctx, pressure := withRequestPressure(
+		serverstore.WithQueryBudget(context.Background(), serverstore.NewQueryBudget(serverstore.ClassInteractive)))
+
+	held := make(chan struct{}, packageLoadSlotCount)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < packageLoadSlotCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.withPackageLoadSlot(context.Background(), func() error {
+				held <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-held
+	}
+
+	before := dbPressure.totals()
+	err := w.withPackageLoadSlot(ctx, func() error {
+		t.Error("a refused caller still ran its store read")
+		return nil
+	})
+	after := dbPressure.totals()
+	close(release)
+	wg.Wait()
+
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("admission gate returned %v, want ErrPoolBusy", err)
+	}
+	if got := after.admissionRefused - before.admissionRefused; got != 1 {
+		t.Errorf("the admission refusal moved the admission counter by %d, want 1", got)
+	}
+	if got := after.poolBusy - before.poolBusy; got != 0 {
+		t.Errorf("a refusal that never reached the pool was charged to pool_busy (+%d)", got)
+	}
+	if got := pressure.admissionRefused.Load(); got != 1 {
+		t.Errorf("the request itself recorded %d admission refusals, want 1", got)
+	}
+}
+
+func TestDeferredLaneRefusalIsCountedWithoutTouchingThePool(t *testing.T) {
+	w := &webStore{} // no store: reaching the database would panic.
+	w.snapshotRetryAt = time.Now().Add(time.Hour)
+	ctx, pressure := withRequestPressure(
+		serverstore.WithQueryBudget(context.Background(), serverstore.NewQueryBudget(serverstore.ClassInteractive)))
+
+	before := dbPressure.totals()
+	_, err := w.cachedSnapshots(ctx)
+	after := dbPressure.totals()
+
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("deferred lane returned %v, want ErrPoolBusy", err)
+	}
+	if got := after.deferredRefused - before.deferredRefused; got != 1 {
+		t.Errorf("the deferred lane moved the deferred counter by %d, want 1", got)
+	}
+	if got := after.poolBusy - before.poolBusy; got != 0 {
+		t.Errorf("a deferred lane was charged to pool_busy (+%d)", got)
+	}
+	if got := pressure.deferredRefused.Load(); got != 1 {
+		t.Errorf("the request itself recorded %d deferred refusals, want 1", got)
+	}
+}
+
+// The defect this lane exists to fix: a request refused entirely above the
+// pool used to leave no trace at all, so an incident made of nothing but
+// synthetic refusals produced an observation that read "pressure 0".
+func TestWithDBBudgetLogsRefusalsThatNeverReachedThePool(t *testing.T) {
+	var buf bytes.Buffer
+	flags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(os.Stderr); log.SetFlags(flags) })
+
+	h := withDBBudget(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		noteAdmissionRefusal(r.Context())
+		noteDeferredRefusal(r.Context())
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/npm/zod", nil))
+
+	line := buf.String()
+	if !strings.Contains(line, "csx-server: db pressure ") {
+		t.Fatalf("a request refused above the pool wrote no pressure line: %q", line)
+	}
+	for _, want := range []string{
+		"path=/npm/zod", "class=interactive", "admission_refused=1", "deferred_refused=1",
+		"cause=admission_refused+deferred_refused",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("pressure line does not carry %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "cause=pool_busy") || strings.Contains(line, "cause=query_timeout") {
+		t.Errorf("a refusal above the pool was reported as a pool or statement failure: %q", line)
 	}
 }

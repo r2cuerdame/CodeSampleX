@@ -60,10 +60,49 @@ memory_usage=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 2)
 memory_percent=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 3 | tr -d '%')
 load_average=$(cut -d ' ' -f 1-3 /proc/loadavg)
 
+# The server caps the pressure line at one per second per class, so counting
+# lines measures how long an incident lasted, not how much traffic it refused:
+# the canonical v0.1.153 observation reported pool-busy 0 and query-timeout 0
+# while the site was serving 503s. Every line now carries the server's
+# process-lifetime totals, so the largest total seen in the window is the event
+# count.
+#
+# max, not last-minus-first: within one process the totals only ever grow, and
+# the first line in the window may already be nonzero. A server that restarted
+# mid-window resets them, which undercounts rather than invents -- and that
+# restart is reported separately as restart_events and die_events.
+summarize_pressure() {
+  awk '
+    BEGIN {
+      wanted["pool_busy_total"] = 1
+      wanted["query_timeout_total"] = 1
+      wanted["admission_refused_total"] = 1
+      wanted["deferred_refused_total"] = 1
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        if (split($i, kv, "=") == 2 && (kv[1] in wanted) && kv[2] + 0 > seen[kv[1]]) {
+          seen[kv[1]] = kv[2] + 0
+        }
+      }
+    }
+    END {
+      printf "pool_busy_event_total=%d\n", seen["pool_busy_total"] + 0
+      printf "query_timeout_event_total=%d\n", seen["query_timeout_total"] + 0
+      printf "admission_refused_event_total=%d\n", seen["admission_refused_total"] + 0
+      printf "deferred_refused_event_total=%d\n", seen["deferred_refused_total"] + 0
+    }
+  '
+}
+
 detail_collected=false
 pressure_lines=0
 pool_busy_events=0
 query_timeout_events=0
+pool_busy_event_total=0
+query_timeout_event_total=0
+admission_refused_event_total=0
+deferred_refused_event_total=0
 max_pressure_wait_seconds=0.000000
 oom_events=0
 restart_events=0
@@ -80,9 +119,18 @@ if [ "$include_detail" = 1 ]; then
   # would unnecessarily widen that already privacy-reviewed boundary.
   pressure_log=$(docker logs --since "$observe_since" "$container" 2>&1 |
     grep 'csx-server: db pressure ' || true)
+  # Kept exactly as they were, so every observation already on the tracking
+  # issue stays comparable with the ones written from here on. The `_total`
+  # suffix below is deliberate: a `total_pool_busy=` prefix would contain the
+  # token these two grep for and would silently inflate them.
   pressure_lines=$(printf '%s\n' "$pressure_log" | grep -c . || true)
   pool_busy_events=$(printf '%s\n' "$pressure_log" | grep -Ec 'pool_busy=[1-9][0-9]*' || true)
   query_timeout_events=$(printf '%s\n' "$pressure_log" | grep -Ec 'query_timeout=[1-9][0-9]*' || true)
+  pressure_event_totals=$(printf '%s\n' "$pressure_log" | summarize_pressure)
+  pool_busy_event_total=$(printf '%s\n' "$pressure_event_totals" | sed -n 's/^pool_busy_event_total=//p')
+  query_timeout_event_total=$(printf '%s\n' "$pressure_event_totals" | sed -n 's/^query_timeout_event_total=//p')
+  admission_refused_event_total=$(printf '%s\n' "$pressure_event_totals" | sed -n 's/^admission_refused_event_total=//p')
+  deferred_refused_event_total=$(printf '%s\n' "$pressure_event_totals" | sed -n 's/^deferred_refused_event_total=//p')
   # Go durations may contain more than one unit (for example 1m2.5s). Convert
   # every fixed-format `waited=` value to seconds without returning log text.
   max_pressure_wait_seconds=$(printf '%s\n' "$pressure_log" |
@@ -173,6 +221,10 @@ printf 'detail_collected=%s\n' "$detail_collected"
 printf 'pressure_lines=%s\n' "$pressure_lines"
 printf 'pool_busy_events=%s\n' "$pool_busy_events"
 printf 'query_timeout_events=%s\n' "$query_timeout_events"
+printf 'pool_busy_event_total=%s\n' "$pool_busy_event_total"
+printf 'query_timeout_event_total=%s\n' "$query_timeout_event_total"
+printf 'admission_refused_event_total=%s\n' "$admission_refused_event_total"
+printf 'deferred_refused_event_total=%s\n' "$deferred_refused_event_total"
 printf 'max_pressure_wait_seconds=%s\n' "$max_pressure_wait_seconds"
 printf 'oom_events=%s\n' "$oom_events"
 printf 'restart_events=%s\n' "$restart_events"
