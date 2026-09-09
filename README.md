@@ -48,6 +48,7 @@ The CLI is the canonical local interface. `csx help` is generated from the comma
 |---|---|
 | `config` | read or change local settings |
 | `daemon` | run, start, stop, or inspect the background sync daemon |
+| `doctor` | run environment, payload, storage, and agent diagnostics with safe self-healing |
 | `hook` | enable, disable, inspect, or self-test the automatic build-failure lookup installed into supported coding agents |
 | `init` | choose community/local-only mode, configure agents, warm the first cache, and start background sync |
 | `login` | sign in with GitHub when you want attributed sample publishing |

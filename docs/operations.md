@@ -1776,3 +1776,103 @@ If dist restoration was requested, missing promotion proof or a missing prior
 generation fails closed before server recreation; it must not silently retain
 the candidate dist. Such ambiguous recovery retains the deployment lock for
 owner inspection.
+
+## Operational Diagnostics and Self-Healing (csx doctor)
+
+`csx doctor` provides an automated health diagnostic and bounded self-healing capability for CodeSampleX installations, local SQLite storage, MCP process lifecycles, and coding agent registrations.
+
+### Diagnostic Tiers and Checks
+
+The diagnostic suite is divided into two operational severity tiers:
+
+#### Tier P0 (Critical Operational Invariants)
+Any P0 failure indicates that `csx` cannot operate correctly, cannot launch active payloads, or cannot guarantee storage/protocol integrity.
+
+1. **`p0.launcher.integrity`**: Verifies that the launcher binary (`csx` / `csx.exe`) is a genuine regular file (not a symlink or directory) and satisfies launcher protocol `v1.0.0` via probe self-test.
+2. **`p0.payload.verification`**: Validates that the active payload referenced by `active.json` exists on disk, matches its committed SHA-256 digest, and passes runtime self-test execution.
+3. **`p0.launcher.consistency`**: Checks `active.json` schema (`schema == 1`), canonical release version format (`vX.Y.Z`), duplicate key refusal, and detects environment path drift between `$CSX_HOME` and execution context.
+4. **`p0.manifest.release_binding`**: Verifies consistency between updater and bootstrap release envelopes and cryptographic signatures, diagnosing and resolving the `"installer payload does not match the signed stable release"` state caused by aborted/partial installations.
+5. **`p0.mcp.viability`**: Probes the stdio MCP server command path to ensure it is executable and can serve JSON-RPC requests for agent clients.
+6. **`p0.server.compatibility`**: Probes the configured CodeSampleX server via `GET /version` and `GET /healthz`. In `local-only` mode, this check is skipped by policy to preserve the zero-network invariant.
+7. **`p0.storage.localdb`**: Verifies `$CSX_HOME` directory layout (`cas`, `samples`, `logs`) and executes SQLite `PRAGMA integrity_check` on `csx.db`.
+
+#### Tier P1 (Operational Hygiene and Resource Reclaim)
+P1 checks detect stale resources, deadlocks, and configuration drift. Failures in P1 produce warnings or fixable actions without blocking local offline commands.
+
+1. **`p1.process.orphaned_mcp`**: Detects orphaned `csx` MCP server processes whose parent process ID has died.
+2. **`p1.storage.stale_locks`**: Inspects `daemon.lock` and `.update.lock`. If the lock-holding process PID is verified dead, flags the lock as stale. **If the owner PID is alive, the lock is strictly left untouched.**
+3. **`p1.storage.stale_payloads`**: Detects unreferenced payload directories in `<root>/payloads` not named in `active.json` (Current, Previous, RollbackHold), as well as displaced binary remnants (`csx.exe.old-*`, `csx.exe.previous-*`).
+4. **`p1.mcp.agent_config`**: Inspects installed coding agent configurations (Claude Code, Codex, Gemini CLI, OpenCode) to ensure their registered `csx` MCP commands point to valid, existing binary paths.
+5. **`p1.auth.session_validity`**: Validates session and API token structure without transmitting secrets.
+6. **`p1.network.registries`**: Verifies network reachability to GitHub release distribution endpoints (skipped in `local-only` mode).
+
+### Safe Self-Healing Boundaries (`--fix`)
+
+When invoked with `--fix`, `csx doctor` performs targeted, safe self-healing actions bounded strictly to CSX-owned state:
+
+- **Strict Boundary Rule**: Repairs never touch user source code, project git trees, or foreign processes. Targets are verified against `$CSX_HOME`, `%LOCALAPPDATA%\csx`, or recognized agent configuration files.
+- **Idempotency**: Running `csx doctor --fix` multiple times produces a deterministic, stable outcome.
+- **Fail-Safe Repair Actions**:
+  - `p0.launcher.integrity`: Restores genuine launcher from verified previous generation (`csx.exe.previous-*`).
+  - `p0.payload.verification`: Automatically rolls back `active.json` to the verified previous payload if current payload is missing or corrupted.
+  - `p0.manifest.release_binding`: Safely removes stale staged bootstrap artifacts (`csx-manifest.new.json`, `csx-bootstrap.new.json`, `csx-payload.new.exe`) from failed updates.
+  - `p0.storage.localdb`: Recreates missing `$CSX_HOME` subdirectories; moves corrupted `csx.db` aside to `csx.db.corrupt-<timestamp>` and reinitializes a clean SQLite schema.
+  - `p1.process.orphaned_mcp`: Terminates orphaned `csx` background processes whose parent PID is proven dead.
+  - `p1.storage.stale_locks`: Removes abandoned lock files whose owner PID is dead. Never touches locks held by live processes.
+  - `p1.storage.stale_payloads`: Reclaims disk space by purging unreferenced payload directories and displaced binaries.
+  - `p1.mcp.agent_config`: Rewrites broken MCP registration paths in agent configuration files to point to the current active binary.
+  - `p1.auth.session_validity`: Clears malformed API tokens without modifying attributed login identities.
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | System is healthy: all checks passed or were successfully self-healed (`StatusPass` / `StatusFixed`). |
+| `1` | System is unhealthy: one or more checks remaining in `StatusFail` state. |
+| `2` | Command usage error (invalid flags or arguments). |
+
+### CLI Usage and Flags
+
+```bash
+# Run read-only diagnostic assessment (tabular output)
+csx doctor
+
+# Run diagnostics with detailed context, error traces, and remediation tips
+csx doctor --verbose
+
+# Run diagnostics and automatically apply safe self-healing repairs
+csx doctor --fix
+
+# Produce machine-readable JSON output
+csx doctor --json
+```
+
+### JSON Output Contract & Zero Secret Leakage
+
+When `--json` is specified, `csx doctor` emits a structured JSON object:
+
+```json
+{
+  "timestamp": "2026-09-10T02:00:00Z",
+  "healthy": true,
+  "summary": {
+    "total": 13,
+    "pass": 12,
+    "warn": 0,
+    "fail": 0,
+    "fixed": 1
+  },
+  "checks": [
+    {
+      "id": "p0.launcher.integrity",
+      "tier": "P0",
+      "status": "PASS",
+      "summary": "launcher binary verified",
+      "fixable": false
+    }
+  ],
+  "duration": 45000000
+}
+```
+
+**Zero Secret Leakage Guarantee**: Output fields (`summary`, `details`, `remediation`, `error`) are recursively filtered by a sanitization barrier before serialization. API tokens (`csx_*`), GitHub personal access tokens (`ghp_*`), and authorization credentials are mask-redacted into `csx_***[REDACTED]`. Private user secrets are never exposed on stdout or written to logs.
