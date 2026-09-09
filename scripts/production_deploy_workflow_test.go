@@ -83,14 +83,22 @@ func TestProductionDeployIsExplicitSerializedAndImmutable(t *testing.T) {
 			t.Errorf("production deploy has an implicit trigger %q", forbidden)
 		}
 	}
+	eligibility := releaseJobs(t, workflow)["eligibility"]
 	for _, required := range []string{
-		"ref: ${{ inputs.commit_sha }}",
-		"fetch-depth: 0",
-		"test \"$(git rev-parse HEAD)\" = \"$TARGET_SHA\"",
-		"git merge-base --is-ancestor \"$TARGET_SHA\" origin/main",
+		`ref: ${{ github.sha }}`,
+		`ref: ${{ inputs.commit_sha }}`,
+		`fetch-depth: 0`,
+		`path: operations`,
+		`path: payload`,
+		`go-version-file: operations/go.mod`,
+		`working-directory: operations`,
+		`test "$(git rev-parse HEAD)" = "$GITHUB_SHA"`,
+		`test "$(git -C ../payload rev-parse HEAD)" = "$TARGET_SHA"`,
+		`git -C ../payload merge-base --is-ancestor "$TARGET_SHA" origin/main`,
+		`go run ./cmd/csx-deploy-gate -repo ../payload`,
 	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("immutable-main/required-CI guard is missing %q", required)
+		if !strings.Contains(eligibility, required) {
+			t.Errorf("immutable operational policy/payload guard is missing %q", required)
 		}
 	}
 }
