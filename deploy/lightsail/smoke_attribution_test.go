@@ -11,17 +11,7 @@ import (
 // of the three probes had stalled needed the box's own edge access log after
 // the fact. A rollout that fails closed has to name the request it failed on.
 func TestPrivacySafeLogProbeNamesThePathItFailedOn(t *testing.T) {
-	script := readDeployFixture(t, "deploy.ps1")
-
-	smoke := strings.Index(script, "$safeAccessLogSmoke = @'")
-	if smoke < 0 {
-		t.Fatal("the privacy-safe access log smoke is gone")
-	}
-	end := strings.Index(script[smoke:], "\n'@")
-	if end < 0 {
-		t.Fatal("the privacy-safe access log smoke is unterminated")
-	}
-	body := script[smoke : smoke+end]
+	body := readDeployFixture(t, "safe-log-smoke.sh")
 
 	for _, required := range []string{
 		// One helper, so the ceiling and the reporting cannot drift apart

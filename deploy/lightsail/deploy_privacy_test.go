@@ -19,7 +19,7 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 	promote := `mv -f "$candidate" "$live"`
 	recreate := `docker compose up -d --no-build --force-recreate caddy`
 	reload := `docker compose exec -T caddy caddy reload`
-	smoke := `$safeAccessLogSmoke = @'`
+	smoke := `$safeAccessLogSmoke = Get-Content`
 	positions := []int{
 		strings.Index(script, copyCandidate),
 		strings.Index(script, promote),
@@ -75,7 +75,6 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		`[string]::Equals($Domain, "codesamplex.dev", [StringComparison]::OrdinalIgnoreCase)`,
 		`$safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)`,
 		`Caddyfile.rollback-predeploy`,
-		`docker compose up -d --no-build --no-deps --force-recreate caddy`,
 		`test "$(cat "$lock/owner")" = "$owner"`,
 		`test "$(find "$lock" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1`,
 		`rmdir "$lock"`,
@@ -89,6 +88,9 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 		if !strings.Contains(script, required) {
 			t.Errorf("deploy.ps1 is missing %q", required)
 		}
+	}
+	if !strings.Contains(readDeployFixture(t, "rollback-caddy.sh"), "docker compose up -d --no-build --no-deps --force-recreate caddy") {
+		t.Fatal("shared Caddy rollback must recreate the exact prior container")
 	}
 	for _, unsafe := range []string{
 		`Invoke-Remote $acquireDeployLock`,
@@ -210,7 +212,7 @@ func TestPrivacySafeAccessLogDeploymentBoundary(t *testing.T) {
 // remote shell then interprets its `|` alternatives as commands. Keep the
 // container program on stdin so regex quoting arrives byte-for-byte.
 func TestPrivacySmokeContainerProgramsCrossTheShellBoundaryOnStdin(t *testing.T) {
-	script := readDeployFixture(t, "deploy.ps1")
+	script := readDeployFixture(t, "deploy.ps1") + readDeployFixture(t, "safe-log-smoke.sh")
 
 	for _, required := range []string{
 		`docker exec -i "$name" sh -s <<'CSX_CADDY_PREFLIGHT_SMOKE'`,
@@ -368,13 +370,17 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 	}
 
 	commit := strings.Index(script, `Invoke-RemoteScript $commitDeployment`)
-	rollback := strings.Index(script, `$rollbackServer = @'`)
-	rollbackCaddy := strings.Index(script, `$rollbackCaddy = @'`)
+	rollback := strings.Index(script, `$rollbackServer = $rollbackServerTemplate.Replace`)
+	rollbackCaddy := strings.Index(script, `$rollbackCaddy = $rollbackCaddyTemplate`)
+	if rollbackCaddy < 0 {
+		t.Fatal("missing Caddy rollback invocation")
+	}
 	aggregate := strings.Index(script[rollbackCaddy:], `throw [AggregateException]::new`)
 	if commit < 0 || rollback <= commit || rollbackCaddy <= rollback || aggregate < 0 {
 		t.Fatalf("rollback lifetime/order is unsafe: commit=%d server=%d caddy=%d aggregate=%d", commit, rollback, rollbackCaddy, aggregate)
 	}
 
+	rollbackSource := script + readDeployFixture(t, "rollback-server.sh")
 	for _, required := range []string{
 		`server-container.rollback-present`,
 		`server-container.rollback-absent`,
@@ -407,7 +413,7 @@ func TestServerRolloutHasExactIndependentRollbackThroughActivitySmoke(t *testing
 		`test "$columns" = kind,epoch,bucket,owner,first_seen,last_seen`,
 		`test "$owner_epochs" = 2`,
 	} {
-		if !strings.Contains(script, required) {
+		if !strings.Contains(rollbackSource, required) {
 			t.Errorf("server rollback/activity smoke is missing %q", required)
 		}
 	}
@@ -546,7 +552,7 @@ func TestAdminCredentialCommitFollowsEverySmokeAndRemoteCommit(t *testing.T) {
 		}
 	}
 	restore := strings.Index(script, `Restore-CSXAdminCredentialRelationship $adminCredentialPaths $adminCredentialState`)
-	remoteEnvRestore := strings.Index(script, `cp -p .env.rollback-predeploy .env`)
+	remoteEnvRestore := strings.Index(script, `Invoke-RemoteScript $rollbackServer`)
 	if restore <= remoteEnvRestore || restore <= commitLocal {
 		t.Fatalf("credential/remote rollback order does not cover a late local commit failure: remote=%d commit=%d local-restore=%d", remoteEnvRestore, commitLocal, restore)
 	}

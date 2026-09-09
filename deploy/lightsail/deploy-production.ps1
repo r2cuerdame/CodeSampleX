@@ -7,11 +7,18 @@ param(
     [Alias("LinearIssue")]
     [Parameter(Mandatory)][string]$TrackingIssue,
     [Parameter(Mandatory)][string]$EvidencePath,
+    [string]$SourceRepoPath = "",
+    [string]$OperationalRevision = "",
+    [ValidateRange(60,1800)][int]$MigrationTimeoutSeconds = 1200,
     [string]$User = "ubuntu"
 )
 
 $ErrorActionPreference = "Stop"
-$repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+. (Join-Path $PSScriptRoot "deployment-source.ps1")
+$source = Resolve-CSXDeploymentSource $SourceRepoPath $ExpectedRevision $OperationalRevision
+$repo = $source.Repository
+$OperationalRevision = $source.OperationalRevision
+$migrationEvidencePath = $EvidencePath + ".migration.json"
 $collector = Join-Path $PSScriptRoot "collect-production-evidence.sh"
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
 
@@ -94,6 +101,8 @@ $evidence = @{
     trackingIssue = $TrackingIssue
     linearIssue = $TrackingIssue
     targetSha = $ExpectedRevision
+    operationalSha = $OperationalRevision
+    offlineMigration = $null
     previousProductionSha = $ExpectedPreviousRevision
     conclusion = "failure"
     deployedSha = ""
@@ -122,12 +131,12 @@ try {
     $evidence.invariants.before = $before.invariants
     $evidence.previousImageDigest = $before.image_digest
 
-    & (Join-Path $PSScriptRoot "deploy.ps1") `
-        -Ip $Ip -User $User -KeyPath $KeyPath -KnownHostsPath $KnownHostsPath `
-        -ExpectedRevision $ExpectedRevision -ExpectedPreviousRevision $ExpectedPreviousRevision `
-        -RequireNoLegacyAccessLogs
-
-    $after = Read-ProductionState
+    # Capture the reader's SSH inputs and evidence variables before invoking
+    # the nested deploy script. Its final acceptance runs under the host lease;
+    # no health/identity gate remains after the host accepts the ACK.
+    $readFinalProductionState = ${function:Read-ProductionState}.GetNewClosure()
+    $finalAcceptance = {
+    $after = & $readFinalProductionState
     $evidence.deployedSha = $after.revision
     $evidence.imageDigest = $after.image_digest
     $evidence.migrationVersion = $after.migration_version
@@ -154,6 +163,15 @@ try {
     # observation only. The independent post-deploy workflow owns the bounded
     # convergence wait and alert; it must not keep this rollback transaction
     # open after health, identity, migration, privacy and invariants pass.
+    }.GetNewClosure()
+
+    & (Join-Path $PSScriptRoot "deploy.ps1") `
+        -Ip $Ip -User $User -KeyPath $KeyPath -KnownHostsPath $KnownHostsPath `
+        -ExpectedRevision $ExpectedRevision -ExpectedPreviousRevision $ExpectedPreviousRevision `
+        -RequireNoLegacyAccessLogs -OfflineMigration -SourceRepoPath $repo -OperationalRevision $OperationalRevision `
+        -MigrationTimeoutSeconds $MigrationTimeoutSeconds -MigrationEvidencePath $migrationEvidencePath `
+        -FinalAcceptance $finalAcceptance
+
     $evidence.conclusion = "success"
     $evidence.smoke = "pass"
     $evidence.rollback = "not-needed"
@@ -181,6 +199,9 @@ try {
         $evidence.rollback = "unverified"
     }
 } finally {
+    if (Test-Path -LiteralPath $migrationEvidencePath) {
+        $evidence.offlineMigration = Get-Content -Raw -LiteralPath $migrationEvidencePath | ConvertFrom-Json
+    }
     Write-Evidence $evidence
 }
 

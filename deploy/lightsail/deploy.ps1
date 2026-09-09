@@ -12,10 +12,28 @@ param(
     [switch]$RequireNoLegacyAccessLogs,
     [switch]$SkipImage,
     [switch]$ConfigureAdmin,
-    [switch]$RotateAdmin
+    [switch]$RotateAdmin,
+    [string]$SourceRepoPath = "",
+    [string]$OperationalRevision = "",
+    [switch]$OfflineMigration,
+    [ValidateRange(60,1800)][int]$MigrationTimeoutSeconds = 1200,
+    [string]$MigrationEvidencePath = "",
+    [scriptblock]$FinalAcceptance
 )
 $ErrorActionPreference = "Stop"
-$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+. (Join-Path $PSScriptRoot "deployment-source.ps1")
+if ($ExpectedRevision -eq "") { $ExpectedRevision = (& git -C (Join-Path $PSScriptRoot "../..") rev-parse HEAD).Trim() }
+$source = Resolve-CSXDeploymentSource $SourceRepoPath $ExpectedRevision $OperationalRevision
+$repo = $source.Repository
+$OperationalRevision = $source.OperationalRevision
+if ($OfflineMigration -and $ConfigureAdmin) { throw "offline migration does not combine local credential rotation with host recovery" }
+if ($OfflineMigration -and -not $RequireNoLegacyAccessLogs) { throw "offline migration requires the non-purging canonical production path" }
+if ($OfflineMigration -and $null -eq $FinalAcceptance) { throw "offline migration requires canonical final acceptance before host commit" }
+$migrationSupervisorStarted = $false
+$migrationSupervisorTerminal = $true
+$migrationRecoveryVerified = $true
+$migrationState = ""
+$migrationUnit = ""
 $remote = "${User}@${Ip}"
 $resolvedKeyPath = (Resolve-Path -LiteralPath $KeyPath).Path
 $resolvedKnownHostsPath = (Resolve-Path -LiteralPath $KnownHostsPath).Path
@@ -239,6 +257,10 @@ function Invoke-Native([string]$What, [scriptblock]$Run) {
     finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)" }
 }
+
+. (Join-Path $PSScriptRoot "offline-migration.ps1")
+$rollbackServerTemplate = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "rollback-server.sh")
+$rollbackCaddyTemplate = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "rollback-caddy.sh")
 
 # The lock covers local credential state, the fixed Docker tag/tar, every
 # remote candidate/rollback filename, activation and smoke. Creating the
@@ -830,13 +852,19 @@ Write-Output "== starting stack =="
 # replaced, so `compose up` without recreation can keep serving the previous
 # release forever. Recreate the server explicitly on every deploy: image
 # upgrades need the same guarantee, and its healthcheck bounds the restart.
-Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
+if ($OfflineMigration) {
+    Start-CSXOfflineMigration
+} else {
+    Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
+}
+if (-not $OfflineMigration) {
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
 # Caddy documents that file-output option changes require a server restart,
 # not only a config reload. Recreate this single proxy after the healthy app
 # is ready, then reload once more as an explicit live-config validation.
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate caddy" | Out-Null
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile" | Out-Null
+}
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose ps" | ForEach-Object { Write-Output $_ }
 if (-not $SkipImage) {
     $imagePair = Invoke-Remote 'set -eu; expected=$(docker image inspect codesamplex/csx-server:latest --format ''{{.Id}}''); actual=$(docker inspect codesamplex-server-1 --format ''{{.Image}}''); echo $expected $actual' | Select-Object -First 1
@@ -871,63 +899,11 @@ Write-Output "installer generation: $tag (server and directory bind mount agree)
 # encoder strips queries and path IDs before disk. The application container
 # must read the 0644 safe log through its read-only dedicated volume; the
 # historical query-bearing access.log is not mounted into its namespace.
-$safeAccessLogSmoke = @'
-set -eu
-cd /opt/codesamplex/deploy
-docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_EPOCH'
-  umask 022
-  marker=/var/log/caddy-safe/access-safe.log.since
-  if [ ! -f "$marker" ]; then
-    tmp=$(mktemp /var/log/caddy-safe/.access-safe.since.XXXXXX)
-    date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp"
-    chmod 0644 "$tmp"
-    mv "$tmp" "$marker"
-  fi
-CSX_SAFE_LOG_EPOCH
-# These three are the FIRST requests this deploy makes through the proxy, and
-# they carry a ten-second ceiling. When one of them timed out, the only thing
-# the transcript said was `curl: (28)` -- identifying which of the three had
-# stalled took the edge access log of the box afterwards. A fail-closed
-# production rollout has to name the request it failed on.
-log_probe() {
-    probe_path="$1"
-    probe_code=0
-    curl --noproxy '*' --connect-timeout 5 --max-time 10 --resolve '__CSX_DOMAIN__:443:127.0.0.1' -sS -o /dev/null "https://__CSX_DOMAIN__$probe_path" || probe_code=$?
-    if [ "$probe_code" -ne 0 ]; then
-        echo "FAIL privacy-safe log probe $probe_path: curl exit $probe_code" >&2
-        exit 1
-    fi
-}
-log_probe '/v1/stats?csx_safe_log_smoke=discard-this-query'
-log_probe '/v1/samples%2Fencoded-marker-must-not-log/path'
-log_probe '/v1/secret-marker-must-not-log/path'
-i=0
-while [ "$i" -lt 10 ]; do
-  if docker compose exec -T caddy sh -c "grep -q '\"csx_route\":\"stats\"' /var/log/caddy-safe/access-safe.log 2>/dev/null"; then
-    break
-  fi
-  i=$((i + 1))
-  sleep 1
-done
-docker compose exec -T caddy sh -s <<'CSX_SAFE_LOG_VERIFY'
-  test -f /var/log/caddy-safe/access-safe.log
-  test "$(stat -c %a /var/log/caddy-safe/access-safe.log)" = 644
-  test "$(stat -c %a /var/log/caddy-safe/access-safe.log.since)" = 644
-  ! grep -q "discard-this-query" /var/log/caddy-safe/access-safe.log
-  ! grep -q "encoded-marker-must-not-log" /var/log/caddy-safe/access-safe.log
-  ! grep -q "secret-marker-must-not-log" /var/log/caddy-safe/access-safe.log
-  ! grep -q '?' /var/log/caddy-safe/access-safe.log
-  grep -q '"csx_method":"get_head"' /var/log/caddy-safe/access-safe.log
-  ! grep -Eq 'remote_ip|client_ip|headers|user_id|"request"' /var/log/caddy-safe/access-safe.log
-CSX_SAFE_LOG_VERIFY
-docker compose exec -T server sh -s <<'CSX_SAFE_LOG_SERVER_VERIFY'
-  test -r /var/log/caddy-safe/access-safe.log
-  test -r /var/log/caddy-safe/access-safe.log.since
-  test ! -e /var/log/caddy/access.log
-CSX_SAFE_LOG_SERVER_VERIFY
-'@
+$safeAccessLogSmoke = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "safe-log-smoke.sh")
 $safeAccessLogSmoke = $safeAccessLogSmoke.Replace('__CSX_DOMAIN__', $Domain)
-Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
+if (-not $OfflineMigration) {
+    Invoke-RemoteScript $safeAccessLogSmoke | ForEach-Object { Write-Output $_ }
+}
 Write-Output "privacy-safe API access log: query-free, bounded, server-readable"
 
 # The pages and files a stranger actually lands on.
@@ -1202,6 +1178,8 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
     Write-Output "local admin credential committed after final remote deployment commit"
 }
+    if ($null -ne $FinalAcceptance) { & $FinalAcceptance }
+    if ($OfflineMigration) { Complete-CSXOfflineMigration }
     $serverActivationStarted = $false
     $caddyPromoted = $false
 } catch {
@@ -1209,157 +1187,39 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     $serverRollbackFailure = $null
     $caddyRollbackFailure = $null
     $credentialRollbackFailure = $null
+    $hostRolledBack = $false
+    $hostRecoveryUnresolved = $false
+    if ($migrationSupervisorStarted) {
+        try {
+            $hostResult = Stop-CSXOfflineMigration
+            $hostRolledBack = $hostResult.phase -eq "rolled-back" -and $hostResult.cleanup -eq "pass"
+            if (-not $hostRolledBack) { throw "host cleanup/rollback was not verified; deployment lock retained" }
+            $migrationRecoveryVerified = $true
+        } catch {
+            $hostRecoveryUnresolved = $true
+            $serverRollbackFailure = $_
+        }
+    }
     $restoreDist = if ($distPromoted) { "1" } else { "0" }
-    $rollbackServer = @'
-set -eu
-cd /opt/codesamplex/deploy
-restore_dist=__CSX_RESTORE_DIST__
-one_of() {
-  count=0
-  for marker in "$@"; do if [ -e "$marker" ]; then count=$((count + 1)); fi; done
-  test "$count" -eq 1
-}
-one_of docker-compose.yml.rollback-predeploy docker-compose.yml.rollback-absent
-one_of .env.rollback-predeploy .env.rollback-absent
-one_of server-container.rollback-present server-container.rollback-absent
-one_of server-latest.rollback-id server-latest.rollback-absent
-if [ -f server-container.rollback-present ]; then
-  one_of server-container.rollback-running server-container.rollback-stopped
-  test -f server-image.rollback-id
-  old=$(cat server-image.rollback-id)
-  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
-  test "$(docker image inspect codesamplex/csx-server:rollback-predeploy --format '{{.Id}}')" = "$old"
-else
-  test ! -e server-image.rollback-id
-  test ! -e server-container.rollback-running
-  test ! -e server-container.rollback-stopped
-fi
-if [ -f .env.rollback-predeploy ]; then
-  test ! -e .env.rollback-absent
-fi
-if [ "$restore_dist" -eq 1 ]; then test -d /opt/codesamplex/dist.previous; fi
-if docker container inspect codesamplex-server-1 >/dev/null 2>&1; then docker rm -f codesamplex-server-1 >/dev/null; fi
-if [ -f docker-compose.yml.rollback-predeploy ]; then
-  cp -p docker-compose.yml.rollback-predeploy docker-compose.yml
-else
-  rm -f docker-compose.yml
-fi
-if [ -f .env.rollback-predeploy ]; then
-  cp -p .env.rollback-predeploy .env
-  chmod 0600 .env
-else
-  rm -f .env
-fi
-rm -f docker-compose.yml.candidate .env.new .env.activity.* .env.admin.* caddy/Caddyfile.candidate
-if [ "$restore_dist" -eq 1 ]; then
-  rm -rf /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist.failed-rollback
-  cp -a /opt/codesamplex/dist.previous /opt/codesamplex/dist.rollback-stage
-  mv /opt/codesamplex/dist /opt/codesamplex/dist.failed-rollback
-  if mv /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist; then
-    rm -rf /opt/codesamplex/dist.failed-rollback
-  else
-    mv /opt/codesamplex/dist.failed-rollback /opt/codesamplex/dist
-    exit 68
-  fi
-fi
-if [ -f server-container.rollback-present ]; then
-  docker tag codesamplex/csx-server:rollback-predeploy codesamplex/csx-server:latest
-  docker compose up -d --no-build --no-deps --force-recreate server
-  test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
-  if [ -f server-container.rollback-running ]; then
-    i=0
-    while [ "$i" -lt 24 ]; do
-      if docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
-      i=$((i + 1))
-      sleep 5
-    done
-    test "$i" -lt 24
-    test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true
-  else
-    docker compose stop server >/dev/null
-    test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = false
-  fi
-else
-  ! docker container inspect codesamplex-server-1 >/dev/null 2>&1
-fi
-if [ -f server-latest.rollback-id ]; then
-  latest=$(cat server-latest.rollback-id)
-  printf '%s\n' "$latest" | grep -Eq '^sha256:[0-9a-f]{64}$'
-  test "$(docker image inspect codesamplex/csx-server:rollback-latest-predeploy --format '{{.Id}}')" = "$latest"
-  docker tag codesamplex/csx-server:rollback-latest-predeploy codesamplex/csx-server:latest
-  test "$(docker image inspect codesamplex/csx-server:latest --format '{{.Id}}')" = "$latest"
-else
-  if docker image inspect codesamplex/csx-server:latest >/dev/null 2>&1; then docker image rm codesamplex/csx-server:latest >/dev/null; fi
-  ! docker image inspect codesamplex/csx-server:latest >/dev/null 2>&1
-fi
-if [ -f docker-compose.yml.rollback-predeploy ]; then cmp -s docker-compose.yml.rollback-predeploy docker-compose.yml; else test ! -e docker-compose.yml; fi
-if [ -f .env.rollback-predeploy ]; then cmp -s .env.rollback-predeploy .env; else test ! -e .env; fi
-test ! -e docker-compose.yml.candidate
-test ! -e .env.new
-'@
-    $rollbackServer = $rollbackServer.Replace('__CSX_RESTORE_DIST__', $restoreDist)
-    try {
-        Invoke-RemoteScript $rollbackServer | Out-Null
-        Write-Output "server rollback: exact prior container/image/config/env state proved"
-    } catch {
-        $serverRollbackFailure = $_
+    $rollbackServer = $rollbackServerTemplate.Replace('__CSX_RESTORE_DIST__', $restoreDist)
+    if (-not $hostRolledBack -and -not $hostRecoveryUnresolved) {
+        try {
+            Invoke-RemoteScript $rollbackServer | Out-Null
+            Write-Output "server rollback: exact prior container/image/config/env state proved"
+        } catch {
+            $serverRollbackFailure = $_
+        }
     }
 
-    if ($caddyPromoted) {
-        $rollbackCaddy = @'
-set -eu
-cd /opt/codesamplex/deploy
-live=/opt/codesamplex/deploy/caddy/Caddyfile
-rollback=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-predeploy
-absent=/opt/codesamplex/deploy/caddy/Caddyfile.rollback-absent
-candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
-container_present=/opt/codesamplex/deploy/caddy/container.rollback-present
-container_absent=/opt/codesamplex/deploy/caddy/container.rollback-absent
-container_running=/opt/codesamplex/deploy/caddy/container.rollback-running
-container_stopped=/opt/codesamplex/deploy/caddy/container.rollback-stopped
-image_id=/opt/codesamplex/deploy/caddy/container.rollback-image-id
-one_of() {
-  count=0
-  for marker in "$@"; do if [ -e "$marker" ]; then count=$((count + 1)); fi; done
-  test "$count" -eq 1
-}
-one_of "$rollback" "$absent"
-one_of "$container_present" "$container_absent"
-if [ -f "$container_present" ]; then one_of "$container_running" "$container_stopped"; test -f "$image_id"; fi
-if docker container inspect codesamplex-caddy-1 >/dev/null 2>&1; then docker rm -f codesamplex-caddy-1 >/dev/null; fi
-if [ -f "$rollback" ]; then
-  chmod 0644 "$rollback"
-  cp -p "$rollback" "$live"
-else
-  rm -f "$live" "$candidate"
-fi
-rm -f "$candidate"
-if [ -f "$container_present" ]; then
-  test -f "$rollback"
-  old=$(cat "$image_id")
-  printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
-  docker compose up -d --no-build --no-deps --force-recreate caddy
-  test "$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')" = "$old"
-  if [ -f "$container_running" ]; then
-    docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-    test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = true
-  else
-    docker compose stop caddy >/dev/null
-    test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = false
-  fi
-else
-  ! docker container inspect codesamplex-caddy-1 >/dev/null 2>&1
-fi
-if [ -f "$rollback" ]; then cmp -s "$rollback" "$live"; else test ! -e "$live"; fi
-test ! -e "$candidate"
-'@
+    if ($caddyPromoted -and -not $hostRolledBack -and -not $hostRecoveryUnresolved) {
+        $rollbackCaddy = $rollbackCaddyTemplate
         try {
             Invoke-RemoteScript $rollbackCaddy | Out-Null
             Write-Output "Caddy rollback: restored rollback-predeploy after failed activation"
         } catch {
             $caddyRollbackFailure = $_
         }
-    } else {
+    } elseif (-not $hostRecoveryUnresolved -and -not $hostRolledBack) {
         try { Invoke-Remote "rm -f /opt/codesamplex/deploy/caddy/Caddyfile.candidate" | Out-Null }
         catch { $caddyRollbackFailure = $_ }
     }
@@ -1394,6 +1254,9 @@ Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagat
         [IO.File]::Delete($adminCredentialState.ActiveBackup)
         [IO.File]::Delete($adminCredentialState.PendingBackup)
     }
+    if ($migrationSupervisorStarted -and (-not $migrationSupervisorTerminal -or -not $migrationRecoveryVerified)) {
+        Write-Warning "host migration recovery is unresolved; the exact deployment lock and state directory are retained"
+    }
     # Clean only per-invocation artifacts whose names contain this lock
     # owner's validated random token. Cleanup errors are warnings; lock
     # release below remains mandatory and gets its own error handling.
@@ -1418,7 +1281,7 @@ Write-Output "Deployed. http://$Ip is live; https://$Domain follows DNS propagat
         try { Invoke-Remote "rm -f $remoteImageTar; docker image rm $localImageTag >/dev/null 2>&1 || true" | Out-Null }
         catch { Write-Warning "could not remove per-deploy remote image artifacts" }
     }
-    if ($deployLockHeld) {
+    if ($deployLockHeld -and (-not $migrationSupervisorStarted -or ($migrationSupervisorTerminal -and $migrationRecoveryVerified))) {
         $releaseDeployLock = @'
 set -eu
 lock=/opt/codesamplex/.deploy-lock

@@ -27,6 +27,11 @@ on:
         required: true
         type: choice
         options: [safe, additive-migration, manual]
+      offline_migration_timeout_seconds:
+        description: Measured offline migration budget (60-1800 seconds); health and smoke limits stay unchanged
+        required: false
+        type: number
+        default: 1200
       tracking_issue:
         description: Canonical GitHub tracking issue receiving the run evidence (e.g. #213 or 213)
         required: true
@@ -48,17 +53,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require canonical operational source
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: operations
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          path: payload
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: operations/go.mod
+          cache-dependency-path: operations/go.sum
           cache: true
 
       - name: Prove canonical commit and ProjectOps decision
+        working-directory: operations
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
@@ -69,10 +84,11 @@ jobs:
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$TARGET_SHA" origin/main
-          go run ./cmd/csx-deploy-gate \
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C ../payload rev-parse HEAD)" = "$TARGET_SHA"
+          git -C ../payload fetch --no-tags origin main
+          git -C ../payload merge-base --is-ancestor "$TARGET_SHA" origin/main
+          go run ./cmd/csx-deploy-gate -repo ../payload \
             -target "$TARGET_SHA" \
             -previous "$PREVIOUS_SHA" \
             -merge-verdict "$MERGE_VERDICT" \
@@ -94,6 +110,17 @@ jobs:
             exit 1
           fi
           echo "Canonical CI evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require successful canonical operational CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATIONAL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ci_run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${OPERATIONAL_SHA}&branch=main&status=success&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // 0')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+          echo "Operational source: ${OPERATIONAL_SHA}; CI: ${ci_run}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Require successful same-target release and farm rollout
         env:
@@ -146,15 +173,23 @@ jobs:
     # Image preparation, transfer, the lightweight smoke and an exact rollback
     # all fit here. Full-builder convergence has its own observation workflow
     # and never extends the deployment success path.
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: codesamplex-production
     permissions:
       contents: read
     steps:
+      # Operational code is the immutable main commit that supplied this workflow.
+      # The payload remains the separately eligible, released target commit.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: operations
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          path: payload
 
       - name: Initialize fail-closed evidence
         shell: pwsh
@@ -170,6 +205,7 @@ jobs:
             trackingIssue = $env:TRACKING_ISSUE
             linearIssue = $env:TRACKING_ISSUE
             targetSha = $env:TARGET_SHA
+            operationalSha = "${{ github.sha }}"
             previousProductionSha = $env:PREVIOUS_SHA
             conclusion = "failure"
             deployedSha = ""
@@ -205,9 +241,14 @@ jobs:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
           TRACKING_ISSUE: ${{ inputs.tracking_issue }}
+          OPERATIONAL_SHA: ${{ github.sha }}
+          MIGRATION_TIMEOUT: ${{ inputs.offline_migration_timeout_seconds }}
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
-          ./deploy/lightsail/deploy-production.ps1 `
+          ./operations/deploy/lightsail/deploy-production.ps1 `
+            -SourceRepoPath (Join-Path $env:GITHUB_WORKSPACE "payload") `
+            -OperationalRevision $env:OPERATIONAL_SHA `
+            -MigrationTimeoutSeconds ([int]$env:MIGRATION_TIMEOUT) `
             -Ip $env:PRODUCTION_HOST `
             -User $user `
             -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `
@@ -230,12 +271,14 @@ jobs:
         run: |
           set -euo pipefail
           test -s production-deploy-evidence.json
-          jq '{deployedSha,imageDigest,migrationVersion,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          jq '{operationalSha,deployedSha,imageDigest,migrationVersion,offlineMigration,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: production-evidence-${{ github.run_id }}
-          path: production-deploy-evidence.json
+          path: |
+            production-deploy-evidence.json
+            production-deploy-evidence.json.migration.json
           if-no-files-found: error
           retention-days: 30
