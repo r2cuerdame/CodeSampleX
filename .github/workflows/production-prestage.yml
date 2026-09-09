@@ -1,0 +1,106 @@
+name: Production builder index prestage
+run-name: Production prestage ${{ inputs.commit_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Immutable commit to build prestage helper from
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codesamplex-production-prestage
+  cancel-in-progress: false
+
+jobs:
+  prestage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: codesamplex-production
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate immutable target and build helper
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/csx-server-prestage" ./cmd/csx-server
+          test -s "$RUNNER_TEMP/csx-server-prestage"
+
+      - name: Install pinned production SSH material
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-production-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-production-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+      - name: Upload prestage helper
+        shell: bash
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+        run: |
+          set -euo pipefail
+          user="${PRODUCTION_USER:-ubuntu}"
+          scp -i "$RUNNER_TEMP/csx-production-ssh/id" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
+            "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage"
+
+      - name: Concurrently prestage production indexes
+        shell: bash
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+        run: |
+          set -euo pipefail
+          user="${PRODUCTION_USER:-ubuntu}"
+          ssh -i "$RUNNER_TEMP/csx-production-ssh/id" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
+            "$user@$PRODUCTION_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          cd /opt/codesamplex/deploy
+          before=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version)
+          dsn=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CSX_DSN=//p' | head -n 1)
+          network=$(docker inspect codesamplex-server-1 --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          test -n "$dsn"
+          test -n "$network"
+          chmod 0755 /tmp/csx-server-prestage
+          docker run --rm --network "$network" \
+            -v /tmp/csx-server-prestage:/usr/local/bin/csx-server:ro \
+            -e CSX_DSN="$dsn" \
+            alpine:3.22 /usr/local/bin/csx-server prestage-builder-indexes
+          after=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version)
+          test "$before" = "$after"
+          docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz >/dev/null
+          rm -f /tmp/csx-server-prestage
+          REMOTE
+
+      - name: Remove production SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
