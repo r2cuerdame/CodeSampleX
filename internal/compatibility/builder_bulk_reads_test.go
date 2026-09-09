@@ -105,6 +105,19 @@ func (s *bulkReadStore) JobsForSamples(ctx context.Context, sampleIDs []string) 
 	return out, nil
 }
 
+func (s *bulkReadStore) EvidenceForTargets(ctx context.Context, targets []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error) {
+	s.note("EvidenceForTargets", len(targets))
+	out := make(map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, len(targets))
+	for _, target := range targets {
+		rows, err := s.Fake.EvidenceForTarget(ctx, target.PURL, target.Symbol)
+		if err != nil {
+			return nil, err
+		}
+		out[target] = rows
+	}
+	return out, nil
+}
+
 // bulkCorpus is what both halves of a parity comparison are seeded from: npm
 // packages carrying observed PASS and FAIL evidence (so clusters and
 // regressions exist), and maven/java samples (so matrix generation runs).
@@ -387,20 +400,28 @@ func TestIncrementalPassReadsWholeCorpusPackagesAndJobsInBoundedPages(t *testing
 		t.Fatal("bounded-page reads changed what the INCREMENTAL pass published")
 	}
 
-	// Evidence stayed scoped to the change on both paths: that is what the
-	// affected-scope rule already buys, and it must not regress here.
-	if got, want := bulkCounter.count("EvidenceForTarget"), rowCounter.count("EvidenceForTarget"); got != want {
-		t.Fatalf("evidence reads = %d, want %d", got, want)
-	}
+	// Evidence stays scoped to the changed package, but the production store
+	// shares one checkout across the bounded batch.
 	if got := rowCounter.count("EvidenceForTarget"); got > 4 {
 		t.Fatalf("evidence reads for one dirty package = %d; the pass is no longer scoped", got)
+	}
+	if got := bulkCounter.count("EvidenceForTarget"); got != 0 {
+		t.Fatalf("bulk store still read %d evidence targets one at a time", got)
+	}
+	if got, want := bulkCounter.count("EvidenceForTargets"), 1; got != want {
+		t.Fatalf("bounded evidence pages = %d, want %d", got, want)
+	}
+	for _, size := range bulkCounter.sizes("EvidenceForTargets") {
+		if size > targetEvidenceReadBatch {
+			t.Fatalf("evidence page size = %d, max %d", size, targetEvidenceReadBatch)
+		}
 	}
 
 	t.Logf("incremental pass, 1 of %d packages dirty: row-at-a-time reads "+
 		"package=%d job=%d evidence=%d; bounded pages package=%d job=%d evidence=%d",
 		npm+maven, rowCounter.count("GetPackage"), rowCounter.count("JobsForSample"),
 		rowCounter.count("EvidenceForTarget"), bulkCounter.count("ExistingPackagePURLs"),
-		bulkCounter.count("JobsForSamples"), bulkCounter.count("EvidenceForTarget"))
+		bulkCounter.count("JobsForSamples"), bulkCounter.count("EvidenceForTargets"))
 
 	// The corpus-sized reads. One receipt-resolved npm package per npm sample
 	// and one maven package per maven sample, none of which changed.
