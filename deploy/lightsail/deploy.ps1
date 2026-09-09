@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 # Canonical runners use PowerShell 7 for bounded, exact native argv transport.
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw "deployment requires PowerShell 7" }
 . (Join-Path $PSScriptRoot "deploy-budget.ps1")
-Set-DeployPhase preparation 600
+Set-DeployPhase preparation 180
 $DeploymentEvidence.phaseTimings = $script:deployPhaseTimings
 . (Join-Path $PSScriptRoot "deployment-source.ps1")
 if ($ExpectedRevision -eq "") { $ExpectedRevision = (& git -C (Join-Path $PSScriptRoot "../..") rev-parse HEAD).Trim() }
@@ -475,11 +475,11 @@ if (-not $SkipImage) {
     Invoke-DeployProcess docker @("build", "--platform", "linux/amd64",
         "--build-arg", "CSX_VERSION=$revision", "--build-arg", "CSX_BUILD_VERSION=$buildVersion",
         "--build-arg", "CSX_BUILT_AT=$builtAt", "--build-arg", "CSX_ENV=production",
-        "-f", $dockerfile, "-t", $localImageTag, $repo) 540 | ForEach-Object { Write-Output $_ }
+        "-f", $dockerfile, "-t", $localImageTag, $repo) 150 | ForEach-Object { Write-Output $_ }
     Invoke-DeployProcess docker @("save", $localImageTag, "-o", $imageTar) 60 | Out-Null
 }
 
-Set-DeployPhase staging 300
+Set-DeployPhase staging 240
 Write-Output "== shipping bundle to $Ip =="
 Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
 # Snapshot the exact live server/config/image state before this deploy changes
@@ -718,7 +718,7 @@ if (-not $SkipImage) {
     Invoke-Remote "set -eu; docker load -i $remoteImageTar >/dev/null; docker tag $localImageTag codesamplex/csx-server:latest; docker image rm $localImageTag >/dev/null; rm -f $remoteImageTar" | Out-Null
 }
 
-    Set-DeployPhase activation 240
+    Set-DeployPhase activation 30
     $promoteServerConfig = @'
 set -eu
 cd /opt/codesamplex/deploy
@@ -731,7 +731,7 @@ mv -f "$candidate" docker-compose.yml
     $serverActivationStarted = $true
 
     # Promote only after every unrelated shipping/build step has succeeded.
-    # Keep one exact rollback copy until the live privacy smoke passes.
+    # Keep one exact rollback copy until minimal host acceptance commits.
     $promoteCaddy = @'
 set -eu
 candidate=/opt/codesamplex/deploy/caddy/Caddyfile.candidate
@@ -778,12 +778,13 @@ Write-Output "== starting stack =="
 # release forever. Recreate the server explicitly on every deploy: image
 # upgrades need the same guarantee, and its healthcheck bounds the restart.
 if ($OfflineMigration) {
-    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 300)
-    Start-CSXOfflineMigration
-    Set-DeployPhase activation-smoke 240
+    $hostResult = Start-CSXOfflineMigration
+    Set-CSXHostDeploymentEvidence $hostResult
+    $liveIdentityParts = @($hostResult.targetSha, $hostResult.imageDigest, $hostResult.targetSha,
+        $hostResult.migrationLedger.version, $hostResult.servedRevision, $hostResult.serverStartedAt)
 } else {
+    Set-DeployPhase activation-smoke 180
     Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --force-recreate server" | Out-Null
-}
 if (-not $OfflineMigration) {
 Invoke-Remote "cd /opt/codesamplex/deploy && docker compose up -d --no-build --remove-orphans" | Out-Null
 # Caddy documents that file-output option changes require a server restart,
@@ -915,7 +916,8 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     Commit-CSXAdminCredential $adminCredentialPaths.Pending $adminCredentialPaths.Active
     Write-Output "local admin credential committed after final remote deployment commit"
 }
-    if ($OfflineMigration) { Complete-CSXOfflineMigration }
+} # The canonical host owns minimal acceptance; legacy direct mode checks above.
+
     # Publish only the state validated INSIDE the rollback boundary. The wrapper
     # must not run a fallible optional collector after this commit.
     $DeploymentEvidence.deployedSha = $liveIdentityParts[0]
@@ -934,9 +936,17 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     $DeploymentEvidence.rollback = "attempted"
     $script:deployRecoveryMode = $true
     if ($migrationSupervisorStarted) {
-        Set-DeployPhase host-recovery 540
+        Set-DeployPhase host-recovery 270
         try {
-            $hostResult = Stop-CSXOfflineMigration
+            $hostResult = Resolve-CSXOfflineMigrationOutcome
+            if ($hostResult.phase -eq "committed") {
+                # A lost SSH result after host acceptance is not an app failure.
+                Set-CSXHostDeploymentEvidence $hostResult
+                $serverActivationStarted = $false
+                $caddyPromoted = $false
+                Write-Output "host committed exact acceptance; recovered terminal evidence"
+                return
+            }
             if ($hostResult.phase -ne "rolled-back" -or $hostResult.cleanup -ne "pass") {
                 throw "host cleanup and exact rollback were not proved"
             }
@@ -944,8 +954,9 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
             $DeploymentEvidence.rollback = "succeeded"
         } catch {
             $script:retainDeployLock = $true
-            $DeploymentEvidence.rollback = "unverified"
-            throw [AggregateException]::new("host migration recovery unresolved; lock retained", @($deployFailure.Exception, $_.Exception))
+            $DeploymentEvidence.rollback = "unknown-host-outcome"
+            $DeploymentEvidence.failureClass = "controller-unresolved"
+            throw [AggregateException]::new("host migration outcome unresolved; no controller rollback requested; lock retained", @($deployFailure.Exception, $_.Exception))
         }
         # The host owns cleanup and exact restoration after its launch. Never
         # race a second controller rollback against its finalizer.

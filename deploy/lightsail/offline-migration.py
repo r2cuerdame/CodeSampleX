@@ -2,7 +2,7 @@
 """Host-owned migration/activation lease for the canonical production deploy.
 
 The transient systemd unit owns the complete interval from stopping the old
-builder to the controller's final smoke acknowledgement. ExecStopPost calls
+builder through exact host acceptance and durable commit. ExecStopPost calls
 finalize even when the main process was killed. No credentials enter argv or
 evidence; Compose obtains the existing DSN from the existing host environment.
 """
@@ -22,6 +22,11 @@ ROOT = Path("/opt/codesamplex/deploy")
 HEX32 = re.compile(r"^[0-9a-f]{32}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 IMAGE = re.compile(r"^sha256:[0-9a-f]{64}$")
+RELEASE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+STARTED = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
+ACTIVATION_BUDGET_SECONDS = 180
+READINESS_BUDGET_SECONDS = 45
+CANONICAL_DOMAIN = "codesamplex.dev"
 INDEXES = {
     "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
     "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
@@ -75,6 +80,8 @@ class Host:
         budget = self.config.get("migrationTimeoutSeconds")
         if type(budget) is not int or not 60 <= budget <= 1800:
             raise ValueError("migration budget must be 60..1800 seconds")
+        if not RELEASE.fullmatch(self.config.get("expectedReleaseTag", "")):
+            raise ValueError("invalid canonical release tag")
         if self.config.get("expectedMigration") != "0036_builder_projections.sql":
             raise ValueError("offline migration supports only reviewed migration 0036")
         self.helper = "csx-migrate-" + owner
@@ -90,6 +97,7 @@ class Host:
             "phase": "preflight", "conclusion": "pending",
             "startedAt": utc(), "backends": [], "cleanup": "not-started",
             "rollback": "not-started", "controllerSmoke": "not-acknowledged",
+            "acceptanceAuthority": "host", "phaseTimings": {},
         }
         if self.evidence_file.exists():
             self.evidence = json.loads(self.evidence_file.read_text(encoding="utf-8"))
@@ -98,13 +106,33 @@ class Host:
         self.evidence.update(values)
         atomic_json(self.evidence_file, self.evidence)
 
+    def execute_phase(self, name, seconds, action, started=None):
+        """Apply one wall-clock budget to every command, preserving caller caps."""
+        started = time.monotonic() if started is None else started
+        previous = self.operation_deadline
+        self.operation_deadline = min(previous, started + seconds) if previous is not None else started + seconds
+        timing = {"startedAt": utc(), "budgetSeconds": seconds, "outcome": "failure"}
+        try:
+            if time.monotonic() >= self.operation_deadline:
+                raise RuntimeError(name + " deadline exceeded")
+            result = action()
+            if time.monotonic() >= self.operation_deadline:
+                raise RuntimeError(name + " deadline exceeded")
+            timing["outcome"] = "pass"
+            return result
+        finally:
+            timing.update(completedAt=utc(), elapsedSeconds=round(time.monotonic() - started, 3))
+            self.evidence.setdefault("phaseTimings", {})[name] = timing
+            self.operation_deadline = previous
+            self.save()
+
     def command(self, args, seconds=30, check=True, environment=None):
         # Never include stdout/stderr or argv in exception messages: Docker
         # inspection includes the DSN. Commands are arrays, never shell text.
         if self.operation_deadline is not None:
             seconds = min(seconds, self.operation_deadline - time.monotonic())
             if seconds <= 0:
-                raise RuntimeError("host cleanup deadline exceeded")
+                raise RuntimeError("host operation deadline exceeded")
         process = subprocess.Popen(args, cwd=self.root, text=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    start_new_session=True, env=environment)
@@ -174,6 +202,7 @@ class Host:
         built = json.loads(self.docker("image", "inspect", image).stdout)[0]
         if built["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
             raise RuntimeError("immutable image revision mismatch")
+        return container
 
     def preflight(self):
         self.check_lock()
@@ -225,9 +254,11 @@ class Host:
         self.save(quiescence="pass", quiescentAt=utc())
 
     def migrate(self):
+        return self.execute_phase("migration", self.config["migrationTimeoutSeconds"], self._migrate)
+
+    def _migrate(self):
         started = time.monotonic()
         self.save(phase="migrating", migrationStartedAt=utc())
-        self.operation_deadline = started + self.config["migrationTimeoutSeconds"]
         # Fixed unique application_name identifies the PostgreSQL session even
         # if Docker exits while its DDL backend survives the socket disconnect.
         self.docker("compose", "run", "--detach", "--no-deps", "--name", self.helper,
@@ -257,12 +288,11 @@ class Host:
             time.sleep(2)
         self.save(migrationElapsedSeconds=round(time.monotonic() - started, 3),
                   migrationCompletedAt=utc())
-        self.operation_deadline = None
-        self.cleanup_helper()
 
     def cleanup_helper(self):
-        if self.operation_deadline is None:
-            self.operation_deadline = time.monotonic() + 90
+        return self.execute_phase("helperCleanup", 90, self._cleanup_helper)
+
+    def _cleanup_helper(self):
         self.save(cleanup="running")
         names = self.docker("ps", "-aq", "--filter", "name=^/" + self.helper + "$").stdout.split()
         if len(names) > 1:
@@ -299,7 +329,6 @@ class Host:
         if self.evidence.get("quiescence") == "pass" and self.clients():
             raise RuntimeError("unowned database clients remain after helper cleanup")
         self.save(cleanup="pass", cleanupCompletedAt=utc())
-        self.operation_deadline = None
 
     def backend_signal(self, row, terminate, server=False):
         if type(row["pid"]) is not int or (not server and row["applicationName"] != self.application):
@@ -355,63 +384,110 @@ class Host:
         self.save(migrationLedger=schema, indexes=indexes, migrationVerification="pass")
 
     def activate(self):
-        self.save(phase="activating", serverActivationStarted=True)
-        # The new image's startup migration is now a bounded no-op. The old
-        # binary never runs between backfill and the new builder's full repair.
-        self.docker("compose", "up", "-d", "--no-build", "--force-recreate", "server", seconds=60)
-        deadline = time.monotonic() + 120
+        started = time.monotonic()
+        wall_started = datetime.datetime.now(datetime.timezone.utc)
+        self.save(phase="activating", serverActivationStarted=True,
+                  activationStartedAt=wall_started.isoformat(),
+                  activationDeadlineAt=(wall_started + datetime.timedelta(
+                      seconds=ACTIVATION_BUDGET_SECONDS)).isoformat(),
+                  activationBudgetSeconds=ACTIVATION_BUDGET_SECONDS)
+        self.execute_phase("activation", ACTIVATION_BUDGET_SECONDS, self._activate, started=started)
+        # The host owns every acceptance proof. Controller loss after this
+        # durable commit cannot resurrect the old builder or prolong outage.
+        self.save(phase="committed", conclusion="success", controllerSmoke="host-verified",
+                  acceptanceAuthority="host", smoke="pass", completedAt=utc(),
+                  activationElapsedSeconds=self.evidence["phaseTimings"]["activation"]["elapsedSeconds"])
+
+    def wait_healthy(self):
         while True:
             result = self.docker("compose", "exec", "-T", "server", "wget", "-q", "-T", "5", "-t", "1", "-O-",
                                  "http://127.0.0.1:8080/healthz", seconds=10, check=False)
             if result.returncode == 0 and result.stdout.strip() == "ok":
-                break
-            if time.monotonic() >= deadline:
+                self.save(health="ok")
+                return
+            remaining = self.operation_deadline - time.monotonic()
+            if remaining <= 0:
                 raise RuntimeError("target health deadline exceeded")
-            time.sleep(5)
-        self.verify_image("codesamplex-server-1", self.config["imageDigest"], self.config["targetSha"])
+            time.sleep(min(1, remaining))
+
+    def wait_proxy_healthy(self):
+        while True:
+            result = None
+            try:
+                result = self.command(["curl", "--noproxy", "*", "--connect-timeout", "1",
+                                       "--max-time", "2", "--resolve",
+                                       CANONICAL_DOMAIN + ":443:127.0.0.1", "-sS",
+                                       "-w", "\n%{http_code}", "https://" + CANONICAL_DOMAIN + "/healthz"],
+                                      seconds=3, check=False)
+            except subprocess.TimeoutExpired:
+                pass
+            if result is not None and result.returncode == 0:
+                body, separator, status = result.stdout.rpartition("\n")
+                if separator and status == "200" and body.strip() == "ok":
+                    self.save(proxyHealth="ok")
+                    return
+            remaining = self.operation_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("proxy health deadline exceeded")
+            time.sleep(min(1, remaining))
+
+    def representative(self, path):
+        # Exercise the actual TLS proxy and app on this host without DNS,
+        # retries, redirects, or an independent network-observation lease.
+        result = self.command(["curl", "--noproxy", "*", "--connect-timeout", "3",
+                               "--max-time", "10", "--resolve",
+                               CANONICAL_DOMAIN + ":443:127.0.0.1", "-sS",
+                               "-w", "\n%{http_code}", "https://" + CANONICAL_DOMAIN + path],
+                              seconds=10)
+        body, separator, status = result.stdout.rpartition("\n")
+        if not separator or status != "200":
+            raise RuntimeError("representative request did not return HTTP 200")
+        return body
+
+    def _activate(self):
+        # Preflight and migration already proved the existing DB is running.
+        # Do not re-enter Compose dependency health waits or recreate the DB.
+        self.docker("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "server", seconds=60)
+        self.execute_phase("readiness", READINESS_BUDGET_SECONDS, self.wait_healthy)
+        container = self.verify_image("codesamplex-server-1", self.config["imageDigest"], self.config["targetSha"])
+        if not container["State"].get("Running") or container["State"].get("OOMKilled"):
+            raise RuntimeError("target server is not running")
+        started = container["State"]["StartedAt"]
+        if not STARTED.fullmatch(started):
+            raise RuntimeError("server start timestamp is malformed")
         served = json.loads(self.docker("compose", "exec", "-T", "server", "wget", "-q", "-T", "5", "-t", "1", "-O-",
                                       "http://127.0.0.1:8080/version", seconds=10).stdout)
         if served.get("revision") != self.config["targetSha"]:
             raise RuntimeError("target process serves the wrong revision")
-        # All stack mutations precede the host's ACK lease. A paused controller
-        # can later perform only read-only smoke and owner-scoped acknowledgement,
-        # never recreate/reload services after this host has rolled them back.
-        self.docker("compose", "up", "-d", "--no-build", "--remove-orphans", seconds=90)
-        self.docker("compose", "up", "-d", "--no-build", "--force-recreate", "caddy", seconds=60)
-        self.docker("compose", "exec", "-T", "caddy", "caddy", "reload",
-                    "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile", seconds=30)
-        self.save(phase="candidate-ready", candidateReadyAt=utc())
-
-    def await_commit(self):
-        deadline = time.monotonic() + 600
-        while True:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("controller smoke acknowledgement deadline exceeded")
-            ack = self.state / "commit.json"
-            if ack.exists():
-                value = json.loads(ack.read_text(encoding="utf-8"))
-                expected = {k: self.evidence[k] for k in
-                            ("owner", "operationalSha", "targetSha", "imageDigest")}
-                if value != expected:
-                    raise RuntimeError("controller acknowledgement identity mismatch")
-                self.check_lock()
-                self.verify_image("codesamplex-server-1", self.config["imageDigest"], self.config["targetSha"])
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("controller smoke acknowledgement deadline exceeded")
-                self.save(phase="committed", conclusion="success",
-                          controllerSmoke="acknowledged", completedAt=utc())
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError("controller smoke acknowledgement deadline exceeded")
-            time.sleep(1)
+        release = self.docker("exec", "codesamplex-server-1", "cat", "/data/dist/.release-tag", seconds=10).stdout.strip()
+        if release != self.config["expectedReleaseTag"]:
+            raise RuntimeError("activated installer release identity mismatch")
+        self.save(servedRevision=served["revision"], serverStartedAt=started, releaseTag=release)
+        # Recreating Caddy reads its new config once. Its startup must not wait
+        # for a second Compose health cycle after explicit readiness passed.
+        self.docker("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "caddy", seconds=45)
+        self.execute_phase("proxyReadiness", 15, self.wait_proxy_healthy)
+        features = self.representative("/features")
+        if '<link rel="canonical" href="https://' + CANONICAL_DOMAIN + '/features">' not in features:
+            raise RuntimeError("representative features identity mismatch")
+        routed = json.loads(self.representative("/version"))
+        if routed.get("revision") != self.config["targetSha"]:
+            raise RuntimeError("proxy serves the wrong revision")
+        self.check_lock()
+        final = self.verify_image("codesamplex-server-1", self.config["imageDigest"], self.config["targetSha"])
+        if not final["State"].get("Running") or final["State"].get("OOMKilled"):
+            raise RuntimeError("target server failed during acceptance")
+        if final["State"]["StartedAt"] != started:
+            raise RuntimeError("target server restarted during acceptance")
+        self.save(representativeSmoke="pass", candidateReadyAt=utc())
 
     def run(self):
-        self.preflight()
-        self.stop_builders()
+        self.execute_phase("preflight", 60, self.preflight)
+        self.execute_phase("quiescence", 60, self.stop_builders)
         self.migrate()
-        self.verify_migration()
+        self.cleanup_helper()
+        self.execute_phase("migrationVerification", 30, self.verify_migration)
         self.activate()
-        self.await_commit()
 
     def server_network(self, container):
         addresses = []
@@ -485,17 +561,18 @@ class Host:
         if self.evidence.get("phase") in ("committed", "rolled-back"):
             return
         self.check_lock()
-        # 90 seconds cleanup + two 180-second artifact rollback budgets fit
-        # inside systemd's separate 480-second stop/finalizer allowance.
-        self.operation_deadline = time.monotonic() + 90
-        self.stop_server_for_rollback()
-        self.cleanup_helper()
-        self.operation_deadline = None
+        # Recovery has its own 60 + 90 + 45 second envelopes, including
+        # helper cleanup, inside systemd's separate 240-second stop allowance.
+        def cleanup():
+            self.stop_server_for_rollback()
+            self.cleanup_helper()
+        self.execute_phase("recoveryCleanup", 60, cleanup)
         self.save(phase="rolling-back", conclusion="failure")
         errors = []
-        for name in ("rollback-server.sh", "rollback-caddy.sh"):
+        for name, seconds in (("rollback-server.sh", 90), ("rollback-caddy.sh", 45)):
             try:
-                self.command(["sh", str(self.state / name)], seconds=180)
+                self.execute_phase(name, seconds,
+                    lambda: self.command(["sh", str(self.state / name)], seconds=seconds))
             except Exception:
                 errors.append(name)
         if errors:
@@ -523,6 +600,18 @@ def main(argv):
     except Exception as exc:
         # Exception strings are intentionally fixed above; never emit subprocess
         # output, which can contain environment or data from the running service.
+        # systemctl stop can race the controller reading a pending snapshot.
+        # A signal after durable commit must not rewrite success as failure.
+        try:
+            durable = json.loads(host.evidence_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            durable = {}
+        expected = {"owner": host.owner, "targetSha": host.config["targetSha"],
+                    "operationalSha": host.config["operationalSha"],
+                    "imageDigest": host.config["imageDigest"], "phase": "committed",
+                    "conclusion": "success", "acceptanceAuthority": "host"}
+        if all(durable.get(key) == value for key, value in expected.items()):
+            return 0
         safe = str(exc) if type(exc) is RuntimeError else type(exc).__name__
         host.save(failure=safe, conclusion="failure")
         return 1

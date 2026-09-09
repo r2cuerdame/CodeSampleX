@@ -59,13 +59,12 @@ if [ -f server-container.rollback-present ]; then
   if [ -f server-container.rollback-running ]; then
     docker compose up -d --no-build --no-deps --force-recreate server
     test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
-    i=0
-    while [ "$i" -lt 24 ]; do
-      if docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok'; then break; fi
-      i=$((i + 1))
-      sleep 5
+    deadline=$(($(date +%s) + 45))
+    while :; do
+      if docker compose exec -T server wget -q -T 3 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null | grep -qx ok; then break; fi
+      if [ "$(date +%s)" -ge "$deadline" ]; then echo 'rollback health deadline exceeded' >&2; exit 1; fi
+      sleep 2
     done
-    test "$i" -lt 24
     test "$(docker inspect codesamplex-server-1 --format '{{.State.Running}}')" = true
     expected=$(docker inspect codesamplex-server-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CSX_VERSION=//p' | head -n 1)
     served=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version | sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
