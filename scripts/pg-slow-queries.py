@@ -1,229 +1,166 @@
 #!/usr/bin/env python3
+"""Bounded PostgreSQL metrics with static, heuristic source attribution.
+
+SQL text remains inside PostgreSQL: only numeric metrics and catalog labels
+are returned. pg_stat_statements normalization is NOT a secrets boundary.
 """
-PostgreSQL Slow-Query Diagnostics & Code Attribution Tool for CodeSampleX.
-
-Queries pg_stat_statements, attributes each normalized SQL statement to its
-corresponding Go store method in internal/serverstore/ and HTTP routes, and
-reports execution metrics (total time, mean latency, max spike, IO wait,
-cache hit percentage, temp block spill).
-
-Privacy note: Queries in pg_stat_statements are pre-parameterized ($1, $2) by
-PostgreSQL. No literals or secret values are captured or emitted.
-"""
-
+import argparse
 import json
+import math
+from pathlib import Path
 import subprocess
 import sys
-import re
 
-QUERY_CATALOG = [
-    {
-        "pattern": r"failure_clusters.*WHERE.*package_name\s*=\s*\$1",
-        "method": "ListFailureClusters / ListFailureClustersIncludingPreserved",
-        "file": "internal/serverstore/pg.go:2807",
-        "route": "/golang/{pkg...}, /npm/{pkg...}, /python/{pkg...} (package/symbol pages), search",
-        "class": "interactive / background",
-    },
-    {
-        "pattern": r"WITH wanted_key AS MATERIALIZED",
-        "method": "ListWanted",
-        "file": "internal/serverstore/pg.go:3373",
-        "route": "/wanted, /v1/wanted, package pages, /admin farm panel",
-        "class": "interactive / background",
-    },
-    {
-        "pattern": r"compatibility_snapshots.*WHERE.*purl\s*=\s*\$1",
-        "method": "GetSnapshotsForPURL",
-        "file": "internal/serverstore/pg.go:560",
-        "route": "/golang/{pkg...} (package detail/symbol pages)",
-        "class": "interactive",
-    },
-    {
-        "pattern": r"SELECT DISTINCT purl, symbol FROM evidence_agg",
-        "method": "ListSnapshotTargets",
-        "file": "internal/serverstore/pg.go:742",
-        "route": "Compatibility builder aggregation loop (SnapshotTargets)",
-        "class": "background",
-    },
-    {
-        "pattern": r"SELECT sample_id.*FROM samples.*WHERE NOT quarantined.*ORDER BY created_at DESC",
-        "method": "ListSamples / ListSamplesPage",
-        "file": "internal/serverstore/pg.go:910",
-        "route": "/samples (web), /v1/samples (API), builder sample iteration",
-        "class": "interactive / background",
-    },
-    {
-        "pattern": r"FROM samples s JOIN receipts r ON r\.sample_id\s*=\s*s\.sample_id.*WHERE NOT s\.quarantined",
-        "method": "ListSnapshotTargets (receipt claims validation)",
-        "file": "internal/serverstore/pg.go:764",
-        "route": "Compatibility builder aggregation loop",
-        "class": "background",
-    },
-    {
-        "pattern": r"SELECT ecosystem, child_name, child_version.*FROM dependency_edge",
-        "method": "ListDependencies / SearchDependencies",
-        "file": "internal/serverstore/dependencyclosure_pg.go:120",
-        "route": "/admin dependency tab, /v1/dependencies",
-        "class": "background",
-    },
-    {
-        "pattern": r"INSERT INTO evidence_agg",
-        "method": "RecordObservation",
-        "file": "internal/serverstore/pg.go:347",
-        "route": "/v1/evidence/batches (evidence ingest)",
-        "class": "background",
-    },
-    {
-        "pattern": r"WITH verified_samples AS MATERIALIZED",
-        "method": "AuthoringBacklog / CandidateJobs (authoringCoverageCTE)",
-        "file": "internal/serverstore/dependencyclosure_pg.go:16",
-        "route": "/admin farm panel, background authoring scheduler",
-        "class": "background",
-    },
-    {
-        "pattern": r"WITH pub AS.*jsonb_array_elements_text",
-        "method": "AdminInsights",
-        "file": "internal/serverstore/admin_insights.go:32",
-        "route": "/admin insights tab",
-        "class": "background",
-    },
-    {
-        "pattern": r"sample_packages.*package\.coord\s*=\s*ANY\(\$1\)",
-        "method": "SamplesForPackageCoords",
-        "file": "internal/serverstore/pg.go:622",
-        "route": "/golang/{pkg...}, symbol detail pages",
-        "class": "interactive",
-    },
-    {
-        "pattern": r"UPDATE evidence_agg SET.*observation_count",
-        "method": "RecordObservation (update path)",
-        "file": "internal/serverstore/pg.go:390",
-        "route": "/v1/evidence/batches",
-        "class": "background",
-    },
-    {
-        "pattern": r"SELECT parent_name, parent_version.*FROM dependency_edge.*WHERE ecosystem\s*=\s*\$1",
-        "method": "DependenciesForPackage",
-        "file": "internal/serverstore/dependencyclosure_pg.go:210",
-        "route": "Package detail dependencies view",
-        "class": "interactive",
-    },
-    {
-        "pattern": r"WITH candidate AS.*unnest.*ordinal FROM candidate",
-        "method": "FilterSupportedJobs / FilterCandidateJobs",
-        "file": "internal/serverstore/pg.go:3150",
-        "route": "Farm worker job dispatch",
-        "class": "background",
-    },
-    {
-        "pattern": r"SELECT receipt_id.*FROM receipts.*WHERE sample_id\s*=\s*ANY\(\$1",
-        "method": "ReceiptsForSamples",
-        "file": "internal/serverstore/pg.go:1200",
-        "route": "/samples, /golang/{pkg...}, /admin",
-        "class": "interactive / background",
-    },
-    {
-        "pattern": r"SELECT purl, SUM\(observation_count\)\s+AS n\s+FROM evidence_agg",
-        "method": "HotPackages",
-        "file": "internal/serverstore/pg.go:2441",
-        "route": "Homepage (/), stats, sitemap warming",
-        "class": "interactive / background",
-    },
-    {
-        "pattern": r"compatibility_snapshots s\s+LEFT JOIN LATERAL jsonb_array_elements",
-        "method": "SnapshotAges / SnapshotFreshness",
-        "file": "internal/serverstore/pg.go:714",
-        "route": "Compatibility builder aggregation loop",
-        "class": "background",
-    },
-    {
-        "pattern": r"WITH observed AS.*ran AS.*measured AS.*proven AS",
-        "method": "FarmCoverage",
-        "file": "internal/serverstore/farm_pg.go:197",
-        "route": "/admin farm panel, matrix coverage scheduler",
-        "class": "background",
-    },
-]
+SORT_KEYS = ("total_exec_time", "mean_exec_time", "max_exec_time", "calls")
+METRICS = ("queryid", "calls", "total_ms", "mean_ms", "max_ms", "io_ms",
+           "shared_blks_hit", "shared_blks_read", "hit_pct", "temp_blks", "rows")
+# Patterns are PostgreSQL regular expressions, not interpolated user input.
+# More specific CTEs precede broader families. Attribution is only a hint.
+CATALOG = (
+    (r"WITH verified_samples AS MATERIALIZED.*verified_symbols",
+     "AuthoringExpansionCandidates", "internal/serverstore/authoring_pg.go"),
+    (r"WITH verified_samples AS MATERIALIZED",
+     "Authoring coverage/backlog family", "internal/serverstore/dependencyclosure_pg.go"),
+    (r"failure_clusters.*WHERE.*package_name[[:space:]]*=",
+     "ListFailureClusters", "internal/serverstore/pg.go"),
+    (r"WITH wanted_key AS MATERIALIZED", "ListWanted", "internal/serverstore/pg.go"),
+    (r"compatibility_snapshots.*WHERE.*purl[[:space:]]*=",
+     "Snapshot lookup family", "internal/serverstore/pg.go"),
+    (r"SELECT sample_id.*FROM samples.*WHERE NOT quarantined",
+     "ListSamples / ListSamplesPage", "internal/serverstore/pg.go"),
+)
+DEFAULT_COMPOSE = str(Path(__file__).resolve().parents[1] / "deploy" / "docker-compose.yml")
 
-def attribute_query(query_text):
-    for entry in QUERY_CATALOG:
-        if re.search(entry["pattern"], query_text, re.IGNORECASE | re.DOTALL):
-            return entry["method"], entry["file"], entry["route"], entry["class"]
-    return "Unknown / uncataloged", "internal/serverstore", "N/A", "N/A"
 
-def fetch_queries_local(limit=20, sort="total_exec_time"):
-    sql = f"""
-    SELECT json_agg(t) FROM (
-      SELECT
-        queryid,
-        calls,
-        round(total_exec_time::numeric, 2) AS total_ms,
-        round(mean_exec_time::numeric, 2) AS mean_ms,
-        round(max_exec_time::numeric, 2) AS max_ms,
-        round(stddev_exec_time::numeric, 2) AS stddev_ms,
-        round((shared_blk_read_time + shared_blk_write_time)::numeric, 2) AS io_ms,
-        shared_blks_hit,
-        shared_blks_read,
-        round(shared_blks_hit::numeric / nullif(shared_blks_hit + shared_blks_read, 0) * 100, 1) AS hit_pct,
-        temp_blks_read + temp_blks_written AS temp_blks,
-        rows,
-        query
-      FROM pg_stat_statements
-      ORDER BY {sort} DESC
-      LIMIT {limit}
-    ) t;
-    """
-    cmd = ["docker", "compose", "-f", "/opt/codesamplex/deploy/docker-compose.yml",
-           "exec", "-T", "db", "psql", "-U", "csx", "-d", "csx", "-Atqc", sql]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Failed to query database: {proc.stderr}")
-    raw = proc.stdout.strip()
-    return json.loads(raw) if raw else []
-
-def main():
-    sort_key = sys.argv[1] if len(sys.argv) > 1 else "total_exec_time"
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 15
-    json_mode = "--json" in sys.argv
-
+def bounded_limit(value):
     try:
-        data = fetch_queries_local(limit, sort_key)
-    except Exception as e:
-        print(f"Error fetching queries: {e}", file=sys.stderr)
-        sys.exit(1)
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("limit must be an integer") from None
+    if not 1 <= number <= 100:
+        raise argparse.ArgumentTypeError("limit must be between 1 and 100")
+    return number
 
-    enriched = []
-    for q in data:
-        method, source_file, route, qclass = attribute_query(q["query"])
-        item = {
-            **q,
-            "attributed_method": method,
-            "source_file": source_file,
-            "route": route,
-            "class": qclass,
-        }
-        enriched.append(item)
 
-    if json_mode:
-        print(json.dumps(enriched, indent=2))
-        return
+class SafeParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse normally echoes rejected values, which may contain secrets.
+        self.print_usage(sys.stderr)
+        self.exit(2, "Invalid arguments; use --help for supported options.\n")
 
-    print(f"\n=== PostgreSQL Top Slow Queries (Sorted by {sort_key}, Limit {limit}) ===\n")
-    print("| Rank | Calls | Total (ms) | Mean (ms) | Max (ms) | IO (ms) | Hit % | Attributed Store Method | Route / Class |")
-    print("|---|---|---|---|---|---|---|---|---|")
-    for i, item in enumerate(enriched):
-        print(f"| {i+1} | {item['calls']} | {item['total_ms']} | {item['mean_ms']} | {item['max_ms']} | {item['io_ms']} | {item['hit_pct']}% | `{item['attributed_method']}` | {item['class']} |")
 
-    print("\n=== Detailed Query Breakdown ===\n")
-    for i, item in enumerate(enriched):
-        clean_query = re.sub(r"\s+", " ", item["query"]).strip()
-        print(f"### #{i+1}: {item['attributed_method']}")
-        print(f"- **File:** `{item['source_file']}`")
-        print(f"- **Route:** {item['route']}")
-        print(f"- **Class:** `{item['class']}` | **QueryID:** `{item['queryid']}`")
-        print(f"- **Metrics:** Calls={item['calls']} | Total={item['total_ms']}ms | Mean={item['mean_ms']}ms | Max={item['max_ms']}ms | IO={item['io_ms']}ms | Hit={item['hit_pct']}% | TempBlks={item['temp_blks']}")
-        print(f"- **SQL Preview:** `{clean_query[:250]}...`")
-        print()
+def query_sql(sort, limit):
+    if sort not in SORT_KEYS or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("invalid metrics bounds")
+    cases = " ".join(
+        "WHEN query ~* '" + pattern.replace("'", "''") + "' THEN " + str(index)
+        for index, (pattern, _, _) in enumerate(CATALOG)
+    )
+    return f"""
+SELECT coalesce(json_agg(t), '[]'::json) FROM (
+  SELECT queryid, calls,
+    round(total_exec_time::numeric, 2) AS total_ms,
+    round(mean_exec_time::numeric, 2) AS mean_ms,
+    round(max_exec_time::numeric, 2) AS max_ms,
+    round((shared_blk_read_time + shared_blk_write_time)::numeric, 2) AS io_ms,
+    shared_blks_hit, shared_blks_read,
+    round(shared_blks_hit::numeric /
+      nullif(shared_blks_hit + shared_blks_read, 0) * 100, 1) AS hit_pct,
+    temp_blks_read + temp_blks_written AS temp_blks, rows,
+    CASE {cases} ELSE -1 END AS attribution
+  FROM public.pg_stat_statements
+  WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+  ORDER BY {sort} DESC, queryid
+  LIMIT {limit}
+) t;
+"""
+
+
+def run_sql(compose, sql):
+    cmd = ["docker", "compose", "-f", compose, "exec", "-T", "db", "psql",
+           "-X", "-v", "ON_ERROR_STOP=1", "-U", "csx", "-d", "csx", "-Atqc",
+           "SET statement_timeout='5s'; SET lock_timeout='1s'; " + sql]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("Database command unavailable or timed out.") from None
+    if proc.returncode:
+        # stderr can contain SQL, connection strings, or literal values.
+        raise RuntimeError("Database command failed; verify Compose access, preload, and extension setup.") from None
+    return proc.stdout.strip()
+
+
+def check_extension(compose):
+    # Function call also verifies the module was preloaded at server startup.
+    raw = run_sql(compose, """
+SELECT json_build_object('installed',
+  EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
+  'entries', (SELECT count(*) FROM public.pg_stat_statements(false)));
+""")
+    result = json.loads(raw)
+    if not isinstance(result, dict) or result.get("installed") is not True:
+        raise ValueError("extension not ready")
+    entries = result.get("entries")
+    if type(entries) is not int or entries < 0:
+        raise ValueError("invalid extension response")
+    return {"installed": True, "entries": entries}
+
+
+def fetch_metrics(compose, sort, limit):
+    data = json.loads(run_sql(compose, query_sql(sort, limit)))
+    if not isinstance(data, list) or len(data) > limit:
+        raise ValueError("invalid metrics response")
+    output = []
+    for row in data:
+        if not isinstance(row, dict):
+            raise ValueError("invalid metrics row")
+        item = {}
+        for key in METRICS:
+            value = row.get(key)
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                raise ValueError("invalid metric")
+            item[key] = value
+        index = row.get("attribution")
+        if type(index) is int and 0 <= index < len(CATALOG):
+            _, method, source = CATALOG[index]
+        else:
+            method, source = "Unknown / uncataloged", ""
+        item.update(attributed_method=method, source_file=source)
+        output.append(item)
+    return output
+
+
+def main(argv=None):
+    parser = SafeParser(description=__doc__)
+    parser.add_argument("sort", nargs="?", choices=SORT_KEYS, default=SORT_KEYS[0])
+    parser.add_argument("limit", nargs="?", type=bounded_limit, default=15)
+    parser.add_argument("--json", action="store_true", help="emit metrics and static labels as JSON")
+    parser.add_argument("--compose-file", default=DEFAULT_COMPOSE)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="verify extension and preload without mutations")
+    mode.add_argument("--init", action="store_true", help="explicitly create the extension, then verify it")
+    args = parser.parse_args(argv)
+    try:
+        if args.init:
+            run_sql(args.compose_file,
+                    "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA public;")
+        if args.init or args.check:
+            result = check_extension(args.compose_file)
+        else:
+            result = fetch_metrics(args.compose_file, args.sort, args.limit)
+    except (RuntimeError, ValueError, TypeError, OverflowError):
+        print("Diagnostics failed. Verify database access and pg_stat_statements setup with --check; see docs/operations.md.", file=sys.stderr)
+        return 1
+    if args.json or args.init or args.check:
+        print(json.dumps(result, indent=2, allow_nan=False))
+    else:
+        print("QueryID | Calls | Total ms | Mean ms | Max ms | IO ms | Hit % | Method (heuristic)")
+        for item in result:
+            print(" | ".join(str(item[key]) for key in
+                            ("queryid", "calls", "total_ms", "mean_ms", "max_ms",
+                             "io_ms", "hit_pct", "attributed_method")))
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

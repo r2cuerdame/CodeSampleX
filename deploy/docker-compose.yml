@@ -118,7 +118,7 @@ services:
       -c pg_stat_statements.track=top
       -c pg_stat_statements.max=5000
       -c track_io_timing=on
-      -c log_min_duration_statement=2000
+      -c log_min_duration_statement=-1
       -c log_parameter_max_length=0
       -c log_parameter_max_length_on_error=0
     volumes:

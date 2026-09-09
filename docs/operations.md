@@ -1158,57 +1158,66 @@ cancels first and burns a connection on every slow probe.
 
 ## Slow-query monitoring and diagnostics (`pg_stat_statements`)
 
-PostgreSQL on `csx-prod-1` runs with persistent slow-query instrumentation
-configured in `deploy/docker-compose.yml`:
+The PostgreSQL Compose service preloads `pg_stat_statements`, caps it at 5000
+entries, tracks top-level statements, and enables `track_io_timing`.
+Timing overhead depends on the host. The introduced slow-statement duration
+logging is disabled with
+`log_min_duration_statement=-1`; bind-parameter logging is also disabled.
+Existing PostgreSQL error-logging defaults are unchanged.
 
-- `shared_preload_libraries = pg_stat_statements`
-- `pg_stat_statements.track = top` (tracks top-level statements, minimal overhead)
-- `pg_stat_statements.max = 5000` (capped memory footprint, ~few MB)
-- `track_io_timing = on` (nanosecond hardware TSC timing for read/write I/O wait)
-- `log_min_duration_statement = 2000` (statements taking >= 2000ms are logged to stderr)
-- `log_parameter_max_length = 0` and `log_parameter_max_length_on_error = 0` (suppresses parameter values for privacy)
+### Privacy boundary
 
-### Privacy and parameter safety
-`pg_stat_statements` normalizes constants into parameter placeholders (`$1`, `$2`, ...) at query parse time. It never stores raw literals, secrets, tokens, or query parameters in memory or disk. In PostgreSQL server logs, `log_parameter_max_length=0` prevents bind parameters from being logged on slow queries or errors.
+Query normalization is not redaction: representative query text can retain
+literals, particularly in statements PostgreSQL cannot normalize. The extension
+also stores representative text on disk. Restrict database and host access;
+error messages and exceptional server logs may still contain sensitive values.
+The diagnostic collector returns only numeric metrics, query IDs, and static
+source labels. Its attribution CASE executes inside PostgreSQL and does not
+return SQL text. Labels are heuristic query-family hints, not proof of a caller
+or route. Subprocess errors are deliberately reported without raw stderr.
+Do not export raw `query` columns from `pg_stat_statements` or `pg_stat_activity`.
 
-### Collecting slow-query evidence
-Run the diagnostic tool from the repository or directly on the host:
+### Activation and clean installation
+
+The normal server deployment activates only server and Caddy with `--no-deps`;
+it does not restart PostgreSQL or apply changed PostgreSQL command flags.
+For an existing database, schedule any required database restart separately
+under the normal maintenance/approval process. Do not add it to the serving
+deployment path. After the intended flags are active, explicitly install the
+extension once per database (including a fresh volume), then verify it:
 
 ```bash
-# On the production host:
-python3 /opt/codesamplex/scripts/pg-slow-queries.py total_exec_time 15
+python3 scripts/pg-slow-queries.py --init
+python3 scripts/pg-slow-queries.py --check
+```
 
-# By mean latency:
-python3 /opt/codesamplex/scripts/pg-slow-queries.py mean_exec_time 15
+`--init` runs only `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` and the
+verification query; it does not run application migrations or scan the corpus.
+It needs database extension privileges. `--check` is read-only and verifies
+both extension availability and that the module was preloaded. Missing setup
+fails clearly; collection never creates an extension implicitly. Commands use
+the repository's Compose file by default; `--compose-file PATH` overrides it.
 
-# Raw SQL query via compose:
+### Collecting metrics
+
+```bash
+python3 scripts/pg-slow-queries.py --json
+python3 scripts/pg-slow-queries.py mean_exec_time 15
 ./scripts/collect-pg-slow-queries.sh 15 total_exec_time
 ```
 
-### Correlating with CPU, I/O wait, locks, and connection pool
-Slow queries must be analyzed together with system and database pressure:
-1. **CPU & I/O Wait**:
-   - `pg_stat_statements` provides `shared_blk_read_time` and `shared_blk_write_time` (when `track_io_timing=on`).
-   - `hit_pct`: `shared_blks_hit / (shared_blks_hit + shared_blks_read) * 100`. Cache hit below 70% indicates severe disk I/O thrashing.
-   - `temp_blks`: `temp_blks_read + temp_blks_written > 0` indicates the query exceeded `work_mem` (16MB) and spilled sorts/hashes to disk.
-2. **Lock contention & Active queries**:
-   ```bash
-   docker compose exec -T db psql -U csx -d csx -c "
-   SELECT pid, now() - query_start AS duration, state, wait_event_type, wait_event, query
-   FROM pg_stat_activity WHERE state != 'idle' ORDER BY duration DESC;
-   "
-   ```
-   `wait_event_type = 'Lock'` indicates blocking transactions.
-3. **Pool pressure**:
-   Check the `/admin` database pool panel or grep container logs for `csx-server: db pressure`:
-   - `cause=pool_busy`: pool exhausted because slow queries are holding connections.
-   - `cause=query_timeout`: query crossed the 8s (interactive) or 2s (probe) `statement_timeout`.
+Accepted sorts are `total_exec_time`, `mean_exec_time`, `max_exec_time`, and
+`calls`; limits must be 1–100. Database statements have a 5-second timeout and
+the command has a 15-second deadline. Read failures return nonzero status.
 
-### Resetting statistics
-To measure a clean observation window (e.g. before/after a deployment or migration):
-```bash
-docker compose exec -T db psql -U csx -d csx -c "SELECT pg_stat_statements_reset();"
-```
+Use repeated cumulative snapshots and counter deltas to bound an observation
+window; the collector does not reset shared statistics. Correlate execution
+time, block I/O, temporary blocks, locks, pool admission, and host CPU/steal.
+A low shared-buffer hit ratio alone does not prove disk thrashing, and a busy
+pool alone does not prove slow SQL. PostgreSQL buffer misses can hit the OS
+cache. See the [PostgreSQL statistics documentation](https://www.postgresql.org/docs/17/pgstatstatements.html)
+and [logging documentation](https://www.postgresql.org/docs/17/runtime-config-logging.html)
+for the text-storage and parameter-logging limitations.
 
 ## Environment variables (compose `.env`)
 
