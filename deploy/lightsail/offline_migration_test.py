@@ -498,10 +498,10 @@ Resolve-CSXDeploymentSource $Payload $Target $Control | ConvertTo-Json -Compress
     def git(self, repo, *args):
         return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.PIPE)
 
-    def check(self, target=None, control=None):
+    def check(self, target=None, control=None, payload=None):
         return subprocess.run([self.shell, "-NoProfile", "-File", str(self.script),
             "-Helper", str(self.control / "deploy" / "lightsail" / "deployment-source.ps1"),
-            "-Payload", str(self.payload), "-Target", target or self.payload_sha,
+            "-Payload", str(payload or self.payload), "-Target", target or self.payload_sha,
             "-Control", control or self.control_sha], capture_output=True, text=True)
 
     def test_distinct_clean_control_and_payload_are_accepted(self):
@@ -514,6 +514,30 @@ Resolve-CSXDeploymentSource $Payload $Target $Control | ConvertTo-Json -Compress
     def test_wrong_payload_or_control_sha_is_rejected(self):
         self.assertNotEqual(self.check(target="0" * 40).returncode, 0)
         self.assertNotEqual(self.check(control="0" * 40).returncode, 0)
+
+    @unittest.skipUnless(os.name == "nt", "Windows short-path alias regression")
+    def test_windows_short_path_alias_is_the_same_repository_root(self):
+        import ctypes
+        short_path = ctypes.windll.kernel32.GetShortPathNameW
+        short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
+        short_path.restype = ctypes.c_ulong
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = short_path(str(self.payload), buffer, len(buffer))
+        self.assertGreater(length, 0)
+        self.assertLess(length, len(buffer))
+        alias = buffer.value
+        self.assertNotEqual(alias.lower(), str(self.payload).lower(), "fixture needs an actual 8.3 alias")
+        result = self.check(payload=alias)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["Revision"], self.payload_sha)
+
+    def test_nested_directory_and_git_directory_are_not_repository_roots(self):
+        nested = self.payload / "nested"
+        nested.mkdir()
+        for source in (nested, self.payload / ".git"):
+            result = self.check(payload=source)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("payload source must be a repository root", result.stderr)
 
     def test_dirty_payload_and_untracked_control_are_rejected(self):
         (self.payload / "payload.txt").write_text("dirty")

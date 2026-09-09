@@ -12,12 +12,15 @@ function Resolve-CSXDeploymentSource {
     if ($LASTEXITCODE -ne 0 -or $controlDirty.Count -ne 0) { throw "operational checkout must be clean" }
     if ($SourceRepoPath -eq "") { $SourceRepoPath = $controlRepo }
     $sourceRepo = (Resolve-Path -LiteralPath $SourceRepoPath).Path
-    $top = (& git -C $sourceRepo rev-parse --show-toplevel).Trim()
-    if ($LASTEXITCODE -ne 0 -or $top -eq "") { throw "payload source must be a repository root" }
-    # Ask Git whether -C is the worktree root. Comparing path strings is not
-    # reliable on Windows, where Git can return an equivalent 8.3 short path.
-    $prefix = (& git -C $sourceRepo rev-parse --show-prefix).Trim()
-    if ($LASTEXITCODE -ne 0 -or $prefix -ne "") {
+    # Git expands Windows 8.3/junction aliases while Resolve-Path can preserve
+    # their spelling. Ask Git about the cwd's position instead of comparing
+    # two path strings that can name the same directory differently.
+    $insideWorktree = @(& git -C $sourceRepo rev-parse --is-inside-work-tree) -join ""
+    if ($LASTEXITCODE -ne 0 -or $insideWorktree -cne "true") {
+        throw "payload source must be a repository root"
+    }
+    $prefix = @(& git -C $sourceRepo rev-parse --show-prefix) -join ""
+    if ($LASTEXITCODE -ne 0 -or $prefix -cne "") {
         throw "payload source must be a repository root"
     }
     $sourceSha = (& git -C $sourceRepo rev-parse HEAD).Trim()
