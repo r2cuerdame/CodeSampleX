@@ -138,12 +138,37 @@ func migrateWithBuilderRepair(ctx context.Context, conn *pgx.Conn, repaired func
 	return backfillBuilderProjectionsWithRepair(ctx, conn, repaired)
 }
 
+// migrationLockNamespace keys the advisory lock below. The \x1f separator is
+// the same one the peer and sample locks in pg.go use, so a version can never
+// collide with a neighbouring key by concatenation.
+const migrationLockNamespace = "csx-migration\x1f"
+
 func applyMigration(ctx context.Context, conn *pgx.Conn, m Migration) error {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("serverstore: begin migration %s: %w", m.Version, err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	// Serialise migrators per migration. Not everything a migration touches is
+	// schema-local: 0034 runs CREATE EXTENSION IF NOT EXISTS pg_trgm, and
+	// pg_extension is per database, so one migrator's IF NOT EXISTS cannot see
+	// another's uncommitted extension row — the loser waits on
+	// pg_extension_name_index and is handed a duplicate key (23505) the moment
+	// the winner commits.
+	//
+	// Two migrators is the normal shape of a test run: the integration suites
+	// isolate themselves in fresh schemas of one shared CSX_TEST_DSN database,
+	// and `go test ./...` migrates several packages in parallel. It is also
+	// reachable in production, where a rollback binary can start while the
+	// offline migration is still committing. The lock is transaction-scoped,
+	// so it is released by the same commit that makes the migration visible;
+	// the second migrator then runs the statements against committed state and
+	// takes the IF NOT EXISTS path.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		migrationLockNamespace+m.Version); err != nil {
+		return fmt.Errorf("serverstore: lock migration %s: %w", m.Version, err)
+	}
 
 	for _, stmt := range m.Statements {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
