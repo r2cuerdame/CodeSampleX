@@ -726,7 +726,7 @@ func (w *webStore) loadSnapshotsForPURL(
 		lane.loading = nil
 	}
 	if err != nil {
-		if !isAdmissionRefusal(err) && !cacheRequestCanceled(loadCtx, err) {
+		if !isAdmissionRefusal(err) {
 			backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
 		}
 	} else {

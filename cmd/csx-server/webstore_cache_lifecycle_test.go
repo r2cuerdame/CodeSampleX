@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -343,3 +344,64 @@ func TestAdmissionRefusalDoesNotDeferTargetIndex(t *testing.T) {
 		t.Fatalf("subsequent target index load failed after slots freed: err=%v", err)
 	}
 }
+
+type deadlineExceededBulkSnapshotStore struct {
+	*serverstore.Fake
+	calls atomic.Int64
+}
+
+func (s *deadlineExceededBulkSnapshotStore) GetSnapshotsForPURL(ctx context.Context, purl string) ([]serverstore.SnapshotRow, error) {
+	s.calls.Add(1)
+	return nil, context.DeadlineExceeded
+}
+
+func TestSnapshotDeadlineExceededAdvancesBackoff(t *testing.T) {
+	store := &deadlineExceededBulkSnapshotStore{Fake: serverstore.NewFake()}
+	w := &webStore{s: store}
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+
+	// Sequential interactive requests for the same PURL.
+	const totalRequests = 6
+	for i := 0; i < totalRequests; i++ {
+		_, _, err := w.SnapshotJSONWithError(ctx, purl, "Batch")
+		if err == nil {
+			t.Fatalf("request %d: expected error, got nil", i)
+		}
+		if i == 0 {
+			// First request observes the actual database deadline exceeded.
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("request 0: expected DeadlineExceeded, got %v", err)
+			}
+		} else {
+			// Subsequent requests should be rejected by backoff deferral (ErrPoolBusy)
+			// without hitting the database.
+			if !errors.Is(err, serverstore.ErrPoolBusy) {
+				t.Fatalf("request %d: expected ErrPoolBusy (deferred), got %v", i, err)
+			}
+		}
+	}
+
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("store calls = %d, want 1 (backoff must prevent hammering store on DeadlineExceeded)", got)
+	}
+
+	// Verify the lane retry state and retryAt.
+	stateAny, ok := w.purlSnapshotLoads.Load(purl)
+	if !ok {
+		t.Fatal("expected purlSnapshotLoads state to be recorded")
+	}
+	state := stateAny.(*snapshotLoadState)
+	state.mu.Lock()
+	retryState := state.interactive.retry.State()
+	retryAt := state.interactive.retryAt
+	state.mu.Unlock()
+
+	if retryState != retrypolicy.Waiting {
+		t.Fatalf("expected lane retry state Waiting, got %v", retryState)
+	}
+	if retryAt.IsZero() {
+		t.Fatal("expected non-zero retryAt after DeadlineExceeded")
+	}
+}
+
