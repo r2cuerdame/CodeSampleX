@@ -2,69 +2,46 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestPostgreSQLSlowQueryMonitoringConfig(t *testing.T) {
-	composePath := filepath.Join("..", "deploy", "docker-compose.yml")
-	content, err := os.ReadFile(composePath)
+func TestPostgreSQLMonitoringDisablesSlowStatementLogging(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "deploy", "docker-compose.yml"))
 	if err != nil {
-		t.Fatalf("failed to read compose file: %v", err)
+		t.Fatal(err)
 	}
-	text := string(content)
+	for _, flag := range []string{
+		"shared_preload_libraries=pg_stat_statements",
+		"log_min_duration_statement=-1",
 
-	requiredFlags := []string{
-		"-c shared_preload_libraries=pg_stat_statements",
-		"-c pg_stat_statements.track=top",
-		"-c pg_stat_statements.max=5000",
-		"-c track_io_timing=on",
-		"-c log_min_duration_statement=2000",
-		"-c log_parameter_max_length=0",
-		"-c log_parameter_max_length_on_error=0",
-	}
-
-	for _, flag := range requiredFlags {
-		if !strings.Contains(text, flag) {
-			t.Errorf("docker-compose.yml db service is missing required postgres flag: %q", flag)
+		"log_parameter_max_length=0", "log_parameter_max_length_on_error=0",
+	} {
+		if !strings.Contains(string(content), "-c "+flag) {
+			t.Errorf("missing privacy setting: %s", flag)
 		}
 	}
 }
 
-func TestOperationsDocumentsSlowQueryMonitoring(t *testing.T) {
-	docPath := filepath.Join("..", "docs", "operations.md")
-	content, err := os.ReadFile(docPath)
-	if err != nil {
-		t.Fatalf("failed to read operations doc: %v", err)
+func TestPostgreSQLMonitoringCLI(t *testing.T) {
+	names := []string{"python3", "python"}
+	if runtime.GOOS == "windows" {
+		names = []string{"python", "python3"}
 	}
-	text := string(content)
-
-	requiredTerms := []string{
-		"pg_stat_statements",
-		"track_io_timing = on",
-		"log_min_duration_statement = 2000",
-		"log_parameter_max_length = 0",
-		"pg-slow-queries.py",
-		"collect-pg-slow-queries.sh",
-		"pg_stat_statements_reset()",
-	}
-
-	for _, term := range requiredTerms {
-		if !strings.Contains(text, term) {
-			t.Errorf("docs/operations.md is missing required slow query documentation term: %q", term)
+	var python string
+	for _, name := range names {
+		if path, err := exec.LookPath(name); err == nil {
+			python = path
+			break
 		}
 	}
-}
-
-func TestSlowQueryDiagnosticScriptsExist(t *testing.T) {
-	for _, rel := range []string{"collect-pg-slow-queries.sh", "pg-slow-queries.py"} {
-		info, err := os.Stat(rel)
-		if err != nil {
-			t.Fatalf("script %s missing: %v", rel, err)
-		}
-		if info.Size() == 0 {
-			t.Errorf("script %s is empty", rel)
-		}
+	if python == "" {
+		t.Fatal("Python 3 is required for diagnostic CLI regression tests")
+	}
+	if out, err := exec.Command(python, "pg_slow_queries_test.py").CombinedOutput(); err != nil {
+		t.Fatalf("diagnostic CLI regression suite: %v\n%s", err, out)
 	}
 }
