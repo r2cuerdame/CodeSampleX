@@ -422,6 +422,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 					eerr = fmt.Errorf("missing result for %s %q", target.PURL, target.Symbol)
 					break
 				}
+				if rows == nil {
+					rows = []serverstore.EvidenceRow{}
+				}
 				targetEvidence[target] = rows
 				items += int64(len(rows))
 			}
@@ -447,6 +450,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			if eerr != nil {
 				return fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
 			}
+		}
+		if rows == nil {
+			rows = []serverstore.EvidenceRow{}
 		}
 		k := pkgKey{p.Ecosystem, p.Name}
 		if byPkg[k] == nil {
@@ -533,14 +539,23 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		versions := allVersionsOf[k][t.Symbol]
 		if prevVer, ok := PreviousVersion(versions, p.Version); ok {
 			prevPURL := allPURLOf[k][t.Symbol][prevVer]
-			prevRows := byPkg[k][t.Symbol][prevVer]
-			if prevRows == nil {
+			var prevRows []serverstore.EvidenceRow
+			var loaded bool
+			if symMap, ok := byPkg[k]; ok {
+				if verMap, ok := symMap[t.Symbol]; ok {
+					prevRows, loaded = verMap[prevVer]
+				}
+			}
+			if !loaded {
 				var eerr error
 				phase = phases.begin(phaseTargetEvidence)
 				prevRows, eerr = b.Store.EvidenceForTarget(ctx, prevPURL, t.Symbol)
 				phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(prevRows))})
 				if eerr != nil {
 					return fmt.Errorf("compatibility: evidence for %s %q: %w", prevPURL, t.Symbol, eerr)
+				}
+				if prevRows == nil {
+					prevRows = []serverstore.EvidenceRow{}
 				}
 				if byPkg[k] == nil {
 					byPkg[k] = symVer{}

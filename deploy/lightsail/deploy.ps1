@@ -316,6 +316,7 @@ $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 $expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File | Sort-Object Name | Select-Object -Last 1).Name
 if ($expectedMigration -notmatch '^[0-9]{4}_[a-z0-9_]+\.sql$') { throw "could not determine the expected migration version" }
+$expectedMigrationCount = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File).Count
 
 $productionStateBefore = Invoke-RemoteScript @'
 set -eu

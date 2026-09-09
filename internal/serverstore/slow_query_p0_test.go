@@ -299,8 +299,11 @@ func TestIntegrationSamplesPaginationIndexScanEliminatesIncrementalSort(t *testi
 	}
 }
 
-func TestAuthoringCoverageCTEContainsBoundedLimit(t *testing.T) {
-	if !strings.Contains(authoringCoverageCTE, "LIMIT 5000") {
-		t.Fatalf("expected authoringCoverageCTE dependency_open to contain bounded LIMIT, got:\n%s", authoringCoverageCTE)
+func TestAuthoringExpansionCandidatesDemandBoundedLimit(t *testing.T) {
+	if strings.Contains(authoringCoverageCTE, "LIMIT 5000") {
+		t.Fatalf("authoringCoverageCTE dependency_open should not contain raw edge LIMIT 5000: demand ranking is preserved without early truncation")
+	}
+	if !strings.Contains(authoringExpansionCandidatesSQL, "LIMIT $3") {
+		t.Fatalf("expected authoringExpansionCandidatesSQL to bound dependency_closure via LIMIT $3, got:\n%s", authoringExpansionCandidatesSQL)
 	}
 }

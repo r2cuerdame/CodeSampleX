@@ -27,12 +27,29 @@ STARTED = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
 ACTIVATION_BUDGET_SECONDS = 180
 READINESS_BUDGET_SECONDS = 45
 CANONICAL_DOMAIN = "codesamplex.dev"
-INDEXES = {
-    "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
-    "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
-    "evidence_agg_builder_changed_idx": "CREATE INDEX evidence_agg_builder_changed_idx ON evidence_agg USING btree (last_seen, purl, symbol)",
-    "samples_builder_created_idx": "CREATE INDEX samples_builder_created_idx ON samples USING btree (created_at, sample_id)",
+REVIEWED_MIGRATIONS = {
+    "0036_builder_projections.sql": {
+        "count": 37,
+        "indexes": {
+            "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
+            "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
+            "evidence_agg_builder_changed_idx": "CREATE INDEX evidence_agg_builder_changed_idx ON evidence_agg USING btree (last_seen, purl, symbol)",
+            "samples_builder_created_idx": "CREATE INDEX samples_builder_created_idx ON samples USING btree (created_at, sample_id)",
+        },
+    },
+    "0037_slow_query_indexes.sql": {
+        "count": 38,
+        "indexes": {
+            "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
+            "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
+            "evidence_agg_builder_changed_idx": "CREATE INDEX evidence_agg_builder_changed_idx ON evidence_agg USING btree (last_seen, purl, symbol)",
+            "samples_builder_created_idx": "CREATE INDEX samples_builder_created_idx ON samples USING btree (created_at, sample_id)",
+            "failure_clusters_pkg_count_idx": "CREATE INDEX failure_clusters_pkg_count_idx ON failure_clusters USING btree (package_name, observation_count DESC, id)",
+            "samples_live_created_id_idx": "CREATE INDEX samples_live_created_id_idx ON samples USING btree (created_at DESC, sample_id) WHERE (NOT quarantined)",
+        },
+    },
 }
+INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
 def utc():
@@ -82,8 +99,8 @@ class Host:
             raise ValueError("migration budget must be 60..1800 seconds")
         if not RELEASE.fullmatch(self.config.get("expectedReleaseTag", "")):
             raise ValueError("invalid canonical release tag")
-        if self.config.get("expectedMigration") != "0036_builder_projections.sql":
-            raise ValueError("offline migration supports only reviewed migration 0036")
+        if self.config.get("expectedMigration") not in REVIEWED_MIGRATIONS:
+            raise ValueError("offline migration supports only reviewed migrations: " + ", ".join(REVIEWED_MIGRATIONS))
         self.helper = "csx-migrate-" + owner
         self.application = self.helper
         self.evidence_file = self.state / "evidence.json"
@@ -345,25 +362,26 @@ class Host:
                    " AND datname=current_database() AND usename='csx' AND backend_type='client backend'")
 
     def verify_migration(self):
+        target = REVIEWED_MIGRATIONS[self.config["expectedMigration"]]
         schema = self.query("""
             SELECT json_build_object('version',max(version),'count',count(*))
             FROM schema_migrations""")
-        if schema != {"version": "0036_builder_projections.sql", "count": 37}:
+        if schema != {"version": self.config["expectedMigration"], "count": target["count"]}:
             raise RuntimeError("migration ledger does not match the target")
-        indexes = self.query("""
+        required_indexes = target["indexes"]
+        names_sql = ",".join(f"'{name}'" for name in required_indexes)
+        indexes = self.query(f"""
             SELECT COALESCE(json_agg(json_build_object('name',c.relname,
                 'valid',i.indisvalid,'ready',i.indisready,
                 'definition',pg_get_indexdef(c.oid))), '[]'::json)
             FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
             JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname='public' AND c.relname IN
-              ('evidence_agg_builder_coord_idx','snapshots_builder_coord_idx',
-               'evidence_agg_builder_changed_idx','samples_builder_created_idx')""")
-        if {r["name"] for r in indexes} != set(INDEXES) or len(indexes) != 4:
+            WHERE n.nspname='public' AND c.relname IN ({names_sql})""")
+        if {r["name"] for r in indexes} != set(required_indexes) or len(indexes) != len(required_indexes):
             raise RuntimeError("required builder indexes are missing")
         for row in indexes:
             definition = " ".join(row["definition"].replace("public.", "").split())
-            if not row["valid"] or not row["ready"] or definition != INDEXES[row["name"]]:
+            if not row["valid"] or not row["ready"] or definition != required_indexes[row["name"]]:
                 raise RuntimeError("builder index is not valid, ready and exact")
         # An interrupted prior backfill can be complete while the restored old
         # builder has overwritten stats_daily and erased this barrier. Re-arm

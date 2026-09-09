@@ -54,5 +54,4 @@ const authoringCoverageCTE = `verified_samples AS MATERIALIZED (
 				  -- reach it; already proven means there is nothing to ask.
 				  AND NOT EXISTS (SELECT 1 FROM verified_packages v WHERE v.purl=k.child_purl)
 				  AND NOT EXISTS (SELECT 1 FROM evidence_agg a WHERE a.purl=k.child_purl)
-				LIMIT 5000
 			)`

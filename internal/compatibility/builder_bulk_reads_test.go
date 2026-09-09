@@ -545,3 +545,48 @@ func TestBulkReadFailuresFailThePassClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestEmptyPredecessorEvidenceDoesNotTriggerIndividualReads(t *testing.T) {
+	ctx := context.Background()
+	fake := serverstore.NewFake()
+	fake.NowFn = func() time.Time { return testNow }
+
+	// Seed package with two versions via samples so targets exist, but NO evidence rows.
+	name := "empty-pred-pkg"
+	symbol := name + ".run"
+	for i, version := range []string{"1.0.0", "1.1.0"} {
+		purl := fmt.Sprintf("pkg:npm/%s@%s", name, version)
+		manifest := domain.SampleManifest{
+			SchemaVersion: 1,
+			Case: domain.Case{SchemaVersion: 1, Kind: "HOW", Goal: "use " + name,
+				Packages: []string{purl}, Contract: []string{"works"}},
+			Packages: []string{purl}, Symbols: []string{symbol},
+			Environment: envNode("esm"), License: "MIT-0",
+			ContractCommand: []string{"node", "test/contract.mjs"},
+			VerifierAdapter: "node-typescript@1",
+		}
+		sampleID := fmt.Sprintf("sha256:%064x", 999900+i)
+		if err := fake.SaveSample(ctx, serverstore.SampleRow{
+			SampleID: sampleID, ManifestJSON: string(domain.MustCanonicalJSON(manifest)),
+			Status: "CROSS_PASS", License: "MIT-0", SizeBytes: 1024, CreatedAt: testNow,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		saveBulkReceipt(t, fake, sampleID, name, envNode("esm"), []string{purl}, "node-typescript@1")
+	}
+
+	counter := newReadCounter(fake)
+	store := &bulkReadStore{counter}
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+
+	if err := b.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	if individualReads := counter.count("EvidenceForTarget"); individualReads != 0 {
+		t.Fatalf("expected 0 individual EvidenceForTarget calls for batched empty targets, got %d", individualReads)
+	}
+	if batchReads := counter.count("EvidenceForTargets"); batchReads == 0 {
+		t.Fatalf("expected EvidenceForTargets to be used, got 0")
+	}
+}
