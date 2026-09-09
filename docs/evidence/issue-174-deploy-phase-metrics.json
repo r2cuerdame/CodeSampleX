@@ -1,0 +1,308 @@
+{
+  "schemaVersion": 1,
+  "repository": "r2cuerdame/CodeSampleX",
+  "observedAtUtc": "2026-09-09T05:22:35.008160+00:00",
+  "sources": [
+    {
+      "runId": "34311753137",
+      "url": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34311753137"
+    },
+    {
+      "runId": "34309433387",
+      "url": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34309433387"
+    },
+    {
+      "runId": "34205073983",
+      "url": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34205073983"
+    },
+    {
+      "runId": "34189442073",
+      "url": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34189442073"
+    },
+    {
+      "runId": "34092352074",
+      "url": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34092352074"
+    }
+  ],
+  "method": "Empirical Type 7 linear interpolation p50/p95; max is measured, not guaranteed worst-case. Completed subphases retained even when a later phase fails. Failed/censored migration durations excluded from success percentiles. Small n is descriptive only. Legacy phase boundaries kept separate.",
+  "phaseMetrics": {
+    "preparation": {
+      "n": 2,
+      "p50Seconds": 41.892,
+      "p95Seconds": 42.187,
+      "maxSeconds": 42.22,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 41.563,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34311753137",
+          "seconds": 42.22,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "staging": {
+      "n": 2,
+      "p50Seconds": 189.519,
+      "p95Seconds": 190.388,
+      "maxSeconds": 190.485,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 190.485,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34311753137",
+          "seconds": 188.553,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "activation": {
+      "n": 2,
+      "p50Seconds": 8.88,
+      "p95Seconds": 9.094,
+      "maxSeconds": 9.118,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 9.118,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34311753137",
+          "seconds": 8.642,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "offline-migration": {
+      "n": 1,
+      "p50Seconds": 1704.797,
+      "p95Seconds": 1704.797,
+      "maxSeconds": 1704.797,
+      "samples": [
+        {
+          "runId": "34311753137",
+          "seconds": 1704.797,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "rollback": {
+      "n": 1,
+      "p50Seconds": 0.001,
+      "p95Seconds": 0.001,
+      "maxSeconds": 0.001,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 0.001,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        }
+      ],
+      "notes": "Controller no-op delegation only; actual host recovery measured separately."
+    },
+    "host-recovery": {
+      "n": 1,
+      "p50Seconds": 65.532,
+      "p95Seconds": 65.532,
+      "maxSeconds": 65.532,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 65.532,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "failure-fence": {
+      "n": 1,
+      "p50Seconds": 4.416,
+      "p95Seconds": 4.416,
+      "maxSeconds": 4.416,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 4.416,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "cleanup": {
+      "n": 2,
+      "p50Seconds": 8.626,
+      "p95Seconds": 8.63,
+      "maxSeconds": 8.63,
+      "samples": [
+        {
+          "runId": "34309433387",
+          "seconds": 8.622,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34311753137",
+          "seconds": 8.63,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "activation-smoke": {
+      "n": 1,
+      "p50Seconds": 73.046,
+      "p95Seconds": 73.046,
+      "maxSeconds": 73.046,
+      "samples": [
+        {
+          "runId": "34311753137",
+          "seconds": 73.046,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        }
+      ]
+    },
+    "identity-evidence": {
+      "n": 3,
+      "p50Seconds": 11.693,
+      "p95Seconds": 21.297,
+      "maxSeconds": 22.364,
+      "samples": [
+        {
+          "runId": "34311753137",
+          "seconds": 11.693,
+          "runConclusion": "success",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34309433387",
+          "seconds": 22.364,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        },
+        {
+          "runId": "34309433387",
+          "seconds": 10.604,
+          "runConclusion": "failure",
+          "sampleStatus": "completed"
+        }
+      ],
+      "notes": "Three probe invocations across two runs, including failed-run final identity snapshot; not three independent deploys."
+    }
+  },
+  "excludedSamples": [
+    {
+      "runId": "34309433387",
+      "seconds": 1261.916,
+      "runConclusion": "failure",
+      "sampleStatus": "failed/censored"
+    }
+  ],
+  "successfulHostDetail": {
+    "runId": "34311753137",
+    "unitLaunchToQuiescenceSeconds": 19.362,
+    "sqlMigrationSeconds": 1561.121,
+    "sqlCompleteToCleanupSeconds": 7.604,
+    "cleanupToCandidateReadySeconds": 71.282,
+    "candidateReadyToControllerAckSeconds": 72.319,
+    "sqlCompleteToControllerAckSeconds": 151.205,
+    "offlinePhaseMinusSqlSeconds": 143.676,
+    "noOpMigrationSamples": 0,
+    "note": "One successful migration sample; durations derived from host timestamps."
+  },
+  "legacySuccessfulRuns": [
+    {
+      "runId": "34092352074",
+      "buildSeconds": 32.914,
+      "stagingPlusConfigSeconds": 183.648,
+      "startupToSmokeSeconds": 69.443,
+      "legacyBroadSmokeToIdentitySeconds": 1327.749,
+      "notes": "Legacy boundaries; inline migration unobservable; excluded from canonical aggregate."
+    },
+    {
+      "runId": "34189442073",
+      "buildSeconds": 32.714,
+      "stagingPlusConfigSeconds": 184.165,
+      "startupToSmokeSeconds": 54.403,
+      "legacyBroadSmokeToIdentitySeconds": 112.66,
+      "notes": "Legacy boundaries; inline migration unobservable; excluded from canonical aggregate."
+    },
+    {
+      "runId": "34205073983",
+      "buildSeconds": 29.352,
+      "stagingPlusConfigSeconds": 211.602,
+      "startupToSmokeSeconds": 69.206,
+      "legacyBroadSmokeToIdentitySeconds": 152.413,
+      "notes": "Legacy boundaries; inline migration unobservable; excluded from canonical aggregate."
+    }
+  ],
+  "proposedCaps": {
+    "sqlMigrationSeconds": 1800,
+    "preparationSeconds": 180,
+    "stagingSeconds": 240,
+    "configPromotionSeconds": 30,
+    "offlineLifecycleAllowanceSeconds": 300,
+    "activationSeconds": 180,
+    "hostRecoverySeconds": 270,
+    "cleanupSeconds": 60,
+    "identityTotalSeconds": 60,
+    "failureFenceSeconds": 20,
+    "serialCeilingFormulaSeconds": "migrationBudgetSeconds + 1340",
+    "workflowStepCeilingMinutes": "ceil(migrationBudgetSeconds / 60) + 24",
+    "workflowJobCeilingMinutes": "ceil(migrationBudgetSeconds / 60) + 27",
+    "note": "Candidate engineering allowances, not inferred stable percentiles; stage has smallest relative headroom at 26% above measured max."
+  },
+  "sqlMigrationMetric": {
+    "n": 1,
+    "p50Seconds": 1561.121,
+    "p95Seconds": 1561.121,
+    "maxSeconds": 1561.121,
+    "runId": "34311753137",
+    "censoredExcluded": {
+      "runId": "34309433387",
+      "seconds": 1199.031,
+      "budgetSeconds": 1200
+    }
+  },
+  "legacyMetrics": {
+    "buildSeconds": {
+      "n": 3,
+      "p50Seconds": 32.714,
+      "p95Seconds": 32.894,
+      "maxSeconds": 32.914
+    },
+    "stagingPlusConfigSeconds": {
+      "n": 3,
+      "p50Seconds": 184.165,
+      "p95Seconds": 208.858,
+      "maxSeconds": 211.602
+    },
+    "startupToSmokeSeconds": {
+      "n": 3,
+      "p50Seconds": 69.206,
+      "p95Seconds": 69.419,
+      "maxSeconds": 69.443
+    },
+    "legacyBroadSmokeToIdentitySeconds": {
+      "n": 3,
+      "p50Seconds": 152.413,
+      "p95Seconds": 1210.215,
+      "maxSeconds": 1327.749
+    }
+  }
+}

@@ -19,6 +19,7 @@ OWNER = "a" * 32
 TARGET = "b" * 40
 PREVIOUS = "c" * 40
 CONTROL = "d" * 40
+RELEASE = "v1.2.3"
 IMAGE = "sha256:" + "e" * 64
 
 
@@ -43,6 +44,11 @@ class FakeHost(migration.Host):
         self.server_present = False
         self.server_backend_present = False
         self.server_image = IMAGE
+        self.served_revision = TARGET
+        self.release_tag = RELEASE
+        self.health = "ok"
+        self.proxy_revision = TARGET
+        self.proxy_status = "200"
         self.helper_environment = {"CSX_DSN": "postgres://db/csx?application_name=" + self.application,
                                    "PGAPPNAME": self.application}
         self.after = {"samples": 1, "receipts": 2, "pass": 3, "fail": 4}
@@ -52,6 +58,10 @@ class FakeHost(migration.Host):
         self.calls.append(("command", args))
         if args[0] == "sh" and Path(args[1]).name == self.rollback_failure:
             raise RuntimeError("injected rollback failure")
+        if args[0] == "curl":
+            body = (json.dumps({"revision": self.proxy_revision}) if args[-1].endswith("/version")
+                    else ("ok" if args[-1].endswith("/healthz") else '<link rel="canonical" href="https://codesamplex.dev/features">'))
+            return subprocess.CompletedProcess(args, 0, body + "\n" + self.proxy_status, "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def docker(self, *args, seconds=30, check=True, environment=None):
@@ -66,9 +76,11 @@ class FakeHost(migration.Host):
         if args[:2] == ("ps", "-aq"):
             output = "helper-id" if self.helper_present else ""
         elif args[-1] == "http://127.0.0.1:8080/healthz":
-            output = "ok"
+            output = self.health
         elif args[-1] == "http://127.0.0.1:8080/version":
-            output = json.dumps({"revision": TARGET})
+            output = json.dumps({"revision": self.served_revision})
+        elif args[-1] == "/data/dist/.release-tag":
+            output = self.release_tag
         elif args[:1] == ("rm",):
             self.helper_present = False
             output = ""
@@ -80,7 +92,9 @@ class FakeHost(migration.Host):
         return {"Image": IMAGE, "Config": {"Env": ["CSX_DSN=postgres://db/csx?application_name=" + self.application],
             "Labels": {
             "codesamplex.deploy-owner": "foreign" if self.foreign_helper else OWNER}},
-            "State": {"Running": self.helper_running, "ExitCode": self.helper_exit, "OOMKilled": False}}
+            "State": {"Running": True if name == "codesamplex-server-1" else self.helper_running,
+                      "ExitCode": self.helper_exit, "OOMKilled": False,
+                      "StartedAt": "2026-09-09T01:00:00Z"}}
 
     def clients(self, owned_only=False):
         if not self.backend_present:
@@ -132,6 +146,7 @@ class FakeHost(migration.Host):
 
     def verify_image(self, name, image, revision):
         self.calls.append(("identity", (name, image, revision)))
+        return self.inspect(name)
 
 
 class SupervisorTests(unittest.TestCase):
@@ -147,7 +162,8 @@ class SupervisorTests(unittest.TestCase):
         (self.state / "config.json").write_text(json.dumps({
             "targetSha": TARGET, "previousSha": PREVIOUS, "operationalSha": CONTROL,
             "imageDigest": IMAGE, "previousImageDigest": "sha256:" + "f" * 64,
-            "expectedMigration": "0036_builder_projections.sql", "migrationTimeoutSeconds": 60}))
+            "expectedMigration": "0036_builder_projections.sql", "migrationTimeoutSeconds": 60,
+            "expectedReleaseTag": RELEASE}))
         self.host = FakeHost(self.root)
         self.clock = iter(range(0, 100000, 3))
         self.addCleanup(patch.stopall)
@@ -217,32 +233,51 @@ class SupervisorTests(unittest.TestCase):
             self.host.finalize()
             self.assertEqual(self.host.calls, [])
 
-    def test_no_controller_ack_times_out_without_committing_candidate(self):
-        with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
-            self.host.await_commit()
-        self.assertNotEqual(self.host.evidence["phase"], "committed")
-        self.host.finalize()
-        self.assertEqual(self.host.evidence["phase"], "rolled-back")
+    def test_controller_disappearance_does_not_delay_or_rollback_healthy_host(self):
+        self.host.activate()
+        self.assertFalse((self.state / "commit.json").exists())
+        self.assertEqual("committed", self.host.evidence["phase"])
+        self.assertEqual("host-verified", self.host.evidence["controllerSmoke"])
+        self.assertEqual("host", self.host.evidence["acceptanceAuthority"])
+        restarted = FakeHost(self.root)
+        restarted.finalize()
+        self.assertEqual([], restarted.calls)
 
-    def test_wrong_payload_ack_is_rejected(self):
-        (self.state / "commit.json").write_text(json.dumps({"targetSha": PREVIOUS}))
-        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
-            self.host.await_commit()
+    def test_wrong_process_identity_blocks_commit(self):
+        self.host.served_revision = PREVIOUS
+        with self.assertRaisesRegex(RuntimeError, "wrong revision"):
+            self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
 
-    def test_matching_ack_commits_only_after_lock_and_image_proof(self):
-        ack = {k: self.host.evidence[k] for k in ("owner", "operationalSha", "targetSha", "imageDigest")}
-        (self.state / "commit.json").write_text(json.dumps(ack))
-        self.host.await_commit()
-        self.assertEqual(self.host.evidence["controllerSmoke"], "acknowledged")
-        self.assertEqual(self.host.evidence["phase"], "committed")
-        self.assertTrue(any(k == "identity" for k, _ in self.host.calls))
+    def test_server_exit_between_proxy_smoke_and_final_identity_blocks_commit(self):
+        original = self.host.verify_image
+        def verify(*args):
+            result = original(*args)
+            if len([c for c in self.host.calls if c[0] == "identity"]) == 2:
+                result["State"]["Running"] = False
+            return result
+        self.host.verify_image = verify
+        with self.assertRaisesRegex(RuntimeError, "server failed during acceptance"):
+            self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
 
-    def test_changed_lock_rejects_otherwise_correct_ack(self):
-        ack = {k: self.host.evidence[k] for k in ("owner", "operationalSha", "targetSha", "imageDigest")}
-        (self.state / "commit.json").write_text(json.dumps(ack))
+    def test_wrong_installer_identity_blocks_commit(self):
+        self.host.release_tag = "v9.9.9"
+        with self.assertRaisesRegex(RuntimeError, "installer release identity"):
+            self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+
+    def test_wrong_proxy_identity_blocks_commit(self):
+        self.host.proxy_revision = PREVIOUS
+        with self.assertRaisesRegex(RuntimeError, "wrong revision"):
+            self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+
+    def test_changed_lock_rejects_otherwise_healthy_candidate(self):
         (self.root.parent / ".deploy-lock" / "owner").write_text("0" * 32)
         with self.assertRaisesRegex(RuntimeError, "ownership changed"):
-            self.host.await_commit()
+            self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
 
     def test_migration_deadline_does_not_activate_target(self):
         self.host.helper_running = True
@@ -280,7 +315,7 @@ class SupervisorTests(unittest.TestCase):
         script = Path(__file__).with_name("offline-migration.ps1").read_text()
         self.assertIn("--property=Type=exec", script)
         self.assertIn("--property=RuntimeMaxSec=", script)
-        self.assertIn("--property=TimeoutStopSec=480", script)
+        self.assertIn("--property=TimeoutStopSec=240", script)
         self.assertIn("ExecStopPost=", script)
         self.assertNotIn("prestage-builder-indexes", script)
 
@@ -363,39 +398,177 @@ class SupervisorTests(unittest.TestCase):
                     self.host.verify_migration()
                 self.assertFalse(self.host.repair_required)
 
-    def test_host_owns_stack_mutations_before_candidate_ready(self):
+    def test_host_owns_only_required_stack_mutations_before_commit(self):
         self.host.activate()
-        self.assertEqual("candidate-ready", self.host.evidence["phase"])
+        self.assertEqual("committed", self.host.evidence["phase"])
         up = [c[1] for c in self.host.calls if c[0] == "docker" and c[1][:2] == ("compose", "up")]
-        self.assertEqual(3, len(up))
-        self.assertEqual(("compose", "up", "-d", "--no-build", "--remove-orphans"), up[1])
-        self.assertEqual(("compose", "up", "-d", "--no-build", "--force-recreate", "caddy"), up[2])
-        controller = Path(__file__).with_name("deploy.ps1").read_text()
-        start = controller.index('if (-not $OfflineMigration) {\nInvoke-Remote "cd /opt/codesamplex/deploy && docker compose up')
-        end = controller.index('\n}\n', start)
-        owned_elsewhere = controller[start:end]
-        self.assertIn("--remove-orphans", owned_elsewhere)
-        self.assertIn("--force-recreate caddy", owned_elsewhere)
-        self.assertIn("caddy reload", owned_elsewhere)
+        self.assertEqual([
+            ("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "server"),
+            ("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "caddy"),
+        ], up)
+        self.assertFalse(any("reload" in c[1] for c in self.host.calls))
+        requests = [c[1] for c in self.host.calls if c[0] == "command" and c[1][0] == "curl" and not c[1][-1].endswith("/healthz")]
+        self.assertEqual(["https://codesamplex.dev/features", "https://codesamplex.dev/version"],
+                         [r[-1] for r in requests])
+        self.assertTrue(all("--resolve" in r and "--retry" not in r for r in requests))
         self.assertNotIn("safe-log-smoke.sh", Path(__file__).with_name("offline-migration.py").read_text())
 
-    def test_correct_ack_cannot_commit_after_deadline_during_identity_check(self):
-        ack = {key: self.host.evidence[key] for key in ("owner", "operationalSha", "targetSha", "imageDigest")}
-        (self.state / "commit.json").write_text(json.dumps(ack))
-        values = iter([0, 0, 601])
-        with patch.object(migration.time, "monotonic", lambda: next(values)):
-            with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
-                self.host.await_commit()
-        self.assertNotEqual("committed", self.host.evidence["phase"])
+    def test_activation_evidence_contains_one_real_deadline_and_phase_duration(self):
+        self.host.activate()
+        start = migration.datetime.datetime.fromisoformat(self.host.evidence["activationStartedAt"])
+        deadline = migration.datetime.datetime.fromisoformat(self.host.evidence["activationDeadlineAt"])
+        self.assertEqual(180, (deadline - start).total_seconds())
+        self.assertEqual(180, self.host.evidence["activationBudgetSeconds"])
+        self.assertEqual("pass", self.host.evidence["phaseTimings"]["activation"]["outcome"])
+        self.assertLess(self.host.evidence["activationElapsedSeconds"], 180)
+        self.assertEqual(TARGET, self.host.evidence["servedRevision"])
+        self.assertEqual(RELEASE, self.host.evidence["releaseTag"])
 
-    def test_expired_ack_is_rejected_before_identity_work(self):
-        ack = {key: self.host.evidence[key] for key in ("owner", "operationalSha", "targetSha", "imageDigest")}
-        (self.state / "commit.json").write_text(json.dumps(ack))
-        values = iter([0, 601])
-        with patch.object(migration.time, "monotonic", lambda: next(values)):
-            with self.assertRaisesRegex(RuntimeError, "acknowledgement deadline"):
-                self.host.await_commit()
-        self.assertFalse(any(kind == "identity" for kind, _ in self.host.calls))
+    def test_final_identity_cannot_commit_after_activation_deadline(self):
+        now = [0]
+        original = self.host.verify_image
+        def verify(*args):
+            result = original(*args)
+            if len([c for c in self.host.calls if c[0] == "identity"]) == 2:
+                now[0] = 181
+            return result
+        self.host.verify_image = verify
+        with patch.object(migration.time, "monotonic", lambda: now[0]):
+            with self.assertRaisesRegex(RuntimeError, "activation deadline"):
+                self.host.activate()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertEqual("failure", self.host.evidence["phaseTimings"]["activation"]["outcome"])
+
+    def test_readiness_failure_is_bounded_and_does_not_start_caddy(self):
+        now = [0]
+        self.host.health = "starting"
+        def sleep(seconds):
+            now[0] += seconds
+        with patch.object(migration.time, "monotonic", lambda: now[0]), patch.object(migration.time, "sleep", sleep):
+            with self.assertRaisesRegex(RuntimeError, "health deadline"):
+                self.host.activate()
+        self.assertEqual(45, now[0])
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertFalse(any(c[0] == "docker" and c[1][-1] == "caddy" for c in self.host.calls))
+
+    def test_cleanup_preserves_existing_deadline_on_success_and_failure(self):
+        for foreign in (False, True):
+            with self.subTest(foreign=foreign):
+                self.host.foreign_helper = foreign
+                self.host.helper_present = True
+                self.host.operation_deadline = 99999
+                if foreign:
+                    with self.assertRaisesRegex(RuntimeError, "ownership mismatch"):
+                        self.host.cleanup_helper()
+                else:
+                    self.host.cleanup_helper()
+                self.assertEqual(99999, self.host.operation_deadline)
+
+    def test_migration_duration_does_not_consume_activation_budget(self):
+        now = [0]
+        self.host.backend_present = False
+        with patch.object(migration.time, "monotonic", lambda: now[0]):
+            self.host.migrate()
+            now[0] = 1800
+            self.host.activate()
+        self.assertEqual(0, self.host.evidence["activationElapsedSeconds"])
+        self.assertEqual(180, self.host.evidence["activationBudgetSeconds"])
+        self.assertIsNone(self.host.operation_deadline)
+
+    def test_slow_sequential_activation_commands_share_one_180_second_deadline(self):
+        now = [0]
+        timeouts = []
+        container = {"Image": IMAGE, "Config": {"Labels": {"org.opencontainers.image.revision": TARGET}},
+                     "State": {"StartedAt": "2026-09-09T01:00:00Z", "Running": True}}
+        class Process:
+            pid = 42042
+            returncode = 0
+            def __init__(process, args, **kwargs):
+                process.args = args
+                if args[0] == "curl":
+                    path = args[-1]
+                    process.duration = 1 if path.endswith("/healthz") else 9
+                    body = ("ok" if path.endswith("/healthz") else
+                            json.dumps({"revision": TARGET}) if path.endswith("/version") else
+                            '<link rel="canonical" href="https://codesamplex.dev/features">')
+                    process.output = body + "\n200"
+                elif args[1:3] == ["compose", "up"]:
+                    process.duration = 55 if args[-1] == "server" else 40
+                    process.output = ""
+                elif args[1] in ("inspect", "image"):
+                    process.duration = 15
+                    process.output = json.dumps([container])
+                else:
+                    process.duration = 4
+                    process.output = ("ok" if args[-1].endswith("/healthz") else
+                                      json.dumps({"revision": TARGET}) if args[-1].endswith("/version") else RELEASE)
+            def communicate(process, timeout):
+                timeouts.append((process.args, timeout))
+                now[0] += min(process.duration, timeout)
+                if process.duration > timeout:
+                    raise subprocess.TimeoutExpired(process.args, timeout)
+                return process.output, ""
+            def wait(process, timeout):
+                return 0
+        for name in ("command", "docker", "inspect", "verify_image"):
+            setattr(self.host, name, getattr(migration.Host, name).__get__(self.host))
+        with patch.object(migration.time, "monotonic", lambda: now[0]), \
+             patch.object(migration.subprocess, "Popen", Process), \
+             patch.object(migration.signal, "SIGKILL", 9, create=True), \
+             patch.object(migration.os, "killpg", create=True) as killed:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.host.activate()
+        self.assertEqual(180, now[0])
+        self.assertEqual(9, timeouts[-1][1])
+        self.assertEqual(["docker", "image", "inspect", IMAGE], timeouts[-1][0])
+        killed.assert_called_once_with(42042, 9)
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertEqual("failure", self.host.evidence["phaseTimings"]["activation"]["outcome"])
+        self.assertIsNone(self.host.operation_deadline)
+
+    def test_proxy_listener_warmup_precedes_the_two_single_representatives(self):
+        now = [0]
+        original = self.host.command
+        readiness = []
+        def command(args, seconds=30, check=True, environment=None):
+            if args[0] == "curl" and args[-1].endswith("/healthz"):
+                readiness.append(now[0])
+                if len(readiness) < 3:
+                    return subprocess.CompletedProcess(args, 7, "", "")
+            return original(args, seconds, check, environment)
+        self.host.command = command
+        with patch.object(migration.time, "monotonic", lambda: now[0]), \
+             patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)):
+            self.host.activate()
+        self.assertEqual([0, 1, 2], readiness)
+        self.assertEqual("committed", self.host.evidence["phase"])
+        self.assertEqual(2, self.host.evidence["phaseTimings"]["proxyReadiness"]["elapsedSeconds"])
+
+    def test_proxy_unavailable_exhausts_only_its_15_second_readiness_budget(self):
+        now = [0]
+        self.host.proxy_status = "503"
+        with patch.object(migration.time, "monotonic", lambda: now[0]), \
+             patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)):
+            with self.assertRaisesRegex(RuntimeError, "proxy health deadline"):
+                self.host.activate()
+        self.assertEqual(15, now[0])
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertFalse(any(c[0] == "command" and c[1][-1].endswith("/features") for c in self.host.calls))
+
+    def test_signal_after_durable_commit_cannot_overwrite_success(self):
+        committed = []
+        def run():
+            self.host.activate()
+            committed.append(self.host.evidence_file.read_bytes())
+            raise RuntimeError("host supervisor interrupted")
+        self.host.run = run
+        with patch.object(migration, "Host", lambda _: self.host), \
+             patch.object(migration, "__file__", str(self.state / "offline-migration.py")), \
+             patch.object(migration.signal, "signal"):
+            result = migration.main(["offline-migration.py", "run", OWNER])
+        self.assertEqual(0, result)
+        self.assertEqual(committed[0], self.host.evidence_file.read_bytes())
+        self.assertEqual("success", json.loads(committed[0])["conclusion"])
 
     def test_stopped_service_rollback_does_not_start_or_stop_service(self):
         for service in ("server", "caddy"):
