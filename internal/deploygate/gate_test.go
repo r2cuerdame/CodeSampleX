@@ -187,6 +187,44 @@ func TestRecentWantedDemandIndexExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+func TestSlowQueryIndexesMigrationIsAutomaticAdditive(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0037_slow_query_indexes.sql")
+	sql, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read slow query indexes migration: %v", err)
+	}
+	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+		t.Fatalf("slow query indexes migration rejected: %v", err)
+	}
+}
+
+func TestSlowQueryIndexesExceptionRemainsFailClosed(t *testing.T) {
+	valid := strings.Join(slowQueryIndexesStatements, ";\n") + ";"
+	for name, sql := range map[string]string{
+		"wrong filename":      valid,
+		"wrong index name":    strings.Replace(valid, "failure_clusters_pkg_count_idx", "failure_clusters_wrong_idx", 1),
+		"wrong table":         strings.Replace(valid, "ON failure_clusters", "ON failure_evidence", 1),
+		"missing idempotence": strings.Replace(valid, " IF NOT EXISTS", "", 1),
+		"missing statement":   slowQueryIndexesStatements[0] + ";",
+		"drop suffix":         valid + "\nDROP TABLE failure_clusters;",
+		"add-column suffix":   valid + "\nALTER TABLE samples ADD COLUMN unsafe TEXT;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			migrationName := "0037_slow_query_indexes.sql"
+			if name == "wrong filename" {
+				migrationName = "0099_slow_query_indexes.sql"
+			}
+			if err := ValidateMigrationSQL(migrationName, sql); err == nil {
+				t.Fatalf("changed slow query index migration accepted: %s", sql)
+			}
+		})
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
