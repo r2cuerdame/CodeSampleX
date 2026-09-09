@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 // handleRegistryPackage implements GET /v1/registry/packages/{purl}.
@@ -92,6 +94,11 @@ func (a *api) symbolsForPURL(r *http.Request, purl string) ([]string, error) {
 	return symbols, nil
 }
 
+// registrySnapshotBatch bounds how many versions share one snapshot lookup.
+// A package can have hundreds of releases; one page per bounded slice keeps
+// the read from becoming one array parameter the size of its history.
+const registrySnapshotBatch = 200
+
 // handleRegistrySymbol implements
 // GET /v1/registry/symbols/{ecosystem}/{package...}/{family}.
 // golang package names contain slashes, so the tail is split as
@@ -119,13 +126,18 @@ func (a *api) handleRegistrySymbol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	found, err := a.familySnapshots(r.Context(), versions, family)
+	if err != nil {
+		writeStoreErr(w, err, http.StatusInternalServerError, "snapshot lookup failed")
+		return
+	}
 	type versionSnapshot struct {
 		PURL     string          `json:"purl"`
 		Snapshot json.RawMessage `json:"snapshot"`
 	}
 	snapshots := []versionSnapshot{}
 	for _, v := range versions {
-		if js, ok, err := a.d.Store.GetSnapshot(r.Context(), v.PURL, family); err == nil && ok {
+		if js, ok := found[v.PURL]; ok {
 			snapshots = append(snapshots, versionSnapshot{PURL: v.PURL, Snapshot: json.RawMessage(js)})
 		}
 	}
@@ -139,4 +151,54 @@ func (a *api) handleRegistrySymbol(w http.ResponseWriter, r *http.Request) {
 		"family":    family,
 		"snapshots": snapshots,
 	})
+}
+
+// snapshotPagesStore is the bounded-page form of GetSnapshot for one symbol
+// across many releases. PostgreSQL offers it; the fallback keeps the
+// row-at-a-time contract for stores that do not.
+type snapshotPagesStore interface {
+	SnapshotsForPURLs(ctx context.Context, purls []string, symbol string) (map[string]string, error)
+}
+
+// familySnapshots reads the family's snapshot for every listed release,
+// keyed by purl. Releases without one are absent from the map; the caller
+// walks the version listing, so the document keeps the listing's order.
+//
+// It reads a bounded page of releases per checkout rather than one release
+// per checkout. A library with three hundred releases was three hundred
+// interactive checkouts for one public read (#174).
+//
+// A read the store refuses is returned, not skipped. Skipping it turned a
+// busy pool into "no evidence for this symbol" -- a 404 that is false and
+// that a client would cache.
+func (a *api) familySnapshots(ctx context.Context, versions []serverstore.PackageRow, family string) (map[string]string, error) {
+	found := make(map[string]string, len(versions))
+	bulk, ok := a.d.Store.(snapshotPagesStore)
+	if !ok {
+		for _, v := range versions {
+			js, ok, err := a.d.Store.GetSnapshot(ctx, v.PURL, family)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				found[v.PURL] = js
+			}
+		}
+		return found, nil
+	}
+	purls := make([]string, 0, len(versions))
+	for _, v := range versions {
+		purls = append(purls, v.PURL)
+	}
+	for start := 0; start < len(purls); start += registrySnapshotBatch {
+		end := min(start+registrySnapshotBatch, len(purls))
+		page, err := bulk.SnapshotsForPURLs(ctx, purls[start:end], family)
+		if err != nil {
+			return nil, err
+		}
+		for purl, js := range page {
+			found[purl] = js
+		}
+	}
+	return found, nil
 }

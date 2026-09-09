@@ -367,6 +367,68 @@ func (p *PG) UpsertPackage(ctx context.Context, pkg PackageRow) error {
 	})
 }
 
+// UpsertPackages is UpsertPackage for a bounded page of rows in one database
+// checkout and one statement, with the same conflict rule: an existing row
+// takes the new publicness and checked_at and has its last_seen refreshed.
+//
+// Receipt-derived registration writes one row per release the registry has
+// never seen. One checkout per row made the first pass over a corpus with
+// thousands of receipt-only releases thousands of background checkouts
+// against the same small pool the readers use (#174).
+//
+// A purl repeated within one page is written once, with the last value
+// given for it; PostgreSQL refuses to update the same row twice in one
+// statement, and the sequential contract would have ended in that state.
+// The list is a BOUNDED page; the caller chunks.
+func (p *PG) UpsertPackages(ctx context.Context, rows []PackageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	n := len(rows)
+	purls := make([]string, 0, n)
+	ecosystems := make([]string, 0, n)
+	names := make([]string, 0, n)
+	versions := make([]string, 0, n)
+	majors := make([]string, 0, n)
+	publicness := make([]string, 0, n)
+	checked := make([]*time.Time, 0, n)
+	index := make(map[string]int, n)
+	for _, row := range rows {
+		if row.Publicness == "" {
+			row.Publicness = "UNKNOWN"
+		}
+		var checkedAt *time.Time
+		if !row.CheckedAt.IsZero() {
+			at := row.CheckedAt
+			checkedAt = &at
+		}
+		if i, dup := index[row.PURL]; dup {
+			ecosystems[i], names[i], versions[i], majors[i] = row.Ecosystem, row.Name, row.Version, row.Major
+			publicness[i], checked[i] = row.Publicness, checkedAt
+			continue
+		}
+		index[row.PURL] = len(purls)
+		purls = append(purls, row.PURL)
+		ecosystems = append(ecosystems, row.Ecosystem)
+		names = append(names, row.Name)
+		versions = append(versions, row.Version)
+		majors = append(majors, row.Major)
+		publicness = append(publicness, row.Publicness)
+		checked = append(checked, checkedAt)
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO packages(purl, ecosystem, name, version, major, publicness, checked_at)
+			SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
+			ON CONFLICT (purl) DO UPDATE SET
+				publicness = EXCLUDED.publicness,
+				checked_at = EXCLUDED.checked_at,
+				last_seen = now()`,
+			purls, ecosystems, names, versions, majors, publicness, checked)
+		return err
+	})
+}
+
 const packageCols = `purl, ecosystem, name, version, major, publicness, checked_at, first_seen, last_seen`
 
 func scanPackage(row pgx.Row) (PackageRow, error) {
@@ -450,6 +512,46 @@ func (p *PG) ExistingPackagePURLs(ctx context.Context, purls []string) (map[stri
 	return out, nil
 }
 
+// PackagesByPURL returns the package rows for these purls, in one database
+// checkout, keyed by purl. It is GetPackage for a bounded page: the same
+// columns, so a caller can judge publicness and checked_at from it, and the
+// rows are left completely alone.
+//
+// The authoring poll asks this about every DEPENDENCY coordinate in its
+// candidate window to learn which ones the registry has already confirmed.
+// One GetPackage checkout per candidate was a few hundred interactive
+// checkouts per poll on an endpoint the whole fleet polls several times a
+// minute (#174).
+//
+// The list is a BOUNDED page; the caller chunks. Absent purls are simply
+// absent from the map.
+func (p *PG) PackagesByPURL(ctx context.Context, purls []string) (map[string]PackageRow, error) {
+	out := make(map[string]PackageRow, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx,
+			`SELECT `+packageCols+` FROM packages WHERE purl = ANY($1::text[])`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			pkg, err := scanPackage(rows)
+			if err != nil {
+				return err
+			}
+			out[pkg.PURL] = pkg
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (p *PG) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]PackageRow, error) {
 	var out []PackageRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
@@ -519,6 +621,42 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 		return nil
 	})
 	return js, found, err
+}
+
+// SnapshotsForPURLs is GetSnapshot for one symbol across a bounded page of
+// releases, in one database checkout, keyed by purl. Releases without a
+// snapshot for that symbol are absent from the map.
+//
+// The registry symbol endpoint reads the family snapshot of every release of
+// a package. One GetSnapshot checkout per release made a library with three
+// hundred releases three hundred interactive checkouts for one public read
+// (#174). The list is a BOUNDED page; the caller chunks.
+func (p *PG) SnapshotsForPURLs(ctx context.Context, purls []string, symbol string) (map[string]string, error) {
+	out := make(map[string]string, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, snapshot::text FROM compatibility_snapshots
+			WHERE symbol = $2 AND purl = ANY($1::text[])`, purls, symbol)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl, js string
+			if err := rows.Scan(&purl, &js); err != nil {
+				return err
+			}
+			out[purl] = js
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PackageStagePasses reads every package-level snapshot for one package in a

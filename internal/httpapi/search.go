@@ -25,6 +25,45 @@ type searchReadCacheKey struct{}
 type searchReadCache struct {
 	clusters  map[string]searchClusterRead
 	snapshots map[string]searchSnapshotRead
+	// receipts is the request's candidate window, read a bounded page at a
+	// time on first need. Nil until the handler knows its candidates.
+	receipts *searchReceiptPages
+}
+
+// searchReceiptPages is the receipt history of one request's candidate
+// window, fetched a bounded page at a time in candidate order and only when
+// a candidate on that page reaches grading.
+type searchReceiptPages struct {
+	ids    []string
+	page   map[string]int
+	loaded map[int]map[string][]serverstore.ReceiptRow
+}
+
+func newSearchReceiptPages(samples []serverstore.SampleRow) *searchReceiptPages {
+	pages := &searchReceiptPages{
+		ids:    make([]string, 0, len(samples)),
+		page:   make(map[string]int, len(samples)),
+		loaded: map[int]map[string][]serverstore.ReceiptRow{},
+	}
+	for _, row := range samples {
+		if _, seen := pages.page[row.SampleID]; seen {
+			continue
+		}
+		pages.page[row.SampleID] = len(pages.ids) / searchReceiptBatch
+		pages.ids = append(pages.ids, row.SampleID)
+	}
+	return pages
+}
+
+// receiptPagesStore is the bounded-page form of ReceiptsForSample.
+// PostgreSQL offers it; other stores keep the row-at-a-time contract.
+type receiptPagesStore interface {
+	ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]serverstore.ReceiptRow, error)
+}
+
+func searchReadCacheOf(ctx context.Context) *searchReadCache {
+	cache, _ := ctx.Value(searchReadCacheKey{}).(*searchReadCache)
+	return cache
 }
 
 type searchClusterRead struct {
@@ -44,6 +83,11 @@ func withSearchReadCache(ctx context.Context) context.Context {
 		snapshots: map[string]searchSnapshotRead{},
 	})
 }
+
+// searchReceiptBatch bounds how many candidates share one receipt-history
+// read. Pages follow candidate order and are fetched on first need, so a
+// request that grades nothing reads nothing.
+const searchReceiptBatch = 100
 
 // maxTreePatterns bounds how many lockfile packages widen a search. A
 // dependency tree runs to hundreds of entries; letting all of them into the
@@ -111,6 +155,10 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	if err != nil {
 		writeStoreErr(w, err, http.StatusInternalServerError, "sample listing failed")
 		return
+	}
+
+	if cache := searchReadCacheOf(r.Context()); cache != nil {
+		cache.receipts = newSearchReceiptPages(samples)
 	}
 
 	now := a.now()
@@ -331,7 +379,7 @@ func (a *api) scoreSample(r *http.Request, row serverstore.SampleRow,
 	// same-name receipt made axios@1 on Linux look verified by an axios@2 on
 	// Windows receipt. Read the variants before computing the delta so the
 	// grade, evidence and exact-failure decision all use the same run.
-	receiptRows, err := a.d.Store.ReceiptsForSample(r.Context(), row.SampleID)
+	receiptRows, err := a.searchReceipts(r.Context(), row.SampleID)
 	if err != nil {
 		return domain.SearchResult{}, false, err
 	}
@@ -861,6 +909,39 @@ func (a *api) searchFailureClusters(ctx context.Context, packageName string) ([]
 		cache.clusters[key] = searchClusterRead{rows: rows, err: err}
 	}
 	return rows, err
+}
+
+// searchReceipts is ReceiptsForSample for one candidate of the current
+// request. Scoring read every candidate's receipts one sample at a time, so
+// a search over a well-covered package was up to maxSearchCandidates
+// interactive checkouts for one answer (#174). With a store that offers
+// bounded pages, the candidate's page is read once, on the first candidate
+// of that page to reach grading, and every later candidate on it is served
+// from the request. The rows are the same rows in the same per-sample order,
+// so the grade cannot differ; a page the store refuses is the same failure a
+// refused row was.
+func (a *api) searchReceipts(ctx context.Context, sampleID string) ([]serverstore.ReceiptRow, error) {
+	cache := searchReadCacheOf(ctx)
+	bulk, ok := a.d.Store.(receiptPagesStore)
+	if !ok || cache == nil || cache.receipts == nil {
+		return a.d.Store.ReceiptsForSample(ctx, sampleID)
+	}
+	idx, known := cache.receipts.page[sampleID]
+	if !known {
+		return a.d.Store.ReceiptsForSample(ctx, sampleID)
+	}
+	rows, loaded := cache.receipts.loaded[idx]
+	if !loaded {
+		start := idx * searchReceiptBatch
+		end := min(start+searchReceiptBatch, len(cache.receipts.ids))
+		page, err := bulk.ReceiptsForSamples(ctx, cache.receipts.ids[start:end])
+		if err != nil {
+			return nil, err
+		}
+		cache.receipts.loaded[idx] = page
+		rows = page
+	}
+	return rows[sampleID], nil
 }
 
 func (a *api) searchSnapshot(ctx context.Context, purl, symbol string) (string, bool, error) {
