@@ -121,7 +121,8 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// The database budget is the outermost wrapper: it has to be in place
 	// before any handler reaches the store, and it has to still be there
 	// when the handler returns so the request can report what the pool cost
-	// it. See dbclass.go.
+	// it. Package cache-miss admission lives inside webStore so warm responses
+	// never consume a DB-load slot.
 	outer.Handle("/", withDBBudget(activityTracker.Wrap(inner)))
 	return outer, activityTracker
 }

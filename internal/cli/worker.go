@@ -23,6 +23,7 @@ import (
 )
 
 const workerPollInterval = 10 * time.Second
+const maxWorkerIdlePollInterval = 30 * time.Second
 const workerUpdateExitCode = 75
 
 var errWorkerUpdateReady = errors.New("verified update installed; restart required")
@@ -355,6 +356,16 @@ func effectiveWorkerParallel(opts workerOptions) int {
 	return opts.parallel
 }
 
+func workerIdlePollInterval(base time.Duration) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	if base >= maxWorkerIdlePollInterval/3 {
+		return maxWorkerIdlePollInterval
+	}
+	return 3 * base
+}
+
 // runContributorWorker schedules Docker verification lanes. Queue polling is
 // cheap and declarative; the shared CrossVerifier serializes only list+claim,
 // then the expensive container work proceeds in parallel.
@@ -502,7 +513,7 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 						printCounts("queue unavailable; retrying:", err)
 					}
 					recordErr(err)
-					if opts.once || !waitWorkerPoll(runCtx, opts.pollInterval) {
+					if opts.once || !waitWorkerPoll(runCtx, workerIdlePollInterval(opts.pollInterval)) {
 						return
 					}
 					continue
@@ -517,7 +528,7 @@ func runContributorWorker(ctx context.Context, cv contributionVerifier, opts wor
 					continue
 				}
 				reportIdle(time.Now())
-				if opts.once || !waitWorkerPoll(runCtx, opts.pollInterval) {
+				if opts.once || !waitWorkerPoll(runCtx, workerIdlePollInterval(opts.pollInterval)) {
 					return
 				}
 			}
