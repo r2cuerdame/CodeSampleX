@@ -104,6 +104,11 @@ type api struct {
 	// recomputed for each caller on the request's own clock.
 	hotShards hotShardHint
 
+	// The daily rollup that same endpoint serves. It is replaced at most once
+	// per builder pass, so it is remembered for one builder cadence and
+	// survives backpressure rather than being reread per request.
+	statsCache latestStatsCache
+
 	// Concurrent container and monitor probes share one bounded DB read.
 	healthMu sync.Mutex
 	health   *healthCall
@@ -312,8 +317,15 @@ func (a *api) trustMode() bool { return a.d.Cfg.PublicCheck == "trust" }
 // between a client that backs off and a client that retries into the
 // saturation that caused it. Anything else keeps the status the caller
 // chose.
+// isBackpressure reports the two refusals above -- the pool declining to queue
+// any longer, and PostgreSQL cancelling a statement past its ceiling. Both say
+// "not now" about a healthy server; neither says anything is wrong with it.
+func isBackpressure(err error) bool {
+	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err)
+}
+
 func writeStoreErr(w http.ResponseWriter, err error, status int, msg string) {
-	if serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err) {
+	if isBackpressure(err) {
 		w.Header().Set("Retry-After", "2")
 		writeErr(w, http.StatusServiceUnavailable, "database busy")
 		return
