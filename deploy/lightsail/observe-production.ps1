@@ -10,6 +10,8 @@ param(
     [Parameter(Mandatory)][string]$DeploymentRunId,
     [Parameter(Mandatory)][string]$EvidencePath,
     [Parameter(Mandatory)][string]$SummaryPath,
+    [string]$BaselinePath,
+    [string]$ExpectedMigrationVersion = "",
     [string]$User = "ubuntu"
 )
 
@@ -19,9 +21,14 @@ $BuilderPollSeconds = 20
 $ActiveBuilderLatencyRounds = 5
 $MaxActiveBuilderTTFBSeconds = 10.0
 $MaxPressureWaitSeconds = 3.0
+$ExtendedObservationSeconds = 600
+$SampleTimeoutSeconds = 180
+$BuilderWindowSeconds = 4800
 $observationWindowMinutes = [int](($BuilderPollAttempts * $BuilderPollSeconds) / 60)
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $collector = Join-Path $PSScriptRoot "collect-post-deploy-observation.sh"
+$extendedCollector = Join-Path $PSScriptRoot "collect-extended-observation.sh"
+$detailedCollector = Join-Path $PSScriptRoot "collect-production-evidence.sh"
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
 $latencyPaths = [ordered]@{
     healthz = '/healthz'
@@ -45,15 +52,18 @@ if ($TrackingIssue -notmatch '^(?:#?[1-9][0-9]*|https://github\.com/[A-Za-z0-9_.
 }
 if ($DeploymentRunId -notmatch '^[1-9][0-9]*$') { throw "deployment run id must be numeric" }
 if ($User -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw "user must be a simple Linux account name" }
-foreach ($path in @($KeyPath, $KnownHostsPath, $collector)) {
+foreach ($path in @($KeyPath, $KnownHostsPath, $collector, $extendedCollector, $detailedCollector)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required observation file is missing" }
 }
 if ([IO.Path]::GetFullPath($EvidencePath) -eq [IO.Path]::GetFullPath($SummaryPath)) {
     throw "JSON evidence and Markdown summary paths must differ"
 }
 
-$expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File |
-    Sort-Object Name | Select-Object -Last 1).Name
+$expectedMigration = $ExpectedMigrationVersion
+if ($expectedMigration -eq "") {
+    $expectedMigration = (Get-ChildItem (Join-Path $repo "internal/serverstore/migrations") -Filter "*.sql" -File |
+        Sort-Object Name | Select-Object -Last 1).Name
+}
 if ($expectedMigration -notmatch '^[0-9]{4}_[a-z0-9_]+\.sql$') {
     throw "could not determine the expected migration version"
 }
@@ -64,12 +74,16 @@ $sshArgs = @(
     "-o", "StrictHostKeyChecking=yes",
     "-o", "UserKnownHostsFile=$KnownHostsPath",
     "-o", "ConnectTimeout=20",
-    $remote,
-    "{ printf '#'; cat; printf '\n}\n'; } | sh"
+    "-o", "BatchMode=yes",
+    "-o", "ServerAliveInterval=10",
+    "-o", "ServerAliveCountMax=2",
+    $remote
 )
 $collectorBytes = [IO.File]::ReadAllBytes($collector)
+$extendedSource = [IO.File]::ReadAllText($extendedCollector).Replace('__CSX_DETAILED_COLLECTOR__', [IO.File]::ReadAllText($detailedCollector))
+$extendedBytes = [Text.UTF8Encoding]::new($false).GetBytes($extendedSource)
 
-function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
+function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bool]$IncludeExtended = $false, [int]$TimeoutSeconds = $SampleTimeoutSeconds) {
     $mode = if ($IncludeLatency) { "1" } else { "0" }
     $detailMode = if ($IncludeDetail) { "1" } else { "0" }
     # The leading marker is intentionally consumed by the remote '#'. It also
@@ -80,9 +94,10 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
     # timestamp contains no shell metacharacters.
     $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`n"
     $prefixBytes = [Text.UTF8Encoding]::new($false).GetBytes($prefix)
-    $payload = [byte[]]::new($prefixBytes.Length + $collectorBytes.Length)
+    $sourceBytes = if ($IncludeExtended) { $extendedBytes } else { $collectorBytes }
+    $payload = [byte[]]::new($prefixBytes.Length + $sourceBytes.Length)
     [Array]::Copy($prefixBytes, 0, $payload, 0, $prefixBytes.Length)
-    [Array]::Copy($collectorBytes, 0, $payload, $prefixBytes.Length, $collectorBytes.Length)
+    [Array]::Copy($sourceBytes, 0, $payload, $prefixBytes.Length, $sourceBytes.Length)
 
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $ssh
@@ -92,15 +107,27 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     foreach ($arg in $sshArgs) { [void]$psi.ArgumentList.Add($arg) }
+    $remoteCommand = "{ printf '#'; cat; printf '\n}\n'; } | timeout --kill-after=5s ${TimeoutSeconds}s sh"
+    [void]$psi.ArgumentList.Add($remoteCommand)
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $psi
+    $probeClock = [Diagnostics.Stopwatch]::StartNew()
+    $transportLimitMs = ($TimeoutSeconds + 15) * 1000
     try {
         if (-not $process.Start()) { throw "could not start production observation probe" }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        try { $process.StandardInput.BaseStream.Write($payload, 0, $payload.Length) }
+        try {
+            $writeTask = $process.StandardInput.BaseStream.WriteAsync($payload, 0, $payload.Length)
+            if (-not $writeTask.Wait($transportLimitMs)) { throw "observation SSH input exceeded its bounded deadline" }
+        }
         finally { $process.StandardInput.Close() }
-        $process.WaitForExit()
+        $remainingMs = [int][Math]::Max(1, $transportLimitMs - $probeClock.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($remainingMs)) { throw "observation SSH probe exceeded its bounded deadline" }
+        $remainingMs = [int][Math]::Max(1, $transportLimitMs - $probeClock.ElapsedMilliseconds)
+        if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdoutTask, $stderrTask), $remainingMs)) {
+            throw "observation SSH output exceeded its bounded deadline"
+        }
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) { throw "production observation probe failed ($($process.ExitCode))" }
@@ -111,6 +138,20 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
             $pair = $line -split '=', 2
             if ($pair.Count -ne 2 -or $state.Contains($pair[0])) { throw "malformed production observation evidence" }
             $state[$pair[0]] = $pair[1]
+        }
+        if ($IncludeExtended) {
+            foreach ($name in @('identity_before','identity_after','observed_at','privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
+                if (-not $state.Contains($name)) { throw "extended observation evidence is missing $name" }
+            }
+            foreach ($name in @('privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
+                if ($state[$name] -notin @('pass','fail','violation','unavailable')) { throw "extended observation evidence has malformed $name" }
+            }
+            foreach ($name in $state.Keys) {
+                if ($name -match '^[a-z_]+_seconds$' -and $state[$name] -match '^\d+$') {
+                    Write-Output "phase=extended-$name elapsed=$($state[$name])s" | Out-Host
+                }
+            }
+            return $state
         }
         $required = @(
             'observed_at','revision','image_digest','image_revision','migration_version','health','served_revision',
@@ -163,11 +204,112 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail) {
         }
         return $state
     } finally {
+        try { if (-not $process.HasExited) { $process.Kill($true) } } catch { }
+        Write-Output "phase=observation-$(if ($IncludeExtended) { 'extended' } elseif ($IncludeDetail) { 'detail' } elseif ($IncludeLatency) { 'latency' } else { 'sample' }) elapsed=$([Math]::Round($probeClock.Elapsed.TotalSeconds, 3))s ceiling=$($TimeoutSeconds + 15)s" | Out-Host
         [Array]::Clear($payload, 0, $payload.Length)
         [Array]::Clear($prefixBytes, 0, $prefixBytes.Length)
         $stdout = $null
         $stderr = $null
         $process.Dispose()
+    }
+}
+
+function Add-ExtendedObservationEvidence([Collections.IDictionary]$Evidence, [Collections.IDictionary]$Sample) {
+    $Evidence.extended = $Sample
+    $identity = "${ExpectedRevision}|${ExpectedImageDigest}|${ExpectedServerStartedAt}|${ExpectedRevision}|"
+    $identityVerified = $Sample.identity_before -ceq $identity -and $Sample.identity_after -ceq $identity
+    if (-not $identityVerified) { $Evidence.anomalies.Add('extended observation identity changed or could not be authenticated') }
+    foreach ($name in @('privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
+        if ($Sample[$name] -ne 'pass') { $Evidence.anomalies.Add("extended $name check: $($Sample[$name])") }
+    }
+    if ($Sample.privacy_live -eq 'violation' -and $Sample.privacy_live_probe_id -cmatch '^[0-9a-f]{32}$') {
+        $Evidence.findings.Add([ordered]@{
+            code = 'privacy-synthetic-marker-recorded'
+            classification = 'security-critical'
+            proven = $true
+            identityVerified = $identityVerified
+            evidence = "Unique synthetic probe $($Sample.privacy_live_probe_id) was positively found in the live access log."
+        })
+    }
+    if ($Sample.detail_status -eq 'pass') {
+        try {
+            $invariants = $Sample.detail_invariants | ConvertFrom-Json
+            foreach ($name in @('pass','fail','publishedSamples','failureClusterObservations','unbalancedFailureClusterRows','pgxParseConfigPass','pgxParseConfigFail')) {
+                if ([string]$invariants.$name -notmatch '^\d+$') { throw 'invalid detailed invariant' }
+            }
+            $quality = $Sample.detail_failure_evidence_quality | ConvertFrom-Json
+            if ($quality.available -isnot [bool] -or -not $quality.available) { throw 'evidence quality snapshot unavailable' }
+            foreach ($name in @('fail','complete','partial','missing','legacyEvidenceIncomplete')) {
+                if ([string]$quality.$name -notmatch '^\d+$') { throw 'invalid evidence quality count' }
+            }
+            if ($invariants.unbalancedFailureClusterRows -ne 0) {
+                $Evidence.anomalies.Add('detailed failure-cluster ledger has internally unbalanced rows')
+            }
+            if ($invariants.fail -gt 0 -and $invariants.failureClusterObservations -le 0) {
+                $Evidence.anomalies.Add('detailed failure-cluster materialization is empty while FAIL evidence remains')
+            }
+            $total = [decimal]$quality.complete + [decimal]$quality.partial + [decimal]$quality.missing + [decimal]$quality.legacyEvidenceIncomplete
+            if ([decimal]$quality.fail -ne $total) {
+                $Evidence.anomalies.Add('complete + partial + missing + legacy-evidence-incomplete does not equal FAIL')
+            }
+            # Derived convergence and a single snapshot cannot prove a loss of
+            # source data attributable to this activation. Keep these incidents.
+        } catch { $Evidence.anomalies.Add('detailed invariant or evidence-quality snapshot is unavailable or malformed') }
+    }
+}
+
+function Set-ObservationClassification([Collections.IDictionary]$Evidence) {
+    $Evidence.rollbackRequested = $false
+    $Evidence.classification = if ($Evidence.anomalies.Count -eq 0) { 'none' } else { 'incident-only' }
+    foreach ($finding in $Evidence.findings) {
+        # Explicit proof allowlist: prose, missing evidence and arbitrary
+        # severity labels cannot upgrade an incident into a rollback request.
+        if ($finding.code -eq 'privacy-synthetic-marker-recorded' -and
+            $finding.classification -eq 'security-critical' -and
+            $finding.proven -is [bool] -and $finding.proven -and
+            $finding.identityVerified -is [bool] -and $finding.identityVerified -and
+            -not [string]::IsNullOrWhiteSpace($finding.evidence)) {
+            $Evidence.classification = 'security-critical'
+            $Evidence.rollbackRequested = $true
+        }
+    }
+    $Evidence.recommendedAction = if ($Evidence.rollbackRequested) {
+        'Primary incident owner: review the proven security evidence and request exact rollback through the canonical production deployment path.'
+    } elseif ($Evidence.classification -eq 'incident-only') {
+        'Create or continue incident work; do not automatically roll back a healthy exact-SHA server.'
+    } else { 'Continue normal production observation.' }
+}
+
+function Add-SourceContinuityEvidence([Collections.IDictionary]$Evidence, [string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    try {
+        $baseline = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+        if ($baseline.targetSha -cne $ExpectedPreviousRevision -or
+            [string]$baseline.baselineDeploymentRunId -notmatch '^[1-9][0-9]*$') { throw 'baseline identity mismatch' }
+        $current = $Evidence.extended.detail_invariants | ConvertFrom-Json
+        $decreased = [Collections.Generic.List[string]]::new()
+        foreach ($name in @('pass','fail','publishedSamples','pgxParseConfigPass','pgxParseConfigFail')) {
+            if ([string]$baseline.invariants.$name -notmatch '^\d+$' -or [string]$current.$name -notmatch '^\d+$') {
+                throw 'baseline or current source count unavailable'
+            }
+            if ([decimal]$current.$name -lt [decimal]$baseline.invariants.$name) { $decreased.Add($name) }
+        }
+        $Evidence.sourceContinuity = [ordered]@{
+            status = if ($decreased.Count -eq 0) { 'no-decrease-observed' } else { 'decrease-observed' }
+            classification = if ($decreased.Count -eq 0) { 'none' } else { 'incident-only' }
+            rollbackRequested = $false
+            baselineDeploymentRunId = [string]$baseline.baselineDeploymentRunId
+            baselineSha = $baseline.targetSha
+            baseline = $baseline.invariants
+            current = $current
+            decreasedCounters = @($decreased)
+            reason = 'Compared with an authenticated successful previous-SHA deployment artifact; a decrease needs incident investigation and does not prove this activation caused data loss.'
+        }
+        if ($decreased.Count -ne 0) {
+            $Evidence.anomalies.Add("source counters decreased since the authenticated previous deployment: $($decreased -join ', ')")
+        }
+    } catch {
+        $Evidence.sourceContinuity.reason = 'Baseline or current source counters were unavailable or malformed; source-loss continuity is not assessed.'
     }
 }
 
@@ -320,6 +462,10 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 
 - Deployment run: $DeploymentRunId
 - Tracking issue: $TrackingIssue
+- Classification: $($Evidence.classification)
+- Rollback requested: $($Evidence.rollbackRequested) (request only; never executed by this observer)
+- Recommended action: $($Evidence.recommendedAction)
+- Source continuity: $($Evidence.sourceContinuity.status). $($Evidence.sourceContinuity.reason)
 - Target SHA: $ExpectedRevision
 - Image digest: $($Evidence.imageDigest)
 - Migration: $expectedMigration
@@ -411,11 +557,34 @@ $evidence = [ordered]@{
     }
     events = [ordered]@{ builderError = 0; restart = 0; oom = 0; die = 0 }
     anomalies = [Collections.Generic.List[string]]::new()
+    findings = [Collections.Generic.List[object]]::new()
+    extended = [ordered]@{}
+    classification = 'incident-only'
+    rollbackRequested = $false
+    recommendedAction = 'Observer incomplete: continue incident work.'
+    sourceContinuity = [ordered]@{
+        status = 'not-assessed'
+        classification = 'incident-only'
+        rollbackRequested = $false
+        reason = 'No authenticated pre-activation source snapshot is available; post-activation counts cannot prove source-loss continuity. Investigate suspected source loss through the tracking incident.'
+    }
 }
 
 $observationFailure = $null
 try {
+    # This bounded phase runs even when the builder never converges, and its
+    # diagnostic failure cannot prevent the independent convergence checks.
+    try {
+        $extendedSample = Read-ObservationSample $false $false $true $ExtendedObservationSeconds
+        Add-ExtendedObservationEvidence $evidence $extendedSample
+    } catch { $evidence.anomalies.Add('extended observation probe failed before completion') }
+    Add-SourceContinuityEvidence $evidence $BaselinePath
+    $builderAnomalyStart = $evidence.anomalies.Count
+    $builderClock = [Diagnostics.Stopwatch]::StartNew()
     for ($attempt = 1; $attempt -le $BuilderPollAttempts; $attempt++) {
+        # The 80-minute budget includes probes, not just sleep intervals.
+        # Reserve one full bounded sample so no probe overruns this window.
+        if ($builderClock.Elapsed.TotalSeconds + $SampleTimeoutSeconds + 15 -gt $BuilderWindowSeconds) { break }
         # Poll lifecycle cheaply. Only a pass that is active now earns a
         # latency round; the collector then rechecks the same start marker
         # after all four requests before it labels that round active.
@@ -425,7 +594,8 @@ try {
         foreach ($anomaly in (Get-StateAnomalies $sample $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
         Update-PressureEvidence $evidence $sample
 
-        if ($sample.builder_active -and $evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds) {
+        if ($sample.builder_active -and $evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds -and
+            $builderClock.Elapsed.TotalSeconds + $SampleTimeoutSeconds + 15 -le $BuilderWindowSeconds) {
             $latencySample = Read-ObservationSample $true $false
             $evidence.samples.Add($latencySample)
             foreach ($anomaly in (Get-StateAnomalies $latencySample $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
@@ -435,7 +605,7 @@ try {
             }
         }
 
-        if ($evidence.anomalies.Count -ne 0) { break }
+        if ($evidence.anomalies.Count -gt $builderAnomalyStart) { break }
         if ($sample.builder_fresh -and $sample.builder_lifecycle_state -eq 'complete' -and $evidence.activeBuilder.rounds -ge $ActiveBuilderLatencyRounds) {
             $evidence.converged = $true
             $evidence.builderGeneratedAt = $sample.builder_generated_at
@@ -453,13 +623,15 @@ try {
             }
             break
         }
-        if ($attempt -lt $BuilderPollAttempts) { Start-Sleep -Seconds $BuilderPollSeconds }
+        if ($attempt -lt $BuilderPollAttempts -and $builderClock.Elapsed.TotalSeconds + $BuilderPollSeconds -le $BuilderWindowSeconds) {
+            Start-Sleep -Seconds $BuilderPollSeconds
+        }
     }
 
     if ($evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds) {
         $evidence.anomalies.Add("insufficient active-builder latency rounds: observed $($evidence.activeBuilder.rounds), required $ActiveBuilderLatencyRounds within the bounded 80-minute observation window")
     }
-    if (-not $evidence.converged -and $evidence.anomalies.Count -eq 0) {
+    if (-not $evidence.converged -and $evidence.anomalies.Count -eq $builderAnomalyStart) {
         $evidence.anomalies.Add("builder did not converge within the bounded 80-minute observation window")
     }
     if (-not $evidence.converged) {
@@ -503,9 +675,13 @@ try {
     $observationFailure = $_.Exception.Message
     $evidence.anomalies.Add("observation probe failed before completion")
 } finally {
+    Set-ObservationClassification $evidence
     $evidence.completedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
     try { Write-ObservationEvidence $evidence }
-    finally { [Array]::Clear($collectorBytes, 0, $collectorBytes.Length) }
+    finally {
+        [Array]::Clear($collectorBytes, 0, $collectorBytes.Length)
+        [Array]::Clear($extendedBytes, 0, $extendedBytes.Length)
+    }
 }
 
 if ($null -ne $observationFailure) { throw "$observationFailure; see $EvidencePath and $SummaryPath" }

@@ -9,6 +9,16 @@ set -eu
 
 cd /opt/codesamplex/deploy
 
+docker_bin=$(command -v docker)
+docker() {
+  if [ "$1" = compose ] && [ "${2:-}" = exec ] && [ "${3:-}" = -T ] && [ "${4:-}" = db ]; then
+    shift 4
+    timeout --kill-after=5s 30s "$docker_bin" compose exec -T -e PGOPTIONS='-c statement_timeout=20000' db "$@"
+  else
+    timeout --kill-after=5s 30s "$docker_bin" "$@"
+  fi
+}
+
 container=codesamplex-server-1
 observe_since=${CSX_OBSERVE_SINCE:?CSX_OBSERVE_SINCE is required}
 include_latency=${CSX_OBSERVE_LATENCY:-0}
@@ -22,8 +32,8 @@ image_digest=$(docker inspect "$container" --format '{{.Image}}')
 image_revision=$(docker image inspect "$image_digest" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 migration_version=$(docker compose exec -T db psql -U csx -d csx -Atqc \
   "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
-health=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null || true)
-served_revision=$(docker compose exec -T server wget -qO- http://127.0.0.1:8080/version 2>/dev/null |
+health=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null || true)
+served_revision=$(docker compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version 2>/dev/null |
   sed -n 's/.*"revision":"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1 || true)
 
 server_started_at=$(docker inspect "$container" --format '{{.State.StartedAt}}')

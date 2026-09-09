@@ -35,6 +35,7 @@ jobs:
     steps:
       - name: Validate deployment provenance and download its evidence
         id: deployment
+        timeout-minutes: 5
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,7 +52,7 @@ jobs:
             exit 1
           fi
 
-          run_json=$(gh api \
+          run_json=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}")
           jq -e --arg repo "$GITHUB_REPOSITORY" '
@@ -63,7 +64,7 @@ jobs:
           deploy_run_number=$(jq -er '.run_number | select(type == "number" and . > 0)' <<<"$run_json")
 
           artifact_name="production-evidence-${DEPLOY_RUN_ID}"
-          artifacts_json=$(gh api \
+          artifacts_json=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/artifacts?per_page=100")
           artifact_count=$(jq --arg name "$artifact_name" \
@@ -77,7 +78,7 @@ jobs:
             '.artifacts[] | select(.name == $name and .expired == false) | .id' \
             <<<"$artifacts_json")
           mkdir -p "$RUNNER_TEMP/csx-production-deploy-evidence"
-          gh api \
+          timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
             > "$RUNNER_TEMP/csx-production-deploy-evidence.zip"
@@ -89,6 +90,8 @@ jobs:
           test "$(jq -er '.workflowRunId | tostring' "$deploy_evidence")" = "$DEPLOY_RUN_ID"
           test "$(jq -er '.conclusion' "$deploy_evidence")" = "success"
           target_sha=$(jq -er '.targetSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          operational_sha=$(jq -er '.operationalSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
+          test "$(jq -er '.head_sha' <<<"$run_json")" = "$operational_sha"
           previous_sha=$(jq -er '.previousProductionSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           deployed_sha=$(jq -er '.deployedSha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$deploy_evidence")
           test "$deployed_sha" = "$target_sha"
@@ -104,12 +107,12 @@ jobs:
             echo "::error::deployment evidence has a non-canonical tracking issue"
             exit 1
           fi
-          issue_json=$(gh api \
+          issue_json=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/issues/${issue_number}")
           jq -e '.pull_request | not' <<<"$issue_json" >/dev/null
           issue_content=$(jq -r '(.title // "") + "\n" + (.body // "")' <<<"$issue_json")
-          issue_comments=$(gh api \
+          issue_comments=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/issues/${issue_number}/comments?per_page=100" \
             --jq '.[].body' 2>/dev/null || true)
@@ -126,11 +129,12 @@ jobs:
             echo "image_digest=${image_digest}"
             echo "server_started_at=${server_started_at}"
             echo "migration_version=${migration_version}"
+            echo "operational_sha=${operational_sha}"
             echo "tracking_issue=${tracking_issue}"
             echo "tracking_issue_number=${issue_number}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Initialize fail-closed observation evidence
+      - name: Initialize incident-only observation evidence
         shell: pwsh
         env:
           TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
@@ -141,6 +145,9 @@ jobs:
           @{
             schemaVersion = 1
             conclusion = "failure"
+            classification = "incident-only"
+            rollbackRequested = $false
+            recommendedAction = "Continue incident work; observer failure is not rollback proof."
             deploymentRunId = $env:DEPLOY_RUN_ID
             observationRunId = "${{ github.run_id }}"
             targetSha = $env:TARGET_SHA
@@ -152,22 +159,25 @@ jobs:
           ## Post-deploy observation: FAIL
 
           The observer did not complete. See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          Classification: incident-only. Rollback requested: false. Continue incident work; missing observation evidence does not prove a production defect.
           "@ | Set-Content -Encoding utf8NoBOM (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ steps.deployment.outputs.target_sha }}
+          ref: ${{ steps.deployment.outputs.operational_sha }}
           fetch-depth: 0
 
-      - name: Prove observer source is the deployed canonical commit
+      - name: Prove observer source is the canonical deployment controller
         shell: bash
         env:
           TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
+          OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$OPERATIONAL_SHA"
+          timeout --kill-after=5s 120s git fetch --no-tags origin main
           git merge-base --is-ancestor "$TARGET_SHA" origin/main
+          git merge-base --is-ancestor "$OPERATIONAL_SHA" origin/main
           test -f deploy/lightsail/observe-production.ps1
 
       - name: Install the dedicated SSH identity and pinned host key
@@ -184,8 +194,101 @@ jobs:
           test -s "$RUNNER_TEMP/csx-production-ssh/id"
           test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
 
+      - name: Find an optional authenticated previous source baseline
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_SHA: ${{ steps.deployment.outputs.previous_sha }}
+          DEPLOY_RUN_NUMBER: ${{ steps.deployment.outputs.deploy_run_number }}
+        run: |
+          set -euo pipefail
+          # Historical snapshots improve detection; absence must not block
+          # observation or invent a pre-activation snapshot. Bound both the
+          # search horizon and API latency independently of convergence.
+          deadline=$((SECONDS + 120))
+          runs=$(timeout --kill-after=5s 15s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/production-deploy.yml/runs?event=workflow_dispatch&status=success&per_page=20")
+          observation_artifacts=$(timeout --kill-after=5s 15s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100") || observation_artifacts='{"artifacts":[]}'
+          mapfile -t candidates < <(jq -r --arg repo "$GITHUB_REPOSITORY" --argjson current "$DEPLOY_RUN_NUMBER" '
+            .workflow_runs[] | select(
+              .path == ".github/workflows/production-deploy.yml" and
+              .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success" and
+              .repository.full_name == $repo and .run_number < $current) | .id
+          ' <<<"$runs")
+          for candidate_id in "${candidates[@]}"; do
+            [[ "$SECONDS" -lt "$deadline" ]] || break
+            artifacts=$(timeout --kill-after=5s 15s gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/artifacts?per_page=100") || continue
+            artifact_ids=$(jq -c --arg name "production-evidence-${candidate_id}" \
+              '[.artifacts[] | select(.name == $name and .expired == false) | .id]' <<<"$artifacts")
+            [[ "$(jq 'length' <<<"$artifact_ids")" == 1 ]] || continue
+            artifact_id=$(jq -r '.[0]' <<<"$artifact_ids")
+            dir="$RUNNER_TEMP/csx-source-baseline-${candidate_id}"
+            mkdir -p "$dir"
+            timeout --kill-after=5s 15s gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "$dir.zip" || continue
+            timeout --kill-after=5s 10s unzip -qo "$dir.zip" -d "$dir" || continue
+            candidate="$dir/production-deploy-evidence.json"
+            [[ -s "$candidate" ]] || continue
+            if ! jq -e --arg sha "$PREVIOUS_SHA" --arg id "$candidate_id" '
+              (.workflowRunId | tostring) == $id and .conclusion == "success" and
+              .targetSha == $sha and .deployedSha == $sha and .servedRevision == $sha and
+              .health == "ok" and .smoke == "pass" and .rollback == "not-needed" and
+              (.imageDigest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+            ' "$candidate" >/dev/null; then continue; fi
+            jq --arg id "$candidate_id" '{schemaVersion:1, baselineDeploymentRunId:$id, targetSha:.targetSha, invariants:.invariants.after}' \
+              "$candidate" > "$RUNNER_TEMP/source-baseline-candidate.json"
+
+            if ! jq -e '.invariants | type == "object"' "$RUNNER_TEMP/source-baseline-candidate.json" >/dev/null; then
+              # New deployments intentionally omit corpus scans. Reuse the
+              # previous deployment's authenticated successful observation.
+              observer_artifact=$(jq -c --arg prefix "post-deploy-observation-${candidate_id}-" '
+                [.artifacts[] | select(.expired == false and (.name | startswith($prefix)))] | first // empty
+              ' <<<"$observation_artifacts")
+              [[ -n "$observer_artifact" ]] || continue
+              observer_run_id=$(jq -er '.workflow_run.id | select(type == "number" and . > 0)' <<<"$observer_artifact")
+              [[ "$(jq -r '.name' <<<"$observer_artifact")" == "post-deploy-observation-${candidate_id}-${observer_run_id}" ]] || continue
+              observer_run=$(timeout --kill-after=5s 15s gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${observer_run_id}") || continue
+              if ! jq -e --arg repo "$GITHUB_REPOSITORY" '
+                .path == ".github/workflows/post-deploy-observation.yml" and
+                .repository.full_name == $repo and .status == "completed" and .conclusion == "success" and
+                (.event == "workflow_run" or .event == "workflow_dispatch")
+              ' <<<"$observer_run" >/dev/null; then continue; fi
+              observer_artifact_id=$(jq -er '.id' <<<"$observer_artifact")
+              timeout --kill-after=5s 15s gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/artifacts/${observer_artifact_id}/zip" > "$dir-observation.zip" || continue
+              mkdir -p "$dir-observation"
+              timeout --kill-after=5s 10s unzip -qo "$dir-observation.zip" -d "$dir-observation" || continue
+              observed="$dir-observation/post-deploy-observation.json"
+              [[ -s "$observed" ]] || continue
+              digest=$(jq -r '.imageDigest' "$candidate")
+              started=$(jq -r '.serverStartedAt' "$candidate")
+              identity="${PREVIOUS_SHA}|${digest}|${started}|${PREVIOUS_SHA}|"
+              if ! jq -e --arg sha "$PREVIOUS_SHA" --arg id "$candidate_id" --arg identity "$identity" --arg digest "$digest" '
+                (.deploymentRunId | tostring) == $id and .targetSha == $sha and .imageDigest == $digest and
+                .conclusion == "success" and .rollbackRequested == false and
+                .extended.identity_before == $identity and .extended.identity_after == $identity and
+                .extended.detail_status == "pass"
+              ' "$observed" >/dev/null; then continue; fi
+              jq --arg id "$candidate_id" '{schemaVersion:1, baselineDeploymentRunId:$id, targetSha:.targetSha,
+                invariants:(.extended.detail_invariants | fromjson)}' \
+                "$observed" > "$RUNNER_TEMP/source-baseline-candidate.json" || continue
+            fi
+            if ! jq -e '.invariants as $counts | all(
+              ["pass","fail","publishedSamples","pgxParseConfigPass","pgxParseConfigFail"][];
+              . as $key | $counts[$key] | type == "number" and . >= 0 and floor == .)
+            ' "$RUNNER_TEMP/source-baseline-candidate.json" >/dev/null; then continue; fi
+            mv "$RUNNER_TEMP/source-baseline-candidate.json" "$RUNNER_TEMP/source-baseline.json"
+            break
+          done
+
       - name: Observe builder convergence and production pressure
         id: observer
+        timeout-minutes: 95
         continue-on-error: true
         shell: pwsh
         env:
@@ -200,6 +303,7 @@ jobs:
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
           ./deploy/lightsail/observe-production.ps1 `
+            -ExpectedMigrationVersion '${{ steps.deployment.outputs.migration_version }}' `
             -Ip $env:PRODUCTION_HOST `
             -User $user `
             -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `
@@ -210,11 +314,13 @@ jobs:
             -ExpectedServerStartedAt $env:SERVER_STARTED_AT `
             -TrackingIssue $env:TRACKING_ISSUE `
             -DeploymentRunId $env:DEPLOY_RUN_ID `
+            -BaselinePath (Join-Path $env:RUNNER_TEMP "source-baseline.json") `
             -EvidencePath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json") `
             -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
 
       - name: Treat a validated newer deployment as superseding this observation
         id: supersession
+        timeout-minutes: 36
         if: always() && steps.deployment.outputs.deploy_run_number != '' && steps.observer.outcome != 'success'
         shell: bash
         env:
@@ -249,7 +355,7 @@ jobs:
           # eligibility + rollout bound, and this wait remains off its path.
           deadline=$((SECONDS + 35 * 60))
           while true; do
-            runs_json=$(gh api --paginate --slurp \
+            runs_json=$(timeout --kill-after=5s 60s gh api --paginate --slurp \
               -H 'Accept: application/vnd.github+json' \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/production-deploy.yml/runs?event=workflow_dispatch&per_page=100")
 
@@ -260,7 +366,7 @@ jobs:
             ' <<<"$runs_json")
 
             for candidate_id in "${candidates[@]}"; do
-              candidate_run=$(gh api \
+              candidate_run=$(timeout --kill-after=5s 60s gh api \
                 -H 'Accept: application/vnd.github+json' \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}")
               if ! jq -e --arg repo "$GITHUB_REPOSITORY" --argjson original "$ORIGINAL_DEPLOY_RUN_NUMBER" '
@@ -273,7 +379,7 @@ jobs:
               ' <<<"$candidate_run" >/dev/null; then
                 continue
               fi
-              candidate_jobs=$(gh api \
+              candidate_jobs=$(timeout --kill-after=5s 60s gh api \
                 -H 'Accept: application/vnd.github+json' \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/jobs?filter=latest&per_page=100")
               deploy_job_count=$(jq '[.jobs[] | select(.name == "Roll out production")] | length' <<<"$candidate_jobs")
@@ -296,7 +402,7 @@ jobs:
               candidate_deploy_completed_epoch=$(date -u -d "$candidate_deploy_completed" +%s)
 
               artifact_name="production-evidence-${candidate_id}"
-              artifacts=$(gh api \
+              artifacts=$(timeout --kill-after=5s 60s gh api \
                 -H 'Accept: application/vnd.github+json' \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_id}/artifacts?per_page=100")
               artifact_count=$(jq --arg name "$artifact_name" \
@@ -308,7 +414,7 @@ jobs:
                 '.artifacts[] | select(.name == $name and .expired == false) | .id' <<<"$artifacts")
               candidate_dir="$RUNNER_TEMP/csx-superseding-deploy-${candidate_id}"
               mkdir -p "$candidate_dir"
-              gh api \
+              timeout --kill-after=5s 60s gh api \
                 -H 'Accept: application/vnd.github+json' \
                 "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
                 > "${candidate_dir}.zip"
@@ -346,18 +452,19 @@ jobs:
               fi
               fresh_raw="$RUNNER_TEMP/post-deploy-supersession-sample.txt"
               {
-                printf 'CSX-OBSERVE-V1\n'
+                printf 'CSX-OBSERVE-V1\n{\n'
                 printf 'CSX_OBSERVE_LATENCY=0\n'
                 printf 'CSX_OBSERVE_DETAIL=1\n'
                 printf 'CSX_OBSERVE_SINCE=%s\n' "$ORIGINAL_SERVER_STARTED_AT"
                 cat "$collector"
-              } | ssh \
+              } | timeout --kill-after=5s 195s ssh \
                 -i "$RUNNER_TEMP/csx-production-ssh/id" \
                 -o StrictHostKeyChecking=yes \
                 -o "UserKnownHostsFile=$RUNNER_TEMP/csx-production-ssh/known_hosts" \
                 -o ConnectTimeout=20 \
+                -o BatchMode=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
                 "${observer_user}@${PRODUCTION_HOST}" \
-                "{ printf '#'; cat; } | sh" > "$fresh_raw"
+                "{ printf '#'; cat; printf '\n}\n'; } | timeout --kill-after=5s 180s sh" > "$fresh_raw"
 
               fresh_json="$RUNNER_TEMP/post-deploy-supersession-sample.json"
               jq -Rn '
@@ -435,6 +542,7 @@ jobs:
                   . != "server restart or exit detected during observation" and
                   . != "observation probe failed before completion"
                 )] | length == 0) and
+                (.rollbackRequested != true) and
                 (all(.samples[];
                   .oom_killed == false and
                   ((.observed_at | fromdateiso8601) >= $cutover_started or
@@ -462,6 +570,8 @@ jobs:
                 --argjson cutover_epoch "$candidate_cutover_epoch" \
                 --slurpfile fresh "$fresh_json" '
                 .conclusion = "superseded" |
+                .classification = "none" |
+                .rollbackRequested = false |
                 .supersessionSample = $fresh[0] |
                 .supersededBy = {
                   deploymentRunId: $run_id,
@@ -505,6 +615,7 @@ jobs:
 
       - name: Comment observation on the validated tracking issue
         if: always() && steps.deployment.outputs.tracking_issue_number != ''
+        timeout-minutes: 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -514,7 +625,7 @@ jobs:
           test -s "$RUNNER_TEMP/post-deploy-observation.md"
           cat "$RUNNER_TEMP/post-deploy-observation.md" >> "$GITHUB_STEP_SUMMARY"
           jq -Rs '{body: .}' "$RUNNER_TEMP/post-deploy-observation.md" > "$RUNNER_TEMP/post-deploy-observation-comment.json"
-          gh api --method POST \
+          timeout --kill-after=5s 60s gh api --method POST \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/issues/${TRACKING_ISSUE_NUMBER}/comments" \
             --input "$RUNNER_TEMP/post-deploy-observation-comment.json"
@@ -529,7 +640,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Fail when production did not converge safely
+      - name: Report classified observation failure without deploying
         if: always()
         shell: bash
         env:
@@ -542,6 +653,8 @@ jobs:
             exit 0
           fi
           if [[ "$OBSERVER_OUTCOME" != "success" || "$conclusion" != "success" ]]; then
-            echo "::error title=Post-deploy observation failed::Builder convergence or production pressure checks failed; see the tracking-issue comment and observation artifact."
+            classification=$(jq -r '.classification // "incident-only"' "$RUNNER_TEMP/post-deploy-observation.json")
+            rollback_requested=$(jq -r '.rollbackRequested // false' "$RUNNER_TEMP/post-deploy-observation.json")
+            echo "::error title=Post-deploy observation failed::Classification: ${classification}; rollback requested: ${rollback_requested}. Continue the tracking incident. Any proven critical rollback request requires primary-owner review through the canonical deployment path. This workflow never deploys or rolls back."
             exit 1
           fi

@@ -7,36 +7,32 @@ param(
     [Alias("LinearIssue")]
     [Parameter(Mandatory)][string]$TrackingIssue,
     [Parameter(Mandatory)][string]$EvidencePath,
+    [string]$SourceRepoPath = "",
+    [string]$OperationalRevision = "",
+    [ValidateRange(60,1800)][int]$MigrationTimeoutSeconds = 1200,
     [string]$User = "ubuntu"
 )
-
 $ErrorActionPreference = "Stop"
-$repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
-$collector = Join-Path $PSScriptRoot "collect-production-evidence.sh"
+if ($PSVersionTable.PSVersion.Major -lt 7) { throw "deployment requires PowerShell 7" }
+. (Join-Path $PSScriptRoot "deployment-source.ps1")
+$source = Resolve-CSXDeploymentSource $SourceRepoPath $ExpectedRevision $OperationalRevision
+$OperationalRevision = $source.OperationalRevision
+$migrationEvidencePath = $EvidencePath + ".migration.json"
+$collector = Join-Path $PSScriptRoot "collect-deploy-identity.sh"
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
-
 foreach ($sha in @($ExpectedRevision, $ExpectedPreviousRevision)) {
     if ($sha -notmatch '^[0-9a-f]{40}$') { throw "production revisions must be lowercase immutable SHAs" }
 }
-if ($TrackingIssue -notmatch '^(?:#?[1-9][0-9]*|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*|[A-Z][A-Z0-9]+-[0-9]+)$') {
-    throw "invalid tracking issue identifier"
+if ($TrackingIssue -notmatch '^(?:#?[1-9][0-9]*|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*)$') {
+    throw "invalid canonical GitHub tracking issue identifier"
 }
+if ($User -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $Ip -notmatch '^[A-Za-z0-9.:-]+$') { throw "unsafe SSH destination" }
 foreach ($path in @($KeyPath, $KnownHostsPath, $collector)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required production deploy file is missing" }
 }
-
-$remote = "${User}@${Ip}"
-$sshArgs = @(
-    "-i", $KeyPath,
-    "-o", "StrictHostKeyChecking=yes",
-    "-o", "UserKnownHostsFile=$KnownHostsPath",
-    "-o", "ConnectTimeout=20",
-    $remote,
-    "{ printf '#'; cat; } | sh"
-)
-
 function Read-ProductionState {
-    $bytes = [IO.File]::ReadAllBytes($collector)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $bytes = [Text.Encoding]::UTF8.GetBytes("CSX-IDENTITY-V1`n" + [IO.File]::ReadAllText($collector))
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $ssh
     $psi.UseShellExecute = $false
@@ -44,145 +40,114 @@ function Read-ProductionState {
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    foreach ($arg in $sshArgs) { [void]$psi.ArgumentList.Add($arg) }
+    foreach ($arg in @("-i", $KeyPath, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$KnownHostsPath",
+        "-o", "ConnectTimeout=5", "${User}@${Ip}", "{ printf '#'; cat; } | timeout --signal=TERM --kill-after=2 20 sh")) {
+        [void]$psi.ArgumentList.Add($arg)
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $psi
+    $started = $false
     try {
-        if (-not $process.Start()) { throw "could not start production evidence probe" }
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        try { $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length) }
-        finally { $process.StandardInput.Close() }
-        $process.WaitForExit()
-        $stdout = $stdoutTask.GetAwaiter().GetResult()
-        $stderr = $stderrTask.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0) { throw "production evidence probe failed ($($process.ExitCode))" }
+        if (-not $process.Start()) { throw "could not start production identity probe" }
+        $started = $true
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $write = $process.StandardInput.BaseStream.WriteAsync($bytes, 0, $bytes.Length)
+        if (-not $write.Wait(5000)) { throw "production identity input timed out" }
+        $process.StandardInput.Close()
+        $remainingMs = [Math]::Max(1, 27000 - [int]$watch.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($remainingMs)) { throw "production identity probe exceeded 30s ceiling" }
+        if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 1000)) { throw "production identity output timed out" }
+        if ($process.ExitCode -ne 0) { throw "production identity probe failed ($($process.ExitCode))" }
         $state = @{}
-        foreach ($line in ($stdout -split "`r?`n")) {
+        foreach ($line in ($stdout.Result -split "`r?`n")) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             $pair = $line -split '=', 2
-            if ($pair.Count -ne 2) { throw "malformed production evidence" }
+            if ($pair.Count -ne 2 -or $state.ContainsKey($pair[0])) { throw "malformed production identity evidence" }
             $state[$pair[0]] = $pair[1]
         }
-        foreach ($required in @('revision','image_digest','image_revision','migration_version','migration_count','health','served_revision','invariants','server_started_at','builder_generated_at','builder_fresh','modern_failure_clusters','failure_evidence_quality')) {
-            if (-not $state.ContainsKey($required)) { throw "production evidence is missing $required" }
+        foreach ($key in @('revision', 'image_revision', 'served_revision')) {
+            if ($state[$key] -notmatch '^[0-9a-f]{40}$') { throw "production identity missing or malformed: $key" }
         }
-        $state['invariants'] = $state['invariants'] | ConvertFrom-Json
-        $state['failure_evidence_quality'] = $state['failure_evidence_quality'] | ConvertFrom-Json
+        if ($state.image_digest -notmatch '^sha256:[0-9a-f]{64}$' -or $state.health -ne 'ok') { throw "production identity or health is invalid" }
         return $state
     } finally {
+        if ($started -and -not $process.HasExited) { $process.Kill($true); [void]$process.WaitForExit(2000) }
         [Array]::Clear($bytes, 0, $bytes.Length)
-        $stdout = $null
-        $stderr = $null
         $process.Dispose()
+        Write-Host "phase=identity-evidence elapsed_seconds=$([Math]::Round($watch.Elapsed.TotalSeconds, 3)) ceiling_seconds=30"
     }
 }
-
-function Write-Evidence([hashtable]$Evidence) {
-    $parent = Split-Path -Parent $EvidencePath
-    if (-not [string]::IsNullOrWhiteSpace($parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $json = $Evidence | ConvertTo-Json -Depth 8
-    [IO.File]::WriteAllText($EvidencePath, $json + "`n", [Text.UTF8Encoding]::new($false))
-}
-
 $evidence = @{
-    schemaVersion = 1
+    schemaVersion = 2
     workflowRunId = $env:GITHUB_RUN_ID
     workflowRunUrl = if ($env:GITHUB_SERVER_URL -and $env:GITHUB_REPOSITORY -and $env:GITHUB_RUN_ID) {
         "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions/runs/$($env:GITHUB_RUN_ID)"
     } else { "" }
     trackingIssue = $TrackingIssue
-    linearIssue = $TrackingIssue
     targetSha = $ExpectedRevision
+    operationalSha = $OperationalRevision
+    offlineMigration = $null
     previousProductionSha = $ExpectedPreviousRevision
     conclusion = "failure"
     deployedSha = ""
     imageDigest = ""
     migrationVersion = ""
-    migrationCount = 0
-    health = "unknown"
+    health = "not-started"
     servedRevision = "unavailable"
-    smoke = "failed"
-    rollback = "unknown"
-    invariants = @{ before = $null; after = $null }
-    modernFailureClusters = 0
-    failureEvidenceQuality = $null
+    smoke = "not-started"
+    rollback = "not-attempted"
     serverStartedAt = ""
-    builderGeneratedAt = ""
-    builderFresh = $false
-    failureClusterObservationDelta = $null
+    observation = "pending-independent-workflow"
+    failureClass = "pre-activation"
+    criticalPathCeilingsSeconds = @{ preparation = 600; staging = 300; activation = 240; offlineMigration = $MigrationTimeoutSeconds + 300; activationSmoke = 240; rollback = 300; hostRecovery = 540; cleanup = 60; identityProbe = 30 }
 }
-
 $failure = $null
+$before = $null
 try {
     $before = Read-ProductionState
-    if ($before.revision -ne $ExpectedPreviousRevision) {
-        throw "production drifted from the ProjectOps rollback SHA"
-    }
-    $evidence.invariants.before = $before.invariants
+    if ($before.revision -ne $ExpectedPreviousRevision -or $before.image_revision -ne $ExpectedPreviousRevision -or
+        $before.served_revision -ne $ExpectedPreviousRevision) { throw "production drifted from the expected exact rollback SHA" }
     $evidence.previousImageDigest = $before.image_digest
 
     & (Join-Path $PSScriptRoot "deploy.ps1") `
         -Ip $Ip -User $User -KeyPath $KeyPath -KnownHostsPath $KnownHostsPath `
         -ExpectedRevision $ExpectedRevision -ExpectedPreviousRevision $ExpectedPreviousRevision `
-        -RequireNoLegacyAccessLogs
+        -SourceRepoPath $source.Repository -OperationalRevision $OperationalRevision -OfflineMigration `
+        -MigrationTimeoutSeconds $MigrationTimeoutSeconds -MigrationEvidencePath $migrationEvidencePath `
+        -DeploymentEvidence $evidence -RequireNoLegacyAccessLogs
 
-    $after = Read-ProductionState
-    $evidence.deployedSha = $after.revision
-    $evidence.imageDigest = $after.image_digest
-    $evidence.migrationVersion = $after.migration_version
-    $evidence.migrationCount = [int]$after.migration_count
-    $evidence.health = $after.health
-    $evidence.serverStartedAt = $after.server_started_at
-    $evidence.builderGeneratedAt = $after.builder_generated_at
-    $evidence.builderFresh = $after.builder_fresh -eq "true"
-    $evidence.servedRevision = $after.served_revision
-    $evidence.invariants.after = $after.invariants
-    $evidence.modernFailureClusters = [int]$after.modern_failure_clusters
-    $evidence.failureEvidenceQuality = $after.failure_evidence_quality
-    $evidence.failureClusterObservationDelta = [int64]$after.invariants.failureClusterObservations - [int64]$before.invariants.failureClusterObservations
-    # The container environment and the image label say what was configured
-    # and what was built; /version says what the running process was built
-    # from. All three have to name the dispatched commit before this run is
-    # recorded as a success.
-    if ($after.revision -ne $ExpectedRevision -or $after.image_revision -ne $ExpectedRevision -or
-        $after.served_revision -ne $ExpectedRevision) {
-        throw "served SHA does not match the requested immutable commit"
-    }
-    if ($after.health -ne "ok") { throw "post-deploy health is not ok" }
-    # builderFresh is retained in the deploy artifact as the initial
-    # observation only. The independent post-deploy workflow owns the bounded
-    # convergence wait and alert; it must not keep this rollback transaction
-    # open after health, identity, migration, privacy and invariants pass.
+    # Identity, migration, health and representative requests were checked
+    # inside deploy.ps1's exact rollback scope. No optional work after commit.
     $evidence.conclusion = "success"
-    $evidence.smoke = "pass"
-    $evidence.rollback = "not-needed"
+    $evidence.failureClass = "none"
 } catch {
     $failure = $_
-    try {
-        $current = Read-ProductionState
-        $evidence.deployedSha = $current.revision
-        $evidence.imageDigest = $current.image_digest
-        $evidence.migrationVersion = $current.migration_version
-        $evidence.migrationCount = [int]$current.migration_count
-        $evidence.servedRevision = $current.served_revision
-        $evidence.health = $current.health
-        $evidence.serverStartedAt = $current.server_started_at
-        $evidence.builderGeneratedAt = $current.builder_generated_at
-        $evidence.builderFresh = $current.builder_fresh -eq "true"
-        $evidence.invariants.after = $current.invariants
-        $evidence.modernFailureClusters = [int]$current.modern_failure_clusters
-        $evidence.failureEvidenceQuality = $current.failure_evidence_quality
-        if ($null -ne $evidence.invariants.before) {
-            $evidence.failureClusterObservationDelta = [int64]$current.invariants.failureClusterObservations - [int64]$evidence.invariants.before.failureClusterObservations
-        }
-        $evidence.rollback = if ($current.revision -eq $ExpectedPreviousRevision -and $current.health -eq "ok") { "succeeded" } else { "failed" }
-    } catch {
-        $evidence.rollback = "unverified"
+    $evidence.failure = $_.Exception.Message
+    if ($evidence.rollback -in @('attempted', 'succeeded', 'unverified')) {
+        $evidence.failureClass = "rollback-critical"
+        try {
+            $current = Read-ProductionState
+            $evidence.deployedSha = $current.revision
+            $evidence.imageDigest = $current.image_digest
+            $evidence.servedRevision = $current.served_revision
+            $evidence.health = $current.health
+            if ($current.revision -ne $ExpectedPreviousRevision -or $current.image_revision -ne $ExpectedPreviousRevision -or
+                $current.served_revision -ne $ExpectedPreviousRevision -or $current.image_digest -ne $before.image_digest -or
+                $evidence.rollback -ne 'succeeded') { throw "exact rollback was not proved" }
+        } catch { $evidence.rollback = "unverified" }
+    } elseif ($evidence.rollback -eq 'not-needed') {
+        # Cleanup failure after commit is incident-only, never an automatic rollback.
+        $evidence.failureClass = "incident-only"
     }
 } finally {
-    Write-Evidence $evidence
+    if (Test-Path -LiteralPath $migrationEvidencePath) {
+        try { $evidence.offlineMigration = Get-Content -Raw -LiteralPath $migrationEvidencePath | ConvertFrom-Json }
+        catch { $evidence.migrationEvidenceRead = "unavailable" }
+    }
+    $parent = Split-Path -Parent $EvidencePath
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    [IO.File]::WriteAllText($EvidencePath, ($evidence | ConvertTo-Json -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))
 }
-
 if ($null -ne $failure) { throw $failure }
 Write-Output "production evidence: $EvidencePath"

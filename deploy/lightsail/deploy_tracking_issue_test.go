@@ -13,8 +13,7 @@ func TestDeployProductionRequiresTrackingIssueWithBackwardCompatibleAlias(t *tes
 		`[Alias("LinearIssue")]`,
 		`[Parameter(Mandatory)][string]$TrackingIssue`,
 		`trackingIssue = $TrackingIssue`,
-		`linearIssue = $TrackingIssue`,
-		`invalid tracking issue identifier`,
+		`invalid canonical GitHub tracking issue identifier`,
 	} {
 		if !strings.Contains(wrapper, required) {
 			t.Errorf("deploy-production.ps1 is missing %q", required)
@@ -40,8 +39,6 @@ func TestTrackingIssueValidationPattern(t *testing.T) {
 		"#174",
 		"https://github.com/r2cuerdame/CodeSampleX/issues/213",
 		"https://github.com/org/repo/issues/1",
-		"R2C-159",
-		"CSX-213",
 	}
 	for _, tc := range valid {
 		if !re.MatchString(tc) {
@@ -50,6 +47,7 @@ func TestTrackingIssueValidationPattern(t *testing.T) {
 	}
 
 	invalid := []string{
+		"R2C-159", "CSX-213",
 		"",
 		"#",
 		"abc",

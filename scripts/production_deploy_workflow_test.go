@@ -11,6 +11,29 @@ import (
 
 const productionEnvironment = "codesamplex-production"
 
+func TestProductionSeparatesReleasedPayloadFromReviewedController(t *testing.T) {
+	workflow := productionWorkflow(t)
+	deploy := releaseJobs(t, workflow)["deploy"]
+	for _, required := range []string{
+		"ref: ${{ github.sha }}", "path: operations", "path: payload",
+		"./operations/deploy/lightsail/deploy-production.ps1",
+		`-SourceRepoPath (Join-Path $env:GITHUB_WORKSPACE "payload")`,
+		"-OperationalRevision $env:OPERATIONAL_SHA",
+	} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("payload/controller separation missing %q", required)
+		}
+	}
+	if strings.Contains(deploy, "./payload/deploy/") {
+		t.Fatal("old payload must not select its old deployment scripts")
+	}
+	for _, required := range []string{`test "$GITHUB_REF" = refs/heads/main`, "head_sha=${OPERATIONAL_SHA}&branch=main&status=success"} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("controller provenance missing %q", required)
+		}
+	}
+}
+
 func productionWorkflow(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "production-deploy.yml"))
@@ -179,8 +202,9 @@ func TestProductionEvidenceIsAlwaysRetained(t *testing.T) {
 		"migrationVersion",
 		"health",
 		"rollback",
-		"invariants",
-		"failureEvidenceQuality",
+		"servedRevision",
+		"observation",
+		"failureClass",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("production evidence contract is missing %q", required)
@@ -217,8 +241,8 @@ func TestProductionJobBudgetExcludesTheFullBuilderWait(t *testing.T) {
 	if jobMinutes < 15 {
 		t.Fatalf("production job budget = %dm, too short for image transfer and exact rollback", jobMinutes)
 	}
-	if jobMinutes > 45 {
-		t.Fatalf("production job budget = %dm; a lightweight deploy must not retain the old 80-minute builder reserve", jobMinutes)
+	if jobMinutes > 73 {
+		t.Fatalf("production job budget = %dm exceeds bounded migration, activation and recovery reserves", jobMinutes)
 	}
 }
 
@@ -264,13 +288,13 @@ func TestSSHUsesOnlyThePinnedHostKey(t *testing.T) {
 	}
 }
 
-func TestProductionProbeToleratesWindowsPowerShellStdinBOM(t *testing.T) {
+func TestProductionProbeHasABoundedBOMSafeStdinEnvelope(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy-production.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := string(raw)
-	if !strings.Contains(script, `"{ printf '#'; cat; } | sh"`) {
+	if !strings.Contains(script, `"{ printf '#'; cat; } | timeout --signal=TERM --kill-after=2 20 sh"`) {
 		t.Fatal("production probe lacks the stdin envelope that neutralizes a Windows PowerShell BOM")
 	}
 }
@@ -286,6 +310,39 @@ func TestProductionRequiresTargetSpecificTrackingIssue(t *testing.T) {
 	} {
 		if !strings.Contains(step, required) {
 			t.Errorf("target-specific tracking issue gate is missing %q", required)
+		}
+	}
+}
+
+func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	ceilings := map[string]int{"preparation": 600, "staging": 300, "activation": 240, "rollback": 300, "cleanup": 60}
+	for phase, seconds := range ceilings {
+		expected := "Set-DeployPhase " + phase + " " + strconv.Itoa(seconds)
+		if !strings.Contains(script, expected) {
+			t.Errorf("critical-path ceiling changed: missing %q", expected)
+		}
+	}
+	workflow := productionWorkflow(t)
+	step := productionWorkflowStep(t, workflow, "Deploy and verify")
+	// Maximum actual migration 1800s; no observation wait. Preparation600 +
+	// staging300 + activation240 + migration2100 + smoke240 + host recovery540
+	// + cleanup60 + two identity30 = 4140s (69m); step reserves one more minute.
+	const maxScriptSeconds = 600 + 300 + 240 + 2100 + 240 + 540 + 60 + 2*30
+	if maxScriptSeconds >= 70*60 || !strings.Contains(step, "timeout-minutes: 70") {
+		t.Error("deploy step must cover the bounded migration and independent host recovery reserve")
+	}
+	deploy := releaseJobs(t, workflow)["deploy"]
+	if !strings.Contains(deploy, "timeout-minutes: 73") {
+		t.Error("deploy job must bound checkout, activation, recovery and evidence at 73 minutes")
+	}
+	for _, forbidden := range []string{"observe-production.ps1", "collect-extended-observation.sh", "collect-production-evidence.sh"} {
+		if strings.Contains(step, forbidden) {
+			t.Errorf("optional observation holds the deployment step open: %q", forbidden)
 		}
 	}
 }

@@ -28,9 +28,7 @@ func TestDeploySuccessDoesNotWaitForBuilderFreshness(t *testing.T) {
 		t.Fatal("production wrapper still rejects a safe deployment while builderFresh is false")
 	}
 	for _, required := range []string{
-		`$evidence.builderFresh = $after.builder_fresh -eq "true"`,
 		`$evidence.conclusion = "success"`,
-		`$evidence.smoke = "pass"`,
 	} {
 		if !strings.Contains(wrapper, required) {
 			t.Errorf("deploy evidence no longer records the lightweight success boundary: missing %q", required)
