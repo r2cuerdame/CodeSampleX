@@ -1744,9 +1744,15 @@ deployment assets, not the policy that authorizes them.
 
 After migration, the host checks the ledger and four builder index definitions
 through PostgreSQL catalogs. It re-arms builderRepairRequired on exactly the
-latest stats_daily row, including retries whose source backfill already
-completed before an old binary was restored. These bounded metadata checks do
-not scan source tables or wait for full-builder convergence. Privacy, source
+latest stats_daily row only when this deployment moved the migration ledger, or
+cannot prove it did not; a deployment that applied no migration asserts and
+records the barrier's state instead of setting it, so an unarmed barrier stays
+unarmed and the builder keeps its resumable watermark rather than restarting a
+full pass. The host evidence names which path ran: `repairBarrierRearmed` for
+the re-arm, `repairBarrierObserved` for the assert, beside the
+`migrationLedgerBefore` head the deployment started from. Both paths still fail
+closed unless the latest day has exactly one stats row. These bounded metadata
+checks do not scan source tables or wait for full-builder convergence. Privacy, source
 invariants and extended user-flow audits remain in the independent observer.
 
 The host completes stack/Caddy recreation and reload before candidate-ready.

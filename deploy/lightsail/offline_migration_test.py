@@ -37,9 +37,11 @@ class FakeHost(migration.Host):
         self.helper_running = False
         self.helper_exit = 0
         self.stale = 0
-        self.repair_required = False
+        self.barrier_rearmed = False
         self.barrier_count = 1
-        self.barrier_armed = True
+        self.barrier_armed = False
+        self.barrier_rearm_sticks = True
+        self.ledger_version = None
         self.index_fault = None
         self.server_present = False
         self.server_backend_present = False
@@ -126,6 +128,8 @@ class FakeHost(migration.Host):
         if "max(version)" in sql:
             exp_mig = self.config.get("expectedMigration", "0036_builder_projections.sql")
             target_count = migration.REVIEWED_MIGRATIONS[exp_mig]["count"] if exp_mig in migration.REVIEWED_MIGRATIONS else 37
+            if self.ledger_version is not None:
+                return {"version": self.ledger_version, "count": target_count - 1}
             return {"version": exp_mig, "count": target_count}
         if "pg_get_indexdef" in sql:
             exp_mig = self.config.get("expectedMigration", "0036_builder_projections.sql")
@@ -137,10 +141,15 @@ class FakeHost(migration.Host):
             if self.index_fault == "invalid": rows[0]["valid"] = False
             if self.index_fault == "not-ready": rows[0]["ready"] = False
             return rows
-        if "WITH latest AS" in sql:
-            self.repair_required = self.barrier_count == 1 and self.barrier_armed
+        if "UPDATE stats_daily" in sql:
+            self.barrier_rearmed = True
+            if self.barrier_rearm_sticks and self.barrier_count == 1:
+                self.barrier_armed = True
             return {"count": self.barrier_count, "day": "2026-09-09" if self.barrier_count else None,
-                    "armed": self.barrier_armed}
+                    "armed": self.barrier_armed if self.barrier_count else None}
+        if "builderRepairRequired" in sql:
+            return {"count": self.barrier_count, "day": "2026-09-09" if self.barrier_count else None,
+                    "armed": self.barrier_armed if self.barrier_count else False}
         if "'repairRequired'" in sql:
             return {"samples": self.stale, "receipts": 0, "repairRequired": True}
         raise AssertionError("unexpected SQL")
@@ -413,20 +422,75 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(any(c[0] == "docker" and c[1][:2] == ("compose", "up") for c in self.host.calls))
 
 
-    def test_completed_retry_rearms_marker_without_corpus_scan(self):
-        self.assertFalse(self.host.repair_required)
+    def target_ledger(self):
+        migrationfile = self.host.config["expectedMigration"]
+        return {"version": migrationfile, "count": migration.REVIEWED_MIGRATIONS[migrationfile]["count"]}
+
+    def test_ledger_baseline_is_recorded_once_and_never_overwritten(self):
+        self.host.ledger_version = "0035_previous.sql"
+        self.host.record_ledger_baseline()
+        first = self.host.evidence["migrationLedgerBefore"]
+        self.assertEqual("0035_previous.sql", first["version"])
+        # A restarted supervisor re-runs preflight after its own migration has
+        # already moved the head; the first observation is the deployment's.
+        self.host.ledger_version = None
+        self.host.record_ledger_baseline()
+        self.assertEqual(first, self.host.evidence["migrationLedgerBefore"])
+
+    def test_noop_deployment_leaves_an_unarmed_barrier_unarmed(self):
+        self.host.evidence["migrationLedgerBefore"] = self.target_ledger()
         self.host.verify_migration()
-        self.assertTrue(self.host.repair_required)
+        self.assertFalse(self.host.barrier_rearmed)
+        self.assertFalse(self.host.barrier_armed)
+        self.assertNotIn("repairBarrierRearmed", self.host.evidence)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": False},
+                         self.host.evidence["repairBarrierObserved"])
+
+    def test_noop_deployment_leaves_an_armed_barrier_armed(self):
+        self.host.evidence["migrationLedgerBefore"] = self.target_ledger()
+        self.host.barrier_armed = True
+        self.host.verify_migration()
+        self.assertFalse(self.host.barrier_rearmed)
+        self.assertTrue(self.host.barrier_armed)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
+                         self.host.evidence["repairBarrierObserved"])
+
+    def test_applied_migration_rearms_the_barrier_without_corpus_scan(self):
+        for armed in (False, True):
+            with self.subTest(armed=armed):
+                self.setUp()
+                self.host.evidence["migrationLedgerBefore"] = {"version": "0035_previous.sql", "count": 36}
+                self.host.barrier_armed = armed
+                self.host.verify_migration()
+                self.assertTrue(self.host.barrier_rearmed)
+                self.assertTrue(self.host.barrier_armed)
+                self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
+                                 self.host.evidence["repairBarrierRearmed"])
+                self.assertNotIn("repairBarrierObserved", self.host.evidence)
+                self.assertFalse(any(c[0] == "sql" and ("FROM samples" in c[1] or "FROM receipts" in c[1])
+                                     for c in self.host.calls))
+
+    def test_unknown_prior_ledger_rearms_the_barrier(self):
+        self.assertNotIn("migrationLedgerBefore", self.host.evidence)
+        self.host.verify_migration()
+        self.assertTrue(self.host.barrier_rearmed)
         self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
                          self.host.evidence["repairBarrierRearmed"])
 
-    def test_missing_or_unarmed_current_stats_row_blocks_activation(self):
-        for count, armed in ((0, False), (2, True), (1, False)):
-            with self.subTest(count=count, armed=armed):
+    def test_missing_or_ambiguous_current_stats_row_blocks_activation(self):
+        for before, count in ((None, 0), (None, 2), (self.target_ledger(), 0), (self.target_ledger(), 2)):
+            with self.subTest(before=before, count=count):
+                self.setUp()
+                if before is not None:
+                    self.host.evidence["migrationLedgerBefore"] = before
                 self.host.barrier_count = count
-                self.host.barrier_armed = armed
                 with self.assertRaisesRegex(RuntimeError, "exactly one current stats row"):
                     self.host.verify_migration()
+
+    def test_rearm_that_does_not_take_blocks_activation(self):
+        self.host.barrier_rearm_sticks = False
+        with self.assertRaisesRegex(RuntimeError, "exactly one current stats row"):
+            self.host.verify_migration()
 
     def test_missing_wrong_or_not_ready_index_blocks_migration_acceptance(self):
         for fault in ("missing", "wrong", "invalid", "not-ready"):
@@ -434,7 +498,8 @@ class SupervisorTests(unittest.TestCase):
                 self.host.index_fault = fault
                 with self.assertRaisesRegex(RuntimeError, "indexes are missing|valid, ready and exact"):
                     self.host.verify_migration()
-                self.assertFalse(self.host.repair_required)
+                self.assertFalse(self.host.barrier_rearmed)
+                self.assertFalse(self.host.barrier_armed)
 
     def test_host_owns_only_required_stack_mutations_before_commit(self):
         self.host.activate()
