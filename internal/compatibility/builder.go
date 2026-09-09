@@ -822,8 +822,26 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 // reads for one unbounded one.
 const packageProbeBatch = 1000
 
+// packageRegisterBatch bounds how many receipt-only releases are registered
+// in one write. The first pass over a corpus can find thousands unknown; one
+// unbounded statement would be the same work in one breath.
+const packageRegisterBatch = 500
+
 type packageProbeStore interface {
 	ExistingPackagePURLs(context.Context, []string) (map[string]bool, error)
+}
+
+// packageRegisterStore is the builder's own bounded-page write: insert the
+// rows the registry has never seen and leave every existing row alone.
+// PostgreSQL offers it; other stores keep the row-at-a-time contract.
+//
+// It is not UpsertPackage for a page. Between the membership probe and this
+// write the registry check can confirm one of the "absent" releases PUBLIC,
+// and UpsertPackage's conflict rule would put it back to UNKNOWN with no
+// checked_at (#174 review). A store that offers this contract promises the
+// conflict is a no-op.
+type packageRegisterStore interface {
+	RegisterPackages(context.Context, []serverstore.PackageRow) error
 }
 
 // ensureReceiptPackages makes receipt-only versions reachable through the
@@ -863,17 +881,44 @@ func (b *Builder) ensureReceiptPackages(ctx context.Context, samples []sampleDat
 	if err != nil {
 		return err
 	}
+	unknown := make([]serverstore.PackageRow, 0, len(resolved))
 	for _, p := range resolved {
 		if known[p.String()] {
 			continue
 		}
-		err := b.Store.UpsertPackage(ctx, serverstore.PackageRow{
+		unknown = append(unknown, serverstore.PackageRow{
 			PURL: p.String(), Ecosystem: p.Ecosystem, Name: p.Name,
 			Version: p.Version, Major: p.Major(), Publicness: "UNKNOWN",
 		})
-		phases.add(phaseEnsureReceiptPackages, knownCalls(1))
+	}
+	return b.registerPackages(ctx, unknown)
+}
+
+// registerPackages writes the rows for releases the registry has never seen.
+// PostgreSQL takes a bounded page per write and never touches a row that
+// exists; alternate stores keep the original row-at-a-time contract. Either
+// way the rows are the same rows in the same first-seen order, and a refused
+// write fails the pass rather than leaving a receipt-only release invisible
+// to the registry endpoints.
+func (b *Builder) registerPackages(ctx context.Context, rows []serverstore.PackageRow) error {
+	phases := builderPhases(ctx)
+	bulk, ok := b.Store.(packageRegisterStore)
+	if !ok {
+		for _, row := range rows {
+			err := b.Store.UpsertPackage(ctx, row)
+			phases.add(phaseEnsureReceiptPackages, knownCalls(1))
+			if err != nil {
+				return fmt.Errorf("compatibility: register receipt package %s: %w", row.PURL, err)
+			}
+		}
+		return nil
+	}
+	for start := 0; start < len(rows); start += packageRegisterBatch {
+		end := min(start+packageRegisterBatch, len(rows))
+		err := bulk.RegisterPackages(ctx, rows[start:end])
+		phases.add(phaseEnsureReceiptPackages, builderPhaseCounters{logicalCalls: 1, callsKnown: true, pages: 1})
 		if err != nil {
-			return fmt.Errorf("compatibility: register receipt package %s: %w", p.String(), err)
+			return fmt.Errorf("compatibility: register receipt packages %s..%s: %w", rows[start].PURL, rows[end-1].PURL, err)
 		}
 	}
 	return nil

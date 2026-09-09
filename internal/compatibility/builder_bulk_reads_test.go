@@ -59,6 +59,11 @@ func (c *builderReadCounter) GetPackage(ctx context.Context, purl string) (serve
 	return c.Fake.GetPackage(ctx, purl)
 }
 
+func (c *builderReadCounter) UpsertPackage(ctx context.Context, row serverstore.PackageRow) error {
+	c.note("UpsertPackage", 1)
+	return c.Fake.UpsertPackage(ctx, row)
+}
+
 func (c *builderReadCounter) JobsForSample(ctx context.Context, sampleID string) ([]serverstore.JobRow, error) {
 	c.note("JobsForSample", 1)
 	return c.Fake.JobsForSample(ctx, sampleID)
@@ -88,6 +93,23 @@ func (s *bulkReadStore) ExistingPackagePURLs(ctx context.Context, purls []string
 		}
 	}
 	return out, nil
+}
+
+// RegisterPackages is insert-if-absent over the Fake, the contract the
+// production store keeps: a row that exists is left completely alone.
+func (s *bulkReadStore) RegisterPackages(ctx context.Context, rows []serverstore.PackageRow) error {
+	s.note("RegisterPackages", len(rows))
+	for _, row := range rows {
+		if _, exists, err := s.Fake.GetPackage(ctx, row.PURL); err != nil {
+			return err
+		} else if exists {
+			continue
+		}
+		if err := s.Fake.UpsertPackage(ctx, row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *bulkReadStore) JobsForSamples(ctx context.Context, sampleIDs []string) (map[string][]serverstore.JobRow, error) {
@@ -502,20 +524,40 @@ func equalInts(a, b []int) bool {
 // jobs" would open a duplicate matrix cell for every verified Java sample.
 type failingBulkStore struct {
 	*serverstore.Fake
-	failPackages bool
-	failJobs     bool
+	failPackages      bool
+	failPackageWrites bool
+	failJobs          bool
 }
+
+var errPoolExhausted = errors.New("pool exhausted")
 
 func (s *failingBulkStore) ExistingPackagePURLs(context.Context, []string) (map[string]bool, error) {
 	if s.failPackages {
-		return nil, errors.New("pool exhausted")
+		return nil, errPoolExhausted
 	}
 	return map[string]bool{}, nil
 }
 
+func (s *failingBulkStore) RegisterPackages(ctx context.Context, rows []serverstore.PackageRow) error {
+	if s.failPackageWrites {
+		return errPoolExhausted
+	}
+	for _, row := range rows {
+		if _, exists, err := s.Fake.GetPackage(ctx, row.PURL); err != nil {
+			return err
+		} else if exists {
+			continue
+		}
+		if err := s.Fake.UpsertPackage(ctx, row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *failingBulkStore) JobsForSamples(context.Context, []string) (map[string][]serverstore.JobRow, error) {
 	if s.failJobs {
-		return nil, errors.New("pool exhausted")
+		return nil, errPoolExhausted
 	}
 	return map[string][]serverstore.JobRow{}, nil
 }

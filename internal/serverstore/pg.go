@@ -367,6 +367,69 @@ func (p *PG) UpsertPackage(ctx context.Context, pkg PackageRow) error {
 	})
 }
 
+// RegisterPackages inserts a bounded page of package rows the registry has
+// never seen, in one database checkout and one statement, and leaves every
+// row that already exists completely alone.
+//
+// It is the compatibility builder's write, and it is deliberately NOT
+// UpsertPackage for a page. The builder learns "never seen" from a
+// membership probe and writes later; between the two, the registry check
+// can confirm one of those releases PUBLIC with a checked_at. A conflict
+// rule that replaced publicness and checked_at -- UpsertPackage's rule --
+// turned that confirmation back into UNKNOWN, and nothing would ever check
+// it again (#174 review). Observation ingest has the same intent for the
+// rows it touches: keep the registry aware of the release, never decide its
+// publicness. Here even last_seen stays put, so aggregation remains a
+// non-write for a known release and "when did the network last see this
+// package" keeps meaning what it says.
+//
+// A purl repeated within one page is inserted once; DO NOTHING skips the
+// repeat the way it skips an existing row. The list is a BOUNDED page; the
+// caller chunks.
+func (p *PG) RegisterPackages(ctx context.Context, rows []PackageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	n := len(rows)
+	purls := make([]string, 0, n)
+	ecosystems := make([]string, 0, n)
+	names := make([]string, 0, n)
+	versions := make([]string, 0, n)
+	majors := make([]string, 0, n)
+	publicness := make([]string, 0, n)
+	checked := make([]*time.Time, 0, n)
+	seen := make(map[string]bool, n)
+	for _, row := range rows {
+		if seen[row.PURL] {
+			continue
+		}
+		seen[row.PURL] = true
+		if row.Publicness == "" {
+			row.Publicness = "UNKNOWN"
+		}
+		var checkedAt *time.Time
+		if !row.CheckedAt.IsZero() {
+			at := row.CheckedAt
+			checkedAt = &at
+		}
+		purls = append(purls, row.PURL)
+		ecosystems = append(ecosystems, row.Ecosystem)
+		names = append(names, row.Name)
+		versions = append(versions, row.Version)
+		majors = append(majors, row.Major)
+		publicness = append(publicness, row.Publicness)
+		checked = append(checked, checkedAt)
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO packages(purl, ecosystem, name, version, major, publicness, checked_at)
+			SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
+			ON CONFLICT (purl) DO NOTHING`,
+			purls, ecosystems, names, versions, majors, publicness, checked)
+		return err
+	})
+}
+
 const packageCols = `purl, ecosystem, name, version, major, publicness, checked_at, first_seen, last_seen`
 
 func scanPackage(row pgx.Row) (PackageRow, error) {
@@ -417,9 +480,10 @@ func (p *PG) GetPackage(ctx context.Context, purl string) (PackageRow, bool, err
 // scales with the network rather than with what changed, and that competes
 // with interactive readers for the same small pool.
 //
-// Membership only. Registration still writes one row at a time through
-// UpsertPackage, so a package that is already known is still left completely
-// alone rather than having its last_seen clock refreshed by aggregation.
+// Membership only. Registration writes through RegisterPackages, which
+// inserts absent rows and nothing else, so a package that is already known
+// is left completely alone rather than having its last_seen clock refreshed
+// by aggregation.
 //
 // The list is a BOUNDED page; the caller chunks. Absent purls are simply
 // absent from the map, never present-and-false.
@@ -441,6 +505,46 @@ func (p *PG) ExistingPackagePURLs(ctx context.Context, purls []string) (map[stri
 				return err
 			}
 			out[purl] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PackagesByPURL returns the package rows for these purls, in one database
+// checkout, keyed by purl. It is GetPackage for a bounded page: the same
+// columns, so a caller can judge publicness and checked_at from it, and the
+// rows are left completely alone.
+//
+// The authoring poll asks this about every DEPENDENCY coordinate in its
+// candidate window to learn which ones the registry has already confirmed.
+// One GetPackage checkout per candidate was a few hundred interactive
+// checkouts per poll on an endpoint the whole fleet polls several times a
+// minute (#174).
+//
+// The list is a BOUNDED page; the caller chunks. Absent purls are simply
+// absent from the map.
+func (p *PG) PackagesByPURL(ctx context.Context, purls []string) (map[string]PackageRow, error) {
+	out := make(map[string]PackageRow, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx,
+			`SELECT `+packageCols+` FROM packages WHERE purl = ANY($1::text[])`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			pkg, err := scanPackage(rows)
+			if err != nil {
+				return err
+			}
+			out[pkg.PURL] = pkg
 		}
 		return rows.Err()
 	})
@@ -519,6 +623,42 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 		return nil
 	})
 	return js, found, err
+}
+
+// SnapshotsForPURLs is GetSnapshot for one symbol across a bounded page of
+// releases, in one database checkout, keyed by purl. Releases without a
+// snapshot for that symbol are absent from the map.
+//
+// The registry symbol endpoint reads the family snapshot of every release of
+// a package. One GetSnapshot checkout per release made a library with three
+// hundred releases three hundred interactive checkouts for one public read
+// (#174). The list is a BOUNDED page; the caller chunks.
+func (p *PG) SnapshotsForPURLs(ctx context.Context, purls []string, symbol string) (map[string]string, error) {
+	out := make(map[string]string, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, snapshot::text FROM compatibility_snapshots
+			WHERE symbol = $2 AND purl = ANY($1::text[])`, purls, symbol)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl, js string
+			if err := rows.Scan(&purl, &js); err != nil {
+				return err
+			}
+			out[purl] = js
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PackageStagePasses reads every package-level snapshot for one package in a
