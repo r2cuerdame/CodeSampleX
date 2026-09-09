@@ -57,15 +57,23 @@ jobs:
         run: test "$GITHUB_REF" = refs/heads/main
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: operations
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          path: payload
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: operations/go.mod
+          cache-dependency-path: operations/go.sum
           cache: true
 
       - name: Prove canonical commit and ProjectOps decision
+        working-directory: operations
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
@@ -76,10 +84,11 @@ jobs:
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$TARGET_SHA" origin/main
-          go run ./cmd/csx-deploy-gate \
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C ../payload rev-parse HEAD)" = "$TARGET_SHA"
+          git -C ../payload fetch --no-tags origin main
+          git -C ../payload merge-base --is-ancestor "$TARGET_SHA" origin/main
+          go run ./cmd/csx-deploy-gate -repo ../payload \
             -target "$TARGET_SHA" \
             -previous "$PREVIOUS_SHA" \
             -merge-verdict "$MERGE_VERDICT" \

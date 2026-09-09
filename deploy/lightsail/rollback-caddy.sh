@@ -31,13 +31,14 @@ if [ -f "$container_present" ]; then
   test -f "$rollback"
   old=$(cat "$image_id")
   printf '%s\n' "$old" | grep -Eq '^sha256:[0-9a-f]{64}$'
-  docker compose up -d --no-build --no-deps --force-recreate caddy
-  test "$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')" = "$old"
   if [ -f "$container_running" ]; then
+    docker compose up -d --no-build --no-deps --force-recreate caddy
+    test "$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')" = "$old"
     docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
     test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = true
   else
-    docker compose stop caddy >/dev/null
+    docker compose up --no-start --no-build --no-deps --force-recreate caddy >/dev/null
+    test "$(docker inspect codesamplex-caddy-1 --format '{{.Image}}')" = "$old"
     test "$(docker inspect codesamplex-caddy-1 --format '{{.State.Running}}')" = false
   fi
 else

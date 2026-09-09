@@ -1680,3 +1680,30 @@ not the product's to make.
 Do not disable Defender, do not add an exclusion, and do not treat a green
 release pipeline as evidence that Windows users can run the artifact: the
 pipeline never executed the payload on a machine with real-time protection on.
+
+### Offline recovery metadata and ownership (#174)
+
+The operational checkout pinned to the workflow SHA executes the eligibility
+policy against the separate immutable payload checkout. Both canonical CI
+requirements remain independent; the released payload supplies the image and
+deployment assets, not the policy that authorizes them.
+
+After migration, the host checks the ledger and four builder index definitions
+through PostgreSQL catalogs. It re-arms builderRepairRequired on exactly the
+latest stats_daily row, including retries whose source backfill already
+completed before an old binary was restored. These bounded metadata checks do
+not scan source tables or wait for full-builder convergence. Privacy, source
+invariants and extended user-flow audits remain in the independent observer.
+
+The host completes stack/Caddy recreation and reload before candidate-ready.
+The later controller performs only the existing short read-only acceptance
+checks and ACK, so a paused controller cannot mutate restored services after
+host rollback. The host checks its 600-second ACK deadline both before reading
+an acknowledgement and after image validation. Existing phase and recovery
+budgets are unchanged.
+
+Exact rollback creates an originally stopped server or Caddy with --no-start.
+If dist restoration was requested, missing promotion proof or a missing prior
+generation fails closed before server recreation; it must not silently retain
+the candidate dist. Such ambiguous recovery retains the deployment lock for
+owner inspection.

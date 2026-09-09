@@ -13,7 +13,11 @@ function Resolve-CSXDeploymentSource {
     if ($SourceRepoPath -eq "") { $SourceRepoPath = $controlRepo }
     $sourceRepo = (Resolve-Path -LiteralPath $SourceRepoPath).Path
     $top = (& git -C $sourceRepo rev-parse --show-toplevel).Trim()
-    if ($LASTEXITCODE -ne 0 -or (Resolve-Path -LiteralPath $top).Path -ne $sourceRepo) {
+    if ($LASTEXITCODE -ne 0 -or $top -eq "") { throw "payload source must be a repository root" }
+    # Ask Git whether -C is the worktree root. Comparing path strings is not
+    # reliable on Windows, where Git can return an equivalent 8.3 short path.
+    $prefix = (& git -C $sourceRepo rev-parse --show-prefix).Trim()
+    if ($LASTEXITCODE -ne 0 -or $prefix -ne "") {
         throw "payload source must be a repository root"
     }
     $sourceSha = (& git -C $sourceRepo rev-parse HEAD).Trim()
