@@ -120,8 +120,11 @@ func safeUpgradesFromReceipts(samples []sampleData) map[receiptTarget][]SafeUpgr
 	for target := range out {
 		sort.Slice(out[target], func(i, j int) bool {
 			a, b := out[target][i], out[target][j]
+			// Lexicographic, like the regression sort: this only breaks ties
+			// for display. CompareVersions is for versions, and a purl is not
+			// one — it truncates a scoped name or a pre-release at the "-".
 			if a.TargetPackage != b.TargetPackage {
-				return domain.CompareVersions(a.TargetPackage, b.TargetPackage) < 0
+				return a.TargetPackage < b.TargetPackage
 			}
 			if a.CaseID != b.CaseID {
 				return a.CaseID < b.CaseID
