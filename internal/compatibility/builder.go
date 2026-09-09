@@ -399,6 +399,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phase = phases.begin(phaseReceiptDerivedCalculation)
 	receiptRegressions := regressionsFromReceipts(samples)
 	jdkBoundaries := jdkBoundariesFromReceipts(samples)
+	safeUpgrades := safeUpgradesFromReceipts(samples)
 	phase.end(nil, builderPhaseCounters{items: int64(len(samples)), callsKnown: true})
 	phases.close(phaseReceiptDerivedCalculation)
 
@@ -577,6 +578,11 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		receipts := receiptsForTarget(samples, p, t.Symbol)
 		snap := BuildSnapshot(t.PURL, t.Symbol, rows, receipts, regs, now)
 		snap.JDKBoundaryCandidates = jdkBoundaries[receiptTarget{purl: p.String(), symbol: t.Symbol}]
+		// A safe-upgrade path is attached to the coordinate it starts FROM,
+		// which is the page a reader on that version opens. That is the
+		// opposite attachment from a regression boundary, and it is why a new
+		// release has to invalidate the older majors' snapshots too.
+		snap.SafeUpgradeCandidates = safeUpgrades[receiptTarget{purl: p.String(), symbol: t.Symbol}]
 		js, jerr := json.Marshal(snap)
 		phase.end(jerr, builderPhaseCounters{items: 1, bytes: int64(len(js)), callsKnown: true})
 		if jerr != nil {
