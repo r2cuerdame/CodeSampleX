@@ -89,7 +89,7 @@ foreach ($bad in @([pscustomobject]@{}, [pscustomobject]@{phase='migrating';owne
     }
     if (-not $rejected) { throw 'unknown host evidence authorized stop' }
 }
-Write-Output 'PASS host commit transport recovery' 
+Write-Output 'PASS host commit transport recovery'
 `
 	path := filepath.Join(t.TempDir(), "host-commit.ps1")
 	if err := os.WriteFile(path, []byte(program), 0600); err != nil {
