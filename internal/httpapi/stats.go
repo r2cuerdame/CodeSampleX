@@ -32,6 +32,10 @@ const (
 	// so a fleet polling a starved database cannot turn one refusal into one
 	// refused read per caller.
 	latestStatsFailureBackoff = time.Second
+	// latestStatsReadTimeout bounds the shared read, which every other caller
+	// waits behind. It is the healthz budget: past it the answer is the
+	// remembered rollup, not a longer wait.
+	latestStatsReadTimeout = healthzTimeout
 	// defaultLatestStatsTTL is used only by zero-valued configuration.
 	// Production derives the lifetime from CSX_SNAPSHOT_INTERVAL so the cache
 	// cannot outlive the builder cadence that replaces the document.
@@ -78,7 +82,16 @@ func (a *api) latestStats(ctx context.Context) (string, bool, error) {
 		return "", false, c.failed
 	}
 
-	js, ok, err := a.d.Store.GetLatestStats(ctx)
+	// The read is shared: this caller holds the lock every other caller is
+	// waiting behind, so it must not run on this caller's context. A client
+	// that hangs up -- which is exactly what a starved box produces -- would
+	// otherwise cancel the read for everyone, and a cancellation is not
+	// backpressure (IsQueryTimeout excludes it by message on purpose), so the
+	// rollup already in hand would be passed over in favour of a 500. This is
+	// the same reason databaseHealth loads WithoutCancel.
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), latestStatsReadTimeout)
+	js, ok, err := a.d.Store.GetLatestStats(loadCtx)
+	cancel()
 	now = a.now()
 	if err != nil {
 		c.failAt, c.failed = now.Add(latestStatsFailureBackoff), err

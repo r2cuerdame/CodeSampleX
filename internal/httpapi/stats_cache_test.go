@@ -212,3 +212,87 @@ func TestStatsDoesNotServeCacheForANonPressureFault(t *testing.T) {
 		t.Fatalf("status = %d for a genuine fault, want 500 rather than a cached 200", resp.StatusCode)
 	}
 }
+
+// hangupStatsStore holds its read open until released, and records whether the
+// context it was handed was cancelled underneath it.
+type hangupStatsStore struct {
+	serverstore.Store
+	entered   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+	mu        sync.Mutex
+	sawCancel bool
+	doc       string
+}
+
+func (s *hangupStatsStore) GetLatestStats(ctx context.Context) (string, bool, error) {
+	s.once.Do(func() { close(s.entered) })
+	select {
+	case <-s.release:
+		return s.doc, true, nil
+	case <-ctx.Done():
+		s.mu.Lock()
+		s.sawCancel = true
+		s.mu.Unlock()
+		return "", false, ctx.Err()
+	}
+}
+
+func (s *hangupStatsStore) cancelled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sawCancel
+}
+
+// A client hanging up is not a fault in the server, and a starved box produces
+// it constantly: the #174 operator probes gave up at 12s while TTFB ran to
+// 6.8s. This read is SHARED -- one caller performs it while every other caller
+// waits behind the same lock -- so running it on that one caller's request
+// context let a single disconnect cancel the read for all of them. The
+// cancellation is then remembered as a fault, and deliberately is not
+// backpressure (IsQueryTimeout matches the timeout message so that an operator
+// reading "query timeout" is reading about a ceiling this code set), so the
+// callers still waiting were answered 500 "stats lookup failed" with a
+// perfectly good rollup in hand. The client that left cannot be served; the
+// ones still here must not be told the server is broken.
+func TestStatsReadSurvivesTheClientThatHangsUp(t *testing.T) {
+	store := &hangupStatsStore{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		doc:     statsRollup(3148),
+	}
+	srv, _, _ := newTestServer(t, func(d *Deps) {
+		store.Store = d.Store
+		d.Store = store
+		d.Cfg.SnapshotInterval = 5 * time.Minute
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	hungUp := make(chan struct{})
+	go func() {
+		defer close(hungUp)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v1/stats", nil)
+		if err != nil {
+			return
+		}
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+
+	<-store.entered // the shared read is in flight
+	cancel()        // ...and the caller that started it hangs up
+	<-hungUp
+	close(store.release) // the database answers, as it was always going to
+
+	doc, status, _ := statsDoc(t, srv.URL+"/v1/stats")
+	if store.cancelled() {
+		t.Error("one client hanging up cancelled the read every other caller was waiting on")
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d after another client hung up, want 200 with the rollup", status)
+	}
+	if doc["packages"] != float64(3148) {
+		t.Fatalf("packages = %v, want the rollup 3148", doc["packages"])
+	}
+}
