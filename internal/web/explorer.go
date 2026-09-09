@@ -1053,10 +1053,7 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A package requested through NO_SAFE_MATCH has a useful, honest page
 	// even before its first sample exists. It says exactly that the request
 	// is queued; it does not manufacture a version, matrix or evidence row.
-	var wanted []WantedRow
-	if rows, err := s.d.Store.WantedForPackage(r.Context(), eco, name); err == nil {
-		wanted = rows
-	}
+	wanted, wantedErr := s.d.Store.WantedForPackage(r.Context(), eco, name)
 	// The cube is the page. Everything under it belongs to ONE coordinate, so
 	// it is built from what the cube decided rather than from the package: on
 	// an undecided slice there is no release whose dependencies these are and
@@ -1071,7 +1068,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var clusterTotal int
 	var deps []PackageDep
 	var allClusters []failureCluster
-	if rawClusters, _, err := s.d.Store.FailureClusters(r.Context(), eco, name); err == nil && len(rawClusters) > 0 {
+	rawClusters, _, clustersErr := s.d.Store.FailureClusters(r.Context(), eco, name)
+	if clustersErr == nil && len(rawClusters) > 0 {
 		allClusters = decodeFailureClusters(rawClusters)
 	}
 
@@ -1106,15 +1104,19 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		}
 	}
 	// Only an authoritative empty aggregate can help prove absence. A failed
-	// aggregate read is unknown and must not turn a transient store error into
-	// a permanent 404 for a package whose older code fell outside the display
-	// window.
+	// aggregate, request or failure read is unknown and must not turn a
+	// transient store error into a permanent 404. Wanted and failure rows can
+	// be the only evidence that gives a package a page.
 	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && len(allClusters) == 0 {
 		if !code.known || samplesErr != nil {
 			s.unavailable(w, r, lang)
 			return
 		}
 		if code.total == 0 {
+			if wantedErr != nil || clustersErr != nil {
+				s.unavailable(w, r, lang)
+				return
+			}
 			s.notFound(w, r, lang)
 			return
 		}
