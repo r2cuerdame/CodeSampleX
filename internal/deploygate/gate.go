@@ -87,6 +87,11 @@ var wantedDedupEpochCoordinateIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS wanted_dedup_epoch_coordinate_idx ON wanted_dedup(epoch DESC, ecosystem, name, version, symbol, target_os)`,
 }
 
+var slowQueryIndexesStatements = []string{
+	`CREATE INDEX IF NOT EXISTS failure_clusters_pkg_count_idx ON failure_clusters (package_name, observation_count DESC, id)`,
+	`CREATE INDEX IF NOT EXISTS samples_live_created_id_idx ON samples (created_at DESC, sample_id) WHERE NOT quarantined`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -156,6 +161,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact wanted demand index allowlist", name)
+	}
+	if name == "0037_slow_query_indexes.sql" {
+		if exactStatements(statements, slowQueryIndexesStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact slow query indexes allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)
