@@ -66,6 +66,7 @@ jobs:
           scp -i "$RUNNER_TEMP/csx-production-ssh/id" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$RUNNER_TEMP/csx-server-prestage" "$user@$PRODUCTION_HOST:/tmp/csx-server-prestage"
 
       - name: Concurrently prestage production indexes
@@ -79,6 +80,7 @@ jobs:
           ssh -i "$RUNNER_TEMP/csx-production-ssh/id" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/csx-production-ssh/known_hosts" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$user@$PRODUCTION_HOST" 'sh -s' <<'REMOTE'
           set -eu
           cd /opt/codesamplex/deploy
