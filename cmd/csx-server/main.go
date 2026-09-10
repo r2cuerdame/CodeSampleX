@@ -27,10 +27,13 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status|backfill-observations>
+const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status|backfill-observations|prestage-builder-indexes>
 
   migrate      apply schema migrations to $CSX_DSN and exit
   serve        apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
+  prestage-builder-indexes
+               pre-create heavy compatibility builder indexes concurrently
+               before activating migration 0036; safe to run while v0.1.149 is active
   quarantine   hide a published sample from every serving read (operator only)
                csx-server quarantine <sampleId> --reason "…"   [--release]
   seeder-create
@@ -78,6 +81,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMigrate(cfg, stdout, stderr)
 	case "serve":
 		return runServe(cfg, stdout, stderr)
+	case "prestage-builder-indexes", "prepare-builder-indexes":
+		return runPrestageBuilderIndexes(cfg, stdout, stderr)
 	case "quarantine":
 		return runQuarantine(cfg, args[1:], stdout, stderr)
 	case "seeder-create":
@@ -90,6 +95,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "csx-server: unknown subcommand %q\n%s", args[0], usage)
 		return 2
 	}
+}
+
+func runPrestageBuilderIndexes(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if cfg.DSN == "" {
+		fmt.Fprintln(stderr, "csx-server: CSX_DSN is not set")
+		return 1
+	}
+	pg, err := serverstore.OpenWithPolicy(ctx, cfg.DSN, cfg.DBPool)
+	if err != nil {
+		fmt.Fprintf(stderr, "csx-server: %v\n", err)
+		return 1
+	}
+	defer pg.Close()
+	if err := pg.PrestageBuilderIndexes(ctx); err != nil {
+		fmt.Fprintf(stderr, "csx-server: prestage builder indexes failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "csx-server: builder indexes prestaged and validated")
+	return 0
 }
 
 func openMigrated(ctx context.Context, cfg serverstore.ServerConfig, stderr io.Writer) (*serverstore.PG, bool) {
@@ -131,8 +157,14 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}
 	defer pg.Close()
 
-	// Aggregation pipeline: snapshots/shards/stats on CSX_SNAPSHOT_INTERVAL.
-	StartBuilder(ctx, cfg, pg)
+	// Capture the public wanted feed before the aggregation pipeline starts.
+	// The first live request after a restart must not run its whole aggregate
+	// while the builder is consuming the same PostgreSQL CPU, I/O and pool.
+	wantedSnapshot, err := primeWantedBeforeBuilder(ctx, cfg, pg, StartBuilder)
+	if err != nil {
+		fmt.Fprintf(stderr, "csx-server: preload wanted snapshot: %v\n", err)
+		return 1
+	}
 
 	// Wake authoring drafts that have nothing left to wait for.
 	//
@@ -220,7 +252,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// is the whole server. WriteTimeout sits above the slowest legitimate
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
-	handler, activityTracker := buildMuxWithTracker(context.Background(), cfg, pg)
+	handler, activityTracker := buildMuxWithTrackerAndWanted(context.Background(), cfg, pg, wantedSnapshot)
 	listenAddr, narrowed := resolveListenAddr(cfg.Listen, runtime.GOOS)
 	if narrowed {
 		fmt.Fprintln(stdout, narrowedListenNotice(cfg.Listen, listenAddr))
@@ -253,7 +285,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}()
 
 	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
-	err := srv.ListenAndServe()
+	err = srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = activityTracker.Close(trackerCtx)

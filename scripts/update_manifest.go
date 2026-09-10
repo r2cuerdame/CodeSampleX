@@ -20,6 +20,17 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 5 && os.Args[1] == "verify-release" {
+		pubRaw, err := base64.StdEncoding.DecodeString(os.Args[2])
+		if err != nil || len(pubRaw) != ed25519.PublicKeySize {
+			fatal("invalid verification public key")
+		}
+		if err := verifyReleaseDirectory(os.Args[3], os.Args[4], pubRaw, time.Now().UTC()); err != nil {
+			fatal(err.Error())
+		}
+		fmt.Println("verified release payloads and launchers", os.Args[4])
+		return
+	}
 	if len(os.Args) == 4 && os.Args[1] == "guard" {
 		if err := guardRelease(os.Args[2], os.Args[3]); err != nil {
 			fatal(err.Error())
@@ -71,9 +82,34 @@ func main() {
 		ExpiresAt: now.Add(90 * 24 * time.Hour),
 		Assets:    assets(dist, version),
 	}
+	if err := writeManifest(output, m, key, now); err != nil {
+		fatal(err.Error())
+	}
+	// Keep the legacy updater envelope unchanged. Only the installer reads
+	// this companion, which signs both launchers in the same release identity.
+	for i, a := range m.Assets {
+		if a.OS != "windows" {
+			continue
+		}
+		name := "csx-launcher-windows-" + a.Arch + ".exe"
+		raw, err := os.ReadFile(filepath.Join(dist, name))
+		if err != nil {
+			fatal(err.Error())
+		}
+		sum := sha256.Sum256(raw)
+		m.Assets[i].LauncherURL = "https://github.com/r2cuerdame/CodeSampleX/releases/download/" + version + "/" + name
+		m.Assets[i].LauncherSize = int64(len(raw))
+		m.Assets[i].LauncherSHA256 = hex.EncodeToString(sum[:])
+	}
+	if err := writeManifest(filepath.Join(filepath.Dir(output), "csx-bootstrap-stable.json"), m, key, now); err != nil {
+		fatal(err.Error())
+	}
+}
+
+func writeManifest(output string, m csxupdate.Manifest, key ed25519.PrivateKey, now time.Time) error {
 	payload, err := json.Marshal(m)
 	if err != nil {
-		fatal(err.Error())
+		return err
 	}
 	env := csxupdate.Envelope{
 		Payload:   base64.StdEncoding.EncodeToString(payload),
@@ -81,15 +117,17 @@ func main() {
 	}
 	raw, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
-		fatal(err.Error())
+		return err
 	}
 	raw = append(raw, '\n')
 	if _, err := csxupdate.VerifyEnvelope(raw, key.Public().(ed25519.PublicKey), now, csxupdate.DefaultChannel); err != nil {
-		fatal("self-verification failed: " + err.Error())
+		return fmt.Errorf("self-verification failed: %w", err)
 	}
-	if err := os.WriteFile(output, raw, 0o644); err != nil {
-		fatal(err.Error())
-	}
+	return os.WriteFile(output, raw, 0o644)
+}
+
+func verifyReleaseDirectory(dist, version string, pub ed25519.PublicKey, now time.Time) error {
+	return csxupdate.VerifyReleaseDirectory(dist, version, pub, now)
 }
 
 func guardRelease(candidate, latest string) error {

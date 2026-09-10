@@ -434,6 +434,9 @@
           .sort((x, y) => y[1] - x[1])
           .map(([kind, n]) => `${kind} ${num(n)}`).join(" · ") || "—";
         backlog.append(
+          stat("요청 백로그", num(b.requestBacklog || 0), (b.requestBacklog || 0) > 0),
+          stat("반복 미스", num(b.repeatedMisses || 0), (b.repeatedMisses || 0) > 0),
+          stat("해결된 요청", num(b.resolvedRequests || 0)),
           stat("미검증 좌표", num(b.coverageHoles || 0)),
           stat("미관측 의존성", num(b.dependencies || 0)),
           stat("배포", `${num(b.handedOutInWindow || 0)} · ${perHour(b.handedOutInWindow || 0)}`),
@@ -521,11 +524,19 @@
 
     if (coverage) {
       coverage.replaceChildren();
+      if (data.coverageAt) {
+        const age = document.createElement("p");
+        age.className = "note";
+        age.textContent = `커버리지 집계 ${since(data.coverageAt)} · ${new Date(data.coverageAt).toLocaleString("ko-KR")}`;
+        coverage.appendChild(age);
+      }
       const rows = data.coverage || [];
       if (!rows.length) {
         const empty = document.createElement("p");
         empty.className = "empty";
-        empty.textContent = "커버리지 자료가 아직 없습니다";
+        empty.textContent = data.coverageAt
+          ? "커버리지 자료가 아직 없습니다"
+          : "커버리지 집계가 아직 완료되지 않았습니다";
         coverage.appendChild(empty);
       }
       for (const c of rows) {

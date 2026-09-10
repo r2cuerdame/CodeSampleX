@@ -247,10 +247,22 @@ func (p PoolPolicy) wait(c QueryClass) time.Duration {
 // creates one budget per request, reads it afterwards and writes the one
 // line an operator needs.
 type QueryBudget struct {
-	class    QueryClass
-	waitedNS atomic.Int64
-	busy     atomic.Int64
-	timeouts atomic.Int64
+	class      QueryClass
+	retry      bool
+	waitedNS   atomic.Int64
+	busy       atomic.Int64
+	timeouts   atomic.Int64
+	attempts   atomic.Uint64
+	suppressed atomic.Int64
+}
+
+// NewRetryQueryBudget marks a fresh unit of work as an explicit retry. A
+// request that performs several different reads is follow-up work, not a
+// retry, and is accounted separately.
+func NewRetryQueryBudget(class QueryClass) *QueryBudget {
+	b := NewQueryBudget(class)
+	b.retry = true
+	return b
 }
 
 // NewQueryBudget returns a budget for one unit of work in one class. A
@@ -280,6 +292,38 @@ func (b *QueryBudget) Pressure() (busy, timeouts int64, waited time.Duration) {
 		return 0, 0, 0
 	}
 	return b.busy.Load(), b.timeouts.Load(), time.Duration(b.waitedNS.Load())
+}
+
+// Suppressed reports follow-up acquisitions rejected without touching the
+// pool after this interactive request had already received ErrPoolBusy.
+func (b *QueryBudget) Suppressed() int64 {
+	if b == nil {
+		return 0
+	}
+	return b.suppressed.Load()
+}
+
+// backpressured reports whether this unit of work has already been told the
+// database cannot serve it now -- by the pool refusing an acquisition, or by
+// PostgreSQL cancelling a statement on its ceiling.
+//
+// Both answers are the same answer. isBackpressure treats them identically
+// and writeStoreErr turns both into one 503 with a Retry-After, so the
+// follow-up reads they should stop are the same follow-up reads. Only the
+// refusal used to arm the suppression, and the asymmetry was invisible
+// precisely when it cost the most: a saturated database stops refusing
+// acquisitions once its connections are free and starts cancelling
+// statements instead, and that is the state where a page making eight
+// sequential reads spent eight ceilings serially, returned nothing before
+// the visitor gave up, and aimed eight more expensive queries at the
+// saturation that cancelled the first one.
+//
+// A nil budget is unclassified background work with nothing to remember.
+func (b *QueryBudget) backpressured() bool {
+	if b == nil {
+		return false
+	}
+	return b.busy.Load() > 0 || b.timeouts.Load() > 0
 }
 
 type queryBudgetKey struct{}
@@ -312,15 +356,22 @@ func QueryClassOf(ctx context.Context) QueryClass { return BudgetOf(ctx).Class()
 
 // ClassPoolStats is one class's share of the pool and what it has cost.
 type ClassPoolStats struct {
-	Class     string
-	Limit     int    // connections this class may hold at once
-	InUse     int    // held right now
-	Acquired  uint64 // successful acquisitions
-	Waited    uint64 // acquisitions that could not be served immediately
-	WaitTotal time.Duration
-	WaitMax   time.Duration
-	Busy      uint64 // refused: ErrPoolBusy
-	Timeouts  uint64 // statements PostgreSQL cancelled on this class's ceiling
+	Class      string
+	Limit      int    // connections this class may hold at once
+	InUse      int    // held right now
+	Attempts   uint64 // all acquisition attempts, including terminal failures
+	First      uint64 // first acquisition in a request/work budget
+	Retries    uint64 // first acquisition in an explicitly marked retry budget
+	Followups  uint64 // later acquisitions in the same request/work budget
+	Acquired   uint64 // successful acquisitions
+	Waited     uint64 // acquisitions that could not be served immediately
+	WaitTotal  time.Duration
+	WaitMax    time.Duration
+	Busy       uint64 // refused: ErrPoolBusy
+	Suppressed uint64 // follow-ups stopped after the request hit Busy
+	Canceled   uint64 // caller context ended while acquiring
+	Failed     uint64 // dial/setup/closed-pool failures
+	Timeouts   uint64 // statements PostgreSQL cancelled on this class's ceiling
 }
 
 // PoolStats is the pool as an operator needs to see it: how much of it is
@@ -335,18 +386,24 @@ type PoolStats struct {
 }
 
 type classCounters struct {
-	inUse     atomic.Int64
-	acquired  atomic.Uint64
-	waited    atomic.Uint64
-	waitNS    atomic.Uint64
-	waitMaxNS atomic.Uint64
-	busy      atomic.Uint64
-	timeouts  atomic.Uint64
+	inUse      atomic.Int64
+	attempts   atomic.Uint64
+	first      atomic.Uint64
+	retries    atomic.Uint64
+	followups  atomic.Uint64
+	acquired   atomic.Uint64
+	waited     atomic.Uint64
+	waitNS     atomic.Uint64
+	waitMaxNS  atomic.Uint64
+	busy       atomic.Uint64
+	suppressed atomic.Uint64
+	canceled   atomic.Uint64
+	failed     atomic.Uint64
+	timeouts   atomic.Uint64
 }
 
 func (c *classCounters) observeWait(d time.Duration) {
-	c.acquired.Add(1)
-	if d <= 0 {
+	if d < time.Millisecond {
 		return
 	}
 	c.waited.Add(1)
@@ -357,6 +414,23 @@ func (c *classCounters) observeWait(d time.Duration) {
 			return
 		}
 	}
+}
+
+func (c *classCounters) observeAttempt(b *QueryBudget) {
+	c.attempts.Add(1)
+	if b == nil {
+		c.first.Add(1)
+		return
+	}
+	if b.attempts.Add(1) == 1 {
+		if b.retry {
+			c.retries.Add(1)
+		} else {
+			c.first.Add(1)
+		}
+		return
+	}
+	c.followups.Add(1)
 }
 
 // ----------------------------------------------------------------- pool --
@@ -385,6 +459,7 @@ type connPool struct {
 	general chan struct{} // every class except ClassProbe
 	inter   chan struct{} // ClassInteractive only
 	back    chan struct{} // ClassBackground only
+	probe   chan struct{} // ClassProbe only
 
 	stats [3]classCounters
 }
@@ -401,20 +476,25 @@ func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
 		p.general = make(chan struct{}, pol.general())
 		p.inter = make(chan struct{}, pol.InteractiveConns)
 		p.back = make(chan struct{}, pol.BackgroundConns)
+		probeConns := pol.ProbeReserve
+		if probeConns < 1 {
+			probeConns = 1
+		}
+		p.probe = make(chan struct{}, probeConns)
 	}
 	return p
 }
 
-// gatesFor is the admission order for a class, outermost first. Probes pass
-// none of them: their ceiling is the reserve the other classes cannot enter
-// plus a 3s statement timeout, which is a tighter bound than any queue.
+// gatesFor is the admission order for a class, outermost first. Probes skip
+// the general gate so the reserved connection remains reachable, but have a
+// gate of their own so overlapping public probes cannot fill the pool.
 func (p *connPool) gatesFor(class QueryClass) []chan struct{} {
 	if !p.pol.Enabled {
 		return nil
 	}
 	switch class {
 	case ClassProbe:
-		return nil
+		return []chan struct{}{p.probe}
 	case ClassInteractive:
 		return []chan struct{}{p.inter, p.general}
 	default:
@@ -423,32 +503,50 @@ func (p *connPool) gatesFor(class QueryClass) []chan struct{} {
 }
 
 func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
-	if p.closed.Load() {
-		return nil, errors.New("serverstore: store is closed")
-	}
 	budget := BudgetOf(ctx)
 	class := budget.Class()
 	counters := &p.stats[class]
+	counters.observeAttempt(budget)
+	if class == ClassInteractive && budget.backpressured() {
+		counters.suppressed.Add(1)
+		budget.suppressed.Add(1)
+		return nil, fmt.Errorf("%w (class %s, follow-up suppressed after earlier backpressure)", ErrPoolBusy, class)
+	}
+	if p.closed.Load() {
+		counters.failed.Add(1)
+		return nil, errors.New("serverstore: store is closed")
+	}
 
 	waitCtx, cancel := p.waitContext(ctx, class)
 	defer cancel()
 
 	start := time.Now()
 	var held []chan struct{}
-	fail := func(err error) (*pooledConn, error) {
+	fail := func(err error, queued time.Duration) (*pooledConn, error) {
 		for i := len(held) - 1; i >= 0; i-- {
 			<-held[i]
 		}
-		p.charge(budget, counters, time.Since(start), -1)
+		p.chargeBudget(budget, time.Since(start))
+		counters.observeWait(queued)
 		if errors.Is(err, ErrPoolBusy) {
 			counters.busy.Add(1)
 			if budget != nil {
 				budget.busy.Add(1)
 			}
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			counters.canceled.Add(1)
+		} else {
+			counters.failed.Add(1)
 		}
 		return nil, err
 	}
+	if err := waitCtx.Err(); err != nil {
+		return fail(p.waitErr(ctx, class), 0)
+	}
 	for _, g := range p.gatesFor(class) {
+		if waitCtx.Err() != nil {
+			return fail(p.waitErr(ctx, class), time.Since(start))
+		}
 		select {
 		case g <- struct{}{}:
 			held = append(held, g)
@@ -458,8 +556,11 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 		select {
 		case g <- struct{}{}:
 			held = append(held, g)
+			if waitCtx.Err() != nil {
+				return fail(p.waitErr(ctx, class), time.Since(start))
+			}
 		case <-waitCtx.Done():
-			return fail(p.waitErr(ctx, class))
+			return fail(p.waitErr(ctx, class), time.Since(start))
 		}
 	}
 
@@ -467,15 +568,19 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	c, err := p.checkout(waitCtx, start, &granted)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return fail(p.waitErr(ctx, class))
+			return fail(p.waitErr(ctx, class), time.Since(start))
 		}
-		return fail(err)
+		return fail(err, granted)
+	}
+	if waitCtx.Err() != nil {
+		p.returnUnused(c)
+		return fail(p.waitErr(ctx, class), time.Since(start))
 	}
 	c.class = class
 	c.gates = held
 	if err := p.applyStatementTimeout(ctx, c, class); err != nil {
 		p.discard(c)
-		return fail(err)
+		return fail(err, granted)
 	}
 	p.charge(budget, counters, time.Since(start), granted)
 	counters.inUse.Add(1)
@@ -510,9 +615,7 @@ func (p *connPool) waitErr(ctx context.Context, class QueryClass) error {
 // a healthy idle server look permanently queued. queued < 0 means the
 // acquisition never got that far.
 func (p *connPool) charge(budget *QueryBudget, counters *classCounters, total, queued time.Duration) {
-	if budget != nil {
-		budget.waitedNS.Add(int64(total))
-	}
+	p.chargeBudget(budget, total)
 	if queued < 0 {
 		return
 	}
@@ -521,7 +624,14 @@ func (p *connPool) charge(budget *QueryBudget, counters *classCounters, total, q
 	if queued < time.Millisecond {
 		queued = 0
 	}
+	counters.acquired.Add(1)
 	counters.observeWait(queued)
+}
+
+func (p *connPool) chargeBudget(budget *QueryBudget, total time.Duration) {
+	if budget != nil {
+		budget.waitedNS.Add(int64(total))
+	}
 }
 
 // checkout hands out an idle connection or opens a new one under the cap.
@@ -600,6 +710,14 @@ func (p *connPool) discard(c *pooledConn) {
 	<-p.sem
 }
 
+func (p *connPool) returnUnused(c *pooledConn) {
+	if p.closed.Load() || c.conn.IsClosed() {
+		p.discard(c)
+		return
+	}
+	p.idle <- c
+}
+
 func (p *connPool) release(c *pooledConn) {
 	if c == nil {
 		return
@@ -661,7 +779,7 @@ func (p *connPool) stat() PoolStats {
 	limits := map[QueryClass]int{
 		ClassBackground:  p.pol.BackgroundConns,
 		ClassInteractive: p.pol.InteractiveConns,
-		ClassProbe:       p.pol.MaxConns,
+		ClassProbe:       max(p.pol.ProbeReserve, 1),
 	}
 	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe} {
 		c := &p.stats[class]
@@ -670,15 +788,22 @@ func (p *connPool) stat() PoolStats {
 			limit = limits[class]
 		}
 		s.Classes = append(s.Classes, ClassPoolStats{
-			Class:     class.String(),
-			Limit:     limit,
-			InUse:     int(c.inUse.Load()),
-			Acquired:  c.acquired.Load(),
-			Waited:    c.waited.Load(),
-			WaitTotal: time.Duration(c.waitNS.Load()),
-			WaitMax:   time.Duration(c.waitMaxNS.Load()),
-			Busy:      c.busy.Load(),
-			Timeouts:  c.timeouts.Load(),
+			Class:      class.String(),
+			Limit:      limit,
+			InUse:      int(c.inUse.Load()),
+			Attempts:   c.attempts.Load(),
+			First:      c.first.Load(),
+			Retries:    c.retries.Load(),
+			Followups:  c.followups.Load(),
+			Acquired:   c.acquired.Load(),
+			Waited:     c.waited.Load(),
+			WaitTotal:  time.Duration(c.waitNS.Load()),
+			WaitMax:    time.Duration(c.waitMaxNS.Load()),
+			Busy:       c.busy.Load(),
+			Suppressed: c.suppressed.Load(),
+			Canceled:   c.canceled.Load(),
+			Failed:     c.failed.Load(),
+			Timeouts:   c.timeouts.Load(),
 		})
 	}
 	return s

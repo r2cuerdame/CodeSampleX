@@ -2,3 +2,10 @@
 # repository and checkout bytes LF-only even when core.autocrlf=true.
 *.ps1 text eol=lf
 *.sh  text eol=lf
+
+schemas/** text eol=lf
+internal/**/agentassets/** text eol=lf
+internal/serverstore/migrations/** text eol=lf
+docs/** text eol=lf
+deploy/** text eol=lf
+internal/httpapi/adapters.json text eol=lf

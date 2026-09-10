@@ -135,7 +135,19 @@ func TestIntegrationFarmBacklogFakeMatchesPostgres(t *testing.T) {
 		t.Errorf("coverage holes: fake=%d pg=%d", fakeBacklog.CoverageHoles, pgBacklog.CoverageHoles)
 	}
 	if fakeBacklog.Dependencies != pgBacklog.Dependencies {
-		t.Errorf("dependency backlog: fake=%d pg=%d", fakeBacklog.Dependencies, pgBacklog.Dependencies)
+		t.Errorf("dependencies: fake=%d pg=%d", fakeBacklog.Dependencies, pgBacklog.Dependencies)
+	}
+	if fakeBacklog.RequestBacklog != pgBacklog.RequestBacklog {
+		t.Errorf("request backlog: fake=%d pg=%d", fakeBacklog.RequestBacklog, pgBacklog.RequestBacklog)
+	}
+	if fakeBacklog.RepeatedMisses != pgBacklog.RepeatedMisses {
+		t.Errorf("repeated misses: fake=%d pg=%d", fakeBacklog.RepeatedMisses, pgBacklog.RepeatedMisses)
+	}
+	if fakeBacklog.ResolvedRequests != pgBacklog.ResolvedRequests {
+		t.Errorf("resolved requests: fake=%d pg=%d", fakeBacklog.ResolvedRequests, pgBacklog.ResolvedRequests)
+	}
+	if fakeBacklog.TotalRequests != pgBacklog.TotalRequests {
+		t.Errorf("total requests: fake=%d pg=%d", fakeBacklog.TotalRequests, pgBacklog.TotalRequests)
 	}
 	if fakeBacklog.FirstProven != pgBacklog.FirstProven {
 		t.Errorf("first proven: fake=%d pg=%d", fakeBacklog.FirstProven, pgBacklog.FirstProven)

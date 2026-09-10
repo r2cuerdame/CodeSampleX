@@ -168,6 +168,22 @@ func updateMain(ctx context.Context, args []string) int {
 	if len(args) > 0 {
 		sub = args[0]
 	}
+	if sub == "verify-release" {
+		if len(args) != 3 || args[2] != Version {
+			fmt.Fprintln(os.Stderr, "csx update: release verification requires this binary's exact release version")
+			return 2
+		}
+		pub, err := csxupdate.EmbeddedPublicKey()
+		if err == nil {
+			err = csxupdate.VerifyReleaseDirectory(args[1], args[2], pub, time.Now().UTC())
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "csx update: verify release: %v\n", err)
+			return 1
+		}
+		fmt.Println("verified signed release", Version)
+		return 0
+	}
 	home, err := config.Home()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "csx update: %v\n", err)

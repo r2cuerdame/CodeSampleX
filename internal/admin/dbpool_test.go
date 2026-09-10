@@ -69,6 +69,17 @@ func TestPoolViewSaysWhenTheGuardIsOff(t *testing.T) {
 	}
 }
 
+func TestPoolViewHighlightsAcquisitionFailures(t *testing.T) {
+	stats := poolStatsFixture()
+	stats.Classes[0].Busy = 0
+	stats.Classes[0].Timeouts = 0
+	stats.Classes[0].Failed = 1
+	view := buildPoolView(stats)
+	if !view.Strained || !view.Classes[0].Strained {
+		t.Fatalf("failed acquisition was not highlighted: %+v", view)
+	}
+}
+
 func TestDashboardRendersThePoolPanel(t *testing.T) {
 	data := dashboardData{
 		Version:     "test",
@@ -85,6 +96,8 @@ func TestDashboardRendersThePoolPanel(t *testing.T) {
 		"사용자 대기 읽기",
 		"6 / 6",
 		"2900 ms",
+		"전체 시도",
+		"503 요청 수가 아닙니다",
 		"docs/operations.md",
 	} {
 		if !strings.Contains(html, want) {

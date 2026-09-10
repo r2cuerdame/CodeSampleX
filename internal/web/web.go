@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -61,11 +62,11 @@ type Store interface {
 	// above one means this evidence cannot say whose the symbol is.
 	SymbolPackageSpread(ctx context.Context, ecosystem string, symbols []string) (map[string]int, error)
 	// SampleMeta returns published-sample metadata by content id.
-	SampleMeta(ctx context.Context, id string) (SampleMeta, bool)
+	SampleMeta(ctx context.Context, id string) (SampleMeta, bool, error)
 	// SampleManifest returns only the stored manifest. Collection pages use
 	// this instead of SampleMeta so they do not open and decompress the
 	// artifact merely to learn its recorded environment.
-	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool)
+	SampleManifest(ctx context.Context, id string) (manifestJSON string, ok bool, err error)
 	// SampleReceipts returns the verification-receipt JSON documents of a sample.
 	SampleReceipts(ctx context.Context, id string) ([]string, error)
 	// SampleSource returns the readable files of a sample's artifact.
@@ -452,6 +453,7 @@ type site struct {
 	// while a fresh production builder is using the background DB lanes.
 	derivedRefreshing bool
 	derivedRetryAt    time.Time
+	derivedRetry      retrypolicy.Series
 
 	// assets caches the per-package three-axis rollup behind /compatibility.
 	// It classifies every public release, which is a timer job and not a
@@ -468,6 +470,7 @@ type site struct {
 	handAt         time.Time
 	handRefreshing bool
 	handRetryAt    time.Time
+	handRetry      retrypolicy.Series
 
 	// cube* caches assembled compatibility cubes per package (cube.go):
 	// one assembly reads dozens of snapshots, which is fine on a timer and
@@ -510,6 +513,12 @@ type site struct {
 	// cannot multiply the database fan-out for the same cold cube.
 	heroLoading map[string]bool
 	heroRetryAt map[string]time.Time
+	heroRetry   map[string]retrypolicy.Series
+
+	// backgroundNow/backgroundJitter are deterministic seams for the cache
+	// retry state machines. Production leaves both nil.
+	backgroundNow    func() time.Time
+	backgroundJitter func(time.Duration) time.Duration
 }
 
 type heroCacheEntry struct {
@@ -1064,6 +1073,7 @@ func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
 }
 
 func (s *site) unavailable(w http.ResponseWriter, r *http.Request, lang string) {
+	w.Header().Set("Retry-After", "2")
 	b := s.page(r, lang, i18n.T(lang, "error.unavailable")+" — CodeSampleX", i18n.T(lang, "error.unavailable"))
 	b.Alternates = nil
 	b.Canonical = ""
@@ -1088,7 +1098,12 @@ func (s *site) oneSegment(w http.ResponseWriter, r *http.Request) {
 // robots allows everything and advertises the sitemap.
 func (s *site) robots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("User-agent: *\nAllow: /\n\nSitemap: " + s.base(r) + "/sitemap.xml\n"))
+	const blocked = "User-agent: Bytespider\nDisallow: /\n\n" +
+		"User-agent: PetalBot\nDisallow: /\n\n" +
+		"User-agent: SemrushBot\nDisallow: /\n\n" +
+		"User-agent: AhrefsBot\nDisallow: /\n\n" +
+		"User-agent: MJ12bot\nDisallow: /\n\n"
+	_, _ = w.Write([]byte(blocked + "User-agent: *\nAllow: /\n\nSitemap: " + s.base(r) + "/sitemap.xml\n"))
 }
 
 // installScript serves an embedded installer with the deployment's real

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,20 @@ func TestSchemaFixtures(t *testing.T) {
 		"measurement-report.json": measurement.NewTwoLayerReport("community",
 			measurement.RetrievalQuality{},
 			measurement.OutcomeValue{}),
+		"cli-execution-evidence.json": CLIExperienceObservation{
+			Coordinate: CLIExperienceCoordinate{
+				Tool: "git", ToolVersion: "2.55.0", Subcommand: "status", ArgsPattern: "--short", Shell: "direct",
+				Environment: EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"},
+			},
+			Provenance: ProvenanceField,
+			Result:     ResultPass,
+			Termination: FailureTermination{
+				Kind: TerminationExit,
+			},
+			EvidenceQuality:   EvidenceComplete,
+			Count:             1,
+			IsHighInformation: false,
+		},
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -72,6 +87,7 @@ func TestSchemaFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", e.Name(), err)
@@ -115,6 +131,7 @@ func TestVerificationReceiptSchemaEvolution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", path, err)
@@ -188,6 +205,7 @@ func TestObservationBatchSchemaRollingCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", path, err)
@@ -256,6 +274,7 @@ func TestSearchSchemaRollingCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatal(err)

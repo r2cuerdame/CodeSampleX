@@ -109,6 +109,18 @@ type FarmBacklog struct {
 	// It is the WHOLE backlog, not the bounded slice one scheduling pass
 	// offers. A backlog reported at its own cap reads as finished work.
 	Dependencies int
+	// RequestBacklog is how many requested coordinates (Wanted) remain
+	// unresolved: real user and agent demand with no passing sample.
+	RequestBacklog int
+	// RepeatedMisses is how many unresolved requested coordinates were asked
+	// more than once (asks > 1), highlighting high-frequency unmet demand.
+	RepeatedMisses int
+	// ResolvedRequests is how many requested coordinates have been answered
+	// by an independently verified passing sample.
+	ResolvedRequests int
+	// TotalRequests is how many distinct requested coordinates have ever
+	// entered the wanted queue.
+	TotalRequests int
 	// ClaimedByKind is work handed out inside the window, by queue source.
 	// This is the generation rate: what the scheduler actually produced,
 	// rather than what it could have.

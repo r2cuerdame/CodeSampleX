@@ -52,16 +52,22 @@ var (
 	reUnixPath = regexp.MustCompile(`(?m)(^|[\s"'(\[=])(/[^\s"':]+)`)
 	reRelPath  = regexp.MustCompile(`\.{1,2}[\\/][^\s"']+`)
 
-	reURL    = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.\-]*://[^\s"')\]>]+`)
-	reEmail  = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
-	reDQuote = regexp.MustCompile(`"[^"\n]*"`)
-	reSQuote = regexp.MustCompile(`'[^'\n]*'`)
+	reURL              = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.\-]*://[^\s"')\]>]+`)
+	reEmail            = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	reSecretAssignment = regexp.MustCompile(`(?im)\b(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=][^\r\n]*`)
+	reKnownToken       = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b`)
+	reDQuote           = regexp.MustCompile(`"[^"\n]*"`)
+	reSQuote           = regexp.MustCompile(`'[^'\n]*'`)
 
 	reTokenCand = regexp.MustCompile(`[A-Za-z0-9+/=]{20,}`)
 	reHexOnly   = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
-	reParenLineCol = regexp.MustCompile(`\(\d+,\d+\)`)
-	reColonNum     = regexp.MustCompile(`:\d+\b`)
+	reParenLineCol   = regexp.MustCompile(`\(\d+,\d+\)`)
+	reColonNum       = regexp.MustCompile(`:\d+\b`)
+	reCLIPlaceholder = regexp.MustCompile(`<(?:path|url|email|str|token|uuid|timestamp|pid|ip|port|n|user)>`)
+	reCLIKeyword     = regexp.MustCompile(`(?i)\b(?:error|warning|failed|failure|fail|passed|pass|success|denied|timeout|timed|out|not|found|exit|code|signal|killed|unable|cannot)\b`)
+	reCLIPrivateWord = regexp.MustCompile(`[\p{L}\p{N}_][\p{L}\p{N}_.@/\\:\-]*`)
+	reRepeatedText   = regexp.MustCompile(`(?:<text>\s+){2,}<text>`)
 )
 
 // protector shields substrings that must survive the destructive steps.
@@ -135,9 +141,13 @@ func sanitize(raw string, stage domain.Stage, publicPkgs []string, scrubHostUser
 	s = reUnixPath.ReplaceAllString(s, "${1}<path>")
 	s = reRelPath.ReplaceAllString(s, "<path>")
 
-	// (4) URLs, (5) emails, (6) quoted string literals.
+	// (4) URLs, (5) emails and well-known secret assignments/prefixes, (6)
+	// quoted string literals. Assignment redaction is needed even for values
+	// that are not base64-shaped (for example an all-lowercase GitHub token).
 	s = reURL.ReplaceAllString(s, "<url>")
 	s = reEmail.ReplaceAllString(s, "<email>")
+	s = reSecretAssignment.ReplaceAllString(s, "${1}=<token>")
+	s = reKnownToken.ReplaceAllString(s, "<token>")
 	s = reDQuote.ReplaceAllString(s, "<str>")
 	s = reSQuote.ReplaceAllString(s, "<str>")
 
@@ -230,28 +240,69 @@ func SanitizeClassifiedFailure(raw string, stage domain.Stage, term domain.Failu
 // public-wire cap. It is idempotent, which lets the server reject any client
 // value that was not produced by the same canonical normalization.
 func PublicErrorSummary(normalized string) string {
+	summary, _ := PublicErrorSummaryWithTruncation(normalized)
+	return summary
+}
+
+// PublicErrorSummaryWithTruncation also reports whether useful normalized
+// content was omitted by the four-line or 512-byte excerpt bounds.
+func PublicErrorSummaryWithTruncation(normalized string) (string, bool) {
 	const maxBytes = 512
 	lines := strings.Split(strings.ReplaceAll(normalized, "\r\n", "\n"), "\n")
 	out := make([]string, 0, 4)
+	truncated := false
 	for _, line := range lines {
 		line = strings.Join(strings.Fields(line), " ")
 		if line == "" {
 			continue
 		}
-		out = append(out, line)
 		if len(out) == 4 {
-			break
+			truncated = true
+			continue
 		}
+		out = append(out, line)
 	}
 	s := strings.Join(out, " · ")
 	if len(s) > maxBytes {
+		truncated = true
 		s = s[:maxBytes]
 		for !utf8.ValidString(s) {
 			s = s[:len(s)-1]
 		}
 		s = strings.TrimSpace(s)
 	}
-	return s
+	return s, truncated
+}
+
+// CLIOutputExcerpt reduces a normalized stream to a non-identifying diagnostic
+// shape. Error codes, fixed diagnostic keywords, and sanitizer placeholders
+// survive; every other word (including project, host, file, and customer names
+// in any Unicode script) becomes <text>. The full normalized text may be hashed
+// locally for comparison, but only this shape is persisted as an excerpt.
+func CLIOutputExcerpt(normalized string) (string, bool) {
+	summary, truncated := PublicErrorSummaryWithTruncation(normalized)
+	if summary == "" {
+		return "", truncated
+	}
+	var protected []string
+	protect := func(value string) string {
+		protected = append(protected, value)
+		// Section signs are punctuation, so the Unicode word scrub below cannot
+		// rewrite the marker itself.
+		return "\x00" + strings.Repeat("§", len(protected)) + "\x00"
+	}
+	for _, re := range codeClasses {
+		summary = re.ReplaceAllStringFunc(summary, protect)
+	}
+	summary = reCLIPlaceholder.ReplaceAllStringFunc(summary, protect)
+	summary = reCLIKeyword.ReplaceAllStringFunc(summary, protect)
+	summary = reCLIPrivateWord.ReplaceAllString(summary, "<text>")
+	summary = reRepeatedText.ReplaceAllString(summary, "<text>")
+	for i, value := range protected {
+		marker := "\x00" + strings.Repeat("§", i+1) + "\x00"
+		summary = strings.ReplaceAll(summary, marker, value)
+	}
+	return summary, truncated
 }
 
 // CanonicalPublicErrorSummary revalidates a normalized public-wire summary
@@ -426,6 +477,8 @@ func Redact(raw string) (clean string, redacted bool) {
 	s = reRelPath.ReplaceAllString(s, "<path>")
 	s = reURL.ReplaceAllString(s, "<url>")
 	s = reEmail.ReplaceAllString(s, "<email>")
+	s = reSecretAssignment.ReplaceAllString(s, "${1}=<token>")
+	s = reKnownToken.ReplaceAllString(s, "<token>")
 	s = reDQuote.ReplaceAllString(s, "<str>")
 	s = reSQuote.ReplaceAllString(s, "<str>")
 	s = reTokenCand.ReplaceAllStringFunc(s, func(m string) string {

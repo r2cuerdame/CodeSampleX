@@ -35,8 +35,12 @@ func buildMux(ctx context.Context, cfg serverstore.ServerConfig, store serversto
 }
 
 func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) (*http.ServeMux, *activity.Tracker) {
+	return buildMuxWithTrackerAndWanted(ctx, cfg, store, nil)
+}
+
+func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, wanted *httpapi.WantedSnapshot) (*http.ServeMux, *activity.Tracker) {
 	build := buildinfo.FromEnvironment()
-	deps := httpapi.Deps{Store: store, Cfg: cfg, Build: build}
+	deps := httpapi.Deps{Store: store, Cfg: cfg, Build: build, WantedSnapshot: wanted}
 	if cfg.BlobDir != "" {
 		blobs, err := blob.NewFS(cfg.BlobDir)
 		if err != nil {
@@ -117,9 +121,22 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 	// The database budget is the outermost wrapper: it has to be in place
 	// before any handler reaches the store, and it has to still be there
 	// when the handler returns so the request can report what the pool cost
-	// it. See dbclass.go.
+	// it. Package cache-miss admission lives inside webStore so warm responses
+	// never consume a DB-load slot.
 	outer.Handle("/", withDBBudget(activityTracker.Wrap(inner)))
 	return outer, activityTracker
+}
+
+// primeWantedBeforeBuilder is the restart ordering boundary: public wanted
+// data is captured while the database is idle, and only then may the
+// aggregation pipeline start consuming shared PostgreSQL resources.
+func primeWantedBeforeBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, start func(context.Context, serverstore.ServerConfig, serverstore.Store)) (*httpapi.WantedSnapshot, error) {
+	snapshot, err := httpapi.LoadWantedSnapshot(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	start(ctx, cfg, store)
+	return snapshot, nil
 }
 
 // adminVersion is the one line the private dashboard shows for "what is

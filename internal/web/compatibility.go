@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
-// assetTTL, assetRefreshTimeout and assetRetryDelay pace the package rollup.
+// assetTTL and assetRefreshTimeout pace the package rollup.
 //
 // The rollup classifies every public release, which is fine on a timer and not
 // fine inside a request: the first /compatibility after a restart would wait
@@ -21,7 +23,6 @@ import (
 const (
 	assetTTL            = 5 * time.Minute
 	assetRefreshTimeout = 30 * time.Second
-	assetRetryDelay     = 30 * time.Second
 )
 
 // assetCache is the per-package rollup, keyed "ecosystem/name".
@@ -31,6 +32,7 @@ type assetCache struct {
 	at         time.Time
 	refreshing bool
 	retryAt    time.Time
+	retry      retrypolicy.Series
 }
 
 // packageAssets returns the last complete rollup and starts one bounded
@@ -41,10 +43,10 @@ type assetCache struct {
 // waiting would trade a missing chip for a page that does not arrive.
 func (s *site) packageAssets() map[string]PackageAsset {
 	s.assets.mu.Lock()
-	now := time.Now()
+	now := s.backgroundNowTime()
 	rows := s.assets.rows
 	if !s.assets.at.After(now.Add(-assetTTL)) &&
-		!s.assets.refreshing && !now.Before(s.assets.retryAt) {
+		!s.assets.refreshing && backgroundRetryReady(&s.assets.retry, &s.assets.retryAt, now) {
 		s.assets.refreshing = true
 		go s.refreshPackageAssets(assetRefreshTimeout)
 	}
@@ -59,7 +61,13 @@ func (s *site) refreshPackageAssets(timeout time.Duration) {
 			s.failPackageAssetRefresh()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	s.assets.mu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.assets.retry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.assets.mu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	rows, err := s.d.Store.PackageAssets(ctx)
 	if err != nil {
@@ -73,7 +81,7 @@ func (s *site) refreshPackageAssets(timeout time.Duration) {
 	s.assets.mu.Lock()
 	s.assets.rows, s.assets.at = out, time.Now()
 	s.assets.refreshing = false
-	s.assets.retryAt = time.Time{}
+	backgroundRetrySucceeded(&s.assets.retry, &s.assets.retryAt)
 	s.assets.mu.Unlock()
 }
 
@@ -85,7 +93,7 @@ func (s *site) refreshPackageAssets(timeout time.Duration) {
 func (s *site) failPackageAssetRefresh() {
 	s.assets.mu.Lock()
 	s.assets.refreshing = false
-	s.assets.retryAt = time.Now().Add(assetRetryDelay)
+	backgroundRetryFailed(&s.assets.retry, &s.assets.retryAt, s.backgroundNowTime(), assetTTL, s.backgroundJitter)
 	s.assets.mu.Unlock()
 }
 

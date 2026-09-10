@@ -26,13 +26,20 @@ type PoolStatsReader interface {
 
 // poolClassView is one class's row.
 type poolClassView struct {
-	Label    string
-	InUse    string
-	Acquired uint64
-	Waited   uint64
-	WaitMax  string
-	Busy     uint64
-	Timeouts uint64
+	Label      string
+	InUse      string
+	Attempts   uint64
+	First      uint64
+	Retries    uint64
+	Followups  uint64
+	Acquired   uint64
+	Waited     uint64
+	WaitMax    string
+	Busy       uint64
+	Suppressed uint64
+	Canceled   uint64
+	Failed     uint64
+	Timeouts   uint64
 	// Strained is true when this class has been refused a connection or had
 	// a statement cancelled. It drives the highlight, so the row that needs
 	// attention is the one an operator's eye lands on.
@@ -73,17 +80,24 @@ func buildPoolView(stats serverstore.PoolStats) poolView {
 		if label == "" {
 			label = c.Class
 		}
-		strained := c.Busy > 0 || c.Timeouts > 0
+		strained := c.Busy > 0 || c.Failed > 0 || c.Timeouts > 0
 		v.Strained = v.Strained || strained
 		v.Classes = append(v.Classes, poolClassView{
-			Label:    label,
-			InUse:    fmt.Sprintf("%d / %d", c.InUse, c.Limit),
-			Acquired: c.Acquired,
-			Waited:   c.Waited,
-			WaitMax:  formatPoolWait(c.WaitMax),
-			Busy:     c.Busy,
-			Timeouts: c.Timeouts,
-			Strained: strained,
+			Label:      label,
+			InUse:      fmt.Sprintf("%d / %d", c.InUse, c.Limit),
+			Attempts:   c.Attempts,
+			First:      c.First,
+			Retries:    c.Retries,
+			Followups:  c.Followups,
+			Acquired:   c.Acquired,
+			Waited:     c.Waited,
+			WaitMax:    formatPoolWait(c.WaitMax),
+			Busy:       c.Busy,
+			Suppressed: c.Suppressed,
+			Canceled:   c.Canceled,
+			Failed:     c.Failed,
+			Timeouts:   c.Timeouts,
+			Strained:   strained,
 		})
 	}
 	return v

@@ -16,7 +16,7 @@ func TestActivationFunnelKeepsEventAndLifecycleBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := string(raw)
+	doc := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	for _, want := range []string{
 		"same queued hit payload carries the same\noffer ID and collapses as a transport retry",
 		"new random offer ID, and is a distinct hit",

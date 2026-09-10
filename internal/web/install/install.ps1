@@ -38,15 +38,28 @@ Get-ChildItem -Path $dir -Filter 'csx.exe.old-*' -ErrorAction SilentlyContinue |
 Write-Host "Downloading csx payload and stable launcher (windows/$arch) from $base ..."
 $staged = Join-Path $dir 'csx-payload.new.exe'
 $launcherStaged = Join-Path $dir 'csx-launcher.new.exe'
+$manifestStaged = Join-Path $dir 'csx-manifest.new.json'
+$bootstrapStaged = Join-Path $dir 'csx-bootstrap.new.json'
 $checksums = "$exe.checksums"
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-windows-$arch.exe" -OutFile $staged
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
+    # Capture the deployment's stable identity once. All remaining URLs are
+    # immutable, so neither a rollback nor another release can mix these bytes.
+    # This parse selects URLs only; the payload verifies both signatures below.
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/csx-update-stable.json" -OutFile $manifestStaged
+    $envelope = Get-Content -LiteralPath $manifestStaged -Raw | ConvertFrom-Json
+    $manifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json
+    if ($manifest.channel -ne 'stable' -or $manifest.version -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'invalid stable release identity' }
+    $releaseBase = "https://github.com/r2cuerdame/CodeSampleX/releases/download/$($manifest.version)"
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/csx-bootstrap-stable.json" -OutFile $bootstrapStaged
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/csx-windows-$arch.exe" -OutFile $staged
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/csx-launcher-windows-$arch.exe" -OutFile $launcherStaged
     $flush = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try { $flush.Flush($true) } finally { $flush.Dispose() }
     $flush = [IO.File]::Open($launcherStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try { $flush.Flush($true) } finally { $flush.Dispose() }
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/dl/SHA256SUMS.txt" -OutFile $checksums
+    $flush = [IO.File]::Open($manifestStaged, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    try { $flush.Flush($true) } finally { $flush.Dispose() }
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/SHA256SUMS.txt" -OutFile $checksums
     $asset = "csx-windows-$arch.exe"
     $line = Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))$" } | Select-Object -First 1
     $launcherAsset = "csx-launcher-windows-$arch.exe"
@@ -61,14 +74,16 @@ try {
     if ($launcherActual -ne $launcherExpected) { throw 'downloaded launcher checksum mismatch' }
     $stagedVersion = & $staged version
     if ($LASTEXITCODE -ne 0 -or $stagedVersion -notmatch '^csx v\d+\.\d+\.\d+$') { Remove-Item $staged -Force -ErrorAction SilentlyContinue; throw 'staged csx self-test failed' }
-    $launcherVersion = & $launcherStaged --launcher-version
-    if ($LASTEXITCODE -ne 0 -or $launcherVersion -ne 'csx-launcher v1.0.0') { throw 'staged launcher self-test failed' }
+    if ($stagedVersion -cne "csx $($manifest.version)") { throw 'staged payload has a different release identity' }
+    $launcherVersion = 'csx-launcher v1.0.0'
 } catch {
     $msg = $_.Exception.Message
     $hresult = $_.Exception.HResult
     $isAv = ($hresult -eq -2147024671) -or ($msg -match 'virus|potentially unwanted software|operation did not complete successfully')
     Remove-Item $staged -Force -ErrorAction SilentlyContinue
     Remove-Item $launcherStaged -Force -ErrorAction SilentlyContinue
+    Remove-Item $manifestStaged -Force -ErrorAction SilentlyContinue
+    Remove-Item $bootstrapStaged -Force -ErrorAction SilentlyContinue
     Remove-Item $checksums -Force -ErrorAction SilentlyContinue
     if ($isAv) {
         Write-Host ""
@@ -91,9 +106,15 @@ if (Test-Path $exe) {
 	} catch { $alreadyLauncher = $false }
 }
 if ($alreadyLauncher -and $installedLauncherVersion -ne $launcherVersion) { throw 'launcher protocol transition requires a newer migration installer; no pointer was changed' }
-if ((Test-Path $exe) -and -not $alreadyLauncher) { & $staged update bootstrap-launcher $dir $staged $exe }
-else { & $staged update bootstrap-launcher $dir $staged }
-if ($LASTEXITCODE -ne 0) { throw 'signed launcher payload bootstrap failed' }
+try {
+    if ((Test-Path $exe) -and -not $alreadyLauncher) { & $staged update bootstrap-launcher $dir $staged $exe }
+    else { & $staged update bootstrap-launcher $dir $staged }
+    if ($LASTEXITCODE -ne 0) { throw 'signed launcher payload bootstrap failed' }
+} finally {
+    Remove-Item $manifestStaged -Force -ErrorAction SilentlyContinue
+    Remove-Item $bootstrapStaged -Force -ErrorAction SilentlyContinue
+}
+# The bootstrap verified and self-tested the signed launcher before commit.
 Remove-Item $staged -Force -ErrorAction SilentlyContinue
 $replaceLauncher = -not $alreadyLauncher
 if ($alreadyLauncher) { $replaceLauncher = ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $launcherActual) }
@@ -132,6 +153,14 @@ try {
     throw
 }
 Remove-Item $journal -Force -ErrorAction SilentlyContinue
+
+# Automation may request only the verified binary installation. It must not
+# mutate the real user PATH, agent configuration, or start a daemon.
+if ($env:CSX_INSTALL_ONLY -eq '1') {
+    & $exe version
+    if ($LASTEXITCODE -ne 0) { throw 'installed launcher payload self-test failed' }
+    return
+}
 
 # Add the install dir to the user PATH once, without changing anything else
 # about it.

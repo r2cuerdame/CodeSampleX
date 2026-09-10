@@ -811,18 +811,35 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, all
 	if len(deps) > maxDependencyRows {
 		deps = deps[:maxDependencyRows]
 	}
-	var wg sync.WaitGroup
-	for i := range deps {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			purl := domain.PURL{Ecosystem: eco, Name: deps[idx].Library, Version: deps[idx].Version}.String()
-			deps[idx].State = dependencyEvidenceState(r, s.d.Store, purl)
-			deps[idx].StateText = i18n.T(lang, "pkg.dep_state_"+deps[idx].State)
-			deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
-		}(i)
+	const maxWorkers = 3
+	workers := maxWorkers
+	if len(deps) < workers {
+		workers = len(deps)
 	}
-	wg.Wait()
+	if workers > 0 {
+		ch := make(chan int, len(deps))
+		for i := range deps {
+			ch <- i
+		}
+		close(ch)
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for idx := range ch {
+					if r.Context().Err() != nil {
+						return
+					}
+					purl := domain.PURL{Ecosystem: eco, Name: deps[idx].Library, Version: deps[idx].Version}.String()
+					deps[idx].State = dependencyEvidenceState(r, s.d.Store, purl)
+					deps[idx].StateText = i18n.T(lang, "pkg.dep_state_"+deps[idx].State)
+					deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
+				}
+			}()
+		}
+		wg.Wait()
+	}
 	if len(deps) > 0 {
 		var healthSummary *DependencyHealthSummary
 		deps, healthSummary = evaluateDependencyHealth(eco, name, version, deps, allClusters, matrix, lang)
@@ -1024,8 +1041,8 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
-	samples, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
-	if err != nil {
+	samples, samplesErr := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	if samplesErr != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
 	codeCounts, codeErr := s.d.Store.PackageCodeCounts(r.Context(), eco, name)
@@ -1036,21 +1053,23 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A package requested through NO_SAFE_MATCH has a useful, honest page
 	// even before its first sample exists. It says exactly that the request
 	// is queued; it does not manufacture a version, matrix or evidence row.
-	var wanted []WantedRow
-	if rows, err := s.d.Store.WantedForPackage(r.Context(), eco, name); err == nil {
-		wanted = rows
-	}
+	wanted, wantedErr := s.d.Store.WantedForPackage(r.Context(), eco, name)
 	// The cube is the page. Everything under it belongs to ONE coordinate, so
 	// it is built from what the cube decided rather than from the package: on
 	// an undecided slice there is no release whose dependencies these are and
 	// no environment whose failures these are, and the page showed both
 	// anyway. That pile is what a reader had to read past to find the grid.
-	cube := buildCubeView(s, r, lang, eco, name, code)
+	cube, err := buildCubeView(s, r, lang, eco, name, code)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var clusters []clusterView
 	var clusterTotal int
 	var deps []PackageDep
 	var allClusters []failureCluster
-	if rawClusters, _, err := s.d.Store.FailureClusters(r.Context(), eco, name); err == nil && len(rawClusters) > 0 {
+	rawClusters, _, clustersErr := s.d.Store.FailureClusters(r.Context(), eco, name)
+	if clustersErr == nil && len(rawClusters) > 0 {
 		allClusters = decodeFailureClusters(rawClusters)
 	}
 
@@ -1085,12 +1104,22 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		}
 	}
 	// Only an authoritative empty aggregate can help prove absence. A failed
-	// aggregate read is unknown and must not turn a transient store error into
-	// a permanent 404 for a package whose older code fell outside the display
-	// window.
-	if len(versions) == 0 && len(samples) == 0 && code.known && code.total == 0 && len(wanted) == 0 && len(allClusters) == 0 {
-		s.notFound(w, r, lang)
-		return
+	// aggregate, request or failure read is unknown and must not turn a
+	// transient store error into a permanent 404. Wanted and failure rows can
+	// be the only evidence that gives a package a page.
+	if len(versions) == 0 && len(samples) == 0 && len(wanted) == 0 && len(allClusters) == 0 {
+		if !code.known || samplesErr != nil {
+			s.unavailable(w, r, lang)
+			return
+		}
+		if code.total == 0 {
+			if wantedErr != nil || clustersErr != nil {
+				s.unavailable(w, r, lang)
+				return
+			}
+			s.notFound(w, r, lang)
+			return
+		}
 	}
 	base := s.base(r)
 	// Translated: the <html lang> said one language while the title was
@@ -1187,14 +1216,19 @@ type symbolLink struct {
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
-	purl := domain.PURL{Ecosystem: eco, Name: name, Version: version}.String()
 	symbols, err := s.d.Store.PackageSymbols(r.Context(), eco, name, version)
 	if err != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
+	versionFacts, packageSnapshot, packageOK, err := loadVersionCubeFacts(
+		r.Context(), s.d.Store, eco, name, version, symbols)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var matrix []matrixRow
-	if raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, ""); ok {
+	if raw, ok := packageSnapshot, packageOK; ok {
 		var doc snapshotDoc
 		if json.Unmarshal([]byte(raw), &doc) == nil {
 			matrix = buildMatrix(lang, doc)
@@ -1204,7 +1238,11 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// golang module is published as both "1.6.0" and "v1.6.0" and only one
 	// spelling carries snapshot evidence, so requiring evidence here left
 	// the samples filed under the other spelling with nowhere to be read.
-	samples := s.versionSamples(r, eco, name, version)
+	samples, err := s.versionSamples(r, eco, name, version)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 {
 		s.notFound(w, r, lang)
 		return
@@ -1240,7 +1278,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// Costs no query: it reads the same cached target list the symbol list is
 	// built from.
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
-	runs := s.symbolRunCounts(r, eco, name, version)
+	runs := symbolRunCounts(versionFacts, version)
 	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread, runs)
 	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
@@ -1248,7 +1286,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		Symbols: links, Matrix: matrix,
 		Crumbs:     leaf(recordCrumbs(b, eco, name, version, "")),
 		Samples:    residue,
-		SymbolGrid: s.versionSymbolGrid(r, lang, eco, name, version),
+		SymbolGrid: versionSymbolGrid(lang, eco, name, version, versionFacts),
 		// A cluster names its own versions, so this release's failures can be
 		// picked out exactly and the rest left to the package page.
 		Clusters:     clusters,
@@ -1262,9 +1300,8 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 // no query. Verification only: an observation is recorded against the
 // package, not the API, and counting it here would put a package's builds
 // behind every symbol name it happens to mention.
-func (s *site) symbolRunCounts(r *http.Request, eco, name, version string) map[string][2]int64 {
-	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
-	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+func symbolRunCounts(facts []cubeFact, version string) map[string][2]int64 {
+	facts = filterCubeFacts(facts, map[string]string{"version": version})
 	out := map[string][2]int64{}
 	for _, f := range facts {
 		sym := f.Dims["symbol"]
@@ -1352,9 +1389,8 @@ func symbolLinks(b basePage, eco, name, version string, observed []string, sampl
 // version, symbol and OS pinned. Empty when the version is outside the
 // cube's newest-versions window or a 1×1 grid would only repeat the
 // detail table.
-func (s *site) versionSymbolGrid(r *http.Request, lang, eco, name, version string) pivotGrid {
-	allFacts, _ := s.cubeFacts(r.Context(), eco, name)
-	facts := filterCubeFacts(allFacts, map[string]string{"version": version})
+func versionSymbolGrid(lang, eco, name, version string, facts []cubeFact) pivotGrid {
+	facts = filterCubeFacts(facts, map[string]string{"version": version})
 	if len(facts) == 0 {
 		return pivotGrid{}
 	}
@@ -1413,14 +1449,18 @@ func suppressDuplicatePackageVerifications(facts []cubeFact) []cubeFact {
 // symbolSamples lists the published samples that answer one exact symbol of
 // one exact version. A sample names the APIs it was written against, so this
 // is a filter over the version's list rather than a separate read.
-func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) []SampleListItem {
+func (s *site) symbolSamples(r *http.Request, eco, name, version, symbol string) ([]SampleListItem, error) {
+	items, err := s.versionSamples(r, eco, name, version)
+	if err != nil {
+		return nil, err
+	}
 	var out []SampleListItem
-	for _, item := range s.versionSamples(r, eco, name, version) {
+	for _, item := range items {
 		if sampleNamesSymbol(item.Symbols, symbol) {
 			out = append(out, item)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // sampleNamesSymbol reports whether a sample answers for one symbol.
@@ -1462,10 +1502,10 @@ func symbolMember(s string) string {
 
 // versionSamples lists the published samples written against one exact
 // version, sorted so the APIs they answer for group together.
-func (s *site) versionSamples(r *http.Request, eco, name, version string) []SampleListItem {
+func (s *site) versionSamples(r *http.Request, eco, name, version string) ([]SampleListItem, error) {
 	all, err := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []SampleListItem
 	for _, item := range all {
@@ -1486,7 +1526,7 @@ func (s *site) versionSamples(r *http.Request, eco, name, version string) []Samp
 		}
 		return out[i].CreatedAt > out[j].CreatedAt
 	})
-	return out
+	return out, nil
 }
 
 // metaContextLimit bounds how many recorded environments a description
@@ -1644,9 +1684,17 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	// snapshot was filed as: /v5.10.0/pgx.CollectRows answered while
 	// /v5.10.0/CollectRows did not, though both name the same API and the
 	// second is what the symbol list now links.
-	samples := s.symbolSamples(r, eco, name, version, symbol)
+	samples, err := s.symbolSamples(r, eco, name, version, symbol)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	var doc snapshotDoc
-	raw, ok := s.d.Store.SnapshotJSON(r.Context(), purl, symbol)
+	raw, ok, err := cubeSnapshotJSON(r.Context(), s.d.Store, purl, symbol)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	switch {
 	case ok:
 		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
@@ -2097,7 +2145,11 @@ func (s *site) samplePage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id string) {
-	meta, ok := s.d.Store.SampleMeta(r.Context(), id)
+	meta, ok, err := s.d.Store.SampleMeta(r.Context(), id)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if !ok {
 		s.notFound(w, r, lang)
 		return
@@ -2109,34 +2161,37 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	}
 
 	var receipts []receiptView
-	if docs, err := s.d.Store.SampleReceipts(r.Context(), id); err == nil {
-		for _, doc := range docs {
-			var rec domain.VerificationReceipt
-			if json.Unmarshal([]byte(doc), &rec) != nil {
-				continue
-			}
-			stages := make([]string, 0, len(rec.Stages))
-			for k := range rec.Stages {
-				stages = append(stages, k)
-			}
-			sort.Strings(stages)
-			parts := make([]string, 0, len(stages))
-			for _, st := range stages {
-				parts = append(parts, st+":"+rec.Stages[st])
-			}
-			receipts = append(receipts, receiptView{
-				Context:     rec.Environment.ContextLabel(),
-				Environment: makeEnvironmentView(lang, rec.Environment),
-				Capability:  string(rec.SandboxCapability),
-				Contract:    rec.Stages["contract"],
-				Stages:      strings.Join(parts, " · "),
-				Verifier:    rec.VerifierAdapter,
-				CreatedAt:   datePart(rec.CreatedAt),
-				PeerID:      rec.PeerID,
-				Image:       imageRefOf(rec),
-				ImageShort:  shortImageRef(imageRefOf(rec)),
-			})
+	docs, err := s.d.Store.SampleReceipts(r.Context(), id)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
+	for _, doc := range docs {
+		var rec domain.VerificationReceipt
+		if json.Unmarshal([]byte(doc), &rec) != nil {
+			continue
 		}
+		stages := make([]string, 0, len(rec.Stages))
+		for k := range rec.Stages {
+			stages = append(stages, k)
+		}
+		sort.Strings(stages)
+		parts := make([]string, 0, len(stages))
+		for _, st := range stages {
+			parts = append(parts, st+":"+rec.Stages[st])
+		}
+		receipts = append(receipts, receiptView{
+			Context:     rec.Environment.ContextLabel(),
+			Environment: makeEnvironmentView(lang, rec.Environment),
+			Capability:  string(rec.SandboxCapability),
+			Contract:    rec.Stages["contract"],
+			Stages:      strings.Join(parts, " · "),
+			Verifier:    rec.VerifierAdapter,
+			CreatedAt:   datePart(rec.CreatedAt),
+			PeerID:      rec.PeerID,
+			Image:       imageRefOf(rec),
+			ImageShort:  shortImageRef(imageRefOf(rec)),
+		})
 	}
 
 	var (

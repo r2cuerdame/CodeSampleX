@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,7 +26,8 @@ import (
 // with max_connections 40 — which is exactly why what a caller is allowed to
 // do with a connection is bounded per class; see PoolPolicy.
 type PG struct {
-	pool *connPool
+	pool                    *connPool
+	builderRepairGeneration atomic.Uint64
 }
 
 var _ Store = (*PG)(nil)
@@ -77,9 +79,14 @@ func (p *PG) PoolStats() PoolStats { return p.pool.stat() }
 // than protect one.
 func (p *PG) Migrate(ctx context.Context) error {
 	return p.withConn(WithQueryClass(ctx, ClassBackground), func(c *pgx.Conn) error {
-		return Migrate(ctx, c)
+		return migrateWithBuilderRepair(ctx, c, func() { p.builderRepairGeneration.Add(1) })
 	})
 }
+
+// BuilderRepairGeneration changes after each committed projection repair page.
+// Builders sharing this PG instance must complete a full pass before trusting
+// their old incremental watermark again. The durable stats flag covers restart.
+func (p *PG) BuilderRepairGeneration() uint64 { return p.builderRepairGeneration.Load() }
 
 func (p *PG) withConn(ctx context.Context, fn func(*pgx.Conn) error) error {
 	c, err := p.pool.acquire(ctx)
@@ -360,6 +367,69 @@ func (p *PG) UpsertPackage(ctx context.Context, pkg PackageRow) error {
 	})
 }
 
+// RegisterPackages inserts a bounded page of package rows the registry has
+// never seen, in one database checkout and one statement, and leaves every
+// row that already exists completely alone.
+//
+// It is the compatibility builder's write, and it is deliberately NOT
+// UpsertPackage for a page. The builder learns "never seen" from a
+// membership probe and writes later; between the two, the registry check
+// can confirm one of those releases PUBLIC with a checked_at. A conflict
+// rule that replaced publicness and checked_at -- UpsertPackage's rule --
+// turned that confirmation back into UNKNOWN, and nothing would ever check
+// it again (#174 review). Observation ingest has the same intent for the
+// rows it touches: keep the registry aware of the release, never decide its
+// publicness. Here even last_seen stays put, so aggregation remains a
+// non-write for a known release and "when did the network last see this
+// package" keeps meaning what it says.
+//
+// A purl repeated within one page is inserted once; DO NOTHING skips the
+// repeat the way it skips an existing row. The list is a BOUNDED page; the
+// caller chunks.
+func (p *PG) RegisterPackages(ctx context.Context, rows []PackageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	n := len(rows)
+	purls := make([]string, 0, n)
+	ecosystems := make([]string, 0, n)
+	names := make([]string, 0, n)
+	versions := make([]string, 0, n)
+	majors := make([]string, 0, n)
+	publicness := make([]string, 0, n)
+	checked := make([]*time.Time, 0, n)
+	seen := make(map[string]bool, n)
+	for _, row := range rows {
+		if seen[row.PURL] {
+			continue
+		}
+		seen[row.PURL] = true
+		if row.Publicness == "" {
+			row.Publicness = "UNKNOWN"
+		}
+		var checkedAt *time.Time
+		if !row.CheckedAt.IsZero() {
+			at := row.CheckedAt
+			checkedAt = &at
+		}
+		purls = append(purls, row.PURL)
+		ecosystems = append(ecosystems, row.Ecosystem)
+		names = append(names, row.Name)
+		versions = append(versions, row.Version)
+		majors = append(majors, row.Major)
+		publicness = append(publicness, row.Publicness)
+		checked = append(checked, checkedAt)
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO packages(purl, ecosystem, name, version, major, publicness, checked_at)
+			SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
+			ON CONFLICT (purl) DO NOTHING`,
+			purls, ecosystems, names, versions, majors, publicness, checked)
+		return err
+	})
+}
+
 const packageCols = `purl, ecosystem, name, version, major, publicness, checked_at, first_seen, last_seen`
 
 func scanPackage(row pgx.Row) (PackageRow, error) {
@@ -398,6 +468,90 @@ func (p *PG) GetPackage(ctx context.Context, purl string) (PackageRow, bool, err
 		return nil
 	})
 	return pkg, found, err
+}
+
+// ExistingPackagePURLs reports which of these purls already have a packages
+// row, in one database checkout.
+//
+// Receipt-derived registration asks that question about every package a live
+// receipt resolved, on every aggregation pass. One GetPackage checkout per
+// purl made an incremental pass with a single dirty package cost one
+// background pool acquisition per package in the whole corpus -- work that
+// scales with the network rather than with what changed, and that competes
+// with interactive readers for the same small pool.
+//
+// Membership only. Registration writes through RegisterPackages, which
+// inserts absent rows and nothing else, so a package that is already known
+// is left completely alone rather than having its last_seen clock refreshed
+// by aggregation.
+//
+// The list is a BOUNDED page; the caller chunks. Absent purls are simply
+// absent from the map, never present-and-false.
+func (p *PG) ExistingPackagePURLs(ctx context.Context, purls []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx,
+			`SELECT purl FROM packages WHERE purl = ANY($1::text[])`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl string
+			if err := rows.Scan(&purl); err != nil {
+				return err
+			}
+			out[purl] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PackagesByPURL returns the package rows for these purls, in one database
+// checkout, keyed by purl. It is GetPackage for a bounded page: the same
+// columns, so a caller can judge publicness and checked_at from it, and the
+// rows are left completely alone.
+//
+// The authoring poll asks this about every DEPENDENCY coordinate in its
+// candidate window to learn which ones the registry has already confirmed.
+// One GetPackage checkout per candidate was a few hundred interactive
+// checkouts per poll on an endpoint the whole fleet polls several times a
+// minute (#174).
+//
+// The list is a BOUNDED page; the caller chunks. Absent purls are simply
+// absent from the map.
+func (p *PG) PackagesByPURL(ctx context.Context, purls []string) (map[string]PackageRow, error) {
+	out := make(map[string]PackageRow, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx,
+			`SELECT `+packageCols+` FROM packages WHERE purl = ANY($1::text[])`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			pkg, err := scanPackage(rows)
+			if err != nil {
+				return err
+			}
+			out[pkg.PURL] = pkg
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (p *PG) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]PackageRow, error) {
@@ -469,6 +623,42 @@ func (p *PG) GetSnapshot(ctx context.Context, purl, symbol string) (string, bool
 		return nil
 	})
 	return js, found, err
+}
+
+// SnapshotsForPURLs is GetSnapshot for one symbol across a bounded page of
+// releases, in one database checkout, keyed by purl. Releases without a
+// snapshot for that symbol are absent from the map.
+//
+// The registry symbol endpoint reads the family snapshot of every release of
+// a package. One GetSnapshot checkout per release made a library with three
+// hundred releases three hundred interactive checkouts for one public read
+// (#174). The list is a BOUNDED page; the caller chunks.
+func (p *PG) SnapshotsForPURLs(ctx context.Context, purls []string, symbol string) (map[string]string, error) {
+	out := make(map[string]string, len(purls))
+	if len(purls) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT purl, snapshot::text FROM compatibility_snapshots
+			WHERE symbol = $2 AND purl = ANY($1::text[])`, purls, symbol)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var purl, js string
+			if err := rows.Scan(&purl, &js); err != nil {
+				return err
+			}
+			out[purl] = js
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PackageStagePasses reads every package-level snapshot for one package in a
@@ -554,15 +744,50 @@ func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	return out, err
 }
 
+const putSnapshotSQL = `
+	INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
+	VALUES($1,$2,$3,now())
+	ON CONFLICT (purl, symbol) DO UPDATE SET
+		snapshot = EXCLUDED.snapshot, generated_at = now()`
+
 func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
-			INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
-			VALUES($1,$2,$3,now())
-			ON CONFLICT (purl, symbol) DO UPDATE SET
-				snapshot = EXCLUDED.snapshot, generated_at = now()`,
+		_, err := c.Exec(ctx, putSnapshotSQL,
 			purl, symbol, []byte(snapshotJSON))
 		return err
+	})
+}
+
+// PutSnapshots pipelines one bounded builder chunk in one transaction. The
+// builder owns the bound so this method stays a narrow optimization rather
+// than a second public Store contract. All rows in a chunk become visible
+// together, and an error rolls the chunk back; later chunks and the pass's
+// generatedAt marker are not written.
+func (p *PG) PutSnapshots(ctx context.Context, snapshots []SnapshotRow) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		var batch pgx.Batch
+		for _, row := range snapshots {
+			batch.Queue(putSnapshotSQL, row.PURL, row.Symbol, []byte(row.SnapshotJSON))
+		}
+		results := tx.SendBatch(ctx, &batch)
+		for range snapshots {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return err
+			}
+		}
+		if err := results.Close(); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	})
 }
 
@@ -729,11 +954,13 @@ func (p *PG) ListSnapshotTargets(ctx context.Context) ([]SnapshotTarget, error) 
 // idle network the timestamp predicates return nothing and aggregation does
 // no materialized-view work.
 func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error) {
+	// Timestamp selectivity changes with every watermark. Avoid a cached
+	// generic plan that assumes a third of the corpus changed each pass.
 	var c Changes
 	seenPURLs := map[string]bool{}
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		rows, err := conn.Query(ctx,
-			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, since)
+			`SELECT DISTINCT purl, symbol FROM evidence_agg WHERE last_seen > $1`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -764,7 +991,7 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 				SELECT jsonb_array_elements_text(s.manifest->'packages') AS pkg
 				FROM samples s JOIN receipts r ON r.sample_id = s.sample_id
 				WHERE r.created_at > $1
-			) t`, since)
+			) t`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -788,7 +1015,15 @@ func (p *PG) ChangedSince(ctx context.Context, since time.Time) (Changes, error)
 		rrows, err := conn.Query(ctx, `
 			SELECT r.receipt::text
 			FROM receipts r JOIN samples s ON s.sample_id = r.sample_id
-			WHERE r.created_at > $1 OR s.created_at > $1 OR s.updated_at > $1`, since)
+			WHERE r.receipt_id IN (
+				SELECT receipt_id FROM receipts WHERE created_at > $1
+				UNION
+				SELECT r2.receipt_id FROM samples s2 JOIN receipts r2 ON r2.sample_id=s2.sample_id
+				WHERE s2.created_at > $1
+				UNION
+				SELECT r3.receipt_id FROM samples s3 JOIN receipts r3 ON r3.sample_id=s3.sample_id
+				WHERE s3.updated_at > $1
+			)`, pgx.QueryExecModeExec, since)
 		if err != nil {
 			return err
 		}
@@ -837,33 +1072,89 @@ func (p *PG) EvidenceForTarget(ctx context.Context, purl, symbol string) ([]Evid
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var e EvidenceRow
-			var outerCommandsJSON string
-			var first, last *time.Time
-			if err := rows.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
-				&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
-				&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
-				&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
-				&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
-				&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
-				&first, &last); err != nil {
+			e, err := scanEvidence(rows)
+			if err != nil {
 				return err
-			}
-			if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
-				return fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
-			}
-			if len(e.OuterCommands) > 0 {
-				e.OuterCommand = e.OuterCommands[0]
-			}
-			if first != nil {
-				e.FirstSeen = *first
-			}
-			if last != nil {
-				e.LastSeen = *last
 			}
 			out = append(out, e)
 		}
 		return rows.Err()
+	})
+	return out, err
+}
+
+func scanEvidence(row pgx.Row) (EvidenceRow, error) {
+	var e EvidenceRow
+	var outerCommandsJSON string
+	var first, last *time.Time
+	if err := row.Scan(&e.PURL, &e.Symbol, &e.SymbolConfidence, &e.EnvHash,
+		&e.EnvJSON, &e.Stage, &e.Result, &e.ErrorFingerprint, &e.ErrorCode,
+		&e.TerminationKind, &e.ExitCode, &e.Signal, &e.TimeoutMillis,
+		&e.ErrorSummary, &e.EvidenceQuality, &outerCommandsJSON, &e.OuterStage,
+		&e.ActualToolchain, &e.StageEvidence, &e.FailureEvidenceGap,
+		&e.ObservationCount, &e.UniquePeerBuckets, &e.UniqueProjectBuckets,
+		&first, &last); err != nil {
+		return EvidenceRow{}, err
+	}
+	if err := json.Unmarshal([]byte(outerCommandsJSON), &e.OuterCommands); err != nil {
+		return EvidenceRow{}, fmt.Errorf("serverstore: decode evidence outer commands: %w", err)
+	}
+	if len(e.OuterCommands) > 0 {
+		e.OuterCommand = e.OuterCommands[0]
+	}
+	if first != nil {
+		e.FirstSeen = *first
+	}
+	if last != nil {
+		e.LastSeen = *last
+	}
+	return e, nil
+}
+
+// EvidenceForTargets preserves EvidenceForTarget's indexed lookup and symbol
+// spelling semantics while sharing one background pool checkout across a
+// bounded builder batch.
+func (p *PG) EvidenceForTargets(ctx context.Context, targets []SnapshotTarget) (map[SnapshotTarget][]EvidenceRow, error) {
+	out := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	if len(targets) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var batch pgx.Batch
+		for _, target := range targets {
+			out[target] = nil
+			batch.Queue(`
+				SELECT purl, symbol, symbol_confidence, env_hash, env_json::text,
+				       stage, result, error_fp, error_code, termination_kind, exit_code,
+				       signal, timeout_millis, error_summary, evidence_quality, outer_commands::text,
+				       outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap, observation_count,
+				       unique_peer_buckets, unique_project_buckets, first_seen, last_seen
+				FROM evidence_agg
+				WHERE purl=$1 AND symbol = ANY($2)
+				ORDER BY env_hash, stage, result, error_fp`, target.PURL, symbolSpellings(target.PURL, target.Symbol))
+		}
+		results := c.SendBatch(ctx, &batch)
+		defer results.Close()
+		for _, target := range targets {
+			rows, err := results.Query()
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				e, err := scanEvidence(rows)
+				if err != nil {
+					rows.Close()
+					return err
+				}
+				out[target] = append(out[target], e)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			rows.Close()
+		}
+		return results.Close()
 	})
 	return out, err
 }
@@ -887,6 +1178,10 @@ func (p *PG) SaveCase(ctx context.Context, cse domain.Case) error {
 }
 
 func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
+	projection, projectionErr := deriveSampleBuilderProjection(s.ManifestJSON)
+	if projectionErr != nil {
+		projection = sampleBuilderProjection{coords: []string{}, purls: []string{}, symbols: []string{}}
+	}
 	if s.Status == "" {
 		s.Status = "PUBLISHED"
 	}
@@ -904,35 +1199,28 @@ func (p *PG) SaveSample(ctx context.Context, s SampleRow) error {
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-		if _, err := tx.Exec(ctx, `
+		inserted, err := tx.Exec(ctx, `
 			INSERT INTO samples(sample_id, case_id, manifest, status, origin_seeder,
-				license, size_bytes, hot_score, quarantined, quarantine_reason)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			ON CONFLICT (sample_id) DO UPDATE SET
-				manifest = EXCLUDED.manifest,
-				-- NOT the status. A sample id is the sha256 of its content,
-				-- so a conflict means this exact sample is already here --
-				-- and the ingest path always sends "PUBLISHED". Overwriting
-				-- with it threw away CROSS_PASS, MATRIX_PASS or STABLE that
-				-- independent peers had actually earned, on nothing more
-				-- than the author re-running their publish. The receipts
-				-- survived, so the status was recoverable only by an
-				-- operator running recompute-status by hand; until then the
-				-- sample ranked lower everywhere and could be cut from its
-				-- own shard by the sample cap.
-				--
-				-- Status is derived from receipts. SetSampleStatus is how it
-				-- moves; this is not.
-				hot_score = EXCLUDED.hot_score`,
+				license, size_bytes, hot_score, quarantined, quarantine_reason,
+				builder_coords, builder_purls, builder_symbols, builder_subject, builder_source_hash)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+				CASE WHEN $15 THEN md5($3::jsonb::text) END)
+			ON CONFLICT (sample_id) DO NOTHING`,
 			s.SampleID, caseID, []byte(s.ManifestJSON), s.Status, s.OriginSeeder,
-			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason); err != nil {
+			s.License, s.SizeBytes, s.HotScore, s.Quarantined, s.QuarantineReason,
+			projection.coords, projection.purls, projection.symbols, projection.subject, projectionErr == nil)
+		if err != nil {
 			return err
+		}
+		if inserted.RowsAffected() == 0 {
+			if err := updateSampleWithBuilderProjection(ctx, tx, s, projection, projectionErr == nil); err != nil {
+				return err
+			}
 		}
 
 		// A sample id is content-addressed, but rebuild the projection on a
-		// duplicate save as well. That keeps the relational index exactly in
-		// step with the manifest even if an operator repairs legacy data by
-		// replaying the sample.
+		// trusted duplicate save as well. Untrusted existing sources require
+		// offline reconciliation before normal publication can resume.
 		if _, err := tx.Exec(ctx, `DELETE FROM sample_packages WHERE sample_id=$1`, s.SampleID); err != nil {
 			return err
 		}
@@ -967,7 +1255,7 @@ func scanSample(row pgx.Row) (SampleRow, error) {
 		return SampleRow{}, err
 	}
 	if created != nil {
-		s.CreatedAt = *created
+		s.CreatedAt = created.UTC()
 	}
 	return s, nil
 }
@@ -1367,6 +1655,49 @@ func (p *PG) ListSamplesPage(ctx context.Context, limit, offset int) ([]SampleRo
 	return out, err
 }
 
+// ListSamplesPageWithTotal serves the public collection with one pool checkout
+// and one query on the normal path. Keeping the count and page together avoids
+// paying two interactive pool waits while the builder is using its background
+// lane after a cold deployment.
+func (p *PG) ListSamplesPageWithTotal(ctx context.Context, limit, offset int) ([]SampleRow, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var out []SampleRow
+	total := 0
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT `+sampleCols+`, count(*) OVER() FROM samples
+			WHERE NOT quarantined
+			ORDER BY created_at DESC, sample_id LIMIT $1 OFFSET $2`, limit, offset)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			s, count, err := scanSampleWithTotal(rows)
+			if err != nil {
+				return err
+			}
+			total = count
+			out = append(out, s)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// An out-of-range page has no window row carrying the total. Use the
+		// same already-acquired connection for this rare fallback.
+		if len(out) == 0 && offset > 0 {
+			return c.QueryRow(ctx, `SELECT count(*) FROM samples WHERE NOT quarantined`).Scan(&total)
+		}
+		return nil
+	})
+	return out, total, err
+}
+
 // SearchSamplesPage is ListSamplesPage narrowed by a reader's words.
 //
 // It searches the manifest, because that is where everything a reader would
@@ -1431,7 +1762,7 @@ func scanSampleWithTotal(row pgx.Row) (SampleRow, int, error) {
 		&s.OriginSeeder, &s.License, &s.SizeBytes, &s.HotScore, &created,
 		&s.Quarantined, &s.QuarantineReason, &total)
 	if created != nil {
-		s.CreatedAt = *created
+		s.CreatedAt = created.UTC()
 	}
 	return s, total, err
 }
@@ -1468,11 +1799,7 @@ func (p *PG) SetSampleStatus(ctx context.Context, sampleID, status string) error
 
 func (p *PG) SaveReceipt(ctx context.Context, r ReceiptRow) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `
-			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
-			VALUES($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (receipt_id) DO NOTHING`,
-			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
+		_, err := insertReceiptWithBuilderProjection(ctx, c, r)
 		return err
 	})
 }
@@ -1495,11 +1822,7 @@ func (p *PG) SaveReceiptForJob(ctx context.Context, r ReceiptRow, jobID int64) (
 		if tag.RowsAffected() != 1 {
 			return nil
 		}
-		inserted, err := tx.Exec(ctx, `
-			INSERT INTO receipts(receipt_id, sample_id, peer_id, env_hash, receipt, contract_result)
-			VALUES($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (receipt_id) DO NOTHING`,
-			r.ReceiptID, r.SampleID, r.PeerID, r.EnvHash, []byte(r.ReceiptJSON), r.ContractResult)
+		inserted, err := insertReceiptWithBuilderProjection(ctx, tx, r)
 		if err != nil {
 			return err
 		}
@@ -1568,6 +1891,44 @@ func (p *PG) ReceiptsForSample(ctx context.Context, sampleID string) ([]ReceiptR
 				r.CreatedAt = *created
 			}
 			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// ReceiptsForSamples returns receipt history for a bounded sample page in one
+// database checkout. The compatibility builder walks the whole live sample
+// corpus; doing one ReceiptsForSample checkout per sample turns an incremental
+// pass into thousands of background acquisitions and competes with readers.
+// Per-sample ordering matches ReceiptsForSample exactly.
+func (p *PG) ReceiptsForSamples(ctx context.Context, sampleIDs []string) (map[string][]ReceiptRow, error) {
+	out := make(map[string][]ReceiptRow, len(sampleIDs))
+	if len(sampleIDs) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT receipt_id, sample_id, peer_id, env_hash, receipt::text,
+			       COALESCE(contract_result,''), created_at
+			FROM receipts
+			WHERE sample_id = ANY($1::text[])
+			ORDER BY sample_id, created_at, receipt_id`, sampleIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r ReceiptRow
+			var created *time.Time
+			if err := rows.Scan(&r.ReceiptID, &r.SampleID, &r.PeerID, &r.EnvHash,
+				&r.ReceiptJSON, &r.ContractResult, &created); err != nil {
+				return err
+			}
+			if created != nil {
+				r.CreatedAt = *created
+			}
+			out[r.SampleID] = append(out[r.SampleID], r)
 		}
 		return rows.Err()
 	})
@@ -1994,6 +2355,46 @@ func (p *PG) StrandedDrafts(ctx context.Context, maxAttempts, limit int) ([]stri
 		return rows.Err()
 	})
 	return out, err
+}
+
+// JobsForSamples returns the verification jobs of a bounded sample page in
+// one database checkout. Matrix generation asks for the job history of every
+// verified Java sample in the live corpus on every aggregation pass; one
+// JobsForSample checkout per sample is the same whole-corpus acquisition
+// storm ExistingPackagePURLs describes.
+//
+// Per-sample ordering matches JobsForSample exactly, so the caller reads the
+// identical rows in the identical order either way. A sample with no jobs is
+// absent from the map, which ranges as the empty slice JobsForSample returns.
+func (p *PG) JobsForSamples(ctx context.Context, sampleIDs []string) (map[string][]JobRow, error) {
+	out := make(map[string][]JobRow, len(sampleIDs))
+	if len(sampleIDs) == 0 {
+		return out, nil
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
+			       COALESCE(claimed_by,''), claimed_at, created_at
+			FROM verification_jobs
+			WHERE sample_id = ANY($1::text[])
+			ORDER BY sample_id, created_at, id`, sampleIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out[j.SampleID] = append(out[j.SampleID], j)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (p *PG) JobsForSample(ctx context.Context, sampleID string) ([]JobRow, error) {
@@ -3213,7 +3614,7 @@ const listWantedSQL = `
 		-- set comes first because most package pages have no wanted row at all;
 		-- answer can then skip the corpus rather than expanding every manifest
 		-- just to discover that there was no question to answer.
-		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
+		SELECT DISTINCT w.ecosystem, w.name, w.version, w.symbol, w.target_os, k.coord
 		  FROM wanted w
 		  CROSS JOIN LATERAL (VALUES
 		      ('pkg:' || w.ecosystem || '/' || w.name || '@'),
@@ -3223,62 +3624,57 @@ const listWantedSQL = `
 		               ELSE w.name END || '@')) AS k(coord)
 		 WHERE ($3 = '' OR (w.ecosystem = $3 AND w.name = $4))
 	), candidate_samples AS MATERIALIZED (
-		-- Only samples whose manifest carries a coordinate matching a requested wanted_key.
-		-- This bounds the subsequent receipt index scan to just the candidate samples (~5 rows)
-		-- instead of evaluating hundreds of thousands of receipts across all samples.
+		-- Deduplicate requested coordinates before joining the indexed package
+		-- projection. Repeated versions and symbols must not multiply sample
+		-- candidates; receipt searches below remain scoped to these samples.
 		SELECT DISTINCT sp.sample_id, sp.coord
-		  FROM wanted_key wk
+		  FROM (SELECT DISTINCT coord FROM wanted_key) wk
 		  JOIN sample_packages sp ON sp.coord = wk.coord
 		  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
-	), candidate_receipts AS MATERIALIZED (
-		-- Index-scan receipts using receipts_sample_idx for candidate samples.
-		-- A sample can have accumulated thousands of automated re-runs; we only
-		-- need the most recent passing receipt for each distinct environment hash.
-		SELECT cs.sample_id,
-		       LOWER(COALESCE(r.receipt->'environment'->>'os','')) AS os,
-		       r.receipt->>'schemaVersion' AS schema_version,
-		       r.receipt->'stages'->>'resolve' AS resolve_stage,
-		       COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) AS resolved_packages
-		  FROM (SELECT DISTINCT sample_id FROM candidate_samples) cs
-		  CROSS JOIN LATERAL (
-		      SELECT r.receipt
-		        FROM receipts r
-		       WHERE r.sample_id = cs.sample_id
-		         AND r.contract_result = 'PASS'
-		       ORDER BY r.created_at DESC
-		       LIMIT 10
-		  ) r
 	), answered AS MATERIALIZED (
 		SELECT DISTINCT wk.ecosystem, wk.name, wk.version, wk.symbol, wk.target_os
 		  FROM wanted_key wk
-		  JOIN candidate_samples cs ON cs.coord = wk.coord
-		  JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
-		  JOIN candidate_receipts cr ON cr.sample_id = cs.sample_id
-		 WHERE (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
-		   AND (wk.target_os = '' OR cr.os = wk.target_os)
-		   AND (
-		       wk.version = ''
-		       OR (
-		           cr.schema_version = '2'
-		           AND cr.resolve_stage = 'PASS'
-		           AND cr.resolved_packages ?
-		               ('pkg:' || wk.ecosystem || '/' ||
-		                CASE WHEN left(wk.name, 1) = '@'
-		                     THEN '%40' || substring(wk.name from 2)
-		                     ELSE wk.name END || '@' || wk.version)
-		       )
-		       OR (
-		           cr.schema_version <> '2'
-		           AND EXISTS (
-		               SELECT 1
-		                 FROM sample_packages sp
-		                WHERE sp.sample_id = cs.sample_id
-		                  AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
-		                                 CASE WHEN left(wk.name, 1) = '@'
-		                                      THEN '%40' || substring(wk.name from 2)
-		                                      ELSE wk.name END || '@' || wk.version)
-		           )
-		       ))
+		 WHERE EXISTS (
+		       SELECT 1
+		         FROM candidate_samples cs
+		         JOIN samples answer_sample ON answer_sample.sample_id = cs.sample_id
+		        WHERE cs.coord = wk.coord
+		          AND (wk.symbol = '' OR COALESCE(answer_sample.manifest->'symbols', '[]'::jsonb) ? wk.symbol)
+		          AND EXISTS (
+		              -- Stop only after an exact answer. A newest-N or
+		              -- newest-per-environment window can hide older platform
+		              -- and resolved-version proof after unrelated reruns.
+		              -- receipts_sample_idx bounds this search to one sample.
+		              SELECT 1
+		                FROM receipts r
+		               WHERE r.sample_id = cs.sample_id
+		                 AND r.contract_result = 'PASS'
+		                 AND (wk.target_os = '' OR LOWER(COALESCE(r.receipt->'environment'->>'os','')) = wk.target_os)
+		                 AND (
+		                     wk.version = ''
+		                     OR (
+		                         r.receipt->>'schemaVersion' = '2'
+		                         AND r.receipt->'stages'->>'resolve' = 'PASS'
+		                         AND COALESCE(r.receipt->'resolvedPackages', '[]'::jsonb) ?
+		                             ('pkg:' || wk.ecosystem || '/' ||
+		                              CASE WHEN left(wk.name, 1) = '@'
+		                                   THEN '%40' || substring(wk.name from 2)
+		                                   ELSE wk.name END || '@' || wk.version)
+		                     )
+		                     OR (
+		                         r.receipt->>'schemaVersion' <> '2'
+		                         AND EXISTS (
+		                             SELECT 1
+		                               FROM sample_packages sp
+		                              WHERE sp.sample_id = cs.sample_id
+		                                AND sp.purl = ('pkg:' || wk.ecosystem || '/' ||
+		                                               CASE WHEN left(wk.name, 1) = '@'
+		                                                    THEN '%40' || substring(wk.name from 2)
+		                                                    ELSE wk.name END || '@' || wk.version)
+		                         )
+		                     ))
+		          )
+		 )
 	), unanswered AS MATERIALIZED (
 		SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os,
 		       w.asks, w.first_seen, w.last_seen,

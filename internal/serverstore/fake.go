@@ -673,6 +673,18 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 	return out, nil
 }
 
+func (f *Fake) EvidenceForTargets(ctx context.Context, targets []SnapshotTarget) (map[SnapshotTarget][]EvidenceRow, error) {
+	out := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	for _, target := range targets {
+		rows, err := f.EvidenceForTarget(ctx, target.PURL, target.Symbol)
+		if err != nil {
+			return nil, err
+		}
+		out[target] = rows
+	}
+	return out, nil
+}
+
 // -------------------------------------------------------- cases + samples --
 
 func (f *Fake) SaveCase(_ context.Context, c domain.Case) error {
@@ -2020,55 +2032,7 @@ func (f *Fake) listWanted(query string, offset, limit int, ecosystem, name strin
 		if !matches {
 			continue
 		}
-		answered := false
-		for _, s := range f.samples {
-			if s.Quarantined {
-				continue
-			}
-			var m struct {
-				Packages []string `json:"packages"`
-				Symbols  []string `json:"symbols"`
-			}
-			if json.Unmarshal([]byte(s.ManifestJSON), &m) != nil {
-				continue
-			}
-			packageMatch := false
-			for _, ps := range m.Packages {
-				pp, err := domain.ParsePURL(ps)
-				if err != nil || pp.Ecosystem != w.Ecosystem || pp.Name != w.Name {
-					continue
-				}
-				packageMatch = true
-			}
-			if !packageMatch {
-				continue
-			}
-			// A row that names a platform is answered only by a proof from
-			// that platform. Closing it on any pass would delete the ask
-			// before the platform it was about had been measured at all.
-			if w.Version == "" {
-				if !f.hasContractPass(s.SampleID, w.TargetOS) {
-					continue
-				}
-			} else {
-				exact := domain.PURL{Ecosystem: w.Ecosystem, Name: w.Name, Version: w.Version}.String()
-				if !f.hasExactResolvedContractPass(s.SampleID, exact, w.TargetOS) {
-					continue
-				}
-			}
-			symbolMatch := w.Symbol == ""
-			for _, symbol := range m.Symbols {
-				if symbol == w.Symbol {
-					symbolMatch = true
-					break
-				}
-			}
-			if symbolMatch {
-				answered = true
-				break
-			}
-		}
-		if answered {
+		if f.isWantedAnsweredLocked(w) {
 			continue
 		}
 		row := *w
@@ -2102,6 +2066,57 @@ func (f *Fake) listWanted(query string, offset, limit int, ecosystem, name strin
 		out = out[:limit]
 	}
 	return out, total, nil
+}
+
+func (f *Fake) isWantedAnsweredLocked(w *WantedRow) bool {
+	for _, s := range f.samples {
+		if s.Quarantined {
+			continue
+		}
+		var m struct {
+			Packages []string `json:"packages"`
+			Symbols  []string `json:"symbols"`
+		}
+		if json.Unmarshal([]byte(s.ManifestJSON), &m) != nil {
+			continue
+		}
+		packageMatch := false
+		for _, ps := range m.Packages {
+			pp, err := domain.ParsePURL(ps)
+			if err != nil || pp.Ecosystem != w.Ecosystem || pp.Name != w.Name {
+				continue
+			}
+			packageMatch = true
+			break
+		}
+		if !packageMatch {
+			continue
+		}
+		// A row that names a platform is answered only by a proof from
+		// that platform. Closing it on any pass would delete the ask
+		// before the platform it was about had been measured at all.
+		if w.Version == "" {
+			if !f.hasContractPass(s.SampleID, w.TargetOS) {
+				continue
+			}
+		} else {
+			exact := domain.PURL{Ecosystem: w.Ecosystem, Name: w.Name, Version: w.Version}.String()
+			if !f.hasExactResolvedContractPass(s.SampleID, exact, w.TargetOS) {
+				continue
+			}
+		}
+		symbolMatch := w.Symbol == ""
+		for _, symbol := range m.Symbols {
+			if symbol == w.Symbol {
+				symbolMatch = true
+				break
+			}
+		}
+		if symbolMatch {
+			return true
+		}
+	}
+	return false
 }
 
 // -------------------------------------------------------------- adoptions --

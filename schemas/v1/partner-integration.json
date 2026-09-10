@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/r2cuerdame/CodeSampleX/main/schemas/v1/partner-integration.json",
+  "title": "CodeSampleX partner integration profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "product",
+    "presentation",
+    "provisioning",
+    "activation",
+    "semantics",
+    "capabilities"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "id": { "const": "io.github.r2cuerdame/codesamplex" },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "recommendedLabel", "partnerPitch", "role", "replacesHostAssistant"],
+      "properties": {
+        "name": { "const": "CodeSampleX" },
+        "recommendedLabel": { "type": "string", "minLength": 1 },
+        "partnerPitch": { "type": "string", "minLength": 1 },
+        "role": { "const": "coding-assist-evidence-layer" },
+        "replacesHostAssistant": { "const": false }
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placement", "defaultEnabled", "showProtocolToUser"],
+      "properties": {
+        "placement": { "enum": ["built-in", "recommended-toggle"] },
+        "defaultEnabled": { "const": false },
+        "showProtocolToUser": { "const": false }
+      }
+    },
+    "provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "registryId", "packageType", "hostOwnsLifecycle"],
+      "properties": {
+        "source": { "const": "official-mcp-registry" },
+        "registryId": { "const": "io.github.r2cuerdame/codesamplex" },
+        "packageType": { "const": "mcpb" },
+        "hostOwnsLifecycle": { "const": true }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiresModeChoice", "modes", "readyAfter", "modeSetup"],
+      "properties": {
+        "requiresModeChoice": { "const": true },
+        "modes": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "community" },
+            { "const": "local-only" }
+          ],
+          "items": false
+        },
+        "readyAfter": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "initialize" },
+            { "const": "notifications/initialized" }
+          ],
+          "items": false
+        },
+        "modeSetup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["executableSource", "arguments"],
+          "properties": {
+            "executableSource": { "const": "managed-package" },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["community", "local-only"],
+              "properties": {
+                "community": { "$ref": "#/$defs/communityInit" },
+                "local-only": { "$ref": "#/$defs/localOnlyInit" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unknownResult",
+        "preserveEnvironmentCoordinates",
+        "keepObservationAndVerificationSeparate",
+        "hostRetainsReasoning",
+        "defaultResponse",
+        "details"
+      ],
+      "properties": {
+        "unknownResult": { "const": "NO_SAFE_MATCH" },
+        "preserveEnvironmentCoordinates": { "const": true },
+        "keepObservationAndVerificationSeparate": { "const": true },
+        "hostRetainsReasoning": { "const": true },
+        "defaultResponse": { "const": "bounded-evidence" },
+        "details": { "const": "on-demand" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automaticRecall", "onDemandRead", "requiresHostActionApproval", "explicitWorkflowOnly"],
+      "properties": {
+        "automaticRecall": { "$ref": "#/$defs/toolNames" },
+        "onDemandRead": { "$ref": "#/$defs/toolNames" },
+        "requiresHostActionApproval": { "$ref": "#/$defs/toolNames" },
+        "explicitWorkflowOnly": { "$ref": "#/$defs/toolNames" }
+      }
+    }
+  },
+  "$defs": {
+    "communityInit": {
+      "const": ["init", "--community", "--yes", "--no-agents", "--no-daemon"]
+    },
+    "localOnlyInit": {
+      "const": ["init", "--local-only", "--yes", "--no-agents", "--no-daemon"]
+    },
+    "toolNames": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "search_known_solution",
+          "get_sample",
+          "explain_compatibility",
+          "run_observed_command",
+          "report_sample_adoption",
+          "report_anomaly",
+          "report_csx_issue",
+          "propose_public_sample",
+          "list_local_hits",
+          "get_local_stats"
+        ]
+      }
+    }
+  }
+}

@@ -83,6 +83,23 @@ func TestRunExitCodePassthrough(t *testing.T) {
 	}
 }
 
+func TestRunCapturesVersionAndExecutionWindowBeforeCommand(t *testing.T) {
+	t.Setenv("CSX_HOME", t.TempDir())
+	code, output, err := Run(context.Background(), []string{"go", "version"}, t.TempDir())
+	if err != nil || code != 0 {
+		t.Fatalf("Run(go version): code=%d err=%v", code, err)
+	}
+	if output.ToolVersion == "" {
+		t.Fatal("tool version was not captured")
+	}
+	if output.Shell != "direct" {
+		t.Fatalf("shell = %q, want direct", output.Shell)
+	}
+	if output.StartedAt.IsZero() || output.FinishedAt.IsZero() || output.FinishedAt.Before(output.StartedAt) {
+		t.Fatalf("execution window = %s .. %s", output.StartedAt, output.FinishedAt)
+	}
+}
+
 func TestRunCapturesStderrTail(t *testing.T) {
 	if !hasNode() {
 		t.Skip("node not installed")

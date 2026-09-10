@@ -58,6 +58,286 @@ func openTestPG(t *testing.T) *PG {
 	return openTestPGWithPolicy(t, DefaultPoolPolicy())
 }
 
+// One compatibility-builder sample page may contain 1,000 IDs. The bulk
+// receipt API must keep that whole read to one checkout; otherwise replacing
+// the old per-sample loop merely moves the same pool pressure behind a new
+// method name.
+func TestIntegrationReceiptPagesUseOneCheckoutEach(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	ids := make([]string, 1000)
+	for i := range ids {
+		ids[i] = "sha256:" + fmt.Sprintf("%064x", i+1)
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	if _, err := pg.ReceiptsForSamples(ctx, ids); err != nil {
+		t.Fatalf("full receipt page: %v", err)
+	}
+	if _, err := pg.ReceiptsForSamples(ctx, ids[:1]); err != nil {
+		t.Fatalf("short receipt page: %v", err)
+	}
+	after := classStat(t, pg.PoolStats(), "background").Acquired
+	if got, want := after-before, uint64(2); got != want {
+		t.Fatalf("receipt page checkouts = %d, want %d", got, want)
+	}
+
+	before = after
+	if got, err := pg.ReceiptsForSamples(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty receipt page = %v, err=%v", got, err)
+	}
+	after = classStat(t, pg.PoolStats(), "background").Acquired
+	if after != before {
+		t.Fatalf("empty receipt page acquired a connection: before=%d after=%d", before, after)
+	}
+}
+
+// Receipt-derived package registration asks whether each resolved package is
+// already known. Asking one purl at a time was one background checkout per
+// package in the whole corpus on every aggregation pass, incremental ones
+// included -- production v0.1.147 reported active-builder pool_busy=143 and a
+// 16.357s maximum wait for a connection while it did exactly that.
+//
+// The bulk form must answer the identical question (membership, and only for
+// purls that really exist), keep a full builder page to one checkout, and
+// leave the rows completely alone: a probe that refreshed last_seen would
+// turn aggregation into a write on every pass and make "when did the network
+// last see this package" mean "when did the builder last run".
+func TestIntegrationExistingPackagePURLsMatchesGetPackageWithoutTouchingRows(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	var known []string
+	for i := 0; i < 5; i++ {
+		purl := fmt.Sprintf("pkg:npm/probe%03d@1.0.0", i)
+		known = append(known, purl)
+		if err := pg.UpsertPackage(ctx, PackageRow{
+			PURL: purl, Ecosystem: "npm", Name: fmt.Sprintf("probe%03d", i),
+			Version: "1.0.0", Major: "1", Publicness: "PUBLIC",
+		}); err != nil {
+			t.Fatalf("UpsertPackage %s: %v", purl, err)
+		}
+	}
+	absent := []string{"pkg:npm/probe-absent@9.9.9", "pkg:npm/probe999@1.0.0"}
+
+	before := map[string]PackageRow{}
+	for _, purl := range known {
+		row, ok, err := pg.GetPackage(ctx, purl)
+		if err != nil || !ok {
+			t.Fatalf("GetPackage %s: ok=%t err=%v", purl, ok, err)
+		}
+		before[purl] = row
+	}
+
+	page := append(append([]string(nil), known...), absent...)
+	got, err := pg.ExistingPackagePURLs(ctx, page)
+	if err != nil {
+		t.Fatalf("ExistingPackagePURLs: %v", err)
+	}
+	want := map[string]bool{}
+	for _, purl := range page {
+		if _, ok, err := pg.GetPackage(ctx, purl); err != nil {
+			t.Fatalf("GetPackage %s: %v", purl, err)
+		} else if ok {
+			want[purl] = true
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExistingPackagePURLs = %v, want %v", got, want)
+	}
+	for _, purl := range absent {
+		if _, present := got[purl]; present {
+			t.Fatalf("absent purl %s appeared in the answer", purl)
+		}
+	}
+	for _, purl := range known {
+		row, ok, err := pg.GetPackage(ctx, purl)
+		if err != nil || !ok {
+			t.Fatalf("GetPackage after probe %s: ok=%t err=%v", purl, ok, err)
+		}
+		if !row.LastSeen.Equal(before[purl].LastSeen) || !row.FirstSeen.Equal(before[purl].FirstSeen) ||
+			row.Publicness != before[purl].Publicness {
+			t.Fatalf("probing %s changed the row: before=%+v after=%+v", purl, before[purl], row)
+		}
+	}
+
+	// A full builder page is one checkout, and an empty one is none.
+	ids := make([]string, packageProbePageForTest)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("pkg:npm/probe-page%05d@1.0.0", i)
+	}
+	acquired := classStat(t, pg.PoolStats(), "background").Acquired
+	if _, err := pg.ExistingPackagePURLs(ctx, ids); err != nil {
+		t.Fatalf("full package page: %v", err)
+	}
+	if got, want := classStat(t, pg.PoolStats(), "background").Acquired-acquired, uint64(1); got != want {
+		t.Fatalf("package page checkouts = %d, want %d", got, want)
+	}
+	acquired = classStat(t, pg.PoolStats(), "background").Acquired
+	if rows, err := pg.ExistingPackagePURLs(ctx, nil); err != nil || len(rows) != 0 {
+		t.Fatalf("empty package page = %v, err=%v", rows, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired; got != acquired {
+		t.Fatalf("empty package page acquired a connection: before=%d after=%d", acquired, got)
+	}
+}
+
+// packageProbePageForTest mirrors the builder's page bound. It is repeated
+// rather than imported because internal/serverstore must not depend on the
+// package that reads it.
+const packageProbePageForTest = 1000
+
+// Matrix generation reads the job history of every verified Java sample in
+// the corpus on every pass. The bulk form must return the same rows in the
+// same per-sample order as JobsForSample, so which matrix cells already exist
+// is decided from identical evidence -- a batched read that dropped or
+// reordered a row would reopen a cell that already ran.
+func TestIntegrationJobsForSamplesMatchesJobsForSample(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	var samples []string
+	for i := 0; i < 3; i++ {
+		sampleID := "sha256:" + fmt.Sprintf("%064x", 900000+i)
+		samples = append(samples, sampleID)
+		if err := pg.SaveSample(ctx, SampleRow{
+			SampleID: sampleID, ManifestJSON: `{"schemaVersion":1}`,
+		}); err != nil {
+			t.Fatalf("SaveSample %s: %v", sampleID, err)
+		}
+	}
+	// The first sample carries two jobs of different reasons; the second one;
+	// the third none, so an absent sample is covered too.
+	for _, j := range []JobRow{
+		{SampleID: samples[0], Reason: "matrix", WantEnvJSON: `{"runtimeVersion":"17"}`, Status: "open"},
+		{SampleID: samples[0], Reason: "cross", WantEnvJSON: `{"os":"linux"}`, Status: "open"},
+		{SampleID: samples[1], Reason: "matrix", WantEnvJSON: `{"runtimeVersion":"21"}`, Status: "open"},
+	} {
+		if _, err := pg.CreateJob(ctx, j); err != nil {
+			t.Fatalf("CreateJob %s/%s: %v", j.SampleID, j.Reason, err)
+		}
+	}
+	// Equal timestamps force id to be the ordering tie-breaker, which is the
+	// only part of the order a batched query could silently change.
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `UPDATE verification_jobs SET created_at=$1`, time.Unix(100, 0).UTC())
+		return err
+	}); err != nil {
+		t.Fatalf("align job timestamps: %v", err)
+	}
+
+	acquired := classStat(t, pg.PoolStats(), "background").Acquired
+	batch, err := pg.JobsForSamples(ctx, append(append([]string(nil), samples...), "sha256:absent"))
+	if err != nil {
+		t.Fatalf("JobsForSamples: %v", err)
+	}
+	if got, want := classStat(t, pg.PoolStats(), "background").Acquired-acquired, uint64(1); got != want {
+		t.Fatalf("job page checkouts = %d, want %d", got, want)
+	}
+	for _, sampleID := range samples {
+		want, err := pg.JobsForSample(ctx, sampleID)
+		if err != nil {
+			t.Fatalf("JobsForSample %s: %v", sampleID, err)
+		}
+		if len(want) == 0 {
+			if _, present := batch[sampleID]; present {
+				t.Fatalf("sample %s has no jobs but appeared in the batch", sampleID)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(batch[sampleID], want) {
+			t.Fatalf("jobs for %s: batch=%+v single=%+v", sampleID, batch[sampleID], want)
+		}
+	}
+	if _, present := batch["sha256:absent"]; present {
+		t.Fatal("an unknown sample appeared in the batch")
+	}
+
+	acquired = classStat(t, pg.PoolStats(), "background").Acquired
+	if rows, err := pg.JobsForSamples(ctx, nil); err != nil || len(rows) != 0 {
+		t.Fatalf("empty job page = %v, err=%v", rows, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired; got != acquired {
+		t.Fatalf("empty job page acquired a connection: before=%d after=%d", acquired, got)
+	}
+}
+
+// The production 2026-09-07 builder pass wrote 4,255 snapshots through
+// 4,255 separate checkouts and autocommits while interactive requests were
+// refused. The builder now supplies bounded chunks of 64: prove that the PG
+// path preserves every document while reducing 129 writes from 129
+// checkouts to three.
+func TestIntegrationSnapshotBatchPipelining(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	const total = 129
+	sameJSON := func(got, want string) bool {
+		var gotDoc, wantDoc any
+		return json.Unmarshal([]byte(got), &gotDoc) == nil &&
+			json.Unmarshal([]byte(want), &wantDoc) == nil &&
+			reflect.DeepEqual(gotDoc, wantDoc)
+	}
+
+	beforeSingles := classStat(t, pg.PoolStats(), "background").Acquired
+	singleStarted := time.Now()
+	for i := 0; i < total; i++ {
+		purl := fmt.Sprintf("pkg:npm/snapshot-single-%03d@1.0.0", i)
+		if err := pg.PutSnapshot(ctx, purl, "run", fmt.Sprintf(`{"value":%d}`, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	singleElapsed := time.Since(singleStarted)
+	afterSingles := classStat(t, pg.PoolStats(), "background").Acquired
+	if got := afterSingles - beforeSingles; got != total {
+		t.Fatalf("single-write checkouts = %d, want %d", got, total)
+	}
+
+	rows := make([]SnapshotRow, 0, total)
+	for i := 0; i < total; i++ {
+		rows = append(rows, SnapshotRow{
+			PURL:   fmt.Sprintf("pkg:npm/snapshot-batch-%03d@1.0.0", i),
+			Symbol: "run", SnapshotJSON: fmt.Sprintf(`{"value":%d}`, i),
+		})
+	}
+	beforeBatches := classStat(t, pg.PoolStats(), "background").Acquired
+	batchStarted := time.Now()
+	for start := 0; start < len(rows); start += 64 {
+		end := start + 64
+		if end > len(rows) {
+			end = len(rows)
+		}
+		if err := pg.PutSnapshots(ctx, rows[start:end]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batchElapsed := time.Since(batchStarted)
+	afterBatches := classStat(t, pg.PoolStats(), "background").Acquired
+	if got := afterBatches - beforeBatches; got != 3 {
+		t.Fatalf("batch-write checkouts = %d, want 3", got)
+	}
+	t.Logf("129 snapshots: singles=%s/129 checkouts, bounded batches=%s/3 checkouts",
+		singleElapsed, batchElapsed)
+
+	for _, i := range []int{0, 63, 64, 128} {
+		got, ok, err := pg.GetSnapshot(ctx, rows[i].PURL, rows[i].Symbol)
+		if err != nil || !ok || !sameJSON(got, rows[i].SnapshotJSON) {
+			t.Fatalf("snapshot %d = %q ok=%v err=%v, want %q", i, got, ok, err, rows[i].SnapshotJSON)
+		}
+	}
+
+	updated := []SnapshotRow{
+		{PURL: rows[0].PURL, Symbol: "run", SnapshotJSON: `{"value":"updated"}`},
+		{PURL: rows[1].PURL, Symbol: "run", SnapshotJSON: `not-json`},
+	}
+	if err := pg.PutSnapshots(ctx, updated); err == nil {
+		t.Fatal("invalid JSON batch succeeded")
+	}
+	got, ok, err := pg.GetSnapshot(ctx, rows[0].PURL, rows[0].Symbol)
+	if err != nil || !ok || !sameJSON(got, rows[0].SnapshotJSON) {
+		t.Fatalf("failed batch partially updated first row: got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
@@ -78,6 +358,37 @@ func TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage(t *
 	rows, total, err = pg.SearchSamplesPage(ctx, "pgx", 1, 99)
 	if err != nil || len(rows) != 0 || total != 2 {
 		t.Fatalf("past-last search page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+}
+
+func TestIntegrationSamplePageAndTotalShareOneCheckout(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := pg.SaveSample(ctx, SampleRow{
+			SampleID:     fmt.Sprintf("sha256:page-%d", i),
+			ManifestJSON: `{"goal":"page sample","packages":[],"symbols":[]}`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	rows, total, err := pg.ListSamplesPageWithTotal(ctx, 1, 0)
+	if err != nil || len(rows) != 1 || total != 3 {
+		t.Fatalf("first page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired - before; got != 1 {
+		t.Fatalf("first page checkouts = %d, want 1", got)
+	}
+
+	before = classStat(t, pg.PoolStats(), "background").Acquired
+	rows, total, err = pg.ListSamplesPageWithTotal(ctx, 1, 99)
+	if err != nil || len(rows) != 0 || total != 3 {
+		t.Fatalf("past-last page = %d rows, total=%d, err=%v", len(rows), total, err)
+	}
+	if got := classStat(t, pg.PoolStats(), "background").Acquired - before; got != 1 {
+		t.Fatalf("past-last page checkouts = %d, want 1", got)
 	}
 }
 
@@ -930,6 +1241,41 @@ func TestIntegrationVerifiedSampleReadsRequireContractPass(t *testing.T) {
 	}
 }
 
+func TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	if accepted, rejected, err := pg.IngestBatches(ctx, []domain.ObservationBatch{
+		obsBatch("anonbatch", "projbatch", 3),
+	}); err != nil || accepted != 1 || len(rejected) != 0 {
+		t.Fatalf("seed evidence: accepted=%d rejected=%v err=%v", accepted, rejected, err)
+	}
+
+	targets := []SnapshotTarget{
+		{PURL: "pkg:npm/axios@1.12.0", Symbol: "axios.post"},
+		{PURL: "pkg:npm/axios@1.12.0", Symbol: "missing.symbol"},
+	}
+	want := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	for _, target := range targets {
+		rows, err := pg.EvidenceForTarget(ctx, target.PURL, target.Symbol)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[target] = rows
+	}
+
+	before := classStat(t, pg.PoolStats(), "background").Acquired
+	got, err := pg.EvidenceForTargets(ctx, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("batched evidence differs from singles:\ngot  %#v\nwant %#v", got, want)
+	}
+	if checkouts := classStat(t, pg.PoolStats(), "background").Acquired - before; checkouts != 1 {
+		t.Fatalf("batched evidence checkouts = %d, want 1", checkouts)
+	}
+}
+
 func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
@@ -1262,9 +1608,51 @@ func TestIntegrationCRUD(t *testing.T) {
 		if err := pg.SaveReceipt(ctx, r); err != nil { // idempotent
 			t.Fatalf("SaveReceipt duplicate: %v", err)
 		}
+		r2 := r
+		r2.ReceiptID = "sha256:" + fmt.Sprintf("%064d", 4)
+		r2.ContractResult = "FAIL"
+		if err := pg.SaveReceipt(ctx, r2); err != nil {
+			t.Fatalf("SaveReceipt second: %v", err)
+		}
+		// Equal timestamps force receipt_id to be the ordering tie-breaker.
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			_, err := c.Exec(ctx, `UPDATE receipts SET created_at=$1
+				WHERE receipt_id = ANY($2::text[])`, time.Unix(100, 0).UTC(), []string{r.ReceiptID, r2.ReceiptID})
+			return err
+		}); err != nil {
+			t.Fatalf("align receipt timestamps: %v", err)
+		}
 		rs, err := pg.ReceiptsForSample(ctx, sampleID)
-		if err != nil || len(rs) != 1 || rs[0].ContractResult != "PASS" {
+		if err != nil || len(rs) != 2 ||
+			rs[0].ReceiptID != r.ReceiptID || rs[0].ContractResult != "PASS" ||
+			rs[1].ReceiptID != r2.ReceiptID || rs[1].ContractResult != "FAIL" {
 			t.Fatalf("ReceiptsForSample: %v err=%v", rs, err)
+		}
+
+		otherSampleID := "sha256:" + fmt.Sprintf("%064d", 5)
+		if err := pg.SaveSample(ctx, SampleRow{SampleID: otherSampleID, ManifestJSON: `{"schemaVersion":1}`}); err != nil {
+			t.Fatalf("SaveSample other receipt owner: %v", err)
+		}
+		other := r
+		other.ReceiptID = "sha256:" + fmt.Sprintf("%064d", 6)
+		other.SampleID = otherSampleID
+		other.ContractResult = "SKIPPED"
+		if err := pg.SaveReceipt(ctx, other); err != nil {
+			t.Fatalf("SaveReceipt other sample: %v", err)
+		}
+		otherRows, err := pg.ReceiptsForSample(ctx, otherSampleID)
+		if err != nil || len(otherRows) != 1 ||
+			otherRows[0].SampleID != otherSampleID || otherRows[0].ReceiptID != other.ReceiptID ||
+			otherRows[0].ContractResult != "SKIPPED" {
+			t.Fatalf("ReceiptsForSample other: %v err=%v", otherRows, err)
+		}
+
+		batch, err := pg.ReceiptsForSamples(ctx, []string{otherSampleID, sampleID, "sha256:absent"})
+		if err != nil || !reflect.DeepEqual(batch[sampleID], rs) || !reflect.DeepEqual(batch[otherSampleID], otherRows) {
+			t.Fatalf("ReceiptsForSamples: %v err=%v", batch, err)
+		}
+		if len(batch["sha256:absent"]) != 0 {
+			t.Fatalf("ReceiptsForSamples returned absent sample: %v", batch["sha256:absent"])
 		}
 	})
 

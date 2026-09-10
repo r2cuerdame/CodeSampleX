@@ -350,9 +350,12 @@ func validCubeAxis(key string) bool {
 // AVAILABILITY, which is keyed by release and API and by nothing else — see
 // cubecode.go for why that key excludes the environment.
 func buildCubeView(s *site, r *http.Request, lang, eco, name string,
-	code *codeIndex) *cubeView {
+	code *codeIndex) (*cubeView, error) {
 
-	facts, windowed := s.cubeFacts(r.Context(), eco, name)
+	facts, windowed, err := s.cubeFactsWithError(r.Context(), eco, name)
+	if err != nil {
+		return nil, err
+	}
 	pagePath := pkgHref(eco, name)
 	q := r.URL.Query()
 	filters := parseCubeFilters(q)
@@ -360,9 +363,13 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 	// releases have all aged out of the browse window still has a page for
 	// the release someone linked to, and testing len(facts) first deleted
 	// the whole section for exactly that reader.
-	facts = append(facts, s.pinnedCubeFactsCached(r.Context(), eco, name, facts, filters)...)
+	pinned, err := s.pinnedCubeFactsCached(r.Context(), eco, name, facts, filters)
+	if err != nil {
+		return nil, err
+	}
+	facts = append(facts, pinned...)
 	if len(facts) == 0 {
-		return nil
+		return nil, nil
 	}
 	sliced := filterCubeFacts(facts, filters)
 
@@ -411,7 +418,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 
 	if len(sliced) == 0 {
 		view.NoMatch = true
-		return view
+		return view, nil
 	}
 
 	// What the reader has actually narrowed to. Everything below the cube on
@@ -491,7 +498,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 			if len(view.Leaf) == 1 && view.Answer != nil {
 				view.Leaf = nil
 			}
-			return view
+			return view, nil
 		}
 	}
 	view.X, view.Y = x, y
@@ -570,7 +577,7 @@ func buildCubeView(s *site, r *http.Request, lang, eco, name string,
 		view.CodeState = state
 	}
 	view.Nav = buildCubeNav(facts, view.Coord, filters, pagePath, name, lang, false)
-	return view
+	return view, nil
 }
 
 // markCodeAvailability puts the code mark on every cell whose release and API

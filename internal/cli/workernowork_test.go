@@ -72,3 +72,15 @@ func (f *idleFakeVerifier) RunOne(context.Context) (bool, error) {
 }
 
 func (*idleFakeVerifier) IsIdle() bool { return true }
+
+func TestWorkerIdlePollIntervalBacksOffAndCaps(t *testing.T) {
+	if got := workerIdlePollInterval(time.Millisecond); got != 3*time.Millisecond {
+		t.Fatalf("1ms idle poll = %v, want 3ms", got)
+	}
+	if got := workerIdlePollInterval(workerPollInterval); got != 30*time.Second {
+		t.Fatalf("default idle poll = %v, want 30s", got)
+	}
+	if got := workerIdlePollInterval(20 * time.Second); got != maxWorkerIdlePollInterval {
+		t.Fatalf("20s idle poll = %v, want cap %v", got, maxWorkerIdlePollInterval)
+	}
+}

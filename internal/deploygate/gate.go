@@ -1,6 +1,7 @@
 package deploygate
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strings"
@@ -82,9 +83,31 @@ var samplesManifestTrgmIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS samples_manifest_lower_trgm_idx ON samples USING gin ((lower(manifest::text)) public.gin_trgm_ops) WHERE NOT quarantined`,
 }
 
+var wantedDedupEpochCoordinateIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS wanted_dedup_epoch_coordinate_idx ON wanted_dedup(epoch DESC, ecosystem, name, version, symbol, target_os)`,
+}
+
+var slowQueryIndexesStatements = []string{
+	`CREATE INDEX IF NOT EXISTS failure_clusters_pkg_count_idx ON failure_clusters (package_name, observation_count DESC, id)`,
+	`CREATE INDEX IF NOT EXISTS samples_live_created_id_idx ON samples (created_at DESC, sample_id) WHERE NOT quarantined`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
+	}
+
+	// Pin this reviewed additive migration as a whole, including its SQL
+	// function and index settings. Only platform line endings may differ.
+	// The general grammar must never learn arbitrary functions or expression
+	// indexes from this exception. A changed body requires a fresh review.
+	if name == "0036_builder_projections.sql" {
+		const reviewedSHA256 = "3499206df74ee5cbf2ec8644de7e9028899061440107782a4e21f6faf3e89133"
+		digest := sha256.Sum256([]byte(strings.ReplaceAll(sql, "\r\n", "\n")))
+		if fmt.Sprintf("%x", digest) != reviewedSHA256 {
+			return fmt.Errorf("migration %s does not match the reviewed builder projection SHA256", name)
+		}
+		return nil
 	}
 
 	// Automatic production migration is an allowlist, not a blacklist. This
@@ -132,6 +155,18 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact samples manifest trgm index allowlist", name)
+	}
+	if name == "0035_recent_wanted_demand.sql" {
+		if exactStatements(statements, wantedDedupEpochCoordinateIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact wanted demand index allowlist", name)
+	}
+	if name == "0037_slow_query_indexes.sql" {
+		if exactStatements(statements, slowQueryIndexesStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact slow query indexes allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

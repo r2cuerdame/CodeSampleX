@@ -43,6 +43,7 @@ func testPoolPolicy() PoolPolicy {
 type occupation struct {
 	errs    chan error
 	elapsed chan time.Duration
+	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 }
 
@@ -52,12 +53,14 @@ func occupy(t *testing.T, pg *PG, class QueryClass, n int) *occupation {
 		errs:    make(chan error, n),
 		elapsed: make(chan time.Duration, n),
 	}
+	rootCtx, cancel := context.WithCancel(context.Background())
+	o.cancel = cancel
 	holding := make(chan struct{}, n)
 	for i := 0; i < n; i++ {
 		o.wg.Add(1)
 		go func() {
 			defer o.wg.Done()
-			ctx := WithQueryClass(context.Background(), class)
+			ctx := WithQueryClass(rootCtx, class)
 			c, err := pg.pool.acquire(ctx)
 			if err != nil {
 				holding <- struct{}{}
@@ -76,7 +79,10 @@ func occupy(t *testing.T, pg *PG, class QueryClass, n int) *occupation {
 	for i := 0; i < n; i++ {
 		<-holding
 	}
-	t.Cleanup(o.wg.Wait)
+	t.Cleanup(func() {
+		o.cancel()
+		o.wg.Wait()
+	})
 	return o
 }
 
@@ -152,6 +158,38 @@ func TestIntegrationSlowReadsLeaveBackgroundWorkAConnection(t *testing.T) {
 	}
 }
 
+// The reserve must work in the production direction too: the restart builder
+// is background work, and filling its whole allowance cannot consume the
+// interactive connection a public request needs. This isolates in-process
+// checkout starvation from PostgreSQL CPU/I/O contention, which admission
+// tokens cannot reserve.
+func TestIntegrationBackgroundWorkLeavesInteractiveCapacity(t *testing.T) {
+	pol := testPoolPolicy()
+	pg := openTestPGWithPolicy(t, pol)
+	occupation := occupy(t, pg, ClassBackground, pol.BackgroundConns)
+	defer occupation.cancel()
+
+	budget := NewQueryBudget(ClassInteractive)
+	ctx, cancel := context.WithTimeout(WithQueryBudget(context.Background(), budget), time.Second)
+	defer cancel()
+	start := time.Now()
+	var one int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, "SELECT 1").Scan(&one)
+	}); err != nil {
+		t.Fatalf("interactive query could not reach PostgreSQL while background allowance was full: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("interactive query read %d, want 1", one)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("interactive query waited %v behind background work", elapsed)
+	}
+	if busy, timeouts, _ := budget.Pressure(); busy != 0 || timeouts != 0 {
+		t.Fatalf("interactive reserve reported busy=%d timeouts=%d", busy, timeouts)
+	}
+}
+
 // A user-facing read that outlives its ceiling is cancelled by PostgreSQL,
 // which is what returns the connection to the pool instead of burning it.
 func TestIntegrationSlowReadIsCancelledByItsStatementCeiling(t *testing.T) {
@@ -175,14 +213,89 @@ func TestIntegrationSlowReadIsCancelledByItsStatementCeiling(t *testing.T) {
 	// The connection has to be reusable afterwards. A cancellation driven
 	// from the Go side would have closed it, and the pool would be paying a
 	// reconnect for every timed-out request precisely when it is shortest.
+	//
+	// This probe is the NEXT request, so it carries the next request's
+	// budget: what is being asked is whether the pool still has a usable
+	// connection, not whether the request that just burned a ceiling may
+	// have another go. A budget that has already been timed out is refused
+	// by design -- TestIntegrationStatementTimeoutStopsFollowUpReads pins
+	// that -- and reusing this one here would be asking both questions at
+	// once and reading the answer as if it were only the first.
+	next := WithQueryClass(context.Background(), ClassInteractive)
 	var one int
-	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
-		return c.QueryRow(ctx, "SELECT 1").Scan(&one)
+	if err := pg.withConn(next, func(c *pgx.Conn) error {
+		return c.QueryRow(next, "SELECT 1").Scan(&one)
 	}); err != nil {
 		t.Fatalf("the pool could not serve a read after a timeout: %v", err)
 	}
 	if got := pg.PoolStats(); classStat(t, got, "interactive").Timeouts != 1 {
 		t.Fatalf("the timeout was not counted: %+v", classStat(t, got, "interactive"))
+	}
+}
+
+// The read amplification behind the 2026-09-10 incident, end to end against
+// a real PostgreSQL that really cancels the statement.
+//
+// One page makes eight or more sequential store reads and only the first is
+// fatal, so before this was pinned a saturated database was asked all eight
+// times and each one was allowed to spend a whole ceiling. The visitor got
+// nothing for 8 x ReadTimeout and left; the database got eight more expensive
+// queries while it was already the thing that was too slow. A request that
+// has been told "not now" once has been told about the database, not about
+// the query, so the answer cannot improve within that same request.
+func TestIntegrationStatementTimeoutStopsFollowUpReads(t *testing.T) {
+	pol := testPoolPolicy()
+	pg := openTestPGWithPolicy(t, pol)
+
+	budget := NewQueryBudget(ClassInteractive)
+	ctx := WithQueryBudget(context.Background(), budget)
+
+	// The page's first read outlives the ceiling and PostgreSQL kills it.
+	err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, execErr := c.Exec(ctx, "SELECT pg_sleep(60)")
+		return execErr
+	})
+	if !IsQueryTimeout(err) {
+		t.Fatalf("first read returned %v, want a statement timeout", err)
+	}
+
+	// Every later read on the same page must be refused without asking the
+	// database anything, and must be refused as backpressure so the route
+	// answers 503 with a Retry-After rather than 404 or 500.
+	start := time.Now()
+	for i := 0; i < 7; i++ {
+		var one int
+		followUp := pg.withConn(ctx, func(c *pgx.Conn) error {
+			return c.QueryRow(ctx, "SELECT 1").Scan(&one)
+		})
+		if !IsPoolBusy(followUp) {
+			t.Fatalf("follow-up read %d returned %v, want ErrPoolBusy", i+1, followUp)
+		}
+	}
+	// Seven refusals that each reached PostgreSQL would cost seven ceilings.
+	if elapsed := time.Since(start); elapsed > pol.ReadTimeout {
+		t.Fatalf("seven follow-up reads spent %v, want no database work at all",
+			elapsed.Round(time.Millisecond))
+	}
+	if got := budget.Suppressed(); got != 7 {
+		t.Fatalf("suppressed follow-ups = %d, want 7", got)
+	}
+	// Exactly one statement was ever cancelled: the first one.
+	if got := classStat(t, pg.PoolStats(), "interactive").Timeouts; got != 1 {
+		t.Fatalf("statement timeouts = %d, want 1", got)
+	}
+
+	// The next request is unaffected -- this bounds one request, and does not
+	// put the server into a mode.
+	next := WithQueryClass(context.Background(), ClassInteractive)
+	var one int
+	if err := pg.withConn(next, func(c *pgx.Conn) error {
+		return c.QueryRow(next, "SELECT 1").Scan(&one)
+	}); err != nil {
+		t.Fatalf("a fresh request after a timed-out one was refused: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("fresh request read %d, want 1", one)
 	}
 }
 

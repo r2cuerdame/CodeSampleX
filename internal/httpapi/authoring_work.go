@@ -16,6 +16,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -66,6 +67,10 @@ const (
 	// are never reached. One poll in four costs WANTED a quarter of its
 	// throughput and starts filling the gaps the same day.
 	authoringGapEvery = 4
+
+	// maxOfferedCandidates caps the bounded window of eligible candidates
+	// offered to a worker during ClaimAuthoringWork.
+	maxOfferedCandidates = 400
 )
 
 type authoringCandidateSnapshot struct {
@@ -90,6 +95,22 @@ type authoringCandidateGate struct {
 	snapshot authoringCandidateSnapshot
 	takenAt  time.Time
 	refresh  *authoringCandidateCall // the background refresh, coalesced
+
+	// A failed first scan or refresh owns one bounded retry series. Keeping the
+	// schedule in the gate is what prevents every poll during backoff from
+	// opening another whole-corpus read. After the fifth retry, deferredUntil
+	// holds the terminal state for one normal candidate TTL before a caller may
+	// begin a fresh series.
+	retries       retrypolicy.Series
+	retryWaiting  bool
+	lastErr       error
+	deferredUntil time.Time
+
+	// Test seams. Production uses retrypolicy's random positive jitter and a
+	// real timer; tests can make the schedule deterministic without shortening
+	// the production contract.
+	retryDraw func(time.Duration) time.Duration
+	retryWait func(time.Duration)
 }
 
 // loadAuthoringCandidates answers a poll from the last completed candidate
@@ -119,46 +140,32 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	now := a.now()
 	g := &a.authoringCandidates
 	g.mu.Lock()
+	if g.retries.State() == retrypolicy.FailedDeferred && !now.Before(g.deferredUntil) {
+		g.retries.Reset()
+		g.deferredUntil = time.Time{}
+		g.lastErr = nil
+	}
 	if g.have {
 		snap := g.snapshot
-		if now.Sub(g.takenAt) >= authoringCandidateTTL && g.refresh == nil {
-			g.refresh = a.startCandidateRefresh(ctx, store)
+		if now.Sub(g.takenAt) >= authoringCandidateTTL && g.refresh == nil &&
+			!g.retryWaiting && g.retries.State() == retrypolicy.Ready {
+			g.refresh = a.startCandidateRefresh(store, false)
 		}
 		g.mu.Unlock()
 		return snap, nil
 	}
 	call := g.call
 	if call == nil {
-		call = &authoringCandidateCall{done: make(chan struct{})}
-		g.call = call
-		baseCtx := context.WithoutCancel(ctx)
-		var callCtx context.Context
-		var cancel context.CancelFunc
-		if deadline, ok := ctx.Deadline(); ok {
-			// WithoutCancel intentionally ignores a disconnected first caller so
-			// joined workers can still receive the result. Put the poll's absolute
-			// deadline back: candidate discovery gets only the time that remains,
-			// never a fresh full timeout after session refresh was slow.
-			callCtx, cancel = context.WithDeadline(baseCtx, deadline)
-		} else {
-			callCtx, cancel = context.WithTimeout(baseCtx, a.d.authoringWorkTimeout)
-		}
-		callCtx = serverstore.WithAuthoringPoll(callCtx)
-		go func() {
-			defer cancel()
-			call.snapshot, call.err = a.readCandidates(callCtx, store, store.ListAuthoringExpansionCandidates)
-			g.mu.Lock()
-			if call.err == nil {
-				now := a.now()
-				call.snapshot.takenAt = now
-				g.have, g.snapshot, g.takenAt = true, call.snapshot, now
-			}
-			close(call.done)
-			if g.call == call {
-				g.call = nil
-			}
+		if g.retryWaiting || g.retries.State() != retrypolicy.Ready {
+			err := g.lastErr
 			g.mu.Unlock()
-		}()
+			if err == nil {
+				err = errors.New("authoring candidate scan deferred")
+			}
+			return authoringCandidateSnapshot{}, err
+		}
+		call = a.startCandidateFirstScan(ctx, store, false)
+		g.call = call
 	}
 	g.mu.Unlock()
 
@@ -170,34 +177,144 @@ func (a *api) loadAuthoringCandidates(ctx context.Context, store serverstore.Aut
 	}
 }
 
-// startCandidateRefresh begins one background re-read of the corpus under
-// the refresh budget, detached from the poll that noticed the snapshot was
-// stale. The caller holds the gate lock.
-func (a *api) startCandidateRefresh(ctx context.Context, store serverstore.AuthoringSessionStore) *authoringCandidateCall {
+// startCandidateFirstScan starts either the request-bounded first attempt or
+// a detached retry. The caller holds the gate lock. A retry is background
+// work: it uses the unhurried scan and a fresh retry-marked query budget
+// instead of inheriting the request's interactive budget.
+func (a *api) startCandidateFirstScan(ctx context.Context, store serverstore.AuthoringSessionStore, retry bool) *authoringCandidateCall {
 	g := &a.authoringCandidates
 	call := &authoringCandidateCall{done: make(chan struct{})}
-	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authoringCandidateRefreshBudget)
+	var callCtx context.Context
+	var cancel context.CancelFunc
+	var expansion func(context.Context, int) ([]serverstore.WantedRow, error)
+	if retry {
+		callCtx, cancel = context.WithTimeout(context.Background(), authoringCandidateRefreshBudget)
+		callCtx = serverstore.WithQueryBudget(callCtx,
+			serverstore.NewRetryQueryBudget(serverstore.ClassBackground))
+		expansion = store.ListAuthoringExpansionCandidatesUnhurried
+	} else {
+		baseCtx := context.WithoutCancel(ctx)
+		if deadline, ok := ctx.Deadline(); ok {
+			// WithoutCancel intentionally ignores a disconnected first caller so
+			// joined workers can still receive the result. Put the poll's absolute
+			// deadline back: candidate discovery gets only the time that remains,
+			// never a fresh full timeout after session refresh was slow.
+			callCtx, cancel = context.WithDeadline(baseCtx, deadline)
+		} else {
+			callCtx, cancel = context.WithTimeout(baseCtx, a.d.authoringWorkTimeout)
+		}
+		callCtx = serverstore.WithAuthoringPoll(callCtx)
+		expansion = store.ListAuthoringExpansionCandidates
+	}
 	go func() {
 		defer cancel()
-		snap, err := a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
+		call.snapshot, call.err = a.readCandidates(callCtx, store, expansion)
 		g.mu.Lock()
-		if err == nil {
-			now := a.now()
-			snap.takenAt = now
-			g.have, g.snapshot, g.takenAt = true, snap, now
-		} else {
-			// The old snapshot stays. The next stale poll starts another try;
-			// nothing is served that was not once true.
-			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", err)
-		}
-		call.snapshot, call.err = snap, err
-		close(call.done)
-		if g.refresh == call {
-			g.refresh = nil
-		}
+		a.finishCandidateAttemptLocked(call, store, false)
 		g.mu.Unlock()
 	}()
 	return call
+}
+
+// startCandidateRefresh begins one background re-read of the corpus under
+// the refresh budget, detached from the poll that noticed the snapshot was
+// stale. The caller holds the gate lock.
+func (a *api) startCandidateRefresh(store serverstore.AuthoringSessionStore, retry bool) *authoringCandidateCall {
+	g := &a.authoringCandidates
+	call := &authoringCandidateCall{done: make(chan struct{})}
+	refreshCtx, cancel := context.WithTimeout(context.Background(), authoringCandidateRefreshBudget)
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	refreshCtx = serverstore.WithQueryBudget(refreshCtx, budget)
+	go func() {
+		defer cancel()
+		call.snapshot, call.err = a.readCandidates(refreshCtx, store, store.ListAuthoringExpansionCandidatesUnhurried)
+		g.mu.Lock()
+		a.finishCandidateAttemptLocked(call, store, true)
+		g.mu.Unlock()
+	}()
+	return call
+}
+
+// finishCandidateAttemptLocked publishes a successful snapshot or advances
+// the one shared retry series. The caller holds the gate lock.
+func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
+	store serverstore.AuthoringSessionStore, refresh bool) {
+	g := &a.authoringCandidates
+	if call.err == nil {
+		now := a.now()
+		call.snapshot.takenAt = now
+		g.have, g.snapshot, g.takenAt = true, call.snapshot, now
+		g.retries.Reset()
+		g.retryWaiting = false
+		g.lastErr = nil
+		g.deferredUntil = time.Time{}
+	} else {
+		g.lastErr = call.err
+		if refresh {
+			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", call.err)
+		} else {
+			log.Printf("csx-server: authoring candidate scan failed (%v)", call.err)
+		}
+	}
+	close(call.done)
+	if refresh {
+		if g.refresh == call {
+			g.refresh = nil
+		}
+	} else if g.call == call {
+		g.call = nil
+	}
+	if call.err != nil {
+		a.scheduleCandidateRetryLocked(store)
+	}
+}
+
+// scheduleCandidateRetryLocked waits without occupying a query or pool slot,
+// then starts one detached retry. Polls during the wait either receive the
+// stale snapshot or the last failure; none can restart the series. The caller
+// holds the gate lock.
+func (a *api) scheduleCandidateRetryLocked(store serverstore.AuthoringSessionStore) {
+	g := &a.authoringCandidates
+	retry, state := g.retries.Failure()
+	if state == retrypolicy.FailedDeferred {
+		g.retryWaiting = false
+		g.deferredUntil = a.now().Add(authoringCandidateTTL)
+		log.Printf("csx-server: authoring candidate scan failed after %d retries; state=failed/deferred for %s",
+			retrypolicy.MaxRetries, authoringCandidateTTL)
+		return
+	}
+	delay, _ := retrypolicy.Delay(retry, g.retryDraw)
+	g.retryWaiting = true
+	wait := g.retryWait
+	go func() {
+		if wait == nil {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			<-timer.C
+		} else {
+			wait(delay)
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if !g.retryWaiting || g.retries.State() != retrypolicy.Waiting {
+			return
+		}
+		g.retryWaiting = false
+		if g.have {
+			if g.refresh == nil {
+				g.refresh = a.startCandidateRefresh(store, true)
+			}
+			return
+		}
+		if g.call == nil {
+			g.call = a.startCandidateFirstScan(context.Background(), store, true)
+		}
+	}()
+	log.Printf("csx-server: authoring candidate background retry %d/%d in %s",
+		retry, retrypolicy.MaxRetries, delay.Round(time.Millisecond))
 }
 
 // readCandidates performs the pair of reads behind one snapshot. expansion
@@ -249,6 +366,280 @@ func gapsFirst(eligible []serverstore.WantedRow) []serverstore.WantedRow {
 		if c.Kind == "WANTED" {
 			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// candidateCoordKey uniquely identifies a work coordinate across candidate sources.
+type candidateCoordKey struct {
+	ecosystem string
+	name      string
+	version   string
+	symbol    string
+	targetOS  string
+	axis      string
+}
+
+func makeCandidateCoordKey(c serverstore.WantedRow) candidateCoordKey {
+	axis := c.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
+	return candidateCoordKey{
+		ecosystem: c.Ecosystem,
+		name:      c.Name,
+		version:   c.Version,
+		symbol:    c.Symbol,
+		targetOS:  strings.ToLower(strings.TrimSpace(c.TargetOS)),
+		axis:      axis,
+	}
+}
+
+func mergeCandidateRows(existing, incoming serverstore.WantedRow) serverstore.WantedRow {
+	out := existing
+	if incoming.Asks > out.Asks {
+		out.Asks = incoming.Asks
+	}
+	if incoming.Score > out.Score {
+		out.Score = incoming.Score
+	}
+	if incoming.LastSeen.After(out.LastSeen) {
+		out.LastSeen = incoming.LastSeen
+	}
+	if out.FirstSeen.IsZero() || (!incoming.FirstSeen.IsZero() && incoming.FirstSeen.Before(out.FirstSeen)) {
+		out.FirstSeen = incoming.FirstSeen
+	}
+	// An explicit ask (WANTED) takes precedence over generic discovery kinds.
+	if out.Kind != "WANTED" && incoming.Kind == "WANTED" {
+		out.Kind = "WANTED"
+	} else if out.Kind != "WANTED" && out.Kind != "FINDING" && incoming.Kind == "FINDING" {
+		out.Kind = "FINDING"
+	}
+	if out.TargetOS == "" && incoming.TargetOS != "" {
+		out.TargetOS = incoming.TargetOS
+	}
+	return out
+}
+
+func deduplicateAuthoringCandidates(slices ...[]serverstore.WantedRow) []serverstore.WantedRow {
+	var total int
+	for _, s := range slices {
+		total += len(s)
+	}
+	out := make([]serverstore.WantedRow, 0, total)
+	seen := make(map[candidateCoordKey]int, total)
+	for _, s := range slices {
+		for _, c := range s {
+			if c.Axis == "" {
+				c.Axis = serverstore.AuthoringAxisSample
+			}
+			key := makeCandidateCoordKey(c)
+			if idx, ok := seen[key]; ok {
+				out[idx] = mergeCandidateRows(out[idx], c)
+			} else {
+				seen[key] = len(out)
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+const (
+	tier0RepeatedAndFindings = 0 // Direct Wanted/MISS with Asks > 1, or FINDING on requested packages
+	tier1DirectAndBoundary   = 1 // Direct Wanted/MISS with Asks == 1, or Sample boundary on requested packages
+	tier2OtherFindings       = 2 // Other failure clusters (FINDING with observations on unrequested packages)
+	tier3RequestedHoles      = 3 // Coverage holes around requested packages (Evidence/Dependency completeness)
+	tier4ObservedDemand      = 4 // Other observed demand (Score > 0)
+	tier5GenericExpansion    = 5 // Generic empty coordinates (Score == 0, unasked siblings, empty packages)
+)
+
+func candidateTier(c serverstore.WantedRow, requestedPkgs map[[2]string]bool) int {
+	pkgKey := [2]string{c.Ecosystem, c.Name}
+	isReqPkg := requestedPkgs[pkgKey]
+	axis := c.Axis
+	if axis == "" {
+		axis = serverstore.AuthoringAxisSample
+	}
+
+	if c.Kind == "WANTED" || c.Asks > 0 {
+		if c.Asks > 1 {
+			return tier0RepeatedAndFindings
+		}
+		return tier1DirectAndBoundary
+	}
+
+	if c.Kind == "FINDING" {
+		if isReqPkg {
+			return tier0RepeatedAndFindings
+		}
+		return tier2OtherFindings
+	}
+
+	if isReqPkg {
+		if axis == serverstore.AuthoringAxisSample {
+			return tier1DirectAndBoundary
+		}
+		return tier3RequestedHoles
+	}
+
+	if c.Score > 0 {
+		return tier4ObservedDemand
+	}
+
+	return tier5GenericExpansion
+}
+
+// buildAuthoringCandidates prioritizes candidates using the request-first queue:
+// Tier 0: Direct Wanted / MISS with Asks > 1 and failure fingerprints on requested packages.
+// Tier 1: Direct Wanted / MISS with Asks == 1 and boundary coverage on requested packages.
+// Tier 2: Other failure clusters (FINDING with observations).
+// Tier 3: Coverage holes around requested packages (Sample/Evidence/Dependency completeness).
+// Tier 4: Other observed demand (Score > 0).
+// Tier 5: Generic empty coordinates (Score == 0, unasked siblings, empty packages).
+//
+// Within each tier, candidates are interleaved across packages via pkgDepth
+// to prevent starvation, and ordered by demand, recency, and version recency.
+func buildAuthoringCandidates(
+	candidates []serverstore.WantedRow,
+	requested []serverstore.WantedRow,
+	req authoringWorkRequest,
+) []serverstore.WantedRow {
+	deduped := deduplicateAuthoringCandidates(candidates)
+	if len(deduped) == 0 {
+		return nil
+	}
+
+	requestedPkgs := make(map[[2]string]bool, len(requested))
+	for _, w := range requested {
+		if w.Name != "" {
+			requestedPkgs[[2]string{w.Ecosystem, w.Name}] = true
+		}
+	}
+
+	effectiveScore := func(c serverstore.WantedRow) int64 {
+		score := c.Score
+		if c.Asks > score {
+			score = c.Asks
+		}
+		return score
+	}
+
+	osMatches := func(c serverstore.WantedRow) bool {
+		if len(req.VerifierOS) == 0 || c.TargetOS == "" {
+			return false
+		}
+		return strings.EqualFold(c.TargetOS, req.VerifierOS[0])
+	}
+
+	compareWithinPackage := func(a, b serverstore.WantedRow) bool {
+		sa, sb := effectiveScore(a), effectiveScore(b)
+		if sa != sb {
+			return sa > sb
+		}
+		if !a.LastSeen.Equal(b.LastSeen) {
+			if a.LastSeen.IsZero() {
+				return false
+			}
+			if b.LastSeen.IsZero() {
+				return true
+			}
+			return a.LastSeen.After(b.LastSeen)
+		}
+		cmp := domain.CompareVersions(a.Version, b.Version)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		ma, mb := osMatches(a), osMatches(b)
+		if ma != mb {
+			return ma && !mb
+		}
+		if a.Symbol != b.Symbol {
+			return a.Symbol < b.Symbol
+		}
+		return a.Axis < b.Axis
+	}
+
+	tiers := make([][]serverstore.WantedRow, 6)
+	for _, c := range deduped {
+		t := candidateTier(c, requestedPkgs)
+		tiers[t] = append(tiers[t], c)
+	}
+
+	type depthItem struct {
+		row   serverstore.WantedRow
+		depth int
+	}
+
+	var out []serverstore.WantedRow
+	for _, tierList := range tiers {
+		if len(tierList) == 0 {
+			continue
+		}
+		byPkg := make(map[[2]string][]serverstore.WantedRow)
+		for _, c := range tierList {
+			pkg := [2]string{c.Ecosystem, c.Name}
+			byPkg[pkg] = append(byPkg[pkg], c)
+		}
+
+		var items []depthItem
+		for _, pkgRows := range byPkg {
+			sort.SliceStable(pkgRows, func(i, j int) bool {
+				return compareWithinPackage(pkgRows[i], pkgRows[j])
+			})
+			for depth, row := range pkgRows {
+				items = append(items, depthItem{row: row, depth: depth + 1})
+			}
+		}
+
+		sort.SliceStable(items, func(i, j int) bool {
+			a, b := items[i], items[j]
+			if a.depth != b.depth {
+				return a.depth < b.depth
+			}
+			sa, sb := effectiveScore(a.row), effectiveScore(b.row)
+			if sa != sb {
+				return sa > sb
+			}
+			if !a.row.LastSeen.Equal(b.row.LastSeen) {
+				if a.row.LastSeen.IsZero() {
+					return false
+				}
+				if b.row.LastSeen.IsZero() {
+					return true
+				}
+				return a.row.LastSeen.After(b.row.LastSeen)
+			}
+			cmp := domain.CompareVersions(a.row.Version, b.row.Version)
+			if cmp != 0 {
+				return cmp > 0
+			}
+			ma, mb := osMatches(a.row), osMatches(b.row)
+			if ma != mb {
+				return ma && !mb
+			}
+			if a.row.Ecosystem != b.row.Ecosystem {
+				return a.row.Ecosystem < b.row.Ecosystem
+			}
+			if a.row.Name != b.row.Name {
+				return a.row.Name < b.row.Name
+			}
+			if a.row.Version != b.row.Version {
+				return a.row.Version < b.row.Version
+			}
+			if a.row.Symbol != b.row.Symbol {
+				return a.row.Symbol < b.row.Symbol
+			}
+			return a.row.Axis < b.row.Axis
+		})
+
+		for _, item := range items {
+			out = append(out, item.row)
+		}
+	}
+
+	if len(out) > maxOfferedCandidates {
+		out = out[:maxOfferedCandidates]
 	}
 	return out
 }
@@ -599,33 +990,34 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	}
 	var funnel authoringFunnel
 	funnel.Wanted = len(snapshot.wanted)
-	eligible := make([]serverstore.WantedRow, 0, 400)
+	wantedEligible := make([]serverstore.WantedRow, 0, len(snapshot.wanted))
 	for _, candidate := range snapshot.wanted {
 		candidate.Kind = "WANTED"
 		candidate.Score = candidate.Asks
 		if authoringCandidateEligible(candidate, request) {
-			eligible = append(eligible, candidate)
+			wantedEligible = append(wantedEligible, candidate)
 		}
 	}
-	funnel.WantedEligible = len(eligible)
-	// WANTED keeps its own order: it is somebody's explicit ask, and demand is
-	// the ranking. Expansion is the network choosing its own next move, so it
-	// is steered at the releases the site renders.
+	funnel.WantedEligible = len(wantedEligible)
+
+	funnel.Expansion = len(snapshot.expansion)
 	fresh := make([]serverstore.WantedRow, 0, len(snapshot.expansion))
 	for _, candidate := range snapshot.expansion {
 		if authoringCandidateEligible(candidate, request) {
 			fresh = append(fresh, candidate)
 		}
 	}
-	funnel.Expansion = len(snapshot.expansion)
 	funnel.ExpansionEligible = len(fresh)
-	eligible = append(eligible, preferNewestVersions(fresh, authoringNewestVersions)...)
+
+	combined := deduplicateAuthoringCandidates(wantedEligible, fresh)
+
 	// The expansion snapshot is deliberately long-lived. Recheck only the
 	// axis predicates against live tables so completed Sample/Evidence/
 	// Dependency work disappears immediately instead of being re-leased for thirty
 	// minutes. Stores without this contract may serve legacy Sample work only.
 	if completeness, ok := store.(serverstore.AuthoringCompletenessStore); ok {
-		eligible, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, eligible)
+		var err error
+		combined, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, combined)
 		if err != nil {
 			if writeAuthoringWorkBusy(w, err) {
 				return
@@ -634,30 +1026,29 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		legacy := eligible[:0]
-		for _, candidate := range eligible {
+		legacy := combined[:0]
+		for _, candidate := range combined {
 			if candidate.Axis == "" || candidate.Axis == serverstore.AuthoringAxisSample {
 				legacy = append(legacy, candidate)
 			}
 		}
-		eligible = legacy
+		combined = legacy
 	}
 	// A dependency coordinate is the one kind of work whose release no
 	// publicness gate has necessarily seen: it exists because a lockfile
 	// resolved onto it, not because anybody reported using it. Confirm it
 	// against the registry before a worker is sent, and register it while we
 	// are there.
-	eligible = a.confirmDependencyWork(pollCtx, eligible)
-	funnel.AfterDependency = len(eligible)
+	combined = a.confirmDependencyWork(pollCtx, combined)
+	funnel.AfterDependency = len(combined)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a
 	// fact about the artifact and not about this worker.
-	eligible = dropUnauthorableMaven(pollCtx, a.mavenJar, eligible)
-	funnel.AfterUnauthorable = len(eligible)
-	if a.authoringPolls.Add(1)%authoringGapEvery == 0 {
-		eligible = gapsFirst(eligible)
-	}
+	combined = dropUnauthorableMaven(pollCtx, a.mavenJar, combined)
+	funnel.AfterUnauthorable = len(combined)
+
+	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
 	funnel.Offered = len(eligible)
 	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
 	if err != nil {

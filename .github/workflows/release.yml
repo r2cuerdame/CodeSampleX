@@ -71,6 +71,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The scripts package starts PowerShell. Run it before the CPU-heavy
+      # packages so hosted-runner starvation cannot hide a real registry
+      # failure behind the child-process deadline. Force that isolated gate
+      # to execute, then exclude only that already-passed test from the
+      # concurrent full suite.
+      - name: Native Windows registry isolation
+        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts
       - name: Native Windows launcher and updater tests
         # An explicit ceiling, because the default one was already being
         # grazed. `go test` gives each package binary ten minutes, and on a
@@ -85,7 +92,7 @@ jobs:
         # That failed a release for a reason that had nothing to do with the
         # code in it. The ceiling is for a hung test, not a slow runner; set
         # it where only a hang can reach it.
-        run: go test -timeout 30m ./...
+        run: go test -timeout 30m -skip '^TestWindowsBootstrapRegistryIsolation$' ./...
 
   # Everything that needs no credential. This job executes the repository's
   # own test code and bundles the built binaries; it is deliberately the one
@@ -315,21 +322,45 @@ jobs:
         run: go run ./scripts/update_manifest.go sign "${GITHUB_REF#refs/tags/}" "${GITHUB_RUN_ID}" dist dist/csx-update-stable.json
 
       - name: Verify signed updater manifest
-        run: go run ./scripts/update_manifest.go verify '${{ needs.build.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
+        run: go run ./scripts/update_manifest.go verify-release '${{ needs.build.outputs.public_key }}' dist "${GITHUB_REF#refs/tags/}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-manifest
-          path: dist/csx-update-stable.json
+          path: |
+            dist/csx-update-stable.json
+            dist/csx-bootstrap-stable.json
           if-no-files-found: error
           retention-days: 7
+
+  windows-bootstrap:
+    name: Clean Windows signed bootstrap
+    needs: [build, sign]
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-dist
+          path: .
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-manifest
+          path: dist
+      - name: Install the signed artifacts in an isolated Windows profile
+        shell: powershell
+        run: ./scripts/windows-bootstrap-smoke.ps1 -DistDir dist
 
   # Write scope and the registry's OIDC identity live here, and the signing
   # seed does not. This job can replace a release asset; it cannot mint a
   # signature, so the worst it can publish is something the updater refuses —
   # which the verification steps below catch before the registry hears of it.
   publish:
-    needs: [build, sign]
+    needs: [build, sign, windows-bootstrap]
     permissions:
       contents: write # create the release and upload assets
       id-token: write # OIDC for the MCP Registry — no stored secret
@@ -363,7 +394,7 @@ jobs:
       # This job never sees the seed, so this is the same check an updating
       # client performs, run against the exact bytes about to be uploaded.
       - name: Verify the signed updater manifest
-        run: go run ./scripts/update_manifest.go verify '${{ needs.build.outputs.public_key }}' dist/csx-update-stable.json "${GITHUB_REF#refs/tags/}"
+        run: go run ./scripts/update_manifest.go verify-release '${{ needs.build.outputs.public_key }}' dist "${GITHUB_REF#refs/tags/}"
 
       - name: Create GitHub release
         env:
@@ -374,45 +405,60 @@ jobs:
             dist/csx-linux-amd64 dist/csx-linux-arm64 \
             dist/csx-windows-amd64.exe dist/csx-windows-arm64.exe \
             dist/csx-launcher-windows-amd64.exe dist/csx-launcher-windows-arm64.exe \
-            dist/csx-server-linux-amd64 dist/SHA256SUMS.txt dist/csx-update-stable.json \
+            dist/csx-server-linux-amd64 dist/SHA256SUMS.txt dist/csx-update-stable.json dist/csx-bootstrap-stable.json \
             dist/codesamplex-mcp.mcpb dist/codesamplex-mcp.mcpb.sha256)
-          # A registry publish can fail after the GitHub release exists. Make
-          # reruns repair/replace that release's assets instead of failing at
-          # `gh release create` and permanently blocking recovery.
+          # Public releases are immutable. A retry may repair an unpublished
+          # draft, but must never clobber a payload already named by a signature.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then
+              gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            fi
           else
             gh release create "$TAG" "${ASSETS[@]}" \
-              --title "$TAG" --generate-notes --latest
+              --title "$TAG" --generate-notes --draft
           fi
 
-      - name: Verify exact published release asset set
+      - name: Verify exact uploaded release asset set
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           printf '%s\n' \
             csx-darwin-amd64 csx-darwin-arm64 csx-linux-amd64 csx-linux-arm64 \
             csx-windows-amd64.exe csx-windows-arm64.exe \
             csx-launcher-windows-amd64.exe csx-launcher-windows-arm64.exe \
-            csx-server-linux-amd64 SHA256SUMS.txt csx-update-stable.json \
+            csx-server-linux-amd64 SHA256SUMS.txt csx-update-stable.json csx-bootstrap-stable.json \
             codesamplex-mcp.mcpb codesamplex-mcp.mcpb.sha256 | sort > /tmp/expected-assets
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            --jq '.assets[].name' | sort > /tmp/actual-assets
+          # REST lookup by tag only finds published releases. The CLI also
+          # resolves drafts, whose uploaded bytes must pass before promotion.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort > /tmp/actual-assets
           diff -u /tmp/expected-assets /tmp/actual-assets
 
-      # The asset must exist and match before the registry is told about it;
-      # publishing first would advertise a digest nobody can satisfy.
-      - name: Verify the published asset
+      - name: Verify uploaded signed release before promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_CHECKSUMS_SHA256: ${{ needs.build.outputs.checksums_sha256 }}
         run: |
-          curl -fsSL -o /tmp/bundle.mcpb \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ needs.build.outputs.version }}/codesamplex-mcp.mcpb"
-          echo '${{ needs.build.outputs.mcpb_sha256 }}  /tmp/bundle.mcpb' | sha256sum -c -
-          curl -fsSL -o /tmp/csx-update-stable.json \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ needs.build.outputs.version }}/csx-update-stable.json"
-          go run ./scripts/update_manifest.go verify \
-            '${{ needs.build.outputs.public_key }}' /tmp/csx-update-stable.json \
-            "v${{ needs.build.outputs.version }}"
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p /tmp/published-release
+          gh release download "$TAG" --dir /tmp/published-release
+          echo "${EXPECTED_CHECKSUMS_SHA256}  /tmp/published-release/SHA256SUMS.txt" | sha256sum -c -
+          (cd /tmp/published-release && sha256sum -c SHA256SUMS.txt && sha256sum -c codesamplex-mcp.mcpb.sha256)
+          go run ./scripts/update_manifest.go verify-release \
+            '${{ needs.build.outputs.public_key }}' /tmp/published-release "$TAG"
+          echo '${{ needs.build.outputs.mcpb_sha256 }}  /tmp/published-release/codesamplex-mcp.mcpb' | sha256sum -c -
+
+      - name: Atomically publish the verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then
+            gh release edit "$TAG" --draft=false --latest
+          fi
 
       - name: Install mcp-publisher
         run: |

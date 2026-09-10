@@ -37,6 +37,27 @@ func TestLoadMigrations(t *testing.T) {
 	}
 }
 
+func TestRecentWantedDemandMigrationAddsEpochLeadingIndex(t *testing.T) {
+	raw, err := migrationsFS.ReadFile("migrations/0035_recent_wanted_demand.sql")
+	if err != nil {
+		t.Fatalf("read recent wanted demand migration: %v", err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, required := range []string{
+		"create index if not exists wanted_dedup_epoch_coordinate_idx",
+		"on wanted_dedup(epoch desc, ecosystem, name, version, symbol, target_os)",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("recent wanted demand migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"anon_id", "ip", "user_agent", "query"} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("recent wanted demand index contains privacy field %q", forbidden)
+		}
+	}
+}
+
 func TestInitMigrationCoversC4Schema(t *testing.T) {
 	migs, err := LoadMigrations()
 	if err != nil {

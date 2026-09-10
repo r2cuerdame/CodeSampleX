@@ -27,15 +27,21 @@ on:
         required: true
         type: choice
         options: [safe, additive-migration, manual]
-      linear_issue:
-        description: Linear issue receiving the run evidence
+      tracking_issue:
+        description: Canonical GitHub tracking issue receiving the run evidence (e.g. #213 or 213)
         required: true
         type: string
+      offline_migration_timeout_seconds:
+        description: Offline migration deadline only (60-1800 seconds); no observation wait
+        required: false
+        type: number
+        default: 1200
 
 permissions:
   contents: read
   checks: read
   actions: read
+  issues: read
 
 concurrency:
   group: codesamplex-production
@@ -46,18 +52,46 @@ jobs:
     name: Production eligibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      deploy_step_minutes: ${{ steps.budget.outputs.step_minutes }}
+      deploy_job_minutes: ${{ steps.budget.outputs.job_minutes }}
     steps:
+      - name: Calculate separate migration and deployment budgets
+        id: budget
+        env:
+          MIGRATION_TIMEOUT: ${{ inputs.offline_migration_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          [[ "$MIGRATION_TIMEOUT" =~ ^[0-9]{1,4}$ ]]
+          migration=$((10#$MIGRATION_TIMEOUT))
+          (( migration >= 60 && migration <= 1800 ))
+          # Measured non-SQL phase caps + exact recovery sum to 1340s.
+          # Round SQL upward; 24m adds 100s for runner/termination overhead.
+          step_minutes=$(( (migration + 59) / 60 + 24 ))
+          echo "step_minutes=$step_minutes" >> "$GITHUB_OUTPUT"
+          echo "job_minutes=$((step_minutes + 3))" >> "$GITHUB_OUTPUT"
+
+      - name: Require canonical operational source
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: operations
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          path: payload
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: operations/go.mod
+          cache-dependency-path: operations/go.sum
           cache: true
 
       - name: Prove canonical commit and ProjectOps decision
+        working-directory: operations
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
@@ -68,10 +102,11 @@ jobs:
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$TARGET_SHA" origin/main
-          go run ./cmd/csx-deploy-gate \
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C ../payload rev-parse HEAD)" = "$TARGET_SHA"
+          git -C ../payload fetch --no-tags origin main
+          git -C ../payload merge-base --is-ancestor "$TARGET_SHA" origin/main
+          go run ./cmd/csx-deploy-gate -repo ../payload \
             -target "$TARGET_SHA" \
             -previous "$PREVIOUS_SHA" \
             -merge-verdict "$MERGE_VERDICT" \
@@ -94,6 +129,17 @@ jobs:
           fi
           echo "Canonical CI evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Require successful canonical operational CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATIONAL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ci_run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${OPERATIONAL_SHA}&branch=main&status=success&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // 0')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+          echo "Operational source: ${OPERATIONAL_SHA}; CI: ${ci_run}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Require successful same-target release and farm rollout
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,50 +156,82 @@ jobs:
           fi
           echo "Release/farm evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${release_run}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Require target-specific GitHub tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
+        run: |
+          set -euo pipefail
+          issue_number=$(echo "$TRACKING_ISSUE" | sed -E 's/.*\/issues\/([0-9]+)/\1/; s/^#//')
+          if ! [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::tracking issue '$TRACKING_ISSUE' must be a valid GitHub issue reference (e.g. #213 or 213)"
+            exit 1
+          fi
+          issue_content=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}" \
+            --jq '(.title // "") + "\n" + (.body // "")')
+          issue_comments=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${issue_number}/comments" \
+            --paginate \
+            --jq '.[].body' 2>/dev/null || true)
+          all_content="$issue_content"$'\n'"$issue_comments"
+          if ! grep -F -q "$TARGET_SHA" <<< "$all_content"; then
+            echo "::error::tracking issue #${issue_number} does not reference target commit $TARGET_SHA"
+            exit 1
+          fi
+          echo "Tracking issue evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${issue_number}" >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Roll out production
     needs: eligibility
     runs-on: ubuntu-latest
-    # deploy.ps1 owns a measured fresh-builder budget after image preparation
-    # and cutover -- 80 minutes since 2026-09-01, raised from 30 when the pass
-    # itself was measured at 49 minutes on a corpus that had tripled that day.
-    # Keep the outer runner alive long enough for setup, the final
-    # invariant/public-surface gates, and rollback as well: if this merely
-    # equals the inner wait, GitHub cancels the job before the script can
-    # record success or run its rollback path.
-    timeout-minutes: 95
+    # Independent SQL budget plus 24m worst-case preparation/recovery envelope.
+    # Host activation and exact acceptance share 180s; no observation/ACK wait.
+    timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_job_minutes) }}
     environment: codesamplex-production
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: operations
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          path: payload
 
       - name: Initialize fail-closed evidence
         shell: pwsh
         env:
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
-          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
         run: |
           @{
-            schemaVersion = 1
+            schemaVersion = 2
             workflowRunId = "${{ github.run_id }}"
             workflowRunUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            linearIssue = $env:LINEAR_ISSUE
+            trackingIssue = $env:TRACKING_ISSUE
             targetSha = $env:TARGET_SHA
+            operationalSha = "${{ github.sha }}"
             previousProductionSha = $env:PREVIOUS_SHA
             conclusion = "failure"
             deployedSha = ""
+            servedRevision = "unavailable"
             imageDigest = ""
             migrationVersion = ""
             health = "not-started"
             smoke = "not-started"
             rollback = "not-started"
-            invariants = @{ before = $null; after = $null }
-            failureEvidenceQuality = $null
+            failureClass = "pre-activation"
+            phaseTimings = @{}
+            observation = "pending-independent-workflow"
           } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM production-deploy-evidence.json
 
       - name: Install the dedicated SSH identity and pinned host key
@@ -171,6 +249,7 @@ jobs:
           test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
 
       - name: Deploy and verify
+        timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_step_minutes) }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,17 +257,22 @@ jobs:
           PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
           TARGET_SHA: ${{ inputs.commit_sha }}
           PREVIOUS_SHA: ${{ inputs.previous_production_sha }}
-          LINEAR_ISSUE: ${{ inputs.linear_issue }}
+          TRACKING_ISSUE: ${{ inputs.tracking_issue }}
+          OPERATIONAL_SHA: ${{ github.sha }}
+          MIGRATION_TIMEOUT: ${{ inputs.offline_migration_timeout_seconds }}
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
-          ./deploy/lightsail/deploy-production.ps1 `
+          ./operations/deploy/lightsail/deploy-production.ps1 `
+            -SourceRepoPath (Join-Path $env:GITHUB_WORKSPACE "payload") `
+            -OperationalRevision $env:OPERATIONAL_SHA `
+            -MigrationTimeoutSeconds ([int]$env:MIGRATION_TIMEOUT) `
             -Ip $env:PRODUCTION_HOST `
             -User $user `
             -KeyPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/id") `
             -KnownHostsPath (Join-Path $env:RUNNER_TEMP "csx-production-ssh/known_hosts") `
             -ExpectedRevision $env:TARGET_SHA `
             -ExpectedPreviousRevision $env:PREVIOUS_SHA `
-            -LinearIssue $env:LINEAR_ISSUE `
+            -TrackingIssue $env:TRACKING_ISSUE `
             -EvidencePath (Join-Path $env:GITHUB_WORKSPACE "production-deploy-evidence.json")
 
       - name: Remove production SSH material
@@ -204,12 +288,14 @@ jobs:
         run: |
           set -euo pipefail
           test -s production-deploy-evidence.json
-          jq '{deployedSha,imageDigest,migrationVersion,health,rollback,invariants,failureEvidenceQuality}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          jq '{operationalSha,deployedSha,servedRevision,imageDigest,migrationVersion,offlineMigration,health,smoke,rollback,failureClass,phaseTimings,criticalPathCeilingsSeconds,migrationBudgetSeconds,activationBudgetSeconds,deployStepCeilingMinutes,acceptanceAuthority,hostPhaseTimings,observation}' production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: production-evidence-${{ github.run_id }}
-          path: production-deploy-evidence.json
+          path: |
+            production-deploy-evidence.json
+            production-deploy-evidence.json.migration.json
           if-no-files-found: error
           retention-days: 30

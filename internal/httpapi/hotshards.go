@@ -41,6 +41,9 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 const (
@@ -76,6 +79,8 @@ type hotShardHint struct {
 	keys    []string
 	at      time.Time
 	loading chan struct{}
+	retry   retrypolicy.Series
+	retryAt time.Time
 }
 
 // hotShardKeys reports the keys to advertise, or nil when this process has
@@ -87,7 +92,17 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 		wait = hotShardRequestWait
 	}
 	a.hotShards.mu.Lock()
+	now := a.now()
 	if a.hotShards.keys != nil && a.now().Sub(a.hotShards.at) < a.hotShardTTL() {
+		keys := a.hotShards.keys
+		a.hotShards.mu.Unlock()
+		return keys
+	}
+	if a.hotShards.retry.State() == retrypolicy.FailedDeferred && !now.Before(a.hotShards.retryAt) {
+		a.hotShards.retry.Reset()
+		a.hotShards.retryAt = time.Time{}
+	}
+	if now.Before(a.hotShards.retryAt) {
 		keys := a.hotShards.keys
 		a.hotShards.mu.Unlock()
 		return keys
@@ -96,7 +111,7 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 	if done == nil {
 		done = make(chan struct{})
 		a.hotShards.loading = done
-		go a.loadHotShards(ctx, done)
+		go a.loadHotShards(ctx, done, a.hotShards.retry.State() == retrypolicy.Waiting)
 	}
 	a.hotShards.mu.Unlock()
 
@@ -124,20 +139,43 @@ func (a *api) hotShardTTL() time.Duration {
 }
 
 // loadHotShards performs the one shared whole-corpus read and publishes it.
-func (a *api) loadHotShards(ctx context.Context, done chan struct{}) {
+func (a *api) loadHotShards(ctx context.Context, done chan struct{}, retry bool) {
 	// Detached from the caller on purpose: the read is shared, so a client
 	// that hung up must neither abandon the callers waiting with it nor make
-	// the next poll pay for the same four whole-corpus reads. The caller's
-	// class travels with the context; only its cancellation is dropped.
-	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hotShardLoadTimeout)
+	// the next poll pay for the same four whole-corpus reads. Detached work is
+	// background work; it must not retain the request's interactive pool class.
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	baseCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
+	loadCtx, cancel := context.WithTimeout(baseCtx, hotShardLoadTimeout)
 	defer cancel()
 	keys, err := a.d.Store.HotShardKeys(loadCtx, hotShardLimit)
 
 	a.hotShards.mu.Lock()
 	defer a.hotShards.mu.Unlock()
-	if err == nil && len(keys) > 0 {
-		a.hotShards.keys = keys
+	if err == nil {
+		// Empty is also a successful read: clear retired hints and reset any
+		// failed series. Keep nil so a fresh install can discover the first
+		// shards as soon as the builder publishes them.
+		a.hotShards.keys = nil
+		if len(keys) > 0 {
+			a.hotShards.keys = keys
+		}
 		a.hotShards.at = a.now()
+		a.hotShards.retry.Reset()
+		a.hotShards.retryAt = time.Time{}
+	} else if err != nil {
+		retry, state := a.hotShards.retry.Failure()
+		if state == retrypolicy.Waiting {
+			delay, _ := retrypolicy.Delay(retry, nil)
+			a.hotShards.retryAt = a.now().Add(delay)
+		} else {
+			// Terminal for this retry series. A normal cache lifetime is the
+			// deferred window; no request can immediately reinsert the work.
+			a.hotShards.retryAt = a.now().Add(a.hotShardTTL())
+		}
 	}
 	a.hotShards.loading = nil
 	close(done)

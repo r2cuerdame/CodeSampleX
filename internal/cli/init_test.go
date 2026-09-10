@@ -62,7 +62,8 @@ func testInitEnv(t *testing.T, stdin string) (*initEnv, *bytes.Buffer, string) {
 }
 
 func TestInitContractTextVerbatim(t *testing.T) {
-	if !strings.Contains(contractText, contract54) {
+	normalizedContract := strings.ReplaceAll(contractText, "\r\n", "\n")
+	if !strings.Contains(normalizedContract, contract54) {
 		t.Fatalf("embedded contract screen does not contain the §5.4 block verbatim:\n%s", contractText)
 	}
 }
@@ -195,7 +196,7 @@ func TestInitInteractiveCommunity(t *testing.T) {
 	if code := initMain(context.Background(), nil, env); code != 0 {
 		t.Fatalf("init returned %d\n%s", code, out.String())
 	}
-	s := out.String()
+	s := strings.ReplaceAll(out.String(), "\r\n", "\n")
 	if !strings.Contains(s, contract54) {
 		t.Errorf("interactive init did not print the contract screen:\n%s", s)
 	}

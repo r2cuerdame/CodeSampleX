@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/blob"
 )
@@ -77,6 +78,12 @@ type Deps struct {
 	// hotShardWait is a test seam for how long GET /v1/stats waits for the
 	// warming hint. Production always uses hotShardRequestWait.
 	hotShardWait time.Duration
+
+	// WantedSnapshot is loaded before the aggregation builder starts. A
+	// process must never make its first public wanted request compete with the
+	// restart builder for PostgreSQL; NewMux takes its own copy and serves it
+	// while one bounded background refresh keeps it current.
+	WantedSnapshot *WantedSnapshot
 }
 
 type api struct {
@@ -97,13 +104,34 @@ type api struct {
 	// recomputed for each caller on the request's own clock.
 	hotShards hotShardHint
 
+	// The daily rollup that same endpoint serves. It is replaced at most once
+	// per builder pass, so it is remembered for one builder cadence and
+	// survives backpressure rather than being reread per request.
+	statsCache latestStatsCache
+
+	// Concurrent container and monitor probes share one bounded DB read.
+	healthMu   sync.Mutex
+	health     *healthCall
+	healthOKAt time.Time
+
 	// authoringPolls counts work polls for the gap rotation; see
 	// authoringGapEvery.
 	authoringPolls atomic.Uint64
 
-	wantedMu    sync.Mutex
-	wantedAt    time.Time
-	wantedItems []wantedListItem
+	wantedMu         sync.Mutex
+	wantedStale      bool
+	wantedAt         time.Time
+	wantedItems      []wantedListItem
+	wantedRefresh    *wantedRefreshCall
+	wantedRetryAt    time.Time
+	wantedRetry      retrypolicy.Series
+	wantedGeneration uint64
+	wantedErr        error
+}
+
+type healthCall struct {
+	done chan struct{}
+	err  error
 }
 
 // NewMux builds the /v1 API mux with every C5 route registered.
@@ -124,6 +152,13 @@ func NewMux(d Deps) *http.ServeMux {
 		d.authoringWorkTimeout = authoringWorkPollTimeout
 	}
 	a := &api{d: d}
+	if d.WantedSnapshot != nil {
+		a.wantedAt = d.WantedSnapshot.GeneratedAt
+		if a.wantedAt.IsZero() {
+			a.wantedAt = a.now().UTC()
+		}
+		a.wantedItems = wantedListItems(d.WantedSnapshot.Rows)
+	}
 	// The publicness checker already talks to Maven Central; asking it one
 	// more question needs no new wiring, and a checker that cannot answer
 	// simply leaves the prober nil.
@@ -131,7 +166,7 @@ func NewMux(d Deps) *http.ServeMux {
 		a.mavenJar = newCachedMavenJarProber(prober)
 	}
 	if a.d.Limits == nil {
-		a.d.Limits = newLimiters()
+		a.d.Limits = newLimitersWithNow(d.Now)
 	}
 	mux := http.NewServeMux()
 	lim := a.d.Limits
@@ -202,7 +237,10 @@ func NewMux(d Deps) *http.ServeMux {
 
 // healthzTimeout keeps a stuck database from turning the health check into
 // another hung request; the probe is a single trivial query.
-const healthzTimeout = 3 * time.Second
+const (
+	healthzTimeout    = 3 * time.Second
+	healthzSuccessTTL = time.Second
+)
 
 func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -217,11 +255,48 @@ func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
 	defer cancel()
 	// Any trivial read proves the pool can hand out a live connection.
-	if _, _, err := a.d.Store.GetLatestStats(ctx); err != nil {
+	if err := a.databaseHealth(ctx); err != nil {
 		unhealthy("database unavailable")
 		return
 	}
 	_, _ = io.WriteString(w, "ok")
+}
+
+func (a *api) databaseHealth(ctx context.Context) error {
+	a.healthMu.Lock()
+	if !a.healthOKAt.IsZero() && a.now().Sub(a.healthOKAt) < healthzSuccessTTL {
+		a.healthMu.Unlock()
+		return nil
+	}
+	if call := a.health; call != nil {
+		a.healthMu.Unlock()
+		select {
+		case <-call.done:
+			return call.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	call := &healthCall{done: make(chan struct{})}
+	a.health = call
+	a.healthMu.Unlock()
+
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), healthzTimeout)
+	_, _, call.err = a.d.Store.GetLatestStats(loadCtx)
+	cancel()
+
+	a.healthMu.Lock()
+	if call.err == nil {
+		a.healthOKAt = a.now()
+	} else {
+		a.healthOKAt = time.Time{}
+	}
+	if a.health == call {
+		a.health = nil
+	}
+	close(call.done)
+	a.healthMu.Unlock()
+	return call.err
 }
 
 // route registers h with a recover guard: a handler panic becomes a JSON
@@ -255,8 +330,15 @@ func (a *api) trustMode() bool { return a.d.Cfg.PublicCheck == "trust" }
 // between a client that backs off and a client that retries into the
 // saturation that caused it. Anything else keeps the status the caller
 // chose.
+// isBackpressure reports the two refusals above -- the pool declining to queue
+// any longer, and PostgreSQL cancelling a statement past its ceiling. Both say
+// "not now" about a healthy server; neither says anything is wrong with it.
+func isBackpressure(err error) bool {
+	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err)
+}
+
 func writeStoreErr(w http.ResponseWriter, err error, status int, msg string) {
-	if serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err) {
+	if isBackpressure(err) {
 		w.Header().Set("Retry-After", "2")
 		writeErr(w, http.StatusServiceUnavailable, "database busy")
 		return

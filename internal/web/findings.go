@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -610,10 +612,7 @@ const maxFindingsPage = 10000
 // one scan serves every visitor in between.
 const derivedTTL = 5 * time.Minute
 
-const (
-	findingsRefreshTimeout = 30 * time.Second
-	findingsRetryDelay     = 30 * time.Second
-)
+const findingsRefreshTimeout = 30 * time.Second
 
 // derivedFindings returns the last complete machine-derived group and starts
 // one bounded refresh when it is cold or stale.
@@ -626,10 +625,10 @@ const (
 // last complete snapshot. Concurrent readers only schedule one refresh.
 func (s *site) derivedFindings(_ *http.Request) []finding {
 	s.derivedMu.Lock()
-	now := time.Now()
+	now := s.backgroundNowTime()
 	rows := s.derivedCache
 	if !s.derivedAt.After(now.Add(-derivedTTL)) &&
-		!s.derivedRefreshing && !now.Before(s.derivedRetryAt) {
+		!s.derivedRefreshing && backgroundRetryReady(&s.derivedRetry, &s.derivedRetryAt, now) {
 		s.derivedRefreshing = true
 		go s.refreshDerivedFindings()
 	}
@@ -648,10 +647,16 @@ func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
 			s.failDerivedFindingsRefresh()
 		}
 	}()
-	// An unclassified context is deliberately a background DB class in the
-	// production adapter. It cannot consume an interactive lane and the
-	// deadline also covers waiting to acquire its own lane.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Every refresh owns a fresh background work budget. Explicit retries
+	// are counted separately from the first scan and its follow-up reads;
+	// the deadline also covers waiting to acquire the background lane.
+	s.derivedMu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.derivedRetry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.derivedMu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	rows, err := s.d.Store.DerivedFindings(ctx)
 	if err == nil {
@@ -673,7 +678,7 @@ func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
 		s.derivedMu.Lock()
 		s.derivedCache, s.derivedAt = out, time.Now()
 		s.derivedRefreshing = false
-		s.derivedRetryAt = time.Time{}
+		backgroundRetrySucceeded(&s.derivedRetry, &s.derivedRetryAt)
 		s.derivedMu.Unlock()
 		return
 	}
@@ -684,7 +689,7 @@ func (s *site) refreshDerivedFindingsWithin(timeout time.Duration) {
 func (s *site) failDerivedFindingsRefresh() {
 	s.derivedMu.Lock()
 	s.derivedRefreshing = false
-	s.derivedRetryAt = time.Now().Add(findingsRetryDelay)
+	backgroundRetryFailed(&s.derivedRetry, &s.derivedRetryAt, s.backgroundNowTime(), derivedTTL, s.backgroundJitter)
 	s.derivedMu.Unlock()
 }
 
@@ -698,8 +703,8 @@ func (s *site) decorateFindings(ctx context.Context, input []finding, basis, bas
 	for i := range out {
 		out[i].BasisKey = basisKey
 		out[i].Basis = basis
-		manifestJSON, ok := s.d.Store.SampleManifest(ctx, out[i].SampleID)
-		if !ok {
+		manifestJSON, ok, err := s.d.Store.SampleManifest(ctx, out[i].SampleID)
+		if err != nil || !ok {
 			continue
 		}
 		var manifest domain.SampleManifest
@@ -719,14 +724,14 @@ func (s *site) decorateFindings(ctx context.Context, input []finding, basis, bas
 // for the cache. That keeps 29 sequential manifest reads off the public path.
 func (s *site) handFindings(_ *http.Request) ([]finding, []finding) {
 	s.handMu.Lock()
-	now := time.Now()
+	now := s.backgroundNowTime()
 	documented, believed := s.handDocumented, s.handBelieved
 	if documented == nil && believed == nil {
 		documented = baseHandFindings(documentedFindings, "docs", "findings.basis_docs")
 		believed = baseHandFindings(believedFindings, "belief", "findings.basis_belief")
 	}
 	if !s.handAt.After(now.Add(-derivedTTL)) &&
-		!s.handRefreshing && !now.Before(s.handRetryAt) {
+		!s.handRefreshing && backgroundRetryReady(&s.handRetry, &s.handRetryAt, now) {
 		s.handRefreshing = true
 		go s.refreshHandFindings()
 	}
@@ -754,7 +759,13 @@ func (s *site) refreshHandFindingsWithin(timeout time.Duration) {
 			s.failHandFindingsRefresh()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	s.handMu.Lock()
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if s.handRetry.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	s.handMu.Unlock()
+	ctx, cancel := context.WithTimeout(serverstore.WithQueryBudget(context.Background(), budget), timeout)
 	defer cancel()
 	documented := s.decorateFindings(ctx, documentedFindings, "docs", "findings.basis_docs")
 	believed := s.decorateFindings(ctx, believedFindings, "belief", "findings.basis_belief")
@@ -764,17 +775,17 @@ func (s *site) refreshHandFindingsWithin(timeout time.Duration) {
 	defer s.handMu.Unlock()
 	s.handRefreshing = false
 	if err != nil {
-		s.handRetryAt = time.Now().Add(findingsRetryDelay)
+		backgroundRetryFailed(&s.handRetry, &s.handRetryAt, s.backgroundNowTime(), derivedTTL, s.backgroundJitter)
 		return
 	}
 	s.handDocumented, s.handBelieved, s.handAt = documented, believed, time.Now()
-	s.handRetryAt = time.Time{}
+	backgroundRetrySucceeded(&s.handRetry, &s.handRetryAt)
 }
 
 func (s *site) failHandFindingsRefresh() {
 	s.handMu.Lock()
 	s.handRefreshing = false
-	s.handRetryAt = time.Now().Add(findingsRetryDelay)
+	backgroundRetryFailed(&s.handRetry, &s.handRetryAt, s.backgroundNowTime(), derivedTTL, s.backgroundJitter)
 	s.handMu.Unlock()
 }
 

@@ -1,0 +1,81 @@
+{
+  "$schema": "../schemas/v1/partner-integration.json",
+  "schemaVersion": 1,
+  "id": "io.github.r2cuerdame/codesamplex",
+  "product": {
+    "name": "CodeSampleX",
+    "recommendedLabel": "Add CodeSampleX execution experience",
+    "partnerPitch": "Your coding assistant keeps reasoning; CSX adds real-world execution memory.",
+    "role": "coding-assist-evidence-layer",
+    "replacesHostAssistant": false
+  },
+  "presentation": {
+    "placement": "recommended-toggle",
+    "defaultEnabled": false,
+    "showProtocolToUser": false
+  },
+  "provisioning": {
+    "source": "official-mcp-registry",
+    "registryId": "io.github.r2cuerdame/codesamplex",
+    "packageType": "mcpb",
+    "hostOwnsLifecycle": true
+  },
+  "activation": {
+    "requiresModeChoice": true,
+    "modes": [
+      "community",
+      "local-only"
+    ],
+    "readyAfter": [
+      "initialize",
+      "notifications/initialized"
+    ],
+    "modeSetup": {
+      "executableSource": "managed-package",
+      "arguments": {
+        "community": [
+          "init",
+          "--community",
+          "--yes",
+          "--no-agents",
+          "--no-daemon"
+        ],
+        "local-only": [
+          "init",
+          "--local-only",
+          "--yes",
+          "--no-agents",
+          "--no-daemon"
+        ]
+      }
+    }
+  },
+  "semantics": {
+    "unknownResult": "NO_SAFE_MATCH",
+    "preserveEnvironmentCoordinates": true,
+    "keepObservationAndVerificationSeparate": true,
+    "hostRetainsReasoning": true,
+    "defaultResponse": "bounded-evidence",
+    "details": "on-demand"
+  },
+  "capabilities": {
+    "automaticRecall": [
+      "search_known_solution",
+      "explain_compatibility"
+    ],
+    "onDemandRead": [
+      "get_sample",
+      "list_local_hits",
+      "get_local_stats"
+    ],
+    "requiresHostActionApproval": [
+      "run_observed_command"
+    ],
+    "explicitWorkflowOnly": [
+      "report_sample_adoption",
+      "report_anomaly",
+      "report_csx_issue",
+      "propose_public_sample"
+    ]
+  }
+}

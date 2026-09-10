@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -229,14 +231,13 @@ func heroGridScore(g pivotGrid, pairRank int) int {
 //
 // heroStaleTTL is how long past that a finished matrix may still be shown
 // while its refresh runs. A healthy process needs at most heroWarmTimeout
-// plus heroWarmRetryDelay of it; the hour is slack for a slow database, and
+// plus a bounded retry series of it; the hour is slack for a slow database, and
 // it is bounded so a store that stopped answering cannot keep an ancient
 // slice on the front page forever.
 const (
-	heroMatrixTTL      = time.Minute
-	heroStaleTTL       = time.Hour
-	heroWarmTimeout    = time.Minute
-	heroWarmRetryDelay = 30 * time.Second
+	heroMatrixTTL   = time.Minute
+	heroStaleTTL    = time.Hour
+	heroWarmTimeout = time.Minute
 )
 
 // heroMatrix picks the featured package and slice: the ?m= selection when
@@ -344,8 +345,10 @@ func (s *site) cacheHeroMatrix(key string, data *heroMatrixData) {
 
 func (s *site) warmHeroMatrix(r *http.Request, lang, key string, hits, ordered []PackageHit) {
 	s.heroMu.Lock()
-	now := time.Now()
-	if s.heroLoading[key] || now.Before(s.heroRetryAt[key]) {
+	now := s.backgroundNowTime()
+	series := s.heroRetry[key]
+	retryAt := s.heroRetryAt[key]
+	if s.heroLoading[key] || !backgroundRetryReady(&series, &retryAt, now) {
 		s.heroMu.Unlock()
 		return
 	}
@@ -355,12 +358,21 @@ func (s *site) warmHeroMatrix(r *http.Request, lang, key string, hits, ordered [
 	if s.heroRetryAt == nil {
 		s.heroRetryAt = map[string]time.Time{}
 	}
+	if s.heroRetry == nil {
+		s.heroRetry = map[string]retrypolicy.Series{}
+	}
+	s.heroRetry[key] = series
+	s.heroRetryAt[key] = retryAt
 	s.heroLoading[key] = true
 	s.heroMu.Unlock()
 
 	// The handler owns its request and slices. Clone them before it returns so
 	// the background worker never observes caller-owned state changing.
-	warmRequest := r.Clone(context.Background())
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if series.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	warmRequest := r.Clone(serverstore.WithQueryBudget(context.Background(), budget))
 	warmHits := append([]PackageHit(nil), hits...)
 	warmOrdered := append([]PackageHit(nil), ordered...)
 	go func() {
@@ -385,10 +397,15 @@ func (s *site) warmHeroMatrix(r *http.Request, lang, key string, hits, ordered [
 		defer s.heroMu.Unlock()
 		delete(s.heroLoading, key)
 		if !complete {
-			s.heroRetryAt[key] = time.Now().Add(heroWarmRetryDelay)
+			series := s.heroRetry[key]
+			retryAt := s.heroRetryAt[key]
+			backgroundRetryFailed(&series, &retryAt, s.backgroundNowTime(), heroMatrixTTL, s.backgroundJitter)
+			s.heroRetry[key] = series
+			s.heroRetryAt[key] = retryAt
 			return
 		}
 		delete(s.heroRetryAt, key)
+		delete(s.heroRetry, key)
 		if s.heroCache == nil {
 			s.heroCache = map[string]heroCacheEntry{}
 		}

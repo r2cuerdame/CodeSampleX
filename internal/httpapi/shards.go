@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
 // handleShard implements GET /v1/shards/{ecosystem}/{package...}/{major}
@@ -33,7 +35,7 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	if inm := r.Header.Get("If-None-Match"); inm != "" {
 		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
 		if err != nil {
-			writeStoreErr(w, err, http.StatusInternalServerError, "shard lookup failed")
+			writeShardStoreErr(w, err)
 			return
 		}
 		if !ok {
@@ -49,7 +51,7 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 
 	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
 	if err != nil {
-		writeStoreErr(w, err, http.StatusInternalServerError, "shard lookup failed")
+		writeShardStoreErr(w, err)
 		return
 	}
 	if !ok {
@@ -88,4 +90,13 @@ func etagMatches(header, etag string) bool {
 		}
 	}
 	return false
+}
+
+func writeShardStoreErr(w http.ResponseWriter, err error) {
+	if serverstore.IsPoolBusy(err) {
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusTooManyRequests, "shard service busy; retry shortly")
+		return
+	}
+	writeStoreErr(w, err, http.StatusInternalServerError, "shard lookup failed")
 }

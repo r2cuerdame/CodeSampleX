@@ -1,11 +1,113 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 )
+
+// The daily rollup, and why this endpoint stopped reading it per request.
+//
+// The document changes at most once per builder pass. During the 2026-09-09
+// #174 incident production's carried generatedAt 2026-09-08T19:49:36Z for over
+// a day while every caller still paid a database read to be told so, and live
+// probes measured GET /v1/stats refusing 5 of 6 requests with 503 "database
+// busy" -- on a box whose problem was that it had no capacity to spare. The
+// read is also the only part of the endpoint that can fail: withHotShards is
+// already bounded and omits its hint rather than failing the request.
+//
+// So the last rollup this process read is kept for one builder cadence, and
+// backpressure serves it instead of refusing. Its age is in the document, in
+// the generatedAt the caller already reads; a 503 is not the more honest
+// answer, it is only the less useful one. Two limits keep that from becoming
+// a licence to invent: with nothing yet cached the pressure is still reported,
+// and a fault that is NOT backpressure keeps its own status rather than being
+// laundered into a stale 200.
+const (
+	// latestStatsFailureBackoff bounds re-reads while the read keeps failing,
+	// so a fleet polling a starved database cannot turn one refusal into one
+	// refused read per caller.
+	latestStatsFailureBackoff = time.Second
+	// latestStatsReadTimeout bounds the shared read, which every other caller
+	// waits behind. It is the healthz budget: past it the answer is the
+	// remembered rollup, not a longer wait.
+	latestStatsReadTimeout = healthzTimeout
+	// defaultLatestStatsTTL is used only by zero-valued configuration.
+	// Production derives the lifetime from CSX_SNAPSHOT_INTERVAL so the cache
+	// cannot outlive the builder cadence that replaces the document.
+	defaultLatestStatsTTL = 5 * time.Minute
+)
+
+// latestStatsCache is this process's memory of the rollup: the last one read,
+// when it was read, and how long to leave a failing read alone.
+type latestStatsCache struct {
+	mu     sync.Mutex
+	doc    string
+	at     time.Time
+	have   bool
+	failAt time.Time
+	failed error
+}
+
+func (a *api) latestStatsTTL() time.Duration {
+	if a.d.Cfg.SnapshotInterval > 0 {
+		return a.d.Cfg.SnapshotInterval
+	}
+	return defaultLatestStatsTTL
+}
+
+// latestStats answers with the stored rollup, preferring the remembered one
+// inside a builder cadence and falling back to it when the read is refused.
+// It reports (doc, false, nil) exactly where the store does: no rollup has
+// been written yet, and the caller computes a live one.
+func (a *api) latestStats(ctx context.Context) (string, bool, error) {
+	c := &a.statsCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := a.now()
+	if c.have && now.Sub(c.at) < a.latestStatsTTL() {
+		return c.doc, true, nil
+	}
+	// Still inside the backoff from a failed read. Answer the way that read
+	// would have: the remembered rollup, or the failure it produced.
+	if now.Before(c.failAt) {
+		if c.have && isBackpressure(c.failed) {
+			return c.doc, true, nil
+		}
+		return "", false, c.failed
+	}
+
+	// The read is shared: this caller holds the lock every other caller is
+	// waiting behind, so it must not run on this caller's context. A client
+	// that hangs up -- which is exactly what a starved box produces -- would
+	// otherwise cancel the read for everyone, and a cancellation is not
+	// backpressure (IsQueryTimeout excludes it by message on purpose), so the
+	// rollup already in hand would be passed over in favour of a 500. This is
+	// the same reason databaseHealth loads WithoutCancel.
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), latestStatsReadTimeout)
+	js, ok, err := a.d.Store.GetLatestStats(loadCtx)
+	cancel()
+	now = a.now()
+	if err != nil {
+		c.failAt, c.failed = now.Add(latestStatsFailureBackoff), err
+		// Backpressure is not an answer when a real one is already in hand.
+		// Any other fault keeps its own meaning and its own status.
+		if c.have && isBackpressure(err) {
+			return c.doc, true, nil
+		}
+		return "", false, err
+	}
+	c.failAt, c.failed = time.Time{}, nil
+	if ok {
+		c.doc, c.at, c.have = js, now, true
+	}
+	return js, ok, nil
+}
 
 // handleStats implements GET /v1/stats: the latest builder-generated daily
 // rollup. Before the first builder pass it computes a live rollup so the
@@ -13,7 +115,7 @@ import (
 // "estimated": true — the dashboard never presents an estimate as a
 // measurement.
 func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
-	js, ok, err := a.d.Store.GetLatestStats(r.Context())
+	js, ok, err := a.latestStats(r.Context())
 	if err != nil {
 		writeStoreErr(w, err, http.StatusInternalServerError, "stats lookup failed")
 		return

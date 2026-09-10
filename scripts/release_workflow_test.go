@@ -190,6 +190,16 @@ func TestOnlyAVersionTagRefCanStartTheRelease(t *testing.T) {
 	}
 }
 
+func TestReleaseRunsWindowsRegistryGateBeforeTheConcurrentSuite(t *testing.T) {
+	windows := releaseJobs(t, releaseWorkflow(t))["windows-test"]
+	want := "      - name: Native Windows registry isolation\n" +
+		"        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts\n" +
+		"      - name: Native Windows launcher and updater tests\n"
+	if !strings.Contains(windows, want) || !strings.Contains(windows, "        run: go test -timeout 30m -skip '^TestWindowsBootstrapRegistryIsolation$' ./...") {
+		t.Fatal("release must run the forced, bounded registry test in its own step before the concurrent suite skips that already-passed test")
+	}
+}
+
 // Nothing signs until the seed in the protected environment, the pinned
 // environment variable and the key the build job actually stamped into the
 // six client binaries are the same key. An unnoticed trust-root rotation
@@ -294,7 +304,7 @@ func TestReleaseStagesStayInOrder(t *testing.T) {
 	for job, needs := range map[string]string{
 		"build":   "needs: windows-test",
 		"sign":    "needs: build",
-		"publish": "needs: [build, sign]",
+		"publish": "needs: [build, sign, windows-bootstrap]",
 		"farm":    "needs: publish",
 	} {
 		body, ok := jobs[job]
@@ -310,6 +320,36 @@ func TestReleaseStagesStayInOrder(t *testing.T) {
 	compile := strings.Index(build, "name: Cross-compile")
 	if guard < 0 || compile < 0 || guard > compile {
 		t.Fatalf("the monotonic release guard must run before the cross-compile: guard=%d compile=%d", guard, compile)
+	}
+}
+
+func TestReleasePublishesOnlyACompleteVerifiedDraft(t *testing.T) {
+	jobs := releaseJobs(t, releaseWorkflow(t))
+	if !strings.Contains(jobs["windows-bootstrap"], "needs: [build, sign]") || !strings.Contains(jobs["windows-bootstrap"], "windows-bootstrap-smoke.ps1 -DistDir dist") {
+		t.Fatal("release lacks native installation of the signed unpublished artifacts")
+	}
+	for _, job := range []string{"sign", "publish"} {
+		if !strings.Contains(jobs[job], "update_manifest.go verify-release") || !strings.Contains(jobs[job], "csx-bootstrap-stable.json") {
+			t.Fatalf("%s does not bind signed stable payloads and bootstrap launchers", job)
+		}
+	}
+	publish := jobs["publish"]
+	ordered := []string{"--generate-notes --draft", "Verify exact uploaded release asset set", "Verify uploaded signed release before promotion", "Atomically publish the verified draft", "--draft=false --latest"}
+	previous := -1
+	for _, marker := range ordered {
+		at := strings.Index(publish, marker)
+		if at <= previous {
+			t.Fatalf("publication no longer ordered at %q", marker)
+		}
+		previous = at
+	}
+	clobber := strings.Index(publish, "--clobber")
+	draftGuard := strings.Index(publish, `if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then`)
+	if clobber < 0 || draftGuard < 0 || draftGuard > clobber || clobber > previous {
+		t.Fatal("release replacement is no longer restricted to unpublished drafts")
+	}
+	if strings.Contains(publish[previous:], "--clobber") {
+		t.Fatal("published release assets can be overwritten")
 	}
 }
 
@@ -552,9 +592,13 @@ func TestWindowsTestsCarryATimeoutOnlyAHangCanReach(t *testing.T) {
 	if !ok {
 		t.Fatal("release workflow has no windows-test job")
 	}
-	m := regexp.MustCompile(`go test\s+(?:\S+\s+)*?-timeout[= ](\d+)m\b`).FindStringSubmatch(job)
+	fullSuite := regexp.MustCompile(`(?m)^\s*run:\s+go test\s+(.+?)\s+\./\.\.\.\s*$`).FindStringSubmatch(job)
+	if fullSuite == nil {
+		t.Fatal("windows-test does not run the full Go test suite")
+	}
+	m := regexp.MustCompile(`(?:^|\s)-timeout[= ](\d+)m\b`).FindStringSubmatch(fullSuite[1])
 	if m == nil {
-		t.Fatal("windows-test runs `go test` with no explicit -timeout; the 10m default " +
+		t.Fatal("windows-test runs its full suite with no explicit -timeout; the 10m default " +
 			"was already at 78% on a passing run (internal/sandbox 471s) and has failed a release")
 	}
 	const floorMinutes = 20

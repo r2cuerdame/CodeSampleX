@@ -31,7 +31,30 @@ The deploy also installs `backup.sh` and `restore-check.sh`, restores executable
 permissions, and keeps `/opt/codesamplex/backups` writable by the `ubuntu` cron
 user.
 Release binaries for `/dl/` + `/install.*` go to `/opt/codesamplex/dist/`.
-The exact release set also includes `csx-update-stable.json`.
+The exact release set also includes `csx-update-stable.json` and the signed
+`csx-bootstrap-stable.json` launcher descriptor. Deployment selects the one
+canonical release tag at the target revision and verifies both signatures and
+every signed payload/launcher hash before promoting the complete directory.
+Rollback restores the previous directory along with the server state.
+The read-only directory bind mount pins the running container's previous
+generation during the host directory swap. Deployment checks that pin before
+activation and checks the new container's mounted release tag before smoke.
+
+Windows installation captures the deployment's stable manifest once and fetches
+the corresponding immutable GitHub release assets. It verifies the stable and
+bootstrap envelopes have the same version, sequence, timestamps and payloads,
+then verifies the launcher before executing it. The separate bootstrap envelope
+keeps old updater clients' strict stable schema compatible. Release publication
+tests the signed artifacts with the real Windows installer, uploads a draft,
+verifies the uploaded set, then publishes it atomically. Published assets are
+never overwritten by a workflow retry.
+An old cached installer from before this protocol fails closed when the new
+payload has no captured signed envelopes; refetch the public `install.ps1`.
+
+After deployment, run `./scripts/windows-bootstrap-smoke.ps1` on Windows for a
+clean production install in an isolated temporary profile. It runs the public
+installer with `CSX_INSTALL_ONLY=1`, checks the installed identity and hashes,
+and leaves the actual user PATH, agent configuration and daemon untouched.
 
 The SSH host key is pinned. `deploy.ps1` uses `StrictHostKeyChecking=yes` and
 never learns a first-seen key during a deployment. Populate `known_hosts` from
@@ -51,7 +74,8 @@ production eligibility job reads that same-target evidence before it can reach
 the production Environment. Auditor `MergeVerdict=pass`,
 `requires_human_decision=no`, and a `safe` or `additive-migration` side effect
 class are still required. The dispatch also names the currently served
-known-good SHA. The workflow rejects drift between that SHA and the host before
+known-good SHA and the target-specific GitHub tracking issue (such as #213)
+receiving the run evidence. The workflow rejects drift between that SHA and the host before
 changing anything, and `codesamplex-production` concurrency serializes all
 rollouts.
 
@@ -84,8 +108,8 @@ The deploy transaction verifies the running `CSX_VERSION`, the OCI revision
 label and the revision the server reports at `GET /version` against the
 dispatched SHA, the latest `schema_migrations` row against the checked-out
 migration set, `/healthz`, the public page/API/install smokes, monotonic
-PASS/FAIL/published-sample source ledgers, and a fresh, internally consistent
-failure-cluster materialization. The first two say what was
+PASS/FAIL/published-sample source ledgers, privacy boundaries, and the current
+failure-cluster ledger's row-level consistency. The first two say what was
 configured and what was built; only `/version` says what the process now
 answering requests was built from. See "Build identity" below. The pgx
 v5.10.0 `ParseConfig` PASS/FAIL totals are a named invariant. Any mismatch
@@ -110,13 +134,38 @@ script drifts from the predicate the server itself reads with. See
 
 **That total is derived, not monotonic.** `RunLoop` makes the builder's first
 pass after any restart a full one, so a deploy may legitimately repair a stale
-materialized count while no source evidence moved. The transaction waits for
-the new server's full-pass completion marker before it samples the table, then
-requires every current cluster to have a positive observation count and a
-non-negative, known-quality breakdown whose values sum to that count. A
-missing materialization while FAIL evidence remains still enters rollback.
-`deploy/lightsail/failure_cluster_ledger_test.go` pins the source/derived split
-and the completion-marker ordering.
+materialized count while no source evidence moved. The deploy samples the
+current table once and still requires every current cluster to have a positive
+observation count and a non-negative, known-quality breakdown whose values sum
+to that count. A missing materialization while FAIL evidence remains still
+enters rollback.
+
+Full-pass convergence is observed by the separate **Post-deploy observation**
+workflow after the lightweight deploy has committed. While the builder is
+active, it takes up to five bounded rounds of TTFB samples from `/healthz`, the
+homepage, the real `github.com/jackc/pgx/v5@v5.10.0` package page, and its fixed
+`pgconn.ParseConfig` sample detail page. A builder start marker and the matching
+terminal log distinguish active work from retry sleep or an already-fresh
+process. The probes require HTTP 200, canonical page-specific content, zero
+503s, and at most ten seconds to first byte. It then waits up to 80 minutes for
+`stats_daily.generatedAt >= server StartedAt`, rechecks the settled ledger, and
+records builder completion time, container/host CPU and memory/load pressure,
+pool-busy/query-timeout counts (both must remain zero), the maximum logged
+DB-pressure wait (bounded at three seconds), restart/OOM/rollback or identity
+drift, and post-settle TTFB.
+A convergence timeout or anomaly
+posts FAIL evidence to the deployment's GitHub tracking issue and fails that
+workflow; it does not retroactively enter the deploy rollback path. The
+observer never logs raw requests or query strings. If its replacement-only
+drift is followed by a fresh production sample that exactly matches the
+authenticated artifact from a later successful Production deploy, the older
+observation is recorded as superseded instead of as a false failure. The
+replacement window begins at the single container exit event immediately
+before the authenticated replacement server start, not at the earlier
+eligibility or rollout-job start. The re-sample uses the collector from the
+canonical workflow revision so its evidence schema remains stable even when
+retrying an older deployment. Every other anomaly still fails closed. The
+deploy evidence keeps `builderFresh` as an informational initial sample only.
 
 `modern_failure_clusters` in the same evidence file counts clusters carrying
 structured termination and a normalized error. It is zero until a client
@@ -126,7 +175,7 @@ promoted to a modern fingerprint. Read a zero there as "no modern producer has
 failed yet", and raise it by shipping a producer, not by rebuilding.
 
 Every run uploads `production-deploy-evidence.json`, including run URL/id,
-target and previous SHA, image digest, migration version, health/smoke result,
+tracking issue, target and previous SHA, image digest, migration version, health/smoke result,
 the served `/version` revision, before/after invariants, and rollback outcome.
 `servedRevision` reads `unavailable` for a build older than `/version`, which
 is what the pre-deploy read of the outgoing server reports; the post-deploy
@@ -1107,6 +1156,69 @@ stay within the 3s deadline `handleHealthz` sets on itself, or the Go side
 cancels first and burns a connection on every slow probe.
 `internal/serverstore/pool_test.go` fails the build if either stops holding.
 
+## Slow-query monitoring and diagnostics (`pg_stat_statements`)
+
+The PostgreSQL Compose service preloads `pg_stat_statements`, caps it at 5000
+entries, tracks top-level statements, and enables `track_io_timing`.
+Timing overhead depends on the host. The introduced slow-statement duration
+logging is disabled with
+`log_min_duration_statement=-1`; bind-parameter logging is also disabled.
+Existing PostgreSQL error-logging defaults are unchanged.
+
+### Privacy boundary
+
+Query normalization is not redaction: representative query text can retain
+literals, particularly in statements PostgreSQL cannot normalize. The extension
+also stores representative text on disk. Restrict database and host access;
+error messages and exceptional server logs may still contain sensitive values.
+The diagnostic collector returns only numeric metrics, query IDs, and static
+source labels. Its attribution CASE executes inside PostgreSQL and does not
+return SQL text. Labels are heuristic query-family hints, not proof of a caller
+or route. Subprocess errors are deliberately reported without raw stderr.
+Do not export raw `query` columns from `pg_stat_statements` or `pg_stat_activity`.
+
+### Activation and clean installation
+
+The normal server deployment activates only server and Caddy with `--no-deps`;
+it does not restart PostgreSQL or apply changed PostgreSQL command flags.
+For an existing database, schedule any required database restart separately
+under the normal maintenance/approval process. Do not add it to the serving
+deployment path. After the intended flags are active, explicitly install the
+extension once per database (including a fresh volume), then verify it:
+
+```bash
+python3 scripts/pg-slow-queries.py --init
+python3 scripts/pg-slow-queries.py --check
+```
+
+`--init` runs only `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` and the
+verification query; it does not run application migrations or scan the corpus.
+It needs database extension privileges. `--check` is read-only and verifies
+both extension availability and that the module was preloaded. Missing setup
+fails clearly; collection never creates an extension implicitly. Commands use
+the repository's Compose file by default; `--compose-file PATH` overrides it.
+
+### Collecting metrics
+
+```bash
+python3 scripts/pg-slow-queries.py --json
+python3 scripts/pg-slow-queries.py mean_exec_time 15
+./scripts/collect-pg-slow-queries.sh 15 total_exec_time
+```
+
+Accepted sorts are `total_exec_time`, `mean_exec_time`, `max_exec_time`, and
+`calls`; limits must be 1–100. Database statements have a 5-second timeout and
+the command has a 15-second deadline. Read failures return nonzero status.
+
+Use repeated cumulative snapshots and counter deltas to bound an observation
+window; the collector does not reset shared statistics. Correlate execution
+time, block I/O, temporary blocks, locks, pool admission, and host CPU/steal.
+A low shared-buffer hit ratio alone does not prove disk thrashing, and a busy
+pool alone does not prove slow SQL. PostgreSQL buffer misses can hit the OS
+cache. See the [PostgreSQL statistics documentation](https://www.postgresql.org/docs/17/pgstatstatements.html)
+and [logging documentation](https://www.postgresql.org/docs/17/runtime-config-logging.html)
+for the text-storage and parameter-logging limitations.
+
 ## Environment variables (compose `.env`)
 
 ```text
@@ -1632,3 +1744,35 @@ Do not disable Defender, do not add an exclusion, and do not treat a green
 release pipeline as evidence that Windows users can run the artifact: the
 pipeline never executed the payload on a machine with real-time protection on.
 
+### Offline recovery metadata and ownership (#174)
+
+The operational checkout pinned to the workflow SHA executes the eligibility
+policy against the separate immutable payload checkout. Both canonical CI
+requirements remain independent; the released payload supplies the image and
+deployment assets, not the policy that authorizes them.
+
+After migration, the host checks the ledger and four builder index definitions
+through PostgreSQL catalogs. It re-arms builderRepairRequired on exactly the
+latest stats_daily row only when this deployment moved the migration ledger, or
+cannot prove it did not; a deployment that applied no migration asserts and
+records the barrier's state instead of setting it, so an unarmed barrier stays
+unarmed and the builder keeps its resumable watermark rather than restarting a
+full pass. The host evidence names which path ran: `repairBarrierRearmed` for
+the re-arm, `repairBarrierObserved` for the assert, beside the
+`migrationLedgerBefore` head the deployment started from. Both paths still fail
+closed unless the latest day has exactly one stats row. These bounded metadata
+checks do not scan source tables or wait for full-builder convergence. Privacy, source
+invariants and extended user-flow audits remain in the independent observer.
+
+The host completes stack/Caddy recreation and reload before candidate-ready.
+The later controller performs only the existing short read-only acceptance
+checks and ACK, so a paused controller cannot mutate restored services after
+host rollback. The host checks its 600-second ACK deadline both before reading
+an acknowledgement and after image validation. Existing phase and recovery
+budgets are unchanged.
+
+Exact rollback creates an originally stopped server or Caddy with --no-start.
+If dist restoration was requested, missing promotion proof or a missing prior
+generation fails closed before server recreation; it must not silently retain
+the candidate dist. Such ambiguous recovery retains the deployment lock for
+owner inspection.

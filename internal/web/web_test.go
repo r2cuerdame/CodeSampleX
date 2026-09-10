@@ -502,7 +502,9 @@ func TestInstallScripts(t *testing.T) {
 	mux, _ := newTestMux(t, nil)
 	ps := get(t, mux, "/install.ps1").Body.String()
 	mustContain(t, ps, "$base = 'https://codesamplex.dev'")
-	mustContain(t, ps, "$base/dl/csx-windows-$arch.exe")
+	mustContain(t, ps, "$base/dl/csx-update-stable.json")
+	mustContain(t, ps, "$releaseBase/csx-windows-$arch.exe")
+	mustContain(t, ps, "$releaseBase/csx-bootstrap-stable.json")
 	mustContain(t, ps, "csx.exe")
 	mustContain(t, ps, "init")
 	mustContain(t, ps, "csx-payload.new.exe")
@@ -528,6 +530,23 @@ func TestInstallScripts(t *testing.T) {
 	mustContain(t, sh, "update adopt")
 	mustContain(t, sh, "previous install restored")
 	mustContain(t, sh, ".local/bin")
+}
+
+func TestWindowsInstallerPinsOneServerReleaseSnapshot(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	ps := get(t, mux, "/install.ps1").Body.String()
+	if strings.Count(ps, `-Uri "$base/dl/`) != 1 || strings.Contains(ps, "/releases/latest/") {
+		t.Fatal("installer can mix deployment assets or a moving latest release")
+	}
+	if !strings.Contains(ps, `/releases/download/$($manifest.version)`) {
+		t.Fatal("installer lost immutable release URL selection")
+	}
+	if strings.Contains(ps, "& $launcherStaged --launcher-version") {
+		t.Fatal("installer executes a staged launcher outside the signed bootstrap")
+	}
+	if !strings.Contains(ps, "CSX_INSTALL_ONLY") {
+		t.Fatal("installer cannot be tested without modifying the user environment")
+	}
 }
 
 func TestDownloadAndTraversal(t *testing.T) {
