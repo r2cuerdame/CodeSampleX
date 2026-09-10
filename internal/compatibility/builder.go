@@ -1994,18 +1994,31 @@ func (b *Builder) evidenceForPackage(ctx context.Context, k pkgKey,
 	}
 	if len(missing) > 0 {
 		if batchStore, ok := b.Store.(targetEvidenceBatchStore); ok {
-			targets := make([]serverstore.SnapshotTarget, len(missing))
-			for i, pt := range missing {
-				targets[i] = pt.target
-			}
-			batch, err := batchStore.EvidenceForTargets(ctx, targets)
-			if err != nil {
-				return nil, fmt.Errorf("compatibility: cluster evidence for %s: %w", k, err)
-			}
-			for _, pt := range missing {
-				rows := batch[pt.target]
-				builderPhases(ctx).add(phaseClusterRead, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
-				add(pt.version, rows)
+			for start := 0; start < len(missing); start += targetEvidenceReadBatch {
+				end := start + targetEvidenceReadBatch
+				if end > len(missing) {
+					end = len(missing)
+				}
+				chunk := missing[start:end]
+				targets := make([]serverstore.SnapshotTarget, len(chunk))
+				for i, pt := range chunk {
+					targets[i] = pt.target
+				}
+				batch, err := batchStore.EvidenceForTargets(ctx, targets)
+				if err != nil {
+					return nil, fmt.Errorf("compatibility: cluster evidence for %s: %w", k, err)
+				}
+				for _, pt := range chunk {
+					rows, present := batch[pt.target]
+					if !present {
+						return nil, fmt.Errorf("compatibility: cluster evidence for %s %q: missing result", pt.target.PURL, pt.target.Symbol)
+					}
+					if rows == nil {
+						rows = []serverstore.EvidenceRow{}
+					}
+					builderPhases(ctx).add(phaseClusterRead, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+					add(pt.version, rows)
+				}
 			}
 		} else {
 			for _, pt := range missing {

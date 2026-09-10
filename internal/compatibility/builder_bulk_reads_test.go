@@ -632,3 +632,94 @@ func TestEmptyPredecessorEvidenceDoesNotTriggerIndividualReads(t *testing.T) {
 		t.Fatalf("expected EvidenceForTargets to be used, got 0")
 	}
 }
+
+func TestEvidenceForPackageBatchChunkingAndGuards(t *testing.T) {
+	ctx := context.Background()
+	fake := serverstore.NewFake()
+	fake.NowFn = func() time.Time { return testNow }
+	counter := newReadCounter(fake)
+	store := &bulkReadStore{counter}
+	b := &Builder{Store: store, Now: func() time.Time { return testNow }}
+
+	k := pkgKey{ecosystem: "npm", name: "chunk-pkg"}
+	totalTargets := 150
+	pkgTargets := make([]parsedTarget, totalTargets)
+	for i := 0; i < totalTargets; i++ {
+		pkgTargets[i] = parsedTarget{
+			target: serverstore.SnapshotTarget{
+				PURL:   fmt.Sprintf("pkg:npm/chunk-pkg@1.%d.0", i),
+				Symbol: fmt.Sprintf("chunk-pkg.fn%d", i),
+			},
+			version: fmt.Sprintf("1.%d.0", i),
+		}
+	}
+	byPkg := map[pkgKey]symVer{}
+
+	// 1. Verify chunking at targetEvidenceReadBatch (64).
+	out, err := b.evidenceForPackage(ctx, k, pkgTargets, byPkg)
+	if err != nil {
+		t.Fatalf("evidenceForPackage: %v", err)
+	}
+	if out == nil {
+		t.Fatalf("expected non-nil output")
+	}
+
+	sizes := counter.sizes("EvidenceForTargets")
+	wantSizes := []int{64, 64, 22}
+	if len(sizes) != len(wantSizes) {
+		t.Fatalf("got %d batches, want %d (%v vs %v)", len(sizes), len(wantSizes), sizes, wantSizes)
+	}
+	for i, sz := range sizes {
+		if sz != wantSizes[i] {
+			t.Errorf("batch %d size = %d, want %d", i, sz, wantSizes[i])
+		}
+	}
+
+	// 2. Verify error when map key is missing from batch result.
+	missingKeyStore := &customBatchStore{
+		Fake: fake,
+		fn: func(ctx context.Context, targets []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error) {
+			m := make(map[serverstore.SnapshotTarget][]serverstore.EvidenceRow)
+			for _, tg := range targets[1:] {
+				m[tg] = []serverstore.EvidenceRow{}
+			}
+			return m, nil
+		},
+	}
+	bMissing := &Builder{Store: missingKeyStore, Now: func() time.Time { return testNow }}
+	if _, err := bMissing.evidenceForPackage(ctx, k, pkgTargets[:5], byPkg); err == nil {
+		t.Fatalf("expected error when batch result is missing target key, got nil")
+	} else if !strings.Contains(err.Error(), "missing result") {
+		t.Fatalf("expected error to mention 'missing result', got %v", err)
+	}
+
+	// 3. Verify nil rows slice in batch result normalizes cleanly without error.
+	nilRowsStore := &customBatchStore{
+		Fake: fake,
+		fn: func(ctx context.Context, targets []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error) {
+			m := make(map[serverstore.SnapshotTarget][]serverstore.EvidenceRow)
+			for _, tg := range targets {
+				m[tg] = nil
+			}
+			return m, nil
+		},
+	}
+	bNil := &Builder{Store: nilRowsStore, Now: func() time.Time { return testNow }}
+	outNil, err := bNil.evidenceForPackage(ctx, k, pkgTargets[:5], byPkg)
+	if err != nil {
+		t.Fatalf("expected success with nil batch rows, got %v", err)
+	}
+	if outNil == nil {
+		t.Fatalf("expected non-nil output with nil batch rows")
+	}
+}
+
+type customBatchStore struct {
+	*serverstore.Fake
+	fn func(ctx context.Context, targets []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error)
+}
+
+func (s *customBatchStore) EvidenceForTargets(ctx context.Context, targets []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error) {
+	return s.fn(ctx, targets)
+}
+
