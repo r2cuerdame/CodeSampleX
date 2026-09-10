@@ -52,8 +52,18 @@ func TestPerPackageGatherStillDedupesSpellings(t *testing.T) {
 	// This asserts the index the refactor moved is still per package and
 	// still keyed by row identity rather than by arrival.
 	src := readBuilderSource(t)
-	fn := src[strings.Index(src, "func (b *Builder) evidenceForPackage("):]
-	fn = fn[:strings.Index(fn, "\n}\n")]
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	const sig = "func (b *Builder) evidenceForPackage("
+	start := strings.Index(src, sig)
+	if start < 0 {
+		t.Fatalf("builder.go missing function %q", sig)
+	}
+	fn := src[start:]
+	end := strings.Index(fn, "\n}\n")
+	if end < 0 {
+		t.Fatalf("builder.go function %q closing block not found", sig)
+	}
+	fn = fn[:end]
 	if !strings.Contains(fn, "seen := map[evidenceKey]bool{}") {
 		t.Error("the per-package gatherer no longer dedupes by row identity")
 	}

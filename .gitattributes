@@ -2,3 +2,10 @@
 # repository and checkout bytes LF-only even when core.autocrlf=true.
 *.ps1 text eol=lf
 *.sh  text eol=lf
+
+internal/serverstore/migrations/** text eol=lf
+internal/web/static/** text eol=lf
+internal/web/templates/** text eol=lf
+internal/web/i18n/locales/** text eol=lf
+internal/web/testdata/** text eol=lf
+*.webp binary
