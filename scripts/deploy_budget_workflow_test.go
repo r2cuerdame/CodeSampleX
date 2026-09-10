@@ -1,17 +1,19 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestMigrationBudgetCalculatesActualWorkflowTimeouts(t *testing.T) {
-	bash, err := exec.LookPath("bash")
+	bash, err := findCompatibleBash()
 	if err != nil {
-		t.Skip("bash unavailable")
+		t.Skipf("compatible bash unavailable: %v", err)
 	}
 	step := productionWorkflowStep(t, productionWorkflow(t), "Calculate separate migration and deployment budgets")
 	start := strings.Index(step, "        run: |\n")
@@ -21,6 +23,7 @@ func TestMigrationBudgetCalculatesActualWorkflowTimeouts(t *testing.T) {
 	lines := strings.Split(step[start+len("        run: |\n"):], "\n")
 	var program strings.Builder
 	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
 		if strings.HasPrefix(line, "          ") {
 			program.WriteString(strings.TrimPrefix(line, "          "))
 			program.WriteByte('\n')
@@ -50,4 +53,90 @@ func TestMigrationBudgetCalculatesActualWorkflowTimeouts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func findCompatibleBash() (string, error) {
+	if runtime.GOOS != "windows" {
+		return exec.LookPath("bash")
+	}
+
+	if p, err := exec.LookPath("bash"); err == nil && !isIncompatibleWindowsBash(p) {
+		return p, nil
+	}
+
+	if gitPath, err := exec.LookPath("git"); err == nil {
+		gitDir := filepath.Dir(gitPath)
+		candidates := []string{
+			filepath.Join(gitDir, "../bin/bash.exe"),
+			filepath.Join(gitDir, "../usr/bin/bash.exe"),
+			filepath.Join(gitDir, "bash.exe"),
+			filepath.Join(gitDir, "../../bin/bash.exe"),
+			filepath.Join(gitDir, "../../usr/bin/bash.exe"),
+		}
+		for _, candidate := range candidates {
+			candidate = filepath.Clean(candidate)
+			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && !isIncompatibleWindowsBash(candidate) {
+				return candidate, nil
+			}
+		}
+	}
+
+	var roots []string
+	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "LocalAppData"} {
+		if val := os.Getenv(env); val != "" {
+			roots = append(roots, val)
+		}
+	}
+	subpaths := []string{
+		filepath.Join("Git", "bin", "bash.exe"),
+		filepath.Join("Git", "usr", "bin", "bash.exe"),
+		filepath.Join("Programs", "Git", "bin", "bash.exe"),
+		filepath.Join("Programs", "Git", "usr", "bin", "bash.exe"),
+	}
+	for _, root := range roots {
+		for _, sub := range subpaths {
+			candidate := filepath.Clean(filepath.Join(root, sub))
+			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && !isIncompatibleWindowsBash(candidate) {
+				return candidate, nil
+			}
+		}
+	}
+
+	fallbacks := []string{
+		`C:\msys64\usr\bin\bash.exe`,
+		`C:\Git\bin\bash.exe`,
+		`C:\cygwin64\bin\bash.exe`,
+	}
+	for _, candidate := range fallbacks {
+		candidate = filepath.Clean(candidate)
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && !isIncompatibleWindowsBash(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", errors.New("compatible bash unavailable")
+}
+
+func isIncompatibleWindowsBash(path string) bool {
+	if path == "" {
+		return true
+	}
+	lower := strings.ToLower(filepath.Clean(path))
+	if strings.Contains(lower, `\microsoft\windowsapps\`) || strings.Contains(lower, "/microsoft/windowsapps/") {
+		return true
+	}
+	roots := []string{`c:\windows`}
+	if sr := os.Getenv("SystemRoot"); sr != "" {
+		roots = append(roots, strings.ToLower(filepath.Clean(sr)))
+	}
+	if windir := os.Getenv("WINDIR"); windir != "" {
+		roots = append(roots, strings.ToLower(filepath.Clean(windir)))
+	}
+	for _, r := range roots {
+		rClean := filepath.Clean(r)
+		if strings.HasPrefix(lower, rClean+`\`) || strings.HasPrefix(lower, rClean+`/`) || lower == rClean {
+			return true
+		}
+	}
+	return false
 }
