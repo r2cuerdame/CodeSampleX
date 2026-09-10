@@ -261,7 +261,7 @@ func TestAdaptersMatchesSchemaFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(adaptersJSON) != string(canonical) {
+	if strings.ReplaceAll(string(adaptersJSON), "\r\n", "\n") != strings.ReplaceAll(string(canonical), "\r\n", "\n") {
 		t.Fatal("internal/httpapi/adapters.json differs from schemas/v1/adapters.json — copy it verbatim")
 	}
 
