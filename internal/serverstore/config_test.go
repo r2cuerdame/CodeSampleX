@@ -65,3 +65,51 @@ func TestConfigFromEnvBadInterval(t *testing.T) {
 		t.Errorf("bad interval should keep default 5m, got %v", cfg.SnapshotInterval)
 	}
 }
+
+func TestConfigSnapshotPassTimeout(t *testing.T) {
+	t.Run("default bounds a pass", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != defaultSnapshotPassTimeout {
+			t.Fatalf("SnapshotPassTimeout = %s, want %s", got, defaultSnapshotPassTimeout)
+		}
+	})
+	t.Run("headroom over typical full pass cost", func(t *testing.T) {
+		// In #174 a typical full pass required ~100-120 minutes. A ceiling at or
+		// under that would truncate healthy work and leave the builder restarting
+		// a pass it can never finish.
+		const typicalFullPass = 120 * time.Minute
+		if defaultSnapshotPassTimeout <= typicalFullPass {
+			t.Fatalf("default ceiling %s does not clear the %s full pass cost noted in #174",
+				defaultSnapshotPassTimeout, typicalFullPass)
+		}
+		if defaultSnapshotPassTimeout >= 24*time.Hour {
+			t.Fatalf("default ceiling %s reaches the 24h resume window", defaultSnapshotPassTimeout)
+		}
+	})
+	t.Run("operator override", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "45m")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != 45*time.Minute {
+			t.Fatalf("SnapshotPassTimeout = %s, want 45m", got)
+		}
+	})
+	t.Run("bare zero removes the ceiling", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "0")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != 0 {
+			t.Fatalf("SnapshotPassTimeout = %s, want 0 (unbounded)", got)
+		}
+	})
+	t.Run("zero durations remove the ceiling", func(t *testing.T) {
+		for _, raw := range []string{"0", "0s", "0m", "0h"} {
+			t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", raw)
+			if got := ConfigFromEnv().SnapshotPassTimeout; got != 0 {
+				t.Fatalf("SnapshotPassTimeout for %q = %s, want 0 (unbounded)", raw, got)
+			}
+		}
+	})
+	t.Run("garbage keeps the default", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "not-a-duration")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != defaultSnapshotPassTimeout {
+			t.Fatalf("SnapshotPassTimeout = %s, want the default %s", got, defaultSnapshotPassTimeout)
+		}
+	})
+}

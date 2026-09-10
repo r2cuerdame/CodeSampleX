@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,6 +29,11 @@ type Builder struct {
 	// business clock above independent from monotonic elapsed-time tests.
 	phaseNow  func() time.Time
 	phaseLogf func(string, ...any)
+
+	// PassTimeout bounds one pass. Zero is unbounded, which is what every
+	// caller but the server has: the default belongs to the server's
+	// configuration, next to the interval that schedules the pass.
+	PassTimeout time.Duration
 
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
@@ -90,16 +96,17 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	runBuilderLoop(ctx, interval, b.RunOnce)
+	runBuilderLoop(ctx, interval, b.PassTimeout, b.RunOnce)
 }
 
-func runBuilderLoop(ctx context.Context, interval time.Duration, run func(context.Context) error) {
-	runBuilderLoopWith(ctx, interval, run, waitBuilderDelay, nil)
+func runBuilderLoop(ctx context.Context, interval, passTimeout time.Duration, run func(context.Context) error) {
+	runBuilderLoopWith(ctx, interval, passTimeout, run, waitBuilderDelay, nil)
 }
 
 func runBuilderLoopWith(
 	ctx context.Context,
 	interval time.Duration,
+	passTimeout time.Duration,
 	run func(context.Context) error,
 	wait func(context.Context, time.Duration) bool,
 	draw func(time.Duration) time.Duration,
@@ -111,7 +118,7 @@ func runBuilderLoopWith(
 		if retrying {
 			budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
 		}
-		err := run(serverstore.WithQueryBudget(ctx, budget))
+		err := runBoundedPass(ctx, passTimeout, budget, run)
 		if ctx.Err() != nil {
 			return
 		}
@@ -141,6 +148,60 @@ func runBuilderLoopWith(
 			series.Reset()
 		}
 	}
+}
+
+// runBoundedPass gives one pass its own deadline and returns whatever it
+// ended with.
+//
+// The deadline is the only thing standing between a wedged query and a dead
+// builder. A pass runs as ClassBackground, which by policy has no statement
+// ceiling and no acquisition wait budget -- deliberately, because background
+// work is allowed to be slow. Handed the process-lifetime context on top of
+// that, "slow" and "never" become the same state: the loop above cannot
+// retry, defer or even log a pass that has not returned. Production 2026-09-09
+// stopped inside one at 17:32:58Z and was still there ~20 hours later, holding
+// its background connections against the interactive reads that share them.
+//
+// Cancellation is the same shape as the failure this pass already tolerates.
+// Any database error aborts a pass today, the outputs are materialized views
+// that fullPassEvery rebuilds from scratch on a cadence, and the next pass
+// resumes from the last completed one's stamp. What cancelling adds is that
+// PostgreSQL is told to stop and the connection goes back.
+//
+// A non-positive timeout is unbounded: the previous behaviour, kept reachable
+// because the honest rollback for a ceiling is one an operator can apply
+// without a build.
+func runBoundedPass(
+	ctx context.Context,
+	passTimeout time.Duration,
+	budget *serverstore.QueryBudget,
+	run func(context.Context) error,
+) error {
+	passCtx := ctx
+	if passTimeout > 0 {
+		var cancel context.CancelFunc
+		passCtx, cancel = context.WithTimeout(ctx, passTimeout)
+		defer cancel()
+	}
+	err := run(serverstore.WithQueryBudget(passCtx, budget))
+	if ctx.Err() != nil || !errors.Is(passCtx.Err(), context.DeadlineExceeded) {
+		return err
+	}
+	// The ceiling fired. Report that even when the pass returned nil, because
+	// a success is what advances lastRun and resets the retry series, and a
+	// pass whose context expired cannot be shown to have finished its work.
+	// The cost of being wrong here is one retry after a pass that completed
+	// in the same instant its deadline did; the cost of the other answer is
+	// a partial pass recorded as a complete one.
+	//
+	// Name the ceiling in the log the loop is about to write. "context
+	// deadline exceeded" alone reads like a query that took too long; this
+	// pass was stopped, and the number that stopped it is the one an
+	// operator would change.
+	if err == nil {
+		return fmt.Errorf("builder pass exceeded its %s ceiling: %w", passTimeout, context.DeadlineExceeded)
+	}
+	return fmt.Errorf("builder pass exceeded its %s ceiling: %w", passTimeout, err)
 }
 
 func waitBuilderDelay(ctx context.Context, delay time.Duration) bool {
@@ -217,6 +278,27 @@ func (b *Builder) resumeFromLastCompletedPass(ctx context.Context, now time.Time
 	b.passes = 1
 }
 
+// onCeilingBreach handles a pass aborted by a context deadline or ceiling.
+//
+// A slow or wedged pass must not trap the builder in an endless series of
+// full-corpus rebuilds. When a completed pass stamp exists inside the
+// 24-hour resume window, the next attempt can safely resume incrementally
+// from lastRun: postpone the scheduled exhaustive repair by one hour and
+// clear any pending periodic full-pass trigger.
+//
+// If lastRun is zero (cold start with no prior stats) or older than the
+// 24-hour resume window, an exhaustive repair is required because no safe
+// incremental delta exists.
+func (b *Builder) onCeilingBreach(now time.Time) {
+	if b.lastRun.IsZero() || now.Sub(b.lastRun) > resumeWindow {
+		return
+	}
+	b.fullRepairAt = now.Add(time.Hour)
+	if b.passes%fullPassEvery == 0 {
+		b.passes++
+	}
+}
+
 // pkgKey identifies a package across versions.
 type pkgKey struct{ ecosystem, name string }
 
@@ -278,7 +360,15 @@ func affectedPackages(affected map[shardKey]bool) []serverstore.BuilderPackage {
 func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases := b.newPhaseRecorder(ctx)
 	ctx = withBuilderPhaseRecorder(ctx, phases)
-	defer func() { phases.finish(runErr) }()
+	defer func() {
+		if runErr == nil && ctx.Err() != nil {
+			runErr = ctx.Err()
+		}
+		phases.finish(runErr)
+		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			b.onCeilingBreach(b.now())
+		}
+	}()
 
 	started := time.Now()
 	now := b.now()
@@ -299,7 +389,8 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		repairGeneration = store.BuilderRepairGeneration()
 	}
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 || !now.Before(b.fullRepairAt) ||
-		repairGeneration != b.completedRepairGeneration
+		repairGeneration != b.completedRepairGeneration ||
+		(!b.lastRun.IsZero() && now.Sub(b.lastRun) > resumeWindow)
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 
