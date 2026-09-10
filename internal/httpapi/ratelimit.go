@@ -106,7 +106,11 @@ type limiter struct {
 }
 
 func newLimiter(r rate) *limiter {
-	return &limiter{buckets: map[string]*bucket{}, rate: r}
+	return newLimiterWithNow(r, nil)
+}
+
+func newLimiterWithNow(r rate, now func() time.Time) *limiter {
+	return &limiter{buckets: map[string]*bucket{}, rate: r, now: now}
 }
 
 func (l *limiter) clock() time.Time {
@@ -193,16 +197,20 @@ type limiters struct {
 }
 
 func newLimiters() *limiters {
+	return newLimitersWithNow(nil)
+}
+
+func newLimitersWithNow(now func() time.Time) *limiters {
 	return &limiters{
-		write:         newLimiter(writeLimit),
-		feedback:      newLimiter(feedbackLimit),
-		wantedBatch:   newLimiter(wantedBatchLimit),
-		read:          newLimiter(readLimit),
-		queue:         newLimiter(queueLimit),
-		auth:          newLimiter(authLimit),
-		publish:       newLimiter(publishLimit),
-		identity:      newLimiter(identityHardLimit),
-		seededPublish: newLimiter(seededPublishLimit),
+		write:         newLimiterWithNow(writeLimit, now),
+		feedback:      newLimiterWithNow(feedbackLimit, now),
+		wantedBatch:   newLimiterWithNow(wantedBatchLimit, now),
+		read:          newLimiterWithNow(readLimit, now),
+		queue:         newLimiterWithNow(queueLimit, now),
+		auth:          newLimiterWithNow(authLimit, now),
+		publish:       newLimiterWithNow(publishLimit, now),
+		identity:      newLimiterWithNow(identityHardLimit, now),
+		seededPublish: newLimiterWithNow(seededPublishLimit, now),
 	}
 }
 
