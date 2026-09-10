@@ -17,6 +17,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -719,3 +720,209 @@ func TestUploadOnlyRunsInCommunityMode(t *testing.T) {
 		t.Fatal("local rows were lost in non-community mode")
 	}
 }
+
+func TestCLIExperienceObservationsBatchWithAValidProjectBucket(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+
+	exit0 := 0
+	obs := domain.CLIExperienceObservation{
+		Coordinate: domain.CLIExperienceCoordinate{
+			Tool:        "gh",
+			ToolVersion: "2.62.0",
+			Subcommand:  "pr list",
+			Environment: testEnvFP(),
+		},
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-01T10:00:00Z",
+		Count:       1,
+	}
+	if err := db.RecordCLIExperienceObservation(ctx, obs); err != nil {
+		t.Fatalf("RecordCLIExperienceObservation: %v", err)
+	}
+
+	batches, err := b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("expected 1 batch, got %d", len(batches))
+	}
+	batch := batches[0]
+	if batch.ProjectBucket == "" {
+		t.Fatalf("projectBucket is empty")
+	}
+	if batch.ProjectBucket != ident.ProjectBucket("csx:no-project", batch.Epoch[:7]) {
+		t.Errorf("projectBucket = %q, want %q", batch.ProjectBucket, ident.ProjectBucket("csx:no-project", batch.Epoch[:7]))
+	}
+	if err := serverstore.ValidateBatch(batch); err != nil {
+		t.Fatalf("ValidateBatch: %v", err)
+	}
+	if batch.ProjectBucket == ident.AnonID(batch.Epoch) {
+		t.Errorf("projectBucket equals AnonID %q", batch.ProjectBucket)
+	}
+	if strings.ContainsAny(batch.ProjectBucket, "/\\:") || len(batch.ProjectBucket) > 64 {
+		t.Errorf("projectBucket invalid characters or length: %q", batch.ProjectBucket)
+	}
+}
+
+func TestProjectBucketFallbackAppliesOnlyWhereNoSightingExists(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	if err := rec.RecordRun(ctx, dir, fakeScanResult(), knownProfile(), 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+
+	exit0 := 0
+	obs := domain.CLIExperienceObservation{
+		Coordinate: domain.CLIExperienceCoordinate{
+			Tool:        "gh",
+			ToolVersion: "2.62.0",
+			Subcommand:  "pr list",
+			Environment: testEnvFP(),
+		},
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  time.Now().UTC().Format(time.RFC3339),
+		Count:       1,
+	}
+	if err := db.RecordCLIExperienceObservation(ctx, obs); err != nil {
+		t.Fatalf("RecordCLIExperienceObservation: %v", err)
+	}
+
+	batches, err := b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(batches) != 3 {
+		t.Fatalf("want 3 batches (2 npm, 1 cli), got %d", len(batches))
+	}
+
+	abs, _ := filepath.Abs(dir)
+	month := time.Now().UTC().Format("2006-01")
+	wantProjectBucket := ident.ProjectBucket(abs, month)
+	wantSentinelBucket := ident.ProjectBucket("csx:no-project", month)
+
+	if wantProjectBucket == wantSentinelBucket {
+		t.Fatalf("sentinel bucket should differ from real project bucket")
+	}
+
+	npmBatchesSeen := 0
+	cliBatchesSeen := 0
+	for _, batch := range batches {
+		if err := serverstore.ValidateBatch(batch); err != nil {
+			t.Fatalf("ValidateBatch: %v", err)
+		}
+		if strings.HasPrefix(batch.Package, "pkg:generic/cli/") {
+			cliBatchesSeen++
+			if batch.ProjectBucket != wantSentinelBucket {
+				t.Errorf("cli batch projectBucket = %q, want %q", batch.ProjectBucket, wantSentinelBucket)
+			}
+		} else {
+			npmBatchesSeen++
+			if batch.ProjectBucket != wantProjectBucket {
+				t.Errorf("npm batch projectBucket = %q, want %q", batch.ProjectBucket, wantProjectBucket)
+			}
+		}
+	}
+	if npmBatchesSeen != 2 {
+		t.Errorf("want 2 npm batches, got %d", npmBatchesSeen)
+	}
+	if cliBatchesSeen != 1 {
+		t.Errorf("want 1 cli batch, got %d", cliBatchesSeen)
+	}
+}
+
+func TestProjectBucketFallbackRotatesMonthlyFromTheRowEpoch(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	b := &Batcher{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+
+	exit0 := 0
+	obsAugust := domain.CLIExperienceObservation{
+		Coordinate: domain.CLIExperienceCoordinate{
+			Tool:        "gh",
+			ToolVersion: "2.62.0",
+			Subcommand:  "pr list",
+			Environment: testEnvFP(),
+		},
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-08-15T12:00:00Z",
+		Count:       1,
+	}
+	obsSept := domain.CLIExperienceObservation{
+		Coordinate: domain.CLIExperienceCoordinate{
+			Tool:        "gh",
+			ToolVersion: "2.62.0",
+			Subcommand:  "pr list",
+			Environment: testEnvFP(),
+		},
+		Provenance:  domain.ProvenanceField,
+		Result:      domain.ResultPass,
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+		ObservedAt:  "2026-09-15T12:00:00Z",
+		Count:       1,
+	}
+
+	if err := db.RecordCLIExperienceObservation(ctx, obsAugust); err != nil {
+		t.Fatalf("RecordCLIExperienceObservation august: %v", err)
+	}
+	if err := db.RecordCLIExperienceObservation(ctx, obsSept); err != nil {
+		t.Fatalf("RecordCLIExperienceObservation sept: %v", err)
+	}
+
+	batches, err := b.Drain(ctx)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("want 2 batches, got %d", len(batches))
+	}
+
+	wantAugustBucket := ident.ProjectBucket("csx:no-project", "2026-08")
+	wantSeptBucket := ident.ProjectBucket("csx:no-project", "2026-09")
+	if wantAugustBucket == wantSeptBucket {
+		t.Fatalf("monthly fallback derivation unexpectedly identical across months")
+	}
+
+	var foundAugust, foundSept bool
+	for _, batch := range batches {
+		if err := serverstore.ValidateBatch(batch); err != nil {
+			t.Fatalf("ValidateBatch: %v", err)
+		}
+		switch batch.Epoch[:7] {
+		case "2026-08":
+			foundAugust = true
+			if batch.ProjectBucket != wantAugustBucket {
+				t.Errorf("2026-08 batch projectBucket = %q, want %q", batch.ProjectBucket, wantAugustBucket)
+			}
+		case "2026-09":
+			foundSept = true
+			if batch.ProjectBucket != wantSeptBucket {
+				t.Errorf("2026-09 batch projectBucket = %q, want %q", batch.ProjectBucket, wantSeptBucket)
+			}
+		default:
+			t.Errorf("unexpected batch epoch: %q", batch.Epoch)
+		}
+	}
+	if !foundAugust || !foundSept {
+		t.Errorf("missing expected batches: august=%v sept=%v", foundAugust, foundSept)
+	}
+}
+

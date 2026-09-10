@@ -440,10 +440,41 @@ func (b *Batcher) canonicalObservationCount(ctx context.Context, row localdb.Obs
 	return total, nil
 }
 
+// noProjectScope is the synthetic project path behind the bucket used for an
+// observation that belongs to no scanned project.
+//
+// ProjectBucket is a REQUIRED wire field — the server checks it before it
+// checks anything else — but its only producer is a sighting lookup over
+// symbol_usages, which the lockfile scan fills and nothing else does. Every
+// CLI experience observation therefore reached the wire with an empty bucket
+// and was refused, terminally, 100% of the time.
+//
+// A sentinel path through the ordinary HMAC derivation keeps every property
+// a real bucket has: 12 hex characters, irreversible, and rotating on the
+// SAME monthly cadence, so one machine's project-less evidence counts as one
+// project per month rather than one per day. It is not a path and never was;
+// nothing about this string reaches the wire.
+const noProjectScope = "csx:no-project"
+
+// fallbackBucket is the bucket for an observation with no project sighting.
+// The month comes from the row's own epoch, not from the clock, so a row
+// re-sent weeks later derives the bucket it would have had when observed.
+func (b *Batcher) fallbackBucket(epoch string) string {
+	month := epoch
+	if len(month) >= 7 {
+		month = month[:7]
+	} else {
+		month = time.Now().UTC().Format("2006-01")
+	}
+	return b.Ident.ProjectBucket(noProjectScope, month)
+}
+
 // bucketFor resolves the rotating project bucket recorded for this
 // aggregate: the symbol-usage sighting matching the row's symbol (the
 // recorder stores a symbol=="" sighting per public package), falling
-// back to the package's most recent sighting, else "". Buckets are
+// back to the package's most recent sighting, else the deterministic
+// monthly fallback bucket for observations with no project sighting.
+// bucketFor is a total function and never returns an empty string. Buckets are
 // HMAC-derived and rotate monthly; they are dedup hints, never identity.
 func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.SymbolUsageRow, row localdb.ObsRow) string {
 	usages, cached := memo[row.PURL]
@@ -451,7 +482,7 @@ func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.Symbo
 		p, err := domain.ParsePURL(row.PURL)
 		if err != nil {
 			memo[row.PURL] = nil
-			return ""
+			return b.fallbackBucket(row.Epoch)
 		}
 		usages, err = b.DB.SymbolUsages(ctx, p)
 		if err != nil {
@@ -472,7 +503,10 @@ func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.Symbo
 	if exact != "" {
 		return exact
 	}
-	return latest
+	if latest != "" {
+		return latest
+	}
+	return b.fallbackBucket(row.Epoch)
 }
 
 // post sends one batch payload; any non-2xx status is an error.
