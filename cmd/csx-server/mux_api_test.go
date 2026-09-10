@@ -62,7 +62,7 @@ func TestBuildMuxMountsV1API(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(body, canonical) {
+	if !bytes.Equal(bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n")), bytes.ReplaceAll(canonical, []byte("\r\n"), []byte("\n"))) {
 		t.Fatal("adapters body differs from schemas/v1/adapters.json")
 	}
 

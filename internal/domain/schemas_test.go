@@ -1,12 +1,15 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 )
 
 // schemaDir walks up from the package dir to the repo root schemas/v1.
@@ -53,6 +56,9 @@ func TestSchemaFixtures(t *testing.T) {
 		"search-request.json": SearchRequest{SchemaVersion: 1, Query: "q",
 			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"}},
 		"search-response.json": SearchResponse{SchemaVersion: 1, Results: []SearchResult{}, Miss: true},
+		"measurement-report.json": measurement.NewTwoLayerReport("community",
+			measurement.RetrievalQuality{},
+			measurement.OutcomeValue{}),
 		"cli-execution-evidence.json": CLIExperienceObservation{
 			Coordinate: CLIExperienceCoordinate{
 				Tool: "git", ToolVersion: "2.55.0", Subcommand: "status", ArgsPattern: "--short", Shell: "direct",
@@ -81,6 +87,7 @@ func TestSchemaFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", e.Name(), err)
@@ -124,6 +131,7 @@ func TestVerificationReceiptSchemaEvolution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", path, err)
@@ -197,6 +205,7 @@ func TestObservationBatchSchemaRollingCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("%s: not valid JSON: %v", path, err)
@@ -265,6 +274,7 @@ func TestSearchSchemaRollingCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		var schema map[string]any
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatal(err)

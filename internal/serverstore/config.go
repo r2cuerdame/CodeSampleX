@@ -24,10 +24,16 @@ type ServerConfig struct {
 	// worth, and code from an origin the network cannot establish cannot be
 	// given that guarantee -- see internal/httpapi/publishgate.go. Evidence,
 	// receipts and every read stay anonymous.
-	Publishing         string        // CSX_PUBLISHING — "seeded" (default) | "open" (dev/e2e only)
-	SnapshotInterval   time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
-	GithubClientID     string        // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
-	GithubClientSecret string        // CSX_GITHUB_CLIENT_SECRET
+	Publishing       string        // CSX_PUBLISHING — "seeded" (default) | "open" (dev/e2e only)
+	SnapshotInterval time.Duration // CSX_SNAPSHOT_INTERVAL — default 5m
+	// SnapshotPassTimeout bounds one builder pass
+	// (CSX_SNAPSHOT_PASS_TIMEOUT, 0 = unbounded). A pass runs as
+	// ClassBackground, which has neither a statement ceiling nor a wait
+	// budget, so without this a single wedged query suspends the builder
+	// for the life of the process instead of failing it.
+	SnapshotPassTimeout time.Duration
+	GithubClientID      string // CSX_GITHUB_CLIENT_ID — empty ⇒ device flow returns 501
+	GithubClientSecret  string // CSX_GITHUB_CLIENT_SECRET
 	// AdminTokenSHA256 enables the private /admin operator route only when
 	// it is a valid hexadecimal SHA-256 digest. It is intentionally separate
 	// from seeder credentials and never accepts a raw token.
@@ -47,25 +53,52 @@ type ServerConfig struct {
 	DBPool PoolPolicy
 }
 
+// defaultSnapshotPassTimeout bounds one builder pass.
+//
+// It is a ceiling, not a target, and it is set from what a legitimate pass
+// has actually cost. In #174 a typical full pass required ~100–120 minutes;
+// a post-restart incremental pass took ~30 minutes, and v0.1.155 converged in
+// 534 seconds. Six hours provides ample headroom so no completed pass on
+// record is truncated by it, and it stays well inside the 24-hour resume
+// window so the pass after a ceiling breach postpones the next full repair
+// and resumes incrementally instead of triggering an endless series of
+// full-corpus rebuilds.
+//
+// Truncating a healthy pass would be worse than the freeze it prevents: the
+// builder would restart work it can never finish. That is why the headroom
+// is this large and why CSX_SNAPSHOT_PASS_TIMEOUT can remove the ceiling
+// entirely without a build.
+const defaultSnapshotPassTimeout = 6 * time.Hour
+
 // ConfigFromEnv reads the CSX_* server environment with safe defaults.
 // DSN deliberately has no default: pointing at a database must be explicit.
 func ConfigFromEnv() ServerConfig {
 	cfg := ServerConfig{
-		DSN:                os.Getenv("CSX_DSN"),
-		Listen:             envOr("CSX_LISTEN", ":8080"),
-		BlobDir:            envOr("CSX_BLOB_DIR", "blobs"),
-		PublicURL:          envOr("CSX_PUBLIC_URL", "http://localhost:8080"),
-		PublicCheck:        envOr("CSX_PUBLIC_CHECK", "strict"),
-		Publishing:         envOr("CSX_PUBLISHING", "seeded"),
-		SnapshotInterval:   5 * time.Minute,
-		GithubClientID:     os.Getenv("CSX_GITHUB_CLIENT_ID"),
-		GithubClientSecret: os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
-		AdminTokenSHA256:   os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
-		ActivityHashKey:    os.Getenv("CSX_ACTIVITY_HASH_KEY"),
+		DSN:                 os.Getenv("CSX_DSN"),
+		Listen:              envOr("CSX_LISTEN", ":8080"),
+		BlobDir:             envOr("CSX_BLOB_DIR", "blobs"),
+		PublicURL:           envOr("CSX_PUBLIC_URL", "http://localhost:8080"),
+		PublicCheck:         envOr("CSX_PUBLIC_CHECK", "strict"),
+		Publishing:          envOr("CSX_PUBLISHING", "seeded"),
+		SnapshotInterval:    5 * time.Minute,
+		SnapshotPassTimeout: defaultSnapshotPassTimeout,
+		GithubClientID:      os.Getenv("CSX_GITHUB_CLIENT_ID"),
+		GithubClientSecret:  os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
+		AdminTokenSHA256:    os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
+		ActivityHashKey:     os.Getenv("CSX_ACTIVITY_HASH_KEY"),
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.SnapshotInterval = d
+		}
+	}
+	if v := os.Getenv("CSX_SNAPSHOT_PASS_TIMEOUT"); v != "" {
+		// "0" means "no ceiling" without writing "0s", the same way the pool
+		// budgets read it: this is the rollback an operator applies at 3am.
+		if v == "0" {
+			cfg.SnapshotPassTimeout = 0
+		} else if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			cfg.SnapshotPassTimeout = d
 		}
 	}
 	// Default 20GB: the production volume is 60GB shared with PostgreSQL,

@@ -545,3 +545,44 @@ func TestSingleflightFailureDoesNotPoisonSubsequentRetry(t *testing.T) {
 		t.Fatalf("attempts = %d, want 2 (failure not cached)", got)
 	}
 }
+
+func TestSingleflightDoesNotReuseFinishedCall(t *testing.T) {
+	group := singleflightGroup[int]{}
+	var count atomic.Int64
+
+	// First call executes and finishes.
+	res1, err := group.Do(context.Background(), "key", func(ctx context.Context) (int, error) {
+		return int(count.Add(1)), nil
+	})
+	if err != nil || res1 != 1 {
+		t.Fatalf("first Do = (%v, %v), want (1, nil)", res1, err)
+	}
+
+	// Loads map must have had the completed call evicted.
+	if _, ok := group.loads.Load("key"); ok {
+		t.Fatalf("key was not evicted from loads on finish")
+	}
+
+	// Explicitly finished call must refuse admission via addWaiter.
+	finishedCall := &singleflightCall[int]{
+		done:     make(chan struct{}),
+		waiters:  0,
+		finished: true,
+		val:      999,
+	}
+	close(finishedCall.done)
+	if finishedCall.addWaiter() {
+		t.Fatalf("addWaiter returned true on finished call, want false")
+	}
+
+	// Even if a finished call was somehow still present in loads,
+	// Do must detect that it is finished, evict it, and launch a fresh call.
+	group.loads.Store("key", finishedCall)
+
+	res2, err := group.Do(context.Background(), "key", func(ctx context.Context) (int, error) {
+		return int(count.Add(1)), nil
+	})
+	if err != nil || res2 != 2 {
+		t.Fatalf("second Do = (%v, %v), want (2, nil)", res2, err)
+	}
+}

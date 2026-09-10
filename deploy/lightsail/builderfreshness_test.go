@@ -215,9 +215,22 @@ func TestBuilderCancellationLeavesLifecycleToExitEvidence(t *testing.T) {
 	if !strings.Contains(builder, "func runBuilderLoopWith(") {
 		t.Fatal("builder source no longer contains runBuilderLoopWith")
 	}
-	cancellationReturn := regexp.MustCompile(`(?s)err := run\(serverstore\.WithQueryBudget\(ctx, budget\)\)\s+if ctx\.Err\(\) != nil \{\s*return\s*\}`)
+	cancellationReturn := regexp.MustCompile(`(?s)err := runBoundedPass\(ctx, passTimeout, budget, run\)\s+if ctx\.Err\(\) != nil \{\s*return\s*\}`)
 	if !cancellationReturn.MatchString(builder) {
 		t.Fatal("builder cancellation path must return without inventing a terminal lifecycle marker")
+	}
+	// The pass now runs under its own deadline, so there are two ways a pass
+	// can end early and only one of them is this process stopping. The
+	// ceiling must defer to the caller's context: wrapping a shutdown as a
+	// breached ceiling would hand the collector a terminal builder error on
+	// every ordinary replacement.
+	if !strings.Contains(builder, "func runBoundedPass(") {
+		t.Fatal("builder source no longer contains runBoundedPass")
+	}
+	ceilingDefersToShutdown := regexp.MustCompile(
+		`(?s)func runBoundedPass\(.*?if ctx\.Err\(\) != nil \|\| !errors\.Is\(passCtx\.Err\(\), context\.DeadlineExceeded\) \{\s*return err\s*\}`)
+	if !ceilingDefersToShutdown.MatchString(builder) {
+		t.Fatal("builder pass ceiling must defer to caller cancellation instead of reporting a breached ceiling")
 	}
 
 	collector := readDeployFixture(t, "collect-post-deploy-observation.sh")

@@ -71,18 +71,31 @@ func statsMain(ctx context.Context, args []string) int {
 		passHuman = fmt.Sprintf("%.0f%% (%d reports)", st.PostHitBuildPassRate*100, st.PostHitBuildReports)
 	}
 	fmt.Printf("Mode:                          %s\n", modeOrUninitialized(st.Mode))
-	fmt.Printf("Hits / Misses:                 %d / %d\n", st.Hits, st.Misses)
-	fmt.Printf("Adoptions:                     %d\n", st.Adoptions)
-	fmt.Printf("Post-hit build pass:           %s\n", passHuman)
-	fmt.Printf("Estimated reasoning avoided:   %d  (Estimated — never measured)\n", st.EstimatedReasoningAvoided)
-	fmt.Printf("Automatic evidence sent:       %d batches\n", st.EvidenceBatchesSent)
-	fmt.Printf("Origin seeds:                  %d\n", st.OriginSeeds)
-	fmt.Printf("Cross verifications:           %d\n", st.CrossVerifications)
-	fmt.Printf("Local cache:                   %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
-	fmt.Printf("Known packages:                %d\n", st.Packages)
-	fmt.Printf("Pending evidence batches:      %d\n", st.Queue.EvidenceBatches)
-	fmt.Printf("Pending upload reports:        %d\n", st.Queue.Uploads)
-	fmt.Printf("Pending queue depth:           %d\n", st.QueueDepth)
+
+	fmt.Printf("\nLayer 1 · Retrieval & Memory Quality (internal search quality):\n")
+	hitRateHuman := "-"
+	if total := st.Hits + st.Misses; total > 0 {
+		hitRateHuman = fmt.Sprintf("%.1f%% (%d searches)", float64(st.Hits)/float64(total)*100, total)
+	}
+	fmt.Printf("  Hits / Misses:               %d / %d  (hit rate: %s)\n", st.Hits, st.Misses, hitRateHuman)
+	fmt.Printf("  Exact failure matches:       %d\n", st.ExactFailureMatches)
+	fmt.Printf("  Verified detours offered:    %d\n", st.VerifiedDetoursOffered)
+	fmt.Printf("  Known packages:              %d\n", st.Packages)
+	fmt.Printf("  Local cache:                 %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
+	fmt.Printf("  Automatic evidence sent:     %d batches\n", st.EvidenceBatchesSent)
+	fmt.Printf("  Origin seeds:                %d\n", st.OriginSeeds)
+	fmt.Printf("  Cross verifications:         %d\n", st.CrossVerifications)
+
+	fmt.Printf("\nLayer 2 · User & Agent Outcome Value (core product value):\n")
+	fmt.Printf("  Adoptions:                   %d\n", st.Adoptions)
+	fmt.Printf("  Post-hit build pass:         %s\n", passHuman)
+	fmt.Printf("  Reported failures avoided:   %d  (all 4 measured stages)\n", st.ReportedFailuresAvoided)
+	fmt.Printf("  Estimated reasoning avoided: %d  (Estimated — never measured)\n", st.EstimatedReasoningAvoided)
+
+	fmt.Printf("\nInfrastructure & Queue:\n")
+	fmt.Printf("  Pending evidence batches:    %d\n", st.Queue.EvidenceBatches)
+	fmt.Printf("  Pending upload reports:      %d\n", st.Queue.Uploads)
+	fmt.Printf("  Pending queue depth:         %d\n", st.QueueDepth)
 	// Sent, pending and refused-for-good are three different states and were
 	// reported as two. A queue pinned at its cap by refusals the server will
 	// never accept looked exactly like a delivery backlog: production read

@@ -38,6 +38,7 @@ services:
       CSX_PUBLIC_URL: ${CSX_PUBLIC_URL:-http://localhost}
       CSX_PUBLIC_CHECK: ${CSX_PUBLIC_CHECK:-strict}
       CSX_SNAPSHOT_INTERVAL: ${CSX_SNAPSHOT_INTERVAL:-5m}
+      CSX_SNAPSHOT_PASS_TIMEOUT: ${CSX_SNAPSHOT_PASS_TIMEOUT:-}
       CSX_GITHUB_CLIENT_ID: ${CSX_GITHUB_CLIENT_ID:-}
       CSX_GITHUB_CLIENT_SECRET: ${CSX_GITHUB_CLIENT_SECRET:-}
       # SHA-256 of the private dashboard's Basic-auth password. The raw

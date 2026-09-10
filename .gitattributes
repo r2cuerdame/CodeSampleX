@@ -3,7 +3,12 @@
 *.ps1 text eol=lf
 *.sh  text eol=lf
 
+schemas/** text eol=lf
+internal/**/agentassets/** text eol=lf
 internal/serverstore/migrations/** text eol=lf
+docs/** text eol=lf
+deploy/** text eol=lf
+internal/httpapi/adapters.json text eol=lf
 internal/web/static/** text eol=lf
 internal/web/templates/** text eol=lf
 internal/web/i18n/locales/** text eol=lf

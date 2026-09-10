@@ -20,7 +20,7 @@ func readmeCommands(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(b)
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
 	a := strings.Index(s, readmeCLIStart)
 	z := strings.Index(s, readmeCLIEnd)
 	if a < 0 || z < 0 || z <= a {

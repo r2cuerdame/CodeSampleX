@@ -369,7 +369,7 @@ func TestBuilderPhaseRetrySeriesUsesDistinctProcessAttemptsWithoutBookkeeping(t 
 	sink := &phaseLogSink{}
 	builder := testPhaseBuilder(store, sink)
 	var waits int
-	runBuilderLoopWith(context.Background(), time.Minute, builder.RunOnce,
+	runBuilderLoopWith(context.Background(), time.Minute, 0, builder.RunOnce,
 		func(context.Context, time.Duration) bool {
 			waits++
 			return waits < 6

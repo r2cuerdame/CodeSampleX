@@ -191,7 +191,7 @@ func TestSampleUploadRespectsBlobBudget(t *testing.T) {
 }
 
 func TestBearerIdentityHardLimitCapsAcrossRoutesAtTwentyPerSecond(t *testing.T) {
-	srv, _, _ := newTestServer(t, nil)
+	srv, _, ck := newTestServer(t, nil)
 	client := srv.Client()
 	const token = "csx_test_identity_rate_key"
 
@@ -232,6 +232,12 @@ func TestBearerIdentityHardLimitCapsAcrossRoutesAtTwentyPerSecond(t *testing.T) 
 	// A different key has a different hard-ceiling bucket.
 	if resp := request("/v1/adapters", "csx_other_identity_rate_key"); resp.StatusCode == http.StatusTooManyRequests {
 		t.Fatal("one bearer key exhausted another bearer's bucket")
+	}
+
+	// Advancing the mock clock by the full refill window (1s) restores the allowance.
+	ck.t = ck.t.Add(time.Second)
+	if resp := request("/v1/adapters", token); resp.StatusCode == http.StatusTooManyRequests {
+		t.Fatal("bearer key bucket did not refill after full refill interval")
 	}
 }
 
