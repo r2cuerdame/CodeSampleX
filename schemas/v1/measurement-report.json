@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/measurement-report.json",
+  "title": "TwoLayerReport",
+  "description": "Concrete two-layer measurement model cleanly separating retrieval/memory quality from user/agent outcome value (GitHub issue #206, docs/measurement-layers.md).",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "mode",
+    "causalModel",
+    "retrievalQuality",
+    "outcomeValue"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string"
+    },
+    "causalModel": {
+      "type": "string"
+    },
+    "retrievalQuality": {
+      "type": "object",
+      "description": "Layer 1: Internal retrieval and memory quality metrics diagnosing 'Is CSX returning the right execution memory?'",
+      "required": [
+        "hits",
+        "misses",
+        "hitRate",
+        "exactFailureMatches",
+        "verifiedDetoursOffered",
+        "knownPackages",
+        "cacheBytes",
+        "evidenceBatchesSent",
+        "originSeeds",
+        "crossVerifications"
+      ],
+      "properties": {
+        "hits": { "type": "integer", "minimum": 0 },
+        "misses": { "type": "integer", "minimum": 0 },
+        "hitRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "exactFailureMatches": { "type": "integer", "minimum": 0 },
+        "verifiedDetoursOffered": { "type": "integer", "minimum": 0 },
+        "knownPackages": { "type": "integer", "minimum": 0 },
+        "cacheBytes": { "type": "integer", "minimum": 0 },
+        "evidenceBatchesSent": { "type": "integer", "minimum": 0 },
+        "originSeeds": { "type": "integer", "minimum": 0 },
+        "crossVerifications": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "outcomeValue": {
+      "type": "object",
+      "description": "Layer 2: Core user and coding agent outcome value metrics answering 'Did that memory actually improve the user's/agent's result?'",
+      "required": [
+        "adoptions",
+        "postHitBuildReports",
+        "postHitBuildPassRate",
+        "verifiedDetoursApplied",
+        "detourPostHitPass",
+        "detourPostHitFail",
+        "detourPostHitUnknown",
+        "reportedFailuresAvoided",
+        "estimatedReasoningAvoided",
+        "estimated"
+      ],
+      "properties": {
+        "adoptions": { "type": "integer", "minimum": 0 },
+        "postHitBuildReports": { "type": "integer", "minimum": 0 },
+        "postHitBuildPassRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "verifiedDetoursApplied": { "type": "integer", "minimum": 0 },
+        "detourPostHitPass": { "type": "integer", "minimum": 0 },
+        "detourPostHitFail": { "type": "integer", "minimum": 0 },
+        "detourPostHitUnknown": { "type": "integer", "minimum": 0 },
+        "reportedFailuresAvoided": { "type": "integer", "minimum": 0 },
+        "estimatedReasoningAvoided": { "type": "integer", "minimum": 0 },
+        "estimated": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

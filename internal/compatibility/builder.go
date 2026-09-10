@@ -1819,6 +1819,30 @@ type StatsDoc struct {
 	// Estimated marks the whole document as containing estimated figures,
 	// mirroring EstimatedReasoningAvoided.Estimated for simple consumers.
 	Estimated bool `json:"estimated"`
+
+	// Two-layer measurement model (issue #206, docs/measurement-layers.md):
+	// separates retrieval/memory quality from user outcome value.
+	RetrievalQuality PublicRetrievalQuality `json:"retrievalQuality"`
+	OutcomeValue     PublicOutcomeValue     `json:"outcomeValue"`
+}
+
+// PublicRetrievalQuality represents Layer 1 in the public stats rollup (docs/measurement-layers.md).
+type PublicRetrievalQuality struct {
+	Packages        int64 `json:"packages"`
+	Symbols         int64 `json:"symbols"`
+	Evidence        int64 `json:"evidence"`
+	VerifiedSamples int64 `json:"verifiedSamples"`
+	Peers           int64 `json:"peers"`
+	ProjectsMonth   int64 `json:"projectsMonth"`
+}
+
+// PublicOutcomeValue represents Layer 2 in the public stats rollup (docs/measurement-layers.md).
+type PublicOutcomeValue struct {
+	PostHitSuccessRate        float64         `json:"postHitSuccessRate"`
+	PostHitBuildPass          PlaceholderStat `json:"postHitBuildPass"`
+	PostHitBuildsReported     int64           `json:"postHitBuildsReported"`
+	EstimatedReasoningAvoided EstimatedStat   `json:"estimatedReasoningAvoided"`
+	Estimated                 bool            `json:"estimated"`
 }
 
 // StatsJSON renders the stats rollup from the network counts and the
@@ -1867,6 +1891,32 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 				"each adopted hit avoids ~3 LLM reasoning calls (fixed v1 assumption)",
 				"rework cost not yet measured, assumed 0",
 			},
+		},
+		RetrievalQuality: PublicRetrievalQuality{
+			Packages:        c.Packages,
+			Symbols:         c.Symbols,
+			Evidence:        c.Observations,
+			VerifiedSamples: c.VerifiedSamples,
+			Peers:           c.Peers,
+			ProjectsMonth:   c.ProjectsMonth,
+		},
+		OutcomeValue: PublicOutcomeValue{
+			PostHitSuccessRate: rate,
+			PostHitBuildPass: PlaceholderStat{
+				Value: float64(adopt.BuildPass),
+				Note:  buildNote,
+			},
+			PostHitBuildsReported: measured,
+			EstimatedReasoningAvoided: EstimatedStat{
+				Estimated: true,
+				Value:     hitsAdopted * 3,
+				Formula:   "hitsAdopted * 3",
+				Assumptions: []string{
+					"each adopted hit avoids ~3 LLM reasoning calls (fixed v1 assumption)",
+					"rework cost not yet measured, assumed 0",
+				},
+			},
+			Estimated: true,
 		},
 	}
 	return json.Marshal(doc)

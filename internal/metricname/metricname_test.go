@@ -171,3 +171,22 @@ func TestFieldsThatNeverReachAConsumerAreNotClaims(t *testing.T) {
 		t.Fatalf("violations = %+v, want none", v)
 	}
 }
+
+type inventedUpliftDoc struct {
+	UpliftPercent float64 `json:"upliftPercent"`
+	ModelSpeedup  float64 `json:"modelSpeedup"`
+}
+
+// Issue #206 and docs/measurement-layers.md §4: unverified uplift claims and
+// percentages must not be published as summary statistics.
+func TestInventedUpliftIsRefused(t *testing.T) {
+	v := Check(inventedUpliftDoc{})
+	if len(v) != 2 {
+		t.Fatalf("violations = %d, want 2: %+v", len(v), v)
+	}
+	for _, got := range v {
+		if got.Rule != RuleInventedUplift {
+			t.Errorf("%s: rule = %s, want %s", got.Field, got.Rule, RuleInventedUplift)
+		}
+	}
+}

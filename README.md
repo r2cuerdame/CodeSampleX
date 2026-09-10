@@ -218,7 +218,7 @@ curl -fsSL https://codesamplex.dev/v1/stats
 | `peers` / `projectsMonth` | distinct anonymous daily/monthly contributor buckets |
 | `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL |
 
-CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count.
+CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count. Measurement is cleanly partitioned into two distinct layers — internal retrieval quality vs user outcome value — under field-first guardrails with no invented uplift ([docs/measurement-layers.md](docs/measurement-layers.md)).
 
 ## Contributor worker
 

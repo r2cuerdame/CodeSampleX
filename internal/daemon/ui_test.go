@@ -69,6 +69,8 @@ func TestUIRendersDashboard(t *testing.T) {
 	for _, want := range []string{
 		"Community status",
 		"LOCAL ONLY",
+		"Layer 1: Retrieval",
+		"Layer 2: User",
 		"Local cache",
 		"Project dependencies",
 		"Hits / Misses",
