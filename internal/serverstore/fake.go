@@ -673,6 +673,18 @@ func (f *Fake) EvidenceForTarget(_ context.Context, purl, symbol string) ([]Evid
 	return out, nil
 }
 
+func (f *Fake) EvidenceForTargets(ctx context.Context, targets []SnapshotTarget) (map[SnapshotTarget][]EvidenceRow, error) {
+	out := make(map[SnapshotTarget][]EvidenceRow, len(targets))
+	for _, target := range targets {
+		rows, err := f.EvidenceForTarget(ctx, target.PURL, target.Symbol)
+		if err != nil {
+			return nil, err
+		}
+		out[target] = rows
+	}
+	return out, nil
+}
+
 // -------------------------------------------------------- cases + samples --
 
 func (f *Fake) SaveCase(_ context.Context, c domain.Case) error {

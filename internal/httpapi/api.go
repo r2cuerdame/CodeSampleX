@@ -110,8 +110,9 @@ type api struct {
 	statsCache latestStatsCache
 
 	// Concurrent container and monitor probes share one bounded DB read.
-	healthMu sync.Mutex
-	health   *healthCall
+	healthMu   sync.Mutex
+	health     *healthCall
+	healthOKAt time.Time
 
 	// authoringPolls counts work polls for the gap rotation; see
 	// authoringGapEvery.
@@ -236,7 +237,10 @@ func NewMux(d Deps) *http.ServeMux {
 
 // healthzTimeout keeps a stuck database from turning the health check into
 // another hung request; the probe is a single trivial query.
-const healthzTimeout = 3 * time.Second
+const (
+	healthzTimeout    = 3 * time.Second
+	healthzSuccessTTL = time.Second
+)
 
 func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -260,6 +264,10 @@ func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) databaseHealth(ctx context.Context) error {
 	a.healthMu.Lock()
+	if !a.healthOKAt.IsZero() && a.now().Sub(a.healthOKAt) < healthzSuccessTTL {
+		a.healthMu.Unlock()
+		return nil
+	}
 	if call := a.health; call != nil {
 		a.healthMu.Unlock()
 		select {
@@ -276,12 +284,17 @@ func (a *api) databaseHealth(ctx context.Context) error {
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), healthzTimeout)
 	_, _, call.err = a.d.Store.GetLatestStats(loadCtx)
 	cancel()
-	close(call.done)
 
 	a.healthMu.Lock()
+	if call.err == nil {
+		a.healthOKAt = a.now()
+	} else {
+		a.healthOKAt = time.Time{}
+	}
 	if a.health == call {
 		a.health = nil
 	}
+	close(call.done)
 	a.healthMu.Unlock()
 	return call.err
 }

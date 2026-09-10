@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -252,4 +253,251 @@ func TestSharedSnapshotLoadRetainsItsOwnBoundAndTrafficClass(t *testing.T) {
 	if !errors.Is(load.Err(), context.Canceled) {
 		t.Fatal("shared read's own cancellation was ignored")
 	}
+}
+
+func TestAdmissionRefusalDoesNotPoisonSnapshotRetry(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+	raw := `{"rows":[{"count":1}]}`
+	if err := fake.PutSnapshot(t.Context(), purl, "Connect", raw); err != nil {
+		t.Fatal(err)
+	}
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots so the next request fails admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	// Request should fail with admission refusal ErrPoolBusy.
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	_, _, err := w.SnapshotJSONWithError(ctx, purl, "Connect")
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("expected ErrPoolBusy on saturated admission slots, got %v", err)
+	}
+
+	// Check that lane.retry was NOT advanced.
+	stateAny, ok := w.purlSnapshotLoads.Load(purl)
+	if !ok {
+		t.Fatal("expected purlSnapshotLoads state to be recorded")
+	}
+	state := stateAny.(*snapshotLoadState)
+	state.mu.Lock()
+	retryState := state.interactive.retry.State()
+	retryAt := state.interactive.retryAt
+	state.mu.Unlock()
+
+	if retryState != retrypolicy.Ready || !retryAt.IsZero() {
+		t.Fatalf("admission refusal poisoned snapshot retry: state=%v, retryAt=%v", retryState, retryAt)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// A subsequent request must be able to load immediately without deferral.
+	got, found, err := w.SnapshotJSONWithError(ctx, purl, "Connect")
+	if err != nil || !found || got != raw {
+		t.Fatalf("subsequent load failed after admission slots freed: got=%q, found=%t, err=%v", got, found, err)
+	}
+}
+
+func TestAdmissionRefusalDoesNotDeferTargetIndex(t *testing.T) {
+	fake := serverstore.NewFake()
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+	if err := fake.PutSnapshot(t.Context(), purl, "Connect", `{"rows":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots so target index load fails admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	_, err := w.cachedTargetIndex(ctx)
+	if !errors.Is(err, serverstore.ErrPoolBusy) {
+		t.Fatalf("expected ErrPoolBusy on saturated admission slots, got %v", err)
+	}
+
+	w.targetsMu.Lock()
+	retryState := w.targetsRetry.State()
+	retryAt := w.targetsRetryAt
+	w.targetsMu.Unlock()
+
+	if retryState != retrypolicy.Ready || !retryAt.IsZero() {
+		t.Fatalf("admission refusal poisoned targetsRetry: state=%v, retryAt=%v", retryState, retryAt)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// A subsequent request must load successfully.
+	idx, err := w.cachedTargetIndex(ctx)
+	if err != nil || idx == nil {
+		t.Fatalf("subsequent target index load failed after slots freed: err=%v", err)
+	}
+}
+
+type deadlineExceededBulkSnapshotStore struct {
+	*serverstore.Fake
+	calls atomic.Int64
+}
+
+func (s *deadlineExceededBulkSnapshotStore) GetSnapshotsForPURL(ctx context.Context, purl string) ([]serverstore.SnapshotRow, error) {
+	s.calls.Add(1)
+	return nil, context.DeadlineExceeded
+}
+
+func TestSnapshotDeadlineExceededAdvancesBackoff(t *testing.T) {
+	store := &deadlineExceededBulkSnapshotStore{Fake: serverstore.NewFake()}
+	w := &webStore{s: store}
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	purl := "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+
+	// Sequential interactive requests for the same PURL.
+	const totalRequests = 6
+	for i := 0; i < totalRequests; i++ {
+		_, _, err := w.SnapshotJSONWithError(ctx, purl, "Batch")
+		if err == nil {
+			t.Fatalf("request %d: expected error, got nil", i)
+		}
+		if i == 0 {
+			// First request observes the actual database deadline exceeded.
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("request 0: expected DeadlineExceeded, got %v", err)
+			}
+		} else {
+			// Subsequent requests should be rejected by backoff deferral (ErrPoolBusy)
+			// without hitting the database.
+			if !errors.Is(err, serverstore.ErrPoolBusy) {
+				t.Fatalf("request %d: expected ErrPoolBusy (deferred), got %v", i, err)
+			}
+		}
+	}
+
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("store calls = %d, want 1 (backoff must prevent hammering store on DeadlineExceeded)", got)
+	}
+
+	// Verify the lane retry state and retryAt.
+	stateAny, ok := w.purlSnapshotLoads.Load(purl)
+	if !ok {
+		t.Fatal("expected purlSnapshotLoads state to be recorded")
+	}
+	state := stateAny.(*snapshotLoadState)
+	state.mu.Lock()
+	retryState := state.interactive.retry.State()
+	retryAt := state.interactive.retryAt
+	state.mu.Unlock()
+
+	if retryState != retrypolicy.Waiting {
+		t.Fatalf("expected lane retry state Waiting, got %v", retryState)
+	}
+	if retryAt.IsZero() {
+		t.Fatal("expected non-zero retryAt after DeadlineExceeded")
+	}
+}
+
+func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
+	fake := serverstore.NewFake()
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots to simulate saturated admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+
+	// Simulate 5 serial cold reads as typically performed during a package page load
+	// (PackageVersions, PackageSamples, PackageCodeCounts, Dependencies, FailureClusters).
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "PackageVersions",
+			run: func() error {
+				_, err := w.PackageVersions(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "PackageSamples",
+			run: func() error {
+				_, err := w.PackageSamples(ctx, "npm", "coldpkg", 10)
+				return err
+			},
+		},
+		{
+			name: "PackageCodeCounts",
+			run: func() error {
+				_, err := w.PackageCodeCounts(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "Dependencies",
+			run: func() error {
+				_, err := w.Dependencies(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "FailureClusters",
+			run: func() error {
+				_, _, err := w.FailureClusters(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+	}
+
+	start := time.Now()
+	for i, r := range reads {
+		rStart := time.Now()
+		err := r.run()
+		elapsed := time.Since(rStart)
+		if !isAdmissionRefusal(err) {
+			t.Fatalf("read %d (%s): expected admission refusal ErrPoolBusy, got %v", i, r.name, err)
+		}
+		// Each cold read under saturated admission must wait ~packageLoadAdmissionWait (250ms),
+		// and must never pay the regressed 1500ms wait.
+		if elapsed >= 1000*time.Millisecond {
+			t.Fatalf("read %d (%s): admission wait took %v, want < 1s (must not pay 1.5s admission wait)", i, r.name, elapsed)
+		}
+	}
+	totalElapsed := time.Since(start)
+
+	// Across 5 cold reads, total wait should be around 5 * 250ms (~1.25s base),
+	// strictly bounded below 2.5s. Under the regressed 1500ms wait, it took ~7.5s.
+	if totalElapsed >= 2500*time.Millisecond {
+		t.Fatalf("total elapsed for 5 cold reads = %v, want < 2.5s (regressed to 5 * 1.5s = ~7.5s)", totalElapsed)
+	}
+	if totalElapsed < 800*time.Millisecond {
+		t.Fatalf("total elapsed = %v, want >= 800ms for 5 serial 250ms waits", totalElapsed)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// Once admission slots are free, subsequent read must succeed promptly without deferral.
+	postStart := time.Now()
+	versions, err := w.PackageVersions(ctx, "npm", "coldpkg")
+	if err != nil {
+		t.Fatalf("post-release PackageVersions failed: %v", err)
+	}
+	if time.Since(postStart) >= 200*time.Millisecond {
+		t.Fatalf("post-release read took %v, want immediate success", time.Since(postStart))
+	}
+	_ = versions
 }
