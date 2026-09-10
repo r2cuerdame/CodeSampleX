@@ -16,7 +16,7 @@ func TestBuilderRetriesAreBoundedThenDeferred(t *testing.T) {
 	var attempts int
 	var waits []time.Duration
 	var classes []serverstore.QueryClass
-	runBuilderLoopWith(t.Context(), normalInterval, func(ctx context.Context) error {
+	runBuilderLoopWith(t.Context(), normalInterval, 0, func(ctx context.Context) error {
 		attempts++
 		b := serverstore.BudgetOf(ctx)
 		classes = append(classes, b.Class())
@@ -47,7 +47,7 @@ func TestBuilderNeverImmediatelyRequeuesAfterCompletion(t *testing.T) {
 	const interval = 3 * time.Minute
 	attempts := 0
 	waits := 0
-	runBuilderLoopWith(t.Context(), interval, func(context.Context) error {
+	runBuilderLoopWith(t.Context(), interval, 0, func(context.Context) error {
 		attempts++
 		return nil
 	}, func(_ context.Context, delay time.Duration) bool {
@@ -118,5 +118,145 @@ func TestBuilderLateFailureDoesNotStartACatchUpPass(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("builder loop did not stop")
+	}
+}
+
+// TestBuilderStalledPassIsBoundedAndRetried is the regression for the
+// production freeze recorded in #174: /v1/stats.generatedAt stopped at
+// 2026-09-09T17:32:58Z and did not move for the following ~20 hours while
+// the process kept serving HTTP.
+//
+// A pass has three unbounded axes. ClassBackground has no statement ceiling
+// and no acquisition wait budget (PoolPolicy.statementTimeout/wait both
+// return zero for it), and RunOnce was handed the process-lifetime context.
+// So one wedged query does not fail the pass -- it suspends it. The retry
+// and deferral machinery below is correct and never runs, because run()
+// never returns to it. There is no error, no log line and no next pass.
+//
+// The blocking run here is that query: it returns only when something
+// cancels it. Unbounded, the loop never reaches a second attempt.
+func TestBuilderStalledPassIsBoundedAndRetried(t *testing.T) {
+	const passTimeout = 50 * time.Millisecond
+	var attempts atomic.Int64
+	var lastErr atomic.Value
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runBuilderLoopWith(t.Context(), time.Minute, passTimeout,
+			func(ctx context.Context) error {
+				attempts.Add(1)
+				<-ctx.Done()
+				lastErr.Store(ctx.Err())
+				return ctx.Err()
+			},
+			func(_ context.Context, _ time.Duration) bool {
+				return attempts.Load() < 2
+			},
+			func(time.Duration) time.Duration { return 0 })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("loop never bounded a stalled pass: still inside run after %d attempt(s)", attempts.Load())
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("attempts = %d, want 2: a bounded stall must reach the existing retry branch", got)
+	}
+	if err, _ := lastErr.Load().(error); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled pass ended with %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestBuilderPassDeadlineIsNotShutdown separates the two cancellations. The
+// pass deadline must fail one pass; only the caller's context ending stops
+// the loop. Sharing one context would turn a single slow pass into a
+// silently dead builder -- the same freeze from the other direction.
+func TestBuilderPassDeadlineIsNotShutdown(t *testing.T) {
+	var attempts atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runBuilderLoopWith(ctx, time.Minute, 20*time.Millisecond,
+			func(passCtx context.Context) error {
+				if attempts.Add(1) == 3 {
+					cancel()
+				}
+				<-passCtx.Done()
+				return passCtx.Err()
+			},
+			func(waitCtx context.Context, _ time.Duration) bool {
+				return waitCtx.Err() == nil
+			},
+			func(time.Duration) time.Duration { return 0 })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("loop did not stop after its caller's context was cancelled")
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3: two deadlines survived, the third cancellation stops the loop", got)
+	}
+}
+
+// TestBuilderPassDeadlineLeavesAHealthyPassAlone guards the truncation risk.
+// The longest legitimate pass this repository has measured is the 119-minute
+// full pass in #174; a bound that cuts a healthy pass short would replace a
+// frozen builder with one that can never finish.
+func TestBuilderPassDeadlineLeavesAHealthyPassAlone(t *testing.T) {
+	var attempts, cancelled atomic.Int64
+	runBuilderLoopWith(t.Context(), time.Minute, time.Hour,
+		func(ctx context.Context) error {
+			attempts.Add(1)
+			if ctx.Err() != nil {
+				cancelled.Add(1)
+			}
+			return nil
+		},
+		func(_ context.Context, delay time.Duration) bool {
+			if delay != time.Minute {
+				t.Errorf("delay after a completed pass = %s, want the normal interval", delay)
+			}
+			return attempts.Load() < 3
+		}, nil)
+	if got := cancelled.Load(); got != 0 {
+		t.Fatalf("%d healthy pass(es) ran under an already-expired context", got)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+}
+
+// TestBuilderExpiredPassIsNeverRecordedAsSuccess covers the pass that returns
+// nil under an expired deadline. Success is what resets the retry series and
+// advances lastRun, so a partial pass reported as a complete one would move
+// the resume stamp past work that never ran.
+func TestBuilderExpiredPassIsNeverRecordedAsSuccess(t *testing.T) {
+	var attempts atomic.Int64
+	var delays []time.Duration
+	runBuilderLoopWith(t.Context(), 7*time.Minute, 10*time.Millisecond,
+		func(ctx context.Context) error {
+			attempts.Add(1)
+			<-ctx.Done()
+			return nil // finished, it says, on a context that had already expired
+		},
+		func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return attempts.Load() < 2
+		},
+		func(time.Duration) time.Duration { return 0 })
+
+	if len(delays) == 0 {
+		t.Fatal("loop never completed a pass")
+	}
+	if delays[0] == 7*time.Minute {
+		t.Fatal("an expired pass was scheduled as a success: it reset the retry series")
+	}
+	if delays[0] != time.Second {
+		t.Fatalf("first delay = %s, want the 1s first background retry", delays[0])
 	}
 }

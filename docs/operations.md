@@ -1234,11 +1234,55 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    shipped policy. See "Database timeouts and
                                    the connection pool" above for the list and
                                    for the one-variable rollback.
+CSX_SNAPSHOT_PASS_TIMEOUT 6h       ceiling on ONE builder pass; "0" removes it.
+                                   See "When the builder stops" below.
 ```
 
 The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
 `CSX_BUILT_AT`, `CSX_ENV`) are not here: they are baked into the image at
 build time so the artifact carries its own identity. See "Build identity".
+
+### When the builder stops
+
+The symptom is `/v1/stats.generatedAt` standing still while the site keeps
+answering. Check it first, against the wall clock:
+
+```bash
+curl -s https://codesamplex.dev/v1/stats | jq -r .generatedAt
+```
+
+A healthy builder moves that stamp every few minutes to every few tens of
+minutes, depending on how much changed. A stamp that has not moved in hours,
+on a process that is still serving, is a suspended pass rather than a slow
+one.
+
+A pass runs as `ClassBackground`, and that class has no statement ceiling and
+no connection-wait budget on purpose — background work is allowed to be slow.
+The cost of that permission is that "slow" and "never" look identical: the
+retry and deferral machinery in `runBuilderLoopWith` only runs when a pass
+*returns*, so a wedged query produces no failure, no retry, no deferral and no
+log line. Production 2026-09-09 stopped inside a pass at 17:32:58Z and was
+still inside it ~20 hours later, holding background connections against the
+interactive reads that share the same eight-connection pool.
+
+`CSX_SNAPSHOT_PASS_TIMEOUT` (default 6h) is the ceiling that turns that
+silence into an ordinary failure. When it fires the log says so by name:
+
+```text
+compatibility: builder run failed: builder pass exceeded its 6h0m0s ceiling: context deadline exceeded; background retry 1/5 in 1s
+```
+
+After that the existing retry series and deferral take over, and the next pass
+resumes from the last completed stamp rather than rebuilding the corpus — the
+ceiling is deliberately well inside the 24-hour resume window for that reason.
+
+The default is three times the longest pass this repository has measured (the
+119-minute full pass in #174). Raise it, or set it to `0` to remove the
+ceiling entirely, if a legitimate pass ever needs longer: truncating a healthy
+pass is worse than the freeze the ceiling prevents, because the builder would
+restart work it can never finish. Repeated ceiling lines in the log mean the
+pass genuinely cannot complete in that time — that is a cost problem to
+measure (#247, #250), not a number to raise reflexively.
 
 ## Structured failure evidence rollout
 

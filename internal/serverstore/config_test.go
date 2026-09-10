@@ -65,3 +65,44 @@ func TestConfigFromEnvBadInterval(t *testing.T) {
 		t.Errorf("bad interval should keep default 5m, got %v", cfg.SnapshotInterval)
 	}
 }
+
+func TestConfigSnapshotPassTimeout(t *testing.T) {
+	t.Run("default bounds a pass", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != defaultSnapshotPassTimeout {
+			t.Fatalf("SnapshotPassTimeout = %s, want %s", got, defaultSnapshotPassTimeout)
+		}
+	})
+	t.Run("headroom over the longest measured pass", func(t *testing.T) {
+		// #174 measured a 119-minute full pass. A ceiling at or under that
+		// would truncate healthy work and leave the builder restarting a pass
+		// it can never finish.
+		const longestMeasuredPass = 119 * time.Minute
+		if defaultSnapshotPassTimeout <= longestMeasuredPass {
+			t.Fatalf("default ceiling %s does not clear the %s full pass measured in #174",
+				defaultSnapshotPassTimeout, longestMeasuredPass)
+		}
+		if defaultSnapshotPassTimeout >= 24*time.Hour {
+			t.Fatalf("default ceiling %s reaches the 24h resume window; the pass after a "+
+				"cancelled one would rebuild the corpus instead of resuming", defaultSnapshotPassTimeout)
+		}
+	})
+	t.Run("operator override", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "45m")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != 45*time.Minute {
+			t.Fatalf("SnapshotPassTimeout = %s, want 45m", got)
+		}
+	})
+	t.Run("bare zero removes the ceiling", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "0")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != 0 {
+			t.Fatalf("SnapshotPassTimeout = %s, want 0 (unbounded)", got)
+		}
+	})
+	t.Run("garbage keeps the default", func(t *testing.T) {
+		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "not-a-duration")
+		if got := ConfigFromEnv().SnapshotPassTimeout; got != defaultSnapshotPassTimeout {
+			t.Fatalf("SnapshotPassTimeout = %s, want the default %s", got, defaultSnapshotPassTimeout)
+		}
+	})
+}

@@ -157,6 +157,6 @@ func adminVersion(build buildinfo.Info) string {
 // clusters, shards, matrix jobs, daily stats) on the CSX_SNAPSHOT_INTERVAL
 // cadence. It returns immediately; the loop stops when ctx is canceled.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
-	b := &compatibility.Builder{Store: store}
+	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
 	go b.RunLoop(ctx, cfg.SnapshotInterval)
 }
