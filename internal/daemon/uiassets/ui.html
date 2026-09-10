@@ -85,25 +85,44 @@
     </dl>
   </div>
 
-  <h2>Numbers</h2>
+  <h2>Layer 1: Retrieval &amp; Memory Quality <span class="note">— internal search quality</span></h2>
   <div class="grid">
+    <div class="panel stat"><div class="label">Hits / Misses</div>
+      <div class="value">{{.Stats.Hits}} / {{.Stats.Misses}}</div></div>
+    <div class="panel stat"><div class="label">Exact failure matches</div>
+      <div class="value">{{.Stats.ExactFailureMatches}}</div></div>
+    <div class="panel stat"><div class="label">Verified detours offered</div>
+      <div class="value">{{.Stats.VerifiedDetoursOffered}}</div></div>
+    <div class="panel stat"><div class="label">Known packages</div>
+      <div class="value">{{.Stats.Packages}}</div></div>
     <div class="panel stat"><div class="label">Local cache</div>
       <div class="value">{{.CacheHuman}}</div>
       <div class="label">budget {{.Stats.CacheBudgetMB}} MB</div></div>
-    <div class="panel stat"><div class="label">Hits / Misses</div>
-      <div class="value">{{.Stats.Hits}} / {{.Stats.Misses}}</div></div>
-    <div class="panel stat"><div class="label">Post-hit build pass</div>
-      <div class="value">{{.PostHitPassHuman}}</div>
-      <div class="label">{{.Stats.PostHitBuildReports}} reports</div></div>
-    <div class="panel stat"><div class="label">Estimated reasoning avoided<span class="badge">Estimated</span></div>
-      <div class="value">{{.Stats.EstimatedReasoningAvoided}}</div>
-      <div class="label">adopted hits × {{.AvgMissLLMCalls}} − rework (estimate, never measured)</div></div>
     <div class="panel stat"><div class="label">Automatic evidence sent</div>
       <div class="value">{{.Stats.EvidenceBatchesSent}}</div></div>
     <div class="panel stat"><div class="label">Origin Seeds</div>
       <div class="value">{{.Stats.OriginSeeds}}</div></div>
     <div class="panel stat"><div class="label">Cross verifications</div>
       <div class="value">{{.Stats.CrossVerifications}}</div></div>
+  </div>
+
+  <h2>Layer 2: User &amp; Agent Outcome Value <span class="note">— core product value</span></h2>
+  <div class="grid">
+    <div class="panel stat"><div class="label">Adoptions</div>
+      <div class="value">{{.Stats.Adoptions}}</div></div>
+    <div class="panel stat"><div class="label">Post-hit build pass</div>
+      <div class="value">{{.PostHitPassHuman}}</div>
+      <div class="label">{{.Stats.PostHitBuildReports}} reports</div></div>
+    <div class="panel stat"><div class="label">Reported failures avoided</div>
+      <div class="value">{{.Stats.ReportedFailuresAvoided}}</div>
+      <div class="label">all four measured stages, no time-saved estimate</div></div>
+    <div class="panel stat"><div class="label">Estimated reasoning avoided<span class="badge">Estimated</span></div>
+      <div class="value">{{.Stats.EstimatedReasoningAvoided}}</div>
+      <div class="label">adopted hits × {{.AvgMissLLMCalls}} − rework (estimate, never measured)</div></div>
+  </div>
+
+  <h2>Infrastructure &amp; Queue</h2>
+  <div class="grid">
     <div class="panel stat"><div class="label">Pending queue depth</div>
       <div class="value">{{.Stats.QueueDepth}}</div></div>
   </div>

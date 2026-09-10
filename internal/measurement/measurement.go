@@ -91,9 +91,7 @@ func CalculateHitRate(hits, misses int) float64 {
 
 // NewTwoLayerReport constructs a validated TwoLayerReport.
 func NewTwoLayerReport(mode string, retrieval RetrievalQuality, outcome OutcomeValue) TwoLayerReport {
-	if retrieval.HitRate == 0.0 && (retrieval.Hits > 0 || retrieval.Misses > 0) {
-		retrieval.HitRate = CalculateHitRate(retrieval.Hits, retrieval.Misses)
-	}
+	retrieval.HitRate = CalculateHitRate(retrieval.Hits, retrieval.Misses)
 	// EstimatedReasoningAvoided is an estimate by construction (docs/activation-funnel.md §6).
 	// The estimated flag must always accompany it.
 	outcome.Estimated = true

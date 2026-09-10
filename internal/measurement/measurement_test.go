@@ -195,3 +195,25 @@ func TestTwoLayerReportJSONRoundtrip(t *testing.T) {
 		t.Errorf("parsed.OutcomeValue.Estimated = false, want true")
 	}
 }
+
+func TestNewTwoLayerReport_HitRateCalculation(t *testing.T) {
+	// Caller supplies inconsistent non-zero HitRate; constructor should recalculate it unconditionally.
+	retrieval := RetrievalQuality{
+		Hits:    9,
+		Misses:  1,
+		HitRate: 0.5, // inconsistent with 9 hits and 1 miss
+	}
+	report := NewTwoLayerReport("community", retrieval, OutcomeValue{})
+	if got, want := report.RetrievalQuality.HitRate, 0.9; got != want {
+		t.Errorf("HitRate = %v, want %v", got, want)
+	}
+	if err := ValidateReportGuardrails(report); err != nil {
+		t.Errorf("ValidateReportGuardrails failed on report with recalculated hit rate: %v", err)
+	}
+
+	// Zero hits and misses safely yields 0.0.
+	zeroReport := NewTwoLayerReport("community", RetrievalQuality{Hits: 0, Misses: 0, HitRate: 0.42}, OutcomeValue{})
+	if got, want := zeroReport.RetrievalQuality.HitRate, 0.0; got != want {
+		t.Errorf("zero HitRate = %v, want %v", got, want)
+	}
+}
