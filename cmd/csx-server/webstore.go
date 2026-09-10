@@ -149,8 +149,8 @@ func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx c
 
 		go func() {
 			val, err := fn(loadCtx)
-			call.finish(val, err)
 			g.loads.CompareAndDelete(key, call)
+			call.finish(val, err)
 		}()
 		return call.wait(ctx)
 	}
@@ -159,7 +159,7 @@ func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx c
 func (c *singleflightCall[T]) addWaiter() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.abandoned {
+	if c.abandoned || c.finished {
 		return false
 	}
 	c.waiters++
