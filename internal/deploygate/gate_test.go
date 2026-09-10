@@ -66,34 +66,31 @@ ALTER TABLE failure_clusters ADD COLUMN diagnostic_candidate BOOLEAN NOT NULL DE
 	}
 }
 
-func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
+func migrationSQL(t *testing.T, name string) string {
+	t.Helper()
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate deploygate test file")
 	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0025_failure_stage_lineage.sql")
-	sql, err := os.ReadFile(migrationPath)
+	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", name)
+	raw, err := os.ReadFile(migrationPath)
 	if err != nil {
-		t.Fatalf("read failure-stage lineage migration: %v", err)
+		t.Fatalf("read migration %s: %v", name, err)
 	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	return strings.ReplaceAll(string(raw), "\r\n", "\n")
+}
+
+func TestFailureStageLineageMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0025_failure_stage_lineage.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("failure-stage lineage migration rejected: %v", err)
 	}
 }
 
 func TestIsolatedTableMigrationsAreAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
 	for _, name := range []string{"0026_anomaly_reports.sql", "0027_csx_issue_reports.sql"} {
 		t.Run(name, func(t *testing.T) {
-			migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", name)
-			sql, err := os.ReadFile(migrationPath)
-			if err != nil {
-				t.Fatalf("read isolated-table migration: %v", err)
-			}
-			if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+			if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 				t.Fatalf("isolated additive table migration rejected: %v", err)
 			}
 		})
@@ -101,61 +98,29 @@ func TestIsolatedTableMigrationsAreAutomaticAdditive(t *testing.T) {
 }
 
 func TestSamplePackageProjectionMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0028_sample_packages.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read sample-package projection migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0028_sample_packages.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("sample-package projection migration rejected: %v", err)
 	}
 }
 
 func TestEvidenceAggDirectIdxMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0033_evidence_agg_direct_idx.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read evidence_agg direct index migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0033_evidence_agg_direct_idx.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("evidence_agg direct index migration rejected: %v", err)
 	}
 }
 
 func TestSamplesManifestTrgmIdxMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0034_samples_manifest_trgm_idx.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read samples manifest trgm index migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0034_samples_manifest_trgm_idx.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("samples manifest trgm index migration rejected: %v", err)
 	}
 }
 
 func TestRecentWantedDemandMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0035_recent_wanted_demand.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read recent wanted demand migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0035_recent_wanted_demand.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("recent wanted demand migration rejected: %v", err)
 	}
 }
@@ -188,16 +153,8 @@ func TestRecentWantedDemandIndexExceptionRemainsFailClosed(t *testing.T) {
 }
 
 func TestSlowQueryIndexesMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0037_slow_query_indexes.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read slow query indexes migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0037_slow_query_indexes.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("slow query indexes migration rejected: %v", err)
 	}
 }
@@ -226,31 +183,14 @@ func TestSlowQueryIndexesExceptionRemainsFailClosed(t *testing.T) {
 }
 
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0034_authoring_work_axis.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read authoring work axis migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0034_authoring_work_axis.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("authoring work axis migration rejected: %v", err)
 	}
 }
 
 func TestSamplePackageProjectionExceptionRemainsFailClosed(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0028_sample_packages.sql")
-	raw, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read sample-package projection migration: %v", err)
-	}
-	valid := string(raw)
+	valid := migrationSQL(t, "0028_sample_packages.sql")
 	withoutStatement := func(i int) string {
 		return strings.Replace(valid, samplePackageProjectionStatements[i]+";", "", 1)
 	}
@@ -320,16 +260,8 @@ CREATE INDEX new_reports_status_idx ON new_reports(status, created_at);`); err !
 }
 
 func TestR2C152MigrationFilePassesAutomaticGate(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate deploygate test file")
-	}
-	migrationPath := filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations", "0024_failure_evidence.sql")
-	sql, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read production migration: %v", err)
-	}
-	if err := ValidateMigrationSQL(filepath.Base(migrationPath), string(sql)); err != nil {
+	const name = "0024_failure_evidence.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
 		t.Fatalf("production migration is not eligible for unattended additive rollout: %v", err)
 	}
 }
