@@ -2,11 +2,12 @@
 // (GitHub issue #206, docs/measurement-layers.md).
 //
 // The core design cleanly separates:
-//   1. Retrieval / Memory Quality (internal system quality: "Is CSX returning the right execution memory?")
-//   2. User / Agent Outcome Value (core product value: "Did that memory actually improve the user's/agent's result?")
+//  1. Retrieval / Memory Quality (internal system quality: "Is CSX returning the right execution memory?")
+//  2. User / Agent Outcome Value (core product value: "Did that memory actually improve the user's/agent's result?")
 //
 // The causal relationship is:
-//   retrieval/memory quality -> better evidence surfaced -> better user/agent outcome
+//
+//	retrieval/memory quality -> better evidence surfaced -> better user/agent outcome
 //
 // Field-first guardrails enforce that:
 //   - Raw corpus size, lookup counts, and retrieval hit rate are never published as proof of agent uplift.

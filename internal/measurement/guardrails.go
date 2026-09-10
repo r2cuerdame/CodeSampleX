@@ -37,6 +37,12 @@ var (
 	// ErrSyntheticOutcomeOnly indicates an outcome claim relied solely on synthetic benchmarks without field evidence.
 	ErrSyntheticOutcomeOnly = errors.New("guardrail violation: product outcome claim cannot rely solely on synthetic benchmarks")
 
+	// ErrDogfoodOutcomeOnly indicates an outcome claim relied solely on internal dogfooding without field evidence.
+	ErrDogfoodOutcomeOnly = errors.New("guardrail violation: product outcome claim cannot rely solely on internal dogfooding")
+
+	// ErrFieldEvidenceRequired indicates an outcome claim lacks primary field-observed evidence.
+	ErrFieldEvidenceRequired = errors.New("guardrail violation: product outcome claim requires field-observed evidence")
+
 	// ErrLayerConfusion indicates an internal search metric was presented as an agent outcome value.
 	ErrLayerConfusion = errors.New("guardrail violation: Layer 1 retrieval quality metric presented as Layer 2 outcome value")
 
@@ -49,15 +55,15 @@ var (
 
 // vanityMetrics are Layer 1 corpus and lookup counters that must never be presented as proof of agent uplift.
 var vanityMetrics = map[string]struct{}{
-	"corpus_size":    {},
-	"packages":       {},
-	"symbols":        {},
-	"shards":         {},
-	"cache_bytes":    {},
-	"raw_lookups":    {},
-	"lookup_count":   {},
-	"evidence_rows":  {},
-	"search_volume":  {},
+	"corpus_size":   {},
+	"packages":      {},
+	"symbols":       {},
+	"shards":        {},
+	"cache_bytes":   {},
+	"raw_lookups":   {},
+	"lookup_count":  {},
+	"evidence_rows": {},
+	"search_volume": {},
 }
 
 // ProductClaim represents an asserted external or product-facing measurement statement.
@@ -97,10 +103,21 @@ func ValidateClaim(claim ProductClaim) error {
 		}
 	}
 
-	// Guardrail 4: Field-first measurement — synthetic benchmarks are supporting only, not replacements for field outcomes.
-	if claim.TargetLayer == LayerOutcomeValue && claim.EvidenceSource == EvidenceSyntheticBenchmark {
-		return fmt.Errorf("%w: benchmark %q is supporting evidence, not a replacement for real-world field outcomes",
-			ErrSyntheticOutcomeOnly, claim.Statement)
+	// Guardrail 4: Field-first measurement — synthetic benchmarks and internal dogfood are supporting only, not replacements for field outcomes.
+	if claim.TargetLayer == LayerOutcomeValue {
+		switch claim.EvidenceSource {
+		case EvidenceFieldObserved:
+			// Primary and required evidence source for user outcome claims.
+		case EvidenceSyntheticBenchmark:
+			return fmt.Errorf("%w: benchmark %q is supporting evidence, not a replacement for real-world field outcomes",
+				ErrSyntheticOutcomeOnly, claim.Statement)
+		case EvidenceInternalDogfood:
+			return fmt.Errorf("%w: internal dogfood %q is supporting evidence, not a replacement for real-world field outcomes",
+				ErrDogfoodOutcomeOnly, claim.Statement)
+		default:
+			return fmt.Errorf("%w: outcome claim %q requires field-observed evidence (got %q)",
+				ErrFieldEvidenceRequired, claim.Statement, claim.EvidenceSource)
+		}
 	}
 
 	// Guardrail: Layer confusion — Layer 1 retrieval metrics explain search quality, not task success.
@@ -125,10 +142,28 @@ func ValidateReportGuardrails(r TwoLayerReport) error {
 			ErrUnlabelledEstimate, r.OutcomeValue.EstimatedReasoningAvoided)
 	}
 
-	// Reported failures avoided requires all 4 measured stages, so it cannot exceed applied detours.
+	// Funnel stage 2 -> stage 3: applied detours cannot exceed offered detours.
+	if r.OutcomeValue.VerifiedDetoursApplied > r.RetrievalQuality.VerifiedDetoursOffered {
+		return fmt.Errorf("%w: verifiedDetoursApplied (%d) cannot exceed verifiedDetoursOffered (%d)",
+			ErrInconsistentFunnel, r.OutcomeValue.VerifiedDetoursApplied, r.RetrievalQuality.VerifiedDetoursOffered)
+	}
+
+	// Funnel stage 3 -> post-hit outcomes: post-hit outcomes cannot exceed applied detours.
+	postHitTotal := r.OutcomeValue.DetourPostHitPass + r.OutcomeValue.DetourPostHitFail + r.OutcomeValue.DetourPostHitUnknown
+	if postHitTotal > r.OutcomeValue.VerifiedDetoursApplied {
+		return fmt.Errorf("%w: detour post-hit outcomes (%d) cannot exceed verifiedDetoursApplied (%d)",
+			ErrInconsistentFunnel, postHitTotal, r.OutcomeValue.VerifiedDetoursApplied)
+	}
+
+	// Funnel stage 4: reported failures avoided requires all 4 measured stages (match -> offer -> apply -> PASS),
+	// so it cannot exceed verifiedDetoursApplied or detourPostHitPass.
 	if r.OutcomeValue.ReportedFailuresAvoided > r.OutcomeValue.VerifiedDetoursApplied {
 		return fmt.Errorf("%w: reportedFailuresAvoided (%d) cannot exceed verifiedDetoursApplied (%d)",
 			ErrInconsistentFunnel, r.OutcomeValue.ReportedFailuresAvoided, r.OutcomeValue.VerifiedDetoursApplied)
+	}
+	if r.OutcomeValue.ReportedFailuresAvoided > r.OutcomeValue.DetourPostHitPass {
+		return fmt.Errorf("%w: reportedFailuresAvoided (%d) cannot exceed detourPostHitPass (%d)",
+			ErrInconsistentFunnel, r.OutcomeValue.ReportedFailuresAvoided, r.OutcomeValue.DetourPostHitPass)
 	}
 
 	// Hit rate must match hits/(hits+misses) when searches have occurred.

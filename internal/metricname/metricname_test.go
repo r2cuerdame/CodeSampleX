@@ -190,4 +190,3 @@ func TestInventedUpliftIsRefused(t *testing.T) {
 		}
 	}
 }
-

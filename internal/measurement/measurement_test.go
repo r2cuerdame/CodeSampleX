@@ -137,6 +137,63 @@ func TestGuardrailsRejectSyntheticBenchmarkAsSoleOutcomeBasis(t *testing.T) {
 	}
 }
 
+func TestValidateClaim_Guardrail4(t *testing.T) {
+	// Guardrail 4: Field-first measurement precedence.
+	// Internal dogfood cannot serve as sole justification for product outcome claims.
+	dogfoodClaim := ProductClaim{
+		Statement:      "Internal dogfood shows 85% task completion",
+		TargetLayer:    LayerOutcomeValue,
+		EvidenceSource: EvidenceInternalDogfood,
+		CitedMetrics:   []string{"taskSuccessRate"},
+	}
+	if err := ValidateClaim(dogfoodClaim); !errors.Is(err, ErrDogfoodOutcomeOnly) {
+		t.Fatalf("internal dogfood outcome claim: err = %v, want %v", err, ErrDogfoodOutcomeOnly)
+	}
+
+	// Unset evidence source on outcome claim is rejected.
+	unspecifiedClaim := ProductClaim{
+		Statement:    "Outcome improved without stated evidence",
+		TargetLayer:  LayerOutcomeValue,
+		CitedMetrics: []string{"taskSuccessRate"},
+	}
+	if err := ValidateClaim(unspecifiedClaim); !errors.Is(err, ErrFieldEvidenceRequired) {
+		t.Fatalf("unspecified evidence outcome claim: err = %v, want %v", err, ErrFieldEvidenceRequired)
+	}
+
+	// Synthetic benchmark on outcome claim is rejected.
+	syntheticClaim := ProductClaim{
+		Statement:      "Synthetic test suite passes 90% of cases",
+		TargetLayer:    LayerOutcomeValue,
+		EvidenceSource: EvidenceSyntheticBenchmark,
+		CitedMetrics:   []string{"taskSuccessRate"},
+	}
+	if err := ValidateClaim(syntheticClaim); !errors.Is(err, ErrSyntheticOutcomeOnly) {
+		t.Fatalf("synthetic benchmark claim: err = %v, want %v", err, ErrSyntheticOutcomeOnly)
+	}
+
+	// Field-observed evidence on outcome claim is accepted.
+	fieldClaim := ProductClaim{
+		Statement:      "Observed 120 field sessions with zero dead-ends",
+		TargetLayer:    LayerOutcomeValue,
+		EvidenceSource: EvidenceFieldObserved,
+		CitedMetrics:   []string{"postHitBuildPassRate"},
+	}
+	if err := ValidateClaim(fieldClaim); err != nil {
+		t.Fatalf("field-observed outcome claim failed: %v", err)
+	}
+
+	// Non-field evidence IS accepted for Layer 1 retrieval/memory quality diagnostics.
+	retrievalDogfood := ProductClaim{
+		Statement:      "Dogfood corpus indexing test",
+		TargetLayer:    LayerRetrievalQuality,
+		EvidenceSource: EvidenceInternalDogfood,
+		CitedMetrics:   []string{"exactFailureMatches"},
+	}
+	if err := ValidateClaim(retrievalDogfood); err != nil {
+		t.Fatalf("retrieval dogfood claim failed: %v", err)
+	}
+}
+
 func TestGuardrailsValidateReportConsistency(t *testing.T) {
 	// Unlabelled estimate.
 	badEstimate := TwoLayerReport{
@@ -149,8 +206,39 @@ func TestGuardrailsValidateReportConsistency(t *testing.T) {
 		t.Errorf("bad estimate: err = %v, want %v", err, ErrUnlabelledEstimate)
 	}
 
+	// Applied detours > offered detours.
+	badOffered := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{
+			VerifiedDetoursOffered: 1,
+		},
+		OutcomeValue: OutcomeValue{
+			VerifiedDetoursApplied: 2,
+		},
+	}
+	if err := ValidateReportGuardrails(badOffered); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("applied > offered: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
+	// Post-hit reports > applied detours.
+	badPostHit := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{
+			VerifiedDetoursOffered: 5,
+		},
+		OutcomeValue: OutcomeValue{
+			VerifiedDetoursApplied: 2,
+			DetourPostHitPass:      2,
+			DetourPostHitFail:      1, // 2+1=3 > 2
+		},
+	}
+	if err := ValidateReportGuardrails(badPostHit); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("postHit > applied: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
 	// Reported failures avoided > applied detours.
 	badFunnel := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{
+			VerifiedDetoursOffered: 5,
+		},
 		OutcomeValue: OutcomeValue{
 			VerifiedDetoursApplied:  2,
 			ReportedFailuresAvoided: 5, // impossible
@@ -160,10 +248,31 @@ func TestGuardrailsValidateReportConsistency(t *testing.T) {
 		t.Errorf("bad funnel: err = %v, want %v", err, ErrInconsistentFunnel)
 	}
 
-	// Valid report passes.
+	// Reported failures avoided > detourPostHitPass (e.g. failure avoided backed by a recorded FAIL).
+	badPass := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{
+			VerifiedDetoursOffered: 5,
+		},
+		OutcomeValue: OutcomeValue{
+			VerifiedDetoursApplied:  1,
+			DetourPostHitPass:       0,
+			DetourPostHitFail:       1,
+			ReportedFailuresAvoided: 1,
+		},
+	}
+	if err := ValidateReportGuardrails(badPass); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("avoided > pass: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
+	// Valid report passes complete funnel.
 	valid := NewTwoLayerReport("community",
-		RetrievalQuality{Hits: 10, Misses: 2},
-		OutcomeValue{VerifiedDetoursApplied: 5, ReportedFailuresAvoided: 4},
+		RetrievalQuality{Hits: 10, Misses: 2, VerifiedDetoursOffered: 5},
+		OutcomeValue{
+			VerifiedDetoursApplied:  5,
+			DetourPostHitPass:       4,
+			DetourPostHitFail:       1,
+			ReportedFailuresAvoided: 4,
+		},
 	)
 	if err := ValidateReportGuardrails(valid); err != nil {
 		t.Errorf("valid report failed guardrails: %v", err)
