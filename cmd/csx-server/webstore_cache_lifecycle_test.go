@@ -405,3 +405,99 @@ func TestSnapshotDeadlineExceededAdvancesBackoff(t *testing.T) {
 	}
 }
 
+func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
+	fake := serverstore.NewFake()
+	w := &webStore{s: fake}
+
+	// Occupy all admission slots to simulate saturated admission.
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for i := 0; i < packageLoadSlotCount; i++ {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+
+	// Simulate 5 serial cold reads as typically performed during a package page load
+	// (PackageVersions, PackageSamples, PackageCodeCounts, Dependencies, FailureClusters).
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "PackageVersions",
+			run: func() error {
+				_, err := w.PackageVersions(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "PackageSamples",
+			run: func() error {
+				_, err := w.PackageSamples(ctx, "npm", "coldpkg", 10)
+				return err
+			},
+		},
+		{
+			name: "PackageCodeCounts",
+			run: func() error {
+				_, err := w.PackageCodeCounts(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "Dependencies",
+			run: func() error {
+				_, err := w.Dependencies(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+		{
+			name: "FailureClusters",
+			run: func() error {
+				_, _, err := w.FailureClusters(ctx, "npm", "coldpkg")
+				return err
+			},
+		},
+	}
+
+	start := time.Now()
+	for i, r := range reads {
+		rStart := time.Now()
+		err := r.run()
+		elapsed := time.Since(rStart)
+		if !isAdmissionRefusal(err) {
+			t.Fatalf("read %d (%s): expected admission refusal ErrPoolBusy, got %v", i, r.name, err)
+		}
+		// Each cold read under saturated admission must wait ~packageLoadAdmissionWait (250ms),
+		// and must never pay the regressed 1500ms wait.
+		if elapsed >= 1000*time.Millisecond {
+			t.Fatalf("read %d (%s): admission wait took %v, want < 1s (must not pay 1.5s admission wait)", i, r.name, elapsed)
+		}
+	}
+	totalElapsed := time.Since(start)
+
+	// Across 5 cold reads, total wait should be around 5 * 250ms (~1.25s base),
+	// strictly bounded below 2.5s. Under the regressed 1500ms wait, it took ~7.5s.
+	if totalElapsed >= 2500*time.Millisecond {
+		t.Fatalf("total elapsed for 5 cold reads = %v, want < 2.5s (regressed to 5 * 1.5s = ~7.5s)", totalElapsed)
+	}
+	if totalElapsed < 800*time.Millisecond {
+		t.Fatalf("total elapsed = %v, want >= 800ms for 5 serial 250ms waits", totalElapsed)
+	}
+
+	// Release slots.
+	for i := 0; i < packageLoadSlotCount; i++ {
+		<-w.packageLoadSlots
+	}
+
+	// Once admission slots are free, subsequent read must succeed promptly without deferral.
+	postStart := time.Now()
+	versions, err := w.PackageVersions(ctx, "npm", "coldpkg")
+	if err != nil {
+		t.Fatalf("post-release PackageVersions failed: %v", err)
+	}
+	if time.Since(postStart) >= 200*time.Millisecond {
+		t.Fatalf("post-release read took %v, want immediate success", time.Since(postStart))
+	}
+	_ = versions
+}

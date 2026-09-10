@@ -344,7 +344,7 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 const (
 	packageDetailCacheTTL    = 30 * time.Minute
 	packageLoadSlotCount     = 4
-	packageLoadAdmissionWait = 1500 * time.Millisecond
+	packageLoadAdmissionWait = 250 * time.Millisecond
 	// A failed snapshot load must recover promptly after transient DB pressure.
 	// Freshness can be 30m without turning failure backoff into a 30m blackout.
 	snapshotLoadRetryDefer = 15 * time.Second
