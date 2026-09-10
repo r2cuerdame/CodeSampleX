@@ -73,18 +73,17 @@ func TestConfigSnapshotPassTimeout(t *testing.T) {
 			t.Fatalf("SnapshotPassTimeout = %s, want %s", got, defaultSnapshotPassTimeout)
 		}
 	})
-	t.Run("headroom over the longest measured pass", func(t *testing.T) {
-		// #174 measured a 119-minute full pass. A ceiling at or under that
-		// would truncate healthy work and leave the builder restarting a pass
-		// it can never finish.
-		const longestMeasuredPass = 119 * time.Minute
-		if defaultSnapshotPassTimeout <= longestMeasuredPass {
-			t.Fatalf("default ceiling %s does not clear the %s full pass measured in #174",
-				defaultSnapshotPassTimeout, longestMeasuredPass)
+	t.Run("headroom over typical full pass cost", func(t *testing.T) {
+		// In #174 a typical full pass required ~100-120 minutes. A ceiling at or
+		// under that would truncate healthy work and leave the builder restarting
+		// a pass it can never finish.
+		const typicalFullPass = 120 * time.Minute
+		if defaultSnapshotPassTimeout <= typicalFullPass {
+			t.Fatalf("default ceiling %s does not clear the %s full pass cost noted in #174",
+				defaultSnapshotPassTimeout, typicalFullPass)
 		}
 		if defaultSnapshotPassTimeout >= 24*time.Hour {
-			t.Fatalf("default ceiling %s reaches the 24h resume window; the pass after a "+
-				"cancelled one would rebuild the corpus instead of resuming", defaultSnapshotPassTimeout)
+			t.Fatalf("default ceiling %s reaches the 24h resume window", defaultSnapshotPassTimeout)
 		}
 	})
 	t.Run("operator override", func(t *testing.T) {
@@ -97,6 +96,14 @@ func TestConfigSnapshotPassTimeout(t *testing.T) {
 		t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", "0")
 		if got := ConfigFromEnv().SnapshotPassTimeout; got != 0 {
 			t.Fatalf("SnapshotPassTimeout = %s, want 0 (unbounded)", got)
+		}
+	})
+	t.Run("zero durations remove the ceiling", func(t *testing.T) {
+		for _, raw := range []string{"0", "0s", "0m", "0h"} {
+			t.Setenv("CSX_SNAPSHOT_PASS_TIMEOUT", raw)
+			if got := ConfigFromEnv().SnapshotPassTimeout; got != 0 {
+				t.Fatalf("SnapshotPassTimeout for %q = %s, want 0 (unbounded)", raw, got)
+			}
 		}
 	})
 	t.Run("garbage keeps the default", func(t *testing.T) {

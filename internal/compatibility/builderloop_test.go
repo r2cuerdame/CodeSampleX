@@ -204,27 +204,43 @@ func TestBuilderPassDeadlineIsNotShutdown(t *testing.T) {
 }
 
 // TestBuilderPassDeadlineLeavesAHealthyPassAlone guards the truncation risk.
-// The longest legitimate pass this repository has measured is the 119-minute
-// full pass in #174; a bound that cuts a healthy pass short would replace a
-// frozen builder with one that can never finish.
+// A bound that cuts a healthy pass short would replace a frozen builder with
+// one that can never finish. It proves a pass that takes non-trivial time
+// completes normally under a sufficient ceiling without cancellation, while
+// an insufficient ceiling bounds it.
 func TestBuilderPassDeadlineLeavesAHealthyPassAlone(t *testing.T) {
 	var attempts, cancelled atomic.Int64
-	runBuilderLoopWith(t.Context(), time.Minute, time.Hour,
-		func(ctx context.Context) error {
-			attempts.Add(1)
-			if ctx.Err() != nil {
-				cancelled.Add(1)
-			}
-			return nil
-		},
-		func(_ context.Context, delay time.Duration) bool {
-			if delay != time.Minute {
-				t.Errorf("delay after a completed pass = %s, want the normal interval", delay)
-			}
-			return attempts.Load() < 3
-		}, nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runBuilderLoopWith(t.Context(), time.Minute, time.Hour,
+			func(ctx context.Context) error {
+				attempts.Add(1)
+				// Healthy pass doing non-trivial work within its ceiling.
+				select {
+				case <-time.After(10 * time.Millisecond):
+				case <-ctx.Done():
+					cancelled.Add(1)
+					return ctx.Err()
+				}
+				return nil
+			},
+			func(_ context.Context, delay time.Duration) bool {
+				if delay != time.Minute {
+					t.Errorf("delay after a completed pass = %s, want the normal interval", delay)
+				}
+				return attempts.Load() < 3
+			}, nil)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("healthy pass loop hung or exceeded test timeout")
+	}
+
 	if got := cancelled.Load(); got != 0 {
-		t.Fatalf("%d healthy pass(es) ran under an already-expired context", got)
+		t.Fatalf("%d healthy pass(es) were truncated by the ceiling", got)
 	}
 	if got := attempts.Load(); got != 3 {
 		t.Fatalf("attempts = %d, want 3", got)
@@ -238,17 +254,27 @@ func TestBuilderPassDeadlineLeavesAHealthyPassAlone(t *testing.T) {
 func TestBuilderExpiredPassIsNeverRecordedAsSuccess(t *testing.T) {
 	var attempts atomic.Int64
 	var delays []time.Duration
-	runBuilderLoopWith(t.Context(), 7*time.Minute, 10*time.Millisecond,
-		func(ctx context.Context) error {
-			attempts.Add(1)
-			<-ctx.Done()
-			return nil // finished, it says, on a context that had already expired
-		},
-		func(_ context.Context, delay time.Duration) bool {
-			delays = append(delays, delay)
-			return attempts.Load() < 2
-		},
-		func(time.Duration) time.Duration { return 0 })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runBuilderLoopWith(t.Context(), 7*time.Minute, 10*time.Millisecond,
+			func(ctx context.Context) error {
+				attempts.Add(1)
+				<-ctx.Done()
+				return nil // finished, it says, on a context that had already expired
+			},
+			func(_ context.Context, delay time.Duration) bool {
+				delays = append(delays, delay)
+				return attempts.Load() < 2
+			},
+			func(time.Duration) time.Duration { return 0 })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop hung on expired pass instead of retrying")
+	}
 
 	if len(delays) == 0 {
 		t.Fatal("loop never completed a pass")

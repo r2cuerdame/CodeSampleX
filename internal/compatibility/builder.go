@@ -278,6 +278,27 @@ func (b *Builder) resumeFromLastCompletedPass(ctx context.Context, now time.Time
 	b.passes = 1
 }
 
+// onCeilingBreach handles a pass aborted by a context deadline or ceiling.
+//
+// A slow or wedged pass must not trap the builder in an endless series of
+// full-corpus rebuilds. When a completed pass stamp exists inside the
+// 24-hour resume window, the next attempt can safely resume incrementally
+// from lastRun: postpone the scheduled exhaustive repair by one hour and
+// clear any pending periodic full-pass trigger.
+//
+// If lastRun is zero (cold start with no prior stats) or older than the
+// 24-hour resume window, an exhaustive repair is required because no safe
+// incremental delta exists.
+func (b *Builder) onCeilingBreach(now time.Time) {
+	if b.lastRun.IsZero() || now.Sub(b.lastRun) > resumeWindow {
+		return
+	}
+	b.fullRepairAt = now.Add(time.Hour)
+	if b.passes%fullPassEvery == 0 {
+		b.passes++
+	}
+}
+
 // pkgKey identifies a package across versions.
 type pkgKey struct{ ecosystem, name string }
 
@@ -339,7 +360,15 @@ func affectedPackages(affected map[shardKey]bool) []serverstore.BuilderPackage {
 func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases := b.newPhaseRecorder(ctx)
 	ctx = withBuilderPhaseRecorder(ctx, phases)
-	defer func() { phases.finish(runErr) }()
+	defer func() {
+		if runErr == nil && ctx.Err() != nil {
+			runErr = ctx.Err()
+		}
+		phases.finish(runErr)
+		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			b.onCeilingBreach(b.now())
+		}
+	}()
 
 	started := time.Now()
 	now := b.now()
@@ -360,7 +389,8 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		repairGeneration = store.BuilderRepairGeneration()
 	}
 	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 || !now.Before(b.fullRepairAt) ||
-		repairGeneration != b.completedRepairGeneration
+		repairGeneration != b.completedRepairGeneration ||
+		(!b.lastRun.IsZero() && now.Sub(b.lastRun) > resumeWindow)
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
 

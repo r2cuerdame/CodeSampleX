@@ -56,13 +56,13 @@ type ServerConfig struct {
 // defaultSnapshotPassTimeout bounds one builder pass.
 //
 // It is a ceiling, not a target, and it is set from what a legitimate pass
-// has actually cost. The longest measured in #174 is the full pass that ran
-// 02:49:25Z to 04:48:51Z -- 119 minutes; a post-restart incremental pass took
-// ~30 minutes, and v0.1.155 converged in 534 seconds. Six hours is three
-// times the worst of those, so no pass this repository has measured can be
-// truncated by it, and it stays well inside the 24-hour resume window so the
-// pass after a cancelled one still resumes incrementally instead of
-// rebuilding the corpus.
+// has actually cost. In #174 a typical full pass required ~100–120 minutes;
+// a post-restart incremental pass took ~30 minutes, and v0.1.155 converged in
+// 534 seconds. Six hours provides ample headroom so no completed pass on
+// record is truncated by it, and it stays well inside the 24-hour resume
+// window so the pass after a ceiling breach postpones the next full repair
+// and resumes incrementally instead of triggering an endless series of
+// full-corpus rebuilds.
 //
 // Truncating a healthy pass would be worse than the freeze it prevents: the
 // builder would restart work it can never finish. That is why the headroom
@@ -97,7 +97,7 @@ func ConfigFromEnv() ServerConfig {
 		// budgets read it: this is the rollback an operator applies at 3am.
 		if v == "0" {
 			cfg.SnapshotPassTimeout = 0
-		} else if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		} else if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			cfg.SnapshotPassTimeout = d
 		}
 	}
