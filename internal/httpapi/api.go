@@ -166,7 +166,7 @@ func NewMux(d Deps) *http.ServeMux {
 		a.mavenJar = newCachedMavenJarProber(prober)
 	}
 	if a.d.Limits == nil {
-		a.d.Limits = newLimiters()
+		a.d.Limits = newLimitersWithNow(d.Now)
 	}
 	mux := http.NewServeMux()
 	lim := a.d.Limits
