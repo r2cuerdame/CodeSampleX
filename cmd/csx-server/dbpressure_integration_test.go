@@ -40,10 +40,9 @@ func testServerPoolPolicy() serverstore.PoolPolicy {
 	return pol
 }
 
-// openTestServer brings up the whole csx-server handler on a throwaway
-// schema of CSX_TEST_DSN, and returns it plus a second connection outside
-// the pool for the lock the fixture needs.
-func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server, *pgx.Conn, *serverstore.PG) {
+// openTestPG creates an isolated schema on CSX_TEST_DSN, runs migrations,
+// registers cleanups, and returns the store plus an outside connection.
+func openTestPG(t *testing.T, pol serverstore.PoolPolicy) (*serverstore.PG, *pgx.Conn) {
 	t.Helper()
 	dsn := os.Getenv("CSX_TEST_DSN")
 	if dsn == "" {
@@ -85,7 +84,16 @@ func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server,
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	return pg, outside
+}
 
+// openTestServer brings up the whole csx-server handler on a throwaway
+// schema of CSX_TEST_DSN, and returns it plus a second connection outside
+// the pool for the lock the fixture needs.
+func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server, *pgx.Conn, *serverstore.PG) {
+	t.Helper()
+	pg, outside := openTestPG(t, pol)
+	ctx := context.Background()
 	cfg := serverstore.ServerConfig{
 		PublicCheck: "trust",
 		PublicURL:   "http://example.invalid",

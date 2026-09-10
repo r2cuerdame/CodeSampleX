@@ -168,7 +168,7 @@ func (s *retryMetricCacheStore) SnapshotKeys(ctx context.Context) ([]serverstore
 }
 
 func TestIntegrationCacheRetriesAreCountedAndResetAfterDeferral(t *testing.T) {
-	_, _, pg := openTestServer(t, testServerPoolPolicy())
+	pg, _ := openTestPG(t, testServerPoolPolicy())
 	store := &retryMetricCacheStore{PG: pg, fail: true}
 	w := &webStore{s: store}
 	background := func() serverstore.ClassPoolStats {
