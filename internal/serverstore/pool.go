@@ -303,6 +303,29 @@ func (b *QueryBudget) Suppressed() int64 {
 	return b.suppressed.Load()
 }
 
+// backpressured reports whether this unit of work has already been told the
+// database cannot serve it now -- by the pool refusing an acquisition, or by
+// PostgreSQL cancelling a statement on its ceiling.
+//
+// Both answers are the same answer. isBackpressure treats them identically
+// and writeStoreErr turns both into one 503 with a Retry-After, so the
+// follow-up reads they should stop are the same follow-up reads. Only the
+// refusal used to arm the suppression, and the asymmetry was invisible
+// precisely when it cost the most: a saturated database stops refusing
+// acquisitions once its connections are free and starts cancelling
+// statements instead, and that is the state where a page making eight
+// sequential reads spent eight ceilings serially, returned nothing before
+// the visitor gave up, and aimed eight more expensive queries at the
+// saturation that cancelled the first one.
+//
+// A nil budget is unclassified background work with nothing to remember.
+func (b *QueryBudget) backpressured() bool {
+	if b == nil {
+		return false
+	}
+	return b.busy.Load() > 0 || b.timeouts.Load() > 0
+}
+
 type queryBudgetKey struct{}
 
 // WithQueryBudget attaches a budget to ctx. Every store call made under
@@ -484,10 +507,10 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	class := budget.Class()
 	counters := &p.stats[class]
 	counters.observeAttempt(budget)
-	if class == ClassInteractive && budget != nil && budget.busy.Load() > 0 {
+	if class == ClassInteractive && budget.backpressured() {
 		counters.suppressed.Add(1)
 		budget.suppressed.Add(1)
-		return nil, fmt.Errorf("%w (class %s, follow-up suppressed after earlier refusal)", ErrPoolBusy, class)
+		return nil, fmt.Errorf("%w (class %s, follow-up suppressed after earlier backpressure)", ErrPoolBusy, class)
 	}
 	if p.closed.Load() {
 		counters.failed.Add(1)

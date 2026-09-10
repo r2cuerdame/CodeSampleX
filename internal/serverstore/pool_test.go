@@ -296,6 +296,67 @@ func TestInteractiveBudgetStopsAfterOnePoolRefusal(t *testing.T) {
 	}
 }
 
+// A statement PostgreSQL killed on the interactive ceiling is backpressure
+// exactly as a refused acquisition is: writeStoreErr answers both with the
+// same 503, and dbclass names both as pressure an operator triages together.
+// So it has to stop the same follow-up reads, and it did not.
+//
+// That gap is what turned a slow database into zero-byte client timeouts.
+// One package page makes eight or more sequential store reads and only the
+// first is fatal; every later one was free to spend another full ReadTimeout
+// because only ErrPoolBusy armed the suppression. Eight reads against a
+// database cancelling statements on the 8s ceiling is over a minute of work
+// for a visitor who gave up at twelve seconds, and eight more expensive
+// queries aimed at the saturation that caused the cancellations.
+func TestInteractiveBudgetStopsAfterOneStatementTimeout(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	pol.ReadWait = 200 * time.Millisecond
+	p := newConnPool(nil, pol)
+	// The gate is filled so that a follow-up which is NOT suppressed has to
+	// announce itself: it pays a full ReadWait and is counted Busy. That is
+	// the observable stand-in for what it does in production, where the gate
+	// is open and the follow-up instead reaches PostgreSQL and spends another
+	// whole ReadTimeout there. Busy == 0 below is the real assertion -- a
+	// follow-up that never reached even the gate cannot have reached a
+	// connection, a statement or the database.
+	for i := 0; i < cap(p.inter); i++ {
+		p.inter <- struct{}{}
+	}
+	budget := NewQueryBudget(ClassInteractive)
+	ctx := WithQueryBudget(context.Background(), budget)
+
+	// The page's first read reached the database and was cancelled there.
+	p.observeQueryError(ctx, &pgconn.PgError{
+		Code: "57014", Message: "canceling statement due to statement timeout",
+	})
+
+	started := time.Now()
+	for i := 0; i < 8; i++ {
+		if _, err := p.acquire(ctx); !IsPoolBusy(err) {
+			t.Fatalf("follow-up %d error = %v, want ErrPoolBusy", i+1, err)
+		}
+	}
+	if elapsed := time.Since(started); elapsed >= pol.ReadWait {
+		t.Fatalf("eight follow-ups after a statement timeout spent %v, want no pool wait at all", elapsed)
+	}
+
+	stats := p.stat().Classes[0]
+	if stats.Busy != 0 || stats.Suppressed != 8 {
+		t.Fatalf("outcomes = busy %d suppressed %d, want 0/8", stats.Busy, stats.Suppressed)
+	}
+	// No follow-up spent any pool time at all, which is the property the
+	// visitor feels: the 503 arrives instead of the connection being sought.
+	if stats.Waited != 0 || stats.WaitTotal != 0 {
+		t.Fatalf("follow-ups waited %d times for %v, want none", stats.Waited, stats.WaitTotal)
+	}
+	if stats.Attempts != stats.Acquired+stats.Busy+stats.Suppressed+stats.Canceled+stats.Failed {
+		t.Fatalf("attempt outcomes do not close: %+v", stats)
+	}
+	if got := budget.Suppressed(); got != 8 {
+		t.Fatalf("request suppressed count = %d, want 8", got)
+	}
+}
+
 func TestPoolSeparatesFirstFollowupAndRetryAttempts(t *testing.T) {
 	pol := DefaultPoolPolicy()
 	pol.ProbeWait = time.Nanosecond
