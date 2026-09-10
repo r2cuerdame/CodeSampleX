@@ -137,16 +137,28 @@ func ProbeExecutable(ctx context.Context, executable, tool string, argv []string
 	return m[1]
 }
 
-// Collect assembles a fingerprint. Hints use the JSON field names of
-// domain.EnvironmentFingerprint ("runtime", "runtimeVersion", ...); a hint
-// naming a tool with an empty version triggers a local probe.
-func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFingerprint {
-	fp := domain.EnvironmentFingerprint{
+// Host is the part of the fingerprint that needs no project and no probe:
+// the machine this process is running on. It names no ecosystem, because
+// nothing here can know one — that is the caller's to supply.
+//
+// It exists for the observations that have no scan behind them at all. A
+// wrapped command run outside any workspace still ran on a real os and a
+// real arch, and an environment missing either is one the ingest endpoint
+// refuses outright, taking the observation with it.
+func Host() domain.EnvironmentFingerprint {
+	return domain.EnvironmentFingerprint{
 		SchemaVersion:   1,
 		OS:              runtime.GOOS,
 		OSVersionBucket: osVersionBucket(),
 		Arch:            archName(),
 	}
+}
+
+// Collect assembles a fingerprint. Hints use the JSON field names of
+// domain.EnvironmentFingerprint ("runtime", "runtimeVersion", ...); a hint
+// naming a tool with an empty version triggers a local probe.
+func Collect(ctx context.Context, hints map[string]string) domain.EnvironmentFingerprint {
+	fp := Host()
 	get := func(k string) string { return strings.TrimSpace(hints[k]) }
 	fp.Ecosystem = get("ecosystem")
 	fp.Runtime = get("runtime")

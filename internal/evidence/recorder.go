@@ -9,6 +9,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	csxenv "github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -114,11 +115,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 	if r.DB != nil && r.Cfg != nil && r.Cfg.Mode == config.ModeCommunity && len(argv) > 0 {
 		tool := domain.CommandTool(argv)
 		if domain.IsRecognizedCLITool(tool) {
-			var env domain.EnvironmentFingerprint
-			if res != nil {
-				env = res.Env
-			}
-			coord := domain.ParseCLICommand(argv, env)
+			coord := domain.ParseCLICommand(argv, cliEnvironment(res))
 			coord.ToolVersion = output.ToolVersion
 			coord.Shell = output.Shell
 			startedAt := output.StartedAt.UTC().Format(time.RFC3339Nano)
@@ -212,6 +209,44 @@ func sanitizedStreamEvidence(raw string, truncated bool) domain.CLIStreamEvidenc
 		Excerpt:     excerpt,
 		Truncated:   truncated || excerptTruncated,
 	}
+}
+
+// cliEnvironment is the fingerprint a CLI observation is filed under.
+//
+// A CLI tool is routinely run where no project answers for it: outside any
+// repository, before `npm install`, in a directory whose ecosystem no
+// adapter detects. No scan at all leaves every axis empty; a scan that
+// detected no adapter still leaves the ecosystem empty, because only an
+// adapter names one. Either way the server refuses the whole batch
+// ("environment requires ecosystem, os and arch") and the observation is
+// lost — and that is exactly the population worth measuring.
+//
+// What the scan did establish is authoritative and is never overwritten;
+// only the empty axes are answered, from the host that actually ran the
+// command. An ecosystem the scan could not name is "generic" — the same
+// namespace the CLI coordinate itself lives in, and an honest statement
+// that no registry ecosystem was in play rather than a guess at one.
+func cliEnvironment(res *scanner.ScanResult) domain.EnvironmentFingerprint {
+	var env domain.EnvironmentFingerprint
+	if res != nil {
+		env = res.Env
+	}
+	if env.Ecosystem == "" {
+		env.Ecosystem = domain.EcosystemGeneric
+	}
+	if env.OS != "" && env.Arch != "" {
+		return env
+	}
+	host := csxenv.Host()
+	if env.OS == "" {
+		// The bucket describes the OS, so it travels with it and never
+		// gets attached to an OS this host did not report.
+		env.OS, env.OSVersionBucket = host.OS, host.OSVersionBucket
+	}
+	if env.Arch == "" {
+		env.Arch = host.Arch
+	}
+	return env
 }
 
 func cliEvidenceQuality(coord domain.CLIExperienceCoordinate, startedAt, finishedAt string,

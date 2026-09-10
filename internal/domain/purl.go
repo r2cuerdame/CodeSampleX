@@ -20,6 +20,12 @@ type PURL struct {
 	Version   string
 }
 
+// EcosystemGeneric is the namespace for coordinates that belong to no
+// package registry: engines, SDKs, operating systems and command-line
+// tools. It is deliberately not in AllowedEcosystems — a generic name is
+// public only through the closed IsWantedTarget vocabulary.
+const EcosystemGeneric = "generic"
+
 // AllowedEcosystems is the Public v1 package/receipt allowlist. Scanner
 // coverage is a separate claim: verification-only ecosystems such as Maven
 // may publish signed sample evidence without scanning arbitrary local projects.

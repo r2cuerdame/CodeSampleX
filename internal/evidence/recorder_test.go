@@ -319,7 +319,7 @@ func TestRecordCommandOutputStoresOnlyStructuredSecretSafeCLIEvidence(t *testing
 	cfg.Mode = config.ModeCommunity
 	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
 
-	env := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64", Runtime: "go", RuntimeVersion: "1.26"}
+	env := domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "golang", OS: "windows", Arch: "x64", Runtime: "go", RuntimeVersion: "1.26"}
 	started := time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)
 	finished := started.Add(2 * time.Second)
 	exit := 7
