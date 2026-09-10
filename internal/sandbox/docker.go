@@ -48,10 +48,17 @@ func containerOSOrLinux(os string) string {
 
 func (r DockerRunner) containerOS() string { return containerOSOrLinux(r.ContainerOS) }
 
+var dockerServerOSProbe = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Os}}").Output()
+}
+
 // DetectContainerOS asks the daemon which kind of container it runs.
 // Anything unreadable is reported as Linux, the historical assumption.
+// The probe is bounded by detectTimeout so an unresponsive daemon cannot hang the caller.
 func DetectContainerOS(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Os}}").Output()
+	ctx, cancel := context.WithTimeout(ctx, detectTimeout)
+	defer cancel()
+	out, err := dockerServerOSProbe(ctx)
 	if err != nil {
 		return ContainerOSLinux
 	}

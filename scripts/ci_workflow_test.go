@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -124,9 +125,29 @@ func TestWindowsRegistryGateRunsBeforeTheConcurrentSuite(t *testing.T) {
 	want := "      - name: Native Windows registry isolation\n" +
 		"        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts\n" +
 		"      - name: Native Windows tests\n" +
-		"        run: go test -skip '^TestWindowsBootstrapRegistryIsolation$' ./..."
+		"        run: go test -timeout 30m -skip '^TestWindowsBootstrapRegistryIsolation$' ./..."
 	if !strings.Contains(windows, want) {
 		t.Fatal("Windows CI must run the forced, bounded registry test in its own step before the concurrent suite skips that already-passed test")
+	}
+}
+
+func TestWindowsCITestsCarryATimeoutOnlyAHangCanReach(t *testing.T) {
+	windows := releaseJobs(t, ciWorkflow(t))["windows"]
+	fullSuite := regexp.MustCompile(`(?m)^\s*run:\s+go test\s+(.+?)\s+\./\.\.\.\s*$`).FindStringSubmatch(windows)
+	if fullSuite == nil {
+		t.Fatal("windows CI does not run the full Go test suite")
+	}
+	m := regexp.MustCompile(`(?:^|\s)-timeout[= ](\d+)m\b`).FindStringSubmatch(fullSuite[1])
+	if m == nil {
+		t.Fatal("windows CI runs its full suite with no explicit -timeout; the 10m default caused #285")
+	}
+	const floorMinutes = 20
+	minutes, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minutes < floorMinutes {
+		t.Errorf("windows CI -timeout is %dm; anything under %dm risks hitting the runner-speed lottery", minutes, floorMinutes)
 	}
 }
 

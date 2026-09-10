@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -47,18 +49,20 @@ func TestImageBaseMatchesTheRealImage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs containers")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available")
+	if ok, reason := supportsLinuxContainers(context.Background()); !ok {
+		t.Skip(reason)
 	}
 	for alias, want := range verifierImages {
 		if want.bucket == "windowsservercore" {
 			// A Linux daemon cannot start these, and a Windows daemon has no
-			// libc to report. The entry is checked by TestWindowsImagesAreRealServerCoreImages.
+			// libc to report. Windows images declare no libc (checked by TestEveryLinuxVerifierImageDeclaresItsLibc).
 			continue
 		}
 		image := want.ref()
 		t.Run(alias, func(t *testing.T) {
-			out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image,
+			cmdCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(cmdCtx, "docker", "run", "--rm", "--entrypoint", "sh", image,
 				"-c", `if ls /lib/ld-musl-* >/dev/null 2>&1; then echo musl; else echo glibc; fi`).Output()
 			if err != nil {
 				t.Skipf("could not run %s: %v", image, err)
