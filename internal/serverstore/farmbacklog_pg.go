@@ -36,30 +36,10 @@ func beginFarmAggregate(ctx context.Context, c *pgx.Conn, ceiling time.Duration)
 	return tx, nil
 }
 
-// FarmBacklogNow reads the two stocks and the two flows the coverage
-// scheduler is judged by.
-//
-// The dependency count comes from the same dependency_open CTE the scheduler
-// hands work out of (authoringCoverageCTE), not from a second definition
-// written to look like it. That is the whole point of the shared constant: a
-// backlog counted from a different predicate than the queue would report a
-// figure that never moves however hard the fleet runs.
-func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error) {
-	ctx, cancel := farmAggregateContext(ctx)
-	defer cancel()
-	return p.farmBacklogNow(ctx, since, now, farmAggregateTimeout)
-}
-
-func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statementTimeout time.Duration) (FarmBacklog, error) {
-	backlog := FarmBacklog{ClaimedByKind: map[string]int{}, ClaimedByAxis: map[string]int{}}
-	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		if err := tx.QueryRow(ctx, `
-			WITH `+authoringCoverageCTE+`,
+// farmBacklogStocksSQL is also exercised directly by the result-parity and
+// query-plan regressions; they must measure the statement production runs.
+const farmBacklogStocksSQL = `
+			WITH ` + authoringCoverageCTE + `,
 			wanted_key AS MATERIALIZED (
 				SELECT w.ecosystem, w.name, w.version, w.symbol, w.target_os, w.asks, k.coord
 				  FROM wanted w
@@ -69,9 +49,14 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 				          CASE WHEN left(w.name, 1) = '@'
 				               THEN '%40' || substring(w.name from 2)
 				               ELSE w.name END || '@')) AS k(coord)
+			), wanted_coord AS MATERIALIZED (
+				-- Repeated symbols, versions and platforms ask about the same
+				-- package coordinate. Join its samples once, before DISTINCT,
+				-- rather than multiplying them by every Wanted row (#364).
+				SELECT DISTINCT coord FROM wanted_key
 			), candidate_samples AS MATERIALIZED (
 				SELECT DISTINCT sp.sample_id, sp.coord
-				  FROM wanted_key wk
+				  FROM wanted_coord wk
 				  JOIN sample_packages sp ON sp.coord = wk.coord
 				  JOIN samples s ON s.sample_id = sp.sample_id AND NOT s.quarantined
 			), candidate_receipts AS MATERIALIZED (
@@ -130,7 +115,7 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 				 WHERE an.ecosystem IS NULL
 			)
 			SELECT
-			  -- The `+"`-`"+` cells: a PUBLIC release the network watches people
+			  -- The ` + "`-`" + ` cells: a PUBLIC release the network watches people
 			  -- use and has never proven.
 			  (SELECT count(*) FROM (
 			     SELECT pk.purl
@@ -150,16 +135,40 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 			  -- ResolvedRequests: answered wanted requests
 			  (SELECT count(*) FROM answered_wanted),
 			  -- TotalRequests: total distinct wanted requests
-			  (SELECT count(*) FROM wanted)`).Scan(
-				&backlog.CoverageHoles,
-				&backlog.Dependencies,
-				&backlog.RequestBacklog,
-				&backlog.RepeatedMisses,
-				&backlog.ResolvedRequests,
-				&backlog.TotalRequests,
-			); err != nil {
-				return err
-			}
+			  (SELECT count(*) FROM wanted)`
+
+// FarmBacklogNow reads the two stocks and the two flows the coverage
+// scheduler is judged by.
+//
+// The dependency count comes from the same dependency_open CTE the scheduler
+// hands work out of (authoringCoverageCTE), not from a second definition
+// written to look like it. That is the whole point of the shared constant: a
+// backlog counted from a different predicate than the queue would report a
+// figure that never moves however hard the fleet runs.
+func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBacklog, error) {
+	ctx, cancel := farmAggregateContext(ctx)
+	defer cancel()
+	return p.farmBacklogNow(ctx, since, now, farmAggregateTimeout)
+}
+
+func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statementTimeout time.Duration) (FarmBacklog, error) {
+	backlog := FarmBacklog{ClaimedByKind: map[string]int{}, ClaimedByAxis: map[string]int{}}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if err := tx.QueryRow(ctx, farmBacklogStocksSQL).Scan(
+			&backlog.CoverageHoles,
+			&backlog.Dependencies,
+			&backlog.RequestBacklog,
+			&backlog.RepeatedMisses,
+			&backlog.ResolvedRequests,
+			&backlog.TotalRequests,
+		); err != nil {
+			return err
+		}
 		// The same absence at the grain a reader sees it: symbol × version
 		// cells rather than releases. Counted from the stored snapshots the
 		// package pages render, so the panel and the page cannot disagree
