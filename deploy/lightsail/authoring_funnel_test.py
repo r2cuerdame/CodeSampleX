@@ -80,6 +80,7 @@ class FunnelParsingTests(unittest.TestCase):
                     line(fallback(SECRET)), line(fallback("context deadline exceeded")),
                     line(fallback("ERROR: canceling statement due to statement timeout (SQLSTATE 57014) " + SECRET)),
                     line(poll(age="NaN")), line(poll(age="999999h0m0s")), line(poll())[:-1],
+                    line(collector.POLL_PREFIX.rstrip()), line(collector.FALLBACK_PREFIX[:-2] + " " + SECRET),
                     line(poll()).replace(b"session=", b"session=\xff"),
                     line(poll()).replace(b"20", b"99", 1),
                     line(poll(), "2026-09-11T18:59:59Z"), line(poll(), "2026-09-11T20:00:01Z"),
@@ -106,7 +107,7 @@ class FunnelParsingTests(unittest.TestCase):
                                 "1.5ms": 1500000, "1µs": 1000, "1us": 1000, "1ns": 1,
                                 "0.000000001s": 1, "720h0m0s": collector.MAX_AGE_NS}.items():
             self.assertEqual(collector.duration_ns(value), expected)
-        for value in ("", "nan", "1e9s", "1h60m0s", "1m60s", "1s1s", "0.1ns", "721h0m0s", "+1s", "1" * 100 + "s"):
+        for value in ("", "nan", "1e9s", "1h60m0s", "1m60s", "1s1s", "0.1ns", "721h0m0s", "+1s", "١s", "1" * 100 + "s"):
             with self.assertRaises(collector.Unavailable):
                 collector.duration_ns(value)
 

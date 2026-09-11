@@ -61,7 +61,7 @@ def duration_ns(value):
     # the numeric domain before conversion; never copy the source string.
     if not isinstance(value, str) or len(value) > 64:
         raise Unavailable("malformed_poll")
-    match = re.fullmatch(r"(-?)(?:(?:(\d{1,6})h)?(?:(\d{1,6})m)?(\d{1,6})(?:\.(\d{1,9}))?s|(\d{1,9})(?:\.(\d{1,9}))?(ms|us|µs|μs|ns))", value)
+    match = re.fullmatch(r"(-?)(?:(?:([0-9]{1,6})h)?(?:([0-9]{1,6})m)?([0-9]{1,6})(?:\.([0-9]{1,9}))?s|([0-9]{1,9})(?:\.([0-9]{1,9}))?(ms|us|µs|μs|ns))", value)
     if match is None:
         raise Unavailable("malformed_poll")
     if match[4] is not None:
@@ -188,7 +188,7 @@ def parse_logs(raw, start_ns, end_ns):
         last_ns = event_ns if last_ns is None else max(last_ns, event_ns)
         # Docker timestamps wrap Go's standard logger timestamp.
         message = re.sub(r"^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} ", "", message, count=1)
-        if message.startswith(POLL_PREFIX):
+        if message.startswith(POLL_PREFIX.rstrip()):
             match = POLL.fullmatch(message[len(POLL_PREFIX):])
             if match is None:
                 raise Unavailable("malformed_poll")
@@ -207,8 +207,8 @@ def parse_logs(raw, start_ns, end_ns):
                 funnel["lastPoll"] = {"at": stamp(event_ns), "wantedRead": wanted, "wantedEligible": wanted_eligible,
                                       "expansionRead": expansion, "expansionEligible": expansion_eligible,
                                       "served": match[5], "snapshotAgeNs": age}
-        elif message.startswith(FALLBACK_PREFIX):
-            if not message.endswith(FALLBACK_SUFFIX):
+        elif message.startswith(FALLBACK_PREFIX[:-2]):
+            if not message.startswith(FALLBACK_PREFIX) or not message.endswith(FALLBACK_SUFFIX):
                 raise Unavailable("unknown_fallback")
             error = message[len(FALLBACK_PREFIX):-len(FALLBACK_SUFFIX)]
             if error == "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)":
