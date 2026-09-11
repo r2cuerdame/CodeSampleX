@@ -4,6 +4,14 @@ function Read-CSXMigrationEvidence {
     $raw = Invoke-RemoteScript "set -eu; if [ -f $migrationState/evidence.json ]; then cat $migrationState/evidence.json; else printf '{}'; fi" 15
     $json = ($raw -join "`n").Trim()
     $value = $json | ConvertFrom-Json
+    # ConvertFrom-Json turns ISO timestamps into DateTime, losing the exact
+    # host string (including nanoseconds). DateKind String requires PS 7.5;
+    # JsonDocument preserves this acceptance field on every supported PS 7.
+    if ($null -ne $value.PSObject.Properties['serverStartedAt']) {
+        $document = [System.Text.Json.JsonDocument]::Parse($json)
+        try { $value.serverStartedAt = $document.RootElement.GetProperty('serverStartedAt').GetString() }
+        finally { $document.Dispose() }
+    }
     if ($MigrationEvidencePath -ne "") {
         [IO.File]::WriteAllText($MigrationEvidencePath, $json + "`n", [Text.UTF8Encoding]::new($false))
     }
@@ -140,6 +148,7 @@ function Set-CSXHostDeploymentEvidence($Result) {
         $Result.migrationLedger.count -ne $expectedCount -or $Result.migrationVerification -ne "pass" -or
         $Result.imageDigest -ne $migrationImageDigest -or $Result.imageDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
         $Result.health -ne "ok" -or $Result.smoke -ne "pass" -or $Result.cleanup -ne "pass" -or
+        $Result.serverStartedAt -isnot [string] -or
         $Result.serverStartedAt -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|\+00:00)$') {
         throw "host exact activation acceptance evidence is incomplete or mismatched"
     }

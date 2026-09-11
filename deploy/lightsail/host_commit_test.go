@@ -41,11 +41,55 @@ $valid=@{
     health='ok'; smoke='pass'; cleanup='pass'
     serverStartedAt='2026-09-09T05:00:00.123Z'; phaseTimings=@{}
 }
-Set-CSXHostDeploymentEvidence ([pscustomobject]$valid)
+$migrationState='/fixture/owned-state'
+$MigrationEvidencePath=Join-Path $PSScriptRoot 'migration-evidence.json'
+# Exercise the real JSON/SSH boundary. Direct PSCustomObject fixtures bypass
+# ConvertFrom-Json's automatic DateTime conversion and hid this production bug.
+function Invoke-RemoteScript {
+    param([string]$RemoteScript, [int]$Timeout)
+    if ($Timeout -ne 15 -or -not $RemoteScript.Contains("$migrationState/evidence.json")) {
+        throw 'unexpected evidence read'
+    }
+    return $script:hostEvidenceJSON -split [char]10
+}
+foreach ($timestamp in @('2026-09-11T14:15:58.802547Z', '2026-09-09T05:00:00Z',
+    '2026-09-09T05:00:00.123456789Z', '2026-09-09T05:00:00.123456789+00:00')) {
+    $fixture=$valid.Clone(); $fixture.serverStartedAt=$timestamp
+    $script:hostEvidenceJSON=$fixture | ConvertTo-Json -Depth 10
+    $result=Read-CSXMigrationEvidence
+    if ($result.serverStartedAt -isnot [string] -or $result.serverStartedAt -cne $timestamp) {
+        throw 'host timestamp changed at the JSON boundary'
+    }
+    Set-CSXHostDeploymentEvidence $result
+    if ($DeploymentEvidence.serverStartedAt -isnot [string] -or $DeploymentEvidence.serverStartedAt -cne $timestamp) {
+        throw 'published host timestamp changed'
+    }
+    if ([IO.File]::ReadAllText($MigrationEvidencePath) -cne ($script:hostEvidenceJSON.Trim() + [char]10)) {
+        throw 'raw host evidence was rewritten'
+    }
+}
 if ($DeploymentEvidence.rollback -ne 'not-needed' -or
     $DeploymentEvidence.deployedSha -ne $revision -or -not $migrationRecoveryVerified) {
     throw 'valid host acceptance not published'
 }
+foreach ($case in @(
+    @{name='missing'; value=$null}, @{name='null'; value=$null},
+    @{name='number'; value=20260911}, @{name='boolean'; value=$true},
+    @{name='array'; value=@($valid.serverStartedAt)}, @{name='object'; value=@{timestamp=$valid.serverStartedAt}},
+    @{name='non-UTC offset'; value='2026-09-09T14:00:00.123+09:00'},
+    @{name='missing zone'; value='2026-09-09T05:00:00.123'},
+    @{name='excess precision'; value='2026-09-09T05:00:00.1234567890Z'})) {
+    $fixture=$valid.Clone(); $fixture.serverStartedAt=$case.value
+    if ($case.name -eq 'missing') { $fixture.Remove('serverStartedAt') }
+    $script:hostEvidenceJSON=$fixture | ConvertTo-Json -Depth 10
+    $rejected=$false
+    try { Set-CSXHostDeploymentEvidence (Read-CSXMigrationEvidence) } catch { $rejected=$true }
+    if (-not $rejected) { throw "invalid JSON timestamp accepted: $($case.name)" }
+}
+$typedTimestamp=$valid.Clone(); $typedTimestamp.serverStartedAt=[DateTime]::UtcNow
+$rejected=$false
+try { Set-CSXHostDeploymentEvidence ([pscustomobject]$typedTimestamp) } catch { $rejected=$true }
+if (-not $rejected) { throw 'typed timestamp accepted without exact JSON string evidence' }
 foreach ($field in @('phase','conclusion','acceptanceAuthority','controllerSmoke','owner',
     'operationalSha','targetSha','servedRevision','releaseTag','migrationVerification',
     'imageDigest','health','smoke','cleanup','serverStartedAt')) {
