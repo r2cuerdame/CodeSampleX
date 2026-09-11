@@ -120,23 +120,28 @@ func (c CLIExperienceCoordinate) DisplayCommand() string {
 // and FAIL observations coexist: a single verified failure is not erased by
 // multiple passing runs.
 type CLIExperienceObservation struct {
-	ID                string                  `json:"id,omitempty"`
-	Coordinate        CLIExperienceCoordinate `json:"coordinate"`
-	Provenance        ExperienceProvenance    `json:"provenance"`
-	Result            Result                  `json:"result"` // PASS | FAIL
-	Termination       FailureTermination      `json:"termination,omitempty"`
-	ErrorFingerprint  string                  `json:"errorFingerprint,omitempty"`
-	ErrorCode         string                  `json:"errorCode,omitempty"`
-	ErrorSummary      string                  `json:"errorSummary,omitempty"`
-	EvidenceQuality   EvidenceQuality         `json:"evidenceQuality,omitempty"`
-	ObservedAt        string                  `json:"observedAt,omitempty"` // RFC3339
-	StartedAt         string                  `json:"startedAt,omitempty"`  // RFC3339
-	FinishedAt        string                  `json:"finishedAt,omitempty"` // RFC3339
-	EnvironmentID     string                  `json:"environmentId,omitempty"`
-	Stdout            CLIStreamEvidence       `json:"stdout,omitempty"`
-	Stderr            CLIStreamEvidence       `json:"stderr,omitempty"`
-	Count             int64                   `json:"count"`
-	IsHighInformation bool                    `json:"isHighInformation"`
+	ID                 string                  `json:"id,omitempty"`
+	Coordinate         CLIExperienceCoordinate `json:"coordinate"`
+	Provenance         ExperienceProvenance    `json:"provenance"`
+	Result             Result                  `json:"result"` // PASS | FAIL
+	Stage              Stage                   `json:"stage,omitempty"`
+	Termination        FailureTermination      `json:"termination,omitempty"`
+	ErrorFingerprint   string                  `json:"errorFingerprint,omitempty"`
+	ErrorCode          string                  `json:"errorCode,omitempty"`
+	ErrorSummary       string                  `json:"errorSummary,omitempty"`
+	EvidenceQuality    EvidenceQuality         `json:"evidenceQuality,omitempty"`
+	OuterStage         Stage                   `json:"outerStage,omitempty"`
+	ActualToolchain    string                  `json:"actualToolchain,omitempty"`
+	StageEvidence      FailureStageEvidence    `json:"stageEvidence,omitempty"`
+	FailureEvidenceGap FailureEvidenceGap      `json:"failureEvidenceGap,omitempty"`
+	ObservedAt         string                  `json:"observedAt,omitempty"` // RFC3339
+	StartedAt          string                  `json:"startedAt,omitempty"`  // RFC3339
+	FinishedAt         string                  `json:"finishedAt,omitempty"` // RFC3339
+	EnvironmentID      string                  `json:"environmentId,omitempty"`
+	Stdout             CLIStreamEvidence       `json:"stdout,omitempty"`
+	Stderr             CLIStreamEvidence       `json:"stderr,omitempty"`
+	Count              int64                   `json:"count"`
+	IsHighInformation  bool                    `json:"isHighInformation"`
 }
 
 // ComputeID derives the content-addressed observation ID.

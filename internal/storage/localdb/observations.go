@@ -509,9 +509,13 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 		epoch = time.Now().UTC().Format("2006-01-02")
 	}
 
-	actualToolchain := ""
-	if obs.Provenance == domain.ProvenanceFarm {
+	actualToolchain := obs.ActualToolchain
+	if actualToolchain == "" && obs.Provenance == domain.ProvenanceFarm {
 		actualToolchain = "farm"
+	}
+	stage := obs.Stage
+	if stage == "" {
+		stage = domain.StageProjectProcess
 	}
 
 	count := int(obs.Count)
@@ -522,22 +526,25 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 	symbol := domain.EncodeCLISymbol(canon.Subcommand, canon.ArgsPattern, obs.Provenance)
 
 	key := ObsKey{
-		Epoch:           epoch,
-		PURL:            purl,
-		Symbol:          symbol,
-		EnvHash:         envHash,
-		Stage:           domain.StageProjectProcess,
-		Result:          obs.Result,
-		ErrorFP:         obs.ErrorFingerprint,
-		ErrorCode:       obs.ErrorCode,
-		TerminationKind: obs.Termination.Kind,
-		ExitCode:        obs.Termination.ExitCode,
-		Signal:          obs.Termination.Signal,
-		TimeoutMillis:   obs.Termination.TimeoutMillis,
-		ErrorSummary:    obs.ErrorSummary,
-		EvidenceQuality: obs.EvidenceQuality,
-		OuterCommand:    canon.DisplayCommand(),
-		ActualToolchain: actualToolchain,
+		Epoch:              epoch,
+		PURL:               purl,
+		Symbol:             symbol,
+		EnvHash:            envHash,
+		Stage:              stage,
+		Result:             obs.Result,
+		ErrorFP:            obs.ErrorFingerprint,
+		ErrorCode:          obs.ErrorCode,
+		TerminationKind:    obs.Termination.Kind,
+		ExitCode:           obs.Termination.ExitCode,
+		Signal:             obs.Termination.Signal,
+		TimeoutMillis:      obs.Termination.TimeoutMillis,
+		ErrorSummary:       obs.ErrorSummary,
+		EvidenceQuality:    obs.EvidenceQuality,
+		OuterCommand:       canon.DisplayCommand(),
+		OuterStage:         obs.OuterStage,
+		ActualToolchain:    actualToolchain,
+		StageEvidence:      obs.StageEvidence,
+		FailureEvidenceGap: obs.FailureEvidenceGap,
 	}
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
