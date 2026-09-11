@@ -3,12 +3,12 @@ run-name: Post-deploy observation for production run ${{ github.event.workflow_r
 
 on:
   workflow_run:
-    workflows: [Production deploy]
+    workflows: [Production deploy, Production reconciliation]
     types: [completed]
   workflow_dispatch:
     inputs:
       deploy_run_id:
-        description: Successful Production deploy workflow run to observe again
+        description: Successful Production deploy or Production reconciliation run to observe again
         required: true
         type: string
 
@@ -33,6 +33,21 @@ jobs:
     timeout-minutes: 135
     environment: codesamplex-production
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          path: .reconciliation-validator
+
+      - name: Authenticate the reconciliation provenance validator
+        shell: bash
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .reconciliation-validator rev-parse HEAD)" = "$WORKFLOW_SHA"
+          git -C .reconciliation-validator merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
+
       - name: Validate deployment provenance and download its evidence
         id: deployment
         timeout-minutes: 5
@@ -56,14 +71,21 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}")
           jq -e --arg repo "$GITHUB_REPOSITORY" '
-            .path == ".github/workflows/production-deploy.yml" and
+            (.path == ".github/workflows/production-deploy.yml" or
+             .path == ".github/workflows/production-reconciliation.yml") and
             .event == "workflow_dispatch" and
+            .status == "completed" and .head_branch == "main" and
             .conclusion == "success" and
-            .repository.full_name == $repo
+            .repository.full_name == $repo and .head_repository.full_name == $repo
           ' <<<"$run_json" >/dev/null
           deploy_run_number=$(jq -er '.run_number | select(type == "number" and . > 0)' <<<"$run_json")
 
           artifact_name="production-evidence-${DEPLOY_RUN_ID}"
+          run_path=$(jq -er '.path' <<<"$run_json")
+          if [[ "$run_path" == ".github/workflows/production-reconciliation.yml" ]]; then
+            run_attempt=$(jq -er '.run_attempt | select(type == "number" and . > 0)' <<<"$run_json")
+            artifact_name="${artifact_name}-${run_attempt}"
+          fi
           artifacts_json=$(timeout --kill-after=5s 60s gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/artifacts?per_page=100")
@@ -78,13 +100,21 @@ jobs:
             '.artifacts[] | select(.name == $name and .expired == false) | .id' \
             <<<"$artifacts_json")
           mkdir -p "$RUNNER_TEMP/csx-production-deploy-evidence"
-          timeout --kill-after=5s 60s gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
-            > "$RUNNER_TEMP/csx-production-deploy-evidence.zip"
-          unzip -q "$RUNNER_TEMP/csx-production-deploy-evidence.zip" \
-            -d "$RUNNER_TEMP/csx-production-deploy-evidence"
           deploy_evidence="$RUNNER_TEMP/csx-production-deploy-evidence/production-deploy-evidence.json"
+          if [[ "$run_path" == ".github/workflows/production-reconciliation.yml" ]]; then
+            # No reconciliation ZIP is extracted. Authenticate every member and
+            # the full receipt chain before writing this single fixed output.
+            deploy_run_number=$(python3 -B .reconciliation-validator/deploy/lightsail/reconciliation-provenance.py \
+              download-observation --run-id "$DEPLOY_RUN_ID" --output "$deploy_evidence")
+            [[ "$deploy_run_number" =~ ^[1-9][0-9]*$ ]]
+          else
+            timeout --kill-after=5s 60s gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+              > "$RUNNER_TEMP/csx-production-deploy-evidence.zip"
+            unzip -q "$RUNNER_TEMP/csx-production-deploy-evidence.zip" \
+              -d "$RUNNER_TEMP/csx-production-deploy-evidence"
+          fi
           test -s "$deploy_evidence"
 
           test "$(jq -er '.workflowRunId | tostring' "$deploy_evidence")" = "$DEPLOY_RUN_ID"

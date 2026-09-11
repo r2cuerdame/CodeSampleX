@@ -39,7 +39,7 @@ func TestPostDeployObservationRunsAfterSuccessfulProductionOrManualRetry(t *test
 	}
 	for _, required := range []string{
 		"workflow_run:",
-		"workflows: [Production deploy]",
+		"workflows: [Production deploy, Production reconciliation]",
 		"types: [completed]",
 		"workflow_dispatch:",
 		"deploy_run_id:",
