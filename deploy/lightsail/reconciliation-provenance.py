@@ -194,12 +194,28 @@ def validate_source(run, jobs, artifact, top_raw, host_raw, repository):
             "sourceEvidence": top, "hostEvidence": host}
 
 
-def fetch_source(api, run_id):
+def source_artifact(api, run, rollout):
+    # Old production artifacts omit attempt numbers in their names. The exact
+    # attempt's failed rollout interval disambiguates retained rerun artifacts;
+    # never pick the first/latest artifact or tolerate two within that interval.
+    name = "production-evidence-" + str(run["id"])
+    started, completed = timestamp(rollout["started_at"]), timestamp(rollout["completed_at"])
+    artifacts = api.pages("actions/runs/" + str(run["id"]) + "/artifacts", "artifacts")
+    selected = [a for a in artifacts if a.get("name") == name and a.get("expired") is False and
+                started <= timestamp(a["created_at"]) <= completed]
+    require(len(selected) == 1, "expected exactly one unexpired source artifact within the exact rollout attempt")
+    return selected[0]
+
+
+def fetch_source(api, run_id, attempt):
     require(matching(str(run_id), r"[1-9][0-9]*"), "source run ID must be positive")
-    run = api.api("actions/runs/" + str(run_id))
-    validate_run(run, api.repository, DEPLOY, "failure", run_id)
-    jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run_id, run["run_attempt"]), "jobs")
-    artifact = named_artifact(api, run, "production-evidence-" + str(run_id))
+    require(positive(attempt), "source run attempt must be an explicit positive integer")
+    run = api.api("actions/runs/{}/attempts/{}".format(run_id, attempt))
+    validate_run(run, api.repository, DEPLOY, "failure", run_id, attempt)
+    jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run_id, attempt), "jobs")
+    exact_job(jobs, "Production eligibility", run, "success")
+    rollout = exact_job(jobs, "Roll out production", run, "failure")
+    artifact = source_artifact(api, run, rollout)
     files = artifact_files(api, artifact, [TOP, HOST], run)
     return validate_source(run, jobs, artifact, files[TOP], files[HOST], api.repository)
 
@@ -245,7 +261,7 @@ def validate_observation(api, run, evidence):
     jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run["id"], run["run_attempt"]), "jobs")
     job = exact_job(jobs, "Reconcile committed production owner", run, "success")
     recon = evidence.get("reconciliation", {})
-    source = fetch_source(api, recon.get("sourceRunId"))
+    source = fetch_source(api, recon.get("sourceRunId"), recon.get("sourceRunAttempt"))
     original = source["sourceRun"]
     expected = source_binding(source)
     require(recon.get("sourceRunNumber") == original["run_number"] and
@@ -286,13 +302,16 @@ def main():
     parser.add_argument("mode", choices=["fetch-source", "verify-observation", "download-observation"])
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--output")
     parser.add_argument("--evidence")
     args = parser.parse_args()
+    if args.mode == "fetch-source" and args.run_attempt is None:
+        parser.error("--run-attempt is required for fetch-source")
     api = GitHub(args.repository)
     if args.mode == "fetch-source":
         require(args.output is not None, "output is required")
-        Path(args.output).write_text(json.dumps(fetch_source(api, args.run_id), indent=2) + "\n", encoding="utf-8")
+        Path(args.output).write_text(json.dumps(fetch_source(api, args.run_id, args.run_attempt), indent=2) + "\n", encoding="utf-8")
     else:
         run = api.api("actions/runs/" + args.run_id)
         validate_run(run, api.repository, RECONCILE, "success", args.run_id)

@@ -139,9 +139,15 @@ class Host:
 
     def directory(self, path):
         require(not path.is_symlink() and path.is_dir() and path.resolve() == path.absolute(), "unsafe-directory")
+        if os.name == "posix":
+            metadata = path.stat()
+            require(metadata.st_uid in (0, os.geteuid()) and metadata.st_mode & 0o022 == 0, "unsafe-directory-permissions")
 
     def regular(self, path):
         require(not path.is_symlink() and path.is_file() and path.stat().st_nlink == 1, "unsafe-file")
+        if os.name == "posix":
+            metadata = path.stat()
+            require(metadata.st_uid == os.geteuid() and metadata.st_mode & 0o022 == 0, "unsafe-file-permissions")
         return path.read_bytes()
 
     def retained(self):

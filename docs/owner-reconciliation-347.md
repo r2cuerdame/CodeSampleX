@@ -13,12 +13,16 @@ Once public health has recovered, use the reviewed main workflow:
 
 ```sh
 gh workflow run production-reconciliation.yml --ref main \
-  -f source_run_id=34608440406 --repo r2cuerdame/CodeSampleX
+  -f source_run_id=34608440406 -f source_run_attempt=1 \
+  --repo r2cuerdame/CodeSampleX
 ```
 
 This command is **on hold while the public health failures below continue**.
 No previous SHA, target, owner or image can be supplied to replace the original
 evidence. The workflow obtains them from the authenticated original artifact.
+The original attempt is explicit: later reruns cannot replace its job identity.
+An original artifact must be uniquely attributable to that attempt's rollout
+window; missing, expired or ambiguous attempt evidence is rejected.
 It requires green canonical CI for its own operational source and shares the
 normal production concurrency group and pinned SSH identity/host-key policy.
 

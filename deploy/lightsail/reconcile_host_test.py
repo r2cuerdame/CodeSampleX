@@ -405,6 +405,20 @@ class ReconciliationHostTests(unittest.TestCase):
                     self.runner().run()
                 path.unlink()
 
+    def test_posix_writable_evidence_namespace_is_refused(self):
+        if os.name != "posix":
+            return
+        for path in (self.root, self.root / "deploy", self.migration, self.lock,
+                     self.migration / "evidence.json", self.migration / "config.json", self.lock / "owner"):
+            with self.subTest(path=path):
+                original = path.stat().st_mode
+                path.chmod(original | 0o020)
+                try:
+                    with self.assertRaisesRegex(host.Refusal, "permissions"):
+                        self.runner().run()
+                finally:
+                    path.chmod(original)
+
     def test_duplicate_keys_and_diagnostic_privacy(self):
         with self.assertRaises(host.Refusal):
             host.strict_json('{"owner":"a","owner":"b"}')

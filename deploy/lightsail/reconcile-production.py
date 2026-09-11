@@ -130,9 +130,9 @@ def main():
     args = parser.parse_args()
     bundle = provenance.unique_json(Path(args.bundle).read_bytes())
     api = provenance.GitHub(os.environ["GITHUB_REPOSITORY"])
-    # Re-fetch at each stage. A rerun or changed source artifact invalidates the
-    # bundle before any host-side release, instead of trusting a local pathname.
-    authenticated = provenance.fetch_source(api, str(bundle["sourceRun"]["id"]))
+    # Re-fetch the originally selected attempt at each stage. Later production
+    # reruns cannot replace its evidence; changed original evidence still fails.
+    authenticated = provenance.fetch_source(api, str(bundle["sourceRun"]["id"]), bundle["sourceRun"]["run_attempt"])
     require(authenticated == bundle, "source provenance changed since eligibility")
     request = make_request(bundle, os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_ID"], int(os.environ["GITHUB_RUN_ATTEMPT"]))
     if args.mode == "release":

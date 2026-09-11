@@ -92,11 +92,30 @@ class API:
 def authenticated_source():
     api = API()
     source_run, jobs, artifact, top, host = source_values()
-    api.values["actions/runs/100"] = source_run
+    api.values["actions/runs/100/attempts/1"] = source_run
     api.lists[("actions/runs/100/attempts/1/jobs", "jobs")] = jobs
     api.artifact(artifact, {p.TOP: raw(top), p.HOST: raw(host)})
     api.lists[("actions/runs/100/artifacts", "artifacts")] = [artifact]
-    return api, p.fetch_source(api, "100")
+    return api, p.fetch_source(api, "100", 1)
+
+
+def add_failed_later_attempt(api, original):
+    # Production's latest-run endpoint now describes attempt 2, which failed
+    # before activation because attempt 1's committed owner was still retained.
+    later = run(100, attempt=2)
+    api.values["actions/runs/100"] = later
+    api.values["actions/runs/100/attempts/2"] = later
+    jobs = [job(later, "Production eligibility", "success"), job(later, "Roll out production", "failure")]
+    for value in jobs:
+        value.update(started_at="2026-09-11T15:00:00Z", completed_at="2026-09-11T15:20:00Z")
+    api.lists[("actions/runs/100/attempts/2/jobs", "jobs")] = jobs
+    artifact = copy.deepcopy(original["sourceArtifact"])
+    artifact.update(id=701, created_at="2026-09-11T15:17:16Z")
+    evidence = copy.deepcopy(original["sourceEvidence"])
+    evidence.update(failureClass="pre-activation", rollback="not-started", offlineMigration=None)
+    api.artifact(artifact, {p.TOP: raw(evidence)})
+    # Reverse temporal order to prove selection is neither first nor latest.
+    api.lists[("actions/runs/100/artifacts", "artifacts")].insert(0, artifact)
 
 
 def released_values():
@@ -125,6 +144,68 @@ def released_values():
 
 
 class ReconciliationProvenanceTests(unittest.TestCase):
+    def test_exact_original_attempt_survives_later_failed_rerun_and_duplicate_names(self):
+        api, original = authenticated_source()
+        add_failed_later_attempt(api, original)
+        with patch.object(api, "api", wraps=api.api) as requested:
+            selected = p.fetch_source(api, "100", 1)
+        self.assertEqual(selected, original)
+        self.assertEqual(selected["sourceRun"]["run_attempt"], 1)
+        self.assertEqual(selected["sourceArtifact"]["id"], 700)
+        self.assertNotIn("actions/runs/100", [call.args[0] for call in requested.call_args_list])
+        self.assertNotIn("actions/artifacts/701/zip", [call.args[0] for call in requested.call_args_list])
+
+    def test_wrong_missing_or_ambiguous_source_attempt_refuses(self):
+        for attempt in (None, 0, -1, True, "1", 1.0):
+            with self.subTest(attempt=attempt):
+                api, original = authenticated_source()
+                with patch.object(api, "api", wraps=api.api) as requested:
+                    with self.assertRaises(ValueError):
+                        p.fetch_source(api, "100", attempt)
+                    requested.assert_not_called()
+        api, original = authenticated_source()
+        add_failed_later_attempt(api, original)
+        with self.assertRaises(ValueError):
+            p.fetch_source(api, "100", 2)
+        api.values["actions/runs/100/attempts/1"]["run_attempt"] = 2
+        with self.assertRaises(ValueError):
+            p.fetch_source(api, "100", 1)
+        for mutation in ("missing", "ambiguous", "expired", "outside"):
+            with self.subTest(artifact=mutation):
+                api, original = authenticated_source()
+                artifacts = api.lists[("actions/runs/100/artifacts", "artifacts")]
+                if mutation == "missing":
+                    artifacts.clear()
+                elif mutation == "ambiguous":
+                    artifacts.append(dict(artifacts[0], id=702))
+                elif mutation == "expired":
+                    artifacts[0]["expired"] = True
+                else:
+                    artifacts[0]["created_at"] = "2026-09-11T15:17:16Z"
+                with self.assertRaises(ValueError):
+                    p.fetch_source(api, "100", 1)
+
+    def test_source_cli_requires_explicit_attempt(self):
+        argv = ["reconciliation-provenance.py", "fetch-source", "--repository", REPO,
+                "--run-id", "100", "--output", "must-not-write.json"]
+        with patch("sys.argv", argv), patch("sys.stderr", new_callable=io.StringIO) as error, \
+                patch.object(p, "GitHub") as api:
+            with self.assertRaises(SystemExit) as failure:
+                p.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertIn("--run-attempt is required", error.getvalue())
+            api.assert_not_called()
+
+    def test_observer_uses_recorded_original_attempt_after_later_rerun(self):
+        api, original, request, result, current, final = released_values()
+        add_failed_later_attempt(api, original)
+        self.assertEqual(p.validate_observation(api, current, final), original["sourceRun"]["run_number"])
+        for attempted in (None, 2):
+            invalid = copy.deepcopy(final)
+            invalid["reconciliation"]["sourceRunAttempt"] = attempted
+            with self.assertRaises(ValueError):
+                p.validate_observation(api, current, invalid)
+
     def test_exact_original_identity_and_raw_hash_survive_old_timestamp_normalization(self):
         api, bundle = authenticated_source()
         self.assertEqual(bundle["hostEvidence"]["serverStartedAt"], "2026-09-11T14:15:58.802547123Z")
@@ -224,11 +305,12 @@ class ReconciliationProvenanceTests(unittest.TestCase):
             argv = ["reconcile-production.py", "verify", "--bundle", str(bundle_path), "--output", str(Path(directory) / "result.json")]
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_SHA": "a" * 40,
                                          "GITHUB_RUN_ID": "200", "GITHUB_RUN_ATTEMPT": "1"}), \
-                    patch("sys.argv", argv), patch.object(c.provenance, "fetch_source", return_value=bundle), \
+                    patch("sys.argv", argv), patch.object(c.provenance, "fetch_source", return_value=bundle) as fetched, \
                     patch.object(c, "public_health", side_effect=ValueError("unhealthy")), patch.object(c, "remote") as remote:
                 with self.assertRaises(ValueError):
                     c.main()
                 remote.assert_not_called()
+                self.assertEqual(fetched.call_args.args[1:], ("100", 1))
                 self.assertFalse((Path(directory) / "result.json").exists())
 
     def test_unpublished_preparation_cannot_release(self):
