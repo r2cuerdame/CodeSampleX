@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -411,6 +412,51 @@ class ReconciliationHostTests(unittest.TestCase):
                     self.assertFalse(self.archive.exists())
             self.assertEqual(self.release()["lockState"], "archived")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux POSIX access ACLs")
+    def test_named_user_and_group_access_acls_keep_the_private_775_owner_locked(self):
+        uid, gid = os.geteuid(), os.getegid()
+        account = SimpleNamespace(pw_uid=uid, pw_gid=gid, pw_name="fixture")
+        group = SimpleNamespace(gr_gid=gid, gr_name="fixture", gr_mem=[])
+        deploy = self.root / "deploy"
+        undefined = 0xffffffff
+        with patch.dict(sys.modules, {
+            "pwd": SimpleNamespace(getpwuid=lambda _: account, getpwall=lambda: [account]),
+            "grp": SimpleNamespace(getgrgid=lambda _: group),
+        }):
+            # Linux's version-2 ACL xattr: owner, optional named user, owning
+            # group, optional named group, effective mask, and other. Both
+            # named entries retain mode 0775 yet add an independent writer.
+            for named_tag in (0x02, 0x08):
+                with self.subTest(named="user" if named_tag == 0x02 else "group"):
+                    entries = [(0x01, 7, undefined), (0x04, 7, undefined),
+                               (named_tag, 7, 4242), (0x10, 7, undefined), (0x20, 5, undefined)]
+                    acl = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in sorted(entries))
+                    os.setxattr(deploy, "system.posix_acl_access", acl, follow_symlinks=False)
+                    try:
+                        self.assertEqual(host.stat.S_IMODE(deploy.stat().st_mode), 0o775)
+                        self.assertEqual(os.getxattr(deploy, "system.posix_acl_access"), acl)
+                        with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-acl"):
+                            self.release()
+                        self.assertEqual({path.name for path in self.lock.iterdir()}, {"owner"})
+                        self.assertFalse(self.archive.exists())
+                    finally:
+                        os.removexattr(deploy, "system.posix_acl_access")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory ACL gate")
+    def test_acl_enumeration_failure_keeps_the_original_owner_locked(self):
+        uid, gid = os.geteuid(), os.getegid()
+        account = SimpleNamespace(pw_uid=uid, pw_gid=gid, pw_name="fixture")
+        group = SimpleNamespace(gr_gid=gid, gr_name="fixture", gr_mem=[])
+        (self.root / "deploy").chmod(0o775)
+        with patch.dict(sys.modules, {
+            "pwd": SimpleNamespace(getpwuid=lambda _: account, getpwall=lambda: [account]),
+            "grp": SimpleNamespace(getgrgid=lambda _: group),
+        }), patch.object(host.os, "listxattr", side_effect=PermissionError("ACL listing denied")):
+            with self.assertRaisesRegex(host.Refusal, "unavailable-deploy-directory-acl"):
+                self.release()
+        self.assertEqual({path.name for path in self.lock.iterdir()}, {"owner"})
+        self.assertFalse(self.archive.exists())
+
     def test_loss_before_rename_retries_only_immutable_same_proof(self):
         with patch.object(host.os, "rename", side_effect=OSError("disconnect")):
             with self.assertRaises(OSError):
@@ -546,6 +592,26 @@ class ReconciliationHostTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr.strip(), "CSX-RECONCILE-REFUSED mode")
+
+
+class PrivateDirectoryACLTests(unittest.TestCase):
+    def test_no_access_acl_allows_empty_or_unrelated_attributes(self):
+        for attributes in ([], ["user.audit-note"]):
+            with self.subTest(attributes=attributes), \
+                    patch.object(host.os, "listxattr", return_value=attributes, create=True) as read:
+                host.verify_no_access_acl("deploy-fixture")
+                read.assert_called_once_with("deploy-fixture", follow_symlinks=False)
+
+    def test_any_extended_access_acl_is_refused(self):
+        with patch.object(host.os, "listxattr", return_value=["system.posix_acl_access"], create=True):
+            with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-acl"):
+                host.verify_no_access_acl("deploy-fixture")
+
+    def test_attribute_read_errors_are_not_treated_as_absence(self):
+        for error in (PermissionError("denied"), OSError("unsupported attributes"), OSError("I/O failure")):
+            with self.subTest(error=error), patch.object(host.os, "listxattr", side_effect=error, create=True):
+                with self.assertRaisesRegex(host.Refusal, "unavailable-deploy-directory-acl"):
+                    host.verify_no_access_acl("deploy-fixture")
 
 
 class PrivateDirectoryPermissionsTests(unittest.TestCase):

@@ -91,6 +91,16 @@ def verify_permissions(info, private_group_directory=False):
             "untrusted-deploy-directory-group")
 
 
+def verify_no_access_acl(path):
+    # A private owning group does not exclude named-user/group ACL writers.
+    # Reject extended access ACLs instead of interpreting or trusting them.
+    try:
+        attributes = os.listxattr(path, follow_symlinks=False)
+    except OSError:
+        raise Refusal("unavailable-deploy-directory-acl") from None
+    require("system.posix_acl_access" not in attributes, "untrusted-deploy-directory-acl")
+
+
 # The same reviewed ledger/index contract as offline-migration.py. This
 # verifier deliberately has no migration, repair-barrier or rollback methods.
 INDEXES = {
@@ -191,6 +201,8 @@ class Host:
         info = path.lstat()
         if os.name == "posix":
             verify_permissions(info, private_group_directory=path == self.deploy)
+            if path == self.deploy and info.st_mode & 0o020:
+                verify_no_access_acl(path)
         self.remember(path, (metadata(info), None), receipt_created)
 
     def regular(self, path):

@@ -45,7 +45,8 @@ release. Retained owner, config and evidence paths must keep their filesystem
 identity and bytes throughout verification. Trusted owner and write-permission
 checks reject a writable or replaced ownership namespace; the existing 0775
 deploy directory is accepted only when its primary group is proved private to
-the trusted owner. Reconciliation does not change host permissions.
+the trusted owner and no extended access ACL grants another writer.
+Reconciliation does not change host permissions.
 
 A lost response or final artifact upload can be retried. Missing `.deploy-lock`
 is accepted only with the exact owner archive, original source binding and
