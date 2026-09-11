@@ -101,7 +101,6 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		total += instance.MonthlyUSD
 	}
 
-	coverage, coverageAt := h.coverage(ctx, now)
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
@@ -116,6 +115,10 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "완성도 집계를 불러오지 못했습니다", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Coverage can fall back to its last computed value. Read the required
+	// measurements first so an optional refresh cannot consume their budget.
+	coverage, coverageAt := h.coverage(ctx, now)
 
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"workers":      views,
