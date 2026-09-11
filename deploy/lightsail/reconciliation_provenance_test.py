@@ -51,12 +51,14 @@ def source_values():
             "imageDigest": "sha256:" + "d" * 64, "serverStartedAt": "2026-09-11T14:15:58.802547123Z",
             "completedAt": "2026-09-11T14:16:51.830430+00:00", "activationStartedAt": "2026-09-11T14:15:57.1Z",
             "releaseTag": "v0.1.158", "migrationLedger": {"version": "0037_slow_query_indexes.sql", "count": 38},
+            "migrationTimeoutSeconds": 1200,
             "health": "ok", "proxyHealth": "ok", "smoke": "pass", "representativeSmoke": "pass", "cleanup": "pass",
             "migrationVerification": "pass", "rollback": "not-started"}
     top = {"schemaVersion": 2, "conclusion": "failure", "failureClass": "controller-unresolved", "workflowRunId": "100",
            "rollback": "unknown-host-outcome",
            "operationalSha": "a" * 40, "targetSha": "c" * 40, "previousProductionSha": "e" * 40,
-           "previousImageDigest": "sha256:" + "f" * 64, "trackingIssue": "347", "offlineMigration": copy.deepcopy(host)}
+           "previousImageDigest": "sha256:" + "f" * 64, "trackingIssue": "347",
+           "migrationBudgetSeconds": 1200, "offlineMigration": copy.deepcopy(host)}
     # Real artifact: the old controller normalized this nonidentity field.
     top["offlineMigration"]["completedAt"] = "2026-09-11T14:16:51.83043+00:00"
     jobs = [job(source_run, "Production eligibility", "success"), job(source_run, "Roll out production", "failure")]
@@ -93,10 +95,11 @@ def authenticated_source():
     api = API()
     source_run, jobs, artifact, top, host = source_values()
     api.values["actions/runs/100"] = source_run
+    api.values["actions/runs/100/attempts/1"] = source_run
     api.lists[("actions/runs/100/attempts/1/jobs", "jobs")] = jobs
     api.artifact(artifact, {p.TOP: raw(top), p.HOST: raw(host)})
     api.lists[("actions/runs/100/artifacts", "artifacts")] = [artifact]
-    return api, p.fetch_source(api, "100")
+    return api, p.fetch_source(api, "100", 1, 700)
 
 
 def released_values():
@@ -149,6 +152,9 @@ class ReconciliationProvenanceTests(unittest.TestCase):
                    lambda r, j, a, t, h: h.update(activationStartedAt="2026-09-11T13:15:57Z"),
                    lambda r, j, a, t, h: h.update(completedAt="2026-09-11T15:16:51Z"),
                    lambda r, j, a, t, h: t.update(rollback="pass"),
+                   lambda r, j, a, t, h: t.update(migrationBudgetSeconds=60),
+                   lambda r, j, a, t, h: h.update(migrationTimeoutSeconds=True),
+                   lambda r, j, a, t, h: h.update(migrationTimeoutSeconds=1801),
                    lambda r, j, a, t, h: j[1]["steps"].append({"name": "cleanup", "conclusion": "failure"})]
         for change in changes:
             with self.subTest(change=change):
@@ -197,6 +203,125 @@ class ReconciliationProvenanceTests(unittest.TestCase):
         self.assertEqual(final["workflowRunId"], "300")
         self.assertEqual(final["previousProductionSha"], "e" * 40)
         self.assertEqual(final["reconciliation"]["sourceRunId"], "100")
+
+    def test_source_attempt_and_artifact_are_explicit_and_not_latest(self):
+        api, bundle = authenticated_source()
+        latest = run(attempt=2)
+        api.values["actions/runs/100"] = latest
+        api.values["actions/runs/100/attempts/2"] = latest
+        later_jobs = [job(latest, "Production eligibility", "success"),
+                      job(latest, "Roll out production", "failure")]
+        for item in later_jobs:
+            item.update(started_at="2026-09-11T15:00:00Z", completed_at="2026-09-11T15:20:00Z")
+        api.lists[("actions/runs/100/attempts/2/jobs", "jobs")] = later_jobs
+        later_artifact = copy.deepcopy(bundle["sourceArtifact"])
+        later_artifact.update(id=701, created_at="2026-09-11T15:17:16Z")
+        api.artifact(later_artifact, {p.TOP: raw(bundle["sourceEvidence"]), p.HOST: raw(bundle["hostEvidence"])})
+        # Same artifact name now exists for another attempt. The exact original
+        # ID remains authoritative; listing order and latest run do not matter.
+        api.lists[("actions/runs/100/artifacts", "artifacts")].insert(0, later_artifact)
+        with patch.object(api, "api", wraps=api.api) as requests:
+            self.assertEqual(p.fetch_source(api, "100", 1, 700), bundle)
+        self.assertNotIn("actions/runs/100", [call.args[0] for call in requests.call_args_list])
+        for attempt, artifact_id in ((1, 701), (2, 700), (True, 700), (1, True), (0, 700), (1, None)):
+            with self.subTest(attempt=attempt, artifact_id=artifact_id), self.assertRaises(ValueError):
+                p.fetch_source(api, "100", attempt, artifact_id)
+        for field, value in (("id", 999), ("name", "foreign-artifact"), ("expired", True)):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(bundle["sourceArtifact"])
+                changed[field] = value
+                api.values["actions/artifacts/700"] = changed
+                with self.assertRaises(ValueError):
+                    p.fetch_source(api, "100", 1, 700)
+        api.values["actions/artifacts/700"] = bundle["sourceArtifact"]
+        api.values["actions/runs/100/attempts/1"] = latest
+        with self.assertRaisesRegex(ValueError, "attempt mismatch"):
+            p.fetch_source(api, "100", 1, 700)
+
+    def test_source_artifact_ambiguity_expiry_and_interval_refuse_before_download(self):
+        for mutation in ("missing", "ambiguous", "expired", "outside"):
+            with self.subTest(mutation=mutation):
+                api, bundle = authenticated_source()
+                artifacts = api.lists[("actions/runs/100/artifacts", "artifacts")]
+                if mutation == "missing":
+                    artifacts.clear()
+                elif mutation == "ambiguous":
+                    artifacts.append(dict(artifacts[0], id=702))
+                elif mutation == "expired":
+                    artifacts[0]["expired"] = True
+                else:
+                    artifacts[0]["created_at"] = "2026-09-11T15:17:16Z"
+                with patch.object(api, "api", wraps=api.api) as requests:
+                    with self.assertRaisesRegex(ValueError, "exactly one unexpired source artifact"):
+                        p.fetch_source(api, "100", 1, 700)
+                self.assertFalse(any(call.args[0].endswith("/zip") for call in requests.call_args_list))
+        api, bundle = authenticated_source()
+        api.lists[("actions/runs/100/attempts/1/jobs", "jobs")][0]["conclusion"] = "failure"
+        with patch.object(api, "api", wraps=api.api) as requests:
+            with self.assertRaises(ValueError):
+                p.fetch_source(api, "100", 1, 700)
+        self.assertFalse(any(call.args[0].startswith("actions/artifacts/") for call in requests.call_args_list))
+
+    def test_source_cli_requires_both_explicit_attempt_and_artifact_before_api(self):
+        baseline = ["reconciliation-provenance.py", "fetch-source", "--repository", REPO,
+                    "--run-id", "100", "--output", "must-not-write.json"]
+        for flags in ([], ["--run-attempt", "1"], ["--artifact-id", "700"]):
+            with self.subTest(flags=flags), patch("sys.argv", baseline + flags), \
+                    patch("sys.stderr", new_callable=io.StringIO) as error, patch.object(p, "GitHub") as api:
+                with self.assertRaises(SystemExit) as failed:
+                    p.main()
+                self.assertEqual(failed.exception.code, 2)
+                self.assertIn("--run-attempt and --artifact-id are required", error.getvalue())
+                api.assert_not_called()
+
+    def test_later_source_attempt_cannot_invalidate_completed_observation_or_archived_retry(self):
+        api, bundle, request, result, current, final = released_values()
+        # The original workflow has since been rerun and failed on the retained
+        # or now-archived lock. All earlier immutable proof remains unchanged.
+        api.values["actions/runs/100"] = run(attempt=2)
+        self.assertEqual(p.validate_observation(api, current, final), 45)
+        self.assertEqual(c.authenticate_receipt(api, result, request), request["preparedArtifact"])
+        new_request = c.make_request(bundle, "a" * 40, "300", 1)
+        prepared = {"schemaVersion": 1, "request": new_request, "verification": result}
+        api.values["actions/runs/300/attempts/1"] = current
+        metadata = {"id": 801, "name": "production-reconciliation-prepared-300-1", "expired": False,
+                    "workflow_run": {"id": 300, "head_sha": "a" * 40, "head_branch": "main"}}
+        api.artifact(metadata, {p.PREPARED: raw(prepared)})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            bundle_path, prepared_path, output = (directory / name for name in ("source.json", "prepared.json", "final.json"))
+            bundle_path.write_bytes(raw(bundle))
+            prepared_path.write_bytes(raw(prepared))
+            argv = ["reconcile-production.py", "release", "--bundle", str(bundle_path),
+                    "--prepared", str(prepared_path), "--prepared-artifact-id", "801",
+                    "--prepared-artifact-digest", metadata["digest"], "--output", str(output)]
+            with patch.dict(os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_SHA": "a" * 40,
+                                         "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1",
+                                         "PRODUCTION_HOST": "production.example", "PRODUCTION_USER": "ubuntu",
+                                         "PRODUCTION_KEY_PATH": "key", "PRODUCTION_KNOWN_HOSTS_PATH": "known"}), \
+                    patch("sys.argv", argv), patch.object(c.provenance, "GitHub", return_value=api), \
+                    patch.object(c, "public_health"), patch.object(c, "remote", return_value=result) as remote:
+                c.main()
+            published = p.unique_json(output.read_bytes())
+            sent = remote.call_args.args[0]
+            self.assertEqual(sent["sourceRunAttempt"], 1)
+            self.assertEqual(sent["sourceArtifactId"], 700)
+            self.assertEqual(sent["preparedArtifact"], request["preparedArtifact"])
+            self.assertEqual(published["reconciliation"]["verification"]["receipt"], result["receipt"])
+            self.assertEqual(p.validate_observation(api, current, published), 45)
+
+    def test_observer_rejects_changed_source_attempt_artifact_or_budget(self):
+        for key, value in (("sourceRunAttempt", 2), ("sourceArtifactId", 701),
+                           ("sourceRunAttempt", True), ("sourceArtifactId", True)):
+            with self.subTest(key=key):
+                api, bundle, request, result, current, final = released_values()
+                final["reconciliation"][key] = value
+                with self.assertRaises((ValueError, KeyError)):
+                    p.validate_observation(api, current, final)
+        api, bundle, request, result, current, final = released_values()
+        result["binding"]["migrationTimeoutSeconds"] = 60
+        with self.assertRaises(ValueError):
+            p.validate_observation(api, current, final)
 
     def test_failed_original_or_reconciliation_never_becomes_observer_eligible(self):
         api, bundle, request, result, current, final = released_values()

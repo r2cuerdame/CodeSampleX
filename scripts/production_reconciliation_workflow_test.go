@@ -31,7 +31,11 @@ func TestProductionReconciliationRequiresPublishedPreparationBeforeRelease(t *te
 		previous = index
 	}
 	for _, required := range []string{
-		"workflow_dispatch:", "source_run_id:", "group: codesamplex-production", "cancel-in-progress: false",
+		"workflow_dispatch:", "source_run_id:", "source_run_attempt:", "source_artifact_id:",
+		"SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}",
+		"SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}",
+		`--run-attempt "$SOURCE_RUN_ATTEMPT"`, `--artifact-id "$SOURCE_ARTIFACT_ID"`,
+		"group: codesamplex-production", "cancel-in-progress: false",
 		"environment: codesamplex-production", "ref: ${{ github.sha }}", "timeout-minutes: 20",
 		"production-reconciliation-prepared-${{ github.run_id }}-${{ github.run_attempt }}",
 		"production-evidence-${{ github.run_id }}-${{ github.run_attempt }}",

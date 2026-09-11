@@ -37,7 +37,8 @@ def expected_binding(request):
     binding = {key: request[key] for key in ("repository", "sourceRunId", "sourceRunAttempt",
                 "sourceArtifactId", "sourceArtifactSha256", "hostEvidenceSha256", "previousSha", "previousImageDigest")}
     binding.update({key: host[key] for key in ("owner", "targetSha", "operationalSha", "imageDigest",
-                                             "serverStartedAt", "migrationLedger", "releaseTag")})
+                                             "serverStartedAt", "migrationLedger", "releaseTag",
+                                             "migrationTimeoutSeconds")})
     return binding
 
 
@@ -130,9 +131,11 @@ def main():
     args = parser.parse_args()
     bundle = provenance.unique_json(Path(args.bundle).read_bytes())
     api = provenance.GitHub(os.environ["GITHUB_REPOSITORY"])
-    # Re-fetch at each stage. A rerun or changed source artifact invalidates the
-    # bundle before any host-side release, instead of trusting a local pathname.
-    authenticated = provenance.fetch_source(api, str(bundle["sourceRun"]["id"]))
+    # Re-fetch the exact immutable source attempt/artifact at each stage. A
+    # later failed deploy attempt cannot erase an earlier committed owner's
+    # provenance or invalidate recovery after release/final-publication loss.
+    authenticated = provenance.fetch_source(api, str(bundle["sourceRun"]["id"]),
+                                            bundle["sourceRun"]["run_attempt"], bundle["sourceArtifact"]["id"])
     require(authenticated == bundle, "source provenance changed since eligibility")
     request = make_request(bundle, os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_ID"], int(os.environ["GITHUB_RUN_ATTEMPT"]))
     if args.mode == "release":

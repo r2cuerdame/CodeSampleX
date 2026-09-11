@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("reconcile_host", Path(__file__).with_name("reconcile-host.py"))
@@ -26,6 +27,7 @@ def fixture():
         "controllerSmoke": "host-verified", "health": "ok", "proxyHealth": "ok", "smoke": "pass",
         "representativeSmoke": "pass", "cleanup": "pass", "migrationVerification": "pass",
         "rollback": "not-started", "migrationLedger": {"version": "0037_slow_query_indexes.sql", "count": 38},
+        "migrationTimeoutSeconds": 1200,
         "indexes": [{"name": key, "valid": True, "ready": True, "definition": value}
                     for key, value in host.INDEXES37.items()],
         "serverStartedAt": "2026-09-11T14:15:58.802547123Z",
@@ -117,7 +119,7 @@ class ReconciliationHostTests(unittest.TestCase):
         self.config = {key: evidence[key] for key in ("targetSha", "operationalSha", "imageDigest")}
         self.config.update(previousSha=self.request["previousSha"], previousImageDigest=self.request["previousImageDigest"],
                            expectedReleaseTag=evidence["releaseTag"], expectedMigration=evidence["migrationLedger"]["version"],
-                           expectedMigrationCount=38)
+                           expectedMigrationCount=38, migrationTimeoutSeconds=1200)
         (self.migration / "config.json").write_text(json.dumps(self.config))
         self.lock = self.root / ".deploy-lock"
         self.lock.mkdir()
@@ -210,7 +212,7 @@ class ReconciliationHostTests(unittest.TestCase):
     def test_lock_and_evidence_changes_during_check_are_refused(self):
         runner = self.runner()
         runner.on_final_identity = lambda: (self.lock / "owner").write_text("foreign")
-        with self.assertRaisesRegex(host.Refusal, "lock-owner"):
+        with self.assertRaisesRegex(host.Refusal, "lock-owner|retained-state-changed"):
             runner.run()
         self.assertTrue(self.lock.exists())
 
@@ -279,6 +281,135 @@ class ReconciliationHostTests(unittest.TestCase):
         self.request["mode"] = "release"
         self.assertEqual(self.runner().run()["receipt"], result["receipt"])
         self.assertEqual(receipt_bytes, (self.archive / "reconciliation.json").read_bytes())
+
+    def test_finalizer_or_owned_work_reappearing_during_smoke_keeps_lock(self):
+        self.request.update(mode="release", preparedArtifact=self.prepared)
+        for changes in (
+            {"systemctl": "ActiveState=deactivating\nSubState=stop-post\nMainPID=0\nControlPID=42\n"},
+            {"docker ps": "helper-id"},
+            {"pg_stat_activity": '{"owned":1,"ddl":0}'},
+            {"pg_stat_activity": '{"owned":0,"ddl":1}'},
+        ):
+            with self.subTest(changes=changes):
+                runner = self.runner()
+                runner.on_final_identity = lambda: runner.failures.update(changes)
+                with self.assertRaises(host.Refusal):
+                    runner.run()
+                self.assertEqual({path.name for path in self.lock.iterdir()}, {"owner"})
+                self.assertFalse(self.archive.exists())
+
+    def test_replaced_lock_or_retained_file_with_identical_bytes_is_not_adopted(self):
+        self.request.update(mode="release", preparedArtifact=self.prepared)
+        for relative in (".deploy-lock", "deploy/.migration-" + "a" * 32 + "/config.json",
+                         "deploy/.migration-" + "a" * 32 + "/evidence.json", ".deploy-lock/owner"):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                shutil.copytree(self.root, root, dirs_exist_ok=True)
+                runner = FakeHost(self.request, root)
+                original = root / relative
+                def replace():
+                    saved = root / "original-retained-path"
+                    original.rename(saved)
+                    if saved.is_dir():
+                        shutil.copytree(saved, original)
+                    else:
+                        shutil.copyfile(saved, original)
+                runner.on_final_identity = replace
+                with self.assertRaisesRegex(host.Refusal, "retained-state-changed"):
+                    runner.run()
+                self.assertTrue(runner.lock.exists())
+                self.assertFalse(runner.archive.exists())
+
+    def test_receipt_sync_does_not_hide_extra_child_or_new_abort_marker(self):
+        for extra in ("unexpected-child", "abort-marker"):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                shutil.copytree(self.root, root, dirs_exist_ok=True)
+                request = dict(self.request, mode="release", preparedArtifact=self.prepared)
+                runner = FakeHost(request, root)
+                original_sync = runner.sync_receipt
+                def changed(directory):
+                    original_sync(directory)
+                    path = directory / "unexpected" if extra == "unexpected-child" else runner.abort
+                    path.write_text("retained for inspection")
+                with patch.object(runner, "sync_receipt", side_effect=changed):
+                    with self.assertRaises(host.Refusal):
+                        runner.run()
+                self.assertTrue(runner.lock.exists())
+                self.assertFalse(runner.archive.exists())
+
+    def test_extra_child_during_receipt_creation_is_not_absorbed_into_directory_snapshot(self):
+        self.request.update(mode="release", preparedArtifact=self.prepared)
+        runner = self.runner()
+        original_fsync = host.os.fsync
+        calls = []
+        def changed(descriptor):
+            original_fsync(descriptor)
+            if not calls:
+                (self.lock / "unexpected").write_text("retained for inspection")
+            calls.append(descriptor)
+        with patch.object(host.os, "fsync", side_effect=changed):
+            with self.assertRaisesRegex(host.Refusal, "lock-contents"):
+                runner.run()
+        self.assertTrue(self.lock.exists())
+        self.assertFalse(self.archive.exists())
+
+    def test_archived_retry_detects_new_owner_created_during_receipt_sync(self):
+        self.release()
+        runner = self.runner()
+        original_sync = runner.sync_receipt
+        def changed(directory):
+            original_sync(directory)
+            self.lock.mkdir()
+            (self.lock / "owner").write_text("new-owner\n")
+        with patch.object(runner, "sync_receipt", side_effect=changed):
+            with self.assertRaisesRegex(host.Refusal, "collision"):
+                runner.run()
+        self.assertEqual((self.lock / "owner").read_text(), "new-owner\n")
+
+    def test_migration_budget_is_exact_and_bound_to_the_original_config(self):
+        self.assertEqual(self.runner().binding["migrationTimeoutSeconds"], 1200)
+        for value in (None, True, 0, 59, 1801, "1200"):
+            with self.subTest(value=value):
+                request = copy.deepcopy(self.request)
+                request["hostEvidence"]["migrationTimeoutSeconds"] = value
+                with self.assertRaisesRegex(host.Refusal, "migration-budget"):
+                    FakeHost(request, self.root)
+        changed = dict(self.config, migrationTimeoutSeconds=1199)
+        (self.migration / "config.json").write_text(json.dumps(changed))
+        with self.assertRaisesRegex(host.Refusal, "config-migrationTimeoutSeconds"):
+            self.runner().run()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX mode bits")
+    def test_world_writable_owner_proof_never_releases(self):
+        self.lock.chmod(0o777)
+        (self.lock / "owner").chmod(0o666)
+        with self.assertRaisesRegex(host.Refusal, "writable-retained-state"):
+            self.release()
+        self.assertTrue(self.lock.exists())
+        self.assertFalse(self.archive.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX private-group directory permissions")
+    def test_private_775_deploy_directory_does_not_relax_retained_permissions(self):
+        uid, gid = os.geteuid(), os.getegid()
+        account = SimpleNamespace(pw_uid=uid, pw_gid=gid, pw_name="fixture")
+        group = SimpleNamespace(gr_gid=gid, gr_name="fixture", gr_mem=[])
+        (self.root / "deploy").chmod(0o775)
+        with patch.dict(sys.modules, {
+            "pwd": SimpleNamespace(getpwuid=lambda _: account, getpwall=lambda: [account]),
+            "grp": SimpleNamespace(getgrgid=lambda _: group),
+        }):
+            self.assertEqual(self.runner().run()["lockState"], "owned")
+            for path in (self.root, self.lock, self.migration, self.lock / "owner",
+                         self.migration / "config.json", self.migration / "evidence.json"):
+                with self.subTest(path=path.name):
+                    original = path.stat().st_mode
+                    path.chmod(original | 0o020)
+                    with self.assertRaisesRegex(host.Refusal, "writable-retained-state"):
+                        self.release()
+                    path.chmod(original)
+                    self.assertFalse(self.archive.exists())
+            self.assertEqual(self.release()["lockState"], "archived")
 
     def test_loss_before_rename_retries_only_immutable_same_proof(self):
         with patch.object(host.os, "rename", side_effect=OSError("disconnect")):
@@ -415,6 +546,62 @@ class ReconciliationHostTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr.strip(), "CSX-RECONCILE-REFUSED mode")
+
+
+class PrivateDirectoryPermissionsTests(unittest.TestCase):
+    def setUp(self):
+        self.account = SimpleNamespace(pw_uid=1000, pw_gid=1000, pw_name="ubuntu")
+        self.accounts = [SimpleNamespace(pw_uid=0, pw_gid=0, pw_name="root"), self.account]
+        self.group = SimpleNamespace(gr_gid=1000, gr_name="ubuntu", gr_mem=[])
+        self.info = SimpleNamespace(st_mode=host.stat.S_IFDIR | 0o775, st_uid=1000, st_gid=1000)
+        self.addCleanup(patch.stopall)
+        patch.object(host.os, "geteuid", return_value=1000, create=True).start()
+        patch.object(host.os, "getegid", return_value=1000, create=True).start()
+        patch.dict(sys.modules, {
+            "pwd": SimpleNamespace(getpwuid=lambda _: self.account, getpwall=lambda: self.accounts),
+            "grp": SimpleNamespace(getgrgid=lambda _: self.group),
+        }).start()
+
+    def test_exact_owner_private_primary_group_has_no_additional_writer(self):
+        host.verify_permissions(self.info, private_group_directory=True)
+        self.group.gr_mem = ["ubuntu", "root"]
+        host.verify_permissions(self.info, private_group_directory=True)
+
+    def test_exception_never_applies_to_retained_state_or_files(self):
+        with self.assertRaisesRegex(host.Refusal, "writable-retained-state"):
+            host.verify_permissions(self.info)
+        self.info.st_mode = host.stat.S_IFREG | 0o664
+        with self.assertRaisesRegex(host.Refusal, "writable-retained-state"):
+            host.verify_permissions(self.info, private_group_directory=True)
+
+    def test_world_write_foreign_owner_gid_and_special_modes_are_refused(self):
+        for key, value in (("st_uid", 2000), ("st_gid", 2000),
+                           ("st_mode", host.stat.S_IFDIR | 0o777),
+                           ("st_mode", host.stat.S_IFDIR | 0o2775)):
+            with self.subTest(field=key, value=value):
+                original = getattr(self.info, key)
+                setattr(self.info, key, value)
+                with self.assertRaises(host.Refusal):
+                    host.verify_permissions(self.info, private_group_directory=True)
+                setattr(self.info, key, original)
+
+    def test_other_supplementary_or_primary_group_members_are_refused(self):
+        self.group.gr_mem = ["other"]
+        with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-group"):
+            host.verify_permissions(self.info, private_group_directory=True)
+        self.group.gr_mem = []
+        self.accounts.append(SimpleNamespace(pw_uid=2000, pw_gid=1000, pw_name="other"))
+        with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-group"):
+            host.verify_permissions(self.info, private_group_directory=True)
+
+    def test_nonprivate_group_or_incomplete_account_enumeration_is_refused(self):
+        self.group.gr_name = "shared"
+        with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-group"):
+            host.verify_permissions(self.info, private_group_directory=True)
+        self.group.gr_name = "ubuntu"
+        self.accounts = []
+        with self.assertRaisesRegex(host.Refusal, "untrusted-deploy-directory-group"):
+            host.verify_permissions(self.info, private_group_directory=True)
 
 
 if __name__ == "__main__":

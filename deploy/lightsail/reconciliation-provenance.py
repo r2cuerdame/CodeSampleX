@@ -181,11 +181,16 @@ def validate_source(run, jobs, artifact, top_raw, host_raw, repository):
     ledger = host.get("migrationLedger", {})
     require(isinstance(ledger, dict) and matching(ledger.get("version"), r"[0-9]{4}_[a-z0-9_]+\.sql") and positive(ledger.get("count")),
             "migration ledger incomplete")
+    budget = host.get("migrationTimeoutSeconds")
+    require(positive(budget) and 60 <= budget <= 1800 and
+            type(top.get("migrationBudgetSeconds")) is int and top["migrationBudgetSeconds"] == budget,
+            "migration budget differs from original controller")
     # The old PowerShell controller normalized OTHER embedded timestamps. The
     # original separate host JSON remains the byte authority; compare only the
     # exact acceptance identity in the embedded copy, never reserialized blobs.
     embedded = top.get("offlineMigration", {})
-    for key in set(expected) | {"owner", "unit", "imageDigest", "serverStartedAt", "releaseTag", "migrationLedger"}:
+    for key in set(expected) | {"owner", "unit", "imageDigest", "serverStartedAt", "releaseTag",
+                               "migrationLedger", "migrationTimeoutSeconds"}:
         require(embedded.get(key) == host.get(key), "embedded host acceptance mismatch: " + key)
     require(timestamp(rollout["started_at"]) <= timestamp(host["activationStartedAt"]) <= timestamp(host["serverStartedAt"]) <=
             timestamp(host["completedAt"]) <= timestamp(rollout["completed_at"]), "activation outside original job")
@@ -194,12 +199,38 @@ def validate_source(run, jobs, artifact, top_raw, host_raw, repository):
             "sourceEvidence": top, "hostEvidence": host}
 
 
-def fetch_source(api, run_id):
+def source_artifact(api, run, rollout):
+    # Original artifact names omitted attempts. Do not allow another same-name
+    # artifact inside this attempt to make the historical proof ambiguous.
+    name = "production-evidence-" + str(run["id"])
+    started, completed = timestamp(rollout["started_at"]), timestamp(rollout["completed_at"])
+    artifacts = api.pages("actions/runs/" + str(run["id"]) + "/artifacts", "artifacts")
+    selected = [a for a in artifacts if a.get("name") == name and a.get("expired") is False and
+                started <= timestamp(a["created_at"]) <= completed]
+    require(len(selected) == 1, "expected exactly one unexpired source artifact within the exact rollout attempt")
+    return selected[0]
+
+
+def fetch_source(api, run_id, attempt, artifact_id):
+    # A later retry must not change the identity of an already committed source.
+    # The original workflow used one artifact name for every attempt; pin its
+    # immutable ID and prove creation inside the selected historical rollout.
     require(matching(str(run_id), r"[1-9][0-9]*"), "source run ID must be positive")
-    run = api.api("actions/runs/" + str(run_id))
-    validate_run(run, api.repository, DEPLOY, "failure", run_id)
-    jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run_id, run["run_attempt"]), "jobs")
-    artifact = named_artifact(api, run, "production-evidence-" + str(run_id))
+    require(positive(attempt) and positive(artifact_id), "source attempt and artifact ID must be positive")
+    run = api.api("actions/runs/{}/attempts/{}".format(run_id, attempt))
+    validate_run(run, api.repository, DEPLOY, "failure", run_id, attempt)
+    jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run_id, attempt), "jobs")
+    exact_job(jobs, "Production eligibility", run, "success")
+    rollout = exact_job(jobs, "Roll out production", run, "failure")
+    selected = source_artifact(api, run, rollout)
+    require(type(selected.get("id")) is int and selected["id"] == artifact_id,
+            "source artifact does not match the explicitly selected ID")
+    artifact = api.api("actions/artifacts/" + str(artifact_id))
+    require(type(artifact.get("id")) is int and artifact["id"] == artifact_id and
+            artifact.get("name") == "production-evidence-" + str(run_id),
+            "source artifact ID or name mismatch")
+    require(all(artifact.get(key) == selected.get(key) for key in
+                ("digest", "created_at", "workflow_run")), "source artifact metadata changed")
     files = artifact_files(api, artifact, [TOP, HOST], run)
     return validate_source(run, jobs, artifact, files[TOP], files[HOST], api.repository)
 
@@ -232,7 +263,7 @@ def source_binding(source):
               "hostEvidenceSha256": source["hostEvidenceSha256"], "previousSha": top["previousProductionSha"],
               "previousImageDigest": top["previousImageDigest"]}
     result.update({k: host[k] for k in ("owner", "targetSha", "operationalSha", "imageDigest", "serverStartedAt",
-                                      "migrationLedger", "releaseTag")})
+                                      "migrationLedger", "releaseTag", "migrationTimeoutSeconds")})
     return result
 
 
@@ -245,7 +276,8 @@ def validate_observation(api, run, evidence):
     jobs = api.pages("actions/runs/{}/attempts/{}/jobs".format(run["id"], run["run_attempt"]), "jobs")
     job = exact_job(jobs, "Reconcile committed production owner", run, "success")
     recon = evidence.get("reconciliation", {})
-    source = fetch_source(api, recon.get("sourceRunId"))
+    source = fetch_source(api, recon.get("sourceRunId"), recon.get("sourceRunAttempt"),
+                          recon.get("sourceArtifactId"))
     original = source["sourceRun"]
     expected = source_binding(source)
     require(recon.get("sourceRunNumber") == original["run_number"] and
@@ -265,7 +297,8 @@ def validate_observation(api, run, evidence):
             "prepared verification did not pass")
     for key, value in expected.items():
         candidate = request.get("hostEvidence", {}).get(key) if key in ("owner", "targetSha", "operationalSha", "imageDigest",
-                        "serverStartedAt", "migrationLedger", "releaseTag") else request.get(key)
+                        "serverStartedAt", "migrationLedger", "releaseTag",
+                        "migrationTimeoutSeconds") else request.get(key)
         require(candidate == value, "prepared source identity mismatch: " + key)
     require(prior.get("binding") == verification.get("binding") == receipt.get("binding") == expected,
             "owner release does not match durable preparation")
@@ -286,13 +319,18 @@ def main():
     parser.add_argument("mode", choices=["fetch-source", "verify-observation", "download-observation"])
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-attempt", type=int)
+    parser.add_argument("--artifact-id", type=int)
     parser.add_argument("--output")
     parser.add_argument("--evidence")
     args = parser.parse_args()
+    if args.mode == "fetch-source" and (args.run_attempt is None or args.artifact_id is None):
+        parser.error("--run-attempt and --artifact-id are required for fetch-source")
     api = GitHub(args.repository)
     if args.mode == "fetch-source":
         require(args.output is not None, "output is required")
-        Path(args.output).write_text(json.dumps(fetch_source(api, args.run_id), indent=2) + "\n", encoding="utf-8")
+        source = fetch_source(api, args.run_id, args.run_attempt, args.artifact_id)
+        Path(args.output).write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
     else:
         run = api.api("actions/runs/" + args.run_id)
         validate_run(run, api.repository, RECONCILE, "success", args.run_id)

@@ -13,12 +13,16 @@ Once public health has recovered, use the reviewed main workflow:
 
 ```sh
 gh workflow run production-reconciliation.yml --ref main \
-  -f source_run_id=34608440406 --repo r2cuerdame/CodeSampleX
+  -f source_run_id=34608440406 -f source_run_attempt=1 \
+  -f source_artifact_id=10267836798 --repo r2cuerdame/CodeSampleX
 ```
 
 This command is **on hold while the public health failures below continue**.
 No previous SHA, target, owner or image can be supplied to replace the original
 evidence. The workflow obtains them from the authenticated original artifact.
+The source attempt and artifact are explicit, immutable references; later
+reruns of the original deployment cannot substitute a different attempt or
+invalidate the historical receipt used by a successful reconciliation.
 It requires green canonical CI for its own operational source and shares the
 normal production concurrency group and pinned SSH identity/host-key policy.
 
@@ -35,6 +39,13 @@ The two stages are:
    existing host command flock, write and sync an owner receipt and atomically
    rename `.deploy-lock` to `.deploy-reconciled-<original-owner>`. The owner file
    and migration evidence remain retained. No lock is deleted or adopted.
+
+Supervisor and helper/database cleanup checks are repeated after smoke, before
+release. Retained owner, config and evidence paths must keep their filesystem
+identity and bytes throughout verification. Trusted owner and write-permission
+checks reject a writable or replaced ownership namespace; the existing 0775
+deploy directory is accepted only when its primary group is proved private to
+the trusted owner. Reconciliation does not change host permissions.
 
 A lost response or final artifact upload can be retried. Missing `.deploy-lock`
 is accepted only with the exact owner archive, original source binding and
@@ -139,6 +150,28 @@ in `ap-northeast-2`. Twelve five-minute measurements at 14:42–15:37 show avera
 CPU utilization 19.998329–20.002731% and burst capacity 0.011049–0.011110%.
 Together with live steal and failing routes, these establish a continuing
 capacity blocker under the current no-deployment/no-restart constraints.
+
+A later independent Playwright panel at 16:19:32–16:19:39 returned HTTP 200 on
+all nine routes with the same exact target. Health TTFB was 0.294 seconds;
+samples was 1.702 seconds, pgx 1.504 seconds, OTel 0.328 seconds and stats 0.329
+seconds. Stats still reported `generatedAt=2026-09-09T17:32:31Z`. This is a
+fresh improvement in route health and can justify attempting the canonical
+fail-closed reconciliation after green CI and fresh host checks. It does not
+establish sustained recovery or a completed builder pass. The latest canonical
+workflow result and incident comments determine the operational hold; a single
+healthy diagnostic does not replace them.
+
+The bounded host recheck at 16:20:31–16:20:48 likewise returned HTTP 200 on
+three loopback health requests. The original owner, raw evidence SHA256,
+image/start and zero restart/OOM identity were unchanged; the supervisor was
+collected/inactive with both PIDs zero. CPU steal remained 77–81% and CPU PSI
+avg10 80.70%. Memory was 769,552,384 of 805,306,368 bytes, with 2,590 cumulative
+`memory.max` events and zero OOM events. Logs still showed two full-pass starts,
+one failure and no completion, with the latest start at 14:29:00. These residual
+pressure and convergence findings remain incident evidence even if owner
+reconciliation passes. The public and host JSON SHA256s are respectively
+`3ac3a649cdc685ab55cc2dfd995db085c1b491ae3bee41ea15b20e75aba86fc3` and
+`92a4506a5e9b62229fa17802005d9964320f976549f57b0574bdde5e253c27f9`.
 
 ### Cost decision if capacity recovery is required
 

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -57,6 +58,37 @@ def timestamp(value):
 
 def normalize_index(value):
     return " ".join(value.replace("public.", "").split())
+
+
+def metadata(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def verify_permissions(info, private_group_directory=False):
+    require(info.st_uid in (0, os.geteuid()), "untrusted-retained-owner")
+    require(not info.st_mode & 0o002, "writable-retained-state")
+    if not info.st_mode & 0o020:
+        return
+    # Canonical mkdir can create deploy/ as 0775 under Ubuntu's 002 umask.
+    # Only that directory may use an owner-private primary group. Never apply
+    # this exception to the lock, state, evidence, receipt, or deploy parent.
+    require(private_group_directory and stat.S_ISDIR(info.st_mode) and
+            stat.S_IMODE(info.st_mode) == 0o775 and info.st_uid == os.geteuid() and
+            info.st_gid == os.getegid(), "writable-retained-state")
+    import grp
+    import pwd
+    account = pwd.getpwuid(os.geteuid())
+    group = grp.getgrgid(info.st_gid)
+    accounts = pwd.getpwall()
+    require(account.pw_uid == info.st_uid and account.pw_gid == info.st_gid and
+            group.gr_gid == info.st_gid and group.gr_name == account.pw_name and
+            set(group.gr_mem).issubset({account.pw_name, "root"}),
+            "untrusted-deploy-directory-group")
+    require(any(row.pw_uid == account.pw_uid and row.pw_gid == account.pw_gid and
+                row.pw_name == account.pw_name for row in accounts) and
+            all(row.pw_uid in (0, account.pw_uid) for row in accounts if row.pw_gid == info.st_gid),
+            "untrusted-deploy-directory-group")
 
 
 # The same reviewed ledger/index contract as offline-migration.py. This
@@ -118,10 +150,13 @@ def make_binding(request):
     require(timestamp(evidence["activationStartedAt"]) <= started <= timestamp(evidence["completedAt"]), "activation-window")
     require(timestamp(evidence["cleanupCompletedAt"]) <= started, "cleanup-window")
     require(evidence["phaseTimings"]["activation"]["outcome"] == "pass", "activation-outcome")
+    require(type(evidence.get("migrationTimeoutSeconds")) is int and
+            60 <= evidence["migrationTimeoutSeconds"] <= 1800, "migration-budget")
     binding = {key: request[key] for key in ("repository", "sourceRunId", "sourceRunAttempt", "sourceArtifactId",
                                            "sourceArtifactSha256", "hostEvidenceSha256", "previousSha", "previousImageDigest")}
     binding.update({key: evidence[key] for key in ("owner", "targetSha", "operationalSha", "imageDigest",
-                                                "migrationLedger", "serverStartedAt", "releaseTag")})
+                                                "migrationLedger", "serverStartedAt", "releaseTag",
+                                                "migrationTimeoutSeconds")})
     return binding
 
 
@@ -136,13 +171,51 @@ class Host:
         self.archive = root / (".deploy-reconciled-" + self.binding["owner"])
         self.abort = (control_home or Path.home()) / (".csx-deploy-aborted-" + self.binding["owner"])
         self.deadline = time.monotonic() + 170
+        self.snapshots = {}
 
-    def directory(self, path):
+    def remember(self, path, value, receipt_created=False):
+        previous = self.snapshots.get(path)
+        if previous is not None:
+            if receipt_created:
+                # Adding our exclusive receipt legitimately changes only the
+                # lock directory size/times. Its inode, owner, mode and link
+                # count must remain the original ones; other snapshots stay exact.
+                require(path == self.lock and value[1] is None and previous[1] is None and
+                        value[0][:6] == previous[0][:6], "retained-state-changed")
+            else:
+                require(value == previous, "retained-state-changed")
+        self.snapshots[path] = value
+
+    def directory(self, path, receipt_created=False):
         require(not path.is_symlink() and path.is_dir() and path.resolve() == path.absolute(), "unsafe-directory")
+        info = path.lstat()
+        if os.name == "posix":
+            verify_permissions(info, private_group_directory=path == self.deploy)
+        self.remember(path, (metadata(info), None), receipt_created)
 
     def regular(self, path):
         require(not path.is_symlink() and path.is_file() and path.stat().st_nlink == 1, "unsafe-file")
-        return path.read_bytes()
+        info = path.lstat()
+        if os.name == "posix":
+            verify_permissions(info)
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, "unsafe-file")
+        require(info.st_size <= 2 * 1024 * 1024, "retained-file-size")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as file:
+            require(metadata(os.fstat(file.fileno())) == metadata(info), "retained-state-changed")
+            raw = file.read(2 * 1024 * 1024 + 1)
+            require(len(raw) <= 2 * 1024 * 1024, "retained-file-size")
+            require(metadata(os.fstat(file.fileno())) == metadata(info), "retained-state-changed")
+        require(metadata(path.lstat()) == metadata(info), "retained-state-changed")
+        self.remember(path, (metadata(info), raw))
+        return raw
+
+    def stable(self):
+        for path, (_, raw) in list(self.snapshots.items()):
+            if raw is None:
+                self.directory(path)
+            else:
+                self.regular(path)
 
     def retained(self):
         for path in (self.root, self.deploy, self.state):
@@ -154,7 +227,8 @@ class Host:
         expected = {key: self.binding[key] for key in ("targetSha", "previousSha", "operationalSha", "imageDigest", "previousImageDigest")}
         expected.update(expectedMigration=self.binding["migrationLedger"]["version"],
                         expectedMigrationCount=self.binding["migrationLedger"]["count"],
-                        expectedReleaseTag=self.binding["releaseTag"])
+                        expectedReleaseTag=self.binding["releaseTag"],
+                        migrationTimeoutSeconds=self.binding["migrationTimeoutSeconds"])
         for key, value in expected.items():
             require(type(config.get(key)) is type(value) and config[key] == value, "config-" + key)
 
@@ -238,7 +312,7 @@ class Host:
         require(sep and status == "200", "proxy-smoke")
         return body
 
-    def live(self):
+    def terminal_and_cleanup(self):
         # Collected transient units may have LoadState=not-found; `show`
         # still returns these properties successfully. Unknown/empty fails.
         unit = self.command(["systemctl", "show", "csx-migration-" + self.binding["owner"] + ".service",
@@ -246,7 +320,6 @@ class Host:
         properties = dict(line.split("=", 1) for line in unit.splitlines())
         require(properties.get("ActiveState") == "inactive" and properties.get("SubState") == "dead" and
                 properties.get("MainPID") == "0" and properties.get("ControlPID") == "0", "supervisor-not-terminal")
-        original_id = self.identity()
         for args in (["docker", "ps", "-aq", "--filter", "name=^/csx-migrate-" + self.binding["owner"] + "$"],
                      ["docker", "ps", "-aq", "--filter", "label=codesamplex.deploy-owner=" + self.binding["owner"]]):
             require(not self.command(args).strip(), "helper-remains")
@@ -254,6 +327,10 @@ class Host:
                              "application_name='csx-migrate-" + self.binding["owner"] + "'),"
                              "'ddl',(SELECT count(*) FROM pg_stat_progress_create_index))")
         require(cleanup == {"owned": 0, "ddl": 0}, "database-helper-remains")
+
+    def live(self):
+        self.terminal_and_cleanup()
+        original_id = self.identity()
         ledger = self.query("SELECT json_build_object('version',max(version),'count',count(*)) FROM schema_migrations")
         require(ledger == self.binding["migrationLedger"], "live-ledger")
         expected = MIGRATIONS[ledger["version"]][1]
@@ -277,6 +354,7 @@ class Host:
         require(isinstance(strict_json(self.proxy("/v1/stats")), dict), "stats-smoke")
         self.proxy("/samples")
         require(self.identity() == original_id, "container-changed-during-verification")
+        return original_id
 
     @staticmethod
     def sync_directory(path):
@@ -320,9 +398,15 @@ class Host:
                 file.write(raw)
                 file.flush()
                 os.fsync(file.fileno())
+            self.directory(self.lock, receipt_created=True)
+            require(self.regular(self.lock / "reconciliation.json") == raw, "receipt-write-changed")
         # Re-establish durability on retries too: a readable complete receipt
         # does not prove that the previous controller reached its fsync.
         self.sync_receipt(self.lock if state == "owned" else self.archive)
+        require(self.ownership() == (state, receipt), "owner-changed-before-release")
+        # Receipt creation/fsync must not conceal replacement of any retained
+        # namespace or original owner file before the atomic archive operation.
+        self.stable()
         if state == "owned":
             # No deployment command can run concurrently: caller holds the
             # existing command flock throughout verification and this rename.
@@ -335,9 +419,14 @@ class Host:
     def run(self):
         self.retained()
         state, receipt = self.ownership()
-        self.live()
+        original_id = self.live()
         self.retained()
+        # The systemd supervisor and PostgreSQL work are independent of the
+        # controller command flock. Refresh these gates after the slower probes.
+        self.terminal_and_cleanup()
+        require(self.identity() == original_id, "container-changed-before-release")
         require(self.ownership() == (state, receipt), "owner-changed-during-verification")
+        self.stable()
         if self.request["mode"] == "release":
             receipt = self.release(state, receipt)
             state = "archived"

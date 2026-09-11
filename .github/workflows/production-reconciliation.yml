@@ -1,11 +1,19 @@
 name: Production reconciliation
-run-name: Reconcile committed production run ${{ inputs.source_run_id }}
+run-name: Reconcile committed production run ${{ inputs.source_run_id }} attempt ${{ inputs.source_run_attempt }}
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
         description: Failed canonical production run with retained committed host acceptance
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact original failed deployment attempt that committed on the host
+        required: true
+        type: string
+      source_artifact_id:
+        description: Immutable production evidence artifact ID uploaded by that attempt
         required: true
         type: string
 
@@ -50,11 +58,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
         shell: bash
         run: |
           set -euo pipefail
           python3 -B deploy/lightsail/reconciliation-provenance.py fetch-source \
-            --run-id "$SOURCE_RUN_ID" --output production-reconciliation-source.json
+            --run-id "$SOURCE_RUN_ID" --run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact-id "$SOURCE_ARTIFACT_ID" --output production-reconciliation-source.json
           target=$(jq -er '.hostEvidence.targetSha' production-reconciliation-source.json)
           original_operations=$(jq -er '.sourceRun.head_sha' production-reconciliation-source.json)
           git merge-base --is-ancestor "$target" origin/main
