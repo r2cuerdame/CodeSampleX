@@ -6,6 +6,7 @@ import json
 import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 
@@ -20,7 +21,7 @@ ERROR_CLASSES = ("statement_timeout", "pool_busy")
 FAILURES = ("none", "command_failed", "command_timeout", "byte_limit", "line_limit",
             "tail_limit", "invalid_utf8", "invalid_log", "malformed_poll", "unknown_fallback",
             "invalid_identity", "identity_changed", "collector_failed", "transport_failed",
-            "invalid_summary", "not_collected")
+            "invalid_summary", "not_collected", "invalid_expected_revision", "revision_mismatch")
 STAMP = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?Z")
 POLL_PREFIX = "csx-server: authoring poll "
 FALLBACK_PREFIX = "csx-server: authoring expansion candidates unavailable ("
@@ -147,8 +148,13 @@ def bounded_command(argv, timeout, byte_limit, source=None, merge_stderr=False):
         process.stdout.close()
 
 
-def empty_summary(end_ns, reason="not_collected"):
+def valid_revision(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def empty_summary(end_ns, reason="not_collected", expected_revision=None):
     return {"schemaVersion": 1, "availability": "unavailable", "failureClass": reason,
+            "expectedRevision": expected_revision if valid_revision(expected_revision) else None,
             "scope": "retained_current_container_logs", "windowSeconds": WINDOW_SECONDS,
             "windowCoverage": "retention_not_proven",
             "windowStart": stamp(end_ns - WINDOW_SECONDS * 1000000000), "windowEnd": stamp(end_ns),
@@ -243,16 +249,22 @@ def inspect_identity(run):
         raise Unavailable("invalid_identity") from None
 
 
-def collect(run=bounded_command, now=time.time_ns):
+def collect(expected_revision, run=bounded_command, now=time.time_ns):
     end_ns = now()
-    result = empty_summary(end_ns)
+    result = empty_summary(end_ns, expected_revision=expected_revision)
     try:
+        if not valid_revision(expected_revision):
+            raise Unavailable("invalid_expected_revision")
         before = inspect_identity(run)
+        if before["revision"] != expected_revision:
+            raise Unavailable("revision_mismatch")
         argv = ("docker", "logs", "--timestamps", "--since", result["windowStart"], "--until", result["windowEnd"],
                 "--tail", str(MAX_LINES + 1), "codesamplex-server-1")
         raw = run(argv, LOG_TIMEOUT, MAX_BYTES, merge_stderr=True)
         read, funnel, fallback = parse_logs(raw, timestamp_ns(result["windowStart"]), end_ns)
         after = inspect_identity(run)
+        if after["revision"] != expected_revision:
+            raise Unavailable("revision_mismatch")
         if before != after:
             raise Unavailable("identity_changed")
         result.update(availability="available", failureClass="none", read=read, funnel=funnel, fallback=fallback,
@@ -266,4 +278,5 @@ def collect(run=bounded_command, now=time.time_ns):
 
 if __name__ == "__main__":
     # Only this constructed object reaches SSH stdout; no exception text does.
-    print(json.dumps(collect(), separators=(",", ":"), ensure_ascii=True))
+    expected = sys.argv[1] if len(sys.argv) == 2 else None
+    print(json.dumps(collect(expected), separators=(",", ":"), ensure_ascii=True))

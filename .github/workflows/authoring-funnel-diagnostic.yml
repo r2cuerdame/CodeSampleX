@@ -3,6 +3,11 @@ run-name: Read bounded retained authoring funnel logs
 
 on:
   workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact 40-character lowercase revision expected on the production server
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: codesamplex-production
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
     steps:
       - name: Require canonical manual main source
         shell: bash

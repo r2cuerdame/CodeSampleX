@@ -18,6 +18,7 @@ START = END - 3600 * 1000000000
 SECRET = "credential-DO-NOT-EMIT-private-coordinate"
 IDENTITY = {"id": "a" * 64, "imageDigest": "sha256:" + "b" * 64,
             "startedAt": "2026-09-11T19:08:54.123456789Z", "revision": "c" * 40}
+EXPECTED_ENV = {"EXPECTED_REVISION": IDENTITY["revision"]}
 
 
 def line(message, at="2026-09-11T19:50:00.123456789Z"):
@@ -39,7 +40,7 @@ def read_fixture(raw, identity=IDENTITY):
         calls.append((argv, timeout, byte_limit, kwargs))
         return json.dumps(identity).encode() if argv[1] == "inspect" else raw
 
-    result = collector.collect(run, lambda: END)
+    result = collector.collect(IDENTITY["revision"], run, lambda: END)
     return result, calls
 
 
@@ -131,7 +132,7 @@ class FunnelParsingTests(unittest.TestCase):
             changed = dict(IDENTITY, id=str(counter) * 64)
             return json.dumps(changed).encode()
 
-        result = collector.collect(replaced, lambda: END)
+        result = collector.collect(IDENTITY["revision"], replaced, lambda: END)
         self.assertEqual(result["failureClass"], "identity_changed")
         self.assertIsNone(result["funnel"])
 
@@ -139,16 +140,56 @@ class FunnelParsingTests(unittest.TestCase):
         for reason in ("command_failed", "command_timeout", "byte_limit"):
             def failed(*args, **kwargs):
                 raise collector.Unavailable(reason)
-            result = collector.collect(failed, lambda: END)
+            result = collector.collect(IDENTITY["revision"], failed, lambda: END)
             self.assertEqual(result["failureClass"], reason)
             self.assertIsNone(result["funnel"])
 
+    def test_expected_revision_matches_both_identity_reads(self):
+        for mismatch_read in (1, 2):
+            calls = []
+            inspections = 0
+
+            def run(argv, *args, **kwargs):
+                nonlocal inspections
+                calls.append(argv)
+                if argv[1] == "logs":
+                    return line(poll())
+                inspections += 1
+                identity = dict(IDENTITY)
+                if inspections == mismatch_read:
+                    identity["revision"] = "e" * 40
+                return json.dumps(identity).encode()
+
+            result = collector.collect(IDENTITY["revision"], run, lambda: END)
+            self.assertEqual(result["failureClass"], "revision_mismatch")
+            self.assertEqual(result["expectedRevision"], IDENTITY["revision"])
+            self.assertTrue(all(result[k] is None for k in ("identity", "read", "funnel", "fallback")))
+            self.assertEqual(len(calls), 1 if mismatch_read == 1 else 3)
+            controller.validate(json.dumps(result).encode(), IDENTITY["revision"])
+        matched, _ = read_fixture(line(poll()))
+        self.assertEqual(matched["availability"], "available")
+        self.assertEqual(matched["identity"]["revision"], matched["expectedRevision"])
+
 
 class TransportTests(unittest.TestCase):
+    def test_invalid_expected_revision_is_rejected_before_transport_or_secret_paths(self):
+        for value in (None, "", "C" * 40, "c" * 39, "c" * 41, SECRET, "c" * 40 + ";id"):
+            with patch.object(Path, "is_file", side_effect=AssertionError("credential path read")), \
+                    patch.object(collector.subprocess, "Popen", side_effect=AssertionError("SSH invoked")) as process:
+                result = controller.diagnose({"EXPECTED_REVISION": value})
+                self.assertEqual(result["failureClass"], "invalid_expected_revision")
+                self.assertIsNone(result["expectedRevision"])
+                with self.assertRaises(ValueError):
+                    controller.remote({"EXPECTED_REVISION": value})
+                collected = collector.collect(value, now=lambda: END)
+                self.assertEqual(collected["failureClass"], "invalid_expected_revision")
+                process.assert_not_called()
+                self.assertNotIn(SECRET, json.dumps(result))
+
     def test_initialization_retains_complete_unavailable_envelope_without_transport(self):
         # Only workflow identity is available before credentials are installed.
         # Any diagnostic/SSH/subprocess invocation here is a regression.
-        with patch.object(controller.os, "environ", {"GITHUB_SHA": "d" * 40, "GITHUB_RUN_ID": "123"}), \
+        with patch.object(controller.os, "environ", dict(EXPECTED_ENV, GITHUB_SHA="d" * 40, GITHUB_RUN_ID="123")), \
                 patch.object(controller, "diagnose", side_effect=AssertionError("diagnostic invoked")) as diagnose, \
                 patch.object(collector.subprocess, "Popen", side_effect=AssertionError("SSH invoked")) as process, \
                 patch.object(Path, "write_text") as write:
@@ -162,6 +203,7 @@ class TransportTests(unittest.TestCase):
         diagnostic = controller.validate(json.dumps(envelope["diagnostic"]).encode())
         self.assertEqual(diagnostic["availability"], "unavailable")
         self.assertEqual(diagnostic["failureClass"], "not_collected")
+        self.assertEqual(diagnostic["expectedRevision"], IDENTITY["revision"])
         self.assertTrue(all(diagnostic[k] is None for k in ("identity", "read", "funnel", "fallback")))
 
     def test_bounded_reader_enforces_deadline_and_memory_while_reading(self):
@@ -185,6 +227,9 @@ class TransportTests(unittest.TestCase):
             value = copy.deepcopy(valid)
             value[path] = replacement
             variants.append(json.dumps(value).encode())
+        wrong_expected = copy.deepcopy(valid)
+        wrong_expected["expectedRevision"] = "e" * 40
+        variants.append(json.dumps(wrong_expected).encode())
         bad = copy.deepcopy(valid)
         bad["funnel"]["servedCounts"]["NO_WORK"] = 10
         variants.append(json.dumps(bad).encode())
@@ -193,13 +238,13 @@ class TransportTests(unittest.TestCase):
         variants.append(json.dumps(bad).encode())
         variants.append(json.dumps(valid).replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1').encode())
         for raw in variants:
-            result = controller.diagnose({}, lambda env: raw)
+            result = controller.diagnose(EXPECTED_ENV, lambda env: raw)
             self.assertEqual(result["failureClass"], "invalid_summary")
             self.assertIsNone(result["funnel"])
             self.assertNotIn(SECRET, json.dumps(result))
         def failed(env):
             raise RuntimeError(SECRET)
-        self.assertEqual(controller.diagnose({}, failed)["failureClass"], "transport_failed")
+        self.assertEqual(controller.diagnose(EXPECTED_ENV, failed)["failureClass"], "transport_failed")
 
     def test_pinned_ssh_has_fixed_stdin_program_and_no_output_passthrough(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -207,14 +252,14 @@ class TransportTests(unittest.TestCase):
             key.write_text("fixture")
             known.write_text("fixture")
             env = {"PRODUCTION_HOST": "example.invalid", "PRODUCTION_USER": "ubuntu",
-                   "PRODUCTION_KEY_PATH": str(key), "PRODUCTION_KNOWN_HOSTS_PATH": str(known)}
+                   "PRODUCTION_KEY_PATH": str(key), "PRODUCTION_KNOWN_HOSTS_PATH": str(known), **EXPECTED_ENV}
             calls = []
             def run(*args, **kwargs):
                 calls.append((args, kwargs))
                 return b"{}"
             controller.remote(env, run)
             argv, timeout, limit = calls[0][0]
-            self.assertEqual(argv[-2:], ("ubuntu@example.invalid", "timeout --kill-after=2s 25s python3 -I -"))
+            self.assertEqual(argv[-2:], ("ubuntu@example.invalid", "timeout --kill-after=2s 25s python3 -I -B - " + IDENTITY["revision"]))
             for option in ("BatchMode=yes", "IdentitiesOnly=yes", "StrictHostKeyChecking=yes", "UserKnownHostsFile=" + str(known.resolve())):
                 self.assertIn(option, argv)
             self.assertEqual((timeout, limit), (35, 16384))
@@ -233,6 +278,7 @@ class TransportTests(unittest.TestCase):
                          'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', "persist-credentials: false",
                          "group: codesamplex-production", "cancel-in-progress: false", "environment: codesamplex-production",
                          "secrets.CSX_PRODUCTION_SSH_KEY", "secrets.CSX_PRODUCTION_KNOWN_HOSTS", "if: always()",
+                         "expected_revision:", "required: true", "EXPECTED_REVISION: ${{ inputs.expected_revision }}",
                          "run: python3 -I deploy/lightsail/read-authoring-funnel.py --initialize",
                          'rm -f "$RUNNER_TEMP/csx-funnel-ssh/id" "$RUNNER_TEMP/csx-funnel-ssh/known_hosts"',
                          "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
@@ -240,7 +286,7 @@ class TransportTests(unittest.TestCase):
             self.assertIn(required, workflow)
         self.assertLess(workflow.index("Require successful exact canonical main CI"), workflow.index("SSH_PRIVATE_KEY:"))
         self.assertLess(workflow.index("actions/checkout@"), workflow.index("Initialize unavailable evidence"))
-        for forbidden in ("inputs:", "workflow_run:", "schedule:", "pull_request:", "issues: write", "contents: write", "continue-on-error", "StrictHostKeyChecking=no", "scp ", "ssh "):
+        for forbidden in ("workflow_run:", "schedule:", "pull_request:", "issues: write", "contents: write", "continue-on-error", "StrictHostKeyChecking=no", "scp ", "ssh "):
             self.assertNotIn(forbidden, workflow)
 
 

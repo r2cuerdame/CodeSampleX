@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("authoring_funnel", ROOT / "collect-authoring-funnel.py")
 funnel = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(funnel)
-REMOTE_COMMAND = "timeout --kill-after=2s 25s python3 -I -"
+REMOTE_COMMAND = "timeout --kill-after=2s 25s python3 -I -B -"
 
 
 def require(ok):
@@ -36,7 +36,7 @@ def unique_object(pairs):
     return out
 
 
-def validate(raw):
+def validate(raw, expected_revision=None):
     require(len(raw) <= 16384)
     value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=unique_object)
     template = funnel.empty_summary(time.time_ns())
@@ -46,6 +46,12 @@ def validate(raw):
     start, end = (funnel.timestamp_ns(value[k]) for k in ("windowStart", "windowEnd"))
     require(end - start == funnel.WINDOW_SECONDS * 1000000000)
     require(value["availability"] in ("available", "unavailable") and value["failureClass"] in funnel.FAILURES)
+    if value["failureClass"] == "invalid_expected_revision":
+        require(value["expectedRevision"] is None)
+    else:
+        require(funnel.valid_revision(value["expectedRevision"]))
+    if expected_revision is not None:
+        require(value["expectedRevision"] == expected_revision)
     if value["availability"] == "unavailable":
         require(value["failureClass"] != "none")
         require(all(value[k] is None for k in ("identity", "read", "funnel", "fallback")))
@@ -55,6 +61,7 @@ def validate(raw):
     keys(identity, ("imageDigest", "revision", "startedAt"))
     require(type(identity["imageDigest"]) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", identity["imageDigest"]) is not None)
     require(type(identity["revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", identity["revision"]) is not None)
+    require(identity["revision"] == value["expectedRevision"])
     require(funnel.timestamp_ns(identity["startedAt"]) <= end)
     read = value["read"]
     keys(read, ("lines", "bytes", "firstAt", "lastAt"))
@@ -98,6 +105,8 @@ def validate(raw):
 
 
 def remote(env, run=funnel.bounded_command):
+    expected_revision = env.get("EXPECTED_REVISION", "")
+    require(funnel.valid_revision(expected_revision))
     host, user = env.get("PRODUCTION_HOST", ""), env.get("PRODUCTION_USER", "") or "ubuntu"
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host) is not None)
     require(re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user) is not None)
@@ -108,18 +117,21 @@ def remote(env, run=funnel.bounded_command):
     command = ("ssh", "-T", "-i", str(key), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
                "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known_hosts),
                "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-               user + "@" + host, REMOTE_COMMAND)
+               user + "@" + host, REMOTE_COMMAND + " " + expected_revision)
     return run(command, 35, 16384, source=source)
 
 
 def diagnose(env, transport=remote):
-    result = funnel.empty_summary(time.time_ns(), "transport_failed")
+    expected_revision = env.get("EXPECTED_REVISION", "")
+    if not funnel.valid_revision(expected_revision):
+        return funnel.empty_summary(time.time_ns(), "invalid_expected_revision")
+    result = funnel.empty_summary(time.time_ns(), "transport_failed", expected_revision)
     try:
         raw = transport(env)
     except Exception:
         return result
     try:
-        return validate(raw)
+        return validate(raw, expected_revision)
     except Exception:
         result["failureClass"] = "invalid_summary"
         return result
@@ -128,12 +140,17 @@ def diagnose(env, transport=remote):
 def main(initialize=False):
     sha, run_id = os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None and re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is not None)
-    # Preparation runs before CI/SSH setup and reads only workflow identity.
+    # Preparation runs before CI/SSH setup and reads only workflow identity
+    # and the expected revision, never production credentials.
     # It must retain the same envelope without entering any remote path.
-    result = funnel.empty_summary(time.time_ns()) if initialize else diagnose(os.environ)
+    expected_revision = os.environ.get("EXPECTED_REVISION", "")
+    if not funnel.valid_revision(expected_revision):
+        result = funnel.empty_summary(time.time_ns(), "invalid_expected_revision")
+    else:
+        result = funnel.empty_summary(time.time_ns(), expected_revision=expected_revision) if initialize else diagnose(os.environ)
     evidence = {"operationalSha": sha, "workflowRunId": int(run_id), "diagnostic": result}
     Path("authoring-funnel.json").write_text(json.dumps(evidence, separators=(",", ":"), ensure_ascii=True) + "\n", encoding="utf-8")
-    return 0 if initialize or result["availability"] == "available" else 1
+    return 0 if (initialize and result["failureClass"] == "not_collected") or result["availability"] == "available" else 1
 
 
 if __name__ == "__main__":
