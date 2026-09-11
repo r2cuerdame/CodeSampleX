@@ -1,54 +1,47 @@
 # PM_AUTO_REFILL_V1 result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/306
-- Branch: `fix/306-record-command-output-failures`
-- Implementation commit: `cb93c6a`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/354
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/308
+- Branch: `herder/job_01M27KDBFEXGECKWN49XM80HR8-pm-refill-42cfe24eb197df7c-bc062e02f2fad9b0`
+- Implementation commit: `b85926e2`
+- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/358
 - Deployment/merge: not performed
 
 ## Canonical-source audit
 
-Issue #306 was open, unassigned, with no comments, no linked or cross-referenced
-PR, and no blocking open dependencies. Related PRs #208 and #215 established
-the baseline CLI experience recording and structured CLI execution evidence layers.
-Fresh `origin/main` at `75db6ba` still retained the restrictive gate
-`else if !profile.Known || profile.Stage == domain.StageProjectProcess` in
-`internal/evidence/recorder.go`, confirming the bug was present and unaddressed.
+Issue #308 was open, unassigned, and had no comments. Searches by issue number
+and the `ValidateBatch`/`outerCommand` subject found no PR already handling the
+work. Issues #295, #298, #301, and #303 are open related defects, but #308 does
+not declare them as blocking dependencies. PR #215 is the merged baseline for
+structured CLI execution evidence. Fresh `origin/main` at `ba6a29fd` still
+omitted `<arg>`, `<branch>`, and `<assignment>` from
+`isSafeOuterCommandToken`, confirming the scoped defect remained.
 
 ## Changes
 
-- In `internal/evidence/recorder.go:RecordCommandOutput`:
-  - Removed the restrictive `!profile.Known || profile.Stage == domain.StageProjectProcess`
-    gate, ensuring failure outcomes (`exitCode != 0` or non-empty termination)
-    for all recognized CLI tools (`domain.IsRecognizedCLITool(tool)`) are recorded into
-    the CLI experience ledger via `RecordCLIExperienceObservation`.
-  - Retained failure diagnostic analysis (`AnalyzeFailure`) and sanitized classification
-    (`SanitizeClassifiedFailure` / `SanitizeFailure`) which extracts error codes, fingerprints,
-    and summaries.
-- In `internal/evidence/recorder_test.go`:
-  - Expanded `TestRecordCommandOutputWiresCLIPassAndFailExperience` to record a failing
-    known build profile (`go test` with `StageProjectTest` and exit code 1) and assert
-    that `QueryCLIExperience` reports `FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`,
-    and populates `RecentFailures`.
-  - Added assertion for subsequent pass on the same coordinate to verify `Status == "COEXISTING_BOUNDARY"`
-    without survivorship bias.
-  - Added `TestRecordCommandOutputRecordsKnownBuildTestCompileFailures` covering known
-    compile, test, and typecheck profiles (`npm run build`, `cargo test`, `tsc`, `pytest`),
-    verifying both observation summary recall (`FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`)
-    and structured execution evidence rows via `ListCLIExecutionEvidence`.
+- Added `<arg>`, `<branch>`, and `<assignment>` to the explicit safe placeholder
+  vocabulary used by `outerCommand` validation.
+- Allowed uppercase ASCII letters so sanitized assignment keys such as
+  `TOKEN=<redacted-secret>` pass validation.
+- Expanded CLI PASS batch tests for branch, assignment, generic argument, and
+  uppercase-key cases.
+- Added direct acceptance coverage for all three required commands and a
+  negative test proving unknown placeholders remain rejected.
 
 ## Verification
 
-- `go test ./internal/evidence -run "TestRecordCommandOutput" -v` — PASS
-- `go test ./internal/domain ./internal/sanitizer ./internal/evidence ./internal/storage/localdb -count=1` — PASS
-- `go vet ./...` — PASS
-- `go build ./...` — PASS
+- `go test ./internal/serverstore/... -count=1` — PASS
+- `go vet ./internal/serverstore/...` — PASS
+- `go test ./internal/serverstore -run 'TestValidateBatchAcceptsCLIPass|TestValidOuterCommand' -count=10` — PASS
 - `git diff --check` — PASS
+- `go test ./... -count=1` — incomplete: two RDC attempts exceeded the command
+  window (30 seconds and 120 seconds) before a completion result was available;
+  no failure output was observed.
 
 ## DevHotel, tooling, and blockers
 
-DevHotel was not applicable because this change affects Go backend CLI experience
-evidence persistence and does not alter deployable web, Android, or desktop UI behavior.
-RDC and CSX MCP were not available in this job environment, so execution used the
-assigned worktree's Git and Go toolchain. No deployment or merge was attempted.
-No blockers remain for PR #354.
+DevHotel verification is not applicable because this is backend-only Go input
+validation with no deployable web, Android, APK, or desktop UI change. Execution
+and diagnostics used Remote Desktop Commander. No CodeSampleX MCP tools were
+exposed in this job, so no CSX MCP call was available. No blocker remains for
+the scoped #308 acceptance criteria; the incomplete repository-wide test is
+recorded above as a verification limitation. No deployment or merge was attempted.
