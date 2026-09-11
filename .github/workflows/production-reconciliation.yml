@@ -1,0 +1,152 @@
+name: Production reconciliation
+run-name: Reconcile committed production run ${{ inputs.source_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Failed canonical production run with retained committed host acceptance
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile committed production owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: codesamplex-production
+    steps:
+      - name: Require canonical operational source
+        shell: bash
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Require successful canonical operational CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ci_run=$(timeout --kill-after=5s 60s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch"))][0].id // 0')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Authenticate original failed run and retained host acceptance
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B deploy/lightsail/reconciliation-provenance.py fetch-source \
+            --run-id "$SOURCE_RUN_ID" --output production-reconciliation-source.json
+          target=$(jq -er '.hostEvidence.targetSha' production-reconciliation-source.json)
+          original_operations=$(jq -er '.sourceRun.head_sha' production-reconciliation-source.json)
+          git merge-base --is-ancestor "$target" origin/main
+          git merge-base --is-ancestor "$original_operations" origin/main
+
+      - name: Initialize fail-closed reconciliation evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('production-deploy-evidence.json').write_text(json.dumps({
+              'schemaVersion': 3, 'conclusion': 'failure', 'workflowRunId': os.environ['GITHUB_RUN_ID'],
+              'operationalSha': os.environ['GITHUB_SHA'], 'failureClass': 'owner-unreconciled',
+              'observation': 'pending-independent-workflow'
+          }) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install the dedicated SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-production-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-production-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-production-ssh/id"
+          test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+
+      - name: Verify exact owner and live acceptance without restart
+        timeout-minutes: 6
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          PRODUCTION_KEY_PATH: ${{ runner.temp }}/csx-production-ssh/id
+          PRODUCTION_KNOWN_HOSTS_PATH: ${{ runner.temp }}/csx-production-ssh/known_hosts
+        run: |
+          python3 -B deploy/lightsail/reconcile-production.py verify \
+            --bundle production-reconciliation-source.json --output production-reconciliation-prepared.json
+
+      - name: Durably publish verified preparation before owner release
+        id: prepared
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-reconciliation-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-reconciliation-prepared.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Revalidate and archive only the proven committed owner
+        timeout-minutes: 7
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          PRODUCTION_KEY_PATH: ${{ runner.temp }}/csx-production-ssh/id
+          PRODUCTION_KNOWN_HOSTS_PATH: ${{ runner.temp }}/csx-production-ssh/known_hosts
+          PREPARED_ARTIFACT_ID: ${{ steps.prepared.outputs.artifact-id }}
+          PREPARED_ARTIFACT_DIGEST: ${{ steps.prepared.outputs.artifact-digest }}
+        run: |
+          python3 -B deploy/lightsail/reconcile-production.py release \
+            --bundle production-reconciliation-source.json --prepared production-reconciliation-prepared.json \
+            --prepared-artifact-id "$PREPARED_ARTIFACT_ID" --prepared-artifact-digest "$PREPARED_ARTIFACT_DIGEST" \
+            --output production-deploy-evidence.json
+
+      - name: Remove production SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
+
+      - name: Retain final reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-deploy-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize reconciliation without rewriting the original failure
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s production-deploy-evidence.json ]]; then
+            jq '{conclusion,workflowRunId,targetSha,previousProductionSha,imageDigest,serverStartedAt,reconciliation,observation}' \
+              production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+          fi
